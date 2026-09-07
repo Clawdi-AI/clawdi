@@ -1,17 +1,5 @@
-import type {
-	ApiMode,
-	ProviderCatalogModel,
-	ProviderTypeId,
-} from "@/hosted/v2/ai-providers/provider-types";
-
-// Provider-preset design derived from cc-switch (MIT). Preset data is maintained
-// by Clawdi and mapped onto the hosted v2 provider form/API contract.
-export interface ProviderPresetCatalogEntry {
-	id: string;
-	context_window?: number;
-	alias?: string;
-	cost?: ProviderCatalogModel["cost"];
-}
+import { NATIVE_AI_PROVIDERS } from "@clawdi/shared";
+import type { ApiMode, ProviderTypeId } from "@/hosted/v2/ai-providers/provider-types";
 
 export interface ProviderPresetRegionVariant {
 	id: string;
@@ -25,246 +13,91 @@ export interface ProviderPreset {
 	label: string;
 	base_url: string;
 	api_mode: ApiMode;
-	/** Non-empty; catalog[0] is the persisted recommended/default model authority. */
-	catalog: readonly [ProviderPresetCatalogEntry, ...ProviderPresetCatalogEntry[]];
 	api_key_url: string;
 	region_variants?: readonly ProviderPresetRegionVariant[];
-	/** Internal backend type to use when the preset matches a first-class type. */
-	provider_type?: ProviderTypeId;
+	provider_type: ProviderTypeId;
+	runtime_env_name: string;
 }
 
-export const PROVIDER_PRESETS = [
-	{
-		id: "deepseek",
-		label: "DeepSeek",
-		base_url: "https://api.deepseek.com/v1",
-		api_mode: "openai_chat",
-		catalog: [
-			{ id: "deepseek-v4-flash", alias: "DeepSeek V4 Flash" },
-			{ id: "deepseek-v4-pro", alias: "DeepSeek V4 Pro" },
-		],
-		api_key_url: "https://platform.deepseek.com/api_keys",
-	},
-	{
-		id: "kimi-coding",
-		label: "Kimi Code",
-		base_url: "https://api.kimi.com/coding",
-		api_mode: "anthropic_messages",
-		catalog: [
-			{ id: "kimi-for-coding", alias: "Kimi Code" },
-			{ id: "k3-256k", alias: "Kimi K3 (256K)" },
-			{ id: "k3", alias: "Kimi K3" },
-		],
-		api_key_url: "https://www.kimi.com/code/console",
-		provider_type: "anthropic",
-	},
-	{
-		id: "moonshot",
-		label: "Kimi API",
-		base_url: "https://api.moonshot.cn/v1",
-		api_mode: "openai_chat",
-		catalog: [{ id: "kimi-k3", alias: "Kimi K3" }],
-		api_key_url: "https://platform.kimi.com/console/api-keys",
-		region_variants: [
-			{
-				id: "cn",
-				label: "China",
-				base_url: "https://api.moonshot.cn/v1",
-				api_key_url: "https://platform.kimi.com/console/api-keys",
-			},
-			{
-				id: "global",
-				label: "Global",
-				base_url: "https://api.moonshot.ai/v1",
-				api_key_url: "https://platform.kimi.ai/console/api-keys",
-			},
-		],
-	},
+// Display metadata only. Native routing, regions, and protocols have one shared owner.
+const PROVIDER_BRANDS = [
+	{ id: "deepseek", label: "DeepSeek", api_key_url: "https://platform.deepseek.com/api_keys" },
+	{ id: "kimi-coding", label: "Kimi Code", api_key_url: "https://www.kimi.com/code/console" },
+	{ id: "moonshot", label: "Kimi API", api_key_url: "https://platform.kimi.com/console/api-keys" },
 	{
 		id: "qwen-dashscope",
 		label: "Qwen (Model Studio)",
-		base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-		api_mode: "openai_chat",
-		catalog: [
-			{ id: "qwen3.7-plus", context_window: 1_000_000, alias: "Qwen3.7 Plus" },
-			{ id: "qwen3.7-max", context_window: 1_000_000, alias: "Qwen3.7 Max" },
-		],
 		api_key_url: "https://bailian.console.aliyun.com/cn-beijing?tab=model#/api-key",
-		region_variants: [
-			{
-				id: "cn",
-				label: "China (Beijing)",
-				base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-				api_key_url: "https://bailian.console.aliyun.com/cn-beijing?tab=model#/api-key",
-			},
-			{
-				id: "global",
-				label: "Singapore",
-				base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-				api_key_url: "https://bailian.console.alibabacloud.com/?apiKey=1#/api-key",
-			},
-		],
 	},
 	{
 		id: "zhipu-glm",
 		label: "Z.AI / Zhipu GLM",
-		base_url: "https://open.bigmodel.cn/api/paas/v4",
-		api_mode: "openai_chat",
-		catalog: [
-			{ id: "glm-5.3", alias: "GLM-5.3" },
-			{ id: "glm-5.2", alias: "GLM-5.2" },
-		],
 		api_key_url: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
-		region_variants: [
-			{
-				id: "cn",
-				label: "China",
-				base_url: "https://open.bigmodel.cn/api/paas/v4",
-				api_key_url: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
-			},
-			{
-				id: "global",
-				label: "Global",
-				base_url: "https://api.z.ai/api/paas/v4",
-				api_key_url: "https://z.ai/manage-apikey/apikey-list",
-			},
-		],
 	},
-	{
-		id: "stepfun",
-		label: "StepFun",
-		base_url: "https://api.stepfun.ai/v1",
-		api_mode: "openai_chat",
-		catalog: [{ id: "step-3.7-flash", alias: "Step 3.7 Flash" }],
-		api_key_url: "https://platform.stepfun.ai/interface-key",
-		region_variants: [
-			{
-				id: "global",
-				label: "Global",
-				base_url: "https://api.stepfun.ai/v1",
-				api_key_url: "https://platform.stepfun.ai/interface-key",
-			},
-			{
-				id: "cn",
-				label: "China",
-				base_url: "https://api.stepfun.com/v1",
-				api_key_url: "https://platform.stepfun.com/interface-key",
-			},
-		],
-	},
+	{ id: "stepfun", label: "StepFun", api_key_url: "https://platform.stepfun.ai/interface-key" },
 	{
 		id: "minimax",
 		label: "MiniMax",
-		base_url: "https://api.minimax.io/v1",
-		api_mode: "openai_chat",
-		catalog: [
-			{ id: "MiniMax-M3", context_window: 1_000_000, alias: "MiniMax M3" },
-			{ id: "MiniMax-M2.7", context_window: 204_800, alias: "MiniMax M2.7" },
-			{ id: "MiniMax-M2", context_window: 204_800, alias: "MiniMax M2" },
-		],
 		api_key_url: "https://platform.minimax.io/user-center/basic-information/interface-key",
-		region_variants: [
-			{
-				id: "global",
-				label: "Global",
-				base_url: "https://api.minimax.io/v1",
-				api_key_url: "https://platform.minimax.io/user-center/basic-information/interface-key",
-			},
-			{
-				id: "cn",
-				label: "China",
-				base_url: "https://api.minimaxi.com/v1",
-				api_key_url: "https://platform.minimaxi.com/user-center/basic-information/interface-key",
-			},
-		],
 	},
-	{
-		id: "openrouter",
-		label: "OpenRouter",
-		base_url: "https://openrouter.ai/api/v1",
-		api_mode: "openai_chat",
-		catalog: [
-			{ id: "openrouter/auto-beta", alias: "Auto Router" },
-			{ id: "~openai/gpt-latest", alias: "OpenAI GPT Latest" },
-			{
-				id: "anthropic/claude-sonnet-5",
-				context_window: 1_000_000,
-				alias: "Claude Sonnet 5",
-			},
-			{ id: "anthropic/claude-opus-4.6", alias: "Claude Opus 4.6" },
-			{ id: "openai/gpt-5.5", alias: "OpenAI GPT-5.5" },
-		],
-		api_key_url: "https://openrouter.ai/keys",
-		provider_type: "openrouter",
-	},
+	{ id: "openrouter", label: "OpenRouter", api_key_url: "https://openrouter.ai/keys" },
 	{
 		id: "together-ai",
 		label: "Together AI",
-		base_url: "https://api.together.ai/v1",
-		api_mode: "openai_chat",
-		catalog: [
-			{ id: "MiniMaxAI/MiniMax-M3", context_window: 524_288, alias: "MiniMax M3" },
-			{ id: "zai-org/GLM-5.2", context_window: 262_144, alias: "GLM-5.2" },
-		],
 		api_key_url: "https://api.together.ai/settings/projects/~current/api-keys",
 	},
-	{
-		id: "groq",
-		label: "Groq",
-		base_url: "https://api.groq.com/openai/v1",
-		api_mode: "openai_chat",
-		catalog: [{ id: "openai/gpt-oss-120b", context_window: 131_072, alias: "OpenAI GPT-OSS 120B" }],
-		api_key_url: "https://console.groq.com/keys",
-	},
-	{
-		id: "mistral",
-		label: "Mistral AI",
-		base_url: "https://api.mistral.ai/v1",
-		api_mode: "openai_chat",
-		catalog: [
-			{ id: "mistral-medium-latest", alias: "Mistral Medium" },
-			{ id: "mistral-small-latest", alias: "Mistral Small" },
-			{ id: "mistral-large-latest", alias: "Mistral Large" },
-			{ id: "codestral-latest", alias: "Codestral" },
-		],
-		api_key_url: "https://console.mistral.ai/api-keys",
-		provider_type: "mistral",
-	},
-	{
-		id: "xai-grok",
-		label: "xAI Grok",
-		base_url: "https://api.x.ai/v1",
-		api_mode: "openai_chat",
-		catalog: [{ id: "grok-4.5", context_window: 500_000, alias: "Grok 4.5" }],
-		api_key_url: "https://console.x.ai/team/default/api-keys",
-	},
-	{
-		id: "google-gemini-openai",
-		label: "Gemini (OpenAI-compatible)",
-		base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
-		api_mode: "openai_chat",
-		catalog: [
-			{ id: "gemini-3.6-flash", context_window: 1_048_576, alias: "Gemini 3.6 Flash" },
-			{ id: "gemini-3.5-flash", context_window: 1_048_576, alias: "Gemini 3.5 Flash" },
-			{
-				id: "gemini-3.5-flash-lite",
-				context_window: 1_048_576,
-				alias: "Gemini 3.5 Flash-Lite",
-			},
-		],
-		api_key_url: "https://aistudio.google.com/apikey",
-	},
-] as const satisfies readonly ProviderPreset[];
+	{ id: "groq", label: "Groq", api_key_url: "https://console.groq.com/keys" },
+	{ id: "mistral", label: "Mistral AI", api_key_url: "https://console.mistral.ai/api-keys" },
+	{ id: "xai-grok", label: "xAI Grok", api_key_url: "https://console.x.ai/team/default/api-keys" },
+] as const;
 
-export type ProviderPresetId = (typeof PROVIDER_PRESETS)[number]["id"];
+const REGION_LABELS: Record<string, string> = {
+	cn: "China",
+	global: "Global",
+	"coding-cn": "China · Coding Plan",
+	"coding-global": "Global · Coding Plan",
+	"plan-cn": "China · Step Plan",
+	"plan-global": "Global · Step Plan",
+};
+const REGION_KEY_URLS: Record<string, string> = {
+	"moonshot/global": "https://platform.kimi.ai/console/api-keys",
+	"qwen-dashscope/global": "https://bailian.console.alibabacloud.com/?apiKey=1#/api-key",
+	"zhipu-glm/global": "https://z.ai/manage-apikey/apikey-list",
+	"stepfun/cn": "https://platform.stepfun.com/interface-key",
+	"minimax/cn": "https://platform.minimaxi.com/user-center/basic-information/interface-key",
+};
 
-const PROVIDER_PRESET_BY_ID: ReadonlyMap<string, ProviderPreset> = new Map(
-	PROVIDER_PRESETS.map((preset) => [preset.id, preset]),
-);
+export const PROVIDER_PRESETS: readonly ProviderPreset[] = PROVIDER_BRANDS.map((brand) => {
+	const routes = NATIVE_AI_PROVIDERS.filter((route) => route.id === brand.id);
+	const route = routes[0];
+	if (!route) throw new Error(`Missing native provider mapping: ${brand.id}`);
+	return {
+		...brand,
+		base_url: route.base_url,
+		api_mode: route.api_mode,
+		provider_type: route.type,
+		runtime_env_name: route.runtime_env_name,
+		region_variants: routes.flatMap((item) =>
+			item.variant
+				? [
+						{
+							id: item.variant,
+							label: REGION_LABELS[item.variant] ?? item.variant,
+							base_url: item.base_url,
+							api_key_url:
+								REGION_KEY_URLS[`${brand.id}/${item.variant}`] ??
+								(/^(coding|plan)-/.test(item.variant) ? "" : brand.api_key_url),
+						},
+					]
+				: [],
+		),
+	};
+});
+
+export type ProviderPresetId = (typeof PROVIDER_BRANDS)[number]["id"];
 
 export function providerPresetById(id: string | null | undefined): ProviderPreset | null {
-	if (!id) return null;
-	return PROVIDER_PRESET_BY_ID.get(id) ?? null;
+	return PROVIDER_PRESETS.find((preset) => preset.id === id) ?? null;
 }
 
 export function providerPresetRegion(
@@ -272,7 +105,6 @@ export function providerPresetRegion(
 	regionId: string | null | undefined,
 ): ProviderPresetRegionVariant | null {
 	const regions = preset.region_variants ?? [];
-	if (regions.length === 0) return null;
 	return regions.find((region) => region.id === regionId) ?? regions[0] ?? null;
 }
 
@@ -281,37 +113,20 @@ export function providerPresetForSavedProvider({
 }: {
 	baseUrl: string;
 }): ProviderPreset | null {
-	const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
-	const presets: readonly ProviderPreset[] = PROVIDER_PRESETS;
+	const normalized = baseUrl.replace(/\/+$/, "");
 	return (
-		presets.find((preset) => {
-			const endpoints = [
-				preset.base_url,
-				...(preset.region_variants ?? []).map((item) => item.base_url),
-			];
-			return endpoints.some((endpoint) => endpoint.replace(/\/+$/, "") === normalizedBaseUrl);
-		}) ?? null
+		PROVIDER_PRESETS.find((preset) =>
+			[preset.base_url, ...(preset.region_variants ?? []).map((item) => item.base_url)].includes(
+				normalized,
+			),
+		) ?? null
 	);
 }
 
 export function providerTypeForPreset(preset: ProviderPreset): ProviderTypeId {
-	return preset.provider_type ?? "custom_openai_compatible";
+	return preset.provider_type;
 }
 
 export function presetRuntimeEnvName(preset: ProviderPreset): string {
-	const name = preset.id
-		.toUpperCase()
-		.replace(/[^A-Z0-9]+/g, "_")
-		.replace(/^_+|_+$/g, "");
-	return `${name || "PROVIDER"}_API_KEY`;
-}
-
-export function presetCatalogToProviderModels(preset: ProviderPreset): ProviderCatalogModel[] {
-	return preset.catalog.map((model) => ({
-		id: model.id,
-		...(model.alias ? { label: model.alias } : {}),
-		...(model.alias ? { alias: model.alias } : {}),
-		...(model.context_window !== undefined ? { context_window: model.context_window } : {}),
-		...(model.cost ? { cost: { ...model.cost } } : {}),
-	}));
+	return preset.runtime_env_name;
 }

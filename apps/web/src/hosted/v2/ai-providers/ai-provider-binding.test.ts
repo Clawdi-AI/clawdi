@@ -65,6 +65,35 @@ const oauthProvider: AiProvider = {
 };
 
 describe("AI provider binding fields", () => {
+	test("native create and switch submit credentials without inheriting a model", () => {
+		const provider = {
+			...apiKeyProvider,
+			configuration_mode: "native",
+			native_provider: "openai",
+			models: null,
+		} satisfies AiProvider;
+		const draft = selectAiBindingProvider(
+			{
+				bindingMode: "configured",
+				primaryProviderChoice: MANAGED_AI_CHOICE,
+				primaryModel: "gpt-managed",
+			},
+			provider.provider_id,
+			{ managedModels, providers: [provider] },
+		);
+		expect(draft.primaryModel).toBe("");
+		for (const mode of ["create", "update"] as const) {
+			const fields = buildAiBindingFields(draft, { managedModels, mode, providers: [provider] });
+			expect(fields.primary_model).toBeNull();
+			expect(fields.provider_ids).toEqual([provider.provider_id]);
+			expect(fields.ai_provider_bootstrap?.catalog.providers[0]).toMatchObject({
+				configuration_mode: "native",
+				native_provider: "openai",
+				readiness: provider.readiness,
+			});
+		}
+	});
+
 	test("create omits update-only clear fields for an unmanaged binding", () => {
 		expect(
 			buildAiBindingFields(

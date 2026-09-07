@@ -5,6 +5,7 @@ import type { AuthMethod } from "@/hosted/v2/ai-providers/add-provider-dialog.lo
 import type { ApiMode, ProviderTypeId } from "@/hosted/v2/ai-providers/provider-types";
 
 export interface ProviderFormState {
+	configurationMode: "native" | "catalog";
 	type: ProviderTypeId;
 	label: string;
 	baseUrl: string;
@@ -18,6 +19,7 @@ export interface ProviderFormState {
 }
 
 const INITIAL_STATE: ProviderFormState = {
+	configurationMode: "native",
 	type: "openai",
 	label: "",
 	baseUrl: "",

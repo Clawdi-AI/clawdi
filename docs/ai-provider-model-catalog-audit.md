@@ -1,5 +1,9 @@
 # Core Web AI Provider Catalog Audit
 
+> HISTORICAL — This audit records the former curated BYOK model presets. Native
+> BYOK connections now use the runtime's own catalog and model selection; these
+> lists are not provider configuration authority. See [AI Providers](ai-providers.md).
+
 This audit covers the Core Web provider types and presets in
 `packages/shared/src/ai-provider.ts` and
 `apps/web/src/hosted/v2/ai-providers/provider-presets.ts`.

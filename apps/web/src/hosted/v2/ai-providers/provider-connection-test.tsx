@@ -29,7 +29,10 @@ export function ProviderConnectionTest({
 }) {
 	const testConnection = useTestProviderConnection();
 	const [open, setOpen] = useState(false);
-	const testable = provider.auth.type === "api_key" && provider.auth.source === "managed";
+	const testable =
+		provider.configuration_mode !== "native" &&
+		provider.auth.type === "api_key" &&
+		provider.auth.source === "managed";
 	const testedModel = provider.models?.[0]?.id;
 	if (!testable) return null;
 

@@ -48,15 +48,7 @@ function presetEntry(preset: ProviderPreset): ChoiceEntry {
 		label: preset.label,
 		description,
 		iconId: preset.id,
-		searchText: [
-			preset.label,
-			preset.id,
-			preset.api_mode,
-			description,
-			...preset.catalog.flatMap((model) => [model.id, model.alias ?? ""]),
-		]
-			.join(" ")
-			.toLowerCase(),
+		searchText: [preset.label, preset.id, preset.api_mode, description].join(" ").toLowerCase(),
 		choice: { kind: "preset", preset },
 	};
 }

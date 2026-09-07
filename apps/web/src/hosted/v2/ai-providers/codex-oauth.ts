@@ -1,9 +1,4 @@
-import {
-	CODEX_OAUTH_MODEL_CATALOG,
-	defaultAiProviderBaseUrl,
-	defaultAiProviderModels,
-} from "@clawdi/shared";
-import { toProviderCatalogModels } from "@/hosted/v2/ai-providers/provider-types";
+import { defaultAiProviderBaseUrl } from "@clawdi/shared";
 import type { AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
 
 export const CLAWDI_CODEX_OAUTH_PROVIDER_ID = "openai-codex";
@@ -66,10 +61,6 @@ export function parseCodexCallback(input: string): CodexOAuthResult | null {
 	return code && state ? { code, state } : null;
 }
 
-/** Catalog seed for a fresh Codex provider (OpenAI Responses / GPT-5). */
-export const CODEX_DEFAULT_MODEL =
-	CODEX_OAUTH_MODEL_CATALOG[0]?.id ?? defaultAiProviderModels("openai")[0]?.id;
-
 /** Provider accepted by one independent ChatGPT device-code flow. */
 export function codexProviderBody(identity: {
 	providerId: string;
@@ -80,7 +71,9 @@ export function codexProviderBody(identity: {
 		type: "openai",
 		label: identity.label,
 		base_url: defaultAiProviderBaseUrl("openai") ?? "https://api.openai.com/v1",
-		models: toProviderCatalogModels(CODEX_OAUTH_MODEL_CATALOG),
+		configuration_mode: "native",
+		native_provider: "openai-codex",
+		native_variant: null,
 		api_mode: "openai_responses",
 		auth: { type: "agent_profile", tool: "codex", profile: "default" },
 		managed_by: "user",

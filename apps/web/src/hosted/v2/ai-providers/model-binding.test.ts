@@ -16,10 +16,7 @@ import {
 	providerRuntimeIncompatibility,
 	usableProviders,
 } from "@/hosted/v2/ai-providers/model-binding";
-import {
-	presetCatalogToProviderModels,
-	providerPresetById,
-} from "@/hosted/v2/ai-providers/provider-presets";
+
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 const managedMetadata = {
@@ -290,26 +287,15 @@ describe("model binding", () => {
 		});
 	});
 
-	test("uses persisted preset catalog order without a component model default", () => {
-		const preset = providerPresetById("deepseek");
-		if (!preset) throw new Error("Expected the DeepSeek preset fixture.");
+	test("native providers never populate the model picker", () => {
 		const provider = {
 			...savedOpenAiProvider,
-			provider_id: preset.id,
-			type: "custom_openai_compatible",
-			base_url: preset.base_url,
-			models: presetCatalogToProviderModels(preset),
+			configuration_mode: "native",
+			native_provider: "openai",
+			models: null,
 		} satisfies AiProvider;
-		const persistedDefault = preset.catalog[0].id;
-
-		expect(provider.models?.[0]?.id).toBe(persistedDefault);
-		expect(firstModelForProvider(provider.provider_id, [provider])).toBe(persistedDefault);
-		expect(modelPickerItems(provider.provider_id, [provider], [])).toEqual(
-			provider.models?.map((model) => ({
-				value: model.id,
-				label: model.label ?? model.id,
-			})),
-		);
+		expect(firstModelForProvider(provider.provider_id, [provider])).toBe("");
+		expect(modelPickerItems(provider.provider_id, [provider], [])).toEqual([]);
 	});
 
 	test("uses a custom provider catalog when present and no fallback when absent", () => {

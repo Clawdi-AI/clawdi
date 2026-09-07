@@ -1,5 +1,7 @@
 "use client";
 
+import { nativeAiProvider } from "@clawdi/shared";
+
 import { ArrowLeft, CircleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -41,7 +43,6 @@ import { providerConnectionIssueMessage } from "@/hosted/v2/ai-providers/provide
 import { ProviderFieldsForm } from "@/hosted/v2/ai-providers/provider-fields-form";
 import { ProviderOAuthFlow } from "@/hosted/v2/ai-providers/provider-oauth-flow";
 import {
-	presetCatalogToProviderModels,
 	providerPresetById,
 	providerPresetForSavedProvider,
 	providerPresetRegion,
@@ -139,13 +140,18 @@ export function AddProviderDialog({
 	const providerId = identity.providerId;
 	const providerLabel = identity.label ?? (providerId || meta.label);
 	const runtimeEnv = form.runtimeEnv.trim() || meta.defaultRuntimeEnv;
-	const presetCatalog = selectedPreset ? presetCatalogToProviderModels(selectedPreset) : [];
+	const nativeRoute = nativeAiProvider(
+		form.authMethod === "oauth" ? "openai-codex" : (selectedPreset?.id ?? form.type),
+		form.regionId,
+	);
+	const nativeConnection = form.configurationMode === "native" && nativeRoute !== undefined;
 	const providerListReady = providerListAllowsSubmit(isEdit, providers.data !== undefined);
 	const savedCredentialAvailable = editing != null && editing.auth.type !== "none";
 	const customNameProvided =
 		meta.custom !== true || selectedPreset !== null || Boolean(form.label.trim());
 	const canSubmit =
 		providerListReady &&
+		(form.configurationMode !== "native" || nativeRoute !== undefined) &&
 		Boolean(providerId) &&
 		customNameProvided &&
 		Boolean(form.baseUrl.trim()) &&
@@ -165,14 +171,17 @@ export function AddProviderDialog({
 				editing.auth.type === "agent_profile" || editing.auth.type === "oauth_profile"
 					? "oauth"
 					: "api_key";
-			const preset = providerPresetForSavedProvider({
-				baseUrl: editing.base_url,
-			});
+			const preset =
+				providerPresetById(editing.native_provider) ??
+				providerPresetForSavedProvider({
+					baseUrl: editing.base_url,
+				});
 			const defaults = derivedProviderFields(type, authMethod, preset);
 			const region = preset?.region_variants?.find(
 				(item) => item.base_url.replace(/\/+$/, "") === editing.base_url.replace(/\/+$/, ""),
 			);
 			resetForm({
+				configurationMode: editing.configuration_mode ?? "catalog",
 				type,
 				label: editing.label ?? "",
 				baseUrl: editing.base_url || defaults.baseUrl,
@@ -183,7 +192,7 @@ export function AddProviderDialog({
 				authMethod,
 				apiKey: "",
 				presetId: preset?.id ?? null,
-				regionId: region?.id ?? preset?.region_variants?.[0]?.id ?? null,
+				regionId: editing.native_variant ?? region?.id ?? preset?.region_variants?.[0]?.id ?? null,
 			});
 			setStep("configure");
 			return;
@@ -191,6 +200,7 @@ export function AddProviderDialog({
 
 		const defaults = derivedProviderFields("openai", "api_key");
 		resetForm({
+			configurationMode: "native",
 			type: "openai",
 			label: "",
 			baseUrl: defaults.baseUrl,
@@ -212,6 +222,7 @@ export function AddProviderDialog({
 			const defaults = derivedProviderFields(type, "api_key", choice.preset);
 			const region = providerPresetRegion(choice.preset, null);
 			resetForm({
+				configurationMode: "native",
 				type,
 				label: "",
 				baseUrl: region?.base_url ?? defaults.baseUrl,
@@ -226,6 +237,7 @@ export function AddProviderDialog({
 		} else {
 			const defaults = derivedProviderFields(choice.type, "api_key");
 			resetForm({
+				configurationMode: choice.type === "custom_openai_compatible" ? "catalog" : "native",
 				type: choice.type,
 				label: "",
 				baseUrl: defaults.baseUrl,
@@ -267,14 +279,22 @@ export function AddProviderDialog({
 	function providerBody(): AiProviderUpsert {
 		return {
 			provider_id: providerId,
-			type: form.type,
+			type: nativeConnection ? nativeRoute.type : form.type,
 			label: identity.label,
-			base_url: form.baseUrl.trim(),
-			models: modelsFromText(form.modelsText, editing?.models, presetCatalog),
-			api_mode: form.apiMode,
+			configuration_mode: nativeConnection ? "native" : "catalog",
+			native_provider: nativeConnection ? nativeRoute.id : null,
+			native_variant: nativeConnection ? nativeRoute.variant : null,
+			base_url: nativeConnection ? nativeRoute.base_url : form.baseUrl.trim(),
+			models: nativeConnection ? null : modelsFromText(form.modelsText, editing?.models),
+			api_mode: nativeConnection ? nativeRoute.api_mode : form.apiMode,
 			auth: authFor(form.authMethod),
 			managed_by: "user",
-			runtime_env_name: form.authMethod === "api_key" ? runtimeEnv : null,
+			runtime_env_name:
+				form.authMethod === "api_key"
+					? nativeConnection
+						? nativeRoute.runtime_env_name
+						: runtimeEnv
+					: null,
 		};
 	}
 
@@ -374,22 +394,12 @@ export function AddProviderDialog({
 				requestClose(false);
 				return;
 			}
-			const patch = {
-				type: form.type,
-				label: identity.label,
-				base_url: form.baseUrl.trim(),
-				api_mode: form.apiMode,
-				managed_by: "user",
-				runtime_env_name:
-					editing.auth.type === "agent_profile" || editing.auth.type === "oauth_profile"
-						? editing.runtime_env_name
-						: runtimeEnv,
-				models: modelsFromText(form.modelsText, editing.models, presetCatalog),
-			} satisfies AiProviderPatch;
+			const { provider_id: _providerId, auth: _auth, ...patch } = providerBody();
+			const update = patch satisfies AiProviderPatch;
 			const saved = await patchProvider
 				.mutateAsync({
 					params: { path: { provider_id: editing.provider_id } },
-					body: patch,
+					body: update,
 				})
 				.catch(() => null);
 			if (!saved) return;
@@ -443,7 +453,7 @@ export function AddProviderDialog({
 			.execute({
 				provider: providerBody(),
 				credential: { type: "api_key", value: credential },
-				model: modelsFromText(form.modelsText, editing?.models, presetCatalog)?.[0]?.id ?? null,
+				model: modelsFromText(form.modelsText, editing?.models)?.[0]?.id ?? null,
 			})
 			.catch(() => null);
 		if (!result || dialogSession !== dialogSessionRef.current) return;
@@ -547,6 +557,21 @@ export function AddProviderDialog({
 								</div>
 							) : null}
 							<ProviderFieldsForm
+								nativeConnection={nativeConnection}
+								onUseNative={
+									nativeRoute && !nativeConnection && !isOAuthEdit
+										? () => {
+												updateForm({
+													configurationMode: "native",
+													modelsText: "",
+													baseUrl: nativeRoute.base_url,
+													apiMode: nativeRoute.api_mode,
+													runtimeEnv: nativeRoute.runtime_env_name,
+												});
+												setDraftTestResult(null);
+											}
+										: undefined
+								}
 								form={form}
 								editing={editing ?? null}
 								preset={selectedPreset}
@@ -610,7 +635,7 @@ export function AddProviderDialog({
 									{isEdit ? null : <ArrowLeft />}
 									{isEdit ? "Cancel" : "Back"}
 								</Button>
-								{form.authMethod === "api_key" ? (
+								{form.authMethod === "api_key" && !nativeConnection ? (
 									<Button
 										variant="outline"
 										onClick={() => void runAction(testDraftConnection)}

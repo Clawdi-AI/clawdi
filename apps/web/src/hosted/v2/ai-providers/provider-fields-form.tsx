@@ -54,6 +54,8 @@ function isApiMode(value: string | null): value is ApiMode {
 
 export function ProviderFieldsForm({
 	form,
+	nativeConnection,
+	onUseNative,
 	editing,
 	preset,
 	region,
@@ -67,6 +69,8 @@ export function ProviderFieldsForm({
 	startingOAuth,
 }: {
 	form: ProviderFormState;
+	nativeConnection: boolean;
+	onUseNative?: () => void;
 	editing: AiProvider | null;
 	preset: ProviderPreset | null;
 	region: ProviderPresetRegionVariant | null;
@@ -122,7 +126,7 @@ export function ProviderFieldsForm({
 
 			{regions.length > 0 ? (
 				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="provider-region">Region</Label>
+					<Label htmlFor="provider-region">Region / plan</Label>
 					<Select
 						items={regions.map((item) => ({ value: item.id, label: item.label }))}
 						value={region?.id ?? regions[0]?.id ?? ""}
@@ -233,9 +237,11 @@ export function ProviderFieldsForm({
 							OpenAI bills API key usage through your Platform account at standard API rates.
 						</p>
 					) : null}
-					<p className="text-xs text-muted-foreground">
-						Testing sends one minimal inference request and may incur a small provider charge.
-					</p>
+					{!nativeConnection ? (
+						<p className="text-xs text-muted-foreground">
+							Testing sends one minimal inference request and may incur a small provider charge.
+						</p>
+					) : null}
 					{apiKeyUrl ? (
 						<a
 							href={apiKeyUrl}
@@ -253,7 +259,15 @@ export function ProviderFieldsForm({
 				</div>
 			)}
 
-			{form.authMethod === "api_key" ? (
+			{nativeConnection ? (
+				<p className="text-sm text-muted-foreground">Choose and manage models inside your agent.</p>
+			) : null}
+			{onUseNative ? (
+				<Button variant="outline" onClick={onUseNative}>
+					Manage models in the agent
+				</Button>
+			) : null}
+			{form.authMethod === "api_key" && !nativeConnection ? (
 				<details ref={initializeAdvancedDetails} className="group rounded-lg border bg-muted/20">
 					<summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-sm font-medium marker:hidden">
 						Advanced

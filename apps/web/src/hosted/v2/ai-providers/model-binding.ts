@@ -205,8 +205,8 @@ export function modelOptionsForProvider(
 	if (choice === MANAGED_AI_CHOICE || isManagedProviderId(choice)) {
 		models = managedModels;
 	} else {
-		models =
-			providers.find((item) => item.id === choice || item.provider_id === choice)?.models ?? [];
+		const provider = providers.find((item) => item.id === choice || item.provider_id === choice);
+		models = provider?.configuration_mode === "native" ? [] : (provider?.models ?? []);
 	}
 
 	const seen = new Set<string>();
@@ -239,10 +239,13 @@ export function providerCatalogDescription(provider: AiProvider): string {
 }
 
 export function providerPresetSummary(preset: ProviderPreset): string {
-	return modelCatalogSummary(preset.catalog);
+	return preset.region_variants?.length
+		? "API key · region / plan options"
+		: "Connect with an API key";
 }
 
 function providerModelSummary(provider: AiProvider): string {
+	if (provider.configuration_mode === "native") return "Models managed in agent";
 	const models = modelOptionsForProvider(provider.provider_id, [provider]);
 	return modelCatalogSummary(models);
 }

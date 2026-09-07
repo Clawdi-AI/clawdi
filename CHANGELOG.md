@@ -19,6 +19,10 @@ database migration, CI, and implementation details.
 
 ### Changed
 
+- Hosted BYOK can connect a provider key or ChatGPT account without configuring
+  a model catalog or default model. Choose models in Hermes or OpenClaw;
+  existing model choices and other saved credentials are preserved.
+
 - Hosted plan selection now explains the single 7-day trial shared by an
   account's first Basic or Performance subscription, while grandfathered Basic
   capacity is labeled Included.
