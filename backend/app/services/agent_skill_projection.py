@@ -133,6 +133,9 @@ async def delete_agent_project_skill_rows(
             project_id=skill.project_id,
             event_type=AGENT_SKILL_DELETED_EVENT,
         )
+    from app.services.project_runtime_skills import remove_project_skill_references
+
+    await remove_project_skill_references(db, project.id)
     await db.execute(
         delete(Skill).where(
             or_(

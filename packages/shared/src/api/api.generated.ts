@@ -2601,6 +2601,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent_id}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agent Skills */
+        get: operations["list_agent_skills_v1_agents__agent_id__skills_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent_id}/skill-references/{skill_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Agent Skill Reference */
+        get: operations["get_agent_skill_reference_v1_agents__agent_id__skill_references__skill_id__get"];
+        /** Put Agent Skill Reference */
+        put: operations["put_agent_skill_reference_v1_agents__agent_id__skill_references__skill_id__put"];
+        post?: never;
+        /** Delete Agent Skill Reference */
+        delete: operations["delete_agent_skill_reference_v1_agents__agent_id__skill_references__skill_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/vault": {
         parameters: {
             query?: never;
@@ -3902,6 +3938,90 @@ export interface components {
              */
             provider_health: components["schemas"]["RuntimeObservedProviderHealthResponse"][];
             desired?: components["schemas"]["AgentRuntimeObservedDesiredResponse"] | null;
+        };
+        /** AgentSkillDesiredListResponse */
+        AgentSkillDesiredListResponse: {
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /** Skills */
+            skills: components["schemas"]["AgentSkillDesiredResponse"][];
+            /** Removal Failures */
+            removal_failures?: components["schemas"]["AgentSkillRemovalFailure"][];
+        };
+        /** AgentSkillDesiredResponse */
+        AgentSkillDesiredResponse: {
+            /** Skill Key */
+            skill_key: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "github" | "library" | "project" | "bundled";
+            /**
+             * Authority
+             * @enum {string}
+             */
+            authority: "hosted" | "cloud";
+            /** Read Only */
+            read_only: boolean;
+            /** Skill Id */
+            skill_id?: string | null;
+            /** Project Id */
+            project_id?: string | null;
+            /** Content Hash */
+            content_hash?: string | null;
+            /** Source Identity */
+            source_identity: string;
+            /** Source Skill Key */
+            source_skill_key?: string | null;
+            /**
+             * Desired State
+             * @default present
+             * @constant
+             */
+            desired_state: "present";
+            /**
+             * Convergence
+             * @default not_observed
+             * @enum {string}
+             */
+            convergence: "installed" | "failed" | "not_observed";
+            /** Observation Error Code */
+            observation_error_code?: string | null;
+            /** Observed At */
+            observed_at?: string | null;
+        };
+        /** AgentSkillReferenceResponse */
+        AgentSkillReferenceResponse: {
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /**
+             * Skill Id
+             * Format: uuid
+             */
+            skill_id: string;
+            /**
+             * Desired State
+             * @enum {string}
+             */
+            desired_state: "present" | "absent";
+        };
+        /** AgentSkillRemovalFailure */
+        AgentSkillRemovalFailure: {
+            /** Skill Key */
+            skill_key: string;
+            /** Observation Error Code */
+            observation_error_code: string;
         };
         /** AiProviderAcceptRequest */
         AiProviderAcceptRequest: {
@@ -6375,6 +6495,51 @@ export interface components {
         HostedRuntimeObservedProviderPayload: {
             [key: string]: components["schemas"]["JsonValue"];
         };
+        /** HostedRuntimeObservedSkillV1 */
+        HostedRuntimeObservedSkillV1: {
+            /** Skillkey */
+            skillKey: string;
+            /**
+             * Runtime
+             * @enum {string}
+             */
+            runtime: "hermes" | "openclaw";
+            /** Sourceidentity */
+            sourceIdentity: string;
+            /** Digest */
+            digest?: string | null;
+            /** Sourcerevision */
+            sourceRevision: string;
+            /** Generation */
+            generation: number;
+            /**
+             * Desiredstate
+             * @enum {string}
+             */
+            desiredState: "present" | "absent";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "installed" | "removed" | "failed" | "unknown";
+            /** Errorcode */
+            errorCode?: ("reconcile_failed" | "evidence_missing" | "evidence_mismatch") | null;
+        };
+        /** HostedRuntimeObservedSkillsV1 */
+        HostedRuntimeObservedSkillsV1: {
+            /**
+             * Schemaversion
+             * @constant
+             */
+            schemaVersion: 1;
+            /** Entries */
+            entries: components["schemas"]["HostedRuntimeObservedSkillV1"][];
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+        };
         /** HostedRuntimeObservedSupervisorProgramV1 */
         HostedRuntimeObservedSupervisorProgramV1: {
             /** Name */
@@ -7425,6 +7590,7 @@ export interface components {
             /** Activecliversion */
             activeCliVersion: string | null;
             applied: components["schemas"]["HostedRuntimeObservedAppliedV2"] | null;
+            skills?: components["schemas"]["HostedRuntimeObservedSkillsV1"] | null;
             agentPlugins: components["schemas"]["HostedRuntimeObservedAgentPluginsV1"] | null;
             userActivity: components["schemas"]["HostedRuntimeObservedUserActivityV1"] | null;
         };
@@ -7653,6 +7819,7 @@ export interface components {
                 [key: string]: components["schemas"]["HostedRuntimeObservedProviderPayload"];
             } | null;
             agentPlugins?: components["schemas"]["HostedRuntimeObservedAgentPluginsV1"] | null;
+            skills?: components["schemas"]["HostedRuntimeObservedSkillsV1"] | null;
             userActivity?: components["schemas"]["HostedRuntimeObservedUserActivityV1"] | null;
             /** Error */
             error?: string | null;
@@ -14809,6 +14976,133 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentPluginDesiredStateDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_agent_skills_v1_agents__agent_id__skills_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentSkillDesiredListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_skill_reference_v1_agents__agent_id__skill_references__skill_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_agent_skill_reference_v1_agents__agent_id__skill_references__skill_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentSkillReferenceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_agent_skill_reference_v1_agents__agent_id__skill_references__skill_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                skill_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentSkillReferenceResponse"];
                 };
             };
             /** @description Validation Error */

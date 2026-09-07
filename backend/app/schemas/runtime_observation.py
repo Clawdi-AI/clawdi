@@ -139,6 +139,67 @@ class HostedRuntimeObservedAgentPluginsV1(RuntimeObservationRequestModel):
                 raise ValueError("Agent Plugin observation must match applied identity")
 
 
+SkillObservationErrorCode = Literal["reconcile_failed", "evidence_missing", "evidence_mismatch"]
+
+
+class HostedRuntimeObservedSkillV1(RuntimeObservationRequestModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+
+    skill_key: str = Field(
+        alias="skillKey", min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$"
+    )
+    runtime: Literal["hermes", "openclaw"]
+    source_identity: str = Field(alias="sourceIdentity", pattern=r"^[0-9a-f]{64}$")
+    digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    source_revision: str = Field(alias="sourceRevision", pattern=r"^[0-9a-f]{64}$")
+    generation: int = Field(ge=1, le=9_007_199_254_740_991)
+    desired_state: Literal["present", "absent"] = Field(alias="desiredState")
+    status: Literal["installed", "removed", "failed", "unknown"]
+    error_code: SkillObservationErrorCode | None = Field(alias="errorCode", default=None)
+
+    @model_validator(mode="after")
+    def validate_status(self) -> HostedRuntimeObservedSkillV1:
+        if self.status in {"installed", "removed"} and self.error_code is not None:
+            raise ValueError("successful Skill observation cannot include errorCode")
+        if self.status == "installed" and (self.desired_state != "present" or self.digest is None):
+            raise ValueError("installed Skill observation requires present intent and digest")
+        if self.status == "removed" and self.desired_state != "absent":
+            raise ValueError("removed Skill observation requires absent intent")
+        if self.status == "failed" and self.error_code != "reconcile_failed":
+            raise ValueError("failed Skill observation requires reconcile_failed")
+        if self.status == "unknown" and self.error_code not in {
+            "evidence_missing",
+            "evidence_mismatch",
+        }:
+            raise ValueError("unknown Skill observation requires an evidence error")
+        return self
+
+
+class HostedRuntimeObservedSkillsV1(RuntimeObservationRequestModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+
+    schema_version: Literal[1] = Field(alias="schemaVersion")
+    entries: list[HostedRuntimeObservedSkillV1] = Field(max_length=2048)
+    truncated: bool = False
+
+    @field_validator("entries")
+    @classmethod
+    def validate_entries(
+        cls, entries: list[HostedRuntimeObservedSkillV1]
+    ) -> list[HostedRuntimeObservedSkillV1]:
+        keys = [(item.runtime, item.skill_key) for item in entries]
+        if keys != sorted(set(keys)):
+            raise ValueError("Skill observations must be unique and sorted by runtime and skillKey")
+        return entries
+
+    def validate_applied_identity(self, applied: HostedRuntimeObservedAppliedV2) -> None:
+        if any(
+            item.generation != applied.generation or item.source_revision != applied.source_revision
+            for item in self.entries
+        ):
+            raise ValueError("Skill observations must match the full applied identity")
+
+
 RuntimeUserActivityClassification = Literal[
     "known_last_user_input",
     "known_no_user_input",
@@ -227,6 +288,7 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
         alias="agentPlugins",
         default=None,
     )
+    skills: HostedRuntimeObservedSkillsV1 | None = None
     user_activity: HostedRuntimeObservedUserActivityV1 | None = Field(
         alias="userActivity",
         default=None,
@@ -296,6 +358,8 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
             and self.truncated is not True
         ):
             raise ValueError("truncated must be true when systemd units are omitted")
+        if self.skills is not None:
+            self.skills.validate_applied_identity(self.applied)
         if self.agent_plugins is not None:
             self.agent_plugins.validate_applied_identity(self.applied)
         return self
@@ -464,11 +528,16 @@ class RuntimeDriftObservationDiagnostics(RuntimeObservationResponseModel):
 
     active_cli_version: str | None = Field(alias="activeCliVersion", min_length=1, max_length=200)
     applied: HostedRuntimeObservedAppliedV2 | None
+    skills: HostedRuntimeObservedSkillsV1 | None = None
     agent_plugins: HostedRuntimeObservedAgentPluginsV1 | None = Field(alias="agentPlugins")
     user_activity: HostedRuntimeObservedUserActivityV1 | None = Field(alias="userActivity")
 
     @model_validator(mode="after")
     def validate_plugin_identity(self) -> RuntimeDriftObservationDiagnostics:
+        if self.skills is not None:
+            if self.applied is None:
+                raise ValueError("Skill diagnostics require applied identity")
+            self.skills.validate_applied_identity(self.applied)
         if self.agent_plugins is not None:
             if self.applied is None:
                 raise ValueError("Agent Plugin diagnostics require applied identity")

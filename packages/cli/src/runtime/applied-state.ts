@@ -7,6 +7,7 @@ import {
 	resolveRuntimeApplyGeneration,
 	runtimeApplyIdentitySchema,
 } from "./apply-identity";
+import { hostedSkillEvidenceSchema } from "./hosted-skill-evidence";
 import type { RuntimePaths } from "./paths";
 import { writeRuntimePlatformFileAtomic } from "./state";
 
@@ -57,6 +58,7 @@ export const runtimeAppliedStateSchema = z
 		officialServiceCommandRevisions: officialServiceCommandRevisionsSchema.optional(),
 		providerIds: providerIdsSchema,
 		projectedProviderIds: projectedProviderIdsSchema,
+		skillEvidence: z.array(hostedSkillEvidenceSchema).optional(),
 	})
 	.strict()
 	.superRefine((state, ctx) => {

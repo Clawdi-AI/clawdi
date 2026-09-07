@@ -440,7 +440,9 @@ renders support/runtime service plans, and exposes the managed operator ABI:
 `clawdi run -- <command>`.
 
 Cloud API is the single desired-state composer for Skills. It merges Hosted V2
-Agent Workspace Skill intent with Cloud-owned Skills from linked Projects. The
+Agent Workspace Skill intent with Cloud-owned Skills from linked Projects and
+individual Library references. References retain source Project authorization
+and do not copy content or bind the whole Project. The
 Project rows remain the only content writer; runtime observations never become
 another catalog. Each Project Skill entry uses the runtime-neutral `project`
 source discriminator and carries immutable content identity plus an authenticated

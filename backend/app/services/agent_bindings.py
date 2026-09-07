@@ -15,6 +15,7 @@ from app.models.agent_project_binding import AgentProjectBinding
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
+from app.models.skill import AgentSkillReference, Skill
 from app.services.agent_lifecycle import active_agent_filter, active_project_filter
 
 
@@ -159,20 +160,16 @@ async def delete_project_bindings_for_users(
     # Membership changes are also Project unlink operations. Serialize them
     # with Project Skill writes and explicit Link/Unlink requests, then notify
     # every managed Agent whose desired bundle changed in the same transaction.
-    from app.services.project_runtime_skills import lock_project_runtime_graph
+    from app.services.project_runtime_skills import (
+        lock_project_runtime_graph,
+        project_runtime_consumers,
+    )
     from app.services.sync_events import queue_environment_runtime_manifest_changed
 
     await lock_project_runtime_graph(db, project_id)
     bound_agents = (
         await db.execute(
-            select(AgentEnvironment.user_id, AgentProjectBinding.agent_id)
-            .join(
-                AgentEnvironment,
-                AgentEnvironment.id == AgentProjectBinding.agent_id,
-            )
-            .where(
-                AgentProjectBinding.project_id == project_id,
-                AgentProjectBinding.binding_type == "context",
+            project_runtime_consumers([project_id]).where(
                 AgentEnvironment.user_id.in_(user_ids),
             )
         )
@@ -192,6 +189,14 @@ async def delete_project_bindings_for_users(
         )
         .scalars()
         .all()
+    )
+    await db.execute(
+        sql_delete(AgentSkillReference).where(
+            AgentSkillReference.agent_id.in_(target_agent_ids),
+            AgentSkillReference.skill_id.in_(
+                select(Skill.id).where(Skill.project_id == project_id)
+            ),
+        )
     )
     for user_id, agent_id in bound_agents:
         await queue_environment_runtime_manifest_changed(db, user_id, agent_id)

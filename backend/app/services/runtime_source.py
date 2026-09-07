@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.agent_plugin import AgentPluginInstallation
-from app.models.agent_project_binding import AgentProjectBinding
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.channel import (
     BOT_AGENT_LINK_STATUS_ACTIVE,
@@ -33,10 +32,9 @@ from app.models.hosted_runtime import (
     HostedRuntimeSecret,
     HostedRuntimeState,
 )
-from app.models.project import PROJECT_KIND_WORKSPACE, Project
-from app.models.project_membership import ProjectMembership
+from app.models.project import Project
 from app.models.session import AgentEnvironment
-from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
+from app.models.skill import Skill
 from app.schemas.ai_provider import AiProviderModel
 from app.schemas.plugin_catalog import RESERVED_AGENT_PLUGIN_NAMES
 from app.schemas.runtime import (
@@ -76,6 +74,7 @@ from app.services.managed_ai_provider import (
 )
 from app.services.project_runtime_skills import (
     RUNTIME_PROJECT_SKILL_LOCAL_KEY_PATTERN,
+    agent_project_skill_sources,
     project_skill_file_signature,
     project_skill_runtime_identity,
 )
@@ -322,36 +321,11 @@ async def load_runtime_source_batch(
     runtime_secrets: dict[UUID, list[HostedRuntimeSecret]] = {}
     for secret in runtime_secret_rows:
         runtime_secrets.setdefault(secret.environment_id, []).append(secret)
-    membership = ProjectMembership.__table__.alias("runtime_project_membership")
     project_skill_rows = (
         await db.execute(
-            select(AgentProjectBinding.agent_id, Skill)
-            .join(
-                AgentEnvironment,
-                AgentEnvironment.id == AgentProjectBinding.agent_id,
-            )
-            .join(Project, Project.id == AgentProjectBinding.project_id)
-            .join(Skill, Skill.project_id == Project.id)
-            .outerjoin(
-                membership,
-                (membership.c.project_id == Project.id)
-                & (membership.c.member_user_id == AgentEnvironment.user_id),
-            )
-            .where(
-                AgentProjectBinding.agent_id.in_(list(rows)),
-                AgentProjectBinding.binding_type == "context",
-                Project.kind == PROJECT_KIND_WORKSPACE,
-                Project.archived_at.is_(None),
-                Skill.authority == SKILL_AUTHORITY_CLOUD,
-                Skill.is_active,
-                (Project.user_id == AgentEnvironment.user_id) | membership.c.id.is_not(None),
-            )
-            .order_by(
-                AgentProjectBinding.agent_id,
-                AgentProjectBinding.priority,
-                Project.id,
-                Skill.skill_key,
-            )
+            agent_project_skill_sources()
+            .where(AgentEnvironment.id.in_(list(rows)))
+            .order_by(AgentEnvironment.id, Project.id, Skill.skill_key)
         )
     ).all()
     project_skills: dict[UUID, list[RuntimeProjectSkill]] = {}

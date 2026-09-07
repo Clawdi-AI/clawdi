@@ -42,14 +42,17 @@ function sha256(bytes: Uint8Array | string): string {
 	return createHash("sha256").update(bytes).digest("hex");
 }
 
-function sourceIdentity(skillId: string, source: HostedSkillSource): string {
+export function hostedSkillArchiveSourceIdentity(
+	skillId: string,
+	source: HostedSkillSource,
+): string {
 	return source.type === "github"
 		? ["github", skillId, source.url, source.path, source.commit].join("\0")
 		: ["project", skillId, source.projectId, source.contentHash].join("\0");
 }
 
 function sourceCacheKey(skillId: string, source: HostedSkillSource): string {
-	return sha256(sourceIdentity(skillId, source));
+	return sha256(hostedSkillArchiveSourceIdentity(skillId, source));
 }
 
 const cacheReceiptSchema = z
@@ -166,7 +169,7 @@ export async function prepareHostedSkillArchives(
 		if (desired.source.type === "project") {
 			assertProjectSkillOrigin(manifest, skillId, desired.source);
 		}
-		const identity = sourceIdentity(skillId, desired.source);
+		const identity = hostedSkillArchiveSourceIdentity(skillId, desired.source);
 		const cacheKey = sourceCacheKey(skillId, desired.source);
 		const cache = archiveCache(
 			paths,

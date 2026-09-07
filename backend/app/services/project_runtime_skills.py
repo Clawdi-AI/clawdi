@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select, text
+from sqlalchemy import Select, delete, exists, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent_project_binding import AgentProjectBinding
@@ -23,9 +23,17 @@ from app.models.hosted_runtime import HostedRuntimeState
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
-from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, Skill
+from app.models.skill import (
+    SKILL_AUTHORITY_AGENT_SYNC,
+    SKILL_AUTHORITY_CLOUD,
+    AgentSkillReference,
+    Skill,
+)
 from app.schemas.runtime import PersistedHostedRuntimeSkills
-from app.services.sync_events import queue_runtime_manifests_changed
+from app.services.sync_events import (
+    active_runtime_manifest_targets,
+    queue_runtime_manifests_changed,
+)
 
 # OpenClaw's native `skills install --as` contract accepts this slug shape.
 # Source keys may be namespaced. The SKILL.md name is the local install identity
@@ -38,6 +46,74 @@ MAX_AGENT_PROJECT_SKILLS = 1000
 class ProjectSkillRuntimeIdentity:
     source_skill_key: str
     local_skill_key: str
+
+
+def project_skill_context_binding():
+    return (
+        exists()
+        .where(
+            AgentProjectBinding.agent_id == AgentEnvironment.id,
+            AgentProjectBinding.project_id == Project.id,
+            AgentProjectBinding.binding_type == "context",
+            Project.kind == PROJECT_KIND_WORKSPACE,
+        )
+        .correlate(AgentEnvironment, Project)
+    )
+
+
+def agent_project_skill_sources() -> Select[tuple[UUID, Skill]]:
+    """One authorized source graph for manifests, downloads and desired inventory."""
+    source_ids = (
+        select(AgentProjectBinding.agent_id, Skill.id.label("skill_id"))
+        .join(Skill, Skill.project_id == AgentProjectBinding.project_id)
+        .join(Project, Project.id == Skill.project_id)
+        .where(
+            AgentProjectBinding.binding_type == "context", Project.kind == PROJECT_KIND_WORKSPACE
+        )
+        .union(select(AgentSkillReference.agent_id, AgentSkillReference.skill_id))
+        .subquery()
+    )
+    membership = (
+        exists()
+        .where(
+            ProjectMembership.project_id == Project.id,
+            ProjectMembership.member_user_id == AgentEnvironment.user_id,
+        )
+        .correlate(Project, AgentEnvironment)
+    )
+    return (
+        select(AgentEnvironment.id, Skill)
+        .select_from(AgentEnvironment)
+        .join(source_ids, source_ids.c.agent_id == AgentEnvironment.id)
+        .join(Skill, Skill.id == source_ids.c.skill_id)
+        .join(Project, Project.id == Skill.project_id)
+        .where(
+            AgentEnvironment.archived_at.is_(None),
+            Project.archived_at.is_(None),
+            Skill.authority == SKILL_AUTHORITY_CLOUD,
+            Skill.is_active,
+            (Project.user_id == AgentEnvironment.user_id) | membership,
+        )
+    )
+
+
+def project_runtime_consumers(project_ids: Iterable[UUID]):
+    """Include inactive sources so deletion/revocation can still notify consumers."""
+    ids = list(project_ids)
+    linked = exists().where(
+        AgentProjectBinding.agent_id == AgentEnvironment.id,
+        AgentProjectBinding.project_id.in_(ids),
+        AgentProjectBinding.binding_type == "context",
+    )
+    referenced = exists(
+        select(AgentSkillReference.agent_id)
+        .join(Skill, Skill.id == AgentSkillReference.skill_id)
+        .where(AgentSkillReference.agent_id == AgentEnvironment.id, Skill.project_id.in_(ids))
+    )
+    return select(AgentEnvironment.user_id, AgentEnvironment.id).where(
+        AgentEnvironment.archived_at.is_(None),
+        linked | referenced,
+    )
 
 
 def _advisory_key(namespace: str, value: UUID) -> int:
@@ -68,16 +144,10 @@ async def lock_project_runtime_graphs(
     if not locked_project_ids:
         return []
     await _lock(db, "project-runtime-skills", locked_project_ids)
-    agent_ids = list(
-        (
-            await db.execute(
-                select(AgentProjectBinding.agent_id).where(
-                    AgentProjectBinding.project_id.in_(locked_project_ids),
-                    AgentProjectBinding.binding_type == "context",
-                )
-            )
-        ).scalars()
-    )
+    agent_ids = [
+        agent_id
+        for _, agent_id in (await db.execute(project_runtime_consumers(locked_project_ids)))
+    ]
     await _lock(db, "agent-runtime-skills", agent_ids)
     return sorted(set(agent_ids), key=str)
 
@@ -215,57 +285,20 @@ async def _other_project_local_skill_keys(
     project_id: UUID,
 ) -> set[str]:
     rows = await db.execute(
-        select(Skill.skill_key, Skill.name)
-        .join(
-            AgentProjectBinding,
-            AgentProjectBinding.project_id == Skill.project_id,
-        )
-        .join(Project, Project.id == Skill.project_id)
-        .where(
-            AgentProjectBinding.agent_id == agent_id,
-            AgentProjectBinding.binding_type == "context",
-            AgentProjectBinding.project_id != project_id,
-            Project.kind == PROJECT_KIND_WORKSPACE,
-            Project.archived_at.is_(None),
-            Skill.authority == SKILL_AUTHORITY_CLOUD,
-            Skill.is_active,
+        agent_project_skill_sources().where(
+            AgentEnvironment.id == agent_id,
+            Project.id != project_id,
         )
     )
     return {
-        project_skill_runtime_identity(skill_key, name).local_skill_key for skill_key, name in rows
+        project_skill_runtime_identity(skill.skill_key, skill.name).local_skill_key
+        for _, skill in rows
     }
 
 
 async def _linked_project_skill_count(db: AsyncSession, *, agent_id: UUID) -> int:
-    """Count active Cloud Skills this Agent can actually receive."""
-    membership = ProjectMembership.__table__.alias("project_skill_capacity_membership")
-    count = await db.scalar(
-        select(func.count(Skill.id))
-        .select_from(Skill)
-        .join(Project, Project.id == Skill.project_id)
-        .join(
-            AgentProjectBinding,
-            (AgentProjectBinding.project_id == Project.id)
-            & (AgentProjectBinding.agent_id == agent_id),
-        )
-        .join(AgentEnvironment, AgentEnvironment.id == AgentProjectBinding.agent_id)
-        .outerjoin(
-            membership,
-            (membership.c.project_id == Project.id)
-            & (membership.c.member_user_id == AgentEnvironment.user_id),
-        )
-        .where(
-            AgentEnvironment.id == agent_id,
-            AgentEnvironment.archived_at.is_(None),
-            AgentProjectBinding.binding_type == "context",
-            Project.kind == PROJECT_KIND_WORKSPACE,
-            Project.archived_at.is_(None),
-            (Project.user_id == AgentEnvironment.user_id) | membership.c.id.is_not(None),
-            Skill.authority == SKILL_AUTHORITY_CLOUD,
-            Skill.is_active,
-        )
-    )
-    return int(count or 0)
+    sources = agent_project_skill_sources().where(AgentEnvironment.id == agent_id).subquery()
+    return int(await db.scalar(select(func.count()).select_from(sources)) or 0)
 
 
 def assert_agent_project_skill_total(total: int) -> None:
@@ -305,6 +338,10 @@ async def _assert_project_link_skill_capacity(
             Skill.project_id == project_id,
             Skill.authority == SKILL_AUTHORITY_CLOUD,
             Skill.is_active,
+            ~exists().where(
+                AgentSkillReference.agent_id == agent_id,
+                AgentSkillReference.skill_id == Skill.id,
+            ),
         )
     )
     assert_agent_project_skill_total(current_count + int(added_count or 0))
@@ -330,7 +367,14 @@ async def _assert_project_skill_write_capacity(
     increment = 0 if already_exists else 1
     for agent_id in agent_ids:
         current_count = await _linked_project_skill_count(db, agent_id=agent_id)
-        assert_agent_project_skill_total(current_count + increment)
+        linked = await db.scalar(
+            select(AgentProjectBinding.id).where(
+                AgentProjectBinding.agent_id == agent_id,
+                AgentProjectBinding.project_id == project_id,
+                AgentProjectBinding.binding_type == "context",
+            )
+        )
+        assert_agent_project_skill_total(current_count + (increment if linked is not None else 0))
 
 
 async def _assert_agent_accepts_project_skills(
@@ -436,12 +480,31 @@ async def assert_project_skill_write_compatible(
     """Lock the graph and prove a Cloud Skill write has one runtime owner."""
     agent_ids = await lock_project_runtime_graph(db, project_id)
     if local_skill_key is not None:
-        proposed_identities = tuple(
-            identity
-            for identity in await _project_skill_identities(db, project_id)
-            if identity.source_skill_key != skill_key
-        ) + (project_skill_runtime_identity(skill_key, local_skill_key),)
         for agent_id in agent_ids:
+            source_keys = {
+                skill.skill_key
+                for _, skill in await db.execute(
+                    agent_project_skill_sources().where(
+                        AgentEnvironment.id == agent_id,
+                        Project.id == project_id,
+                    )
+                )
+            }
+            linked = await db.scalar(
+                select(AgentProjectBinding.id).where(
+                    AgentProjectBinding.agent_id == agent_id,
+                    AgentProjectBinding.project_id == project_id,
+                    AgentProjectBinding.binding_type == "context",
+                )
+            )
+            proposed_identities = tuple(
+                identity
+                for identity in await _project_skill_identities(db, project_id)
+                if identity.source_skill_key != skill_key
+                and (linked is not None or identity.source_skill_key in source_keys)
+            )
+            if linked is not None or skill_key in source_keys:
+                proposed_identities += (project_skill_runtime_identity(skill_key, local_skill_key),)
             await _assert_agent_accepts_project_skills(
                 db,
                 agent_id=agent_id,
@@ -471,24 +534,10 @@ async def assert_agent_workspace_skill_write_compatible(
     await lock_agent_runtime_graph(db, agent_id)
     if not skill_keys:
         return
-    rows = await db.execute(
-        select(Skill.skill_key, Skill.name)
-        .join(
-            AgentProjectBinding,
-            AgentProjectBinding.project_id == Skill.project_id,
-        )
-        .join(Project, Project.id == Skill.project_id)
-        .where(
-            AgentProjectBinding.agent_id == agent_id,
-            AgentProjectBinding.binding_type == "context",
-            Project.kind == PROJECT_KIND_WORKSPACE,
-            Project.archived_at.is_(None),
-            Skill.authority == SKILL_AUTHORITY_CLOUD,
-            Skill.is_active,
-        )
-    )
+    rows = await db.execute(agent_project_skill_sources().where(AgentEnvironment.id == agent_id))
     project_local_skill_keys = {
-        project_skill_runtime_identity(skill_key, name).local_skill_key for skill_key, name in rows
+        project_skill_runtime_identity(skill.skill_key, skill.name).local_skill_key
+        for _, skill in rows
     }
     conflicts = skill_keys & project_local_skill_keys
     if not conflicts:
@@ -537,23 +586,26 @@ async def queue_project_runtime_manifest_changed(
     *,
     project_id: UUID,
 ) -> list[UUID]:
-    rows = (
-        await db.execute(
-            select(AgentEnvironment.user_id, AgentProjectBinding.agent_id)
-            .join(
-                AgentProjectBinding,
-                AgentProjectBinding.agent_id == AgentEnvironment.id,
-            )
-            .where(
-                AgentProjectBinding.project_id == project_id,
-                AgentProjectBinding.binding_type == "context",
-                AgentEnvironment.archived_at.is_(None),
-            )
-        )
-    ).all()
+    rows = (await db.execute(project_runtime_consumers([project_id]))).all()
     targets = [(user_id, agent_id) for user_id, agent_id in rows]
     await queue_runtime_manifests_changed(db, targets)
     return [agent_id for _user_id, agent_id in targets]
+
+
+async def remove_project_skill_references(db: AsyncSession, project_id: UUID) -> None:
+    """Called while lifecycle cleanup holds the source Project's row lock."""
+    agent_ids = (
+        await db.scalars(
+            delete(AgentSkillReference)
+            .where(
+                AgentSkillReference.skill_id.in_(
+                    select(Skill.id).where(Skill.project_id == project_id)
+                ),
+            )
+            .returning(AgentSkillReference.agent_id)
+        )
+    ).all()
+    await queue_runtime_manifests_changed(db, await active_runtime_manifest_targets(db, agent_ids))
 
 
 def project_skill_file_signature(

@@ -46,6 +46,7 @@ from app.models.runtime_observation import (
 )
 from app.models.session import AgentEnvironment, Session
 from app.models.session_permission import SessionPermission
+from app.models.skill import AgentSkillReference, Skill
 from app.models.user import PRINCIPAL_KIND_CLERK, User
 from app.services.ai_provider_auth_transition import transition_ai_provider_auth
 from app.services.ai_provider_oauth_lifecycle import terminal_oauth_attempt
@@ -775,6 +776,13 @@ async def complete_principal_cleanup(
             delete(AgentProjectBinding).where(
                 AgentProjectBinding.project_id.in_(owned_project_id_values),
                 AgentProjectBinding.binding_type == "context",
+            )
+        )
+        await db.execute(
+            delete(AgentSkillReference).where(
+                AgentSkillReference.skill_id.in_(
+                    select(Skill.id).where(Skill.project_id.in_(owned_project_id_values))
+                ),
             )
         )
         await queue_runtime_manifests_changed(db, affected_targets)

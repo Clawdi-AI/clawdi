@@ -53,6 +53,7 @@ from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains
 from app.services.project_runtime_skills import (
     MAX_AGENT_PROJECT_SKILLS,
+    agent_project_skill_sources,
     assert_agent_project_skill_total,
     assert_project_skill_runtime_identity,
     project_skill_file_signature,
@@ -667,42 +668,20 @@ async def _linked_project_skill(
     project_id: UUID | None = None,
     local_skill_key: str | None = None,
 ) -> _ProjectSkillSource:
-    membership = ProjectMembership.__table__.alias("signed_project_skill_membership")
-    filters = [
+    query = agent_project_skill_sources().where(
+        AgentEnvironment.id == agent_id,
         Skill.id == skill_id,
         Skill.content_hash == content_hash,
-        Skill.authority == SKILL_AUTHORITY_CLOUD,
-        Skill.is_active,
-        Project.kind == PROJECT_KIND_WORKSPACE,
-        Project.archived_at.is_(None),
-        AgentProjectBinding.binding_type == "context",
-        AgentEnvironment.archived_at.is_(None),
-        (Project.user_id == AgentEnvironment.user_id) | membership.c.id.is_not(None),
-    ]
+    )
     if project_id is not None:
-        filters.append(Project.id == project_id)
-    row = (
-        await db.execute(
-            select(Skill.file_key, Skill.skill_key, Skill.name)
-            .join(Project, Project.id == Skill.project_id)
-            .join(
-                AgentProjectBinding,
-                (AgentProjectBinding.project_id == Project.id)
-                & (AgentProjectBinding.agent_id == agent_id),
-            )
-            .join(AgentEnvironment, AgentEnvironment.id == AgentProjectBinding.agent_id)
-            .outerjoin(
-                membership,
-                (membership.c.project_id == Project.id)
-                & (membership.c.member_user_id == AgentEnvironment.user_id),
-            )
-            .where(*filters)
-        )
-    ).one_or_none()
+        query = query.where(Project.id == project_id)
+    row = (await db.execute(query)).one_or_none()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill file not found")
-    file_key, stored_skill_key, name = row
-    skill = _ProjectSkillSource(file_key=file_key, skill_key=stored_skill_key, name=name)
+    _, source = row
+    skill = _ProjectSkillSource(
+        file_key=source.file_key, skill_key=source.skill_key, name=source.name
+    )
     if (
         local_skill_key is not None
         and project_skill_runtime_identity(

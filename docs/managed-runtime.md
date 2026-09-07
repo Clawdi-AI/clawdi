@@ -866,6 +866,38 @@ ownership or timestamps, rejects source symlinks, and treats target symlinks as
 drift without following them. The public sync hash remains unchanged for old
 and new clients.
 
+### Library Skill References And Runtime Evidence
+
+`PUT /v1/agents/{agent_id}/skill-references/{skill_id}` selects one accessible
+Cloud-authority Skill for a Hosted Agent; `DELETE` removes that reference.
+`GET` on the reference returns the existing Skill detail with its real source
+Project. Linked copies make PUT a no-op. Agent-sync projections cannot be
+selected. References share Project Skill composition, signed downloads,
+conflict locks, source updates and access revocation; they never own bytes.
+
+`GET /v1/agents/{agent_id}/skills` combines Hosted GitHub/bundled intent with
+Library and linked Project sources. It distinguishes the runtime `skill_key`
+from `source_skill_key` and returns source authority and read-only metadata.
+Installation evidence requires a unique fresh observation head matching the
+current deployment, instance, generation, source revision and source identity.
+Missing evidence yields `not_observed`. Current absent failures appear only in
+`removal_failures`; they never recreate desired rows.
+
+The existing CLI reconcile records per-Skill bytes/absence verification in its
+private applied-state receipt. The v2 companion heartbeat rechecks ownership and
+installed tree digests and emits optional `skills` diagnostics. Source identity
+is SHA-256 of UTF-8 NUL-joined fields: `github`, local key, repository URL, path,
+commit; or `project`, local key, Project UUID, content hash; or `bundled`, local
+key, version. It excludes transport URLs. Diagnostics share the full applied
+identity, including failed resources. The wire retains at most 2048 entries,
+prioritizes failures deterministically, and explicitly sets `skills.truncated`
+and the existing top-level flag; private applied evidence remains complete.
+The v1 heartbeat shape is unchanged.
+
+Done: `scripts/test.sh backend tests/test_agent_skill_references.py` and
+`scripts/test.sh cli src/runtime/hosted-skill-observation.test.ts` pass in the
+isolated Docker runners (the backend runner provisions and migrates PostgreSQL).
+
 ### Skill And MCP Authority Boundaries
 
 Agent Plugins 1.0.0 defines package manifests and Skill/MCP component loading;

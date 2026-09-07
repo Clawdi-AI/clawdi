@@ -1,5 +1,6 @@
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
+import type { HostedSkillEvidence } from "./hosted-skill-evidence";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
@@ -54,6 +55,7 @@ export interface RuntimeSystemdApplyHooks {
 	activate: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
 }
 export interface RuntimePrivateAppliedAuthority {
+	skillEvidence?: HostedSkillEvidence[];
 	activated: Record<string, string>;
 	officialServiceCommandRevisions: Record<string, string>;
 }

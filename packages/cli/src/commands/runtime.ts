@@ -42,6 +42,7 @@ import {
 	assertHostedRuntimeContract,
 	type HostedRuntimeContractOptions,
 } from "../runtime/hosted-runtime-contract";
+import type { HostedSkillEvidence } from "../runtime/hosted-skill-evidence";
 import {
 	gcHostedSkillArchives,
 	type PreparedHostedSkill,
@@ -288,6 +289,7 @@ function runtimeAppliedStatus(paths: RuntimePaths): {
 }
 
 export function commitRuntimeAppliedState(input: {
+	skillEvidence?: HostedSkillEvidence[];
 	load: RuntimeManifestLoad;
 	paths: RuntimePaths;
 	etag: string;
@@ -332,6 +334,7 @@ export function commitRuntimeAppliedState(input: {
 			officialServiceCommandRevisions: input.officialServiceCommandRevisions ?? {},
 			providerIds,
 			projectedProviderIds: input.convergence.projectedProviderIds,
+			...(input.skillEvidence ? { skillEvidence: input.skillEvidence } : {}),
 		},
 		input.paths,
 	);
@@ -1220,6 +1223,7 @@ export async function applyRuntimeManifestLoad(
 				applyIdentity,
 				activated: authority.activated,
 				officialServiceCommandRevisions: authority.officialServiceCommandRevisions,
+				skillEvidence: authority.skillEvidence,
 			}),
 		requireSystemdApplied: applyIdentity !== null,
 	});

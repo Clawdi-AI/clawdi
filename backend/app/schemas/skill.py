@@ -184,3 +184,38 @@ class SkillInstallResponse(BaseModel):
     version: int
     file_count: int
     repo: str
+
+
+class AgentSkillDesiredResponse(BaseModel):
+    skill_key: str
+    name: str
+    description: str | None = None
+    source: Literal["github", "library", "project", "bundled"]
+    authority: Literal["hosted", "cloud"]
+    read_only: bool
+    skill_id: UUID | None = None
+    project_id: UUID | None = None
+    content_hash: str | None = None
+    source_identity: str
+    source_skill_key: str | None = None
+    desired_state: Literal["present"] = "present"
+    convergence: Literal["installed", "failed", "not_observed"] = "not_observed"
+    observation_error_code: str | None = None
+    observed_at: datetime | None = None
+
+
+class AgentSkillRemovalFailure(BaseModel):
+    skill_key: str
+    observation_error_code: str
+
+
+class AgentSkillDesiredListResponse(BaseModel):
+    agent_id: UUID
+    skills: list[AgentSkillDesiredResponse]
+    removal_failures: list[AgentSkillRemovalFailure] = Field(default_factory=list)
+
+
+class AgentSkillReferenceResponse(BaseModel):
+    agent_id: UUID
+    skill_id: UUID
+    desired_state: Literal["present", "absent"]
