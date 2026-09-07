@@ -8,6 +8,7 @@ import {
 	OverviewMetadata,
 	OverviewModuleError,
 } from "@/components/dashboard/agent-overview-capabilities";
+import { overviewProjectsModule } from "@/components/dashboard/agent-overview-resource-bodies";
 import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 
 describe("overview card typography", () => {
@@ -48,6 +49,15 @@ describe("overview metadata", () => {
 });
 
 describe("overview modules", () => {
+	test.each([
+		[0, "No projects linked"],
+		[1, "1 linked project"],
+		[2, "2 linked projects"],
+	] as const)("uses sentence case for the project count (%s)", (count, description) => {
+		expect(
+			overviewProjectsModule({ bindings: { count, isLoading: false, error: null } }).description,
+		).toBe(description);
+	});
 	test("keeps loading summaries on the standard description line height", () => {
 		const markup = renderToStaticMarkup(
 			createElement(OverviewDescriptionSkeleton, { label: "projects" }),

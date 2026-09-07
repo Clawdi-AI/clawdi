@@ -1256,7 +1256,7 @@ test("connected overview keeps Status beside sessions and preserves resource col
 			desktop: viewport.width === 1440,
 		});
 		await testInfo.attach(
-			`connected-status-right-${viewport.width}-sessions-${sessionCount}-geometry`,
+			`connected-final-clean-${viewport.width}-sessions-${sessionCount}-geometry`,
 			{
 				body: JSON.stringify(geometry, null, 2),
 				contentType: "application/json",
@@ -1265,7 +1265,7 @@ test("connected overview keeps Status beside sessions and preserves resource col
 		await captureAgentOverview(
 			page,
 			testInfo,
-			`connected-status-right-${viewport.width}-sessions-${sessionCount}`,
+			`connected-final-clean-${viewport.width}-sessions-${sessionCount}`,
 		);
 	}
 	expect(sessionRequests.every((url) => new URL(url).searchParams.get("page_size") === "3")).toBe(

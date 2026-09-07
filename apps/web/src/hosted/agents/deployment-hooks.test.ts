@@ -179,7 +179,7 @@ describe("deployment failure status rendering", () => {
 		);
 
 		expect(markup).not.toContain("Temporarily unavailable");
-		expect(markup.match(/Clawdi is checking this Agent/g)).toHaveLength(1);
+		expect(markup.match(/Clawdi is checking this agent/g)).toHaveLength(1);
 		expect(markup).not.toContain("restart failed");
 		expect(markup).not.toContain("Hermes prerequisite");
 		expect(markup).not.toContain("internal runtime");
@@ -249,7 +249,7 @@ describe("overview Compute hierarchy", () => {
 		if (!overviewComputeSummary) throw new Error("agent detail was not loaded");
 		const markup = renderToStaticMarkup(
 			createElement(overviewComputeSummary, {
-				plan: "Basic",
+				planLabel: "Basic plan",
 				vcpu: 2,
 				memoryMib: 4096,
 				storageGib: 20,
@@ -258,9 +258,12 @@ describe("overview Compute hierarchy", () => {
 
 		expect(markup).toContain("Basic plan");
 		expect(markup).toContain("2 vCPU");
-		expect(markup).toContain("4 GiB memory");
-		expect(markup).toContain("20 GiB storage");
-		expect(markup).toContain('aria-label="Configuration: 2 vCPU, 4 GiB memory, 20 GiB storage"');
+		expect(markup).toContain("4 GiB");
+		expect(markup).toContain("20 GiB");
+		expect(markup).toContain('aria-label="Compute resources"');
+		expect(markup).toContain("<dt>CPU</dt>");
+		expect(markup).toContain("<dt>Memory</dt>");
+		expect(markup).toContain("<dt>Storage</dt>");
 		expect(markup).toContain('data-testid="overview-compute-summary"');
 		expect(markup).toContain('data-overview-compute-plan="true"');
 		expect(markup).toContain("text-sm text-muted-foreground");

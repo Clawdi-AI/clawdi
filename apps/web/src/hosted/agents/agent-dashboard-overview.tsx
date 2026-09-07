@@ -28,7 +28,7 @@ export function AgentDashboardOverview({
 		<div data-hosted="true" className="min-w-0">
 			<OverviewNavigationCard
 				id="dashboard"
-				title="Chat on Web"
+				title="Chat on the web"
 				description={runtimeBrowserUiLabel(runtime)}
 				icon={item.icon}
 				tint={item.tint}

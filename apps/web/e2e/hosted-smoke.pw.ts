@@ -251,7 +251,7 @@ async function expectAgentOverviewTypography(page: Page) {
 
 	const metadataMetrics = await main
 		.locator(
-			'[data-testid="session-card-meta"], [data-overview-status] dl, [data-testid="overview-compute-summary"] ul',
+			'[data-testid="session-card-meta"], [data-overview-status] dl, [data-testid="overview-compute-summary"] dl',
 		)
 		.evaluateAll((elements) =>
 			elements.map((element) => {
@@ -3252,7 +3252,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 		),
 	).toBeLessThanOrEqual(2);
 	await expect(page.locator('[data-overview-module="dashboard"]')).toBeVisible();
-	await expect(page.getByRole("button", { name: "Chat on Web", exact: true })).toBeDisabled();
+	await expect(page.getByRole("button", { name: "Chat on the web", exact: true })).toBeDisabled();
 	const compute = page.locator('[data-overview-status="compute"]');
 	await expect(compute).toContainText("Running");
 	await expect(compute).toContainText("Basic plan");
@@ -3272,11 +3272,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(compute.getByTestId("overview-compute-summary")).not.toHaveClass(
 		/rounded|border|bg-/,
 	);
-	await expect(
-		compute.getByRole("list", {
-			name: "Configuration: 2 vCPU, 4 GiB memory, 20 GiB storage",
-		}),
-	).toBeVisible();
+	await expect(compute.getByLabel("Compute resources", { exact: true })).toBeVisible();
 	await expect(page.getByText("Your agent is running", { exact: true })).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module] [data-slot="badge"]')).toHaveCount(0);
 	await expect(overview.getByTestId("overview-channel-rail")).toHaveCount(0);
@@ -3286,12 +3282,12 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	);
 	expect(aiProviderRequests).toEqual([]);
 	await expect.poll(() => managedModelRequests.length).toBe(1);
-	for (const configuration of ["2 vCPU", "4 GiB memory", "20 GiB storage"])
+	for (const configuration of ["2 vCPU", "4 GiB", "20 GiB"])
 		await expect(compute.getByText(configuration, { exact: true })).toBeVisible();
 	await expect(compute.getByText("Plan", { exact: true })).toHaveCount(0);
-	await expect(compute.getByText("CPU", { exact: true })).toHaveCount(0);
-	await expect(compute.getByText("Memory", { exact: true })).toHaveCount(0);
-	await expect(compute.getByText("Storage", { exact: true })).toHaveCount(0);
+	await expect(compute.getByText("CPU", { exact: true })).toBeVisible();
+	await expect(compute.getByText("Memory", { exact: true })).toBeVisible();
+	await expect(compute.getByText("Storage", { exact: true })).toBeVisible();
 	await expect(overview.locator('[data-overview-module="skills"]')).toContainText(
 		"No skills installed",
 	);
@@ -3418,7 +3414,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const sessionsHeading = page.getByRole("heading", { name: "Sessions", exact: true });
 	await expect(sessionsHeading).toBeVisible();
 	await expect(sessionsHeading.locator("..").getByText("Cloud", { exact: true })).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Chat on Web", exact: true })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Chat on the web", exact: true })).toHaveCount(0);
 });
 
 for (const projectionFailure of [
@@ -3657,24 +3653,29 @@ test("hosted terminal opens a standalone fitted window", async ({ page, context 
 	}
 });
 
-test("overview subscription shortcut follows existing eligibility without billing mutations", async ({
+test("overview billing facts and shortcuts follow subscription authority", async ({
 	page,
 }, testInfo) => {
+	await page.clock.setFixedTime(new Date("2026-09-07T12:00:00Z"));
 	const included = includedBasicDeployment.compute_subscription;
 	const paid = paidBasicDeployment.compute_subscription;
 	if (!included || !paid) throw new Error("Missing subscription fixtures");
-	const deployment: DeploymentMutationFixture = {
+	const deployment = mutationDeploymentReadFixture({
 		...railHostedDeployment,
 		hermes_control_ui_url: "https://runtime.example/",
-	};
+	});
+	const commercial = deployment.commercial_display;
+	const runtimeStatus = deployment.resource.status;
+	if (!commercial || !runtimeStatus) throw new Error("Missing deployment projection");
+	const future = "2027-07-15T00:00:00Z";
+	const ended = "2026-08-15T00:00:00Z";
 	const billingMutations: string[] = [];
 	page.on("request", (request) => {
 		if (
 			["POST", "PUT", "PATCH", "DELETE"].includes(request.method()) &&
 			new URL(request.url()).host === "127.0.0.1:8001"
-		) {
+		)
 			billingMutations.push(request.url());
-		}
 	});
 	await stubHostedApi(page, {
 		deployments: [deployment],
@@ -3685,140 +3686,174 @@ test("overview subscription shortcut follows existing eligibility without billin
 	});
 	for (const scenario of [
 		{
-			name: "eligible",
+			name: "included",
 			subscription: included,
-			runtime: "running",
-			available: true,
-			label: "Active",
-			upgrade: true,
+			value: "Included with your plan",
+			date: null,
+			action: "Upgrade",
 		},
 		{
 			name: "stopped",
 			subscription: included,
-			runtime: "stopped",
-			available: true,
-			label: "Active",
-			upgrade: true,
-		},
-		{
-			name: "canceling",
-			subscription: { ...included, cancel_at_period_end: true },
-			runtime: "running",
-			available: true,
-			label: "Canceling",
-			upgrade: false,
+			value: "Included with your plan",
+			date: null,
+			action: "Upgrade",
 		},
 		{
 			name: "paid",
 			subscription: paid,
-			runtime: "running",
-			available: true,
-			label: "Active",
-			upgrade: false,
+			value: "Active",
+			date: ["Next renewal", "Jul 15, 2027"],
+			action: null,
 		},
 		{
-			name: "past-due",
-			subscription: { ...paid, payment_state: "past_due", recovery_action: "fix_payment" },
-			runtime: "running",
-			available: true,
-			label: "Past due",
-			upgrade: false,
+			name: "canceling",
+			subscription: { ...paid, cancel_at_period_end: true, cancel_at: future },
+			value: "Canceling",
+			date: ["Ends on", "Jul 15, 2027"],
+			action: null,
 		},
 		{
-			name: "authority-pending",
-			subscription: { ...included, recovery_blocked_reason: "authority_pending" },
-			runtime: "running",
-			available: true,
-			label: "Updating subscription",
-			upgrade: false,
+			name: "trial",
+			subscription: {
+				...paid,
+				status: "trialing",
+				actions: { cancel: "end_trial", resume: false, command_state: null },
+			},
+			value: "Trial",
+			date: ["Trial ends", "Jul 15, 2027"],
+			action: null,
 		},
 		{
-			name: "transition",
-			subscription: included,
-			runtime: "restarting",
-			available: true,
-			label: "Active",
-			upgrade: false,
+			name: "payment-retry",
+			subscription: {
+				...paid,
+				payment_state: "past_due",
+				recovery_action: "fix_payment",
+				next_payment_attempt_at: "2026-09-08T12:00:00Z",
+			},
+			value: "Past due",
+			date: ["Next payment attempt", "Sep 8, 2026"],
+			action: "Fix payment",
 		},
 		{
-			name: "failed",
-			subscription: included,
-			runtime: "failed",
-			available: true,
-			label: "Active",
-			upgrade: false,
+			name: "missing-retry",
+			subscription: {
+				...paid,
+				payment_state: "past_due",
+				recovery_action: "fix_payment",
+				next_payment_attempt_at: null,
+			},
+			value: "Past due",
+			date: null,
+			action: "Fix payment",
 		},
 		{
-			name: "missing",
-			subscription: null,
-			runtime: "running",
-			available: true,
-			label: null,
-			upgrade: false,
+			name: "wallet-recovery",
+			subscription: {
+				...paid,
+				funding_source: "wallet",
+				payment_state: "past_due",
+				recovery_action: "top_up",
+			},
+			value: "Past due",
+			date: null,
+			action: "Top up",
 		},
 		{
-			name: "unavailable",
-			subscription: included,
-			runtime: "running",
-			available: false,
-			label: "Active",
-			upgrade: false,
+			name: "ended",
+			subscription: {
+				...paid,
+				status: "canceled",
+				canceled_at: ended,
+				recovery_action: "start_new",
+			},
+			value: "Ended",
+			date: ["Ended on", "Aug 15, 2026"],
+			action: "Manage",
 		},
+		{
+			name: "pending",
+			subscription: { ...paid, recovery_blocked_reason: "authority_pending" },
+			value: "Updating subscription",
+			date: null,
+			action: null,
+		},
+		{
+			name: "missing-date",
+			subscription: { ...paid, current_period_end: null },
+			value: "Active",
+			date: null,
+			action: null,
+		},
+		{
+			name: "unknown-subscription",
+			subscription: { ...paid, status: "unrecognized" },
+			value: "Status unavailable",
+			date: null,
+			action: null,
+		},
+		{
+			name: "unknown-runtime",
+			subscription: { ...paid, current_period_end: null },
+			value: "Active",
+			date: null,
+			action: null,
+		},
+		{ name: "missing-subscription", subscription: null, value: null, date: null, action: null },
 	] as const) {
-		deployment.compute_subscription = scenario.subscription;
-		deployment.status = scenario.runtime;
-		deployment.upgrade_available = scenario.available;
-		for (const width of scenario.name === "canceling" || scenario.name === "paid"
-			? [1440, 390]
-			: [1440]) {
-			await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
+		commercial.compute_subscription = scenario.subscription;
+		deployment.resource.status =
+			scenario.name === "unknown-runtime"
+				? null
+				: { ...runtimeStatus, summary_state: scenario.name === "stopped" ? "stopped" : "running" };
+		deployment.upgrade_available = scenario.name === "included" || scenario.name === "stopped";
+		for (const width of scenario.name === "payment-retry"
+			? [1440, 320]
+			: scenario.name === "paid"
+				? [1440, 390]
+				: [1440]) {
+			await page.setViewportSize({
+				width,
+				height: width === 1440 ? 900 : width === 320 ? 800 : 844,
+			});
 			await page.goto(`/agents/${railHostedEnvironmentId}`);
 			const compute = page.locator('[data-overview-status="compute"]');
 			const body = compute.locator('[data-slot="card-content"]');
 			await expect(body).toContainText("Basic plan");
 			await expect(compute.locator('[data-slot="card-header"]')).not.toContainText("Basic plan");
-			if (scenario.label) await expect(body).toContainText(scenario.label);
-			else await expect(body.getByText("Subscription", { exact: true })).toHaveCount(0);
-			const upgrade = body.getByRole("button", { name: "Upgrade", exact: true });
-			await expect(upgrade).toHaveCount(scenario.upgrade ? 1 : 0);
-			await expect(body.getByText("Renews", { exact: true })).toHaveCount(
-				scenario.name === "paid" ? 1 : 0,
-			);
-			if (scenario.name === "paid") await expect(body).toContainText("Jul 15, 2027");
+			const row = body.locator("[data-overview-subscription-row]");
+			if (scenario.value) await expect(row).toContainText(scenario.value);
+			else await expect(row).toHaveCount(0);
+			if (scenario.value === "Included with your plan") {
+				await expect(row.getByText("Subscription:", { exact: true })).toHaveCount(0);
+				await expect(row.getByText("Active", { exact: true })).toHaveCount(0);
+			}
+			const date = row.locator("..").locator(":scope > dl");
+			await expect(date).toHaveCount(scenario.date ? 1 : 0);
+			if (scenario.date) for (const text of scenario.date) await expect(date).toContainText(text);
+			const actions = body.getByRole("button");
+			await expect(actions).toHaveCount(scenario.action ? 1 : 0);
+			if (scenario.action) await expect(actions).toHaveText(scenario.action);
 			await expect(compute.locator("a a, a button, button a, [data-slot=badge]")).toHaveCount(0);
 			await expectAgentOverviewGeometry(page, { hosted: true, desktop: width === 1440 });
-			if (scenario.name === "canceling" || scenario.name === "paid") {
-				await captureAgentOverview(
-					page,
-					testInfo,
-					`hermes-neutral-entry-${scenario.name}-${width}`,
-				);
-				if (width === 1440) {
-					await page.locator("html").evaluate((element) => element.classList.add("dark"));
-					await expectAgentOverviewGeometry(page, { hosted: true, desktop: true });
-					await captureAgentOverview(
-						page,
-						testInfo,
-						`hermes-neutral-entry-${scenario.name}-1440-dark`,
-					);
-					await page.locator("html").evaluate((element) => element.classList.remove("dark"));
-				}
+			await captureAgentOverview(page, testInfo, `hermes-final-clean-${scenario.name}-${width}`);
+			if (scenario.name === "paid" && width === 1440) {
+				await page.locator("html").evaluate((element) => element.classList.add("dark"));
+				await expectAgentOverviewGeometry(page, { hosted: true, desktop: true });
+				await captureAgentOverview(page, testInfo, "hermes-final-clean-paid-1440-dark");
+				await page.locator("html").evaluate((element) => element.classList.remove("dark"));
 			}
-			if (scenario.upgrade) {
-				await expect(upgrade).toHaveAttribute(
-					"href",
-					`/agents/${railHostedEnvironmentId}/settings#compute-plan-controls`,
-				);
-				await upgrade.click();
-				await expect(page).toHaveURL(
-					`/agents/${railHostedEnvironmentId}/settings#compute-plan-controls`,
-				);
-				await expect(
-					page
-						.locator("#compute-plan-controls")
-						.getByRole("button", { name: "Upgrade", exact: true }),
-				).toBeEnabled();
-				await expect(page.getByRole("dialog")).toHaveCount(0);
+			if (scenario.action) {
+				const target =
+					scenario.action === "Top up"
+						? `/agents/${railHostedEnvironmentId}?settings=billing-wallet`
+						: `/agents/${railHostedEnvironmentId}/settings#compute-plan-controls`;
+				await expect(actions).toHaveAttribute("href", target);
+				await actions.click();
+				await expect(page).toHaveURL(target);
+				if (scenario.action === "Top up") await expect(page.getByRole("dialog")).toBeVisible();
+				else await expect(page.locator("#compute-plan-controls")).toBeVisible();
 			}
 		}
 	}
@@ -3826,7 +3861,7 @@ test("overview subscription shortcut follows existing eligibility without billin
 });
 
 for (const runtime of ["hermes", "openclaw"] as const) {
-	test(`${runtime} Dashboard entry is prominent, runtime-aware and secure`, async ({
+	test(`${runtime} overview entries preserve navigation and layout`, async ({
 		page,
 		context,
 	}, testInfo) => {
@@ -3882,7 +3917,7 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			await page.setViewportSize(viewport);
 			await page.goto(`/agents/${railHostedEnvironmentId}`);
 			const module = page.locator('[data-overview-module="dashboard"]');
-			const open = page.getByRole("link", { name: "Chat on Web", exact: true });
+			const open = page.getByRole("link", { name: "Chat on the web", exact: true });
 			await expect(open).toHaveCount(1);
 			await expect(open).toBeEnabled();
 			await expect(open.getByText(label, { exact: true })).toBeVisible();
@@ -3949,7 +3984,7 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 				desktop: viewport.width === 1440,
 			});
 			await testInfo.attach(
-				`${runtime}-neutral-entry-${viewport.width}-sessions-${sessionCount}-geometry`,
+				`${runtime}-final-clean-${viewport.width}-sessions-${sessionCount}-geometry`,
 				{
 					body: JSON.stringify(geometry, null, 2),
 					contentType: "application/json",
@@ -3958,12 +3993,12 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			await captureAgentOverview(
 				page,
 				testInfo,
-				`${runtime}-neutral-entry-${viewport.width}-sessions-${sessionCount}`,
+				`${runtime}-final-clean-${viewport.width}-sessions-${sessionCount}`,
 			);
 			if (viewport.width === 1440 && sessionCount === 3) {
 				await page.locator("html").evaluate((element) => element.classList.add("dark"));
 				await expectAgentOverviewGeometry(page, { hosted: true, desktop: true });
-				await captureAgentOverview(page, testInfo, `${runtime}-neutral-entry-1440-dark`);
+				await captureAgentOverview(page, testInfo, `${runtime}-final-clean-1440-dark`);
 				await page.locator("html").evaluate((element) => element.classList.remove("dark"));
 			}
 			if (viewport.width < 768) {
@@ -3993,11 +4028,11 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 		}
 		await page
 			.locator('[data-overview-module="channels"]')
-			.getByRole("link", { name: "Chat in Channels", exact: true })
+			.getByRole("link", { name: "Chat via channels", exact: true })
 			.click();
 		await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}/channel-links`);
 		await page.goto(`/agents/${railHostedEnvironmentId}`);
-		await page.getByRole("link", { name: "Chat on Web", exact: true }).click();
+		await page.getByRole("link", { name: "Chat on the web", exact: true }).click();
 		await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}/console`);
 		await expect(page.locator('[data-slot="breadcrumb-page"]').last()).toHaveText(label);
 		const target = runtime === "hermes" ? `${endpoint}chat` : `${endpoint}#token=test-token`;
@@ -4815,7 +4850,7 @@ test("env-keyed failed overview is action-free while Settings keeps management",
 	await expect(main.getByText("Recent sessions", { exact: true })).toBeVisible();
 	await expect(main.getByText(missingProjectionFailureReason, { exact: true })).toHaveCount(0);
 	await expect(
-		main.getByText("Clawdi is checking this Agent. Open Agent settings for details.", {
+		main.getByText("Clawdi is checking this agent.", {
 			exact: true,
 		}),
 	).toHaveCount(0);
@@ -4824,7 +4859,7 @@ test("env-keyed failed overview is action-free while Settings keeps management",
 	await expect(main.getByText("internal runtime health error", { exact: true })).toHaveCount(0);
 	await expect(main.getByText(/dashboard prerequisite/i)).toHaveCount(0);
 	const compute = main.locator('[data-overview-status="compute"]');
-	await expect(main.getByRole("button", { name: "Chat on Web", exact: true })).toBeDisabled();
+	await expect(main.getByRole("button", { name: "Chat on the web", exact: true })).toBeDisabled();
 	const computeStatus = compute.locator("[data-overview-compute-status]");
 	await expect(computeStatus).toHaveText("Temporarily unavailable");
 	await expect(computeStatus.locator('[data-slot="status-dot"]')).toHaveAttribute(
@@ -4859,7 +4894,7 @@ test("env-keyed failed overview is action-free while Settings keeps management",
 	await computeSettingsLink.click();
 	await expect(page).toHaveURL(/\/settings/);
 	await expect(
-		main.getByText("Clawdi is checking this Agent. Open Agent settings for details.", {
+		main.getByText("Clawdi is checking this agent.", {
 			exact: true,
 		}),
 	).toBeVisible();

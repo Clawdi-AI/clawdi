@@ -27,6 +27,7 @@ import {
 	Settings,
 	TerminalSquare,
 	Trash2,
+	WalletCards,
 	X,
 } from "lucide-react";
 import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -126,6 +127,7 @@ import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
+import { overviewComputePresentation } from "@/hosted/agents/overview-compute-presentation";
 import {
 	forgetOpenClawNativeHandoffLoaded,
 	hasOpenClawNativeHandoffLoaded,
@@ -151,11 +153,7 @@ import {
 	computeSubscriptionRequiredToStart,
 } from "@/hosted/billing/components/compute-dunning.logic";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
-import type {
-	DeploymentUpdateRequest,
-	HostedComputeSubscription,
-	HostedDeployment,
-} from "@/hosted/billing/contracts";
+import type { DeploymentUpdateRequest, HostedDeployment } from "@/hosted/billing/contracts";
 import { navigateToAcceptedDeployment } from "@/hosted/billing/deploy/accepted-deployment-navigation";
 import {
 	fallbackTimezones,
@@ -178,10 +176,7 @@ import {
 	type ComputeSubscriptionManagementResult,
 	computeSubscriptionManagement,
 } from "@/hosted/billing/subscription/compute-subscription-management";
-import {
-	computeSubscriptionRecoveryPresentation,
-	computeSubscriptionRecoveryTarget,
-} from "@/hosted/billing/subscription/compute-subscription-recovery";
+import { computeSubscriptionRecoveryPresentation } from "@/hosted/billing/subscription/compute-subscription-recovery";
 import {
 	PlanChangeController,
 	planChangeBillingTerm,
@@ -218,9 +213,7 @@ import {
 	deploymentRuntimeStatusPresentation,
 	deploymentStatusFromResource,
 	deploymentStatusLabel,
-	hasCurrentRuntimeHealthDegradation,
 	isRunningStatus,
-	isTransitionalStatus,
 } from "@/hosted/deployment-status";
 import { DeploymentStatusUnavailableState } from "@/hosted/deployment-status-unavailable";
 import {
@@ -593,7 +586,6 @@ export function HostedAgentDetail({
 		activeTab === "overview" ? availableAgentTitle : agentSectionLabel(activeTab, runtime),
 	);
 
-	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
 	const terminalHref = agentSectionHref(environmentId, "terminal");
 	const terminalWindowHref = agentTerminalWindowHref(environmentId);
 	const scopedSessionLink = (sessionId: string) => ({
@@ -685,7 +677,6 @@ export function HostedAgentDetail({
 							deployment={deployment}
 							agent={isAgentRouteId(environmentId) ? agent : null}
 							projectionStatus={projection.status}
-							isPerformance={isPerformance}
 							sessions={sessions.data?.items ?? []}
 							sessionsLoading={sessions.isLoading}
 							sessionsError={
@@ -965,7 +956,7 @@ export function ComputeStatusDetails({
 		<div className="space-y-3 text-xs">
 			{failure?.status.kind === "runtime_unavailable" ? (
 				<p className="text-warning-muted-foreground" role="status">
-					{failure.reason}
+					Clawdi is checking this agent.
 				</p>
 			) : failure ? (
 				<div className="space-y-1 text-destructive-muted-foreground" role="status">
@@ -1026,85 +1017,38 @@ export function ComputeStatusDetails({
 }
 
 export function OverviewComputeSummary({
-	plan,
+	planLabel,
 	vcpu,
 	memoryMib,
 	storageGib,
 }: {
-	plan: string;
+	planLabel: string;
 	vcpu: number;
 	memoryMib: number;
 	storageGib: number;
 }) {
 	const configuration = [
-		`${vcpu} vCPU`,
-		`${formatMemoryMib(memoryMib)} memory`,
-		`${storageGib} GiB storage`,
+		{ label: "CPU", value: `${vcpu} vCPU` },
+		{ label: "Memory", value: formatMemoryMib(memoryMib) },
+		{ label: "Storage", value: `${storageGib} GiB` },
 	];
 	return (
 		<div className="space-y-1.5" data-testid="overview-compute-summary">
 			<p data-overview-compute-plan className="text-sm text-muted-foreground">
-				{plan} plan
+				{planLabel}
 			</p>
-			<ul
-				aria-label={`Configuration: ${configuration.join(", ")}`}
-				className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
+			<dl
+				aria-label="Compute resources"
+				className="grid grid-cols-3 gap-3 text-xs text-muted-foreground"
 			>
 				{configuration.map((item) => (
-					<li key={item}>{item}</li>
+					<div key={item.label} className="min-w-0">
+						<dt>{item.label}</dt>
+						<dd className="break-words">{item.value}</dd>
+					</div>
 				))}
-			</ul>
+			</dl>
 		</div>
-	);
-}
-
-function OverviewComputeUpgrade({
-	agentId,
-	deployment,
-	subscription,
-}: {
-	agentId: string;
-	deployment: HostedDeployment;
-	subscription: HostedComputeSubscription;
-}) {
-	const access = useProductAccess();
-	const plans = usePlans();
-	const entitlement = {
-		deploymentId: deployment.resource.id,
-		planSlug: deployment.current_plan_slug,
-		fundingSource: subscription.funding_source,
-		priceCents: subscription.price_cents,
-		billingTermMonths: subscription.billing_term_months,
-		status: subscription.status,
-		paymentState: subscription.payment_state,
-		cancelAtPeriodEnd: subscription.cancel_at_period_end,
-		recoveryAction: subscription.recovery_action,
-		pendingPlanSlug: pendingComputePlanSlug(subscription),
-		actions: subscription.actions,
-	};
-	const management = computeSubscriptionManagement({
-		entitlement,
-		deployment,
-		canCreateCloudAgents: !access.isLoading && access.canCreateCloudAgents,
-		plansLoading: plans.isLoading,
-		performancePlanAvailable: !plans.error && Boolean(resolvePerformancePlan(plans.data)),
-	});
-	const upgrade = resolveComputeSubscriptionActions({
-		entitlement,
-		management,
-		recoveryTarget: computeSubscriptionRecoveryTarget(subscription),
-		hasPendingOperation: Boolean(management.target?.projectedOperationName),
-	}).find((action) => action.kind === "upgrade" && action.disabledReason === null);
-	if (!upgrade) return null;
-	return (
-		<Button
-			render={<Link {...agentSectionLink(agentId, "settings")} hash="compute-plan-controls" />}
-			nativeButton={false}
-			variant="outline"
-			size="sm"
-		>
-			<ArrowUp /> Upgrade
-		</Button>
 	);
 }
 
@@ -1297,7 +1241,6 @@ function OverviewTab({
 	deployment,
 	agent,
 	projectionStatus,
-	isPerformance,
 	sessions,
 	sessionsLoading,
 	sessionsError,
@@ -1309,7 +1252,6 @@ function OverviewTab({
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
 	projectionStatus: HostedProjectionResolution<unknown>["status"];
-	isPerformance: boolean;
 	sessions: SessionListItem[];
 	sessionsLoading: boolean;
 	sessionsError: unknown;
@@ -1346,36 +1288,25 @@ function OverviewTab({
 		label: runtimeStatusPresentation.label,
 		tone: runtimeStatusPresentation.tone,
 	};
-	const currentSubscription = deployment.commercial_display?.compute_subscription;
-	const subscriptionLifecycle = currentSubscription
-		? computeSubscriptionLifecycle(currentSubscription)
-		: null;
-	const subscriptionRecovery = subscriptionLifecycle
-		? computeSubscriptionRecoveryPresentation(currentSubscription, {
-				label: subscriptionLifecycle.badgeLabel,
-				tone: subscriptionLifecycle.badgeTone,
-			})
-		: null;
-	const subscriptionSchedule =
-		subscriptionRecovery?.schedule ??
-		(!subscriptionRecovery?.hasPaymentIssue &&
-		subscriptionLifecycle?.dateVerb &&
-		subscriptionLifecycle.dateAt
-			? { verb: subscriptionLifecycle.dateVerb, at: subscriptionLifecycle.dateAt }
-			: null);
-	const subscriptionDate =
-		computeFundingSource(deployment.current_plan_slug, currentSubscription) !== "included_basic" &&
-		subscriptionSchedule?.verb &&
-		subscriptionSchedule.at
-			? { label: subscriptionSchedule.verb, value: formatShortDate(subscriptionSchedule.at) }
-			: null;
-	const upgradeReady =
-		deployment.upgrade_available &&
-		!isTransitionalStatus(deploymentStatus) &&
-		!deploymentFailure &&
-		!subscriptionRecovery?.hasPaymentIssue &&
-		currentSubscription?.recovery_blocked_reason == null &&
-		!(deployment.resource.status && hasCurrentRuntimeHealthDegradation(deployment.resource.status));
+	const access = useProductAccess();
+	const plans = usePlans({ enabled: deployment.upgrade_available && access.canCreateCloudAgents });
+	const compute = overviewComputePresentation(deployment, {
+		canCreateCloudAgents: !access.isLoading && access.canCreateCloudAgents,
+		plansLoading: plans.isLoading,
+		performancePlanAvailable: !plans.error && Boolean(resolvePerformancePlan(plans.data)),
+	});
+	const actionLink =
+		compute.action?.kind === "top_up"
+			? agentSectionLink(agentId, "overview", { settings: "billing-wallet" })
+			: { ...agentSectionLink(agentId, "settings"), hash: "compute-plan-controls" };
+	const ActionIcon =
+		compute.action?.kind === "upgrade"
+			? ArrowUp
+			: compute.action?.kind === "top_up"
+				? WalletCards
+				: compute.action?.kind === "fix_payment"
+					? CreditCard
+					: Settings;
 	const billingClient = useBillingClient();
 	const projectBindings = useAgentProjectBindings(agentId, { enabled: Boolean(agent) });
 	const projectionLoading = projectionStatus === "loading";
@@ -1459,7 +1390,7 @@ function OverviewTab({
 				<AgentDashboardOverview agentId={agentId} deployment={deployment} />
 				<OverviewNavigationCard
 					id="channels"
-					title="Chat in Channels"
+					title="Chat via channels"
 					description="Telegram, Discord, or WhatsApp"
 					icon={AGENT_SECTION_NAVIGATION_ITEMS.channels.icon}
 					tint={AGENT_SECTION_NAVIGATION_ITEMS.channels.tint}
@@ -1538,30 +1469,37 @@ function OverviewTab({
 					>
 						<div className="flex h-full flex-col justify-between gap-3">
 							<OverviewComputeSummary
-								plan={isPerformance ? "Performance" : "Basic"}
+								planLabel={compute.planLabel}
 								vcpu={spec.resources.vcpu}
 								memoryMib={spec.resources.memory_mib}
 								storageGib={spec.resources.disk_gib}
 							/>
-							{subscriptionRecovery ? (
+							{compute.subscription ? (
 								<div className="space-y-2">
 									<div
 										className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2"
 										data-overview-subscription-row
 									>
 										<dl className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground">
-											<dt>Subscription</dt>
-											<dd data-overview-subscription-status>{subscriptionRecovery.status.label}</dd>
+											{compute.subscription.label ? (
+												<dt>{compute.subscription.label}:</dt>
+											) : (
+												<dt className="sr-only">Plan access</dt>
+											)}
+											<dd data-overview-subscription-status>{compute.subscription.value}</dd>
 										</dl>
-										{currentSubscription && upgradeReady ? (
-											<OverviewComputeUpgrade
-												agentId={agentId}
-												deployment={deployment}
-												subscription={currentSubscription}
-											/>
+										{compute.action ? (
+											<Button
+												render={<Link {...actionLink} />}
+												nativeButton={false}
+												variant="outline"
+												size="sm"
+											>
+												<ActionIcon /> {compute.action.label}
+											</Button>
 										) : null}
 									</div>
-									{subscriptionDate ? <OverviewMetadata items={[subscriptionDate]} /> : null}
+									{compute.date ? <OverviewMetadata items={[compute.date]} /> : null}
 								</div>
 							) : null}
 						</div>

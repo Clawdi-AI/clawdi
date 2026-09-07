@@ -17,6 +17,7 @@ export async function expectAgentOverviewGeometry(
 		const subscriptionStatus = subscriptionRow?.querySelector(
 			"[data-overview-subscription-status]",
 		);
+		const subscriptionDetails = subscriptionRow?.querySelector("dl");
 		const subscriptionAction = subscriptionRow?.querySelector("[data-slot=button]");
 		const subscriptionDate = subscriptionRow?.parentElement?.querySelector(":scope > dl");
 		const entries = Array.from(
@@ -60,6 +61,7 @@ export async function expectAgentOverviewGeometry(
 					? {
 							row: subscriptionRow.getBoundingClientRect().toJSON(),
 							status: subscriptionStatus.getBoundingClientRect().toJSON(),
+							details: subscriptionDetails?.getBoundingClientRect().toJSON() ?? null,
 							action: subscriptionAction?.getBoundingClientRect().toJSON() ?? null,
 							date: subscriptionDate?.getBoundingClientRect().toJSON() ?? null,
 						}
@@ -145,12 +147,17 @@ export async function expectAgentOverviewGeometry(
 			expect(color.contrast).toBeGreaterThanOrEqual(4.5);
 		}
 		if (geometry.subscription) {
-			const { row, status, action, date } = geometry.subscription;
+			const { row, status, details, action, date } = geometry.subscription;
 			if (action) {
-				aligned(status.y + status.height / 2, action.y + action.height / 2);
-				aligned(action.right, row.right);
-				expect(action.left - status.right).toBeGreaterThanOrEqual(12);
-			} else aligned(row.height, status.height);
+				if (details && action.top >= details.bottom) {
+					expect(details.width + action.width + 12).toBeGreaterThan(row.width);
+					expect(action.top - details.bottom).toBeGreaterThanOrEqual(8);
+				} else {
+					aligned(status.y + status.height / 2, action.y + action.height / 2);
+					aligned(action.right, row.right);
+					expect(action.left - status.right).toBeGreaterThanOrEqual(12);
+				}
+			} else if (details) aligned(row.height, details.height);
 			if (date) expect(date.top).toBeGreaterThan(row.bottom);
 		}
 		const tools = geometry.tools;

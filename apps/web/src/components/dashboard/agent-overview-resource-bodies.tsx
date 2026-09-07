@@ -36,8 +36,8 @@ export function overviewProjectsModule({
 	if (bindings.error) return { description: "Unavailable right now" };
 	const count = bindings.count ?? 0;
 	const primary = count
-		? `${count} linked ${count === 1 ? "Project" : "Projects"}`
-		: "No Projects linked";
+		? `${count} linked ${count === 1 ? "project" : "projects"}`
+		: "No projects linked";
 	return { description: primary };
 }
 
@@ -98,8 +98,8 @@ export function useOverviewMemoriesModule({
 	const total = query.data?.total ?? 0;
 	return {
 		description: total
-			? `${total} ${total === 1 ? "memory" : "memories"} · All agents`
-			: "No memories yet · All agents",
+			? `${total} ${total === 1 ? "memory" : "memories"} · all agents`
+			: "No memories yet · all agents",
 	};
 }
 
@@ -145,7 +145,7 @@ export function useOverviewConnectorsModule({
 	) : connections.error ? (
 		"Unavailable right now"
 	) : connectedAppCount ? (
-		`${connectedAppCount} ${connectedAppCount === 1 ? "app" : "apps"} · available to every Agent`
+		`${connectedAppCount} ${connectedAppCount === 1 ? "app" : "apps"} · all agents`
 	) : (
 		"No apps available"
 	);
