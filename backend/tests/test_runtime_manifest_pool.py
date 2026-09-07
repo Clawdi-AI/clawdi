@@ -7,7 +7,8 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 from sqlalchemy import event, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from app.core import auth, database
@@ -121,7 +122,10 @@ async def test_manifest_fanout_preserves_auth_without_nested_pool_starvation(
         await ordinary.dispose()
 
 
-async def test_manifest_pairs_allow_four_snapshots_and_clean_up_partial_acquisition(monkeypatch):
+@pytest.mark.parametrize("abort", ["cancel", "timeout"])
+async def test_manifest_pairs_allow_four_snapshots_and_clean_up_partial_acquisition(
+    monkeypatch, abort
+):
     ordinary = database._create_engine(pool_size=8, max_overflow=0)
     monkeypatch.setattr(database, "engine", ordinary)
     pool = ordinary.sync_engine.pool
@@ -131,7 +135,15 @@ async def test_manifest_pairs_allow_four_snapshots_and_clean_up_partial_acquisit
 
     async def read_pair():
         async with pairs() as pair:
-            await pair.auth.execute(text("SELECT 1"))
+            configured = (
+                await pair.auth.execute(
+                    text(
+                        "SELECT current_setting('transaction_isolation'), "
+                        "current_setting('transaction_read_only')"
+                    )
+                )
+            ).one()
+            assert configured == ("read committed", "off")
             await pair.auth.commit()
             async with database.runtime_snapshot_session(session_factory=pair.snapshots) as db:
                 configured = (
@@ -159,13 +171,18 @@ async def test_manifest_pairs_allow_four_snapshots_and_clean_up_partial_acquisit
                 partial.set()
 
             event.listen(pool, "checkout", on_checkout)
+            if abort == "timeout":
+                monkeypatch.setattr(settings, "db_pool_timeout", 1.0)
             dependency = database.get_runtime_manifest_sessions()
             acquire = asyncio.create_task(anext(dependency))
             try:
                 await asyncio.wait_for(partial.wait(), timeout=5)
-                acquire.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await acquire
+                if abort == "cancel":
+                    acquire.cancel()
+                with pytest.raises(
+                    asyncio.CancelledError if abort == "cancel" else SQLAlchemyTimeoutError
+                ):
+                    await asyncio.wait_for(acquire, timeout=5)
                 assert pool.checkedout() == 7
                 assert not database._manifest_checkout_lock.locked()
             finally:
@@ -175,6 +192,159 @@ async def test_manifest_pairs_allow_four_snapshots_and_clean_up_partial_acquisit
                 await dependency.aclose()
         assert pool.checkedout() == 0
     finally:
+        await ordinary.dispose()
+
+
+async def test_manifest_checkouts_overlap_only_within_one_pair(monkeypatch):
+    ordinary = database._create_engine(pool_size=5, max_overflow=3)
+    monkeypatch.setattr(database, "engine", ordinary)
+    pool = ordinary.sync_engine.pool
+    assert isinstance(pool, QueuePool)
+    reserved = database._reserved_connection
+    both_started = asyncio.Event()
+    release_checkouts = asyncio.Event()
+    started = 0
+
+    @asynccontextmanager
+    async def delayed_checkout():
+        nonlocal started
+        async with reserved() as connection:
+            started += 1
+            if started == 2:
+                both_started.set()
+            await release_checkouts.wait()
+            yield connection
+
+    monkeypatch.setattr(database, "_reserved_connection", delayed_checkout)
+    first = database.get_runtime_manifest_sessions()
+    second = database.get_runtime_manifest_sessions()
+    acquire_first = asyncio.create_task(anext(first))
+    acquire_second = None
+    try:
+        await asyncio.wait_for(both_started.wait(), timeout=5)
+        assert pool.checkedout() == 2
+        assert database._manifest_checkout_lock.locked()
+        acquire_second = asyncio.create_task(anext(second))
+        # The second pair must reach the locked admission gate, not a checkout.
+        await asyncio.sleep(0)
+        assert started == 2
+        assert not acquire_first.done()
+        assert not acquire_second.done()
+        release_checkouts.set()
+        async with asyncio.timeout(5):
+            await acquire_first
+            await acquire_second
+        assert pool.checkedout() == 4
+        assert not database._manifest_checkout_lock.locked()
+    finally:
+        release_checkouts.set()
+        tasks = [acquire_first] + ([acquire_second] if acquire_second is not None else [])
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await first.aclose()
+        await second.aclose()
+        assert pool.checkedout() == 0
+        await ordinary.dispose()
+
+
+async def test_manifest_checkout_failure_cancels_sibling_and_remains_retryable(monkeypatch):
+    ordinary = database._create_engine(pool_size=5, max_overflow=3)
+    monkeypatch.setattr(database, "engine", ordinary)
+    pool = ordinary.sync_engine.pool
+    assert isinstance(pool, QueuePool)
+    reserved = database._reserved_connection
+    sibling_reserved = asyncio.Event()
+    started = 0
+
+    @asynccontextmanager
+    async def failing_checkout():
+        nonlocal started
+        started += 1
+        if started == 2:
+            await sibling_reserved.wait()
+            raise SQLAlchemyTimeoutError("checkout failed")
+        async with reserved() as connection:
+            sibling_reserved.set()
+            await asyncio.Event().wait()
+            yield connection
+
+    monkeypatch.setattr(database, "_reserved_connection", failing_checkout)
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            async with asyncio.timeout(5):
+                response = await client.get(
+                    "/v1/runtime/manifest", headers={"Authorization": "Bearer clawdi_test"}
+                )
+            assert response.status_code == 503, response.text
+            assert response.json() == {"detail": "Database capacity temporarily unavailable"}
+            assert response.headers["Retry-After"] == "1"
+        assert pool.checkedout() == 0
+        assert not database._manifest_checkout_lock.locked()
+        monkeypatch.setattr(database, "_reserved_connection", reserved)
+        async with asynccontextmanager(database.get_runtime_manifest_sessions)() as pair:
+            assert await pair.auth.scalar(text("SELECT 1")) == 1
+    finally:
+        await ordinary.dispose()
+
+
+async def test_manifest_repeated_cancellation_joins_both_checkout_cleanups(monkeypatch):
+    ordinary = database._create_engine(pool_size=5, max_overflow=3)
+    monkeypatch.setattr(database, "engine", ordinary)
+    pool = ordinary.sync_engine.pool
+    assert isinstance(pool, QueuePool)
+    reserved = database._reserved_connection
+    both_reserved = asyncio.Event()
+    both_closing = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    started = 0
+    closing = 0
+
+    @asynccontextmanager
+    async def pending_checkout():
+        nonlocal started
+        async with reserved() as connection:
+            started += 1
+            if started == 2:
+                both_reserved.set()
+            await asyncio.Event().wait()
+            yield connection
+
+    close = AsyncConnection.close
+
+    async def delayed_close(connection):
+        nonlocal closing
+        closing += 1
+        if closing == 2:
+            both_closing.set()
+        await release_cleanup.wait()
+        await close(connection)
+
+    monkeypatch.setattr(database, "_reserved_connection", pending_checkout)
+    monkeypatch.setattr(AsyncConnection, "close", delayed_close)
+    dependency = database.get_runtime_manifest_sessions()
+    acquire = asyncio.create_task(anext(dependency))
+    try:
+        await asyncio.wait_for(both_reserved.wait(), timeout=5)
+        acquire.cancel("disconnect")
+        await asyncio.wait_for(both_closing.wait(), timeout=5)
+        acquire.cancel("disconnect-again")
+        await asyncio.sleep(0)
+        assert not acquire.done()
+        assert pool.checkedout() == 2
+        assert database._manifest_checkout_lock.locked()
+        release_cleanup.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(acquire, timeout=5)
+        assert pool.checkedout() == 0
+        assert not database._manifest_checkout_lock.locked()
+    finally:
+        release_cleanup.set()
+        acquire.cancel()
+        await asyncio.gather(acquire, return_exceptions=True)
+        await dependency.aclose()
         await ordinary.dispose()
 
 

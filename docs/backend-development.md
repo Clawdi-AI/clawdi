@@ -415,9 +415,12 @@ separate pools prevent nested checkout deadlocks between concurrent callers.
 Both use the ordinary pool's timeout, metrics, and cancellation-safe cleanup.
 Ordinary runtime manifests acquire a complete pair of ordinary connections
 before authentication: one for the unchanged authority transaction, one for
-read-only RR snapshots. Only pair acquisition is serialized, within the ordinary
-pool timeout; renders run concurrently. Connections stay reserved across commits
-and repairs, so no manifest can hold auth while competing for a second checkout.
+read-only RR snapshots. Pair admission is serialized within the ordinary pool
+timeout, while the two checkouts in that pair overlap connection setup and
+pre-ping I/O. A bounded task group cancels and joins unfinished checkouts on
+failure or cancellation; existing cleanup returns all reserved connections.
+Renders run concurrently. Connections stay reserved across commits and repairs,
+so no manifest can hold auth while competing for a second checkout.
 The shared eight-slot web pool still supports four concurrent manifests and
 remains fully available to other traffic when manifests are idle. Neither
 control slot is borrowed. Signed Project Skill downloads retain only immutable
