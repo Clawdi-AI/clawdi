@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
+import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -185,6 +186,31 @@ async def test_embedding_healthcheck_requires_published_instance_identity(
             new_generation.publish()
             assert await check_embedding_worker_health(str(socket_path), "new-instance")
             assert not await check_embedding_worker_health(str(socket_path), "old-instance")
+
+
+async def test_healthcheck_cli_does_not_load_server_dependencies(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    socket_path = tmp_path_factory.mktemp("health-cli") / "embedding.sock"
+    async with _running_generation(socket_path, _RecordingEmbedder(1.0), socket.gethostname()):
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            "import sys; from app.workers.embedding import main; "
+            "assert not {'fastapi', 'uvicorn'} & sys.modules.keys(); main()",
+            "healthcheck",
+            env={**os.environ, "MEMORY_EMBEDDING_SERVICE_SOCKET_PATH": str(socket_path)},
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            async with asyncio.timeout(10):
+                stdout, stderr = await process.communicate()
+            assert process.returncode == 0, (stdout, stderr)
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
 
 
 def test_embedding_socket_rollover_does_not_let_old_owner_remove_new_socket(

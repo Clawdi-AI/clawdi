@@ -10,12 +10,10 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import httpx
-import uvicorn
 from anyio import CapacityLimiter, WouldBlock
-from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, ConfigDict, StrictStr, ValidationError
 
 from app.core.config import settings
@@ -29,6 +27,9 @@ from app.services.embedding import (
 )
 
 configure_application_logging()
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 
 class EmbeddingWorkerHealthResponse(BaseModel):
@@ -79,6 +80,8 @@ def create_embedding_worker_app(
     instance_id: str,
     max_concurrency: int,
 ) -> FastAPI:
+    from fastapi import FastAPI, HTTPException, status
+
     limiter = CapacityLimiter(max_concurrency)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -210,6 +213,8 @@ def stage_embedding_socket(socket_path: str) -> Generator[StagedEmbeddingSocket,
 
 
 async def run() -> None:
+    import uvicorn
+
     instance_id = current_worker_instance_id()
     embedder = LocalEmbedder.get()
     await embedder.initialize()
