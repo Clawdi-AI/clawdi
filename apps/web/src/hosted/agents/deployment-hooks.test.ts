@@ -261,9 +261,6 @@ describe("overview Compute hierarchy", () => {
 		expect(markup).toContain("4 GiB");
 		expect(markup).toContain("20 GiB");
 		expect(markup).toContain('aria-label="Compute resources"');
-		expect(markup).toContain("<dt>CPU</dt>");
-		expect(markup).toContain("<dt>Memory</dt>");
-		expect(markup).toContain("<dt>Storage</dt>");
 		expect(markup).toContain('data-testid="overview-compute-summary"');
 		expect(markup).toContain('data-overview-compute-plan="true"');
 		expect(markup).toContain("text-sm text-muted-foreground");

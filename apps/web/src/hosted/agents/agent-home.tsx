@@ -1,6 +1,6 @@
 "use client";
 
-import { useLocation, useRouter } from "@tanstack/react-router";
+import { Navigate, useLocation, useRouter } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import {
@@ -16,6 +16,7 @@ import {
 	type AgentRouteSearch,
 	type AgentSectionId,
 	agentRouteBelongsToSection,
+	agentRouteIdsEqual,
 	agentRouteOwnsSection,
 	CONNECTED_AGENT_SECTION_IDS,
 	HOSTED_AGENT_SECTION_IDS,
@@ -58,6 +59,7 @@ export function AgentHome({
 	const eventStreamActive = useDeploymentEventStreamActive();
 	const {
 		deployment,
+		inventoryDeployments,
 		environmentId: resolvedEnvId,
 		matchedRuntime,
 		membershipResolved,
@@ -72,6 +74,11 @@ export function AgentHome({
 	const ownsCurrentSection =
 		agentRouteOwnsSection(pathname, environmentId, section) ||
 		(section === "plugins" && agentRouteBelongsToSection(pathname, environmentId, section));
+	const dismissedHostedAgent =
+		!deployment &&
+		inventoryDeployments?.some((candidate) =>
+			agentRouteIdsEqual(candidate.agent_id, environmentId),
+		);
 	const hostedSectionIds = deployment
 		? hostedAgentVisibleSectionIds(deploymentFilesUrl(deployment) !== null)
 		: HOSTED_AGENT_SECTION_IDS;
@@ -81,7 +88,7 @@ export function AgentHome({
 	// Canonicalize exact section roots and nested Plugins routes, while a stale
 	// rendered match cannot rewrite a newer route.
 	useEffect(() => {
-		if (!ownsCurrentSection) return;
+		if (!ownsCurrentSection || dismissedHostedAgent) return;
 
 		if (deployment) {
 			if (!hostedSection) {
@@ -106,6 +113,7 @@ export function AgentHome({
 	}, [
 		connectedSection,
 		deployment,
+		dismissedHostedAgent,
 		environmentId,
 		hostedSection,
 		membershipResolved,
@@ -123,6 +131,9 @@ export function AgentHome({
 			manualCheckInFlightRef.current = false;
 		}
 	};
+
+	// A dismissed hosted member must not reappear as a connected agent during cleanup.
+	if (dismissedHostedAgent) return ownsCurrentSection ? <Navigate to="/" replace /> : null;
 
 	// No route may be classified as connected until deployment membership has
 	// produced at least one authoritative snapshot. A 403/network failure is not

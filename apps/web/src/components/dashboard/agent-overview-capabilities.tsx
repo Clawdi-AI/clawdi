@@ -1,6 +1,7 @@
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { ArrowRight, type LucideIcon, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
+import { AgentOverviewSectionHeading } from "@/components/dashboard/agent-overview-layout";
 import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +21,8 @@ export type AgentOverviewModuleContent = {
 
 type OverviewLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
 
+export const OVERVIEW_CHANNELS_DESCRIPTION = "Telegram, Discord, or WhatsApp";
+
 export function AgentOverviewStatusCard({
 	agentId,
 	section,
@@ -28,6 +31,7 @@ export function AgentOverviewStatusCard({
 	tint,
 	description,
 	children,
+	loading = false,
 }: {
 	agentId: string;
 	section: "settings";
@@ -36,29 +40,38 @@ export function AgentOverviewStatusCard({
 	tint: string;
 	description: ReactNode;
 	children?: ReactNode;
+	loading?: boolean;
 }) {
+	const heading = (
+		<OverviewCardHeading
+			title={title}
+			description={description}
+			icon={Icon}
+			tint={tint}
+			loading={loading}
+		/>
+	);
 	return (
 		<Card
 			size="sm"
 			role="article"
 			data-overview-status={title.toLowerCase().replaceAll(" ", "-")}
+			data-testid={loading ? "overview-status-card-skeleton" : undefined}
+			aria-busy={loading || undefined}
 			className="h-full min-w-0 gap-0 border border-foreground/10 py-0 ring-0"
 		>
 			<CardHeader className="p-0">
-				<Link
-					{...agentSectionLink(agentId, section)}
-					aria-label={title}
-					className="group flex items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-				>
-					<IconChip size="sm" tint={tint}>
-						<Icon />
-					</IconChip>
-					<div className="min-w-0 flex-1">
-						<CardTitle>{title}</CardTitle>
-						<CardDescription>{description}</CardDescription>
-					</div>
-					<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-				</Link>
+				{loading ? (
+					<div className="flex items-center gap-3 px-4 py-3">{heading}</div>
+				) : (
+					<Link
+						{...agentSectionLink(agentId, section)}
+						aria-label={title}
+						className="group flex items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+					>
+						{heading}
+					</Link>
+				)}
 			</CardHeader>
 			{children ? (
 				<CardContent className="flex flex-1 flex-col px-4 pb-4">{children}</CardContent>
@@ -80,8 +93,66 @@ export function OverviewModuleError({ label, onRetry }: { label: string; onRetry
 	);
 }
 
-export function OverviewDescriptionSkeleton({ label }: { label: string }) {
-	return <Skeleton className="h-5 w-20" aria-label={`Loading ${label} summary`} role="status" />;
+export function OverviewDescriptionSkeleton({
+	label,
+	children,
+}: {
+	label: string;
+	children?: string;
+}) {
+	return (
+		<Skeleton
+			className={children ? "text-transparent" : "h-lh w-20 max-w-full"}
+			aria-label={`Loading ${label} summary`}
+			role="status"
+		>
+			{children}
+		</Skeleton>
+	);
+}
+
+function OverviewCardHeading({
+	title,
+	description,
+	icon: Icon,
+	tint,
+	loading,
+	arrow = true,
+}: {
+	title: string;
+	description: ReactNode;
+	icon: LucideIcon;
+	tint: string;
+	loading: boolean;
+	arrow?: boolean;
+}) {
+	return (
+		<>
+			<IconChip size="sm" tint={loading ? "bg-muted animate-pulse" : tint}>
+				{loading ? null : <Icon />}
+			</IconChip>
+			<div className="min-w-0 flex-1">
+				<CardTitle>{loading ? <Skeleton className="h-lh w-24 max-w-full" /> : title}</CardTitle>
+				<CardDescription data-overview-primary-value>
+					{loading ? (
+						<OverviewDescriptionSkeleton label={title}>
+							{typeof description === "string" ? description : undefined}
+						</OverviewDescriptionSkeleton>
+					) : (
+						description
+					)}
+				</CardDescription>
+			</div>
+			{arrow && loading ? (
+				<Skeleton className="size-4 shrink-0" />
+			) : arrow ? (
+				<ArrowRight
+					aria-hidden="true"
+					className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+				/>
+			) : null}
+		</>
+	);
 }
 
 export function OverviewModuleUnavailable() {
@@ -96,7 +167,7 @@ export function OverviewMetadata({
 	return (
 		<dl className="space-y-2 text-xs text-muted-foreground">
 			{items.map((item) => (
-				<div key={item.label} className="flex min-w-0 items-baseline justify-between gap-3">
+				<div key={item.label} className="flex min-w-0 items-start justify-between gap-3">
 					<dt>{item.label}</dt>
 					<dd className="min-w-0 break-words text-right">{item.value}</dd>
 				</div>
@@ -109,21 +180,31 @@ export function AgentOverviewCapabilities({
 	agentId,
 	variant,
 	content,
+	loading = false,
 }: {
 	agentId: string;
 	variant: AgentNavigationVariant;
 	content: Partial<Record<AgentOverviewModuleId, AgentOverviewModuleContent>>;
+	loading?: boolean;
 }) {
 	const groups = agentOverviewGroups(variant);
 	return (
-		<div className="flex flex-col gap-8" data-agent-overview={variant}>
+		<div
+			className="flex flex-col gap-8"
+			data-agent-overview={variant}
+			data-agent-overview-skeleton={loading ? variant : undefined}
+		>
 			{groups.map((group) => (
-				<section key={group.id} aria-labelledby={`agent-overview-${group.id}`}>
-					<div className="mb-3">
+				<section
+					key={group.id}
+					className="flex flex-col gap-3"
+					aria-labelledby={`agent-overview-${group.id}`}
+				>
+					<AgentOverviewSectionHeading>
 						<h2 id={`agent-overview-${group.id}`} className="text-sm font-semibold">
-							{group.label}
+							{loading ? <Skeleton className="h-lh w-20" /> : group.label}
 						</h2>
-					</div>
+					</AgentOverviewSectionHeading>
 					<div
 						data-overview-layout="two-column"
 						className="grid auto-rows-fr items-stretch gap-3 @2xl/main:grid-cols-2"
@@ -131,17 +212,18 @@ export function AgentOverviewCapabilities({
 						{group.modules.map((module) => {
 							const item = AGENT_SECTION_NAVIGATION_ITEMS[module.section];
 							const moduleContent = content[module.id];
-							if (!moduleContent) return null;
+							if (!moduleContent && !loading) return null;
 							return (
 								<OverviewNavigationCard
 									key={module.id}
 									id={module.id}
+									loading={loading}
 									title={item.label}
-									description={moduleContent.description}
+									description={moduleContent?.description}
 									icon={item.icon}
 									tint={item.tint}
 									link={
-										moduleContent.link === undefined
+										moduleContent?.link === undefined
 											? agentSectionLink(agentId, module.section)
 											: moduleContent.link
 									}
@@ -163,6 +245,7 @@ export function OverviewNavigationCard({
 	tint,
 	link,
 	disabled = false,
+	loading = false,
 }: {
 	id: string;
 	title: string;
@@ -171,30 +254,31 @@ export function OverviewNavigationCard({
 	tint: string;
 	link: OverviewLinkOptions | null;
 	disabled?: boolean;
+	loading?: boolean;
 }) {
 	const content = (
-		<>
-			<IconChip size="sm" tint={tint}>
-				<Icon />
-			</IconChip>
-			<div className="min-w-0 flex-1">
-				<CardTitle>{title}</CardTitle>
-				<CardDescription data-overview-primary-value>{description}</CardDescription>
-			</div>
-			{link || disabled ? (
-				<ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-			) : null}
-		</>
+		<OverviewCardHeading
+			title={title}
+			description={description}
+			icon={Icon}
+			tint={tint}
+			loading={loading}
+			arrow={Boolean(link || disabled || loading)}
+		/>
 	);
 	return (
 		<Card
 			size="sm"
 			role="article"
 			data-overview-module={id}
+			data-overview-module-skeleton={loading ? id : undefined}
+			aria-busy={loading || undefined}
 			className="h-full min-w-0 border border-foreground/10 py-3 ring-0"
 		>
 			<CardHeader className="h-full grid-rows-1 content-center gap-0">
-				{disabled ? (
+				{loading ? (
+					<div className="flex min-w-0 items-center gap-3">{content}</div>
+				) : disabled ? (
 					<button
 						type="button"
 						disabled
@@ -224,38 +308,5 @@ export function AgentOverviewCapabilitiesSkeleton({
 }: {
 	variant: AgentNavigationVariant;
 }) {
-	const groups = agentOverviewGroups(variant);
-	return (
-		<div className="flex flex-col gap-8" aria-hidden="true" data-agent-overview-skeleton={variant}>
-			{groups.map((group) => (
-				<section key={group.id}>
-					<Skeleton className="mb-3 h-5 w-20" />
-					<div
-						data-overview-layout="two-column"
-						className="grid auto-rows-fr items-stretch gap-3 @2xl/main:grid-cols-2"
-					>
-						{group.modules.map((module) => (
-							<Card
-								size="sm"
-								key={module.id}
-								data-overview-module-skeleton={module.id}
-								className="h-full min-w-0 border border-foreground/10 py-3 ring-0"
-							>
-								<CardHeader className="h-full grid-rows-1 content-center gap-0">
-									<div className="flex min-w-0 items-center gap-3">
-										<Skeleton className="size-8 shrink-0 rounded-lg" />
-										<div className="min-w-0 flex-1">
-											<Skeleton className="h-5 w-24" />
-											<Skeleton className="h-5 w-20" />
-										</div>
-										<Skeleton className="size-4 shrink-0" />
-									</div>
-								</CardHeader>
-							</Card>
-						))}
-					</div>
-				</section>
-			))}
-		</div>
-	);
+	return <AgentOverviewCapabilities agentId="" variant={variant} content={{}} loading />;
 }

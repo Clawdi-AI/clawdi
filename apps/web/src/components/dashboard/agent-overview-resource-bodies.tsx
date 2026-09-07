@@ -10,6 +10,7 @@ import { fetchAgentProjectSkills } from "@/components/dashboard/agent-skill-inve
 import { useAgentProjectVaults } from "@/components/vault/agent-vaults-query";
 import { unwrap, useApi } from "@/lib/api";
 import { isActiveConnection, useConnections } from "@/lib/connectors-data";
+import { shouldBlockQueryError } from "@/lib/query-state";
 
 type SummaryState = {
 	isLoading: boolean;
@@ -33,7 +34,8 @@ export function overviewProjectsModule({
 }): AgentOverviewModuleContent {
 	if (bindings.isLoading) return { description: <OverviewDescriptionSkeleton label="projects" /> };
 	if (bindings.isUnavailable) return { description: "Unavailable right now" };
-	if (bindings.error) return { description: "Unavailable right now" };
+	if (shouldBlockQueryError(bindings.error, bindings.count))
+		return { description: "Unavailable right now" };
 	const count = bindings.count ?? 0;
 	const primary = count
 		? `${count} linked ${count === 1 ? "project" : "projects"}`
@@ -74,7 +76,8 @@ export function useOverviewWorkspaceSkillsModule({
 	});
 	if (resolution === "loading" || query.isLoading)
 		return { description: <OverviewDescriptionSkeleton label="skills" /> };
-	if (resolution === "unavailable" || query.error) return { description: "Unavailable right now" };
+	if (resolution === "unavailable" || shouldBlockQueryError(query.error, query.data))
+		return { description: "Unavailable right now" };
 	return overviewWorkspaceSkillsModule([
 		...skillKeys,
 		...(query.data ?? []).map((skill) => skill.skill_key),
@@ -94,7 +97,8 @@ export function useOverviewMemoriesModule({
 		enabled,
 	});
 	if (query.isLoading) return { description: <OverviewDescriptionSkeleton label="memories" /> };
-	if (query.error) return { description: "Unavailable right now" };
+	if (shouldBlockQueryError(query.error, query.data))
+		return { description: "Unavailable right now" };
 	const total = query.data?.total ?? 0;
 	return {
 		description: total
@@ -116,7 +120,8 @@ export function useOverviewVaultsModule({
 	if (resolution === "loading" || query.isLoading)
 		return { description: <OverviewDescriptionSkeleton label="vaults" /> };
 	if (resolution === "unavailable") return { description: "Unavailable right now" };
-	if (query.error) return { description: "Unavailable right now" };
+	if (shouldBlockQueryError(query.error, query.data))
+		return { description: "Unavailable right now" };
 	const vaults = query.data ?? [];
 	return {
 		description: vaults.length
@@ -142,7 +147,7 @@ export function useOverviewConnectorsModule({
 	);
 	const description = connections.isLoading ? (
 		<OverviewDescriptionSkeleton label="apps" />
-	) : connections.error ? (
+	) : shouldBlockQueryError(connections.error, connections.data) ? (
 		"Unavailable right now"
 	) : connectedAppCount ? (
 		`${connectedAppCount} ${connectedAppCount === 1 ? "app" : "apps"} · all agents`

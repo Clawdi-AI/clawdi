@@ -1,5 +1,6 @@
 "use client";
 
+import { getRouteApi } from "@tanstack/react-router";
 import { lazy, Suspense } from "react";
 import {
 	ConnectedAgentDetail,
@@ -16,6 +17,14 @@ const agentHomeLoader = loadHostedAgentHome;
 const AgentHome = agentHomeLoader
 	? lazy(() => agentHomeLoader().then((module) => ({ default: module.AgentHome })))
 	: null;
+
+const overviewRoute = getRouteApi("/_protected/_dashboard/agents/$id/");
+
+export function AgentOverviewPage() {
+	const { id } = overviewRoute.useParams();
+	const search = overviewRoute.useSearch();
+	return <AgentDetailClient environmentId={id} section="overview" routeSearch={search} />;
+}
 
 export function AgentDetailClient({
 	environmentId,

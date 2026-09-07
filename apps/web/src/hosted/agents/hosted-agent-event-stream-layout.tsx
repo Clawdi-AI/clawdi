@@ -1,17 +1,15 @@
 "use client";
 
-import { type ReactNode, useEffect, useState } from "react";
+import { getRouteApi, Outlet } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { useDeploymentEventStream } from "@/hosted/use-deployment-event-stream";
 import { DeploymentEventStreamActiveProvider } from "@/lib/deployment-event-stream-context";
 
-export function HostedAgentEventStreamLayout({
-	agentId,
-	children,
-}: {
-	agentId: string;
-	children: ReactNode;
-}) {
+const route = getRouteApi("/_protected/_dashboard/agents/$id");
+
+export function HostedAgentEventStreamLayout() {
+	const { id: agentId } = route.useParams();
 	const [eventStreamActive, setEventStreamActive] = useState(false);
 	const { deployment } = useAgentDeployment(agentId, eventStreamActive);
 	const deploymentEvents = useDeploymentEventStream({
@@ -27,7 +25,7 @@ export function HostedAgentEventStreamLayout({
 	return (
 		<DeploymentEventStreamActiveProvider active={deploymentEvents.active}>
 			<div data-hosted="true" className="contents">
-				{children}
+				<Outlet />
 			</div>
 		</DeploymentEventStreamActiveProvider>
 	);

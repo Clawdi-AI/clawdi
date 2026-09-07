@@ -4,15 +4,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 export interface PageHeaderProps {
-	title: string;
+	title: ReactNode;
 	titleAdornment?: ReactNode;
-	description?: string;
+	description?: ReactNode;
 	actions?: ReactNode;
 	/** Left-of-title slot — e.g. a channel or runtime icon. */
 	icon?: ReactNode;
 	/** Meta row rendered under the title — status badges, runtime/compute, etc. */
 	status?: ReactNode;
 	className?: string;
+	"data-slot"?: string;
+	"aria-hidden"?: boolean;
 }
 
 /**
@@ -30,10 +32,14 @@ export function PageHeader({
 	icon,
 	status,
 	className,
+	"data-slot": slot = "page-header",
+	"aria-hidden": ariaHidden,
 }: PageHeaderProps) {
+	const Description = typeof description === "string" ? "p" : "div";
 	return (
 		<div
-			data-slot="page-header"
+			data-slot={slot}
+			aria-hidden={ariaHidden}
 			className={cn("flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", className)}
 		>
 			<div className="flex min-w-0 items-center gap-3">
@@ -45,7 +51,9 @@ export function PageHeader({
 						</h1>
 						{titleAdornment}
 					</div>
-					{description ? <p className="mt-1 text-sm text-muted-foreground">{description}</p> : null}
+					{description ? (
+						<Description className="mt-1 text-sm text-muted-foreground">{description}</Description>
+					) : null}
 					{status ? <div className="mt-1">{status}</div> : null}
 				</div>
 			</div>
@@ -65,24 +73,27 @@ export function PageHeaderSkeleton({
 }: {
 	icon?: boolean;
 	actions?: boolean;
-	description?: boolean;
+	description?: boolean | string;
 	iconClassName?: string;
 	className?: string;
 }) {
 	return (
-		<div
+		<PageHeader
 			data-slot="page-header-skeleton"
-			aria-hidden="true"
-			className={cn("flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", className)}
-		>
-			<div className="flex min-w-0 items-center gap-3">
-				{icon ? <Skeleton className={cn("size-10 shrink-0 rounded-lg", iconClassName)} /> : null}
-				<div className="min-w-0 flex-1 space-y-2">
-					<Skeleton className="h-6 w-52 max-w-full" />
-					{description ? <Skeleton className="h-4 w-80 max-w-full" /> : null}
-				</div>
-			</div>
-			{actions ? <Skeleton className="h-11 w-36 sm:h-8" /> : null}
-		</div>
+			aria-hidden
+			className={className}
+			icon={icon ? <Skeleton className={cn("size-10 rounded-lg", iconClassName)} /> : null}
+			title={<Skeleton className="h-lh w-52 max-w-full" />}
+			description={
+				typeof description === "string" ? (
+					<Skeleton className="text-transparent" aria-hidden="true">
+						{description}
+					</Skeleton>
+				) : description ? (
+					<Skeleton className="h-lh w-80 max-w-full" />
+				) : null
+			}
+			actions={actions ? <Skeleton className="h-11 w-36 sm:h-8" /> : null}
+		/>
 	);
 }

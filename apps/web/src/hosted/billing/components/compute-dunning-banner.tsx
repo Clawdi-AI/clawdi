@@ -14,7 +14,13 @@ import { formatShortDate } from "@/lib/format";
 import { useProductAccess } from "@/lib/product-access";
 import { computeDunningState, fallbackReasonSentence } from "./compute-dunning.logic";
 
-export function ComputeDunningBanner({ deployment }: { deployment: HostedDeployment }) {
+export function ComputeDunningBanner({
+	deployment,
+	showPrimaryAction = true,
+}: {
+	deployment: HostedDeployment;
+	showPrimaryAction?: boolean;
+}) {
 	const state = computeDunningState(deployment);
 	const subscription = deployment.commercial_display?.compute_subscription;
 	const actions = state
@@ -82,7 +88,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 			<AlertTitle>{state.title}</AlertTitle>
 			<AlertDescription className="flex flex-col items-start gap-3">
 				<span>{bannerDescription}</span>
-				{hostedAccess.isLoading ? null : !hostedAccess.canCreateCloudAgents &&
+				{!showPrimaryAction || hostedAccess.isLoading ? null : !hostedAccess.canCreateCloudAgents &&
 					primaryAction?.kind === "start_new" ? (
 					<span className="text-xs text-muted-foreground">
 						Starting a new subscription is temporarily unavailable. This agent remains visible and
