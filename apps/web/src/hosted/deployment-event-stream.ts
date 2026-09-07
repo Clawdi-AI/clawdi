@@ -207,7 +207,7 @@ export function deploymentEventQueryBelongsToAgent(queryKey: QueryKey, agentId: 
 	return (
 		(Array.isArray(queryKey) &&
 			queryKey[0] === "skills" &&
-			queryKey[1] === "agent-projects" &&
+			(queryKey[1] === "agent-projects" || queryKey[1] === "managed-agent") &&
 			queryKey[2] === agentId) ||
 		skillDetailQueryBelongsToAgent(queryKey, agentId) ||
 		openApiParamMatches(

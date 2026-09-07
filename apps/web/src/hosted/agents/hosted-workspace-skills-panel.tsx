@@ -6,7 +6,6 @@ import { type ReactNode, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import {
-	mergeWorkspaceRuntimeSkills,
 	parseWorkspaceSkillGitHubInput,
 	workspaceSkillMutationsAvailable,
 } from "@/components/dashboard/workspace-skills.logic";
@@ -30,7 +29,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+	type AgentSkillInventoryItem,
+	agentSkillInventory,
+} from "@/hosted/agents/agent-skills-inventory";
+import { useAgentManagedSkills } from "@/hosted/agents/agent-skills-query";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
+import { LibrarySkillPicker } from "@/hosted/agents/library-skill-picker";
 import {
 	normalizeWorkspaceSkillError,
 	workspaceSkillErrorNormalizer,
@@ -40,14 +46,17 @@ import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import { agentSkillDetailLink } from "@/lib/agent-routes";
-import { useOpenApi } from "@/lib/api";
+import { unwrap, useApi, useOpenApi } from "@/lib/api";
+import type { components } from "@/lib/api-schemas";
 import { useDeploymentEventStreamActive } from "@/lib/deployment-event-stream-context";
 import { eventStreamFallbackInterval } from "@/lib/event-stream-refresh";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
 type WorkspaceSkillMutation =
 	| { action: "install"; repo: string; path?: string }
-	| { action: "uninstall"; skillKey: string };
+	| { action: "uninstall"; skillKey: string }
+	| { action: "install-library"; skillId: string }
+	| { action: "uninstall-library"; skillId: string };
 
 type HostedWorkspaceSkillsPanelProps = {
 	agentId: string;
@@ -69,11 +78,16 @@ function HostedWorkspaceSkillsPanelContent({
 	pageHeader,
 }: HostedWorkspaceSkillsPanelProps) {
 	const $api = useOpenApi();
+	const api = useApi();
 	const billingClient = useBillingClient();
 	const queryClient = useQueryClient();
 	const eventStreamActive = useDeploymentEventStreamActive();
 	const actionLockedRef = useRef(false);
 	const [installOpen, setInstallOpen] = useState(false);
+	const [installSource, setInstallSource] = useState<"github" | "library">("library");
+	const [librarySkill, setLibrarySkill] = useState<
+		components["schemas"]["SkillSummaryResponse"] | null
+	>(null);
 	const [repoInput, setRepoInput] = useState("");
 	const [installError, setInstallError] = useState<string | null>(null);
 	const deploymentResolution = useAgentDeployment(agentId, eventStreamActive);
@@ -101,11 +115,21 @@ function HostedWorkspaceSkillsPanelContent({
 		refetchInterval: eventStreamFallbackInterval(10_000, eventStreamActive),
 		refetchIntervalInBackground: false,
 	});
+	const managedSkills = useAgentManagedSkills(agentId, Boolean(deploymentId));
+	const canInstallLibrary = Boolean(managedSkills.data) && !managedSkills.error;
 	const canMutate = workspaceSkillMutationsAvailable(status.data, status.error);
 
 	const mutateSkill = useMutation({
 		mutationFn: async (variables: WorkspaceSkillMutation) => {
 			const { action } = variables;
+			if (action === "install-library" || action === "uninstall-library") {
+				const params = { path: { agent_id: agentId, skill_id: variables.skillId } };
+				return action === "install-library"
+					? unwrap(await api.PUT("/v1/agents/{agent_id}/skill-references/{skill_id}", { params }))
+					: unwrap(
+							await api.DELETE("/v1/agents/{agent_id}/skill-references/{skill_id}", { params }),
+						);
+			}
 			const resourceVersion = status.data?.deployment_resource_version;
 			if (!deploymentId || !canMutate || !resourceVersion) {
 				throw new Error("Skill management isn't available right now.");
@@ -129,8 +153,8 @@ function HostedWorkspaceSkillsPanelContent({
 		onSuccess: (result, variables) => {
 			void queryClient.invalidateQueries({ queryKey: statusKey });
 			void queryClient.invalidateQueries({ queryKey: ["skills"] });
-			if (result.status === "failed") {
-				if (variables.action === "install") {
+			if ("status" in result && result.status === "failed") {
+				if (variables.action.startsWith("install")) {
 					setInstallError("Update failed. We'll retry automatically.");
 				}
 				toast.error("Update failed", {
@@ -138,19 +162,21 @@ function HostedWorkspaceSkillsPanelContent({
 				});
 				return;
 			}
-			if (variables.action === "install") {
+			if (variables.action.startsWith("install")) {
 				setRepoInput("");
 				setInstallError(null);
 				setInstallOpen(false);
 			}
-			toast.success(variables.action === "install" ? "Skill added" : "Skill removed");
+			toast.success(variables.action.startsWith("install") ? "Skill added" : "Skill removed");
 		},
 		onError: (error, variables) => {
-			if (variables.action === "install") {
+			if (variables.action.startsWith("install")) {
 				setInstallError(normalizeWorkspaceSkillError(error));
 			}
 			toast.error(
-				variables.action === "install" ? "Couldn't install skill" : "Couldn't uninstall skill",
+				variables.action.startsWith("install")
+					? "Couldn't install skill"
+					: "Couldn't uninstall skill",
 				{ description: normalizeWorkspaceSkillError(error) },
 			);
 		},
@@ -166,6 +192,11 @@ function HostedWorkspaceSkillsPanelContent({
 	};
 	const submitInstall = () => {
 		setInstallError(null);
+		if (installSource === "library") {
+			if (librarySkill)
+				void runMutation({ action: "install-library", skillId: librarySkill.id }).catch(() => {});
+			return;
+		}
 		try {
 			const request = parseWorkspaceSkillGitHubInput(repoInput);
 			void runMutation({ action: "install", ...request, path: request.path ?? undefined }).catch(
@@ -242,7 +273,8 @@ function HostedWorkspaceSkillsPanelContent({
 	const blockingStatusError = shouldBlockQueryError(status.error, status.data)
 		? status.error
 		: null;
-	const inventory = mergeWorkspaceRuntimeSkills(
+	const inventory = agentSkillInventory(
+		managedSkills.data?.skills ?? [],
 		workspaceSkills.data ?? [],
 		status.data?.items ?? [],
 	);
@@ -250,7 +282,7 @@ function HostedWorkspaceSkillsPanelContent({
 		<Button
 			size="sm"
 			onClick={() => setInstallOpen(true)}
-			disabled={!canMutate || mutateSkill.isPending}
+			disabled={(!canMutate && !canInstallLibrary) || mutateSkill.isPending}
 		>
 			<Plus className="size-3.5" />
 			Install skill
@@ -265,7 +297,7 @@ function HostedWorkspaceSkillsPanelContent({
 			) : null}
 			{status.data && !canMutate && !status.error ? (
 				<Alert>
-					<AlertTitle>Skill installation is unavailable</AlertTitle>
+					<AlertTitle>GitHub installation is unavailable</AlertTitle>
 					<AlertDescription>
 						{status.data.capability?.reason === "upgrade_not_observed"
 							? "Installation will be available when your Agent is ready."
@@ -273,11 +305,28 @@ function HostedWorkspaceSkillsPanelContent({
 					</AlertDescription>
 				</Alert>
 			) : null}
-			{status.data?.items?.some((skill) => skill.status === "failed") ? (
+			{status.data?.items?.some((skill) => skill.status === "failed") ||
+			managedSkills.data?.skills.some((skill) => skill.convergence === "failed") ? (
 				<Alert variant="destructive">
 					<AlertTitle>Couldn't update Skills</AlertTitle>
 					<AlertDescription>We'll retry automatically.</AlertDescription>
 				</Alert>
+			) : null}
+			{managedSkills.data?.removal_failures?.length ? (
+				<Alert variant="destructive">
+					<AlertTitle>Couldn't remove Skills</AlertTitle>
+					<AlertDescription>
+						We'll retry automatically.{" "}
+						{managedSkills.data.removal_failures?.map((skill) => skill.skill_key).join(", ")}
+					</AlertDescription>
+				</Alert>
+			) : null}
+			{managedSkills.error ? (
+				<ApiErrorPanel
+					error={managedSkills.error}
+					onRetry={() => void managedSkills.refetch()}
+					title="Couldn't load installed Skills"
+				/>
 			) : null}
 			{workspaceSkills.error ? (
 				<ApiErrorPanel
@@ -298,69 +347,30 @@ function HostedWorkspaceSkillsPanelContent({
 					title="Couldn't load skills"
 				/>
 			) : null}
-			{status.isLoading || workspaceSkills.isLoading ? (
+			{status.isLoading || workspaceSkills.isLoading || managedSkills.isLoading ? (
 				<WorkspaceSkillSkeleton />
-			) : inventory.length === 0 && !blockingStatusError && !workspaceSkills.error ? (
+			) : inventory.length === 0 &&
+				!blockingStatusError &&
+				!workspaceSkills.error &&
+				!managedSkills.error ? (
 				<EmptyState
 					variant="inset"
 					description="No Skills are available in this Agent's Workspace."
 				/>
 			) : (
 				<div className={HERO_GRID_CLASS}>
-					{inventory.map((item) => {
-						const pending =
-							mutateSkill.isPending &&
-							mutateSkill.variables?.action === "uninstall" &&
-							mutateSkill.variables.skillKey === item.entity.skill_key;
-						return (
-							<SkillCard
-								key={item.entity.skill_key}
-								skill={item.entity}
-								cloudSkill={item.cloudProjection ?? undefined}
-								entityLink={agentSkillDetailLink(agentId, item.entity.skill_key, projectId)}
-								readOnly
-								readOnlyLabel={item.projectionOnly ? "Read-only" : null}
-								provenanceLabel={item.projectionOnly ? "Synced from Agent" : null}
-								showVersion={Boolean(item.cloudProjection?.version)}
-								actions={
-									item.desired ? (
-										<div className="flex flex-wrap items-center gap-2">
-											{canMutate ? (
-												<ConfirmAction
-													title={`Uninstall ${item.entity.name} from Agent?`}
-													description={
-														<p>
-															This removes the copy installed by this Workspace. Other copies won't
-															be affected.
-														</p>
-													}
-													confirmLabel="Uninstall skill"
-													destructive
-													onConfirm={() =>
-														runMutation({ action: "uninstall", skillKey: item.entity.skill_key })
-													}
-												>
-													<Button
-														variant="ghost"
-														size="icon-sm"
-														disabled={mutateSkill.isPending}
-														className="text-muted-foreground hover:text-destructive"
-														aria-label={`${pending ? "Uninstalling" : "Uninstall"} ${item.entity.name} from Agent`}
-													>
-														{pending ? (
-															<Spinner className="size-3.5" />
-														) : (
-															<Trash2 className="size-3.5" />
-														)}
-													</Button>
-												</ConfirmAction>
-											) : null}
-										</div>
-									) : null
-								}
-							/>
-						);
-					})}
+					{inventory.map((item) => (
+						<WorkspaceSkillCard
+							key={item.entity.skill_key}
+							item={item}
+							agentId={agentId}
+							projectId={projectId}
+							canMutate={canMutate}
+							canManageLibrary={canInstallLibrary}
+							pending={mutateSkill.isPending}
+							onRemove={runMutation}
+						/>
+					))}
 				</div>
 			)}
 			<Dialog
@@ -371,6 +381,7 @@ function HostedWorkspaceSkillsPanelContent({
 				onOpenChangeComplete={(open) => {
 					if (!open) {
 						setRepoInput("");
+						setLibrarySkill(null);
 						setInstallError(null);
 					}
 				}}
@@ -378,32 +389,66 @@ function HostedWorkspaceSkillsPanelContent({
 				<DialogContent className="sm:max-w-md">
 					<DialogHeader>
 						<DialogTitle>Install skill</DialogTitle>
-						<DialogDescription>Install from a public GitHub Skill repository.</DialogDescription>
+						<DialogDescription>
+							Choose a Skill from your Library or a public GitHub repository.
+						</DialogDescription>
 					</DialogHeader>
-					<div className="space-y-2">
-						<Label htmlFor={`hosted-workspace-skill-repo-${agentId}`}>
-							GitHub Skill repository
-						</Label>
-						<Input
-							id={`hosted-workspace-skill-repo-${agentId}`}
-							value={repoInput}
-							onChange={(event) => {
-								setRepoInput(event.target.value);
+					<Tabs
+						value={installSource}
+						onValueChange={(value) => {
+							if (value === "library" || value === "github") {
+								setInstallSource(value);
 								setInstallError(null);
-							}}
-							onKeyDown={(event) => {
-								if (event.key === "Enter" && canMutate && !mutateSkill.isPending) submitInstall();
-							}}
-							placeholder="owner/repo or owner/repo/path-to-skill…"
-							autoComplete="off"
-							spellCheck={false}
-							aria-invalid={Boolean(installError) || undefined}
-						/>
-						<p className="text-xs text-muted-foreground">
-							Use owner/repo or owner/repo/path-to-skill.
+							}
+						}}
+					>
+						<TabsList>
+							<TabsTrigger value="library" disabled={mutateSkill.isPending}>
+								Library
+							</TabsTrigger>
+							<TabsTrigger value="github" disabled={mutateSkill.isPending}>
+								GitHub
+							</TabsTrigger>
+						</TabsList>
+						<TabsContent value="library">
+							<LibrarySkillPicker
+								value={librarySkill}
+								onChange={setLibrarySkill}
+								disabled={mutateSkill.isPending}
+							/>
+						</TabsContent>
+						<TabsContent value="github">
+							<div className="space-y-2">
+								<Label htmlFor={`hosted-workspace-skill-repo-${agentId}`}>
+									GitHub Skill repository
+								</Label>
+								<Input
+									id={`hosted-workspace-skill-repo-${agentId}`}
+									value={repoInput}
+									onChange={(event) => {
+										setRepoInput(event.target.value);
+										setInstallError(null);
+									}}
+									onKeyDown={(event) => {
+										if (event.key === "Enter" && canMutate && !mutateSkill.isPending)
+											submitInstall();
+									}}
+									placeholder="owner/repo or owner/repo/path-to-skill…"
+									autoComplete="off"
+									spellCheck={false}
+									aria-invalid={Boolean(installError) || undefined}
+								/>
+								<p className="text-xs text-muted-foreground">
+									Use owner/repo or owner/repo/path-to-skill.
+								</p>
+							</div>
+						</TabsContent>
+					</Tabs>
+					{installError ? (
+						<p className="text-sm text-destructive" role="alert">
+							{installError}
 						</p>
-						{installError ? <p className="text-xs text-destructive">{installError}</p> : null}
-					</div>
+					) : null}
 					<DialogFooter>
 						<Button
 							variant="outline"
@@ -414,9 +459,14 @@ function HostedWorkspaceSkillsPanelContent({
 						</Button>
 						<Button
 							onClick={submitInstall}
-							disabled={!canMutate || !repoInput.trim() || mutateSkill.isPending}
+							disabled={
+								mutateSkill.isPending ||
+								(installSource === "library"
+									? !canInstallLibrary || !librarySkill
+									: !canMutate || !repoInput.trim())
+							}
 						>
-							{mutateSkill.isPending && mutateSkill.variables?.action === "install" ? (
+							{mutateSkill.isPending && mutateSkill.variables?.action.startsWith("install") ? (
 								<Spinner />
 							) : (
 								<Plus className="size-3.5" />
@@ -428,6 +478,89 @@ function HostedWorkspaceSkillsPanelContent({
 			</Dialog>
 		</div>,
 		installAction,
+	);
+}
+
+function WorkspaceSkillCard({
+	item,
+	agentId,
+	projectId,
+	canMutate,
+	canManageLibrary,
+	pending,
+	onRemove,
+}: {
+	item: AgentSkillInventoryItem;
+	agentId: string;
+	projectId: string;
+	canMutate: boolean;
+	canManageLibrary: boolean;
+	pending: boolean;
+	onRemove: (mutation: WorkspaceSkillMutation) => Promise<unknown>;
+}) {
+	const managed = item.managed;
+	const libraryReference = managed?.source === "library" && !managed.read_only && managed.skill_id;
+	const removable = Boolean(
+		(libraryReference && canManageLibrary) || (item.desired && canMutate && !managed?.read_only),
+	);
+	const detailLink =
+		managed?.source === "bundled"
+			? undefined
+			: managed?.source === "project" && managed.project_id && managed.source_skill_key
+				? agentSkillDetailLink(agentId, managed.source_skill_key, managed.project_id)
+				: agentSkillDetailLink(agentId, item.entity.skill_key, projectId);
+	const provenance =
+		managed?.source === "library"
+			? "Library"
+			: managed?.source === "project"
+				? "Linked Project"
+				: managed?.source === "bundled"
+					? "Built in"
+					: item.projectionOnly
+						? "Synced from Agent"
+						: null;
+	return (
+		<SkillCard
+			skill={item.entity}
+			cloudSkill={item.cloudProjection ?? undefined}
+			entityLink={detailLink}
+			readOnly
+			readOnlyLabel={item.projectionOnly ? "Read-only" : null}
+			provenanceLabel={provenance}
+			showVersion={Boolean(item.cloudProjection?.version)}
+			actions={
+				removable ? (
+					<ConfirmAction
+						title={`Uninstall ${item.entity.name} from Agent?`}
+						description={
+							<p>
+								This removes the Skill from this Agent. Your Library and other Agents keep their
+								copies.
+							</p>
+						}
+						confirmLabel="Uninstall skill"
+						destructive
+						onConfirm={() =>
+							onRemove(
+								libraryReference
+									? { action: "uninstall-library", skillId: libraryReference }
+									: { action: "uninstall", skillKey: item.entity.skill_key },
+							)
+						}
+					>
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							disabled={pending}
+							className="text-muted-foreground hover:text-destructive"
+							aria-label={`Uninstall ${item.entity.name} from Agent`}
+						>
+							<Trash2 className="size-3.5" />
+						</Button>
+					</ConfirmAction>
+				) : null
+			}
+		/>
 	);
 }
 

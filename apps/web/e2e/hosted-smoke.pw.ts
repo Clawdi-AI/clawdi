@@ -2681,6 +2681,13 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				},
 			]);
 		}
+		if (/^\/v1\/agents\/[^/]+\/skills$/.test(p) && r.request().method() === "GET") {
+			return fulfillJson(r, {
+				agent_id: decodeURIComponent(p.split("/")[3] ?? ""),
+				skills: [],
+				removal_failures: [],
+			});
+		}
 		if (p.startsWith("/v1/agents/") && r.request().method() === "GET") {
 			const id = decodeURIComponent(p.slice("/v1/agents/".length));
 			const response = options.cloudAgentResponses?.[id]?.shift();

@@ -6,8 +6,11 @@ import {
 	DeploymentConflictError,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
+import { ApiError, ApiNetworkError, isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 
 export function normalizeWorkspaceSkillError(error: unknown): string {
+	if (error instanceof ApiError || error instanceof ApiNetworkError)
+		return normalizeApiError(error);
 	if (billingErrorNormalizer.isAuthError(error) || error instanceof DeploymentConflictError) {
 		return normalizeBillingError(error);
 	}
@@ -33,6 +36,7 @@ export function normalizeWorkspaceSkillError(error: unknown): string {
 }
 
 export const workspaceSkillErrorNormalizer = {
-	isAuthError: billingErrorNormalizer.isAuthError,
+	isAuthError: (error: unknown) =>
+		isApiAuthError(error) || billingErrorNormalizer.isAuthError(error),
 	normalizeError: normalizeWorkspaceSkillError,
 };
