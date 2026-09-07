@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import quote
 
 
 ADDON_PATH = (
@@ -351,22 +352,89 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                     "priority": 10,
                 }
             ],
-            {"secret://placeholder": "managed"},
+            {"secret://placeholder": "managed:token"},
         )
 
         matched = Flow(
             host="provider.test",
-            path="/v1/messages?identity=managed.gateway",
-            headers={"authorization": "Bearer managed.session"},
+            path="/v1/messages?identity=managed%3Atoken.gateway",
+            headers={"authorization": "Bearer managed:token.session"},
         )
         wrong_query = Flow(
             host="provider.test",
-            path="/v1/messages?identity=user-owned",
-            headers={"authorization": "Bearer managed.session"},
+            path="/v1/messages?identity=managed%253Atoken.gateway",
+            headers={"authorization": "Bearer managed:token.session"},
+        )
+        wrong_header = Flow(
+            host="provider.test",
+            path="/v1/messages?identity=managed%3Atoken.gateway",
+            headers={"authorization": "Bearer managed%3Atoken.session"},
         )
 
         self.assertEqual(egress.apply_to_flow(matched).profile_id, "generic-prefix-identity")
         self.assertIsNone(egress.apply_to_flow(wrong_query).profile)
+        self.assertIsNone(egress.apply_to_flow(wrong_header).profile)
+
+    def test_path_secret_encoding_preserves_literal_boundaries_and_matcher_semantics(self):
+        secrets = {"secret://placeholder": "id:token+value@host"}
+        for matcher_type in ("secretRefEquals", "secretRefPrefix"):
+            matcher = {
+                "type": matcher_type,
+                "secretRef": "secret://placeholder",
+                "prefix": "/key/",
+                "suffix": "/",
+            }
+            cases = (
+                ("/key/id:token+value@host/", True),
+                ("/key/id%3Atoken%2Bvalue%40host/", True),
+                ("/key/id%3atoken+value%40host/", True),
+                ("/key/id%3Atoken%2Bvalue%40host/file", matcher_type == "secretRefPrefix"),
+                ("/key/id%253Atoken%2Bvalue%40host/", False),
+                ("/key/id%3ATOKEN%2Bvalue%40host/", False),
+                ("/key/id%3Atoken%2Bvalue%40host-extra/", False),
+                ("/key/id%3Atoken%2Bvalue%40host", False),
+                ("/key/id%3Atoken%2Bvalue%40host%2Ffile", False),
+                ("/key/id%3Atoken%2Bvalue%40host%5Cfile", False),
+                ("/key/id%3Atoken%2Bvalue%40host%2F..%2Ffile", False),
+                ("/key%2Fid%3Atoken%2Bvalue%40host/", False),
+            )
+            for path, expected in cases:
+                with self.subTest(matcher_type=matcher_type, path=path):
+                    self.assertEqual(addon.path_matcher_matches(path, matcher, secrets), expected)
+
+        for matcher_type in ("equals", "prefix"):
+            self.assertFalse(
+                addon.path_matcher_matches(
+                    "/key/id%3Atoken/", {"type": matcher_type, "value": "/key/id:token/"}, {}
+                )
+            )
+        for secret, encoded, expected in (
+            ("a/b", "a%2Fb", False),
+            ("a\\b", "a%5Cb", False),
+            ("..", "%2E%2E", False),
+            (":", "%253A", False),
+            ("%", "%25", True),
+            ("value%3A", "value%253A", True),
+        ):
+            with self.subTest(secret=secret):
+                matcher = {"type": "secretRefEquals", "secretRef": "secret://placeholder"}
+                secrets = {"secret://placeholder": secret}
+                self.assertTrue(addon.path_matcher_matches(secret, matcher, secrets))
+                self.assertEqual(addon.path_matcher_matches(encoded, matcher, secrets), expected)
+
+        self.assertEqual(
+            addon.apply_path_replace(
+                "/key/value%25tail?x=1",
+                {"pathReplace": {
+                    "type": "secretRefPrefix",
+                    "secretRef": "secret://placeholder",
+                    "replacementSecretRef": "secret://actual",
+                    "prefix": "/key/",
+                }},
+                {"secret://placeholder": "value%", "secret://actual": "actual"},
+            ),
+            "/key/actualtail?x=1",
+        )
 
     def load(self, profiles, secrets=None):
         self.tmp = tempfile.TemporaryDirectory()
@@ -706,27 +774,32 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                 }
             ],
             {
-                "secret://placeholder": "placeholder-token",
-                "secret://real-token": "real-agent-token",
+                "secret://placeholder": "placeholder:token",
+                "secret://real-token": "real:agent?token#value%3A",
                 "secret://control-token": "control-token",
             },
         )
 
-        flow = Flow(host="provider.test", path="/botplaceholder-token/send?x=1")
-        decision = egress.apply_to_flow(flow)
+        tail = "send%2Fpart%253A?x=a%2Fb&x=c+d"
+        for placeholder in ("placeholder:token", "placeholder%3Atoken", "placeholder%3atoken"):
+            with self.subTest(placeholder=placeholder):
+                flow = Flow(host="provider.test", path=f"/bot{placeholder}/{tail}")
+                decision = egress.apply_to_flow(flow)
 
-        self.assertEqual(decision.action, "http")
-        self.assertIsNotNone(decision.profile)
-        self.assertEqual(flow.request.scheme, "https")
-        self.assertEqual(flow.request.host, "control.test")
-        self.assertEqual(flow.request.path, "/v1/relay/botreal-agent-token/send?x=1")
-        self.assertEqual(flow.request.headers["host"], "control.test")
-        self.assertEqual(flow.request.headers["authorization"], "Bearer control-token")
-        redacted = addon.redact_url(
-            "https://control.test/v1/relay/botreal-agent-token/send?x=1",
-            decision.profile,
-        )
-        self.assertNotIn("real-agent-token", redacted)
+                self.assertEqual(decision.action, "http")
+                self.assertIsNotNone(decision.profile)
+                self.assertEqual(flow.request.scheme, "https")
+                self.assertEqual(flow.request.host, "control.test")
+                self.assertEqual(
+                    flow.request.path,
+                    f"/v1/relay/botreal:agent%3Ftoken%23value%253A/{tail}",
+                )
+                self.assertEqual(flow.request.headers["host"], "control.test")
+                self.assertEqual(flow.request.headers["authorization"], "Bearer control-token")
+                redacted = addon.redact_url(
+                    f"https://control.test{flow.request.path}", decision.profile
+                )
+                self.assertEqual(redacted, f"https://control.test/v1/relay[redacted]/{tail}")
 
     def test_provider_profile_with_explicit_port_matches_exact_origin(self):
         egress = self.load(
@@ -788,16 +861,17 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         egress = self.load(
             [
                 {
-                    "id": "managed-telegram",
+                    "id": profile_id,
                     "enabled": True,
                     "kind": "http",
                     "match": {
                         "scheme": "https",
                         "host": "api.telegram.org",
+                        "pathPrefix": prefix,
                         "path": {
                             "type": "secretRefPrefix",
                             "secretRef": "secret://placeholder",
-                            "prefix": "/bot",
+                            "prefix": prefix,
                             "suffix": "/",
                         },
                     },
@@ -815,26 +889,50 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                     "logging": {"redactHeaders": ["authorization"], "redactUrlPatterns": []},
                     "priority": 10,
                 }
+                for profile_id, prefix in (
+                    ("managed-telegram", "/bot"),
+                    ("managed-telegram-file", "/file/bot"),
+                )
             ],
             {
                 "secret://placeholder": "999999999:public-routing-id",
                 "secret://agent-token": "123456789:real-agent-token",
             },
         )
-        flow = Flow(
-            host="api.telegram.org",
-            path="/bot999999999:public-routing-id/sendMessage?chat_id=42",
-        )
+        for path in (
+            "/bot999999999:public-routing-id/sendMessage",
+            "/file/bot999999999:public-routing-id/photos/file 1.jpg",
+        ):
+            # python-telegram-bot File._get_encoded_url quotes the path, not the query.
+            for encoded in (
+                path.replace(" ", "%20"), quote(path), quote(path).replace("%3A", "%3a")
+            ):
+                with self.subTest(path=encoded):
+                    request_path = f"{encoded}?x=a%2Fb&x=c+d"
+                    flow = Flow(host="api.telegram.org", path=request_path)
+                    decision = egress.apply_to_flow(flow)
 
-        decision = egress.apply_to_flow(flow)
+                    self.assertEqual(decision.action, "http")
+                    self.assertEqual(flow.request.host, "cloud.test")
+                    self.assertEqual(flow.request.path, f"/v1/channels/telegram{request_path}")
+                    self.assertNotIn("real-agent-token", flow.request.path)
+                    self.assertEqual(
+                        flow.request.headers["authorization"], "Bearer 123456789:real-agent-token"
+                    )
 
-        self.assertEqual(decision.action, "http")
-        self.assertEqual(
-            flow.request.path,
-            "/v1/channels/telegram/bot999999999:public-routing-id/sendMessage?chat_id=42",
-        )
-        self.assertNotIn("real-agent-token", flow.request.path)
-        self.assertEqual(flow.request.headers["authorization"], "Bearer 123456789:real-agent-token")
+        for token in (
+            "999999999%253Apublic-routing-id",
+            "999999999%3Aother-account",
+            "999999999%3Apublic-routing-id-extra",
+            "999999999%3Apublic-routing-id%2F..",
+        ):
+            with self.subTest(token=token):
+                path = f"/file/bot{token}/photos/file_1.jpg"
+                flow = Flow(host="api.telegram.org", path=path)
+                self.assertEqual(egress.apply_to_flow(flow).action, "allow")
+                self.assertEqual(flow.request.host, "api.telegram.org")
+                self.assertEqual(flow.request.path, path)
+                self.assertNotIn("authorization", flow.request.headers)
 
     def test_websocket_profile_rewrites_upgrade_request(self):
         egress = self.load(
