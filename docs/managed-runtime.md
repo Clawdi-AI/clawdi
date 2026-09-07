@@ -115,12 +115,16 @@ read-only batch using the shared runtime observation RR session dependency.
 Send 1-100 bindings with distinct environment and deployment IDs. Current
 callers include `expectedApplyIdentity` (`generation`, `manifestETag`,
 `applyReceiptId`, and `bootNonce`) so head selection uses the same authority as
-the full observation reader. The field is optional only for rolling compatibility;
-legacy requests retain the original all-active-head behavior. Invalid or duplicate
-bindings return 422. `items` preserves request order and echoes every requested
-pair, including missing entries; `observedAt` is the server's freshness evaluation
-time. This endpoint never registers consumers, ACKs, resets cursors, renders
-sources, or repairs persisted revisions.
+the full observation reader. Intentionally stopped runtimes may omit the field
+when callers need only binding and persisted source instance identity; source
+revision availability and observation heads are not runtime-health evidence
+until the runtime starts again. Observation selection then uses the original
+all-active-head behavior. The field also remains optional for rolling
+compatibility. Invalid or duplicate bindings return 422. `items`
+preserves request order and echoes every requested pair, including missing
+entries; `observedAt` is the server's freshness evaluation time. This endpoint
+never registers consumers, ACKs, resets cursors, renders sources, or repairs
+persisted revisions.
 
 Each result reports `binding` (`active`, `retired`, `missing`, or
 `binding_mismatch`). A missing fence is `missing`; a fence or available runtime
