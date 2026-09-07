@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -8,6 +8,7 @@ import {
 	nativeAssetName,
 	nativeTargetForPlatform,
 } from "../src/lib/native-release-manifest.ts";
+import { validateNativePublicationArchive } from "./native-publication.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const cliRoot = resolve(scriptDir, "..");
@@ -36,9 +37,10 @@ run("tar", [
 	"-czf",
 	assetPath,
 	"clawdi",
-	"egress-addon",
+	"egress-addon/clawdi_egress_addon.py",
 	"skills",
 ]);
+await validateNativePublicationArchive(readFileSync(assetPath));
 
 console.log(`packaged ${assetPath}`);
 
