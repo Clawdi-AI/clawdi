@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse } from "yaml";
@@ -26,10 +27,11 @@ const cliDevelopmentDoc = readFileSync(
 	resolve(import.meta.dir, "../../../docs/cli-development.md"),
 	"utf8",
 );
-const publishManifestChecker = readFileSync(
-	resolve(import.meta.dir, "../scripts/check-publish-manifest.mjs"),
-	"utf8",
+const publishManifestCheckerPath = resolve(
+	import.meta.dir,
+	"../scripts/check-publish-manifest.mjs",
 );
+const publishManifestChecker = readFileSync(publishManifestCheckerPath, "utf8");
 const manifestContract = readFileSync(
 	resolve(import.meta.dir, "../src/runtime/manifest-contract.ts"),
 	"utf8",
@@ -37,8 +39,60 @@ const manifestContract = readFileSync(
 const cliPackage = JSON.parse(
 	readFileSync(resolve(import.meta.dir, "../package.json"), "utf8"),
 ) as {
+	name: string;
+	version: string;
 	publishConfig?: { access?: string; tag?: unknown };
 };
+
+describe("CLI pack inventory", () => {
+	const packed = {
+		name: cliPackage.name,
+		version: cliPackage.version,
+		filename: `${cliPackage.name}-${cliPackage.version}.tgz`,
+		files: [
+			{ path: "package.json" },
+			{ path: "egress-addon/clawdi_egress_addon.py" },
+			{ path: "skills/future-skill/SKILL.md" },
+		],
+	};
+	const check = (inventory: unknown) =>
+		spawnSync("node", [publishManifestCheckerPath, "--pack-json"], {
+			input: JSON.stringify(inventory),
+			encoding: "utf8",
+		});
+
+	test("accepts the exact source and additional intentional skill files", () => {
+		const result = check([packed]);
+		expect(result.status).toBe(0);
+		expect(result.stdout.trim()).toBe(packed.filename);
+	});
+
+	test("rejects Python cache directories and bytecode anywhere in the package", () => {
+		for (const path of [
+			"egress-addon/__pycache__/cache.json",
+			"egress-addon/addon.pyc",
+			"skills/future-skill/cache.pyo",
+		]) {
+			const result = check([{ ...packed, files: [...packed.files, { path }] }]);
+			expect(result.status).toBe(1);
+			expect(result.stderr).toContain(path);
+			expect(result.stdout).toBe("");
+		}
+	});
+
+	test("fails closed for invalid inventory, identity or missing addon source", () => {
+		for (const inventory of [
+			[],
+			[{ ...packed, version: "unreviewed" }],
+			[{ ...packed, files: [{ path: 1 }] }],
+			[{ ...packed, files: [{ path: "package.json" }] }],
+		]) {
+			const result = check(inventory);
+			expect(result.status).toBe(1);
+			expect(result.stdout).toBe("");
+		}
+	});
+});
 
 describe("CLI publish workflow contract", () => {
 	test("keeps current-run release decisions inside the protected publish topology", () => {
@@ -138,6 +192,9 @@ describe("CLI publish workflow contract", () => {
 			"published CLI package must not declare publishConfig.tag",
 		);
 		expect(workflow).toContain("node scripts/check-publish-manifest.mjs");
+		expect(build.steps?.find((step) => step.id === "pack_release")?.run).toContain(
+			'tarball=$(node scripts/check-publish-manifest.mjs --pack-json <<< "$pack_json")',
+		);
 		expect(workflow).toContain("CLI_ARTIFACT_NAME: clawdi-cli-release");
 		expect(workflow).toContain(
 			`CLI_TARBALL_FILENAME: \${{ needs['build-immutable-artifact'].outputs.cli_tarball_filename }}`,

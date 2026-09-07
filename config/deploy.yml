@@ -59,11 +59,12 @@ servers:
         # This is the smallest measured capacity step. The local ONNX model is
         # isolated below, so two API workers no longer duplicate its RSS.
         WEB_CONCURRENCY: 2
-        # Per worker: 5+3 ordinary + 2 reserved control = 10 pooled connections.
+        # Retain all 8 ordinary slots to avoid overflow connection churn.
+        # Per worker: 8+0 ordinary + 2 reserved control = 10 pooled connections.
         # Both workers total 20; channels totals 20. Sequential role rolls peak
         # at 60 pooled + 5 LISTEN = 65 of 97 ordinary PostgreSQL client slots.
-        DB_POOL_SIZE: 5
-        DB_MAX_OVERFLOW: 3
+        DB_POOL_SIZE: 8
+        DB_MAX_OVERFLOW: 0
         DB_POOL_TIMEOUT: 5
         PROMETHEUS_MULTIPROC_DIR: /tmp/clawdi-prometheus-multiproc
   embedding-worker:

@@ -47,9 +47,11 @@ if (!result.success) {
 
 console.log(`built ${outfile} (${targetEntry.bunTarget})`);
 
-cpSync(resolve(cliRoot, "egress-addon"), resolve(outputDirectory, "egress-addon"), {
-	recursive: true,
-});
+mkdirSync(resolve(outputDirectory, "egress-addon"), { recursive: true });
+cpSync(
+	resolve(cliRoot, "egress-addon", "clawdi_egress_addon.py"),
+	resolve(outputDirectory, "egress-addon", "clawdi_egress_addon.py"),
+);
 console.log(`copied egress addon to ${resolve(outputDirectory, "egress-addon")}`);
 
 cpSync(resolve(cliRoot, "skills"), resolve(outputDirectory, "skills"), {

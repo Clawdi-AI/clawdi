@@ -132,6 +132,13 @@ async def test_manifest_pairs_allow_four_snapshots_and_clean_up_partial_acquisit
     assert isinstance(pool, QueuePool)
     rendezvous = asyncio.Barrier(4)
     pairs = asynccontextmanager(database.get_runtime_manifest_sessions)
+    connections_created = 0
+
+    def on_connect(_connection, _record):
+        nonlocal connections_created
+        connections_created += 1
+
+    event.listen(pool, "connect", on_connect)
 
     async def read_pair():
         async with pairs() as pair:
@@ -161,6 +168,9 @@ async def test_manifest_pairs_allow_four_snapshots_and_clean_up_partial_acquisit
     try:
         async with asyncio.timeout(5):
             await asyncio.gather(*(read_pair() for _ in range(4)))
+            assert connections_created == 8
+            await asyncio.gather(*(read_pair() for _ in range(4)))
+            assert connections_created == 8
         assert pool.checkedout() == 0
         async with AsyncExitStack() as stack:
             for _ in range(7):
@@ -192,6 +202,7 @@ async def test_manifest_pairs_allow_four_snapshots_and_clean_up_partial_acquisit
                 await dependency.aclose()
         assert pool.checkedout() == 0
     finally:
+        event.remove(pool, "connect", on_connect)
         await ordinary.dispose()
 
 

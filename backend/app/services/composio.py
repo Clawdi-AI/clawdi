@@ -1515,46 +1515,48 @@ def _titleize_slug(slug: str) -> str:
 
 _toolkits_cache: list[_Toolkit] | None = None
 _toolkits_cache_at: datetime | None = None
+_toolkits_cache_lock = asyncio.Lock()
 
 
 async def _get_all_toolkits() -> list[_Toolkit]:
     """Fetch and cache the Composio toolkit catalog."""
     global _toolkits_cache, _toolkits_cache_at
-    now = datetime.now(UTC)
-    if _toolkits_cache is not None and _toolkits_cache_at is not None:
-        if (now - _toolkits_cache_at) < _COMPOSIO_METADATA_CACHE_TTL:
-            return _toolkits_cache
+    async with _toolkits_cache_lock:
+        now = datetime.now(UTC)
+        if _toolkits_cache is not None and _toolkits_cache_at is not None:
+            if (now - _toolkits_cache_at) < _COMPOSIO_METADATA_CACHE_TTL:
+                return _toolkits_cache
 
-    client = get_composio_client()
-    toolkits: list[_Toolkit] = []
-    cursor: str | None = None
-    while True:
-        if cursor:
-            raw_response = await _call_generated_sdk(
-                client.toolkits.list(
-                    managed_by="composio",
-                    sort_by="usage",
-                    limit=1000,
-                    cursor=cursor,
+        client = get_composio_client()
+        toolkits: list[_Toolkit] = []
+        cursor: str | None = None
+        while True:
+            if cursor:
+                raw_response = await _call_generated_sdk(
+                    client.toolkits.list(
+                        managed_by="composio",
+                        sort_by="usage",
+                        limit=1000,
+                        cursor=cursor,
+                    )
                 )
-            )
-        else:
-            raw_response = await _call_generated_sdk(
-                client.toolkits.list(
-                    managed_by="composio",
-                    sort_by="usage",
-                    limit=1000,
+            else:
+                raw_response = await _call_generated_sdk(
+                    client.toolkits.list(
+                        managed_by="composio",
+                        sort_by="usage",
+                        limit=1000,
+                    )
                 )
-            )
-        response = _normalize_sdk_response(raw_response, _ToolkitPage)
-        toolkits.extend(response.items)
-        cursor = response.next_cursor
-        if not cursor:
-            break
+            response = _normalize_sdk_response(raw_response, _ToolkitPage)
+            toolkits.extend(response.items)
+            cursor = response.next_cursor
+            if not cursor:
+                break
 
-    _toolkits_cache = toolkits
-    _toolkits_cache_at = now
-    return toolkits
+        _toolkits_cache = toolkits
+        _toolkits_cache_at = now
+        return toolkits
 
 
 async def get_app_by_name(name: str) -> ConnectorAvailableAppResponse | None:
@@ -1562,8 +1564,7 @@ async def get_app_by_name(name: str) -> ConnectorAvailableAppResponse | None:
     client = get_composio_client()
     toolkits = await _get_all_toolkits()
     for toolkit in toolkits:
-        app = _serialize_app(toolkit, allow_unknown_auth_type=True)
-        if app.name == name:
+        if toolkit.slug == name:
             detail = await _get_toolkit_detail(name)
             return await _annotate_connect_status(client, detail, _serialize_app(detail))
     return None

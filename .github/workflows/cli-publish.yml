@@ -100,7 +100,7 @@ jobs:
           install_dir="$RUNNER_TEMP/clawdi-cli-install"
           mkdir -p "$release_dir" "$install_dir"
           pack_json=$(npm pack --json --ignore-scripts --pack-destination "$release_dir")
-          tarball=$(node -e "const fs=require('node:fs'); const data=JSON.parse(fs.readFileSync(0,'utf8')); console.log(data[0].filename)" <<< "$pack_json")
+          tarball=$(node scripts/check-publish-manifest.mjs --pack-json <<< "$pack_json")
           tarball_path="$release_dir/$tarball"
           tarball_sha=$(sha256sum "$tarball_path" | cut -d' ' -f1)
           printf '%s  %s\n' "$tarball_sha" "$tarball" > "$release_dir/$tarball.sha256"

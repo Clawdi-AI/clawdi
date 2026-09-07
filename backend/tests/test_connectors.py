@@ -442,6 +442,7 @@ def _composio_client_status_error(
 
 @pytest.fixture(autouse=True)
 def _reset_composio_app_cache(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(composio, "_toolkits_cache_lock", asyncio.Lock())
     monkeypatch.setattr(composio, "_toolkits_cache", None)
     monkeypatch.setattr(composio, "_toolkits_cache_at", None)
     monkeypatch.setattr(composio, "_custom_auth_config_index", None)
@@ -452,6 +453,14 @@ def _reset_composio_app_cache(monkeypatch: pytest.MonkeyPatch):
 @pytest.mark.asyncio
 async def test_connector_detail_uses_toolkit_auth_config_details(monkeypatch: pytest.MonkeyPatch):
     fake = FakeClient()
+    serialized: list[str] = []
+    serialize = composio._serialize_app
+
+    def record_serialization(toolkit, **kwargs):
+        serialized.append(toolkit.slug)
+        return serialize(toolkit, **kwargs)
+
+    monkeypatch.setattr(composio, "_serialize_app", record_serialization)
     monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
     monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
 
@@ -460,6 +469,79 @@ async def test_connector_detail_uses_toolkit_auth_config_details(monkeypatch: py
     assert app is not None
     assert app.name == "posthog"
     assert app.auth_type == "api_key"
+    assert serialized == ["posthog"]
+
+
+async def test_catalog_refresh_is_shared_and_expires(monkeypatch: pytest.MonkeyPatch):
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[str | None] = []
+    fake = FakeClient()
+
+    async def list_page(**kwargs):
+        cursor = kwargs.get("cursor")
+        calls.append(cursor)
+        if cursor is None:
+            started.set()
+            await release.wait()
+        return _FakePage[_FakeToolkit](
+            items=[_posthog_list_toolkit()], next_cursor="next" if cursor is None else None
+        )
+
+    monkeypatch.setattr(fake.toolkits, "list", list_page)
+    monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+    first = asyncio.create_task(composio._get_all_toolkits())
+    second = asyncio.create_task(composio._get_all_toolkits())
+    try:
+        async with asyncio.timeout(3):
+            await started.wait()
+            await asyncio.sleep(0)
+            assert calls == [None]
+            release.set()
+            first_result, second_result = await asyncio.gather(first, second)
+        assert first_result is second_result
+        assert len(first_result) == 2
+        assert calls == [None, "next"]
+        assert await composio._get_all_toolkits() is first_result
+        monkeypatch.setattr(
+            composio, "_toolkits_cache_at", datetime.now(UTC) - timedelta(minutes=6)
+        )
+        assert await composio._get_all_toolkits() == first_result
+        assert calls == [None, "next", None, "next"]
+    finally:
+        release.set()
+        for task in (first, second):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(first, second, return_exceptions=True)
+
+
+async def test_cancelled_catalog_refresh_releases_lock_without_publishing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    started = asyncio.Event()
+    fake = FakeClient()
+    list_page = fake.toolkits.list
+
+    async def blocked_page(**kwargs):
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(fake.toolkits, "list", blocked_page)
+    monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+    first = asyncio.create_task(composio._get_all_toolkits())
+    try:
+        async with asyncio.timeout(3):
+            await started.wait()
+    finally:
+        first.cancel()
+        await asyncio.gather(first, return_exceptions=True)
+    assert first.cancelled()
+    assert composio._toolkits_cache is None
+    assert composio._toolkits_cache_at is None
+    monkeypatch.setattr(fake.toolkits, "list", list_page)
+    async with asyncio.timeout(3):
+        assert len(await composio._get_all_toolkits()) == 1
 
 
 @pytest.mark.asyncio
