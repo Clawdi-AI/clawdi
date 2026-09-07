@@ -27,6 +27,14 @@ import {
 } from "@/hosted/deployment-status";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
+const runtimeUiEndpoint = {
+	runtime: "openclaw",
+	role: "control_ui",
+	url: "https://runtime.example/",
+	auth_mode: "openclaw_token",
+	browser_mode: "embedded_and_top_level",
+} as const;
+
 function acceptedOperation(verb: DeploymentOperationVerb): DeploymentOperation {
 	return {
 		name: `operations/${verb}-polling`,
@@ -343,6 +351,7 @@ describe("DeploymentStatus", () => {
 				hostedDeploymentFixture({
 					id: "hdep_polling",
 					status: "running",
+					runtimeUiEndpoint,
 					acceptedOperation: operation,
 				}),
 			],
@@ -383,6 +392,7 @@ describe("DeploymentStatus", () => {
 				hostedDeploymentFixture({
 					id: "hdep_slow_create",
 					status: "running",
+					runtimeUiEndpoint,
 					acceptedOperation: operation,
 				}),
 			],
@@ -400,6 +410,19 @@ describe("DeploymentStatus", () => {
 		expect(running.refetchInterval).toBe(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS);
 		expect(running.transitions.size).toBe(0);
 		expect(running.trackers.size).toBe(0);
+		const awaitingPublication = deploymentPollingState(
+			[
+				hostedDeploymentFixture({
+					id: "hdep_slow_create",
+					status: "running",
+					acceptedOperation: { ...operation, done: true },
+				}),
+			],
+			delayed.trackers,
+			Date.parse("2026-07-29T05:10:01Z"),
+		);
+		expect(awaitingPublication.refetchInterval).toBe(DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS);
+		expect(awaitingPublication.transitions.get("hdep_slow_create")?.kind).toBe("converging");
 	});
 
 	test("escalates a transition stuck past the escalation window with reconciliation polling intact", () => {
@@ -454,6 +477,7 @@ describe("DeploymentStatus", () => {
 				hostedDeploymentFixture({
 					id: "hdep_stuck_restart",
 					status: "running",
+					runtimeUiEndpoint,
 					acceptedOperation: operation,
 				}),
 			],
@@ -482,7 +506,7 @@ describe("DeploymentStatus", () => {
 
 	test("schedules a modest reconciliation interval for steady inventory", () => {
 		const deployments = [
-			hostedDeploymentFixture({ status: "running" }),
+			hostedDeploymentFixture({ status: "running", runtimeUiEndpoint }),
 			hostedDeploymentFixture({ id: "hdep_stopped", status: "stopped" }),
 			hostedDeploymentFixture({ id: "hdep_failed", status: "failed" }),
 		];

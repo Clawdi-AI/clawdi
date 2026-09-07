@@ -1198,6 +1198,66 @@ async function stubConnectedAgentResources(page: Page) {
 	};
 }
 
+test("connected overview loading shares the Status body and section tracks", async ({
+	page,
+}, testInfo) => {
+	const agent = agents[0];
+	if (!agent) throw new Error("Missing connected fixture");
+	const currentAgent = { ...agent, adapter_modules: ["sessions", "skills"] };
+	await stubDashboardApi(page, [], { sessionsPage: overviewSessions });
+	let inventoryGate = Promise.resolve();
+	await page.route("**/v1/agents", async (route) => {
+		await inventoryGate;
+		await fulfillJson(route, [currentAgent]);
+	});
+	await page.route(`**/v1/agents/${agent.id}`, async (route) => {
+		await inventoryGate;
+		await fulfillJson(route, currentAgent);
+	});
+	for (const viewport of [
+		{ width: 1440, height: 900 },
+		{ width: 390, height: 844 },
+	]) {
+		await page.setViewportSize(viewport);
+		let release = () => {};
+		inventoryGate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		try {
+			await page.goto(`/agents/${agent.id}`);
+			await expect(page.getByTestId("overview-status-card-skeleton")).toBeVisible();
+			await page.locator("#dashboard-scroll-container").evaluate((element) => {
+				element.scrollTop = 0;
+			});
+			await page.evaluate(() => window.scrollTo(0, 0));
+			const status = page.locator('[data-overview-status="status"]');
+			const loadingBody = await status.locator("dl").boundingBox();
+			const loading = await expectAgentOverviewGeometry(page, {
+				hosted: false,
+				desktop: viewport.width === 1440,
+			});
+			await page.screenshot({ path: testInfo.outputPath(`connected-${viewport.width}-cold.png`) });
+			release();
+			await expect(page.locator('main [data-slot="skeleton"]')).toHaveCount(0);
+			const readyBody = await status.locator("dl").boundingBox();
+			if (!loadingBody || !readyBody) throw new Error("Missing Status metadata");
+			expect(Math.abs(readyBody.height - loadingBody.height)).toBeLessThanOrEqual(1);
+			const ready = await expectAgentOverviewGeometry(page, {
+				hosted: false,
+				desktop: viewport.width === 1440,
+			});
+			expect(Math.abs(ready.status.height - loading.status.height)).toBeLessThanOrEqual(1);
+			await testInfo.attach(`connected-${viewport.width}-loading-geometry`, {
+				body: JSON.stringify({ loadingBody, readyBody, loading, ready }, null, 2),
+				contentType: "application/json",
+			});
+			await captureAgentOverview(page, testInfo, `connected-${viewport.width}-ready`);
+		} finally {
+			release();
+		}
+	}
+});
+
 test("connected overview keeps Status beside sessions and preserves resource columns", async ({
 	page,
 }, testInfo) => {

@@ -2,7 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, ExternalLink, Laptop } from "lucide-react";
+import { ArrowRight, Cpu, ExternalLink, Laptop } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
@@ -14,9 +14,15 @@ import {
 	AgentOverviewCapabilities,
 	AgentOverviewCapabilitiesSkeleton,
 	AgentOverviewStatusCard,
+	OVERVIEW_CHANNELS_DESCRIPTION,
 	OverviewMetadata,
 	OverviewModuleError,
+	OverviewNavigationCard,
 } from "@/components/dashboard/agent-overview-capabilities";
+import {
+	AgentOverviewActivity,
+	AgentOverviewTools,
+} from "@/components/dashboard/agent-overview-layout";
 import {
 	overviewProjectsModule,
 	useOverviewConnectorsModule,
@@ -32,6 +38,7 @@ import {
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
+import { OverviewComputeBody } from "@/components/dashboard/overview-compute-body";
 import { DetailNotFound } from "@/components/detail/layout";
 import { MemoriesPageActions, MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
@@ -42,7 +49,6 @@ import {
 	SessionFeed,
 } from "@/components/sessions/session-feed";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusDot } from "@/components/ui/status-badge";
 import { connectedAdapterHasModule } from "@/lib/adapter-modules";
@@ -232,30 +238,26 @@ export function ConnectedAgentDetail({
 
 					{activeTab === "overview" ? (
 						<div className="flex flex-col gap-8">
-							<div
-								className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3"
-								data-overview-section="entry"
-							>
-								{supportsSessions ? (
-									<div
-										className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid"
-										data-overview-section="activity"
+							<AgentOverviewActivity
+								heading={
+									<h2 id="connected-recent-sessions" className="text-sm font-semibold">
+										Recent sessions
+									</h2>
+								}
+								action={
+									<Button
+										render={<Link {...agentSectionLink(id, "sessions")} />}
+										nativeButton={false}
+										variant="ghost"
+										size="sm"
+										className="text-muted-foreground"
 									>
-										<div className="flex items-center justify-between">
-											<h2 id="connected-recent-sessions" className="text-sm font-semibold">
-												Recent sessions
-											</h2>
-											<Button
-												render={<Link {...agentSectionLink(id, "sessions")} />}
-												nativeButton={false}
-												variant="ghost"
-												size="sm"
-												className="text-muted-foreground"
-											>
-												View all
-												<ArrowRight />
-											</Button>
-										</div>
+										View all
+										<ArrowRight />
+									</Button>
+								}
+								sessions={
+									supportsSessions ? (
 										<section aria-labelledby="connected-recent-sessions" className="min-w-0">
 											{blockingOverviewSessionsError ? (
 												<OverviewModuleError
@@ -271,32 +273,31 @@ export function ConnectedAgentDetail({
 												/>
 											)}
 										</section>
+									) : null
+								}
+							>
+								<AgentOverviewStatusCard
+									agentId={id}
+									section="settings"
+									title="Status"
+									icon={Laptop}
+									tint="bg-identity-7-bg text-identity-7-fg"
+									description={
+										<span className="flex items-center gap-2">
+											<StatusDot status={syncTone} /> {syncStatus.label}
+										</span>
+									}
+								>
+									<div className="flex h-full flex-col justify-end">
+										<OverviewMetadata
+											items={[
+												{ label: "Machine", value: agent.machine_name },
+												{ label: "Last seen", value: relativeTime(agent.last_seen_at) },
+											]}
+										/>
 									</div>
-								) : null}
-								<div className={cn(supportsSessions && "@3xl/main:row-start-2")}>
-									<AgentOverviewStatusCard
-										agentId={id}
-										section="settings"
-										title="Status"
-										icon={Laptop}
-										tint="bg-identity-7-bg text-identity-7-fg"
-										description={
-											<span className="inline-flex items-center gap-2">
-												<StatusDot status={syncTone} /> {syncStatus.label}
-											</span>
-										}
-									>
-										<div className="flex h-full flex-col justify-end">
-											<OverviewMetadata
-												items={[
-													{ label: "Machine", value: agent.machine_name },
-													{ label: "Last seen", value: relativeTime(agent.last_seen_at) },
-												]}
-											/>
-										</div>
-									</AgentOverviewStatusCard>
-								</div>
-							</div>
+								</AgentOverviewStatusCard>
+							</AgentOverviewActivity>
 							<AgentOverviewCapabilities
 								agentId={id}
 								variant="connected"
@@ -429,8 +430,8 @@ function AgentDetailContentSkeleton({
 				<PageHeaderSkeleton
 					icon
 					iconClassName="size-4 rounded-sm"
-					actions={variant === "hosted"}
-					description={false}
+					actions={section === "memories"}
+					description={AGENT_SECTION_NAVIGATION_ITEMS[section].description ?? false}
 				/>
 				<div className="space-y-4">
 					<Skeleton className="h-4 w-28" />
@@ -443,57 +444,75 @@ function AgentDetailContentSkeleton({
 
 	return (
 		<section
-			className="flex flex-col gap-8"
+			className="flex flex-col gap-6"
 			data-agent-detail-skeleton
 			data-agent-detail-section="overview"
 		>
 			<PageHeaderSkeleton
 				icon
 				iconClassName="size-4 rounded-sm"
-				actions={variant === "hosted"}
-				description={false}
+				description={AGENT_SECTION_NAVIGATION_ITEMS.overview.description ?? false}
 			/>
-			{variant === "hosted" ? (
-				<div className="grid gap-3 @5xl/main:grid-cols-3" aria-hidden="true">
-					<Skeleton className="h-17 rounded-xl" />
-					<Skeleton className="h-17 rounded-xl" />
-					<Skeleton className="h-17 rounded-xl" />
-				</div>
-			) : null}
-			<div className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3">
-				<div className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid">
-					<div className="flex items-center justify-between">
-						<Skeleton className="h-5 w-28" />
-						<Skeleton className="h-8 w-20" />
-					</div>
-					<OverviewSessionListSkeleton />
-				</div>
-				<div className="@3xl/main:row-start-2" aria-hidden="true">
-					<Card
-						size="sm"
-						className="h-full gap-0 border border-foreground/10 py-0 ring-0"
-						data-testid="overview-status-card-skeleton"
+			<div className="flex flex-col gap-8">
+				{variant === "hosted" ? (
+					<AgentOverviewTools>
+						{(
+							[
+								["dashboard", "console"],
+								["channels", "channels"],
+								["model-provider", "ai"],
+							] as const
+						).map(([id, section]) => {
+							const item = AGENT_SECTION_NAVIGATION_ITEMS[section];
+							return (
+								<OverviewNavigationCard
+									key={id}
+									id={id}
+									title={item.label}
+									description={section === "channels" ? OVERVIEW_CHANNELS_DESCRIPTION : null}
+									icon={item.icon}
+									tint={item.tint}
+									link={null}
+									loading
+								/>
+							);
+						})}
+					</AgentOverviewTools>
+				) : null}
+				<AgentOverviewActivity
+					heading={
+						<h2 className="text-sm font-semibold">
+							<Skeleton className="h-lh w-28" />
+						</h2>
+					}
+					action={<Skeleton className="h-8 w-20" />}
+					sessions={<OverviewSessionListSkeleton />}
+				>
+					<AgentOverviewStatusCard
+						agentId=""
+						section="settings"
+						title={variant === "hosted" ? "Compute" : "Status"}
+						icon={variant === "hosted" ? Cpu : Laptop}
+						tint=""
+						description={null}
+						loading
 					>
-						<CardHeader className="p-0">
-							<div className="flex items-center gap-3 px-4 py-3">
-								<Skeleton className="size-8 shrink-0 rounded-lg" />
-								<div className="min-w-0 flex-1">
-									<Skeleton className="h-5 w-20" />
-									<Skeleton className="h-5 w-16" />
-								</div>
-								<Skeleton className="size-4 shrink-0" />
+						{variant === "hosted" ? (
+							<OverviewComputeBody loading />
+						) : (
+							<div className="flex h-full flex-col justify-end">
+								<OverviewMetadata
+									items={[
+										{ label: "Machine", value: <Skeleton className="h-lh w-24" /> },
+										{ label: "Last seen", value: <Skeleton className="h-lh w-20" /> },
+									]}
+								/>
 							</div>
-						</CardHeader>
-						<CardContent
-							className={cn("gap-2 px-4 pb-4", variant === "connected" && "flex-1 justify-end")}
-						>
-							<Skeleton className="h-4 w-full" />
-							<Skeleton className="h-4 w-3/4" />
-						</CardContent>
-					</Card>
-				</div>
+						)}
+					</AgentOverviewStatusCard>
+				</AgentOverviewActivity>
+				<AgentOverviewCapabilitiesSkeleton variant={variant} />
 			</div>
-			<AgentOverviewCapabilitiesSkeleton variant={variant} />
 		</section>
 	);
 }

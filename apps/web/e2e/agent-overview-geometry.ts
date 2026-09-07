@@ -17,9 +17,9 @@ export async function expectAgentOverviewGeometry(
 		const subscriptionStatus = subscriptionRow?.querySelector(
 			"[data-overview-subscription-status]",
 		);
-		const subscriptionDetails = subscriptionRow?.querySelector("dl");
+		const subscriptionDetails = subscriptionRow?.querySelector("dd > span");
 		const subscriptionAction = subscriptionRow?.querySelector("[data-slot=button]");
-		const subscriptionDate = subscriptionRow?.parentElement?.querySelector(":scope > dl");
+		const subscriptionDate = subscriptionRow?.nextElementSibling;
 		const entries = Array.from(
 			main.querySelectorAll('[data-overview-section="tools"] [data-slot="card"]'),
 		);
@@ -54,6 +54,11 @@ export async function expectAgentOverviewGeometry(
 		paint(getComputedStyle(resourceCard).backgroundColor);
 		const resourceBackground = pixel();
 		return {
+			headings: Array.from(main.querySelectorAll("[data-overview-heading]")).map((row) => ({
+				row: row.getBoundingClientRect().toJSON(),
+				title: row.querySelector("h2")?.getBoundingClientRect().toJSON(),
+				content: row.nextElementSibling?.getBoundingClientRect().toJSON(),
+			})),
 			colors,
 			resourceBackground,
 			subscription:
@@ -95,6 +100,12 @@ export async function expectAgentOverviewGeometry(
 		};
 	});
 	const aligned = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThanOrEqual(1);
+	for (const heading of geometry.headings) {
+		if (!heading.title || !heading.content) throw new Error("Missing overview heading or content");
+		aligned(heading.row.height, 32);
+		aligned(heading.content.top - heading.row.bottom, 12);
+		aligned(heading.content.top - heading.title.bottom, 18);
+	}
 	expect(geometry.overflows).toBe(false);
 	if (desktop) {
 		aligned(geometry.activity.top, geometry.entry.top);
@@ -102,8 +113,7 @@ export async function expectAgentOverviewGeometry(
 		aligned(geometry.status.left - geometry.sessions.right, 16);
 		aligned(geometry.status.right, geometry.entry.right);
 		aligned(geometry.sessions.width, geometry.status.width * 2);
-		if (geometry.sessionCards.length === 3)
-			aligned(geometry.status.bottom, geometry.sessions.bottom);
+		expect(geometry.status.bottom).toBeGreaterThanOrEqual(geometry.sessions.bottom - 1);
 	} else {
 		expect(geometry.status.top).toBeGreaterThan(geometry.activity.bottom);
 		aligned(geometry.status.left, geometry.entry.left);
@@ -149,8 +159,9 @@ export async function expectAgentOverviewGeometry(
 		if (geometry.subscription) {
 			const { row, status, details, action, date } = geometry.subscription;
 			if (action) {
+				expect(action.left).toBeGreaterThanOrEqual(row.left - 1);
+				expect(action.right).toBeLessThanOrEqual(row.right + 1);
 				if (details && action.top >= details.bottom) {
-					expect(details.width + action.width + 12).toBeGreaterThan(row.width);
 					expect(action.top - details.bottom).toBeGreaterThanOrEqual(8);
 				} else {
 					aligned(status.y + status.height / 2, action.y + action.height / 2);

@@ -85,7 +85,17 @@ export function hostedDeploymentFixture(
 					: {
 							summary_state: options.status ?? "running",
 							observedGeneration: 1,
-							conditions: [],
+							observed_at: createdAt,
+							conditions: [
+								{
+									type: "Ready",
+									status: (options.status ?? "running") === "running" ? "True" : "False",
+									observedGeneration: 1,
+									reason: "RuntimeReady",
+									message: "Runtime observation",
+									lastTransitionTime: createdAt,
+								},
+							],
 							failure: options.failure,
 							driver_acknowledged_generation: 1,
 							driver_applied_generation: 1,

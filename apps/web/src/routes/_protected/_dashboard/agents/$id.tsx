@@ -1,6 +1,10 @@
-import { createFileRoute, notFound, Outlet, redirect } from "@tanstack/react-router";
-import { lazy, Suspense } from "react";
-import { loadHostedAgentEventStreamLayout } from "@/lib/agent-home-loader";
+import {
+	createFileRoute,
+	lazyRouteComponent,
+	notFound,
+	Outlet,
+	redirect,
+} from "@tanstack/react-router";
 import {
 	agentConnectorDetailLink,
 	agentMemoryDetailLink,
@@ -17,16 +21,10 @@ import {
 	validateAgentRouteSearch,
 } from "@/lib/agent-routes";
 
-const hostedEventStreamLayoutLoader = loadHostedAgentEventStreamLayout;
-const HostedAgentEventStreamLayout = hostedEventStreamLayoutLoader
-	? lazy(() =>
-			hostedEventStreamLayoutLoader().then((module) => ({
-				default: module.HostedAgentEventStreamLayout,
-			})),
-		)
-	: null;
+const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
 export const Route = createFileRoute("/_protected/_dashboard/agents/$id")({
+	codeSplitGroupings: [],
 	validateSearch: validateAgentRouteSearch,
 	beforeLoad: ({ params, search, location }) => {
 		if (!isAgentRouteId(params.id)) throw notFound();
@@ -102,17 +100,10 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id")({
 			});
 		}
 	},
-	component: AgentEventStreamRouteLayout,
+	component: IS_HOSTED_BUILD
+		? lazyRouteComponent(
+				() => import("@/hosted/agents/hosted-agent-event-stream-layout"),
+				"HostedAgentEventStreamLayout",
+			)
+		: Outlet,
 });
-
-function AgentEventStreamRouteLayout() {
-	const { id } = Route.useParams();
-	const outlet = <Outlet />;
-	return HostedAgentEventStreamLayout ? (
-		<Suspense fallback={outlet}>
-			<HostedAgentEventStreamLayout agentId={id}>{outlet}</HostedAgentEventStreamLayout>
-		</Suspense>
-	) : (
-		outlet
-	);
-}

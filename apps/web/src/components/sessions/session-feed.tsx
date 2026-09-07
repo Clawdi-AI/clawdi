@@ -41,8 +41,13 @@ function SessionCardSkeleton({ testId }: { testId?: string }) {
 		>
 			<Skeleton className="size-8 shrink-0 rounded-md" />
 			<div className="min-w-0 flex-1">
-				<Skeleton className="h-4 w-4/5" />
-				<Skeleton className="mt-1.5 h-3 w-1/2" />
+				<div className="text-sm leading-5 font-semibold">
+					<Skeleton className="h-lh w-4/5" />
+				</div>
+				<div className="mt-0.5 min-h-8 text-xs leading-4 @3xl/main:min-h-4">
+					<Skeleton className="h-lh w-1/2" />
+					<Skeleton className="h-lh w-1/3 @3xl/main:hidden" />
+				</div>
 			</div>
 		</div>
 	);
@@ -267,7 +272,7 @@ export function SessionCard({
 					) : null}
 					<span
 						data-testid="session-card-meta"
-						className="mt-0.5 flex min-w-0 flex-wrap items-center gap-y-0 text-xs leading-4 text-muted-foreground"
+						className="mt-0.5 flex min-h-8 min-w-0 flex-wrap items-center gap-y-0 text-xs leading-4 text-muted-foreground @3xl/main:min-h-4"
 					>
 						{metadata.map((item, index) => (
 							<span key={item.key} className="inline-flex min-w-0 max-w-full items-center">

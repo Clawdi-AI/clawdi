@@ -48,11 +48,15 @@ export function hasOpenClawNativeHandoffLoaded(
 	storage: RuntimeUiBootstrapStorage | null,
 	deploymentId: string,
 	endpointUrl: string,
+	generation: number,
 ): boolean {
 	removeStorageItem(storage, legacyOpenClawBootstrapStorageKey(deploymentId));
 	if (!storage) return false;
 	try {
-		return storage.getItem(openClawNativeHandoffLoadedStorageKey(deploymentId)) === endpointUrl;
+		return (
+			storage.getItem(openClawNativeHandoffLoadedStorageKey(deploymentId)) ===
+			JSON.stringify([generation, endpointUrl])
+		);
 	} catch {
 		return false;
 	}
@@ -63,12 +67,16 @@ export function markOpenClawNativeHandoffLoaded(
 	deploymentId: string,
 	endpointUrl: string,
 	credentials: RuntimeUiCredentials | null,
+	generation: number,
 ): boolean {
 	if (openClawHandoffMode(credentials) !== "native") return false;
 	removeStorageItem(storage, legacyOpenClawBootstrapStorageKey(deploymentId));
 	if (!storage) return true;
 	try {
-		storage.setItem(openClawNativeHandoffLoadedStorageKey(deploymentId), endpointUrl);
+		storage.setItem(
+			openClawNativeHandoffLoadedStorageKey(deploymentId),
+			JSON.stringify([generation, endpointUrl]),
+		);
 	} catch {
 		// Browser storage is only an optimization; OpenClaw remains authoritative.
 	}

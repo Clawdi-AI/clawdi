@@ -1,11 +1,6 @@
 import { OverviewNavigationCard } from "@/components/dashboard/agent-overview-capabilities";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
-import {
-	deploymentRuntimeStatusPresentation,
-	hasCurrentRuntimeHealthDegradation,
-	isRunningStatus,
-} from "@/hosted/deployment-status";
-import { runtimeConsoleUrl } from "@/hosted/runtimes";
+import { deploymentRuntimeUiIsReady } from "@/hosted/deployment-status";
 import { agentSectionLink } from "@/lib/agent-routes";
 import { AGENT_SECTION_NAVIGATION_ITEMS, runtimeBrowserUiLabel } from "@/lib/navigation-model";
 
@@ -17,12 +12,7 @@ export function AgentDashboardOverview({
 	deployment: HostedDeployment;
 }) {
 	const runtime = deployment.resource.spec.runtime;
-	const presentation = deploymentRuntimeStatusPresentation(deployment.resource.status);
-	const running = isRunningStatus(presentation.status);
-	const degraded = deployment.resource.status
-		? hasCurrentRuntimeHealthDegradation(deployment.resource.status)
-		: false;
-	const available = running && !degraded && Boolean(runtimeConsoleUrl(deployment));
+	const available = deploymentRuntimeUiIsReady(deployment);
 	const item = AGENT_SECTION_NAVIGATION_ITEMS.console;
 	return (
 		<div data-hosted="true" className="min-w-0">

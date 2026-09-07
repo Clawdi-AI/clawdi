@@ -209,20 +209,23 @@ describe("runtime UI credential targeting", () => {
 		};
 		values.set("clawdi.openclaw-bootstrap-attempted.hdep_one", endpointUrl);
 
-		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl)).toBeFalse();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, 1)).toBeFalse();
 		expect(values.has("clawdi.openclaw-bootstrap-attempted.hdep_one")).toBeFalse();
-		expect(markOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, legacy)).toBeFalse();
-		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl)).toBeFalse();
-		expect(markOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, native)).toBeTrue();
-		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl)).toBeTrue();
-		expect(markOpenClawNativeHandoffLoaded(null, "hdep_one", endpointUrl, native)).toBeTrue();
-		expect(hasOpenClawNativeHandoffLoaded(null, "hdep_one", endpointUrl)).toBeFalse();
 		expect(
-			hasOpenClawNativeHandoffLoaded(storage, "hdep_one", "https://moved.runtime.example/"),
+			markOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, legacy, 1),
 		).toBeFalse();
-		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_two", endpointUrl)).toBeFalse();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, 1)).toBeFalse();
+		expect(markOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, native, 1)).toBeTrue();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, 1)).toBeTrue();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, 2)).toBeFalse();
+		expect(markOpenClawNativeHandoffLoaded(null, "hdep_one", endpointUrl, native, 1)).toBeTrue();
+		expect(hasOpenClawNativeHandoffLoaded(null, "hdep_one", endpointUrl, 1)).toBeFalse();
+		expect(
+			hasOpenClawNativeHandoffLoaded(storage, "hdep_one", "https://moved.runtime.example/", 1),
+		).toBeFalse();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_two", endpointUrl, 1)).toBeFalse();
 		forgetOpenClawNativeHandoffLoaded(storage, "hdep_one");
-		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl)).toBeFalse();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, 1)).toBeFalse();
 	});
 
 	test("treats an unavailable localStorage getter as missing storage", () => {

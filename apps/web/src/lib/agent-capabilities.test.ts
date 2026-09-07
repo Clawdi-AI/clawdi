@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { AgentOverviewCapabilities } from "@/components/dashboard/agent-overview-capabilities";
 import { agentOverviewGroups } from "@/lib/agent-capabilities";
 import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 
@@ -32,11 +34,9 @@ describe("agent overview registry", () => {
 	});
 
 	test("skips a missing summary without rendering an empty card or crashing the overview", () => {
-		const source = readFileSync(
-			new URL("../components/dashboard/agent-overview-capabilities.tsx", import.meta.url),
-			"utf8",
+		const markup = renderToStaticMarkup(
+			createElement(AgentOverviewCapabilities, { agentId: "", variant: "connected", content: {} }),
 		);
-		expect(source).toContain("if (!moduleContent) return null;");
-		expect(source).not.toContain("Missing overview content");
+		expect(markup).not.toContain("data-overview-module=");
 	});
 });
