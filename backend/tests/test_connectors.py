@@ -451,6 +451,55 @@ def _reset_composio_app_cache(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
+async def test_connector_metadata_batch_reads_catalog_once_without_auth_details(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    fake = FakeClient(list_toolkits=[_posthog_list_toolkit(), _gmail_detail_toolkit()])
+    calls = 0
+    list_toolkits = fake.toolkits.list
+
+    async def counted_list(**kwargs):
+        nonlocal calls
+        calls += 1
+        return await list_toolkits(**kwargs)
+
+    async def unexpected_detail(_slug):
+        raise AssertionError("Display metadata must not fetch per-toolkit auth details")
+
+    monkeypatch.setattr(settings, "composio_api_key", "test-key")
+    monkeypatch.setattr(composio, "get_composio_client", lambda: fake)
+    monkeypatch.setattr(fake.toolkits, "list", counted_list)
+    monkeypatch.setattr(fake.toolkits, "retrieve", unexpected_detail)
+    response = await client.post(
+        "/v1/connectors/metadata:batchRead", json={"names": ["gmail", "missing", "posthog"]}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [item["name"] for item in body["items"]] == ["gmail", "posthog"]
+    assert body["missing"] == ["missing"]
+    assert set(body["items"][0]) == {"name", "display_name", "logo", "description"}
+    repeated = await client.post("/v1/connectors/metadata:batchRead", json={"names": ["posthog"]})
+    assert repeated.status_code == 200
+    assert calls == 1
+    assert not fake.auth_configs.listed
+    oversized = await client.post(
+        "/v1/connectors/metadata:batchRead", json={"names": ["gmail"] * 101}
+    )
+    assert oversized.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_connector_metadata_batch_requires_authentication():
+    from app.main import app
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post("/v1/connectors/metadata:batchRead", json={"names": ["gmail"]})
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_connector_detail_uses_toolkit_auth_config_details(monkeypatch: pytest.MonkeyPatch):
     fake = FakeClient()
     serialized: list[str] = []

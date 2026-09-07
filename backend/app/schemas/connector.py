@@ -1,7 +1,7 @@
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, JsonValue, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from app.core.config import settings
 
@@ -80,11 +80,27 @@ class ConnectorConnectionResponse(BaseModel):
     account_display: str | None = None
 
 
-class ConnectorAvailableAppResponse(BaseModel):
+class ConnectorMetadataResponse(BaseModel):
     name: str
     display_name: str
     logo: str
     description: str
+
+
+class ConnectorMetadataBatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    names: list[Annotated[str, Field(min_length=1, max_length=256)]] = Field(
+        min_length=1, max_length=100
+    )
+
+
+class ConnectorMetadataBatchResponse(BaseModel):
+    items: list[ConnectorMetadataResponse]
+    missing: list[str]
+
+
+class ConnectorAvailableAppResponse(ConnectorMetadataResponse):
     # Surfaces Composio's auth scheme so the UI can pick OAuth vs an
     # API-key form on click. Lowercase strings: `oauth2`, `api_key`,
     # `bearer_token`, `basic`, `none`.
