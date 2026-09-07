@@ -9,15 +9,17 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import httpx
+import httpx2
 import pytest
 from fastapi.routing import iter_route_contexts
 from httpx import ASGITransport
-from mcp.types import ListToolsResult
+from mcp.types import CallToolResult, ListToolsResult
 
 from app.main import app
 from app.services.composio import ComposioMcpSession
@@ -255,8 +257,6 @@ async def test_legacy_composio_bridge_rejects_unknown_methods_without_upstream_s
 
 @pytest.mark.asyncio
 async def test_legacy_composio_aliases_bridge_tools_list_and_call(monkeypatch):
-    from mcp.types import CallToolResult, ListToolsResult
-
     from app.core.config import settings
     from app.routes import mcp_bridge
     from app.services.composio import ComposioMcpSession, create_mcp_bridge_token
@@ -874,6 +874,76 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
     }
     await session.retire()
     assert clients[0].is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["list_tools", "call_tool"])
+async def test_composio_mcp_operations_normalize_nested_upstream_groups(operation, monkeypatch):
+    from app.services import composio
+
+    failure = ExceptionGroup(
+        "MCP transport failed",
+        [
+            ExceptionGroup(
+                "request failed",
+                [httpx2.ConnectError("All connection attempts failed")],
+            ),
+            httpx2.RemoteProtocolError("invalid upstream response"),
+        ],
+    )
+
+    class FakeClient:
+        async def list_tools(self):
+            return _mcp_tools("unused")
+
+        async def call_tool(self, _name, _arguments):
+            return CallToolResult.model_validate({"content": [{"type": "text", "text": "unused"}]})
+
+    @asynccontextmanager
+    async def failing_client(_session):
+        yield FakeClient()
+        raise failure
+
+    monkeypatch.setattr(composio, "_tool_router_mcp_client", failing_client)
+    session = _mcp_session("upstream-group")
+
+    with pytest.raises(composio.ComposioMcpUpstreamError, match="operation failed"):
+        if operation == "list_tools":
+            await composio.list_tool_router_mcp_tools(session)
+        else:
+            await composio.call_tool_router_mcp_tool(session, "COMPOSIO_TEST", {})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ExceptionGroup("program failure", [AssertionError("bug")]),
+        BaseExceptionGroup(
+            "cancelled",
+            [httpx2.ConnectError("connection failed"), asyncio.CancelledError()],
+        ),
+    ],
+    ids=["program-error", "cancellation"],
+)
+async def test_composio_mcp_operation_does_not_normalize_non_upstream_groups(failure, monkeypatch):
+    from app.services import composio
+
+    class FakeClient:
+        async def list_tools(self):
+            return _mcp_tools("unused")
+
+    @asynccontextmanager
+    async def failing_client(_session):
+        yield FakeClient()
+        raise failure
+
+    monkeypatch.setattr(composio, "_tool_router_mcp_client", failing_client)
+
+    with pytest.raises(BaseExceptionGroup) as exc_info:
+        await composio.list_tool_router_mcp_tools(_mcp_session("non-upstream-group"))
+
+    assert exc_info.value is failure
 
 
 @pytest.mark.asyncio
