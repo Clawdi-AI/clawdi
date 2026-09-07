@@ -65,6 +65,18 @@ database migration, CI, and implementation details.
 - Hosted OpenClaw upgrades now retire the legacy Clawdi provider plugin even
   when OpenClaw requires capability consent before it can inspect the plugin.
 
+## Clawdi CLI v0.14.51
+
+Package: `clawdi@0.14.51`
+
+### Fixed
+
+- Restore managed Telegram photo and other media downloads when clients encode
+  the bot routing token in the file URL, avoiding misleading `InvalidToken`
+  errors while preserving channel authorization boundaries.
+- Preserve encoded credentials, file paths, and query parameters when managed
+  egress replaces credentials in request URLs.
+
 ## Clawdi CLI v0.14.48
 
 Package: `clawdi@0.14.48`
