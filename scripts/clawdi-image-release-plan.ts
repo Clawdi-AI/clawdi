@@ -11,7 +11,7 @@ import {
 } from "./whatsapp-sidecar-deployment-revision";
 
 const BACKEND_ROOT = "backend";
-const NATIVE_PROVIDER_INPUT = "config/native-ai-providers.json";
+const NATIVE_PROVIDER_INPUT = "packages/shared/src/native-ai-providers.json";
 const IMAGE_RELEASE_WORKFLOW = ".github/workflows/clawdi-image-release.yml";
 const DEPLOYMENT_FILE_INPUTS = [
 	".github/actions/setup-bun-ci/action.yml",
@@ -49,7 +49,9 @@ export function calculateClawdiImageRevisionsFromSnapshot(
 	snapshot: RevisionSnapshot,
 ): ClawdiImageRevisions {
 	const dockerignore = snapshot.readText(".dockerignore");
-	const nativeProvidersIncluded = snapshot.listFiles("config").includes(NATIVE_PROVIDER_INPUT);
+	const nativeProvidersIncluded = snapshot
+		.listFiles(dirname(NATIVE_PROVIDER_INPUT))
+		.includes(NATIVE_PROVIDER_INPUT);
 	assertBackendDockerInputContract(
 		snapshot.readText("backend/Dockerfile"),
 		dockerignore,
@@ -98,7 +100,7 @@ function assertBackendDockerInputContract(
 		"COPY --chown=app:app backend/ /app/backend/",
 		...(nativeProvidersIncluded
 			? [
-					"COPY --chown=app:app config/native-ai-providers.json /app/config/native-ai-providers.json",
+					"COPY --chown=app:app packages/shared/src/native-ai-providers.json /app/packages/shared/src/native-ai-providers.json",
 				]
 			: []),
 	];

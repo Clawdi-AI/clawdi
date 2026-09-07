@@ -1,5 +1,5 @@
-import routing from "../../../config/native-ai-providers.json";
 import type { AiProviderApiMode, AiProviderType } from "./ai-provider";
+import routing from "./native-ai-providers.json";
 
 // Verified against OpenClaw 71e3383a and Hermes a7198a88. This is auth/routing
 // metadata only: catalogs and model selection belong to the native runtime.

@@ -33,7 +33,13 @@ class NativeProvider(BaseModel):
 
 @lru_cache(maxsize=1)
 def native_providers() -> list[NativeProvider]:
-    path = Path(__file__).resolve().parents[3] / "config" / "native-ai-providers.json"
+    path = (
+        Path(__file__).resolve().parents[3]
+        / "packages"
+        / "shared"
+        / "src"
+        / "native-ai-providers.json"
+    )
     return TypeAdapter(list[NativeProvider]).validate_json(path.read_bytes())
 
 

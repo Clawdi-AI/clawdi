@@ -20,7 +20,7 @@ be deployable while inference remains `not_tested` and `primary_model` is null.
 
 `native_provider` identifies the connection and `native_variant` optionally
 identifies its region or plan. The shared
-[`native-ai-providers.json`](../config/native-ai-providers.json) contains only
+[`native-ai-providers.json`](../packages/shared/src/native-ai-providers.json) contains only
 auth/routing metadata. Core validates the identity and hydrates endpoint,
 protocol, and runtime credential delivery; Hosted consumes Core readiness.
 The encrypted key or reference and the Agent binding remain separately owned.
