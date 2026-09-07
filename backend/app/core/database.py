@@ -232,16 +232,30 @@ async def _reserved_connection() -> AsyncGenerator[AsyncConnection, None]:
 async def get_runtime_manifest_sessions() -> AsyncGenerator[RuntimeManifestSessions, None]:
     """Acquire a complete pair before auth so manifest readers cannot deadlock.
 
-    Only acquisition is serialized. Both connections stay reserved across
-    commits, allowing repairs and fresh RR snapshots without another checkout.
-    Other requests continue sharing the entire ordinary pool.
+    Pair admission is serialized, but its two checkouts overlap connection
+    setup and pre-ping I/O. Both connections stay reserved across commits,
+    allowing repairs and fresh RR snapshots without another checkout. Other
+    requests continue sharing the entire ordinary pool.
     """
     async with AsyncExitStack() as stack:
         acquisition = asyncio.timeout(settings.db_pool_timeout)
         try:
             async with acquisition, _manifest_checkout_lock:
-                auth_connection = await stack.enter_async_context(_reserved_connection())
-                snapshot_connection = await stack.enter_async_context(_reserved_connection())
+                try:
+                    async with asyncio.TaskGroup() as checkouts:
+                        auth_checkout = checkouts.create_task(
+                            stack.enter_async_context(_reserved_connection())
+                        )
+                        snapshot_checkout = checkouts.create_task(
+                            stack.enter_async_context(_reserved_connection())
+                        )
+                except* SQLAlchemyTimeoutError:
+                    # Keep the existing retryable pool-exhaustion response.
+                    raise SQLAlchemyTimeoutError(
+                        "Runtime manifest connection acquisition timed out"
+                    ) from None
+                auth_connection = auth_checkout.result()
+                snapshot_connection = snapshot_checkout.result()
         except TimeoutError:
             if not acquisition.expired():
                 raise
