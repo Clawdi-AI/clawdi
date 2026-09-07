@@ -75,7 +75,7 @@ export function PairedChatsDialog({
 			data-agent-paired-chats-trigger={linkId}
 			className={cn(
 				buttonVariants({ variant: "link", size: "xs" }),
-				"h-auto max-w-full justify-start p-0 text-sm",
+				"h-auto max-w-full justify-start p-0 text-sm text-muted-foreground underline hover:text-foreground",
 			)}
 			aria-controls={panelId}
 		>
