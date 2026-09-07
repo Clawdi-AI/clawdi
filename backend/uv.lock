@@ -501,7 +501,7 @@ requires-dist = [
     { name = "asyncpg", specifier = "==0.31.0" },
     { name = "boto3", specifier = "==1.43.67" },
     { name = "botocore", specifier = "==1.43.67" },
-    { name = "composio", specifier = "==0.20.0" },
+    { name = "composio", specifier = "==0.21.1" },
     { name = "composio-client", specifier = "==1.43.0" },
     { name = "cryptography", specifier = ">=44.0" },
     { name = "fastapi", specifier = ">=0.115" },
@@ -566,7 +566,7 @@ wheels = [
 
 [[package]]
 name = "composio"
-version = "0.20.0"
+version = "0.21.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "composio-client" },
@@ -575,11 +575,13 @@ dependencies = [
     { name = "openai" },
     { name = "pydantic" },
     { name = "pysher" },
+    { name = "requests" },
     { name = "typing-extensions" },
+    { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/91/a3/171451ce7ff00a0e5ac572c3865f95cbf74524b9d94598fca23a2a840a27/composio-0.20.0.tar.gz", hash = "sha256:a0799f54a4807bfdb04e1c0703aac7e70f10e2c0189695581c955a981de99c8e", size = 288112, upload-time = "2026-08-18T22:47:31.585Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a3/ee/fa6f8a7e54fe588442b0c51f023602e1c1e8b039b76365b5994298c309ab/composio-0.21.1.tar.gz", hash = "sha256:73b327abcc13f49a43a1302bcf426a9e072a872afb3eea2905b0c85bc3bb1f9d", size = 334800, upload-time = "2026-09-04T18:57:48.283Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5e/ca/63816be796edc873b030c53d0b5d82bd5fa58ac775d7a8de757cec6eff2c/composio-0.20.0-py3-none-any.whl", hash = "sha256:d1ec14da58479a45a9ed96ec5eb21f8f8c980c8de133964fa11ec463112d7e0f", size = 176061, upload-time = "2026-08-18T22:47:18.275Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/ef/1d02c50b0f02a9f607cb65753ea6c06950b8eedae3f471abeac89075bdfd/composio-0.21.1-py3-none-any.whl", hash = "sha256:932c4f1818ee1b9488a48737ab8f2461314c50aa99c2e51b017caef76ee69114", size = 201032, upload-time = "2026-09-04T18:57:33.891Z" },
 ]
 
 [[package]]
