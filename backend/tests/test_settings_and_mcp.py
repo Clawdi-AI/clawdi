@@ -73,6 +73,7 @@ def tool_router_cache(monkeypatch):
         return sessions[user_id].pop(0)
 
     monkeypatch.setattr(composio, "_tool_router_session_cache", {})
+    monkeypatch.setattr(composio, "_tool_router_session_creations", {})
     monkeypatch.setattr(composio, "_tool_router_tools_cache", {})
     monkeypatch.setattr(composio, "_tool_router_tools_inflight", {})
     monkeypatch.setattr(composio, "_create_tool_router_mcp_session", fake_create)
@@ -881,6 +882,94 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
     }
     await session.retire()
     assert clients[0].is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalidation", ["none", "account-change", "shutdown"])
+async def test_session_creation_cannot_replace_a_newer_session(
+    monkeypatch, tool_router_cache, invalidation
+):
+    composio, _sessions = tool_router_cache
+    stale = _mcp_session("publication", 1)
+    fresh = _mcp_session("publication", 2)
+    candidates = [stale, fresh]
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def create(_user_id, *, now):
+        candidate = candidates.pop(0)
+        if candidate is stale:
+            started.set()
+            await release.wait()
+        return candidate
+
+    monkeypatch.setattr(composio, "_create_tool_router_mcp_session", create)
+    monkeypatch.setattr(composio, "_client", None)
+    monkeypatch.setattr(composio, "_sdk_client", None)
+    request = asyncio.create_task(composio.get_tool_router_mcp_session("publication"))
+    try:
+        async with asyncio.timeout(3):
+            await started.wait()
+            if invalidation == "account-change":
+                await composio.invalidate_tool_router_mcp_session("publication")
+            elif invalidation == "shutdown":
+                await composio.close_composio_client()
+            assert await composio.get_tool_router_mcp_session("publication") is fresh
+            release.set()
+            if invalidation != "none":
+                with pytest.raises(composio.ComposioMcpUpstreamError):
+                    await request
+            else:
+                assert await request is fresh
+        assert composio._tool_router_session_cache["publication"] is fresh
+        assert stale._retired
+        assert not fresh._retired
+        assert await composio.get_tool_router_mcp_session("publication") is fresh
+        assert not composio._tool_router_session_creations
+    finally:
+        release.set()
+        if not request.done():
+            request.cancel()
+        await asyncio.gather(request, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_session_creation_does_not_invalidate_another_creator(
+    monkeypatch, tool_router_cache
+):
+    composio, _sessions = tool_router_cache
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def create(_user_id, *, now):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            started.set()
+        await release.wait()
+        return _mcp_session("survivor")
+
+    monkeypatch.setattr(composio, "_create_tool_router_mcp_session", create)
+    first = asyncio.create_task(composio.get_tool_router_mcp_session("survivor"))
+    second = asyncio.create_task(composio.get_tool_router_mcp_session("survivor"))
+    try:
+        async with asyncio.timeout(3):
+            await started.wait()
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            release.set()
+            surviving = await second
+        assert composio._tool_router_session_cache["survivor"] is surviving
+        assert not surviving._retired
+        assert not composio._tool_router_session_creations
+    finally:
+        release.set()
+        for task in (first, second):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(first, second, return_exceptions=True)
 
 
 @pytest.mark.asyncio
