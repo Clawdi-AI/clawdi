@@ -18,6 +18,33 @@ const sidecarManifest = {
 };
 
 describe("runtime impact revisions", () => {
+	test("changes sidecar revision for an addon-only update", () => {
+		const program = {
+			transparentPort: 8080,
+			profileBundlePath: "/run/clawdi/egress/profiles.json",
+			secretFilePath: "/run/clawdi/secrets/egress.json",
+			engine: {
+				status: "ready" as const,
+				version: "12.2.3",
+				url: "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
+				sha256: "a".repeat(64),
+				cacheDir: "/var/cache/clawdi/mitmproxy",
+				binaryPath: "/var/cache/clawdi/mitmproxy/mitmdump",
+			},
+			addonSha256: "b".repeat(64),
+		};
+		const identity = { runtimeUid: 10001, runtimeGid: 10001, egressUid: 10002, egressGid: 10002 };
+		const revision = runtimeSidecarProgramRevision(sidecarManifest, program, identity);
+		expect(runtimeSidecarProgramRevision(sidecarManifest, { ...program }, identity)).toBe(revision);
+		expect(
+			runtimeSidecarProgramRevision(
+				sidecarManifest,
+				{ ...program, addonSha256: "c".repeat(64) },
+				identity,
+			),
+		).not.toBe(revision);
+	});
+
 	test("hashes canonical runtime program impact", () => {
 		const impact = {
 			renderedProjection: {

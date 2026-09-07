@@ -35,6 +35,11 @@ path data, and preserves the trailing path and query. Public path equals/prefix
 matchers and headers remain literal; query values retain their existing single
 form-URL decode.
 
+The addon ships with the exact CLI artifact, independently of the mitmproxy
+engine pin. Convergence writes the packaged addon and includes its SHA256 in
+the sidecar unit revision, so an addon-only update requires sidecar activation
+through normal runtime reconciliation, not an engine upgrade or image rebuild.
+
 Only hosts from non-passthrough profiles enter the TLS interception set. Once a
 host is intercepted, an unmatched request on that host still uses the original
 request-level upstream. This is not byte-for-byte TCP passthrough because the
