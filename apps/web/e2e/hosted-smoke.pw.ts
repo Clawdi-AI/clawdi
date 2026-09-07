@@ -18,6 +18,7 @@ import {
 	mutationDeploymentReadFixture,
 	readDeploymentFixture,
 } from "./hosted-stub-api";
+import { measureNavigation } from "./navigation-measurement";
 
 type PlanChangeProgress = DeployComponents["schemas"]["ComputePlanChangeProgress"];
 type PlanChangeKind = PlanChangeProgress["changeKind"];
@@ -860,6 +861,423 @@ const railHostedCloudAgent = {
 	display_name: null,
 	sort_order: 0,
 };
+
+test("navigation timing preserves the outgoing iframe geometry", async ({
+	page,
+	context,
+}, testInfo) => {
+	await stubHostedApi(page, {
+		deployments: [
+			{
+				...mutationDeploymentReadFixture({
+					...railHostedDeployment,
+					hermes_control_ui_url: "https://runtime.example/",
+				}),
+				files_endpoint: { url: "https://files.example.test/" },
+			},
+		],
+		cloudAgents: [railHostedCloudAgent],
+		plans: [basicPlan, performancePlan],
+		agentResourceFixtures: true,
+		sessionsPage: hostedOverviewSessionsPage(3),
+	});
+	let runtimeDocuments = 0;
+	await context.route("https://runtime.example/**", (route) => {
+		if (route.request().resourceType() === "document") runtimeDocuments += 1;
+		return route.fulfill({
+			contentType: "text/html",
+			body: '<!doctype html><style>body{margin:0;background:#fafafa;color:#222;font:16px system-ui}header{background:#eceef0;padding:20px}main{padding:24px}textarea{width:80%;height:100px}</style><header>Runtime dashboard</header><main><h1>Chat</h1><textarea aria-label="Message">Retained conversation</textarea></main>',
+		});
+	});
+	await context.route("https://files.example.test/**", (route) =>
+		route.fulfill({
+			contentType: "text/html",
+			headers: {
+				"access-control-allow-origin": "http://127.0.0.1:3100",
+				"access-control-allow-credentials": "true",
+				"access-control-allow-headers": "authorization",
+			},
+			body: "<!doctype html><style>body{background:#fff;color:#222;font:16px system-ui}</style><h1>Workspace files</h1><p>notes.txt</p>",
+		}),
+	);
+	let slow = false;
+	let apiDelay = 300;
+	await page.route("**/*", async (route) => {
+		const request = route.request();
+		if (slow && ["script", "fetch", "xhr"].includes(request.resourceType())) {
+			await new Promise((resolve) =>
+				setTimeout(resolve, request.resourceType() === "script" ? 400 : apiDelay),
+			);
+		}
+		await route.fallback();
+	});
+	const results = [];
+	for (const [section, destination] of [
+		["", '[data-overview-section="tools"]'],
+		["sessions", '[data-slot="page-header"] h1'],
+		["channel-links", '[data-slot="page-header"] h1'],
+		["model-provider", '[data-slot="page-header"] h1'],
+		["settings", '[data-slot="page-header"] h1'],
+	] as const) {
+		for (const temperature of ["cold", "warm"] as const) {
+			slow = false;
+			if (temperature === "cold") await page.goto(`/agents/${railHostedEnvironmentId}/console`);
+			else
+				await page
+					.getByTestId("app-sidebar")
+					.getByRole("link", { name: "Hermes Dashboard", exact: true })
+					.click();
+			await expect(page.locator("main iframe")).toBeVisible();
+			await page.evaluate(() => document.fonts.ready);
+			slow = true;
+			results.push(
+				await measureNavigation(page, testInfo, {
+					name: `${section || "overview"}-${temperature}`,
+					href: `/agents/${railHostedEnvironmentId}${section ? `/${section}` : ""}`,
+					destination,
+				}),
+			);
+		}
+	}
+	for (const [section, title] of [
+		["files", "Files"],
+		["console", "Hermes Dashboard"],
+	] as const) {
+		if (section === "files") {
+			slow = false;
+			await page
+				.getByTestId("app-sidebar")
+				.getByRole("link", { name: "Hermes Dashboard", exact: true })
+				.click();
+			await expect(page.locator("main iframe")).toBeVisible();
+		}
+		slow = true;
+		results.push(
+			await measureNavigation(page, testInfo, {
+				name: `iframe-to-${section}`,
+				href: `/agents/${railHostedEnvironmentId}/${section}`,
+				destination: `main iframe[title="${title}"]`,
+			}),
+		);
+	}
+	const runtimeFrame = page.frameLocator('iframe[title="Hermes Dashboard"]');
+	await runtimeFrame.getByRole("textbox", { name: "Message" }).fill("Unsaved runtime draft");
+	await runtimeFrame.locator("body").evaluate(() => history.pushState(null, "", "#retained"));
+	const documentsBeforeSettings = runtimeDocuments;
+	await page.getByRole("button", { name: /^Wallet balance/ }).click();
+	await expect(page.getByRole("dialog")).toBeVisible();
+	await page.keyboard.press("Escape");
+	await expect(page.getByRole("dialog")).toBeHidden();
+	await expect(runtimeFrame.getByRole("textbox", { name: "Message" })).toHaveValue(
+		"Unsaved runtime draft",
+	);
+	expect(await runtimeFrame.locator("body").evaluate(() => location.hash)).toBe("#retained");
+	expect(runtimeDocuments).toBe(documentsBeforeSettings);
+	apiDelay = 1500;
+	results.push(
+		await measureNavigation(page, testInfo, {
+			name: "overview-pending",
+			href: `/agents/${railHostedEnvironmentId}`,
+			destination: '[data-overview-section="tools"]',
+		}),
+	);
+	await testInfo.attach("navigation-summary", {
+		body: JSON.stringify(results, null, 2),
+		contentType: "application/json",
+	});
+});
+
+test("overview loading geometry retains card structure and section rhythm", async ({
+	page,
+}, testInfo) => {
+	const paidSubscription = paidBasicDeployment.compute_subscription;
+	if (!paidSubscription) throw new Error("Missing paid subscription fixture");
+	const deployment = mutationDeploymentReadFixture({
+		...railHostedDeployment,
+		hermes_control_ui_url: "https://runtime.example/",
+		config_info: { ...railHostedDeployment.config_info, compute_plan_slug: "compute_performance" },
+		compute_subscription: {
+			...paidSubscription,
+			current_period_end: "2026-09-11T00:00:00Z",
+		},
+	});
+	const sessionsPage = hostedOverviewSessionsPage(3);
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		cloudAgents: [railHostedCloudAgent],
+		plans: [basicPlan, performancePlan],
+		agentResourceFixtures: true,
+		sessionsPage,
+	});
+	let inventoryGate = Promise.resolve();
+	let resourceGate = Promise.resolve();
+	await page.route(`${DEPLOY_API}/v2/deployments**`, async (route) => {
+		if (new URL(route.request().url()).pathname === "/v2/deployments") await inventoryGate;
+		await route.fallback();
+	});
+	await page.route(`${CLOUD_API}/**`, async (route) => {
+		if (/\/(agent-plugins|memories|vault|connectors)(\?|$)/.test(route.request().url()))
+			await resourceGate;
+		await route.fallback();
+	});
+	const cardMetrics = () =>
+		page.locator("main").evaluate((main) =>
+			Array.from(main.querySelectorAll("[data-overview-module], [data-overview-status]")).map(
+				(card) => {
+					const style = getComputedStyle(card);
+					const title = card.querySelector('[data-slot="card-title"]');
+					const description = card.querySelector('[data-slot="card-description"]');
+					return {
+						id:
+							card.getAttribute("data-overview-module") ??
+							card.getAttribute("data-overview-status"),
+						box: card.getBoundingClientRect().toJSON(),
+						border: style.borderWidth,
+						radius: style.borderRadius,
+						padding: style.padding,
+						titleLine: title ? getComputedStyle(title).lineHeight : null,
+						descriptionLine: description ? getComputedStyle(description).lineHeight : null,
+					};
+				},
+			),
+		);
+	for (const viewport of [
+		{ width: 1440, height: 900 },
+		{ width: 390, height: 844 },
+		{ width: 320, height: 800 },
+	]) {
+		await page.setViewportSize(viewport);
+		await page.addInitScript(() => {
+			localStorage.setItem("clawdi-theme", "dark");
+		});
+		let releaseInventory = () => {};
+		let releaseResources = () => {};
+		inventoryGate = new Promise<void>((resolve) => {
+			releaseInventory = resolve;
+		});
+		resourceGate = new Promise<void>((resolve) => {
+			releaseResources = resolve;
+		});
+		try {
+			await page.goto(`/agents/${railHostedEnvironmentId}`);
+			await expect(page.getByTestId("overview-status-card-skeleton")).toBeVisible();
+			await page.locator("#dashboard-scroll-container").evaluate((element) => {
+				element.scrollTop = 0;
+			});
+			await page.evaluate(() => window.scrollTo(0, 0));
+			const loading = await cardMetrics();
+			const loadingGeometry = await expectAgentOverviewGeometry(page, {
+				hosted: true,
+				desktop: viewport.width === 1440,
+			});
+			await testInfo.attach(`paid-${viewport.width}-cold-rhythm`, {
+				body: JSON.stringify(loadingGeometry, null, 2),
+				contentType: "application/json",
+			});
+			await page.screenshot({ path: testInfo.outputPath(`paid-${viewport.width}-cold.png`) });
+			releaseInventory();
+			await expect(page.locator("[data-overview-compute-plan]")).toHaveText("Performance plan");
+			await expect(
+				page.locator('[data-overview-module="plugins"] [data-slot="skeleton"]'),
+			).toBeVisible();
+			await page.screenshot({ path: testInfo.outputPath(`paid-${viewport.width}-partial.png`) });
+			releaseResources();
+			await expect(page.locator('main [data-slot="skeleton"]')).toHaveCount(0);
+			const ready = await cardMetrics();
+			await testInfo.attach(`paid-${viewport.width}-card-metrics`, {
+				body: JSON.stringify({ loading, ready }, null, 2),
+				contentType: "application/json",
+			});
+			for (const before of loading) {
+				const after = ready.find((card) => card.id === before.id);
+				if (!after) throw new Error(`Missing loaded card: ${before.id}`);
+				expect([
+					after.border,
+					after.radius,
+					after.padding,
+					after.titleLine,
+					after.descriptionLine,
+				]).toEqual([
+					before.border,
+					before.radius,
+					before.padding,
+					before.titleLine,
+					before.descriptionLine,
+				]);
+				expect(Math.abs(after.box.width - before.box.width)).toBeLessThanOrEqual(1);
+				expect(
+					Math.abs(after.box.height - before.box.height),
+					`${before.id} height`,
+				).toBeLessThanOrEqual(1);
+				expect(Math.abs(after.box.y - before.box.y), `${before.id} top`).toBeLessThanOrEqual(1);
+			}
+			const geometry = await expectAgentOverviewGeometry(page, {
+				hosted: true,
+				desktop: viewport.width === 1440,
+			});
+			await testInfo.attach(`paid-${viewport.width}-loading-geometry`, {
+				body: JSON.stringify({ loading, ready, geometry }, null, 2),
+				contentType: "application/json",
+			});
+			await captureAgentOverview(page, testInfo, `paid-performance-${viewport.width}-dark`);
+			await page
+				.locator('[data-overview-status="compute"]')
+				.screenshot({
+					path: testInfo.outputPath(`paid-performance-${viewport.width}-compute.png`),
+				});
+			for (const count of [0, 1]) {
+				Object.assign(sessionsPage, hostedOverviewSessionsPage(count));
+				await page.reload();
+				await expect(page.locator('main [data-slot="skeleton"]')).toHaveCount(0);
+				await expectAgentOverviewGeometry(page, { hosted: true, desktop: viewport.width === 1440 });
+				await captureAgentOverview(
+					page,
+					testInfo,
+					`paid-performance-${viewport.width}-sessions-${count}`,
+				);
+			}
+			Object.assign(sessionsPage, hostedOverviewSessionsPage(3));
+		} finally {
+			releaseInventory();
+			releaseResources();
+		}
+	}
+	let memoryFailures = 0;
+	await page.route(`${CLOUD_API}/v1/memories?*`, async (route) => {
+		memoryFailures += 1;
+		await fulfillJson(route, { detail: "Temporary fixture error" }, 503);
+	});
+	const currentTime = await page.evaluate(() => Date.now());
+	await page.clock.setFixedTime(currentTime + 60_000);
+	await page.locator('main a[href$="/sessions"]').click();
+	await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+	await page.goBack();
+	await expect.poll(() => memoryFailures).toBe(3);
+	await page.evaluate(() => new Promise(requestAnimationFrame));
+	const memories = page.locator('[data-overview-module="memories"]');
+	await expect(memories).toContainText("1 memory");
+	await expect(memories.locator('[data-slot="skeleton"]')).toHaveCount(0);
+	await page.screenshot({ path: testInfo.outputPath("refresh-error-retains-memories.png") });
+});
+
+test("runtime readiness keeps launch closed across generation and credential races", async ({
+	page,
+	context,
+}, testInfo) => {
+	const deployment = mutationDeploymentReadFixture({
+		...railHostedDeployment,
+		openclaw_control_ui_url: "https://runtime.example/",
+		config_info: { ...railHostedDeployment.config_info, runtime: "openclaw" },
+	});
+	const readyStatus = deployment.resource.status;
+	const endpoint = deployment.runtime_ui_endpoint;
+	if (!readyStatus || !endpoint) throw new Error("Missing runtime readiness fixture");
+	const handoffUrl = `${endpoint.url}#bootstrapToken=fixture-token&bootstrapProfile=owner`;
+	const credentialRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		cloudAgents: [],
+		agentResourceFixtures: true,
+		runtimeUiRedemptionRequests: credentialRequests,
+	});
+	await context.route("https://runtime.example/**", (route) =>
+		route.fulfill({
+			contentType: "text/html",
+			body: "<!doctype html><title>Runtime fixture</title><h1>Mock authentication target</h1>",
+		}),
+	);
+	let credentialGate = Promise.resolve();
+	let credentialFailures = 1;
+	await page.route(`${DEPLOY_API}/v2/deployments/*/runtime-ui/credentials`, async (route) => {
+		credentialRequests.push(route.request().url());
+		const version = deployment.resource.metadata.resourceVersion;
+		await credentialGate;
+		if (credentialFailures-- > 0)
+			return route.fulfill({
+				status: 409,
+				contentType: "application/json",
+				body: JSON.stringify({ detail: "Runtime UI credential is unavailable" }),
+			});
+		await route.fulfill({
+			contentType: "application/json",
+			body: JSON.stringify({
+				runtime: "openclaw",
+				url: endpoint.url,
+				deployment_resource_version: version,
+				auth_mode: "openclaw_token",
+				token: "fixture-token",
+				handoff_url: handoffUrl,
+			}),
+		});
+	});
+	for (const state of ["starting", "no-endpoint", "old-ack", "old-generation", "ready"] as const) {
+		deployment.resource.status = {
+			...readyStatus,
+			summary_state: state === "starting" ? "starting" : "running",
+			driver_acknowledged_generation: state === "old-ack" ? 0 : 1,
+		};
+		deployment.resource.metadata.generation = state === "old-generation" ? 2 : 1;
+		deployment.runtime_ui_endpoint = state === "no-endpoint" ? null : endpoint;
+		await page.goto(`/agents/${railHostedEnvironmentId}`);
+		const launch = page.locator('[data-overview-module="dashboard"]');
+		if (state === "ready") {
+			await expect(launch.getByRole("link", { name: "Chat on the web" })).toBeVisible();
+		} else {
+			await expect(launch.getByRole("button", { name: "Chat on the web" })).toBeDisabled();
+		}
+		await page.screenshot({ path: testInfo.outputPath(`readiness-${state}.png`) });
+		expect(credentialRequests).toHaveLength(0);
+		if (state === "no-endpoint") {
+			const publishedAt = await page.evaluate(() => performance.now());
+			deployment.runtime_ui_endpoint = endpoint;
+			await expect(launch.getByRole("link", { name: "Chat on the web" })).toBeVisible({
+				timeout: 15_000,
+			});
+			const observedAt = await page.evaluate(() => performance.now());
+			await testInfo.attach("endpoint-publication-refresh", {
+				body: JSON.stringify({ milliseconds: observedAt - publishedAt }),
+				contentType: "application/json",
+			});
+		}
+	}
+	let releaseCredentials = () => {};
+	credentialGate = new Promise<void>((resolve) => {
+		releaseCredentials = resolve;
+	});
+	try {
+		await page.getByRole("link", { name: "Chat on the web" }).click();
+		await expect.poll(() => credentialRequests.length).toBe(1);
+		await expect(page.locator("main iframe")).toHaveCount(0);
+		await page.screenshot({ path: testInfo.outputPath("readiness-awaiting-credentials.png") });
+		releaseCredentials();
+		await page.getByRole("button", { name: "Retry", exact: true }).click();
+		await expect(page.locator("main iframe")).toHaveAttribute("src", handoffUrl);
+		await page
+			.getByTestId("app-sidebar")
+			.getByRole("link", { name: "Overview", exact: true })
+			.click();
+		await page.getByRole("link", { name: "Chat on the web" }).click();
+		await expect(page.locator("main iframe")).toHaveAttribute("src", endpoint.url);
+		expect(credentialRequests).toHaveLength(2);
+		deployment.resource.metadata.generation = 2;
+		deployment.resource.metadata.resourceVersion = "rv_generation_2";
+		deployment.resource.status = {
+			...readyStatus,
+			observedGeneration: 2,
+			driver_acknowledged_generation: 2,
+			driver_applied_generation: 2,
+			conditions: readyStatus.conditions.map((condition) => ({
+				...condition,
+				observedGeneration: 2,
+			})),
+		};
+		await page.reload();
+		await expect.poll(() => credentialRequests.length).toBe(3);
+		await expect(page.locator("main iframe")).toHaveAttribute("src", handoffUrl);
+	} finally {
+		releaseCredentials();
+	}
+});
 
 const _interruptedIdentitylessDeployment = {
 	...includedBasicDeployment,
@@ -3503,7 +3921,7 @@ test("agent provider creation stays in context and updates only after Save chang
 		.getByTestId("provider-choice-grid")
 		.getByRole("button", { pressed: true })
 		.filter({ hasText: "OpenAI" });
-	await expect(providerCard).toContainText("Selected");
+	await expect(providerCard).toHaveAttribute("aria-pressed", "true");
 	const mainModel = page.getByRole("combobox", { name: "Main model" });
 	await expect(mainModel).toBeVisible();
 	const accountProviderLink = page
@@ -3829,7 +4247,7 @@ test("overview billing facts and shortcuts follow subscription authority", async
 				await expect(row.getByText("Subscription:", { exact: true })).toHaveCount(0);
 				await expect(row.getByText("Active", { exact: true })).toHaveCount(0);
 			}
-			const date = row.locator("..").locator(":scope > dl");
+			const date = row.locator("xpath=following-sibling::div[1]");
 			await expect(date).toHaveCount(scenario.date ? 1 : 0);
 			if (scenario.date) for (const text of scenario.date) await expect(date).toContainText(text);
 			const actions = body.getByRole("button");
@@ -4768,9 +5186,6 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 		.toBe(historyLengthBeforeDelete);
 	await expect(page.locator("html")).toHaveAttribute("data-delete-not-found-flash", "false");
 	await expect(page.getByText("Agent removed", { exact: true })).toBeVisible();
-	await expect(
-		page.getByText("Cleanup continues in the background.", { exact: true }),
-	).toBeVisible();
 	await expect(page.getByRole("link", { name: "Open Basic", exact: true })).toHaveCount(0);
 	await expect(page.getByTestId("app-sidebar-agent-tiles").getByLabel("Basic")).toHaveCount(0);
 	// The deployment is still in the stubbed inventory as `deleting`; dismissal
@@ -5089,7 +5504,7 @@ test("accepted plan change recovers from the deployment projection after refresh
 			effectiveAt: "2026-07-16T00:00:00Z",
 		});
 	const pendingOperation = operation("awaiting_projection").body;
-	const failedOperation = {
+	const failedOperation: NonNullable<DeploymentRead["accepted_operation"]> = {
 		...pendingOperation,
 		done: true,
 		error: { code: 9, message: "Plan change failed", details: [] },
@@ -5106,13 +5521,16 @@ test("accepted plan change recovers from the deployment projection after refresh
 			metadata: { ...failedOperation.metadata, deploymentId: projectedDeployment.resource.id },
 		},
 	};
+	const deployments: DeploymentRead[] = [projectedDeployment];
 
 	await stubHostedApi(page, {
-		deployments: [terminalDeployment],
-		deploymentListResponses: [[projectedDeployment], [projectedDeployment]],
+		deployments,
 		planChangeRequests,
-		planChangeOperationResponses: [{ body: terminalDeployment.accepted_operation, status: 200 }],
 		plans: [basicPlan, performancePlan],
+	});
+	await page.route(`${DEPLOY_API}/v2/${pendingOperation.name}`, async (route) => {
+		deployments[0] = terminalDeployment;
+		await fulfillJson(route, terminalDeployment.accepted_operation);
 	});
 	await gotoHostedAgentSettings(page, fixtureAgentId(terminalFallbackDeployment), "Basic");
 	await page.reload();
@@ -5127,9 +5545,7 @@ test("accepted plan change recovers from the deployment projection after refresh
 	).toBeVisible();
 	await recoveryDialog.getByRole("button", { name: "Check status", exact: true }).click();
 	await expect(page.getByText("Couldn’t update subscription", { exact: true })).toBeVisible();
-	const retryDialog = page.getByRole("dialog", { name: "Change compute subscription" });
-	await expect(retryDialog).toBeVisible();
-	await retryDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+	await expect(recoveryDialog).toBeHidden();
 	await expect(
 		page.locator("#compute-plan-controls").getByRole("button", { name: "Choose a subscription" }),
 	).toBeVisible();

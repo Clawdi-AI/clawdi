@@ -218,7 +218,17 @@ export function mutationDeploymentReadFixture(
 			status: {
 				summary_state: summaryState,
 				observedGeneration: 1,
-				conditions: [],
+				observed_at: deployment.created_at,
+				conditions: [
+					{
+						type: "Ready",
+						status: summaryState === "running" ? "True" : "False",
+						observedGeneration: 1,
+						reason: "RuntimeReady",
+						message: "Runtime observation",
+						lastTransitionTime: deployment.created_at,
+					},
+				],
 				failure,
 				driver_acknowledged_generation: 1,
 				driver_applied_generation: 1,

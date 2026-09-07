@@ -30,7 +30,15 @@ import {
 	WalletCards,
 	X,
 } from "lucide-react";
-import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	type ComponentProps,
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -39,11 +47,15 @@ import { AgentSourceBadge, agentDisplayName } from "@/components/dashboard/agent
 import {
 	AgentOverviewCapabilities,
 	AgentOverviewStatusCard,
+	OVERVIEW_CHANNELS_DESCRIPTION,
 	OverviewDescriptionSkeleton,
-	OverviewMetadata,
 	OverviewModuleError,
 	OverviewNavigationCard,
 } from "@/components/dashboard/agent-overview-capabilities";
+import {
+	AgentOverviewActivity,
+	AgentOverviewTools,
+} from "@/components/dashboard/agent-overview-layout";
 import {
 	overviewProjectsModule,
 	overviewWorkspaceSkillsModule,
@@ -58,6 +70,7 @@ import {
 } from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
+import { OverviewComputeBody } from "@/components/dashboard/overview-compute-body";
 import { DetailPanel } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import {
@@ -211,6 +224,7 @@ import {
 	canStop as canStopDeployment,
 	type DeploymentStatus,
 	deploymentRuntimeStatusPresentation,
+	deploymentRuntimeUiIsReady,
 	deploymentStatusFromResource,
 	deploymentStatusLabel,
 	isRunningStatus,
@@ -316,7 +330,7 @@ import {
 import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { eventStreamFallbackInterval } from "@/lib/event-stream-refresh";
-import { formatMemoryMib, formatShortDate } from "@/lib/format";
+import { formatShortDate } from "@/lib/format";
 import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
 	agentSectionNavigationItem,
@@ -1021,34 +1035,26 @@ export function OverviewComputeSummary({
 	vcpu,
 	memoryMib,
 	storageGib,
+	subscription,
+	date,
+	action,
 }: {
 	planLabel: string;
 	vcpu: number;
 	memoryMib: number;
 	storageGib: number;
+	subscription?: { label: string | null; value: string } | null;
+	date?: { label: string; value: string } | null;
+	action?: ReactNode;
 }) {
-	const configuration = [
-		{ label: "CPU", value: `${vcpu} vCPU` },
-		{ label: "Memory", value: formatMemoryMib(memoryMib) },
-		{ label: "Storage", value: `${storageGib} GiB` },
-	];
 	return (
-		<div className="space-y-1.5" data-testid="overview-compute-summary">
-			<p data-overview-compute-plan className="text-sm text-muted-foreground">
-				{planLabel}
-			</p>
-			<dl
-				aria-label="Compute resources"
-				className="grid grid-cols-3 gap-3 text-xs text-muted-foreground"
-			>
-				{configuration.map((item) => (
-					<div key={item.label} className="min-w-0">
-						<dt>{item.label}</dt>
-						<dd className="break-words">{item.value}</dd>
-					</div>
-				))}
-			</dl>
-		</div>
+		<OverviewComputeBody
+			planLabel={planLabel}
+			resources={{ vcpu, memory_mib: memoryMib, disk_gib: storageGib }}
+			subscription={subscription}
+			date={date}
+			action={action}
+		/>
 	);
 }
 
@@ -1317,7 +1323,9 @@ function OverviewTab({
 	const workspaceResolution =
 		projectionLoading || projectBindings.isLoading
 			? "loading"
-			: projectionUnavailable || projectBindings.error || !workspaceProjectId
+			: projectionUnavailable ||
+					shouldBlockQueryError(projectBindings.error, projectBindings.data) ||
+					!workspaceProjectId
 				? "unavailable"
 				: "ready";
 	const runtimeSkills = useQuery({
@@ -1348,7 +1356,7 @@ function OverviewTab({
 	};
 	const skillsModule = runtimeSkills.isLoading
 		? { description: <OverviewDescriptionSkeleton label="skills" /> }
-		: runtimeSkills.error
+		: shouldBlockQueryError(runtimeSkills.error, runtimeSkills.data)
 			? { description: "Unavailable right now" }
 			: overviewWorkspaceSkillsModule(
 					(runtimeSkills.data?.items ?? []).map((skill) => skill.skill_key),
@@ -1386,12 +1394,12 @@ function OverviewTab({
 	};
 	return (
 		<div className="flex flex-col gap-8">
-			<div className="grid auto-rows-fr gap-3 @5xl/main:grid-cols-3" data-overview-section="tools">
+			<AgentOverviewTools>
 				<AgentDashboardOverview agentId={agentId} deployment={deployment} />
 				<OverviewNavigationCard
 					id="channels"
 					title="Chat via channels"
-					description="Telegram, Discord, or WhatsApp"
+					description={OVERVIEW_CHANNELS_DESCRIPTION}
 					icon={AGENT_SECTION_NAVIGATION_ITEMS.channels.icon}
 					tint={AGENT_SECTION_NAVIGATION_ITEMS.channels.tint}
 					link={agentSectionLink(agentId, "channels")}
@@ -1404,7 +1412,8 @@ function OverviewTab({
 					description={
 						providers.isLoading || managedModelCatalog.isLoading ? (
 							<OverviewDescriptionSkeleton label="model and provider" />
-						) : providers.error || managedModelCatalog.error ? (
+						) : shouldBlockQueryError(providers.error, providers.data) ||
+							shouldBlockQueryError(managedModelCatalog.error, managedModelCatalog.data) ? (
 							"Unavailable right now"
 						) : (
 							model
@@ -1412,30 +1421,26 @@ function OverviewTab({
 					}
 					link={agentSectionLink(agentId, "ai")}
 				/>
-			</div>
-			<div
-				className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3"
-				data-overview-section="entry"
-			>
-				<div
-					className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid"
-					data-overview-section="activity"
-				>
-					<div className="flex items-center justify-between">
-						<h2 id="hosted-recent-sessions" className="text-sm font-semibold">
-							Recent sessions
-						</h2>
-						<Button
-							render={<Link {...agentSectionLink(agentId, "sessions")} />}
-							nativeButton={false}
-							variant="ghost"
-							size="sm"
-							className="text-muted-foreground"
-						>
-							View all
-							<ArrowRight />
-						</Button>
-					</div>
+			</AgentOverviewTools>
+			<AgentOverviewActivity
+				heading={
+					<h2 id="hosted-recent-sessions" className="text-sm font-semibold">
+						Recent sessions
+					</h2>
+				}
+				action={
+					<Button
+						render={<Link {...agentSectionLink(agentId, "sessions")} />}
+						nativeButton={false}
+						variant="ghost"
+						size="sm"
+						className="text-muted-foreground"
+					>
+						View all
+						<ArrowRight />
+					</Button>
+				}
+				sessions={
 					<section aria-labelledby="hosted-recent-sessions" className="min-w-0">
 						{sessionsError ? (
 							<OverviewModuleError label="Sessions" onRetry={() => void onRetrySessions()} />
@@ -1448,64 +1453,47 @@ function OverviewTab({
 							/>
 						)}
 					</section>
-				</div>
-				<div className="min-w-0 @3xl/main:row-start-2">
-					<AgentOverviewStatusCard
-						agentId={agentId}
-						section="settings"
-						title="Compute"
-						icon={Cpu}
-						tint="bg-identity-4-bg text-identity-4-fg"
-						description={
-							<span
-								data-overview-compute-status
-								className="inline-flex items-center gap-2"
-								title={`Agent status: ${computeStatusPresentation.label}`}
-							>
-								<StatusDot status={computeStatusPresentation.tone} />
-								{computeStatusPresentation.label}
-							</span>
+				}
+			>
+				<AgentOverviewStatusCard
+					agentId={agentId}
+					section="settings"
+					title="Compute"
+					icon={Cpu}
+					tint="bg-identity-4-bg text-identity-4-fg"
+					description={
+						<span
+							data-overview-compute-status
+							className="flex items-center gap-2"
+							title={`Agent status: ${computeStatusPresentation.label}`}
+						>
+							<StatusDot status={computeStatusPresentation.tone} />
+							{computeStatusPresentation.label}
+						</span>
+					}
+				>
+					<OverviewComputeSummary
+						planLabel={compute.planLabel}
+						vcpu={spec.resources.vcpu}
+						memoryMib={spec.resources.memory_mib}
+						storageGib={spec.resources.disk_gib}
+						subscription={compute.subscription}
+						date={compute.date}
+						action={
+							compute.action ? (
+								<Button
+									render={<Link {...actionLink} />}
+									nativeButton={false}
+									variant="outline"
+									size="sm"
+								>
+									<ActionIcon /> {compute.action.label}
+								</Button>
+							) : null
 						}
-					>
-						<div className="flex h-full flex-col justify-between gap-3">
-							<OverviewComputeSummary
-								planLabel={compute.planLabel}
-								vcpu={spec.resources.vcpu}
-								memoryMib={spec.resources.memory_mib}
-								storageGib={spec.resources.disk_gib}
-							/>
-							{compute.subscription ? (
-								<div className="space-y-2">
-									<div
-										className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2"
-										data-overview-subscription-row
-									>
-										<dl className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground">
-											{compute.subscription.label ? (
-												<dt>{compute.subscription.label}:</dt>
-											) : (
-												<dt className="sr-only">Plan access</dt>
-											)}
-											<dd data-overview-subscription-status>{compute.subscription.value}</dd>
-										</dl>
-										{compute.action ? (
-											<Button
-												render={<Link {...actionLink} />}
-												nativeButton={false}
-												variant="outline"
-												size="sm"
-											>
-												<ActionIcon /> {compute.action.label}
-											</Button>
-										) : null}
-									</div>
-									{compute.date ? <OverviewMetadata items={[compute.date]} /> : null}
-								</div>
-							) : null}
-						</div>
-					</AgentOverviewStatusCard>
-				</div>
-			</div>
+					/>
+				</AgentOverviewStatusCard>
+			</AgentOverviewActivity>
 			<AgentOverviewCapabilities agentId={agentId} variant="hosted" content={overviewContent} />
 		</div>
 	);
@@ -1562,7 +1550,8 @@ function ConsoleTab({
 	const isStarting = isStartingStatus(status);
 	const label = runtimeDisplayName(runtime);
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
-	const url = runtimeConsoleUrl(deployment, runtime);
+	const ready = deploymentRuntimeUiIsReady(deployment);
+	const url = ready ? runtimeConsoleUrl(deployment, runtime) : null;
 	const [credentials, setCredentials] = useState<RuntimeUiCredentials | null>(null);
 	const [credentialError, setCredentialError] = useState<Error | null>(null);
 	const [isCredentialLoading, setIsCredentialLoading] = useState(false);
@@ -1574,7 +1563,7 @@ function ConsoleTab({
 	const requestCredentials = useRuntimeUiCredentialRequest(deployment, url, runtime);
 	const requestVersionRef = useRef(0);
 	const loadedCredentialIdentityRef = useRef<string | null>(null);
-	const credentialIdentity = `${deployment.resource.id}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${url ?? ""}\0${isRunning}`;
+	const credentialIdentity = `${deployment.resource.id}\0${deployment.resource.metadata.generation}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${url ?? ""}\0${ready}`;
 
 	const loadCredentials = useCallback(async (): Promise<RuntimeUiCredentials | null> => {
 		const requestVersion = requestVersionRef.current + 1;
@@ -1629,8 +1618,15 @@ function ConsoleTab({
 		if (loadedCredentialIdentityRef.current === credentialIdentity) return;
 		loadedCredentialIdentityRef.current = credentialIdentity;
 		clearCredentials();
-		if (runtime !== "openclaw" || !isRunning || !url) return;
-		if (hasOpenClawNativeHandoffLoaded(runtimeUiLocalStorage(), deployment.resource.id, url)) {
+		if (runtime !== "openclaw" || !ready || !url) return;
+		if (
+			hasOpenClawNativeHandoffLoaded(
+				runtimeUiLocalStorage(),
+				deployment.resource.id,
+				url,
+				deployment.resource.metadata.generation,
+			)
+		) {
 			setOpenClawNativeHandoffLoaded(true);
 			setCredentialLoadState("ready");
 			return;
@@ -1640,7 +1636,8 @@ function ConsoleTab({
 		clearCredentials,
 		credentialIdentity,
 		deployment.resource.id,
-		isRunning,
+		deployment.resource.metadata.generation,
+		ready,
 		loadCredentials,
 		runtime,
 		url,
@@ -1746,6 +1743,7 @@ function ConsoleTab({
 	const openClawCredentials =
 		currentCredentials?.runtime === "openclaw" ? currentCredentials : null;
 	const openClawFrameCanLoad =
+		loadedCredentialIdentityRef.current === credentialIdentity &&
 		credentialLoadState === "ready" &&
 		(openClawCredentials !== null || openClawNativeHandoffLoaded);
 	const iframeUrl =
@@ -1762,7 +1760,7 @@ function ConsoleTab({
 					openClawCredentials,
 					url,
 					openClawNativeHandoffLoaded,
-					openClawFrameLoaded,
+					openClawFrameCanLoad && openClawFrameLoaded,
 				)
 			: runtimeDashboardUrl(url, runtime);
 
@@ -1827,12 +1825,14 @@ function ConsoleTab({
 					onLoad={
 						runtime === "openclaw"
 							? () => {
+									if (loadedCredentialIdentityRef.current !== credentialIdentity) return;
 									if (
 										markOpenClawNativeHandoffLoaded(
 											runtimeUiLocalStorage(),
 											deployment.resource.id,
 											url,
 											openClawCredentials,
+											deployment.resource.metadata.generation,
 										)
 									) {
 										setOpenClawNativeHandoffLoaded(true);

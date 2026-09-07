@@ -185,6 +185,29 @@ export function hasCurrentRuntimeHealthDegradation(status: HostedDeploymentStatu
 	);
 }
 
+/** Public readiness evidence authorizes a launch attempt, not an authenticated browser session. */
+export function deploymentRuntimeUiIsReady(deployment: HostedDeployment): boolean {
+	const { metadata, spec, status } = deployment.resource;
+	const generation = metadata.generation;
+	const ready = status?.conditions.find((condition) => condition.type === "Ready");
+	return Boolean(
+		generation >= 1 &&
+			spec.desired_lifecycle === "running" &&
+			status?.summary_state === "running" &&
+			!status.deleted_at &&
+			status.observed_at &&
+			status.observedGeneration === generation &&
+			status.driver_acknowledged_generation === generation &&
+			status.driver_applied_generation === generation &&
+			ready?.status === "True" &&
+			ready.observedGeneration === generation &&
+			!hasCurrentRuntimeHealthDegradation(status) &&
+			deployment.runtime_ui_endpoint?.runtime === spec.runtime &&
+			deployment.runtime_ui_endpoint.role === "control_ui" &&
+			deployment.runtime_ui_endpoint.url,
+	);
+}
+
 export function deploymentRuntimeStatusPresentation(
 	resourceStatus: HostedDeploymentStatus | null,
 ): DeploymentStatusPresentation {
@@ -445,19 +468,23 @@ export function deploymentPollingState(
 	for (const deployment of deployments ?? []) {
 		if (deployment.accepted_operation?.done && deployment.accepted_operation.error) continue;
 		const status = deploymentStatusFromResource(deployment.resource.status);
-		if (!isTransitionalStatus(status)) continue;
+		const awaitingRuntimeUi = status.kind === "running" && !deploymentRuntimeUiIsReady(deployment);
+		if (!isTransitionalStatus(status) && !awaitingRuntimeUi) continue;
 
 		const deploymentId = deployment.resource.id;
 		const operation = deployment.accepted_operation;
 		const operationStartedAtMs = Date.parse(operation?.metadata.createTime ?? "");
 		const pollState = boundedSettlingPollState({
-			key: operation?.name ?? deploymentTransitionFallbackKey(deployment),
-			startedAtMs: Number.isFinite(operationStartedAtMs) ? operationStartedAtMs : nowMs,
+			key: awaitingRuntimeUi
+				? `${deploymentTransitionFallbackKey(deployment)}:runtime-ui`
+				: (operation?.name ?? deploymentTransitionFallbackKey(deployment)),
+			startedAtMs:
+				!awaitingRuntimeUi && Number.isFinite(operationStartedAtMs) ? operationStartedAtMs : nowMs,
 			tracker: trackers.get(deploymentId) ?? null,
 			nowMs,
 			pollIntervalMs: DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
 			timeoutMs:
-				operation?.metadata.verb === "create"
+				!awaitingRuntimeUi && operation?.metadata.verb === "create"
 					? DEPLOYMENT_CREATION_TRANSITION_TIMEOUT_MS
 					: DEPLOYMENT_TRANSITION_TIMEOUT_MS,
 			escalationMs: DEPLOYMENT_TRANSITION_ESCALATION_MS,

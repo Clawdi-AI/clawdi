@@ -1,6 +1,6 @@
 "use client";
 
-import { useLocation } from "@tanstack/react-router";
+import { useMatches } from "@tanstack/react-router";
 import { lazy, type ReactNode, Suspense, useCallback, useState } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { BreadcrumbTitleProvider } from "@/components/breadcrumb-title";
@@ -58,7 +58,8 @@ const GlobalWalletBalance = IS_HOSTED_BUILD
 	: null;
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
-	const pathname = useLocation({ select: (location) => location.pathname });
+	// Layout belongs to the presented matches, not the pending destination.
+	const pathname = useMatches({ select: (matches) => matches.at(-1)?.pathname ?? "/" });
 	const hydrated = useHydrated();
 	const [ownership, setOwnership] = useState<AgentOwnership | null>(null);
 	const [existingCloudDeploymentCount, setExistingCloudDeploymentCount] = useState<number | null>(

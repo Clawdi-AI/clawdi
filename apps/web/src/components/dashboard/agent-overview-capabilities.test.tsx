@@ -63,8 +63,16 @@ describe("overview modules", () => {
 			createElement(OverviewDescriptionSkeleton, { label: "projects" }),
 		);
 
-		expect(markup).toContain("h-5 w-20");
+		expect(markup).toContain("h-lh w-20");
 		expect(markup).not.toContain("h-4 w-20");
+	});
+
+	test("retains a known project count when a background refresh fails", () => {
+		expect(
+			overviewProjectsModule({
+				bindings: { count: 3, isLoading: false, error: new Error("Offline") },
+			}).description,
+		).toBe("3 linked projects");
 	});
 
 	test("uses the same compact Card grid for initial overview skeletons", () => {
