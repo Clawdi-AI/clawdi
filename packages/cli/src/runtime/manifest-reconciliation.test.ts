@@ -2080,9 +2080,9 @@ describe("runtime manifest reconciliation invariants", () => {
 	])("rejects hosted CLI policy with $name", ({ clawdiCli }) => {
 		const valid = hostedManifestFixture();
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(valid).success).toBe(true);
-		expect(
-			hostedRuntimeBundleV2ManifestSchema.safeParse({ ...valid, clawdiCli }).success,
-		).toBe(false);
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse({ ...valid, clawdiCli }).success).toBe(
+			false,
+		);
 	});
 
 	test.each(["clawdi@1.2.3-test", "clawdi@1.2.3-rc-1.2", "clawdi@1.2.3"])(
