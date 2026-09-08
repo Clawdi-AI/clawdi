@@ -42,7 +42,7 @@ export function reconcileHermesNativeCredentials(input: HermesNativeCredentialsI
 	const appRoot = runtimeAppRoot("hermes", input.home);
 	if (!appRoot) throw new Error("Hermes application path is unavailable");
 	const result = spawnRuntimeUserCommand(
-		join(appRoot, ".venv", "bin", "python"),
+		join(appRoot, "venv", "bin", "python"),
 		["-c", HERMES_NATIVE_CREDENTIALS_HELPER, appRoot],
 		input.home,
 		input.workspaceRoot,

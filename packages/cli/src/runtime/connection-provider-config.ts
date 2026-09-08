@@ -59,14 +59,26 @@ const HERMES_API: Partial<Record<AiProviderApiMode, string>> = {
 
 // Public installed APIs only. Never load_pool(): it can seed/write credentials.
 // NousResearch/hermes-agent@0d08cd295fd73427833ee349eb858569d4d0dd3a.
+// The deployed 7a963456 baseline resolves one pool via get_custom_provider_pool_key.
 const HERMES_POOL_GUARD = `
 import contextlib, io, json, sys
 sys.path.insert(0, sys.argv[1])
 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-    from agent.credential_pool import custom_provider_pool_key_candidates
+    from agent import credential_pool
     from hermes_cli.auth import read_credential_pool
+    candidates = getattr(credential_pool, "custom_provider_pool_key_candidates", None)
+    legacy_key = getattr(credential_pool, "get_custom_provider_pool_key", None)
     for connection in json.load(sys.stdin):
-        for key in custom_provider_pool_key_candidates(connection["baseUrl"], provider_name=connection["id"]):
+        if callable(candidates):
+            keys = candidates(connection["baseUrl"], provider_name=connection["id"])
+        elif callable(legacy_key):
+            key = legacy_key(connection["baseUrl"], provider_name=connection["id"])
+            keys = [] if key is None else [key]
+        else:
+            raise ValueError("Custom provider public pool API is unavailable")
+        if not isinstance(keys, (list, tuple)) or any(not isinstance(key, str) or not key for key in keys):
+            raise ValueError("Custom provider public pool API returned invalid keys")
+        for key in keys:
             rows = read_credential_pool(key)
             if not isinstance(rows, list) or rows:
                 raise ValueError("Custom provider credential pool conflicts with connection ownership")
@@ -118,7 +130,7 @@ function guardHermesPools(input: ConnectionContext): void {
 	const appRoot = runtimeAppRoot("hermes", input.home);
 	if (!appRoot) throw new Error("Hermes application path is unavailable");
 	const result = spawnRuntimeUserCommand(
-		join(appRoot, ".venv", "bin", "python"),
+		join(appRoot, "venv", "bin", "python"),
 		["-c", HERMES_POOL_GUARD, appRoot],
 		input.home,
 		input.workspaceRoot,

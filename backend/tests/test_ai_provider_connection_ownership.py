@@ -7,7 +7,12 @@ from sqlalchemy import select
 from app.models.ai_provider import AiProviderAuthPayload
 from app.models.app_setting import AppSetting
 from app.models.hosted_runtime import HostedRuntimeState
-from app.schemas.runtime_observation import RuntimeObservationEventV2
+from app.schemas.runtime_observation import (
+    RuntimeDriftBindingRequest,
+    RuntimeDriftSummaryReadRequest,
+    RuntimeObservationEventV2,
+)
+from app.services.runtime_drift_summary import read_runtime_drift_summaries
 from app.services.runtime_observation import (
     ingest_runtime_observation,
     provision_runtime_environment_fence,
@@ -120,6 +125,71 @@ async def consumer(
     )
     await db.commit()
     return state
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history", ["expired", "previous-generation", "competing-fresh"])
+async def test_handoff_uses_one_fresh_current_generation_without_weakening_legacy_reads(
+    client, db_session, seed_user, history
+):
+    await create_provider(client)
+    now = datetime.now(UTC)
+    state = await consumer(
+        db_session,
+        seed_user.id,
+        captured_at=now - timedelta(minutes=20) if history == "expired" else now,
+    )
+    generation = 2 if history == "previous-generation" else 1
+    state.generation = generation
+    state.apply_generation = generation
+    db_session.add(AppSetting(key="supported_connection_cli_versions", value_json=[VERSION]))
+    observation = RuntimeObservationEventV2.model_validate(
+        {
+            "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
+            "reportedAt": now,
+            "capturedAt": now,
+            "runtimeMode": "hosted",
+            "status": "ok",
+            "activeCliVersion": VERSION,
+            "applied": {
+                "etag": f'"sha256:{REVISION}"',
+                "sourceRevision": REVISION,
+                "generation": generation,
+                "instanceId": state.instance_id,
+                "appliedProviderIds": [PROVIDER],
+            },
+            "boot": None,
+            "cli": None,
+            "applyReceiptId": "apply-connection-0002",
+            "bootNonce": "boot-nonce-connection-0002",
+            "bootSessionId": "current-connection-boot",
+            "sequence": 1,
+            "eventId": str(uuid4()),
+        }
+    )
+    await ingest_runtime_observation(
+        db_session,
+        environment_id=state.environment_id,
+        credential_deployment_id=state.deployment_id,
+        value=observation,
+        received_at=now,
+    )
+    await db_session.commit()
+    legacy = await read_runtime_drift_summaries(
+        db_session,
+        RuntimeDriftSummaryReadRequest(
+            bindings=[
+                RuntimeDriftBindingRequest(
+                    environmentId=state.environment_id, deploymentId=state.deployment_id
+                )
+            ]
+        ),
+    )
+    assert legacy.items[0].observation.status == "ambiguous"
+    response = await client.patch(
+        f"/v1/ai-providers/{PROVIDER}", json={"configuration_mode": "connection"}
+    )
+    assert response.status_code == (409 if history == "competing-fresh" else 200), response.text
 
 
 @pytest.mark.asyncio

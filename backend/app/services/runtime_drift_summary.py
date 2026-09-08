@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
@@ -32,8 +33,15 @@ from app.services.runtime_source_revision import runtime_source_contract_revisio
 async def read_runtime_drift_summaries(
     db: AsyncSession,
     body: RuntimeDriftSummaryReadRequest,
+    *,
+    expected_generations: Mapping[UUID, int] | None = None,
 ) -> RuntimeDriftSummaryReadResponse:
-    """Read persisted drift evidence without writes in the caller's RR snapshot."""
+    """Read persisted drift evidence without writes in the caller's RR snapshot.
+
+    Trusted callers may scope a binding to its persisted generation without
+    inventing a receipt or boot nonce. Multiple fresh boots remain ambiguous;
+    unscoped legacy reads retain their conservative historical-head behavior.
+    """
     observed_at = datetime.now(UTC)
     environment_ids = [binding.environment_id for binding in body.bindings]
     rows = (
@@ -62,6 +70,7 @@ async def read_runtime_drift_summaries(
     active: list[tuple[UUID, str]] = []
     expected: list[tuple[UUID, str, int, str, str, str]] = []
     legacy: list[tuple[UUID, str]] = []
+    generation_scoped: list[tuple[UUID, str, int]] = []
     for requested in body.bindings:
         row = by_environment.get(requested.environment_id)
         if row is None:
@@ -78,7 +87,17 @@ async def read_runtime_drift_summaries(
             active.append((requested.environment_id, requested.deployment_id))
             identity = requested.expected_apply_identity
             if identity is None:
-                legacy.append((requested.environment_id, requested.deployment_id))
+                generation = (
+                    None
+                    if expected_generations is None
+                    else expected_generations.get(requested.environment_id)
+                )
+                if generation is None:
+                    legacy.append((requested.environment_id, requested.deployment_id))
+                else:
+                    generation_scoped.append(
+                        (requested.environment_id, requested.deployment_id, generation)
+                    )
             else:
                 expected.append(
                     (
@@ -116,6 +135,14 @@ async def read_runtime_drift_summaries(
                     V2RuntimeObservationHead.environment_id,
                     V2RuntimeObservationHead.deployment_id,
                 ).in_(legacy)
+            )
+        if generation_scoped:
+            predicates.append(
+                tuple_(
+                    V2RuntimeObservationHead.environment_id,
+                    V2RuntimeObservationHead.deployment_id,
+                    V2RuntimeObservationHead.generation,
+                ).in_(generation_scoped)
             )
         ranked_heads = (
             select(
