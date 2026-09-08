@@ -5,11 +5,12 @@ import { nativeAiProvider } from "@clawdi/shared";
 import { ArrowLeft, CircleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { EntityIcon } from "@/components/entity-icon";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
 	DialogContent,
-	DialogDescription,
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
@@ -458,7 +459,6 @@ export function AddProviderDialog({
 			.catch(() => null);
 		if (!result || dialogSession !== dialogSessionRef.current) return;
 		setDraftTestResult(result);
-		if (result.ok) toast.success("Connection verified");
 	}
 
 	function requestClose(next: boolean) {
@@ -494,24 +494,6 @@ export function AddProviderDialog({
 		oauthDeviceStart.isPending ||
 		oauthDevicePoll.isPending;
 
-	function setupDescription(): string {
-		if (renderedOAuth)
-			return "Open ChatGPT, enter the one-time code, and this page will finish automatically.";
-		if (step === "choose" && !isEdit) return "Choose a common provider or bring a custom endpoint.";
-		if (isOAuthEdit)
-			return "Subscription access is ready. Reconnect only to change or repair the account.";
-		if (form.authMethod === "oauth") return "Sign in with ChatGPT to connect your account.";
-		if (nativeConnection) {
-			if (isEdit && savedCredentialAvailable) return "Update the credential for this connection.";
-			return `Connect using your ${(selectedPreset?.credential_label ?? "API key").toLowerCase()}.`;
-		}
-		if (isEdit)
-			return editing?.auth.type === "none"
-				? "Enter an API key to finish setup. Optional provider details are in Advanced."
-				: "Update this provider. Enter a new API key only if you want to replace it.";
-		return "Enter the credential and connection details for this custom endpoint.";
-	}
-
 	return (
 		<Dialog open={open} onOpenChange={requestClose} onOpenChangeComplete={completeOpenChange}>
 			<DialogContent
@@ -520,19 +502,34 @@ export function AddProviderDialog({
 				className="flex max-h-[min(92vh,calc(100dvh-1rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl"
 			>
 				<DialogHeader className="shrink-0 px-5 pt-5 pr-14 sm:px-6 sm:pt-6 sm:pr-14">
-					<DialogTitle>
-						{renderedOAuth
-							? "Sign in with ChatGPT"
-							: isEdit
-								? (editing?.readiness?.deployable ?? editing?.usable) &&
-									editing.auth.type !== "none"
-									? "Edit provider"
-									: "Finish provider setup"
-								: step === "choose"
-									? "Add a provider"
-									: `Set up ${providerLabel}`}
+					<DialogTitle className="flex min-w-0 items-center gap-3">
+						{step === "configure" || isEdit || renderedOAuth ? (
+							<span aria-hidden="true" className="shrink-0">
+								<EntityIcon
+									kind="provider"
+									id={
+										renderedOAuth || form.authMethod === "oauth"
+											? "openai"
+											: (selectedPreset?.id ?? form.type)
+									}
+									label={providerLabel}
+									size="md"
+								/>
+							</span>
+						) : null}
+						<span className="min-w-0 break-words">
+							{renderedOAuth
+								? "Sign in with ChatGPT"
+								: isEdit
+									? (editing?.readiness?.deployable ?? editing?.usable) &&
+										editing.auth.type !== "none"
+										? `Edit ${providerLabel}`
+										: `Finish ${providerLabel} setup`
+									: step === "choose"
+										? "Add a provider"
+										: `Set up ${providerLabel}`}
+						</span>
 					</DialogTitle>
-					<DialogDescription>{setupDescription()}</DialogDescription>
 				</DialogHeader>
 
 				<div
@@ -553,12 +550,21 @@ export function AddProviderDialog({
 					) : (
 						<div className="flex flex-col gap-3">
 							{!providerListReady ? (
-								<div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
-									<CircleAlert className="mt-0.5 size-3.5 shrink-0" />
-									{providers.isLoading
-										? "Providers are still loading."
-										: "Providers couldn't be loaded. Refresh and try again."}
-								</div>
+								providers.isLoading ? (
+									<div
+										className="flex items-center gap-2 text-sm text-muted-foreground"
+										role="status"
+									>
+										<Spinner className="size-4" /> Loading providers…
+									</div>
+								) : (
+									<Alert variant="destructive">
+										<CircleAlert />
+										<AlertDescription>
+											Providers couldn’t be loaded. Refresh and try again.
+										</AlertDescription>
+									</Alert>
+								)
 							) : null}
 							<ProviderFieldsForm
 								nativeConnection={nativeConnection}
@@ -599,18 +605,13 @@ export function AddProviderDialog({
 								startingOAuth={oauthDeviceStart.isPending}
 							/>
 							{draftTestResult ? (
-								<div
-									aria-live="polite"
-									className={
-										draftTestResult.ok
-											? "rounded-md border border-success/30 bg-success-muted p-3 text-xs text-success"
-											: "rounded-md border border-warning/30 bg-warning-muted p-3 text-xs text-warning-muted-foreground"
-									}
-								>
-									{draftTestResult.ok
-										? "Connection verified. The provider accepted the test request."
-										: providerConnectionIssueMessage(draftTestResult.error)}
-								</div>
+								<Alert role="status" variant={draftTestResult.ok ? "default" : "destructive"}>
+									<AlertDescription>
+										{draftTestResult.ok
+											? "Connection verified"
+											: providerConnectionIssueMessage(draftTestResult.error)}
+									</AlertDescription>
+								</Alert>
 							) : null}
 						</div>
 					)}

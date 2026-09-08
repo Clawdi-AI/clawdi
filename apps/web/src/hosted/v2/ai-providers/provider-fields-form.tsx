@@ -91,6 +91,7 @@ export function ProviderFieldsForm({
 	const apiModes = meta.apiModes;
 	const regions = preset?.region_variants ?? [];
 	const credentialLabel = preset?.credential_label ?? "API key";
+	const credentialName = credentialLabel === "API key" ? "API key" : credentialLabel.toLowerCase();
 	const isCustomEndpoint = meta.custom === true && preset === null;
 	const showPrimaryName = isCustomEndpoint;
 	const showAdvancedName = preset !== null || (!showPrimaryName && isEdit);
@@ -186,9 +187,7 @@ export function ProviderFieldsForm({
 					<UserRound className="size-4 shrink-0 text-muted-foreground" />
 					<div className="min-w-0 flex-1">
 						<p className="text-sm font-medium">ChatGPT sign-in</p>
-						<p className="text-xs text-muted-foreground">
-							Subscription access. Reconnect only to change or repair the account.
-						</p>
+						<p className="text-xs text-muted-foreground">Subscription access</p>
 					</div>
 					<Button variant="outline" size="sm" onClick={onReconnectOAuth} disabled={startingOAuth}>
 						{startingOAuth ? <Spinner /> : <RefreshCw />}
@@ -197,7 +196,20 @@ export function ProviderFieldsForm({
 				</div>
 			) : form.authMethod === "api_key" ? (
 				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="provider-key">{credentialLabel}</Label>
+					<div className="flex items-center justify-between gap-2">
+						<Label htmlFor="provider-key">{credentialLabel}</Label>
+						{apiKeyUrl ? (
+							<a
+								href={apiKeyUrl}
+								target="_blank"
+								rel="noreferrer"
+								className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary hover:underline"
+							>
+								{preset?.credential_link_label ?? `Get ${credentialName}`}{" "}
+								<ExternalLink className="size-3" aria-hidden="true" />
+							</a>
+						) : null}
+					</div>
 					<InputGroup>
 						<InputGroupInput
 							id="provider-key"
@@ -207,63 +219,32 @@ export function ProviderFieldsForm({
 							placeholder={
 								isEdit && savedCredentialAvailable
 									? "Leave blank to keep current credential"
-									: `Enter ${credentialLabel.toLowerCase()}`
+									: `Enter ${credentialName}`
 							}
 							autoComplete="off"
 							autoCapitalize="none"
 							autoCorrect="off"
 							spellCheck={false}
-							aria-describedby="provider-key-help"
 						/>
 						<InputGroupAddon align="inline-end">
 							<InputGroupButton
 								size="icon-xs"
 								onClick={() => setApiKeyVisible((visible) => !visible)}
-								aria-label={`${apiKeyVisible ? "Hide" : "Show"} ${credentialLabel.toLowerCase()}`}
+								aria-label={`${apiKeyVisible ? "Hide" : "Show"} ${credentialName}`}
 								aria-pressed={apiKeyVisible}
 							>
 								{apiKeyVisible ? <EyeOff /> : <Eye />}
 							</InputGroupButton>
 						</InputGroupAddon>
 					</InputGroup>
-					<p id="provider-key-help" className="text-xs text-muted-foreground">
-						{isEdit
-							? editing?.auth.type === "none"
-								? `Enter ${credentialLabel.toLowerCase()} to finish setup.`
-								: "Leave blank to keep the current credential."
-							: "Encrypted at rest and never shown again."}
-					</p>
-					{meta.oauth ? (
-						<p className="text-xs text-muted-foreground">
-							OpenAI bills API key usage through your Platform account at standard API rates.
-						</p>
-					) : null}
 					{!nativeConnection ? (
 						<p className="text-xs text-muted-foreground">
 							Testing sends one minimal inference request and may incur a small provider charge.
 						</p>
 					) : null}
-					{apiKeyUrl ? (
-						<a
-							href={apiKeyUrl}
-							target="_blank"
-							rel="noreferrer"
-							className="inline-flex w-fit items-center gap-1 text-xs font-medium text-primary hover:underline"
-						>
-							{preset?.credential_link_label ?? `Get ${credentialLabel.toLowerCase()}`}{" "}
-							<ExternalLink className="size-3" />
-						</a>
-					) : null}
 				</div>
-			) : (
-				<div className="rounded-lg border bg-muted/30 p-3 text-sm">
-					You’ll finish setup on ChatGPT. No API key is required here.
-				</div>
-			)}
-
-			{nativeConnection ? (
-				<p className="text-sm text-muted-foreground">Choose and manage models inside your agent.</p>
 			) : null}
+
 			{onUseNative ? (
 				<Button variant="outline" onClick={onUseNative}>
 					Manage models in the agent

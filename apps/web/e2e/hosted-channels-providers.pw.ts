@@ -120,6 +120,23 @@ test("popular BYOK providers have branded icons and credential-only product setu
 	]) {
 		await dialog.getByRole("textbox", { name: "Search providers" }).fill(choice.query);
 		await dialog.getByRole("button", { name: new RegExp(`^${choice.name}`) }).click();
+		await expect(
+			dialog.locator('[data-slot="dialog-title"] svg[data-icon-source="lobehub"]'),
+		).toBeVisible();
+		await expect(dialog.getByText("Choose and manage models inside your agent.")).toHaveCount(0);
+		await expect(dialog.getByText("Encrypted at rest and never shown again.")).toHaveCount(0);
+		const credentialInput = dialog.getByLabel(choice.credential, { exact: true });
+		await expect(credentialInput).toHaveAttribute(
+			"placeholder",
+			choice.credential === "API key" ? "Enter API key" : "Enter access token",
+		);
+		await expect(
+			dialog.getByRole("button", {
+				name: choice.credential === "API key" ? "Show API key" : "Show access token",
+				exact: true,
+			}),
+		).toBeVisible();
+		await dialog.screenshot({ path: testInfo.outputPath(`provider-setup-${choice.id}.png`) });
 		if (choice.product) {
 			await dialog.getByRole("combobox", { name: "Product", exact: true }).click();
 			await page.getByRole("option", { name: choice.product, exact: true }).click();
