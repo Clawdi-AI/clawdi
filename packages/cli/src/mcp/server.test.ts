@@ -29,7 +29,7 @@ describe("MCP stdio proxy", () => {
 		}
 	});
 
-	it("aborts a stalled MCP forwarding request at the configured deadline", async () => {
+	it.each(["tools/list", "tools/call"])("aborts stalled %s without retrying", async (method) => {
 		const previousAuthToken = process.env.CLAWDI_AUTH_TOKEN;
 		const previousAuthTokenOrigin = process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
 		const previousApiUrl = process.env.CLAWDI_API_URL;
@@ -38,7 +38,9 @@ describe("MCP stdio proxy", () => {
 		process.env.CLAWDI_AUTH_TOKEN_ORIGIN = "http://localhost:8000";
 		process.env.CLAWDI_API_URL = "http://localhost:8000";
 		let aborted = false;
+		let attempts = 0;
 		globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+			attempts += 1;
 			const body = new ReadableStream<Uint8Array>({
 				start(controller) {
 					init?.signal?.addEventListener(
@@ -54,10 +56,13 @@ describe("MCP stdio proxy", () => {
 			return new Response(body, { status: 200 });
 		}) as typeof fetch;
 		try {
-			await expect(callClawdiMcp("tools/list", {}, 10)).rejects.toThrow(
-				"request timed out after 10ms",
+			await expect(callClawdiMcp(method, {}, 10)).rejects.toThrow(
+				method === "tools/call"
+					? "execution may still have completed"
+					: "request timed out after 10ms",
 			);
 			expect(aborted).toBe(true);
+			expect(attempts).toBe(1);
 		} finally {
 			globalThis.fetch = originalFetch;
 			if (previousAuthToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;

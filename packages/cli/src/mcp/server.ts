@@ -7,7 +7,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { getConfig, isLoggedIn } from "../lib/config";
-import { timedFetch } from "../lib/timed-fetch";
+import { FetchTimeoutError, timedFetch } from "../lib/timed-fetch";
 
 interface JsonRpcResponse {
 	result?: unknown;
@@ -45,12 +45,14 @@ function ensureMcpLogin(): void {
 }
 
 const MCP_ENDPOINT_PATH = "/v1/mcp/clawdi";
-const MCP_FORWARD_TIMEOUT_MS = 30_000;
+const MCP_DISCOVERY_TIMEOUT_MS = 30_000;
+// Backend MCP execution has a 360s deadline (300s read plus setup overhead).
+const MCP_TOOL_CALL_TIMEOUT_MS = 390_000;
 
 export async function callClawdiMcp(
 	method: string,
 	params?: Record<string, unknown>,
-	timeoutMs = MCP_FORWARD_TIMEOUT_MS,
+	timeoutMs = method === "tools/call" ? MCP_TOOL_CALL_TIMEOUT_MS : MCP_DISCOVERY_TIMEOUT_MS,
 ): Promise<unknown> {
 	const config = getConfig();
 	const accessToken = await getClawdiAccessToken(config.apiUrl);
@@ -65,7 +67,14 @@ export async function callClawdiMcp(
 			body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: params ?? {} }),
 		},
 		timeoutMs,
-	);
+	).catch((error: unknown) => {
+		if (method === "tools/call" && error instanceof FetchTimeoutError) {
+			throw new Error(
+				"Tool call timed out; execution may still have completed. Check the outcome before retrying; do not automatically retry side-effecting calls.",
+			);
+		}
+		throw error;
+	});
 	if (!response.ok) {
 		throw new Error(`Clawdi MCP request failed (HTTP ${response.status})`);
 	}

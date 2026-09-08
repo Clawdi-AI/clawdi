@@ -280,7 +280,6 @@ async def test_legacy_composio_aliases_bridge_tools_list_and_call(monkeypatch, t
             {
                 "tools": [{"name": "COMPOSIO_SEARCH_TOOLS", "inputSchema": {"type": "object"}}],
                 "_meta": {"upstream": "preserved"},
-                "nextCursor": "upstream-cursor",
             }
         )
 
@@ -317,7 +316,7 @@ async def test_legacy_composio_aliases_bridge_tools_list_and_call(monkeypatch, t
             assert listed.status_code == 200, listed.text
             assert listed.json()["result"]["tools"][0]["name"] == "COMPOSIO_SEARCH_TOOLS"
             assert listed.json()["result"]["_meta"] == {"upstream": "preserved"}
-            assert listed.json()["result"]["nextCursor"] == "upstream-cursor"
+            assert "nextCursor" not in listed.json()["result"]
             assert called.status_code == 200, called.text
             assert called.json()["result"]["content"] == [{"type": "text", "text": "called"}]
             assert called.json()["result"]["isError"] is False
@@ -810,6 +809,8 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
                 },
             )
         assert method == "tools/list"
+        cursor = (payload.get("params") or {}).get("cursor")
+        assert cursor in (None, "page-2")
         body = json.dumps(
             {
                 "jsonrpc": "2.0",
@@ -817,11 +818,12 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
                 "result": {
                     "tools": [
                         {
-                            "name": "COMPOSIO_SEARCH_TOOLS",
+                            "name": "COMPOSIO_SEARCH_TOOLS" if cursor is None else "SECOND_TOOL",
                             "inputSchema": {"type": "object"},
                             "_meta": {"composio": {"version": 1}},
                         }
-                    ]
+                    ],
+                    **({"nextCursor": "page-2"} if cursor is None else {}),
                 },
             }
         )
@@ -871,7 +873,10 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
     assert all(headers.get("mcp-protocol-version") == "2025-06-18" for headers in followups)
     assert all(headers.get("mcp-session-id") == "sdk-session" for headers in followups)
     assert requests[-1][0] == "DELETE"
-    assert result.tools[0].name == "COMPOSIO_SEARCH_TOOLS"
+    assert [tool.name for tool in result.tools] == ["COMPOSIO_SEARCH_TOOLS", "SECOND_TOOL"]
+    assert result.next_cursor is None
+    first_listing = methods[: methods.index("initialize", methods.index("initialize") + 1)]
+    assert first_listing.count("tools/list") == 2
     assert result.tools[0].meta == {"composio": {"version": 1}}
     serialized_call = called.model_dump(by_alias=True, exclude_none=True)
     assert serialized_call == {

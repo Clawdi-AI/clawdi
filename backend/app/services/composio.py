@@ -549,6 +549,8 @@ async def close_composio_client() -> None:
 
         try:
             await asyncio.to_thread(_sdk_client.client.close)
+        except composio_client.ComposioError as exc:
+            raise ComposioProviderError(_generated_sdk_failure(exc, credentials=None)) from exc
         except composio_exceptions.ComposioError as exc:
             raise ComposioProviderError(_high_level_sdk_failure(exc)) from exc
         _sdk_client = None
@@ -675,11 +677,25 @@ def _finish_tool_router_mcp_tools_load(user_id: str, task: asyncio.Task[ListTool
 
 
 async def list_tool_router_mcp_tools(session: ComposioMcpSession) -> ListToolsResult:
-    """List tools through a fully initialized, operation-scoped MCP client."""
+    """Drain one listing in one client; never publish a partial catalog."""
     try:
-        async with _tool_router_mcp_client(session) as client:
-            response = await client.list_tools()
-            return _normalize_mcp_response(response, ListToolsResult)
+        async with asyncio.timeout(20), _tool_router_mcp_client(session) as client:
+            result = _normalize_mcp_response(await client.list_tools(), ListToolsResult)
+            tools = list(result.tools)
+            cursor = result.next_cursor
+            seen: set[str] = set()
+            while cursor is not None:
+                # Bound even a provider issuing endlessly unique cursors. Together
+                # with the deadline this limits discovery work and cache growth.
+                if not cursor or cursor in seen or len(seen) >= 99:
+                    raise ComposioMcpUpstreamError("Composio MCP returned invalid pagination")
+                seen.add(cursor)
+                page = _normalize_mcp_response(
+                    await client.list_tools(cursor=cursor), ListToolsResult
+                )
+                tools.extend(page.tools)
+                cursor = page.next_cursor
+            return result.model_copy(update={"tools": tools, "next_cursor": None})
     except _MCP_OPERATION_ERRORS as exc:
         logger.warning(
             "Composio MCP operation failed: operation=list_tools error_type=%s",
@@ -693,7 +709,9 @@ async def call_tool_router_mcp_tool(
 ) -> CallToolResult:
     """Call a tool through a fully initialized, operation-scoped MCP client."""
     try:
-        async with _tool_router_mcp_client(session) as client:
+        # Allow the 300s upstream read plus initialization/transport overhead,
+        # but bound the whole operation even if the server keeps streaming.
+        async with asyncio.timeout(360), _tool_router_mcp_client(session) as client:
             response = await client.call_tool(name, arguments)
             return _normalize_mcp_response(response, CallToolResult)
     except _MCP_OPERATION_ERRORS as exc:
@@ -742,6 +760,8 @@ async def _create_tool_router_mcp_session(
             mcp=True,
             multi_account={"enable": True, "require_explicit_selection": False},
         )
+    except composio_client.ComposioError as exc:
+        raise ComposioProviderError(_generated_sdk_failure(exc, credentials=None)) from exc
     except composio_exceptions.ComposioError as exc:
         raise ComposioProviderError(_high_level_sdk_failure(exc)) from exc
     try:

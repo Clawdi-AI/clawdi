@@ -765,6 +765,14 @@ async def _handle_clawdi_mcp_request(
                 await _call_clawdi_mcp_tool(name, arguments, auth=auth, db=db),
             )
         return _mcp_error(rpc_id, -32601, "Method not found")
+    except ComposioMcpUpstreamError:
+        message = (
+            "Connector execution could not be confirmed. Check the outcome before retrying; "
+            "do not automatically retry side-effecting calls."
+            if method == "tools/call"
+            else "Connector tools unavailable"
+        )
+        return _mcp_error(rpc_id, -32000, message, is_tool_error=True)
     except HTTPException as exc:
         return _mcp_error(rpc_id, -32000, _http_exception_message(exc), is_tool_error=True)
     except Exception as exc:
