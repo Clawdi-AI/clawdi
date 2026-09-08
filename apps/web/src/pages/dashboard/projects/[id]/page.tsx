@@ -719,10 +719,7 @@ export default function ProjectDetailPage({
 								{isOwner ? (
 									<ProjectActions
 										project={project}
-										onChanged={async () => {
-											refresh();
-											await projectQuery.refetch();
-										}}
+										onChanged={refresh}
 										onArchived={() => router.navigate({ href: projectsTarget.href })}
 									/>
 								) : null}
@@ -940,6 +937,7 @@ export default function ProjectDetailPage({
 					key={project.id}
 					project={project}
 					attachedVaults={vaults.data?.items}
+					attachedVaultsUpdatedAt={vaults.dataUpdatedAt}
 					isLoading={vaults.isLoading}
 					error={vaults.error}
 					onRetry={() => void vaults.refetch()}

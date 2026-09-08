@@ -35,6 +35,7 @@ type Project = components["schemas"]["ProjectResponse"];
 export function ProjectVaultCatalog({
 	project,
 	attachedVaults,
+	attachedVaultsUpdatedAt,
 	isLoading,
 	error,
 	onRetry,
@@ -44,6 +45,7 @@ export function ProjectVaultCatalog({
 }: {
 	project: Project;
 	attachedVaults: Vault[] | undefined;
+	attachedVaultsUpdatedAt: number;
 	isLoading: boolean;
 	error: unknown;
 	onRetry: () => void;
@@ -75,14 +77,20 @@ export function ProjectVaultCatalog({
 	const context = project.kind === "environment" ? "Workspace" : "Project";
 	const attachedIds = new Set(attachedVaults?.map((vault) => vault.id));
 	const attachmentsKnown = attachedVaults !== undefined;
-	// Scoped rows remain visible even when the account catalog is unavailable.
-	const rows = Array.from(
-		new Map(
-			[...(attachedVaults ?? []), ...(canAttach ? (catalog.data?.items ?? []) : [])].map(
-				(vault) => [vault.id, vault],
-			),
-		).values(),
-	)
+	const scopedSnapshotIsNewer = attachedVaultsUpdatedAt > catalog.dataUpdatedAt;
+	const vaultsById = new Map(attachedVaults?.map((vault) => [vault.id, vault]));
+	for (const vault of canAttach ? (catalog.data?.items ?? []) : []) {
+		const attached = vaultsById.get(vault.id);
+		// Metadata follows the latest snapshot; only the catalog knows other Project links.
+		const metadata = attached && scopedSnapshotIsNewer ? attached : vault;
+		const projectIds = scopedSnapshotIsNewer
+			? attached
+				? Array.from(new Set([...vault.project_ids, project.id]))
+				: vault.project_ids.filter((id) => id !== project.id)
+			: vault.project_ids;
+		vaultsById.set(vault.id, { ...metadata, project_ids: projectIds });
+	}
+	const rows = Array.from(vaultsById.values())
 		.filter((vault) => vaultSearchRank(vault, search) !== null)
 		.sort(
 			(a, b) =>

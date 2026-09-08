@@ -52,11 +52,11 @@ export function ProjectActions({
 	const editLockedRef = useRef(false);
 
 	const refresh = async () => {
+		if (onChanged) return onChanged();
 		await Promise.all([
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] }),
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects/{project_id}"] }),
 		]);
-		await onChanged?.();
 	};
 	const update = useMutation({
 		mutationFn: async () =>

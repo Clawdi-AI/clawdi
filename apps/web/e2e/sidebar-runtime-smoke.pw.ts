@@ -2412,6 +2412,17 @@ test("Vault catalog failures preserve scoped attachments and catalog return navi
 	});
 	const origin = "/agents/11111111-1111-4111-8111-111111111111/project-access/project-smoke/vaults";
 	const vaultRoute = "**/v1/vault?*";
+	await page.route(
+		(url) => url.pathname === "/v1/vault" && url.searchParams.has("project_id"),
+		async (route) => {
+			const projectId = new URL(route.request().url()).searchParams.get("project_id");
+			if (!projectId) throw new Error("Missing Project scope");
+			const items = projectAccessVaults
+				.filter((vault) => vault.project_ids.includes(projectId))
+				.map((vault) => ({ ...vault, project_ids: [projectId] }));
+			await fulfillJson(route, { ...vaults, items, total: items.length });
+		},
+	);
 	let releaseAttachments = () => {};
 	const attachmentGate = new Promise<void>((resolve) => {
 		releaseAttachments = resolve;
@@ -2451,6 +2462,11 @@ test("Vault catalog failures preserve scoped attachments and catalog return navi
 	const link = scoped.getByRole("link", { name: "Open vault Scoped Vault" });
 	await expect(detach).toBeEnabled();
 	const href = await link.getAttribute("href");
+	const sharedVault = projectAccessVaults.find((vault) => vault.id === "vault-shared");
+	if (!sharedVault) throw new Error("Missing shared Vault fixture");
+	const sharedCard = catalog.getByTestId("project-vault-card").filter({ hasText: "Shared Vault" });
+	await expect(sharedCard).toContainText("2 keys");
+	sharedVault.item_count = 5;
 	let failAttachments = false;
 	await page.route(vaultRoute, (route) => {
 		if (!failAttachments && new URL(route.request().url()).searchParams.has("project_id"))
@@ -2460,6 +2476,8 @@ test("Vault catalog failures preserve scoped attachments and catalog return navi
 	await page.clock.setFixedTime(new Date(Date.now() + 60_000));
 	await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
 	await expect(catalog.getByText("Couldn't load Vault catalog", { exact: true })).toBeVisible();
+	await expect(sharedCard).toContainText("5 keys");
+	await expect(sharedCard).toContainText("used by Smoke Project, Team Knowledge");
 	await expect(detach).toBeEnabled();
 	await expect(
 		catalog.getByRole("button", { name: "Link Unrelated Vault to Workspace" }),
@@ -2484,12 +2502,18 @@ test("Vault catalog failures preserve scoped attachments and catalog return navi
 		.filter({ hasText: "Couldn't load Workspace Vault links" })
 		.getByRole("button", { name: "Retry" })
 		.click();
+	await expect(detach).toBeEnabled();
+	await expect(sharedCard).toContainText("5 keys");
+	sharedVault.item_count = 7;
+	await page.clock.setFixedTime(new Date(Date.now() + 180_000));
 	await catalog
 		.getByRole("alert")
 		.filter({ hasText: "Couldn't load Vault catalog" })
 		.getByRole("button", { name: "Retry" })
 		.click();
 	await expect(detach).toBeEnabled();
+	await expect(sharedCard).toContainText("7 keys");
+	await expect(sharedCard).toContainText("used by Smoke Project, Team Knowledge");
 	await catalog.getByLabel("Search Vaults").fill("Vault");
 	await expect(linked.getByTestId("project-vault-card")).toHaveCount(2);
 	await expect(available.getByTestId("project-vault-card")).toHaveCount(3);
