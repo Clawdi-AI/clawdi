@@ -21,6 +21,8 @@ database migration, CI, and implementation details.
 
 ### Changed
 
+- Projects and Vaults now share catalogs with Linked and Available groups and
+  direct Link or Unlink actions in Agent and Project context.
 - CLI 0.14.56 installs sourced Skills through Hermes and OpenClaw native
   capabilities, preserving supporting files and recovering interrupted changes.
 - CLI 0.14.54 delivers native BYOK credentials through OpenClaw configuration

@@ -3712,7 +3712,10 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	await expect(overview.getByText("Default Project", { exact: true })).toHaveCount(0);
 	await expect(overview.getByTestId("agent-project-grid")).toHaveCount(0);
 	expect(agentProjectRequests).toHaveLength(1);
-	expect(skillRequests).toEqual([]);
+	expect(skillRequests).toHaveLength(1);
+	expect(new URL(skillRequests[0] ?? "http://invalid").searchParams.get("project_id")).toBe(
+		"project-hosted",
+	);
 	expect(vaultRequests).toHaveLength(1);
 	expect(new URL(vaultRequests[0] ?? "http://invalid").searchParams.get("project_id")).toBe(
 		"project-hosted",
