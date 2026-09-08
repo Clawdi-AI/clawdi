@@ -47,7 +47,6 @@ import {
 	providerPresetById,
 	providerPresetForSavedProvider,
 	providerPresetRegion,
-	providerTypeForPreset,
 } from "@/hosted/v2/ai-providers/provider-presets";
 import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 import type {
@@ -186,8 +185,7 @@ export function AddProviderDialog({
 				type,
 				label: editing.label ?? "",
 				baseUrl: editing.base_url || defaults.baseUrl,
-				modelsText:
-					(editing.models?.length ?? 0) > 0 ? modelsToText(editing.models) : defaults.modelsText,
+				modelsText: modelsToText(editing.models),
 				apiMode: editing.api_mode ?? defaults.apiMode,
 				runtimeEnv: editing.runtime_env_name ?? defaults.runtimeEnv,
 				authMethod,
@@ -205,7 +203,7 @@ export function AddProviderDialog({
 			type: "openai",
 			label: "",
 			baseUrl: defaults.baseUrl,
-			modelsText: defaults.modelsText,
+			modelsText: "",
 			apiMode: defaults.apiMode,
 			runtimeEnv: defaults.runtimeEnv,
 			authMethod: "api_key",
@@ -219,7 +217,7 @@ export function AddProviderDialog({
 	function selectProvider(choice: ProviderChoice) {
 		acceptAttemptRef.current = null;
 		if (choice.kind === "preset") {
-			const type = providerTypeForPreset(choice.preset);
+			const type = choice.preset.provider_type;
 			const defaults = derivedProviderFields(type, "api_key", choice.preset);
 			const region = providerPresetRegion(choice.preset, null);
 			resetForm({
@@ -227,7 +225,7 @@ export function AddProviderDialog({
 				type,
 				label: "",
 				baseUrl: region?.base_url ?? defaults.baseUrl,
-				modelsText: defaults.modelsText,
+				modelsText: "",
 				apiMode: defaults.apiMode,
 				runtimeEnv: defaults.runtimeEnv,
 				authMethod: "api_key",
@@ -242,7 +240,7 @@ export function AddProviderDialog({
 				type: choice.type,
 				label: "",
 				baseUrl: defaults.baseUrl,
-				modelsText: defaults.modelsText,
+				modelsText: "",
 				apiMode: defaults.apiMode,
 				runtimeEnv: defaults.runtimeEnv,
 				authMethod: "api_key",
@@ -262,7 +260,7 @@ export function AddProviderDialog({
 			authMethod,
 			apiKey: "",
 			baseUrl: defaults.baseUrl,
-			modelsText: defaults.modelsText,
+			modelsText: "",
 			apiMode: defaults.apiMode,
 			runtimeEnv: defaults.runtimeEnv,
 		});

@@ -331,7 +331,7 @@ export function ProviderFieldsForm({
 								id="provider-models"
 								value={form.modelsText}
 								onChange={(event) => onUpdate({ modelsText: event.target.value })}
-								placeholder={meta.modelPlaceholder}
+								placeholder="model name"
 								className="min-h-24 resize-y"
 								autoComplete="off"
 								spellCheck={false}

@@ -1,9 +1,6 @@
 import { nativeAiProvider } from "@clawdi/shared";
 import { CLAWDI_CODEX_OAUTH_PROVIDER_ID } from "@/hosted/v2/ai-providers/codex-oauth";
-import {
-	type ProviderPreset,
-	presetRuntimeEnvName,
-} from "@/hosted/v2/ai-providers/provider-presets";
+import type { ProviderPreset } from "@/hosted/v2/ai-providers/provider-presets";
 import {
 	type ApiMode,
 	type ProviderTypeId,
@@ -28,7 +25,6 @@ export interface DerivedProviderFields {
 	baseUrl: string;
 	apiMode: ApiMode;
 	runtimeEnv: string;
-	modelsText: string;
 }
 
 export function authFor(method: AuthMethod): AiProviderUpsertAuth {
@@ -105,9 +101,7 @@ export function derivedProviderFields(
 	return {
 		baseUrl: route?.base_url ?? preset?.base_url ?? meta.defaultBaseUrl,
 		apiMode: route?.api_mode ?? preset?.api_mode ?? meta.defaultApiMode,
-		runtimeEnv:
-			route?.runtime_env_name ?? (preset ? presetRuntimeEnvName(preset) : meta.defaultRuntimeEnv),
-		modelsText: "",
+		runtimeEnv: route?.runtime_env_name ?? preset?.runtime_env_name ?? meta.defaultRuntimeEnv,
 	};
 }
 
