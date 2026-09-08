@@ -7,7 +7,8 @@ from dataclasses import dataclass
 
 import anyio
 from sqlalchemy import event
-from sqlalchemy.engine import Connection, ExceptionContext
+from sqlalchemy.dialects import registry
+from sqlalchemy.engine import Connection, ExceptionContext, make_url
 from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor, ExecutionContext
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
@@ -37,6 +38,11 @@ _CONNECTION_CHECKED_OUT_AT = "clawdi_connection_checked_out_at"
 CONTROL_POOL_SIZE = 1
 
 
+registry.register(
+    "postgresql.clawdi_asyncpg", "app.core.asyncpg_dialect", "CancellationSafeAsyncpgDialect"
+)
+
+
 def _create_engine(
     *, pool_size: int, max_overflow: int, lock_timeout: str | None = None
 ) -> AsyncEngine:
@@ -46,8 +52,11 @@ def _create_engine(
     }
     if lock_timeout is not None:
         server_settings["lock_timeout"] = lock_timeout
+    url = make_url(settings.database_url)
+    if url.drivername == "postgresql+asyncpg":
+        url = url.set(drivername="postgresql+clawdi_asyncpg")
     return create_async_engine(
-        settings.database_url,
+        url,
         echo=settings.debug,
         hide_parameters=True,
         pool_size=pool_size,
