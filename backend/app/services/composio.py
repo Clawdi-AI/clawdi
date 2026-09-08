@@ -267,6 +267,8 @@ class ConnectorAppPage(TypedDict):
 
 _client: AsyncComposio | None = None
 _sdk_client: Composio[OpenAITool, OpenAIToolCollection] | None = None
+_TOOL_ROUTER_SESSION_TIMEOUT_SECONDS = 10.0
+_TOOL_ROUTER_DISCOVERY_TIMEOUT_SECONDS = 25.0
 _tool_router_session_cache: dict[str, ComposioMcpSession] = {}
 _tool_router_session_creations: dict[str, set[object]] = {}
 _tool_router_tools_cache: dict[str, tuple[ComposioMcpSession, ListToolsResult]] = {}
@@ -544,10 +546,12 @@ def get_composio_sdk() -> Composio[OpenAITool, OpenAIToolCollection]:
         if settings.composio_api_base_url:
             _sdk_client = Composio(
                 api_key=settings.composio_api_key,
+                timeout=5,
+                max_retries=0,
                 base_url=settings.composio_api_base_url.rstrip("/"),
             )
         else:
-            _sdk_client = Composio(api_key=settings.composio_api_key)
+            _sdk_client = Composio(api_key=settings.composio_api_key, timeout=5, max_retries=0)
     return _sdk_client
 
 
@@ -680,18 +684,22 @@ async def get_tool_router_mcp_tools_result(user_id: str) -> ListToolsResult:
 
 
 async def _load_tool_router_mcp_tools(user_id: str) -> ListToolsResult:
-    while True:
-        session = await get_tool_router_mcp_session(user_id)
-        cached = _tool_router_tools_cache.get(user_id)
-        if cached and cached[0] is session:
-            return cached[1]
+    try:
+        async with asyncio.timeout(_TOOL_ROUTER_DISCOVERY_TIMEOUT_SECONDS):
+            while True:
+                session = await get_tool_router_mcp_session(user_id)
+                cached = _tool_router_tools_cache.get(user_id)
+                if cached and cached[0] is session:
+                    return cached[1]
 
-        result = await list_tool_router_mcp_tools(session)
-        if _tool_router_session_cache.get(user_id) is not session:
-            continue
+                result = await list_tool_router_mcp_tools(session)
+                if _tool_router_session_cache.get(user_id) is not session:
+                    continue
 
-        _tool_router_tools_cache[user_id] = (session, result)
-        return result
+                _tool_router_tools_cache[user_id] = (session, result)
+                return result
+    except TimeoutError:
+        raise ComposioProviderError(ComposioFailure("timeout")) from None
 
 
 def _finish_tool_router_mcp_tools_load(user_id: str, task: asyncio.Task[ListToolsResult]) -> None:
@@ -704,7 +712,7 @@ def _finish_tool_router_mcp_tools_load(user_id: str, task: asyncio.Task[ListTool
 async def list_tool_router_mcp_tools(session: ComposioMcpSession) -> ListToolsResult:
     """Drain one listing in one client; never publish a partial catalog."""
     try:
-        async with asyncio.timeout(20), _tool_router_mcp_client(session) as client:
+        async with asyncio.timeout(15), _tool_router_mcp_client(session) as client:
             result = _normalize_mcp_response(await client.list_tools(), ListToolsResult)
             tools = list(result.tools)
             cursor = result.next_cursor
@@ -779,12 +787,18 @@ async def _create_tool_router_mcp_session(
 
     sdk = get_composio_sdk()
     try:
-        session = await asyncio.to_thread(
-            sdk.sessions.create,
-            user_id=user_id,
-            mcp=True,
-            multi_account={"enable": True, "require_explicit_selection": False},
-        )
+        # Cancelling to_thread cannot stop the sync SDK, but its late result is
+        # discarded here and can never reach the session cache. Disable SDK
+        # retries and bound transport phases separately to limit worker lifetime.
+        async with asyncio.timeout(_TOOL_ROUTER_SESSION_TIMEOUT_SECONDS):
+            session = await asyncio.to_thread(
+                sdk.sessions.create,
+                user_id=user_id,
+                mcp=True,
+                multi_account={"enable": True, "require_explicit_selection": False},
+            )
+    except TimeoutError:
+        raise ComposioProviderError(ComposioFailure("timeout")) from None
     except composio_client.ComposioError as exc:
         raise ComposioProviderError(_generated_sdk_failure(exc, credentials=None)) from exc
     except composio_exceptions.ComposioError as exc:

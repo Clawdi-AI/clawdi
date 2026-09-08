@@ -95,3 +95,75 @@ async def test_mcp_listing_rejects_broken_pagination_without_partial_catalog(mon
         await composio.list_tool_router_mcp_tools(session)
     assert len(calls) == {"empty": 1, "repeated": 2, "endless": 100}[mode]
     assert closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("base_url", ["", "https://composio.test"])
+async def test_session_sdk_bounds_transport_without_retries(monkeypatch, base_url):
+    monkeypatch.setattr(composio, "_sdk_client", None)
+    monkeypatch.setattr(composio.settings, "composio_api_key", "test-key")
+    monkeypatch.setattr(composio.settings, "composio_api_base_url", base_url)
+    sdk = composio.get_composio_sdk()
+    try:
+        assert sdk.client.timeout == 5.0
+        assert sdk.client.max_retries == 0
+    finally:
+        sdk.client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_late_session_creation_never_publishes_after_timeout_or_cancellation(
+    monkeypatch, cancel
+):
+    import asyncio
+    import threading
+
+    started = asyncio.Event()
+    finished = asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+    attempts = 0
+
+    def create(**kwargs):
+        nonlocal attempts
+        attempts += 1
+        loop.call_soon_threadsafe(started.set)
+        try:
+            assert release.wait(2)
+            return SimpleNamespace(
+                mcp=SimpleNamespace(
+                    type="http", url="https://composio.test/mcp", headers={"x-api-key": "test"}
+                )
+            )
+        finally:
+            loop.call_soon_threadsafe(finished.set)
+
+    monkeypatch.setattr(composio, "_TOOL_ROUTER_SESSION_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(composio, "_tool_router_session_cache", {})
+    monkeypatch.setattr(composio, "_tool_router_session_creations", {})
+    monkeypatch.setattr(
+        composio,
+        "get_composio_sdk",
+        lambda: SimpleNamespace(sessions=SimpleNamespace(create=create)),
+    )
+    task = asyncio.create_task(composio.get_tool_router_mcp_session("cold-user"))
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        if cancel:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            with pytest.raises(composio.ComposioProviderError) as error:
+                await asyncio.wait_for(task, 1)
+            assert error.value.failure.kind == "timeout"
+        assert not composio._tool_router_session_cache
+        assert not composio._tool_router_session_creations
+    finally:
+        release.set()
+        await asyncio.wait_for(finished.wait(), 1)
+        await asyncio.gather(task, return_exceptions=True)
+    assert attempts == 1
+    assert not composio._tool_router_session_cache
+    assert not composio._tool_router_session_creations
