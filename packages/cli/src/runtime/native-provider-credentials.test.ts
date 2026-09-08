@@ -4,6 +4,8 @@ import {
 	type AiProviderCatalog,
 	NATIVE_AI_PROVIDERS,
 	nativeAiProvider,
+	nativeAiProviderForRuntime,
+	nativeAiProviderRuntime,
 } from "@clawdi/shared";
 import { parse as parseYaml } from "yaml";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
@@ -67,6 +69,27 @@ describe("native provider credentials", () => {
 		});
 		expect(config.agents?.defaults?.model).toBeUndefined();
 		expect(config.models.providers.google.models).toBeUndefined();
+	});
+
+	test("keeps mixed-protocol OpenCode catalogs and request handling in their official plugins", () => {
+		for (const variant of ["zen", "go"]) {
+			const patch = JSON.parse(
+				buildOpenClawHostedProviderPatch(
+					{
+						catalog: { schema_version: 1, providers: [credential("opencode", variant)] },
+						primaryModel: null,
+					},
+					[],
+				).content,
+			);
+			const id = variant === "zen" ? "opencode" : "opencode-go";
+			expect(patch.plugins.entries[id]).toEqual({ enabled: true });
+			expect(patch.models.providers[id]).toEqual({
+				baseUrl: variant === "zen" ? "https://opencode.ai/zen/v1" : "https://opencode.ai/zen/go/v1",
+				auth: "api-key",
+				apiKey: { source: "env", provider: "clawdi-native", id: "OPENCODE_API_KEY" },
+			});
+		}
 	});
 
 	test("keeps a managed embedding catalog beside a native chat credential", () => {
@@ -182,5 +205,46 @@ describe("native provider credentials", () => {
 				true,
 			),
 		).toEqual([]);
+		// Runtime wire metadata can differ from the portable saved connection.
+		for (const route of NATIVE_AI_PROVIDERS.filter((entry) => entry.id !== "openai-codex")) {
+			for (const runtime of ["hermes", "openclaw"] as const) {
+				const target = nativeAiProviderRuntime(route, runtime);
+				const env = runtime === "hermes" ? route.hermes.env : route.runtime_env_name;
+				const projection = {
+					kind: "openai-compatible",
+					type: target.type,
+					configurationMode: "native",
+					nativeProvider: route[runtime].provider,
+					baseUrl: target.base_url,
+					apiMode: target.api_mode,
+					runtimeEnvName: env,
+					apiKeySecretRef: "secret://provider.saved-credential.apiKey",
+				} as const;
+				const bundle: RuntimeManifest = {
+					...manifest,
+					runtime,
+					runtimes: { [runtime]: { ...manifest.runtimes.hermes } },
+					projection: { providers: { "saved-credential": projection } },
+				};
+				expect(
+					nativeAiProviderForRuntime(runtime, projection.nativeProvider, projection.baseUrl)?.id,
+				).toBe(route.id);
+				const input = hostedAiProviderCatalog(bundle, runtime);
+				expect(input?.catalog.providers[0]).toMatchObject({
+					type: route.type,
+					base_url: route.base_url,
+					api_mode: route.api_mode,
+					native_provider: route.id,
+					native_variant: route.variant ?? undefined,
+				});
+				if (!input) throw new Error("Native credential projection is missing");
+				expect(buildAgentTargetProjection(runtime, input.catalog).primary_model).toBeNull();
+				if (runtime === "hermes" && route.hermes.base_url_env) {
+					expect(
+						hostedProviderEnvironment(bundle, runtime).configEnv[route.hermes.base_url_env],
+					).toBe(target.base_url);
+				}
+			}
+		}
 	});
 });

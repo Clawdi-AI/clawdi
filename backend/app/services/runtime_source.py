@@ -1185,9 +1185,19 @@ def _provider_entry(
             routing = native_provider(provider.native_provider, provider.native_variant)
         except ValueError as exc:
             raise RuntimeSourceError("Stored native provider identity is invalid") from exc
-        if managed or provider.models or provider.base_url != routing.base_url:
+        if (
+            managed
+            or provider.models
+            or any(
+                getattr(provider, field) != getattr(routing, field)
+                for field in ("type", "base_url", "api_mode", "runtime_env_name")
+            )
+        ):
             raise RuntimeSourceError("Native provider must contain only credential routing")
         runtime_routing = getattr(routing, runtime_name)
+        result["type"] = runtime_routing.type or routing.type
+        result["baseUrl"] = runtime_routing.base_url or routing.base_url
+        api_mode = runtime_routing.api_mode or routing.api_mode
         result["configurationMode"] = "native"
         result["nativeProvider"] = runtime_routing.provider
         runtime_env = runtime_routing.env or routing.runtime_env_name

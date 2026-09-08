@@ -13,10 +13,11 @@ the selected provider through the stable runtime bootstrap bundle.
 ## Supported Provider Data
 
 New BYOK connections use `configuration_mode: "native"`: choose a provider,
-region or plan variant, and an API key or supported OAuth connection. Hermes
-and OpenClaw own model selection and their native catalogs. Clawdi does not
-pick a default model or copy a catalog for these connections. Credentials can
-be deployable while inference remains `not_tested` and `primary_model` is null.
+region or plan variant, and an API key, access token, or supported OAuth
+connection. Hermes and OpenClaw own model selection and their native catalogs.
+Clawdi does not pick a default model or copy a catalog for these connections.
+Credentials can be deployable while inference remains `not_tested` and
+`primary_model` is null.
 
 `native_provider` identifies the connection and `native_variant` optionally
 identifies its region or plan. The shared
@@ -24,6 +25,14 @@ identifies its region or plan. The shared
 auth/routing metadata. Core validates the identity and hydrates endpoint,
 protocol, and runtime credential delivery; Hosted consumes Core readiness.
 The encrypted key or reference and the Agent binding remain separately owned.
+
+Native connections include NVIDIA NIM, Fireworks AI, Hugging Face (access
+token), DeepInfra, OpenCode Zen and Go, Xiaomi MiMo, and Tencent TokenHub and
+TokenPlan, alongside the existing providers. OpenCode's per-model protocols,
+provider request headers, and model catalogs remain native. TokenPlan uses
+OpenAI chat in OpenClaw and Anthropic Messages in Hermes; runtime routing
+overrides do not change the portable saved connection. Xiaomi Token Plan is
+not included because the audited Hermes version has no separate native profile.
 
 Omitted `configuration_mode` means the existing `catalog` contract. Existing
 catalog connections keep their explicit model intent until the user converts
@@ -234,14 +243,16 @@ bound API-key provider, preserving other pool entries and the selected model.
 Key rotation updates only that entry. Its keyless ownership journal preserves
 the prior credential strategy across retries and restores it when unbound.
 Native pool APIs retain concurrent changes and cooldown state for other keys.
+The installed Hermes auth resolver identifies aliases using the same provider
+key as its credential pool (`opencode-zen`, not the models.dev alias `opencode`).
 For the selected native provider, obsolete `model.base_url`, auth and protocol
 overrides are removed through the config transaction; `model.provider` and
 `model.default` are preserved. Connection overrides for other providers remain.
 
 These native contracts are audited against OpenClaw
-[`71e3383a`](https://github.com/openclaw/openclaw/blob/71e3383a0ef8414891c61cadb067d42c7f909198/docs/concepts/model-providers.md)
+[`53ff0867`](https://github.com/openclaw/openclaw/tree/53ff0867149e1fd753cbfc9f67f79a28e6318f58/extensions)
 and Hermes
-[`a7198a88`](https://github.com/NousResearch/hermes-agent/blob/a7198a8855ad98681114ff5138eb01fe132a62e7/hermes_cli/runtime_provider.py).
+[`96663732`](https://github.com/NousResearch/hermes-agent/blob/966637323e6f90864e069dbc12755934c2c86387/hermes_cli/runtime_provider.py).
 Provider identity/auth mappings do not freeze upstream model catalogs.
 
 Done: `scripts/test.sh cli src/runtime/native-provider-credentials.test.ts

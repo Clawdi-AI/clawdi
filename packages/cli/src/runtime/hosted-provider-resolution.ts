@@ -5,6 +5,7 @@ import {
 	CLAWDI_MANAGED_V2_API_MODE,
 	isClawdiManagedV2ProviderId,
 	MANAGED_AI_PROVIDER_RUNTIME_ENV,
+	nativeAiProvider,
 	nativeAiProviderForRuntime,
 } from "@clawdi/shared";
 import type { AgentPrimaryModel } from "../lib/ai-provider-projection";
@@ -110,13 +111,17 @@ export function hostedAiProviderCatalog(
 							input.auth?.type === "agent_profile",
 						)
 					: undefined;
-			if (input.configurationMode === "native" && !native)
+			if (
+				input.configurationMode === "native" &&
+				(!native || native.type !== hostedProviderType(input) || native.api_mode !== apiMode)
+			)
 				throw new Error("Invalid native provider runtime identity");
+			const portable = native ? nativeAiProvider(native.id, native.variant) : undefined;
 			return {
 				id,
-				type: hostedProviderType(input),
-				base_url: baseUrl,
-				api_mode: apiMode,
+				type: portable?.type ?? hostedProviderType(input),
+				base_url: portable?.base_url ?? baseUrl,
+				api_mode: portable?.api_mode ?? apiMode,
 				managed_by: input.managed_by,
 				configuration_mode: input.configurationMode,
 				...(native

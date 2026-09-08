@@ -1,14 +1,16 @@
 import type { AiProviderApiMode, AiProviderType } from "./ai-provider";
 import routing from "./native-ai-providers.json";
 
-// Verified against OpenClaw 71e3383a and Hermes a7198a88. This is auth/routing
+// Verified against OpenClaw 53ff0867 and Hermes 96663732. This is auth/routing
 // metadata only: catalogs and model selection belong to the native runtime.
 export type NativeAiProvider = Omit<(typeof routing)[number], "type" | "api_mode"> & {
 	type: AiProviderType;
 	api_mode: AiProviderApiMode;
 };
 
-function checkedRouting(entry: (typeof routing)[number]): NativeAiProvider {
+function checkedRouting(
+	entry: Omit<NativeAiProvider, "type" | "api_mode"> & { type: string; api_mode: string },
+): NativeAiProvider {
 	const { type, api_mode } = entry;
 	if (
 		type !== "openai" &&
@@ -48,10 +50,19 @@ export function nativeAiProviderForRuntime(
 	baseUrl: string,
 	codexOAuth = false,
 ): NativeAiProvider | undefined {
-	return NATIVE_AI_PROVIDERS.find(
+	return NATIVE_AI_PROVIDERS.map((entry) => nativeAiProviderRuntime(entry, runtime)).find(
 		(entry) =>
 			entry[runtime].provider === identity &&
 			entry.base_url === baseUrl.replace(/\/+$/, "") &&
 			(entry.id === "openai-codex") === codexOAuth,
 	);
+}
+
+export function nativeAiProviderRuntime(
+	entry: NativeAiProvider,
+	runtime: "openclaw" | "hermes",
+): NativeAiProvider {
+	// Native runtimes may use different official protocols for the same plan.
+	const { type, base_url, api_mode } = { ...entry, ...entry[runtime] };
+	return checkedRouting({ ...entry, type, base_url, api_mode });
 }

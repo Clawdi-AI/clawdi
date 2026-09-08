@@ -679,6 +679,12 @@ async def patch_ai_provider(
     if merged.configuration_mode == "native":
         try:
             native_input = merged.model_dump(exclude_none=True)
+            if (
+                "native_provider" in update
+                and update["native_provider"] != provider.native_provider
+                and "native_variant" not in update
+            ):
+                native_input.pop("native_variant", None)
             if "native_provider" in update or "native_variant" in update:
                 for field in ("type", "base_url", "api_mode", "runtime_env_name"):
                     if field not in update:

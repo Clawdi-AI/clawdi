@@ -7,6 +7,7 @@ import { spawnRuntimeUserCommand } from "./runtime-user-command";
 const providerId = z.string().regex(/^[a-z][a-z0-9-]{0,119}$/);
 const resultSchema = z.object({
 	changed: z.boolean(),
+	selectedProvider: providerId.nullable(),
 	strategyUpdates: z.record(
 		providerId,
 		z.object({ exists: z.boolean(), value: z.unknown().optional() }),
@@ -14,15 +15,15 @@ const resultSchema = z.object({
 });
 
 export interface HermesNativeCredentialsInput {
-	commandPath: string;
 	home: string;
 	workspaceRoot: string;
 	providers: ReadonlyArray<{ providerId: string; apiKey: string; baseUrl: string }>;
 	previousProviderIds: readonly string[];
 	strategies: Readonly<Record<string, unknown>>;
+	selectedProvider?: string;
 }
 
-// Audited against Hermes a7198a88: the native writer merges omitted sibling
+// Audited against Hermes 96663732: the native writer merges omitted sibling
 // rows under its auth lock and requires explicit removed_ids for deletion.
 // This helper never rewrites config.yaml; the caller applies strategyUpdates
 // through its existing config transaction. The journal contains no credentials.
@@ -69,7 +70,7 @@ def write_journal(path, records):
 
 
 def reconcile(payload):
-    from hermes_cli.auth import read_credential_pool, write_credential_pool
+    from hermes_cli.auth import AuthError, read_credential_pool, resolve_provider, write_credential_pool
     from agent.credential_pool import PooledCredential
 
     desired = {}
@@ -79,7 +80,26 @@ def reconcile(payload):
                 or not isinstance(item["apiKey"], str) or not item["apiKey"].strip()
                 or not isinstance(item["baseUrl"], str) or not item["baseUrl"].startswith("https://")):
             raise ValueError("Invalid native credential input")
+        if resolve_provider(provider) != provider:
+            raise ValueError("Native credential identity is not canonical")
         desired[provider] = item
+    selected = payload.get("selectedProvider")
+    if selected and selected.strip().lower() != "auto":
+        try:
+            # Use the auth resolver used by load_pool, not models.dev aliases:
+            # providers.normalize_provider collapses opencode-zen to opencode.
+            canonical = resolve_provider(selected)
+            if canonical != selected:
+                # A saved custom provider can intentionally shadow a native
+                # alias. Preserve that connection and its model overrides.
+                from hermes_cli.runtime_provider import _get_named_custom_provider
+                selected = None if _get_named_custom_provider(selected) is not None else canonical
+            else:
+                selected = canonical
+        except AuthError:
+            selected = None
+    else:
+        selected = None
     strategies = payload["strategies"]
     if not isinstance(strategies, dict):
         raise ValueError("Invalid credential strategies")
@@ -171,7 +191,7 @@ def reconcile(payload):
                 write_journal(path, records)
         else:
             path.unlink(missing_ok=True)
-        return {"changed": changed or bool(updates), "strategyUpdates": updates}
+        return {"changed": changed or bool(updates), "strategyUpdates": updates, "selectedProvider": selected}
 
 
 try:
@@ -192,7 +212,11 @@ export function reconcileHermesNativeCredentials(input: HermesNativeCredentialsI
 		input.previousProviderIds.length === 0 &&
 		!existsSync(join(input.home, ".clawdi", "runtime", "hermes-native-credentials.json"))
 	) {
-		return { changed: false, strategyUpdates: {} };
+		return {
+			changed: false,
+			strategyUpdates: {},
+			selectedProvider: input.selectedProvider ?? null,
+		};
 	}
 	const appRoot = runtimeAppRoot("hermes", input.home);
 	if (!appRoot) throw new Error("Hermes application path is unavailable");
@@ -207,6 +231,7 @@ export function reconcileHermesNativeCredentials(input: HermesNativeCredentialsI
 				providers: input.providers,
 				previousProviderIds: input.previousProviderIds,
 				strategies: input.strategies,
+				selectedProvider: input.selectedProvider,
 			}),
 			timeoutMs: 30_000,
 			maxBufferBytes: 64 * 1024,

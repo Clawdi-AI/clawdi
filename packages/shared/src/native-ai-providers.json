@@ -481,5 +481,169 @@
 			"env": "XAI_API_KEY",
 			"base_url_env": "XAI_BASE_URL"
 		}
+	},
+	{
+		"id": "nvidia",
+		"variant": null,
+		"type": "custom_openai_compatible",
+		"base_url": "https://integrate.api.nvidia.com/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "NVIDIA_API_KEY",
+		"openclaw": {
+			"provider": "nvidia",
+			"plugin": "nvidia",
+			"package": "@openclaw/nvidia-provider"
+		},
+		"hermes": {
+			"provider": "nvidia",
+			"env": "NVIDIA_API_KEY",
+			"base_url_env": "NVIDIA_BASE_URL"
+		}
+	},
+	{
+		"id": "fireworks",
+		"variant": null,
+		"type": "custom_openai_compatible",
+		"base_url": "https://api.fireworks.ai/inference/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "FIREWORKS_API_KEY",
+		"openclaw": {
+			"provider": "fireworks",
+			"plugin": "fireworks",
+			"package": "@openclaw/fireworks-provider"
+		},
+		"hermes": {
+			"provider": "fireworks",
+			"env": "FIREWORKS_API_KEY"
+		}
+	},
+	{
+		"id": "huggingface",
+		"variant": null,
+		"type": "custom_openai_compatible",
+		"base_url": "https://router.huggingface.co/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "HF_TOKEN",
+		"openclaw": {
+			"provider": "huggingface",
+			"plugin": "huggingface",
+			"package": "@openclaw/huggingface-provider"
+		},
+		"hermes": {
+			"provider": "huggingface",
+			"env": "HF_TOKEN",
+			"base_url_env": "HF_BASE_URL"
+		}
+	},
+	{
+		"id": "deepinfra",
+		"variant": null,
+		"type": "custom_openai_compatible",
+		"base_url": "https://api.deepinfra.com/v1/openai",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "DEEPINFRA_API_KEY",
+		"openclaw": {
+			"provider": "deepinfra",
+			"plugin": "deepinfra",
+			"package": "@openclaw/deepinfra-provider"
+		},
+		"hermes": {
+			"provider": "deepinfra",
+			"env": "DEEPINFRA_API_KEY",
+			"base_url_env": "DEEPINFRA_BASE_URL"
+		}
+	},
+	{
+		"id": "opencode",
+		"variant": "zen",
+		"type": "custom_openai_compatible",
+		"base_url": "https://opencode.ai/zen/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "OPENCODE_API_KEY",
+		"openclaw": {
+			"provider": "opencode",
+			"plugin": "opencode",
+			"package": "@openclaw/opencode-provider"
+		},
+		"hermes": {
+			"provider": "opencode-zen",
+			"env": "OPENCODE_ZEN_API_KEY",
+			"base_url_env": "OPENCODE_ZEN_BASE_URL"
+		}
+	},
+	{
+		"id": "opencode",
+		"variant": "go",
+		"type": "custom_openai_compatible",
+		"base_url": "https://opencode.ai/zen/go/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "OPENCODE_API_KEY",
+		"openclaw": {
+			"provider": "opencode-go",
+			"plugin": "opencode-go",
+			"package": "@openclaw/opencode-go-provider"
+		},
+		"hermes": {
+			"provider": "opencode-go",
+			"env": "OPENCODE_GO_API_KEY",
+			"base_url_env": "OPENCODE_GO_BASE_URL"
+		}
+	},
+	{
+		"id": "xiaomi",
+		"variant": null,
+		"type": "custom_openai_compatible",
+		"base_url": "https://api.xiaomimimo.com/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "XIAOMI_API_KEY",
+		"openclaw": {
+			"provider": "xiaomi",
+			"plugin": "xiaomi",
+			"package": "@openclaw/xiaomi-provider"
+		},
+		"hermes": {
+			"provider": "xiaomi",
+			"env": "XIAOMI_API_KEY",
+			"base_url_env": "XIAOMI_BASE_URL"
+		}
+	},
+	{
+		"id": "tencent",
+		"variant": "tokenhub",
+		"type": "custom_openai_compatible",
+		"base_url": "https://tokenhub.tencentmaas.com/v1",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "TOKENHUB_API_KEY",
+		"openclaw": {
+			"provider": "tencent-tokenhub",
+			"plugin": "tencent",
+			"package": "@openclaw/tencent-provider"
+		},
+		"hermes": {
+			"provider": "tencent-tokenhub",
+			"env": "TOKENHUB_API_KEY",
+			"base_url_env": "TOKENHUB_BASE_URL"
+		}
+	},
+	{
+		"id": "tencent",
+		"variant": "tokenplan",
+		"type": "custom_openai_compatible",
+		"base_url": "https://api.lkeap.cloud.tencent.com/plan/v3",
+		"api_mode": "openai_chat",
+		"runtime_env_name": "TOKENPLAN_API_KEY",
+		"openclaw": {
+			"provider": "tencent-tokenplan",
+			"plugin": "tencent",
+			"package": "@openclaw/tencent-provider"
+		},
+		"hermes": {
+			"provider": "tencent-tokenplan",
+			"env": "TOKENPLAN_API_KEY",
+			"base_url_env": "TOKENPLAN_BASE_URL",
+			"type": "anthropic",
+			"base_url": "https://api.lkeap.cloud.tencent.com/plan/anthropic",
+			"api_mode": "anthropic_messages"
+		}
 	}
 ]

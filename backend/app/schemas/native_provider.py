@@ -16,6 +16,9 @@ class NativeRuntimeProvider(BaseModel):
     companion_package: str | None = None
     env: str | None = None
     base_url_env: str | None = None
+    type: str | None = None
+    base_url: str | None = None
+    api_mode: str | None = None
 
 
 class NativeProvider(BaseModel):

@@ -4,6 +4,7 @@ import {
 	isClawdiManagedProviderId,
 	MANAGED_AI_PROVIDER_RUNTIME_ENV,
 	nativeAiProvider,
+	nativeAiProviderRuntime,
 } from "@clawdi/shared";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
@@ -260,19 +261,32 @@ export function applyHostedAiProviderProjection(
 				const ref = manifest.projection?.providers?.[provider.id]?.apiKeySecretRef;
 				const apiKey = ref ? runtimeSecretValue(secretValues ?? {}, ref) : null;
 				if (!apiKey) throw new Error("Native Hermes provider credential is unavailable");
-				return [{ providerId: native.hermes.provider, apiKey, baseUrl: native.base_url }];
+				return [
+					{
+						providerId: native.hermes.provider,
+						apiKey,
+						baseUrl: nativeAiProviderRuntime(native, "hermes").base_url,
+					},
+				];
 			}) ?? [];
 		const currentStrategies = getHermesRawConfigValue(hermesConfig, "credential_pool_strategies");
 		if (currentStrategies.exists && !isPlainRecord(currentStrategies.value))
 			throw new Error("Hermes credential strategies must be an object");
 		const strategies = isPlainRecord(currentStrategies.value) ? currentStrategies.value : {};
 		const selected = getHermesRawConfigValue(hermesConfig, "model.provider");
-		const selectedProvider = stringValue(selected.value)?.trim().toLowerCase();
+		const auth = reconcileHermesNativeCredentials({
+			home,
+			workspaceRoot,
+			providers,
+			previousProviderIds: previousNativeProviderIds,
+			strategies,
+			selectedProvider: stringValue(selected.value)?.trim().toLowerCase(),
+		});
 		const ownsSelectedConnection = projectionInput?.catalog.providers.some(
 			(provider) =>
 				provider.configuration_mode === "native" &&
 				nativeAiProvider(provider.native_provider, provider.native_variant)?.hermes.provider ===
-					selectedProvider,
+					auth.selectedProvider,
 		);
 		let connectionOverridesChanged = false;
 		if (ownsSelectedConnection) {
@@ -284,14 +298,6 @@ export function applyHostedAiProviderProjection(
 				}
 			}
 		}
-		const auth = reconcileHermesNativeCredentials({
-			commandPath: observation.commandPath,
-			home,
-			workspaceRoot,
-			providers,
-			previousProviderIds: previousNativeProviderIds,
-			strategies,
-		});
 		if (Object.keys(auth.strategyUpdates).length > 0) {
 			const next = { ...strategies };
 			for (const [providerId, strategy] of Object.entries(auth.strategyUpdates)) {
