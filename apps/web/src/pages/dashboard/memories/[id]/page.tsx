@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
+import { agentSessionDetailLink } from "@/lib/agent-routes";
 import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError, normalizeApiError } from "@/lib/api-errors";
 import { MEMORY_CATEGORY_COLORS, memoryDisplayName } from "@/lib/memory-utils";
@@ -194,11 +195,12 @@ export default function MemoryDetailPage({
 									<>
 										<span>·</span>
 										<Link
-											to="/sessions/$id"
-											params={{ id: memory.source_session_id }}
+											{...(scope.kind === "agent"
+												? agentSessionDetailLink(scope.agentId, memory.source_session_id)
+												: { to: "/sessions/$id", params: { id: memory.source_session_id } })}
 											className="underline hover:text-foreground"
 										>
-											{scope.kind === "agent" ? "View in session library" : "View session"}
+											View session
 										</Link>
 									</>
 								) : null}

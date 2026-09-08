@@ -7,7 +7,6 @@ import {
 	Bot,
 	CheckCircle2,
 	ChevronRight,
-	ExternalLink,
 	Eye,
 	LogOut,
 	Plus,
@@ -108,7 +107,6 @@ import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 import { projectResourceHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
-	libraryManagementTarget,
 	projectDetailHrefForScope,
 	type ResourceNavigationScope,
 	type ResourceNavigationTarget,
@@ -198,30 +196,29 @@ export default function ProjectDetailPage({
 	// keep matching the URL the user is still looking at.
 	const { pathname, search } = useCommittedLocation();
 	const searchParams = useMemo(() => searchRecordToSearchParams(search), [search]);
-	const requestedTab = searchParams.get("tab");
-	const localTab: ProjectLocalTab = PROJECT_LOCAL_TABS.some((tab) => tab.id === requestedTab)
-		? (requestedTab as ProjectLocalTab)
-		: "overview";
-	const projectsTarget = resourceCollectionTarget(scope, "projects");
-	const managementTarget = libraryManagementTarget("projects", { projectId });
-	const isAgentScope = scope.kind === "agent";
-	const showSkills = isAgentScope ? focus !== "vaults" : localTab === "skills";
-	const showVaults = isAgentScope ? focus !== "skills" : localTab === "vaults";
-	const [useWithAgentOpen, setUseWithAgentOpen] = useState(
-		searchParams.get("useWithAgent") === "1",
-	);
-	const [skillsPage, setSkillsPage] = useState(1);
-	const joinedFromShare = !isAgentScope && searchParams.get("joined") === "share";
-	const catalogReturnTarget = resourceCatalogReturnTarget(searchParams.get("from"));
-	useEffect(() => {
-		setSkillsPage(1);
-	}, [projectId]);
-
 	const projectQuery = $api.useQuery("get", "/v1/projects/{project_id}", {
 		params: { path: { project_id: projectId } },
 	});
 
 	const project = projectQuery.data ?? null;
+	const requestedTab = searchParams.get("tab");
+	const localTab: ProjectLocalTab = PROJECT_LOCAL_TABS.some((tab) => tab.id === requestedTab)
+		? (requestedTab as ProjectLocalTab)
+		: (focus ?? "overview");
+	const projectsTarget = resourceCollectionTarget(scope, "projects");
+	const isWorkspaceView = scope.kind === "agent" && project?.kind === "environment";
+	const showSkills = isWorkspaceView ? focus !== "vaults" : localTab === "skills";
+	const showVaults = isWorkspaceView ? focus !== "skills" : localTab === "vaults";
+	const [useWithAgentOpen, setUseWithAgentOpen] = useState(
+		searchParams.get("useWithAgent") === "1",
+	);
+	const [skillsPage, setSkillsPage] = useState(1);
+	const joinedFromShare = !isWorkspaceView && searchParams.get("joined") === "share";
+	const catalogReturnTarget = resourceCatalogReturnTarget(searchParams.get("from"));
+	useEffect(() => {
+		setSkillsPage(1);
+	}, [projectId]);
+
 	const projectName = project ? displayProjectName(project) : null;
 	const projectResourceTargets =
 		scope.kind === "agent"
@@ -245,10 +242,10 @@ export default function ProjectDetailPage({
 	);
 	const scopedBinding =
 		orderedScopedBindings.find((binding) => binding.project_id === projectId) ?? null;
-	const isWorkspace = isAgentScope && scopedBinding?.binding_type === "primary";
+	const isWorkspace = isWorkspaceView && scopedBinding?.binding_type === "primary";
 	const canManageProjectSkills = canManageSkills && !isWorkspace;
 	const pageReturnTarget: ResourceNavigationTarget =
-		focus && scope.kind === "agent"
+		isWorkspaceView && focus && scope.kind === "agent"
 			? isWorkspace
 				? {
 						href: agentSectionHref(scope.agentId, "overview"),
@@ -285,14 +282,15 @@ export default function ProjectDetailPage({
 		"get",
 		"/v1/agents",
 		{},
-		{ enabled: !isAgentScope && !!project && useWithAgentOpen },
+		{ enabled: !isWorkspaceView && !!project && useWithAgentOpen },
 	);
 	const agentsById = useMemo(
 		() => new Map((environments.data ?? []).map((agent) => [agent.id, agent])),
 		[environments.data],
 	);
 	const projectAgent = project ? projectAgentFor(project, agentsById) : null;
-	const localTabHref = (tab: ProjectLocalTab) => projectLocalTabHref(pathname, searchParams, tab);
+	const localTabHref = (tab: ProjectLocalTab) =>
+		projectLocalTabHref(projectDetailHrefForScope(scope, projectId), searchParams, tab);
 	const selectLocalTab = (tab: ProjectLocalTab) => {
 		void router.navigate({ href: localTabHref(tab), resetScroll: false });
 	};
@@ -311,7 +309,10 @@ export default function ProjectDetailPage({
 					},
 				}),
 			),
-		enabled: showSkills && (!isAgentScope || !!scopedBinding) && !(IS_HOSTED_BUILD && isWorkspace),
+		enabled:
+			showSkills &&
+			(!isWorkspaceView || !!scopedBinding || Boolean(project && isCustomProject(project))) &&
+			!(IS_HOSTED_BUILD && isWorkspace),
 	});
 	const workspaceSkillProjections = useMemo(
 		() => (skills.data?.items ?? []).filter((skill) => skill.authority === "agent_sync"),
@@ -331,7 +332,9 @@ export default function ProjectDetailPage({
 					),
 				{ pageSize: 200, resourceName: "Project Vaults" },
 			),
-		enabled: showVaults && (!isAgentScope || !!scopedBinding),
+		enabled:
+			showVaults &&
+			(!isWorkspaceView || !!scopedBinding || Boolean(project && isCustomProject(project))),
 	});
 	useEffect(() => {
 		if (skills.data?.total === undefined) return;
@@ -349,14 +352,15 @@ export default function ProjectDetailPage({
 					params: { path: { project_id: projectId } },
 				}),
 			),
-		enabled: !isAgentScope && !!project && isOwner && isShareableProject && localTab === "access",
+		enabled:
+			!isWorkspaceView && !!project && isOwner && isShareableProject && localTab === "access",
 	});
 
 	const boundAgents = $api.useQuery(
 		"get",
 		"/v1/agents",
 		{ params: { query: { project_id: projectId } } },
-		{ enabled: !isAgentScope && !!project && (localTab === "agents" || useWithAgentOpen) },
+		{ enabled: !isWorkspaceView && !!project && (localTab === "agents" || useWithAgentOpen) },
 	);
 
 	const refresh = async () => {
@@ -430,7 +434,7 @@ export default function ProjectDetailPage({
 			: null,
 	);
 
-	if (projectQuery.isLoading || (isAgentScope && scopedBindings.isLoading)) {
+	if (projectQuery.isLoading || (isWorkspaceView && scopedBindings.isLoading)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<DetailBackLink
@@ -449,7 +453,7 @@ export default function ProjectDetailPage({
 		);
 	}
 
-	const blockingScopeError = isAgentScope
+	const blockingScopeError = isWorkspaceView
 		? shouldBlockQueryError(scopedBindings.error, scopedBindings.data)
 			? scopedBindings.error
 			: null
@@ -506,7 +510,7 @@ export default function ProjectDetailPage({
 		);
 	}
 
-	if (!isAgentScope && project.kind !== "workspace") {
+	if (!isWorkspaceView && project.kind !== "workspace") {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<DetailBackLink
@@ -518,32 +522,6 @@ export default function ProjectDetailPage({
 					title="Project not found"
 					message="This page is for user-created Projects. Open an Agent to manage its private Workspace."
 				/>
-			</div>
-		);
-	}
-
-	if (isAgentScope && !scopedBinding) {
-		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<DetailBackLink
-					href={catalogReturnTarget?.href ?? projectsTarget.href}
-					label={catalogReturnTarget?.label ?? projectsTarget.label}
-					mobileOnly={false}
-				/>
-				<DetailNotFound
-					title="Project not available to this Agent"
-					message="The Project may have been removed from this Agent. It remains available in the resource library if your account still has access."
-				/>
-				<Button
-					render={<Link to={managementTarget.href} />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="w-fit text-muted-foreground"
-				>
-					<ExternalLink className="size-3.5" />
-					{managementTarget.label}
-				</Button>
 			</div>
 		);
 	}
@@ -569,14 +547,14 @@ export default function ProjectDetailPage({
 	const blockingEnvironmentsError = shouldBlockQueryError(environments.error, environments.data)
 		? environments.error
 		: null;
-	const skillCount: CountValue | undefined = isAgentScope
+	const skillCount: CountValue | undefined = isWorkspaceView
 		? isWorkspace || project.kind === "environment"
 			? undefined
 			: blockingSkillsError
 				? "unavailable"
 				: skills.data?.total
 		: project.skill_count;
-	const vaultCount: CountValue | undefined = isAgentScope
+	const vaultCount: CountValue | undefined = isWorkspaceView
 		? blockingVaultsError
 			? "unavailable"
 			: vaults.data?.total
@@ -603,7 +581,8 @@ export default function ProjectDetailPage({
 	);
 	const projectIdentity = identityFor(displayProjectName(project));
 	const workspaceIdentity = identityFor("Workspace");
-	const focusedResourceIdentity = focus ? AGENT_SECTION_NAVIGATION_ITEMS[focus] : null;
+	const focusedResourceIdentity =
+		isWorkspaceView && focus ? AGENT_SECTION_NAVIGATION_ITEMS[focus] : null;
 	const FocusedResourceIcon = focusedResourceIdentity?.icon ?? null;
 	const focusedWorkspaceSkillsPageHeaderProps: Omit<PageHeaderProps, "actions"> | undefined =
 		isWorkspace && focus === "skills"
@@ -669,46 +648,16 @@ export default function ProjectDetailPage({
 						)
 					}
 					description={
-						isAgentScope
-							? isWorkspace
-								? focus === "skills"
-									? "Skills available in this Agent's Workspace. Skills synced from the Agent are read-only."
-									: focus === "vaults"
-										? "Vaults available through this Agent’s Workspace."
-										: "This Agent's fixed Workspace for installed Skills and Vaults."
-								: focus === "skills"
-									? "Skills this Agent uses through this linked Project."
-									: focus === "vaults"
-										? isOwner
-											? "Vaults this Agent can use through this Project."
-											: "Vaults this Agent can use through this Project. Key values stay protected."
-										: "This Agent uses the Project's Skills and Vaults as one bundle."
+						isWorkspace
+							? focus === "vaults"
+								? "Vaults available through this Agent’s Workspace."
+								: "This Agent's fixed Workspace for installed Skills and Vaults."
 							: projectDetailDescription(project, isOwner)
 					}
-					status={
-						focus && !isWorkspace ? (
-							<span className="text-xs text-muted-foreground">
-								Project: {displayProjectName(project)}
-							</span>
-						) : undefined
-					}
 					actions={
-						focus === "skills" && canManageProjectSkills ? (
-							<CreateSkillDialog project={project} onCreated={refresh}>
-								<Button size="sm">
-									<Plus className="size-3.5" />
-									Add skill
-								</Button>
-							</CreateSkillDialog>
-						) : focus === "vaults" && isOwner && !isAgentScope ? (
-							<CreateProjectVaultDialog
-								projectId={project.id}
-								contextLabel={isWorkspace ? "Workspace" : "Project"}
-								onChanged={refresh}
-							/>
-						) : !focus && isShareableProject && (!isAgentScope || isOwner) ? (
+						isShareableProject ? (
 							<>
-								{!isAgentScope && !joinedFromShare
+								{!isWorkspaceView && !joinedFromShare
 									? manageAgentsDialog(
 											<Button size="sm">
 												<Bot className="mr-1.5 size-3.5" />
@@ -743,7 +692,7 @@ export default function ProjectDetailPage({
 				</Alert>
 			) : null}
 
-			{!isAgentScope ? (
+			{!isWorkspaceView ? (
 				<Tabs
 					value={localTab}
 					onValueChange={(value) => {
@@ -768,7 +717,7 @@ export default function ProjectDetailPage({
 				</Tabs>
 			) : null}
 
-			{!isAgentScope && localTab === "overview" ? (
+			{!isWorkspaceView && localTab === "overview" ? (
 				<DetailPanel className="space-y-5">
 					<div className="space-y-1">
 						<h2 className="text-sm font-semibold">Project bundle</h2>
@@ -788,15 +737,15 @@ export default function ProjectDetailPage({
 
 			<HubSection
 				visible={showSkills}
-				showHeading={!focus}
+				showHeading={!isWorkspaceView || !focus}
 				id="skills"
 				title="Skills"
 				count={skillCount}
 				description={
-					isAgentScope
+					isWorkspaceView
 						? isWorkspace
 							? "Installed Skills in this Agent's fixed Workspace."
-							: "Skills this Agent uses through this linked Project."
+							: "Skills included in this Project."
 						: project.kind === "environment"
 							? "Skills synced from this Agent. Manage them on the Agent."
 							: isOwner
@@ -804,7 +753,7 @@ export default function ProjectDetailPage({
 								: "Readable instructions shared by the owner."
 				}
 				action={
-					!focus && (projectResourceTargets || canManageProjectSkills) ? (
+					(!focus || !isWorkspaceView) && (projectResourceTargets || canManageProjectSkills) ? (
 						<>
 							{!focus && projectResourceTargets ? (
 								<ProjectResourceViewAllLink
@@ -898,29 +847,29 @@ export default function ProjectDetailPage({
 
 			<HubSection
 				visible={showVaults}
-				showHeading={!focus}
+				showHeading={!isWorkspaceView || !focus}
 				id="vaults"
 				title="Vaults"
-				count={isAgentScope ? vaultCount : undefined}
+				count={isWorkspaceView ? vaultCount : undefined}
 				description={
-					isAgentScope
+					isWorkspaceView
 						? isWorkspace
 							? "Vaults available through this Agent’s Workspace."
-							: "Vaults this Agent can use through this Project."
+							: "Vaults included in this Project."
 						: isOwner
 							? "Vaults included in this Project."
 							: "Read-only vaults shared through this Project."
 				}
 				action={
-					!focus && (isAgentScope || isOwner) ? (
+					(!focus || !isWorkspaceView) && (isWorkspaceView || isOwner) ? (
 						<>
-							{!focus && isAgentScope && projectResourceTargets ? (
+							{!focus && isWorkspaceView && projectResourceTargets ? (
 								<ProjectResourceViewAllLink
 									href={projectResourceTargets.vaults}
 									resource="Vaults"
 								/>
 							) : null}
-							{isOwner && !isAgentScope ? (
+							{isOwner && !isWorkspaceView ? (
 								<CreateProjectVaultDialog
 									projectId={project.id}
 									contextLabel={isWorkspace ? "Workspace" : "Project"}
@@ -944,7 +893,7 @@ export default function ProjectDetailPage({
 				/>
 			</HubSection>
 
-			{!isAgentScope && localTab === "access" && isOwner && isShareableProject ? (
+			{!isWorkspaceView && localTab === "access" && isOwner && isShareableProject ? (
 				<HubSection
 					id="people"
 					title="People"
@@ -993,7 +942,7 @@ export default function ProjectDetailPage({
 				</HubSection>
 			) : null}
 
-			{!isAgentScope && localTab === "access" && !isOwner ? (
+			{!isWorkspaceView && localTab === "access" && !isOwner ? (
 				<HubSection
 					id="people"
 					title="Your access"
@@ -1009,7 +958,7 @@ export default function ProjectDetailPage({
 				</HubSection>
 			) : null}
 
-			{!isAgentScope && localTab === "agents" ? (
+			{!isWorkspaceView && localTab === "agents" ? (
 				<HubSection
 					id="agents"
 					title="Your Agents"

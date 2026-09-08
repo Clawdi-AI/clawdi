@@ -300,6 +300,9 @@ test("Library Skills use references from both entry points, show source content,
 				]
 			: [],
 	});
+	await page.route(`http://127.0.0.1:8000/v1/projects/${libraryProjectId}/skills/**`, (route) =>
+		route.fulfill({ json: sourceSkill }),
+	);
 	await page.route(apiPath, (route) => route.fulfill({ json: inventory() }));
 	await page.route("http://127.0.0.1:8000/v1/projects", (route) =>
 		route.fulfill({ json: [project] }),
@@ -354,10 +357,20 @@ test("Library Skills use references from both entry points, show source content,
 	await expect(page.getByRole("button", { name: "Copy skill" })).toBeDisabled();
 	await page.getByRole("button", { name: "Retry", exact: true }).click();
 	await expect(page.getByRole("heading", { name: "Team review", exact: true })).toBeVisible();
-	await expect(page.getByRole("link", { name: "View in Library" })).toHaveAttribute(
+	await expect(page.getByRole("link", { name: "View source Skill" })).toHaveAttribute(
 		"href",
-		/project=project-library/,
+		/\/agents\/[^/]+\/skills\/[^?]+\?project=project-library/,
 	);
+	await page.getByRole("link", { name: "View source Skill" }).click();
+	await expect(page).toHaveURL(
+		(url) =>
+			url.pathname === `/agents/${agentId}/skills/team/review-pr` &&
+			url.searchParams.get("project") === libraryProjectId,
+	);
+	await expect(
+		page.locator("main").getByRole("heading", { name: "review-pr", exact: true, level: 1 }),
+	).toBeVisible();
+	await page.goBack();
 	await page.getByRole("link", { name: "Skills", exact: true }).last().click();
 	await page.getByRole("button", { name: "Uninstall review-pr from Agent" }).click();
 	await page

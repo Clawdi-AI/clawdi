@@ -22,11 +22,9 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { agentDisplayName, cleanMachineName } from "@/components/dashboard/agent-label";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
+import { useAgentProjectBrowseAccess } from "@/components/dashboard/agent-project-browse-access";
 import { resolveAgentProjectScope } from "@/components/dashboard/agent-project-scope";
-import {
-	fetchAgentScopedSkillDetail,
-	resolveAgentSkillProjectAccess,
-} from "@/components/dashboard/agent-skill-detail-scope";
+import { fetchAgentScopedSkillDetail } from "@/components/dashboard/agent-skill-detail-scope";
 import {
 	AGENT_PROJECT_SKILLS_REFRESH_POLICY,
 	agentSkillForegroundRefetchInterval,
@@ -107,8 +105,8 @@ export function SkillDetailContent({
 	const queryClient = useQueryClient();
 
 	// Library routes keep their legacy resolver fallback for backwards
-	// compatibility. Agent routes must resolve one explicit binding first and
-	// only call the endpoint for the Project selected on the Project hub.
+	// compatibility. Agent routes verify the selected Project is readable and
+	// only call that Project’s endpoint; browsing never creates an Agent binding.
 	// Router-validated search (one ownership system — not nuqs), from the
 	// committed match so the page agrees with the rendered route.
 	const { search: committedSearch } = useCommittedLocation();
@@ -133,17 +131,10 @@ export function SkillDetailContent({
 			return error;
 		}
 	}, [isAgentScope, scopedBindings.data]);
-	const scopedProjectAccess = useMemo(
-		() => resolveAgentSkillProjectAccess(scopedBindings.data ?? [], selectedProjectId),
-		[scopedBindings.data, selectedProjectId],
-	);
-	const bindingsResolved = !isAgentScope || scopedBindings.data !== undefined;
-	const scopedSkillQueryEnabled =
-		!isAgentScope ||
-		(bindingsResolved &&
-			!scopedProjectError &&
-			scopedProjectAccess.kind === "bound" &&
-			scopedProjectAccess.projectIds.length > 0);
+	const browseAccess = useAgentProjectBrowseAccess(agentId, selectedProjectId);
+	const bindingsResolved = !isAgentScope || !browseAccess.isLoading;
+	const scopedSkillQueryEnabled = !isAgentScope || (!scopedProjectError && browseAccess.readable);
+
 	const projectionScope = agentId
 		? `agent:${JSON.stringify([agentId, selectedProjectId])}`
 		: "cloud";
@@ -156,11 +147,8 @@ export function SkillDetailContent({
 		enabled: skillKey.length > 0 && scopedSkillQueryEnabled,
 		queryFn: async () => {
 			if (isAgentScope) {
-				if (scopedProjectAccess.kind !== "bound") {
-					throw new Error("This Project is not available to this Agent.");
-				}
 				return fetchAgentScopedSkillDetail(
-					scopedProjectAccess.projectIds,
+					[selectedProjectId],
 					async (projectId) =>
 						unwrap(
 							await api.GET("/v1/projects/{project_id}/skills/{skill_key}", {
@@ -194,9 +182,9 @@ export function SkillDetailContent({
 			? scopedBindings.error
 			: null
 		: null;
-	const agentAccessError = blockingBindingsError ?? scopedProjectError;
+	const agentAccessError = blockingBindingsError ?? scopedProjectError ?? browseAccess.error;
 	const agentProjectUnavailable =
-		isAgentScope && bindingsResolved && !scopedProjectError && scopedProjectAccess.kind !== "bound";
+		isAgentScope && bindingsResolved && !scopedProjectError && !browseAccess.readable;
 	const skillIsLoading =
 		(isAgentScope && !bindingsResolved && !agentAccessError) ||
 		(!agentAccessError && !agentProjectUnavailable && skillQuery.isLoading);
@@ -446,7 +434,7 @@ export function SkillDetailContent({
 				<DetailNotFound
 					title="Project not available to this Agent"
 					message={
-						scopedProjectAccess.kind === "unavailable"
+						!selectedProjectId
 							? "The Workspace is not available yet. Return to Projects and try again."
 							: "The requested Project is not available through this Agent. Choose an available Project first."
 					}
