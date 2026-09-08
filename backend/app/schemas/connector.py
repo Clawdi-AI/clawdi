@@ -28,7 +28,7 @@ def _allowed_redirect_origins() -> set[str]:
     return out
 
 
-class ConnectorReconnectRequest(BaseModel):
+class ConnectRequest(BaseModel):
     """OAuth connect-link request body.
 
     `redirect_url` is the absolute URL Composio redirects the user
@@ -44,7 +44,7 @@ class ConnectorReconnectRequest(BaseModel):
     """
 
     redirect_url: str | None = Field(default=None, max_length=2048)
-    model_config = ConfigDict(extra="forbid")
+    alias: ConnectorAlias | None = None
 
     @field_validator("redirect_url")
     @classmethod
@@ -72,28 +72,12 @@ class ConnectorReconnectRequest(BaseModel):
         return v
 
 
-class ConnectRequest(ConnectorReconnectRequest):
-    model_config = ConfigDict(extra="ignore")
-
-    alias: ConnectorAlias | None = None
-
-
-type ConnectorReconnectStrategy = Literal["oauth", "credentials", "enable", "unsupported"]
-
-
-class ConnectorReconnectResponse(BaseModel):
-    id: str
-    status: str
-    connect_url: str | None
-
-
 class ConnectorConnectionResponse(BaseModel):
     id: str
     app_name: str
     status: str
     created_at: str
     is_disabled: bool = False
-    reconnect_strategy: ConnectorReconnectStrategy = "unsupported"
     alias: str | None = None
     # User-facing identity label (e.g. their Gmail address). `None` when
     # Composio hasn't resolved it yet, which is common right after OAuth
@@ -161,7 +145,7 @@ class ConnectorAuthFieldsResponse(BaseModel):
     expected_input_fields: list[ConnectorAuthFieldResponse]
 
 
-class _ConnectorCredentialsRequest(BaseModel):
+class ConnectorCredentialsConnectRequest(BaseModel):
     """User-supplied credentials for an API-key style connector.
 
     Bounds picked to fit any sane API-key form (Composio's largest
@@ -172,6 +156,7 @@ class _ConnectorCredentialsRequest(BaseModel):
     """
 
     credentials: dict[str, str] = Field(..., min_length=1, max_length=20)
+    alias: ConnectorAlias | None = None
 
     @field_validator("credentials")
     @classmethod
@@ -182,21 +167,6 @@ class _ConnectorCredentialsRequest(BaseModel):
             if len(val) > 8192:
                 raise ValueError("Credential value too long")
         return v
-
-
-class ConnectorCredentialsUpdateRequest(_ConnectorCredentialsRequest):
-    model_config = ConfigDict(extra="forbid")
-
-    @field_validator("credentials")
-    @classmethod
-    def _nonblank(cls, v: dict[str, str]) -> dict[str, str]:
-        if any(not value.strip() for value in v.values()):
-            raise ValueError("Credential values cannot be empty")
-        return v
-
-
-class ConnectorCredentialsConnectRequest(_ConnectorCredentialsRequest):
-    alias: ConnectorAlias | None = None
 
 
 class ConnectorCredentialsConnectResponse(BaseModel):

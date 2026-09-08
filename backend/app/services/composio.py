@@ -47,8 +47,6 @@ from app.schemas.connector import (
     ConnectorCredentialsConnectResponse,
     ConnectorMetadataBatchResponse,
     ConnectorMetadataResponse,
-    ConnectorReconnectResponse,
-    ConnectorReconnectStrategy,
     ConnectorToolResponse,
 )
 
@@ -141,10 +139,6 @@ class _ConnectedAccountToolkit(_ComposioWireModel):
     slug: str = Field(min_length=1)
 
 
-class _ConnectedAccountAuthConfig(_ComposioWireModel):
-    id: str = Field(min_length=1)
-
-
 class _ConnectedAccount(_ComposioWireModel):
     id: str = Field(min_length=1)
     created_at: str = Field(min_length=1)
@@ -153,7 +147,6 @@ class _ConnectedAccount(_ComposioWireModel):
     alias: str | None = None
     word_id: str | None = None
     is_disabled: bool = False
-    auth_config: _ConnectedAccountAuthConfig | None = None
     data: JsonObject = Field(default_factory=dict)
     state: JsonObject = Field(default_factory=dict)
 
@@ -169,10 +162,6 @@ class _ConnectedAccountCreateResponse(_ComposioWireModel):
 
 class _ConnectedAccountStatusResponse(_ComposioWireModel):
     status: ComposioStatus
-
-
-class _ConnectedAccountReconnectResponse(_ConnectedAccountCreateResponse):
-    redirect_url: str | None
 
 
 class _ConnectedAccountDeleteResponse(_ComposioWireModel):
@@ -311,10 +300,6 @@ class ComposioMcpUpstreamError(RuntimeError):
 
 class ComposioProtocolError(ComposioRouteError):
     """Raised when a pinned Composio SDK response violates its public contract."""
-
-
-class ConnectorReconnectUnavailableError(ComposioProtocolError):
-    """Upstream did not start an actionable reauthorization flow."""
 
 
 class ConnectorCustomAuthConfigRequired(ComposioRouteError):
@@ -898,7 +883,6 @@ def _serialize_connected_account(account: _ConnectedAccount) -> ConnectorConnect
         status=account.status,
         created_at=account.created_at,
         is_disabled=account.is_disabled,
-        reconnect_strategy=_account_reconnect_strategy(account),
         alias=account.alias,
         account_display=_account_display_label(account),
     )
@@ -1189,141 +1173,6 @@ async def update_account_alias(
         client.connected_accounts.retrieve(connected_account_id)
     )
     return _serialize_connected_account(_normalize_sdk_response(raw_account, _ConnectedAccount))
-
-
-def _account_auth_scheme(account: _ConnectedAccount) -> str:
-    value = account.state.get("auth_scheme") or account.state.get("authScheme")
-    return _normalize_composio_scheme(value if isinstance(value, str) else None)
-
-
-def _account_reconnect_strategy(account: _ConnectedAccount) -> ConnectorReconnectStrategy:
-    # Enabling expired/revoked credentials would only label them ACTIVE, not repair them.
-    if account.status == "INACTIVE" or (account.status == "ACTIVE" and account.is_disabled):
-        return "enable"
-    auth_type = _normalize_auth_type(_account_auth_scheme(account))
-    if auth_type in {"oauth1", "oauth2", "dcr_oauth"}:
-        return "oauth"
-    if auth_type in _CREDENTIAL_AUTH_TYPES:
-        return "credentials"
-    return "unsupported"
-
-
-async def reconnect_account(
-    user_id: str, connected_account_id: str, redirect_url: str | None = None
-) -> ConnectorReconnectResponse:
-    """Reauthorize the same account; never create a replacement or change its alias.
-
-    Composio v3.1 documents refresh as deprecated developer-triggered reauthorization.
-    It remains the only documented OAuth reinitiation operation that targets an
-    existing ID. The recommended link.create replacement creates a new account.
-    """
-    account = await get_owned_account(user_id, connected_account_id)
-    strategy = _account_reconnect_strategy(account)
-    client = get_composio_client().with_options(max_retries=0)
-    if strategy == "enable":
-        raw_result = await _call_generated_sdk(
-            client.connected_accounts.update_status(connected_account_id, enabled=True)
-        )
-        await invalidate_tool_router_mcp_session(user_id)
-        result = _normalize_sdk_response(raw_result, _ConnectedAccountDeleteResponse)
-        if not result.success:
-            raise ComposioProtocolError("Composio did not enable the account")
-        raw_account = await _call_generated_sdk(
-            client.connected_accounts.retrieve(connected_account_id)
-        )
-        refreshed = _normalize_sdk_response(raw_account, _ConnectedAccount)
-        if refreshed.id != connected_account_id:
-            raise ComposioProtocolError("Composio returned a different account")
-        return ConnectorReconnectResponse(
-            id=refreshed.id, status=refreshed.status, connect_url=None
-        )
-    if strategy == "credentials":
-        raise ComposioInvalidRequestError("Connector requires a credential update")
-    if strategy != "oauth":
-        raise ComposioInvalidRequestError("Connector authentication method is not supported")
-    raw_response = await _call_generated_sdk(
-        client.connected_accounts.refresh(  # pyright: ignore[reportDeprecated]
-            connected_account_id,
-            body_redirect_url=redirect_url if redirect_url else composio_client.omit,
-        )
-    )
-    await invalidate_tool_router_mcp_session(user_id)
-    response = _normalize_sdk_response(raw_response, _ConnectedAccountReconnectResponse)
-    if response.id != connected_account_id:
-        raise ComposioProtocolError("Composio returned a different account")
-    if not response.redirect_url and response.status != "ACTIVE":
-        raise ConnectorReconnectUnavailableError("Composio did not provide an authentication URL")
-    return ConnectorReconnectResponse(
-        id=response.id, status=response.status, connect_url=response.redirect_url
-    )
-
-
-async def get_account_reconnect_fields(
-    user_id: str, connected_account_id: str
-) -> ConnectorAuthFieldsResponse:
-    from composio_client.types.connected_account_patch_params import ConnectionStateVal
-
-    account = await get_owned_account(user_id, connected_account_id)
-    scheme = _account_auth_scheme(account)
-    if _normalize_auth_type(scheme) not in _CREDENTIAL_AUTH_TYPES:
-        raise ComposioInvalidRequestError("Connector does not support credential updates")
-    if account.auth_config is None:
-        raise ConnectorAuthMetadataError("Connector auth metadata unavailable")
-    raw_response = await _call_generated_sdk(
-        get_composio_client().auth_configs.retrieve(account.auth_config.id)
-    )
-    response = _normalize_sdk_response(raw_response, _AuthConfigRetrieveResponse)
-    if response.auth_scheme and _normalize_composio_scheme(response.auth_scheme) != scheme:
-        raise ConnectorAuthMetadataError("Connector auth scheme does not match its account")
-    if response.expected_input_fields is None:
-        raise ConnectorAuthMetadataError("Connector auth metadata unavailable")
-    fields = [
-        _serialize_auth_field(field).model_copy(update={"default": None})
-        for field in response.expected_input_fields
-        if field.name in ConnectionStateVal.__annotations__
-        and field.user_visible
-        and field.expected_from_customer
-    ]
-    if not fields:
-        raise ConnectorAuthMetadataError("Connector credential update fields unavailable")
-    return ConnectorAuthFieldsResponse(auth_scheme=scheme, expected_input_fields=fields)
-
-
-async def update_account_credentials(
-    user_id: str, connected_account_id: str, credentials: dict[str, str]
-) -> ConnectorConnectionResponse:
-    from composio_client.types import ConnectedAccountPatchParams
-
-    account = await get_owned_account(user_id, connected_account_id)
-    scheme = _account_auth_scheme(account)
-    if _normalize_auth_type(scheme) not in _CREDENTIAL_AUTH_TYPES:
-        raise ComposioInvalidRequestError("Connector does not support credential updates")
-    try:
-        request = TypeAdapter(ConnectedAccountPatchParams).validate_python(
-            {"connection": {"state": {"auth_scheme": scheme, "val": credentials}}}
-        )
-    except ValidationError:
-        raise ComposioInvalidRequestError("Invalid connector credential fields") from None
-    # TypedDict validation discards unknown fields; never silently accept an ignored update.
-    if "connection" not in request or set(request["connection"]["state"]["val"]) != set(
-        credentials
-    ):
-        raise ComposioInvalidRequestError("Unsupported connector credential fields")
-    client = get_composio_client().with_options(max_retries=0)
-    raw_result = await _call_generated_sdk(
-        client.connected_accounts.patch(connected_account_id, **request), credentials=credentials
-    )
-    await invalidate_tool_router_mcp_session(user_id)
-    result = _normalize_sdk_response(raw_result, _ConnectedAccountPatchResponse)
-    if not result.success or result.id != connected_account_id:
-        raise ComposioProtocolError("Composio returned an invalid update response")
-    raw_account = await _call_generated_sdk(
-        client.connected_accounts.retrieve(connected_account_id)
-    )
-    updated = _normalize_sdk_response(raw_account, _ConnectedAccount)
-    if updated.id != connected_account_id:
-        raise ComposioProtocolError("Composio returned a different account")
-    return _serialize_connected_account(updated)
 
 
 async def get_app_tools(app_name: str) -> list[ConnectorToolResponse]:
