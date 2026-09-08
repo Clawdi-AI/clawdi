@@ -47,7 +47,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, require_scope_short_session
-from app.core.database import async_session_factory
+from app.core.database import async_session_factory, finish_cleanup
 from app.core.project import project_ids_visible_to
 from app.core.skill_sync_protocol import (
     SKILL_SYNC_PROTOCOL_HEADER,
@@ -126,13 +126,19 @@ async def _cancel_and_wait(*tasks: asyncio.Task[object]) -> None:
     for task in tasks:
         if not task.done():
             task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
-    for task in tasks:
-        if task.cancelled():
-            continue
-        failure = task.exception()
-        if failure is not None:
-            raise failure
+
+    async def collect() -> None:
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for task in tasks:
+            if task.cancelled():
+                continue
+            failure = task.exception()
+            if failure is not None:
+                raise failure
+
+    # The stream owns these tasks. Repeated cancellation of the stream must
+    # not cancel their in-progress database termination a second time.
+    await finish_cleanup(collect)
 
 
 async def _refresh_subscription_lease(lease_id: UUID, close_stream: asyncio.Event) -> None:
@@ -165,17 +171,7 @@ async def _release_subscription_lease_safely(lease_id: UUID) -> None:
         except Exception as error:  # noqa: BLE001 - expiry is the crash-safe fallback
             log.warning("sync events: subscription lease release failed: %s", error)
 
-    release_task = asyncio.create_task(release())
-    cancellation: asyncio.CancelledError | None = None
-    while not release_task.done():
-        try:
-            await asyncio.shield(release_task)
-        except asyncio.CancelledError as error:
-            cancellation = error
-
-    release_task.result()
-    if cancellation is not None:
-        raise cancellation
+    await finish_cleanup(release)
 
 
 async def _stream(

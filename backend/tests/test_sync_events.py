@@ -427,13 +427,14 @@ async def test_stream_cancellation_awaits_internal_wait_tasks(
     next_chunk = original_create_task(gen.__anext__())
     await asyncio.wait_for(internal_tasks_created.wait(), timeout=1)
     assert len(internal_tasks) == 2
+    wait_tasks = tuple(internal_tasks)
 
     next_chunk.cancel()
     with pytest.raises(asyncio.CancelledError):
         await next_chunk
 
     assert all(task.done() for task in internal_tasks)
-    assert all(task.cancelled() for task in internal_tasks)
+    assert all(task.cancelled() for task in wait_tasks)
 
 
 @pytest.mark.asyncio
@@ -532,6 +533,55 @@ async def test_cancel_and_wait_collects_pending_sibling_before_surfacing_failure
         assert sibling_task.done()
         assert sibling_task.cancelled()
         assert sibling_cleaned.is_set()
+
+
+async def test_cancel_and_wait_preserves_failure_when_parent_is_cancelled(caplog):
+    from app.routes import sync as sync_route
+
+    started = asyncio.Event()
+    cleaning = asyncio.Event()
+    release = asyncio.Event()
+    failure = RuntimeError("child cleanup failed")
+
+    async def child():
+        try:
+            started.set()
+            await asyncio.Event().wait()
+        finally:
+            cleaning.set()
+            await release.wait()
+            raise failure
+
+    child_task = asyncio.create_task(child())
+    await started.wait()
+    owner = asyncio.create_task(sync_route._cancel_and_wait(child_task))
+    try:
+        await cleaning.wait()
+        assert owner.cancel("disconnect")
+        await asyncio.sleep(0)
+        assert owner.cancel("disconnect-again")
+        await asyncio.sleep(0)
+        assert not owner.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError, match="disconnect-again") as cancelled:
+            await owner
+        assert cancelled.value.__cause__ is failure
+        assert owner.cancelling() == 2
+        assert child_task.done()
+        assert child_task.cancelling() == 1
+        assert child_task.exception() is failure
+        records = [
+            record
+            for record in caplog.records
+            if record.message == "Cleanup failed during request cancellation"
+        ]
+        assert len(records) == 1
+        info = records[0].exc_info
+        assert info is not None
+        assert info[1] is failure
+    finally:
+        release.set()
+        await asyncio.gather(owner, child_task, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -1227,3 +1277,158 @@ async def test_try_subscribe_caps_per_user_and_per_key(seed_user: User):
     for q, _sub in routine_handles:
         sync_events.unsubscribe(user_id, q)
     sync_events._subscribers.pop(user_id, None)
+
+
+@pytest.mark.parametrize("disconnect", ["peer", "cancel"])
+@pytest.mark.parametrize("phase", ["pre_ping", "query"])
+async def test_real_sse_disconnect_drains_database_refresh(
+    db_session: AsyncSession,
+    seed_user: User,
+    engine,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog,
+    disconnect: str,
+    phase: str,
+):
+    """The real ASGI 2.3 stream must not forward repeated cancellation to DB cleanup."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from sqlalchemy.pool import QueuePool
+
+    from app.core import database
+    from app.main import app
+    from app.routes import sync as sync_route
+    from app.services.api_key import mint_api_key
+
+    minted = await mint_api_key(db_session, user_id=seed_user.id, label="sse-cancellation")
+    await db_session.commit()
+    refresh_engine = database._create_engine(pool_size=1, max_overflow=0)
+    pool = refresh_engine.sync_engine.pool
+    assert isinstance(pool, QueuePool)
+    monkeypatch.setattr(
+        sync_route,
+        "async_session_factory",
+        async_sessionmaker(refresh_engine, class_=database.async_session_factory.class_),
+    )
+    connected = asyncio.Event()
+    disconnected = asyncio.Event()
+    query_started = asyncio.Event()
+    refresh_tasks = []
+    refresh_pids = []
+    invalidation_errors = []
+    invalidation_started = asyncio.Event()
+    response_statuses = []
+    first_request = True
+
+    async def receive():
+        nonlocal first_request
+        if first_request:
+            first_request = False
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await disconnected.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            response_statuses.append(message["status"])
+        if message.get("body") == b": connected\n\n":
+            connected.set()
+
+    def capture_query(connection, _cursor, statement, *_args):
+        if phase == "query" and connected.is_set() and "FROM api_keys" in statement:
+            task = asyncio.current_task()
+            assert task is not None
+            refresh_tasks.append(task)
+            refresh_pids.append(connection.connection.driver_connection.get_server_pid())
+            query_started.set()
+
+    def capture_invalidation(_connection, _record, _exception):
+        # Retain the traceback so GC cannot hide an unreturned pre-ping slot.
+        invalidation_errors.append(_exception)
+        invalidation_started.set()
+
+    original_ping = refresh_engine.sync_engine.dialect.do_ping
+
+    def capture_ping(connection):
+        if phase == "pre_ping" and connected.is_set():
+            task = asyncio.current_task()
+            assert task is not None
+            refresh_tasks.append(task)
+            refresh_pids.append(connection.driver_connection.get_server_pid())
+            query_started.set()
+        return original_ping(connection)
+
+    monkeypatch.setattr(refresh_engine.sync_engine.dialect, "do_ping", capture_ping)
+
+    event.listen(refresh_engine.sync_engine, "before_cursor_execute", capture_query)
+    event.listen(refresh_engine.sync_engine, "invalidate", capture_invalidation)
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/v1/sync/events",
+        "raw_path": b"/v1/sync/events",
+        "query_string": b"",
+        "headers": [(b"authorization", f"Bearer {minted.raw_key}".encode())],
+        "client": ("127.0.0.1", 1),
+        "server": ("test", 80),
+    }
+    tasks_before = asyncio.all_tasks()
+    request_task = asyncio.create_task(app(scope, receive, send))
+    try:
+        async with asyncio.timeout(8), engine.connect() as observer:
+            await connected.wait()
+            assert response_statuses == [200]
+            # Block the unmodified refresh SELECT, after auth and stream setup.
+            await db_session.execute(text("LOCK TABLE api_keys IN ACCESS EXCLUSIVE MODE"))
+            sync_events.sync_subscriptions_changed.signal(str(seed_user.id))
+            await query_started.wait()
+            pid = refresh_pids[0]
+            if phase == "query":
+                while not await observer.scalar(
+                    text("SELECT cardinality(pg_blocking_pids(:pid)) > 0"), {"pid": pid}
+                ):
+                    await observer.rollback()
+                    await asyncio.sleep(0.01)
+            if disconnect == "peer":
+                disconnected.set()
+                await request_task
+            else:
+                assert request_task.cancel("request-shutdown")
+                await invalidation_started.wait()
+                assert request_task.cancel("request-shutdown-again")
+                with pytest.raises(asyncio.CancelledError):
+                    await request_task
+            assert request_task.cancelling() == (0 if disconnect == "peer" else 2)
+            assert len(refresh_tasks) == 1
+            assert refresh_tasks[0].done()
+            assert refresh_tasks[0].cancelling() == 1
+            # Keep the table locked: successful cleanup must cancel the server
+            # query, rather than wait for it to finish after releasing the lock.
+            await observer.rollback()
+            assert not await observer.scalar(
+                text("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=:pid)"),
+                {"pid": pid},
+            )
+            assert not await observer.scalar(
+                text("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid=:pid)"), {"pid": pid}
+            )
+            assert pool.checkedout() == 0
+            assert not await observer.scalar(
+                select(SyncSubscriptionLease.id).where(
+                    SyncSubscriptionLease.user_id == seed_user.id
+                )
+            )
+            async with refresh_engine.connect() as replacement:
+                assert await replacement.scalar(text("SELECT 1")) == 1
+            assert asyncio.all_tasks() <= tasks_before
+    finally:
+        await db_session.rollback()
+        disconnected.set()
+        if not request_task.done():
+            request_task.cancel()
+            await asyncio.gather(request_task, return_exceptions=True)
+        invalidation_errors.clear()
+        await refresh_engine.dispose()
+    assert not [record for record in caplog.records if record.name.startswith("sqlalchemy.pool")]
