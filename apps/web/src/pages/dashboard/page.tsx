@@ -310,12 +310,9 @@ function ActivityGraphSkeleton() {
 	return (
 		<div className="w-full">
 			<div className="flex gap-1.5">
-				<div className="flex w-[22px] shrink-0 flex-col gap-[3px]">
+				<div className="flex w-3 shrink-0 flex-col items-center gap-[3px]">
 					{Array.from({ length: 7 }).map((_, index) => (
-						<Skeleton
-							key={index}
-							className={cn("h-[11px] rounded-[3px]", index % 2 === 1 ? "w-5" : "w-2")}
-						/>
+						<Skeleton key={index} className="h-[11px] w-2 rounded-[3px]" />
 					))}
 				</div>
 				<div className="min-w-0 flex-1">

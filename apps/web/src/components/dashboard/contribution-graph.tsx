@@ -18,7 +18,7 @@ const LEVEL_COLORS = [
 const CELL = 11; // px, matches GitHub's ~11px heatmap cell
 const GAP = 3; // px gap between cells and columns
 const WEEK_STRIDE = CELL + GAP; // horizontal distance from one week's column to the next
-const DAY_LABEL_W = 28; // px reserved for "Mon"/"Wed"/"Fri" labels on the left
+const DAY_LABEL_W = 18; // px reserved for single-letter weekday labels and their gap
 const MIN_WEEKS = 4; // never show fewer than a month of data, even on tiny viewports
 
 function clampLevel(level: number): number {
@@ -105,23 +105,21 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 
 	return (
 		<div ref={containerRef} className="w-full">
-			<div className="flex gap-1.5">
-				{/* Day-of-week labels: only label odd rows so they don't overflow the cell heights. */}
+			<div className="mx-auto flex w-fit gap-1.5">
+				{/* Weekday labels align with the Sunday-first rows. */}
 				<div
-					className="flex shrink-0 flex-col gap-[3px] text-3xs text-muted-foreground tabular-nums"
+					className="flex shrink-0 flex-col gap-[3px] text-center text-3xs text-muted-foreground tabular-nums"
 					style={{ width: DAY_LABEL_W - 6 }}
 					aria-hidden
 				>
-					<span style={{ height: CELL }} />
-					<span style={{ height: CELL, lineHeight: `${CELL}px` }}>Mon</span>
-					<span style={{ height: CELL }} />
-					<span style={{ height: CELL, lineHeight: `${CELL}px` }}>Wed</span>
-					<span style={{ height: CELL }} />
-					<span style={{ height: CELL, lineHeight: `${CELL}px` }}>Fri</span>
-					<span style={{ height: CELL }} />
+					{["S", "M", "T", "W", "T", "F", "S"].map((day, index) => (
+						<span key={index} style={{ height: CELL, lineHeight: `${CELL}px` }}>
+							{day}
+						</span>
+					))}
 				</div>
 
-				<div className="min-w-0 flex-1">
+				<div style={{ width: weeks.length * WEEK_STRIDE - GAP }}>
 					{/* Week columns grid. */}
 					<div className="flex gap-[3px]">
 						{weeks.map((week, wi) => (
