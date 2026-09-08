@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { nativeAiProvider } from "@clawdi/shared";
 import {
 	firstModelForProvider,
 	isManagedProviderId,
@@ -16,10 +17,7 @@ import {
 	providerRuntimeIncompatibility,
 	usableProviders,
 } from "@/hosted/v2/ai-providers/model-binding";
-import {
-	presetCatalogToProviderModels,
-	providerPresetById,
-} from "@/hosted/v2/ai-providers/provider-presets";
+
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 const managedMetadata = {
@@ -63,6 +61,28 @@ const savedOpenAiProvider = {
 } satisfies AiProvider;
 
 describe("model binding", () => {
+	test("native identity and product stay visible even with a custom connection name", () => {
+		const route = nativeAiProvider("tencent", "tokenplan");
+		if (!route) throw new Error("Tencent TokenPlan route missing");
+		const provider = {
+			...savedOpenAiProvider,
+			type: route.type,
+			base_url: route.base_url,
+			provider_id: "work",
+			label: "Work",
+			configuration_mode: "native",
+			native_provider: "tencent",
+			native_variant: "tokenplan",
+			models: null,
+		} satisfies AiProvider;
+		expect(providerPresentation(provider)).toMatchObject({
+			label: "Work",
+			brandLabel: "Tencent Cloud",
+			iconId: "tencent",
+			summary: "Tencent Cloud · TokenPlan · Models managed in agent",
+		});
+	});
+
 	test("uses the canonical Clawdi AI product label", () => {
 		expect(MANAGED_PROVIDER_LABEL).toBe("Clawdi AI");
 	});
@@ -290,26 +310,15 @@ describe("model binding", () => {
 		});
 	});
 
-	test("uses persisted preset catalog order without a component model default", () => {
-		const preset = providerPresetById("deepseek");
-		if (!preset) throw new Error("Expected the DeepSeek preset fixture.");
+	test("native providers never populate the model picker", () => {
 		const provider = {
 			...savedOpenAiProvider,
-			provider_id: preset.id,
-			type: "custom_openai_compatible",
-			base_url: preset.base_url,
-			models: presetCatalogToProviderModels(preset),
+			configuration_mode: "native",
+			native_provider: "openai",
+			models: null,
 		} satisfies AiProvider;
-		const persistedDefault = preset.catalog[0].id;
-
-		expect(provider.models?.[0]?.id).toBe(persistedDefault);
-		expect(firstModelForProvider(provider.provider_id, [provider])).toBe(persistedDefault);
-		expect(modelPickerItems(provider.provider_id, [provider], [])).toEqual(
-			provider.models?.map((model) => ({
-				value: model.id,
-				label: model.label ?? model.id,
-			})),
-		);
+		expect(firstModelForProvider(provider.provider_id, [provider])).toBe("");
+		expect(modelPickerItems(provider.provider_id, [provider], [])).toEqual([]);
 	});
 
 	test("uses a custom provider catalog when present and no fallback when absent", () => {

@@ -1280,15 +1280,20 @@ function OverviewTab({
 	const managedProvider = !providerId || isManagedProviderId(providerId);
 	const providers = useUserAiProviders({ enabled: !managedProvider });
 	const managedModelCatalog = useManagedModelCatalog({ enabled: managedProvider });
-	const model = modelBindingDisplayName(
-		primaryModel,
-		runtimeAiProviderAuthKind(deployment) ?? bindingProvider?.auth_kind,
-		modelOptionsForProvider(
-			primaryModelProviderId(primaryModel) ?? MANAGED_PROVIDER_ID,
-			providers.data ?? [],
-			managedModelCatalog.data?.models ?? [],
-		),
+	const nativeConnection = providers.data?.some(
+		(provider) => provider.provider_id === providerId && provider.configuration_mode === "native",
 	);
+	const model = nativeConnection
+		? "Managed in agent"
+		: modelBindingDisplayName(
+				primaryModel,
+				runtimeAiProviderAuthKind(deployment) ?? bindingProvider?.auth_kind,
+				modelOptionsForProvider(
+					primaryModelProviderId(primaryModel) ?? MANAGED_PROVIDER_ID,
+					providers.data ?? [],
+					managedModelCatalog.data?.models ?? [],
+				),
+			);
 	const runtimeStatusPresentation = deploymentRuntimeStatusPresentation(deployment.resource.status);
 	const deploymentStatus = runtimeStatusPresentation.status;
 	const deploymentFailure = deploymentFailurePresentation(deployment);

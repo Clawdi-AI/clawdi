@@ -1044,7 +1044,7 @@ def _validate_runtime_provider_ids(value: list[str]) -> list[str]:
 class HostedRuntimeConfiguredDesiredState(_HostedRuntimeDesiredStateBase):
     providerMode: Literal["configured"]
     provider_ids: list[str] = Field(min_length=1, max_length=2)
-    primary_model: HostedRuntimePrimaryModel
+    primary_model: HostedRuntimePrimaryModel | None = None
 
     @field_validator("provider_ids")
     @classmethod
@@ -1053,7 +1053,10 @@ class HostedRuntimeConfiguredDesiredState(_HostedRuntimeDesiredStateBase):
 
     @model_validator(mode="after")
     def _validate_primary_model_provider(self) -> "HostedRuntimeConfiguredDesiredState":
-        if self.primary_model.provider_id not in self.provider_ids:
+        if (
+            self.primary_model is not None
+            and self.primary_model.provider_id not in self.provider_ids
+        ):
             raise ValueError("primary_model.provider_id must be present in provider_ids")
         return self
 

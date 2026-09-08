@@ -2533,6 +2533,117 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(envFile).not.toContain("OPENCLAW_GATEWAY_TOKEN");
 	});
 
+	test("connects a native key without replacing models or native user provider settings", () => {
+		const paths = tempRuntimePaths();
+		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, {
+			initialConfig: {
+				agents: { defaults: { model: { primary: "google/user-selected-model" } } },
+				auth: { profiles: { personal: { provider: "google", mode: "api_key" } } },
+				secrets: {
+					providers: { default: { source: "file", path: "/user/secrets.json" } },
+					defaults: { file: "default" },
+				},
+				models: { mode: "replace", providers: { google: { timeoutSeconds: 45 } } },
+				plugins: { entries: { google: { config: { webSearch: { enabled: false } } } } },
+			},
+		});
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		const baseCommand = `${command}-base`;
+		const pluginState = join(paths.userHome, "plugin-state.json");
+		const pluginLog = join(paths.userHome, "plugin-commands.log");
+		writeFileSync(pluginState, '{"plugins":[]}');
+		writeFakeGatewayCli({
+			path: command,
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
+		cpSync(command, baseCommand);
+		writeFileSync(
+			command,
+			`#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "plugins" ]; then
+  printf '%s\\n' "$*" >> '${pluginLog}'
+  case "$*" in
+    "plugins list --json") cat '${pluginState}' ;;
+    "plugins install --help"|"plugins enable --help") printf '%s\\n' '--accept-capabilities' ;;
+    "plugins install @openclaw/google-plugin --force --pin --accept-capabilities") printf '%s' '{"plugins":[{"id":"google","enabled":false,"status":"disabled"}]}' > '${pluginState}' ;;
+    "plugins enable google --accept-capabilities") printf '%s' '{"plugins":[{"id":"google","enabled":true,"status":"loaded"}]}' > '${pluginState}' ;;
+    *) exit 42 ;;
+  esac
+elif [ "$1 $2 $3" = "config patch --stdin" ]; then
+  printf '%s\\n' "$*" >> '${pluginLog}'
+  python3 -c '
+import json, sys
+path = sys.argv[1]
+with open(path) as f: current = json.load(f)
+def merge(target, patch):
+    for key, value in patch.items():
+        if value is None: target.pop(key, None)
+        elif isinstance(value, dict):
+            if not isinstance(target.get(key), dict): target[key] = {}
+            merge(target[key], value)
+        else: target[key] = value
+merge(current, json.load(sys.stdin))
+with open(path, "w") as f: json.dump(current, f)
+' '${configPath}'
+else
+  exec '${baseCommand}' "$@"
+fi
+`,
+		);
+		const provider = {
+			kind: "openai-compatible",
+			type: "gemini",
+			configurationMode: "native",
+			nativeProvider: "google",
+			baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+			apiMode: "google_generate_content",
+			runtimeEnvName: "GEMINI_API_KEY",
+			apiKeySecretRef: "secret://provider.google.apiKey",
+		};
+		const manifest = hostedRuntimeBundleV2ManifestSchema.parse(
+			hostedOpenClawV2ManifestFixture({
+				providers: { default: provider },
+				runtimes: { openclaw: hostedRuntimeFixture({ primary_model: null }) },
+			}),
+		);
+		const connected = convergeRuntimeManifest(
+			manifestLoad(
+				{ ...manifest, egressEngine: installCachedTestEgressEngine(paths, "12.2.3-native-google") },
+				"native-google",
+				{
+					...TEST_HOSTED_SECRET_VALUES,
+					"secret://provider.google.apiKey": "native-google-test-key",
+				},
+			),
+			paths,
+		);
+		expect(connected.installErrors).toEqual([]);
+		expect(connected.nativeCredentialProviderIds).toEqual({ openclaw: ["google"] });
+		const configured = JSON.parse(readFileSync(configPath, "utf8"));
+		expect(configured.agents.defaults.model.primary).toBe("google/user-selected-model");
+		expect(configured.auth.profiles.personal).toEqual({ provider: "google", mode: "api_key" });
+		expect(configured.models.providers.google).toEqual({
+			timeoutSeconds: 45,
+			baseUrl: provider.baseUrl,
+			auth: "api-key",
+			apiKey: { source: "env", provider: "clawdi-native", id: "GEMINI_API_KEY" },
+		});
+		expect(configured.plugins.entries.google.config).toEqual({ webSearch: { enabled: false } });
+		expect(configured.secrets.providers.default).toEqual({
+			source: "file",
+			path: "/user/secrets.json",
+		});
+		expect(configured.secrets.defaults).toEqual({ file: "default" });
+		expect(readFileSync(pluginLog, "utf8")).toContain(
+			"plugins enable google --accept-capabilities",
+		);
+		expect(readFileSync(pluginLog, "utf8")).toContain("config patch --stdin");
+		expect(readFileSync(pluginLog, "utf8")).not.toContain("native-google-test-key");
+		expect(readFileSync(configPath, "utf8")).not.toContain("native-google-test-key");
+	});
+
 	test("repairs legacy managed memory config and keeps the provider key out of agent env", () => {
 		const paths = tempRuntimePaths();
 		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, {

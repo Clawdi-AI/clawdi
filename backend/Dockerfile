@@ -27,6 +27,7 @@ COPY backend/pyproject.toml backend/uv.lock backend/alembic.ini ./
 RUN uv sync --frozen --no-dev --no-install-project --extra mem0
 
 COPY --chown=app:app backend/ /app/backend/
+COPY --chown=app:app packages/shared/src/native-ai-providers.json /app/packages/shared/src/native-ai-providers.json
 
 RUN mkdir -p /data/files /home/app/.cache/fastembed /run/clawdi-embedding \
     && chmod 0770 /run/clawdi-embedding \

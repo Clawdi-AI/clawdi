@@ -22,6 +22,13 @@ export function selectAiBindingProvider(
 	choice: string,
 	context: DraftContext,
 ): AiProviderBindingDraft {
+	if (
+		context.providers.some(
+			(provider) => provider.provider_id === choice && provider.configuration_mode === "native",
+		)
+	) {
+		return { ...draft, bindingMode: "configured", primaryProviderChoice: choice, primaryModel: "" };
+	}
 	const previous = modelIdsForProvider(
 		draft.primaryProviderChoice,
 		context.providers,

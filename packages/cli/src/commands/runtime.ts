@@ -332,6 +332,7 @@ export function commitRuntimeAppliedState(input: {
 			officialServiceCommandRevisions: input.officialServiceCommandRevisions ?? {},
 			providerIds,
 			projectedProviderIds: input.convergence.projectedProviderIds,
+			nativeCredentialProviderIds: input.convergence.nativeCredentialProviderIds,
 		},
 		input.paths,
 	);

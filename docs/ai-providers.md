@@ -12,6 +12,34 @@ the selected provider through the stable runtime bootstrap bundle.
 
 ## Supported Provider Data
 
+New BYOK connections use `configuration_mode: "native"`: choose a provider,
+region or plan variant, and an API key, access token, or supported OAuth
+connection. Hermes and OpenClaw own model selection and their native catalogs.
+Clawdi does not pick a default model or copy a catalog for these connections.
+Credentials can be deployable while inference remains `not_tested` and
+`primary_model` is null.
+
+`native_provider` identifies the connection and `native_variant` optionally
+identifies its region or plan. The shared
+[`native-ai-providers.json`](../packages/shared/src/native-ai-providers.json) contains only
+auth/routing metadata. Core validates the identity and hydrates endpoint,
+protocol, and runtime credential delivery; Hosted consumes Core readiness.
+The encrypted key or reference and the Agent binding remain separately owned.
+
+Native connections include NVIDIA NIM, Fireworks AI, Hugging Face (access
+token), DeepInfra, OpenCode Zen and Go, Xiaomi MiMo, and Tencent TokenHub and
+TokenPlan, alongside the existing providers. OpenCode's per-model protocols,
+provider request headers, and model catalogs remain native. TokenPlan uses
+OpenAI chat in OpenClaw and Anthropic Messages in Hermes; runtime routing
+overrides do not change the portable saved connection. Xiaomi Token Plan is
+not included because the audited Hermes version has no separate native profile.
+
+Omitted `configuration_mode` means the existing `catalog` contract. Existing
+catalog connections keep their explicit model intent until the user converts
+them. Custom endpoints retain URL/protocol and optional model metadata for
+runtimes that require a fallback. Managed AI keeps frozen catalogs and an
+explicit primary model.
+
 Supported provider types:
 
 - `openai`
@@ -177,7 +205,9 @@ The wire field remains `provider_ids: string[]`. Its Core Hosted semantics are:
 - configured mode contains one primary provider and may contain one additional
   capability provider;
 - unmanaged mode contains an empty list;
-- `primary_model.provider_id` must belong to the configured provider IDs;
+- an explicit `primary_model.provider_id` must belong to the configured provider IDs;
+- a native chat binding may omit `primary_model` or send null, including when
+  accompanied by a separate managed embedding provider;
 - the manifest `providers` projection must exactly match the selected IDs;
 - the capability provider does not participate in chat fallback or ordering.
 
@@ -193,6 +223,57 @@ exits 0 and covers the optional capability provider plus duplicate and size
 limits.
 
 ## Hosted Hermes And OpenClaw Delivery
+
+Native credential convergence never writes `model.provider`/`model.default`
+in Hermes or `agents.defaults.model.primary` in OpenClaw. This also applies to
+Codex OAuth; its existing ownership and token-rotation reconciliation remains
+in place. OpenClaw's current OAuth provider ID is `openai`, while Hermes uses
+`openai-codex`; the portable credential identity stays `openai-codex`.
+
+Native manifest entries are resolved directly to runtime connections. They do not
+pass through the legacy catalog projector or synthesize a primary model.
+
+OpenClaw enables the official provider plugin, installing it through the
+native CLI when absent. Native capability consent and install policy remain
+active. API keys use narrow `auth: "api-key"` and env SecretRef overrides so
+an existing auth profile cannot silently replace the selected key. Native
+provider objects contain no `models`; their catalog uses `models.mode: merge`.
+Other provider settings and stored user auth profiles are preserved. Removing
+a native binding removes its owned auth/endpoint fields, not the user profile.
+These narrow updates use `openclaw config patch --stdin`; keys are supplied only
+in the child process environment. Official CLI verification against npm
+`openclaw@2026.9.2` ([`3928bad9`](https://github.com/openclaw/openclaw/tree/3928bad9badfcb6c7d140530435e806fb8092190))
+confirmed merge and null deletion preserve unrelated fields. Its `--replace-path`
+replaces a small catalog but rejects a 300-to-1 model reduction under the native
+[size-drop guard](https://github.com/openclaw/openclaw/blob/3928bad9badfcb6c7d140530435e806fb8092190/src/config/io.write-safety.ts#L161).
+The CLI has no explicit size-drop option, so owned catalog replacement and legacy
+memory-layout repair retain the existing public SDK path, before native updates.
+
+Hermes uses a namespaced native credential-pool entry and `fill_first` for the
+bound API-key provider, preserving other pool entries and the selected model.
+Key rotation updates only that entry. Its keyless ownership journal preserves
+the prior credential strategy across retries and restores it when unbound.
+Native pool APIs retain concurrent changes and cooldown state for other keys.
+The standalone Python bridge calls public `read_credential_pool`,
+`write_credential_pool`, `PooledCredential`, and `has_named_custom_provider`;
+Bun embeds it in Node and native CLI builds. Secrets arrive through stdin.
+Hermes `auth add` uses random IDs and a masked prompt or key argv, so it cannot
+provide the required secure, owned, idempotent upsert. Its config CLI has no
+batch/CAS operation; structured changes retain `HermesConfigTransaction`.
+The installed Hermes auth resolver identifies aliases using the same provider
+key as its credential pool (`opencode-zen`, not the models.dev alias `opencode`).
+For the selected native provider, obsolete `model.base_url`, auth and protocol
+overrides are removed through the config transaction; `model.provider` and
+`model.default` are preserved. Connection overrides for other providers remain.
+
+These native contracts are audited against OpenClaw
+[`53ff0867`](https://github.com/openclaw/openclaw/tree/53ff0867149e1fd753cbfc9f67f79a28e6318f58/extensions)
+and Hermes
+[`96663732`](https://github.com/NousResearch/hermes-agent/blob/966637323e6f90864e069dbc12755934c2c86387/hermes_cli/runtime_provider.py).
+Provider identity/auth mappings do not freeze upstream model catalogs.
+
+Done: `scripts/test.sh cli src/runtime/native-provider-credentials.test.ts
+src/runtime/hermes-native-credentials.test.ts` exits 0.
 
 For Hermes, Hosted convergence uses `hermes config get --json` when it needs a
 resolved value, `unset` for deletion, and `set --force` for scalar writes. Raw
@@ -220,7 +301,7 @@ probe `/models` by default but honor `discover_models: false`;
 [`config.py`](https://github.com/NousResearch/hermes-agent/blob/cc4cab2f592e60a197e796506de9168f74baf3ea/hermes_cli/config.py#L1310-L1321)
 accepts that provider field.
 
-For OpenClaw, Hosted provider convergence uses the public
+For explicit catalog connections, OpenClaw Hosted provider convergence uses the public
 `openclaw/plugin-sdk/config-mutation` export. The mutation starts from authored
 source config, sets `models.mode` to `replace`, exactly replaces each selected
 provider object, and leaves unrelated provider and user settings intact. In the

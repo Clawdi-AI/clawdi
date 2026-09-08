@@ -51,9 +51,8 @@ function presetEntry(preset: ProviderPreset): ChoiceEntry {
 		searchText: [
 			preset.label,
 			preset.id,
-			preset.api_mode,
 			description,
-			...preset.catalog.flatMap((model) => [model.id, model.alias ?? ""]),
+			...(preset.region_variants ?? []).map((variant) => variant.label),
 		]
 			.join(" ")
 			.toLowerCase(),

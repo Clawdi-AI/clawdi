@@ -1,19 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import {
-	API_MODE_LABEL,
-	PROVIDER_TYPE_META,
-	toProviderCatalogModels,
-} from "@/hosted/v2/ai-providers/provider-types";
+import { API_MODE_LABEL, PROVIDER_TYPE_META } from "@/hosted/v2/ai-providers/provider-types";
 
 describe("AI provider type metadata", () => {
-	test("uses current model placeholders for known providers", () => {
-		expect(PROVIDER_TYPE_META.openai.modelPlaceholder).toBe("gpt-5.6-sol");
-		expect(PROVIDER_TYPE_META.anthropic.modelPlaceholder).toBe("claude-sonnet-5");
-		expect(PROVIDER_TYPE_META.openrouter.modelPlaceholder).toBe("openrouter/auto-beta");
-		expect(PROVIDER_TYPE_META.gemini.modelPlaceholder).toBe("gemini-3.6-flash");
-		expect(PROVIDER_TYPE_META.mistral.modelPlaceholder).toBe("mistral-medium-latest");
-	});
-
 	test("uses canonical SDK environment variable names", () => {
 		expect(PROVIDER_TYPE_META.openai.defaultRuntimeEnv).toBe("OPENAI_API_KEY");
 		expect(PROVIDER_TYPE_META.anthropic.defaultRuntimeEnv).toBe("ANTHROPIC_API_KEY");
@@ -34,43 +22,6 @@ describe("AI provider type metadata", () => {
 		expect(PROVIDER_TYPE_META.gemini.label).toBe("Google Gemini");
 		expect(PROVIDER_TYPE_META.mistral.apiKeyUrl).toBe("https://console.mistral.ai/api-keys");
 		expect(PROVIDER_TYPE_META.mistral.label).toBe("Mistral AI");
-	});
-
-	test("keeps shared catalog defaults aligned for models and API modes", () => {
-		expect(PROVIDER_TYPE_META.openai.defaultApiMode).toBe("openai_responses");
-		expect(PROVIDER_TYPE_META.openai.defaultModels.map((model) => model.id)).toEqual([
-			"gpt-5.6-sol",
-			"gpt-5.6-terra",
-			"gpt-5.6-luna",
-			"gpt-5.5",
-			"gpt-5.4",
-			"gpt-5.4-mini",
-		]);
-		expect(PROVIDER_TYPE_META.custom_openai_compatible.defaultModels).toEqual([]);
-	});
-
-	test("preserves generated model capabilities and omits empty compat", () => {
-		expect(
-			toProviderCatalogModels([
-				{
-					id: "complete-model",
-					supports_vision: true,
-					supports_tools: false,
-					max_input_tokens: 120_000,
-					compat: { supportsDeveloperRole: false, future: { opaque: true } },
-				},
-				{ id: "empty-compat", compat: {} },
-			]),
-		).toEqual([
-			{
-				id: "complete-model",
-				supports_vision: true,
-				supports_tools: false,
-				max_input_tokens: 120_000,
-				compat: { supportsDeveloperRole: false, future: { opaque: true } },
-			},
-			{ id: "empty-compat" },
-		]);
 	});
 
 	test("uses the factual protocol names shown in Advanced settings", () => {

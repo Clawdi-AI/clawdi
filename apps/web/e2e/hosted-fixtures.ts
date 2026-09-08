@@ -69,6 +69,9 @@ function managedProvider(): JsonRecord {
 }
 
 export async function stubCloudApi(page: Page) {
+	await page.route(`${DEPLOY_API}/v1/me/notifications?*`, (route) =>
+		fulfillJson(route, { items: [], unread_count: 0, next_cursor: null }),
+	);
 	const channels: JsonRecord[] = [initialChannel()];
 	const linksByChannel = new Map<string, JsonRecord[]>([
 		[
@@ -212,9 +215,19 @@ export async function stubCloudApi(page: Page) {
 				api_mode: incoming.api_mode ?? "openai_chat",
 				managed_by: "user",
 				runtime_env_name: incoming.runtime_env_name ?? null,
-				models: incoming.models ?? [],
+				configuration_mode: incoming.configuration_mode ?? "catalog",
+				native_provider: incoming.native_provider ?? null,
+				native_variant: incoming.native_variant ?? null,
+				models: incoming.models ?? null,
 				scope: "account",
-				auth: { type: "secret_ref", secret_ref: "clawdi://e2e/provider/key" },
+				auth: { type: "api_key", source: "managed" },
+				readiness: {
+					credential_material: "available",
+					deployable: true,
+					runtime_compatibility: { openclaw: true, hermes: true, codex: false },
+					endpoint_reachability: "not_tested",
+					inference_verification: "not_tested",
+				},
 				usable: true,
 				created_at: "2026-07-11T12:00:00Z",
 				updated_at: "2026-07-11T12:00:00Z",
@@ -261,7 +274,7 @@ export async function stubCloudApi(page: Page) {
 export function collectBrowserErrors(page: Page): string[] {
 	const errors: string[] = [];
 	page.on("console", (message) => {
-		if (message.type() === "error") errors.push(message.text());
+		if (message.type() === "error") errors.push(`${message.text()} (${message.location().url})`);
 	});
 	page.on("pageerror", (error) => {
 		errors.push(error.message);

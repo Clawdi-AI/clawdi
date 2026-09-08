@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { NATIVE_AI_PROVIDERS } from "@clawdi/shared";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PROVIDER_BRAND_ICON_IDS } from "@/components/entity-brand-icon-ids";
@@ -36,6 +37,19 @@ describe("AI provider icon coverage", () => {
 			expect(markup).toContain('width="84%"');
 			expect(markup).toContain('height="84%"');
 			expect(markup).not.toContain("<img");
+		}
+	});
+
+	test("every native connection and runtime identity resolves to a LobeHub brand", () => {
+		const identities = new Set(
+			NATIVE_AI_PROVIDERS.flatMap((route) => [
+				route.id,
+				route.openclaw.provider,
+				route.hermes.provider,
+			]),
+		);
+		for (const id of identities) {
+			expect(providerBrandIcon(id), `Missing provider brand: ${id}`).toBeDefined();
 		}
 	});
 

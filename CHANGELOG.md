@@ -19,6 +19,17 @@ database migration, CI, and implementation details.
 
 ### Changed
 
+- CLI 0.14.54 delivers native BYOK credentials through OpenClaw configuration
+  commands and Hermes authentication APIs while preserving agent model choices.
+
+- Native BYOK now also supports NVIDIA NIM, Fireworks, Hugging Face, DeepInfra,
+  OpenCode Zen/Go, Xiaomi MiMo API, and Tencent TokenHub/TokenPlan, with official
+  provider icons and product-specific credential prompts.
+
+- Hosted BYOK can connect a provider key or ChatGPT account without configuring
+  a model catalog or default model. Choose models in Hermes or OpenClaw;
+  existing model choices and other saved credentials are preserved.
+
 - Hosted plan selection now explains the single 7-day trial shared by an
   account's first Basic or Performance subscription, while grandfathered Basic
   capacity is labeled Included.
