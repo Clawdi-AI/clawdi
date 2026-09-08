@@ -339,6 +339,14 @@ Vaults are account-owned secret bundles. Projects attach to vaults through
 `vault_project_attachments`; keys remain on the vault. `vault_items` stores
 sectioned fields encrypted with AES-256-GCM using `VAULT_ENCRYPTION_KEY`.
 
+Dashboard Project pages own Vault inclusion through Add and Remove actions.
+The Agent Vaults page shows effective access across its Workspace and linked
+Projects, including the source of each Vault; it does not manage a second set
+of Agent-to-Vault links. Existing Workspace associations are preserved and can
+be removed deliberately from the Vault library. New dashboard additions target
+user-created Projects. Project sharing is the single sharing entry for Vault
+access; it does not change Vault ownership or expose plaintext values.
+
 The dashboard can list and mutate metadata but never receives plaintext values.
 Plaintext resolution is restricted to API-key auth through `/v1/vault/resolve`
 and `/v1/vault/resolve/bulk`. Agent-scoped resolution reads the Agent Workspace

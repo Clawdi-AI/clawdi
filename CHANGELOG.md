@@ -21,8 +21,11 @@ database migration, CI, and implementation details.
 
 ### Changed
 
-- Projects and Vaults now share catalogs with Linked and Available groups and
-  direct Link or Unlink actions in Agent and Project context.
+- Agent Projects show Linked and Available groups with direct Link or Unlink
+  actions. Agent Vaults show the keys available through those Projects and the
+  existing Workspace, with their sources; Vaults are configured in Projects.
+- Project sharing uses a compact invitation and access view, with inactive
+  links and bulk sharing controls tucked away.
 - CLI 0.14.56 installs sourced Skills through Hermes and OpenClaw native
   capabilities, preserving supporting files and recovering interrupted changes.
 - CLI 0.14.54 delivers native BYOK credentials through OpenClaw configuration
