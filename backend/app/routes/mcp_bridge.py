@@ -47,17 +47,21 @@ from app.models.project import Project
 from app.models.session import AgentEnvironment, Session
 from app.models.session_share import SessionShare
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
+from app.routes.connectors import map_composio_error
 from app.routes.memories import attach_source_machines
 from app.routes.public_sessions import resolve_session_for_view
+from app.schemas.connector import ConnectorAlias, ConnectorDisconnectResponse
 from app.schemas.vault import VaultCreate, VaultItemDelete, VaultItemUpsert
 from app.services.composio import (
     ComposioMcpUpstreamError,
     ComposioRouteError,
     call_tool_router_mcp_tool,
+    disconnect_owned_account,
     get_connected_account_identities,
     get_tool_router_mcp_session,
     get_tool_router_mcp_tools,
     get_tool_router_mcp_tools_result,
+    update_account_alias,
     verify_mcp_bridge_token,
 )
 from app.services.file_store import get_file_store
@@ -110,6 +114,16 @@ class _ToolArguments(BaseModel):
 
 class _NoArguments(_ToolArguments):
     pass
+
+
+class _ConnectorAccountIdentityArguments(_ToolArguments):
+    connection_id: StrictStr = Field(
+        min_length=1, max_length=200, pattern=r"\S", description="Exact connected account ID."
+    )
+
+
+class _ConnectorAccountUpdateArguments(_ConnectorAccountIdentityArguments):
+    alias: ConnectorAlias = Field(description="Account alias; an empty string clears it.")
 
 
 class _MemorySearchArguments(_ToolArguments):
@@ -614,6 +628,30 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         input_schema=_NoArguments.model_json_schema(),
         scopes=("connectors:read",),
         handler=lambda arguments, auth, db: _tool_connector_account_list(
+            arguments, auth=auth, db=db
+        ),
+    ),
+    "connector_account_update": _NativeToolSpec(
+        description=(
+            "Update the alias of one exact connected account only when authorized by the user. "
+            "An empty alias clears it; credentials cannot be updated. This change is "
+            "account-wide and affects all agents."
+        ),
+        input_schema=_ConnectorAccountUpdateArguments.model_json_schema(),
+        scopes=("connectors:invoke",),
+        handler=lambda arguments, auth, db: _tool_connector_account_update(
+            arguments, auth=auth, db=db
+        ),
+    ),
+    "connector_account_delete": _NativeToolSpec(
+        description=(
+            "Disconnect one exact connected account only when authorized by the user. "
+            "Verify the connection ID before calling. Disconnection is account-wide and "
+            "removes this account's connector access for all agents."
+        ),
+        input_schema=_ConnectorAccountIdentityArguments.model_json_schema(),
+        scopes=("connectors:invoke",),
+        handler=lambda arguments, auth, db: _tool_connector_account_delete(
             arguments, auth=auth, db=db
         ),
     ),
@@ -1485,6 +1523,34 @@ async def _tool_connector_account_list(
     return _tool_json(
         {"accounts": [account.model_dump(mode="json", exclude_none=True) for account in accounts]}
     )
+
+
+async def _tool_connector_account_update(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_ConnectorAccountUpdateArguments, arguments)
+    del db
+    try:
+        account = await update_account_alias(
+            require_clerk_id(auth), parsed.connection_id, parsed.alias
+        )
+    except ComposioRouteError as exc:
+        raise map_composio_error(exc) from exc
+    return _tool_json(account.model_dump(mode="json"))
+
+
+async def _tool_connector_account_delete(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_ConnectorAccountIdentityArguments, arguments)
+    del db
+    try:
+        success = await disconnect_owned_account(require_clerk_id(auth), parsed.connection_id)
+    except ComposioRouteError as exc:
+        raise map_composio_error(exc) from exc
+    if not success:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to disconnect")
+    return _tool_json(ConnectorDisconnectResponse(status="disconnected").model_dump(mode="json"))
 
 
 async def _tool_connector_call(

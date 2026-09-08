@@ -1243,8 +1243,8 @@ async def test_disconnect_invalidates_tool_router_session(monkeypatch: pytest.Mo
         return True
 
     monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
-    monkeypatch.setattr(connectors, "get_owned_account", fake_get_owned_account)
-    monkeypatch.setattr(connectors, "disconnect_account", fake_disconnect_account)
+    monkeypatch.setattr(composio, "get_owned_account", fake_get_owned_account)
+    monkeypatch.setattr(composio, "disconnect_account", fake_disconnect_account)
     composio._tool_router_session_cache["clerk_user_123"] = composio.ComposioMcpSession(
         url="https://app.composio.dev/tool_router/v3/trs_old/mcp",
         headers={},
@@ -1284,7 +1284,7 @@ async def test_map_composio_client_bad_request_to_safe_credential_error():
             credentials={"generic_api_key": "mb_secret_123"},
         )
 
-    mapped = connectors._map_composio_error(exc_info.value)
+    mapped = connectors.map_composio_error(exc_info.value)
 
     assert mapped.status_code == 400
     assert mapped.detail == "Metabase rejected API key ***"
@@ -1306,14 +1306,14 @@ async def test_map_composio_client_not_found_to_connector_not_found():
     with pytest.raises(composio.ComposioProviderError) as exc_info:
         await composio._call_generated_sdk(fail_request())
 
-    mapped = connectors._map_composio_error(exc_info.value)
+    mapped = connectors.map_composio_error(exc_info.value)
 
     assert mapped.status_code == 404
     assert mapped.detail == "Connector not found"
 
 
 def test_map_custom_oauth_config_required_to_actionable_bad_request():
-    mapped = connectors._map_composio_error(
+    mapped = connectors.map_composio_error(
         composio.ConnectorCustomAuthConfigRequired("twitter", "OAUTH2")
     )
 
@@ -1347,7 +1347,7 @@ async def test_catalog_rejects_malformed_sdk_page_instead_of_returning_empty(
     with pytest.raises(composio.ComposioProtocolError):
         await composio.get_available_apps()
 
-    mapped = connectors._map_composio_error(
+    mapped = connectors.map_composio_error(
         composio.ComposioProtocolError("provider detail must stay private")
     )
     assert mapped.status_code == 502

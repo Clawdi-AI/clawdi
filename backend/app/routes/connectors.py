@@ -26,14 +26,13 @@ from app.services.composio import (
     connect_with_credentials,
     create_connect_link,
     create_mcp_bridge_token,
-    disconnect_account,
+    disconnect_owned_account,
     get_all_connected_accounts,
     get_app_by_name,
     get_app_tools,
     get_auth_fields,
     get_available_apps,
     get_connector_metadata,
-    get_owned_account,
     invalidate_tool_router_mcp_session,
     normalize_composio_failure,
     update_account_alias,
@@ -65,7 +64,7 @@ _REDIRECT_AUTH_TYPES = {
 }
 
 
-def _map_composio_error(exc: ComposioRouteError) -> HTTPException:
+def map_composio_error(exc: ComposioRouteError) -> HTTPException:
     """Map the adapter's sanitized failure record to the public HTTP contract."""
     failure = normalize_composio_failure(exc)
     if failure.kind == "metadata":
@@ -132,7 +131,7 @@ async def list_connections(
         if _is_composio_auth_error(exc):
             log.warning("composio_key_invalid path=connectors_list")
             return []
-        raise _map_composio_error(exc) from exc
+        raise map_composio_error(exc) from exc
     # The dashboard refetches connections after OAuth redirects complete.
     # Composio Tool Router sessions capture the active account set, so
     # observing the latest connected-account state should force the next
@@ -152,7 +151,7 @@ async def read_connector_metadata(
     try:
         return await get_connector_metadata(body.names)
     except ComposioRouteError as exc:
-        raise _map_composio_error(exc) from exc
+        raise map_composio_error(exc) from exc
 
 
 @router.get("/available")
@@ -179,7 +178,7 @@ async def list_available_apps(
             return Paginated[ConnectorAvailableAppResponse](
                 items=[], total=0, page=page, page_size=page_size
             )
-        raise _map_composio_error(exc) from exc
+        raise map_composio_error(exc) from exc
     return Paginated[ConnectorAvailableAppResponse](
         items=page_data["items"],
         total=page_data["total"],
@@ -201,7 +200,7 @@ async def get_available_app(
     try:
         app = await get_app_by_name(app_name)
     except ComposioRouteError as exc:
-        raise _map_composio_error(exc) from exc
+        raise map_composio_error(exc) from exc
     if app is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found")
     return app
@@ -242,7 +241,7 @@ async def connect_app(
             require_clerk_id(auth), app_name, redirect_url, alias=body.alias if body else None
         )
     except ComposioRouteError as exc:
-        raise _map_composio_error(exc) from exc
+        raise map_composio_error(exc) from exc
     return result
 
 
@@ -263,7 +262,7 @@ async def auth_fields(
     try:
         fields = await get_auth_fields(app_name)
     except ComposioRouteError as exc:
-        raise _map_composio_error(exc) from exc
+        raise map_composio_error(exc) from exc
     return fields
 
 
@@ -295,7 +294,7 @@ async def connect_credentials(
             require_clerk_id(auth), app_name, body.credentials, alias=body.alias
         )
     except ComposioRouteError as exc:
-        raise _map_composio_error(exc) from exc
+        raise map_composio_error(exc) from exc
     if not result.ok:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -316,7 +315,7 @@ async def update_connection(
     try:
         return await update_account_alias(require_clerk_id(auth), connection_id, body.alias)
     except ComposioRouteError as exc:
-        raise _map_composio_error(exc) from exc
+        raise map_composio_error(exc) from exc
 
 
 @router.delete("/{connection_id}")
@@ -333,19 +332,12 @@ async def disconnect(
     if not settings.composio_api_key:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
 
-    clerk_id = require_clerk_id(auth)
     try:
-        await get_owned_account(clerk_id, connection_id)
+        success = await disconnect_owned_account(require_clerk_id(auth), connection_id)
     except ComposioRouteError as exc:
-        raise _map_composio_error(exc) from exc
-
-    try:
-        success = await disconnect_account(connection_id)
-    except ComposioRouteError as exc:
-        raise _map_composio_error(exc) from exc
+        raise map_composio_error(exc) from exc
     if not success:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to disconnect")
-    await invalidate_tool_router_mcp_session(clerk_id)
     return ConnectorDisconnectResponse(status="disconnected")
 
 
@@ -374,5 +366,5 @@ async def list_app_tools(
     try:
         tools = await get_app_tools(app_name)
     except ComposioRouteError as exc:
-        raise _map_composio_error(exc) from exc
+        raise map_composio_error(exc) from exc
     return [ConnectorToolResponse.model_validate(tool) for tool in tools]

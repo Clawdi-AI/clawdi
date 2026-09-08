@@ -1131,11 +1131,23 @@ async def _wait_for_connection_status(
 
 
 async def disconnect_account(connected_account_id: str) -> bool:
-    """Disconnect/revoke a connected account."""
+    """Delete a connected account."""
     client = get_composio_client()
-    raw_response = await _call_generated_sdk(client.connected_accounts.delete(connected_account_id))
+    # A failed response may follow a completed deletion; never replay it automatically.
+    raw_response = await _call_generated_sdk(
+        client.with_options(max_retries=0).connected_accounts.delete(connected_account_id)
+    )
     response = _normalize_sdk_response(raw_response, _ConnectedAccountDeleteResponse)
     return response.success
+
+
+async def disconnect_owned_account(user_id: str, connected_account_id: str) -> bool:
+    """Disconnect one owned account and discard sessions even after ambiguous failures."""
+    await get_owned_account(user_id, connected_account_id)
+    try:
+        return await disconnect_account(connected_account_id)
+    finally:
+        await invalidate_tool_router_mcp_session(user_id)
 
 
 async def get_owned_account(user_id: str, connected_account_id: str) -> _ConnectedAccount:
