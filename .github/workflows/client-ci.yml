@@ -180,6 +180,9 @@ jobs:
             exit 2
           fi
           bunx turbo typecheck build "${filters[@]}" --output-logs=errors-only
+      - name: Smoke production authentication SSR
+        if: needs.changes.outputs.web == 'true'
+        run: bun run --cwd apps/web test:auth-ssr
       - name: Set up native Agent test dependencies
         if: needs.changes.outputs.cli == 'true'
         uses: astral-sh/setup-uv@v10.0.1

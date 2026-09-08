@@ -12,6 +12,7 @@
 		"lint": "biome ci --linter-enabled=true --formatter-enabled=false src",
 		"test": "../../scripts/test.sh web",
 		"test:internal": "bun test",
+		"test:auth-ssr": "node scripts/test-auth-ssr.mjs",
 		"e2e": "playwright test",
 		"e2e:hosted": "playwright test --config=playwright.hosted.config.ts",
 		"generate-api": "../../scripts/openapi-typescript.sh http://localhost:8000/openapi.json -o ../../packages/shared/src/api/api.generated.ts",
