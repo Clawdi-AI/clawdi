@@ -1,6 +1,5 @@
 "use client";
 
-import type { components } from "@clawdi/shared/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -19,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
-import { isActiveConnection, useAuthFields, useReconnectFields } from "@/lib/connectors-data";
+import { useAuthFields } from "@/lib/connectors-data";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { buildCredentialPayload, getVisibleCredentialFields } from "./credentials-dialog.logic";
@@ -39,46 +38,30 @@ export function ConnectorCredentialsDialog({
 	onOpenChange,
 	appName,
 	displayName,
-	connection,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	appName: string;
 	displayName: string;
-	connection?: components["schemas"]["ConnectorConnectionResponse"];
 }) {
 	const formId = useId();
-	const connectFields = useAuthFields(appName, { enabled: open && !connection });
-	const reconnectFields = useReconnectFields(connection?.id ?? "", {
-		enabled: open && !!connection,
-	});
-	const fields = connection ? reconnectFields : connectFields;
+	const fields = useAuthFields(appName, { enabled: open });
 	const api = useApi();
 	const queryClient = useQueryClient();
-	const submit = useSensitiveAction(async (credentials: Record<string, string>, alias: string) => {
-		if (connection) {
-			const updated = unwrap(
-				await api.PATCH("/v1/connectors/{connection_id}/credentials", {
-					params: { path: { connection_id: connection.id } },
-					body: { credentials },
-				}),
-			);
-			void queryClient.invalidateQueries({ queryKey: ["get", "/v1/connectors"] });
-			return updated;
-		} else {
+	const submit = useSensitiveAction(
+		async (credentials: Record<string, string>, alias: string): Promise<void> => {
 			unwrap(
 				await api.POST("/v1/connectors/{app_name}/connect-credentials", {
 					params: { path: { app_name: appName } },
 					body: { credentials, ...(alias ? { alias } : {}) },
 				}),
 			);
-		}
-		queryClient.invalidateQueries({ queryKey: ["get", "/v1/connectors"] });
-	});
+			queryClient.invalidateQueries({ queryKey: ["get", "/v1/connectors"] });
+		},
+	);
 	const [alias, setAlias] = useState("");
 	const [values, setValues] = useState<Record<string, string>>({});
 	const [submitError, setSubmitError] = useState<string | null>(null);
-	const [savedInactive, setSavedInactive] = useState(false);
 
 	// Generation counter bumped on EVERY open transition (open→close
 	// AND close→open). Each `handleSubmit` captures the generation it
@@ -104,7 +87,6 @@ export function ConnectorCredentialsDialog({
 		setValues({});
 		setAlias("");
 		setSubmitError(null);
-		setSavedInactive(false);
 		return () => {
 			openGenRef.current += 1;
 		};
@@ -114,36 +96,27 @@ export function ConnectorCredentialsDialog({
 	const visibleFields = getVisibleCredentialFields(allFields);
 	const canSubmit =
 		visibleFields.length > 0 &&
-		(connection
-			? visibleFields.some((f) => values[f.name]?.trim())
-			: visibleFields.filter((f) => f.required).every((f) => values[f.name]?.trim()));
+		visibleFields.filter((f) => f.required).every((f) => values[f.name]?.trim());
 
 	async function handleSubmit() {
 		if (!canSubmit || inflightSubmitRef.current) return;
 		inflightSubmitRef.current = true;
 		const gen = openGenRef.current;
 		setSubmitError(null);
-		setSavedInactive(false);
 		try {
-			const credentials = buildCredentialPayload(connection ? visibleFields : allFields, values);
-			const updated = await submit.execute(credentials, alias.trim());
+			const credentials = buildCredentialPayload(allFields, values);
+			await submit.execute(credentials, alias.trim());
 			// Drop the result if the dialog has been reopened — toasts
 			// and `onOpenChange(false)` should target the session that
 			// initiated the mutation, not whatever the user is doing now.
 			if (gen !== openGenRef.current) return;
 			setValues({});
-			toast.success(connection ? "Credentials saved" : `${displayName} connected`);
-			if (updated && !isActiveConnection(updated)) {
-				setSavedInactive(true);
-			} else {
-				onOpenChange(false);
-			}
+			toast.success(`${displayName} connected`);
+			onOpenChange(false);
 		} catch {
 			if (gen !== openGenRef.current) return;
 			setSubmitError(
-				connection
-					? "The credentials couldn’t be updated. Try again. If the problem persists, contact support."
-					: "The account couldn’t be connected. Try again. If the problem persists, contact support.",
+				"The account couldn’t be connected. Try again. If the problem persists, contact support.",
 			);
 		} finally {
 			inflightSubmitRef.current = false;
@@ -161,17 +134,15 @@ export function ConnectorCredentialsDialog({
 				if (!nextOpen) {
 					setValues({});
 					setSubmitError(null);
-					setSavedInactive(false);
 				}
 			}}
 		>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
-					<DialogTitle>{connection ? "Update credentials" : `Connect ${displayName}`}</DialogTitle>
+					<DialogTitle>Connect {displayName}</DialogTitle>
 					<DialogDescription>
-						{connection
-							? `Enter new credentials for ${connection.alias || connection.account_display || displayName}. Your account and alias will be kept. Leave fields blank to keep their saved values.`
-							: "Enter the credentials this app expects. They are stored in Composio and used when connector tools run."}
+						Enter the credentials this app expects. They are stored in Composio and used when
+						connector tools run.
 					</DialogDescription>
 				</DialogHeader>
 
@@ -190,7 +161,8 @@ export function ConnectorCredentialsDialog({
 						/>
 					) : visibleFields.length === 0 ? (
 						<p className="text-sm text-muted-foreground">
-							No credential fields are available. Refresh the page or contact support.
+							This connector doesn't need any credentials configured here. Try OAuth from the
+							connector page.
 						</p>
 					) : (
 						<form
@@ -207,9 +179,7 @@ export function ConnectorCredentialsDialog({
 									<div key={f.name} className="flex flex-col gap-1.5">
 										<Label htmlFor={id}>
 											{f.display_name || f.name}
-											{f.required && !connection ? (
-												<span className="ml-0.5 text-destructive">*</span>
-											) : null}
+											{f.required ? <span className="ml-0.5 text-destructive">*</span> : null}
 										</Label>
 										<Input
 											id={id}
@@ -219,7 +189,7 @@ export function ConnectorCredentialsDialog({
 											onChange={(e) => setValues((prev) => ({ ...prev, [f.name]: e.target.value }))}
 											disabled={submit.isPending}
 											autoComplete="off"
-											required={!connection && f.required}
+											required={f.required}
 											spellCheck={false}
 										/>
 										{f.description ? (
@@ -228,15 +198,7 @@ export function ConnectorCredentialsDialog({
 									</div>
 								);
 							})}
-							{!connection ? (
-								<AccountAliasField value={alias} onChange={setAlias} disabled={submit.isPending} />
-							) : null}
-							{savedInactive ? (
-								<p role="status" className="text-sm text-muted-foreground">
-									Credentials saved. This account is not active yet. Check the account status with
-									the provider, then refresh this page.
-								</p>
-							) : null}
+							<AccountAliasField value={alias} onChange={setAlias} disabled={submit.isPending} />
 							{submitError ? (
 								<p role="alert" className="text-sm text-destructive">
 									{submitError}
@@ -258,7 +220,7 @@ export function ConnectorCredentialsDialog({
 					</Button>
 					<Button type="submit" form={formId} disabled={!canSubmit || submit.isPending}>
 						{submit.isPending ? <Spinner className="size-3.5" /> : null}
-						{connection ? "Update credentials" : "Connect"}
+						Connect
 					</Button>
 				</DialogFooter>
 			</DialogContent>

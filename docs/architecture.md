@@ -414,14 +414,13 @@ ID or alias through the upstream tool's live schema; omitted selection uses the
 default active account. Upstream MCP tools remain authoritative: SDK support for
 editing an alias does not establish the parameters of a session's MCP tools.
 
-The connector management API lists all account states. Alias edits, credential
-updates, reauthorization, enabling, and deletion verify ownership independently
-of account status. OAuth reauthorization targets the existing connection ID
-through Composio's documented, deprecated `refresh` endpoint; creating a new link
-would create a different account. Credential updates preserve omitted fields and
-do not imply that the provider has validated the new credentials. Returned state
-determines readiness, and successful account mutations invalidate cached MCP
-sessions. Dashboard counts and Agent account identities remain active-only.
+The connector management API lists all account states. Alias edits and deletion
+verify ownership independently of account status. To authorize again, use the
+standard new-connection flow; it creates a separate account rather than repairing
+an existing ID. Existing accounts and aliases are never deleted or reassigned
+automatically. Clear or change an old alias before reusing it on a new account.
+Account mutations invalidate cached MCP sessions. Dashboard counts and Agent
+account identities remain active-only.
 
 For agents that only support stdio MCP, `clawdi mcp` is a protocol-transparent
 stdio-to-HTTP wrapper: it forwards MCP messages and does not declare a second

@@ -135,17 +135,15 @@ through that system instead of adding another hardcoded string layer.
 ## Connector account management
 
 Connector management uses the same account-wide API in the library and Agent
-detail views. Keep non-active accounts discoverable for recovery; only active,
+detail views. Keep non-active accounts discoverable for management; only active,
 enabled accounts count as connected. Display aliases alongside provider identity
 or a connection ID, and allow an empty alias to clear it. Alias input is bounded
 to 256 characters by Clawdi, not by a documented Composio format restriction.
 
-Use the saved connection's `reconnect_strategy`, rather than the toolkit's
-preferred authentication scheme: OAuth opens a user-initiated popup, enabling
-needs no popup, and credential recovery loads that account's saved auth fields.
-Recovery must retain the connection ID and alias. A saved credential update is
-not proof of valid credentials; render the returned account state and sanitize
-failures.
+Use the standard OAuth or credential connection flow to add another account.
+It creates a new connection; it does not repair an old connection in place.
+Existing aliases remain reserved until explicitly cleared, changed, or deleted
+with their account. Do not automatically remove an old account to reuse its alias.
 
 ## Generated API types
 

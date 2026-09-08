@@ -10,7 +10,6 @@ import { AccountAliasDialog } from "@/components/connectors/account-alias-dialog
 import { getConnectorAuthFlow } from "@/components/connectors/auth-flow.logic";
 import { ConnectorConnectAction } from "@/components/connectors/connector-connect-action";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
-import { ConnectorReconnectAction } from "@/components/connectors/connector-reconnect-action";
 import { DashboardSection, DashboardSectionHeader } from "@/components/dashboard/section";
 import { DetailBackLink } from "@/components/detail/back-link";
 import { EmptyState } from "@/components/empty-state";
@@ -355,11 +354,6 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 										</p>
 									</div>
 									<div className="flex flex-wrap items-center gap-2">
-										<ConnectorReconnectAction
-											connection={c}
-											displayName={displayName}
-											disabled={isDisconnecting(c.id)}
-										/>
 										<Button
 											variant="ghost"
 											size="xs"

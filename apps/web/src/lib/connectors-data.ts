@@ -175,15 +175,6 @@ export function useAuthFields(appName: string, { enabled }: { enabled: boolean }
 	);
 }
 
-export function useReconnectFields(connectionId: string, { enabled }: { enabled: boolean }) {
-	return useOpenApi().useQuery(
-		"get",
-		"/v1/connectors/{connection_id}/reconnect-fields",
-		{ params: { path: { connection_id: connectionId } } },
-		{ enabled },
-	);
-}
-
 // ─────────────────────────────────────────────────────────────────────
 // Mutations
 
