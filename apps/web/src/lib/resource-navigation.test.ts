@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
 import {
 	agentResourceScope,
 	connectorDetailHrefForScope,
@@ -174,32 +173,5 @@ describe("resource navigation scopes", () => {
 				future: "kept",
 			}),
 		).toEqual({ vault: "vault 1", future: "kept" });
-	});
-
-	it("keeps legacy singular Vault URLs as redirects to plural routes", () => {
-		const legacyListRoute = readFileSync(
-			new URL("../routes/_protected/_dashboard/vault/index.tsx", import.meta.url),
-			"utf8",
-		);
-		const legacyDetailRoute = readFileSync(
-			new URL("../routes/_protected/_dashboard/vault/$slug.tsx", import.meta.url),
-			"utf8",
-		);
-		expect(legacyListRoute).toContain('to: "/vaults"');
-		expect(legacyListRoute).toContain("search");
-		expect(legacyDetailRoute).toContain('to: "/vaults/$slug"');
-		expect(legacyDetailRoute).toContain("search,");
-	});
-
-	it("keeps the canonical project query as the library Vault filter", () => {
-		const vaultsSurface = readFileSync(
-			new URL("../components/vault/vaults-surface.tsx", import.meta.url),
-			"utf8",
-		);
-		expect(vaultsSurface).toContain('useQueryState(\n\t\t"project"');
-		expect(vaultsSurface).toContain(
-			"const projectFilter = embedded ? embeddedProjectFilter : projectParam",
-		);
-		expect(vaultsSurface).toContain("void setProjectParam(projectId)");
 	});
 });

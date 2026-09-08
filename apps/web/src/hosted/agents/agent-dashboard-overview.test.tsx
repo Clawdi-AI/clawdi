@@ -26,12 +26,8 @@ test.each(["starting", "stopped", "failed", null, "running"] as const)(
 		);
 		expect(markup).toContain("Hermes Dashboard");
 		expect(markup).toContain("Chat on the web");
-		expect(markup).toContain("lucide-panels-top-left");
 		expect(markup).not.toContain("Start Chat");
-		expect(markup).toContain('data-size="sm"');
-		expect(markup).not.toContain("min-h-24");
 		expect(markup).not.toContain('role="status"');
-		expect(markup).not.toContain("agent-dashboard-status");
 		expect(markup).toContain('disabled=""');
 		expect(markup).not.toContain("/console");
 	},

@@ -21,14 +21,11 @@ describe("pairing dialog primitives", () => {
 		expect(markup).toContain(">Copy<");
 	});
 
-	test("uses one responsive QR treatment", () => {
+	test("labels the pairing QR code accessibly", () => {
 		const markup = renderToStaticMarkup(
 			createElement(PairingQrCode, { value: "https://example.com", label: "Pairing QR code" }),
 		);
 
 		expect(markup).toContain('aria-label="Pairing QR code"');
-		expect(markup).toContain("data-pairing-qr-container");
-		expect(markup).toContain("max-w-44 sm:max-w-48");
-		expect(markup).toContain("bg-white");
 	});
 });

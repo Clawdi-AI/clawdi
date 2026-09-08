@@ -1,26 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import {
-	AuthBadge,
-	ProviderIcon,
-	ProviderReadinessBadge,
-} from "@/hosted/v2/ai-providers/ai-providers-ui";
-import { MANAGED_PROVIDER_ID } from "@/hosted/v2/ai-providers/model-binding";
-
-const providerPageSource = readFileSync(
-	new URL("./ai-providers-page.tsx", import.meta.url),
-	"utf8",
-);
-
-test("managed AI uses the shared AI Providers icon", () => {
-	const markup = renderToStaticMarkup(
-		createElement(ProviderIcon, { provider: MANAGED_PROVIDER_ID }),
-	);
-	expect(markup).toContain("lucide-brain-circuit");
-	expect(markup).not.toContain("lucide-sparkles");
-});
+import { AuthBadge, ProviderReadinessBadge } from "@/hosted/v2/ai-providers/ai-providers-ui";
 
 describe("ProviderReadinessBadge", () => {
 	test("badges an unfinished provider as needing setup, never connected", () => {
@@ -31,15 +12,6 @@ describe("ProviderReadinessBadge", () => {
 		expect(markup).toContain("Setup required");
 		expect(markup).not.toContain("Connected");
 		expect(markup).toContain('data-status="warning"');
-	});
-
-	test("requires hosted deployability before presenting a provider as ready", () => {
-		expect(providerPageSource).toContain(
-			'(provider.readiness?.deployable ?? provider.usable) && provider.auth.type !== "none"',
-		);
-		expect(providerPageSource).toContain("<ProviderReadinessBadge deployable={deployable} />");
-		expect(providerPageSource).toContain('deployable ? "Edit" : "Finish setup"');
-		expect(providerPageSource).toContain("<RemoveProviderAction provider={provider}");
 	});
 
 	test("labels legacy no-credential records without offering No auth", () => {

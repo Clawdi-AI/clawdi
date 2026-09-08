@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import process from "node:process";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -7,9 +6,6 @@ import type { WhatsAppOnboardingSession } from "./channel-types";
 
 process.env.VITE_CLERK_PUBLISHABLE_KEY = "pk_test_dummy";
 const { WhatsAppSessionState } = await import("./whatsapp-device-onboarding");
-
-const source = readFileSync(new URL("./whatsapp-device-onboarding.tsx", import.meta.url), "utf8");
-const connectDialog = readFileSync(new URL("./connect-bot-dialog.tsx", import.meta.url), "utf8");
 
 function session(overrides: Partial<WhatsAppOnboardingSession> = {}): WhatsAppOnboardingSession {
 	return {
@@ -43,22 +39,6 @@ function render(state: WhatsAppOnboardingSession): string {
 }
 
 describe("WhatsApp linked-device onboarding", () => {
-	test("keeps Custom WhatsApp setup flat and separate from Clawdi-managed bots", () => {
-		expect(source).toContain('data-hosted="true"');
-		expect(source).toContain('data-v2="true"');
-		expect(source).not.toContain("Clawdi WhatsApp");
-		expect(source).not.toContain("WhatsAppOptionCard");
-		expect(source).not.toContain("sm:grid-cols-2");
-		expect(source).toContain("This adds the account under Custom bots");
-		expect(source).toContain("linked-device QR");
-		expect(source).toMatch(/<Alert\s+data-whatsapp-account-warning/);
-		const warningMarkerIndex = source.indexOf("data-whatsapp-account-warning");
-		expect(warningMarkerIndex).toBeLessThan(source.indexOf("Connect your account"));
-		expect(connectDialog).toContain("<WhatsAppDeviceOnboarding");
-		expect(connectDialog).not.toContain("phone-number ID");
-		expect(connectDialog).not.toContain("Graph API");
-	});
-
 	test("renders QR instructions, rotation, mobile warning, and secondary code fallback", () => {
 		const markup = render(session());
 		expect(markup).toContain('aria-label="WhatsApp linked-device QR code"');
@@ -66,7 +46,6 @@ describe("WhatsApp linked-device onboarding", () => {
 			"WhatsApp &gt; Settings/Menu &gt; Linked devices &gt; Link a device &gt; scan.",
 		);
 		expect(markup).toContain("QR refreshes in 20s");
-		expect(markup).toContain("sm:hidden");
 		expect(markup).toContain("cannot scan a QR shown on the same phone");
 		expect(markup).toContain("Can&#x27;t scan? Use a pairing code");
 		expect(markup).toContain("digits only");

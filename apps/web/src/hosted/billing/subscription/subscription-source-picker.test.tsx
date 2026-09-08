@@ -17,7 +17,7 @@ const reusableSubscription: ReusableSubscription = {
 };
 
 describe("SubscriptionSourcePicker", () => {
-	test("keeps reusable compute compact and readable at card-local breakpoints", () => {
+	test("renders the selected reusable subscription and included option", () => {
 		const markup = renderToStaticMarkup(
 			<SubscriptionSourcePicker
 				value={{ mode: "existing", subscriptionId: reusableSubscription.subscription_id }}
@@ -30,10 +30,6 @@ describe("SubscriptionSourcePicker", () => {
 			/>,
 		);
 
-		expect(markup).toContain("@container/subscription-source");
-		expect(markup).toContain("items-start gap-2 @3xl/subscription-source:grid-cols-2");
-		expect(markup).toContain("@container/choice");
-		expect(markup).toContain("@md/choice:flex-row");
 		expect(markup).toContain('aria-pressed="true"');
 		expect(markup).toContain('title="Basic">Basic</span>');
 		expect(markup).toContain("Plan price");

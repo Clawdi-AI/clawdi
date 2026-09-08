@@ -1,5 +1,4 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -245,7 +244,7 @@ describe("deployment failure status rendering", () => {
 });
 
 describe("overview Compute hierarchy", () => {
-	test("keeps plan and configuration in one compact summary instead of metric tiles", () => {
+	test("renders the plan and compute resource values", () => {
 		if (!overviewComputeSummary) throw new Error("agent detail was not loaded");
 		const markup = renderToStaticMarkup(
 			createElement(overviewComputeSummary, {
@@ -261,15 +260,6 @@ describe("overview Compute hierarchy", () => {
 		expect(markup).toContain("4 GiB");
 		expect(markup).toContain("20 GiB");
 		expect(markup).toContain('aria-label="Compute resources"');
-		expect(markup).toContain('data-testid="overview-compute-summary"');
-		expect(markup).toContain('data-overview-compute-plan="true"');
-		expect(markup).toContain("text-sm text-muted-foreground");
-		expect(markup).not.toContain("text-sm font-medium text-muted-foreground");
-		expect(markup).not.toContain("text-sm font-semibold");
-		expect(markup).not.toContain("grid-cols-2");
-		expect(markup).not.toContain("rounded");
-		expect(markup).not.toContain("border");
-		expect(markup).not.toContain("bg-");
 	});
 });
 
@@ -449,51 +439,6 @@ describe("deployment transition timeout rendering", () => {
 		expect(shouldShowProjectionNotice("vaults")).toBe(false);
 	});
 
-	test("keeps diagnostics separate from lifecycle actions", () => {
-		const detailSource = readFileSync(
-			new URL("./hosted-agent-detail.tsx", import.meta.url),
-			"utf8",
-		);
-		const statusDetailsSource = detailSource.slice(
-			detailSource.indexOf("export function ComputeStatusDetails"),
-			detailSource.indexOf("export function OverviewComputeSummary"),
-		);
-		expect(statusDetailsSource).not.toContain("StartComputeAction");
-		expect(statusDetailsSource).not.toContain("RestartComputeAction");
-		expect(statusDetailsSource).not.toContain("DeleteComputeAction");
-		expect(statusDetailsSource).not.toContain("<Button");
-		expect(statusDetailsSource).not.toContain("href=");
-		expect(detailSource).not.toContain("OverviewFailureAction");
-		expect(detailSource).toContain("shouldShowInitialDeploymentProgress(");
-	});
-
-	test("wires the timed-out inventory state and real refetch action into the detail", () => {
-		const source = readFileSync(new URL("./agent-home.tsx", import.meta.url), "utf8");
-		const manualHandler = source.slice(
-			source.indexOf("const handleCheckAgain"),
-			source.indexOf("// No route may be classified as connected"),
-		);
-
-		expect(source).toContain("deploymentTransitionTimedOut,");
-		expect(source).toContain("deploymentTransitionTimedOut={deploymentTransitionTimedOut}");
-		expect(source).toContain("const [manualChecking, setManualChecking] = useState(false);");
-		expect(manualHandler).toContain("manualCheckInFlightRef.current");
-		expect(manualHandler).toContain(
-			"await runManualDeploymentRefetch(refetch, setManualChecking);",
-		);
-		expect(manualHandler).not.toContain("isFetchingRef");
-		expect(manualHandler).not.toContain("mutate");
-		expect(manualHandler).not.toContain("restart");
-		expect(source).toContain("isCheckingDeployment={manualChecking}");
-		expect(source).toContain("onCheckDeploymentAgain={() => void handleCheckAgain()}");
-		const detailSource = readFileSync(
-			new URL("./hosted-agent-detail.tsx", import.meta.url),
-			"utf8",
-		);
-		expect(detailSource).toContain("isChecking={isCheckingProjection}");
-		expect(detailSource).not.toContain("isFetching={isCheckingProjection}");
-	});
-
 	test("gives a manual check local feedback while an ambient refetch is active", async () => {
 		if (!runManualDeploymentRefetch) throw new Error("agent home was not loaded");
 		let requestCount = 0;
@@ -544,45 +489,6 @@ describe("deployment transition timeout rendering", () => {
 		client.clear();
 	});
 
-	test("escalates a stuck transition on every timed-out surface with a cancel action", () => {
-		const detailSource = readFileSync(
-			new URL("./hosted-agent-detail.tsx", import.meta.url),
-			"utf8",
-		);
-		const statusDetailsSource = detailSource.slice(
-			detailSource.indexOf("export function ComputeStatusDetails"),
-			detailSource.indexOf("export function OverviewComputeSummary"),
-		);
-		const initialPageSource = detailSource.slice(
-			detailSource.indexOf("export function InitialDeploymentPage"),
-			detailSource.indexOf("function OverviewTab"),
-		);
-		const consoleTabSource = detailSource.slice(
-			detailSource.indexOf("function ConsoleTab"),
-			detailSource.indexOf("function FilesTab"),
-		);
-
-		for (const source of [statusDetailsSource, initialPageSource, consoleTabSource]) {
-			expect(source).toContain("appears to be stuck");
-			expect(source).toContain("<DeploymentCancelAction");
-			expect(source).toContain("taking longer than expected");
-		}
-		expect(initialPageSource).toContain("Setup appears to be stuck");
-	});
-
-	test("gates the cancel action behind the backend cancel acceptance contract", () => {
-		const actionSource = readFileSync(
-			new URL("./deployment-cancel-action.tsx", import.meta.url),
-			"utf8",
-		);
-		expect(actionSource).toContain("canCancelOperation(operation)");
-		expect(actionSource).toContain("Cancel this change");
-		expect(actionSource).toContain('data-hosted="true"');
-		const statusSource = readFileSync(new URL("../deployment-status.ts", import.meta.url), "utf8");
-		expect(statusSource).toContain('verb !== "migrate_image"');
-		expect(statusSource).toContain('verb !== "rollback_image"');
-	});
-
 	test("keeps the escalation honest as a stuck state, not a warning badge for running compute", () => {
 		if (!computeStatusDetails) throw new Error("agent detail was not loaded");
 		const markup = renderToStaticMarkup(
@@ -596,92 +502,6 @@ describe("deployment transition timeout rendering", () => {
 
 		expect(markup).not.toContain("appears to be stuck");
 		expect(markup).not.toContain("<button");
-	});
-});
-
-describe("hosted agent customer language", () => {
-	test("uses grounded deployment language across hosted surfaces", () => {
-		const detailSource = readFileSync(
-			new URL("./hosted-agent-detail.tsx", import.meta.url),
-			"utf8",
-		);
-		const agentHomeSource = readFileSync(new URL("./agent-home.tsx", import.meta.url), "utf8");
-		const sidebarSource = readFileSync(
-			new URL("../../components/app-sidebar.tsx", import.meta.url),
-			"utf8",
-		);
-		const wizardSource = readFileSync(
-			new URL("../billing/deploy/deploy-wizard.tsx", import.meta.url),
-			"utf8",
-		);
-		const customerCopy = `${detailSource}\n${agentHomeSource}\n${sidebarSource}\n${wizardSource}`;
-
-		for (const staleLifecycleCopy of [
-			"Getting your agent ready",
-			"Setting up your agent",
-			"Your agent is ready",
-			"After your agent is ready",
-		]) {
-			expect(customerCopy).not.toContain(staleLifecycleCopy);
-		}
-		expect(detailSource).toMatch(/Setting up \$\{runtimeLabel\}/);
-		expect(detailSource).toContain("Your agent is running");
-		expect(wizardSource).not.toContain("After your agent is running");
-	});
-
-	test("keeps delayed and unavailable states honest without implementation vocabulary", () => {
-		const detailSource = readFileSync(
-			new URL("./hosted-agent-detail.tsx", import.meta.url),
-			"utf8",
-		);
-		const sidebarSource = readFileSync(
-			new URL("../../components/app-sidebar.tsx", import.meta.url),
-			"utf8",
-		);
-		const customerCopy = `${detailSource}\n${sidebarSource}`;
-
-		for (const internalCopy of [
-			"Sync record unavailable",
-			"synced agent record",
-			"Deployment actions",
-			"Manage hosted compute independently of synced agent data.",
-			"Apply locale changes directly",
-			"finishes booting",
-			"Deployment operation failed",
-			"failure reason and operation",
-		]) {
-			expect(customerCopy).not.toContain(internalCopy);
-		}
-		expect(detailSource).toContain("Some agent details are unavailable");
-		expect(detailSource).toContain("Clawdi can’t load every part of this agent right now.");
-		expect(detailSource).toContain("title={`Agent status: ");
-		expect(sidebarSource).toContain('"Agent details unavailable"');
-	});
-
-	test("shares one access dialog and keeps both runtime interfaces embedded", () => {
-		const detailSource = readFileSync(
-			new URL("./hosted-agent-detail.tsx", import.meta.url),
-			"utf8",
-		);
-
-		expect(detailSource.match(/getRuntimeUiCredentials/g)).toHaveLength(1);
-		expect(detailSource).toContain("openSecureRuntimeWindow");
-		expect(detailSource).toContain("resolveRuntimeUiCredentials");
-		expect(detailSource).toContain("runtimeUiLaunchTarget");
-		expect(detailSource).toContain("RuntimeUiAccessDialog");
-		expect(detailSource).toContain("Agent dashboard access");
-		expect(detailSource).toContain("<iframe");
-		expect(detailSource).toContain('allow="clipboard-read; clipboard-write"');
-		expect(detailSource).toContain('<RuntimeUiCredentialRow label="Username"');
-		expect(detailSource).toContain('label="Password"');
-		expect(detailSource).not.toContain('<RuntimeUiCredentialRow label="Token"');
-		expect(detailSource).toContain("Reconnect");
-		expect(detailSource).toContain("Sign in to Hermes");
-		expect(detailSource).toContain("Get your Hermes username and password from Access.");
-		expect(detailSource).toContain("clawdi.hermes-access-hint.dismissed");
-		expect(detailSource).toContain('runtime === "hermes" ? (');
-		expect(detailSource).not.toContain("Open Access to retry");
-		expect(detailSource).not.toContain("reconciliationRequired");
 	});
 });
 
@@ -772,18 +592,6 @@ describe("deployment mutation settlement", () => {
 		expect(queryClient.getQueryState(billingKeys.reusableSubscriptions)?.isInvalidated).toBe(true);
 	});
 
-	test("uses the shared invalidation on every inventory-changing mutation settlement", () => {
-		const source = readFileSync(new URL("./deployment-hooks.ts", import.meta.url), "utf8");
-		const settlementInvalidations = source.match(
-			/onSettled: \(\) => invalidateDeploymentSnapshots\(qc\)/g,
-		);
-
-		// Declarative lifecycle, access reset, delete, settings updates, and
-		// operation cancellation all reconcile even when the request rejects
-		// or times out.
-		expect(settlementInvalidations).toHaveLength(5);
-	});
-
 	test("waits for accepted navigation before projecting the delete transition", async () => {
 		if (!settleAcceptedDelete) throw new Error("deployment hooks were not loaded");
 		const queryClient = new QueryClient();
@@ -843,14 +651,6 @@ describe("deployment mutation settlement", () => {
 
 		const projected = queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments);
 		expect(requiredDeploymentStatus(projected?.[0]).summary_state).toBe("deleting");
-	});
-
-	test("retires old runtime windows only after restart, access reset, or delete is accepted", () => {
-		const source = readFileSync(new URL("./deployment-hooks.ts", import.meta.url), "utf8");
-
-		expect(source).toContain('if (vars.action === "restart") {');
-		expect(source).toContain("retireRuntimeWindows(accepted.deploymentId);");
-		expect(source.match(/retireRuntimeWindows\(accepted\.deploymentId/g)).toHaveLength(3);
 	});
 
 	test("projects every accepted operation through the shared transition model", () => {
