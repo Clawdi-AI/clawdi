@@ -901,7 +901,7 @@ export default function ProjectDetailPage({
 				showHeading={!focus}
 				id="vaults"
 				title="Vaults"
-				count={vaultCount}
+				count={isAgentScope ? vaultCount : undefined}
 				description={
 					isAgentScope
 						? isWorkspace
@@ -912,9 +912,9 @@ export default function ProjectDetailPage({
 							: "Read-only vaults shared through this Project."
 				}
 				action={
-					!focus && (projectResourceTargets || isOwner) ? (
+					!focus && (isAgentScope || isOwner) ? (
 						<>
-							{!focus && projectResourceTargets ? (
+							{!focus && isAgentScope && projectResourceTargets ? (
 								<ProjectResourceViewAllLink
 									href={projectResourceTargets.vaults}
 									resource="Vaults"
