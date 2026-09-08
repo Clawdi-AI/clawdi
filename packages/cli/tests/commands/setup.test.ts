@@ -247,7 +247,9 @@ describe("setup daemon install", () => {
 
 	it("adopts a pre-ledger clawdi target under the previous exclusion contract", async () => {
 		const target = join(home, ".codex", "skills", "clawdi");
-		cpSync(resolve(import.meta.dir, "../fixtures/legacy-local-clawdi"), target, { recursive: true });
+		cpSync(resolve(import.meta.dir, "../fixtures/legacy-local-clawdi"), target, {
+			recursive: true,
+		});
 		installEnvironmentMock("env-codex");
 
 		await setup({ agent: "codex", yes: true, daemon: false });
