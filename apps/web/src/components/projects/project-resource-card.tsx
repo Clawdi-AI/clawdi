@@ -28,6 +28,8 @@ export function ProjectResourceCard({
 	project,
 	footer,
 	actions,
+	primaryAction,
+	status,
 	showKind = false,
 	navigationScope = LIBRARY_RESOURCE_SCOPE,
 	link,
@@ -37,6 +39,8 @@ export function ProjectResourceCard({
 	project: ProjectMetadata;
 	footer?: ReactNode | ReactNode[];
 	actions?: ReactNode;
+	primaryAction?: ReactNode;
+	status?: ReactNode;
 	showKind?: boolean;
 	navigationScope?: ResourceNavigationScope;
 	/** Optional collection-local destination while retaining the canonical card. */
@@ -61,8 +65,9 @@ export function ProjectResourceCard({
 				searchQuery ? <SearchHighlightedText text={projectName} query={searchQuery} /> : projectName
 			}
 			badges={
-				showKind || showViewer ? (
+				showKind || showViewer || status ? (
 					<>
+						{status}
 						{showKind ? <ProjectKindBadge kind={project.kind ?? "workspace"} /> : null}
 						{showViewer ? <Badge variant="outline">Viewer</Badge> : null}
 					</>
@@ -79,7 +84,17 @@ export function ProjectResourceCard({
 				)
 			}
 			footer={footer}
-			actions={actions}
+			actions={
+				primaryAction ? (
+					<>
+						{primaryAction}
+						{actions}
+					</>
+				) : (
+					actions
+				)
+			}
+			actionsVisibility={primaryAction ? "always" : "responsive"}
 			link={detailLink}
 			ariaLabel={`Open ${projectName}`}
 			className={className}

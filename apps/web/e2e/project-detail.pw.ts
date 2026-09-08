@@ -69,6 +69,25 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 	const boundedAgentRequests: string[] = [];
 	const updateBodies: unknown[] = [];
 	const vaultCreateRequests: Array<{ url: URL; body: unknown }> = [];
+	const vaultDetachRequests: URL[] = [];
+	const vaultRows = [
+		{
+			id: "77777777-7777-4777-8777-777777777777",
+			slug: "already-attached",
+			name: "Already attached",
+			is_owner: true,
+			project_ids: [projectId],
+			item_count: 1,
+		},
+		{
+			id: "88888888-8888-4888-8888-888888888888",
+			slug: "release-archive",
+			name: "Release archive",
+			is_owner: true,
+			project_ids: [workspaceId],
+			item_count: 2,
+		},
+	];
 
 	await page.addInitScript(() => localStorage.setItem("clawdi-theme", "dark"));
 	await page.setViewportSize({ width: 390, height: 844 });
@@ -111,34 +130,25 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 			projectResourceRequests.push(request.url());
 			if (request.method() === "POST") {
 				vaultCreateRequests.push({ url, body: request.postDataJSON() });
-				return fulfill(route, {
-					id: "66666666-6666-4666-8666-666666666666",
-					slug: "production-credentials",
-				});
+				const body = request.postDataJSON() as { slug: string; name: string };
+				const existing = vaultRows.find((vault) => vault.slug === body.slug);
+				if (existing) {
+					existing.project_ids.push(projectId);
+					return fulfill(route, existing);
+				}
+				return fulfill(route, { id: "66666666-6666-4666-8666-666666666666", ...body });
 			}
-			if (url.searchParams.get("project_id"))
-				return fulfill(route, { items: [], total: 0, page: 1, page_size: 200 });
-			return fulfill(route, {
-				items: [
-					{
-						id: "77777777-7777-4777-8777-777777777777",
-						slug: "already-attached",
-						name: "Already attached",
-						is_owner: true,
-						project_ids: [projectId],
-					},
-					{
-						id: "88888888-8888-4888-8888-888888888888",
-						slug: "release-archive",
-						name: "Release archive",
-						is_owner: true,
-						project_ids: [],
-					},
-				],
-				total: 2,
-				page: 1,
-				page_size: 200,
-			});
+			const items = url.searchParams.has("project_id")
+				? vaultRows.filter((vault) => vault.project_ids.includes(projectId))
+				: vaultRows;
+			return fulfill(route, { items, total: items.length, page: 1, page_size: 200 });
+		}
+		if (path === "/v1/vault/release-archive" && request.method() === "DELETE") {
+			vaultDetachRequests.push(url);
+			const vault = vaultRows.find((vault) => vault.slug === "release-archive");
+			if (!vault) throw new Error("Missing release Vault");
+			vault.project_ids = vault.project_ids.filter((id) => id !== projectId);
+			return fulfill(route, { status: "ok" });
 		}
 		if (path === `/v1/projects/${projectId}/members`) return fulfill(route, []);
 		if (path === "/v1/dashboard/stats") return fulfill(route, {});
@@ -203,15 +213,36 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 
 	await projectTabs.getByRole("tab", { name: "Vaults" }).click();
 	await expect(page.getByRole("heading", { name: "Vaults", exact: true })).toBeVisible();
-	await expect(page.getByRole("button", { name: "Attach vault", exact: true })).toBeVisible();
-	await page.getByRole("button", { name: "Attach vault", exact: true }).click();
-	const attachVaultDialog = page.getByRole("dialog", { name: "Attach vault" });
-	await attachVaultDialog.getByLabel("Search Vaults").fill("release");
-	await attachVaultDialog.getByLabel("Existing Vault").click();
-	await expect(page.getByRole("option", { name: "Release archive" })).toBeVisible();
-	await expect(page.getByRole("option", { name: "Already attached" })).toHaveCount(0);
-	await page.keyboard.press("Escape");
-	await attachVaultDialog.getByRole("button", { name: "Cancel" }).click();
+	const catalog = page.getByTestId("project-vault-catalog");
+	const releaseVault = catalog
+		.getByTestId("project-vault-card")
+		.filter({ hasText: "Release archive" });
+	await expect(
+		catalog.getByRole("button", { name: "Detach Already attached from Project" }),
+	).toBeVisible();
+	await catalog.getByLabel("Search Vaults").fill("release");
+	await expect(catalog.getByTestId("project-vault-card")).toHaveCount(1);
+	await releaseVault.getByRole("button", { name: "Attach Release archive to Project" }).click();
+	await expect(releaseVault).toContainText("Attached to Project");
+	await expect.poll(() => vaultCreateRequests).toHaveLength(1);
+	expect(vaultCreateRequests[0]?.body).toEqual({
+		slug: "release-archive",
+		name: "Release archive",
+	});
+	expect(vaultCreateRequests[0]?.url.searchParams.get("project_id")).toBe(projectId);
+	await releaseVault.getByRole("button", { name: "Detach Release archive from Project" }).click();
+	await expect(releaseVault).toContainText("Not attached");
+	await expect(
+		releaseVault.getByRole("button", { name: "Attach Release archive to Project" }),
+	).toBeEnabled();
+	expect(vaultDetachRequests[0]?.searchParams.get("vault_id")).toBe(
+		"88888888-8888-4888-8888-888888888888",
+	);
+	expect(vaultDetachRequests[0]?.searchParams.get("project_id")).toBe(projectId);
+	expect(vaultRows.find((vault) => vault.slug === "release-archive")?.project_ids).toEqual([
+		workspaceId,
+	]);
+	vaultCreateRequests.length = 0;
 	await page.getByRole("button", { name: "Create vault", exact: true }).click();
 	const createVaultDialog = page.getByRole("dialog", { name: "Create vault" });
 	await createVaultDialog.getByLabel("Vault name").fill("Production Credentials");

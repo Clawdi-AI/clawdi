@@ -35,8 +35,13 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { useAgentProjectVaults } from "@/components/vault/agent-vaults-query";
+import { useVaultCatalog } from "@/components/vault/vault-catalog-query";
 import { vaultsForSelectedProject } from "@/components/vault/vault-scope";
-import { vaultSearchRank, vaultSearchSupportingText } from "@/components/vault/vault-search";
+import {
+	compareVaultsForCatalog,
+	vaultSearchRank,
+	vaultSearchSupportingText,
+} from "@/components/vault/vault-search";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
@@ -89,17 +94,7 @@ export function VaultsSurface({
 		void setProjectParam(projectId);
 	};
 
-	const accountVaults = $api.useQuery(
-		"get",
-		"/v1/vault",
-		{
-			params: { query: { page_size: 200 } },
-		},
-		{
-			placeholderData: keepPreviousData,
-			enabled: agentProjectIds === undefined,
-		},
-	);
+	const accountVaults = useVaultCatalog({ enabled: agentProjectIds === undefined });
 	const agentVaults = useAgentProjectVaults(agentProjectIds ?? [], {
 		enabled: agentProjectIds !== undefined,
 	});
@@ -155,17 +150,7 @@ export function VaultsSurface({
 					a.name.localeCompare(b.name),
 			);
 	}, [projectFilter, projects.data, vaultCountByProject]);
-	// Busiest vaults first — same ranking rule as the project tabs.
-	// The grab-bag default vault usually tops the list, which is exactly
-	// where the curation work starts.
-	const byKeysDesc = (a: VaultSummary, b: VaultSummary) =>
-		(b.item_count ?? 0) - (a.item_count ?? 0) || a.name.localeCompare(b.name);
-	const bySearchRank = (a: VaultSummary, b: VaultSummary) =>
-		(vaultSearchRank(a, search) ?? Number.MAX_SAFE_INTEGER) -
-			(vaultSearchRank(b, search) ?? Number.MAX_SAFE_INTEGER) ||
-		a.name.localeCompare(b.name) ||
-		a.id.localeCompare(b.id);
-	const sortVaults = search.trim() ? bySearchRank : byKeysDesc;
+	const sortVaults = (a: VaultSummary, b: VaultSummary) => compareVaultsForCatalog(a, b, search);
 	const mine = filtered.filter((v) => v.is_owner !== false).sort(sortVaults);
 	const shared = filtered.filter((v) => v.is_owner === false).sort(sortVaults);
 
@@ -303,25 +288,32 @@ export function VaultsSurface({
 
 export function VaultCard({
 	vault,
+	projectId,
 	projectNameById,
 	projectNamesUnavailable,
 	visibleProjectIds,
 	navigationScope,
 	shared = false,
 	actions,
+	primaryAction,
+	status,
 	searchQuery,
 }: {
 	vault: VaultSummary;
+	projectId?: string;
 	projectNameById: ReadonlyMap<string, string>;
 	projectNamesUnavailable: boolean;
 	visibleProjectIds: ReadonlySet<string> | null;
 	navigationScope: ResourceNavigationScope;
 	shared?: boolean;
 	actions?: ReactNode;
+	primaryAction?: ReactNode;
+	status?: ReactNode;
 	searchQuery?: string;
 }) {
 	const api = useApi();
 	const itemProjectId =
+		projectId ??
 		vault.project_ids?.find((projectId) => visibleProjectIds?.has(projectId)) ??
 		vault.project_ids?.[0];
 	const canManageVault = vault.is_owner !== false;
@@ -366,6 +358,7 @@ export function VaultCard({
 
 	return (
 		<HeroCard
+			className="h-full"
 			icon={
 				<IconChip tint={identity.colorClasses} className="relative text-xl">
 					{identity.emoji}
@@ -386,6 +379,7 @@ export function VaultCard({
 			}
 			footer={[
 				keyCountLabel,
+				status,
 				usedBy.length > 0 ? (
 					<Tooltip>
 						<TooltipTrigger render={<span className="truncate" />}>
@@ -396,13 +390,18 @@ export function VaultCard({
 					</Tooltip>
 				) : projectNamesUnavailable && (vault.project_ids?.length ?? 0) > 0 ? (
 					"Project details unavailable"
+				) : (vault.project_ids?.length ?? 0) > 0 ? (
+					"Attached to Projects"
 				) : (
 					"not in any Project yet"
 				),
 			]}
+			footerWrap={Boolean(status)}
+			actionsVisibility={primaryAction ? "always" : "responsive"}
 			actions={
-				canManageVault || actions ? (
+				canManageVault || actions || primaryAction ? (
 					<>
+						{primaryAction}
 						{canManageVault ? (
 							<AddKeysDialog
 								vaultSlug={vault.slug}
@@ -431,28 +430,22 @@ export function VaultCardSkeleton() {
 
 function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigationScope }) {
 	const api = useApi();
-	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const router = useRouter();
 	const [open, setOpen] = useState(false);
 	const [name, setName] = useState("");
 
-	const vaultsQuery = $api.useQuery(
-		"get",
-		"/v1/vault",
-		{
-			params: { query: { page_size: 200 } },
-		},
-		{
-			enabled: open,
-		},
-	);
+	const vaultsQuery = useVaultCatalog({ enabled: open });
 	const slug = slugFromVaultName(name);
 	const slugTaken =
 		slug.length > 0 &&
 		(vaultsQuery.data?.items ?? []).some((v) => v.is_owner !== false && v.slug === slug);
 	const canCreate =
-		name.trim().length > 0 && slug.length > 0 && !slugTaken && !vaultsQuery.isLoading;
+		name.trim().length > 0 &&
+		slug.length > 0 &&
+		!slugTaken &&
+		!vaultsQuery.isLoading &&
+		!vaultsQuery.error;
 
 	const create = useMutation({
 		mutationFn: async () => {
@@ -503,6 +496,13 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 						A bundle of API keys your Agents can use. Attach it to Projects to control access.
 					</DialogDescription>
 				</DialogHeader>
+				{vaultsQuery.error ? (
+					<ApiErrorPanel
+						error={vaultsQuery.error}
+						onRetry={() => void vaultsQuery.refetch()}
+						title="Couldn't load Vault catalog"
+					/>
+				) : null}
 				<form
 					className="space-y-4"
 					onSubmit={(e) => {

@@ -20,7 +20,6 @@ const SHARED_LIFECYCLE = [
 const COMPLETION_ONLY = [
 	"components/command-palette.tsx",
 	"components/connectors/credentials-dialog.tsx",
-	"components/dashboard/agent-projects-tab.tsx",
 	"components/dashboard/workspace-skills-panel.tsx",
 	"components/memories/memories-surface.tsx",
 	"components/projects/create-project-dialog.tsx",

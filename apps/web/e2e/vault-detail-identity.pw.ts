@@ -37,25 +37,52 @@ test("same-slug Vault cards preserve UUID identity through detail and cache", as
 		[ownedId, ["OWNED_ONLY"]],
 	]);
 	const upsertedVaultIds: string[] = [];
+	const catalog = vaults.map((vault) => ({ ...vault }));
 	await page.route("**/v1/**", async (route) => {
 		const url = new URL(route.request().url());
 		if (url.pathname === "/v1/agents") return fulfill(route, []);
 		if (url.pathname === "/v1/vault") {
-			return fulfill(route, { items: vaults, total: 2, page: 1, page_size: 25 });
+			if (route.request().method() === "POST") {
+				const body = route.request().postDataJSON() as { name: string; slug: string };
+				const vault = {
+					id: "33333333-3333-4333-8333-333333333333",
+					...body,
+					project_id: "",
+					project_ids: [],
+					is_owner: true,
+					item_count: 0,
+					created_at: now,
+				};
+				catalog.push(vault);
+				return fulfill(route, vault);
+			}
+			return fulfill(route, { items: catalog, total: catalog.length, page: 1, page_size: 200 });
 		}
 		if (url.pathname === "/v1/vault/detail") {
 			const id = url.searchParams.get("vault_id");
 			return fulfill(
 				route,
-				vaults.find((vault) => vault.id === id),
+				catalog.find((vault) => vault.id === id),
 			);
+		}
+		if (url.pathname === "/v1/vault/collision" && route.request().method() === "DELETE") {
+			expect(url.searchParams.get("vault_id")).toBe(ownedId);
+			expect(url.searchParams.has("project_id")).toBe(false);
+			const index = catalog.findIndex((vault) => vault.id === ownedId);
+			if (index < 0) throw new Error("Owned Vault missing");
+			catalog.splice(index, 1);
+			return fulfill(route, { status: "deleted" });
 		}
 		if (url.pathname === "/v1/vault/collision/items") {
 			const id = url.searchParams.get("vault_id");
 			if (route.request().method() === "PUT") {
 				if (id) upsertedVaultIds.push(id);
 				const body = route.request().postDataJSON() as { fields: Record<string, string> };
-				if (id) keysByVault.set(id, [...(keysByVault.get(id) ?? []), ...Object.keys(body.fields)]);
+				if (id) {
+					keysByVault.set(id, [...(keysByVault.get(id) ?? []), ...Object.keys(body.fields)]);
+					const vault = catalog.find((vault) => vault.id === id);
+					if (vault) vault.item_count = keysByVault.get(id)?.length ?? 0;
+				}
 				return fulfill(route, { status: "ok", fields: Object.keys(body.fields).length });
 			}
 			return fulfill(route, {
@@ -107,4 +134,24 @@ test("same-slug Vault cards preserve UUID identity through detail and cache", as
 	await expect(page.getByText("ADDED_TO_OWNED", { exact: true })).toBeVisible();
 	expect(upsertedVaultIds).toEqual([ownedId]);
 	expect(keysByVault.get(sharedId)).toEqual(["SHARED_ONLY"]);
+	await page.getByLabel("breadcrumb").getByRole("link", { name: "Vaults" }).click();
+	const ownedCard = page
+		.getByRole("link", { name: "Open vault Owned Collision" })
+		.locator("xpath=..");
+	await expect(ownedCard).toContainText("2 keys");
+	await page.getByRole("button", { name: "Create vault", exact: true }).click();
+	const dialog = page.getByRole("dialog", { name: "Create vault" });
+	await dialog.getByLabel("Name").fill("Release Tokens");
+	await dialog.getByRole("button", { name: "Create vault", exact: true }).click();
+	await expect(dialog).toHaveCount(0);
+	await expect(page.getByRole("link", { name: "Open vault Release Tokens" })).toBeVisible();
+	await page.getByRole("link", { name: "Open vault Owned Collision" }).click();
+	await page.getByRole("button", { name: "Delete", exact: true }).click();
+	await page
+		.getByRole("alertdialog")
+		.getByRole("button", { name: "Delete vault", exact: true })
+		.click();
+	await expect(page).toHaveURL(/\/vaults$/);
+	await expect(page.getByRole("link", { name: "Open vault Owned Collision" })).toHaveCount(0);
+	await expect(page.getByRole("link", { name: "Open vault Shared Collision" })).toBeVisible();
 });

@@ -265,6 +265,8 @@ async function stubDashboardApi(
 	agentOrderRequests: string[] = [],
 	options: DashboardApiStubOptions = {},
 ) {
+	const removedProjectIds = new Set<string>();
+	const addedProjectIds = new Set<string>();
 	const createdProjects: unknown[] = [];
 	const createdProjectBindings: unknown[] = [];
 	await page.route("**/v1/**", async (route) => {
@@ -331,11 +333,41 @@ async function stubDashboardApi(
 				return;
 			}
 			const agentId = decodeURIComponent(projectBindingsMatch[1] ?? "");
-			await fulfillJson(route, [
+			const currentBindings = [
 				...(options.projectBindings ??
 					projectBindings.map((binding) => ({ ...binding, agent_id: agentId }))),
 				...createdProjectBindings,
-			]);
+			].filter(
+				(binding) =>
+					!(
+						typeof binding === "object" &&
+						binding !== null &&
+						"project_id" in binding &&
+						removedProjectIds.has(String(binding.project_id))
+					),
+			);
+			for (const projectId of addedProjectIds) {
+				if (
+					currentBindings.some(
+						(binding) =>
+							typeof binding === "object" &&
+							binding !== null &&
+							"project_id" in binding &&
+							binding.project_id === projectId,
+					)
+				)
+					continue;
+				currentBindings.push({
+					id: `binding-${projectId}`,
+					agent_id: agentId,
+					project_id: projectId,
+					binding_type: "context",
+					priority: currentBindings.length,
+					default_write_enabled: false,
+					created_at: now.toISOString(),
+				});
+			}
+			await fulfillJson(route, currentBindings);
 			return;
 		}
 		if (
@@ -347,6 +379,14 @@ async function stubDashboardApi(
 				remove_project_ids: string[];
 			};
 			options.projectLinkDeltaBodies?.push(body);
+			for (const projectId of body.remove_project_ids) {
+				removedProjectIds.add(projectId);
+				addedProjectIds.delete(projectId);
+			}
+			for (const projectId of body.add_project_ids) {
+				removedProjectIds.delete(projectId);
+				addedProjectIds.add(projectId);
+			}
 			await fulfillJson(route, {
 				agent_id: "11111111-1111-4111-8111-111111111111",
 				added_project_ids: body.add_project_ids,
@@ -1184,6 +1224,7 @@ async function stubConnectedAgentResources(page: Page) {
 	});
 
 	return {
+		projectAccessVaults,
 		skillRequests,
 		skillCreateRequests,
 		vaultRequests,
@@ -1340,10 +1381,11 @@ test("connected overview keeps Status beside sessions and preserves resource col
 	expect(sessionRequests).toEqual([]);
 });
 
-test("connected agent resources select Projects before scoped Skills and Vaults", async ({
+test("connected agent shares the Project catalog and preserves scoped Skills and Vaults", async ({
 	page,
 }, testInfo) => {
 	const {
+		projectAccessVaults,
 		skillRequests,
 		projectCreateBodies,
 		projectLinkDeltaBodies,
@@ -1363,7 +1405,10 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	const projectStack = main.getByTestId("agent-project-stack");
 	const projectGrid = projectStack.getByTestId("agent-project-grid");
 	const projectCards = projectGrid.getByTestId("agent-project-card");
-	await expect(projectCards).toHaveCount(2);
+	await expect(projectCards).toHaveCount(4);
+	const teamCard = projectCards.filter({ hasText: "Team Knowledge" });
+	const longCard = projectCards.filter({ hasText: longContextProjectName });
+	const releaseCard = projectCards.filter({ hasText: "Release Project" });
 	expect(
 		await projectGrid.evaluate(
 			(element) => getComputedStyle(element).gridTemplateColumns.split(" ").length,
@@ -1372,14 +1417,27 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	for (const card of await projectCards.all()) {
 		await expect(card.locator(":scope > div")).toHaveCSS("border-top-width", "1px");
 	}
-	await expect(projectCards.nth(0)).toContainText("Team Knowledge");
-	await expect(projectCards.nth(0)).toContainText("Viewer");
-	await expect(projectCards.nth(1)).toContainText(longContextProjectName);
-	await projectCards.nth(0).hover();
-	await expect(projectStack.getByText(/Project order/)).toHaveCount(0);
-	await expect(projectStack.getByRole("button", { name: /Move .* (up|down)/ })).toHaveCount(0);
-	await expect(projectCards.nth(0).getByRole("button", { name: /Unlink/ })).toHaveCount(0);
-	await expect(projectStack.getByLabel("Project to link")).toHaveCount(0);
+	await expect(projectCards.nth(0)).toContainText(longContextProjectName);
+	await expect(teamCard).toContainText("Viewer");
+	await expect(teamCard).toContainText("by Teammate");
+	await expect(teamCard.getByRole("button", { name: "Unlink Team Knowledge" })).toBeVisible();
+	await expect(
+		releaseCard.getByRole("button", { name: "Link Release Project", exact: true }),
+	).toBeVisible();
+	await expect(projectStack.getByRole("button", { name: "Manage projects" })).toHaveCount(0);
+	await expect(projectStack.getByRole("link", { name: "Open Smoke Project" })).toHaveCount(0);
+	await expect(releaseCard.getByRole("link", { name: "Open Release Project" })).toHaveAttribute(
+		"href",
+		/\/projects\/project-batch-second\?from=/,
+	);
+	const search = projectStack.getByPlaceholder("Search projects…");
+	await search.fill("Teammate");
+	await expect(projectCards).toHaveCount(1);
+	await expect(teamCard).toBeVisible();
+	await search.fill("[]$");
+	await expect(projectStack.getByText("No matching Projects", { exact: true })).toBeVisible();
+	await search.fill("");
+	await expect(projectCards).toHaveCount(4);
 	await expect(
 		projectStack.getByRole("button", { name: "Create project", exact: true }),
 	).toBeVisible();
@@ -1400,7 +1458,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 			},
 		]);
 	expect(projectLinkDeltaBodies).toEqual([]);
-	await expect(projectGrid.getByTestId("agent-project-card")).toHaveCount(3);
+	await expect(projectGrid.getByTestId("agent-project-card")).toHaveCount(5);
 	await expect(projectGrid.getByText("Release Review", { exact: true })).toBeVisible();
 	const createdToast = page
 		.locator("[data-sonner-toast]")
@@ -1416,41 +1474,30 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await expect(page).toHaveURL(/\/agents\/11111111-1111-4111-8111-111111111111\/project-access$/);
 	const bindingReadsBeforeLink = projectBindingRequests.length;
 	const projectReadsBeforeLink = projectRequests.length;
-	const addProjectTrigger = projectStack.getByRole("button", {
-		name: "Manage projects",
-		exact: true,
-	});
-	await expect(addProjectTrigger).toBeVisible();
-	await addProjectTrigger.click();
-	const addProjectDialog = page.getByTestId("agent-project-add-dialog");
-	await expect(addProjectDialog).toBeVisible();
-	await expect(addProjectDialog.getByRole("heading", { name: "Manage projects" })).toBeVisible();
-	const linkedProject = addProjectDialog.getByRole("checkbox", {
-		name: "Team Knowledge access",
-	});
-	await expect(linkedProject).toBeChecked();
-	await expect(linkedProject).toBeEnabled();
-	await expect(addProjectDialog.getByText("Linked", { exact: true })).toHaveCount(0);
-	await expect(addProjectDialog.getByText("Available", { exact: true })).toHaveCount(0);
-	await linkedProject.click();
-	await expect(linkedProject).not.toBeChecked();
-	const releaseProject = addProjectDialog.getByRole("checkbox", { name: "Release Project access" });
-	await expect(releaseProject).not.toBeChecked();
-	await releaseProject.click();
-	await expect(addProjectDialog.getByRole("button", { name: "Save changes" })).toBeEnabled();
-	await addProjectDialog.getByRole("button", { name: "Save changes" }).click();
-	await expect(addProjectDialog).toHaveCount(0);
+	await teamCard.getByRole("button", { name: "Unlink Team Knowledge" }).click();
+	await expect(teamCard.getByText("Not linked", { exact: true })).toBeVisible();
+	await expect(
+		teamCard.getByRole("button", { name: "Link Team Knowledge", exact: true }),
+	).toBeEnabled();
+	await releaseCard.getByRole("button", { name: "Link Release Project", exact: true }).click();
+	await expect(releaseCard.getByText("Linked", { exact: true })).toBeVisible();
+	await expect(releaseCard.getByRole("link", { name: "Open Release Project" })).toHaveAttribute(
+		"href",
+		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-batch-second",
+	);
+	await teamCard.getByRole("button", { name: "Link Team Knowledge", exact: true }).click();
+	await expect(teamCard.getByText("Linked", { exact: true })).toBeVisible();
 	await expect
 		.poll(() => projectLinkDeltaBodies)
 		.toEqual([
-			{
-				add_project_ids: ["project-batch-second"],
-				remove_project_ids: ["project-context-first"],
-			},
+			{ add_project_ids: [], remove_project_ids: ["project-context-first"] },
+			{ add_project_ids: ["project-batch-second"], remove_project_ids: [] },
+			{ add_project_ids: ["project-context-first"], remove_project_ids: [] },
 		]);
 	await expect.poll(() => projectBindingRequests.length).toBeGreaterThan(bindingReadsBeforeLink);
 	await expect.poll(() => projectRequests.length).toBeGreaterThan(projectReadsBeforeLink);
 
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 	await projectStack.screenshot({
 		path: testInfo.outputPath("connected-agent-projects-desktop.png"),
 	});
@@ -1467,14 +1514,14 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	).toBeLessThanOrEqual(1280);
 
 	await page.setViewportSize({ width: 390, height: 844 });
-	await expect(projectCards.nth(1)).toBeVisible();
+	await expect(longCard).toBeVisible();
 	expect(
 		await projectGrid.evaluate(
 			(element) => getComputedStyle(element).gridTemplateColumns.split(" ").length,
 		),
 	).toBe(1);
-	const longTitle = projectCards.nth(1).getByRole("heading", { name: longContextProjectName });
-	const longDescription = projectCards.nth(1).getByText(longContextProjectDescription, {
+	const longTitle = longCard.getByRole("heading", { name: longContextProjectName });
+	const longDescription = longCard.getByText(longContextProjectDescription, {
 		exact: true,
 	});
 	expect(await longTitle.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
@@ -1495,9 +1542,7 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		isVerticallyTruncated: true,
 		hasHorizontalOverflow: false,
 	});
-	await expect(projectCards.nth(1).getByText(longContextProjectSlug, { exact: true })).toHaveCount(
-		0,
-	);
+	await expect(longCard.getByText(longContextProjectSlug, { exact: true })).toHaveCount(0);
 	expect(
 		await projectStack.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
 	).toBe(true);
@@ -1506,7 +1551,8 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 			.locator("html")
 			.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
 	).toBe(true);
-	await projectStack.screenshot({
+	await page.screenshot({
+		fullPage: true,
 		path: testInfo.outputPath("connected-agent-projects-mobile.png"),
 	});
 	await page.goto("/agents/11111111-1111-4111-8111-111111111111/project-access/project-smoke");
@@ -1523,7 +1569,9 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await expect(main.getByRole("heading", { name: "People", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Agents", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Install skill", exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Attach vault", exact: true })).toBeVisible();
+	await expect(
+		main.getByRole("button", { name: /^Attach .* to (Workspace|Project)$/ }).first(),
+	).toBeVisible();
 	await expect(main.getByRole("button", { name: "Add keys to Scoped Vault" })).toBeVisible();
 	await expect(main.getByRole("button", { name: "View all Skills", exact: true })).toHaveAttribute(
 		"href",
@@ -1538,7 +1586,13 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await expect(main.getByText("Team-only Skill", { exact: true })).toHaveCount(0);
 	await expect(main.getByText("Scoped Vault", { exact: true })).toBeVisible();
 	await expect(main.getByText("Shared Vault", { exact: true })).toBeVisible();
-	await expect(main.getByText("Team Vault", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("Team Vault", { exact: true })).toBeVisible();
+	await expect(
+		main.getByTestId("project-vault-card").filter({ hasText: "Team Vault" }),
+	).toContainText("Via linked Project");
+	await expect(
+		main.getByTestId("project-vault-card").filter({ hasText: "Unrelated Vault" }),
+	).toContainText("used by Unrelated Project");
 	await expect(main.getByRole("link", { name: "Open Primary-only Skill" })).toHaveAttribute(
 		"href",
 		"/agents/11111111-1111-4111-8111-111111111111/skills/primary-only?project=project-smoke",
@@ -1619,7 +1673,9 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await expect(main.getByRole("heading", { name: "Skills", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "View all Vaults" })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /Install skill/i })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: "Attach vault", exact: true })).toBeVisible();
+	await expect(
+		main.getByRole("button", { name: /^Attach .* to (Workspace|Project)$/ }).first(),
+	).toBeVisible();
 	const desktopWorkspace = page
 		.getByTestId("app-sidebar")
 		.getByRole("group", { name: "Workspace", exact: true });
@@ -1630,6 +1686,25 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await expect(
 		desktopWorkspace.getByRole("link", { name: "Skills", exact: true }),
 	).not.toHaveAttribute("data-active", "");
+	const sharedVaultCard = main
+		.getByTestId("project-vault-card")
+		.filter({ hasText: "Shared Vault" });
+	await page.route("**/v1/vault/shared-vault?*", async (route) => {
+		const url = new URL(route.request().url());
+		expect(route.request().method()).toBe("DELETE");
+		expect(url.searchParams.get("project_id")).toBe("project-smoke");
+		expect(url.searchParams.get("vault_id")).toBe("vault-shared");
+		const vault = projectAccessVaults.find((vault) => vault.id === "vault-shared");
+		if (!vault) throw new Error("Missing shared Vault fixture");
+		vault.project_ids = ["project-context-first"];
+		await fulfillJson(route, { status: "deleted" });
+	});
+	await sharedVaultCard.getByRole("button", { name: "Detach Shared Vault from Workspace" }).click();
+	await expect(sharedVaultCard).toContainText("Via linked Project");
+	await expect(sharedVaultCard).toContainText("used by Team Knowledge");
+	await expect(
+		sharedVaultCard.getByRole("button", { name: "Attach Shared Vault to Workspace" }),
+	).toBeEnabled();
 	await main.screenshot({ path: testInfo.outputPath("connected-workspace-vaults-desktop.png") });
 	await page.setViewportSize({ width: 390, height: 844 });
 	await main.screenshot({ path: testInfo.outputPath("connected-workspace-vaults-mobile.png") });
@@ -1645,6 +1720,9 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	await expect(main.getByText("Team Vault", { exact: true })).toBeVisible();
 	await expect(main.getByText("Shared Vault", { exact: true })).toBeVisible();
 	await expect(main.getByText("Scoped Vault", { exact: true })).toHaveCount(0);
+	await expect(
+		main.getByRole("button", { name: /^(Attach|Detach) .* (to|from) Project$/ }),
+	).toHaveCount(0);
 	await expect(main.getByRole("link", { name: "Open Team-only Skill" })).toHaveAttribute(
 		"href",
 		"/agents/11111111-1111-4111-8111-111111111111/skills/team-only?project=project-context-first",
@@ -1676,6 +1754,9 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-later",
 	);
 	await expect(main.getByRole("heading", { name: longContextProjectName, level: 1 })).toBeVisible();
+	await expect(
+		main.getByTestId("project-vault-card").filter({ hasText: "Scoped Vault" }),
+	).toContainText("Via Workspace");
 	await expect(main.getByRole("button", { name: "View all Skills" })).toHaveAttribute(
 		"href",
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-later/skills",
@@ -1685,7 +1766,9 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 		"href",
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-later/vaults",
 	);
-	await expect(main.getByRole("button", { name: "Attach vault", exact: true })).toBeVisible();
+	await expect(
+		main.getByRole("button", { name: /^Attach .* to (Workspace|Project)$/ }).first(),
+	).toBeVisible();
 	const requestsBeforeInvalidScope = skillRequests.length;
 	await page.goto(
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-unrelated/skills",
@@ -1709,6 +1792,13 @@ test("connected agent resources select Projects before scoped Skills and Vaults"
 	});
 	await expect(consoleSharedProject).toHaveAttribute("href", "/projects/project-context-first");
 	await expect(consoleSharedProject.locator("xpath=..")).toContainText("Viewer");
+	await expect(consoleProjectGrid.getByRole("heading")).toHaveText([
+		longContextProjectName,
+		"Release Project",
+		"Release Review",
+		"Unrelated Project",
+		"Team Knowledge",
+	]);
 	await expect(consoleProjectGrid.getByText("Custom Project", { exact: true })).toHaveCount(0);
 	await expect(consoleProjectGrid.getByText("Owner", { exact: true })).toHaveCount(0);
 	await expect(consoleProjectGrid).not.toContainText("undefined skills");
@@ -1842,7 +1932,7 @@ test("agent scoped Skills and Vaults preserve context for mutations", async ({ p
 	);
 	expect(requestedVaultProjectIds).toContain("project-smoke");
 	expect(requestedVaultProjectIds).not.toContain("project-context-first");
-	expect(requestedVaultProjectIds).not.toContain(null);
+	expect(requestedVaultProjectIds).toContain(null);
 	expect(requestedVaultProjectIds).not.toContain("project-unrelated");
 });
 
@@ -2111,4 +2201,34 @@ test("agent rail preserves keyboard sorting and primes agent switches", async ({
 	await expect(page).toHaveURL("/agents/22222222-2222-4222-8222-222222222222");
 	await expect(page.getByRole("heading", { name: "Smoke Hermes", level: 1 })).toBeVisible();
 	expect(agentDetailRequests).toEqual([]);
+});
+
+test("Project catalog stays readable while link state fails and recovers", async ({ page }) => {
+	const options: DashboardApiStubOptions = {
+		projectBindingsError: { status: 503, detail: "Project links temporarily unavailable" },
+	};
+	await stubDashboardApi(page, [], options);
+	const main = page.locator("main");
+	await page.goto("/agents/11111111-1111-4111-8111-111111111111/project-access");
+	const card = main.getByTestId("agent-project-card").filter({ hasText: "Unrelated Project" });
+	await expect(card.getByRole("link", { name: "Open Unrelated Project" })).toBeVisible();
+	await expect(main.getByText("Couldn't load Project links", { exact: true })).toBeVisible();
+	await expect(
+		card.getByRole("button", { name: "Link status unavailable for Unrelated Project" }),
+	).toBeDisabled();
+	await expect(card.getByText("Not linked", { exact: true })).toHaveCount(0);
+	options.projectBindingsError = undefined;
+	await main.getByRole("button", { name: /Retry/ }).click();
+	await expect(
+		card.getByRole("button", { name: "Link Unrelated Project", exact: true }),
+	).toBeEnabled();
+	await page.route("**/v1/agents/*/projects", (route) =>
+		fulfillJson(route, { detail: "Skill key conflict" }, 409),
+	);
+	await card.getByRole("button", { name: "Link Unrelated Project", exact: true }).click();
+	await expect(page.getByText("Couldn't update Project link", { exact: true })).toBeVisible();
+	await expect(card.getByText("Not linked", { exact: true })).toBeVisible();
+	await expect(
+		card.getByRole("button", { name: "Link Unrelated Project", exact: true }),
+	).toBeEnabled();
 });
