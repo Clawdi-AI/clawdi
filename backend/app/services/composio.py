@@ -145,6 +145,7 @@ class _ConnectedAccount(_ComposioWireModel):
     toolkit: _ConnectedAccountToolkit
     alias: str | None = None
     word_id: str | None = None
+    is_disabled: bool = False
     data: JsonObject = Field(default_factory=dict)
     state: JsonObject = Field(default_factory=dict)
 
@@ -166,12 +167,17 @@ class _ConnectedAccountDeleteResponse(_ComposioWireModel):
     success: bool
 
 
+class _ConnectedAccountPatchResponse(_ConnectedAccountCreateResponse):
+    success: bool
+
+
 class ConnectorAccountIdentity(BaseModel):
     """Credential-free identity projection for Agent-side account selection."""
 
     id: str
     app_name: str
     status: ComposioStatus
+    alias: str | None = None
     account_display: str | None = None
     organization_display: str | None = None
     tenant_display: str | None = None
@@ -249,6 +255,8 @@ class ConnectorAppPage(TypedDict):
 
 _client: AsyncComposio | None = None
 _sdk_client: Composio[OpenAITool, OpenAIToolCollection] | None = None
+_TOOL_ROUTER_SESSION_TIMEOUT_SECONDS = 10.0
+_TOOL_ROUTER_DISCOVERY_TIMEOUT_SECONDS = 25.0
 _tool_router_session_cache: dict[str, ComposioMcpSession] = {}
 _tool_router_session_creations: dict[str, set[object]] = {}
 _tool_router_tools_cache: dict[str, tuple[ComposioMcpSession, ListToolsResult]] = {}
@@ -256,6 +264,14 @@ _tool_router_tools_inflight: dict[str, asyncio.Task[ListToolsResult]] = {}
 
 _REDIRECT_AUTH_TYPES = {"oauth", "oauth1", "oauth2", "dcr_oauth", "composio_link"}
 _INSTANT_AUTH_TYPES = {"none", "no_auth"}
+_CREDENTIAL_AUTH_TYPES = {
+    "api_key",
+    "bearer_token",
+    "basic",
+    "basic_with_jwt",
+    "google_service_account",
+    "service_account",
+}
 _ACTIVE_OR_PENDING_STATUSES = {"INITIALIZING", "INITIATED"}
 _TERMINAL_STATUSES = _COMPOSIO_STATUSES - _ACTIVE_OR_PENDING_STATUSES
 _COMPOSIO_METADATA_CACHE_TTL = timedelta(minutes=5)
@@ -514,10 +530,12 @@ def get_composio_sdk() -> Composio[OpenAITool, OpenAIToolCollection]:
         if settings.composio_api_base_url:
             _sdk_client = Composio(
                 api_key=settings.composio_api_key,
+                timeout=5,
+                max_retries=0,
                 base_url=settings.composio_api_base_url.rstrip("/"),
             )
         else:
-            _sdk_client = Composio(api_key=settings.composio_api_key)
+            _sdk_client = Composio(api_key=settings.composio_api_key, timeout=5, max_retries=0)
     return _sdk_client
 
 
@@ -544,6 +562,8 @@ async def close_composio_client() -> None:
 
         try:
             await asyncio.to_thread(_sdk_client.client.close)
+        except composio_client.ComposioError as exc:
+            raise ComposioProviderError(_generated_sdk_failure(exc, credentials=None)) from exc
         except composio_exceptions.ComposioError as exc:
             raise ComposioProviderError(_high_level_sdk_failure(exc)) from exc
         _sdk_client = None
@@ -648,18 +668,22 @@ async def get_tool_router_mcp_tools_result(user_id: str) -> ListToolsResult:
 
 
 async def _load_tool_router_mcp_tools(user_id: str) -> ListToolsResult:
-    while True:
-        session = await get_tool_router_mcp_session(user_id)
-        cached = _tool_router_tools_cache.get(user_id)
-        if cached and cached[0] is session:
-            return cached[1]
+    try:
+        async with asyncio.timeout(_TOOL_ROUTER_DISCOVERY_TIMEOUT_SECONDS):
+            while True:
+                session = await get_tool_router_mcp_session(user_id)
+                cached = _tool_router_tools_cache.get(user_id)
+                if cached and cached[0] is session:
+                    return cached[1]
 
-        result = await list_tool_router_mcp_tools(session)
-        if _tool_router_session_cache.get(user_id) is not session:
-            continue
+                result = await list_tool_router_mcp_tools(session)
+                if _tool_router_session_cache.get(user_id) is not session:
+                    continue
 
-        _tool_router_tools_cache[user_id] = (session, result)
-        return result
+                _tool_router_tools_cache[user_id] = (session, result)
+                return result
+    except TimeoutError:
+        raise ComposioProviderError(ComposioFailure("timeout")) from None
 
 
 def _finish_tool_router_mcp_tools_load(user_id: str, task: asyncio.Task[ListToolsResult]) -> None:
@@ -670,11 +694,25 @@ def _finish_tool_router_mcp_tools_load(user_id: str, task: asyncio.Task[ListTool
 
 
 async def list_tool_router_mcp_tools(session: ComposioMcpSession) -> ListToolsResult:
-    """List tools through a fully initialized, operation-scoped MCP client."""
+    """Drain one listing in one client; never publish a partial catalog."""
     try:
-        async with _tool_router_mcp_client(session) as client:
-            response = await client.list_tools()
-            return _normalize_mcp_response(response, ListToolsResult)
+        async with asyncio.timeout(15), _tool_router_mcp_client(session) as client:
+            result = _normalize_mcp_response(await client.list_tools(), ListToolsResult)
+            tools = list(result.tools)
+            cursor = result.next_cursor
+            seen: set[str] = set()
+            while cursor is not None:
+                # Bound even a provider issuing endlessly unique cursors. Together
+                # with the deadline this limits discovery work and cache growth.
+                if not cursor or cursor in seen or len(seen) >= 99:
+                    raise ComposioMcpUpstreamError("Composio MCP returned invalid pagination")
+                seen.add(cursor)
+                page = _normalize_mcp_response(
+                    await client.list_tools(cursor=cursor), ListToolsResult
+                )
+                tools.extend(page.tools)
+                cursor = page.next_cursor
+            return result.model_copy(update={"tools": tools, "next_cursor": None})
     except _MCP_OPERATION_ERRORS as exc:
         logger.warning(
             "Composio MCP operation failed: operation=list_tools error_type=%s",
@@ -688,7 +726,9 @@ async def call_tool_router_mcp_tool(
 ) -> CallToolResult:
     """Call a tool through a fully initialized, operation-scoped MCP client."""
     try:
-        async with _tool_router_mcp_client(session) as client:
+        # Allow the 300s upstream read plus initialization/transport overhead,
+        # but bound the whole operation even if the server keeps streaming.
+        async with asyncio.timeout(360), _tool_router_mcp_client(session) as client:
             response = await client.call_tool(name, arguments)
             return _normalize_mcp_response(response, CallToolResult)
     except _MCP_OPERATION_ERRORS as exc:
@@ -731,7 +771,20 @@ async def _create_tool_router_mcp_session(
 
     sdk = get_composio_sdk()
     try:
-        session = await asyncio.to_thread(sdk.sessions.create, user_id=user_id, mcp=True)
+        # Cancelling to_thread cannot stop the sync SDK, but its late result is
+        # discarded here and can never reach the session cache. Disable SDK
+        # retries and bound transport phases separately to limit worker lifetime.
+        async with asyncio.timeout(_TOOL_ROUTER_SESSION_TIMEOUT_SECONDS):
+            session = await asyncio.to_thread(
+                sdk.sessions.create,
+                user_id=user_id,
+                mcp=True,
+                multi_account={"enable": True, "require_explicit_selection": False},
+            )
+    except TimeoutError:
+        raise ComposioProviderError(ComposioFailure("timeout")) from None
+    except composio_client.ComposioError as exc:
+        raise ComposioProviderError(_generated_sdk_failure(exc, credentials=None)) from exc
     except composio_exceptions.ComposioError as exc:
         raise ComposioProviderError(_high_level_sdk_failure(exc)) from exc
     try:
@@ -783,34 +836,43 @@ async def get_connected_account_identities(user_id: str) -> list[ConnectorAccoun
 
 
 async def _get_active_connected_accounts(user_id: str) -> list[_ConnectedAccount]:
+    accounts = await _list_connected_accounts(user_id, active_only=True)
+    return [
+        account for account in accounts if account.status == "ACTIVE" and not account.is_disabled
+    ]
+
+
+async def get_all_connected_accounts(user_id: str) -> list[ConnectorConnectionResponse]:
+    """List all owned accounts for lifecycle management, including expired accounts."""
+    return [
+        _serialize_connected_account(account) for account in await _list_connected_accounts(user_id)
+    ]
+
+
+async def _list_connected_accounts(
+    user_id: str, *, active_only: bool = False
+) -> list[_ConnectedAccount]:
     client = get_composio_client()
     accounts: list[_ConnectedAccount] = []
     cursor: str | None = None
-
+    seen_cursors: set[str] = set()
     while True:
-        if cursor:
-            raw_response = await _call_generated_sdk(
-                client.connected_accounts.list(
-                    user_ids=[user_id],
-                    statuses=["ACTIVE"],
-                    limit=100,
-                    cursor=cursor,
-                )
+        raw_response = await _call_generated_sdk(
+            client.connected_accounts.list(
+                user_ids=[user_id],
+                statuses=["ACTIVE"] if active_only else composio_client.omit,
+                limit=100,
+                cursor=cursor if cursor else composio_client.omit,
             )
-        else:
-            raw_response = await _call_generated_sdk(
-                client.connected_accounts.list(
-                    user_ids=[user_id],
-                    statuses=["ACTIVE"],
-                    limit=100,
-                )
-            )
+        )
         response = _normalize_sdk_response(raw_response, _ConnectedAccountPage)
         accounts.extend(response.items)
         cursor = response.next_cursor
         if not cursor:
-            break
-    return accounts
+            return accounts
+        if cursor in seen_cursors:
+            raise ComposioProtocolError("Composio returned a repeated account cursor")
+        seen_cursors.add(cursor)
 
 
 def _serialize_connected_account(account: _ConnectedAccount) -> ConnectorConnectionResponse:
@@ -819,6 +881,8 @@ def _serialize_connected_account(account: _ConnectedAccount) -> ConnectorConnect
         app_name=account.toolkit.slug,
         status=account.status,
         created_at=account.created_at,
+        is_disabled=account.is_disabled,
+        alias=account.alias,
         account_display=_account_display_label(account),
     )
 
@@ -831,6 +895,7 @@ def _serialize_connected_account_identity(account: _ConnectedAccount) -> Connect
         id=account.id,
         app_name=account.toolkit.slug,
         status=account.status,
+        alias=account.alias,
         account_display=_account_display_label(account),
         organization_display=_first_identity_label(
             containers,
@@ -857,10 +922,6 @@ def _serialize_connected_account_identity(account: _ConnectedAccount) -> Connect
 
 def _account_display_label(account: _ConnectedAccount) -> str | None:
     """Best-effort user-facing label for a Composio connected account."""
-    for value in (account.alias, account.word_id):
-        if value is not None and value.strip():
-            return value.strip()
-
     state_value = _json_object(account.state.get("val"))
     authed_user = _json_object(state_value.get("authed_user") or state_value.get("authedUser"))
     containers = (account.data, state_value, authed_user)
@@ -869,6 +930,9 @@ def _account_display_label(account: _ConnectedAccount) -> str | None:
             value = container.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+    for value in (account.word_id, account.alias):
+        if value is not None and value.strip():
+            return value.strip()
     return None
 
 
@@ -901,7 +965,7 @@ def _json_object(value: JsonValue | None) -> JsonObject:
 
 
 async def create_connect_link(
-    entity_id: str, app_name: str, redirect_url: str | None = None
+    entity_id: str, app_name: str, redirect_url: str | None = None, *, alias: str | None = None
 ) -> ConnectorConnectResponse:
     """Create a Composio Connect Link for an OAuth connector."""
     client = get_composio_client()
@@ -929,6 +993,7 @@ async def create_connect_link(
                 auth_config_id=auth_config.id,
                 user_id=entity_id,
                 callback_url=redirect_url,
+                alias=alias if alias is not None else composio_client.omit,
             )
         )
     else:
@@ -936,6 +1001,7 @@ async def create_connect_link(
             client.link.create(
                 auth_config_id=auth_config.id,
                 user_id=entity_id,
+                alias=alias if alias is not None else composio_client.omit,
             )
         )
     result = _normalize_sdk_response(raw_result, _ConnectLinkResponse)
@@ -957,6 +1023,8 @@ async def get_auth_fields(app_name: str) -> ConnectorAuthFieldsResponse:
             expected_input_fields=[],
         )
 
+    if auth_type not in _CREDENTIAL_AUTH_TYPES:
+        raise ComposioInvalidRequestError("Connector does not support credential authentication")
     detail_fields = _auth_fields_from_toolkit_detail(toolkit, auth_scheme)
     if detail_fields:
         return ConnectorAuthFieldsResponse(
@@ -981,7 +1049,7 @@ async def get_auth_fields(app_name: str) -> ConnectorAuthFieldsResponse:
 
 
 async def connect_with_credentials(
-    user_id: str, app_name: str, credentials: dict[str, str]
+    user_id: str, app_name: str, credentials: dict[str, str], *, alias: str | None = None
 ) -> ConnectorCredentialsConnectResponse:
     """Create a connected account with user-supplied credentials."""
     client = get_composio_client()
@@ -997,6 +1065,7 @@ async def connect_with_credentials(
         app_name=app_name,
         auth_type=auth_type,
         credentials=credentials,
+        alias=alias,
     )
 
 
@@ -1007,6 +1076,7 @@ async def _create_non_oauth_connection(
     app_name: str,
     auth_type: str,
     credentials: dict[str, str],
+    alias: str | None = None,
 ) -> ConnectorCredentialsConnectResponse:
     auth_scheme = _auth_type_to_composio_scheme(auth_type)
     auth_config = await _get_or_create_auth_config(
@@ -1020,6 +1090,7 @@ async def _create_non_oauth_connection(
         user_id=user_id,
         auth_scheme=auth_scheme,
         credentials=credentials,
+        alias=alias,
     )
     raw_result = await _call_generated_sdk(
         client.connected_accounts.create(**request),
@@ -1067,11 +1138,48 @@ async def disconnect_account(connected_account_id: str) -> bool:
     return response.success
 
 
+async def get_owned_account(user_id: str, connected_account_id: str) -> _ConnectedAccount:
+    """Resolve ownership with server-side owner/id filters, regardless of status."""
+    client = get_composio_client()
+    raw_page = await _call_generated_sdk(
+        client.connected_accounts.list(
+            user_ids=[user_id], connected_account_ids=[connected_account_id], limit=1
+        )
+    )
+    page = _normalize_sdk_response(raw_page, _ConnectedAccountPage)
+    for account in page.items:
+        if account.id == connected_account_id:
+            return account
+    raise ComposioProviderError(ComposioFailure("not_found"))
+
+
+async def update_account_alias(
+    user_id: str, connected_account_id: str, alias: str
+) -> ConnectorConnectionResponse:
+    client = get_composio_client()
+    await get_owned_account(user_id, connected_account_id)
+    # Do not automatically retry a mutation after a conflict or ambiguous failure.
+    raw_result = await _call_generated_sdk(
+        client.with_options(max_retries=0).connected_accounts.patch(
+            connected_account_id, alias=alias
+        )
+    )
+    await invalidate_tool_router_mcp_session(user_id)
+    result = _normalize_sdk_response(raw_result, _ConnectedAccountPatchResponse)
+    if not result.success or result.id != connected_account_id:
+        raise ComposioProtocolError("Composio returned an invalid update response")
+    raw_account = await _call_generated_sdk(
+        client.connected_accounts.retrieve(connected_account_id)
+    )
+    return _serialize_connected_account(_normalize_sdk_response(raw_account, _ConnectedAccount))
+
+
 async def get_app_tools(app_name: str) -> list[ConnectorToolResponse]:
     """List available tools/actions for a specific Composio toolkit."""
     client = get_composio_client()
     tools: list[_Tool] = []
     cursor: str | None = None
+    seen_cursors: set[str] = set()
 
     while True:
         if cursor:
@@ -1094,8 +1202,11 @@ async def get_app_tools(app_name: str) -> list[ConnectorToolResponse]:
         response = _normalize_sdk_response(raw_response, _ToolPage)
         tools.extend(response.items)
         cursor = response.next_cursor
-        if not cursor or len(tools) >= 500:
+        if not cursor:
             break
+        if cursor in seen_cursors:
+            raise ComposioProtocolError("Composio returned a repeated tool cursor")
+        seen_cursors.add(cursor)
 
     return [_serialize_tool(tool) for tool in tools]
 
@@ -1117,6 +1228,8 @@ async def _get_or_create_auth_config(
     managed: bool,
 ) -> _AuthConfig:
     auth_scheme = _auth_type_to_composio_scheme(auth_type)
+    if auth_type not in _REDIRECT_AUTH_TYPES | _CREDENTIAL_AUTH_TYPES:
+        raise ComposioInvalidRequestError("Connector authentication method is not supported")
     existing = await _find_auth_config(client, app_name, auth_scheme, managed=managed)
     if existing is not None:
         return existing
@@ -1137,6 +1250,7 @@ def _connected_account_create_request(
     user_id: str,
     auth_scheme: str,
     credentials: dict[str, str],
+    alias: str | None = None,
 ) -> ConnectedAccountCreateParams:
     """Validate a complete request against the SDK's public generated type."""
     from composio_client.types import ConnectedAccountCreateParams
@@ -1147,6 +1261,7 @@ def _connected_account_create_request(
             "auth_config": {"id": auth_config_id},
             "connection": {
                 "user_id": user_id,
+                **({"alias": alias} if alias is not None else {}),
                 "state": {
                     "auth_scheme": auth_scheme,
                     "val": {"status": "ACTIVE", **credentials},
@@ -1211,6 +1326,7 @@ async def _find_auth_config(
     managed: bool,
 ) -> _AuthConfig | None:
     cursor: str | None = None
+    seen_cursors: set[str] = set()
     while True:
         if cursor:
             raw_response = await _call_generated_sdk(
@@ -1218,7 +1334,7 @@ async def _find_auth_config(
                     toolkit_slug=app_name,
                     is_composio_managed=managed,
                     show_disabled=False,
-                    limit=100,
+                    limit=50,
                     cursor=cursor,
                 )
             )
@@ -1228,7 +1344,7 @@ async def _find_auth_config(
                     toolkit_slug=app_name,
                     is_composio_managed=managed,
                     show_disabled=False,
-                    limit=100,
+                    limit=50,
                 )
             )
         response = _normalize_sdk_response(raw_response, _AuthConfigPage)
@@ -1248,6 +1364,9 @@ async def _find_auth_config(
         cursor = response.next_cursor
         if not cursor:
             return None
+        if cursor in seen_cursors:
+            raise ComposioProtocolError("Composio returned a repeated catalog cursor")
+        seen_cursors.add(cursor)
 
 
 async def _connect_disabled_reason(
@@ -1258,6 +1377,8 @@ async def _connect_disabled_reason(
     *,
     custom_auth_config_index: frozenset[tuple[str, str]] | None = None,
 ) -> str | None:
+    if auth_type not in _REDIRECT_AUTH_TYPES | _INSTANT_AUTH_TYPES | _CREDENTIAL_AUTH_TYPES:
+        return "This connector authentication method is not supported"
     if not _requires_preconfigured_custom_oauth(toolkit, auth_type):
         return None
 
@@ -1317,6 +1438,7 @@ async def _get_custom_auth_config_index(
 
     index: set[tuple[str, str]] = set()
     cursor: str | None = None
+    seen_cursors: set[str] = set()
     while True:
         if cursor:
             raw_response = await _call_generated_sdk(
@@ -1348,6 +1470,9 @@ async def _get_custom_auth_config_index(
         cursor = response.next_cursor
         if not cursor:
             break
+        if cursor in seen_cursors:
+            raise ComposioProtocolError("Composio returned a repeated catalog cursor")
+        seen_cursors.add(cursor)
 
     _custom_auth_config_index = frozenset(index)
     _custom_auth_config_index_at = now
@@ -1555,6 +1680,7 @@ async def _get_all_toolkits() -> list[_Toolkit]:
         client = get_composio_client()
         toolkits: list[_Toolkit] = []
         cursor: str | None = None
+        seen_cursors: set[str] = set()
         while True:
             if cursor:
                 raw_response = await _call_generated_sdk(
@@ -1578,6 +1704,9 @@ async def _get_all_toolkits() -> list[_Toolkit]:
             cursor = response.next_cursor
             if not cursor:
                 break
+            if cursor in seen_cursors:
+                raise ComposioProtocolError("Composio returned a repeated catalog cursor")
+            seen_cursors.add(cursor)
 
         _toolkits_cache = toolkits
         _toolkits_cache_at = now

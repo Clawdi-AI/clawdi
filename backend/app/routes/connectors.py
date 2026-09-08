@@ -17,6 +17,7 @@ from app.schemas.connector import (
     ConnectorMetadataBatchRequest,
     ConnectorMetadataBatchResponse,
     ConnectorToolResponse,
+    ConnectorUpdateRequest,
     ConnectRequest,
 )
 from app.services.composio import (
@@ -26,14 +27,16 @@ from app.services.composio import (
     create_connect_link,
     create_mcp_bridge_token,
     disconnect_account,
+    get_all_connected_accounts,
     get_app_by_name,
     get_app_tools,
     get_auth_fields,
     get_available_apps,
-    get_connected_accounts,
     get_connector_metadata,
+    get_owned_account,
     invalidate_tool_router_mcp_session,
     normalize_composio_failure,
+    update_account_alias,
 )
 
 log = logging.getLogger(__name__)
@@ -90,6 +93,11 @@ def _map_composio_error(exc: ComposioRouteError) -> HTTPException:
             failure.message or "Invalid credentials",
         )
     if failure.kind == "status":
+        if failure.status_code == status.HTTP_409_CONFLICT:
+            return HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Connection conflict. Check the alias or retry shortly.",
+            )
         if failure.status_code == status.HTTP_404_NOT_FOUND:
             return HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found")
         if failure.status_code in {
@@ -119,7 +127,7 @@ async def list_connections(
         return []
     clerk_id = require_clerk_id(auth)
     try:
-        accounts = await get_connected_accounts(clerk_id)
+        accounts = await get_all_connected_accounts(clerk_id)
     except ComposioRouteError as exc:
         if _is_composio_auth_error(exc):
             log.warning("composio_key_invalid path=connectors_list")
@@ -230,7 +238,9 @@ async def connect_app(
             )
         if auth_type not in _REDIRECT_AUTH_TYPES:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Connector requires credentials")
-        result = await create_connect_link(require_clerk_id(auth), app_name, redirect_url)
+        result = await create_connect_link(
+            require_clerk_id(auth), app_name, redirect_url, alias=body.alias if body else None
+        )
     except ComposioRouteError as exc:
         raise _map_composio_error(exc) from exc
     return result
@@ -281,7 +291,9 @@ async def connect_credentials(
     if any(not v.strip() for v in body.credentials.values()):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Credential values cannot be empty")
     try:
-        result = await connect_with_credentials(require_clerk_id(auth), app_name, body.credentials)
+        result = await connect_with_credentials(
+            require_clerk_id(auth), app_name, body.credentials, alias=body.alias
+        )
     except ComposioRouteError as exc:
         raise _map_composio_error(exc) from exc
     if not result.ok:
@@ -290,6 +302,21 @@ async def connect_credentials(
             f"Composio returned connection status {result.status}",
         )
     return result
+
+
+@router.patch("/{connection_id}")
+async def update_connection(
+    connection_id: str,
+    body: ConnectorUpdateRequest,
+    auth: AuthContext = Depends(require_user_auth_short_session),
+) -> ConnectorConnectionResponse:
+    """Update or clear the alias of an owned connected account."""
+    if not settings.composio_api_key:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
+    try:
+        return await update_account_alias(require_clerk_id(auth), connection_id, body.alias)
+    except ComposioRouteError as exc:
+        raise _map_composio_error(exc) from exc
 
 
 @router.delete("/{connection_id}")
@@ -308,11 +335,9 @@ async def disconnect(
 
     clerk_id = require_clerk_id(auth)
     try:
-        accounts = await get_connected_accounts(clerk_id)
+        await get_owned_account(clerk_id, connection_id)
     except ComposioRouteError as exc:
         raise _map_composio_error(exc) from exc
-    if not any(account.id == connection_id for account in accounts):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Connection not found")
 
     try:
         success = await disconnect_account(connection_id)

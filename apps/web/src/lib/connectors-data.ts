@@ -178,6 +178,14 @@ export function useAuthFields(appName: string, { enabled }: { enabled: boolean }
 // ─────────────────────────────────────────────────────────────────────
 // Mutations
 
+export function useUpdateConnectionAlias() {
+	const api = useOpenApi();
+	const qc = useQueryClient();
+	return api.useMutation("patch", "/v1/connectors/{connection_id}", {
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["get", "/v1/connectors"] }),
+	});
+}
+
 export function useDisconnect() {
 	const api = useOpenApi();
 	const qc = useQueryClient();
@@ -190,7 +198,7 @@ export function useDisconnect() {
 // Composite hooks
 
 /**
- * Joins the user's ACTIVE connections with catalog metadata so the
+ * Joins all of the user's connections with catalog metadata so the
  * list page can render a "Connected" rail that's always visible,
  * independent of which catalog page the user is on. Backend
  * orders the catalog by Composio's popularity (`base_rank`) which
@@ -205,6 +213,7 @@ export function useConnectedAppCards({ enabled = true }: { enabled?: boolean } =
 	const connectionsQ = useConnections({ enabled });
 	const api = useApi();
 
+	const connections = useMemo(() => connectionsQ.data ?? [], [connectionsQ.data]);
 	const activeConnections = useMemo(
 		() => connectionsQ.data?.filter(isActiveConnection) ?? [],
 		[connectionsQ.data],
@@ -217,8 +226,8 @@ export function useConnectedAppCards({ enabled = true }: { enabled?: boolean } =
 	// it in practice, but a malformed row would otherwise become an
 	// invalid metadata name in a batch request.
 	const names = useMemo(
-		() => Array.from(new Set(activeConnections.flatMap((c) => (c.app_name ? [c.app_name] : [])))),
-		[activeConnections],
+		() => Array.from(new Set(connections.flatMap((c) => (c.app_name ? [c.app_name] : [])))),
+		[connections],
 	);
 	const batches = useMemo(() => connectorMetadataBatches(names), [names]);
 
@@ -256,6 +265,7 @@ export function useConnectedAppCards({ enabled = true }: { enabled?: boolean } =
 	};
 
 	return {
+		connections,
 		activeConnections,
 		data,
 		hasData,
@@ -272,18 +282,8 @@ export function useConnectedAppCards({ enabled = true }: { enabled?: boolean } =
 // ─────────────────────────────────────────────────────────────────────
 // Status helpers
 //
-// Composio's connection lifecycle has many states (INITIALIZING →
-// INITIATED → ACTIVE → … → EXPIRED / FAILED / INACTIVE). Only ACTIVE
-// connections are usable: an INITIALIZING row exists before OAuth
-// completes (and may stick around forever if the user abandons), an
-// EXPIRED row needs reconnection, and FAILED / INACTIVE are dead.
-// Surfacing any of these as "Connected" misleads the user — list
-// pages show a Connected checkmark for an app that doesn't work, and
-// detail pages show a Disconnect button on a row that isn't real yet.
-// Filter user-facing lists with `isActiveConnection`. Re-connecting
-// from the UI lets Composio update or replace the old row, so we
-// don't lose the user's ability to recover from EXPIRED/FAILED.
+// Keep every account available for management. Only ACTIVE accounts grant tool access.
 
-export function isActiveConnection(c: { status: string }): boolean {
-	return c.status.toUpperCase() === "ACTIVE";
+export function isActiveConnection(c: { status: string; is_disabled?: boolean }): boolean {
+	return c.status.trim().toUpperCase() === "ACTIVE" && !c.is_disabled;
 }

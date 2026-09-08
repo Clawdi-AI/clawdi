@@ -46,7 +46,7 @@ for (const width of [1440, 375]) {
 				body = ["alpha", "beta", "gamma", "retired", "alpha"].map((name, index) => ({
 					id: `connection-${index}`,
 					app_name: name,
-					status: "ACTIVE",
+					status: index === 2 ? "EXPIRED" : index === 3 ? "INACTIVE" : "ACTIVE",
 					created_at: "2026-09-07T00:00:00Z",
 				}));
 			} else if (path === "/v1/connectors/available") {
@@ -87,14 +87,16 @@ for (const width of [1440, 375]) {
 		});
 		try {
 			await page.goto("/connectors");
-			await expect(page.getByText("5 active", { exact: true })).toBeVisible();
+			await expect(page.getByText("3 active", { exact: true })).toBeVisible();
 			await metadataStarted.promise;
 			metadata.resolve();
 			const rail = page
 				.locator("section")
-				.filter({ has: page.getByText("Ready to use", { exact: true }) });
+				.filter({ has: page.getByText("Your connections", { exact: true }) });
 			const gamma = rail.getByRole("link", { name: "GAMMA", exact: true });
 			await expect(gamma).toBeVisible();
+			await expect(gamma.locator("..").getByLabel("Connected", { exact: true })).toHaveCount(0);
+			await expect(gamma.locator("..").getByText("Needs attention")).toBeVisible();
 			await expect(rail.getByText("4 apps", { exact: true })).toBeVisible();
 			await expect(rail.getByRole("link", { name: "retired", exact: true })).toBeVisible();
 			expect(batches).toEqual([["alpha", "beta", "gamma", "retired"]]);

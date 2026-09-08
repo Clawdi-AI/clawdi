@@ -37,6 +37,37 @@ unauthenticated) work without a backend. Anything that hits the API
 the baked-in production URL for release builds and `http://localhost:8000`
 for dev builds (`bun run dev` / `build:dev`).
 
+## MCP forwarding deadlines
+
+The stdio proxy gives `tools/call` a 390-second HTTP deadline, including response
+body consumption. Backend Composio MCP execution has a 360-second total deadline:
+its upstream read allows 300 seconds, with 60 seconds for initialization and
+transport overhead. Cold session creation adds at most 10 seconds, leaving
+20 seconds for the Clawdi round trip. The session-only high-level SDK uses a
+5-second transport timeout and no automatic retries. A separate 10-second total
+creation deadline discards late results from the synchronous SDK worker, which
+cannot be forcibly cancelled. Authentication precedes forwarding and retains its
+existing short network budgets.
+
+Discovery and other MCP methods retain a 30-second forwarding deadline. Backend
+Composio discovery has a 25-second total deadline, including cold session creation
+and any reload after invalidation. Listing drains all cursor pages in a single
+initialized client within 15 seconds and at most 100 pages, leaving 5 seconds
+for the Clawdi round trip. Invalid/repeated cursors fail without caching a
+partial catalog. Tool schemas, annotations and tool metadata survive aggregation;
+the complete list has no upstream cursor. The legacy endpoint retains first-page
+result metadata, since page metadata has no standardized merge semantics.
+
+The locked JavaScript MCP SDK 1.30 defaults **outgoing client requests** to 60
+seconds; this does not impose a timer on incoming stdio server handlers. MCP
+clients invoking slow tools must set their own request timeout to at least
+420 seconds (for SDK clients, pass `{ timeout: 420_000 }` as the `callTool`
+request options). Clawdi cannot override another client's deadline.
+
+Timeout or transport loss does not confirm cancellation or failure of an external
+side effect. The proxy never automatically retries tool calls. Check the provider
+outcome before retrying a call that may have changed external state.
+
 ## Link (`bun link`) — simulated global install
 
 ```bash

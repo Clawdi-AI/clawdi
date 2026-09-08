@@ -3021,7 +3021,11 @@ export interface paths {
         delete: operations["disconnect_v1_connectors__connection_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update Connection
+         * @description Update or clear the alias of an owned connected account.
+         */
+        patch: operations["update_connection_v1_connectors__connection_id__patch"];
         trace?: never;
     };
     "/v1/connectors/mcp-config": {
@@ -5521,7 +5525,9 @@ export interface components {
         ConnectRequest: {
             /** Redirect Url */
             redirect_url?: string | null;
+            alias?: components["schemas"]["ConnectorAlias"] | null;
         };
+        ConnectorAlias: string;
         /**
          * ConnectorAuthFieldResponse
          * @description One input expected from the user when connecting via API key.
@@ -5606,6 +5612,13 @@ export interface components {
             status: string;
             /** Created At */
             created_at: string;
+            /**
+             * Is Disabled
+             * @default false
+             */
+            is_disabled: boolean;
+            /** Alias */
+            alias?: string | null;
             /** Account Display */
             account_display?: string | null;
         };
@@ -5624,6 +5637,7 @@ export interface components {
             credentials: {
                 [key: string]: string;
             };
+            alias?: components["schemas"]["ConnectorAlias"] | null;
         };
         /** ConnectorCredentialsConnectResponse */
         ConnectorCredentialsConnectResponse: {
@@ -5694,6 +5708,11 @@ export interface components {
             /** App */
             app?: string | null;
             parameters?: components["schemas"]["ConnectorToolParametersResponse"] | null;
+        };
+        /** ConnectorUpdateRequest */
+        ConnectorUpdateRequest: {
+            /** @description Account alias; an empty string clears it. */
+            alias: components["schemas"]["ConnectorAlias"];
         };
         /** ContributionDayResponse */
         ContributionDayResponse: {
@@ -15885,6 +15904,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectorDisconnectResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_connection_v1_connectors__connection_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectorUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorConnectionResponse"];
                 };
             };
             /** @description Validation Error */

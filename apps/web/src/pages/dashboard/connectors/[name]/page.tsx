@@ -6,6 +6,7 @@ import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { AccountAliasDialog } from "@/components/connectors/account-alias-dialog";
 import { getConnectorAuthFlow } from "@/components/connectors/auth-flow.logic";
 import { ConnectorConnectAction } from "@/components/connectors/connector-connect-action";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
@@ -48,9 +49,13 @@ function formatName(raw: string): string {
 
 function connectionStatusLabel(status: string): string {
 	const normalized = status.trim().toLowerCase();
-	if (["active", "connected", "ready"].includes(normalized)) return "Connected";
-	if (["pending", "initiated", "connecting"].includes(normalized)) return "Connecting";
-	if (["expired", "disconnected", "revoked"].includes(normalized)) return "Reconnect required";
+	if (normalized === "active") return "Connected";
+	if (["pending", "initializing", "initiated", "connecting"].includes(normalized))
+		return "Awaiting authorization";
+	if (normalized === "expired") return "Expired";
+	if (normalized === "inactive") return "Inactive";
+	if (normalized === "disconnected") return "Disconnected";
+	if (normalized === "revoked") return "Access revoked";
 	if (["failed", "error"].includes(normalized)) return "Connection failed";
 	return "Status unavailable";
 }
@@ -69,7 +74,7 @@ export default function ConnectorDetailPage({
 }) {
 	return (
 		<Suspense fallback={<DetailSkeletonShell />}>
-			<ConnectorDetail name={name} scope={scope} />
+			<ConnectorDetail key={name} name={name} scope={scope} />
 		</Suspense>
 	);
 }
@@ -103,9 +108,6 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 		void setOauthState({ error: null, status: null }, { history: "replace" });
 	}, [oauthState.error, oauthState.status, setOauthState]);
 
-	// All hosted/cloud branching is encapsulated in the `connectors-data`
-	// hooks — both branches are always-called, network is gated by the
-	// `enabled` flag inside, and the returned shapes are unified.
 	const appQ = useAvailableApp(name);
 	const connectionsQ = useConnections();
 	const toolsQ = useConnectorTools(name);
@@ -126,6 +128,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	// flips synchronously and rejects the second click before the
 	// mutation queues. Both are kept in lockstep so the visible spinner
 	// always matches the in-flight set.
+	const [editingId, setEditingId] = useState<string | null>(null);
 	const disconnectMutation = useDisconnect();
 	const inflightDisconnectsRef = useRef<Set<string>>(new Set());
 	const [disconnectingIds, setDisconnectingIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -145,7 +148,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					});
 				},
 				onError: () =>
-					toast.error("Couldn't disconnect", {
+					toast.error("Couldn't remove account", {
 						description: "Try again. If the problem persists, refresh the page.",
 					}),
 			},
@@ -153,8 +156,9 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	};
 	const isDisconnecting = (connectionId: string) => disconnectingIds.has(connectionId);
 
-	const activeConnections =
-		connections?.filter((c) => c.app_name === name && isActiveConnection(c)) ?? [];
+	const appConnections = connections?.filter((c) => c.app_name === name) ?? [];
+	const activeConnections = appConnections.filter(isActiveConnection);
+	const editingConnection = appConnections.find((connection) => connection.id === editingId);
 	const isConnected = activeConnections.length > 0;
 	const isLoading = isAppLoading || appQ.isPending;
 
@@ -181,11 +185,8 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 		);
 	}
 
-	// `appQ.error` covers both "connector not found" (404 from cloud-api,
-	// thrown 404 from the hosted catalog adapter) and outright network
-	// failures. Surface it so the user sees what's wrong instead of a
-	// silently-broken connect page.
-	if (!app) {
+	// Saved accounts remain manageable even when catalog metadata is unavailable.
+	if (!app && appConnections.length === 0) {
 		const appNotFound = isApiNotFoundError(appQ.error) || !appQ.error;
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
@@ -217,7 +218,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					<Plug />
 					<AlertTitle>Shared across all agents</AlertTitle>
 					<AlertDescription>
-						Connections belong to this account. Connecting or disconnecting here affects all agents.
+						Connections and aliases belong to this account. Changes here affect all agents.
 					</AlertDescription>
 				</Alert>
 			) : null}
@@ -238,13 +239,13 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 			<DashboardSection priority="primary">
 				<DashboardSectionHeader
 					icon={Plug}
-					title="Connected accounts"
+					title="Accounts"
 					count={
 						usesNoAuth
 							? "No account required"
 							: isConnectionsLoading
 								? "Checking accounts"
-								: `${activeConnections.length} connected`
+								: `${activeConnections.length} active · ${appConnections.length} total`
 					}
 					description={
 						usesNoAuth
@@ -252,10 +253,11 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 							: "Connect an account once. Approved tools become available to agents through this connector."
 					}
 					actions={
+						app &&
 						!usesNoAuth &&
 						!isSetupBlocked &&
 						!isConnectionsLoading &&
-						activeConnections.length > 0 ? (
+						appConnections.length > 0 ? (
 							<ConnectorConnectAction app={app} label="Connect account" />
 						) : null
 					}
@@ -285,7 +287,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 						</div>
 					) : usesNoAuth ? (
 						<EmptyState variant="inset" description="No account connection is required." />
-					) : hasUnsupportedAuthType ? (
+					) : hasUnsupportedAuthType && appConnections.length === 0 ? (
 						<ApiErrorPanel
 							error="This connector uses an authentication method Clawdi does not support."
 							onRetry={() => {
@@ -293,7 +295,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 							}}
 							title="Connection unavailable"
 						/>
-					) : activeConnections.length === 0 ? (
+					) : appConnections.length === 0 ? (
 						isSetupBlocked ? (
 							<Alert>
 								<AlertCircle />
@@ -307,58 +309,95 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 								variant="inset"
 								description="No connected accounts yet."
 								action={
-									<ConnectorConnectAction app={app} label="Connect account" emphasis="primary" />
+									app ? (
+										<ConnectorConnectAction app={app} label="Connect account" emphasis="primary" />
+									) : null
 								}
 							/>
 						)
 					) : (
 						<div className="divide-y overflow-hidden rounded-lg border bg-card">
-							{activeConnections.map((c) => (
-								<div key={c.id} className="flex items-center justify-between gap-3 px-4 py-3">
+							{appConnections.map((c) => (
+								<div
+									key={c.id}
+									className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+								>
 									<div className="min-w-0">
-										{/* Identity first — `account_display` (e.g. the user's Gmail
-										    address) is the only thing that tells two same-app rows
-										    apart. Falls back to a shortened connection id so OSS
-										    users (whose backend doesn't surface account_display
-										    yet) still see something distinct per row. */}
-										<p className="truncate text-sm font-medium">
-											{c.account_display || `Account ${c.id.slice(-6)}`}
+										<p
+											className="truncate text-sm font-medium"
+											title={c.alias || c.account_display || c.id}
+										>
+											{c.alias || c.account_display || `Account ${c.id.slice(-6)}`}
 										</p>
+										{c.alias ? (
+											<p
+												className="truncate text-xs text-muted-foreground"
+												title={
+													c.account_display && c.account_display !== c.alias
+														? c.account_display
+														: c.id
+												}
+											>
+												{c.account_display && c.account_display !== c.alias
+													? c.account_display
+													: `Account ${c.id}`}
+											</p>
+										) : null}
 										<p className="mt-0.5 text-xs text-muted-foreground">
-											{connectionStatusLabel(c.status)}
+											{c.is_disabled ? "Disabled" : connectionStatusLabel(c.status)}
 										</p>
 									</div>
-									<ConfirmAction
-										title={`Disconnect ${c.account_display || "this account"}?`}
-										description={
-											<p>
-												All agents will lose access immediately. To restore access, sign in again.
-											</p>
-										}
-										confirmLabel="Disconnect"
-										destructive
-										onConfirm={() => handleDisconnect(c.id)}
-									>
+									<div className="flex flex-wrap items-center gap-2">
 										<Button
 											variant="ghost"
 											size="xs"
 											disabled={isDisconnecting(c.id)}
-											className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+											onClick={() => setEditingId(c.id)}
 										>
-											{isDisconnecting(c.id) ? (
-												<Spinner className="size-3.5" />
-											) : (
-												<Link2Off className="size-3.5" />
-											)}
-											Disconnect
+											Edit alias
 										</Button>
-									</ConfirmAction>
+										<ConfirmAction
+											title={`${isActiveConnection(c) ? "Disconnect" : "Delete"} ${c.alias || c.account_display || "this account"}?`}
+											description={
+												<p>
+													{isActiveConnection(c)
+														? "All agents will lose access immediately. To restore access, sign in again."
+														: "This removes the saved account and its alias for all agents."}
+												</p>
+											}
+											confirmLabel={isActiveConnection(c) ? "Disconnect" : "Delete"}
+											destructive
+											onConfirm={() => handleDisconnect(c.id)}
+										>
+											<Button
+												variant="ghost"
+												size="xs"
+												disabled={isDisconnecting(c.id)}
+												className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+											>
+												{isDisconnecting(c.id) ? (
+													<Spinner className="size-3.5" />
+												) : (
+													<Link2Off className="size-3.5" />
+												)}
+												{isActiveConnection(c) ? "Disconnect" : "Delete"}
+											</Button>
+										</ConfirmAction>
+									</div>
 								</div>
 							))}
 						</div>
 					)}
 				</div>
 			</DashboardSection>
+
+			{editingConnection ? (
+				<AccountAliasDialog
+					key={editingConnection.id}
+					connection={editingConnection}
+					onClose={() => setEditingId(null)}
+				/>
+			) : null}
 
 			{/* Tools — matches clawdi ConnectorToolsList */}
 			<ConnectorToolsList

@@ -403,9 +403,24 @@ metadata and provenance. Built-in memory updates clear a stale embedding when
 re-embedding is unavailable; Mem0 updates verify account ownership before the
 provider mutation. `session_list` uses the same account/legacy-environment fence
 as Session search/get and supports bounded time, Agent, and visible Project
-filters. `connector_account_list` exposes only connection IDs, toolkit names,
-statuses, and allowlisted display labels; raw provider `data`, `state`, tokens,
-and credentials never enter the MCP result.
+filters. `connector_account_list` exposes active, enabled connection IDs,
+toolkit names, aliases, statuses, and allowlisted display labels; raw provider
+`data`, `state`, tokens, and credentials never enter the MCP result.
+
+Composio sessions enable multiple accounts per toolkit with
+`require_explicit_selection=False` explicitly set. The pinned SDK otherwise
+inserts `True`, contrary to the documented default. Agents can select an account
+ID or alias through the upstream tool's live schema; omitted selection uses the
+default active account. Upstream MCP tools remain authoritative: SDK support for
+editing an alias does not establish the parameters of a session's MCP tools.
+
+The connector management API lists all account states. Alias edits and deletion
+verify ownership independently of account status. To authorize again, use the
+standard new-connection flow; it creates a separate account rather than repairing
+an existing ID. Existing accounts and aliases are never deleted or reassigned
+automatically. Clear or change an old alias before reusing it on a new account.
+Account mutations invalidate cached MCP sessions. Dashboard counts and Agent
+account identities remain active-only.
 
 For agents that only support stdio MCP, `clawdi mcp` is a protocol-transparent
 stdio-to-HTTP wrapper: it forwards MCP messages and does not declare a second

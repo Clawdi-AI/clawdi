@@ -15,6 +15,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from composio.core.models.tool_router import ToolRouterMultiAccountConfig
 from fastapi.routing import iter_route_contexts
 from httpx import ASGITransport
 from mcp.types import ListToolsResult
@@ -279,7 +280,6 @@ async def test_legacy_composio_aliases_bridge_tools_list_and_call(monkeypatch, t
             {
                 "tools": [{"name": "COMPOSIO_SEARCH_TOOLS", "inputSchema": {"type": "object"}}],
                 "_meta": {"upstream": "preserved"},
-                "nextCursor": "upstream-cursor",
             }
         )
 
@@ -316,7 +316,7 @@ async def test_legacy_composio_aliases_bridge_tools_list_and_call(monkeypatch, t
             assert listed.status_code == 200, listed.text
             assert listed.json()["result"]["tools"][0]["name"] == "COMPOSIO_SEARCH_TOOLS"
             assert listed.json()["result"]["_meta"] == {"upstream": "preserved"}
-            assert listed.json()["result"]["nextCursor"] == "upstream-cursor"
+            assert "nextCursor" not in listed.json()["result"]
             assert called.status_code == 200, called.text
             assert called.json()["result"]["content"] == [{"type": "text", "text": "called"}]
             assert called.json()["result"]["isError"] is False
@@ -809,6 +809,8 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
                 },
             )
         assert method == "tools/list"
+        cursor = (payload.get("params") or {}).get("cursor")
+        assert cursor in (None, "page-2")
         body = json.dumps(
             {
                 "jsonrpc": "2.0",
@@ -816,11 +818,12 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
                 "result": {
                     "tools": [
                         {
-                            "name": "COMPOSIO_SEARCH_TOOLS",
+                            "name": "COMPOSIO_SEARCH_TOOLS" if cursor is None else "SECOND_TOOL",
                             "inputSchema": {"type": "object"},
                             "_meta": {"composio": {"version": 1}},
                         }
-                    ]
+                    ],
+                    **({"nextCursor": "page-2"} if cursor is None else {}),
                 },
             }
         )
@@ -870,7 +873,10 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
     assert all(headers.get("mcp-protocol-version") == "2025-06-18" for headers in followups)
     assert all(headers.get("mcp-session-id") == "sdk-session" for headers in followups)
     assert requests[-1][0] == "DELETE"
-    assert result.tools[0].name == "COMPOSIO_SEARCH_TOOLS"
+    assert [tool.name for tool in result.tools] == ["COMPOSIO_SEARCH_TOOLS", "SECOND_TOOL"]
+    assert result.next_cursor is None
+    first_listing = methods[: methods.index("initialize", methods.index("initialize") + 1)]
+    assert first_listing.count("tools/list") == 2
     assert result.tools[0].meta == {"composio": {"version": 1}}
     serialized_call = called.model_dump(by_alias=True, exclude_none=True)
     assert serialized_call == {
@@ -1144,8 +1150,10 @@ async def test_create_tool_router_mcp_session_uses_canonical_sdk_off_event_loop(
     event_loop_thread = threading.get_ident()
 
     class FakeSessions:
-        def create(self, *, user_id: str, mcp: bool) -> _FakeToolRouterSession:
-            kwargs = {"user_id": user_id, "mcp": mcp}
+        def create(
+            self, *, user_id: str, mcp: bool, multi_account: ToolRouterMultiAccountConfig
+        ) -> _FakeToolRouterSession:
+            kwargs = {"user_id": user_id, "mcp": mcp, "multi_account": multi_account}
             calls.append({"kwargs": kwargs, "thread": threading.get_ident()})
             return _FakeToolRouterSession(
                 mcp=_FakeMcpConfig(
@@ -1164,7 +1172,11 @@ async def test_create_tool_router_mcp_session_uses_canonical_sdk_off_event_loop(
     now = datetime(2026, 5, 24, tzinfo=UTC)
     session = await composio._create_tool_router_mcp_session("clerk_user_123", now=now)
 
-    assert calls[0]["kwargs"] == {"user_id": "clerk_user_123", "mcp": True}
+    assert calls[0]["kwargs"] == {
+        "user_id": "clerk_user_123",
+        "mcp": True,
+        "multi_account": {"enable": True, "require_explicit_selection": False},
+    }
     assert calls[0]["thread"] != event_loop_thread
     assert session.url == "https://app.composio.dev/tool_router/v3/trs_test/mcp"
     assert session.headers == {
@@ -1201,7 +1213,9 @@ async def test_create_tool_router_mcp_session_fails_closed_on_invalid_sdk_contra
     config = mcp
 
     class FakeSessions:
-        def create(self, *, user_id: str, mcp: bool) -> _FakeToolRouterSession:
+        def create(
+            self, *, user_id: str, mcp: bool, multi_account: ToolRouterMultiAccountConfig
+        ) -> _FakeToolRouterSession:
             assert user_id and mcp is True
             return _FakeToolRouterSession(mcp=config)
 
