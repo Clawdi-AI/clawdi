@@ -422,8 +422,8 @@ export function SkillDetailContent({
 	const editDirty =
 		isEditing &&
 		skill != null &&
-		(draftName.trim() !== skill.name ||
-			draftDescription.trim() !== (skill.description ?? "") ||
+		(draftName !== skill.name ||
+			draftDescription !== (skill.description ?? "") ||
 			draftInstructions.trim() !== stripFrontmatter(skill.content ?? "").trim());
 
 	return (
@@ -572,8 +572,8 @@ export function SkillDetailContent({
 											!draftName.trim() ||
 											!draftDescription.trim() ||
 											!draftInstructions.trim() ||
-											(draftName.trim() === skill.name &&
-												draftDescription.trim() === (skill.description ?? "") &&
+											(draftName === skill.name &&
+												draftDescription === (skill.description ?? "") &&
 												draftInstructions.trim() === stripFrontmatter(skill.content ?? "").trim())
 										}
 									>
