@@ -8,6 +8,7 @@ import type { AiProviderAuthKind, ManagedModelCatalogItem } from "@/hosted/billi
 import { type HostedRuntime, runtimeDisplayName } from "@/hosted/runtimes";
 import {
 	type ProviderPreset,
+	providerPresetById,
 	providerPresetForSavedProvider,
 } from "@/hosted/v2/ai-providers/provider-presets";
 import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
@@ -152,13 +153,15 @@ export function providerPresentation(
 	}
 	if (isFirstPartyManagedAiProvider(provider)) return managedProviderPresentation();
 
-	const preset = providerPresetForSavedProvider({
-		baseUrl: provider.base_url,
-	});
+	const preset =
+		providerPresetById(provider.native_provider) ??
+		providerPresetForSavedProvider({
+			baseUrl: provider.base_url,
+		});
 	const typeMeta = providerTypeMeta(provider.type);
 	const brandLabel = preset?.label ?? typeMeta.label;
 	const label = provider.label?.trim() || brandLabel;
-	const catalogSummary = providerModelSummary(provider);
+	const catalogSummary = providerModelSummary(provider, preset);
 	return {
 		label,
 		brandLabel,
@@ -239,13 +242,20 @@ export function providerCatalogDescription(provider: AiProvider): string {
 }
 
 export function providerPresetSummary(preset: ProviderPreset): string {
+	if (preset.variant_label === "Product")
+		return preset.region_variants?.map((variant) => variant.label).join(" / ") || "API key";
+	if (preset.credential_label) return `Connect using an ${preset.credential_label.toLowerCase()}`;
+	if (preset.id === "xiaomi") return "Pay-as-you-go API access";
 	return preset.region_variants?.length
 		? "API key · region / plan options"
 		: "Connect with an API key";
 }
 
-function providerModelSummary(provider: AiProvider): string {
-	if (provider.configuration_mode === "native") return "Models managed in agent";
+function providerModelSummary(provider: AiProvider, preset: ProviderPreset | null): string {
+	if (provider.configuration_mode === "native") {
+		const variant = preset?.region_variants?.find((item) => item.id === provider.native_variant);
+		return variant ? `${variant.label} · Models managed in agent` : "Models managed in agent";
+	}
 	const models = modelOptionsForProvider(provider.provider_id, [provider]);
 	return modelCatalogSummary(models);
 }

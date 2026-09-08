@@ -19,6 +19,10 @@ database migration, CI, and implementation details.
 
 ### Changed
 
+- Native BYOK now also supports NVIDIA NIM, Fireworks, Hugging Face, DeepInfra,
+  OpenCode Zen/Go, Xiaomi MiMo API, and Tencent TokenHub/TokenPlan, with official
+  provider icons and product-specific credential prompts.
+
 - Hosted BYOK can connect a provider key or ChatGPT account without configuring
   a model catalog or default model. Choose models in Hermes or OpenClaw;
   existing model choices and other saved credentials are preserved.

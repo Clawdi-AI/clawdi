@@ -90,6 +90,7 @@ export function ProviderFieldsForm({
 	const savedCredentialAvailable = editing !== null && editing.auth.type !== "none";
 	const apiModes = meta.apiModes;
 	const regions = preset?.region_variants ?? [];
+	const credentialLabel = preset?.credential_label ?? "API key";
 	const isCustomEndpoint = meta.custom === true && preset === null;
 	const showPrimaryName = isCustomEndpoint;
 	const showAdvancedName = preset !== null || (!showPrimaryName && isEdit);
@@ -126,7 +127,7 @@ export function ProviderFieldsForm({
 
 			{regions.length > 0 ? (
 				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="provider-region">Region / plan</Label>
+					<Label htmlFor="provider-region">{preset?.variant_label ?? "Region / plan"}</Label>
 					<Select
 						items={regions.map((item) => ({ value: item.id, label: item.label }))}
 						value={region?.id ?? regions[0]?.id ?? ""}
@@ -196,7 +197,7 @@ export function ProviderFieldsForm({
 				</div>
 			) : form.authMethod === "api_key" ? (
 				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="provider-key">API key</Label>
+					<Label htmlFor="provider-key">{credentialLabel}</Label>
 					<InputGroup>
 						<InputGroupInput
 							id="provider-key"
@@ -205,8 +206,8 @@ export function ProviderFieldsForm({
 							onChange={(event) => onUpdate({ apiKey: event.target.value })}
 							placeholder={
 								isEdit && savedCredentialAvailable
-									? "Leave blank to keep current key"
-									: "Enter API key"
+									? "Leave blank to keep current credential"
+									: `Enter ${credentialLabel.toLowerCase()}`
 							}
 							autoComplete="off"
 							autoCapitalize="none"
@@ -218,7 +219,7 @@ export function ProviderFieldsForm({
 							<InputGroupButton
 								size="icon-xs"
 								onClick={() => setApiKeyVisible((visible) => !visible)}
-								aria-label={apiKeyVisible ? "Hide API key" : "Show API key"}
+								aria-label={`${apiKeyVisible ? "Hide" : "Show"} ${credentialLabel.toLowerCase()}`}
 								aria-pressed={apiKeyVisible}
 							>
 								{apiKeyVisible ? <EyeOff /> : <Eye />}
@@ -228,8 +229,8 @@ export function ProviderFieldsForm({
 					<p id="provider-key-help" className="text-xs text-muted-foreground">
 						{isEdit
 							? editing?.auth.type === "none"
-								? "Enter an API key to finish setup."
-								: "Leave blank to keep the current key."
+								? `Enter ${credentialLabel.toLowerCase()} to finish setup.`
+								: "Leave blank to keep the current credential."
 							: "Encrypted at rest and never shown again."}
 					</p>
 					{meta.oauth ? (
@@ -249,7 +250,8 @@ export function ProviderFieldsForm({
 							rel="noreferrer"
 							className="inline-flex w-fit items-center gap-1 text-xs font-medium text-primary hover:underline"
 						>
-							Get API key <ExternalLink className="size-3" />
+							{preset?.credential_link_label ?? `Get ${credentialLabel.toLowerCase()}`}{" "}
+							<ExternalLink className="size-3" />
 						</a>
 					) : null}
 				</div>

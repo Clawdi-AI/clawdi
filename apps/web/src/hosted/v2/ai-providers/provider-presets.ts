@@ -17,6 +17,9 @@ export interface ProviderPreset {
 	region_variants?: readonly ProviderPresetRegionVariant[];
 	provider_type: ProviderTypeId;
 	runtime_env_name: string;
+	credential_label?: string;
+	credential_link_label?: string;
+	variant_label?: string;
 }
 
 // Display metadata only. Native routing, regions, and protocols have one shared owner.
@@ -49,9 +52,44 @@ const PROVIDER_BRANDS = [
 	{ id: "groq", label: "Groq", api_key_url: "https://console.groq.com/keys" },
 	{ id: "mistral", label: "Mistral AI", api_key_url: "https://console.mistral.ai/api-keys" },
 	{ id: "xai-grok", label: "xAI Grok", api_key_url: "https://console.x.ai/team/default/api-keys" },
+	{ id: "nvidia", label: "NVIDIA NIM", api_key_url: "https://build.nvidia.com/" },
+	{
+		id: "fireworks",
+		label: "Fireworks AI",
+		api_key_url: "https://app.fireworks.ai/settings/users/api-keys",
+	},
+	{
+		id: "huggingface",
+		label: "Hugging Face",
+		api_key_url: "https://huggingface.co/settings/tokens",
+		credential_label: "Access token",
+	},
+	{ id: "deepinfra", label: "DeepInfra", api_key_url: "https://deepinfra.com/dash/api_keys" },
+	{
+		id: "opencode",
+		label: "OpenCode",
+		api_key_url: "https://opencode.ai/auth",
+		variant_label: "Product",
+	},
+	{
+		id: "xiaomi",
+		label: "Xiaomi MiMo API",
+		api_key_url: "https://platform.xiaomimimo.com/#/console/api-keys",
+	},
+	{
+		id: "tencent",
+		label: "Tencent Cloud",
+		api_key_url: "https://cloud.tencent.com/product/tokenhub",
+		credential_link_label: "Open Tencent Cloud",
+		variant_label: "Product",
+	},
 ] as const;
 
 const REGION_LABELS: Record<string, string> = {
+	zen: "Zen",
+	go: "Go",
+	tokenhub: "TokenHub",
+	tokenplan: "TokenPlan",
 	cn: "China",
 	global: "Global",
 	"coding-cn": "China · Coding Plan",

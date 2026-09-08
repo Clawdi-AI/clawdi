@@ -270,6 +270,32 @@ describe("native provider form defaults", () => {
 		expect(providerPresetForSavedProvider({ baseUrl: preset.base_url })?.id).toBe(preset.id);
 	});
 
+	test("exposes product selection and access-token terminology without model input", () => {
+		expect(testPreset("opencode").region_variants?.map((item) => item.label)).toEqual([
+			"Zen",
+			"Go",
+		]);
+		expect(testPreset("tencent").region_variants?.map((item) => item.label)).toEqual([
+			"TokenHub",
+			"TokenPlan",
+		]);
+		expect(testPreset("huggingface").credential_label).toBe("Access token");
+		for (const id of [
+			"nvidia",
+			"fireworks",
+			"huggingface",
+			"deepinfra",
+			"opencode",
+			"xiaomi",
+			"tencent",
+		]) {
+			const preset = testPreset(id);
+			expect(
+				derivedProviderFields(providerTypeForPreset(preset), "api_key", preset).modelsText,
+			).toBe("");
+		}
+	});
+
 	test("keeps custom endpoint input empty", () => {
 		expect(derivedProviderFields("custom_openai_compatible", "api_key")).toEqual({
 			baseUrl: "",

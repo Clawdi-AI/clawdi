@@ -48,7 +48,14 @@ function presetEntry(preset: ProviderPreset): ChoiceEntry {
 		label: preset.label,
 		description,
 		iconId: preset.id,
-		searchText: [preset.label, preset.id, preset.api_mode, description].join(" ").toLowerCase(),
+		searchText: [
+			preset.label,
+			preset.id,
+			description,
+			...(preset.region_variants ?? []).map((variant) => variant.label),
+		]
+			.join(" ")
+			.toLowerCase(),
 		choice: { kind: "preset", preset },
 	};
 }

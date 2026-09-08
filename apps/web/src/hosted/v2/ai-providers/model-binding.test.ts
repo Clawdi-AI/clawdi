@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { nativeAiProvider } from "@clawdi/shared";
 import {
 	firstModelForProvider,
 	isManagedProviderId,
@@ -60,6 +61,28 @@ const savedOpenAiProvider = {
 } satisfies AiProvider;
 
 describe("model binding", () => {
+	test("native identity and product stay visible even with a custom connection name", () => {
+		const route = nativeAiProvider("tencent", "tokenplan");
+		if (!route) throw new Error("Tencent TokenPlan route missing");
+		const provider = {
+			...savedOpenAiProvider,
+			type: route.type,
+			base_url: route.base_url,
+			provider_id: "work",
+			label: "Work",
+			configuration_mode: "native",
+			native_provider: "tencent",
+			native_variant: "tokenplan",
+			models: null,
+		} satisfies AiProvider;
+		expect(providerPresentation(provider)).toMatchObject({
+			label: "Work",
+			brandLabel: "Tencent Cloud",
+			iconId: "tencent",
+			summary: "Tencent Cloud · TokenPlan · Models managed in agent",
+		});
+	});
+
 	test("uses the canonical Clawdi AI product label", () => {
 		expect(MANAGED_PROVIDER_LABEL).toBe("Clawdi AI");
 	});

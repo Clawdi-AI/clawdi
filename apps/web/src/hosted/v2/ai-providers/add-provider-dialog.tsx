@@ -494,6 +494,24 @@ export function AddProviderDialog({
 		oauthDeviceStart.isPending ||
 		oauthDevicePoll.isPending;
 
+	function setupDescription(): string {
+		if (renderedOAuth)
+			return "Open ChatGPT, enter the one-time code, and this page will finish automatically.";
+		if (step === "choose" && !isEdit) return "Choose a common provider or bring a custom endpoint.";
+		if (isOAuthEdit)
+			return "Subscription access is ready. Reconnect only to change or repair the account.";
+		if (form.authMethod === "oauth") return "Sign in with ChatGPT to connect your account.";
+		if (nativeConnection) {
+			if (isEdit && savedCredentialAvailable) return "Update the credential for this connection.";
+			return `Connect using your ${(selectedPreset?.credential_label ?? "API key").toLowerCase()}.`;
+		}
+		if (isEdit)
+			return editing?.auth.type === "none"
+				? "Enter an API key to finish setup. Optional provider details are in Advanced."
+				: "Update this provider. Enter a new API key only if you want to replace it.";
+		return "Enter the credential and connection details for this custom endpoint.";
+	}
+
 	return (
 		<Dialog open={open} onOpenChange={requestClose} onOpenChangeComplete={completeOpenChange}>
 			<DialogContent
@@ -514,21 +532,7 @@ export function AddProviderDialog({
 									? "Add a provider"
 									: `Set up ${providerLabel}`}
 					</DialogTitle>
-					<DialogDescription>
-						{renderedOAuth
-							? "Open ChatGPT, enter the one-time code, and this page will finish automatically."
-							: isOAuthEdit
-								? "Subscription access is ready. Reconnect only to change or repair the account."
-								: isEdit
-									? editing?.auth.type === "none"
-										? "Enter an API key to finish setup. Optional provider details are in Advanced."
-										: "Update this provider. Enter a new API key only if you want to replace it."
-									: step === "choose"
-										? "Choose a common provider or bring a custom endpoint."
-										: meta.custom && selectedPreset === null
-											? "Enter the credential and connection details for this custom endpoint."
-											: "Enter a credential. Optional provider details are in Advanced."}
-					</DialogDescription>
+					<DialogDescription>{setupDescription()}</DialogDescription>
 				</DialogHeader>
 
 				<div
