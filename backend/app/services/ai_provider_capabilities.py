@@ -10,6 +10,7 @@ from app.schemas.ai_provider import (
     CredentialMaterialState,
     VerificationState,
 )
+from app.schemas.native_provider import native_provider
 from app.services.url_security import is_public_https_url
 
 _DEFAULT_API_MODES = {
@@ -50,6 +51,9 @@ class AiProviderCapabilityInput:
     auth_tool: str | None = None
     auth_ref: str | None = None
     runtime_env_name: str | None = None
+    configuration_mode: str = "catalog"
+    native_provider: str | None = None
+    native_variant: str | None = None
 
 
 def provider_runtime_compatibility(
@@ -58,6 +62,24 @@ def provider_runtime_compatibility(
     """Return runtime projection support from the same fields agents consume."""
 
     api_mode = effective_provider_api_mode(provider.provider_type, provider.api_mode)
+    if provider.configuration_mode == "native":
+        try:
+            routing = native_provider(provider.native_provider, provider.native_variant)
+        except ValueError:
+            return AiProviderRuntimeCompatibility(openclaw=False, hermes=False, codex=False)
+        valid = (
+            provider.base_url == routing.base_url
+            and provider.provider_type == routing.type
+            and api_mode == routing.api_mode
+            and (
+                provider.auth_type in {"api_key", "secret_ref"}
+                if routing.id != "openai-codex"
+                else provider.auth_type == "agent_profile" and provider.auth_tool == "codex"
+            )
+        )
+        return AiProviderRuntimeCompatibility(
+            openclaw=valid, hermes=valid, codex=valid and routing.id in {"openai", "openai-codex"}
+        )
     native_codex_auth = provider.auth_type == "agent_profile" and provider.auth_tool == "codex"
     native_codex_shape = (
         native_codex_auth

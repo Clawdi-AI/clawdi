@@ -59,6 +59,7 @@ export const runtimeAppliedStateSchema = z
 		providerIds: providerIdsSchema,
 		projectedProviderIds: projectedProviderIdsSchema,
 		skillEvidence: z.array(hostedSkillEvidenceSchema).optional(),
+		nativeCredentialProviderIds: projectedProviderIdsSchema.optional(),
 	})
 	.strict()
 	.superRefine((state, ctx) => {

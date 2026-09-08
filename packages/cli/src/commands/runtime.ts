@@ -335,6 +335,7 @@ export function commitRuntimeAppliedState(input: {
 			providerIds,
 			projectedProviderIds: input.convergence.projectedProviderIds,
 			...(input.skillEvidence ? { skillEvidence: input.skillEvidence } : {}),
+			nativeCredentialProviderIds: input.convergence.nativeCredentialProviderIds,
 		},
 		input.paths,
 	);

@@ -15,6 +15,8 @@ from pydantic import (
 )
 from pydantic.json_schema import SkipJsonSchema
 
+from app.schemas.native_provider import native_provider
+
 ProviderType = Literal[
     "openai",
     "anthropic",
@@ -336,6 +338,9 @@ class AiProviderModel(BaseModel):
 
 
 class AiProviderBase(BaseModel):
+    configuration_mode: Literal["native", "catalog"] | SkipJsonSchema[None] = None
+    native_provider: AuthProfile | None = None
+    native_variant: AuthProfile | None = None
     type: ProviderType
     label: str | None = Field(default=None, max_length=200)
     base_url: str = Field(min_length=1, max_length=1000)
@@ -344,6 +349,30 @@ class AiProviderBase(BaseModel):
     runtime_env_name: str | None = Field(default=None, max_length=128)
     capabilities: dict[str, JsonValue] | None = None
     models: list[AiProviderModel] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _hydrate_native_provider(cls, value: object) -> object:
+        _reject_explicit_nulls(value, frozenset({"configuration_mode"}))
+        if not _is_string_object_dict(value) or value.get("configuration_mode") != "native":
+            return value
+        identity = value.get("native_provider")
+        variant = value.get("native_variant")
+        if not isinstance(identity, str) or (variant is not None and not isinstance(variant, str)):
+            raise ValueError("native credentials require a provider identity")
+        routing = native_provider(identity, variant)
+        if value.get("managed_by", "user") != "user" or value.get("models"):
+            raise ValueError("native credentials cannot manage model catalogs")
+        if value.get("default_model") is not None:
+            raise ValueError("native credentials do not select a default model")
+        hydrated = dict(value)
+        for field in ("type", "base_url", "api_mode", "runtime_env_name"):
+            expected = getattr(routing, field)
+            if value.get(field) is not None and value[field] != expected:
+                raise ValueError(f"native provider {field} does not match its identity and variant")
+            hydrated[field] = expected
+        hydrated["native_variant"] = routing.variant
+        return hydrated
 
 
 class AiProviderUpsert(AiProviderBase):
@@ -357,6 +386,9 @@ class AiProviderUpsert(AiProviderBase):
 
 
 class AiProviderPatch(BaseModel):
+    configuration_mode: Literal["native", "catalog"] | None = None
+    native_provider: AuthProfile | None = None
+    native_variant: AuthProfile | None = None
     type: ProviderType | None = None
     label: str | None = Field(default=None, max_length=200)
     base_url: str | None = Field(default=None, min_length=1, max_length=1000)

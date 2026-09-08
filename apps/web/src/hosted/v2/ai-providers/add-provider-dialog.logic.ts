@@ -1,8 +1,7 @@
-import { CODEX_OAUTH_MODEL_CATALOG } from "@clawdi/shared";
+import { nativeAiProvider } from "@clawdi/shared";
 import { CLAWDI_CODEX_OAUTH_PROVIDER_ID } from "@/hosted/v2/ai-providers/codex-oauth";
 import {
 	type ProviderPreset,
-	presetCatalogToProviderModels,
 	presetRuntimeEnvName,
 } from "@/hosted/v2/ai-providers/provider-presets";
 import {
@@ -49,9 +48,11 @@ export type SavedProviderConnectionTestInput = {
 type SavedProviderConnectionTestResult = Pick<AiProviderConnectionTestResponse, "ok" | "error">;
 
 export async function runPostSaveProviderConnectionTest(
-	provider: Pick<AiProvider, "provider_id" | "auth" | "models">,
+	provider: Pick<AiProvider, "provider_id" | "auth" | "models"> &
+		Partial<Pick<AiProvider, "configuration_mode">>,
 	execute: (input: SavedProviderConnectionTestInput) => Promise<SavedProviderConnectionTestResult>,
 ): Promise<SavedProviderConnectionTestResult | null> {
+	if (provider.configuration_mode === "native") return null;
 	if (provider.auth.type !== "api_key" || provider.auth.source !== "managed") return null;
 	const model = provider.models?.[0]?.id;
 	try {
@@ -84,13 +85,9 @@ export function parseModelIds(input: string): string[] {
 export function modelsFromText(
 	input: string,
 	existing: AiProvider["models"],
-	catalog: AiProvider["models"] = [],
 ): AiProviderUpsert["models"] {
 	type UpsertModel = NonNullable<AiProviderUpsert["models"]>[number];
 	const knownById = new Map<string, UpsertModel>();
-	for (const model of catalog ?? []) {
-		knownById.set(model.id, model);
-	}
 	for (const model of existing ?? []) {
 		knownById.set(model.id, model);
 	}
@@ -103,38 +100,15 @@ export function derivedProviderFields(
 	authMethod: AuthMethod,
 	preset?: ProviderPreset | null,
 ): DerivedProviderFields {
+	const route = nativeAiProvider(authMethod === "oauth" ? "openai-codex" : (preset?.id ?? type));
 	const meta = providerTypeMeta(type);
-	if (authMethod === "oauth") {
-		return {
-			baseUrl: providerTypeMeta("openai").defaultBaseUrl,
-			apiMode: "openai_responses",
-			runtimeEnv: providerTypeMeta("openai").defaultRuntimeEnv,
-			modelsText: modelsToText(CODEX_OAUTH_MODEL_CATALOG),
-		};
-	}
-	if (preset) {
-		return {
-			baseUrl: preset.base_url,
-			apiMode: preset.api_mode,
-			runtimeEnv: presetRuntimeEnvName(preset),
-			modelsText: modelsToText(presetCatalogToProviderModels(preset)),
-		};
-	}
 	return {
-		baseUrl: meta.defaultBaseUrl,
-		apiMode: meta.defaultApiMode,
-		runtimeEnv: meta.defaultRuntimeEnv,
-		modelsText: modelsToText(meta.defaultModels),
+		baseUrl: route?.base_url ?? preset?.base_url ?? meta.defaultBaseUrl,
+		apiMode: route?.api_mode ?? preset?.api_mode ?? meta.defaultApiMode,
+		runtimeEnv:
+			route?.runtime_env_name ?? (preset ? presetRuntimeEnvName(preset) : meta.defaultRuntimeEnv),
+		modelsText: "",
 	};
-}
-
-export function shouldUseCatalogModels(
-	type: ProviderTypeId,
-	authMethod: AuthMethod,
-	preset?: ProviderPreset | null,
-): boolean {
-	if (preset) return true;
-	return authMethod === "oauth" || providerTypeMeta(type).custom !== true;
 }
 
 export function providerFormIdentity({

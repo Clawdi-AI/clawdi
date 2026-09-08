@@ -4452,6 +4452,12 @@ export interface components {
         };
         /** AiProviderPatch */
         AiProviderPatch: {
+            /** Configuration Mode */
+            configuration_mode?: ("native" | "catalog") | null;
+            /** Native Provider */
+            native_provider?: string | null;
+            /** Native Variant */
+            native_variant?: string | null;
             /** Type */
             type?: ("openai" | "anthropic" | "openrouter" | "gemini" | "mistral" | "custom_openai_compatible") | null;
             /** Label */
@@ -4506,6 +4512,15 @@ export interface components {
         };
         /** AiProviderResponse */
         AiProviderResponse: {
+            /**
+             * Configuration Mode
+             * @enum {string}
+             */
+            configuration_mode?: "native" | "catalog";
+            /** Native Provider */
+            native_provider?: string | null;
+            /** Native Variant */
+            native_variant?: string | null;
             /**
              * Type
              * @enum {string}
@@ -4584,6 +4599,15 @@ export interface components {
         };
         /** AiProviderUpsert */
         AiProviderUpsert: {
+            /**
+             * Configuration Mode
+             * @enum {string}
+             */
+            configuration_mode?: "native" | "catalog";
+            /** Native Provider */
+            native_provider?: string | null;
+            /** Native Variant */
+            native_variant?: string | null;
             /**
              * Type
              * @enum {string}
@@ -6353,7 +6377,7 @@ export interface components {
             providerMode: "configured";
             /** Provider Ids */
             provider_ids: string[];
-            primary_model: components["schemas"]["HostedRuntimePrimaryModel"];
+            primary_model?: components["schemas"]["HostedRuntimePrimaryModel"] | null;
         };
         /** HostedRuntimeInstall */
         HostedRuntimeInstall: {

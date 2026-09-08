@@ -29,7 +29,7 @@ export type HostedAiBindingSelection =
 	| { mode: "managed"; model: string }
 	| {
 			mode: "saved";
-			model: string;
+			model?: string;
 			providerId: string;
 	  };
 
@@ -151,6 +151,12 @@ function toHostedRuntimeAiProvider(provider: HostedSavedAiProvider): RuntimeAiPr
 		base_url: provider.base_url,
 		auth: toRuntimeAuth(provider.auth),
 		managed_by: provider.managed_by,
+		...(provider.configuration_mode ? { configuration_mode: provider.configuration_mode } : {}),
+		...(provider.native_provider ? { native_provider: provider.native_provider } : {}),
+		...(provider.native_variant ? { native_variant: provider.native_variant } : {}),
+		...(provider.configuration_mode === "native" && provider.readiness
+			? { readiness: provider.readiness }
+			: {}),
 	};
 	if (provider.label) runtimeProvider.label = provider.label;
 	const models = toRuntimeModels(provider.models);
@@ -189,12 +195,15 @@ export function buildHostedAiBindingFields({
 				};
 	}
 
-	const model = selection.model.trim();
-	if (!model) {
-		throw new HostedAiBindingError("model_required", "Choose a catalog model or enter a model id.");
-	}
+	const model = selection.model?.trim() ?? "";
 
 	if (selection.mode === "managed") {
+		if (!model) {
+			throw new HostedAiBindingError(
+				"model_required",
+				"Choose a catalog model or enter a model id.",
+			);
+		}
 		if (managedModels.length === 0 || !managedModels.some((item) => item.id === model)) {
 			throw new HostedAiBindingError(
 				"managed_model_unavailable",
@@ -214,12 +223,18 @@ export function buildHostedAiBindingFields({
 	}
 
 	const provider = savedProviderForId(selection.providerId, providers);
+	if (provider.configuration_mode !== "native" && !model) {
+		throw new HostedAiBindingError("model_required", "Choose a catalog model or enter a model id.");
+	}
 	const authKind = hostedAiProviderAuthKind(provider);
 	return {
 		ai_provider_auth_kind: authKind,
 		ai_provider_id: provider.provider_id,
 		provider_ids: [provider.provider_id],
-		primary_model: { provider_id: provider.provider_id, model },
+		primary_model:
+			provider.configuration_mode === "native"
+				? null
+				: { provider_id: provider.provider_id, model },
 		ai_provider_bootstrap: buildHostedAiProviderBootstrap(provider),
 	};
 }
