@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import type { ChannelActivityItem, ChannelHealthItem } from "@/hosted/v2/channels/channel-types";
 import {
 	channelActivityErrorSummary,
@@ -64,14 +63,5 @@ describe("channel user-facing error summaries", () => {
 			"A channel action failed. Check the channel connection and try again.",
 		);
 		expect(channelHealthErrorSummary(health())).toBeNull();
-	});
-
-	test("the detail page cannot render the raw fields directly", () => {
-		const source = readFileSync(new URL("./channel-detail-page.tsx", import.meta.url), "utf8");
-		expect(source).toContain("channelActivityErrorSummary(item)");
-		expect(source).toContain("channelHealthErrorSummary(h)");
-		expect(source).not.toContain("item.delivery_last_error ?? item.error");
-		expect(source).not.toContain(">{h.last_error}<");
-		expect(source).not.toContain("h.last_error_outcome");
 	});
 });

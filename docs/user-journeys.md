@@ -28,7 +28,7 @@ Severity legend for open gaps: 🔴 blocks · 🟡 friction · ⚪ nitpick.
   nuqs (`q`, `category`, `page`, `pageSize`, filters) — back/forward and
   deep links restore the exact list state.
 - **Guards**: `sidebar-runtime-smoke` navigation grammar tests;
-  backend search tests; `pages-smoke`.
+  backend search tests; `session-search-navigation` and `project-detail`.
 
 ## 3. Read a session
 

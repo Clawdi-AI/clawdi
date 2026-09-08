@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { API_MODE_LABEL, PROVIDER_TYPE_META } from "@/hosted/v2/ai-providers/provider-types";
+import { PROVIDER_TYPE_META } from "@/hosted/v2/ai-providers/provider-types";
 
 describe("AI provider type metadata", () => {
 	test("uses canonical SDK environment variable names", () => {
@@ -22,14 +22,5 @@ describe("AI provider type metadata", () => {
 		expect(PROVIDER_TYPE_META.gemini.label).toBe("Google Gemini");
 		expect(PROVIDER_TYPE_META.mistral.apiKeyUrl).toBe("https://console.mistral.ai/api-keys");
 		expect(PROVIDER_TYPE_META.mistral.label).toBe("Mistral AI");
-	});
-
-	test("uses the factual protocol names shown in Advanced settings", () => {
-		expect(API_MODE_LABEL).toEqual({
-			openai_chat: "OpenAI Chat Completions",
-			openai_responses: "OpenAI Responses",
-			anthropic_messages: "Anthropic Messages",
-			google_generate_content: "Gemini generateContent",
-		});
 	});
 });

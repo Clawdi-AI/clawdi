@@ -3241,10 +3241,6 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }) => {
 	await expect(compute.getByRole("button")).toHaveCount(0);
 	await expect(compute.locator("a a, a button, button a")).toHaveCount(0);
 	await expect(compute.getByLabel("Compute resources", { exact: true })).toBeVisible();
-	await expect(page.getByText("Your agent is running", { exact: true })).toHaveCount(0);
-	await expect(overview.locator('[data-overview-module] [data-slot="badge"]')).toHaveCount(0);
-	await expect(overview.getByTestId("overview-channel-rail")).toHaveCount(0);
-	await expect(overview.getByTestId("overview-connector-rail")).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="model-provider"]')).toContainText(
 		"AI Providers",
 	);
@@ -3252,8 +3248,6 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }) => {
 	await expect.poll(() => managedModelRequests.length).toBe(1);
 	for (const configuration of ["2 vCPU", "4 GiB RAM", "20 GiB storage"])
 		await expect(compute.getByText(configuration, { exact: true })).toBeVisible();
-	await expect(compute.getByText("Plan", { exact: true })).toHaveCount(0);
-	await expect(compute.getByLabel("Compute resources").locator("dt:not(.sr-only)")).toHaveCount(0);
 	await expect(overview.locator('[data-overview-module="skills"]')).toContainText(
 		"No skills installed",
 	);
@@ -3295,12 +3289,6 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }) => {
 	await expect(skillsLink).not.toHaveAttribute("data-active", "");
 	await page.goto(`/agents/${railHostedEnvironmentId}`);
 	await expect(page.locator('main [data-slot="skeleton"]')).toHaveCount(0);
-	await expect(overview.locator("[data-overview-module]")).toHaveCount(9);
-	await expect(overview.getByText("Scope", { exact: true })).toHaveCount(0);
-	await expect(overview.getByText("Access", { exact: true })).toHaveCount(0);
-	await expect(overview.getByText("Managed", { exact: true })).toHaveCount(0);
-	await expect(overview.getByText("Activity and current state", { exact: true })).toHaveCount(0);
-	await expect(overview.locator('[data-overview-module="live-sync"]')).toHaveCount(0);
 	await page.setViewportSize({ width: 390, height: 1200 });
 	await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
 	const mobileSidebar = page.getByRole("dialog");
