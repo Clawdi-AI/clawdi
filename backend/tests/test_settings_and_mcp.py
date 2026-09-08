@@ -15,6 +15,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from composio.core.models.tool_router import ToolRouterMultiAccountConfig
 from fastapi.routing import iter_route_contexts
 from httpx import ASGITransport
 from mcp.types import ListToolsResult
@@ -1144,8 +1145,10 @@ async def test_create_tool_router_mcp_session_uses_canonical_sdk_off_event_loop(
     event_loop_thread = threading.get_ident()
 
     class FakeSessions:
-        def create(self, *, user_id: str, mcp: bool) -> _FakeToolRouterSession:
-            kwargs = {"user_id": user_id, "mcp": mcp}
+        def create(
+            self, *, user_id: str, mcp: bool, multi_account: ToolRouterMultiAccountConfig
+        ) -> _FakeToolRouterSession:
+            kwargs = {"user_id": user_id, "mcp": mcp, "multi_account": multi_account}
             calls.append({"kwargs": kwargs, "thread": threading.get_ident()})
             return _FakeToolRouterSession(
                 mcp=_FakeMcpConfig(
@@ -1164,7 +1167,11 @@ async def test_create_tool_router_mcp_session_uses_canonical_sdk_off_event_loop(
     now = datetime(2026, 5, 24, tzinfo=UTC)
     session = await composio._create_tool_router_mcp_session("clerk_user_123", now=now)
 
-    assert calls[0]["kwargs"] == {"user_id": "clerk_user_123", "mcp": True}
+    assert calls[0]["kwargs"] == {
+        "user_id": "clerk_user_123",
+        "mcp": True,
+        "multi_account": {"enable": True},
+    }
     assert calls[0]["thread"] != event_loop_thread
     assert session.url == "https://app.composio.dev/tool_router/v3/trs_test/mcp"
     assert session.headers == {
@@ -1201,7 +1208,9 @@ async def test_create_tool_router_mcp_session_fails_closed_on_invalid_sdk_contra
     config = mcp
 
     class FakeSessions:
-        def create(self, *, user_id: str, mcp: bool) -> _FakeToolRouterSession:
+        def create(
+            self, *, user_id: str, mcp: bool, multi_account: ToolRouterMultiAccountConfig
+        ) -> _FakeToolRouterSession:
             assert user_id and mcp is True
             return _FakeToolRouterSession(mcp=config)
 
