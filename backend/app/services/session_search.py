@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import batched
 from typing import Literal, Protocol
 from uuid import UUID
 
@@ -13,6 +14,7 @@ from sqlalchemy import (
     cast,
     delete,
     func,
+    insert,
     literal,
     literal_column,
     or_,
@@ -402,7 +404,7 @@ def searchable_snapshot_messages(
     return projected
 
 
-def _add_documents(
+async def _add_documents(
     db: AsyncSession,
     *,
     user_id: UUID,
@@ -411,25 +413,27 @@ def _add_documents(
     content_revision: str,
     messages: Sequence[SearchableSessionMessage],
 ) -> None:
-    db.add_all(
-        [
-            SessionMessageSearch(
-                user_id=user_id,
-                session_id=session_id,
-                generation_id=generation_id,
-                content_revision=content_revision,
-                position=message.position,
-                chunk_index=chunk_index,
-                role=message.role,
-                content=content,
-            )
-            for message in messages
-            for chunk_index, content in enumerate(session_search_chunks(message.content))
-        ]
+    documents = (
+        {
+            "user_id": user_id,
+            "session_id": session_id,
+            "generation_id": generation_id,
+            "content_revision": content_revision,
+            "position": message.position,
+            "chunk_index": chunk_index,
+            "role": message.role,
+            "content": content,
+        }
+        for message in messages
+        for chunk_index, content in enumerate(session_search_chunks(message.content))
     )
+    # Bound Python work between database awaits without creating an ORM unit
+    # of work for the entire transcript. All batches share the caller's transaction.
+    for batch in batched(documents, 500):
+        await db.execute(insert(SessionMessageSearch), list(batch))
 
 
-def stage_event_search_messages(
+async def stage_event_search_messages(
     db: AsyncSession,
     *,
     user_id: UUID,
@@ -437,7 +441,7 @@ def stage_event_search_messages(
     generation_id: UUID,
     events: Sequence[SessionEvent],
 ) -> None:
-    _add_documents(
+    await _add_documents(
         db,
         user_id=user_id,
         session_id=session_id,
@@ -480,7 +484,7 @@ async def replace_snapshot_search_index(
     await db.execute(
         delete(SessionMessageSearch).where(SessionMessageSearch.session_id == session.id)
     )
-    _add_documents(
+    await _add_documents(
         db,
         user_id=session.user_id,
         session_id=session.id,
@@ -531,7 +535,7 @@ async def rebuild_session_search_index(
     await db.execute(
         delete(SessionMessageSearch).where(SessionMessageSearch.session_id == current.id)
     )
-    _add_documents(
+    await _add_documents(
         db,
         user_id=current.user_id,
         session_id=current.id,

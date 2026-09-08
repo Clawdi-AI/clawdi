@@ -113,6 +113,10 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     load off the main thread so it doesn't block startup itself; if it
     finishes before the first embedding call, that call is fast.
     """
+    # Populate FastAPI's schema cache before accepting requests: its default
+    # OpenAPI endpoint otherwise generates the schema on the event loop.
+    await asyncio.to_thread(_app.openapi)
+
     background: set[asyncio.Task[None]] = set()
     whatsapp_sidecars = ConfiguredWhatsAppSidecarClientPool(
         settings.channel_whatsapp_baileys_sidecar_token.get_secret_value(),

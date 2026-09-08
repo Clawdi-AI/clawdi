@@ -19,11 +19,21 @@ from app.routes.channel_routers import discord, whatsapp
 
 
 @pytest.mark.asyncio
-async def test_openapi_available(client: httpx.AsyncClient):
-    """App boots and the OpenAPI schema is reachable."""
-    r = await client.get("/openapi.json")
-    assert r.status_code == 200
-    assert "paths" in r.json()
+async def test_openapi_available(client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch):
+    """Startup populates the same schema cache served by the public endpoint."""
+    monkeypatch.setattr(app, "openapi_schema", None)
+    async with app.router.lifespan_context(app):
+        schema = app.openapi_schema
+        assert schema is not None
+
+        def unexpected_generation(**_kwargs: object) -> None:
+            pytest.fail("OpenAPI must already be generated before serving requests")
+
+        monkeypatch.setattr("fastapi.applications.get_openapi", unexpected_generation)
+        r = await client.get("/openapi.json")
+        assert r.status_code == 200
+        assert "paths" in r.json()
+        assert r.json() == schema
 
 
 @pytest.mark.asyncio

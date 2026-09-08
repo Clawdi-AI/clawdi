@@ -142,7 +142,7 @@ async def _read_upload(file: UploadFile) -> bytes:
     return data
 
 
-def _stage_missing_chunk_search_projection(
+async def _stage_missing_chunk_search_projection(
     db: AsyncSession,
     session: Session,
     chunk: SessionEventChunk,
@@ -150,7 +150,7 @@ def _stage_missing_chunk_search_projection(
 ) -> bool:
     if chunk.search_indexed_at is not None:
         return False
-    stage_event_search_messages(
+    await stage_event_search_messages(
         db,
         user_id=session.user_id,
         session_id=session.id,
@@ -344,19 +344,19 @@ async def upload_session_event_generation_chunk(
             or existing.result_head_hash != validated.result_head_hash
         ):
             raise HTTPException(status.HTTP_409_CONFLICT, "Event chunk identity conflict")
-        if _stage_missing_chunk_search_projection(
-            db,
-            session,
-            existing,
-            validated.events,
-        ):
-            try:
+        try:
+            if await _stage_missing_chunk_search_projection(
+                db,
+                session,
+                existing,
+                validated.events,
+            ):
                 await db.commit()
-            except IntegrityError as exc:
-                await db.rollback()
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT, "Event chunk search projection conflict"
-                ) from exc
+        except IntegrityError as exc:
+            await db.rollback()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Event chunk search projection conflict"
+            ) from exc
         return SessionEventChunkResponse(
             generation=generation_id,
             start_seq=existing.start_seq,
@@ -386,14 +386,14 @@ async def upload_session_event_generation_chunk(
             search_indexed_at=datetime.now(UTC),
         )
     )
-    stage_event_search_messages(
-        db,
-        user_id=session.user_id,
-        session_id=session.id,
-        generation_id=generation_id,
-        events=validated.events,
-    )
     try:
+        await stage_event_search_messages(
+            db,
+            user_id=session.user_id,
+            session_id=session.id,
+            generation_id=generation_id,
+            events=validated.events,
+        )
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
@@ -602,13 +602,13 @@ async def append_session_events(
         ).scalar_one_or_none()
         if existing_chunk is None:
             raise HTTPException(status.HTTP_409_CONFLICT, "Event append chunk is missing")
-        if _stage_missing_chunk_search_projection(
-            db,
-            session,
-            existing_chunk,
-            validated.events,
-        ):
-            try:
+        try:
+            if await _stage_missing_chunk_search_projection(
+                db,
+                session,
+                existing_chunk,
+                validated.events,
+            ):
                 await db.flush()
                 await finalize_event_search_index(
                     db,
@@ -617,11 +617,11 @@ async def append_session_events(
                     projection_complete=await event_search_projection_complete(db, generation),
                 )
                 await db.commit()
-            except IntegrityError as exc:
-                await db.rollback()
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT, "Event chunk search projection conflict"
-                ) from exc
+        except IntegrityError as exc:
+            await db.rollback()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Event chunk search projection conflict"
+            ) from exc
         return SessionEventAppendResponse(
             generation=generation,
             revision=receipt.result_revision,
@@ -688,7 +688,7 @@ async def append_session_events(
             result_head_hash=final_head_hash,
         )
     )
-    stage_event_search_messages(
+    await stage_event_search_messages(
         db,
         user_id=session.user_id,
         session_id=session.id,

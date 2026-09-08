@@ -13,6 +13,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.session import Session, SessionMessageSearch
+from app.models.user import User
 from app.services.session_events import (
     EMPTY_EVENT_HEAD,
     EVENT_ADAPTER,
@@ -970,6 +971,7 @@ async def test_event_search_rebuild_fences_same_head_generation_replacement(
 async def test_generation_commit_does_not_publish_an_incomplete_search_projection(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
+    seed_user: User,
 ) -> None:
     from app.models.session import SessionEventChunk
     from app.routes import session_events as event_routes
@@ -1017,6 +1019,20 @@ async def test_generation_commit_does_not_publish_an_incomplete_search_projectio
             select(SessionEventChunk).where(SessionEventChunk.generation_id == generation_id)
         )
     ).scalar_one()
+    # An inconsistent projection must retain the retry's sanitized conflict
+    # response even when inserts execute before commit.
+    chunk.search_indexed_at = None
+    await db_session.commit()
+    conflicting_retry = await client.put(
+        f"/v1/sessions/{local_id}/events/generations/{generation}/chunks/0",
+        data={"base_head_hash": EMPTY_EVENT_HEAD, "content_hash": content_hash},
+        files={"file": ("0.ndjson", data, "application/x-ndjson")},
+    )
+    assert conflicting_retry.status_code == 409, conflicting_retry.text
+    assert conflicting_retry.json() == {"detail": "Event chunk search projection conflict"}
+    await db_session.refresh(seed_user)
+    await db_session.refresh(chunk)
+    assert chunk.search_indexed_at is None
     await db_session.execute(
         delete(SessionMessageSearch).where(SessionMessageSearch.generation_id == generation_id)
     )
