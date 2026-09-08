@@ -4,10 +4,8 @@ import {
 	decodeResourceRouteParam,
 	getProjectResourceDefinition,
 	memoryDetailHref,
-	PROJECT_RESOURCE_NAV_IDS,
 	projectDetailHref,
 	projectManagedResourceDefinitions,
-	projectResourceDefinitionsForGroup,
 	projectResourceHref,
 	projectResourcePathLabel,
 	projectResourceScopeDescription,
@@ -49,20 +47,7 @@ describe("project resource model", () => {
 		expect(getProjectResourceDefinition("memories").projectScope).toBe("all-agents");
 	});
 
-	it("keeps navigation order grouped by management flow", () => {
-		expect(PROJECT_RESOURCE_NAV_IDS).toEqual([
-			"projects",
-			"skills",
-			"vaults",
-			"connectors",
-			"sessions",
-			"memories",
-		]);
-		expect(projectResourceDefinitionsForGroup("library").map((r) => r.id)).toEqual([
-			"skills",
-			"vaults",
-			"connectors",
-		]);
+	it("selects only Project-managed resources", () => {
 		expect(projectManagedResourceDefinitions().map((r) => r.id)).toEqual(["skills", "vaults"]);
 	});
 

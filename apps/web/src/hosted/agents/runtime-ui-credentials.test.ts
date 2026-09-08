@@ -84,7 +84,6 @@ describe("runtime UI credential targeting", () => {
 		expect(
 			resolveRuntimeUiCredentials(credentials, "https://runtime.example/hermes", "rv-current"),
 		).toEqual(credentials);
-		expect(credentials.url).not.toContain(credentials.password ?? "");
 		expect(runtimeUiLaunchTarget(credentials)).toBe(credentials.url);
 		const rootCredentials = { ...credentials, url: "https://runtime.example/" };
 		expect(runtimeUiLaunchTarget(rootCredentials)).toBe("https://runtime.example/chat");

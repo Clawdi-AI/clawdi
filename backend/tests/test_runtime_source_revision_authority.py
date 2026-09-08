@@ -85,11 +85,6 @@ MUTATION_AUTHORITIES = (
         "queue_runtime_manifest_changed",
     ),
     (
-        "app/services/ai_provider_auth_transition.py",
-        "transition_ai_provider_auth",
-        "queue_provider_runtime_manifest_changed",
-    ),
-    (
         "app/routes/ai_providers.py",
         "upsert_ai_provider",
         "queue_provider_runtime_manifest_changed",

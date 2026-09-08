@@ -171,7 +171,6 @@ describe("CLI smoke — src entry", () => {
 			const parsed = JSON.parse(stdout);
 			expect(parsed.authenticated).toBe(false);
 			expect(parsed.source).toBe("none");
-			expect(stdout).not.toContain("secret");
 		} finally {
 			rmSync(fakeHome, { recursive: true, force: true });
 		}

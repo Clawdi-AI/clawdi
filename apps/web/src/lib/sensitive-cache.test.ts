@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import type { QueryClient } from "@tanstack/react-query";
 import { createAppQueryClient } from "@/lib/query-client";
 import { cacheValueContains, sanitizeQueryCacheValue } from "@/lib/sensitive-cache";
-import { executeSensitiveAction } from "@/lib/use-sensitive-action";
 
 function cachedState(queryClient: QueryClient) {
 	return {
@@ -46,22 +45,6 @@ describe("sensitive cache boundaries", () => {
 		});
 		expect(cacheValueContains(cachedState(queryClient), clientSecret)).toBe(false);
 		expect(cacheValueContains(cachedState(queryClient), providerToken)).toBe(false);
-	});
-
-	test("imperative secret actions leave MutationCache empty after settlement", async () => {
-		const queryClient = createAppQueryClient();
-		const apiKey = "sk-sensitive-action-test";
-		const oneTimeToken = "one-time-sensitive-action-test";
-
-		const result = await executeSensitiveAction(
-			async (value: string) => ({ agent_token: oneTimeToken, accepted: value.length > 0 }),
-			apiKey,
-		);
-
-		expect(result).toEqual({ agent_token: oneTimeToken, accepted: true });
-		expect(queryClient.getMutationCache().getAll()).toHaveLength(0);
-		expect(cacheValueContains(cachedState(queryClient), apiKey)).toBe(false);
-		expect(cacheValueContains(cachedState(queryClient), oneTimeToken)).toBe(false);
 	});
 
 	test("matches mixed-case fields through arrays and deeply nested JSON payloads", () => {

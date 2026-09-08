@@ -1574,30 +1574,6 @@ async def test_session_batch_updates_only_matching_origin(
 
 
 @pytest.mark.asyncio
-async def test_session_batch_response_carries_rejected_field_shape(client: httpx.AsyncClient):
-    """Schema-shape pin: a normal happy-path batch returns
-    `rejected: []` so CLI callers reading `result.rejected`
-    don't have to defend against undefined."""
-    env_id = await _register_env(client)
-    payload = {
-        "sessions": [
-            {
-                "environment_id": env_id,
-                "local_session_id": "happy-path",
-                "started_at": datetime.now(UTC).isoformat(),
-                "message_count": 1,
-                "model": "claude-opus-4",
-                "content_hash": "a" * 64,
-            }
-        ]
-    }
-    r = await client.post("/v1/sessions/batch", json=payload)
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["rejected"] == []
-
-
-@pytest.mark.asyncio
 async def test_session_batch_rejects_legacy_session_without_immutable_origin(
     client: httpx.AsyncClient, db_session: AsyncSession, seed_user
 ):

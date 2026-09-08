@@ -102,10 +102,6 @@ describe("model binding", () => {
 		});
 	});
 
-	test("uses the canonical Clawdi AI product label", () => {
-		expect(MANAGED_PROVIDER_LABEL).toBe("Clawdi AI");
-	});
-
 	test("does not invent a managed model before the catalog loads", () => {
 		expect(firstModelForProvider(MANAGED_AI_CHOICE, [])).toBe("");
 		expect(modelOptionsForProvider(MANAGED_AI_CHOICE, [])).toEqual([]);

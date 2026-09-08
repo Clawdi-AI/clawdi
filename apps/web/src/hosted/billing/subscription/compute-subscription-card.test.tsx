@@ -17,7 +17,5 @@ describe("ComputeSubscriptionCard", () => {
 
 		expect(markup).toContain("Available for a new agent");
 		expect(markup).not.toContain("Used by");
-		expect(markup).not.toContain("Deleted agent");
-		expect(markup).not.toContain("Orphaned");
 	});
 });

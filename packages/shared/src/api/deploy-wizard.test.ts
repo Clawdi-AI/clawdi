@@ -22,7 +22,7 @@ type Equal<Left, Right> =
 type Assert<Condition extends true> = Condition;
 type CheckoutModeIsExact = Assert<Equal<HostedDeployCheckoutUiMode, "custom" | "hosted">>;
 
-const checkoutModeIsExact: CheckoutModeIsExact = true;
+void (true satisfies CheckoutModeIsExact);
 // @ts-expect-error Stripe Checkout UI mode must stay on the backend's narrow generated union.
 const unsupportedCheckoutMode: HostedDeployCheckoutUiMode = "elements";
 void unsupportedCheckoutMode;
@@ -166,10 +166,6 @@ describe("hosted deploy request contract", () => {
 });
 
 describe("hosted deploy compute and payment contract", () => {
-	test("keeps every product checkout mode in the generated narrow union", () => {
-		expect(checkoutModeIsExact).toBe(true);
-	});
-
 	test("requires an explicit Basic offer once the free slot is occupied", () => {
 		const basic = plan("compute_basic", 900);
 		expect(

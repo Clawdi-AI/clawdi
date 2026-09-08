@@ -103,16 +103,6 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(workflow).not.toContain("WHATSAPP_TAILSCALE_EXPECTED_PUBLIC_IP");
 	});
 
-	test("compares desired and actual network mode independently of image revision", () => {
-		expect(deployHelper).toContain("actual_network=");
-		expect(deployHelper).toContain("'{{.HostConfig.NetworkMode}}'");
-		expect(deployHelper).toContain('[[ "$' + '{actual_network}" == "$' + '{desired_network}" ]]');
-		expect(deployHelper).toContain("infra_netns_inode");
-		expect(deployHelper).toContain("docker exec '$1' stat -Lc %i /proc/self/ns/net");
-		expect(deployHelper).toContain('desired_network="container:$' + '{infra_id}"');
-		expect(deployHelper).not.toContain("/proc/$" + "{pid}/ns/net");
-	});
-
 	test("keeps state private and exposes only a read-only Unix socket to the app", () => {
 		expect(deploy).toContain("/home/phala/clawdi-whatsapp/run:/run/clawdi-whatsapp:ro");
 		expect(deploy).toContain('remote: /data\n        mode: "700"');

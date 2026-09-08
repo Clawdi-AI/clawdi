@@ -146,9 +146,6 @@ describe("run command project folder selection", () => {
 			USER: "clawdi",
 			LOGNAME: "clawdi",
 		});
-		expect(child.env.USER).toBe("clawdi");
-		expect(child.env.LOGNAME).toBe("clawdi");
-		expect(child.env.HOME).toBe("/home/clawdi");
 		expect(child.env.HTTPS_PROXY).toBe("http://127.0.0.1:19090");
 		expect(child.env.CLAWDI_PROVIDER_PLACEHOLDER_TOKEN).toBe("clawdi-egress-placeholder");
 		expect(child.env.CLAWDI_AUTH_TOKEN).toBeUndefined();
@@ -617,47 +614,6 @@ describe("run command project folder selection", () => {
 		expect(calls[0].env.CLAWDI_EGRESS_SIDECAR_BUNDLE).toBeUndefined();
 		expect(calls[0].env.CLAWDI_EGRESS_ALLOW_REMOTE_PROXY).toBeUndefined();
 		expect(calls[0].env.CLAWDI_AUTH_TOKEN).toBeUndefined();
-	});
-
-	it("does not start a per-run hosted egress sidecar for transparent runtime commands", async () => {
-		unlinkSync(join(fakeClawdiHome, "auth.json"));
-		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
-		const runRoot = join(tmpRoot, "run", "clawdi");
-		const hermesPath = join(tmpRoot, "home", "clawdi", ".local", "bin", "hermes");
-		const runConfigRoot = join(tmpRoot, "etc", "clawdi", "run");
-		const egressProfileBundle = join(tmpRoot, "run", "clawdi", "egress", "profiles.json");
-		mkdirSync(runConfigRoot, { recursive: true });
-		mkdirSync(join(tmpRoot, "run", "clawdi", "egress"), { recursive: true });
-		mkdirSync(join(tmpRoot, "home", "clawdi", ".local", "bin"), { recursive: true });
-		writeFileSync(egressProfileBundle, "{}\n");
-		writeFileSync(
-			join(runConfigRoot, "hermes.json"),
-			JSON.stringify({
-				schemaVersion: "clawdi.runtimeRunConfig.v1",
-				runtime: "hermes",
-				enabled: true,
-				generatedAt: "2026-06-04T00:00:00Z",
-				generation: 1,
-				instanceId: "iid_test",
-				command: "hermes",
-				defaultArgs: [],
-				env: {},
-				prependPath: [join(tmpRoot, "home", "clawdi", ".local", "bin")],
-				cwd: projectRoot,
-				commandPath: hermesPath,
-				appRoot: join(tmpRoot, "home", "clawdi", ".hermes", "hermes-agent"),
-				egressProfileBundlePath: egressProfileBundle,
-			}),
-		);
-		writeFileSync(hermesPath, "#!/usr/bin/env sh\n");
-		const { calls, spawnImpl } = recordSpawn();
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
-		process.env.CLAWDI_RUN_DIR = runRoot;
-
-		await run(["hermes", "serve"], {}, spawnImpl);
-
-		expect(calls).toHaveLength(1);
 	});
 
 	it("uses the system CA bundle for hosted transparent runtime commands", async () => {

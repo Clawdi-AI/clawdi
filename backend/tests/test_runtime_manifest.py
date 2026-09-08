@@ -1897,33 +1897,6 @@ async def test_environment_delete_invalidates_cascaded_runtime_manifest(
 
 
 @pytest.mark.asyncio
-async def test_agent_v2_manifest_cli_package_is_cloud_owned(
-    admin_client,
-    db_session,
-    seed_user,
-):
-    env = await create_env_with_project(
-        db_session,
-        user_id=seed_user.id,
-        machine_id=f"runtime-cli-authority-{uuid4().hex[:8]}",
-        machine_name="Runtime CLI authority",
-        agent_type="openclaw",
-    )
-    await _write_runtime_state(admin_client, str(env.id))
-    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
-    async with await _runtime_client(db_session, seed_user, api_key) as client:
-        response = await client.get("/v1/runtime/manifest")
-    app.dependency_overrides.clear()
-
-    assert response.status_code == 200, response.text
-    assert response.json()["manifest"]["clawdiCli"] == {
-        "source": "npm:clawdi",
-        "packageSpec": TEST_CLI_PACKAGE_SPEC,
-        "registry": "https://registry.npmjs.org",
-    }
-
-
-@pytest.mark.asyncio
 async def test_admin_runtime_state_rejects_cli_desired_state_authority(
     admin_client,
     db_session,

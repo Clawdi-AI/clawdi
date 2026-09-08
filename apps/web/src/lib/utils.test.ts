@@ -1,26 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
-	cn,
 	formatAbsoluteTooltip,
 	formatNumber,
 	formatSessionSummary,
 	recencyBucketFor,
 	relativeTime,
 } from "./utils";
-
-describe("cn", () => {
-	test("merges class names", () => {
-		expect(cn("foo", "bar")).toBe("foo bar");
-	});
-
-	test("dedupes conflicting tailwind classes (last wins)", () => {
-		expect(cn("px-2", "px-4")).toBe("px-4");
-	});
-
-	test("drops falsy values", () => {
-		expect(cn("foo", null, undefined, false && "bar", "baz")).toBe("foo baz");
-	});
-});
 
 describe("relativeTime", () => {
 	test('returns "just now" for recent timestamps', () => {

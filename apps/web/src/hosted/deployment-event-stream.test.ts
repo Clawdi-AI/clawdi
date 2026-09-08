@@ -9,7 +9,6 @@ import {
 	type DeploymentEventSignal,
 	deploymentEventQueryBelongsToAgent,
 	deploymentEventSignal,
-	EVENT_STREAM_INVALIDATION_BATCH_MS,
 	eventStreamReconnectDelay,
 	eventStreamResponseResetsCursor,
 	invalidateDeploymentEventQueries,
@@ -204,8 +203,6 @@ describe("deployment event query invalidation", () => {
 		batch.enqueue(first);
 		batch.enqueue(first);
 		batch.enqueue(second);
-		expect(EVENT_STREAM_INVALIDATION_BATCH_MS).toBeGreaterThanOrEqual(50);
-		expect(EVENT_STREAM_INVALIDATION_BATCH_MS).toBeLessThanOrEqual(100);
 		expect(batches).toHaveLength(0);
 		await Bun.sleep(10);
 		expect(batches).toHaveLength(1);

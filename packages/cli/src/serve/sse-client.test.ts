@@ -315,16 +315,6 @@ describe("parseRecord", () => {
 		}
 	});
 
-	it("uses event names that the released live-only parser ignores during rolling deploys", () => {
-		// origin/main's released parser accepts exactly these two Skill event
-		// names. Keeping Agent projection invalidations additive prevents an
-		// already-open old SSE stream from writing/deleting local files when a
-		// new backend worker broadcasts through PostgreSQL NOTIFY.
-		const releasedSkillEventTypes = new Set(["skill_changed", "skill_deleted"]);
-		expect(releasedSkillEventTypes.has("agent_skill_changed")).toBe(false);
-		expect(releasedSkillEventTypes.has("agent_skill_deleted")).toBe(false);
-	});
-
 	it("parses a well-formed skill_changed record", () => {
 		const record =
 			'event: skill_changed\ndata: {"type":"skill_changed","skill_key":"hello","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":7}';

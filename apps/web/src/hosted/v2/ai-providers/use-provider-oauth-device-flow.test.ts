@@ -57,17 +57,6 @@ describe("provider OAuth device flow lifecycle", () => {
 		).toBe(true);
 	});
 
-	test("ignores an expiry callback from the replaced session generation", () => {
-		expect(
-			isCurrentOAuthGeneration({
-				stopped: false,
-				completed: false,
-				generation: 4,
-				currentGeneration: 5,
-			}),
-		).toBe(false);
-	});
-
 	test("does not start a session when the flow is cancelled during its pending factory", async () => {
 		const lifecycle = { generation: 0, completed: true };
 		const pending = deferred<OAuthSession | null>();

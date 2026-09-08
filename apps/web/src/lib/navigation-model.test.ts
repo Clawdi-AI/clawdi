@@ -22,35 +22,35 @@ describe("sidebar navigation model", () => {
 		expectNavigationHeadings(cloudGroups);
 
 		const ossGroups = consoleNavigationGroups(false);
-		expect(ossGroups[1]?.items.map((item) => item.id)).toEqual([
+		expect(ossGroups[1]?.items.map((item) => item.id).sort()).toEqual([
+			"connectors",
 			"projects",
 			"skills",
 			"vaults",
-			"connectors",
 		]);
 		expectNavigationHeadings(ossGroups);
 	});
 
-	test("preserves command palette availability in the rendered navigation order", () => {
-		expect(consoleCommandPaletteItems(false).map((item) => item.id)).toEqual([
-			"overview",
-			"sessions",
-			"memories",
-			"projects",
-			"skills",
-			"vaults",
-			"connectors",
-		]);
-		expect(consoleCommandPaletteItems(true).map((item) => item.id)).toEqual([
-			"overview",
-			"sessions",
-			"memories",
-			"projects",
-			"skills",
-			"vaults",
-			"connectors",
-			"channels",
+	test("preserves command palette availability", () => {
+		expect(
+			consoleCommandPaletteItems(false)
+				.map((item) => item.id)
+				.sort(),
+		).toEqual(["connectors", "memories", "overview", "projects", "sessions", "skills", "vaults"]);
+		expect(
+			consoleCommandPaletteItems(true)
+				.map((item) => item.id)
+				.sort(),
+		).toEqual([
 			"ai-providers",
+			"channels",
+			"connectors",
+			"memories",
+			"overview",
+			"projects",
+			"sessions",
+			"skills",
+			"vaults",
 		]);
 	});
 

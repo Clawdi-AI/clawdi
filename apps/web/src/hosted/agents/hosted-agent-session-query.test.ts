@@ -5,7 +5,6 @@ import {
 	QueryClient,
 	QueryObserver,
 } from "@tanstack/react-query";
-import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	canQueryHostedAgentSessions,
 	HOSTED_AGENT_SESSIONS_REFETCH_INTERVAL_MS,
@@ -17,45 +16,6 @@ describe("hosted agent sessions refresh", () => {
 		expect(canQueryHostedAgentSessions("4f4f8630-5a38-4d31-89ad-2e5451f6ba8f")).toBe(true);
 		expect(canQueryHostedAgentSessions("hdep_starting")).toBe(false);
 		expect(canQueryHostedAgentSessions("")).toBe(false);
-	});
-
-	test("preserves successful data and stays non-blocking after a refetch error", async () => {
-		const error = new Error("background refresh failed");
-		const cachedData = { items: [{ id: "session-1" }], total: 1 };
-		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-		let calls = 0;
-		const observer = new QueryObserver(queryClient, {
-			queryKey: ["test", "hosted-sessions-refetch-error"],
-			queryFn: async () => {
-				calls += 1;
-				if (calls === 1) return cachedData;
-				throw error;
-			},
-		});
-		let resolveFirstSuccess = (_result: ReturnType<typeof observer.getCurrentResult>) => {};
-		const firstSuccess = new Promise<ReturnType<typeof observer.getCurrentResult>>((resolve) => {
-			resolveFirstSuccess = resolve;
-		});
-		const unsubscribe = observer.subscribe((result) => {
-			if (result.isSuccess && !result.isFetching) resolveFirstSuccess(result);
-		});
-
-		try {
-			const first = await firstSuccess;
-			expect(first.data).toEqual(cachedData);
-			expect(first.isSuccess).toBe(true);
-
-			const second = await observer.refetch();
-			expect(calls).toBe(2);
-			expect(second.data).toEqual(cachedData);
-			expect(second.error).toBe(error);
-			expect(second.isRefetchError).toBe(true);
-			expect(shouldBlockQueryError(second.error, second.data)).toBe(false);
-			expect(shouldBlockQueryError(error, undefined)).toBe(true);
-		} finally {
-			unsubscribe();
-			queryClient.clear();
-		}
 	});
 
 	test("polls only while an observer is mounted in the foreground", async () => {

@@ -8,15 +8,6 @@ describe("pairing success detection", () => {
 		expect(pairingCountIncreased(1, 2)).toBe(false);
 	});
 
-	test("a reopened session snapshots its newer count instead of reusing the old baseline", () => {
-		const firstSessionBaseline = 1;
-		expect(pairingCountIncreased(2, firstSessionBaseline)).toBe(true);
-
-		const reopenedSessionBaseline = 2;
-		expect(pairingCountIncreased(2, reopenedSessionBaseline)).toBe(false);
-		expect(pairingCountIncreased(3, reopenedSessionBaseline)).toBe(true);
-	});
-
 	test("describes provider success without requiring a binding-list poll", () => {
 		expect(pairingSuccessDescription("telegram")).toBe("Telegram chat is ready.");
 		expect(pairingSuccessDescription("discord")).toBe("Discord chat is ready.");

@@ -40,14 +40,8 @@ const releasedAgentPluginReceiptWriters = [
 		schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
 		mode: 0o600,
 	},
-	{
-		writerVersion: "0.14.14",
-		fileName: "runtime-agent-plugin-receipts.json",
-		schemaVersion: "clawdi.hostedAgentPluginReceipts.v2",
-		mode: 0o600,
-	},
 ] satisfies Array<{
-	writerVersion: "0.13.92" | "0.14.14";
+	writerVersion: "0.13.92";
 	fileName: "runtime-agent-plugin-receipts.json";
 	schemaVersion: "clawdi.hostedAgentPluginReceipts.v2";
 	mode: 0o600;

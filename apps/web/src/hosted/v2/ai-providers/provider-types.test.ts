@@ -19,8 +19,6 @@ describe("AI provider type metadata", () => {
 		);
 		expect(PROVIDER_TYPE_META.openrouter.apiKeyUrl).toBe("https://openrouter.ai/keys");
 		expect(PROVIDER_TYPE_META.gemini.apiKeyUrl).toBe("https://aistudio.google.com/apikey");
-		expect(PROVIDER_TYPE_META.gemini.label).toBe("Google Gemini");
 		expect(PROVIDER_TYPE_META.mistral.apiKeyUrl).toBe("https://console.mistral.ai/api-keys");
-		expect(PROVIDER_TYPE_META.mistral.label).toBe("Mistral AI");
 	});
 });

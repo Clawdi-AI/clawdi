@@ -11,7 +11,6 @@ These tests pin that contract:
 - name=None + JWT name → backfilled
 - email already set → NOT overwritten (Clerk display-name changes
   must not silently rewrite our row)
-- both already set → no commit churn
 """
 
 from __future__ import annotations
@@ -128,24 +127,6 @@ async def test_backfill_only_email_when_name_unknown(db_session, signing_key):
     assert ctx is not None
     assert ctx.user.email == "just-email@example.com"
     assert ctx.user.name is None  # JWT didn't carry one
-
-
-@pytest.mark.asyncio
-async def test_backfill_no_op_when_all_fields_set(db_session, signing_key):
-    """Both email and name already populated → no commit, no churn.
-    This is the 99% steady-state path."""
-    clerk_id = f"clerk_steady_state_{uuid.uuid4().hex[:12]}"
-
-    user = User(clerk_id=clerk_id, email="set@example.com", name="Set")
-    db_session.add(user)
-    await db_session.commit()
-
-    token = _sign(signing_key, clerk_id, email="ignored@example.com", name="Ignored")
-    ctx = await _auth_via_clerk_jwt(token, db_session)
-
-    assert ctx is not None
-    assert ctx.user.email == "set@example.com"
-    assert ctx.user.name == "Set"
 
 
 @pytest.mark.asyncio

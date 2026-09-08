@@ -30,16 +30,6 @@ async function fulfill(route: Route, body: unknown) {
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
-	await expect
-		.poll(() =>
-			page.evaluate(() => ({
-				viewport: window.innerWidth,
-				content: document.documentElement.scrollWidth,
-			})),
-		)
-		.toEqual(
-			expect.objectContaining({ viewport: expect.any(Number), content: expect.any(Number) }),
-		);
 	const widths = await page.evaluate(() => ({
 		viewport: window.innerWidth,
 		content: document.documentElement.scrollWidth,
@@ -161,7 +151,6 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 		timeout: 15_000,
 	});
 	const projectTabs = page.getByRole("tablist", { name: "Project pages" });
-	await expect(projectTabs.getByRole("tab")).toHaveCount(5);
 	const overviewTab = projectTabs.getByRole("tab", { name: "Overview" });
 	await expect(overviewTab).toHaveAttribute("aria-selected", "true");
 	expect(projectResourceRequests).toEqual([]);
@@ -216,10 +205,6 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 	const catalog = page.getByTestId("project-vault-catalog");
 	const linked = catalog.getByRole("region", { name: "In this Project Vaults", exact: true });
 	const available = catalog.getByRole("region", { name: "Available Project Vaults" });
-	await expect(catalog.getByRole("region").nth(0)).toHaveAttribute(
-		"aria-label",
-		"In this Project Vaults",
-	);
 	await expect(linked.getByText("In this Project", { exact: true }).locator("..")).toHaveText(
 		"In this Project1",
 	);

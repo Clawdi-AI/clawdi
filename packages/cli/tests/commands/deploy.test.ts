@@ -20,7 +20,6 @@ import type {
 } from "@clawdi/shared/api";
 import {
 	DEFAULT_DEPLOY_POLL_LIMIT,
-	DeployInputError,
 	type DeployPromptAdapter,
 	deployCommand,
 	type HostedDeployGateway,
@@ -1450,12 +1449,13 @@ describe("deploy orchestration", () => {
 			runDeployFlow(
 				parseDeployCommandOptions({
 					compute: "performance",
+					requestId: "123e4567-e89b-42d3-a456-426614174096",
 					payment: "card",
 					yes: true,
 				}),
 				{ client, interactive: false },
 			),
-		).rejects.toBeInstanceOf(DeployInputError);
+		).rejects.toMatchObject({ code: "paid_checkout_unavailable" });
 		expect(client.quoted).toBeNull();
 		expect(client.checkoutCalls).toHaveLength(0);
 	});

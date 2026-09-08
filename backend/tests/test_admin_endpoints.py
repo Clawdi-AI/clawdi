@@ -740,67 +740,61 @@ async def test_admin_mint_existing_user_reuses_row(admin_client, db_session, see
 
 
 @pytest.mark.asyncio
-async def test_admin_mint_lazy_create_handles_race(db_session):
-    """Concurrent admin calls for the same brand-new clerk_id race
-    on the `users.clerk_id` unique constraint. The loser must
-    catch IntegrityError, rollback, and adopt the winner's row —
-    not 500 with a unique-constraint traceback.
-
-    Real-world race: a user clicks Deploy on clawdi.ai (admin mint
-    fires) AND signs into cloud.clawdi.ai (JWT lazy-create fires)
-    in the same second. Whichever reaches `db.flush` first wins;
-    the other must converge gracefully.
-
-    Test simulates this by injecting an IntegrityError on the first
-    flush attempt and verifying the rollback+re-query path returns
-    the row that the "winner" (separately seeded) wrote.
-    """
-    from sqlalchemy.exc import IntegrityError
-
-    from app.models.user import User
-    from app.routes.admin import _resolve_or_create_user
-
-    clerk_id = f"clerk_race_{uuid.uuid4().hex[:12]}"
-
-    # Seed the "winner's" row: this is what `_resolve_or_create_user`
-    # will find after rolling back its losing flush.
-    winner = User(clerk_id=clerk_id, email=None, name=None)
-    db_session.add(winner)
-    await db_session.commit()
-
-    # Make `db.flush()` raise IntegrityError exactly once — the
-    # path the loser takes when its INSERT trips the unique
-    # constraint. Real flush() is restored after the first call so
-    # any later flush (Personal project insert, etc.) works normally.
-    real_flush = db_session.flush
-    flush_calls = {"count": 0}
-
-    async def mock_flush(objects: Sequence[object] | None = None) -> None:
-        flush_calls["count"] += 1
-        if flush_calls["count"] == 1:
-            raise IntegrityError("simulated race", None, Exception())
-        if objects is None:
-            await real_flush()
-        else:
-            await real_flush(objects)
-
-    db_session.flush = mock_flush
-
-    try:
-        result = await _resolve_or_create_user(db_session, clerk_id)
-    finally:
-        db_session.flush = real_flush
-
-    # The loser converged onto the winner's row.
-    assert result.clerk_id == clerk_id
-    assert result.id == winner.id
-    # No duplicate row — the unique constraint did its job.
+@pytest.mark.committed_db
+async def test_admin_mint_lazy_create_handles_race(engine, monkeypatch):
+    """Two first-time admin mints adopt one User and Personal project."""
     from sqlalchemy import func, select
 
-    count = (
-        await db_session.execute(select(func.count(User.id)).where(User.clerk_id == clerk_id))
-    ).scalar_one()
-    assert count == 1
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
+    from app.models.user import User
+    from app.routes import admin as admin_routes
+
+    clerk_id = f"clerk_race_{uuid.uuid4().hex}"
+    original_load = admin_routes.load_clerk_user_for_issuer
+    both_missing = asyncio.Event()
+    arrivals = 0
+
+    async def synchronize_missing_user(*args, **kwargs):
+        nonlocal arrivals
+        user = await original_load(*args, **kwargs)
+        assert user is None
+        arrivals += 1
+        if arrivals == 2:
+            both_missing.set()
+        await asyncio.wait_for(both_missing.wait(), timeout=5)
+        return user
+
+    monkeypatch.setattr(admin_routes, "load_clerk_user_for_issuer", synchronize_missing_user)
+    async with _isolated_admin_client(engine) as client:
+        responses = await asyncio.wait_for(
+            asyncio.gather(
+                *(
+                    client.post(
+                        "/v1/admin/auth/keys",
+                        headers=_AUTH,
+                        json={"target_clerk_id": clerk_id, "label": label},
+                    )
+                    for label in ("race-first", "race-second")
+                )
+            ),
+            timeout=10,
+        )
+
+    assert arrivals == 2
+    assert [response.status_code for response in responses] == [200, 200]
+    assert responses[0].json()["id"] != responses[1].json()["id"]
+    async with async_sessionmaker(engine, expire_on_commit=False)() as observer:
+        winner = (
+            await observer.execute(select(User).where(User.clerk_id == clerk_id))
+        ).scalar_one()
+        assert (
+            await observer.scalar(
+                select(func.count(Project.id)).where(
+                    Project.user_id == winner.id, Project.kind == PROJECT_KIND_PERSONAL
+                )
+            )
+            == 1
+        )
 
 
 @pytest.mark.asyncio

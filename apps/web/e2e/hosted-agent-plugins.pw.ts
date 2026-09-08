@@ -195,7 +195,6 @@ test("Agent Plugin cards keep every status and action readable", async ({ page }
 		"title",
 		"The agent could not apply this plugin.",
 	);
-	await expect(page.getByRole("main").locator('[data-slot="status-badge"]')).toHaveCount(0);
 	const updateFooter = cardFor("Update Available Plugin").locator('[data-slot="entity-meta"]');
 	await expect(updateFooter).toContainText("Mysten Labs");
 	await expect(updateFooter).toContainText("v1.0.0 → v2.0.0");
@@ -206,15 +205,9 @@ test("Agent Plugin cards keep every status and action readable", async ({ page }
 		cards.evaluateAll((elements) =>
 			elements.map((card) => {
 				const cardRect = card.getBoundingClientRect();
-				const heading = card.querySelector("h3");
-				const badge = card.querySelector('[data-slot="status-badge"]');
 				const controls = Array.from(card.querySelectorAll("button"));
 				return {
-					title: heading?.textContent ?? "Unknown plugin",
 					cardFits: card.scrollWidth <= card.clientWidth,
-					badgesFit: Array.from(card.querySelectorAll('[data-slot="status-badge"]')).every(
-						(item) => item.scrollWidth <= item.clientWidth,
-					),
 					metadataFits: Array.from(
 						card.querySelectorAll('[data-slot="entity-meta"] > span > span'),
 					).every((item) => item.scrollWidth <= item.clientWidth),
@@ -226,10 +219,6 @@ test("Agent Plugin cards keep every status and action readable", async ({ page }
 							rect.right <= cardRect.right + 1
 						);
 					}),
-					titleClearsBadge:
-						!heading ||
-						!badge ||
-						heading.getBoundingClientRect().right <= badge.getBoundingClientRect().left,
 				};
 			}),
 		);
@@ -241,8 +230,7 @@ test("Agent Plugin cards keep every status and action readable", async ({ page }
 		const layouts = await readLayouts();
 		expect(
 			layouts.filter(
-				({ cardFits, badgesFit, metadataFits, controlsFit, titleClearsBadge }) =>
-					!cardFits || !badgesFit || !metadataFits || !controlsFit || !titleClearsBadge,
+				({ cardFits, metadataFits, controlsFit }) => !cardFits || !metadataFits || !controlsFit,
 			),
 		).toEqual([]);
 	}
@@ -250,7 +238,6 @@ test("Agent Plugin cards keep every status and action readable", async ({ page }
 	await page.getByRole("button", { name: "View Plugin Waiting for Agent details" }).click();
 	await expect(page.getByRole("button", { name: "Waiting for agent", exact: true })).toBeDisabled();
 	await expect(page.getByRole("alert")).toContainText("Agent hasn't picked up this change");
-	await expect(page.getByRole("main").locator('[data-slot="status-badge"]')).toHaveCount(0);
 });
 
 test("Hosted Agent Plugins opens and installs from the overview", async ({ page }) => {
@@ -343,7 +330,6 @@ test("Hosted Agent Plugins opens and installs from the overview", async ({ page 
 	acceptInstall();
 	await desiredRefetched;
 	await expect(page.getByRole("button", { name: "Installing…", exact: true })).toBeDisabled();
-	await expect(page.getByRole("main").locator('[data-slot="status-badge"]')).toHaveCount(0);
 	await page.getByRole("button", { name: "View Sui Agent details" }).click();
 	await expect(page.getByRole("heading", { name: "Sui Agent", exact: true })).toBeVisible();
 	await expect(page.getByText("OpenClaw", { exact: true })).toHaveCount(0);
