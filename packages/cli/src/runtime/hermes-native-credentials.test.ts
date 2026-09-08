@@ -21,7 +21,7 @@ function fixture() {
 	writeFileSync(
 		join(app, "hermes_cli", "auth.py"),
 		`
-import json, os
+import json, os, sys
 from pathlib import Path
 path = Path(os.environ["HERMES_HOME"]) / "auth.json"
 class AuthError(Exception):
@@ -35,10 +35,15 @@ def write_credential_pool(provider_id, entries, *, removed_ids=(), status_cleare
     assert all(e["id"] == "clawdi-native-api-key" for e in entries)
     pool = read_credential_pool()
     prior = {e["id"]: e for e in pool.get(provider_id, []) if e["id"] not in removed_ids}
-    prior.update({e["id"]: e for e in entries})
+    for entry in entries:
+        old = prior.get(entry["id"], {})
+        if old.get("last_status") == "exhausted" and entry["id"] not in status_cleared_ids:
+            entry = {**entry, "last_status": old["last_status"]}
+        prior[entry["id"]] = entry
     pool[provider_id] = list(prior.values())
     path.write_text(json.dumps(pool))
     if (path.parent / "fail-after-write").exists():
+        print("private upstream diagnostic " + str(entries), file=sys.stderr)
         raise RuntimeError("private upstream diagnostic " + str(entries))
 `,
 	);
@@ -47,8 +52,8 @@ def write_credential_pool(provider_id, entries, *, removed_ids=(), status_cleare
 		`
 import os
 from pathlib import Path
-def _get_named_custom_provider(provider):
-    return {"name": provider} if (Path(os.environ["HERMES_HOME"]) / "custom-alias").exists() else None
+def has_named_custom_provider(provider):
+    return (Path(os.environ["HERMES_HOME"]) / "custom-alias").exists()
 `,
 	);
 	writeFileSync(
@@ -124,12 +129,19 @@ test("native credentials take priority, rotate only their row, and retain cooldo
 	const repeat = f.run([credential], { anthropic: "fill_first" });
 	expect(repeat.status).toBe(0);
 	expect(JSON.parse(repeat.stdout).changed).toBe(false);
+	expect(
+		f.pool().anthropic.find((row: { id: string }) => row.id === "clawdi-native-api-key")
+			.last_status,
+	).toBe("exhausted");
 	const rotated = f.run([{ ...credential, apiKey: "rotated-key" }], { anthropic: "fill_first" });
 	expect(rotated.status).toBe(0);
 	const pool = f.pool();
 	expect(
 		pool.anthropic.find((row: { id: string }) => row.id === "clawdi-native-api-key"),
 	).toMatchObject({ access_token: "rotated-key", base_url: credential.baseUrl });
+	expect(
+		pool.anthropic.find((row: { id: string }) => row.id === "clawdi-native-api-key").last_status,
+	).toBeUndefined();
 	expect(pool.anthropic.find((row: { id: string }) => row.id === "personal")).toEqual(f.userEntry);
 	expect(pool.openai).toEqual(connected.openai);
 	expect(readFileSync(f.journal, "utf8")).not.toContain("key");
@@ -154,6 +166,9 @@ test("uses the native auth identity for selected aliases and rejects alias pool 
 	const custom = f.run([zen], { "opencode-zen": "fill_first" }, "opencode");
 	expect(custom.status).toBe(0);
 	expect(JSON.parse(custom.stdout).selectedProvider).toBeNull();
+	const builtin = f.run([credential], {}, "anthropic");
+	expect(builtin.status).toBe(0);
+	expect(JSON.parse(builtin.stdout).selectedProvider).toBe("anthropic");
 	const saved = readFileSync(f.auth, "utf8");
 	expect(f.run([{ ...zen, providerId: "opencode" }], {}).status).toBe(1);
 	expect(readFileSync(f.auth, "utf8")).toBe(saved);
@@ -178,6 +193,36 @@ test("removal recovers uncommitted ownership and retries strategy restoration", 
 	expect(completed.status).toBe(0);
 	expect(JSON.parse(completed.stdout).changed).toBe(false);
 	expect(existsSync(f.journal)).toBe(false);
+});
+
+test("removal restores absent strategies and preserves the user's latest strategy", () => {
+	const f = fixture();
+	expect(f.run([credential], {}).status).toBe(0);
+	const removal = f.run([], { anthropic: "fill_first" });
+	expect(removal.status).toBe(0);
+	expect(JSON.parse(removal.stdout).strategyUpdates).toEqual({ anthropic: { exists: false } });
+	expect(f.run([], {}).status).toBe(0);
+	expect(existsSync(f.journal)).toBe(false);
+
+	expect(f.run([credential], { anthropic: "round_robin" }).status).toBe(0);
+	const changedByUser = f.run([], { anthropic: "least_used" });
+	expect(changedByUser.status).toBe(0);
+	expect(JSON.parse(changedByUser.stdout).strategyUpdates).toEqual({});
+	expect(f.pool().anthropic).toEqual([f.userEntry]);
+	expect(existsSync(f.journal)).toBe(false);
+});
+
+test("invalid strategy ownership fails before mutating credentials", () => {
+	const f = fixture();
+	expect(f.run([credential], {}).status).toBe(0);
+	writeFileSync(
+		f.journal,
+		JSON.stringify({ version: 1, strategies: { anthropic: { exists: true } } }),
+	);
+	const saved = readFileSync(f.auth, "utf8");
+	const result = f.run([], { anthropic: "fill_first" });
+	expect(result.status).toBe(1);
+	expect(readFileSync(f.auth, "utf8")).toBe(saved);
 });
 
 test("conflicting or malformed native rows are preserved without adoption", () => {
