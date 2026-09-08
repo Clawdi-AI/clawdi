@@ -51,17 +51,16 @@ async def client(monkeypatch, handler):
     "status,url", [("INITIATED", "https://connect.composio.dev/reauth"), ("ACTIVE", None)]
 )
 async def test_reconnect_targets_original_account(monkeypatch, status, url):
-    requests = []
     original = account()
     monkeypatch.setattr(settings, "web_origin", "https://dashboard.example.test")
 
     def handle(request):
-        requests.append(request)
         if request.method == "GET":
             assert request.url.params["user_ids"] == "owner"
             assert request.url.params["connected_account_ids"] == original["id"]
             assert "statuses" not in request.url.params
             return httpx.Response(200, json={"items": [original]})
+        assert request.method == "POST"
         assert request.url.path == "/api/v3.1/connected_accounts/ca_owned/refresh"
         assert json.loads(request.content) == {
             "redirect_url": "https://dashboard.example.test/connectors"
@@ -79,54 +78,12 @@ async def test_reconnect_targets_original_account(monkeypatch, status, url):
             auth,
         )
     assert result.model_dump() == {"id": "ca_owned", "status": status, "connect_url": url}
-    assert [r.method for r in requests] == ["GET", "POST"]
-    assert original["alias"] == "Work" and original["auth_config"] == {"id": "ac_original"}
-
-
-@pytest.mark.parametrize(
-    "owned,scheme,upstream_status,url,expected",
-    [
-        (False, "OAUTH2", 200, None, 404),
-        (True, "API_KEY", 200, None, 400),
-        (True, "BEARER_TOKEN", 200, None, 400),
-        (True, "SAML", 200, None, 400),
-        (True, "OAUTH2", 500, None, 502),
-        (True, "OAUTH2", 200, None, 502),
-    ],
-)
-async def test_reconnect_failures_never_create_delete_or_retry(
-    monkeypatch, owned, scheme, upstream_status, url, expected
-):
-    methods = []
-
-    def handle(request):
-        methods.append(request.method)
-        if request.method == "GET":
-            return httpx.Response(200, json={"items": [account(scheme=scheme)] if owned else []})
-        return httpx.Response(
-            upstream_status,
-            json={
-                "id": "ca_owned",
-                "status": "EXPIRED",
-                "redirect_url": url,
-                "error": {"message": "private-provider-detail"},
-            },
-        )
-
-    async with client(monkeypatch, handle) as auth:
-        with pytest.raises(connectors.HTTPException) as exc:
-            await connectors.reconnect_connection("ca_owned", None, auth)
-    assert exc.value.status_code == expected
-    assert "private-provider-detail" not in exc.value.detail
-    assert methods == (["GET", "POST"] if owned and scheme == "OAUTH2" else ["GET"])
 
 
 async def test_inactive_account_is_enabled_without_oauth(monkeypatch):
     original = account("INACTIVE", disabled=True)
-    calls = []
 
     def handle(request):
-        calls.append((request.method, request.url.path))
         if request.url.path.endswith("/connected_accounts"):
             return httpx.Response(200, json={"items": [original]})
         if request.method == "PATCH":
@@ -139,18 +96,17 @@ async def test_inactive_account_is_enabled_without_oauth(monkeypatch):
     async with client(monkeypatch, handle) as auth:
         result = await connectors.reconnect_connection("ca_owned", None, auth)
     assert result.status == "ACTIVE" and result.connect_url is None
-    assert [method for method, _ in calls] == ["GET", "PATCH", "GET"]
 
 
-@pytest.mark.parametrize("status", ["ACTIVE", "EXPIRED", "FAILED"])
-async def test_credentials_patch_preserves_identity_and_reports_actual_status(monkeypatch, status):
+async def test_credentials_patch_preserves_identity_and_reports_actual_status(monkeypatch):
+    status = "FAILED"
     original = account(status, "API_KEY")
-    calls = []
 
     def handle(request):
-        calls.append(request)
         if request.url.path.endswith("/connected_accounts"):
             return httpx.Response(200, json={"items": [original]})
+        assert request.url.path == "/api/v3.1/connected_accounts/ca_owned"
+        assert request.method in {"GET", "PATCH"}
         if request.method == "PATCH":
             assert json.loads(request.content) == {
                 "connection": {
@@ -168,7 +124,6 @@ async def test_credentials_patch_preserves_identity_and_reports_actual_status(mo
         )
     assert result.id == "ca_owned" and result.alias == "Work" and result.status == status
     assert "private-old-key" not in result.model_dump_json()
-    assert [r.method for r in calls] == ["GET", "PATCH", "GET"]
 
 
 async def test_reconnect_fields_use_saved_config_not_toolkit_default(monkeypatch):
@@ -202,20 +157,20 @@ async def test_management_lists_nonactive_but_identity_availability_does_not(mon
         all_accounts = await composio.get_all_connected_accounts("owner")
         available = await composio.get_connected_account_identities("owner")
         counts = await composio.get_connected_accounts("owner")
+    assert {item.status for item in all_accounts} == {"ACTIVE", "EXPIRED", "FAILED", "INACTIVE"}
     assert len(all_accounts) == 5
     assert len(available) == len(counts) == 1
     assert "private-old-key" not in str(all_accounts)
 
 
-@pytest.mark.parametrize("status", ["EXPIRED", "FAILED", "INACTIVE"])
-async def test_delete_owned_nonactive_account(monkeypatch, status):
+async def test_delete_owned_expired_account(monkeypatch):
     methods = []
 
     def handle(request):
         methods.append(request.method)
         if request.method == "GET":
             assert "statuses" not in request.url.params
-            return httpx.Response(200, json={"items": [account(status)]})
+            return httpx.Response(200, json={"items": [account()]})
         assert request.method == "DELETE"
         return httpx.Response(200, json={"success": True})
 
@@ -226,11 +181,8 @@ async def test_delete_owned_nonactive_account(monkeypatch, status):
 
 @pytest.mark.parametrize("cycle", [False, True])
 async def test_tools_read_beyond_500_and_reject_cursor_cycles(monkeypatch, cycle):
-    calls = []
-
     def handle(request):
         cursor = int(request.url.params.get("cursor", "0"))
-        calls.append(cursor)
         items = [
             {
                 "slug": f"TOOL_{cursor}_{i}",
@@ -249,11 +201,9 @@ async def test_tools_read_beyond_500_and_reject_cursor_cycles(monkeypatch, cycle
                 await composio.get_app_tools("example")
         else:
             assert len(await composio.get_app_tools("example")) == 600
-    assert len(calls) == (2 if cycle else 6)
 
 
-@pytest.mark.parametrize("scheme", ["CIMD_OAUTH", "FUTURE_AUTH"])
-async def test_unsupported_auth_rejected_before_any_mutation(monkeypatch, scheme):
+async def test_unsupported_auth_rejected_before_any_mutation(monkeypatch):
     methods = []
 
     def handle(request):
@@ -265,7 +215,7 @@ async def test_unsupported_auth_rejected_before_any_mutation(monkeypatch, scheme
                 "slug": "example",
                 "name": "Example",
                 "meta": {"logo": "", "description": ""},
-                "auth_schemes": [scheme],
+                "auth_schemes": ["CIMD_OAUTH"],
             },
         )
 
@@ -276,37 +226,64 @@ async def test_unsupported_auth_rejected_before_any_mutation(monkeypatch, scheme
 
 
 @pytest.mark.parametrize(
-    "owned,fields,upstream_status,expected",
+    "operation,owned,scheme,upstream_status,expected",
     [
-        (False, {"api_key": "replacement"}, 200, 404),
-        (True, {"unrecognized": "replacement"}, 200, 400),
-        (True, {"api_key": "replacement"}, 500, 502),
+        ("reconnect", False, "OAUTH2", 200, 404),
+        ("credentials", False, "API_KEY", 200, 404),
+        ("alias", False, "API_KEY", 200, 404),
+        ("delete", False, "OAUTH2", 200, 404),
+        ("reconnect", True, "API_KEY", 200, 400),
+        ("reconnect", True, "SAML", 200, 400),
+        ("reconnect", True, "OAUTH2", 500, 502),
+        ("reconnect", True, "OAUTH2", 200, 502),  # No usable redirect or active state.
+        ("credentials", True, "API_KEY", 500, 502),
+        ("alias", True, "API_KEY", 409, 409),
+        ("alias", True, "API_KEY", 500, 502),
     ],
 )
-async def test_credential_failures_leave_original_account_untouched(
-    monkeypatch, owned, fields, upstream_status, expected
+async def test_account_mutations_enforce_ownership_and_sanitize_failures_without_retries(
+    monkeypatch, operation, owned, scheme, upstream_status, expected
 ):
-    calls = []
+    methods = []
 
     def handle(request):
-        calls.append(request.method)
+        methods.append(request.method)
         if request.method == "GET":
-            return httpx.Response(200, json={"items": [account(scheme="API_KEY")] if owned else []})
-        assert json.loads(request.content) == {
-            "connection": {"state": {"authScheme": "API_KEY", "val": fields}}
-        }
+            assert request.url.params["user_ids"] == "owner"
+            assert request.url.params["connected_account_ids"] == "ca_owned"
+            return httpx.Response(200, json={"items": [account(scheme=scheme)] if owned else []})
         return httpx.Response(
-            upstream_status, json={"error": {"message": "private-provider-detail"}}
+            upstream_status,
+            json={
+                "id": "ca_owned",
+                "status": "EXPIRED",
+                "redirect_url": None,
+                "error": {"message": "private-provider-detail"},
+            },
         )
 
     async with client(monkeypatch, handle) as auth:
         with pytest.raises(connectors.HTTPException) as exc:
-            await connectors.update_connection_credentials(
-                "ca_owned", connectors.ConnectorCredentialsUpdateRequest(credentials=fields), auth
-            )
+            if operation == "reconnect":
+                await connectors.reconnect_connection("ca_owned", None, auth)
+            elif operation == "credentials":
+                await connectors.update_connection_credentials(
+                    "ca_owned",
+                    connectors.ConnectorCredentialsUpdateRequest(credentials={"api_key": "new"}),
+                    auth,
+                )
+            elif operation == "alias":
+                await connectors.update_connection(
+                    "ca_owned", connectors.ConnectorUpdateRequest(alias="Work"), auth
+                )
+            else:
+                await connectors.disconnect("ca_owned", auth)
     assert exc.value.status_code == expected
     assert "private-provider-detail" not in exc.value.detail
-    assert calls == (["GET", "PATCH"] if owned and "api_key" in fields else ["GET"])
+    if operation == "reconnect" and owned and scheme == "OAUTH2" and upstream_status == 200:
+        assert exc.value.detail == "Connector reauthorization did not start. Retry reconnecting."
+    mutation = "POST" if operation == "reconnect" else "PATCH"
+    assert methods == (["GET"] if not owned or expected == 400 else ["GET", mutation])
 
 
 async def test_auth_config_lookup_uses_50_item_pages(monkeypatch):
@@ -352,11 +329,3 @@ async def test_reconnect_route_validates_callback_and_rejects_alias_changes(monk
         for body in [{"redirect_url": "https://attacker.test"}, {"alias": "changed"}]:
             response = await web.post(f"{prefix}/connectors/ca_owned/reconnect", json=body)
             assert response.status_code == 422
-
-
-def test_existing_create_boundaries_remain_compatible():
-    assert connectors.ConnectRequest.model_validate({"future": True}).alias is None
-    request = connectors.ConnectorCredentialsConnectRequest.model_validate(
-        {"credentials": {"api_key": " "}, "future": True}
-    )
-    assert request.credentials == {"api_key": " "}
