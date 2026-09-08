@@ -408,14 +408,14 @@ function AgentSectionList({
 	const activePrimaryProjectResource =
 		(primaryProjectRouteActive ? activeAgentRoute?.projectResource : null) ??
 		(scopedResourceTarget?.kind === "workspace" ? scopedResourceTarget.resource : null);
-	const isFlatProjectResourceRoute =
-		activeAgentRoute?.section === "skills" || activeAgentRoute?.section === "vaults";
+	const isFlatProjectResourceRoute = activeAgentRoute?.section === "skills";
 	// Invalid, legacy, and not-yet-resolved flat resource URLs all return through
 	// Projects. Keep that safe parent active until an exact Workspace or linked
 	// Project context has been proven instead of misleadingly highlighting Overview.
 	const activeContextProjectResource =
-		scopedResourceTarget?.kind === "projects" ||
-		(isFlatProjectResourceRoute && !activePrimaryProjectResource);
+		activeAgentRoute?.section !== "vaults" &&
+		(scopedResourceTarget?.kind === "projects" ||
+			(isFlatProjectResourceRoute && !activePrimaryProjectResource));
 	const normalizedActiveSection =
 		loading || groups.some((group) => group.items.some((item) => item.id === activeSection))
 			? activeSection
@@ -428,11 +428,17 @@ function AgentSectionList({
 					return {
 						id: `primary-project-${section}`,
 						label: item.label,
-						href: agentProjectResourceHref(agentId, primaryProject.id, section),
+						href:
+							section === "vaults"
+								? agentSectionHref(agentId, "vaults")
+								: agentProjectResourceHref(agentId, primaryProject.id, section),
 						icon: item.icon,
 						tint: item.tint,
-						tooltip: `${item.label} in Workspace`,
-						active: activePrimaryProjectResource === section,
+						tooltip: section === "vaults" ? "Available Vaults" : `${item.label} in Workspace`,
+						active:
+							section === "vaults"
+								? activeAgentRoute?.section === "vaults" || activePrimaryProjectResource === section
+								: activePrimaryProjectResource === section,
 					};
 				})
 		: [];
@@ -455,7 +461,8 @@ function AgentSectionList({
 										(normalizedActiveSection === "projects" && !activePrimaryProjectResource)
 									: normalizedActiveSection === item.id &&
 										!activePrimaryProjectResource &&
-										!activeContextProjectResource,
+										!activeContextProjectResource &&
+										activeAgentRoute?.section !== "vaults",
 							prefetch: item.id === "connectors" ? prefetchConnectorsCatalog : undefined,
 						};
 					}),

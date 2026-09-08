@@ -84,7 +84,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Vaults",
 		description: "Encrypted key collections linked to one or more Projects.",
 		managementDescription:
-			"Keep API keys in a Vault, then link it to the Projects where Agents should use those keys.",
+			"Keep API keys in a Vault, then add it to the Projects where Agents should use those keys.",
 		href: PROJECT_RESOURCE_LIST_PATHS.vaults,
 		emptyCta: "Create vault",
 		routeGroup: "library",

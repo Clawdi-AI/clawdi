@@ -674,13 +674,13 @@ export default function ProjectDetailPage({
 								? focus === "skills"
 									? "Skills available in this Agent's Workspace. Skills synced from the Agent are read-only."
 									: focus === "vaults"
-										? "Your Vault library and this Agent's Workspace Vault links."
+										? "Vaults available through this Agent’s Workspace."
 										: "This Agent's fixed Workspace for installed Skills and linked Vaults."
 								: focus === "skills"
 									? "Skills this Agent uses through this linked Project."
 									: focus === "vaults"
 										? isOwner
-											? "Your Vault library and this linked Project’s Vault links."
+											? "Vaults this Agent can use through this Project."
 											: "Vaults this Agent can use through this Project. Key values stay protected."
 										: "This Agent uses the Project's Skills and linked Vaults as one bundle."
 							: projectDetailDescription(project, isOwner)
@@ -700,7 +700,7 @@ export default function ProjectDetailPage({
 									Add skill
 								</Button>
 							</CreateSkillDialog>
-						) : focus === "vaults" && isOwner ? (
+						) : focus === "vaults" && isOwner && !isAgentScope ? (
 							<CreateProjectVaultDialog
 								projectId={project.id}
 								contextLabel={isWorkspace ? "Workspace" : "Project"}
@@ -907,7 +907,7 @@ export default function ProjectDetailPage({
 				description={
 					isAgentScope
 						? isWorkspace
-							? "Your Vault library and this Agent's Workspace Vault links."
+							? "Vaults available through this Agent’s Workspace."
 							: "Vaults this Agent can use through this Project."
 						: isOwner
 							? "Your Vault library and this Project’s Vault links."
@@ -922,7 +922,7 @@ export default function ProjectDetailPage({
 									resource="Vaults"
 								/>
 							) : null}
-							{isOwner ? (
+							{isOwner && !isAgentScope ? (
 								<CreateProjectVaultDialog
 									projectId={project.id}
 									contextLabel={isWorkspace ? "Workspace" : "Project"}
@@ -942,7 +942,6 @@ export default function ProjectDetailPage({
 					error={vaults.error}
 					onRetry={() => void vaults.refetch()}
 					scope={scope}
-					agentBindings={scopedBindings.data ? orderedScopedBindings : undefined}
 					onChanged={refresh}
 				/>
 			</HubSection>

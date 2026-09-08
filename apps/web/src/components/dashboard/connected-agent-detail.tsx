@@ -32,6 +32,7 @@ import {
 } from "@/components/dashboard/agent-overview-resource-bodies";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import {
+	effectiveAgentProjectIds,
 	linkedAgentProjectCount,
 	resolveAgentWorkspaceProjectId,
 } from "@/components/dashboard/agent-project-scope";
@@ -175,7 +176,7 @@ export function ConnectedAgentDetail({
 		enabled: overviewEnabled && supportsSkills,
 	});
 	const vaultsModule = useOverviewVaultsModule({
-		projectIds: workspaceProjectId ? [workspaceProjectId] : [],
+		projectIds: workspaceProjectId ? effectiveAgentProjectIds(projectBindings ?? []) : [],
 		resolution: workspaceResolution,
 		enabled: overviewEnabled,
 	});
@@ -322,9 +323,7 @@ export function ConnectedAgentDetail({
 									memories: memoriesModule,
 									vaults: {
 										...vaultsModule,
-										link: workspaceProjectId
-											? agentProjectResourceLink(id, workspaceProjectId, "vaults")
-											: null,
+										link: agentSectionLink(id, "vaults"),
 									},
 									connectors: connectorsModule,
 								}}

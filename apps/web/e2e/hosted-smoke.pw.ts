@@ -3829,10 +3829,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	);
 	await expect(
 		overview.locator('[data-overview-module="vaults"]').getByRole("link", { name: "Vaults" }),
-	).toHaveAttribute(
-		"href",
-		`/agents/${railHostedEnvironmentId}/project-access/project-hosted/vaults`,
-	);
+	).toHaveAttribute("href", `/agents/${railHostedEnvironmentId}/vaults`);
 	await expect(overview.locator('[data-overview-module="memories"]')).toContainText("1 memory");
 	await expect(overview.locator('[data-overview-module="connectors"]')).toContainText("2 apps");
 	expect(overviewConnectorRequests).toEqual([]);
@@ -3852,11 +3849,11 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }, testIn
 	const vaultsLink = projectGroup.getByRole("link", { name: "Vaults", exact: true });
 	const expectedProjectHub = `/agents/${railHostedEnvironmentId}/project-access/project-hosted`;
 	await expect(skillsLink).toHaveAttribute("href", `${expectedProjectHub}/skills`);
-	await expect(vaultsLink).toHaveAttribute("href", `${expectedProjectHub}/vaults`);
+	await expect(vaultsLink).toHaveAttribute("href", `/agents/${railHostedEnvironmentId}/vaults`);
 	await vaultsLink.focus();
 	await expect(vaultsLink).toBeFocused();
 	await vaultsLink.click();
-	await expect(page).toHaveURL(`${expectedProjectHub}/vaults`);
+	await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}/vaults`);
 	await expect(vaultsLink).toHaveAttribute("data-active", "");
 	await expect(skillsLink).not.toHaveAttribute("data-active", "");
 	await page.goto(`/agents/${railHostedEnvironmentId}`);

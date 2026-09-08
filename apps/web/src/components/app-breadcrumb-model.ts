@@ -89,7 +89,13 @@ function buildAgentBreadcrumbTrail(
 		return finishTrail(trail, overrideTitle ?? context.label);
 	}
 
-	if (route.section === "skills" || route.section === "vaults") {
+	if (route.section === "vaults") {
+		if (!route.vaultSlug) return finishTrail(trail, agentSectionLabel("vaults"));
+		trail.push({ key: "vaults", label: "Vaults", href: agentSectionHref(route.agentId, "vaults") });
+		return finishTrail(trail, overrideTitle);
+	}
+
+	if (route.section === "skills") {
 		const projectId = typeof search.project === "string" ? search.project.trim() : "";
 		if (projectId) {
 			const context = projectContext(route.agentId, projectId, segmentTitles);
@@ -107,8 +113,7 @@ function buildAgentBreadcrumbTrail(
 				href: agentSectionHref(route.agentId, "projects"),
 			});
 		}
-		const hasDetail =
-			route.section === "skills" ? Boolean(route.skillKey) : Boolean(route.vaultSlug);
+		const hasDetail = Boolean(route.skillKey);
 		return hasDetail
 			? finishTrail(trail, overrideTitle)
 			: finishTrail(trail, agentSectionLabel(route.section));
