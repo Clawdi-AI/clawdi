@@ -1128,6 +1128,10 @@ async function stubConnectedAgentResources(page: Page) {
 		{
 			id: "project-context-first",
 			name: "Team Knowledge",
+			skill_count: 2,
+			vault_count: 2,
+			member_count: 0,
+			agent_count: 1,
 			slug: "team-knowledge",
 			description: "Shared review instructions and protected Vault access",
 			kind: "workspace",
@@ -1780,78 +1784,50 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-first",
 	);
 	await expect(main.getByRole("heading", { name: "Team Knowledge", level: 1 })).toBeVisible();
+	await expect(main.getByRole("tablist", { name: "Project pages" }).getByRole("tab")).toHaveText([
+		"Overview",
+		"Skills",
+		"Vaults",
+		"Agents",
+		"Access",
+	]);
+	await main.getByRole("tab", { name: "Skills", exact: true }).click();
 	await expect(main.getByText("Team-only Skill", { exact: true })).toBeVisible();
 	await expect(main.getByText("Shared Workflow", { exact: true })).toBeVisible();
 	await expect(main.getByText("Primary-only Skill", { exact: true })).toHaveCount(0);
-	await expect(main.getByText("Team Vault", { exact: true })).toBeVisible();
-	await expect(main.getByText("Shared Vault", { exact: true })).toBeVisible();
-	await expect(main.getByText("Scoped Vault", { exact: true })).toHaveCount(0);
-	await expect(
-		main
-			.getByRole("region", { name: "In this Project Vaults", exact: true })
-			.getByTestId("project-vault-card"),
-	).toHaveCount(2);
-	await expect(main.getByRole("region", { name: "Available Project Vaults" })).toHaveCount(0);
-	await expect(
-		main.getByRole("button", { name: /^(Link|Unlink) .* (to|from) Project$/ }),
-	).toHaveCount(0);
 	await expect(main.getByRole("link", { name: "Open Team-only Skill" })).toHaveAttribute(
 		"href",
 		"/agents/11111111-1111-4111-8111-111111111111/skills/team-only?project=project-context-first",
 	);
-	await expect(main.getByRole("link", { name: "Open vault Team Vault" })).toHaveAttribute(
-		"href",
-		"/agents/11111111-1111-4111-8111-111111111111/vaults/team-vault?project=project-context-first&vault=vault-team&from=" +
-			encodeURIComponent(
-				"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-first",
-			),
-	);
-	await expect(main.getByRole("button", { name: "View all Skills", exact: true })).toHaveAttribute(
-		"href",
-		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-first/skills",
-	);
-	await expect(main.getByRole("button", { name: "View all Vaults", exact: true })).toHaveAttribute(
-		"href",
-		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-first/vaults",
-	);
-	await main.getByRole("button", { name: "View all Skills", exact: true }).click();
-	await expect(page).toHaveURL(
-		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-first/skills",
-	);
-	await expect(main.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible();
-	await expect(
-		page
-			.getByRole("navigation", { name: "breadcrumb" })
-			.locator('[data-slot="breadcrumb-item"]:visible'),
-	).toHaveText(["Smoke Codex", "Projects", "Team Knowledge", "Skills"]);
-	await expect(main.getByRole("button", { name: "Back to Team Knowledge" })).toHaveCount(0);
+	await main.getByRole("tab", { name: "Vaults", exact: true }).click();
+	await expect(main.getByText("Team Vault", { exact: true })).toBeVisible();
+	await expect(main.getByText("Shared Vault", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: /^(Add|Remove) .* Project$/ })).toHaveCount(0);
+	await main.getByRole("tab", { name: "Access", exact: true }).click();
+	await expect(main.getByRole("button", { name: "Leave project" })).toBeVisible();
 	await page.goto(
-		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-later",
+		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-later?tab=vaults",
 	);
 	await expect(main.getByRole("heading", { name: longContextProjectName, level: 1 })).toBeVisible();
-	await expect(
-		main.getByTestId("project-vault-card").filter({ hasText: "Scoped Vault" }),
-	).toHaveCount(0);
-	await expect(
-		main.getByRole("region", { name: "In this Project Vaults", exact: true }),
-	).toHaveCount(0);
 	await expect(
 		main
 			.getByRole("region", { name: "Available Project Vaults" })
 			.getByTestId("project-vault-card"),
-	).toHaveCount(0);
-	await expect(main.getByRole("button", { name: "View all Skills" })).toHaveAttribute(
-		"href",
-		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-later/skills",
+	).toHaveCount(4);
+	await expect(main.getByRole("button", { name: "Create vault", exact: true })).toBeVisible();
+	await main.getByRole("link", { name: "Open vault Unrelated Vault" }).click();
+	await expect(page).toHaveURL(
+		(url) =>
+			url.pathname === "/agents/11111111-1111-4111-8111-111111111111/vaults/unrelated-vault" &&
+			!url.searchParams.has("project"),
 	);
-	await expect(main.getByRole("button", { name: "Add skill", exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "View all Vaults" })).toHaveAttribute(
-		"href",
-		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-later/vaults",
+	await expect(main.getByRole("heading", { name: "Unrelated Vault", level: 1 })).toBeVisible();
+	await main.getByRole("button", { name: "Back to Project" }).click();
+	await expect(main.getByRole("tab", { name: "Vaults", exact: true })).toHaveAttribute(
+		"aria-selected",
+		"true",
 	);
-	await expect(
-		main.getByRole("button", { name: /^(Link|Unlink|Add|Remove) .* (Workspace|Project)$/ }),
-	).toHaveCount(0);
+
 	const requestsBeforeInvalidScope = skillRequests.length;
 	await page.goto(
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-inaccessible/skills",
@@ -1917,8 +1893,11 @@ test("agent scoped Skills and Vaults preserve context for mutations", async ({ p
 	await expect(page).toHaveURL(
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-first/skills",
 	);
-	await expect(main.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible();
-	await expect(main.getByText("Project: Team Knowledge", { exact: true })).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Team Knowledge", level: 1 })).toBeVisible();
+	await expect(main.getByRole("tab", { name: "Skills", exact: true })).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
 	await expect(main.getByText("Team-only Skill", { exact: true })).toBeVisible();
 	await expect(main.getByText("Primary-only Skill", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Add skill", exact: true })).toHaveCount(0);
@@ -1926,7 +1905,7 @@ test("agent scoped Skills and Vaults preserve context for mutations", async ({ p
 	await page.goto(
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-later/skills",
 	);
-	await expect(main.getByText(`Project: ${longContextProjectName}`, { exact: true })).toBeVisible();
+	await expect(main.getByRole("heading", { name: longContextProjectName, level: 1 })).toBeVisible();
 	const addSkillButton = main.getByRole("button", { name: "Add skill", exact: true });
 	await expect(addSkillButton).toBeVisible();
 	await addSkillButton.click();
@@ -2510,6 +2489,12 @@ test("unlinked Project resources stay inside the Agent without granting runtime 
 }, testInfo) => {
 	const { projectLinkDeltaBodies } = await stubConnectedAgentResources(page);
 	const base = "/agents/11111111-1111-4111-8111-111111111111";
+	await page.goto("/projects/project-context-first");
+	await expect(page.getByRole("tablist", { name: "Project pages" })).toBeVisible();
+	const libraryTabs = await page
+		.getByRole("tablist", { name: "Project pages" })
+		.getByRole("tab")
+		.allTextContents();
 	await page.goto(`${base}/project-access?q=Team`);
 	const card = page.getByTestId("agent-project-card").filter({ hasText: "Team Knowledge" });
 	await card.getByRole("button", { name: "Unlink Team Knowledge" }).click();
@@ -2522,13 +2507,27 @@ test("unlinked Project resources stay inside the Agent without granting runtime 
 	);
 	const main = page.locator("main");
 	await expect(main.getByRole("heading", { name: "Team Knowledge", level: 1 })).toBeVisible();
-	await expect(
-		main.getByText("Not linked to this Agent. Link it from Projects to enable access."),
-	).toBeVisible();
+	await expect(main.getByRole("tablist", { name: "Project pages" }).getByRole("tab")).toHaveText([
+		"Overview",
+		"Skills",
+		"Vaults",
+		"Agents",
+		"Access",
+	]);
+	await expect(main.getByRole("tablist", { name: "Project pages" }).getByRole("tab")).toHaveText(
+		libraryTabs,
+	);
 	await page.screenshot({
 		path: testInfo.outputPath("unlinked-project-desktop.png"),
 		fullPage: true,
 	});
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.screenshot({
+		path: testInfo.outputPath("unlinked-project-mobile.png"),
+		fullPage: true,
+	});
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await main.getByRole("tab", { name: "Skills", exact: true }).click();
 	await main.getByRole("link", { name: "Open Team-only Skill" }).click();
 	await expect(page).toHaveURL(
 		(url) =>
@@ -2539,6 +2538,7 @@ test("unlinked Project resources stay inside the Agent without granting runtime 
 	await page.reload();
 	await expect(main.getByRole("heading", { name: "Team-only Skill", level: 1 })).toBeVisible();
 	await page.goBack();
+	await main.getByRole("tab", { name: "Vaults", exact: true }).click();
 	await main.getByRole("link", { name: "Open vault Team Vault" }).click();
 	await expect(page).toHaveURL((url) => url.pathname === `${base}/vaults/team-vault`);
 	await expect(main.getByRole("heading", { name: "Team Vault", level: 1 })).toBeVisible();

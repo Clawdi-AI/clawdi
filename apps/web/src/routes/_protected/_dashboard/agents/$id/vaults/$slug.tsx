@@ -34,6 +34,17 @@ function AgentVaultDetailRoute() {
 		? agentProjectResourceHref(id, projectId, "vaults")
 		: agentSectionHref(id, "projects");
 
+	if (!projectId && typeof search.vault === "string" && search.vault.trim()) {
+		return (
+			<AgentResourceRouteGate
+				agentId={id}
+				returnHref={agentSectionHref(id, "vaults")}
+				returnLabel="Vaults"
+			>
+				<VaultDetailPage slug={slug} scope={agentResourceScope(id)} />
+			</AgentResourceRouteGate>
+		);
+	}
 	if (!projectId) {
 		return (
 			<AgentResourceRouteGate agentId={id} returnHref={returnHref} returnLabel="Projects">

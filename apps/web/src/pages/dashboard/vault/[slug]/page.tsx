@@ -94,7 +94,7 @@ export default function VaultDetailPage({
 	const router = useRouter();
 	const catalogReturnTarget = resourceCatalogReturnTarget(committedSearch.from);
 	const backTarget = catalogReturnTarget ?? resourceCollectionTarget(scope, "vaults");
-	const isAgentScope = scope.kind === "agent";
+	const isAgentScope = scope.kind === "agent" && Boolean(scope.projectId);
 	const requestedProjectId =
 		scope.kind === "agent" && scope.projectId?.trim() ? scope.projectId.trim() : null;
 	const scopedBindings = useAgentProjectBindings(scope.kind === "agent" ? scope.agentId : "", {
@@ -815,7 +815,7 @@ export default function VaultDetailPage({
 											</Link>
 										) : (
 											<span className="block text-sm font-medium">
-												{displayProjectName(project)}
+												{isWorkspaceAttachment ? "Workspace" : displayProjectName(project)}
 											</span>
 										)}
 										<p className="truncate text-xs text-muted-foreground">

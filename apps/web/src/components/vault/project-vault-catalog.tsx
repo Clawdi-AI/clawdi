@@ -8,7 +8,7 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
-import { displayProjectName } from "@/components/projects/project-metadata";
+import { displayProjectName, isCustomProject } from "@/components/projects/project-metadata";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
@@ -21,6 +21,7 @@ import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
+	agentResourceScope,
 	LIBRARY_RESOURCE_SCOPE,
 	type ResourceNavigationScope,
 	resourceCollectionTarget,
@@ -73,7 +74,7 @@ export function ProjectVaultCatalog({
 	else returnSearch.delete("q");
 	const returnHref = `${location.pathname}${returnSearch.size ? `?${returnSearch}` : ""}`;
 	const locked = useRef(false);
-	const canAttach = scope.kind !== "agent" && project.is_owner !== false;
+	const canAttach = isCustomProject(project) && project.is_owner !== false;
 	const catalog = useVaultCatalog({ enabled: canAttach });
 	const context = project.kind === "environment" ? "Workspace" : "Project";
 	const attachedIds = new Set(attachedVaults?.map((vault) => vault.id));
@@ -203,7 +204,11 @@ export function ProjectVaultCatalog({
 										locked.current = true;
 										updateAttachment.mutate({ vault, attached });
 									};
-									const detailScope = attached ? scope : LIBRARY_RESOURCE_SCOPE;
+									const detailScope = attached
+										? scope
+										: scope.kind === "agent"
+											? agentResourceScope(scope.agentId)
+											: LIBRARY_RESOURCE_SCOPE;
 									return (
 										<div key={vault.id} data-testid="project-vault-card" className="min-w-0">
 											<VaultCard
@@ -213,7 +218,7 @@ export function ProjectVaultCatalog({
 													projects.error,
 													projects.data,
 												)}
-												visibleProjectIds={scope.kind === "agent" ? new Set([project.id]) : null}
+												visibleProjectIds={null}
 												projectId={attached ? project.id : undefined}
 												navigationScope={detailScope}
 												returnHref={

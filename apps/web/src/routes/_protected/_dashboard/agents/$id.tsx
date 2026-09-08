@@ -33,7 +33,8 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id")({
 			currentRoute && agentRouteIdsEqual(currentRoute.agentId, params.id)
 				? currentRoute.section
 				: "overview";
-		const legacy = legacyAgentRoute(fallbackSection, search);
+		// Project tabs belong to the shared Project page, not legacy Agent section navigation.
+		const legacy = currentRoute?.projectId ? null : legacyAgentRoute(fallbackSection, search);
 		if (legacy) {
 			if (currentRoute?.sessionId) {
 				throw redirect({

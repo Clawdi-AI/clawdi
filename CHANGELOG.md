@@ -22,7 +22,8 @@ database migration, CI, and implementation details.
 ### Changed
 
 - Resources opened from an Agent stay in that Agent, including unlinked Projects,
-  newly created Projects, and resource source links.
+  newly created Projects, and resource source links. Agent and Library entry points
+  use the same Project detail page and controls.
 
 - Agent Projects show Linked and Available groups with direct Link or Unlink
   actions. Agent Vaults show the keys available through those Projects and the

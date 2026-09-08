@@ -147,16 +147,6 @@ test("Hosted Skills install, open pinned content, and uninstall without a Cloud 
 		`${source.url}/tree/${source.commit}/review-pr`,
 	);
 	await expect(page.getByRole("button", { name: "Copy skill" })).toBeVisible();
-	await page.getByRole("link", { name: "View source Skill" }).click();
-	await expect(page).toHaveURL(
-		(url) =>
-			url.pathname === `/agents/${agentId}/skills/team/review-pr` &&
-			url.searchParams.get("project") === libraryProjectId,
-	);
-	await expect(
-		page.locator("main").getByRole("heading", { name: "review-pr", exact: true, level: 1 }),
-	).toBeVisible();
-	await page.goBack();
 	await page.getByRole("link", { name: "Skills", exact: true }).last().click();
 	await page.getByRole("button", { name: "Uninstall review-pr from Agent" }).click();
 	await page
@@ -371,6 +361,16 @@ test("Library Skills use references from both entry points, show source content,
 		"href",
 		/\/agents\/[^/]+\/skills\/[^?]+\?project=project-library/,
 	);
+	await page.getByRole("link", { name: "View source Skill" }).click();
+	await expect(page).toHaveURL(
+		(url) =>
+			url.pathname === `/agents/${agentId}/skills/team/review-pr` &&
+			url.searchParams.get("project") === libraryProjectId,
+	);
+	await expect(
+		page.locator("main").getByRole("heading", { name: "review-pr", exact: true, level: 1 }),
+	).toBeVisible();
+	await page.goBack();
 	await page.getByRole("link", { name: "Skills", exact: true }).last().click();
 	await page.getByRole("button", { name: "Uninstall review-pr from Agent" }).click();
 	await page
