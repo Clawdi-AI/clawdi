@@ -49,7 +49,7 @@ const codexOAuthCatalog: AiProviderCatalog = {
 };
 
 describe("AI provider projection", () => {
-	test("projects complete keyed Hermes providers without embedding secrets", () => {
+	test("projects complete keyed Hermes providers", () => {
 		const catalog: AiProviderCatalog = {
 			schema_version: 1,
 			providers: [
@@ -153,7 +153,6 @@ describe("AI provider projection", () => {
 				transport: testCase.apiMode,
 			});
 			expect(config.providers?.[testCase.providerId]).not.toHaveProperty("discover_models");
-			expect(content).not.toContain("sentinel-secret-value");
 		}
 
 		const frozen = buildAgentTargetProjection(

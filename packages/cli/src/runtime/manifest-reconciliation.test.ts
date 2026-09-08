@@ -2078,21 +2078,11 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 		},
 	])("rejects hosted CLI policy with $name", ({ clawdiCli }) => {
-		expect(() =>
-			hostedRuntimeBundleV2ManifestSchema.parse({
-				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-				runtime: "openclaw",
-				deploymentId: "hdep_invalid_cli_policy",
-				environmentId: "env_invalid_cli_policy",
-				instanceId: "hri_invalid_cli_policy",
-				generation: 1,
-				issuedAt: "2026-07-11T00:00:00.000Z",
-				locale: TEST_HOSTED_LOCALE,
-				controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
-				clawdiCli,
-				runtimes: { openclaw: { enabled: true } },
-			}),
-		).toThrow();
+		const valid = hostedManifestFixture();
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(valid).success).toBe(true);
+		expect(
+			hostedRuntimeBundleV2ManifestSchema.safeParse({ ...valid, clawdiCli }).success,
+		).toBe(false);
 	});
 
 	test.each(["clawdi@1.2.3-test", "clawdi@1.2.3-rc-1.2", "clawdi@1.2.3"])(
@@ -2361,10 +2351,7 @@ describe("runtime manifest reconciliation invariants", () => {
 					openclaw: {
 						...((manifest.runtimes as Record<string, unknown>).openclaw as Record<string, unknown>),
 						run: {
-							command: "openclaw",
-							args: ["gateway", "run"],
-							env: {},
-							prependPath: [],
+							...(hostedRuntimeFixture().run as Record<string, unknown>),
 							unknown: true,
 						},
 					},
@@ -2372,35 +2359,8 @@ describe("runtime manifest reconciliation invariants", () => {
 			}),
 		],
 	])("rejects unknown hosted manifest fields at the %s", (_name, addUnknownField) => {
-		const cleanManifest = {
-			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-			runtime: "openclaw",
-			deploymentId: "hdep_forward_compat",
-			environmentId: "env_forward_compat",
-			instanceId: "hri_forward_compat",
-			generation: 1,
-			issuedAt: "2026-07-01T00:00:00.000Z",
-			locale: TEST_HOSTED_LOCALE,
-			controlPlane: {
-				cloudApiUrl: "https://cloud-api.example.test",
-			},
-			clawdiCli: {
-				source: "npm:clawdi",
-				packageSpec: "clawdi@1.2.3-test",
-				registry: "https://registry.npmjs.org",
-			},
-			runtimes: {
-				openclaw: {
-					enabled: true,
-					run: {
-						command: "openclaw",
-						args: ["gateway", "run"],
-						env: {},
-						prependPath: [],
-					},
-				},
-			},
-		};
+		const cleanManifest = hostedManifestFixture();
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(cleanManifest).success).toBe(true);
 
 		expect(
 			hostedRuntimeBundleV2ManifestSchema.safeParse(addUnknownField(cleanManifest)).success,
@@ -3230,6 +3190,7 @@ fi
 			{
 				openclaw: {
 					enabled: true,
+					providerMode: "configured",
 					run: runSettings("openclaw", ["gateway", "run"]),
 					provider_ids: ["default"],
 					services: {},
@@ -3251,6 +3212,10 @@ fi
 		);
 
 		expect(hostedAiProviderCatalog(manifest, "openclaw")).toBeNull();
+		const runtime = manifest.runtimes.openclaw;
+		if (!runtime) throw new Error("OpenClaw fixture runtime is missing");
+		runtime.primary_model = { provider_id: "default", model: "gpt-inferred" };
+		expect(hostedAiProviderCatalog(manifest, "openclaw")).not.toBeNull();
 	});
 
 	test("preserves hosted provider model alias and cost metadata", () => {

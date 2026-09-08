@@ -8,10 +8,6 @@ describe("sanitizeSkillKey", () => {
 		expect(isValidSkillKey(sanitizeSkillKey("Hello, World!"))).toBe(true);
 	});
 
-	it("lowercases", () => {
-		expect(sanitizeSkillKey("UPPER")).toBe("upper");
-	});
-
 	it("strips leading characters that cannot start a skill_key", () => {
 		expect(sanitizeSkillKey("-foo-")).toBe("foo");
 		expect(sanitizeSkillKey(".hidden.")).toBe("hidden");

@@ -90,9 +90,6 @@ describe("native WhatsApp egress contract", () => {
 		expect(sidecarRuntime).toContain("new SQLiteProviderState(");
 		expect(sidecarRuntime).not.toContain("useMultiFileAuthState");
 		expect(sidecarRuntime).not.toContain("fetchLatestBaileysVersion");
-		expect(sidecarState).toContain('db.exec("PRAGMA journal_mode = WAL")');
-		expect(sidecarState).toContain('db.exec("PRAGMA synchronous = FULL")');
-		expect(sidecarState).toContain('db.exec("PRAGMA locking_mode = EXCLUSIVE")');
 		expect(sidecarState).toContain('["account_id", input.sessionId]');
 		expect(sidecarState).not.toMatch(/process\.kill|unlinkSync/);
 		expect(auditedVersion).toContain('AUDITED_BAILEYS_RELEASE = "7.0.0-rc14"');

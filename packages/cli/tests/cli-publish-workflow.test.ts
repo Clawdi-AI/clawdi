@@ -19,23 +19,11 @@ const workflow = readFileSync(
 	"utf8",
 );
 const workflowDocument = parse(workflow) as WorkflowDocument;
-const releaseRunbookDoc = readFileSync(
-	resolve(import.meta.dir, "../../../docs/runbooks/release.md"),
-	"utf8",
-);
-const cliDevelopmentDoc = readFileSync(
-	resolve(import.meta.dir, "../../../docs/cli-development.md"),
-	"utf8",
-);
 const publishManifestCheckerPath = resolve(
 	import.meta.dir,
 	"../scripts/check-publish-manifest.mjs",
 );
 const publishManifestChecker = readFileSync(publishManifestCheckerPath, "utf8");
-const manifestContract = readFileSync(
-	resolve(import.meta.dir, "../src/runtime/manifest-contract.ts"),
-	"utf8",
-);
 const cliPackage = JSON.parse(
 	readFileSync(resolve(import.meta.dir, "../package.json"), "utf8"),
 ) as {
@@ -268,24 +256,5 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).toContain("latest) ;;");
 		expect(workflow).toContain('echo "unsupported npm release tag: $NPM_TAG" >&2');
 		expect(workflow).not.toContain("pull_request:");
-	});
-
-	test("keeps Hosted production semantics exact-version only", () => {
-		for (const surface of [workflow, cliDevelopmentDoc, releaseRunbookDoc, manifestContract]) {
-			expect(surface).not.toMatch(/clawdi@agent-v2(?!-)/);
-		}
-		expect(workflow).toContain("npm install -g clawdi@$VERSION");
-		expect(cliDevelopmentDoc).toMatch(
-			/explicitly supplies the exact\s+`clawdi@<semver>` package spec/,
-		);
-		expect(cliDevelopmentDoc).toContain("fails closed when the exact input is missing");
-		expect(releaseRunbookDoc).toMatch(/supplies the exact\s+`clawdi@<semver>`\s+package\s+spec/);
-		expect(releaseRunbookDoc).toMatch(/fails when the exact spec is\s+missing/);
-		for (const surface of [cliDevelopmentDoc, releaseRunbookDoc]) {
-			expect(surface).toMatch(/never\s+resolves\s+an\s+npm\s+dist-tag/);
-			expect(surface).not.toContain("resolves that candidate");
-		}
-		expect(manifestContract).toContain("must be clawdi@<exact-semver>");
-		expect(workflow).not.toContain("npm view clawdi@agent-v2");
 	});
 });

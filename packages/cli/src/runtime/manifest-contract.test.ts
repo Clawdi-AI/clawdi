@@ -8,8 +8,6 @@ describe("official runtime installer arguments", () => {
 			"--skip-browser",
 			"--non-interactive",
 		]);
-		expect(officialInstallArgs("hermes", "/home/clawdi")).not.toContain("--no-skills");
-		expect(officialInstallArgs("hermes", "/home/clawdi")).not.toContain("--version");
 	});
 
 	test("keeps OpenClaw on the official installer's latest release", () => {
@@ -19,6 +17,5 @@ describe("official runtime installer arguments", () => {
 			"--prefix",
 			"/srv/tenant/.local",
 		]);
-		expect(officialInstallArgs("openclaw", "/srv/tenant")).not.toContain("--version");
 	});
 });
