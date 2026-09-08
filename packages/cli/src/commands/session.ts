@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import * as p from "@clack/prompts";
 import chalk from "chalk";
 import type { RawSession } from "../adapters/base";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
@@ -12,6 +13,7 @@ import {
 	listRegisteredAgentTypes,
 	resolveTargetAgentTypes,
 } from "../lib/select-adapter";
+import { isInteractive } from "../lib/tty";
 
 interface SessionListOpts {
 	agent?: string;
@@ -340,4 +342,122 @@ export async function sessionExtract(sessionId: string, opts: SessionExtractOpts
 		}
 		throw e;
 	}
+}
+
+export async function sessionExport(sessionId: string, opts: { json?: boolean } = {}) {
+	if (opts.json) return sessionRead(sessionId, { json: true });
+	if (!requireCloudSessionAuth()) return;
+	const markdown = unwrap(
+		await new ApiClient().GET("/v1/sessions/{session_id}/export.md", {
+			params: { path: { session_id: sessionId } },
+			parseAs: "text",
+		}),
+	);
+	process.stdout.write(process.stdout.isTTY ? stripTerminalEscapes(markdown) : markdown);
+}
+
+export async function sessionShareCreate(
+	sessionId: string,
+	opts: { through?: string; response?: string; json?: boolean; yes?: boolean } = {},
+) {
+	if (!requireCloudSessionAuth()) return;
+	if (opts.through !== undefined && opts.response !== undefined) {
+		throw new Error("Use only one of --through or --response.");
+	}
+	const scope =
+		opts.through !== undefined ? "through" : opts.response !== undefined ? "response" : "session";
+	const rawPosition = opts.through ?? opts.response;
+	const position = rawPosition === undefined ? undefined : Number(rawPosition);
+	if (
+		rawPosition !== undefined &&
+		(!/^\d+$/.test(rawPosition) || !Number.isSafeInteger(position))
+	) {
+		throw new Error("Message position must be a non-negative integer from `session read --json`.");
+	}
+	if (
+		!(await confirmSessionLink(
+			`Publish a public ${scope} snapshot of session ${sanitizeMetadata(sessionId)}? Anyone with the link can read it.`,
+			opts.yes,
+		))
+	)
+		return;
+	const share = unwrap(
+		await new ApiClient().POST("/v1/sessions/{session_id}/shares", {
+			params: { path: { session_id: sessionId } },
+			body: { scope, position },
+		}),
+	);
+	console.log(
+		opts.json || !process.stdout.isTTY ? JSON.stringify(share, null, 2) : share.share_url,
+	);
+}
+
+export async function sessionShareList(
+	sessionId: string | undefined,
+	opts: { page?: string; limit?: string; json?: boolean } = {},
+) {
+	if (!requireCloudSessionAuth()) return;
+	const page = opts.page === undefined ? 1 : Number(opts.page);
+	const limit = opts.limit === undefined ? 25 : Number(opts.limit);
+	if (
+		!Number.isSafeInteger(page) ||
+		page < 1 ||
+		!Number.isSafeInteger(limit) ||
+		limit < 1 ||
+		limit > 100
+	) {
+		throw new Error("--page must be a positive integer; --limit must be between 1 and 100.");
+	}
+	const result = unwrap(
+		await new ApiClient().GET("/v1/session-shares", {
+			params: { query: { page, page_size: limit, session_id: sessionId } },
+		}),
+	);
+	if (opts.json || !process.stdout.isTTY) {
+		console.log(JSON.stringify(result, null, 2));
+		return;
+	}
+	for (const link of result.items) {
+		console.log(`${link.id}  ${link.kind}  ${link.scope}  ${sanitizeMetadata(link.session_title)}`);
+		console.log(`  ${stripTerminalEscapes(link.share_url)}`);
+	}
+	console.log(
+		chalk.gray(`Page ${result.page}: ${result.items.length} of ${result.total} active links`),
+	);
+}
+
+export async function sessionShareRevoke(
+	shareId: string,
+	opts: { yes?: boolean; legacy?: boolean; json?: boolean } = {},
+) {
+	if (!requireCloudSessionAuth()) return;
+	if (
+		!(await confirmSessionLink(
+			`Revoke ${opts.legacy ? "legacy live" : "snapshot"} link ${sanitizeMetadata(shareId)}?`,
+			opts.yes,
+		))
+	)
+		return;
+	unwrap(
+		await new ApiClient().DELETE("/v1/session-shares/{share_id}", {
+			params: { path: { share_id: shareId }, query: { kind: opts.legacy ? "live" : "snapshot" } },
+		}),
+	);
+	console.log(
+		opts.json || !process.stdout.isTTY
+			? JSON.stringify({ id: shareId, status: "revoked" })
+			: `Revoked ${opts.legacy ? "legacy live" : "snapshot"} link ${sanitizeMetadata(shareId)}.`,
+	);
+}
+
+async function confirmSessionLink(message: string, yes?: boolean): Promise<boolean> {
+	if (yes) return true;
+	if (!isInteractive())
+		throw new Error("Pass --yes to confirm this session link change in non-interactive mode.");
+	const confirmed = await p.confirm({ message, initialValue: false });
+	if (p.isCancel(confirmed) || !confirmed) {
+		process.exitCode = 1;
+		return false;
+	}
+	return true;
 }

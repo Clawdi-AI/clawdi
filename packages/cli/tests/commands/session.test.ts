@@ -1,8 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sessionRead, sessionSearch } from "../../src/commands/session";
+import {
+	sessionExport,
+	sessionRead,
+	sessionSearch,
+	sessionShareCreate,
+	sessionShareList,
+	sessionShareRevoke,
+} from "../../src/commands/session";
 import { jsonResponse, mockFetch, seedAuthAndEnv } from "./helpers";
 
 let tmpHome: string;
@@ -111,7 +118,7 @@ describe("cloud session commands", () => {
 			{
 				method: "GET",
 				path: `/v1/sessions/${sessionId}/content`,
-				response: () => jsonResponse([{ role: "user", content: "hello" }]),
+				response: () => jsonResponse([{ role: "user", content: "hello", position: 3 }]),
 			},
 			{
 				method: "GET",
@@ -142,7 +149,7 @@ describe("cloud session commands", () => {
 		);
 		expect(JSON.parse(output[0])).toMatchObject({
 			session: { id: sessionId },
-			messages: [{ role: "user", content: "hello" }],
+			messages: [{ role: "user", content: "hello", position: 3 }],
 		});
 	});
 
@@ -179,4 +186,62 @@ describe("cloud session commands", () => {
 			messages: [],
 		});
 	});
+});
+
+it("publishes only with confirmation and keeps canonical positions and legacy IDs", async () => {
+	const { captured, restore } = mockFetch([
+		{
+			method: "POST",
+			path: "/v1/sessions/cloud-id/shares",
+			response: () => jsonResponse({ id: "snapshot-id", scope: "response", position: 3 }, 201),
+		},
+		{
+			method: "GET",
+			path: "/v1/session-shares",
+			response: () => jsonResponse({ items: [], total: 0, page: 1, page_size: 25 }),
+		},
+		{
+			method: "DELETE",
+			path: "/v1/session-shares/legacy-id",
+			response: () => new Response(null, { status: 204 }),
+		},
+	]);
+	const originalLog = console.log;
+	console.log = () => {};
+	try {
+		await expect(sessionShareCreate("cloud-id", { response: "3" })).rejects.toThrow("--yes");
+		await expect(
+			sessionShareCreate("cloud-id", { through: "1", response: "3", yes: true }),
+		).rejects.toThrow("only one");
+		expect(captured).toHaveLength(0);
+		await sessionShareCreate("cloud-id", { response: "3", yes: true, json: true });
+		await sessionShareList("cloud-id", { json: true });
+		await sessionShareRevoke("legacy-id", { legacy: true, yes: true, json: true });
+		expect(captured[0]?.body).toEqual({ scope: "response", position: 3 });
+		expect(new URL(captured[1]?.url ?? "").searchParams.get("session_id")).toBe("cloud-id");
+		expect(new URL(captured[2]?.url ?? "").searchParams.get("kind")).toBe("live");
+	} finally {
+		console.log = originalLog;
+		restore();
+	}
+});
+
+it("exports owner Markdown without publishing a link", async () => {
+	const { captured, restore } = mockFetch([
+		{
+			method: "GET",
+			path: "/v1/sessions/cloud-id/export.md",
+			response: () =>
+				new Response("# Private session\n", { headers: { "Content-Type": "text/markdown" } }),
+		},
+	]);
+	const write = spyOn(process.stdout, "write").mockImplementation(() => true);
+	try {
+		await sessionExport("cloud-id");
+		expect(write).toHaveBeenCalledWith("# Private session\n");
+		expect(captured.map((item) => item.method)).toEqual(["GET"]);
+	} finally {
+		write.mockRestore();
+		restore();
+	}
 });

@@ -728,7 +728,7 @@ export async function runDeployFlow(
 	if (aiMode === "saved" && !selectedSavedProvider) {
 		throw new DeployInputError(
 			"provider_missing",
-			`Saved AI provider ${providerId ?? ""} was not found. Pass its exact provider id or run \`clawdi ai-provider list\`.`,
+			`Saved AI provider ${providerId ?? ""} was not found. Pass its exact provider id from Cloud AI Providers.`,
 		);
 	}
 	const selectedProviderIssue = selectedSavedProvider
@@ -744,7 +744,15 @@ export async function runDeployFlow(
 		);
 	}
 
-	let model = parsed.model ?? (aiMode === "managed" ? defaultManagedModel(managedModels) : "");
+	const nativeProvider = selectedSavedProvider?.configuration_mode === "native";
+	if (nativeProvider && parsed.model) {
+		console.error(
+			"Warning: --model is ignored for native saved providers; choose models inside the Agent. Existing model choices are preserved.",
+		);
+	}
+	let model = nativeProvider
+		? ""
+		: (parsed.model ?? (aiMode === "managed" ? defaultManagedModel(managedModels) : ""));
 	if (aiMode === "managed") {
 		if (managedModels.length === 0) {
 			throw new Error(
@@ -762,7 +770,7 @@ export async function runDeployFlow(
 				defaultManagedModel(managedModels),
 			);
 		}
-	} else if (selectedSavedProvider) {
+	} else if (selectedSavedProvider && selectedSavedProvider.configuration_mode !== "native") {
 		const catalog = selectedSavedProvider.models ?? [];
 		const automaticModel = savedProviderDefaultModel(selectedSavedProvider);
 		if (interactive && !parsed.model) {
@@ -1064,7 +1072,7 @@ export async function runDeployFlow(
 			aiMode === "managed"
 				? `Clawdi AI · ${model}`
 				: aiMode === "saved"
-					? `${selectedSavedProvider ? savedProviderLabel(selectedSavedProvider) : providerId} · ${model}`
+					? `${selectedSavedProvider ? savedProviderLabel(selectedSavedProvider) : providerId}${model ? ` · ${model}` : " · choose models inside Agent"}`
 					: "Configure inside agent"
 		}`,
 		`Compute: ${planLabel(computePlanSlug)}${includedBasic ? " · included" : ` · ${paidSelection?.billingTermMonths} month term`}`,
@@ -1234,7 +1242,7 @@ export async function runDeployFlow(
 		runtime,
 		compute_plan_slug: computePlanSlug,
 		ai_provider: aiMode === "saved" ? (selectedSavedProvider?.provider_id ?? "") : aiMode,
-		primary_model: aiMode === "unmanaged" ? null : model,
+		primary_model: aiMode === "unmanaged" || !model ? null : model,
 		payment: includedBasic
 			? { kind: "included_basic" }
 			: payment === "wallet"

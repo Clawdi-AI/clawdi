@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from sqlalchemy import func, literal, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, require_web_auth
+from app.core.auth import AuthContext, require_user_auth_unbound
 from app.core.config import settings
 from app.core.database import get_session
 from app.models.session import AgentEnvironment, Session
@@ -84,7 +85,8 @@ def _share_response(share: SessionShare) -> SessionShareResponse:
 async def list_all_session_shares(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
-    auth: AuthContext = Depends(require_web_auth),
+    session_id: UUID | None = Query(default=None),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> Paginated[SessionShareListItemResponse]:
     """List every active Session link owned by the signed-in user."""
@@ -124,6 +126,9 @@ async def list_all_session_shares(
             ),
         )
     )
+    if session_id is not None:
+        snapshot_rows = snapshot_rows.where(Session.id == session_id)
+        live_rows = live_rows.where(Session.id == session_id)
     active_links = union_all(snapshot_rows, live_rows).subquery()
     total = int((await db.execute(select(func.count()).select_from(active_links))).scalar_one())
     rows = (
@@ -163,7 +168,7 @@ async def list_all_session_shares(
 @router.get("/sessions/{session_id}/shares")
 async def list_session_shares(
     session_id: UUID,
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> SessionSharesResponse:
     await _owned_session(db, auth, session_id)
@@ -186,7 +191,7 @@ async def list_session_shares(
 async def create_share(
     body: SessionShareCreate,
     session_id: UUID,
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> SessionShareResponse:
     session, agent_type = await _owned_session(db, auth, session_id)
@@ -221,9 +226,30 @@ async def create_share(
 @router.delete("/session-shares/{share_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_share(
     share_id: UUID,
-    auth: AuthContext = Depends(require_web_auth),
+    kind: Literal["snapshot", "live"] = Query(default="snapshot"),
+    auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> None:
+    """Revoke one owned snapshot or legacy live link by its exact inventory ID."""
+    if kind == "live":
+        permission = (
+            await db.execute(
+                select(SessionPermission)
+                .join(Session, Session.id == SessionPermission.session_id)
+                .where(
+                    SessionPermission.id == share_id,
+                    SessionPermission.kind == PERMISSION_KIND_LINK,
+                    Session.user_id == auth.user_id,
+                )
+                .with_for_update(of=SessionPermission)
+            )
+        ).scalar_one_or_none()
+        if permission is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Session share not found")
+        if permission.revoked_at is None:
+            permission.revoked_at = datetime.now(UTC)
+            await db.commit()
+        return
     share = (
         await db.execute(
             select(SessionShare)

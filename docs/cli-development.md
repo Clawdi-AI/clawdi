@@ -204,7 +204,11 @@ Deploy Wizard:
 clawdi deploy
 clawdi deploy --runtime hermes --provider managed --model <id> \
   --compute basic --request-id <uuid> --yes --json
-clawdi deploy --provider <saved-provider-id> --model <id> \
+# Native saved provider (credentials only):
+clawdi deploy --provider <native-provider-id> \
+  --compute basic --request-id <uuid> --yes --json
+# Custom saved provider:
+clawdi deploy --provider <custom-provider-id> --model <id> \
   --compute basic --request-id <uuid> --yes --json
 clawdi deploy --compute performance --term 12 --payment wallet \
   --request-id <uuid> --yes --json
@@ -220,8 +224,81 @@ deterministic automation and reuse the same request ID after an ambiguous
 create or checkout response.
 `--provider` also accepts an exact Cloud saved-provider id. The CLI reads only
 secret-free provider metadata and sends a provider binding/bootstrap; it never
-accepts or prints the saved credential. Pass `--model` unless that provider has
-one unambiguous default model.
+accepts or prints the saved credential. Native saved providers do not prompt
+for or require a model: choose models inside
+the Agent. Legacy `--model` is accepted with a stderr warning and omitted from
+the binding, preserving existing model choices. Custom saved providers require
+`--model` unless they have one unambiguous default. Provider IDs come from Cloud
+AI Providers, not the local `ai-provider list` catalog.
+
+## Cloud context and remote Skills
+
+These commands use the configured Cloud API and require login. `session list`
+continues to read local history; `session search`, `read`, and `export` use Cloud
+session UUIDs. Export writes owner Markdown to stdout and never creates a link.
+`--json` exports owner metadata and messages instead.
+
+```bash
+clawdi session search "workspace setup" --json
+clawdi session read <cloud-session-id> --json
+clawdi session export <cloud-session-id> > session.md
+clawdi session share <cloud-session-id> --yes --json
+clawdi session share <cloud-session-id> --through <position> --yes --json
+clawdi session share <cloud-session-id> --response <position> --yes --json
+clawdi session shares <cloud-session-id> --json
+clawdi session unshare <share-id> --yes
+clawdi session unshare <legacy-link-id> --legacy --yes
+clawdi memory update <full-memory-id> "Prefer tabs" --json
+```
+
+Sharing publishes an immutable whole-session snapshot by default. Scoped shares
+use the canonical `position` returned by `session read --json`; these positions
+may have gaps from hidden/tool events, so never enumerate the filtered messages.
+`--response` requires an assistant message. Publication and revocation prompt
+unless `--yes` is supplied; automation requires it. `shares` includes both active
+snapshot and legacy live links, with `--page` and `--limit` pagination. Revoke
+uses the exact inventory link ID; `--legacy` selects a legacy link explicitly
+and retrying it cannot revoke a newly created replacement. Sharing requires
+OAuth CLI or a fully unbound account key; scoped and Agent-bound keys are denied.
+Memory update requires `memories:write`, retains metadata through the configured
+provider service, and rejects likely secrets on both client and server.
+
+```bash
+clawdi agent skills list <agent-id> --json
+clawdi agent skills read <agent-id> <skill-key>
+clawdi agent skills install <agent-id> --github owner/repo --path skills/review
+clawdi agent skills install <agent-id> --library <skill-id>
+clawdi agent skills rm <agent-id> <skill-key>
+```
+
+Remote targets are stable Cloud Agent UUIDs. Local `skill --agent <type>` keeps
+its existing meaning. Library operations use Cloud references and preserve the
+source Skill. Linked Project and bundled Skills are read-only here. GitHub
+operations use Hosted's native source validation and capability gate, with the
+canonical OAuth CLI login. Unsupported runtimes/capabilities fail explicitly;
+no local installation is substituted. `list` includes desired state, observed
+convergence and failed removals; failed status sets exit code 1. `read` prints
+instructions on a terminal and structured detail with `--json` or a pipe.
+
+Accepted requests are not proof of runtime application. GitHub writes carry a
+fresh resource version and a generated or caller-supplied `--request-id`. After
+an ambiguous response, inspect inventory. Exact replay must reuse **both** the
+original `--request-id` and `--resource-version` printed in the result/error;
+the Hosted fingerprint includes that version. Version conflicts require
+reviewing current state before submitting a new request.
+
+Against local Cloud/Hosted APIs with suitable fixtures, verify that
+`session read --json` exposes canonical positions, owner exports create no
+links, revoked links disappear from `shares`, and `agent skills list` reports
+actual convergence. Run the focused hermetic regressions:
+
+```bash
+bash scripts/test.sh cli tests/commands/deploy.test.ts tests/commands/session.test.ts tests/commands/agent-skills.test.ts
+bash scripts/test.sh backend tests/test_cli_oauth_auth.py tests/test_session_shares.py
+```
+
+Done: both commands exit 0. The backend tests cover real OAuth/API-key gates,
+exact legacy revocation, hidden/tool position gaps and Memory metadata/ownership.
 
 ## Typecheck / test / build
 
