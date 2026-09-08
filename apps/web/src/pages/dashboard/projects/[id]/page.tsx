@@ -426,7 +426,7 @@ export default function ProjectDetailPage({
 	);
 	useSetBreadcrumbTitle(
 		projectName
-			? isWorkspaceView && focus
+			? focus
 				? agentSectionLabel(focus)
 				: isWorkspace
 					? "Workspace"
