@@ -862,7 +862,7 @@ async def test_connector_catalog_hides_oauth_without_managed_or_custom_auth(
     assert page["items"] == []
     assert page["total"] == 0
     assert fake.auth_configs.listed == [
-        {"is_composio_managed": False, "show_disabled": False, "limit": 100}
+        {"is_composio_managed": False, "show_disabled": False, "limit": 50}
     ]
 
 
@@ -895,8 +895,108 @@ async def test_connector_catalog_shows_oauth_without_managed_auth_when_custom_co
     assert page["items"][0].connect_disabled_reason is None
     assert page["total"] == 1
     assert fake.auth_configs.listed == [
-        {"is_composio_managed": False, "show_disabled": False, "limit": 100}
+        {"is_composio_managed": False, "show_disabled": False, "limit": 50}
     ]
+
+
+async def test_catalog_reads_complete_custom_auth_index_with_upstream_page_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from composio_client import AsyncComposio
+    from composio_client.types.auth_config_list_response import AuthConfigListResponse
+
+    configs = [
+        {
+            "id": f"ac_{index}",
+            "uuid": f"config-{index}",
+            "name": f"Config {index}",
+            "no_of_connections": 0,
+            "status": "ENABLED",
+            "tool_access_config": {},
+            "toolkit": {"slug": f"toolkit_{index}", "logo": ""},
+            "type": "custom",
+            "auth_scheme": "OAUTH2",
+            "is_composio_managed": False,
+        }
+        for index in range(248)
+    ]
+    configs[1]["toolkit"] = {"slug": "Toolkit_0", "logo": ""}
+    configs[2]["toolkit"] = {"slug": "toolkit_0", "logo": ""}
+    configs[2]["auth_scheme"] = "API_KEY"
+    # Only the final config can enable Twitter; incomplete pagination must hide it.
+    configs[-1]["toolkit"] = {"slug": "twitter", "logo": ""}
+    page_sizes: list[int] = []
+    cursors: dict[str | None, int] = {None: 1}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/api/v3.1/auth_configs"
+        params = dict(request.url.params)
+        current_page = cursors[params.pop("cursor", None)]
+        limit = int(params["limit"])
+        assert params == {
+            "is_composio_managed": "false",
+            "show_disabled": "false",
+            "limit": str(limit),
+        }
+        # Observed upstream behavior: pages contain at most 50 records, while
+        # total_pages and cursor termination use the requested limit. Larger
+        # limits silently truncate the index even when every cursor is followed.
+        total_pages = (len(configs) + limit - 1) // limit
+        offset = (current_page - 1) * 50
+        items = configs[offset : offset + 50]
+        page_sizes.append(len(items))
+        next_cursor = None
+        if current_page < total_pages:
+            next_cursor = f"upstream-page-{current_page + 1}"
+            cursors[next_cursor] = current_page + 1
+        response = AuthConfigListResponse.model_validate(
+            {
+                "items": items,
+                "current_page": current_page,
+                "total_items": len(configs),
+                "total_pages": total_pages,
+                "next_cursor": next_cursor,
+            }
+        )
+        return httpx.Response(200, json=response.model_dump())
+
+    monkeypatch.setattr(
+        composio,
+        "_toolkits_cache",
+        [
+            composio._normalize_sdk_response(toolkit, composio._Toolkit)
+            for toolkit in [_hackernews_detail_toolkit(), _twitter_detail_toolkit()]
+        ],
+    )
+    monkeypatch.setattr(composio, "_toolkits_cache_at", datetime.now(UTC))
+    async with AsyncComposio(
+        api_key="isolated-test",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+        max_retries=0,
+    ) as client:
+        monkeypatch.setattr(composio, "_client", client)
+        await composio.get_available_apps(search="hackernews")
+        assert page_sizes == []
+
+        page = await composio.get_available_apps()
+        assert [app.name for app in page["items"]] == ["hackernews", "twitter"]
+        assert page["total"] == 2
+        assert page_sizes == [50, 50, 50, 50, 48]
+        index = await composio._get_custom_auth_config_index(client)
+        assert len(index) == 247
+        assert {("toolkit_0", "OAUTH2"), ("toolkit_0", "API_KEY"), ("twitter", "OAUTH2")} <= index
+        assert await composio.get_available_apps() == page
+        assert page_sizes == [50, 50, 50, 50, 48]
+
+        configs.clear()
+        monkeypatch.setattr(
+            composio, "_custom_auth_config_index_at", datetime.now(UTC) - timedelta(minutes=5)
+        )
+        page = await composio.get_available_apps()
+        assert [app.name for app in page["items"]] == ["hackernews"]
+        assert page["total"] == 1
+        assert page_sizes == [50, 50, 50, 50, 48, 0]
 
 
 @pytest.mark.asyncio
