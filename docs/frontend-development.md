@@ -48,6 +48,12 @@ generated route tree stays current. The public package `test` command routes
 through the Docker-backed clean runner; `test:internal` is reserved for that
 runner and CI.
 
+The clean runner also builds the hosted Vercel production bundle and executes
+its server entry with auth bypass off and synthetic Clerk keys. It checks
+sign-in/sign-up HTML and protected-route redirects without external requests.
+Client CI runs the same `test:ssr:internal` check. This catches server chunk
+initialization failures that the Vite dev-server E2E suite cannot detect.
+
 For broader changes, run the full web test suite:
 
 ```bash
