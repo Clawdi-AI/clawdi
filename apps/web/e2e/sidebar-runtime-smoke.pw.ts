@@ -1005,8 +1005,9 @@ test("connector cards complete each authentication flow in Agent scope", async (
 	await expect(main.getByRole("heading", { name: "Connectors", level: 1 })).toBeVisible();
 
 	const gmailCard = main.getByRole("link", { name: "Gmail" }).locator("..");
-	const popupPromise = page.waitForEvent("popup");
 	await gmailCard.getByRole("button", { name: "Connect", exact: true }).click();
+	const popupPromise = page.waitForEvent("popup");
+	await page.getByRole("dialog").getByRole("button", { name: "Continue", exact: true }).click();
 	const popup = await popupPromise;
 	await expect.poll(() => oauthRequests).toHaveLength(1);
 	const oauthRequest = oauthRequests[0];

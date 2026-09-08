@@ -10,6 +10,7 @@ import { AccountAliasDialog } from "@/components/connectors/account-alias-dialog
 import { getConnectorAuthFlow } from "@/components/connectors/auth-flow.logic";
 import { ConnectorConnectAction } from "@/components/connectors/connector-connect-action";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
+import { ConnectorReconnectAction } from "@/components/connectors/connector-reconnect-action";
 import { DashboardSection, DashboardSectionHeader } from "@/components/dashboard/section";
 import { DetailBackLink } from "@/components/detail/back-link";
 import { EmptyState } from "@/components/empty-state";
@@ -49,9 +50,13 @@ function formatName(raw: string): string {
 
 function connectionStatusLabel(status: string): string {
 	const normalized = status.trim().toLowerCase();
-	if (["active", "connected", "ready"].includes(normalized)) return "Connected";
-	if (["pending", "initiated", "connecting"].includes(normalized)) return "Connecting";
-	if (["expired", "disconnected", "revoked"].includes(normalized)) return "Reconnect required";
+	if (normalized === "active") return "Connected";
+	if (["pending", "initializing", "initiated", "connecting"].includes(normalized))
+		return "Awaiting authorization";
+	if (normalized === "expired") return "Expired";
+	if (normalized === "inactive") return "Inactive";
+	if (normalized === "disconnected") return "Disconnected";
+	if (normalized === "revoked") return "Access revoked";
 	if (["failed", "error"].includes(normalized)) return "Connection failed";
 	return "Status unavailable";
 }
@@ -147,7 +152,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					});
 				},
 				onError: () =>
-					toast.error("Couldn't disconnect", {
+					toast.error("Couldn't remove account", {
 						description: "Try again. If the problem persists, refresh the page.",
 					}),
 			},
@@ -155,9 +160,9 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	};
 	const isDisconnecting = (connectionId: string) => disconnectingIds.has(connectionId);
 
-	const activeConnections =
-		connections?.filter((c) => c.app_name === name && isActiveConnection(c)) ?? [];
-	const editingConnection = activeConnections.find((connection) => connection.id === editingId);
+	const appConnections = connections?.filter((c) => c.app_name === name) ?? [];
+	const activeConnections = appConnections.filter(isActiveConnection);
+	const editingConnection = appConnections.find((connection) => connection.id === editingId);
 	const isConnected = activeConnections.length > 0;
 	const isLoading = isAppLoading || appQ.isPending;
 
@@ -188,7 +193,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	// thrown 404 from the hosted catalog adapter) and outright network
 	// failures. Surface it so the user sees what's wrong instead of a
 	// silently-broken connect page.
-	if (!app) {
+	if (!app && appConnections.length === 0) {
 		const appNotFound = isApiNotFoundError(appQ.error) || !appQ.error;
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
@@ -241,13 +246,13 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 			<DashboardSection priority="primary">
 				<DashboardSectionHeader
 					icon={Plug}
-					title="Connected accounts"
+					title="Accounts"
 					count={
 						usesNoAuth
 							? "No account required"
 							: isConnectionsLoading
 								? "Checking accounts"
-								: `${activeConnections.length} connected`
+								: `${activeConnections.length} active · ${appConnections.length} total`
 					}
 					description={
 						usesNoAuth
@@ -255,10 +260,11 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 							: "Connect an account once. Approved tools become available to agents through this connector."
 					}
 					actions={
+						app &&
 						!usesNoAuth &&
 						!isSetupBlocked &&
 						!isConnectionsLoading &&
-						activeConnections.length > 0 ? (
+						appConnections.length > 0 ? (
 							<ConnectorConnectAction app={app} label="Connect account" />
 						) : null
 					}
@@ -288,7 +294,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 						</div>
 					) : usesNoAuth ? (
 						<EmptyState variant="inset" description="No account connection is required." />
-					) : hasUnsupportedAuthType ? (
+					) : hasUnsupportedAuthType && appConnections.length === 0 ? (
 						<ApiErrorPanel
 							error="This connector uses an authentication method Clawdi does not support."
 							onRetry={() => {
@@ -296,7 +302,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 							}}
 							title="Connection unavailable"
 						/>
-					) : activeConnections.length === 0 ? (
+					) : appConnections.length === 0 ? (
 						isSetupBlocked ? (
 							<Alert>
 								<AlertCircle />
@@ -310,13 +316,15 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 								variant="inset"
 								description="No connected accounts yet."
 								action={
-									<ConnectorConnectAction app={app} label="Connect account" emphasis="primary" />
+									app ? (
+										<ConnectorConnectAction app={app} label="Connect account" emphasis="primary" />
+									) : null
 								}
 							/>
 						)
 					) : (
 						<div className="divide-y overflow-hidden rounded-lg border bg-card">
-							{activeConnections.map((c) => (
+							{appConnections.map((c) => (
 								<div
 									key={c.id}
 									className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
@@ -343,10 +351,15 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 											</p>
 										) : null}
 										<p className="mt-0.5 text-xs text-muted-foreground">
-											{connectionStatusLabel(c.status)}
+											{c.is_disabled ? "Disabled" : connectionStatusLabel(c.status)}
 										</p>
 									</div>
-									<div className="flex shrink-0 items-center gap-1">
+									<div className="flex flex-wrap items-center gap-2">
+										<ConnectorReconnectAction
+											connection={c}
+											displayName={displayName}
+											disabled={isDisconnecting(c.id)}
+										/>
 										<Button
 											variant="ghost"
 											size="xs"
@@ -356,13 +369,15 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 											Edit alias
 										</Button>
 										<ConfirmAction
-											title={`Disconnect ${c.alias || c.account_display || "this account"}?`}
+											title={`${isActiveConnection(c) ? "Disconnect" : "Delete"} ${c.alias || c.account_display || "this account"}?`}
 											description={
 												<p>
-													All agents will lose access immediately. To restore access, sign in again.
+													{isActiveConnection(c)
+														? "All agents will lose access immediately. To restore access, sign in again."
+														: "This removes the saved account and its alias for all agents."}
 												</p>
 											}
-											confirmLabel="Disconnect"
+											confirmLabel={isActiveConnection(c) ? "Disconnect" : "Delete"}
 											destructive
 											onConfirm={() => handleDisconnect(c.id)}
 										>
@@ -377,7 +392,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 												) : (
 													<Link2Off className="size-3.5" />
 												)}
-												Disconnect
+												{isActiveConnection(c) ? "Disconnect" : "Delete"}
 											</Button>
 										</ConfirmAction>
 									</div>

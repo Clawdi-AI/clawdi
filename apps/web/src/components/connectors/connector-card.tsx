@@ -7,6 +7,7 @@ import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { connectorSearchSupportingText } from "@/components/connectors/connector-search";
 import { ENTITY_GRID_CLASS, EntityCardSkeleton, EntityRow } from "@/components/entity-card";
 import { SearchHighlightedText } from "@/components/search-highlighted-text";
+import { Badge } from "@/components/ui/badge";
 import { useOpenApi } from "@/lib/api";
 import {
 	availableAppQueryOptions,
@@ -28,12 +29,14 @@ import {
 export function ConnectorCard({
 	app,
 	isConnected = false,
+	needsAttention = false,
 	scope = LIBRARY_RESOURCE_SCOPE,
 	searchQuery,
 	actions,
 }: {
 	app: ConnectorMetadata;
 	isConnected?: boolean;
+	needsAttention?: boolean;
 	scope?: ResourceNavigationScope;
 	searchQuery?: string;
 	actions?: ReactNode;
@@ -60,6 +63,8 @@ export function ConnectorCard({
 			titleAdornment={
 				isConnected ? (
 					<Check className="size-3.5 shrink-0 text-success" aria-label="Connected" />
+				) : needsAttention ? (
+					<Badge variant="outline">Needs attention</Badge>
 				) : undefined
 			}
 			meta={

@@ -77,7 +77,7 @@ function ConnectorsListSkeleton({ embedded }: { embedded: boolean }) {
 			)}
 			<Skeleton className="h-10 w-full max-w-xl" />
 			<section className="space-y-3">
-				<SectionLabel>Ready to use</SectionLabel>
+				<SectionLabel>Your connections</SectionLabel>
 				<div className={CONNECTOR_GRID_CLASS}>
 					{Array.from({ length: 4 }).map((_, i) => (
 						<ConnectorCardSkeleton key={i} />
@@ -151,6 +151,11 @@ function ConnectorsList({
 		[connected.activeConnections],
 	);
 
+	const managedNames = useMemo(
+		() => new Set(connected.connections.flatMap((c) => (c.app_name ? [c.app_name] : []))),
+		[connected.connections],
+	);
+
 	const items = pageData?.items ?? [];
 	const total = pageData?.total ?? 0;
 	const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -173,7 +178,7 @@ function ConnectorsList({
 	// disappear and the user has no signal anything went wrong.
 	const showConnectedRail =
 		!debouncedQuery &&
-		(connected.isLoading || connected.activeConnections.length > 0 || !!connectedError);
+		(connected.isLoading || connected.connections.length > 0 || !!connectedError);
 	const headerStatus =
 		total > 0 || connected.activeConnections.length > 0 ? (
 			<div className="flex flex-wrap items-center gap-2">
@@ -216,7 +221,8 @@ function ConnectorsList({
 			{showConnectedRail ? (
 				<ConnectedRail
 					apps={connected.data}
-					appNames={[...connectedNames]}
+					appNames={[...managedNames]}
+					activeNames={connectedNames}
 					isLoading={connected.isLoading}
 					error={connectedError}
 					onRetry={connected.refetch}
@@ -230,6 +236,7 @@ function ConnectorsList({
 				page={page}
 				totalPages={totalPages}
 				connectedNames={connectedNames}
+				managedNames={managedNames}
 				isLoading={isCatalogLoading}
 				error={catalogError}
 				query={debouncedQuery}
@@ -245,13 +252,12 @@ function ConnectorsList({
 }
 
 /**
- * Always-visible row showing the user's ACTIVE connections, regardless
- * of catalog page or search. Solves the "I have 2 active but see 0
- * checkmarks" problem when active apps fall outside catalog page 1.
+ * Account management stays discoverable regardless of account status or catalog page.
  */
 function ConnectedRail({
 	apps,
 	appNames,
+	activeNames,
 	isLoading,
 	error,
 	onRetry,
@@ -259,19 +265,20 @@ function ConnectedRail({
 }: {
 	apps: ConnectorMetadata[];
 	appNames: readonly string[];
+	activeNames: Set<string>;
 	isLoading: boolean;
 	error: Error | null;
 	onRetry: () => void;
 	scope: ResourceNavigationScope;
 }) {
 	const byName = new Map(apps.map((app) => [app.name, app]));
-	const activeCount = appNames.length;
+	const appCount = appNames.length;
 	return (
 		<section className="space-y-3">
 			<SectionLabel
-				count={activeCount > 0 ? `${activeCount} ${activeCount === 1 ? "app" : "apps"}` : undefined}
+				count={appCount > 0 ? `${appCount} ${appCount === 1 ? "app" : "apps"}` : undefined}
 			>
-				Ready to use
+				Your connections
 			</SectionLabel>
 			{error ? (
 				// Without this, a connections-fetch failure makes the rail
@@ -280,7 +287,7 @@ function ConnectedRail({
 				<ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load connections" />
 			) : isLoading && apps.length === 0 ? (
 				<div className={CONNECTOR_GRID_CLASS}>
-					{Array.from({ length: activeCount || 4 }).map((_, i) => (
+					{Array.from({ length: appCount || 4 }).map((_, i) => (
 						<ConnectorCardSkeleton key={i} />
 					))}
 				</div>
@@ -289,7 +296,13 @@ function ConnectedRail({
 					{appNames.map((name) => {
 						const app = byName.get(name);
 						return app ? (
-							<ConnectorCard key={name} app={app} isConnected scope={scope} />
+							<ConnectorCard
+								key={name}
+								app={app}
+								isConnected={activeNames.has(name)}
+								scope={scope}
+								needsAttention={!activeNames.has(name)}
+							/>
 						) : (
 							<ConnectorCardSkeleton key={name} />
 						);
@@ -306,6 +319,7 @@ function CatalogSection({
 	page,
 	totalPages,
 	connectedNames,
+	managedNames,
 	isLoading,
 	error,
 	query,
@@ -319,6 +333,7 @@ function CatalogSection({
 	page: number;
 	totalPages: number;
 	connectedNames: Set<string>;
+	managedNames: Set<string>;
 	isLoading: boolean;
 	error: Error | null;
 	query: string;
@@ -360,10 +375,11 @@ function CatalogSection({
 							key={app.name}
 							app={app}
 							isConnected={connectedNames.has(app.name)}
+							needsAttention={managedNames.has(app.name) && !connectedNames.has(app.name)}
 							scope={scope}
 							searchQuery={query.trim() || undefined}
 							actions={
-								!connectedNames.has(app.name) ? (
+								!managedNames.has(app.name) ? (
 									<ConnectorConnectAction
 										app={app}
 										redirectHref={connectorDetailHrefForScope(scope, app.name)}
