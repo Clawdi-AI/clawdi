@@ -120,23 +120,6 @@ describe("no static @/hosted/* imports outside hosted/", () => {
 	});
 });
 
-describe("no static @/hosted/v2/* imports outside hosted/", () => {
-	test("OSS-reachable files only reach hosted/v2 via dynamic imports", () => {
-		const offenders: string[] = [];
-		for (const file of walkSrcExceptQuarantined(SRC_DIR)) {
-			const src = readFileSync(file, "utf8");
-			if (/^\s*import\s+[^"']+from\s+["']@\/hosted\/v2\//m.test(src)) {
-				offenders.push(relative(SRC_DIR, file));
-			}
-		}
-		if (offenders.length > 0) {
-			throw new Error(
-				`Static @/hosted/v2/* imports leak hosted-only chunks into OSS bundles:\n  ${offenders.join("\n  ")}\nUse dynamic imports gated on IS_HOSTED instead.`,
-			);
-		}
-	});
-});
-
 describe("gated-module imports use the Vite hosted flag", () => {
 	test("every hosted dynamic import outside hosted/ is constructed behind a compile-time ternary", () => {
 		// Why this matters: a bare `lazy(() => import("@/hosted/x"))`
