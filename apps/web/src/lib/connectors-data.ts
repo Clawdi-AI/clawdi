@@ -1,9 +1,15 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { keepPreviousData, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo } from "react";
-import { type OpenApiClient, useOpenApi } from "@/lib/api";
+import {
+	keepPreviousData,
+	queryOptions,
+	useQueries,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
+import { useMemo } from "react";
+import { type OpenApiClient, unwrap, useApi, useOpenApi } from "@/lib/api";
 
 /**
  * Connector data hooks. Always talk to cloud-api — there is no
@@ -26,39 +32,25 @@ export const CONNECTOR_CATALOG_STALE_TIME_MS = 10 * 60 * 1000;
 export const CONNECTOR_CATALOG_GC_TIME_MS = CONNECTOR_CATALOG_STALE_TIME_MS;
 
 export type ConnectorAvailableApp = components["schemas"]["ConnectorAvailableAppResponse"];
+export type ConnectorMetadata = components["schemas"]["ConnectorMetadataResponse"];
 
-export type ConnectedAppCatalogSnapshot = {
-	apps: readonly ConnectorAvailableApp[] | undefined;
-	isLoading: boolean;
-	error: unknown;
-};
-
-type ConnectedAppMetadataPlan = {
-	catalogApps: ConnectorAvailableApp[];
-	missingNames: string[];
-};
-
-export function limitConnectedAppMetadataNames(
-	names: readonly string[],
-	limit?: number,
-): readonly string[] {
-	return limit === undefined ? names : names.slice(0, Math.max(0, limit));
+export function connectorMetadataBatches(names: readonly string[]): string[][] {
+	const unique = [...new Set(names.filter(Boolean))];
+	const batches: string[][] = [];
+	for (let offset = 0; offset < unique.length; offset += 100) {
+		batches.push(unique.slice(offset, offset + 100));
+	}
+	return batches;
 }
 
-export function resolveConnectedAppMetadataPlan(
-	names: readonly string[],
-	catalog?: ConnectedAppCatalogSnapshot,
-): ConnectedAppMetadataPlan {
-	if (!catalog) return { catalogApps: [], missingNames: [...names] };
-	if (catalog.isLoading && !catalog.apps) return { catalogApps: [], missingNames: [] };
-	const byName = new Map((catalog.apps ?? []).map((app) => [app.name, app]));
-	return {
-		catalogApps: names.flatMap((name) => {
-			const app = byName.get(name);
-			return app ? [app] : [];
-		}),
-		missingNames: names.filter((name) => !byName.has(name)),
-	};
+function connectorMetadataQueryOptions(api: ReturnType<typeof useApi>, names: string[]) {
+	return queryOptions({
+		queryKey: ["connector-metadata", names],
+		queryFn: async ({ signal }) =>
+			unwrap(await api.POST("/v1/connectors/metadata:batchRead", { body: { names }, signal })),
+		staleTime: CONNECTOR_CATALOG_STALE_TIME_MS,
+		gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
+	});
 }
 
 export type AvailableAppsQueryArgs = {
@@ -162,20 +154,11 @@ export function useAvailableApps({
 	enabled = true,
 }: AvailableAppsQueryArgs & { enabled?: boolean }) {
 	const api = useOpenApi();
-	const queryClient = useQueryClient();
-	const query = useQuery({
+	return useQuery({
 		...availableAppsQueryOptions(api, { page, pageSize, search }),
 		placeholderData: keepPreviousData,
 		enabled,
 	});
-	useEffect(() => {
-		const apps = query.data?.items;
-		if (!apps) return;
-		for (const app of apps) {
-			queryClient.setQueryData<ConnectorAvailableApp>(availableAppQueryKey(app.name), app);
-		}
-	}, [query.data?.items, queryClient]);
-	return query;
 }
 
 export function useConnectorTools(appName: string) {
@@ -215,17 +198,12 @@ export function useDisconnect() {
  * without this rail, they'd never find their connections without
  * searching.
  *
- * Fan-out: one `/available/{name}` query per unique active app not
- * covered by a supplied catalog snapshot. Callers can cap metadata
- * resolution for compact previews without changing the full connection
- * count; the default preserves the existing unbounded behavior.
+ * Display metadata is fetched in bounded batches, independently of the
+ * current catalog page. It never seeds the authoritative detail query.
  */
-export function useConnectedAppCards(
-	catalog?: ConnectedAppCatalogSnapshot,
-	{ enabled = true, limit }: { enabled?: boolean; limit?: number } = {},
-) {
+export function useConnectedAppCards({ enabled = true }: { enabled?: boolean } = {}) {
 	const connectionsQ = useConnections({ enabled });
-	const api = useOpenApi();
+	const api = useApi();
 
 	const activeConnections = useMemo(
 		() => connectionsQ.data?.filter(isActiveConnection) ?? [],
@@ -237,41 +215,36 @@ export function useConnectedAppCards(
 	// the user picks between accounts. Filter out connections with a
 	// missing/empty `app_name` defensively — Composio always returns
 	// it in practice, but a malformed row would otherwise become an
-	// `undefined` Set entry and fan out a useQueries with a broken
-	// path param.
+	// invalid metadata name in a batch request.
 	const names = useMemo(
 		() => Array.from(new Set(activeConnections.flatMap((c) => (c.app_name ? [c.app_name] : [])))),
 		[activeConnections],
 	);
-	const metadataNames = useMemo(() => limitConnectedAppMetadataNames(names, limit), [names, limit]);
-	const metadataPlan = useMemo(
-		() => resolveConnectedAppMetadataPlan(metadataNames, catalog),
-		[metadataNames, catalog?.apps, catalog?.error, catalog?.isLoading],
-	);
+	const batches = useMemo(() => connectorMetadataBatches(names), [names]);
 
 	const lookup = useQueries({
-		queries: metadataPlan.missingNames.map((name) => ({
-			...availableAppQueryOptions(api, name),
+		queries: batches.map((batch) => ({
+			...connectorMetadataQueryOptions(api, batch),
 			enabled,
 		})),
 	});
 
 	const data = useMemo(() => {
-		const byName = new Map(metadataPlan.catalogApps.map((app) => [app.name, app]));
+		const byName = new Map<string, ConnectorMetadata>();
 		for (const query of lookup) {
-			if (query.data) byName.set(query.data.name, query.data);
+			for (const app of query.data?.items ?? []) byName.set(app.name, app);
+			for (const name of query.data?.missing ?? []) {
+				byName.set(name, { name, display_name: name, logo: "", description: "" });
+			}
 		}
-		return metadataNames.flatMap((name) => {
+		return names.flatMap((name) => {
 			const app = byName.get(name);
 			return app ? [app] : [];
 		});
-	}, [lookup, metadataPlan.catalogApps, metadataNames]);
-	const waitingForCatalog = Boolean(
-		catalog?.isLoading && !catalog.apps && metadataNames.length > 0,
-	);
-	const isLoading = connectionsQ.isLoading || waitingForCatalog || lookup.some((q) => q.isLoading);
+	}, [lookup, names]);
+	const isLoading = connectionsQ.isLoading || lookup.some((q) => q.isLoading);
 	const connectionsLoading = connectionsQ.isLoading;
-	const metadataLoading = waitingForCatalog || lookup.some((q) => q.isLoading);
+	const metadataLoading = lookup.some((q) => q.isLoading);
 	const connectionsError = connectionsQ.error;
 	const metadataError = lookup.find((q) => q.error)?.error ?? null;
 	const error = connectionsError ?? metadataError;
