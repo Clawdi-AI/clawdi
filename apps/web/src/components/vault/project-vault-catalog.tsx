@@ -2,7 +2,8 @@
 
 import { useMutation } from "@tanstack/react-query";
 import { Link2, Unlink } from "lucide-react";
-import { useRef, useState } from "react";
+import { parseAsString, useQueryState } from "nuqs";
+import { useRef } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import type { AgentProjectBinding } from "@/components/dashboard/agent-project-scope";
@@ -19,7 +20,14 @@ import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface"
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
-import { LIBRARY_RESOURCE_SCOPE, type ResourceNavigationScope } from "@/lib/resource-navigation";
+import { shouldBlockQueryError } from "@/lib/query-state";
+import {
+	agentResourceScope,
+	LIBRARY_RESOURCE_SCOPE,
+	type ResourceNavigationScope,
+	resourceCollectionTarget,
+} from "@/lib/resource-navigation";
+import { useCommittedLocation } from "@/lib/use-committed-location";
 
 type Vault = components["schemas"]["VaultResponse"];
 type Project = components["schemas"]["ProjectResponse"];
@@ -49,13 +57,24 @@ export function ProjectVaultCatalog({
 		(projects.data ?? []).map((row) => [row.id, displayProjectName(row)]),
 	);
 	projectNames.set(project.id, displayProjectName(project));
-	const [search, setSearch] = useState("");
+	const [search, setSearch] = useQueryState(
+		"q",
+		parseAsString.withDefault("").withOptions({ clearOnDefault: true, history: "replace" }),
+	);
+	const location = useCommittedLocation();
+	const returnSearch = new URLSearchParams();
+	for (const [key, value] of Object.entries(location.search)) {
+		if (typeof value === "string") returnSearch.set(key, value);
+	}
+	if (search) returnSearch.set("q", search);
+	else returnSearch.delete("q");
+	const returnHref = `${location.pathname}${returnSearch.size ? `?${returnSearch}` : ""}`;
 	const locked = useRef(false);
 	const canAttach = project.is_owner !== false;
 	const catalog = useVaultCatalog({ enabled: canAttach });
 	const context = project.kind === "environment" ? "Workspace" : "Project";
 	const attachedIds = new Set(attachedVaults?.map((vault) => vault.id));
-	const attachmentsKnown = attachedVaults !== undefined && !error;
+	const attachmentsKnown = attachedVaults !== undefined;
 	// Scoped rows remain visible even when the account catalog is unavailable.
 	const rows = Array.from(
 		new Map(
@@ -72,7 +91,13 @@ export function ProjectVaultCatalog({
 		);
 	const updateAttachment = useMutation({
 		mutationFn: async ({ vault, attached }: { vault: Vault; attached: boolean }) => {
-			if (!canAttach || !attachmentsKnown || vault.is_owner === false)
+			if (
+				!canAttach ||
+				!attachmentsKnown ||
+				error ||
+				vault.is_owner === false ||
+				(!attached && (catalog.data === undefined || catalog.error))
+			)
 				throw new Error("Refresh Vault attachments and try again.");
 			return attached
 				? unwrap(
@@ -115,8 +140,8 @@ export function ProjectVaultCatalog({
 			/>
 			{canAttach ? (
 				<p className="text-sm text-muted-foreground">
-					Vaults from your Library. Attach to this {context} to grant access. Detaching keeps the
-					Vault and its other attachments.
+					Attach a Vault to grant this {context} access. Detaching preserves its keys and other
+					attachments.
 				</p>
 			) : null}
 			{error ? (
@@ -147,15 +172,25 @@ export function ProjectVaultCatalog({
 								: undefined;
 						const pending =
 							updateAttachment.isPending && updateAttachment.variables.vault.id === vault.id;
+						const detailScope = attached
+							? scope
+							: inherited && scope.kind === "agent"
+								? agentResourceScope(scope.agentId, inherited.project_id)
+								: LIBRARY_RESOURCE_SCOPE;
 						return (
 							<div key={vault.id} data-testid="project-vault-card" className="min-w-0">
 								<VaultCard
 									vault={vault}
 									projectNameById={projectNames}
-									projectNamesUnavailable={Boolean(projects.error)}
+									projectNamesUnavailable={shouldBlockQueryError(projects.error, projects.data)}
 									visibleProjectIds={null}
-									projectId={attached ? project.id : undefined}
-									navigationScope={attached ? scope : LIBRARY_RESOURCE_SCOPE}
+									projectId={attached ? project.id : inherited?.project_id}
+									navigationScope={detailScope}
+									returnHref={
+										returnHref !== resourceCollectionTarget(detailScope, "vaults").href
+											? returnHref
+											: undefined
+									}
 									shared={vault.is_owner === false}
 									searchQuery={search.trim() || undefined}
 									status={
@@ -169,7 +204,9 @@ export function ProjectVaultCatalog({
 													: scope.kind === "agent" && !agentBindings
 														? "Agent access unavailable"
 														: "Not attached"
-											: "Attachment status unavailable"
+											: isLoading
+												? "Loading attachments…"
+												: "Attachment status unavailable"
 									}
 									primaryAction={
 										canAttach && vault.is_owner !== false ? (
@@ -177,7 +214,10 @@ export function ProjectVaultCatalog({
 												size="sm"
 												variant={attached ? "outline" : "default"}
 												disabled={
-													!attachmentsKnown || updateAttachment.isPending || Boolean(catalog.error)
+													!attachmentsKnown ||
+													Boolean(error) ||
+													updateAttachment.isPending ||
+													(!attached && (catalog.data === undefined || Boolean(catalog.error)))
 												}
 												aria-label={`${attached ? "Detach" : "Attach"} ${vault.name} ${attached ? "from" : "to"} ${context}`}
 												onClick={() => {
@@ -186,14 +226,20 @@ export function ProjectVaultCatalog({
 													updateAttachment.mutate({ vault, attached });
 												}}
 											>
-												{pending ? (
+												{pending || isLoading ? (
 													<Spinner className="size-3.5" />
 												) : attached ? (
 													<Unlink className="size-3.5" />
 												) : (
 													<Link2 className="size-3.5" />
 												)}
-												{attachmentsKnown ? (attached ? "Detach" : "Attach") : "Unavailable"}
+												{attachmentsKnown
+													? attached
+														? "Detach"
+														: "Attach"
+													: isLoading
+														? "Loading…"
+														: "Unavailable"}
 											</Button>
 										) : undefined
 									}
@@ -208,7 +254,8 @@ export function ProjectVaultCatalog({
 						<VaultCardSkeleton key={index} />
 					))}
 				</div>
-			) : !error && !catalog.error ? (
+			) : !shouldBlockQueryError(error, attachedVaults) &&
+				(!canAttach || !shouldBlockQueryError(catalog.error, catalog.data)) ? (
 				<EmptyState
 					variant="inset"
 					description={search.trim() ? "No Vaults match that search." : "No Vaults available yet."}

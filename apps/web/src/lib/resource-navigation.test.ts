@@ -11,6 +11,7 @@ import {
 	memoryDetailLink,
 	projectDetailHrefForScope,
 	projectDetailLink,
+	resourceCatalogReturnTarget,
 	resourceCollectionTarget,
 	validateResourceDetailSearch,
 	vaultDetailHrefForScope,
@@ -18,6 +19,31 @@ import {
 } from "./resource-navigation";
 
 describe("resource navigation scopes", () => {
+	it("preserves catalog search without allowing a return link to grant Agent access", () => {
+		const from = "/agents/agent-1/project-access/workspace-1/vaults?q=release%26keys";
+		expect(resourceCatalogReturnTarget(from)).toEqual({ href: from, label: "Agent Vaults" });
+		expect(resourceCatalogReturnTarget("/projects/project-1?tab=vaults&q=release")).toEqual({
+			href: "/projects/project-1?tab=vaults&q=release",
+			label: "Project",
+		});
+		expect(vaultDetailLink(LIBRARY_RESOURCE_SCOPE, "release", "vault-1", from)).toMatchObject({
+			to: "/vaults/$slug",
+			search: { vault: "vault-1", from },
+		});
+		for (const invalid of [
+			undefined,
+			[],
+			"https://example.com",
+			"//example.com",
+			"/agents/../settings",
+			"/agents/agent-1/settings",
+			"/projects\\evil",
+			"/projects\n",
+		]) {
+			expect(resourceCatalogReturnTarget(invalid)).toBeNull();
+		}
+	});
+
 	it("keeps library detail and collection navigation global", () => {
 		expect(resourceCollectionTarget(LIBRARY_RESOURCE_SCOPE, "projects")).toEqual({
 			href: "/projects",

@@ -64,10 +64,10 @@ export function ProjectResourceCard({
 			title={
 				searchQuery ? <SearchHighlightedText text={projectName} query={searchQuery} /> : projectName
 			}
+			titleAttribute={projectName}
 			badges={
-				showKind || showViewer || status ? (
+				showKind || showViewer ? (
 					<>
-						{status}
 						{showKind ? <ProjectKindBadge kind={project.kind ?? "workspace"} /> : null}
 						{showViewer ? <Badge variant="outline">Viewer</Badge> : null}
 					</>
@@ -84,17 +84,9 @@ export function ProjectResourceCard({
 				)
 			}
 			footer={footer}
-			actions={
-				primaryAction ? (
-					<>
-						{primaryAction}
-						{actions}
-					</>
-				) : (
-					actions
-				)
-			}
-			actionsVisibility={primaryAction ? "always" : "responsive"}
+			status={status}
+			primaryAction={primaryAction}
+			actions={actions}
 			link={detailLink}
 			ariaLabel={`Open ${projectName}`}
 			className={className}

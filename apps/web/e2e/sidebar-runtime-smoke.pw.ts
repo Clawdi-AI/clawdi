@@ -1599,7 +1599,10 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	);
 	await expect(main.getByRole("link", { name: "Open vault Scoped Vault" })).toHaveAttribute(
 		"href",
-		"/agents/11111111-1111-4111-8111-111111111111/vaults/scoped-vault?project=project-smoke&vault=vault-scoped",
+		"/agents/11111111-1111-4111-8111-111111111111/vaults/scoped-vault?project=project-smoke&vault=vault-scoped&from=" +
+			encodeURIComponent(
+				"/agents/11111111-1111-4111-8111-111111111111/project-access/project-smoke",
+			),
 	);
 	await page.goto(
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-smoke/skills",
@@ -1705,6 +1708,7 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(
 		sharedVaultCard.getByRole("button", { name: "Attach Shared Vault to Workspace" }),
 	).toBeEnabled();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 	await main.screenshot({ path: testInfo.outputPath("connected-workspace-vaults-desktop.png") });
 	await page.setViewportSize({ width: 390, height: 844 });
 	await main.screenshot({ path: testInfo.outputPath("connected-workspace-vaults-mobile.png") });
@@ -1729,7 +1733,10 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	);
 	await expect(main.getByRole("link", { name: "Open vault Team Vault" })).toHaveAttribute(
 		"href",
-		"/agents/11111111-1111-4111-8111-111111111111/vaults/team-vault?project=project-context-first&vault=vault-team",
+		"/agents/11111111-1111-4111-8111-111111111111/vaults/team-vault?project=project-context-first&vault=vault-team&from=" +
+			encodeURIComponent(
+				"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-first",
+			),
 	);
 	await expect(main.getByRole("button", { name: "View all Skills", exact: true })).toHaveAttribute(
 		"href",
@@ -2231,4 +2238,100 @@ test("Project catalog stays readable while link state fails and recovers", async
 	await expect(
 		card.getByRole("button", { name: "Link Unrelated Project", exact: true }),
 	).toBeEnabled();
+});
+
+test("cached Project links retain their state and destination after a failed refresh", async ({
+	page,
+}) => {
+	await stubConnectedAgentResources(page);
+	await page.goto("/agents/11111111-1111-4111-8111-111111111111/project-access?q=Team");
+	const card = page.getByTestId("agent-project-card").filter({ hasText: "Team Knowledge" });
+	const link = card.getByRole("link", { name: "Open Team Knowledge" });
+	const unlink = card.getByRole("button", { name: "Unlink Team Knowledge" });
+	await expect(unlink).toBeEnabled();
+	const href = await link.getAttribute("href");
+	const bindingRoute = "**/v1/agents/*/project-bindings";
+	await page.route(bindingRoute, (route) =>
+		fulfillJson(route, { detail: "Temporary refresh failure" }, 503),
+	);
+	await page.clock.setFixedTime(new Date(Date.now() + 60_000));
+	await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+	await expect(page.getByText("Couldn't load Project links", { exact: true })).toBeVisible();
+	await expect(card.getByText("Linked", { exact: true })).toBeVisible();
+	await expect(unlink).toBeDisabled();
+	await expect(link).toHaveAttribute("href", href ?? "");
+	await page.unroute(bindingRoute);
+	await page.locator("main").getByRole("button", { name: "Retry" }).click();
+	await expect(unlink).toBeEnabled();
+	await link.click();
+	await expect(page.getByRole("heading", { name: "Team Knowledge", level: 1 })).toBeVisible();
+	await page.getByRole("button", { name: "Back to Agent Projects" }).click();
+	await expect(page.getByPlaceholder("Search projects…")).toHaveValue("Team");
+});
+
+test("Vault catalog failures preserve scoped attachments and catalog return navigation", async ({
+	page,
+}) => {
+	await stubConnectedAgentResources(page);
+	const origin = "/agents/11111111-1111-4111-8111-111111111111/project-access/project-smoke/vaults";
+	await page.goto(origin);
+	const catalog = page.getByTestId("project-vault-catalog");
+	const scoped = catalog.getByTestId("project-vault-card").filter({ hasText: "Scoped Vault" });
+	const detach = scoped.getByRole("button", { name: "Detach Scoped Vault from Workspace" });
+	const link = scoped.getByRole("link", { name: "Open vault Scoped Vault" });
+	await expect(detach).toBeEnabled();
+	const href = await link.getAttribute("href");
+	let failAttachments = false;
+	const vaultRoute = "**/v1/vault?*";
+	await page.route(vaultRoute, (route) => {
+		if (!failAttachments && new URL(route.request().url()).searchParams.has("project_id"))
+			return route.fallback();
+		return fulfillJson(route, { detail: "Temporary refresh failure" }, 503);
+	});
+	await page.clock.setFixedTime(new Date(Date.now() + 60_000));
+	await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+	await expect(catalog.getByText("Couldn't load Vault catalog", { exact: true })).toBeVisible();
+	await expect(detach).toBeEnabled();
+	await expect(
+		catalog.getByRole("button", { name: "Attach Unrelated Vault to Workspace" }),
+	).toBeDisabled();
+	failAttachments = true;
+	await page.clock.setFixedTime(new Date(Date.now() + 120_000));
+	await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+	await expect(
+		catalog.getByText("Couldn't load Workspace Vault attachments", { exact: true }),
+	).toBeVisible();
+	await expect(scoped.getByText("Attached to Workspace", { exact: true })).toBeVisible();
+	await expect(link).toHaveAttribute("href", href ?? "");
+	await expect(detach).toBeDisabled();
+	await page.unroute(vaultRoute);
+	await catalog
+		.getByRole("alert")
+		.filter({ hasText: "Couldn't load Workspace Vault attachments" })
+		.getByRole("button", { name: "Retry" })
+		.click();
+	await catalog
+		.getByRole("alert")
+		.filter({ hasText: "Couldn't load Vault catalog" })
+		.getByRole("button", { name: "Retry" })
+		.click();
+	await expect(detach).toBeEnabled();
+	await catalog.getByLabel("Search Vaults").fill("Unrelated");
+	await catalog.getByRole("link", { name: "Open vault Unrelated Vault" }).click();
+	await expect(page).toHaveURL(
+		(url) =>
+			url.pathname === "/vaults/unrelated-vault" &&
+			url.searchParams.get("from") === `${origin}?q=Unrelated`,
+	);
+	await page.getByRole("button", { name: "Back to Agent Vaults" }).click();
+	await expect(catalog.getByLabel("Search Vaults")).toHaveValue("Unrelated");
+	await catalog.getByLabel("Search Vaults").fill("Team");
+	await catalog.getByRole("link", { name: "Open vault Team Vault" }).click();
+	await expect(page).toHaveURL(
+		(url) =>
+			url.pathname.endsWith("/vaults/team-vault") &&
+			url.searchParams.get("project") === "project-context-first",
+	);
+	await page.getByRole("button", { name: "Back to Agent Vaults" }).click();
+	await expect(catalog.getByLabel("Search Vaults")).toHaveValue("Team");
 });

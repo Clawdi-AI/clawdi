@@ -29,7 +29,6 @@ import {
 	ProjectResourceCardSkeleton,
 	UnavailableProjectResourceCard,
 } from "@/components/projects/project-resource-card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
 import { Spinner } from "@/components/ui/spinner";
@@ -45,6 +44,7 @@ import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	agentResourceScope,
 	LIBRARY_RESOURCE_SCOPE,
+	projectDetailLink,
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
 
@@ -73,7 +73,7 @@ export function ProjectsSurface({
 	const linkLocked = useRef(false);
 	const scope = agentId ? agentResourceScope(agentId) : LIBRARY_RESOURCE_SCOPE;
 	const primary = bindings.data?.filter((binding) => binding.binding_type === "primary");
-	const linksKnown = bindings.data !== undefined && !bindings.error && primary?.length === 1;
+	const linksKnown = bindings.data !== undefined && primary?.length === 1;
 	const linkedIds = new Set(
 		bindings.data
 			?.filter((binding) => binding.binding_type === "context")
@@ -88,7 +88,7 @@ export function ProjectsSurface({
 				compareProjectsForUse(a, b),
 		);
 	const missingBindings =
-		!search.trim() && linksKnown && projects.data && !projects.error
+		!search.trim() && linksKnown && projects.data
 			? (bindings.data ?? []).filter(
 					(binding) =>
 						binding.binding_type === "context" &&
@@ -113,7 +113,8 @@ export function ProjectsSurface({
 	};
 	const updateLink = useMutation({
 		mutationFn: async ({ projectId, linked }: { projectId: string; linked: boolean }) => {
-			if (!agentId || !linksKnown) throw new Error("Refresh Project links and try again.");
+			if (!agentId || !linksKnown || bindings.error || projects.error)
+				throw new Error("Refresh Project links and try again.");
 			return unwrap(
 				await api.PATCH("/v1/agents/{agent_id}/projects", {
 					params: { path: { agent_id: agentId } },
@@ -138,7 +139,7 @@ export function ProjectsSurface({
 		projects.isLoading ||
 		Boolean(projects.error) ||
 		updateLink.isPending ||
-		Boolean(agentId && !linksKnown);
+		Boolean(agentId && (!linksKnown || bindings.error));
 	const returnHref = resourceCollectionTarget(scope, "projects").href;
 	const from = `${returnHref}${search ? `?q=${encodeURIComponent(search)}` : ""}`;
 
@@ -166,7 +167,7 @@ export function ProjectsSurface({
 									label: "Open project",
 									onClick: () =>
 										void router.navigate({
-											href: `${projectDetailHref(project.id)}${agentId ? `?from=${encodeURIComponent(from)}` : ""}`,
+											href: `${projectDetailHref(project.id)}?from=${encodeURIComponent(from)}`,
 										}),
 								},
 							});
@@ -237,19 +238,12 @@ export function ProjectsSurface({
 									className="h-full"
 									project={project}
 									searchQuery={search.trim() || undefined}
-									navigationScope={linked ? scope : LIBRARY_RESOURCE_SCOPE}
-									link={
-										agentId && !linked
-											? { to: "/projects/$id", params: { id: project.id }, search: { from } }
-											: undefined
-									}
-									status={
-										agentId && linksKnown ? (
-											<Badge variant={linked ? "secondary" : "outline"}>
-												{linked ? "Linked" : "Not linked"}
-											</Badge>
-										) : undefined
-									}
+									link={projectDetailLink(
+										linked ? scope : LIBRARY_RESOURCE_SCOPE,
+										project.id,
+										search || (agentId && !linked) ? from : undefined,
+									)}
+									status={agentId && linksKnown ? (linked ? "Linked" : "Not linked") : undefined}
 									footer={[
 										formatResourceCount(project.skill_count, "skill"),
 										formatResourceCount(project.vault_count, "vault"),
@@ -274,7 +268,7 @@ export function ProjectsSurface({
 													updateLink.mutate({ projectId: project.id, linked });
 												}}
 											>
-												{pending ? (
+												{pending || bindings.isLoading ? (
 													<Spinner className="size-3.5" />
 												) : linked ? (
 													<Unlink className="size-3.5" />

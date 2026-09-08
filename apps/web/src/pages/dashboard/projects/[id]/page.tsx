@@ -112,6 +112,7 @@ import {
 	projectDetailHrefForScope,
 	type ResourceNavigationScope,
 	type ResourceNavigationTarget,
+	resourceCatalogReturnTarget,
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
 import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
@@ -146,6 +147,7 @@ function projectLocalTabHref(
 ): string {
 	const nextSearch = new URLSearchParams(searchParams);
 	nextSearch.set("tab", tab);
+	if (tab !== "vaults") nextSearch.delete("q");
 	if (tab !== "overview") {
 		nextSearch.delete("joined");
 		nextSearch.delete("useWithAgent");
@@ -210,8 +212,7 @@ export default function ProjectDetailPage({
 	);
 	const [skillsPage, setSkillsPage] = useState(1);
 	const joinedFromShare = !isAgentScope && searchParams.get("joined") === "share";
-	const returnHref = searchParams.get("from");
-	const safeAgentReturnHref = returnHref?.startsWith("/agents/") ? returnHref : null;
+	const catalogReturnTarget = resourceCatalogReturnTarget(searchParams.get("from"));
 	useEffect(() => {
 		setSkillsPage(1);
 	}, [projectId]);
@@ -257,9 +258,7 @@ export default function ProjectDetailPage({
 						href: projectDetailHrefForScope(scope, projectId),
 						label: projectName ?? "Project",
 					}
-			: safeAgentReturnHref
-				? { href: safeAgentReturnHref, label: "Agent Projects" }
-				: projectsTarget;
+			: (catalogReturnTarget ?? projectsTarget);
 	const workspaceAgent = useQuery({
 		...agentDetailQueryOptions($api, qc, scope.kind === "agent" ? scope.agentId : ""),
 		enabled: scope.kind === "agent" && isWorkspace && showSkills && !IS_HOSTED_BUILD,
@@ -321,11 +320,12 @@ export default function ProjectDetailPage({
 
 	const vaults = useQuery({
 		queryKey: ["get", "/v1/vault", "project-detail", projectId],
-		queryFn: () =>
+		queryFn: ({ signal }) =>
 			fetchAllPages<VaultSummary>(
 				async (page, pageSize) =>
 					unwrap(
 						await api.GET("/v1/vault", {
+							signal,
 							params: { query: { project_id: projectId, page, page_size: pageSize } },
 						}),
 					),
@@ -434,8 +434,8 @@ export default function ProjectDetailPage({
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<DetailBackLink
-					href={projectsTarget.href}
-					label={projectsTarget.label}
+					href={catalogReturnTarget?.href ?? projectsTarget.href}
+					label={catalogReturnTarget?.label ?? projectsTarget.label}
 					mobileOnly={false}
 				/>
 				<PageHeaderSkeleton icon actions />
@@ -463,8 +463,8 @@ export default function ProjectDetailPage({
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<DetailBackLink
-					href={projectsTarget.href}
-					label={projectsTarget.label}
+					href={catalogReturnTarget?.href ?? projectsTarget.href}
+					label={catalogReturnTarget?.label ?? projectsTarget.label}
 					mobileOnly={false}
 				/>
 				{isApiNotFoundError(blockingError) ? (
@@ -494,8 +494,8 @@ export default function ProjectDetailPage({
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<DetailBackLink
-					href={projectsTarget.href}
-					label={projectsTarget.label}
+					href={catalogReturnTarget?.href ?? projectsTarget.href}
+					label={catalogReturnTarget?.label ?? projectsTarget.label}
 					mobileOnly={false}
 				/>
 				<DetailNotFound
@@ -510,8 +510,8 @@ export default function ProjectDetailPage({
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<DetailBackLink
-					href={projectsTarget.href}
-					label={projectsTarget.label}
+					href={catalogReturnTarget?.href ?? projectsTarget.href}
+					label={catalogReturnTarget?.label ?? projectsTarget.label}
 					mobileOnly={false}
 				/>
 				<DetailNotFound
@@ -526,8 +526,8 @@ export default function ProjectDetailPage({
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<DetailBackLink
-					href={projectsTarget.href}
-					label={projectsTarget.label}
+					href={catalogReturnTarget?.href ?? projectsTarget.href}
+					label={catalogReturnTarget?.label ?? projectsTarget.label}
 					mobileOnly={false}
 				/>
 				<DetailNotFound
@@ -642,7 +642,11 @@ export default function ProjectDetailPage({
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<DetailBackLink href={pageReturnTarget.href} label={pageReturnTarget.label} />
+			<DetailBackLink
+				href={pageReturnTarget.href}
+				label={pageReturnTarget.label}
+				mobileOnly={!catalogReturnTarget}
+			/>
 
 			{isWorkspace && focus === "skills" ? null : (
 				<PageHeader
@@ -940,7 +944,7 @@ export default function ProjectDetailPage({
 					error={vaults.error}
 					onRetry={() => void vaults.refetch()}
 					scope={scope}
-					agentBindings={scopedBindings.error ? undefined : orderedScopedBindings}
+					agentBindings={scopedBindings.data ? orderedScopedBindings : undefined}
 					onChanged={refresh}
 				/>
 			</HubSection>

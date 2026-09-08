@@ -70,6 +70,7 @@ import {
 	libraryManagementTarget,
 	projectDetailLink,
 	type ResourceNavigationScope,
+	resourceCatalogReturnTarget,
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
 import { useCommittedLocation } from "@/lib/use-committed-location";
@@ -112,7 +113,8 @@ export default function VaultDetailPage({
 	const $api = useOpenApi();
 	const qc = useQueryClient();
 	const router = useRouter();
-	const backTarget = resourceCollectionTarget(scope, "vaults");
+	const catalogReturnTarget = resourceCatalogReturnTarget(committedSearch.from);
+	const backTarget = catalogReturnTarget ?? resourceCollectionTarget(scope, "vaults");
 	const isAgentScope = scope.kind === "agent";
 	const requestedProjectId =
 		scope.kind === "agent" && scope.projectId?.trim() ? scope.projectId.trim() : null;
@@ -494,7 +496,11 @@ export default function VaultDetailPage({
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<DetailBackLink href={backTarget.href} label={backTarget.label} />
+			<DetailBackLink
+				href={backTarget.href}
+				label={backTarget.label}
+				mobileOnly={!catalogReturnTarget}
+			/>
 
 			<PageHeader
 				title={vault.name}

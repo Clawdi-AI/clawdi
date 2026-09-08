@@ -395,6 +395,8 @@ export function HeroCard({
 	badges,
 	description,
 	footer,
+	status,
+	primaryAction,
 	actions,
 	actionsVisibility = "responsive",
 	link,
@@ -402,6 +404,7 @@ export function HeroCard({
 	ariaLabel,
 	className,
 	titleClassName,
+	titleAttribute,
 	descriptionClassName,
 	footerClassName,
 	footerWrap = false,
@@ -412,6 +415,9 @@ export function HeroCard({
 	badges?: ReactNode;
 	description?: ReactNode;
 	footer?: ReactNode | ReactNode[];
+	/** Contextual relationship and its action, separate from identity and metadata. */
+	status?: ReactNode;
+	primaryAction?: ReactNode;
 	actions?: ReactNode;
 	/** Action visibility rhythm; `responsive` recedes until hover/focus on desktop. */
 	actionsVisibility?: "responsive" | "always";
@@ -421,6 +427,8 @@ export function HeroCard({
 	ariaLabel?: string;
 	className?: string;
 	titleClassName?: string;
+	/** Plain-text identity when the visible title contains search highlighting. */
+	titleAttribute?: string;
 	descriptionClassName?: string;
 	footerClassName?: string;
 	/** Wrap dense footer facts between intact items. */
@@ -446,7 +454,8 @@ export function HeroCard({
 					<h3
 						className={cn("min-w-0 flex-1 truncate text-sm font-medium", titleClassName)}
 						title={
-							typeof title === "string" || typeof title === "number" ? String(title) : undefined
+							titleAttribute ??
+							(typeof title === "string" || typeof title === "number" ? String(title) : undefined)
 						}
 					>
 						{title}
@@ -471,6 +480,21 @@ export function HeroCard({
 					className={cn("mt-auto text-xs text-muted-foreground tabular-nums", footerClassName)}
 					wrap={footerWrap}
 				/>
+			) : null}
+			{status || primaryAction ? (
+				<div
+					className="mt-auto flex flex-wrap items-center justify-between gap-3 border-t pt-3"
+					data-slot="hero-card-context"
+				>
+					{status ? (
+						<div className="min-w-0 flex-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+							{status}
+						</div>
+					) : null}
+					{primaryAction ? (
+						<EntityCardActions visibility="always">{primaryAction}</EntityCardActions>
+					) : null}
+				</div>
 			) : null}
 			{link ? (
 				<EntityCardLink variant="resource" {...link} ariaLabel={ariaLabel ?? "Open"} />

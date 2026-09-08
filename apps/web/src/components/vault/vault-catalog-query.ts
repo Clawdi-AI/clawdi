@@ -10,10 +10,15 @@ export function useVaultCatalog({ enabled = true }: { enabled?: boolean } = {}) 
 	return useQuery({
 		queryKey: ["get", "/v1/vault", "catalog"],
 		enabled,
-		queryFn: () =>
+		queryFn: ({ signal }) =>
 			fetchAllPages(
 				async (page, pageSize) =>
-					unwrap(await api.GET("/v1/vault", { params: { query: { page, page_size: pageSize } } })),
+					unwrap(
+						await api.GET("/v1/vault", {
+							signal,
+							params: { query: { page, page_size: pageSize } },
+						}),
+					),
 				{ pageSize: 200, resourceName: "Vault catalog" },
 			),
 	});

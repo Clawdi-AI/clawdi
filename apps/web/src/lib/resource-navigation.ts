@@ -93,10 +93,16 @@ export function projectDetailHrefForScope(
 		: projectDetailHref(projectId);
 }
 
-export function projectDetailLink(scope: ResourceNavigationScope, projectId: string) {
-	return scope.kind === "agent"
-		? agentProjectDetailLink(scope.agentId, projectId)
-		: linkOptions({ to: "/projects/$id", params: { id: projectId } });
+export function projectDetailLink(
+	scope: ResourceNavigationScope,
+	projectId: string,
+	from?: string,
+) {
+	const link =
+		scope.kind === "agent"
+			? agentProjectDetailLink(scope.agentId, projectId)
+			: linkOptions({ to: "/projects/$id", params: { id: projectId } });
+	return from ? { ...link, search: { from } } : link;
 }
 
 export function vaultDetailHrefForScope(
@@ -116,17 +122,41 @@ export function vaultDetailLink(
 	scope: ResourceNavigationScope,
 	vaultSlug: string,
 	vaultId?: string | null,
+	from?: string,
 ) {
-	return scope.kind === "agent"
-		? agentVaultDetailLink(scope.agentId, vaultSlug, {
-				projectId: scope.projectId,
-				vaultId,
-			})
-		: linkOptions({
-				to: "/vaults/$slug",
-				params: { slug: vaultSlug },
-				search: vaultId ? { vault: vaultId } : undefined,
-			});
+	const link =
+		scope.kind === "agent"
+			? agentVaultDetailLink(scope.agentId, vaultSlug, {
+					projectId: scope.projectId,
+					vaultId,
+				})
+			: linkOptions({
+					to: "/vaults/$slug",
+					params: { slug: vaultSlug },
+					search: vaultId ? { vault: vaultId } : undefined,
+				});
+	return from ? { ...link, search: { ...link.search, from } } : link;
+}
+
+/** A catalog return link is navigation context, never resource access authority. */
+export function resourceCatalogReturnTarget(from: unknown): ResourceNavigationTarget | null {
+	if (
+		typeof from !== "string" ||
+		!/^\/(agents|projects)(\/|\?|$)/.test(from) ||
+		from.includes("\\") ||
+		Array.from(from).some((character) => character.charCodeAt(0) <= 32)
+	)
+		return null;
+	const url = new URL(from, "https://catalog.invalid");
+	const path = url.pathname;
+	const href = `${path}${url.search}`;
+	if (/^\/agents\/[^/]+\/project-access\/?$/.test(path)) return { href, label: "Agent Projects" };
+	if (/^\/agents\/[^/]+\/project-access\/[^/]+\/vaults\/?$/.test(path))
+		return { href, label: "Agent Vaults" };
+	if (/^\/agents\/[^/]+\/project-access\/[^/]+\/?$/.test(path)) return { href, label: "Project" };
+	if (/^\/projects\/?$/.test(path)) return { href, label: "Projects" };
+	if (/^\/projects\/[^/]+\/?$/.test(path)) return { href, label: "Project" };
+	return null;
 }
 
 export function memoryDetailHrefForScope(scope: ResourceNavigationScope, memoryId: string): string {

@@ -297,6 +297,7 @@ export function VaultCard({
 	actions,
 	primaryAction,
 	status,
+	returnHref,
 	searchQuery,
 }: {
 	vault: VaultSummary;
@@ -309,6 +310,7 @@ export function VaultCard({
 	actions?: ReactNode;
 	primaryAction?: ReactNode;
 	status?: ReactNode;
+	returnHref?: string;
 	searchQuery?: string;
 }) {
 	const api = useApi();
@@ -347,13 +349,14 @@ export function VaultCard({
 		.map((id) => projectNameById.get(id))
 		.filter((n): n is string => !!n);
 	const identity = identityFor(vault.name);
-	const keyCountLabel = keys.isError ? (
-		"Key count unavailable"
-	) : keyCount === null ? (
-		<Skeleton key="key-count" className="h-3 w-12" aria-label="Loading key count" />
-	) : (
-		formatResourceCount(keyCount, "key")
-	);
+	const keyCountLabel =
+		listCount === undefined && shouldBlockQueryError(keys.error, keys.data) ? (
+			"Key count unavailable"
+		) : keyCount === null ? (
+			<Skeleton key="key-count" className="h-3 w-12" aria-label="Loading key count" />
+		) : (
+			formatResourceCount(keyCount, "key")
+		);
 	const searchSupportingText = searchQuery ? vaultSearchSupportingText(vault, searchQuery) : null;
 
 	return (
@@ -372,6 +375,7 @@ export function VaultCard({
 			title={
 				searchQuery ? <SearchHighlightedText text={vault.name} query={searchQuery} /> : vault.name
 			}
+			titleAttribute={vault.name}
 			description={
 				searchSupportingText ? (
 					<SearchHighlightedText text={searchSupportingText} query={searchQuery ?? ""} />
@@ -379,7 +383,6 @@ export function VaultCard({
 			}
 			footer={[
 				keyCountLabel,
-				status,
 				usedBy.length > 0 ? (
 					<Tooltip>
 						<TooltipTrigger render={<span className="truncate" />}>
@@ -396,12 +399,11 @@ export function VaultCard({
 					"not in any Project yet"
 				),
 			]}
-			footerWrap={Boolean(status)}
-			actionsVisibility={primaryAction ? "always" : "responsive"}
+			status={status}
+			primaryAction={primaryAction}
 			actions={
-				canManageVault || actions || primaryAction ? (
+				canManageVault || actions ? (
 					<>
-						{primaryAction}
 						{canManageVault ? (
 							<AddKeysDialog
 								vaultSlug={vault.slug}
@@ -418,7 +420,7 @@ export function VaultCard({
 					</>
 				) : undefined
 			}
-			link={vaultDetailLink(navigationScope, vault.slug, vault.id)}
+			link={vaultDetailLink(navigationScope, vault.slug, vault.id, returnHref)}
 			ariaLabel={`Open vault ${vault.name}`}
 		/>
 	);
