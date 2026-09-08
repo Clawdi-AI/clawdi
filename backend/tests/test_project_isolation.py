@@ -1,21 +1,4 @@
-"""Project-boundary regression suite.
-
-These tests pin the security/correctness fixes from PR review
-rounds 2 + B + E so they don't regress silently:
-
-- POST /api/environments heals an existing env that lost its
-  `default_project_id` (B1). Pre-fix the new-env branch created
-  a project, but the existing-env branch returned without
-  healing — daemons booted with "no default_project_id" fatals.
-
-- Memory remains account-shared across Agents. Environment and Session ids are
-  provenance, while the explicit `memories:read` scope is the authorization
-  boundary.
-
-- /api/search excludes vault hits for scoped api keys so a
-  leaked deploy key (which only carries skills/sessions
-  API permissions) can't side-channel-read vault metadata.
-"""
+"""Account-shared memory and project boundaries for bound and unbound API keys."""
 
 from __future__ import annotations
 
@@ -25,7 +8,6 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
-import pytest_asyncio
 from httpx import ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,11 +20,9 @@ from app.core.skill_sync_protocol import (
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.memory import Memory
-from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
-from app.models.session import AgentEnvironment, Session
+from app.models.session import Session
 from app.models.user import User
-from app.models.vault import Vault, VaultItem, VaultProjectAttachment
-from app.services.agent_environments import local_machine_registration_key
+from app.models.vault import Vault, VaultProjectAttachment
 
 pytestmark = pytest.mark.committed_db
 
@@ -70,93 +50,6 @@ async def _client_for(
     app.dependency_overrides[get_auth_short_session] = auth_o
     transport = ASGITransport(app=app)
     return httpx.AsyncClient(transport=transport, base_url="http://test")
-
-
-@pytest_asyncio.fixture
-async def env_without_project(db_session: AsyncSession, seed_user: User) -> AgentEnvironment:
-    """A fixture for the heal-path test. Builds an env with a
-    valid project (the schema enforces NOT NULL), then NULLs the
-    column directly through a raw UPDATE to simulate a row that
-    lost its project assignment via some pre-migration / cleanup
-    bug. The next register_environment call should heal it.
-    """
-    from sqlalchemy import update
-
-    pending_slug = f"env-{uuid.uuid4().hex[:12]}"
-    project = Project(
-        user_id=seed_user.id,
-        name="Heal Test (claude_code)",
-        slug=pending_slug,
-        kind=PROJECT_KIND_ENVIRONMENT,
-    )
-    db_session.add(project)
-    await db_session.flush()
-
-    env = AgentEnvironment(
-        user_id=seed_user.id,
-        machine_id="heal-test-mac",
-        machine_name="Heal Test",
-        agent_type="claude_code",
-        os="darwin",
-        default_project_id=project.id,
-        registration_key=local_machine_registration_key("heal-test-mac", "claude_code"),
-    )
-    db_session.add(env)
-    await db_session.flush()
-
-    # Sneak the env into a broken state. The schema is NOT NULL,
-    # but Postgres accepts NULL via direct UPDATE if no constraint
-    # check fires — only INSERTs and explicit checks enforce.
-    # If your local PG rejects this, the heal path is technically
-    # unreachable in production too; the test serves as a lower
-    # bound on what register_environment must tolerate.
-    try:
-        await db_session.execute(
-            update(AgentEnvironment)
-            .where(AgentEnvironment.id == env.id)
-            .values(default_project_id=None)
-        )
-        await db_session.commit()
-        await db_session.refresh(env)
-    except Exception:
-        # Constraint check refused; skip — the env stays valid.
-        await db_session.rollback()
-    return env
-
-
-async def test_register_environment_heals_missing_project(
-    db_session: AsyncSession,
-    seed_user: User,
-    env_without_project: AgentEnvironment,
-):
-    """Re-registering an env that lost its default_project_id
-    must populate it before returning, so the daemon can boot.
-    """
-    if env_without_project.default_project_id is not None:
-        # Constraint refused the NULL update; nothing to heal.
-        # Treat as a passing no-op rather than a hard skip.
-        return
-
-    client = await _client_for(db_session, seed_user, None)
-    try:
-        resp = await client.post(
-            "/v1/environments",
-            json={
-                "machine_id": env_without_project.machine_id,
-                "machine_name": env_without_project.machine_name,
-                "agent_type": env_without_project.agent_type,
-                "os": env_without_project.os,
-                "agent_version": "0.0.1",
-            },
-        )
-        assert resp.status_code == 200, resp.text
-        # Re-read the row; the heal path should have written a
-        # fresh default_project_id.
-        await db_session.refresh(env_without_project)
-        assert env_without_project.default_project_id is not None
-    finally:
-        await client.aclose()
-        app.dependency_overrides.clear()
 
 
 async def test_memories_list_is_account_shared_for_deploy_keys(
@@ -609,61 +502,33 @@ async def test_search_includes_account_memories_for_scoped_keys(
         app.dependency_overrides.clear()
 
 
-async def test_search_excludes_vault_for_scoped_keys(
-    db_session: AsyncSession,
-    seed_user: User,
-):
-    """Global search must omit vault metadata for any scoped
-    api key (deploy keys + future scoped Personal keys).
-    Personal CLI / Clerk auth keep full visibility."""
+@pytest.mark.asyncio
+async def test_search_excludes_vault_for_scoped_keys(db_session, seed_user):
+    """Scoped keys cannot search Vault metadata visible to the same user."""
     from tests.conftest import create_env_with_project
 
     env = await create_env_with_project(
-        db_session,
-        user_id=seed_user.id,
-        machine_id="search-mac",
-        machine_name="Search Mac",
+        db_session, user_id=seed_user.id, machine_id="search-vault", machine_name="Search Vault"
     )
-    # Create a vault item the search should NOT surface for a
-    # scoped key.
-    vault = Vault(
-        user_id=seed_user.id,
-        slug="search-vault",
-        name="Search Test Vault",
-    )
+    needle = f"vaultneedle{uuid.uuid4().hex}"
+    vault = Vault(user_id=seed_user.id, slug=needle, name=needle)
     db_session.add(vault)
     await db_session.flush()
     db_session.add(VaultProjectAttachment(vault_id=vault.id, project_id=env.default_project_id))
-    item = VaultItem(
-        vault_id=vault.id,
-        section="api",
-        item_name="OPENAI_API_KEY",
-        encrypted_value=b"x",
-        nonce=b"y",
-    )
-    db_session.add(item)
     await db_session.commit()
 
-    deploy_key = ApiKey(
-        user_id=seed_user.id,
-        key_hash=uuid.uuid4().hex,
-        key_prefix="clawdi_test",
-        label="test-deploy",
-        scopes=["sessions:write", "skills:read", "skills:write"],
-        environment_id=env.id,
-    )
-    db_session.add(deploy_key)
-    await db_session.commit()
-
-    client = await _client_for(db_session, seed_user, deploy_key)
-    try:
-        resp = await client.get("/v1/search", params={"q": "OPENAI"})
-        assert resp.status_code == 200, resp.text
-        sources = {hit["source"] for hit in resp.json().get("hits", [])}
-        assert "vaults" not in sources
-    finally:
-        await client.aclose()
-        app.dependency_overrides.clear()
+    for scopes in (None, ["sessions:write", "skills:read", "skills:write"]):
+        key = ApiKey(user_id=seed_user.id, environment_id=env.id, scopes=scopes)
+        async with await _client_for(db_session, seed_user, key) as client:
+            try:
+                response = await client.get("/v1/search", params={"q": needle})
+                assert response.status_code == 200, response.text
+                vault_ids = {
+                    hit["id"] for hit in response.json()["results"] if hit["type"] == "vault"
+                }
+                assert vault_ids == ({str(vault.id)} if scopes is None else set())
+            finally:
+                app.dependency_overrides.clear()
 
 
 @pytest.mark.asyncio

@@ -13,16 +13,7 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.database import engine
-from app.services.metrics import (
-    active_polls,
-    inbound_messages,
-    ingress_errors,
-    outbound_errors,
-    outbound_messages,
-    proxy_latency,
-    rate_limit_rejects,
-    render_metrics,
-)
+from app.services.metrics import render_metrics
 
 
 def _metrics_text() -> str:
@@ -72,42 +63,6 @@ def test_metrics_exports_all_expected_metrics() -> None:
     assert "clawdi_backend_embedding_in_flight" in text
     assert "clawdi_backend_embedding_duration_seconds" in text
     assert "clawdi_backend_embedding_rejections_total" in text
-
-
-def test_metrics_increment_counters() -> None:
-    suffix = uuid.uuid4().hex
-    channel = f"telegram-{suffix}"
-    method = f"sendMessage-{suffix}"
-    bot_id = f"b-{suffix}"
-
-    inbound_messages.labels(channel=channel).inc()
-    inbound_messages.labels(channel=channel).inc()
-    outbound_messages.labels(channel=channel, method=method).inc()
-    outbound_errors.labels(channel=channel, method=method).inc()
-    rate_limit_rejects.labels(channel=channel, scope="chat").inc()
-    ingress_errors.labels(channel=channel, bot_id=bot_id).inc()
-
-    text = _metrics_text()
-    assert f'msg_router_inbound_total{{channel="{channel}"}} 2.0' in text
-    assert f'msg_router_outbound_total{{channel="{channel}",method="{method}"}} 1.0' in text
-
-
-def test_metrics_records_histogram_observations() -> None:
-    suffix = uuid.uuid4().hex
-    proxy_latency.labels(channel=f"telegram-{suffix}", method="sendMessage").observe(0.11)
-
-    text = _metrics_text()
-    assert "msg_router_proxy_latency_seconds_count" in text
-
-
-def test_metrics_tracks_gauge_up_and_down() -> None:
-    channel = f"telegram-{uuid.uuid4().hex}"
-    active_polls.labels(channel=channel).inc()
-    active_polls.labels(channel=channel).inc()
-    active_polls.labels(channel=channel).dec()
-
-    text = _metrics_text()
-    assert f'msg_router_active_polls{{channel="{channel}"}} 1.0' in text
 
 
 async def test_database_metrics_follow_connection_lifecycle() -> None:

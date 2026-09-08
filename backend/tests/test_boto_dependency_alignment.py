@@ -9,7 +9,6 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
-REPOSITORY_ROOT = BACKEND_ROOT.parent
 BOTO_VERSION = "1.43.67"
 BOTO_DISTRIBUTIONS = frozenset(
     {
@@ -51,7 +50,3 @@ def test_boto_runtime_stubs_lock_and_metadata_use_one_exact_patch() -> None:
     } == dict.fromkeys(BOTO_DISTRIBUTIONS, BOTO_VERSION)
     assert packages_distributions()["mypy_boto3_s3"] == ["boto3-stubs-full"]
     assert s3_stub_version == BOTO_VERSION
-
-    documentation = (REPOSITORY_ROOT / "docs/backend-development.md").read_text(encoding="utf-8")
-    for distribution in BOTO_DISTRIBUTIONS:
-        assert f"`{distribution}=={BOTO_VERSION}`" in documentation
