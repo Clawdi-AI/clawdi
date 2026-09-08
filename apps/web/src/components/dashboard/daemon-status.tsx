@@ -13,6 +13,7 @@ import { Rocket, Terminal } from "lucide-react";
 import { useState } from "react";
 import { agentTypeLabel } from "@/components/dashboard/agent-label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { statusDotVariants } from "@/components/ui/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn, relativeTime } from "@/lib/utils";
@@ -120,10 +121,10 @@ const STATUS_TOOLTIP: Record<DaemonStatusKind, string> = {
 };
 
 const DOT_TONE: Record<DaemonStatusKind, string> = {
-	live: "bg-success ring-2 ring-success/20",
-	"set-up": "border-dashed border border-muted-foreground/50 bg-transparent",
-	errored: "bg-destructive ring-2 ring-destructive/20",
-	paused: "bg-warning ring-2 ring-warning/20",
+	live: statusDotVariants({ status: "success" }),
+	"set-up": statusDotVariants({ status: "neutral" }),
+	errored: statusDotVariants({ status: "destructive" }),
+	paused: statusDotVariants({ status: "warning" }),
 };
 
 const TEXT_TONE: Record<DaemonStatusKind, string> = {
