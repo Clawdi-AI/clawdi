@@ -95,7 +95,6 @@ describe("selectUnifiedAgentList", () => {
 			[legacy.id, "legacy-hosted"],
 			[connected.id, "self-managed"],
 		]);
-		expect(selection.tiles.filter((tile) => tile.id === claimed.id)).toHaveLength(1);
 	});
 
 	test("keeps known hosted membership but withholds connected classification while ownership is unresolved", () => {

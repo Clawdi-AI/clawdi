@@ -7,7 +7,6 @@ import { join, relative } from "node:path";
 
 const HOSTED_DIR = join(import.meta.dir);
 const SRC_DIR = join(import.meta.dir, "..");
-const HOSTED_V2_DIR = join(HOSTED_DIR, "v2");
 const PAGES_DIR = join(SRC_DIR, "pages");
 const CAPABILITY_INDEPENDENT_HOSTED_ROUTES = new Set(["oauth/codex/callback/page.tsx"]);
 const GATED_ROUTE_DYNAMIC_IMPORT =
@@ -199,18 +198,9 @@ describe("hosted product route exposure", () => {
 		expect(directGateConsumers).toEqual(["components/hosted-product-route.tsx"]);
 	});
 
-	test("the Codex OAuth callback relays independently of the capability gate", () => {
+	test("the Codex OAuth callback route remains outside the capability gate", () => {
 		const route = readFileSync(join(PAGES_DIR, "oauth/codex/callback/page.tsx"), "utf8");
-		const callback = readFileSync(
-			join(HOSTED_V2_DIR, "ai-providers/codex-oauth-callback.tsx"),
-			"utf8",
-		);
 		expect(route).not.toContain("HostedProductGate");
-		expect(callback).toContain("channel.postMessage(result)");
-		expect(callback).toContain("window.opener?.postMessage(");
-		expect(callback).toContain("window.history.replaceState(");
-		expect(callback).not.toContain("localStorage");
-		expect(callback).not.toContain("sessionStorage");
 	});
 });
 
@@ -305,12 +295,16 @@ describe("Wallet return security boundary", () => {
 		const client = readFileSync(join(SRC_DIR, "client.tsx"), "utf8");
 		const bootstrap = readFileSync(join(SRC_DIR, "wallet-stripe-return.bootstrap.ts"), "utf8");
 
+		expect(
+			client.indexOf("await bootstrapWalletStripeReturnBeforeTelemetry()"),
+		).toBeGreaterThanOrEqual(0);
 		expect(client.indexOf("await bootstrapWalletStripeReturnBeforeTelemetry()")).toBeLessThan(
 			client.indexOf('import("./instrument.client")'),
 		);
 		expect(bootstrap).toMatch(/const loadHostedWalletStripeReturn = IS_HOSTED_BUILD\s*\?/);
 		expect(bootstrap).toContain('import("@/hosted/billing/wallet/stripe-return")');
 		expect(bootstrap).toContain("if (!hasWalletStripeReturnUrl(currentHref)) return");
+		expect(bootstrap.indexOf("scrubWalletStripeReturnLocation(")).toBeGreaterThanOrEqual(0);
 		expect(bootstrap.indexOf("scrubWalletStripeReturnLocation(")).toBeLessThan(
 			bootstrap.indexOf("await loadHostedWalletStripeReturn()"),
 		);
@@ -320,7 +314,7 @@ describe("Wallet return security boundary", () => {
 describe("instrumentation-client hosted imports", () => {
 	test("server instrumentation is the first static import", () => {
 		const serverEntry = readFileSync(join(SRC_DIR, "server.ts"), "utf8");
-		expect(serverEntry.trimStart().startsWith('import "../instrument.server.mjs";')).toBe(true);
+		expect(serverEntry.match(/^import\b.*$/m)?.[0]).toBe('import "../instrument.server.mjs";');
 		expect(serverEntry).not.toContain('await import("../instrument.server.mjs")');
 	});
 

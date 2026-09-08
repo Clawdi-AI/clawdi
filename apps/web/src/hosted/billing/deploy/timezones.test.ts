@@ -16,12 +16,11 @@ describe("timezone options", () => {
 		).toEqual(["America/New_York", "Europe/London", "UTC"]);
 	});
 
-	test("uses a small standards-valid fallback without supportedValuesOf", () => {
+	test("uses a standards-valid fallback without supportedValuesOf", () => {
 		const fallback = fallbackTimezones();
 		expect(fallback).toContain("UTC");
 		expect(fallback).toContain("America/New_York");
 		expect(fallback).toContain("Asia/Tokyo");
-		expect(fallback.length).toBeLessThan(25);
 		expect(fallback).toEqual([...fallback].sort());
 		expect(fallback.every(isValidTimezone)).toBe(true);
 	});

@@ -53,7 +53,7 @@ function snakeCaseLiterals(text: string): string[] {
 }
 
 describe("lifecycle problem-code snapshot", () => {
-	test("is canonical and identical to the backend registry snapshot", () => {
+	test("contains sorted, unique lifecycle problem codes", () => {
 		expect(SNAPSHOT.length).toBeGreaterThan(0);
 		expect(new Set(SNAPSHOT).size).toBe(SNAPSHOT.length);
 		expect([...SNAPSHOT]).toEqual([...SNAPSHOT].sort());

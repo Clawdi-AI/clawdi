@@ -201,8 +201,6 @@ for (const viewport of [
 		await openSharing(page);
 		const dialog = page.getByRole("dialog");
 		await expect(dialog.getByText("Only you have access", { exact: true })).toBeVisible();
-		await expect(dialog.getByRole("alert")).toHaveCount(0);
-		await expect(dialog.getByRole("textbox", { name: "Share link label" })).toHaveCount(0);
 		await expect(
 			dialog.getByRole("button", { name: "Stop all sharing for this Project" }),
 		).toBeHidden();

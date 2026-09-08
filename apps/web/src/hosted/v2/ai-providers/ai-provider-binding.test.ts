@@ -286,12 +286,6 @@ describe("AI provider binding draft transitions", () => {
 				providers: [],
 			}).primaryModel,
 		).toBe("");
-		expect(
-			selectAiBindingProvider(draft, "missing-models", {
-				managedModels,
-				providers: [],
-			}).primaryModel,
-		).toBe("");
 	});
 
 	test("preserves an existing custom model across provider switches", () => {

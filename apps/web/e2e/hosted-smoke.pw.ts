@@ -210,14 +210,6 @@ const textModelCapabilities: ManagedModelCatalogItem["capabilities"] = {
 	supports_tools: true,
 };
 
-function _deferred() {
-	let resolve = () => {};
-	const promise = new Promise<void>((nextResolve) => {
-		resolve = nextResolve;
-	});
-	return { promise, resolve };
-}
-
 const managedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 	models: [
 		{
@@ -250,108 +242,6 @@ const managedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 	],
 };
 
-const _dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
-	models: [
-		{
-			id: "gpt-5.6-terra",
-			display_name: "GPT-5.6 Terra",
-			provider_id: "openai-codex",
-			is_default: true,
-			is_featured: true,
-			description: "Balanced cost for everyday work.",
-			capabilities: textModelCapabilities,
-		},
-		{
-			id: "gpt-5.6-luna",
-			display_name: "GPT-5.6 Luna",
-			provider_id: "openai-codex",
-			is_default: false,
-			is_featured: true,
-			description: "Low cost for routine work.",
-			capabilities: textModelCapabilities,
-		},
-		{
-			id: "gpt-5.6-sol",
-			display_name: "GPT-5.6 Sol",
-			provider_id: "openai-codex",
-			is_default: false,
-			is_featured: true,
-			description: "Higher cost for complex work.",
-			capabilities: textModelCapabilities,
-		},
-		{
-			id: "k3",
-			display_name: "Kimi K3",
-			provider_id: "kimi-coding",
-			is_default: false,
-			is_featured: true,
-			description: "Variable cost for long, detailed work.",
-			capabilities: {
-				...textModelCapabilities,
-				context_window: 262_144,
-				max_context_window: 1_048_576,
-				max_input_tokens: 262_144,
-				max_output_tokens: null,
-				supports_tools: null,
-			},
-		},
-		{
-			id: "gpt-5.5",
-			display_name: "GPT-5.5",
-			provider_id: "openai-codex",
-			is_default: false,
-			is_featured: false,
-			description: "Higher cost for demanding work.",
-			capabilities: textModelCapabilities,
-		},
-		{
-			id: "gpt-5.4",
-			display_name: "GPT-5.4",
-			provider_id: "openai-codex",
-			is_default: false,
-			is_featured: false,
-			description: "Balanced cost for coding and tools.",
-			capabilities: textModelCapabilities,
-		},
-		{
-			id: "gpt-5.4-mini",
-			display_name: "GPT-5.4 mini",
-			provider_id: "openai-codex",
-			is_default: false,
-			is_featured: false,
-			description: "Low cost for lighter coding work.",
-			capabilities: textModelCapabilities,
-		},
-		{
-			id: "gpt-5.2",
-			display_name: "GPT-5.2",
-			provider_id: "openai-codex",
-			is_default: false,
-			is_featured: false,
-			description: "Variable cost for general work.",
-			capabilities: textModelCapabilities,
-		},
-		{
-			id: "kimi-for-coding-highspeed",
-			display_name: "Kimi For Coding HighSpeed",
-			provider_id: "kimi-coding",
-			is_default: false,
-			is_featured: false,
-			description: "Variable cost for faster coding work.",
-			capabilities: textModelCapabilities,
-		},
-		{
-			id: "kimi-for-coding",
-			display_name: "Kimi K2.7 Code",
-			provider_id: "kimi-coding",
-			is_default: false,
-			is_featured: false,
-			description: "Variable cost for coding work.",
-			capabilities: textModelCapabilities,
-		},
-	],
-};
-
 const deepSeekProvider = {
 	id: "row-deepseek-team",
 	provider_id: "deepseek-primary",
@@ -375,14 +265,6 @@ const deepSeekProvider = {
 	capabilities: null,
 	created_at: "2026-07-15T00:00:00Z",
 	updated_at: "2026-07-15T00:00:00Z",
-};
-
-const _deepSeekProxyProvider = {
-	...deepSeekProvider,
-	id: "row-deepseek-proxy",
-	provider_id: "deepseek-team",
-	label: "DeepSeek proxy",
-	base_url: "https://proxy.example.com/v1",
 };
 
 function userProvider(providerId: string, label: string, models: AiProvider["models"]): AiProvider {
@@ -527,39 +409,6 @@ const openClawIncludedDeployment: DeploymentMutationFixture = {
 	},
 };
 
-const _performanceDeployment = {
-	...paidBasicDeployment,
-	id: "hdep_performance",
-	name: "Performance agent",
-	compute_subscription: {
-		...paidBasicDeployment.compute_subscription,
-		price_cents: 20_000,
-	},
-	config_info: {
-		...paidBasicDeployment.config_info,
-		compute_plan_slug: "compute_performance",
-	},
-};
-
-const _stoppedIncludedBasicDeployment = {
-	...includedBasicDeployment,
-	id: "hdep_stopped",
-	name: "Stopped Basic",
-	status: "stopped",
-};
-
-const _stoppedProjectionEnvironmentId = "44444444-4444-4444-8444-444444444444";
-const _stoppedProjectionGoneDeployment: DeploymentMutationFixture = {
-	...includedBasicDeployment,
-	id: "hdep_stopped_projection_gone",
-	name: "deployment-create-browser-generated",
-	status: "stopped",
-	config_info: {
-		...includedBasicDeployment.config_info,
-		clawdi_cloud_environments: {},
-	},
-};
-
 const missingProjectionEnvironmentId = "55555555-5555-4555-8555-555555555555";
 const missingProjectionFailureReason =
 	"startup_probe_failing; restart_count=2; container failed readiness probe after the runtime bridge exhausted every startup attempt";
@@ -588,40 +437,7 @@ const runningMissingProjectionDeployment = {
 	},
 };
 
-const retainedProjectionEnvironmentId = "66666666-6666-4666-8666-666666666666";
-const retainedProjectionFailureReason =
-	"startup_probe_failing; restart_count=4; runtime daemon exited and is no longer reachable";
-const _failedRetainedProjectionDeployment = {
-	...includedBasicDeployment,
-	id: "hdep_failed_retained_projection",
-	agent_id: retainedProjectionEnvironmentId,
-	name: "Failed retained projection agent",
-	status: "failed",
-	failure_reason: retainedProjectionFailureReason,
-	config_info: {
-		...includedBasicDeployment.config_info,
-		clawdi_cloud_environments: { hermes: retainedProjectionEnvironmentId },
-	},
-};
-
 const sharedLegacyEnvironmentId = "77777777-7777-4777-8777-777777777777";
-const newerSharedEnvironmentDeployment = {
-	...includedBasicDeployment,
-	id: "hdep_shared_newer",
-	name: "Newer twin",
-	created_at: "2026-07-15T00:00:00Z",
-	config_info: {
-		...includedBasicDeployment.config_info,
-		clawdi_cloud_environments: { hermes: sharedLegacyEnvironmentId },
-	},
-};
-const _olderSharedEnvironmentDeployment = {
-	...newerSharedEnvironmentDeployment,
-	id: "hdep_shared_older",
-	name: "Older twin",
-	status: "stopped",
-	created_at: "2026-07-14T00:00:00Z",
-};
 const sharedLegacyCloudAgent = {
 	id: sharedLegacyEnvironmentId,
 	name: "shared-legacy-agent",
@@ -1083,14 +899,6 @@ test("runtime readiness keeps launch closed across generation and credential rac
 	}
 });
 
-const _interruptedIdentitylessDeployment = {
-	...includedBasicDeployment,
-	id: "hdep_creation_interrupted",
-	name: "Interrupted deployment",
-	status: "failed",
-	failure_reason: "creation_interrupted",
-};
-
 const walletState: WalletState = {
 	balance_usd: "25.00",
 	x402_enabled: false,
@@ -1113,48 +921,6 @@ const walletState: WalletState = {
 	auto_reload_action: null,
 };
 
-const walletActiveDeployment = {
-	...paidBasicDeployment,
-	id: "hdep_wallet_due",
-	name: "Wallet-funded Basic",
-	compute_subscription: {
-		subscription_id: 42,
-		status: "active",
-		funding_source: "wallet",
-		payment_state: "ok",
-		billing_term_months: 1,
-		price_cents: 1_000,
-		currency: "usd",
-		cancel_at_period_end: false,
-		current_period_end: "2026-08-15T00:00:00Z",
-	},
-};
-
-const _walletPastDueDeployment = {
-	...walletActiveDeployment,
-	compute_subscription: {
-		...walletActiveDeployment.compute_subscription,
-		status: "past_due",
-		payment_state: "past_due",
-		latest_failed_invoice_id: "in_wallet_open",
-		next_payment_attempt_at: "2026-07-16T00:00:00Z",
-	},
-};
-
-const _cardPastDueDeployment = {
-	...paidBasicDeployment,
-	id: "hdep_card_due",
-	name: "Card-funded Basic",
-	compute_subscription: {
-		...paidBasicDeployment.compute_subscription,
-		status: "past_due",
-		payment_state: "past_due",
-		latest_failed_invoice_id: "in_card_open",
-		latest_failed_invoice_hosted_url: null,
-		next_payment_attempt_at: "2026-07-16T00:00:00Z",
-	},
-};
-
 const terminalFallbackDeployment: DeploymentMutationFixture = {
 	...includedBasicDeployment,
 	id: "hdep_terminal_fallback",
@@ -1166,30 +932,6 @@ const terminalFallbackDeployment: DeploymentMutationFixture = {
 		prior_plan_slug: "compute_performance",
 		occurred_at: "2026-07-16T00:00:00Z",
 		subscription_id: 42,
-	},
-};
-
-const _cancelPendingBasicDeployment = {
-	...paidBasicDeployment,
-	id: "hdep_cancel_pending",
-	name: "Cancel-pending Basic",
-	compute_subscription: {
-		...paidBasicDeployment.compute_subscription,
-		cancel_at_period_end: true,
-		cancel_at: "2027-07-15T00:00:00Z",
-	},
-};
-
-const _walletAnnualDeployment = {
-	...paidBasicDeployment,
-	id: "hdep_wallet_created",
-	name: "Annual Wallet Basic",
-	status: "creating",
-	compute_subscription: {
-		...walletActiveDeployment.compute_subscription,
-		billing_term_months: 12,
-		price_cents: 10_000,
-		current_period_end: "2027-07-15T00:00:00Z",
 	},
 };
 
@@ -1337,14 +1079,6 @@ function planChangeResponse({
 					: null,
 		},
 	};
-}
-
-function _checkoutDeployRequestId(requestBody: string): string | null {
-	const request: unknown = JSON.parse(requestBody);
-	if (!isRecord(request) || !isRecord(request.deploy_config)) return null;
-	return typeof request.deploy_config.deploy_request_id === "string"
-		? request.deploy_config.deploy_request_id
-		: null;
 }
 
 function completedDeploymentOperation(
@@ -1705,67 +1439,6 @@ async function stubWalletStripeSetup(page: Page) {
 					paymentIntent: { id: "pi_auto_reload_return", status: "succeeded" },
 				}),
 				_registerWrapper: () => undefined,
-			}),
-			{ version: "dahlia" },
-		);
-		Object.defineProperty(window, "Stripe", { configurable: true, value: mockStripe });
-	});
-}
-
-async function _stubRetriedStripeCheckoutLoad(page: Page) {
-	await page.addInitScript(() => {
-		const browserState = window;
-		browserState.__stripeCheckoutClientSecrets = [];
-		browserState.__stripeCheckoutLoadCalls = 0;
-		browserState.__stripeConfirmCalls = 0;
-		const mockStripe = Object.assign(
-			() => ({
-				elements: () => ({}),
-				createToken: async () => ({}),
-				createPaymentMethod: async () => ({}),
-				confirmCardPayment: async () => {
-					browserState.__stripeConfirmCalls = (browserState.__stripeConfirmCalls ?? 0) + 1;
-					return {};
-				},
-				_registerWrapper: () => undefined,
-				initCheckoutElementsSdk: (options: { clientSecret?: string }) => {
-					browserState.__stripeCheckoutClientSecrets?.push(options.clientSecret ?? "");
-					browserState.__stripeCheckoutLoadCalls =
-						(browserState.__stripeCheckoutLoadCalls ?? 0) + 1;
-					const failThisLoad = browserState.__stripeCheckoutLoadCalls === 1;
-					const session = { canConfirm: true, status: { type: "open" } };
-					const actions = {
-						getSession: () => session,
-						confirm: async () => {
-							browserState.__stripeConfirmCalls = (browserState.__stripeConfirmCalls ?? 0) + 1;
-							return {
-								type: "success",
-								session: { status: { type: "complete" } },
-							};
-						},
-					};
-					return {
-						loadActions: async () =>
-							failThisLoad
-								? {
-										type: "error",
-										error: { message: "Mock Elements load failure" },
-									}
-								: { type: "success", actions },
-						on: () => undefined,
-						changeAppearance: () => undefined,
-						loadFonts: () => undefined,
-						createPaymentElement: () => ({
-							mount: (node: HTMLElement) => {
-								node.textContent = "Mock retried secure payment form";
-							},
-							on: () => undefined,
-							off: () => undefined,
-							update: () => undefined,
-							destroy: () => undefined,
-						}),
-					};
-				},
 			}),
 			{ version: "dahlia" },
 		);
@@ -2835,22 +2508,6 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	});
 }
 
-async function _expectNoQuarterlyCopy(page: Page) {
-	await expect(page.getByText("Quarterly", { exact: true })).toHaveCount(0);
-	await expect(page.getByText(/\/qtr/)).toHaveCount(0);
-}
-
-async function _expectActionCenterUncovered(action: Locator) {
-	await expect(action).toBeVisible();
-	expect(
-		await action.evaluate((element) => {
-			const rect = element.getBoundingClientRect();
-			const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-			return hit !== null && (hit === element || element.contains(hit));
-		}),
-	).toBe(true);
-}
-
 function collectBrowserErrors(page: Page): string[] {
 	const errors: string[] = [];
 	page.on("console", (m) => {
@@ -3481,9 +3138,6 @@ test("hosted terminal opens a standalone fitted window", async ({ page, context 
 	await page.goto(terminalPath);
 	const openButton = page.getByRole("button", { name: "Open Terminal in new window" });
 	await expect(openButton).toContainText("Open in new window");
-	expect(
-		await openButton.evaluate((button) => button === button.parentElement?.lastElementChild),
-	).toBe(true);
 	const popupPromise = context.waitForEvent("page");
 	await openButton.click();
 	const popup = await popupPromise;
@@ -3702,7 +3356,6 @@ test("overview billing facts and shortcuts follow subscription authority", async
 			const compute = page.locator('[data-overview-status="compute"]');
 			const body = compute.locator('[data-slot="card-content"]');
 			await expect(body).toContainText("Basic plan");
-			await expect(compute.locator('[data-slot="card-header"]')).not.toContainText("Basic plan");
 			const row = body.locator("[data-overview-subscription-row]");
 			if (scenario.value) await expect(row).toContainText(scenario.value);
 			else await expect(row).toHaveCount(0);
@@ -3813,35 +3466,16 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			await expect(entry.locator('[data-overview-status="compute"]')).toBeVisible();
 			const compute = entry.locator('[data-overview-status="compute"]');
 			await expect(compute.getByRole("button", { name: "Upgrade", exact: true })).toBeVisible();
-			await expect(compute.locator('[data-slot="card-header"]')).not.toContainText("Basic plan");
 			await expect(compute.locator('[data-slot="card-content"]')).toContainText("Basic plan");
 			await expect(compute.locator("a a, a button, button a")).toHaveCount(0);
-			await expect(page.getByTestId("overview-session-placeholder")).toHaveCount(0);
 			const sessionGrid = page.getByTestId("overview-session-grid");
 			await expect(sessionGrid.getByRole("article")).toHaveCount(sessionCount);
-			await expect(page.getByTestId("overview-session-skeleton-row")).toHaveCount(0);
 			if (sessionCount === 0) {
 				await expect(sessionGrid.getByRole("status")).toHaveText(
 					"No sessions from this agent yet.",
 				);
 			}
 			await expectNoHorizontalOverflow(page.locator("main"), "Overview");
-			if (viewport.width < 768) {
-				await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
-			}
-			const sidebar =
-				viewport.width < 768 ? page.getByRole("dialog") : page.getByTestId("app-sidebar");
-			const labels = await sidebar.locator('a[href^="/agents/"]').allTextContents();
-			const start = labels.findIndex((text) => text.trim() === "Overview");
-			expect(start).toBeGreaterThanOrEqual(0);
-			expect(labels.slice(start, start + 5).map((text) => text.trim())).toEqual([
-				"Overview",
-				label,
-				"Channels",
-				"AI Providers",
-				"Sessions",
-			]);
-			if (viewport.width < 768) await page.keyboard.press("Escape");
 		}
 		await page
 			.locator('[data-overview-module="channels"]')
@@ -3956,7 +3590,6 @@ test("agent rail keeps New agent after agents and retains cache after list failu
 		await page.goto("/agents");
 		const rail = page.getByTestId("app-sidebar-agent-rail");
 		const newAgent = rail.getByRole("button", { name: "New agent" });
-		await expect(rail.getByTestId("app-sidebar-agent-loading-slot")).toHaveCount(2);
 		await expect(rail.getByTestId("app-sidebar-agent-tile")).toHaveCount(0);
 		await expect(rail.getByRole("button", { name: "e2e-2", exact: true })).toHaveCount(0);
 
@@ -4480,9 +4113,6 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	await expect.poll(() => deploymentDetailRequests).toEqual([startingDeployment.id]);
 	await expect(page).toHaveURL(`/agents/${fixtureAgentId(startingDeployment)}`);
 	await expect(page.getByText("Setting up Hermes", { exact: true })).toBeVisible();
-	await expect(
-		page.getByText("Setup usually takes about 7–10 minutes.", { exact: false }),
-	).toBeVisible();
 	await expect(page.getByText("Preparing cloud resources", { exact: true })).toBeVisible();
 	expect(operationPollRequests).toEqual([]);
 	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);

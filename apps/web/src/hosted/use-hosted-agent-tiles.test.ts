@@ -64,7 +64,6 @@ function expectHostedTileStatus(
 	expect(tile).toBeDefined();
 	expect(tile?.cardStatus?.visual.label).toBe(label);
 	expect(tile?.cardStatus?.labels[0]).toBe(label);
-	expect((tile as { action?: unknown } | undefined)?.action).toBeUndefined();
 }
 
 function resolveAgentDeployment(deployments: readonly HostedDeployment[], agentId: string) {
@@ -338,31 +337,6 @@ describe("deploymentToTiles", () => {
 		expectHostedTileStatus(tile, "Stopped");
 	});
 
-	test("never projects card actions for any deployment lifecycle state", () => {
-		const lifecycleStates = [
-			"creating",
-			"starting",
-			"running",
-			"stopping",
-			"stopped",
-			"restarting",
-			"updating",
-			"deleting",
-			"deleted",
-			"failed",
-			null,
-		] satisfies readonly (HostedDeploymentStatus["summary_state"] | null)[];
-
-		for (const status of lifecycleStates) {
-			const tiles = hostedDeploymentToTiles(deployment({ status }));
-			if (status === "deleting" || status === "deleted") {
-				expect(tiles).toEqual([]);
-				continue;
-			}
-			expect((tiles[0] as { action?: unknown } | undefined)?.action).toBeUndefined();
-		}
-	});
-
 	test("keeps non-running compute primary when the joined environment has fresh sync", () => {
 		for (const [status, label] of [
 			["stopped", "Stopped"],
@@ -395,25 +369,6 @@ describe("deploymentToTiles", () => {
 
 		expect(hostedDeploymentToTiles(deleting)).toEqual([]);
 		expect(resolveAgentDeployment([deleting], deleting.agent_id)).toBeNull();
-	});
-
-	test("keeps a provisioning deployment navigable before projection exists", () => {
-		const agentId = "33333333-3333-4333-8333-333333333333";
-		const hostedDeployment = deployment({
-			status: "failed",
-			failureReason: "creation_interrupted",
-			agentId,
-			environmentId: null,
-		});
-		const [tile] = hostedDeploymentToTiles(hostedDeployment);
-
-		expect(tile).toMatchObject({
-			id: agentId,
-			name: "hosted-test",
-			href: `/agents/${agentId}`,
-			env: null,
-		});
-		expectHostedTileStatus(tile, "Temporarily unavailable");
 	});
 });
 

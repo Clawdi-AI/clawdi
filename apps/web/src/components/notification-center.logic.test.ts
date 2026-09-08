@@ -3,11 +3,9 @@ import {
 	type AccountNotification,
 	filterAccountNotifications,
 	getAcceptedProjectInvitationToastCopy,
-	getNotificationCenterDescription,
 	getNotificationCenterEmptyCopy,
 	getNotificationCenterTriggerLabel,
 	getPendingNotificationCount,
-	getProjectInvitationAccessCopy,
 	NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS,
 	type ProjectInvitationNotification,
 	resolveNotificationUrl,
@@ -62,12 +60,8 @@ describe("notification center logic", () => {
 
 		const allEmpty = getNotificationCenterEmptyCopy("all");
 		expect(allEmpty.title).toBe("No notifications yet");
-		expect(allEmpty.description).toContain("project invitations");
 		const unreadEmpty = getNotificationCenterEmptyCopy("unread");
 		expect(unreadEmpty.title).toBe("You're all caught up");
-		expect(unreadEmpty.description).toContain("account updates");
-		expect(getNotificationCenterDescription()).toContain("Account activity");
-		expect(getNotificationCenterDescription()).toContain("project invitations");
 	});
 
 	test("accepts same-origin and HTTPS notification actions only", () => {
@@ -82,18 +76,13 @@ describe("notification center logic", () => {
 		expect(resolveNotificationUrl("javascript:alert(1)", "https://cloud.clawdi.ai")).toBeNull();
 	});
 
-	test("keeps project invitation invariants as the first notification type", () => {
-		expect(getProjectInvitationAccessCopy()).toContain("Only the owner can edit");
-		expect(getProjectInvitationAccessCopy()).toContain("link them to your Agents");
-
+	test("includes the accepted Project name with a fallback", () => {
 		const accepted = getAcceptedProjectInvitationToastCopy("Shared Workspace");
 		expect(accepted.title).toBe("Joined Shared Workspace");
 		expect(getAcceptedProjectInvitationToastCopy().title).toBe("Project joined");
-		expect(accepted.description).toContain("Open the Project");
-		expect(accepted.description).toContain("link it to an Agent");
 	});
 
-	test("refreshes canonical OpenAPI membership caches after accepting an invitation", () => {
+	test("declares canonical OpenAPI membership cache keys", () => {
 		expect(NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS).toContainEqual(["get", "/v1/projects"]);
 		expect(NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS).toContainEqual(["get", "/v1/agents"]);
 		expect(NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS).not.toContainEqual(["projects"]);

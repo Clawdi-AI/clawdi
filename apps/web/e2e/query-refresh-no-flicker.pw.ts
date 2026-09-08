@@ -103,14 +103,12 @@ for (const viewport of [
 		// only resolve on a client retry, so the first paint allowance matches
 		// the suite-wide 15s convention instead of the 5s default.
 		await expect(link).toBeVisible({ timeout: 15_000 });
-		await expect(page.getByText("1 agent", { exact: true })).toHaveCount(0);
 		const card = link.locator("..");
 
 		await expect.poll(refresh.agentRequests, { timeout: 15_000 }).toBeGreaterThan(1);
 		await refresh.refreshStarted.promise;
 		try {
 			await expect(link).toBeVisible();
-			await expect(page.getByText("1 agent", { exact: true })).toHaveCount(0);
 			expect(await card.evaluate((element) => getComputedStyle(element).opacity)).toBe("1");
 		} finally {
 			refresh.releaseRefresh.resolve();

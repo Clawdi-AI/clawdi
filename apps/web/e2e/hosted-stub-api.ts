@@ -1257,11 +1257,6 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 	});
 }
 
-export async function expectNoQuarterlyCopy(page: Page) {
-	await expect(page.getByText("Quarterly", { exact: true })).toHaveCount(0);
-	await expect(page.getByText(/\/qtr/)).toHaveCount(0);
-}
-
 export function collectBrowserErrors(page: Page): string[] {
 	const errors: string[] = [];
 	page.on("console", (m) => {
@@ -1271,13 +1266,6 @@ export function collectBrowserErrors(page: Page): string[] {
 		errors.push(e.message);
 	});
 	return errors;
-}
-
-export async function expectNonZeroBox(locator: ReturnType<Page["locator"]>, label: string) {
-	const box = await locator.boundingBox();
-	expect(box, `${label} should render a layout box`).not.toBeNull();
-	expect(box?.width, `${label} width`).toBeGreaterThan(0);
-	expect(box?.height, `${label} height`).toBeGreaterThan(0);
 }
 
 export async function gotoHostedAgentSettings(

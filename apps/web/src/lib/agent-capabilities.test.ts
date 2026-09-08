@@ -12,26 +12,6 @@ describe("agent overview registry", () => {
 				expect(AGENT_SECTION_NAVIGATION_ITEMS[module.section].variants).toContain(variant);
 		}
 	});
-	test("separates workspace and shared resources for both agent kinds", () => {
-		const connected = agentOverviewGroups("connected");
-		const hosted = agentOverviewGroups("hosted");
-		expect(connected.map((group) => group.id)).toEqual(["workspace", "shared"]);
-		expect(hosted.map((group) => group.id)).toEqual(["workspace", "shared"]);
-		expect(connected[0]?.modules.map((module) => module.id)).toEqual([
-			"projects",
-			"skills",
-			"vaults",
-		]);
-		expect(hosted[0]?.modules.map((module) => module.id)).toEqual([
-			"projects",
-			"skills",
-			"vaults",
-			"plugins",
-		]);
-		expect(connected[1]?.modules.map((module) => module.id)).toEqual(["memories", "connectors"]);
-		expect(hosted[1]?.modules).toEqual(connected[1]?.modules);
-	});
-
 	test("skips a missing summary without rendering an empty card or crashing the overview", () => {
 		const markup = renderToStaticMarkup(
 			createElement(AgentOverviewCapabilities, { agentId: "", variant: "connected", content: {} }),

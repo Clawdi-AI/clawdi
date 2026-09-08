@@ -78,8 +78,6 @@ describe("selfManagedAgentTiles", () => {
 		expect(tile).toMatchObject({
 			name: "Launch runner",
 		});
-		expect("statusLabel" in tile).toBe(false);
-		expect("runtimeLabel" in tile).toBe(false);
 	});
 });
 

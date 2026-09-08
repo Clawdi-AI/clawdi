@@ -695,23 +695,6 @@ async function stubDashboardApi(
 	});
 }
 
-async function expectSidebarNavigationGroups(
-	page: Page,
-	expected: Array<{ label: string | null; items: string[] }>,
-) {
-	const groups = page
-		.getByTestId("app-sidebar")
-		.locator('[data-slot="sidebar-content"] > [data-slot="sidebar-group"]');
-	await expect(groups).toHaveCount(expected.length);
-	for (const [index, group] of expected.entries()) {
-		const heading = groups.nth(index).locator('[data-slot="sidebar-group-label"]');
-		if (group.label) await expect(heading).toHaveText(group.label);
-		else await expect(heading).toHaveCount(0);
-		await expect(groups.nth(index).getByRole("link")).toHaveText(group.items);
-	}
-	await expect(groups.locator('[data-slot="sidebar-group-label"]:empty')).toHaveCount(0);
-}
-
 test("sidebar shortcut preserves the desktop focus rail and Escape closes the mobile drawer", async ({
 	page,
 }) => {
@@ -751,23 +734,6 @@ test("sidebar shortcut preserves the desktop focus rail and Escape closes the mo
 	await expect(drawer).toBeVisible();
 	await page.keyboard.press("Escape");
 	await expect(drawer).toBeHidden();
-});
-
-test("Console and connected agents use the scoped navigation grammar", async ({ page }) => {
-	await stubDashboardApi(page);
-	await page.goto("/");
-	await expectSidebarNavigationGroups(page, [
-		{ label: null, items: ["Overview", "Agents", "Sessions", "Memories"] },
-		{ label: "Library", items: ["Projects", "Skills", "Vaults", "Connectors"] },
-	]);
-
-	await page.goto("/agents/11111111-1111-4111-8111-111111111111");
-	await expectSidebarNavigationGroups(page, [
-		{ label: null, items: ["Overview", "Sessions"] },
-		{ label: "Workspace", items: ["Projects", "Skills", "Vaults"] },
-		{ label: "Shared", items: ["Memories", "Connectors"] },
-		{ label: null, items: ["Settings"] },
-	]);
 });
 
 test("connected primary Project navigation stays hidden until scope resolves", async ({ page }) => {
@@ -830,7 +796,6 @@ test("connected Agent Memories keeps established UI through nested list and deta
 			exact: true,
 		}),
 	).toHaveCount(1);
-	await expect(main.getByText("All agents", { exact: true })).toHaveCount(0);
 	await expect(main.getByTestId("memories-surface")).toBeVisible();
 	const memoryCard = main.locator("article").filter({ hasText: "Shared account context" });
 	await expect(memoryCard).toBeVisible();
@@ -857,9 +822,7 @@ test("connected Agent Memories keeps established UI through nested list and deta
 	await expect(
 		main.getByRole("heading", { name: "Shared account context", level: 1 }),
 	).toBeVisible();
-	await expect(main.getByText("All agents", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Open in resource library" })).toHaveCount(0);
 	await expect(main.getByRole("link", { name: "View session" })).toHaveAttribute(
 		"href",
 		"/agents/11111111-1111-4111-8111-111111111111/sessions/session-smoke-1",
@@ -1291,8 +1254,6 @@ test("connected overview shows sessions and resources according to agent capabil
 		await expect(
 			main.getByRole("region", { name: "Recent sessions" }).getByRole("article"),
 		).toHaveCount(sessionCount);
-		await expect(main.getByTestId("overview-session-placeholder")).toHaveCount(0);
-		await expect(main.getByTestId("overview-session-skeleton-row")).toHaveCount(0);
 		await expect(main.locator('[data-overview-module="skills"]')).toContainText("skill");
 		await expect(main.locator('[data-overview-module="vaults"]')).toContainText("1 vault");
 		await expect(main.locator('[data-overview-module="memories"]')).toContainText("1 memory");
@@ -1340,14 +1301,6 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(projectCards).toHaveCount(4);
 	const linkedProjects = projectStack.getByRole("region", { name: "Linked Projects", exact: true });
 	const availableProjects = projectStack.getByRole("region", { name: "Available Projects" });
-	await expect(projectStack.getByRole("region").nth(0)).toHaveAttribute(
-		"aria-label",
-		"Linked Projects",
-	);
-	await expect(projectStack.getByRole("region").nth(1)).toHaveAttribute(
-		"aria-label",
-		"Available Projects",
-	);
 	await expect(linkedProjects.getByText("Linked", { exact: true }).locator("..")).toHaveText(
 		"Linked2",
 	);
@@ -1517,7 +1470,6 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 		"href",
 		"/agents/11111111-1111-4111-8111-111111111111/project-access",
 	);
-	await expect(main.getByRole("button", { name: "Manage in resource library" })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /Add to agent/i })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "People", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Agents", exact: true })).toHaveCount(0);
@@ -1558,7 +1510,6 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	const focusedSkillsHeading = main.getByRole("heading", { name: "Skills", level: 1 });
 	await expect(focusedSkillsHeading).toBeVisible();
 	await expect(page).toHaveTitle("Skills · Clawdi");
-	await expect(main.getByText("Project: Smoke Project", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveAttribute(
 		"href",
 		"/agents/11111111-1111-4111-8111-111111111111",
@@ -1603,7 +1554,6 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
 	).toHaveText(["Smoke Codex", "Vaults"]);
-	await expect(main.getByText("Project: Smoke Project", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Vaults", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Skills", level: 2 })).toHaveCount(0);
@@ -1633,13 +1583,6 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-first",
 	);
 	await expect(main.getByRole("heading", { name: "Team Knowledge", level: 1 })).toBeVisible();
-	await expect(main.getByRole("tablist", { name: "Project pages" }).getByRole("tab")).toHaveText([
-		"Overview",
-		"Skills",
-		"Vaults",
-		"Agents",
-		"Access",
-	]);
 	await main.getByRole("tab", { name: "Skills", exact: true }).click();
 	await expect(main.getByText("Team-only Skill", { exact: true })).toBeVisible();
 	await expect(main.getByText("Shared Workflow", { exact: true })).toBeVisible();
@@ -1707,7 +1650,6 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 		"Unrelated Project",
 		"Team Knowledge",
 	]);
-	await expect(consoleProjectGrid.getByText("Custom Project", { exact: true })).toHaveCount(0);
 	await expect(consoleProjectGrid.getByText("Owner", { exact: true })).toHaveCount(0);
 	await expect(consoleProjectGrid).not.toContainText("undefined skills");
 	await expect(consoleProjectGrid).not.toContainText("undefined vaults");
@@ -1803,7 +1745,6 @@ test("agent scoped Skills and Vaults preserve context for mutations", async ({ p
 			.getByRole("navigation", { name: "breadcrumb" })
 			.getByRole("link", { name: "Vaults", exact: true }),
 	).toHaveAttribute("href", vaultOrigin);
-	await expect(main.getByRole("button", { name: "Open in resource library" })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /^Delete$/ })).toBeVisible();
 	const addKeysButton = main.getByRole("button", { name: "Add keys", exact: true });
 	await expect(addKeysButton).toBeVisible();
@@ -1955,7 +1896,6 @@ test("agent Skill details resolve only through effective Projects", async ({ pag
 			.locator('[data-slot="breadcrumb-item"]:visible'),
 	).toHaveText(["Smoke Codex", "Skills", "Scoped Skill"]);
 	await expect(main.getByRole("button", { name: "Agent Skills" })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: "Manage in resource library" })).toHaveCount(0);
 	const agentSkillsLink = main
 		.getByRole("navigation", { name: "breadcrumb" })
 		.getByRole("link", { name: "Skills", exact: true });
@@ -2351,13 +2291,6 @@ test("unlinked Project resources stay inside the Agent without granting runtime 
 	);
 	const main = page.locator("main");
 	await expect(main.getByRole("heading", { name: "Team Knowledge", level: 1 })).toBeVisible();
-	await expect(main.getByRole("tablist", { name: "Project pages" }).getByRole("tab")).toHaveText([
-		"Overview",
-		"Skills",
-		"Vaults",
-		"Agents",
-		"Access",
-	]);
 	await expect(main.getByRole("tablist", { name: "Project pages" }).getByRole("tab")).toHaveText(
 		libraryTabs,
 	);

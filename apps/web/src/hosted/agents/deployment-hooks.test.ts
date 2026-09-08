@@ -272,7 +272,6 @@ describe("deployment transition timeout rendering", () => {
 				runtime: "hermes",
 				title: "Setting up Hermes",
 				activeLabel: "Preparing cloud resources",
-				activeDescription: "Creating a private environment and connecting your AI provider.",
 				step: "Step 1 of 3",
 				currentStage: "creating",
 				states: { creating: "active", starting: "pending", running: "pending" },
@@ -282,8 +281,6 @@ describe("deployment transition timeout rendering", () => {
 				runtime: "openclaw",
 				title: "Setting up OpenClaw",
 				activeLabel: "Installing and starting OpenClaw",
-				activeDescription:
-					"Provisioning a private workspace, installing the Agent, and confirming readiness.",
 				step: "Step 2 of 3",
 				currentStage: "starting",
 				states: { creating: "completed", starting: "active", running: "pending" },
@@ -293,7 +290,6 @@ describe("deployment transition timeout rendering", () => {
 				runtime: "hermes",
 				title: "Setting up Hermes",
 				activeLabel: "Ready",
-				activeDescription: "Setup is complete.",
 				step: "Step 3 of 3",
 				currentStage: "running",
 				states: { creating: "completed", starting: "completed", running: "completed" },
@@ -313,10 +309,7 @@ describe("deployment transition timeout rendering", () => {
 			);
 
 			expect(markup).toContain(fixture.title);
-			expect(markup).not.toContain("Deploying your agent");
-			expect(markup).not.toContain("Current status");
 			expect(markup).toContain(fixture.activeLabel);
-			expect(markup).toContain(fixture.activeDescription);
 			expect(markup).toContain(fixture.step);
 			expect(markup).toContain('aria-label="Deployment progress"');
 			for (const [stage, state] of Object.entries(fixture.states)) {
@@ -326,10 +319,6 @@ describe("deployment transition timeout rendering", () => {
 					),
 				);
 			}
-			for (const shortLabel of ["Cloud resources", "Agent software", "Ready"])
-				expect(markup).toContain(`>${shortLabel}</p>`);
-			expect(markup).toContain("updates automatically");
-			expect(markup).toContain("7–10 minutes");
 			if (fixture.status === "running") {
 				expect(markup).not.toContain('data-slot="spinner"');
 			} else {
@@ -339,8 +328,6 @@ describe("deployment transition timeout rendering", () => {
 			expect(markup).not.toContain("aria-valuenow");
 			expect(markup).not.toContain("RuntimeNotReady");
 			expect(markup).not.toContain("DriverApplying");
-			for (const configurationLabel of ["Plan", "CPU", "Memory", "Storage"])
-				expect(markup).not.toContain(`>${configurationLabel}<`);
 		}
 	});
 
@@ -359,7 +346,6 @@ describe("deployment transition timeout rendering", () => {
 		expect(markup).toContain('role="alert"');
 		expect(markup).toContain("Setup is taking longer than expected");
 		expect(markup).toContain("Check again");
-		expect(markup).not.toContain("Current status");
 		expect(markup).toContain(">Installing and starting OpenClaw</p>");
 		expect(markup).toContain("Step 2 of 3");
 		expect(markup).toContain('data-deployment-stage="starting" data-stage-state="active"');

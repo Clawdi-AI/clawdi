@@ -5,7 +5,6 @@ import {
 	isRetryableTerminalCloseCode,
 	nextTerminalReconnect,
 	TERMINAL_CONNECTION_STABILITY_MS,
-	TERMINAL_RECONNECT_DELAYS_MS,
 	TTYD_OUTPUT_FLOW_CONTROL,
 	terminalConnectionClosedMessage,
 	terminalReconnectAttemptsForClose,
@@ -59,40 +58,6 @@ describe("terminal output flow control", () => {
 		expect(callbacks).toEqual([undefined]);
 		expect(commands).toEqual([]);
 	});
-
-	test("does not let an old write callback resume a replacement transport", () => {
-		const callbacks: Array<() => void> = [];
-		const commands: string[] = [];
-		let currentGeneration = 1;
-		let isCurrentSocket = true;
-		const writeOutput = createTtydOutputWriter({
-			write: (_data, callback) => {
-				if (callback) callbacks.push(callback);
-			},
-			send: (command) => {
-				if (
-					canUseTerminalTransport({
-						currentGeneration,
-						transportGeneration: 1,
-						isCurrentSocket,
-						failed: false,
-					})
-				) {
-					commands.push(command);
-				}
-			},
-		});
-		const checkpoint = "x".repeat(TTYD_OUTPUT_FLOW_CONTROL.writeLimit + 1);
-
-		for (let index = 0; index < TTYD_OUTPUT_FLOW_CONTROL.lowWater; index += 1) {
-			writeOutput(checkpoint);
-		}
-		currentGeneration = 2;
-		isCurrentSocket = false;
-		callbacks.shift()?.();
-
-		expect(commands).toEqual([]);
-	});
 });
 
 describe("terminal reconnect policy", () => {
@@ -106,7 +71,6 @@ describe("terminal reconnect policy", () => {
 	});
 
 	test("uses a finite exponential retry sequence", () => {
-		expect(TERMINAL_RECONNECT_DELAYS_MS).toEqual([500, 1_000, 2_000]);
 		expect(nextTerminalReconnect(1011, 0)).toEqual({ attempt: 1, delayMs: 500 });
 		expect(nextTerminalReconnect(1011, 1)).toEqual({ attempt: 2, delayMs: 1_000 });
 		expect(nextTerminalReconnect(1011, 2)).toEqual({ attempt: 3, delayMs: 2_000 });

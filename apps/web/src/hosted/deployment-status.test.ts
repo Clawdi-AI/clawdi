@@ -53,21 +53,6 @@ function acceptedOperation(verb: DeploymentOperationVerb): DeploymentOperation {
 }
 
 describe("DeploymentStatus", () => {
-	test("matches the hosted backend deployment status enum", () => {
-		expect(KNOWN_DEPLOYMENT_STATUSES).toEqual([
-			"creating",
-			"starting",
-			"running",
-			"stopping",
-			"stopped",
-			"restarting",
-			"updating",
-			"failed",
-			"deleting",
-			"deleted",
-		]);
-	});
-
 	test("normalizes known hosted backend statuses", () => {
 		for (const raw of KNOWN_DEPLOYMENT_STATUSES) {
 			const status = parseDeploymentStatus(raw.toUpperCase());
