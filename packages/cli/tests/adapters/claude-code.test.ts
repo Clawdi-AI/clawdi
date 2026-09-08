@@ -412,7 +412,7 @@ describe("ClaudeCodeAdapter.collectSkills", () => {
 
 	it("adopts a pre-ledger bundled clawdi target without uploading it", async () => {
 		const legacy = join(tmpHome, ".claude", "skills", "clawdi");
-		cpSync(resolve(import.meta.dir, "../../skills/clawdi"), legacy, { recursive: true });
+		cpSync(resolve(import.meta.dir, "../fixtures/legacy-local-clawdi"), legacy, { recursive: true });
 		const adapter = new ClaudeCodeAdapter();
 		expect((await adapter.skills.collect()).map((skill) => skill.skillKey)).not.toContain("clawdi");
 		expect(await adapter.skills.listKeys()).not.toContain("clawdi");
