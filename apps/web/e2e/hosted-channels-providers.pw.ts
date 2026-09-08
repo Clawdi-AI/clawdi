@@ -4,6 +4,69 @@ import { collectBrowserErrors, stubCloudApi } from "./hosted-fixtures";
 test.beforeEach(async ({ page }) => {
 	await stubCloudApi(page);
 });
+
+test("editing and rotating an agent-owned connection sends one atomic patch without models or env changes", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	const provider = {
+		id: "connection-row",
+		provider_id: "saved-connection",
+		label: "Saved connection",
+		type: "custom_openai_compatible",
+		configuration_mode: "connection",
+		base_url: "https://custom.example/v1",
+		api_mode: "openai_responses",
+		runtime_env_name: "SAVED_CONNECTION_KEY",
+		managed_by: "user",
+		scope: "account",
+		models: [{ id: "historic-model" }],
+		auth: { type: "api_key", source: "managed" },
+		usable: true,
+		readiness: {
+			deployable: true,
+			credential_material: "available",
+			runtime_compatibility: { openclaw: true, hermes: true, codex: false },
+		},
+	};
+	const patches: unknown[] = [];
+	const unexpected: string[] = [];
+	page.on("request", (request) => {
+		if (/\/v1\/ai-providers\/(?:accept|.*test)(?:\?|$)/.test(request.url()))
+			unexpected.push(request.url());
+	});
+	await page.route("**/v1/ai-providers", (route) =>
+		route.fulfill({ json: { providers: [provider] } }),
+	);
+	await page.route("**/v1/ai-providers/saved-connection", async (route) => {
+		const body = route.request().postDataJSON();
+		patches.push(body);
+		await route.fulfill({ json: { ...provider, label: body.label, base_url: body.base_url } });
+	});
+	await page.goto("/ai-providers");
+	await page.getByRole("button", { name: "Edit Saved connection", exact: true }).click();
+	const dialog = page.getByRole("dialog");
+	await expect(dialog).toHaveAccessibleName("Edit Saved connection");
+	await expect(dialog.getByLabel("Model catalog")).toHaveCount(0);
+	await expect(dialog.getByRole("button", { name: "Test connection", exact: true })).toHaveCount(0);
+	await expect(dialog.getByLabel("Agent environment variable")).toHaveAttribute("readonly", "");
+	await dialog.getByLabel("Name", { exact: true }).fill("Updated connection");
+	await dialog.getByLabel("Base URL").fill("https://updated.example/v1");
+	await dialog.getByLabel("API key", { exact: true }).fill("synthetic-rotated-key");
+	await dialog.getByRole("button", { name: "Save settings", exact: true }).click();
+	await expect(dialog).toBeHidden();
+	expect(patches).toEqual([
+		{
+			configuration_mode: "connection",
+			label: "Updated connection",
+			base_url: "https://updated.example/v1",
+			api_mode: "openai_responses",
+			credential: { type: "api_key", value: "synthetic-rotated-key" },
+		},
+	]);
+	expect(unexpected).toEqual([]);
+	expect(errors).toEqual([]);
+});
 test("native BYOK saves credentials without a model catalog or inference probe", async ({
 	page,
 }) => {

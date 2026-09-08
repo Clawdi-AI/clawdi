@@ -60,6 +60,25 @@ const savedOpenAiProvider = {
 	label: "OpenAI",
 } satisfies AiProvider;
 
+test("connection metadata never seeds a model or permits selection onto a fresh agent", () => {
+	const provider = {
+		...savedOpenAiProvider,
+		configuration_mode: "connection",
+	} satisfies AiProvider;
+	expect(firstModelForProvider(provider.provider_id, [provider])).toBe("");
+	expect(modelOptionsForProvider(provider.provider_id, [provider])).toEqual([]);
+	expect(
+		providerAvailabilityIssue(provider, { runtime: "openclaw", environmentId: null }),
+	).not.toBeNull();
+	expect(
+		providerAvailabilityIssue(provider, {
+			runtime: "openclaw",
+			environmentId: "current-agent",
+			currentProviderIds: [provider.provider_id],
+		}),
+	).toBeNull();
+});
+
 describe("model binding", () => {
 	test("native identity and product stay visible even with a custom connection name", () => {
 		const route = nativeAiProvider("tencent", "tokenplan");

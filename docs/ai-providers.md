@@ -19,10 +19,32 @@ Clawdi does not pick a default model or copy a catalog for these connections.
 Credentials can be deployable while inference remains `not_tested` and
 `primary_model` is null.
 
-The Web editor preserves existing catalog connections. It does not convert them
-in place: removing an old custom provider while preserving its model selector
-can leave an invalid runtime selection. To move to native model management,
-create a separate native connection and select its provider/model inside the agent.
+The Web editor preserves each saved connection's ownership mode. Existing
+catalog connections can migrate in place through a mode-only
+`PATCH /v1/ai-providers/{provider_id}` with `configuration_mode: "connection"`.
+This one-way handoff keeps the saved ID, endpoint, protocol, key, and historical
+model metadata. It requires an already-bound runtime with the existing native
+provider row; it never creates a provider or seeds models on a fresh agent.
+
+For `connection`, the agent owns model selection, model metadata, and model
+parameters. Core retains historical metadata for reference but emits neither
+provider models nor a primary model for this connection. Web hides its model
+editor and automatic inference tests. Connection edits may change the endpoint,
+protocol, or label; an optional `credential: {type: "api_key", value: "..."}`
+in the same PATCH replaces the key atomically. The runtime environment name and
+API-key auth identity remain fixed. Upsert/accept cannot replace a connection,
+and OAuth conversion and model updates are rejected. Unbinding removes only
+owned credential references and retains the native provider's routing and models.
+
+First migration is disabled unless the registered database setting
+`supported_connection_cli_versions` contains a qualified exact stable CLI
+version. Missing or empty settings deny migration. Every existing consumer
+must have a fresh, unambiguous accepted v2 observation with that running CLI
+version and matching current source/applied identity. Installed-version metadata
+alone is insufficient. The allowlist is managed through the audited admin settings
+API and must remain empty until a supporting release is qualified and published.
+Include files whose native inspection redacts credential ownership are excluded
+from this migration rather than guessed.
 
 `native_provider` identifies the connection and `native_variant` optionally
 identifies its region or plan. The shared

@@ -47,6 +47,7 @@ export type PrimaryModelInput = string | PrimaryModelRef | null | undefined;
 export type ProviderAvailabilityContext = {
 	runtime: HostedRuntime;
 	environmentId: string | null;
+	currentProviderIds?: readonly string[];
 };
 
 export type ProviderAvailabilityIssue = ReturnType<typeof hostedAiProviderAvailabilityIssue>;
@@ -209,7 +210,10 @@ export function modelOptionsForProvider(
 		models = managedModels;
 	} else {
 		const provider = providers.find((item) => item.id === choice || item.provider_id === choice);
-		models = provider?.configuration_mode === "native" ? [] : (provider?.models ?? []);
+		models =
+			provider?.configuration_mode === "native" || provider?.configuration_mode === "connection"
+				? []
+				: (provider?.models ?? []);
 	}
 
 	const seen = new Set<string>();
@@ -252,7 +256,7 @@ export function providerPresetSummary(preset: ProviderPreset): string {
 }
 
 function providerModelSummary(provider: AiProvider, preset: ProviderPreset | null): string {
-	if (provider.configuration_mode === "native") {
+	if (provider.configuration_mode === "native" || provider.configuration_mode === "connection") {
 		const variant = preset?.region_variants?.find((item) => item.id === provider.native_variant);
 		return variant ? `${variant.label} · Models managed in agent` : "Models managed in agent";
 	}

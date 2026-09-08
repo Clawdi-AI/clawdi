@@ -40,17 +40,18 @@ function containsConfigInclude(value: unknown): boolean {
 }
 
 /** Recover owned writes when service activation failed before authority commit. */
-export function discoverNativeOpenClawProviderIds(
+export function readOpenClawProviderConfig(
 	command: string,
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
 	environment: Record<string, string>,
-): string[] {
+): { providers: Record<string, unknown>; included: boolean } {
 	let content: string;
 	try {
 		content = readFileSync(context.configPath, "utf8");
 	} catch (error) {
-		if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+		if (error instanceof Error && "code" in error && error.code === "ENOENT")
+			return { providers: {}, included: false };
 		throw new Error("OpenClaw native provider ownership could not be inspected");
 	}
 	try {
@@ -89,7 +90,7 @@ export function discoverNativeOpenClawProviderIds(
 						(result.stderr === "" &&
 							missingModelsReportSchema.safeParse(JSON.parse(String(result.stdout))).success))
 				)
-					return [];
+					return { providers: {}, included };
 				throw new Error("Included provider config is unavailable");
 			}
 			const resolvedModels = record.parse(JSON.parse(String(result.stdout)));
@@ -98,19 +99,34 @@ export function discoverNativeOpenClawProviderIds(
 		} else {
 			providers = models.providers === undefined ? {} : record.parse(models.providers);
 		}
-		return Object.entries(providers).flatMap(([id, value]) => {
-			const parsed = nativeProviderConfigSchema.safeParse(value);
-			if (!parsed.success) return [];
-			const routing = nativeAiProviderForRuntime("openclaw", id, parsed.data.baseUrl);
-			return routing &&
-				(routing.runtime_env_name === parsed.data.apiKey.id ||
-					(included && parsed.data.apiKey.id === "__OPENCLAW_REDACTED__"))
-				? [id]
-				: [];
-		});
+		return { providers, included };
 	} catch {
 		throw new Error("OpenClaw native provider ownership could not be inspected");
 	}
+}
+
+export function discoverNativeOpenClawProviderIds(
+	command: string,
+	context: OpenClawHostedContext,
+	workspaceRoot: string,
+	environment: Record<string, string>,
+): string[] {
+	const { providers, included } = readOpenClawProviderConfig(
+		command,
+		context,
+		workspaceRoot,
+		environment,
+	);
+	return Object.entries(providers).flatMap(([id, value]) => {
+		const parsed = nativeProviderConfigSchema.safeParse(value);
+		if (!parsed.success) return [];
+		const routing = nativeAiProviderForRuntime("openclaw", id, parsed.data.baseUrl);
+		return routing &&
+			(routing.runtime_env_name === parsed.data.apiKey.id ||
+				(included && parsed.data.apiKey.id === "__OPENCLAW_REDACTED__"))
+			? [id]
+			: [];
+	});
 }
 
 function runNativeCommand(

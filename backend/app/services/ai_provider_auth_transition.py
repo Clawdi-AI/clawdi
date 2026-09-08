@@ -19,6 +19,7 @@ from app.models.ai_provider import (
     AiProviderOAuthRevokeTombstone,
 )
 from app.services.ai_provider_credentials import (
+    OAuthCredentialClaimConflict,
     claim_unique_bound_runtime,
     lock_ai_provider_owner,
     validate_prospective_bound_runtime_auth,
@@ -343,6 +344,16 @@ async def transition_ai_provider_auth(
     """Apply one auth identity/material transition inside the caller's transaction."""
 
     await lock_ai_provider_owner(db, owner_user_id)
+    if (
+        provider.configuration_mode == "connection"
+        and not archive_provider
+        and (
+            auth_type != "api_key"
+            or auth_ref is not None
+            or (auth_metadata or {}).get("source") != "managed"
+        )
+    ):
+        raise OAuthCredentialClaimConflict("Connection providers require a managed API key")
     if auth_type != provider.auth_type:
         await validate_prospective_bound_runtime_auth(
             db,

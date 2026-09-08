@@ -493,7 +493,7 @@ const hostedProviderAuthSchema = z
 const hostedProviderBaseSchema = z
 	.object({
 		kind: z.literal("openai-compatible"),
-		configurationMode: z.enum(["native", "catalog"]).optional(),
+		configurationMode: z.enum(["native", "catalog", "connection"]).optional(),
 		nativeProvider: z.string().min(1).max(120).optional(),
 		type: z.enum(AI_PROVIDER_TYPES).optional(),
 		baseUrl: z.string().url().optional(),
@@ -519,6 +519,21 @@ function validateHostedProvider(
 	provider: z.infer<typeof hostedProviderBaseSchema>,
 	ctx: z.RefinementCtx,
 ): void {
+	if (
+		provider.configurationMode === "connection" &&
+		(provider.managed_by !== "user" ||
+			!provider.apiKeySecretRef ||
+			provider.auth ||
+			!provider.baseUrl ||
+			!provider.apiMode ||
+			provider.nativeProvider)
+	) {
+		ctx.addIssue({
+			code: "custom",
+			message: "Connection providers require user ownership, routing and an API key reference",
+			path: [],
+		});
+	}
 	if (
 		provider.configurationMode === "native" &&
 		(provider.managed_by === "clawdi" || provider.models?.length || !provider.nativeProvider)
@@ -902,10 +917,14 @@ function validateHostedRuntimeManifest(
 		if (
 			selectedRuntime.providerMode === "configured" &&
 			!selectedRuntime.primary_model &&
-			(nativeProviders.length !== 1 ||
+			(nativeProviders.length +
+				selectedProviders.filter((provider) => provider?.configurationMode === "connection")
+					.length !==
+				1 ||
 				selectedProviders.some(
 					(provider) =>
 						provider?.configurationMode !== "native" &&
+						provider?.configurationMode !== "connection" &&
 						!(
 							provider?.managed_by === "clawdi" &&
 							provider.models?.length &&

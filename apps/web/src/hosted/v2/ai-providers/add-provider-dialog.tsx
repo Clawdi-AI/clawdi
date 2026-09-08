@@ -22,6 +22,7 @@ import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
 	type AuthMethod,
 	authFor,
+	connectionProviderPatch,
 	derivedProviderFields,
 	modelsFromText,
 	modelsToText,
@@ -37,6 +38,7 @@ import {
 	usePatchProvider,
 	useTestDraftProviderConnection,
 	useTestProviderConnection,
+	useUpdateConnectionProvider,
 } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { codexProviderBody } from "@/hosted/v2/ai-providers/codex-oauth";
 import { type ProviderChoice, ProviderChooser } from "@/hosted/v2/ai-providers/provider-chooser";
@@ -84,6 +86,7 @@ export function AddProviderDialog({
 	const providers = useAiProviders();
 	const acceptProvider = useAcceptProvider();
 	const patchProvider = usePatchProvider();
+	const updateConnection = useUpdateConnectionProvider();
 	const testDraft = useTestDraftProviderConnection();
 	const testSaved = useTestProviderConnection();
 	const oauthDeviceStart = useOAuthDeviceStart();
@@ -375,6 +378,23 @@ export function AddProviderDialog({
 		if (!canSubmit) return;
 		if (editing) {
 			const replacementKey = form.apiKey.trim();
+			if (editing.configuration_mode === "connection") {
+				const saved = await updateConnection
+					.execute({
+						providerId: editing.provider_id,
+						body: connectionProviderPatch(editing, {
+							label: identity.label,
+							baseUrl: form.baseUrl,
+							apiMode: form.apiMode,
+							apiKey: replacementKey,
+						}),
+					})
+					.catch(() => null);
+				if (!saved) return;
+				toast.success("Provider updated");
+				requestClose(false);
+				return;
+			}
 			if (replacementKey) {
 				const body = {
 					provider: providerBody(),
@@ -487,6 +507,7 @@ export function AddProviderDialog({
 	const busy =
 		acceptProvider.isPending ||
 		patchProvider.isPending ||
+		updateConnection.isPending ||
 		testDraft.isPending ||
 		testSaved.isPending ||
 		oauthDeviceStart.isPending ||
@@ -624,7 +645,9 @@ export function AddProviderDialog({
 									{isEdit ? null : <ArrowLeft />}
 									{isEdit ? "Cancel" : "Back"}
 								</Button>
-								{form.authMethod === "api_key" && !nativeConnection ? (
+								{form.authMethod === "api_key" &&
+								!nativeConnection &&
+								form.configurationMode !== "connection" ? (
 									<Button
 										variant="outline"
 										onClick={() => void runAction(testDraftConnection)}

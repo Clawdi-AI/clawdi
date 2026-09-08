@@ -235,7 +235,7 @@ export function ProviderFieldsForm({
 							</InputGroupButton>
 						</InputGroupAddon>
 					</InputGroup>
-					{!nativeConnection ? (
+					{!nativeConnection && form.configurationMode !== "connection" ? (
 						<p className="text-xs text-muted-foreground">
 							Testing sends one minimal inference request and may incur a small provider charge.
 						</p>
@@ -309,6 +309,7 @@ export function ProviderFieldsForm({
 									<Label htmlFor="provider-env">Agent environment variable</Label>
 									<Input
 										id="provider-env"
+										readOnly={form.configurationMode === "connection"}
 										value={form.runtimeEnv}
 										onChange={(event) => onUpdate({ runtimeEnv: event.target.value.toUpperCase() })}
 										placeholder="OPENAI_API_KEY"
@@ -318,21 +319,25 @@ export function ProviderFieldsForm({
 								</div>
 							) : null}
 						</div>
-						<div className="flex flex-col gap-1.5">
-							<Label htmlFor="provider-models">Model catalog</Label>
-							<Textarea
-								id="provider-models"
-								value={form.modelsText}
-								onChange={(event) => onUpdate({ modelsText: event.target.value })}
-								placeholder="model name"
-								className="min-h-24 resize-y"
-								autoComplete="off"
-								spellCheck={false}
-							/>
-							<p className="text-xs text-muted-foreground">
-								One model id per line. The first is used by connection testing.
-							</p>
-						</div>
+						{form.configurationMode === "connection" ? (
+							<p className="text-xs text-muted-foreground">Models are managed in the agent.</p>
+						) : (
+							<div className="flex flex-col gap-1.5">
+								<Label htmlFor="provider-models">Model catalog</Label>
+								<Textarea
+									id="provider-models"
+									value={form.modelsText}
+									onChange={(event) => onUpdate({ modelsText: event.target.value })}
+									placeholder="model name"
+									className="min-h-24 resize-y"
+									autoComplete="off"
+									spellCheck={false}
+								/>
+								<p className="text-xs text-muted-foreground">
+									One model id per line. The first is used by connection testing.
+								</p>
+							</div>
+						)}
 					</div>
 				</details>
 			) : null}

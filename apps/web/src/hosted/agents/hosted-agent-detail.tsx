@@ -1285,7 +1285,9 @@ function OverviewTab({
 	const providers = useUserAiProviders({ enabled: !managedProvider });
 	const managedModelCatalog = useManagedModelCatalog({ enabled: managedProvider });
 	const nativeConnection = providers.data?.some(
-		(provider) => provider.provider_id === providerId && provider.configuration_mode === "native",
+		(provider) =>
+			provider.provider_id === providerId &&
+			(provider.configuration_mode === "native" || provider.configuration_mode === "connection"),
 	);
 	const model = nativeConnection
 		? "Managed in agent"
@@ -2429,7 +2431,8 @@ function AiProviderTab({
 		deploymentStatusFromResource(deployment.resource.status).kind === "updating";
 	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
 	const list = providers.data ?? [];
-	const availabilityContext = { runtime, environmentId };
+	const currentProviderIds = runtimeConfiguration.providers.map((provider) => provider.provider_id);
+	const availabilityContext = { runtime, environmentId, currentProviderIds };
 	const managedModels = managedModelCatalog.data?.models ?? [];
 	// A provider reference is only unresolved after the catalog has settled. While
 	// it is loading, preserve the server id verbatim so the binding does not briefly
@@ -2461,8 +2464,13 @@ function AiProviderTab({
 				(isManagedProviderId(primaryProviderRef)
 					? MANAGED_AI_CHOICE
 					: unresolvedProviderChoice(primaryProviderRef)));
+	const agentOwnsModels = list.some(
+		(provider) =>
+			provider.provider_id === primaryProviderRef &&
+			(provider.configuration_mode === "connection" || provider.configuration_mode === "native"),
+	);
 	const bindingModelIdentity =
-		currentAuthKind === "unmanaged"
+		currentAuthKind === "unmanaged" || agentOwnsModels
 			? ""
 			: primaryModelValue(configuredPrimaryModel) ||
 				(initialPrimaryChoice === MANAGED_AI_CHOICE
@@ -2511,6 +2519,7 @@ function AiProviderTab({
 				managedModels,
 				mode: "update",
 				providers: list,
+				currentProviderIds,
 			});
 		} catch (error) {
 			const copy = aiBindingBuildErrorCopy(error, "update");

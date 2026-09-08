@@ -24,7 +24,9 @@ export function selectAiBindingProvider(
 ): AiProviderBindingDraft {
 	if (
 		context.providers.some(
-			(provider) => provider.provider_id === choice && provider.configuration_mode === "native",
+			(provider) =>
+				provider.provider_id === choice &&
+				(provider.configuration_mode === "native" || provider.configuration_mode === "connection"),
 		)
 	) {
 		return { ...draft, bindingMode: "configured", primaryProviderChoice: choice, primaryModel: "" };
