@@ -14,7 +14,6 @@ from app.models.user import User
 from app.routes import connectors
 from app.schemas.connector import (
     ConnectorAvailableAppResponse,
-    ConnectorConnectionResponse,
     ConnectorCredentialsConnectResponse,
 )
 from app.services import composio
@@ -384,9 +383,9 @@ class FakeConnectedAccounts:
         user_ids: list[str],
         statuses: list[str],
         limit: int,
-        cursor: str | None = None,
+        cursor: object = None,
     ) -> _FakePage[_FakeConnectedAccountResponse]:
-        assert user_ids and statuses == ["ACTIVE"] and limit == 100 and cursor is None
+        assert user_ids and statuses == ["ACTIVE"] and limit == 100 and not cursor
         return _FakePage[_FakeConnectedAccountResponse](items=[])
 
     async def retrieve(self, connected_account_id: str) -> _FakeConnectedAccountResponse:
@@ -597,7 +596,7 @@ async def test_cancelled_catalog_refresh_releases_lock_without_publishing(
 
 
 @pytest.mark.asyncio
-async def test_catalog_without_auth_metadata_is_unknown_not_oauth2(
+async def test_catalog_without_auth_metadata_is_not_connectable(
     monkeypatch: pytest.MonkeyPatch,
 ):
     fake = FakeClient(list_toolkits=[_posthog_list_toolkit()])
@@ -606,7 +605,7 @@ async def test_catalog_without_auth_metadata_is_unknown_not_oauth2(
 
     page = await composio.get_available_apps(search="posthog")
 
-    assert page["items"][0].auth_type == "unknown"
+    assert page["items"] == []
 
 
 @pytest.mark.asyncio
@@ -1221,7 +1220,7 @@ async def test_list_connections_invalidates_tool_router_session(
         return []
 
     monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
-    monkeypatch.setattr(connectors, "get_connected_accounts", fake_get_connected_accounts)
+    monkeypatch.setattr(connectors, "get_all_connected_accounts", fake_get_connected_accounts)
     composio._tool_router_session_cache["clerk_user_123"] = composio.ComposioMcpSession(
         url="https://app.composio.dev/tool_router/v3/trs_old/mcp",
         headers={},
@@ -1236,23 +1235,15 @@ async def test_list_connections_invalidates_tool_router_session(
 
 @pytest.mark.asyncio
 async def test_disconnect_invalidates_tool_router_session(monkeypatch: pytest.MonkeyPatch):
-    async def fake_get_connected_accounts(user_id: str):
-        assert user_id == "clerk_user_123"
-        return [
-            ConnectorConnectionResponse(
-                id="ca_posthog",
-                app_name="posthog",
-                status="ACTIVE",
-                created_at="2026-05-27T00:00:00Z",
-            )
-        ]
+    async def fake_get_owned_account(user_id: str, connection_id: str):
+        assert user_id == "clerk_user_123" and connection_id == "ca_posthog"
 
     async def fake_disconnect_account(connection_id: str):
         assert connection_id == "ca_posthog"
         return True
 
     monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
-    monkeypatch.setattr(connectors, "get_connected_accounts", fake_get_connected_accounts)
+    monkeypatch.setattr(connectors, "get_owned_account", fake_get_owned_account)
     monkeypatch.setattr(connectors, "disconnect_account", fake_disconnect_account)
     composio._tool_router_session_cache["clerk_user_123"] = composio.ComposioMcpSession(
         url="https://app.composio.dev/tool_router/v3/trs_old/mcp",
@@ -1777,6 +1768,7 @@ async def test_alias_patch_denies_other_owners_and_sanitizes_failures(
                             "id": "ca_gmail",
                             "created_at": "2026-09-03T00:00:00Z",
                             "status": "ACTIVE",
+                            "is_disabled": False,
                             "toolkit": {"slug": "gmail"},
                             "data": {},
                             "state": {"authScheme": "API_KEY", "val": {"status": "ACTIVE"}},

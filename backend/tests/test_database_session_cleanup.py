@@ -275,7 +275,7 @@ async def test_external_connector_wait_does_not_hold_auth_transaction(
     if surface == "mcp":
         monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_tools", blocked_connector_call)
     else:
-        monkeypatch.setattr(connectors, "get_connected_accounts", blocked_connector_call)
+        monkeypatch.setattr(connectors, "get_all_connected_accounts", blocked_connector_call)
     pool = _database_pool()
     checked_out_before = pool.checkedout()
     event.listen(database.engine.sync_engine, "rollback", mark_auth_rollback)
