@@ -11,8 +11,6 @@ import {
 	defaultAiProviderApiMode,
 	defaultAiProviderBaseUrl,
 	isClawdiManagedV2ProviderId,
-	type NativeAiProvider,
-	nativeAiProvider,
 	validateAiProviderCatalog,
 } from "@clawdi/shared";
 
@@ -71,7 +69,6 @@ export interface AgentPrimaryModel {
 }
 
 interface ProjectionProvider {
-	native?: NativeAiProvider;
 	id: string;
 	type: AiProvider["type"];
 	label?: string;
@@ -104,6 +101,8 @@ export function buildAgentTargetProjection(
 	primaryModel?: AgentPrimaryModel | null,
 	options: { freezeManagedModelCatalog?: boolean } = {},
 ): AgentTargetProjection {
+	if (catalog.providers.some((provider) => provider.configuration_mode === "native"))
+		throw new Error("Native credentials must use a native runtime adapter");
 	const validation = validateAiProviderCatalog(catalog);
 	if (!validation.valid) {
 		throw new Error(`AI Provider catalog is invalid:\n${validation.errors.join("\n")}`);
@@ -173,24 +172,15 @@ function selectProjectionProviders(
 			`No AI Providers can be applied to ${target}:\n${warnings.map((warning) => `- ${warning}`).join("\n")}`,
 		);
 	}
-	const nativeCredentials = providers.some((provider) => provider.native);
 	if (
-		nativeCredentials &&
-		(!primaryModel ||
-			providers.some((provider) => provider.native && provider.id === primaryModel.provider_id))
-	) {
-		if (
-			providers.some(
-				(provider) =>
-					!provider.native &&
-					!(
-						provider.managed_by === "clawdi" &&
-						provider.models?.length &&
-						provider.models.every((model) => model.capabilities?.embeddings === true)
-					),
-			)
+		!primaryModel &&
+		providers.every(
+			(provider) =>
+				provider.managed_by === "clawdi" &&
+				provider.models?.length &&
+				provider.models.every((model) => model.capabilities?.embeddings === true),
 		)
-			throw new Error("Catalog chat providers require a primary model");
+	) {
 		return { providers, primaryProvider: null, primaryModel: null, warnings };
 	}
 	const selectedPrimaryModelInput = primaryModel ?? legacyCatalogPrimaryModel(catalog, providers);
@@ -247,10 +237,6 @@ function normalizeProjectionProvider(
 		return `Provider ${providerId} skipped for ${target}: requires api_mode before agent config apply.`;
 	}
 	const projectionProvider = {
-		native:
-			provider.configuration_mode === "native"
-				? nativeAiProvider(provider.native_provider, provider.native_variant)
-				: undefined,
 		id: providerId,
 		type: provider.type,
 		label: provider.label,
@@ -265,7 +251,7 @@ function normalizeProjectionProvider(
 		const reason = codexProjectionSkipReason(projectionProvider);
 		if (reason) return reason;
 	}
-	if (target === "hermes" && !projectionProvider.native) {
+	if (target === "hermes") {
 		const reason = hermesProjectionSkipReason(projectionProvider);
 		if (reason) return reason;
 	}
@@ -344,15 +330,6 @@ function buildOpenClawProjection(
 		providers
 			.filter((provider) => !usesNativeCodexOpenAiProvider(provider))
 			.map((provider) => {
-				if (provider.native)
-					return [
-						provider.native.openclaw.provider,
-						{
-							baseUrl: provider.base_url,
-							auth: "api-key",
-							apiKey: { source: "env", provider: "clawdi-native", id: provider.env_name },
-						},
-					];
 				const apiKeyEnv = openClawApiKeyEnvForProvider(provider);
 				return [
 					openClawProjectedProviderId(provider),
@@ -371,35 +348,16 @@ function buildOpenClawProjection(
 	);
 	const usesNativeCodex = providers.some(usesNativeCodexOpenAiProvider);
 	const usesEnvSecrets = providers
-		.filter((provider) => !provider.native && !usesNativeCodexOpenAiProvider(provider))
+		.filter((provider) => !usesNativeCodexOpenAiProvider(provider))
 		.some((provider) => Boolean(openClawApiKeyEnvForProvider(provider)));
-	const usesNativeEnvSecrets = providers.some(
-		(provider) => provider.native && !usesNativeCodexOpenAiProvider(provider),
-	);
 	const body = compactObject({
-		plugins:
-			usesNativeCodex || providers.some((provider) => provider.native)
-				? {
-						entries: {
-							...(usesNativeCodex ? { codex: { enabled: true } } : {}),
-							...Object.fromEntries(
-								providers.flatMap((provider) =>
-									provider.native ? [[provider.native.openclaw.plugin, { enabled: true }]] : [],
-								),
-							),
-						},
-					}
-				: undefined,
-		secrets:
-			usesEnvSecrets || usesNativeEnvSecrets
-				? {
-						providers: {
-							...(usesEnvSecrets ? { default: { source: "env" } } : {}),
-							...(usesNativeEnvSecrets ? { "clawdi-native": { source: "env" } } : {}),
-						},
-						...(usesEnvSecrets ? { defaults: { env: "default" } } : {}),
-					}
-				: undefined,
+		plugins: usesNativeCodex ? { entries: { codex: { enabled: true } } } : undefined,
+		secrets: usesEnvSecrets
+			? {
+					providers: { default: { source: "env" } },
+					defaults: { env: "default" },
+				}
+			: undefined,
 		agents: {
 			defaults: {
 				model:
@@ -553,9 +511,7 @@ function buildHermesProjection(
 	freezeManagedModelCatalog: boolean,
 ): string {
 	const nativeCodexDefault = primaryProvider && usesNativeCodexOpenAiProvider(primaryProvider);
-	const customProviders = providers.filter(
-		(provider) => !provider.native && !usesNativeCodexOpenAiProvider(provider),
-	);
+	const customProviders = providers.filter((provider) => !usesNativeCodexOpenAiProvider(provider));
 	const lines: string[] = [
 		"# Generated by Clawdi. Reconcile this projection into Hermes config.",
 		`# Verified contract baseline: ${AGENT_TARGET_CONTRACTS.hermes.verifiedContractBaseline}; ${AGENT_TARGET_CONTRACTS.hermes.settingMethod}.`,

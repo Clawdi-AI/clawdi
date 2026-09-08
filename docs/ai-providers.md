@@ -230,6 +230,9 @@ Codex OAuth; its existing ownership and token-rotation reconciliation remains
 in place. OpenClaw's current OAuth provider ID is `openai`, while Hermes uses
 `openai-codex`; the portable credential identity stays `openai-codex`.
 
+Native manifest entries are resolved directly to runtime connections. They do not
+pass through the legacy catalog projector or synthesize a primary model.
+
 OpenClaw enables the official provider plugin, installing it through the
 native CLI when absent. Native capability consent and install policy remain
 active. API keys use narrow `auth: "api-key"` and env SecretRef overrides so
@@ -237,12 +240,26 @@ an existing auth profile cannot silently replace the selected key. Native
 provider objects contain no `models`; their catalog uses `models.mode: merge`.
 Other provider settings and stored user auth profiles are preserved. Removing
 a native binding removes its owned auth/endpoint fields, not the user profile.
+These narrow updates use `openclaw config patch --stdin`; keys are supplied only
+in the child process environment. Official CLI verification against npm
+`openclaw@2026.9.2` ([`3928bad9`](https://github.com/openclaw/openclaw/tree/3928bad9badfcb6c7d140530435e806fb8092190))
+confirmed merge and null deletion preserve unrelated fields. Its `--replace-path`
+replaces a small catalog but rejects a 300-to-1 model reduction under the native
+[size-drop guard](https://github.com/openclaw/openclaw/blob/3928bad9badfcb6c7d140530435e806fb8092190/src/config/io.write-safety.ts#L161).
+The CLI has no explicit size-drop option, so owned catalog replacement and legacy
+memory-layout repair retain the existing public SDK path, before native updates.
 
 Hermes uses a namespaced native credential-pool entry and `fill_first` for the
 bound API-key provider, preserving other pool entries and the selected model.
 Key rotation updates only that entry. Its keyless ownership journal preserves
 the prior credential strategy across retries and restores it when unbound.
 Native pool APIs retain concurrent changes and cooldown state for other keys.
+The standalone Python bridge calls public `read_credential_pool`,
+`write_credential_pool`, `PooledCredential`, and `has_named_custom_provider`;
+Bun embeds it in Node and native CLI builds. Secrets arrive through stdin.
+Hermes `auth add` uses random IDs and a masked prompt or key argv, so it cannot
+provide the required secure, owned, idempotent upsert. Its config CLI has no
+batch/CAS operation; structured changes retain `HermesConfigTransaction`.
 The installed Hermes auth resolver identifies aliases using the same provider
 key as its credential pool (`opencode-zen`, not the models.dev alias `opencode`).
 For the selected native provider, obsolete `model.base_url`, auth and protocol

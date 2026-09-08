@@ -1,11 +1,10 @@
-import type { AiProviderAuth, AiProviderCatalog } from "@clawdi/shared";
+import type { AiProviderAuth, AiProviderCatalog, NativeAiProvider } from "@clawdi/shared";
 import {
 	CLAWDI_MANAGED_PROVIDER_ID,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_API_MODE,
 	isClawdiManagedV2ProviderId,
 	MANAGED_AI_PROVIDER_RUNTIME_ENV,
-	nativeAiProvider,
 	nativeAiProviderForRuntime,
 } from "@clawdi/shared";
 import type { AgentPrimaryModel } from "../lib/ai-provider-projection";
@@ -21,6 +20,69 @@ export type HostedAiProviderProjectionInput = {
 type HostedProviderProjection = NonNullable<
 	NonNullable<RuntimeManifest["projection"]>["providers"]
 >[string];
+
+export interface NativeProviderConnection {
+	id: string;
+	routing: NativeAiProvider;
+	auth: { kind: "api-key"; secretRef: string; envName: string } | { kind: "codex" };
+}
+
+/** Native credentials go directly from the manifest to their runtime adapter. */
+export function nativeProviderConnections(
+	manifest: RuntimeManifest,
+	runtimeName: string,
+): NativeProviderConnection[] {
+	if (runtimeName !== "openclaw" && runtimeName !== "hermes") return [];
+	return hostedProviderEntries(manifest.projection?.providers ?? {}, runtimeName, manifest)
+		.filter(([, input]) => input.configurationMode === "native")
+		.map(([id, input]) => {
+			const codex = input.auth?.type === "agent_profile";
+			const routing = nativeAiProviderForRuntime(
+				runtimeName,
+				input.nativeProvider ?? "",
+				input.baseUrl ?? "",
+				codex,
+			);
+			if (
+				input.status === "error" ||
+				!routing ||
+				routing.type !== hostedProviderType(input) ||
+				routing.api_mode !== hostedProviderApiMode(input)
+			) {
+				throw new Error("Invalid native provider runtime identity");
+			}
+			if (codex) return { id, routing, auth: { kind: "codex" as const } };
+			if (!input.apiKeySecretRef)
+				throw new Error("Native provider credential reference is unavailable");
+			return {
+				id,
+				routing,
+				auth: {
+					kind: "api-key" as const,
+					secretRef: input.apiKeySecretRef,
+					envName: hostedProviderRuntimeEnvName(id, input, runtimeName),
+				},
+			};
+		});
+}
+
+export function hostedProviderConfiguration(manifest: RuntimeManifest, runtimeName: string) {
+	hostedProviderEnvironment(manifest, runtimeName, { validateOverlap: true });
+	const native = nativeProviderConnections(manifest, runtimeName);
+	const nativeIds = native.map(({ routing }) =>
+		runtimeName === "hermes" ? routing.hermes.provider : routing.openclaw.provider,
+	);
+	if (new Set(nativeIds).size !== nativeIds.length)
+		throw new Error("Native provider credential identity is selected more than once");
+	const catalog = agentTargetProjectionInput(hostedAiProviderCatalog(manifest, runtimeName));
+	if (
+		manifest.runtimes[runtimeName]?.providerMode === "unmanaged" &&
+		(catalog || native.length > 0)
+	) {
+		throw new Error(`runtime ${runtimeName} unmanaged provider mode has a provider projection`);
+	}
+	return { native, catalog };
+}
 
 export function agentTargetProjectionInput(
 	input: HostedAiProviderProjectionInput | null,
@@ -78,11 +140,22 @@ export function hostedAiProviderCatalog(
 ): HostedAiProviderProjectionInput | null {
 	const providers = manifest.projection?.providers;
 	if (!providers || Object.keys(providers).length === 0) return null;
-	const providerEntries = hostedProviderEntries(providers, runtimeName, manifest);
-	const primaryModel = hostedRuntimePrimaryModel(manifest, runtimeName);
+	const providerEntries = hostedProviderEntries(providers, runtimeName, manifest).filter(
+		([, input]) => input.configurationMode !== "native",
+	);
+	const requestedModel = hostedRuntimePrimaryModel(manifest, runtimeName);
+	const primaryModel =
+		requestedModel && providerEntries.some(([id]) => id === requestedModel.provider_id)
+			? requestedModel
+			: null;
 	if (
 		!primaryModel &&
-		!providerEntries.some(([, provider]) => provider.configurationMode === "native")
+		!providerEntries.every(
+			([, provider]) =>
+				provider.managed_by === "clawdi" &&
+				provider.models?.length &&
+				provider.models.every((model) => model.capabilities?.embeddings === true),
+		)
 	)
 		return null;
 	const entries = providerEntries
@@ -97,36 +170,14 @@ export function hostedAiProviderCatalog(
 			if (!auth) return null;
 			const models = hostedProviderModels(
 				input,
-				input.configurationMode !== "native" && id === primaryModel?.provider_id
-					? primaryModel
-					: null,
+				id === primaryModel?.provider_id ? primaryModel : null,
 			);
-			const native =
-				input.configurationMode === "native" &&
-				(runtimeName === "openclaw" || runtimeName === "hermes")
-					? nativeAiProviderForRuntime(
-							runtimeName,
-							input.nativeProvider ?? "",
-							baseUrl,
-							input.auth?.type === "agent_profile",
-						)
-					: undefined;
-			if (
-				input.configurationMode === "native" &&
-				(!native || native.type !== hostedProviderType(input) || native.api_mode !== apiMode)
-			)
-				throw new Error("Invalid native provider runtime identity");
-			const portable = native ? nativeAiProvider(native.id, native.variant) : undefined;
 			return {
 				id,
-				type: portable?.type ?? hostedProviderType(input),
-				base_url: portable?.base_url ?? baseUrl,
-				api_mode: portable?.api_mode ?? apiMode,
+				type: hostedProviderType(input),
+				base_url: baseUrl,
+				api_mode: apiMode,
 				managed_by: input.managed_by,
-				configuration_mode: input.configurationMode,
-				...(native
-					? { native_provider: native.id, native_variant: native.variant ?? undefined }
-					: {}),
 				auth,
 				runtime_env_name: apiKeySecretRef || auth.type !== "none" ? runtimeEnvName : undefined,
 				models,
@@ -247,6 +298,22 @@ function hostedProviderRuntimeEnvName(
 	) {
 		return MANAGED_AI_PROVIDER_RUNTIME_ENV;
 	}
+	if (
+		input.configurationMode === "native" &&
+		(runtimeName === "openclaw" || runtimeName === "hermes")
+	) {
+		const native = nativeAiProviderForRuntime(
+			runtimeName,
+			input.nativeProvider ?? "",
+			input.baseUrl ?? "",
+			input.auth?.type === "agent_profile",
+		);
+		if (!native) throw new Error("Invalid native provider runtime identity");
+		const env = runtimeName === "hermes" ? native.hermes.env : native.runtime_env_name;
+		if (input.runtimeEnvName && input.runtimeEnvName !== env)
+			throw new Error("Invalid native provider credential environment");
+		return env;
+	}
 	const raw = input.runtimeEnvName;
 	if (raw && isEnvKey(raw)) return raw;
 	return `CLAWDI_PROVIDER_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
@@ -266,6 +333,7 @@ export function hostedProviderEnvironment(
 	const placeholderEnv: Record<string, string> = {};
 	const configEnv: Record<string, string> = {};
 	const secretEnv: Record<string, string> = {};
+	const envOwners = new Map<string, string>();
 	for (const [providerId, provider] of hostedProviderEntries(
 		manifest.projection?.providers ?? {},
 		runtimeName,
@@ -284,6 +352,12 @@ export function hostedProviderEnvironment(
 		if (!provider.apiKeySecretRef) continue;
 		const runtimeEnvName = hostedProviderRuntimeEnvName(providerId, provider, runtimeName);
 		if (!isEnvKey(runtimeEnvName)) continue;
+		const owner = envOwners.get(runtimeEnvName);
+		if (owner && owner !== providerId)
+			throw new Error(
+				`runtime ${runtimeName ?? "default"} credential environment ${runtimeEnvName} has multiple providers`,
+			);
+		envOwners.set(runtimeEnvName, providerId);
 		if (isClawdiManagedProviderProjection(provider)) {
 			placeholderEnv[runtimeEnvName] = MANAGED_EGRESS_PLACEHOLDER_VALUE;
 		} else {

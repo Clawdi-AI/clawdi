@@ -1,102 +1,140 @@
 import { describe, expect, test } from "bun:test";
 import {
-	type AiProvider,
 	type AiProviderCatalog,
 	NATIVE_AI_PROVIDERS,
 	nativeAiProvider,
-	nativeAiProviderForRuntime,
 	nativeAiProviderRuntime,
 } from "@clawdi/shared";
-import { parse as parseYaml } from "yaml";
-import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import {
 	agentTargetProjectionInput,
 	hostedAiProviderCatalog,
+	hostedProviderConfiguration,
 	hostedProviderEnvironment,
+	nativeProviderConnections,
 } from "./hosted-provider-resolution";
 import type { RuntimeManifest } from "./manifest-contract";
 import { buildOpenClawHostedProviderPatch, providerHealthReasons } from "./manifest-providers";
+import { buildNativeOpenClawProviderPatch } from "./openclaw-native-provider";
 
-function credential(identity: string, variant?: string): AiProvider {
-	const routing = nativeAiProvider(identity, variant);
-	if (!routing) throw new Error("Missing native provider fixture");
+function bundle(
+	identity: string,
+	variant?: string,
+	runtime: "hermes" | "openclaw" = "openclaw",
+): RuntimeManifest {
+	const route = nativeAiProvider(identity, variant);
+	if (!route) throw new Error("Missing native fixture");
+	const target = nativeAiProviderRuntime(route, runtime);
 	return {
-		id: "saved-credential",
-		configuration_mode: "native",
-		native_provider: identity,
-		native_variant: variant,
-		type: routing.type,
-		base_url: routing.base_url,
-		api_mode: routing.api_mode,
-		runtime_env_name: routing.runtime_env_name,
-		auth:
-			identity === "openai-codex"
-				? { type: "agent_profile", tool: "codex", profile: "default" }
-				: { type: "api_key", source: "managed" },
+		schemaVersion: "clawdi.runtimeDesiredState.v1",
+		deploymentId: "native-test",
+		environmentId: "native-test",
+		instanceId: "native-test",
+		generation: 1,
+		issuedAt: "2026-09-07T00:00:00Z",
+		runtime,
+		controlPlane: { apiUrl: "https://core.example.test" },
+		recovery: {},
+		runtimes: {
+			[runtime]: {
+				enabled: true,
+				providerMode: "configured",
+				provider_ids: ["saved-credential"],
+				primary_model: null,
+				services: {},
+			},
+		},
+		projection: {
+			providers: {
+				"saved-credential": {
+					kind: "openai-compatible",
+					type: target.type,
+					configurationMode: "native",
+					nativeProvider: route[runtime].provider,
+					baseUrl: target.base_url,
+					apiMode: target.api_mode,
+					runtimeEnvName: runtime === "hermes" ? route.hermes.env : route.runtime_env_name,
+					...(identity === "openai-codex"
+						? { auth: { type: "agent_profile", tool: "codex", profile: "default" } }
+						: { apiKeySecretRef: "secret://provider.saved-credential.apiKey" }),
+				},
+			},
+		},
 	};
+}
+function nativePatch(identity: string, variant?: string) {
+	return buildNativeOpenClawProviderPatch(
+		nativeProviderConnections(bundle(identity, variant), "openclaw"),
+		[],
+	).config;
 }
 
 describe("native provider credentials", () => {
-	test("connects every supported route without projecting a Hermes model or catalog", () => {
+	test("routes all native connections directly without creating catalogs or model selections", () => {
 		for (const route of NATIVE_AI_PROVIDERS) {
-			const catalog: AiProviderCatalog = {
-				schema_version: 1,
-				providers: [credential(route.id, route.variant ?? undefined)],
-			};
-			const projection = buildAgentTargetProjection("hermes", catalog);
-			expect(projection.primary_model).toBeNull();
-			expect(parseYaml(projection.files[0]?.content ?? "")).toEqual({});
+			for (const runtime of ["hermes", "openclaw"] as const) {
+				const manifest = bundle(route.id, route.variant ?? undefined, runtime);
+				const resolved = hostedProviderConfiguration(manifest, runtime);
+				expect(resolved.catalog).toBeNull();
+				expect(resolved.native[0]?.routing).toEqual(nativeAiProviderRuntime(route, runtime));
+				const config = buildNativeOpenClawProviderPatch(resolved.native, []).config;
+				expect(config.agents).toBeUndefined();
+				expect(JSON.stringify(config)).not.toContain('"models":[');
+			}
 		}
 	});
 
-	test("preserves an existing model choice and enables the official OpenClaw catalog", () => {
-		const catalog: AiProviderCatalog = { schema_version: 1, providers: [credential("gemini")] };
-		const patch = buildOpenClawHostedProviderPatch(
-			{ catalog, primaryModel: { provider_id: "saved-credential", model: "existing-user-model" } },
-			[],
-		);
-		const config = JSON.parse(patch.content);
-		expect(config.plugins.entries.google.enabled).toBe(true);
-		expect(config.models).toEqual({
-			mode: "merge",
-			providers: {
-				google: {
-					baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-					auth: "api-key",
-					apiKey: { source: "env", provider: "clawdi-native", id: "GEMINI_API_KEY" },
+	test("writes only native routing and namespaced authentication", () => {
+		expect(nativePatch("gemini")).toEqual({
+			models: {
+				mode: "merge",
+				providers: {
+					google: {
+						baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+						auth: "api-key",
+						apiKey: { source: "env", provider: "clawdi-native", id: "GEMINI_API_KEY" },
+					},
 				},
 			},
+			secrets: { providers: { "clawdi-native": { source: "env" } } },
 		});
-		expect(config.agents?.defaults?.model).toBeUndefined();
-		expect(config.models.providers.google.models).toBeUndefined();
 	});
 
-	test("keeps mixed-protocol OpenCode catalogs and request handling in their official plugins", () => {
-		for (const variant of ["zen", "go"]) {
-			const patch = JSON.parse(
-				buildOpenClawHostedProviderPatch(
-					{
-						catalog: { schema_version: 1, providers: [credential("opencode", variant)] },
-						primaryModel: null,
-					},
-					[],
-				).content,
-			);
-			const id = variant === "zen" ? "opencode" : "opencode-go";
-			expect(patch.plugins.entries[id]).toEqual({ enabled: true });
-			expect(patch.models.providers[id]).toEqual({
-				baseUrl: variant === "zen" ? "https://opencode.ai/zen/v1" : "https://opencode.ai/zen/go/v1",
-				auth: "api-key",
-				apiKey: { source: "env", provider: "clawdi-native", id: "OPENCODE_API_KEY" },
-			});
-		}
+	test("rejects invalid native metadata before projection", () => {
+		const manifest = bundle("gemini");
+		const provider = manifest.projection?.providers?.["saved-credential"];
+		if (!provider) throw new Error("Missing fixture");
+		provider.apiMode = "openai_chat";
+		expect(() => hostedProviderConfiguration(manifest, "openclaw")).toThrow(
+			"Invalid native provider",
+		);
+	});
+
+	test("rejects credential environment collisions across native and catalog paths", () => {
+		const manifest = bundle("anthropic");
+		const providers = manifest.projection?.providers;
+		const runtime = manifest.runtimes.openclaw;
+		if (!providers || !runtime) throw new Error("Missing fixture");
+		providers.catalog = {
+			kind: "openai-compatible",
+			type: "custom_openai_compatible",
+			baseUrl: "https://catalog.example.test/v1",
+			apiMode: "openai_chat",
+			runtimeEnvName: "ANTHROPIC_API_KEY",
+			apiKeySecretRef: "secret://provider.catalog.apiKey",
+			models: [{ id: "chat" }],
+		};
+		runtime.provider_ids = ["saved-credential", "catalog"];
+		runtime.primary_model = { provider_id: "catalog", model: "chat" };
+		expect(() => hostedProviderConfiguration(manifest, "openclaw")).toThrow(
+			"has multiple providers",
+		);
+		expect(() => hostedProviderEnvironment(manifest, "openclaw")).toThrow("has multiple providers");
 	});
 
 	test("keeps a managed embedding catalog beside a native chat credential", () => {
 		const catalog: AiProviderCatalog = {
 			schema_version: 1,
 			providers: [
-				credential("openai"),
 				{
 					id: "clawdi",
 					type: "custom_openai_compatible",
@@ -111,7 +149,7 @@ describe("native provider credentials", () => {
 			defaults: { embedding_provider_id: "clawdi" },
 		};
 		const patch = JSON.parse(
-			buildOpenClawHostedProviderPatch({ catalog, primaryModel: null }, []).content,
+			buildOpenClawHostedProviderPatch({ catalog, primaryModel: null }, [], "merge").content,
 		);
 		expect(patch.models.mode).toBe("merge");
 		expect(patch.models.providers.clawdi.models.map((model: { id: string }) => model.id)).toEqual([
@@ -128,7 +166,6 @@ describe("native provider credentials", () => {
 			catalog: {
 				schema_version: 1,
 				providers: [
-					credential("openai"),
 					{
 						id,
 						type: "custom_openai_compatible",
@@ -145,55 +182,22 @@ describe("native provider credentials", () => {
 		});
 		expect(input?.primaryModel).toBeNull();
 		expect(input?.catalog.defaults?.embedding_provider_id).toBe("clawdi");
-		expect(input?.catalog.providers[1]).toMatchObject({
+		expect(input?.catalog.providers[0]).toMatchObject({
 			id: "clawdi",
 			api_mode: "openai_responses",
 		});
 	});
 
 	test("unbinding a native credential removes only owned auth fields", () => {
-		const patch = JSON.parse(buildOpenClawHostedProviderPatch(null, [], ["google"]).content);
+		const patch = buildNativeOpenClawProviderPatch([], ["google"]).config;
 		expect(patch).toEqual({
 			models: { providers: { google: { apiKey: null, auth: null, baseUrl: null } } },
 		});
 	});
 
-	test("resolves native region auth and endpoint variables without a primary model", () => {
-		const manifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
-			deploymentId: "native-test",
-			environmentId: "native-test",
-			instanceId: "native-test",
-			generation: 1,
-			issuedAt: "2026-09-07T00:00:00Z",
-			runtime: "hermes",
-			controlPlane: { apiUrl: "https://core.example.test" },
-			recovery: {},
-			runtimes: {
-				hermes: {
-					enabled: true,
-					providerMode: "configured",
-					provider_ids: ["saved-credential"],
-					primary_model: null,
-					services: {},
-				},
-			},
-			projection: {
-				providers: {
-					"saved-credential": {
-						kind: "openai-compatible",
-						type: "custom_openai_compatible",
-						configurationMode: "native",
-						nativeProvider: "alibaba-coding-plan",
-						baseUrl: "https://coding-intl.dashscope.aliyuncs.com/v1",
-						apiMode: "openai_chat",
-						runtimeEnvName: "ALIBABA_CODING_PLAN_API_KEY",
-						apiKeySecretRef: "secret://provider.saved-credential.apiKey",
-					},
-				},
-			},
-		};
-		expect(hostedAiProviderCatalog(manifest, "hermes")?.primaryModel).toBeNull();
+	test("derives native regional environment without a model", () => {
+		const manifest = bundle("qwen-dashscope", "coding-global", "hermes");
+		expect(hostedAiProviderCatalog(manifest, "hermes")).toBeNull();
 		expect(hostedProviderEnvironment(manifest, "hermes")).toEqual({
 			placeholderEnv: {},
 			configEnv: { ALIBABA_CODING_PLAN_BASE_URL: "https://coding-intl.dashscope.aliyuncs.com/v1" },
@@ -205,46 +209,5 @@ describe("native provider credentials", () => {
 				true,
 			),
 		).toEqual([]);
-		// Runtime wire metadata can differ from the portable saved connection.
-		for (const route of NATIVE_AI_PROVIDERS.filter((entry) => entry.id !== "openai-codex")) {
-			for (const runtime of ["hermes", "openclaw"] as const) {
-				const target = nativeAiProviderRuntime(route, runtime);
-				const env = runtime === "hermes" ? route.hermes.env : route.runtime_env_name;
-				const projection = {
-					kind: "openai-compatible",
-					type: target.type,
-					configurationMode: "native",
-					nativeProvider: route[runtime].provider,
-					baseUrl: target.base_url,
-					apiMode: target.api_mode,
-					runtimeEnvName: env,
-					apiKeySecretRef: "secret://provider.saved-credential.apiKey",
-				} as const;
-				const bundle: RuntimeManifest = {
-					...manifest,
-					runtime,
-					runtimes: { [runtime]: { ...manifest.runtimes.hermes } },
-					projection: { providers: { "saved-credential": projection } },
-				};
-				expect(
-					nativeAiProviderForRuntime(runtime, projection.nativeProvider, projection.baseUrl)?.id,
-				).toBe(route.id);
-				const input = hostedAiProviderCatalog(bundle, runtime);
-				expect(input?.catalog.providers[0]).toMatchObject({
-					type: route.type,
-					base_url: route.base_url,
-					api_mode: route.api_mode,
-					native_provider: route.id,
-					native_variant: route.variant ?? undefined,
-				});
-				if (!input) throw new Error("Native credential projection is missing");
-				expect(buildAgentTargetProjection(runtime, input.catalog).primary_model).toBeNull();
-				if (runtime === "hermes" && route.hermes.base_url_env) {
-					expect(
-						hostedProviderEnvironment(bundle, runtime).configEnv[route.hermes.base_url_env],
-					).toBe(target.base_url);
-				}
-			}
-		}
 	});
 });

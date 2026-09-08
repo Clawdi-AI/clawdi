@@ -1,6 +1,4 @@
 import { join } from "node:path";
-import { parse as parseYaml } from "yaml";
-import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import {
 	type FileBrowserCompanionInstallOptions,
 	fileBrowserCompanionProgram,
@@ -13,11 +11,7 @@ import {
 	type HostedAgentPluginTransaction,
 	prepareHostedAgentPluginTransaction,
 } from "./hosted-agent-plugin-runtime";
-import {
-	agentTargetProjectionInput,
-	hostedAiProviderCatalog,
-	hostedProviderEnvironment,
-} from "./hosted-provider-resolution";
+import { hostedProviderEnvironment } from "./hosted-provider-resolution";
 import type { HostedRuntimeContractOptions } from "./hosted-runtime-contract";
 import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
 import type { ManagedBaileysRuntime } from "./managed-baileys-compat";
@@ -32,11 +26,10 @@ import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimeInstallObservation } from "./manifest-install";
 import { validateHostedMcpProjectionPlan } from "./manifest-mcp";
 import {
-	assertHostedProviderProjectionMode,
-	buildOpenClawHostedProviderPatch,
 	hostedCodexManagedConfigToml,
 	hostedCodexManagedProvider,
 	openClawGatewayHostedPatch,
+	validateHostedProviderConfiguration,
 } from "./manifest-providers";
 import {
 	managedLocaleBlock,
@@ -46,11 +39,10 @@ import {
 	resolvedRuntimeSettings,
 } from "./manifest-runtime-config";
 import { scopedSecretValues } from "./manifest-secrets";
-import {
-	type RuntimeConvergenceResult,
-	type RuntimePrivateAppliedAuthority,
-	type RuntimeSystemdApplyHooks,
-	recordValue,
+import type {
+	RuntimeConvergenceResult,
+	RuntimePrivateAppliedAuthority,
+	RuntimeSystemdApplyHooks,
 } from "./manifest-shared";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import type { EnsureRuntimeMitmproxyOptions } from "./mitmproxy-fetch";
@@ -339,39 +331,11 @@ export function validateRuntimeProjectionPlan(input: {
 	for (const [name, runtime] of Object.entries(manifest.runtimes).sort(([a], [b]) =>
 		a.localeCompare(b),
 	)) {
-		const projectionInput = agentTargetProjectionInput(hostedAiProviderCatalog(manifest, name));
-		assertHostedProviderProjectionMode(name, manifest, projectionInput);
-		const configuredProjectionUnavailable =
-			manifest.runtimes[name]?.providerMode === "configured" && !projectionInput;
-		if (name === "openclaw") {
-			if (projectionInput) {
-				buildOpenClawHostedProviderPatch(
-					projectionInput,
-					previousProjectedProviderIds.openclaw ?? [],
-				);
-			} else if (!configuredProjectionUnavailable) {
-				buildOpenClawHostedProviderPatch(null, previousProjectedProviderIds.openclaw ?? []);
-			}
+		validateHostedProviderConfiguration(manifest, name, previousProjectedProviderIds[name] ?? []);
+		if (name === "openclaw")
 			JSON.stringify(
 				openClawGatewayHostedPatch(manifest, secretValues, openClawOwnerBrowserBootstrapSupported),
 			);
-		}
-		if (name === "hermes") {
-			if (projectionInput) {
-				const yamlProjection = buildAgentTargetProjection(
-					"hermes",
-					projectionInput.catalog,
-					projectionInput.primaryModel,
-					{ freezeManagedModelCatalog: true },
-				);
-				const yamlFile = yamlProjection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
-				if (!yamlFile)
-					throw new Error("Hermes projection did not include a config merge YAML file.");
-				if (!recordValue(parseYaml(yamlFile.content) as unknown)) {
-					throw new Error("Hermes projection patch must be a YAML object.");
-				}
-			}
-		}
 
 		const channels = hostedChannelProjection(manifest);
 		if (channels && name === "openclaw") JSON.stringify(openClawManagedChannelsPatch(channels));
