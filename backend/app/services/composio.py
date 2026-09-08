@@ -1302,7 +1302,13 @@ _custom_auth_config_index_at: datetime | None = None
 async def _get_custom_auth_config_index(
     client: AsyncComposio,
 ) -> frozenset[tuple[str, str]]:
-    """Return enabled custom auth configs keyed by (toolkit slug, auth scheme)."""
+    """Return enabled custom auth configs keyed by (toolkit slug, auth scheme).
+
+    Upstream caps pages at 50 but computes total_pages/next_cursor from the
+    requested limit (verified 2026-09-08 with composio-client 1.43.0). Request
+    50 so the returned cursors cover the full index despite the SDK docs
+    advertising a maximum of 1000.
+    """
     global _custom_auth_config_index, _custom_auth_config_index_at
     now = datetime.now(UTC)
     if _custom_auth_config_index is not None and _custom_auth_config_index_at is not None:
@@ -1317,7 +1323,7 @@ async def _get_custom_auth_config_index(
                 client.auth_configs.list(
                     is_composio_managed=False,
                     show_disabled=False,
-                    limit=100,
+                    limit=50,
                     cursor=cursor,
                 )
             )
@@ -1326,7 +1332,7 @@ async def _get_custom_auth_config_index(
                 client.auth_configs.list(
                     is_composio_managed=False,
                     show_disabled=False,
-                    limit=100,
+                    limit=50,
                 )
             )
         response = _normalize_sdk_response(raw_response, _AuthConfigPage)
