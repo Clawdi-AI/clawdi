@@ -3000,6 +3000,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/connectors/{connection_id}/reconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reconnect Connection
+         * @description Reauthorize or enable an owned account without replacing its ID or alias.
+         */
+        post: operations["reconnect_connection_v1_connectors__connection_id__reconnect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/connectors/{connection_id}/reconnect-fields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Account Reconnect Fields
+         * @description Read credential inputs from this account's saved auth configuration.
+         */
+        get: operations["account_reconnect_fields_v1_connectors__connection_id__reconnect_fields_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/connectors/{connection_id}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Connection Credentials
+         * @description Update provided credential fields only; preserve the account and its alias.
+         */
+        patch: operations["update_connection_credentials_v1_connectors__connection_id__credentials_patch"];
+        trace?: never;
+    };
     "/v1/connectors/{connection_id}": {
         parameters: {
             query?: never;
@@ -5507,21 +5567,7 @@ export interface components {
             /** Completed At */
             completed_at?: string | null;
         };
-        /**
-         * ConnectRequest
-         * @description OAuth connect-link request body.
-         *
-         *     `redirect_url` is the absolute URL Composio redirects the user
-         *     back to after the OAuth flow completes. The frontend supplies
-         *     its own connector detail page (e.g.
-         *     `https://cloud.example.com/connectors/gmail`); when omitted,
-         *     Composio uses its own managed callback. The origin must match
-         *     `web_origin` (or one of `cors_origins` for staging/preview),
-         *     otherwise an authenticated caller could turn this into an open
-         *     redirect: present the user a "Connect Gmail" link that lands on
-         *     an attacker-controlled domain after OAuth completes, where
-         *     cookies / tokens / phishing UIs become reachable.
-         */
+        /** ConnectRequest */
         ConnectRequest: {
             /** Redirect Url */
             redirect_url?: string | null;
@@ -5612,21 +5658,19 @@ export interface components {
             status: string;
             /** Created At */
             created_at: string;
+            /**
+             * Is Disabled
+             * @default false
+             */
+            is_disabled: boolean;
+            /** @default unsupported */
+            reconnect_strategy: components["schemas"]["ConnectorReconnectStrategy"];
             /** Alias */
             alias?: string | null;
             /** Account Display */
             account_display?: string | null;
         };
-        /**
-         * ConnectorCredentialsConnectRequest
-         * @description User-supplied credentials for an API-key style connector.
-         *
-         *     Bounds picked to fit any sane API-key form (Composio's largest
-         *     schema we've seen has ~6 fields; a single API key fits well under
-         *     8KB) while rejecting payloads that don't look like credentials at
-         *     all. Caps protect against accidental large-blob submissions and
-         *     keep error logs / Composio request bodies small.
-         */
+        /** ConnectorCredentialsConnectRequest */
         ConnectorCredentialsConnectRequest: {
             /** Credentials */
             credentials: {
@@ -5642,6 +5686,13 @@ export interface components {
             status: string;
             /** Ok */
             ok: boolean;
+        };
+        /** ConnectorCredentialsUpdateRequest */
+        ConnectorCredentialsUpdateRequest: {
+            /** Credentials */
+            credentials: {
+                [key: string]: string;
+            };
         };
         /** ConnectorDisconnectResponse */
         ConnectorDisconnectResponse: {
@@ -5681,6 +5732,36 @@ export interface components {
             /** Description */
             description: string;
         };
+        /**
+         * ConnectorReconnectRequest
+         * @description OAuth connect-link request body.
+         *
+         *     `redirect_url` is the absolute URL Composio redirects the user
+         *     back to after the OAuth flow completes. The frontend supplies
+         *     its own connector detail page (e.g.
+         *     `https://cloud.example.com/connectors/gmail`); when omitted,
+         *     Composio uses its own managed callback. The origin must match
+         *     `web_origin` (or one of `cors_origins` for staging/preview),
+         *     otherwise an authenticated caller could turn this into an open
+         *     redirect: present the user a "Connect Gmail" link that lands on
+         *     an attacker-controlled domain after OAuth completes, where
+         *     cookies / tokens / phishing UIs become reachable.
+         */
+        ConnectorReconnectRequest: {
+            /** Redirect Url */
+            redirect_url?: string | null;
+        };
+        /** ConnectorReconnectResponse */
+        ConnectorReconnectResponse: {
+            /** Id */
+            id: string;
+            /** Status */
+            status: string;
+            /** Connect Url */
+            connect_url: string | null;
+        };
+        /** @enum {string} */
+        ConnectorReconnectStrategy: "oauth" | "credentials" | "enable" | "unsupported";
         /** ConnectorToolParametersResponse */
         ConnectorToolParametersResponse: {
             /** Properties */
@@ -15868,6 +15949,107 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectorCredentialsConnectResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reconnect_connection_v1_connectors__connection_id__reconnect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ConnectorReconnectRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorReconnectResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    account_reconnect_fields_v1_connectors__connection_id__reconnect_fields_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorAuthFieldsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_connection_credentials_v1_connectors__connection_id__credentials_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectorCredentialsUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorConnectionResponse"];
                 };
             };
             /** @description Validation Error */

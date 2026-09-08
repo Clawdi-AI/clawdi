@@ -47,6 +47,8 @@ from app.schemas.connector import (
     ConnectorCredentialsConnectResponse,
     ConnectorMetadataBatchResponse,
     ConnectorMetadataResponse,
+    ConnectorReconnectResponse,
+    ConnectorReconnectStrategy,
     ConnectorToolResponse,
 )
 
@@ -96,6 +98,7 @@ class _ToolkitMeta(_ComposioWireModel):
 
 
 class _AuthField(_ComposioWireModel):
+    user_visible: bool = True
     name: str = Field(min_length=1)
     display_name: str = ""
     description: str = ""
@@ -138,6 +141,10 @@ class _ConnectedAccountToolkit(_ComposioWireModel):
     slug: str = Field(min_length=1)
 
 
+class _ConnectedAccountAuthConfig(_ComposioWireModel):
+    id: str = Field(min_length=1)
+
+
 class _ConnectedAccount(_ComposioWireModel):
     id: str = Field(min_length=1)
     created_at: str = Field(min_length=1)
@@ -145,6 +152,8 @@ class _ConnectedAccount(_ComposioWireModel):
     toolkit: _ConnectedAccountToolkit
     alias: str | None = None
     word_id: str | None = None
+    is_disabled: bool = False
+    auth_config: _ConnectedAccountAuthConfig | None = None
     data: JsonObject = Field(default_factory=dict)
     state: JsonObject = Field(default_factory=dict)
 
@@ -160,6 +169,10 @@ class _ConnectedAccountCreateResponse(_ComposioWireModel):
 
 class _ConnectedAccountStatusResponse(_ComposioWireModel):
     status: ComposioStatus
+
+
+class _ConnectedAccountReconnectResponse(_ConnectedAccountCreateResponse):
+    redirect_url: str | None
 
 
 class _ConnectedAccountDeleteResponse(_ComposioWireModel):
@@ -261,6 +274,14 @@ _tool_router_tools_inflight: dict[str, asyncio.Task[ListToolsResult]] = {}
 
 _REDIRECT_AUTH_TYPES = {"oauth", "oauth1", "oauth2", "dcr_oauth", "composio_link"}
 _INSTANT_AUTH_TYPES = {"none", "no_auth"}
+_CREDENTIAL_AUTH_TYPES = {
+    "api_key",
+    "bearer_token",
+    "basic",
+    "basic_with_jwt",
+    "google_service_account",
+    "service_account",
+}
 _ACTIVE_OR_PENDING_STATUSES = {"INITIALIZING", "INITIATED"}
 _TERMINAL_STATUSES = _COMPOSIO_STATUSES - _ACTIVE_OR_PENDING_STATUSES
 _COMPOSIO_METADATA_CACHE_TTL = timedelta(minutes=5)
@@ -288,6 +309,10 @@ class ComposioMcpUpstreamError(RuntimeError):
 
 class ComposioProtocolError(ComposioRouteError):
     """Raised when a pinned Composio SDK response violates its public contract."""
+
+
+class ConnectorReconnectUnavailableError(ComposioProtocolError):
+    """Upstream did not start an actionable reauthorization flow."""
 
 
 class ConnectorCustomAuthConfigRequired(ComposioRouteError):
@@ -813,34 +838,43 @@ async def get_connected_account_identities(user_id: str) -> list[ConnectorAccoun
 
 
 async def _get_active_connected_accounts(user_id: str) -> list[_ConnectedAccount]:
+    accounts = await _list_connected_accounts(user_id, active_only=True)
+    return [
+        account for account in accounts if account.status == "ACTIVE" and not account.is_disabled
+    ]
+
+
+async def get_all_connected_accounts(user_id: str) -> list[ConnectorConnectionResponse]:
+    """List all owned accounts for lifecycle management, including expired accounts."""
+    return [
+        _serialize_connected_account(account) for account in await _list_connected_accounts(user_id)
+    ]
+
+
+async def _list_connected_accounts(
+    user_id: str, *, active_only: bool = False
+) -> list[_ConnectedAccount]:
     client = get_composio_client()
     accounts: list[_ConnectedAccount] = []
     cursor: str | None = None
-
+    seen_cursors: set[str] = set()
     while True:
-        if cursor:
-            raw_response = await _call_generated_sdk(
-                client.connected_accounts.list(
-                    user_ids=[user_id],
-                    statuses=["ACTIVE"],
-                    limit=100,
-                    cursor=cursor,
-                )
+        raw_response = await _call_generated_sdk(
+            client.connected_accounts.list(
+                user_ids=[user_id],
+                statuses=["ACTIVE"] if active_only else composio_client.omit,
+                limit=100,
+                cursor=cursor if cursor else composio_client.omit,
             )
-        else:
-            raw_response = await _call_generated_sdk(
-                client.connected_accounts.list(
-                    user_ids=[user_id],
-                    statuses=["ACTIVE"],
-                    limit=100,
-                )
-            )
+        )
         response = _normalize_sdk_response(raw_response, _ConnectedAccountPage)
         accounts.extend(response.items)
         cursor = response.next_cursor
         if not cursor:
-            break
-    return accounts
+            return accounts
+        if cursor in seen_cursors:
+            raise ComposioProtocolError("Composio returned a repeated account cursor")
+        seen_cursors.add(cursor)
 
 
 def _serialize_connected_account(account: _ConnectedAccount) -> ConnectorConnectionResponse:
@@ -849,6 +883,8 @@ def _serialize_connected_account(account: _ConnectedAccount) -> ConnectorConnect
         app_name=account.toolkit.slug,
         status=account.status,
         created_at=account.created_at,
+        is_disabled=account.is_disabled,
+        reconnect_strategy=_account_reconnect_strategy(account),
         alias=account.alias,
         account_display=_account_display_label(account),
     )
@@ -990,6 +1026,8 @@ async def get_auth_fields(app_name: str) -> ConnectorAuthFieldsResponse:
             expected_input_fields=[],
         )
 
+    if auth_type not in _CREDENTIAL_AUTH_TYPES:
+        raise ComposioInvalidRequestError("Connector does not support credential authentication")
     detail_fields = _auth_fields_from_toolkit_detail(toolkit, auth_scheme)
     if detail_fields:
         return ConnectorAuthFieldsResponse(
@@ -1103,20 +1141,26 @@ async def disconnect_account(connected_account_id: str) -> bool:
     return response.success
 
 
-async def update_account_alias(
-    user_id: str, connected_account_id: str, alias: str
-) -> ConnectorConnectionResponse:
+async def get_owned_account(user_id: str, connected_account_id: str) -> _ConnectedAccount:
+    """Resolve ownership with server-side owner/id filters, regardless of status."""
     client = get_composio_client()
-    # Filter server-side by both owner and id, without excluding non-active accounts.
-    # user_id on retrieve responses is deprecated; do not use it as an ownership guard.
     raw_page = await _call_generated_sdk(
         client.connected_accounts.list(
             user_ids=[user_id], connected_account_ids=[connected_account_id], limit=1
         )
     )
     page = _normalize_sdk_response(raw_page, _ConnectedAccountPage)
-    if not any(account.id == connected_account_id for account in page.items):
-        raise ComposioProviderError(ComposioFailure("not_found"))
+    for account in page.items:
+        if account.id == connected_account_id:
+            return account
+    raise ComposioProviderError(ComposioFailure("not_found"))
+
+
+async def update_account_alias(
+    user_id: str, connected_account_id: str, alias: str
+) -> ConnectorConnectionResponse:
+    client = get_composio_client()
+    await get_owned_account(user_id, connected_account_id)
     # Do not automatically retry a mutation after a conflict or ambiguous failure.
     raw_result = await _call_generated_sdk(
         client.with_options(max_retries=0).connected_accounts.patch(
@@ -1133,11 +1177,147 @@ async def update_account_alias(
     return _serialize_connected_account(_normalize_sdk_response(raw_account, _ConnectedAccount))
 
 
+def _account_auth_scheme(account: _ConnectedAccount) -> str:
+    value = account.state.get("auth_scheme") or account.state.get("authScheme")
+    return _normalize_composio_scheme(value if isinstance(value, str) else None)
+
+
+def _account_reconnect_strategy(account: _ConnectedAccount) -> ConnectorReconnectStrategy:
+    # Enabling expired/revoked credentials would only label them ACTIVE, not repair them.
+    if account.status == "INACTIVE" or (account.status == "ACTIVE" and account.is_disabled):
+        return "enable"
+    auth_type = _normalize_auth_type(_account_auth_scheme(account))
+    if auth_type in {"oauth1", "oauth2", "dcr_oauth"}:
+        return "oauth"
+    if auth_type in _CREDENTIAL_AUTH_TYPES:
+        return "credentials"
+    return "unsupported"
+
+
+async def reconnect_account(
+    user_id: str, connected_account_id: str, redirect_url: str | None = None
+) -> ConnectorReconnectResponse:
+    """Reauthorize the same account; never create a replacement or change its alias.
+
+    Composio v3.1 documents refresh as deprecated developer-triggered reauthorization.
+    It remains the only documented OAuth reinitiation operation that targets an
+    existing ID. The recommended link.create replacement creates a new account.
+    """
+    account = await get_owned_account(user_id, connected_account_id)
+    strategy = _account_reconnect_strategy(account)
+    client = get_composio_client().with_options(max_retries=0)
+    if strategy == "enable":
+        raw_result = await _call_generated_sdk(
+            client.connected_accounts.update_status(connected_account_id, enabled=True)
+        )
+        await invalidate_tool_router_mcp_session(user_id)
+        result = _normalize_sdk_response(raw_result, _ConnectedAccountDeleteResponse)
+        if not result.success:
+            raise ComposioProtocolError("Composio did not enable the account")
+        raw_account = await _call_generated_sdk(
+            client.connected_accounts.retrieve(connected_account_id)
+        )
+        refreshed = _normalize_sdk_response(raw_account, _ConnectedAccount)
+        if refreshed.id != connected_account_id:
+            raise ComposioProtocolError("Composio returned a different account")
+        return ConnectorReconnectResponse(
+            id=refreshed.id, status=refreshed.status, connect_url=None
+        )
+    if strategy == "credentials":
+        raise ComposioInvalidRequestError("Connector requires a credential update")
+    if strategy != "oauth":
+        raise ComposioInvalidRequestError("Connector authentication method is not supported")
+    raw_response = await _call_generated_sdk(
+        client.connected_accounts.refresh(  # pyright: ignore[reportDeprecated]
+            connected_account_id,
+            body_redirect_url=redirect_url if redirect_url else composio_client.omit,
+        )
+    )
+    await invalidate_tool_router_mcp_session(user_id)
+    response = _normalize_sdk_response(raw_response, _ConnectedAccountReconnectResponse)
+    if response.id != connected_account_id:
+        raise ComposioProtocolError("Composio returned a different account")
+    if not response.redirect_url and response.status != "ACTIVE":
+        raise ConnectorReconnectUnavailableError("Composio did not provide an authentication URL")
+    return ConnectorReconnectResponse(
+        id=response.id, status=response.status, connect_url=response.redirect_url
+    )
+
+
+async def get_account_reconnect_fields(
+    user_id: str, connected_account_id: str
+) -> ConnectorAuthFieldsResponse:
+    from composio_client.types.connected_account_patch_params import ConnectionStateVal
+
+    account = await get_owned_account(user_id, connected_account_id)
+    scheme = _account_auth_scheme(account)
+    if _normalize_auth_type(scheme) not in _CREDENTIAL_AUTH_TYPES:
+        raise ComposioInvalidRequestError("Connector does not support credential updates")
+    if account.auth_config is None:
+        raise ConnectorAuthMetadataError("Connector auth metadata unavailable")
+    raw_response = await _call_generated_sdk(
+        get_composio_client().auth_configs.retrieve(account.auth_config.id)
+    )
+    response = _normalize_sdk_response(raw_response, _AuthConfigRetrieveResponse)
+    if response.auth_scheme and _normalize_composio_scheme(response.auth_scheme) != scheme:
+        raise ConnectorAuthMetadataError("Connector auth scheme does not match its account")
+    if response.expected_input_fields is None:
+        raise ConnectorAuthMetadataError("Connector auth metadata unavailable")
+    fields = [
+        _serialize_auth_field(field).model_copy(update={"default": None})
+        for field in response.expected_input_fields
+        if field.name in ConnectionStateVal.__annotations__
+        and field.user_visible
+        and field.expected_from_customer
+    ]
+    if not fields:
+        raise ConnectorAuthMetadataError("Connector credential update fields unavailable")
+    return ConnectorAuthFieldsResponse(auth_scheme=scheme, expected_input_fields=fields)
+
+
+async def update_account_credentials(
+    user_id: str, connected_account_id: str, credentials: dict[str, str]
+) -> ConnectorConnectionResponse:
+    from composio_client.types import ConnectedAccountPatchParams
+
+    account = await get_owned_account(user_id, connected_account_id)
+    scheme = _account_auth_scheme(account)
+    if _normalize_auth_type(scheme) not in _CREDENTIAL_AUTH_TYPES:
+        raise ComposioInvalidRequestError("Connector does not support credential updates")
+    try:
+        request = TypeAdapter(ConnectedAccountPatchParams).validate_python(
+            {"connection": {"state": {"auth_scheme": scheme, "val": credentials}}}
+        )
+    except ValidationError:
+        raise ComposioInvalidRequestError("Invalid connector credential fields") from None
+    # TypedDict validation discards unknown fields; never silently accept an ignored update.
+    if "connection" not in request or set(request["connection"]["state"]["val"]) != set(
+        credentials
+    ):
+        raise ComposioInvalidRequestError("Unsupported connector credential fields")
+    client = get_composio_client().with_options(max_retries=0)
+    raw_result = await _call_generated_sdk(
+        client.connected_accounts.patch(connected_account_id, **request), credentials=credentials
+    )
+    await invalidate_tool_router_mcp_session(user_id)
+    result = _normalize_sdk_response(raw_result, _ConnectedAccountPatchResponse)
+    if not result.success or result.id != connected_account_id:
+        raise ComposioProtocolError("Composio returned an invalid update response")
+    raw_account = await _call_generated_sdk(
+        client.connected_accounts.retrieve(connected_account_id)
+    )
+    updated = _normalize_sdk_response(raw_account, _ConnectedAccount)
+    if updated.id != connected_account_id:
+        raise ComposioProtocolError("Composio returned a different account")
+    return _serialize_connected_account(updated)
+
+
 async def get_app_tools(app_name: str) -> list[ConnectorToolResponse]:
     """List available tools/actions for a specific Composio toolkit."""
     client = get_composio_client()
     tools: list[_Tool] = []
     cursor: str | None = None
+    seen_cursors: set[str] = set()
 
     while True:
         if cursor:
@@ -1160,8 +1340,11 @@ async def get_app_tools(app_name: str) -> list[ConnectorToolResponse]:
         response = _normalize_sdk_response(raw_response, _ToolPage)
         tools.extend(response.items)
         cursor = response.next_cursor
-        if not cursor or len(tools) >= 500:
+        if not cursor:
             break
+        if cursor in seen_cursors:
+            raise ComposioProtocolError("Composio returned a repeated tool cursor")
+        seen_cursors.add(cursor)
 
     return [_serialize_tool(tool) for tool in tools]
 
@@ -1183,6 +1366,8 @@ async def _get_or_create_auth_config(
     managed: bool,
 ) -> _AuthConfig:
     auth_scheme = _auth_type_to_composio_scheme(auth_type)
+    if auth_type not in _REDIRECT_AUTH_TYPES | _CREDENTIAL_AUTH_TYPES:
+        raise ComposioInvalidRequestError("Connector authentication method is not supported")
     existing = await _find_auth_config(client, app_name, auth_scheme, managed=managed)
     if existing is not None:
         return existing
@@ -1279,6 +1464,7 @@ async def _find_auth_config(
     managed: bool,
 ) -> _AuthConfig | None:
     cursor: str | None = None
+    seen_cursors: set[str] = set()
     while True:
         if cursor:
             raw_response = await _call_generated_sdk(
@@ -1286,7 +1472,7 @@ async def _find_auth_config(
                     toolkit_slug=app_name,
                     is_composio_managed=managed,
                     show_disabled=False,
-                    limit=100,
+                    limit=50,
                     cursor=cursor,
                 )
             )
@@ -1296,7 +1482,7 @@ async def _find_auth_config(
                     toolkit_slug=app_name,
                     is_composio_managed=managed,
                     show_disabled=False,
-                    limit=100,
+                    limit=50,
                 )
             )
         response = _normalize_sdk_response(raw_response, _AuthConfigPage)
@@ -1316,6 +1502,9 @@ async def _find_auth_config(
         cursor = response.next_cursor
         if not cursor:
             return None
+        if cursor in seen_cursors:
+            raise ComposioProtocolError("Composio returned a repeated catalog cursor")
+        seen_cursors.add(cursor)
 
 
 async def _connect_disabled_reason(
@@ -1326,6 +1515,8 @@ async def _connect_disabled_reason(
     *,
     custom_auth_config_index: frozenset[tuple[str, str]] | None = None,
 ) -> str | None:
+    if auth_type not in _REDIRECT_AUTH_TYPES | _INSTANT_AUTH_TYPES | _CREDENTIAL_AUTH_TYPES:
+        return "This connector authentication method is not supported"
     if not _requires_preconfigured_custom_oauth(toolkit, auth_type):
         return None
 
@@ -1385,6 +1576,7 @@ async def _get_custom_auth_config_index(
 
     index: set[tuple[str, str]] = set()
     cursor: str | None = None
+    seen_cursors: set[str] = set()
     while True:
         if cursor:
             raw_response = await _call_generated_sdk(
@@ -1416,6 +1608,9 @@ async def _get_custom_auth_config_index(
         cursor = response.next_cursor
         if not cursor:
             break
+        if cursor in seen_cursors:
+            raise ComposioProtocolError("Composio returned a repeated catalog cursor")
+        seen_cursors.add(cursor)
 
     _custom_auth_config_index = frozenset(index)
     _custom_auth_config_index_at = now
@@ -1623,6 +1818,7 @@ async def _get_all_toolkits() -> list[_Toolkit]:
         client = get_composio_client()
         toolkits: list[_Toolkit] = []
         cursor: str | None = None
+        seen_cursors: set[str] = set()
         while True:
             if cursor:
                 raw_response = await _call_generated_sdk(
@@ -1646,6 +1842,9 @@ async def _get_all_toolkits() -> list[_Toolkit]:
             cursor = response.next_cursor
             if not cursor:
                 break
+            if cursor in seen_cursors:
+                raise ComposioProtocolError("Composio returned a repeated catalog cursor")
+            seen_cursors.add(cursor)
 
         _toolkits_cache = toolkits
         _toolkits_cache_at = now

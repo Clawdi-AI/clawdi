@@ -12,10 +12,13 @@ from app.schemas.connector import (
     ConnectorConnectResponse,
     ConnectorCredentialsConnectRequest,
     ConnectorCredentialsConnectResponse,
+    ConnectorCredentialsUpdateRequest,
     ConnectorDisconnectResponse,
     ConnectorMcpConfigResponse,
     ConnectorMetadataBatchRequest,
     ConnectorMetadataBatchResponse,
+    ConnectorReconnectRequest,
+    ConnectorReconnectResponse,
     ConnectorToolResponse,
     ConnectorUpdateRequest,
     ConnectRequest,
@@ -23,19 +26,24 @@ from app.schemas.connector import (
 from app.services.composio import (
     ComposioRouteError,
     ConnectorAuthMetadataError,
+    ConnectorReconnectUnavailableError,
     connect_with_credentials,
     create_connect_link,
     create_mcp_bridge_token,
     disconnect_account,
+    get_account_reconnect_fields,
+    get_all_connected_accounts,
     get_app_by_name,
     get_app_tools,
     get_auth_fields,
     get_available_apps,
-    get_connected_accounts,
     get_connector_metadata,
+    get_owned_account,
     invalidate_tool_router_mcp_session,
     normalize_composio_failure,
+    reconnect_account,
     update_account_alias,
+    update_account_credentials,
 )
 
 log = logging.getLogger(__name__)
@@ -66,6 +74,11 @@ _REDIRECT_AUTH_TYPES = {
 
 def _map_composio_error(exc: ComposioRouteError) -> HTTPException:
     """Map the adapter's sanitized failure record to the public HTTP contract."""
+    if isinstance(exc, ConnectorReconnectUnavailableError):
+        return HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Connector reauthorization did not start. Retry reconnecting.",
+        )
     failure = normalize_composio_failure(exc)
     if failure.kind == "metadata":
         return HTTPException(
@@ -126,7 +139,7 @@ async def list_connections(
         return []
     clerk_id = require_clerk_id(auth)
     try:
-        accounts = await get_connected_accounts(clerk_id)
+        accounts = await get_all_connected_accounts(clerk_id)
     except ComposioRouteError as exc:
         if _is_composio_auth_error(exc):
             log.warning("composio_key_invalid path=connectors_list")
@@ -303,6 +316,54 @@ async def connect_credentials(
     return result
 
 
+@router.post("/{connection_id}/reconnect")
+async def reconnect_connection(
+    connection_id: str,
+    body: ConnectorReconnectRequest | None = None,
+    auth: AuthContext = Depends(require_user_auth_short_session),
+) -> ConnectorReconnectResponse:
+    """Reauthorize or enable an owned account without replacing its ID or alias."""
+    if not settings.composio_api_key:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
+    try:
+        return await reconnect_account(
+            require_clerk_id(auth), connection_id, body.redirect_url if body else None
+        )
+    except ComposioRouteError as exc:
+        raise _map_composio_error(exc) from exc
+
+
+@router.get("/{connection_id}/reconnect-fields")
+async def account_reconnect_fields(
+    connection_id: str,
+    auth: AuthContext = Depends(require_user_auth_short_session),
+) -> ConnectorAuthFieldsResponse:
+    """Read credential inputs from this account's saved auth configuration."""
+    if not settings.composio_api_key:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
+    try:
+        return await get_account_reconnect_fields(require_clerk_id(auth), connection_id)
+    except ComposioRouteError as exc:
+        raise _map_composio_error(exc) from exc
+
+
+@router.patch("/{connection_id}/credentials")
+async def update_connection_credentials(
+    connection_id: str,
+    body: ConnectorCredentialsUpdateRequest,
+    auth: AuthContext = Depends(require_user_auth_short_session),
+) -> ConnectorConnectionResponse:
+    """Update provided credential fields only; preserve the account and its alias."""
+    if not settings.composio_api_key:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
+    try:
+        return await update_account_credentials(
+            require_clerk_id(auth), connection_id, body.credentials
+        )
+    except ComposioRouteError as exc:
+        raise _map_composio_error(exc) from exc
+
+
 @router.patch("/{connection_id}")
 async def update_connection(
     connection_id: str,
@@ -334,11 +395,9 @@ async def disconnect(
 
     clerk_id = require_clerk_id(auth)
     try:
-        accounts = await get_connected_accounts(clerk_id)
+        await get_owned_account(clerk_id, connection_id)
     except ComposioRouteError as exc:
         raise _map_composio_error(exc) from exc
-    if not any(account.id == connection_id for account in accounts):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Connection not found")
 
     try:
         success = await disconnect_account(connection_id)
