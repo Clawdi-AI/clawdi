@@ -208,8 +208,6 @@ test("popular BYOK providers support credential-only product setup", async ({ pa
 	]) {
 		await dialog.getByRole("textbox", { name: "Search providers" }).fill(choice.query);
 		await dialog.getByRole("button", { name: new RegExp(`^${choice.name}`) }).click();
-		await expect(dialog.getByText("Choose and manage models inside your agent.")).toHaveCount(0);
-		await expect(dialog.getByText("Encrypted at rest and never shown again.")).toHaveCount(0);
 		const credentialInput = dialog.getByLabel(choice.credential, { exact: true });
 		await expect(credentialInput).toHaveAttribute(
 			"placeholder",

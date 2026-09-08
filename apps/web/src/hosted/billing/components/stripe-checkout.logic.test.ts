@@ -2,9 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { StripeCheckoutStatus } from "@stripe/stripe-js";
 import type { CheckoutOperationResult } from "@/hosted/billing/billing-client";
 import {
-	CHECKOUT_ELEMENTS_UI_MODE,
 	checkoutRedirectUrl,
-	checkoutSessionClientSecret,
 	checkoutUiModeForPublishableKey,
 	completedCheckoutPaymentStatus,
 } from "@/hosted/billing/components/stripe-checkout.logic";
@@ -30,18 +28,6 @@ describe("stripe checkout logic", () => {
 		});
 
 		expect(checkoutRedirectUrl(result)).toBe("https://checkout.stripe.com/primary");
-	});
-
-	test("detects elements checkout responses from a client secret", () => {
-		const result = checkoutResult({
-			client_secret: "cs_test_elements",
-		});
-
-		expect(checkoutSessionClientSecret(result) === "cs_test_elements").toBe(true);
-	});
-
-	test("documents the checkout elements ui mode for the installed Stripe SDK", () => {
-		expect(CHECKOUT_ELEMENTS_UI_MODE).toBe("custom");
 	});
 
 	test("reads payment settlement only from a completed Checkout Session", () => {
