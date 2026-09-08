@@ -21,6 +21,8 @@ from app.schemas.memory import (
     MemoryCreatedResponse,
     MemoryDeleteResponse,
     MemoryResponse,
+    MemoryUpdate,
+    MemoryUpdatedResponse,
 )
 from app.services.embedding import EmbeddingUpstreamError, resolve_embedder
 from app.services.memory_provider import get_memory_provider, memory_to_dict
@@ -253,6 +255,30 @@ async def create_memory(
             source_environment_id=source_environment_id,
         )
     )
+
+
+@router.patch("/{memory_id}")
+async def update_memory(
+    memory_id: UUID,
+    body: MemoryUpdate,
+    auth: AuthContext = Depends(require_scope("memories:write")),
+    db: AsyncSession = Depends(get_session),
+) -> MemoryUpdatedResponse:
+    """Replace exact-item content while preserving category, tags and provenance."""
+    finding = find_likely_secret(body.content)
+    if finding is not None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "memory_secret_rejected",
+                "message": secret_memory_warning(finding),
+                "secret_type": finding.label,
+            },
+        )
+    provider = await get_memory_provider(str(auth.user_id), db)
+    if not await provider.update(str(auth.user_id), str(memory_id), body.content):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Memory not found")
+    return MemoryUpdatedResponse(status="updated", memory_id=str(memory_id))
 
 
 @router.delete("/{memory_id}")

@@ -10,7 +10,7 @@ export type Memory = Schemas["MemoryResponse"];
 export type SkillSummary = Schemas["SkillSummaryResponse"];
 export type SessionListItem = Schemas["SessionListItemResponse"];
 export type SessionDetail = Schemas["SessionDetailResponse"];
-export type SessionMessage = Schemas["SessionMessageResponse"];
+export type SessionMessage = Schemas["SessionTimelineMessageResponse"];
 
 // ── Write responses ───────────────────────────────────────────────────────
 // `/v1/vault/resolve` has richer single-reference/debug shapes in OpenAPI.

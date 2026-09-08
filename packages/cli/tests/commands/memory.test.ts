@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { memoryAdd } from "../../src/commands/memory";
+import { memoryAdd, memoryUpdate } from "../../src/commands/memory";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
@@ -75,4 +75,27 @@ describe("memoryAdd", () => {
 			source: "manual",
 		});
 	});
+});
+
+it("updates exact content only and rejects secrets before the request", async () => {
+	const id = "00000000-0000-0000-0000-000000000abc";
+	const { captured, restore } = mockFetch([
+		{
+			method: "PATCH",
+			path: `/v1/memories/${id}`,
+			response: () => jsonResponse({ status: "updated", memory_id: id }),
+		},
+	]);
+	const originalLog = console.log;
+	console.log = () => {};
+	try {
+		await expect(memoryUpdate(id, `ghp_${"a".repeat(36)}`)).rejects.toThrow("Store secrets");
+		expect(captured).toHaveLength(0);
+		await memoryUpdate(id, "Use tabs", { json: true });
+		expect(captured).toHaveLength(1);
+		expect(captured[0]?.body).toEqual({ content: "Use tabs" });
+	} finally {
+		console.log = originalLog;
+		restore();
+	}
 });

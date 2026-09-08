@@ -128,3 +128,23 @@ export async function memoryRm(id: string) {
 	unwrap(await api.DELETE("/v1/memories/{memory_id}", { params: { path: { memory_id: id } } }));
 	console.log(chalk.green("✓ Deleted memory"));
 }
+
+export async function memoryUpdate(id: string, content: string, opts: { json?: boolean } = {}) {
+	requireAuth();
+	if (!content.trim() || content.length > 100_000) {
+		throw new Error("Memory content must contain text and be at most 100000 characters.");
+	}
+	const finding = findLikelySecret(content);
+	if (finding) throw new Error(formatSecretMemoryWarning(finding));
+	const result = unwrap(
+		await new ApiClient().PATCH("/v1/memories/{memory_id}", {
+			params: { path: { memory_id: id } },
+			body: { content },
+		}),
+	);
+	console.log(
+		opts.json || !process.stdout.isTTY
+			? JSON.stringify(result)
+			: `Updated memory ${sanitizeMetadata(result.memory_id)}; metadata preserved.`,
+	);
+}

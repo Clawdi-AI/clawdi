@@ -101,7 +101,9 @@ def _event_chunk(events: list[dict[str, Any]]) -> tuple[bytes, str]:
     return data, hashlib.sha256(data).hexdigest()
 
 
-async def _seed_event_session(client: httpx.AsyncClient) -> tuple[str, str, str, str]:
+async def _seed_event_session(
+    client: httpx.AsyncClient, events: list[dict[str, Any]] | None = None
+) -> tuple[str, str, str, str]:
     registered = await client.post(
         "/v1/agents",
         json={
@@ -132,7 +134,7 @@ async def _seed_event_session(client: httpx.AsyncClient) -> tuple[str, str, str,
     )
     assert batch.status_code == 200, batch.text
 
-    events = [
+    events = events or [
         _event(0, "user", "user", "Original question"),
         _event(1, "assistant", "assistant", "Original answer"),
     ]
@@ -376,3 +378,46 @@ async def test_session_share_reports_storage_outages(
     response = await anon_client.get(f"/v1/public/session-shares/{created.json()['id']}/messages")
     assert response.status_code == 503
     assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+async def test_owner_content_positions_survive_hidden_and_tool_gaps(client, anon_client):
+    hidden = _event(1, "hidden", "assistant", "Private hidden reasoning")
+    hidden["semantics"] = {
+        "lifecycle": "active",
+        "display": "hidden",
+        "compressed_summary": False,
+        "display_kind": "ignored_text",
+    }
+    tool = _event(2, "tool", "assistant", "unused")
+    tool.pop("role")
+    tool.pop("parts")
+    tool.update(type="tool_call", call_id="call-1", name="read", arguments_json="{}")
+    tool["event_id"] = hashlib.sha256(
+        canonical_event_json({"source": tool["source"], "type": "tool_call"})
+    ).hexdigest()
+    events = [
+        _event(0, "user", "user", "Question"),
+        hidden,
+        tool,
+        _event(3, "answer", "assistant", "Visible answer"),
+    ]
+    session_id, _, _, _ = await _seed_event_session(client, events)
+    content = await client.get(f"/v1/sessions/{session_id}/content")
+    assert content.status_code == 200, content.text
+    assert [item["position"] for item in content.json()] == [0, 3]
+    assert "Private hidden" not in content.text
+    for scope in ("through", "response"):
+        share = await client.post(
+            f"/v1/sessions/{session_id}/shares",
+            json={"scope": scope, "position": content.json()[-1]["position"]},
+        )
+        assert share.status_code == 201, share.text
+        public = await anon_client.get(f"/v1/public/session-shares/{share.json()['id']}/messages")
+        assert [item["content"] for item in public.json()["items"]] == (
+            ["Question", "Visible answer"] if scope == "through" else ["Visible answer"]
+        )
+    invalid = await client.post(
+        f"/v1/sessions/{session_id}/shares", json={"scope": "response", "position": 1}
+    )
+    assert invalid.status_code == 409

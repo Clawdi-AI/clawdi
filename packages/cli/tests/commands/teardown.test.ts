@@ -208,7 +208,9 @@ describe("teardown — flag behavior", () => {
 		const { skillPath } = setup("claude_code", { managed: false });
 		const target = dirname(skillPath);
 		rmSync(target, { recursive: true, force: true });
-		cpSync(resolve(import.meta.dir, "../../skills/clawdi"), target, { recursive: true });
+		cpSync(resolve(import.meta.dir, "../fixtures/legacy-local-clawdi"), target, {
+			recursive: true,
+		});
 
 		await teardown({ agent: "claude_code", yes: true, keepMcp: true });
 

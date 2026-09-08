@@ -1019,7 +1019,10 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Revoke Share */
+        /**
+         * Revoke Share
+         * @description Revoke one owned snapshot or legacy live link by its exact inventory ID.
+         */
         delete: operations["revoke_share_v1_session_shares__share_id__delete"];
         options?: never;
         head?: never;
@@ -1490,7 +1493,7 @@ export interface paths {
         };
         /**
          * Get Session Content
-         * @description Read session messages from FileStore, typed as SessionMessageResponse[].
+         * @description Read visible messages with canonical source positions for sharing.
          */
         get: operations["get_session_content_v1_sessions__session_id__content_get"];
         put?: never;
@@ -2358,7 +2361,11 @@ export interface paths {
         delete: operations["delete_memory_v1_memories__memory_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update Memory
+         * @description Replace exact-item content while preserving category, tags and provenance.
+         */
+        patch: operations["update_memory_v1_memories__memory_id__patch"];
         trace?: never;
     };
     "/v1/memories/embed-backfill": {
@@ -6988,6 +6995,21 @@ export interface components {
             source_environment_id?: string | null;
             /** Source Machine Name */
             source_machine_name?: string | null;
+        };
+        /** MemoryUpdate */
+        MemoryUpdate: {
+            /** Content */
+            content: string;
+        };
+        /** MemoryUpdatedResponse */
+        MemoryUpdatedResponse: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "updated";
+            /** Memory Id */
+            memory_id: string;
         };
         /**
          * OAuthConfigResponse
@@ -11679,6 +11701,7 @@ export interface operations {
             query?: {
                 page?: number;
                 page_size?: number;
+                session_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -11774,7 +11797,9 @@ export interface operations {
     };
     revoke_share_v1_session_shares__share_id__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                kind?: "snapshot" | "live";
+            };
             header?: never;
             path: {
                 share_id: string;
@@ -12900,7 +12925,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionMessageResponse"][];
+                    "application/json": components["schemas"]["SessionTimelineMessageResponse"][];
                 };
             };
             /** @description Validation Error */
@@ -14390,6 +14415,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemoryDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_memory_v1_memories__memory_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                memory_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemoryUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemoryUpdatedResponse"];
                 };
             };
             /** @description Validation Error */

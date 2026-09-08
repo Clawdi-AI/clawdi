@@ -115,6 +115,9 @@ program
 Examples:
   $ clawdi deploy
   $ clawdi deploy --runtime hermes --provider managed --model <id> --compute basic --request-id <uuid> --yes --json
+  # Native saved provider: choose models inside the Agent
+  $ clawdi deploy --provider <saved-provider-id> --compute basic --request-id <uuid> --yes --json
+  # Custom saved provider: select its model
   $ clawdi deploy --provider <saved-provider-id> --model <id> --compute basic --request-id <uuid> --yes --json
   $ clawdi deploy --compute performance --term 12 --payment wallet --request-id <uuid> --yes --json
   $ clawdi deploy --compute performance --payment card --request-id <uuid> --yes --json
@@ -1140,6 +1143,47 @@ sessionCmd
 	});
 
 sessionCmd
+	.command("export <session-id>")
+	.description("Export an uploaded Cloud session as Markdown to stdout")
+	.option("--json", "Export owner metadata and messages as JSON instead")
+	.action(async (id, opts) => {
+		const { sessionExport } = await import("./commands/session.js");
+		await sessionExport(id, opts);
+	});
+
+sessionCmd
+	.command("share <session-id>")
+	.description("Publish an immutable public snapshot (user-level auth)")
+	.option("-y, --yes", "Confirm public publication without prompting")
+	.option("--through <position>", "Include messages through this zero-based position")
+	.option("--response <position>", "Share only the assistant response at this zero-based position")
+	.option("--json", "Output link metadata as JSON")
+	.action(async (id, opts) => {
+		const { sessionShareCreate } = await import("./commands/session.js");
+		await sessionShareCreate(id, opts);
+	});
+sessionCmd
+	.command("shares [session-id]")
+	.description("List active snapshot and legacy links")
+	.option("--page <n>", "Page number", "1")
+	.option("--limit <n>", "Page size (1-100)", "25")
+	.option("--json", "Output as JSON")
+	.action(async (id, opts) => {
+		const { sessionShareList } = await import("./commands/session.js");
+		await sessionShareList(id, opts);
+	});
+sessionCmd
+	.command("unshare <share-id>")
+	.option("--legacy", "Revoke a legacy live link (kind=live in session shares)")
+	.option("-y, --yes", "Confirm revocation without prompting")
+	.description("Revoke the exact snapshot or legacy link ID from session shares")
+	.option("--json", "Output as JSON")
+	.action(async (id, opts) => {
+		const { sessionShareRevoke } = await import("./commands/session.js");
+		await sessionShareRevoke(id, opts);
+	});
+
+sessionCmd
 	.command("extract <session-id>")
 	.description("Extract memories from a session via the cloud's configured LLM")
 	.option("--json", "Output result as JSON")
@@ -1200,6 +1244,15 @@ memoryCmd
 	.action(async (content, opts) => {
 		const { memoryAdd } = await import("./commands/memory.js");
 		await memoryAdd(content, opts);
+	});
+
+memoryCmd
+	.command("update <id> <content>")
+	.description("Replace exact memory content, preserving metadata; use the full ID")
+	.option("--json", "Output as JSON")
+	.action(async (id, content, opts) => {
+		const { memoryUpdate } = await import("./commands/memory.js");
+		await memoryUpdate(id, content, opts);
 	});
 
 memoryCmd
@@ -1573,6 +1626,55 @@ projectCmd
 	});
 
 const agentCmd = program.command("agent").description("Manage agents");
+
+const agentSkillsCmd = agentCmd
+	.command("skills")
+	.description("Manage remote Cloud Agent Skills (not local --agent types)");
+agentSkillsCmd
+	.command("list <agent-id>")
+	.description("List remote desired Skills, capabilities and observed convergence")
+	.option("--json", "Output as JSON")
+	.action(async (id, opts) => {
+		const { agentSkillsList } = await import("./commands/agent-skills.js");
+		await agentSkillsList(id, opts);
+	});
+agentSkillsCmd
+	.command("read <agent-id> <skill-key>")
+	.description("Read remote Skill detail using its exact inventory key")
+	.option("--json", "Output as JSON")
+	.action(async (id, key, opts) => {
+		const { agentSkillsRead } = await import("./commands/agent-skills.js");
+		await agentSkillsRead(id, key, opts);
+	});
+agentSkillsCmd
+	.command("install <agent-id>")
+	.description("Request a public GitHub Skill or Library reference; inspect list for application")
+	.option("--github <repo>", "Public GitHub owner/repo or URL")
+	.option("--path <directory>", "Skill directory within the GitHub repository")
+	.option("--library <skill-id>", "Cloud Library Skill UUID")
+	.option("--request-id <uuid>", "GitHub mutation idempotency key (generated if omitted)")
+	.option(
+		"--resource-version <version>",
+		"Original resource version for exact replay with --request-id",
+	)
+	.option("--json", "Output as JSON")
+	.action(async (id, opts) => {
+		const { agentSkillsInstall } = await import("./commands/agent-skills.js");
+		await agentSkillsInstall(id, opts);
+	});
+agentSkillsCmd
+	.command("rm <agent-id> <skill-key>")
+	.description("Request removal by exact remote inventory key; linked/bundled Skills are read-only")
+	.option("--request-id <uuid>", "GitHub mutation idempotency key (generated if omitted)")
+	.option(
+		"--resource-version <version>",
+		"Original resource version for exact replay with --request-id",
+	)
+	.option("--json", "Output as JSON")
+	.action(async (id, key, opts) => {
+		const { agentSkillsRemove } = await import("./commands/agent-skills.js");
+		await agentSkillsRemove(id, key, opts);
+	});
 
 agentCmd
 	.command("detect")

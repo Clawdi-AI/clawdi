@@ -36,6 +36,9 @@ save routine task completion, code facts, speculation, or plaintext secrets; use
 remember only the exact `clawdi://` reference. List before updating or deleting unless the user
 already supplied the exact memory ID; never infer which stored item to mutate.
 
+CLI fallback for exact updates: `clawdi memory update <full-memory-id> "new content" --json`.
+It preserves metadata; find the exact ID before changing it.
+
 ## Sessions
 
 - Use `session_list` to browse recent sessions or filter by time, Agent, or Project.
@@ -47,6 +50,19 @@ contents. For a request to open a specific unnamed past conversation, use `sessi
 to find the UUID and then read the selected match.
 
 Do NOT call WebFetch on `cloud.clawdi.ai/s/...` URLs — `session_get` is the right tool and avoids the WebFetch permission prompt.
+
+CLI fallback: `clawdi session search "query" --json`, then `clawdi session read <cloud-session-id> --json`.
+`session list` is local; `session export <cloud-session-id>` exports owner Markdown without
+publishing. Publish only with user authorization: `session share <cloud-session-id> --yes`.
+For `--through` or `--response`, use the returned canonical message `position`, never a
+filtered array index. `session shares --json` lists active links; revoke the exact link
+ID with `session unshare <share-id> --yes` (add `--legacy` for `kind=live`).
+
+Remote Skill operations use `clawdi agent skills list/read/install/rm <agent-id>`; local
+`skill --agent <type>` remains separate. Use `install --github owner/repo --path skills/name`
+or `install --library <skill-id>`. Accepted intent is not applied state: check `list` for
+convergence and failures. GitHub exact replay needs both original `--request-id` and
+`--resource-version` from the result/error.
 
 ## Projects
 

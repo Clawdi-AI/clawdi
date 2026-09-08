@@ -14,6 +14,12 @@ database migration, CI, and implementation details.
 
 ### Added
 
+- Share a whole Session, a conversation up to a chosen message, or one response
+  from the CLI. Review and turn off active links, or export without sharing.
+- `clawdi memory update` edits one Memory while preserving its category and source.
+- `clawdi agent skills` inspects, installs, and removes supported Cloud Agent
+  Skills from public GitHub or Library, with installation status and failures.
+
 - Agent Skills can be installed from Library or public GitHub repositories,
   with source details, updates, and removal from the Agent page.
 - Session search now matches visible user and assistant message text in addition to summaries, folders, and IDs. CLI and Web results show the best matching message excerpt; private reasoning, tool payloads, system messages, and hidden events remain excluded.
@@ -50,6 +56,10 @@ database migration, CI, and implementation details.
 - The product tour now shows messaging Channels and explains the separate bot, Agent link, and paired-chat boundaries.
 
 ### Fixed
+
+- Deploy with native saved AI Providers without supplying a model. Existing
+  scripts that pass `--model` still work and receive a warning; choose models
+  inside the Agent.
 
 - CLI 0.14.53 ships only the Python egress addon source in npm and native packages,
   rejecting generated Python caches and bytecode before publication.

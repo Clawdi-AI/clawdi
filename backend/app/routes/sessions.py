@@ -97,7 +97,6 @@ from app.schemas.session import (
     SessionDetailResponse,
     SessionExtractResponse,
     SessionListItemResponse,
-    SessionMessageResponse,
     SessionMessagesPage,
     SessionPermissionCreate,
     SessionPermissionResponse,
@@ -105,6 +104,7 @@ from app.schemas.session import (
     SessionSearchAnchorResponse,
     SessionSearchMatchResponse,
     SessionSearchNavigationResponse,
+    SessionTimelineMessageResponse,
     SessionTimelinePage,
     SessionUploadResponse,
 )
@@ -3244,8 +3244,8 @@ async def get_session_content(
     # message bodies must not be reachable without sessions:read.
     auth: AuthContext = Depends(require_scope("sessions:read")),
     db: AsyncSession = Depends(get_session),
-) -> list[SessionMessageResponse]:
-    """Read session messages from FileStore, typed as SessionMessageResponse[]."""
+) -> list[SessionTimelineMessageResponse]:
+    """Read visible messages with canonical source positions for sharing."""
     bound_env = _bound_env_id(auth)
     stmt = select(Session).where(
         Session.user_id == auth.user_id,
@@ -3261,7 +3261,7 @@ async def get_session_content(
     if not session_has_uploaded_content(session):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
     try:
-        raw = await load_session_messages(session, file_store, db)
+        projection = await load_session_content_projection(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
     except SessionContentUnavailable:
@@ -3274,7 +3274,10 @@ async def get_session_content(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
         ) from None
 
-    return [SessionMessageResponse.model_validate(m) for m in raw]
+    return [
+        SessionTimelineMessageResponse.model_validate({**message, "position": position})
+        for message, position in zip(projection.messages, projection.source_positions, strict=True)
+    ]
 
 
 @router.get("/sessions/{session_id}/messages")

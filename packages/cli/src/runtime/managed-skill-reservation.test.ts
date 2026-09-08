@@ -225,7 +225,10 @@ describe("managed Skill reservations", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "service-state");
 		const existing = join(root, "one", "skills", "clawdi");
 		const absent = join(root, "two", "skills", "clawdi");
-		cpSync(resolve(import.meta.dir, "../../skills/clawdi"), existing, { recursive: true });
+		// Released CLI 0.14.28 content: legacy adoption must not depend on the current bundle.
+		cpSync(resolve(import.meta.dir, "../../tests/fixtures/legacy-local-clawdi"), existing, {
+			recursive: true,
+		});
 
 		expect(
 			migrateLegacyLocalSetupSkill({

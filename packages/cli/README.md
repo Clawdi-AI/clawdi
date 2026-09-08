@@ -5,9 +5,9 @@ local AI agents, syncs sessions and skills, manages memory and vault workflows,
 installs the MCP server, and controls the background sync daemon.
 
 For product usage, start with the
-[Connected Agent quickstart](https://docs.clawdi.ai/getting-started/quickstart). For the full command reference, read the
-[top-level README](../../README.md#cli-reference). For contributor workflows, read
-[`docs/cli-development.md`](../../docs/cli-development.md). For a full local
+[Connected Agent quickstart](https://docs.clawdi.ai/getting-started/quickstart).
+For Cloud context and remote Skill commands, testing, and contributor workflows,
+read [`docs/cli-development.md`](../../docs/cli-development.md). For a full local
 backend + dashboard + CLI stack, use the canonical runbook in
 [`AGENTS.md`](../../AGENTS.md#local-end-to-end).
 

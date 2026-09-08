@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
 	type components,
+	type DeployComponents,
 	type DeployPaths,
 	extractApiDetail,
 	type HostedDeployCheckoutRequest,
@@ -16,6 +17,7 @@ import {
 	type HostedSavedAiProvider,
 	type HostedWalletBinding,
 	type paths,
+	unwrapDeploymentList,
 } from "@clawdi/shared/api";
 import createClient, { type Client, type Middleware } from "openapi-fetch";
 import {
@@ -63,7 +65,7 @@ async function fetchWithTimeout(request: Request): Promise<Response> {
 		throw new HostedDeployApiError(
 			0,
 			timedOut
-				? "Hosted deploy API request timed out. The request may still have been accepted; retry with the same --request-id."
+				? "Hosted API request timed out. A mutation may have been accepted; inspect its status before retrying."
 				: "Could not reach the Hosted deploy API. Check your connection and deployApiUrl.",
 		);
 	} finally {
@@ -163,6 +165,72 @@ export class HostedDeployClient {
 	 */
 	supportsPaidCheckout(): boolean {
 		return this.paidCheckoutSupported;
+	}
+
+	async getAgentDeployment(agentId: string) {
+		const deployments = unwrapDeploymentList(
+			unwrapHosted(await this.client.GET("/v2/deployments", {})),
+		);
+		const matches = deployments.filter(
+			(item) => item.agent_id === agentId && item.resource.spec.desired_lifecycle !== "deleted",
+		);
+		if (matches.length !== 1) {
+			throw new Error(
+				"This Agent does not have one active Hosted deployment supporting remote Skills.",
+			);
+		}
+		const deployment = matches[0];
+		if (!deployment) throw new Error("Hosted deployment is unavailable.");
+		return deployment;
+	}
+
+	async getWorkspaceSkills(deploymentId: string) {
+		return unwrapHosted(
+			await this.client.GET("/v2/deployments/{deployment_id}/workspace-skills", {
+				params: { path: { deployment_id: deploymentId } },
+			}),
+		);
+	}
+
+	async getWorkspaceSkill(deploymentId: string, skillKey: string) {
+		return unwrapHosted(
+			await this.client.GET("/v2/deployments/{deployment_id}/workspace-skills/{skill_key}", {
+				params: { path: { deployment_id: deploymentId, skill_key: skillKey } },
+			}),
+		);
+	}
+
+	async installWorkspaceSkill(
+		deploymentId: string,
+		body: DeployComponents["schemas"]["V2WorkspaceSkillInstallRequest"],
+		resourceVersion: string,
+		requestId: string,
+	) {
+		return unwrapHosted(
+			await this.client.POST("/v2/deployments/{deployment_id}/workspace-skills", {
+				params: {
+					path: { deployment_id: deploymentId },
+					header: { "If-Match": `"${resourceVersion}"`, "Idempotency-Key": requestId },
+				},
+				body,
+			}),
+		);
+	}
+
+	async removeWorkspaceSkill(
+		deploymentId: string,
+		skillKey: string,
+		resourceVersion: string,
+		requestId: string,
+	) {
+		return unwrapHosted(
+			await this.client.DELETE("/v2/deployments/{deployment_id}/workspace-skills/{skill_key}", {
+				params: {
+					path: { deployment_id: deploymentId, skill_key: skillKey },
+					header: { "If-Match": `"${resourceVersion}"`, "Idempotency-Key": requestId },
+				},
+			}),
+		);
 	}
 
 	async getPlans(): Promise<HostedDeployPlan[]> {

@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class MemoryCreate(BaseModel):
@@ -39,3 +39,12 @@ class MemoryDeleteResponse(BaseModel):
 class EmbedBackfillResponse(BaseModel):
     processed: int
     failed: int
+
+
+class MemoryUpdate(BaseModel):
+    content: str = Field(min_length=1, max_length=100_000, pattern=r"\S")
+
+
+class MemoryUpdatedResponse(BaseModel):
+    status: Literal["updated"]
+    memory_id: str

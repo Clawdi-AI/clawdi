@@ -666,18 +666,29 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
     projected = await client.get(f"/v1/sessions/{session.id}/content")
     assert projected.status_code == 200, projected.text
     assert projected.json() == [
-        {"role": "user", "content": "inspect this", "model": None, "timestamp": None},
+        {
+            "role": "user",
+            "content": "inspect this",
+            "model": None,
+            "timestamp": None,
+            "kind": "message",
+            "position": 1,
+        },
         {
             "role": "assistant",
             "content": "visible answer",
             "model": "claude-sonnet",
             "timestamp": None,
+            "kind": "message",
+            "position": 4,
         },
         {
             "role": "assistant",
             "content": "appended left\x00right answer",
             "model": None,
             "timestamp": None,
+            "kind": "message",
+            "position": 6,
         },
     ]
     assert "private context" not in projected.text

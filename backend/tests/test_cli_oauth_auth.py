@@ -840,3 +840,174 @@ async def test_oauth_revoke_hides_upstream_failure_details(
     assert response.status_code == 503
     assert response.json() == {"detail": "OAuth CLI revocation is temporarily unavailable"}
     assert refresh_token not in response.text
+
+
+@pytest.mark.asyncio
+async def test_session_share_cli_auth_ownership_and_exact_legacy_revocation(
+    raw_auth_client, db_session, seed_user, clerk_oauth_signing_key
+):
+    from app.models.session import Session
+    from tests.test_session_shares import _seed_session
+
+    browser = _session_token(
+        clerk_oauth_signing_key, seed_user.clerk_id, {"iss": _ISSUER, "aud": _AUDIENCE}
+    )
+    token = _oauth_access_token(clerk_oauth_signing_key, seed_user.clerk_id)
+    raw_auth_client.headers["Authorization"] = f"Bearer {token}"
+    session_id, _, _ = await _seed_session(raw_auth_client)
+    created = await raw_auth_client.post(
+        f"/v1/sessions/{session_id}/shares", json={"scope": "response", "position": 1}
+    )
+    assert created.status_code == 201, created.text
+    share_id = created.json()["id"]
+    session = await db_session.get(Session, uuid.UUID(session_id))
+    assert session is not None
+    for scopes, bound in ((["sessions:read"], False), (None, True), (None, False)):
+        key = f"clawdi_{uuid.uuid4().hex}"
+        db_session.add(
+            ApiKey(
+                user_id=seed_user.id,
+                key_hash=hashlib.sha256(key.encode()).hexdigest(),
+                key_prefix=key[:16],
+                label="Share boundary",
+                scopes=scopes,
+                environment_id=session.environment_id if bound else None,
+            )
+        )
+        await db_session.commit()
+        headers = {"Authorization": f"Bearer {key}"}
+        expected = 403 if scopes or bound else 200
+        listing = await raw_auth_client.get("/v1/session-shares", headers=headers)
+        assert listing.status_code == expected, listing.text
+        if expected == 403:
+            for method, path, kwargs in (
+                ("POST", f"/v1/sessions/{session_id}/shares", {"json": {}}),
+                ("DELETE", f"/v1/session-shares/{share_id}", {}),
+                ("DELETE", f"/v1/session-shares/{share_id}?kind=live", {}),
+            ):
+                denied = await raw_auth_client.request(method, path, headers=headers, **kwargs)
+                assert denied.status_code == 403, denied.text
+    foreign = User(clerk_id=f"foreign_{uuid.uuid4().hex}", email="foreign-share@test.invalid")
+    db_session.add(foreign)
+    await db_session.commit()
+    foreign_headers = {
+        "Authorization": f"Bearer {_oauth_access_token(clerk_oauth_signing_key, foreign.clerk_id)}"
+    }
+    assert (await raw_auth_client.get("/v1/session-shares", headers=foreign_headers)).json()[
+        "items"
+    ] == []
+    assert (
+        await raw_auth_client.delete(f"/v1/session-shares/{share_id}", headers=foreign_headers)
+    ).status_code == 404
+    assert (
+        await raw_auth_client.post(
+            f"/v1/sessions/{session_id}/shares", json={}, headers=foreign_headers
+        )
+    ).status_code == 404
+
+    live = await raw_auth_client.post(
+        f"/v1/sessions/{session_id}/permissions",
+        json={"kind": "link"},
+        headers={"Authorization": f"Bearer {browser}"},
+    )
+    assert live.status_code == 200, live.text
+    live_id = live.json()["id"]
+    assert (await raw_auth_client.delete(f"/v1/session-shares/{live_id}")).status_code == 404
+    assert (
+        await raw_auth_client.delete(
+            f"/v1/session-shares/{live_id}?kind=live", headers=foreign_headers
+        )
+    ).status_code == 404
+    assert (
+        await raw_auth_client.delete(f"/v1/session-shares/{live_id}?kind=live")
+    ).status_code == 204
+    new_live = await raw_auth_client.post(
+        f"/v1/sessions/{session_id}/permissions",
+        json={"kind": "link"},
+        headers={"Authorization": f"Bearer {browser}"},
+    )
+    assert new_live.status_code == 200
+    assert new_live.json()["id"] != live_id
+    assert (
+        await raw_auth_client.delete(f"/v1/session-shares/{live_id}?kind=live")
+    ).status_code == 204
+    remaining = (
+        await raw_auth_client.get("/v1/session-shares", params={"session_id": session_id})
+    ).json()
+    assert {item["id"] for item in remaining["items"]} == {share_id, new_live.json()["id"]}
+
+
+@pytest.mark.asyncio
+async def test_memory_update_cli_preserves_metadata_and_enforces_scope_owner_and_secrets(
+    raw_auth_client, db_session, seed_user, clerk_oauth_signing_key
+):
+    from app.models.memory import Memory
+
+    memory = Memory(
+        user_id=seed_user.id,
+        content="Old preference",
+        category="preference",
+        source="manual",
+        tags=["editor"],
+        access_count=7,
+    )
+    db_session.add(memory)
+    await db_session.commit()
+    await db_session.refresh(memory)
+    original_created_at = memory.created_at
+    path = f"/v1/memories/{memory.id}"
+    raw_auth_client.headers["Authorization"] = (
+        f"Bearer {_oauth_access_token(clerk_oauth_signing_key, seed_user.clerk_id)}"
+    )
+    result = await raw_auth_client.patch(path, json={"content": "Use tabs"})
+    assert result.status_code == 200, result.text
+    assert result.json() == {"status": "updated", "memory_id": str(memory.id)}
+    await db_session.refresh(memory)
+    assert (
+        memory.content,
+        memory.category,
+        memory.source,
+        memory.tags,
+        memory.access_count,
+        memory.created_at,
+    ) == (
+        "Use tabs",
+        "preference",
+        "manual",
+        ["editor"],
+        7,
+        original_created_at,
+    )
+    for scopes, expected in ((["memories:read"], 403), (["memories:write"], 200)):
+        key = f"clawdi_{uuid.uuid4().hex}"
+        db_session.add(
+            ApiKey(
+                user_id=seed_user.id,
+                key_hash=hashlib.sha256(key.encode()).hexdigest(),
+                key_prefix=key[:16],
+                label="Memory scope",
+                scopes=scopes,
+            )
+        )
+        await db_session.commit()
+        result = await raw_auth_client.patch(
+            path, json={"content": "Keep tabs"}, headers={"Authorization": f"Bearer {key}"}
+        )
+        assert result.status_code == expected, result.text
+    foreign = User(clerk_id=f"foreign_{uuid.uuid4().hex}", email="foreign-memory@test.invalid")
+    db_session.add(foreign)
+    await db_session.commit()
+    foreign_token = _oauth_access_token(clerk_oauth_signing_key, foreign.clerk_id)
+    denied = await raw_auth_client.patch(
+        path,
+        json={"content": "Overwrite"},
+        headers={"Authorization": f"Bearer {foreign_token}"},
+    )
+    assert denied.status_code == 404
+    secret = "ghp_" + "a" * 36
+    rejected = await raw_auth_client.patch(path, json={"content": secret})
+    assert rejected.status_code == 400
+    assert secret not in rejected.text
+    assert (await raw_auth_client.patch(path, json={"content": "   "})).status_code == 422
+    await db_session.refresh(memory)
+    assert memory.content == "Keep tabs"
