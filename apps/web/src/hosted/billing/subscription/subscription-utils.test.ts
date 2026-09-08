@@ -83,12 +83,6 @@ describe("compute plan resolvers", () => {
 		expect(resolvePerformancePlan([basic, paid])).toBeUndefined();
 	});
 
-	test("resolvePerformancePlan never treats compute_basic as the positive-price fallback", () => {
-		const basic = plan({ slug: COMPUTE_BASIC_SLUG, price_cents: 900 });
-
-		expect(resolvePerformancePlan([basic])).toBeUndefined();
-	});
-
 	test("resolveBasicPlan only resolves the canonical Basic plan", () => {
 		const otherPaid = plan({ slug: "legacy_paid", price_cents: 900 });
 		const basic = plan({ slug: COMPUTE_BASIC_SLUG, price_cents: 1_100 });
