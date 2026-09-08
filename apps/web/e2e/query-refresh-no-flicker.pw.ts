@@ -103,7 +103,7 @@ for (const viewport of [
 		// only resolve on a client retry, so the first paint allowance matches
 		// the suite-wide 15s convention instead of the 5s default.
 		await expect(link).toBeVisible({ timeout: 15_000 });
-		await expect(page.getByText("1 agent", { exact: true })).toBeVisible();
+		await expect(page.getByText("1 agent", { exact: true })).toHaveCount(0);
 		const card = link.locator("..");
 		const before = await card.boundingBox();
 		if (!before) throw new Error("Expected the Agent card to have layout bounds");
@@ -112,7 +112,7 @@ for (const viewport of [
 		await refresh.refreshStarted.promise;
 		try {
 			await expect(link).toBeVisible();
-			await expect(page.getByText("1 agent", { exact: true })).toBeVisible();
+			await expect(page.getByText("1 agent", { exact: true })).toHaveCount(0);
 			expect(await card.evaluate((element) => getComputedStyle(element).opacity)).toBe("1");
 			expect(await card.locator(".animate-pulse").count()).toBe(0);
 			const during = await card.boundingBox();
