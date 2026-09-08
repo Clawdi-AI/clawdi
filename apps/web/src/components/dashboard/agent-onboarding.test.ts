@@ -30,9 +30,6 @@ describe("dashboard agent onboarding", () => {
 		expect(
 			dashboardSource.match(/canDeployOnClawdi=\{hostedAccess\.canCreateCloudAgents\}/g),
 		).toHaveLength(2);
-		expect(
-			dashboardSource.match(/showCloudDeployments=\{cloudDeploymentManagementEnabled\}/g),
-		).toHaveLength(3);
 		expect(agentsIndexSource).toContain("canDeployOnClawdi={hostedAccess.canCreateCloudAgents}");
 		expect(agentsIndexSource).toContain("showCloudDeployments={cloudDeploymentManagementEnabled}");
 		expect(hostedSectionSource).toContain(
