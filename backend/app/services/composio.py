@@ -732,7 +732,10 @@ async def _create_tool_router_mcp_session(
     sdk = get_composio_sdk()
     try:
         session = await asyncio.to_thread(
-            sdk.sessions.create, user_id=user_id, mcp=True, multi_account={"enable": True}
+            sdk.sessions.create,
+            user_id=user_id,
+            mcp=True,
+            multi_account={"enable": True, "require_explicit_selection": False},
         )
     except composio_exceptions.ComposioError as exc:
         raise ComposioProviderError(_high_level_sdk_failure(exc)) from exc

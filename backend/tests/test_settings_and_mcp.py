@@ -1170,7 +1170,7 @@ async def test_create_tool_router_mcp_session_uses_canonical_sdk_off_event_loop(
     assert calls[0]["kwargs"] == {
         "user_id": "clerk_user_123",
         "mcp": True,
-        "multi_account": {"enable": True},
+        "multi_account": {"enable": True, "require_explicit_selection": False},
     }
     assert calls[0]["thread"] != event_loop_thread
     assert session.url == "https://app.composio.dev/tool_router/v3/trs_test/mcp"
