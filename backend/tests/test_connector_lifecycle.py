@@ -15,6 +15,15 @@ from app.services import composio
 
 
 def account(status="EXPIRED", scheme="OAUTH2", disabled=False):
+    # Model failed account lifecycles with a valid stored credential state;
+    # the SDK has no EXPIRED/FAILED credential-state variant.
+    credential_state = scheme in {"API_KEY", "BEARER_TOKEN"} and status in {"EXPIRED", "FAILED"}
+    state_value = {"status": "ACTIVE" if credential_state else status}
+    if state_value["status"] in {"ACTIVE", "INACTIVE"}:
+        if scheme == "OAUTH2":
+            state_value["access_token"] = "private-access-token"
+        elif scheme == "BEARER_TOKEN":
+            state_value["token"] = "private-bearer-token"
     return {
         "id": "ca_owned",
         "alias": "Work",
@@ -23,7 +32,7 @@ def account(status="EXPIRED", scheme="OAUTH2", disabled=False):
         "is_disabled": disabled,
         "toolkit": {"slug": "example"},
         "auth_config": {"id": "ac_original"},
-        "state": {"authScheme": scheme, "val": {"status": status}},
+        "state": {"authScheme": scheme, "val": state_value},
         "data": {"email": "work@example.test", "api_key": "private-old-key"},
     }
 
@@ -80,7 +89,7 @@ async def test_reconnect_targets_original_account(monkeypatch, status, url):
         (False, "OAUTH2", 200, None, 404),
         (True, "API_KEY", 200, None, 400),
         (True, "BEARER_TOKEN", 200, None, 400),
-        (True, "CIMD_OAUTH", 200, None, 400),
+        (True, "SAML", 200, None, 400),
         (True, "OAUTH2", 500, None, 502),
         (True, "OAUTH2", 200, None, 502),
     ],
