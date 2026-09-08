@@ -1,7 +1,6 @@
 "use client";
 
 import { useMutation } from "@tanstack/react-query";
-import { Check, Link2, Unlink } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { useRef } from "react";
 import { toast } from "sonner";
@@ -98,7 +97,7 @@ export function ProjectVaultCatalog({
 				vault.is_owner === false ||
 				(!attached && (catalog.data === undefined || catalog.error))
 			)
-				throw new Error("Refresh Vault attachments and try again.");
+				throw new Error("Refresh Vault links and try again.");
 			return attached
 				? unwrap(
 						await api.DELETE("/v1/vault/{slug}", {
@@ -117,10 +116,10 @@ export function ProjectVaultCatalog({
 		},
 		onSuccess: async (_, { attached }) => {
 			await onChanged();
-			toast.success(`Vault ${attached ? "detached from" : "attached to"} ${context}`);
+			toast.success(`Vault ${attached ? "unlinked from" : "linked to"} ${context}`);
 		},
 		onError: (error) =>
-			toast.error("Couldn't update Vault attachment", { description: normalizeApiError(error) }),
+			toast.error("Couldn't update Vault link", { description: normalizeApiError(error) }),
 		onSettled: () => {
 			locked.current = false;
 		},
@@ -140,15 +139,14 @@ export function ProjectVaultCatalog({
 			/>
 			{canAttach ? (
 				<p className="text-sm text-muted-foreground">
-					Attach a Vault to grant this {context} access. Detaching preserves its keys and other
-					attachments.
+					Link a Vault to grant this {context} access. Unlinking preserves its keys and other links.
 				</p>
 			) : null}
 			{error ? (
 				<ApiErrorPanel
 					error={error}
 					onRetry={onRetry}
-					title={`Couldn't load ${context} Vault attachments`}
+					title={`Couldn't load ${context} Vault links`}
 				/>
 			) : null}
 			{canAttach && catalog.error ? (
@@ -208,7 +206,7 @@ export function ProjectVaultCatalog({
 											? attached
 												? canAttach && vault.is_owner !== false
 													? undefined
-													: `Attached to ${context}`
+													: `Linked to ${context}`
 												: inherited
 													? inherited.binding_type === "primary"
 														? "Via Workspace"
@@ -217,52 +215,37 @@ export function ProjectVaultCatalog({
 														? "Agent access unavailable"
 														: undefined
 											: isLoading
-												? "Loading attachments…"
-												: "Attachment status unavailable"
+												? "Loading links…"
+												: "Link status unavailable"
 									}
 									actions={
 										canAttach && vault.is_owner !== false ? (
-											<>
-												<Button
-													size="sm"
-													variant={attached ? "ghost" : "default"}
-													className={
-														attached
-															? "text-success-muted-foreground disabled:opacity-100"
-															: undefined
-													}
-													disabled={attached || actionsDisabled}
-													aria-busy={pending}
-													aria-label={`${attached ? "Attached" : "Attach"} ${vault.name} to ${context}`}
-													onClick={toggleAttachment}
-												>
-													{pending || isLoading ? <Spinner /> : attached ? <Check /> : <Link2 />}
-													{pending
+											<Button
+												size="sm"
+												variant={attached ? "ghost" : "default"}
+												disabled={actionsDisabled}
+												aria-busy={pending}
+												aria-label={
+													attachmentsKnown
+														? `${attached ? "Unlink" : "Link"} ${vault.name} ${attached ? "from" : "to"} ${context}`
+														: `Link status unavailable for ${vault.name}`
+												}
+												onClick={toggleAttachment}
+											>
+												{pending || isLoading ? <Spinner /> : null}
+												{pending
+													? attached
+														? "Unlinking…"
+														: "Linking…"
+													: attachmentsKnown
 														? attached
-															? "Detaching…"
-															: "Attaching…"
-														: attachmentsKnown
-															? attached
-																? "Attached"
-																: "Attach"
-															: isLoading
-																? "Loading…"
-																: "Unavailable"}
-												</Button>
-												{attached ? (
-													<Button
-														variant="ghost"
-														size="icon-sm"
-														disabled={actionsDisabled}
-														aria-label={`Detach ${vault.name} from ${context}`}
-														title={`Detach ${vault.name} from ${context}`}
-														onClick={toggleAttachment}
-													>
-														<Unlink />
-													</Button>
-												) : null}
-											</>
-										) : undefined
+															? "Unlink"
+															: "Link"
+														: isLoading
+															? "Loading…"
+															: "Unavailable"}
+											</Button>
+										) : null
 									}
 								/>
 							</div>

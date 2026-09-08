@@ -1420,7 +1420,7 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(projectCards.nth(0)).toContainText(longContextProjectName);
 	await expect(teamCard).toContainText("Viewer");
 	await expect(teamCard).toContainText("by Teammate");
-	await expect(teamCard.getByRole("button", { name: "Unlink Team Knowledge" })).toBeVisible();
+	await expect(teamCard.getByRole("button")).toHaveText(["Unlink"]);
 	await expect(
 		releaseCard.getByRole("button", { name: "Link Release Project", exact: true }),
 	).toBeVisible();
@@ -1479,13 +1479,13 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 		teamCard.getByRole("button", { name: "Link Team Knowledge", exact: true }),
 	).toBeEnabled();
 	await releaseCard.getByRole("button", { name: "Link Release Project", exact: true }).click();
-	await expect(releaseCard.getByText("Linked", { exact: true })).toBeVisible();
+	await expect(releaseCard.getByRole("button", { name: "Unlink Release Project" })).toBeVisible();
 	await expect(releaseCard.getByRole("link", { name: "Open Release Project" })).toHaveAttribute(
 		"href",
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-batch-second",
 	);
 	await teamCard.getByRole("button", { name: "Link Team Knowledge", exact: true }).click();
-	await expect(teamCard.getByText("Linked", { exact: true })).toBeVisible();
+	await expect(teamCard.getByRole("button")).toHaveText(["Unlink"]);
 	await expect
 		.poll(() => projectLinkDeltaBodies)
 		.toEqual([
@@ -1569,9 +1569,9 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(main.getByRole("heading", { name: "Agents", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Install skill", exact: true })).toBeVisible();
 	await expect(
-		main.getByRole("button", { name: /^Attach .* to (Workspace|Project)$/ }).first(),
+		main.getByRole("button", { name: /^Link .* to (Workspace|Project)$/ }).first(),
 	).toBeVisible();
-	await expect(main.getByRole("button", { name: "Add keys to Scoped Vault" })).toBeVisible();
+	await expect(main.getByRole("button", { name: /Add keys to / })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "View all Skills", exact: true })).toHaveAttribute(
 		"href",
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-smoke/skills",
@@ -1622,7 +1622,7 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(main.getByRole("button", { name: "View all Skills" })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Install skill", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Add skill", exact: true })).toHaveCount(0);
-	await expect(main.getByRole("button", { name: /Attach Vault/i })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: /Link Vault/i })).toHaveCount(0);
 	await main.screenshot({ path: testInfo.outputPath("connected-workspace-skills-mobile.png") });
 	await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
 	const mobileProjectSidebar = page.getByRole("dialog");
@@ -1676,7 +1676,7 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(main.getByRole("button", { name: "View all Vaults" })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /Install skill/i })).toHaveCount(0);
 	await expect(
-		main.getByRole("button", { name: /^Attach .* to (Workspace|Project)$/ }).first(),
+		main.getByRole("button", { name: /^Link .* to (Workspace|Project)$/ }).first(),
 	).toBeVisible();
 	const desktopWorkspace = page
 		.getByTestId("app-sidebar")
@@ -1701,11 +1701,11 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 		vault.project_ids = ["project-context-first"];
 		await fulfillJson(route, { status: "deleted" });
 	});
-	await sharedVaultCard.getByRole("button", { name: "Detach Shared Vault from Workspace" }).click();
+	await sharedVaultCard.getByRole("button", { name: "Unlink Shared Vault from Workspace" }).click();
 	await expect(sharedVaultCard).toContainText("Via linked Project");
 	await expect(sharedVaultCard).toContainText("used by Team Knowledge");
 	await expect(
-		sharedVaultCard.getByRole("button", { name: "Attach Shared Vault to Workspace" }),
+		sharedVaultCard.getByRole("button", { name: "Link Shared Vault to Workspace" }),
 	).toBeEnabled();
 	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 	await main.screenshot({ path: testInfo.outputPath("connected-workspace-vaults-desktop.png") });
@@ -1724,7 +1724,7 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(main.getByText("Shared Vault", { exact: true })).toBeVisible();
 	await expect(main.getByText("Scoped Vault", { exact: true })).toHaveCount(0);
 	await expect(
-		main.getByRole("button", { name: /^(Attach|Detach) .* (to|from) Project$/ }),
+		main.getByRole("button", { name: /^(Link|Unlink) .* (to|from) Project$/ }),
 	).toHaveCount(0);
 	await expect(main.getByRole("link", { name: "Open Team-only Skill" })).toHaveAttribute(
 		"href",
@@ -1773,7 +1773,7 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-later/vaults",
 	);
 	await expect(
-		main.getByRole("button", { name: /^Attach .* to (Workspace|Project)$/ }).first(),
+		main.getByRole("button", { name: /^Link .* to (Workspace|Project)$/ }).first(),
 	).toBeVisible();
 	const requestsBeforeInvalidScope = skillRequests.length;
 	await page.goto(
@@ -1878,7 +1878,7 @@ test("agent scoped Skills and Vaults preserve context for mutations", async ({ p
 				},
 			},
 		]);
-	await expect(main.getByRole("button", { name: /Attach Vault/i })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: /Link Vault/i })).toHaveCount(0);
 
 	await page.goto("/agents/11111111-1111-4111-8111-111111111111/vaults");
 	await expect(page).toHaveURL(
@@ -2255,7 +2255,6 @@ test("cached Project links retain their state and destination after a failed ref
 	await page.clock.setFixedTime(new Date(Date.now() + 60_000));
 	await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
 	await expect(page.getByText("Couldn't load Project links", { exact: true })).toBeVisible();
-	await expect(card.getByText("Linked", { exact: true })).toBeVisible();
 	await expect(unlink).toBeDisabled();
 	await expect(link).toHaveAttribute("href", href ?? "");
 	await page.unroute(bindingRoute);
@@ -2275,7 +2274,7 @@ test("Vault catalog failures preserve scoped attachments and catalog return navi
 	await page.goto(origin);
 	const catalog = page.getByTestId("project-vault-catalog");
 	const scoped = catalog.getByTestId("project-vault-card").filter({ hasText: "Scoped Vault" });
-	const detach = scoped.getByRole("button", { name: "Detach Scoped Vault from Workspace" });
+	const detach = scoped.getByRole("button", { name: "Unlink Scoped Vault from Workspace" });
 	const link = scoped.getByRole("link", { name: "Open vault Scoped Vault" });
 	await expect(detach).toBeEnabled();
 	const href = await link.getAttribute("href");
@@ -2291,23 +2290,21 @@ test("Vault catalog failures preserve scoped attachments and catalog return navi
 	await expect(catalog.getByText("Couldn't load Vault catalog", { exact: true })).toBeVisible();
 	await expect(detach).toBeEnabled();
 	await expect(
-		catalog.getByRole("button", { name: "Attach Unrelated Vault to Workspace" }),
+		catalog.getByRole("button", { name: "Link Unrelated Vault to Workspace" }),
 	).toBeDisabled();
 	failAttachments = true;
 	await page.clock.setFixedTime(new Date(Date.now() + 120_000));
 	await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
 	await expect(
-		catalog.getByText("Couldn't load Workspace Vault attachments", { exact: true }),
+		catalog.getByText("Couldn't load Workspace Vault links", { exact: true }),
 	).toBeVisible();
-	await expect(
-		scoped.getByRole("button", { name: "Attached Scoped Vault to Workspace" }),
-	).toBeVisible();
+	await expect(detach).toHaveText("Unlink");
 	await expect(link).toHaveAttribute("href", href ?? "");
 	await expect(detach).toBeDisabled();
 	await page.unroute(vaultRoute);
 	await catalog
 		.getByRole("alert")
-		.filter({ hasText: "Couldn't load Workspace Vault attachments" })
+		.filter({ hasText: "Couldn't load Workspace Vault links" })
 		.getByRole("button", { name: "Retry" })
 		.click();
 	await catalog

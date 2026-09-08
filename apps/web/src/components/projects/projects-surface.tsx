@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { Check, Link2, Plus, Unlink } from "lucide-react";
+import { Plus } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, useRef } from "react";
 import { toast } from "sonner";
@@ -151,7 +151,7 @@ export function ProjectsSurface({
 				titleAdornment={headerAdornment}
 				description={
 					agentId
-						? "Your Projects and Projects shared with you. Link a Project to use its Skills and attached Vaults together."
+						? "Your Projects and Projects shared with you. Link a Project to use its Skills and linked Vaults together."
 						: getProjectResourceDefinition("projects").managementDescription
 				}
 				actions={
@@ -161,7 +161,7 @@ export function ProjectsSurface({
 							await refresh();
 							toast.success(agentId ? "Project created and linked" : "Project created", {
 								description: agentId
-									? "This Agent can use its Skills and attached Vaults immediately."
+									? "This Agent can use its Skills and linked Vaults immediately."
 									: "It is ready for Skills, Vaults, and Agent links.",
 								action: {
 									label: "Open project",
@@ -262,50 +262,27 @@ export function ProjectsSurface({
 												<Button
 													size="sm"
 													variant={linked ? "ghost" : "default"}
-													className={
-														linked
-															? "text-success-muted-foreground disabled:opacity-100"
-															: undefined
-													}
-													disabled={linked || actionsDisabled}
+													disabled={actionsDisabled}
 													aria-busy={pending}
 													aria-label={
 														linksKnown
-															? `${linked ? "Linked" : "Link"} ${project.name}`
+															? `${linked ? "Unlink" : "Link"} ${project.name}`
 															: `Link status unavailable for ${project.name}`
 													}
 													onClick={toggleLink}
 												>
-													{pending || bindings.isLoading ? (
-														<Spinner />
-													) : linked ? (
-														<Check />
-													) : (
-														<Link2 />
-													)}
+													{pending || bindings.isLoading ? <Spinner /> : null}
 													{pending
 														? linked
 															? "Unlinking…"
 															: "Linking…"
 														: linksKnown
 															? linked
-																? "Linked"
+																? "Unlink"
 																: "Link"
 															: bindings.isLoading
 																? "Loading…"
 																: "Unavailable"}
-												</Button>
-											) : null}
-											{agentId && linked ? (
-												<Button
-													variant="ghost"
-													size="icon-sm"
-													disabled={actionsDisabled}
-													aria-label={`Unlink ${project.name}`}
-													title={`Unlink ${project.name}`}
-													onClick={toggleLink}
-												>
-													<Unlink />
 												</Button>
 											) : null}
 											{canManageCustomProject(project) ? (

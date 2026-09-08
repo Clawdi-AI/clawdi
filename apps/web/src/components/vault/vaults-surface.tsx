@@ -393,7 +393,7 @@ export function VaultCard({
 				) : projectNamesUnavailable && (vault.project_ids?.length ?? 0) > 0 ? (
 					"Project details unavailable"
 				) : (vault.project_ids?.length ?? 0) > 0 ? (
-					"Attached to Projects"
+					"Linked to Projects"
 				) : (
 					"not in any Project yet"
 				),
@@ -401,26 +401,14 @@ export function VaultCard({
 			footerWrap
 			actionsVisibility="always"
 			actions={
-				canManageVault || actions ? (
-					<>
-						{actions}
-						{canManageVault ? (
-							<AddKeysDialog
-								vaultSlug={vault.slug}
-								vaultId={vault.id}
-								vaultProjectId={itemProjectId}
-							>
-								<Button
-									variant="ghost"
-									size="icon-sm"
-									aria-label={`Add keys to ${vault.name}`}
-									title={`Add keys to ${vault.name}`}
-								>
-									<Plus className="size-3.5" />
-								</Button>
-							</AddKeysDialog>
-						) : null}
-					</>
+				actions !== undefined ? (
+					actions
+				) : canManageVault ? (
+					<AddKeysDialog vaultSlug={vault.slug} vaultId={vault.id} vaultProjectId={itemProjectId}>
+						<Button variant="ghost" size="sm" aria-label={`Add keys to ${vault.name}`}>
+							Add keys
+						</Button>
+					</AddKeysDialog>
 				) : undefined
 			}
 			link={vaultDetailLink(navigationScope, vault.slug, vault.id, returnHref)}
@@ -469,7 +457,7 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			setOpen(false);
 			toast.success("Vault created", {
-				description: "Use Add keys on its card, then attach it to a Project.",
+				description: "Use Add keys on its card, then link it to a Project.",
 				action: {
 					label: "Open vault",
 					onClick: () =>
@@ -498,7 +486,7 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 				<DialogHeader>
 					<DialogTitle>Create vault</DialogTitle>
 					<DialogDescription>
-						A bundle of API keys your Agents can use. Attach it to Projects to control access.
+						A bundle of API keys your Agents can use. Link it to Projects to control access.
 					</DialogDescription>
 				</DialogHeader>
 				{vaultsQuery.error ? (

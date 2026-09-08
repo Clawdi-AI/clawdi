@@ -218,23 +218,21 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 		.getByTestId("project-vault-card")
 		.filter({ hasText: "Release archive" });
 	await expect(
-		catalog.getByRole("button", { name: "Detach Already attached from Project" }),
+		catalog.getByRole("button", { name: "Unlink Already attached from Project" }),
 	).toBeVisible();
 	await catalog.getByLabel("Search Vaults").fill("release");
 	await expect(catalog.getByTestId("project-vault-card")).toHaveCount(1);
-	await releaseVault.getByRole("button", { name: "Attach Release archive to Project" }).click();
-	await expect(
-		releaseVault.getByRole("button", { name: "Attached Release archive to Project" }),
-	).toBeVisible();
+	await releaseVault.getByRole("button", { name: "Link Release archive to Project" }).click();
+	await expect(releaseVault.getByRole("button")).toHaveText(["Unlink"]);
 	await expect.poll(() => vaultCreateRequests).toHaveLength(1);
 	expect(vaultCreateRequests[0]?.body).toEqual({
 		slug: "release-archive",
 		name: "Release archive",
 	});
 	expect(vaultCreateRequests[0]?.url.searchParams.get("project_id")).toBe(projectId);
-	await releaseVault.getByRole("button", { name: "Detach Release archive from Project" }).click();
+	await releaseVault.getByRole("button", { name: "Unlink Release archive from Project" }).click();
 	await expect(
-		releaseVault.getByRole("button", { name: "Attach Release archive to Project" }),
+		releaseVault.getByRole("button", { name: "Link Release archive to Project" }),
 	).toBeEnabled();
 	expect(vaultDetachRequests[0]?.searchParams.get("vault_id")).toBe(
 		"88888888-8888-4888-8888-888888888888",

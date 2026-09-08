@@ -310,8 +310,8 @@ export function CopyKeysDialog({
 					{mode === "copy" ? (
 						<p className="text-xs text-muted-foreground">
 							Just want these keys available in another Project? Use{" "}
-							<span className="font-medium text-foreground">Attach vault</span> on this vault
-							instead — one source of truth, changes apply everywhere.
+							<span className="font-medium text-foreground">Link vault</span> on this vault instead
+							— one source of truth, changes apply everywhere.
 						</p>
 					) : null}
 					<Button
