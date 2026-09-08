@@ -21,6 +21,7 @@ import { recordValue, stringValue } from "./manifest-shared";
 import {
 	applyOpenClawNativeProviders,
 	buildNativeOpenClawProviderPatch,
+	discoverNativeOpenClawProviderIds,
 	ensureNativeOpenClawProviderPlugins,
 } from "./openclaw-native-provider";
 import {
@@ -147,13 +148,24 @@ export function applyHostedAiProviderProjection(
 			workspaceRoot,
 			providerRevision,
 		);
+	const ownedNativeProviderIds = [
+		...new Set([
+			...previousNativeProviderIds,
+			...discoverNativeOpenClawProviderIds(
+				observation.commandPath,
+				openClawContext,
+				workspaceRoot,
+				environment,
+			),
+		]),
+	];
 	const nativePatch = buildNativeOpenClawProviderPatch(
 		native,
-		previousNativeProviderIds.filter(
+		ownedNativeProviderIds.filter(
 			(id) => !patch.providerIds.includes(id) && !previousProviderIds.includes(id),
 		),
 	);
-	if (native.length > 0 || previousNativeProviderIds.length > 0) {
+	if (native.length > 0 || ownedNativeProviderIds.length > 0) {
 		nativeChanged =
 			applyOpenClawNativeProviders({
 				patch: nativePatch,

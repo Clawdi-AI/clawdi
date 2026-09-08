@@ -44,6 +44,54 @@ test("native BYOK saves credentials without a model catalog or inference probe",
 	expect(errors, `providers flow: ${errors.join(" | ")}`).toEqual([]);
 });
 
+test("editing a catalog connection preserves its models and configuration mode", async ({
+	page,
+}) => {
+	const models = [{ id: "existing-model", capabilities: { tools: true } }];
+	await page.route("**/v1/ai-providers", (route) =>
+		route.fulfill({
+			json: {
+				providers: [
+					{
+						id: "legacy-row",
+						provider_id: "legacy-openai",
+						label: "Existing OpenAI",
+						type: "openai",
+						configuration_mode: "catalog",
+						base_url: "https://api.openai.com/v1",
+						api_mode: "openai_responses",
+						runtime_env_name: "OPENAI_API_KEY",
+						managed_by: "user",
+						scope: "account",
+						models,
+						auth: { type: "api_key", source: "managed" },
+						usable: true,
+						readiness: {
+							deployable: true,
+							credential_material: "available",
+							runtime_compatibility: { openclaw: true, hermes: true, codex: true },
+						},
+					},
+				],
+			},
+		}),
+	);
+	await page.goto("/ai-providers");
+	await page.getByRole("button", { name: "Edit Existing OpenAI", exact: true }).click();
+	const dialog = page.getByRole("dialog", { name: "Edit Existing OpenAI" });
+	await expect(dialog.getByRole("button", { name: "Manage models in the agent" })).toHaveCount(0);
+	await dialog.getByLabel("API key", { exact: true }).fill("replacement-fixture-key");
+	const request = page.waitForRequest(
+		(item) => item.url().endsWith("/ai-providers/accept") && item.method() === "POST",
+	);
+	await dialog.getByRole("button", { name: "Save settings", exact: true }).click();
+	expect((await request).postDataJSON()).toMatchObject({
+		replace: true,
+		provider: { configuration_mode: "catalog", native_provider: null, models },
+	});
+	await expect(dialog).toBeHidden();
+});
+
 test("channels connect dialog opens without browser errors", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	await page.goto("/channels");

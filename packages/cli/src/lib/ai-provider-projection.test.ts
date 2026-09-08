@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+	type AiProviderAuth,
 	type AiProviderCatalog,
 	CLAWDI_MANAGED_PROVIDER_ID,
 	CODEX_OAUTH_MODEL_CATALOG,
@@ -292,8 +293,43 @@ describe("AI provider projection", () => {
 		}
 	});
 
+	test("requires an explicit chat primary even when catalog defaults and models exist", () => {
+		for (const target of ["openclaw", "hermes", "codex"] as const) {
+			expect(() => buildAgentTargetProjection(target, byokOpenAiCatalog, null)).toThrow(
+				"No primary model is configured",
+			);
+		}
+	});
+
+	test("binds each explicit env credential as API-key auth", () => {
+		const auths: AiProviderAuth[] = [
+			{ type: "api_key", source: "env", ref: "env:SELECTED_KEY" },
+			{ type: "secret_ref", ref: "env:SELECTED_KEY" },
+		];
+		for (const auth of auths) {
+			const catalog: AiProviderCatalog = {
+				...byokOpenAiCatalog,
+				providers: byokOpenAiCatalog.providers.map((provider) => ({
+					...provider,
+					auth,
+					runtime_env_name: "SELECTED_KEY",
+				})),
+			};
+			const projection = buildAgentTargetProjection("openclaw", catalog, {
+				provider_id: "openai-main",
+				model: "gpt-5.6-sol",
+			});
+			const patch = JSON.parse(projection.files[0]?.content ?? "{}");
+			expect(patch.models.providers["openai-main"]).toMatchObject({
+				auth: "api-key",
+				apiKey: { source: "env", provider: "default", id: "SELECTED_KEY" },
+			});
+		}
+	});
+
 	test("maps known BYOK OpenAI providers to all runtime targets without extra user fields", () => {
-		const openclaw = buildAgentTargetProjection("openclaw", byokOpenAiCatalog);
+		const primaryModel = { provider_id: "openai-main", model: "gpt-5.6-sol" };
+		const openclaw = buildAgentTargetProjection("openclaw", byokOpenAiCatalog, primaryModel);
 		expect(openclaw.provider_ids).toEqual(["openai-main"]);
 		expect(openclaw.primary_model).toEqual({
 			provider_id: "openai-main",
@@ -302,7 +338,7 @@ describe("AI provider projection", () => {
 		expect(openclaw.files[0]?.content).toContain('"baseUrl": "https://api.openai.com/v1"');
 		expect(openclaw.files[0]?.content).toContain('"api": "openai-responses"');
 		expect(openclaw.files[0]?.content).toContain('"id": "OPENAI_API_KEY"');
-		expect(openclaw.files[0]?.content).not.toContain('"auth": "api-key"');
+		expect(openclaw.files[0]?.content).toContain('"auth": "api-key"');
 		expect(openclaw.files[0]?.content).not.toContain('"memory"');
 		const managedToByokPatch = JSON.parse(
 			buildOpenClawHostedProviderPatch(
@@ -324,13 +360,13 @@ describe("AI provider projection", () => {
 		});
 		expect(managedToByokPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID]).toBeNull();
 
-		const hermes = buildAgentTargetProjection("hermes", byokOpenAiCatalog);
+		const hermes = buildAgentTargetProjection("hermes", byokOpenAiCatalog, primaryModel);
 		expect(hermes.files[0]?.content).toContain('provider: "custom:openai-main"');
 		expect(hermes.files[0]?.content).toContain('api: "https://api.openai.com/v1"');
 		expect(hermes.files[0]?.content).toContain('transport: "codex_responses"');
 		expect(hermes.files[0]?.content).toContain('key_env: "OPENAI_API_KEY"');
 
-		const codex = buildAgentTargetProjection("codex", byokOpenAiCatalog);
+		const codex = buildAgentTargetProjection("codex", byokOpenAiCatalog, primaryModel);
 		expect(codex.files[0]?.content).toContain('model = "gpt-5.6-sol"');
 		expect(codex.files[0]?.content).toContain('model_provider = "openai-main"');
 		expect(codex.files[0]?.content).toContain('[model_providers."openai-main"]');
@@ -338,6 +374,7 @@ describe("AI provider projection", () => {
 	});
 
 	test("projects Gemini only to the runtime with a verified transport", () => {
+		const primaryModel = { provider_id: "gemini-main", model: "gemini-2.5-pro" };
 		const catalog: AiProviderCatalog = {
 			schema_version: 1,
 			providers: [
@@ -363,15 +400,16 @@ describe("AI provider projection", () => {
 			},
 		};
 
-		const openclaw = buildAgentTargetProjection("openclaw", catalog);
+		const openclaw = buildAgentTargetProjection("openclaw", catalog, primaryModel);
 		expect(openclaw.provider_ids).toEqual(["gemini-main"]);
 		expect(JSON.parse(openclaw.files[0]?.content ?? "{}").agents.defaults.memorySearch).toBeNull();
-		expect(() => buildAgentTargetProjection("hermes", catalog)).toThrow(
+		expect(() => buildAgentTargetProjection("hermes", catalog, primaryModel)).toThrow(
 			"does not map to a verified Hermes custom-provider transport",
 		);
 	});
 
 	test("rejects non-canonical Codex auth profiles from Codex projection", () => {
+		const primaryModel = { provider_id: "openai-codex", model: "gpt-5.6-sol" };
 		const catalog: AiProviderCatalog = {
 			...codexOAuthCatalog,
 			providers: [
@@ -382,28 +420,31 @@ describe("AI provider projection", () => {
 			],
 		};
 
-		expect(() => buildAgentTargetProjection("codex", catalog)).toThrow(
+		expect(() => buildAgentTargetProjection("codex", catalog, primaryModel)).toThrow(
 			"provider protocol and auth shape are not runtime-compatible",
 		);
 	});
 
 	test("keeps native Codex OAuth projections on the verified OpenAI/Codex path", () => {
-		const openclaw = buildAgentTargetProjection("openclaw", codexOAuthCatalog);
+		const primaryModel = { provider_id: "openai-codex", model: "gpt-5.6-sol" };
+		const openclaw = buildAgentTargetProjection("openclaw", codexOAuthCatalog, primaryModel);
 		expect(openclaw.files[0]?.content).toContain('"plugins": {');
 		expect(openclaw.files[0]?.content).toContain('"primary": "openai/gpt-5.6-sol"');
+		expect(openclaw.files[0]?.content).not.toContain('"auth": "api-key"');
 
-		const hermes = buildAgentTargetProjection("hermes", codexOAuthCatalog);
+		const hermes = buildAgentTargetProjection("hermes", codexOAuthCatalog, primaryModel);
 		expect(hermes.files[0]?.content).toContain('provider: "openai-codex"');
 		expect(hermes.files[0]?.content).toContain('default: "gpt-5.6-sol"');
 		expect(hermes.files[0]?.content).not.toContain("base_url:");
 
-		const codex = buildAgentTargetProjection("codex", codexOAuthCatalog);
+		const codex = buildAgentTargetProjection("codex", codexOAuthCatalog, primaryModel);
 		expect(codex.files[0]?.content).toContain('model = "gpt-5.6-sol"');
 		expect(codex.files[0]?.content).toContain('model_provider = "openai"');
 		expect(codex.files[0]?.content).not.toContain('[model_providers."openai-codex"]');
 	});
 
 	test("projects model alias and cost metadata to runtime-native fields", () => {
+		const primaryModel = { provider_id: "custom-main", model: "example-model" };
 		const catalog: AiProviderCatalog = {
 			schema_version: 1,
 			providers: [
@@ -427,13 +468,13 @@ describe("AI provider projection", () => {
 			defaults: { chat_provider_id: "custom-main" },
 		};
 
-		const openclaw = buildAgentTargetProjection("openclaw", catalog);
+		const openclaw = buildAgentTargetProjection("openclaw", catalog, primaryModel);
 		expect(openclaw.files[0]?.content).toContain('"name": "Example Model"');
 		expect(openclaw.files[0]?.content).toContain('"cost": {');
 		expect(openclaw.files[0]?.content).toContain('"cacheRead": 0.06');
 		expect(openclaw.files[0]?.content).toContain('"cacheWrite": 0');
 
-		const hermes = buildAgentTargetProjection("hermes", catalog);
+		const hermes = buildAgentTargetProjection("hermes", catalog, primaryModel);
 		expect(hermes.files[0]?.content).toContain("input_cost_per_million: 0.3");
 		expect(hermes.files[0]?.content).toContain("output_cost_per_million: 1.2");
 		expect(hermes.files[0]?.content).toContain("cache_read_cost_per_million: 0.06");
@@ -441,6 +482,7 @@ describe("AI provider projection", () => {
 	});
 
 	test("preserves opaque OpenClaw compat fields with explicit values taking precedence", () => {
+		const primaryModel = { provider_id: "custom-main", model: "k3" };
 		const catalog: AiProviderCatalog = {
 			schema_version: 1,
 			providers: [
@@ -468,7 +510,7 @@ describe("AI provider projection", () => {
 			defaults: { chat_provider_id: "custom-main" },
 		};
 
-		const projection = buildAgentTargetProjection("openclaw", catalog);
+		const projection = buildAgentTargetProjection("openclaw", catalog, primaryModel);
 		const patch = JSON.parse(projection.files[0]?.content ?? "{}") as {
 			models?: { providers?: Record<string, { models?: Array<Record<string, unknown>> }> };
 		};

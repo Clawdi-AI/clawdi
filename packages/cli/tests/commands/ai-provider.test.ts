@@ -771,7 +771,7 @@ describe("ai-provider commands", () => {
 	});
 
 	it("projects Codex auth profiles to native Hermes config without key env", () => {
-		const projection = buildAgentTargetProjection("hermes", {
+		const catalog = {
 			schema_version: 1,
 			providers: [
 				{
@@ -784,6 +784,10 @@ describe("ai-provider commands", () => {
 					runtime_env_name: "OPENAI_API_KEY",
 				},
 			],
+		} as const;
+		const projection = buildAgentTargetProjection("hermes", catalog, {
+			provider_id: "openai-codex",
+			model: "gpt-5.2",
 		});
 
 		const patch = projection.files[0]?.content ?? "";
@@ -812,7 +816,10 @@ describe("ai-provider commands", () => {
 			defaults: { chat_provider_id: "clawdi-managed-v2" },
 		} as const;
 
-		const projection = buildAgentTargetProjection("openclaw", catalog);
+		const projection = buildAgentTargetProjection("openclaw", catalog, {
+			provider_id: "clawdi-managed-v2",
+			model: "gpt-5.5",
+		});
 		const patch = JSON.parse(projection.files[0]!.content);
 
 		expect(patch.agents.defaults.model.primary).toBe("clawdi/gpt-5.5");
@@ -833,7 +840,7 @@ describe("ai-provider commands", () => {
 	});
 
 	it("projects Clawdi-managed OpenAI chat providers directly to Hermes", () => {
-		const projection = buildAgentTargetProjection("hermes", {
+		const catalog = {
 			schema_version: 1,
 			providers: [
 				{
@@ -849,6 +856,10 @@ describe("ai-provider commands", () => {
 				},
 			],
 			defaults: { chat_provider_id: "clawdi-managed-v2" },
+		} as const;
+		const projection = buildAgentTargetProjection("hermes", catalog, {
+			provider_id: "clawdi-managed-v2",
+			model: "gpt-5.5",
 		});
 
 		const patch = projection.files[0]?.content ?? "";
@@ -926,7 +937,10 @@ describe("ai-provider commands", () => {
 			defaults: { chat_provider_id: "custom-openai" },
 		} as const;
 
-		const projection = buildAgentTargetProjection("openclaw", catalog);
+		const projection = buildAgentTargetProjection("openclaw", catalog, {
+			provider_id: "custom-openai",
+			model: "gpt-5.5",
+		});
 		const patch = JSON.parse(projection.files[0]!.content);
 
 		expect(patch.agents.defaults.model.primary).toBe("custom-openai/gpt-5.5");
@@ -949,7 +963,7 @@ describe("ai-provider commands", () => {
 	});
 
 	it("keeps the OpenClaw default model registered when catalog models omit it", () => {
-		const projection = buildAgentTargetProjection("openclaw", {
+		const catalog = {
 			schema_version: 1,
 			defaults: { chat_provider_id: "openai-main" },
 			providers: [
@@ -963,6 +977,10 @@ describe("ai-provider commands", () => {
 					models: [{ id: "gpt-4o", label: "GPT 4o", input_modalities: ["text", "image"] }],
 				},
 			],
+		} as const;
+		const projection = buildAgentTargetProjection("openclaw", catalog, {
+			provider_id: "openai-main",
+			model: "gpt-5.2",
 		});
 
 		const patch = JSON.parse(projection.files[0]?.content ?? "{}");
@@ -973,7 +991,7 @@ describe("ai-provider commands", () => {
 	});
 
 	it("projects multiple OpenClaw providers with merge mode and one default", () => {
-		const projection = buildAgentTargetProjection("openclaw", {
+		const catalog = {
 			schema_version: 1,
 			defaults: { chat_provider_id: "anthropic-main" },
 			providers: [
@@ -994,6 +1012,10 @@ describe("ai-provider commands", () => {
 					auth: { type: "secret_ref", ref: "env:ANTHROPIC_API_KEY" },
 				},
 			],
+		} as const;
+		const projection = buildAgentTargetProjection("openclaw", catalog, {
+			provider_id: "anthropic-main",
+			model: "claude-opus-4-6",
 		});
 
 		const patch = JSON.parse(projection.files[0]?.content ?? "{}");
@@ -1007,7 +1029,7 @@ describe("ai-provider commands", () => {
 	});
 
 	it("projects Codex OAuth to OpenClaw native OpenAI route without apiKey", () => {
-		const projection = buildAgentTargetProjection("openclaw", {
+		const catalog = {
 			schema_version: 1,
 			defaults: { chat_provider_id: "openai-codex" },
 			providers: [
@@ -1020,6 +1042,10 @@ describe("ai-provider commands", () => {
 					auth: { type: "agent_profile", tool: "codex", profile: "default" },
 				},
 			],
+		} as const;
+		const projection = buildAgentTargetProjection("openclaw", catalog, {
+			provider_id: "openai-codex",
+			model: "gpt-5.2",
 		});
 
 		const patch = JSON.parse(projection.files[0]?.content ?? "{}");
@@ -1113,7 +1139,7 @@ describe("ai-provider commands", () => {
 
 	it("imports provider metadata from the current OpenClaw patch shape", async () => {
 		const openclawConfig = join(tmpHome, "openclaw-config.json");
-		const projection = buildAgentTargetProjection("openclaw", {
+		const sourceCatalog = {
 			schema_version: 1,
 			defaults: { chat_provider_id: "anthropic-main" },
 			providers: [
@@ -1134,6 +1160,10 @@ describe("ai-provider commands", () => {
 					auth: { type: "secret_ref", ref: "env:ANTHROPIC_API_KEY" },
 				},
 			],
+		} as const;
+		const projection = buildAgentTargetProjection("openclaw", sourceCatalog, {
+			provider_id: "anthropic-main",
+			model: "claude-opus-4-6",
 		});
 		writeFileSync(openclawConfig, projection.files[0]?.content ?? "{}");
 		const { restore } = captureConsole();

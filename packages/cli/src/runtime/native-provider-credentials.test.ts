@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	type AiProviderCatalog,
 	NATIVE_AI_PROVIDERS,
 	nativeAiProvider,
 	nativeAiProviderRuntime,
 } from "@clawdi/shared";
+import { createOpenClawHostedContext } from "./hosted-openclaw-context";
 import {
 	agentTargetProjectionInput,
 	hostedAiProviderCatalog,
@@ -14,7 +18,10 @@ import {
 } from "./hosted-provider-resolution";
 import type { RuntimeManifest } from "./manifest-contract";
 import { buildOpenClawHostedProviderPatch, providerHealthReasons } from "./manifest-providers";
-import { buildNativeOpenClawProviderPatch } from "./openclaw-native-provider";
+import {
+	buildNativeOpenClawProviderPatch,
+	discoverNativeOpenClawProviderIds,
+} from "./openclaw-native-provider";
 
 function bundle(
 	identity: string,
@@ -69,6 +76,170 @@ function nativePatch(identity: string, variant?: string) {
 }
 
 describe("native provider credentials", () => {
+	test("discovers only valid owned routing and env references, preserving foreign or modified entries", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-native-discovery-"));
+		const context = createOpenClawHostedContext(bundle("gemini"), root);
+		const path = context.configPath;
+		mkdirSync(context.stateRoot, { recursive: true });
+		const discover = () =>
+			discoverNativeOpenClawProviderIds("unavailable-openclaw", context, root, {});
+		try {
+			expect(discover()).toEqual([]);
+			const owned = {
+				baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+				auth: "api-key",
+				apiKey: { source: "env", provider: "clawdi-native", id: "GEMINI_API_KEY" },
+				models: [{ id: "user-model" }],
+			};
+			const candidates = [
+				[owned, ["google"]],
+				[{ ...owned, apiKey: "user-key" }, []],
+				[{ ...owned, apiKey: { ...owned.apiKey, provider: "default" } }, []],
+				[{ ...owned, apiKey: { ...owned.apiKey, source: "file" } }, []],
+				[{ ...owned, apiKey: { ...owned.apiKey, id: "OTHER_KEY" } }, []],
+				[{ ...owned, apiKey: { ...owned.apiKey, extra: true } }, []],
+				[{ ...owned, baseUrl: "https://user.example/v1" }, []],
+				[{ ...owned, auth: "oauth" }, []],
+			] as const;
+			for (const [provider, expected] of candidates) {
+				writeFileSync(path, JSON.stringify({ models: { providers: { google: provider } } }));
+				expect(discover()).toEqual([...expected]);
+			}
+			writeFileSync(
+				path,
+				`{
+  // A failed convergence can leave authored native JSON5 behind.
+  models: { providers: { google: ${JSON.stringify(owned)}, }, },
+}`,
+			);
+			expect(discover()).toEqual(["google"]);
+			writeFileSync(path, "invalid config");
+			expect(() => discover()).toThrow("ownership could not be inspected");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+	test("uses native include resolution and accepts only namespaced env references after redaction", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-native-includes-"));
+		const context = createOpenClawHostedContext(bundle("gemini"), root);
+		mkdirSync(context.stateRoot, { recursive: true });
+		const command = join(root, "openclaw");
+		const report = join(root, "report.json");
+		writeFileSync(
+			command,
+			`#!/usr/bin/env node
+const fs = require("node:fs");
+if (process.argv.slice(2).join(" ") !== "config get models --json") process.exit(42);
+process.stdout.write(fs.readFileSync(${JSON.stringify(report)}, "utf8"));
+`,
+			{ mode: 0o700 },
+		);
+		try {
+			writeFileSync(context.configPath, "{models: {$include: './providers.json',},}");
+			const owned = {
+				baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+				auth: "api-key",
+				apiKey: { source: "env", provider: "clawdi-native", id: "__OPENCLAW_REDACTED__" },
+			};
+			writeFileSync(
+				report,
+				JSON.stringify({
+					providers: {
+						google: owned,
+						openai: {
+							...owned,
+							baseUrl: "https://api.openai.com/v1",
+							apiKey: { ...owned.apiKey, provider: "personal" },
+						},
+					},
+				}),
+			);
+			expect(discoverNativeOpenClawProviderIds(command, context, root, {})).toEqual(["google"]);
+			writeFileSync(report, '{"mode":"merge"}');
+			expect(discoverNativeOpenClawProviderIds(command, context, root, {})).toEqual([]);
+
+			writeFileSync(report, "private native diagnostic");
+			expect(() => discoverNativeOpenClawProviderIds(command, context, root, {})).toThrow(
+				"OpenClaw native provider ownership could not be inspected",
+			);
+			writeFileSync(command, "#!/bin/sh\nprintf 'private native error' >&2\nexit 1\n", {
+				mode: 0o700,
+			});
+			expect(() => discoverNativeOpenClawProviderIds(command, context, root, {})).toThrow(
+				"OpenClaw native provider ownership could not be inspected",
+			);
+			writeFileSync(context.configPath, "{$include: './gateway.json5'}");
+			expect(context.sdk.configMutation).toBeNull();
+			const missingStderr =
+				"Config path not found: models. Run openclaw config validate to inspect config shape.\n";
+			const missingStdout = `${JSON.stringify(
+				{
+					ok: false,
+					error: {
+						type: "cli_error",
+						message:
+							"Config path is valid but unset: models. The runtime default applies until you set an authored value with openclaw config set models <value>.",
+					},
+				},
+				null,
+				2,
+			)}\n`;
+			const reports = [
+				{ status: 1, stdout: "", stderr: missingStderr, missing: true },
+				{ status: 1, stdout: missingStdout, stderr: "", missing: true },
+				{
+					status: 1,
+					stdout: JSON.stringify({ error: JSON.parse(missingStdout).error, ok: false }),
+					stderr: "",
+					missing: true,
+				},
+				{
+					status: 1,
+					stdout: JSON.stringify({ ...JSON.parse(missingStdout), diagnostic: "unexpected" }),
+					stderr: "",
+					missing: false,
+				},
+				{
+					status: 1,
+					stdout: missingStdout.replace('"cli_error"', '"other_error"'),
+					stderr: "",
+					missing: false,
+				},
+				{ status: 2, stdout: "", stderr: missingStderr, missing: false },
+				{ status: 1, stdout: "unexpected diagnostic", stderr: missingStderr, missing: false },
+				{ status: 1, stdout: missingStdout, stderr: "unexpected diagnostic", missing: false },
+				{ status: 1, stdout: "", stderr: `private diagnostic\n${missingStderr}`, missing: false },
+				{
+					status: 1,
+					stdout: missingStdout.replace("models.", "models.providers."),
+					stderr: "",
+					missing: false,
+				},
+				{ status: 1, stdout: "", stderr: "Config path not found: models\n", missing: false },
+			];
+			for (const report of reports) {
+				writeFileSync(
+					command,
+					`#!/usr/bin/env node
+if (process.env.NO_COLOR !== "1" || process.env.FORCE_COLOR !== undefined || process.env.CLICOLOR_FORCE !== undefined) process.exit(42);
+process.stdout.write(${JSON.stringify(report.stdout)});
+process.stderr.write(${JSON.stringify(report.stderr)});
+process.exit(${report.status});
+`,
+					{ mode: 0o700 },
+				);
+				const discover = () =>
+					discoverNativeOpenClawProviderIds(command, context, root, {
+						FORCE_COLOR: "1",
+						CLICOLOR_FORCE: "1",
+					});
+				if (report.missing) expect(discover()).toEqual([]);
+				else expect(discover).toThrow("OpenClaw native provider ownership could not be inspected");
+			}
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
 	test("routes all native connections directly without creating catalogs or model selections", () => {
 		for (const route of NATIVE_AI_PROVIDERS) {
 			for (const runtime of ["hermes", "openclaw"] as const) {

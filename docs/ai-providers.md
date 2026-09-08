@@ -19,6 +19,11 @@ Clawdi does not pick a default model or copy a catalog for these connections.
 Credentials can be deployable while inference remains `not_tested` and
 `primary_model` is null.
 
+The Web editor preserves existing catalog connections. It does not convert them
+in place: removing an old custom provider while preserving its model selector
+can leave an invalid runtime selection. To move to native model management,
+create a separate native connection and select its provider/model inside the agent.
+
 `native_provider` identifies the connection and `native_variant` optionally
 identifies its region or plan. The shared
 [`native-ai-providers.json`](../packages/shared/src/native-ai-providers.json) contains only

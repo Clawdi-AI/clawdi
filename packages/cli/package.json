@@ -70,6 +70,7 @@
 		"chalk": "^6.0.0",
 		"commander": "^15.0.0",
 		"eventsource-parser": "^4.1.0",
+		"json5": "2.2.3",
 		"openapi-fetch": "^0.17.0",
 		"tar": "^7.5.22",
 		"typescript": "catalog:",

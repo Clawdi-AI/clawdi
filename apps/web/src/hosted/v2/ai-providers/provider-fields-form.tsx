@@ -55,7 +55,6 @@ function isApiMode(value: string | null): value is ApiMode {
 export function ProviderFieldsForm({
 	form,
 	nativeConnection,
-	onUseNative,
 	editing,
 	preset,
 	region,
@@ -70,7 +69,6 @@ export function ProviderFieldsForm({
 }: {
 	form: ProviderFormState;
 	nativeConnection: boolean;
-	onUseNative?: () => void;
 	editing: AiProvider | null;
 	preset: ProviderPreset | null;
 	region: ProviderPresetRegionVariant | null;
@@ -245,11 +243,6 @@ export function ProviderFieldsForm({
 				</div>
 			) : null}
 
-			{onUseNative ? (
-				<Button variant="outline" onClick={onUseNative}>
-					Manage models in the agent
-				</Button>
-			) : null}
 			{form.authMethod === "api_key" && !nativeConnection ? (
 				<details ref={initializeAdvancedDetails} className="group rounded-lg border bg-muted/20">
 					<summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-sm font-medium marker:hidden">

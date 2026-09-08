@@ -566,20 +566,6 @@ export function AddProviderDialog({
 							) : null}
 							<ProviderFieldsForm
 								nativeConnection={nativeConnection}
-								onUseNative={
-									nativeRoute && !nativeConnection && !isOAuthEdit
-										? () => {
-												updateForm({
-													configurationMode: "native",
-													modelsText: "",
-													baseUrl: nativeRoute.base_url,
-													apiMode: nativeRoute.api_mode,
-													runtimeEnv: nativeRoute.runtime_env_name,
-												});
-												setDraftTestResult(null);
-											}
-										: undefined
-								}
 								form={form}
 								editing={editing ?? null}
 								preset={selectedPreset}
