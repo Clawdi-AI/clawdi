@@ -3,7 +3,10 @@ import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { hostedBundledSkillIds, resolveHostedBundledSkill } from "./hosted-bundled-skill";
 import { activateHostedHermesSkill } from "./hosted-hermes-skill";
-import { activateHostedOpenClawSkill } from "./hosted-openclaw-skill";
+import {
+	activateHostedOpenClawSkill,
+	hostedOpenClawSkillSourceMatches,
+} from "./hosted-openclaw-skill";
 import type { HostedSkillEvidence } from "./hosted-skill-evidence";
 import {
 	hashSkillIdentity,
@@ -41,7 +44,8 @@ type HostedSkillDesired =
 	| { enabled: boolean; source: HostedSkillSource };
 interface HostedSkillProjectionDriver {
 	skillsRoot: string | null;
-	activate(sourceDir: string, targetDir: string): void;
+	activate(sourceDir: string, targetDir: string, source?: HostedSkillSource): void;
+	sourceMatches?(targetDir: string, source?: HostedSkillSource): boolean;
 	exclude?: ReadonlySet<string>;
 }
 type HostedSkillRuntime = "hermes" | "openclaw";
@@ -50,6 +54,24 @@ function withRuntimeUserSkillFiles<T>(
 	operation: () => T & (T extends PromiseLike<unknown> ? never : unknown),
 ): T {
 	return withRuntimeUserFileAccess(operation);
+}
+
+function installedHostedSkillMatches(
+	driver: HostedSkillProjectionDriver,
+	prepared: PreparedHostedSkill,
+	targetDir: string,
+): boolean {
+	return (
+		installedTreeMatches(prepared, targetDir, { exclude: driver.exclude }) &&
+		withRuntimeUserSkillFiles(() =>
+			driver.sourceMatches
+				? driver.sourceMatches(
+						targetDir,
+						prepared.identity.source.type === "bundled" ? undefined : prepared.identity.source,
+					)
+				: true,
+		)
+	);
 }
 
 function preparedSkillMatchesDesired(
@@ -139,7 +161,8 @@ function hostedSkillProjectionDrivers(input: {
 			{
 				skillsRoot: openClawSkillsRoot,
 				exclude: new Set([".openclaw/source-origin.json"]),
-				activate: (sourceDir, targetDir) => {
+				sourceMatches: hostedOpenClawSkillSourceMatches,
+				activate: (sourceDir, targetDir, source) => {
 					const workspaceRoot = input.openClawWorkspaceRoot;
 					if (!workspaceRoot) openClawWorkspaceUnavailable();
 					withRuntimeUserSkillFiles(() =>
@@ -148,6 +171,7 @@ function hostedSkillProjectionDrivers(input: {
 							workspaceRoot,
 							sourceDir,
 							targetDir,
+							source,
 						}),
 					);
 				},
@@ -204,9 +228,7 @@ function recoverPendingHostedSkillInstallations(
 			manager: "hosted-manifest",
 			verify: () =>
 				promotable !== null &&
-				installedTreeMatches(promotable, reservation.targetDir, {
-					exclude: driver.exclude,
-				}),
+				installedHostedSkillMatches(driver, promotable, reservation.targetDir),
 			discard: () => discardPendingHostedSkill(reservation.targetDir),
 		});
 	}
@@ -287,9 +309,7 @@ function applyHostedSkills(
 		if (
 			reservation?.targetDir === targetDir &&
 			reservation.digest === reservationIdentity.digest &&
-			installedTreeMatches(prepared, targetDir, {
-				exclude: driver.exclude,
-			})
+			installedHostedSkillMatches(driver, prepared, targetDir)
 		) {
 			if (
 				reservation.version !== reservationIdentity.version ||
@@ -313,12 +333,15 @@ function applyHostedSkills(
 					...preparedReservationIdentity(prepared),
 				},
 				() =>
-					withPreparedHostedSkill(prepared, (sourceDir) => driver.activate(sourceDir, targetDir)),
+					withPreparedHostedSkill(prepared, (sourceDir) =>
+						driver.activate(
+							sourceDir,
+							targetDir,
+							prepared.identity.source.type === "bundled" ? undefined : prepared.identity.source,
+						),
+					),
 				{
-					verify: () =>
-						installedTreeMatches(prepared, targetDir, {
-							exclude: driver.exclude,
-						}),
+					verify: () => installedHostedSkillMatches(driver, prepared, targetDir),
 					discard: () => discardPendingHostedSkill(targetDir),
 				},
 			);
@@ -466,9 +489,13 @@ function collectHostedSkillEvidence(
 					targetDir &&
 					preparedSkillMatchesDesired(prepared, desired, skillKey) &&
 					reservation?.digest === prepared.identity.digest &&
-					installedTreeMatches(prepared, targetDir, { exclude: driver.exclude })
+					installedHostedSkillMatches(driver, prepared, targetDir)
 				) {
-					item.treeDigest = installedSkillTreeDigest(targetDir, runtime);
+					item.treeDigest = installedSkillTreeDigest(
+						targetDir,
+						runtime,
+						reservation.sourceIdentity,
+					);
 					item.status = "installed";
 				}
 			} catch {

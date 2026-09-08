@@ -31,12 +31,18 @@ export function hashSkillIdentity(identity: string): string {
 export function installedSkillTreeDigest(
 	targetDir: string,
 	runtime: HostedSkillEvidence["runtime"],
+	sourceIdentity?: string,
 ): string {
+	// Root Git installs also attest native provenance; changing only the origin
+	// must invalidate heartbeat evidence even when the Skill bytes are unchanged.
+	const identity = sourceIdentity?.split("\0");
+	const includeOrigin = identity?.[0] === "github" && identity[3] === "";
 	return withRuntimeUserFileAccess(() =>
 		sha256TreeDigest(
 			collectRegularFileTree(targetDir, {
 				limits: MANAGED_SKILL_TREE_LIMITS,
-				exclude: (path) => runtime === "openclaw" && path === ".openclaw/source-origin.json",
+				exclude: (path) =>
+					runtime === "openclaw" && !includeOrigin && path === ".openclaw/source-origin.json",
 				resourceLabel: "managed Skill tree",
 			}),
 		).slice("sha256-tree-v1:".length),
@@ -79,7 +85,11 @@ export function readHostedSkillsObservation(
 									["bundled", reservation.id, String(reservation.version)].join("\0"),
 							) === evidence.sourceIdentity &&
 							evidence.treeDigest !== null &&
-							installedSkillTreeDigest(evidence.targetDir, evidence.runtime) === evidence.treeDigest
+							installedSkillTreeDigest(
+								evidence.targetDir,
+								evidence.runtime,
+								reservation.sourceIdentity,
+							) === evidence.treeDigest
 						: !reservation &&
 							withRuntimeUserFileAccess(() => collectManagedSkillTree(evidence.targetDir ?? ""))
 								.status === "absent");

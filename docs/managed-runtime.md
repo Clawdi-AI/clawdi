@@ -868,6 +868,35 @@ and new clients.
 
 ### Library Skill References And Runtime Evidence
 
+For a GitHub Skill whose source path is empty (repository root), OpenClaw
+activation invokes `openclaw skills install git:<repository-url>#<commit>
+--agent main --as <skill-key> --force`. OpenClaw owns Git fetching, install
+policy and native source metadata; `--force` selects replacement and does not
+override its scan policy. Clawdi verifies the resulting bytes against the
+prepared immutable archive and reads `.openclaw/source-origin.json` to check
+the Git URL, ref and commit. A reserved installation with matching bytes but
+missing or stale native provenance is reinstalled through that same command.
+Native refusal, changed bytes or mismatched provenance fail the operation and
+retain the existing filesystem/reservation rollback; there is no local-path
+retry after a Git install fails. Heartbeat evidence also detects native origin
+changes for these root Git installs. Unmanaged local targets remain protected.
+
+This is a limited source-preservation fix, not a complete native lifecycle
+integration. GitHub subdirectories and Project/Library archives still use the
+existing OpenClaw staged-path install; Hermes still uses directory activation.
+Their native lifecycle gaps remain unresolved, and this change adds no native
+uninstall or adoption of untracked Skills. OpenClaw's uploaded-archive API does
+not yet accept the required persistent Git/Project source identity, and it has
+no native uninstall for Git/uploaded Skills. The platform bundled `clawdi`
+bootstrap retains its existing path. These boundaries were checked against
+OpenClaw commit `cef6e690d5573d06f3feef5fdf103906e842c618`
+([source install](https://github.com/openclaw/openclaw/blob/cef6e690d5573d06f3feef5fdf103906e842c618/src/skills/lifecycle/source-install.ts),
+[upload install](https://github.com/openclaw/openclaw/blob/cef6e690d5573d06f3feef5fdf103906e842c618/src/skills/lifecycle/upload-install.ts)).
+
+Done: run `scripts/test.sh cli src/runtime/hosted-openclaw-skill.test.ts` and
+`scripts/test.sh cli src/runtime/hosted-skill-observation.test.ts` separately;
+both Docker runners pass their CLI typecheck and focused tests.
+
 `PUT /v1/agents/{agent_id}/skill-references/{skill_id}` selects one accessible
 Cloud-authority Skill for a Hosted Agent; `DELETE` removes that reference.
 `GET` on the reference returns the existing Skill detail with its real source

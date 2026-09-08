@@ -1,13 +1,42 @@
+import { lstatSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import {
 	ManagedSkillResourceError,
 	managedSkillTargetMatchesSource,
 	withManagedTargetRollback,
 } from "./managed-skill-delivery";
+import type { HostedSkillSource } from "./manifest-resources";
+import { recordValue } from "./manifest-shared";
 import { executableExists, spawnRuntimeUserCommand } from "./runtime-user-command";
 
 const OPENCLAW_AGENT_ID = "main";
 const OPENCLAW_INSTALLED_TREE_EXCLUDES = new Set([".openclaw/source-origin.json"]);
+
+export function hostedOpenClawSkillSourceMatches(
+	targetDir: string,
+	source?: HostedSkillSource,
+): boolean {
+	if (source?.type !== "github" || source.path !== "") return true;
+	try {
+		const metadataDir = join(targetDir, ".openclaw");
+		if (!lstatSync(metadataDir).isDirectory()) return false;
+		const originPath = join(metadataDir, "source-origin.json");
+		const stat = lstatSync(originPath);
+		if (!stat.isFile() || stat.size > 64 * 1024) return false;
+		const origin = recordValue(JSON.parse(readFileSync(originPath, "utf8")));
+		const git = recordValue(origin?.git);
+		return (
+			origin?.version === 1 &&
+			origin.source === "git" &&
+			origin.slug === basename(targetDir) &&
+			git?.url === source.url &&
+			git.ref === source.commit &&
+			git.commit === source.commit
+		);
+	} catch {
+		return false;
+	}
+}
 
 function installedCommandPath(home: string): string | null {
 	for (const candidate of [
@@ -47,12 +76,17 @@ export function activateHostedOpenClawSkill(input: {
 	workspaceRoot: string;
 	sourceDir: string;
 	targetDir: string;
+	source?: HostedSkillSource;
 }): void {
 	const skillId = basename(input.targetDir);
 	const target = resolve(input.targetDir);
 	if (target !== resolve(targetDir(input.workspaceRoot, skillId))) {
 		throw new ManagedSkillResourceError("OpenClaw Skill target is invalid");
 	}
+	const installSpec =
+		input.source?.type === "github" && input.source.path === ""
+			? `git:${input.source.url}#${input.source.commit}`
+			: input.sourceDir;
 	withManagedTargetRollback({
 		target,
 		operation: () => {
@@ -62,7 +96,7 @@ export function activateHostedOpenClawSkill(input: {
 				[
 					"skills",
 					"install",
-					input.sourceDir,
+					installSpec,
 					"--agent",
 					OPENCLAW_AGENT_ID,
 					"--as",
@@ -84,6 +118,9 @@ export function activateHostedOpenClawSkill(input: {
 				})
 			) {
 				throw new ManagedSkillResourceError("OpenClaw Skill activation changed exact source bytes");
+			}
+			if (!hostedOpenClawSkillSourceMatches(target, input.source)) {
+				throw new ManagedSkillResourceError("OpenClaw Skill native source provenance mismatch");
 			}
 		},
 	});

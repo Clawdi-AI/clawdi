@@ -1,13 +1,29 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type RuntimeAppliedState, runtimeAppliedStateSchema } from "./applied-state";
 import type { HostedSkillEvidence } from "./hosted-skill-evidence";
 import { readHostedSkillsObservation } from "./hosted-skill-observation";
-import { releaseManagedSkill } from "./managed-skill-reservation";
+import { hostedSkillArchiveSourceIdentity } from "./hosted-sourced-skill-archive";
+import {
+	managedSkillReservationLedgerPath,
+	releaseManagedSkill,
+	reserveManagedSkill,
+} from "./managed-skill-reservation";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimeInstallObservation } from "./manifest-install";
+import type { HostedSkillSource } from "./manifest-resources";
 import { reconcileHostedSkillProjection } from "./manifest-skills-apply";
 import { hostedRuntimeBundleV2Schema } from "./manifest-source";
 import { getRuntimePaths } from "./paths";
@@ -201,4 +217,143 @@ test("preparation failure is per Skill and large evidence cannot block apply or 
 	expect(observed?.entries).toHaveLength(2048);
 	expect(observed?.truncated).toBe(true);
 	expect(Buffer.byteLength(JSON.stringify(observed))).toBeLessThan(1024 * 1024);
+});
+
+test("reconciles root Git provenance through native install without local fallback", () => {
+	const { input, state } = setup();
+	const source: HostedSkillSource = {
+		type: "github",
+		url: "https://github.com/example/review",
+		path: "",
+		commit: "a".repeat(40),
+	};
+	const workspace = join(input.home, "workspace");
+	const target = join(workspace, "skills", "review");
+	const fixture = join(root, "review");
+	const skillMd = "---\nname: review\ndescription: Review changes\n---\nRead the diff.\n";
+	mkdirSync(join(fixture, "references"), { recursive: true });
+	writeFileSync(join(fixture, "SKILL.md"), skillMd);
+	writeFileSync(join(fixture, "references", "guide.md"), "Pinned support file\n");
+	const archivePath = join(root, "review.tar.gz");
+	execFileSync("tar", ["-czf", archivePath, "-C", root, "review"]);
+	const tarBytes = readFileSync(archivePath);
+	const identity = {
+		source,
+		sourceIdentity: hostedSkillArchiveSourceIdentity("review", source),
+		digest: createHash("sha256").update(tarBytes).digest("hex"),
+	};
+	const observation = input.observations.get("hermes");
+	if (!observation) throw new Error("missing runtime observation fixture");
+	const projection = {
+		...input,
+		manifest: {
+			...input.manifest,
+			runtimes: { openclaw: { enabled: true, services: {} } },
+			projection: { skills: { entries: { review: { enabled: true, source } } } },
+		},
+		observations: new Map([["openclaw", { ...observation, runtime: "openclaw" }]]),
+		openClawWorkspaceRoot: workspace,
+		preparedSourcedSkills: new Map([["review", { id: "review", identity, tarBytes }]]),
+	};
+	const command = join(input.home, ".local", "bin", "openclaw");
+	const commandLog = join(root, "argv.log");
+	const originFixture = join(root, "origin.json");
+	const originPath = join(target, ".openclaw", "source-origin.json");
+	const origin = () =>
+		JSON.stringify({
+			version: 1,
+			source: "git",
+			spec: `git:${source.url}@${source.commit}`,
+			slug: "review",
+			git: { url: source.url, ref: source.commit, commit: source.commit },
+		});
+	writeFileSync(originFixture, origin());
+	mkdirSync(join(input.home, ".local", "bin"), { recursive: true });
+	// This command double checks the transport boundary, not native scan policy.
+	writeFileSync(
+		command,
+		`#!/bin/sh
+set -eu
+printf '%s\\n' "$@" >> '${commandLog}'
+if test -f '${root}/refuse'; then
+  printf '%s\\n' 'native install refused' >&2
+  exit 44
+fi
+mkdir -p '${target}/.openclaw'
+cp -R '${fixture}/.' '${target}/'
+cp '${originFixture}' '${originPath}'
+`,
+		{ mode: 0o755 },
+	);
+	const argv = () =>
+		`${[
+			"skills",
+			"install",
+			`git:${source.url}#${source.commit}`,
+			"--agent",
+			"main",
+			"--as",
+			"review",
+			"--force",
+		].join("\n")}\n`;
+
+	mkdirSync(join(target, ".openclaw"), { recursive: true });
+	writeFileSync(join(target, "SKILL.md"), skillMd);
+	mkdirSync(join(target, "references"));
+	writeFileSync(join(target, "references", "guide.md"), "Pinned support file\n");
+	writeFileSync(originPath, '{"version":1,"source":"path"}');
+	expect(() => reconcileHostedSkillProjection(projection)).toThrow(
+		"refusing to replace unmanaged review",
+	);
+	expect(existsSync(commandLog)).toBe(false);
+	reserveManagedSkill({
+		targetDir: target,
+		id: "review",
+		manager: "hosted-manifest",
+		digest: identity.digest,
+		sourceIdentity: identity.sourceIdentity,
+	});
+	expect(reconcileHostedSkillProjection(projection)).toEqual([]);
+	expect(readFileSync(commandLog, "utf8")).toBe(argv());
+	expect(readHostedSkillsObservation(state())?.entries[0]?.status).toBe("installed");
+	expect(reconcileHostedSkillProjection(projection)).toEqual([]);
+	expect(readFileSync(commandLog, "utf8")).toBe(argv());
+
+	const ledgerBefore = readFileSync(managedSkillReservationLedgerPath());
+	writeFileSync(originPath, "{}");
+	expect(readHostedSkillsObservation(state())?.entries[0]?.status).toBe("unknown");
+	writeFileSync(join(root, "refuse"), "");
+	expect(reconcileHostedSkillProjection(projection).join("\n")).toContain("native install refused");
+	expect(readFileSync(commandLog, "utf8")).toBe(argv().repeat(2));
+	expect(readFileSync(originPath, "utf8")).toBe("{}");
+	expect(readFileSync(managedSkillReservationLedgerPath())).toEqual(ledgerBefore);
+	expect(readHostedSkillsObservation(state())?.entries[0]?.status).toBe("failed");
+	rmSync(join(root, "refuse"));
+
+	writeFileSync(join(fixture, "references", "guide.md"), "Wrong support bytes\n");
+	expect(reconcileHostedSkillProjection(projection).join("\n")).toContain(
+		"changed exact source bytes",
+	);
+	expect(readFileSync(join(target, "references", "guide.md"), "utf8")).toBe(
+		"Pinned support file\n",
+	);
+	expect(readFileSync(managedSkillReservationLedgerPath())).toEqual(ledgerBefore);
+	writeFileSync(join(fixture, "references", "guide.md"), "Pinned support file\n");
+	writeFileSync(originFixture, "{}");
+	expect(reconcileHostedSkillProjection(projection).join("\n")).toContain(
+		"native source provenance mismatch",
+	);
+	expect(readFileSync(commandLog, "utf8")).toBe(argv().repeat(4));
+	writeFileSync(originFixture, origin());
+	expect(reconcileHostedSkillProjection(projection)).toEqual([]);
+	const oldCalls = argv().repeat(5);
+
+	// A new immutable source must update native provenance even with identical bytes.
+	source.commit = "b".repeat(40);
+	identity.sourceIdentity = hostedSkillArchiveSourceIdentity("review", source);
+	writeFileSync(originFixture, origin());
+	expect(reconcileHostedSkillProjection(projection)).toEqual([]);
+	expect(readFileSync(commandLog, "utf8")).toBe(oldCalls + argv());
+	expect(JSON.parse(readFileSync(originPath, "utf8")).git.commit).toBe(source.commit);
+	expect(readHostedSkillsObservation(state())?.entries[0]?.status).toBe("installed");
 });
