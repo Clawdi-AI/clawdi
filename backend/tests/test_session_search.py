@@ -18,6 +18,7 @@ from uuid import UUID
 import httpx
 import pytest
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.query_utils import search_excerpt, search_highlight_terms, search_terms
@@ -381,6 +382,59 @@ async def test_snapshot_message_search_tracks_current_content_and_escapes_wildca
     await db_session.commit()
     rebuilt = (await client.get("/v1/sessions", params={"q": "authoritative"})).json()
     assert [item["local_session_id"] for item in rebuilt["items"]] == [local_id]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_search_batches_preserve_rows_and_rollback_together(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    env_id = await _register_env(client)
+    session_id = await _push_session(client, env_id, local_session_id="batched-search")
+    session = await db_session.get(Session, UUID(session_id))
+    assert session is not None
+    messages = [
+        SearchableSessionMessage(
+            position=position,
+            role="user" if position % 2 == 0 else "assistant",
+            content=f"searchable message {position}",
+        )
+        for position in range(1001)
+    ]
+    original_hash, replacement_hash = "a" * 64, "b" * 64
+    session.content_hash = original_hash
+    await replace_snapshot_search_index(db_session, session, original_hash, messages)
+    await db_session.commit()
+
+    # A duplicate in the last batch must roll back both the earlier inserts
+    # and deletion of the previously active revision.
+    with pytest.raises(IntegrityError):
+        async with db_session.begin_nested():
+            session.content_hash = replacement_hash
+            await replace_snapshot_search_index(
+                db_session, session, replacement_hash, [*messages, messages[0]]
+            )
+    await db_session.refresh(session)
+    assert session.content_hash == original_hash
+    assert session.search_index_revision == f"snapshot:{original_hash}"
+    rows = (
+        await db_session.execute(
+            select(
+                SessionMessageSearch.position,
+                SessionMessageSearch.role,
+                SessionMessageSearch.content,
+                SessionMessageSearch.chunk_index,
+                SessionMessageSearch.generation_id,
+                SessionMessageSearch.content_revision,
+            )
+            .where(SessionMessageSearch.session_id == session.id)
+            .order_by(SessionMessageSearch.position)
+        )
+    ).all()
+    assert rows == [
+        (message.position, message.role, message.content, 0, None, session.search_index_revision)
+        for message in messages
+    ]
 
 
 @pytest.mark.asyncio
