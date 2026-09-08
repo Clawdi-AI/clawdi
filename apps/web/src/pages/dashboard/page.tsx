@@ -3,11 +3,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, type ReactNode, Suspense, useEffect, useMemo, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import {
-	type AgentFleetSummary,
 	AgentsCard,
 	fleetSummaryFromTiles,
 	selfManagedAgentTiles,
@@ -20,7 +19,7 @@ import { ThisWeekCard } from "@/components/dashboard/this-week-card";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SessionFeed } from "@/components/sessions/session-feed";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
@@ -153,35 +152,37 @@ export default function DashboardPage() {
 			: blockingEnvsError || hostedAccess.isError
 				? "error"
 				: "resolved";
-	const greeting = renderGreeting(selfManagedFleetSummary, { state: greetingState });
-	const loadingGreeting = renderGreeting(selfManagedFleetSummary, { state: "loading" });
+	const greeting = agentGreetingSummary(selfManagedFleetSummary.total, greetingState);
+	const loadingGreeting = agentGreetingSummary(selfManagedFleetSummary.total, "loading");
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			{hostedAccessLoading ? (
-				loadingGreeting
-			) : hostedSectionEnabled && HostedFleetSummary ? (
-				<Suspense fallback={loadingGreeting}>
-					<HostedFleetSummary
-						cloudEnvs={environments ?? []}
-						showCloudDeployments={cloudDeploymentManagementEnabled}
-						showLegacyAgents={legacyHostedAgentsEnabled}
-					>
-						{(summary, state) =>
-							renderGreeting(summary, {
-								state:
+			<Greeting>
+				{hostedAccessLoading ? (
+					loadingGreeting
+				) : hostedSectionEnabled && HostedFleetSummary ? (
+					<Suspense fallback={loadingGreeting}>
+						<HostedFleetSummary
+							cloudEnvs={environments ?? []}
+							showCloudDeployments={cloudDeploymentManagementEnabled}
+							showLegacyAgents={legacyHostedAgentsEnabled}
+						>
+							{(summary, state) =>
+								agentGreetingSummary(
+									summary.total,
 									blockingEnvsError || hostedAccess.isError || state.error
 										? "error"
 										: envsLoading || state.isLoading || !state.membershipResolved
 											? "loading"
 											: "resolved",
-							})
-						}
-					</HostedFleetSummary>
-				</Suspense>
-			) : (
-				greeting
-			)}
+								)
+							}
+						</HostedFleetSummary>
+					</Suspense>
+				) : (
+					greeting
+				)}
+			</Greeting>
 
 			<div className="grid gap-4 lg:grid-cols-3">
 				<div className="min-w-0 lg:col-span-2 lg:row-start-1">
@@ -216,12 +217,9 @@ export default function DashboardPage() {
 					)}
 				</div>
 
-				<Card className="min-w-0 lg:col-span-2 lg:row-start-2">
-					<CardHeader>
-						<CardTitle>Activity</CardTitle>
-						<CardDescription>Sessions per day in the last 12 months</CardDescription>
-					</CardHeader>
-					<CardContent>
+				<section className="min-w-0 space-y-2 lg:col-span-2 lg:row-start-2">
+					<h2 className="text-base font-semibold">Activity</h2>
+					<div>
 						{blockingStatsError ? (
 							<ApiErrorPanel
 								error={blockingStatsError}
@@ -235,8 +233,8 @@ export default function DashboardPage() {
 						) : contribution ? (
 							<ContributionGraph data={contribution} />
 						) : null}
-					</CardContent>
-				</Card>
+					</div>
+				</section>
 
 				{/* This source order is also the mobile reading and focus order. */}
 				<div className="min-w-0 space-y-4 lg:col-start-3 lg:row-span-3 lg:row-start-1">
@@ -306,28 +304,19 @@ export default function DashboardPage() {
 	);
 }
 
-function renderGreeting(summary: AgentFleetSummary, options: { state?: AgentGreetingState } = {}) {
-	return <Greeting total={summary.total} state={options.state} />;
-}
-
 function ActivityGraphSkeleton() {
 	return (
 		<div className="w-full">
 			<div className="flex gap-1.5">
-				<div className="flex w-[22px] shrink-0 flex-col gap-[3px] pt-5">
+				<div className="flex w-[22px] shrink-0 flex-col gap-[3px]">
 					{Array.from({ length: 7 }).map((_, index) => (
 						<Skeleton
 							key={index}
-							className={cn("h-[11px] rounded-sm", index % 2 === 1 ? "w-5" : "w-2")}
+							className={cn("h-[11px] rounded-[2px]", index % 2 === 1 ? "w-5" : "w-2")}
 						/>
 					))}
 				</div>
 				<div className="min-w-0 flex-1">
-					<div className="mb-1 flex h-4 items-center gap-10">
-						{Array.from({ length: 6 }).map((_, index) => (
-							<Skeleton key={index} className="h-2.5 w-6" />
-						))}
-					</div>
 					<div className="flex max-h-[95px] overflow-hidden gap-[3px]">
 						{Array.from({ length: 52 }).map((_, weekIndex) => (
 							<div key={weekIndex} className="flex flex-col gap-[3px]">
@@ -335,7 +324,7 @@ function ActivityGraphSkeleton() {
 									<Skeleton
 										key={dayIndex}
 										className={cn(
-											"size-[11px] rounded-sm",
+											"size-[11px] rounded-[2px]",
 											(weekIndex + dayIndex) % 5 === 0 && "opacity-50",
 										)}
 									/>
@@ -343,14 +332,12 @@ function ActivityGraphSkeleton() {
 							</div>
 						))}
 					</div>
+					<div className="mt-1 flex h-4 items-center gap-10">
+						{Array.from({ length: 6 }).map((_, index) => (
+							<Skeleton key={index} className="h-2.5 w-6" />
+						))}
+					</div>
 				</div>
-			</div>
-			<div className="mt-3 flex justify-end gap-1.5">
-				<Skeleton className="h-3 w-7" />
-				{Array.from({ length: 5 }).map((_, index) => (
-					<Skeleton key={index} className="size-[11px] rounded-sm" />
-				))}
-				<Skeleton className="h-3 w-8" />
 			</div>
 		</div>
 	);
@@ -379,21 +366,23 @@ function currentDaypart(): "morning" | "afternoon" | "evening" {
 	return hour < 5 ? "evening" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
 }
 
-function Greeting({ total, state = "resolved" }: { total: number; state?: AgentGreetingState }) {
-	const { user } = useCurrentUser();
+function Greeting({ children }: { children: ReactNode }) {
+	const { user, isLoaded } = useCurrentUser();
 	const [daypart, setDaypart] = useState<ReturnType<typeof currentDaypart> | null>(null);
 	useEffect(() => {
 		setDaypart(currentDaypart());
 	}, []);
 	const firstName = user?.fullName?.split(" ")[0];
-	const summary = agentGreetingSummary(total, state);
 	return (
 		<div>
 			<h1 className="text-2xl font-semibold tracking-tight">
-				{daypart ? `Good ${daypart}` : "Welcome"}
-				{firstName ? `, ${firstName}` : ""}
+				{daypart && isLoaded ? (
+					`Good ${daypart}${firstName ? `, ${firstName}` : ""}`
+				) : (
+					<Skeleton className="h-8 w-64 max-w-full" />
+				)}
 			</h1>
-			<p className="mt-1 text-sm text-muted-foreground tabular-nums">{summary}</p>
+			<p className="mt-1 text-sm text-muted-foreground tabular-nums">{children}</p>
 		</div>
 	);
 }

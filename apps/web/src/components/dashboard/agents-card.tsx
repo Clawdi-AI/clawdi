@@ -3,7 +3,6 @@
 import type { components } from "@clawdi/shared/api";
 import { Link } from "@tanstack/react-router";
 import { ArrowUpRight } from "lucide-react";
-import { useState } from "react";
 import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
@@ -120,11 +119,7 @@ export function AgentsCard({
 		normalizer?: ApiErrorNormalizer;
 	};
 }) {
-	const [showAll, setShowAll] = useState(false);
-	const total = agents.length;
 	const ordered = [...agents].sort(compareAgentTiles);
-	const visible = showAll ? ordered : ordered.slice(0, 6);
-	const hiddenCount = ordered.length - visible.length;
 
 	// No section header: the greeting directly above already carries the
 	// fleet summary ("N agents"), and a bare
@@ -143,25 +138,14 @@ export function AgentsCard({
 						))}
 					</div>
 				) : agents.length || hostedStatus?.isLoading ? (
-					<>
-						<div className={ENTITY_GRID_CLASS}>
-							{visible.map((tile) => (
-								<AgentTileView key={`${tile.source}:${tile.id}`} tile={tile} />
-							))}
-							{hostedStatus?.isLoading ? (
-								<EntityCardSkeleton iconSize="sm" statusDot titleBadge />
-							) : null}
-						</div>
-						{hiddenCount > 0 || showAll ? (
-							<button
-								type="button"
-								onClick={() => setShowAll((v) => !v)}
-								className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-							>
-								{showAll ? "Show fewer" : `Show all ${total} Agents`}
-							</button>
+					<div className={ENTITY_GRID_CLASS}>
+						{ordered.map((tile) => (
+							<AgentTileView key={`${tile.source}:${tile.id}`} tile={tile} />
+						))}
+						{hostedStatus?.isLoading ? (
+							<EntityCardSkeleton iconSize="sm" statusDot titleBadge />
 						) : null}
-					</>
+					</div>
 				) : hostedStatus?.error ? null : (
 					// When the hosted fetch failed, the error banner below carries
 					// the message — render no empty state to avoid contradicting it.
