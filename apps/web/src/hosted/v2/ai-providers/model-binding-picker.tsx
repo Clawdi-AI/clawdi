@@ -50,11 +50,7 @@ export function ModelBindingPicker({
 		(item) => item.provider_id === primaryProviderChoice || item.id === primaryProviderChoice,
 	);
 	if (primaryProviderChoice !== MANAGED_AI_CHOICE && !provider) return null;
-	if (provider?.configuration_mode === "native") {
-		return (
-			<p className="text-sm text-muted-foreground">Choose and manage models inside your agent.</p>
-		);
-	}
+	if (provider?.configuration_mode === "native") return null;
 	const catalogInputId = `${idPrefix}-catalog-model`;
 	const modelInputId = `${idPrefix}-primary-model`;
 	const modelListId = `${idPrefix}-model-options`;

@@ -186,9 +186,7 @@ export function ProviderFieldsForm({
 					<UserRound className="size-4 shrink-0 text-muted-foreground" />
 					<div className="min-w-0 flex-1">
 						<p className="text-sm font-medium">ChatGPT sign-in</p>
-						<p className="text-xs text-muted-foreground">
-							Subscription access. Reconnect only to change or repair the account.
-						</p>
+						<p className="text-xs text-muted-foreground">Subscription access</p>
 					</div>
 					<Button variant="outline" size="sm" onClick={onReconnectOAuth} disabled={startingOAuth}>
 						{startingOAuth ? <Spinner /> : <RefreshCw />}
@@ -213,7 +211,6 @@ export function ProviderFieldsForm({
 							autoCapitalize="none"
 							autoCorrect="off"
 							spellCheck={false}
-							aria-describedby="provider-key-help"
 						/>
 						<InputGroupAddon align="inline-end">
 							<InputGroupButton
@@ -226,18 +223,6 @@ export function ProviderFieldsForm({
 							</InputGroupButton>
 						</InputGroupAddon>
 					</InputGroup>
-					<p id="provider-key-help" className="text-xs text-muted-foreground">
-						{isEdit
-							? editing?.auth.type === "none"
-								? `Enter ${credentialLabel.toLowerCase()} to finish setup.`
-								: "Leave blank to keep the current credential."
-							: "Encrypted at rest and never shown again."}
-					</p>
-					{meta.oauth ? (
-						<p className="text-xs text-muted-foreground">
-							OpenAI bills API key usage through your Platform account at standard API rates.
-						</p>
-					) : null}
 					{!nativeConnection ? (
 						<p className="text-xs text-muted-foreground">
 							Testing sends one minimal inference request and may incur a small provider charge.
@@ -255,15 +240,8 @@ export function ProviderFieldsForm({
 						</a>
 					) : null}
 				</div>
-			) : (
-				<div className="rounded-lg border bg-muted/30 p-3 text-sm">
-					You’ll finish setup on ChatGPT. No API key is required here.
-				</div>
-			)}
-
-			{nativeConnection ? (
-				<p className="text-sm text-muted-foreground">Choose and manage models inside your agent.</p>
 			) : null}
+
 			{onUseNative ? (
 				<Button variant="outline" onClick={onUseNative}>
 					Manage models in the agent
