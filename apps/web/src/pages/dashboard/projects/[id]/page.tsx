@@ -7,7 +7,6 @@ import {
 	Bot,
 	CheckCircle2,
 	ChevronRight,
-	ExternalLink,
 	Eye,
 	LogOut,
 	Plus,
@@ -108,7 +107,6 @@ import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 import { projectResourceHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
-	libraryManagementTarget,
 	projectDetailHrefForScope,
 	type ResourceNavigationScope,
 	type ResourceNavigationTarget,
@@ -203,7 +201,6 @@ export default function ProjectDetailPage({
 		? (requestedTab as ProjectLocalTab)
 		: "overview";
 	const projectsTarget = resourceCollectionTarget(scope, "projects");
-	const managementTarget = libraryManagementTarget("projects", { projectId });
 	const isAgentScope = scope.kind === "agent";
 	const showSkills = isAgentScope ? focus !== "vaults" : localTab === "skills";
 	const showVaults = isAgentScope ? focus !== "skills" : localTab === "vaults";
@@ -311,7 +308,10 @@ export default function ProjectDetailPage({
 					},
 				}),
 			),
-		enabled: showSkills && (!isAgentScope || !!scopedBinding) && !(IS_HOSTED_BUILD && isWorkspace),
+		enabled:
+			showSkills &&
+			(!isAgentScope || !!scopedBinding || Boolean(project && isCustomProject(project))) &&
+			!(IS_HOSTED_BUILD && isWorkspace),
 	});
 	const workspaceSkillProjections = useMemo(
 		() => (skills.data?.items ?? []).filter((skill) => skill.authority === "agent_sync"),
@@ -331,7 +331,9 @@ export default function ProjectDetailPage({
 					),
 				{ pageSize: 200, resourceName: "Project Vaults" },
 			),
-		enabled: showVaults && (!isAgentScope || !!scopedBinding),
+		enabled:
+			showVaults &&
+			(!isAgentScope || !!scopedBinding || Boolean(project && isCustomProject(project))),
 	});
 	useEffect(() => {
 		if (skills.data?.total === undefined) return;
@@ -522,32 +524,6 @@ export default function ProjectDetailPage({
 		);
 	}
 
-	if (isAgentScope && !scopedBinding) {
-		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-				<DetailBackLink
-					href={catalogReturnTarget?.href ?? projectsTarget.href}
-					label={catalogReturnTarget?.label ?? projectsTarget.label}
-					mobileOnly={false}
-				/>
-				<DetailNotFound
-					title="Project not available to this Agent"
-					message="The Project may have been removed from this Agent. It remains available in the resource library if your account still has access."
-				/>
-				<Button
-					render={<Link to={managementTarget.href} />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="w-fit text-muted-foreground"
-				>
-					<ExternalLink className="size-3.5" />
-					{managementTarget.label}
-				</Button>
-			</div>
-		);
-	}
-
 	const blockingSkillsError = shouldBlockQueryError(skills.error, skills.data)
 		? skills.error
 		: null;
@@ -677,12 +653,14 @@ export default function ProjectDetailPage({
 										? "Vaults available through this Agent’s Workspace."
 										: "This Agent's fixed Workspace for installed Skills and Vaults."
 								: focus === "skills"
-									? "Skills this Agent uses through this linked Project."
+									? "Skills included in this Project."
 									: focus === "vaults"
 										? isOwner
-											? "Vaults this Agent can use through this Project."
-											: "Vaults this Agent can use through this Project. Key values stay protected."
-										: "This Agent uses the Project's Skills and Vaults as one bundle."
+											? "Vaults included in this Project."
+											: "Vaults included in this Project. Key values stay protected."
+										: scopedBinding
+											? "This Agent uses the Project's Skills and Vaults as one bundle."
+											: "Not linked to this Agent. Link it from Projects to enable access."
 							: projectDetailDescription(project, isOwner)
 					}
 					status={
@@ -796,7 +774,7 @@ export default function ProjectDetailPage({
 					isAgentScope
 						? isWorkspace
 							? "Installed Skills in this Agent's fixed Workspace."
-							: "Skills this Agent uses through this linked Project."
+							: "Skills included in this Project."
 						: project.kind === "environment"
 							? "Skills synced from this Agent. Manage them on the Agent."
 							: isOwner
@@ -906,7 +884,7 @@ export default function ProjectDetailPage({
 					isAgentScope
 						? isWorkspace
 							? "Vaults available through this Agent’s Workspace."
-							: "Vaults this Agent can use through this Project."
+							: "Vaults included in this Project."
 						: isOwner
 							? "Vaults included in this Project."
 							: "Read-only vaults shared through this Project."

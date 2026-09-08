@@ -36,15 +36,12 @@ import { Spinner } from "@/components/ui/spinner";
 import { agentDetailQueryKey } from "@/lib/agent-queries";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
-import {
-	formatResourceCount,
-	getProjectResourceDefinition,
-	projectDetailHref,
-} from "@/lib/project-resource-model";
+import { formatResourceCount, getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	agentResourceScope,
 	LIBRARY_RESOURCE_SCOPE,
+	projectDetailHrefForScope,
 	projectDetailLink,
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
@@ -183,7 +180,7 @@ export function ProjectsSurface({
 									label: "Open project",
 									onClick: () =>
 										void router.navigate({
-											href: `${projectDetailHref(project.id)}?from=${encodeURIComponent(from)}`,
+											href: `${projectDetailHrefForScope(scope, project.id)}?from=${encodeURIComponent(from)}`,
 										}),
 								},
 							});
@@ -272,11 +269,7 @@ export function ProjectsSurface({
 												className="h-full"
 												project={project}
 												searchQuery={search.trim() || undefined}
-												link={projectDetailLink(
-													linked ? scope : LIBRARY_RESOURCE_SCOPE,
-													project.id,
-													search || (agentId && !linked) ? from : undefined,
-												)}
+												link={projectDetailLink(scope, project.id, search ? from : undefined)}
 												footer={[
 													formatResourceCount(project.skill_count, "skill"),
 													formatResourceCount(project.vault_count, "vault"),

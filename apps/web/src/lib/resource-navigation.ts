@@ -187,21 +187,6 @@ export function connectorDetailLink(scope: ResourceNavigationScope, connectorNam
 		: linkOptions({ to: "/connectors/$name", params: { name: connectorName } });
 }
 
-export function libraryManagementTarget(
-	resource: ProjectAssignedResource,
-	identity: { projectId: string } | { vaultSlug: string; vaultId?: string | null },
-): ResourceNavigationTarget {
-	return {
-		href:
-			resource === "projects" && "projectId" in identity
-				? projectDetailHref(identity.projectId)
-				: "vaultSlug" in identity
-					? vaultDetailHref(identity.vaultSlug, identity.vaultId)
-					: PROJECT_RESOURCE_LIST_PATHS[resource],
-		label: "Manage in resource library",
-	};
-}
-
 type LegacyResourceNavigationQuery =
 	| URLSearchParams
 	| Readonly<Record<string, unknown>>

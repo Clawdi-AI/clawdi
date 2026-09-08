@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
+import { useAgentProjectBrowseAccess } from "@/components/dashboard/agent-project-browse-access";
 import { DetailBackLink } from "@/components/detail/back-link";
 import { DetailNotFound } from "@/components/detail/layout";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -130,17 +130,10 @@ function AgentProjectAccessGate({
 	children: ReactNode;
 }) {
 	const projectId = rawProjectId?.trim() || null;
-	const bindings = useAgentProjectBindings(agentId, { enabled: Boolean(projectId) });
-	const blockingError = projectId
-		? shouldBlockQueryError(bindings.error, bindings.data)
-			? bindings.error
-			: null
-		: null;
-	const projectIsBound = Boolean(
-		projectId && bindings.data?.some((binding) => binding.project_id === projectId),
-	);
+	const access = useAgentProjectBrowseAccess(agentId, projectId);
+	const blockingError = access.error;
 
-	if (projectId && bindings.isLoading) {
+	if (access.isLoading) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-4 px-4 lg:px-6")}>
 				<DetailBackLink href={returnHref} label={returnLabel} mobileOnly={false} />
@@ -150,7 +143,7 @@ function AgentProjectAccessGate({
 		);
 	}
 
-	if (blockingError || !projectIsBound) {
+	if (blockingError || !access.readable) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-4 px-4 lg:px-6")}>
 				<DetailBackLink href={returnHref} label={returnLabel} mobileOnly={false} />
@@ -158,7 +151,7 @@ function AgentProjectAccessGate({
 					<ApiErrorPanel
 						error={blockingError}
 						onRetry={() => {
-							void bindings.refetch();
+							void access.refetch();
 						}}
 						title="Couldn't verify Workspace or Project access"
 					/>

@@ -2,21 +2,14 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
-import {
-	Copy as CopyIcon,
-	ExternalLink,
-	FolderInput,
-	ListChecks,
-	Plus,
-	Trash2,
-} from "lucide-react";
+import { Copy as CopyIcon, FolderInput, ListChecks, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { BulkActionBar } from "@/components/bulk-action-bar";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
-import { effectiveAgentProjectIds } from "@/components/dashboard/agent-project-scope";
+import { useAgentProjectBrowseAccess } from "@/components/dashboard/agent-project-browse-access";
 import { DetailBackLink } from "@/components/detail/back-link";
 import { DetailNotFound } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
@@ -54,7 +47,7 @@ import { identityFor } from "@/lib/identity";
 import { decodeResourceRouteParam } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
-	libraryManagementTarget,
+	projectDetailLink,
 	type ResourceNavigationScope,
 	resourceCatalogReturnTarget,
 	resourceCollectionTarget,
@@ -107,15 +100,13 @@ export default function VaultDetailPage({
 	const scopedBindings = useAgentProjectBindings(scope.kind === "agent" ? scope.agentId : "", {
 		enabled: scope.kind === "agent" && Boolean(requestedProjectId),
 	});
-	const scopedProjectIds = useMemo(
-		() => effectiveAgentProjectIds(scopedBindings.data ?? []),
-		[scopedBindings.data],
+	const browseAccess = useAgentProjectBrowseAccess(
+		scope.kind === "agent" ? scope.agentId : null,
+		requestedProjectId,
 	);
-	const scopedProjectIdSet = useMemo(() => new Set(scopedProjectIds), [scopedProjectIds]);
-	const scopedBindingsResolved = !isAgentScope || scopedBindings.data !== undefined;
-	const requestedProjectIsBound = Boolean(
-		requestedProjectId && scopedProjectIdSet.has(requestedProjectId),
-	);
+	const scopedBindingsResolved = !isAgentScope || !browseAccess.isLoading;
+	const requestedProjectIsReadable = browseAccess.readable;
+
 	const requestedBinding = scopedBindings.data?.find(
 		(binding) => binding.project_id === requestedProjectId,
 	);
@@ -123,7 +114,7 @@ export default function VaultDetailPage({
 		requestedBinding?.binding_type === "primary" ? "Workspace" : "Project";
 
 	// One backend resolver owns both exact UUID links and legacy slug bookmarks.
-	// Agent scope always supplies the exact bound Project before this query runs.
+	// Agent scope supplies an exact readable Project before this query runs.
 	const vaultDetail = useQuery({
 		queryKey: ["vault-detail", slug, vaultId, requestedProjectId],
 		queryFn: async () =>
@@ -140,19 +131,15 @@ export default function VaultDetailPage({
 			),
 		enabled:
 			!isAgentScope ||
-			(Boolean(requestedProjectId) && scopedBindingsResolved && requestedProjectIsBound),
+			(Boolean(requestedProjectId) && scopedBindingsResolved && requestedProjectIsReadable),
 	});
 	const vault: VaultSummary | null = vaultDetail.data ?? null;
 	const resolvedVaultId = vault?.id ?? vaultId;
-	const managementTarget = libraryManagementTarget("vaults", {
-		vaultSlug: slug,
-		vaultId: resolvedVaultId,
-	});
 	const isOwner = vault?.is_owner !== false;
 	const canManageVault = isOwner;
 	const anyProjectId = isAgentScope
 		? requestedProjectId &&
-			requestedProjectIsBound &&
+			requestedProjectIsReadable &&
 			vault?.project_ids?.includes(requestedProjectId)
 			? requestedProjectId
 			: undefined
@@ -214,12 +201,13 @@ export default function VaultDetailPage({
 		? projects.error
 		: null;
 	const blockingScopeError = isAgentScope
-		? shouldBlockQueryError(scopedBindings.error, scopedBindings.data)
-			? scopedBindings.error
+		? shouldBlockQueryError(browseAccess.error, browseAccess.readable ? true : undefined)
+			? browseAccess.error
 			: null
 		: null;
 	const requestedProjectUnavailable =
-		isAgentScope && (!requestedProjectId || (scopedBindingsResolved && !requestedProjectIsBound));
+		isAgentScope &&
+		(!requestedProjectId || (scopedBindingsResolved && !requestedProjectIsReadable));
 
 	// Curation toolkit for grab-bag vaults (the default vault holds
 	// hundreds of keys): search by name, batch-select, then copy/move
@@ -390,10 +378,7 @@ export default function VaultDetailPage({
 
 	useSetBreadcrumbTitle(vault?.name ?? null);
 
-	if (
-		vaultDetail.isLoading ||
-		(isAgentScope && Boolean(requestedProjectId) && scopedBindings.isLoading)
-	) {
+	if (vaultDetail.isLoading || (isAgentScope && browseAccess.isLoading)) {
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<DetailBackLink href={backTarget.href} label={backTarget.label} mobileOnly={false} />
@@ -419,7 +404,7 @@ export default function VaultDetailPage({
 						error={blockingError}
 						onRetry={() => {
 							if (blockingVaultDetailError) void vaultDetail.refetch();
-							if (blockingScopeError) void scopedBindings.refetch();
+							if (blockingScopeError) void browseAccess.refetch();
 						}}
 						title={blockingScopeError ? "Couldn't load Agent Vault access" : "Couldn't load vault"}
 					/>
@@ -464,18 +449,8 @@ export default function VaultDetailPage({
 				<DetailBackLink href={backTarget.href} label={backTarget.label} mobileOnly={false} />
 				<DetailNotFound
 					title="Vault not available to this Agent"
-					message="This Vault is no longer available through the Agent's Projects. It remains in the resource library if your account still has access."
+					message="This Vault is no longer in the selected Project. Return to Vaults to choose another."
 				/>
-				<Button
-					render={<Link to={managementTarget.href} />}
-					nativeButton={false}
-					variant="ghost"
-					size="sm"
-					className="w-fit text-muted-foreground"
-				>
-					<ExternalLink className="size-3.5" />
-					{managementTarget.label}
-				</Button>
 			</div>
 		);
 	}
@@ -830,26 +805,13 @@ export default function VaultDetailPage({
 							return (
 								<div key={project.id} className="flex items-center gap-3 px-4 py-2.5">
 									<div className="min-w-0 flex-1">
-										{isWorkspaceAttachment ? (
-											<>
-												<span className="block text-sm font-medium">Workspace</span>
-												{isAgentScope && isOwner ? (
-													<Link
-														to={managementTarget.href}
-														className="text-xs text-muted-foreground underline"
-													>
-														Manage in Vault Library
-													</Link>
-												) : null}
-											</>
-										) : isCustomProject(project) ? (
+										{(isWorkspaceAttachment && isAgentScope) || isCustomProject(project) ? (
 											<Link
-												to="/projects/$id"
-												params={{ id: project.id }}
+												{...projectDetailLink(scope, project.id)}
 												search={{ tab: "vaults" }}
 												className="block truncate text-sm font-medium hover:underline"
 											>
-												{displayProjectName(project)}
+												{isWorkspaceAttachment ? "Workspace" : displayProjectName(project)}
 											</Link>
 										) : (
 											<span className="block text-sm font-medium">

@@ -6,7 +6,6 @@ import {
 	connectorDetailLink,
 	LIBRARY_RESOURCE_SCOPE,
 	legacyAgentResourceScope,
-	libraryManagementTarget,
 	memoryDetailHrefForScope,
 	memoryDetailLink,
 	projectDetailHrefForScope,
@@ -143,19 +142,6 @@ describe("resource navigation scopes", () => {
 			params: { id: "agent 1", name: "google drive" },
 		});
 		expect(connectorDetailLink(scope, "google drive")).not.toHaveProperty("search");
-	});
-
-	it("makes leaving the Agent shell an explicit library-management target", () => {
-		expect(libraryManagementTarget("projects", { projectId: "project 1" })).toEqual({
-			href: "/projects/project%201",
-			label: "Manage in resource library",
-		});
-		expect(
-			libraryManagementTarget("vaults", { vaultSlug: "prod keys", vaultId: "vault/1" }),
-		).toEqual({
-			href: "/vaults/prod%20keys?vault=vault%2F1",
-			label: "Manage in resource library",
-		});
 	});
 
 	it("ignores obsolete Hosted identity fields on legacy resource-return links", () => {

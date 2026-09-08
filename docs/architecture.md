@@ -243,7 +243,10 @@ kind names or offer the compatibility container as a Project.
 
 Every Agent has one fixed Workspace through `default_project_id` and a
 `primary` `agent_project_bindings` row. User Projects are ordered `context`
-bindings. Sharing grants existing read access only; Link Project is an explicit
+bindings. Agent resource navigation stays under `/agents/{id}` even when browsing an
+unlinked user Project. Account authorization controls browsing; Agent bindings
+control runtime use. Private Workspaces remain restricted to their bound Agent.
+Sharing grants existing read access only; Link Project is an explicit
 whole-bundle action. A linked Agent uses every Skill in the Project and resolves
 its attached Vaults. Link, unlink, Project Skill changes, and Project archival
 invalidate the affected managed Agent desired state.

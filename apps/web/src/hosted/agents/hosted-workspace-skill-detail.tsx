@@ -21,7 +21,7 @@ import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { workspaceSkillErrorNormalizer } from "@/hosted/agents/workspace-skill-errors";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import { billingKeys } from "@/hosted/billing/query-keys";
-import { agentProjectResourceHref } from "@/lib/agent-routes";
+import { agentProjectResourceHref, agentSkillDetailLink } from "@/lib/agent-routes";
 import { unwrap, useApi } from "@/lib/api";
 import { useDeploymentEventStreamActive } from "@/lib/deployment-event-stream-context";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -158,12 +158,14 @@ export default function HostedWorkspaceSkillDetail({
 						</a>
 					) : detail.data?.kind === "library" && detail.data.skill.project_id ? (
 						<Link
-							to="/skills/$key"
-							params={{ key: detail.data.skill.skill_key }}
-							search={{ project: detail.data.skill.project_id }}
+							{...agentSkillDetailLink(
+								agentId,
+								detail.data.skill.skill_key,
+								detail.data.skill.project_id,
+							)}
 							className="text-sm text-muted-foreground hover:text-foreground"
 						>
-							View in Library
+							View source Skill
 						</Link>
 					) : null}
 					<DetailPanel>

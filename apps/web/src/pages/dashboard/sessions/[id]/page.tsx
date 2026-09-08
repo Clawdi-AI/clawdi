@@ -375,7 +375,7 @@ export function SessionDetailContent({
 		? formatSessionSummary(session.summary) || session.local_session_id.slice(0, 12)
 		: null;
 	const sessionAgentIdentity = session ? sessionAgentIdentityInput(session) : null;
-	const detailAgentIdentity = scopedAgent ?? sessionAgentIdentity;
+	const detailAgentIdentity = sessionAgentIdentity ?? scopedAgent;
 	useSetBreadcrumbTitle(summaryText);
 
 	if (isSessionLoading) {
