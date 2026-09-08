@@ -121,6 +121,7 @@ strict = [
     "app/__init__.py",
     "app/core/__init__.py",
     "app/core/api_scopes.py",
+    "app/core/asyncpg_dialect.py",
     "app/core/auth.py",
     "app/core/config.py",
     "app/core/database.py",
