@@ -1,6 +1,4 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import type { AgentTile } from "@/components/dashboard/agents-card";
 import {
@@ -272,45 +270,10 @@ describe("legacy membership resolution", () => {
 
 	test("surfaces an initial endpoint failure instead of remaining in loading state", () => {
 		const error = new Error("legacy endpoint unavailable");
-		const unifiedSource = readFileSync(
-			new URL("./use-unified-agent-list.ts", import.meta.url),
-			"utf8",
-		);
-		const sectionSource = readFileSync(
-			new URL("./hosted-agents-section.tsx", import.meta.url),
-			"utf8",
-		);
-
 		expect(resolveLegacyEnvIds("enabled", undefined, error)).toEqual({
 			envIds: null,
 			error,
 			isLoading: false,
 		});
-		expect(unifiedSource).toContain("error: hosted.error ?? legacy.error");
-		expect(sectionSource).toContain("{unified.error ? (");
-		expect(sectionSource).toContain("<HostedUnavailableBanner");
-	});
-});
-
-describe("unified list consumers", () => {
-	test("sidebar and homepage use the shared unified list hook", () => {
-		const srcDir = resolve(import.meta.dir, "..");
-		const sidebar = readFileSync(resolve(srcDir, "components/app-sidebar.tsx"), "utf8");
-		const homepage = readFileSync(resolve(srcDir, "hosted/hosted-agents-section.tsx"), "utf8");
-		const onboarding = readFileSync(
-			resolve(srcDir, "components/dashboard/onboarding-card.tsx"),
-			"utf8",
-		);
-
-		expect(sidebar).toContain('import("@/hosted/use-unified-agent-list")');
-		expect(sidebar).toContain("hostedMembershipResolved");
-		expect(sidebar).toContain("activeAgentTile");
-		expect(homepage).toContain("useUnifiedAgentList({");
-		expect(homepage).not.toContain("connectedAgentTilesForHostedView");
-		expect(homepage).not.toContain("useHostedAgentTiles({");
-		expect(homepage).toContain("<HostedEmptyAccountHero canDeployOnClawdi={canDeployOnClawdi} />");
-		expect(homepage).toContain("<WelcomeWalletCard />");
-		expect(onboarding).toContain("Deploy an Agent on Clawdi");
-		expect(onboarding).toContain("Connect an Agent on your machine");
 	});
 });

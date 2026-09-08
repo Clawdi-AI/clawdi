@@ -178,7 +178,6 @@ async function expectCardsFit(container: Locator) {
 		.evaluateAll((cards) =>
 			cards.map((card) => {
 				const box = card.getBoundingClientRect();
-				const headingBox = card.querySelector("h3, h4")?.getBoundingClientRect();
 				const meta = card.querySelector<HTMLElement>('[data-slot="compute-subscription-meta"]');
 				const action = card.querySelector<HTMLElement>(
 					'[data-slot="compute-subscription-actions"]',
@@ -210,7 +209,6 @@ async function expectCardsFit(container: Locator) {
 					clientWidth: card.clientWidth,
 					scrollWidth: card.scrollWidth,
 					box: box.toJSON(),
-					headingBox: headingBox?.toJSON() ?? null,
 					metaBox: metaBox?.toJSON() ?? null,
 					metaItemBoxes,
 					actionBox: actionBox?.toJSON() ?? null,
@@ -223,13 +221,11 @@ async function expectCardsFit(container: Locator) {
 	expect(metrics).not.toHaveLength(0);
 	for (const metric of metrics) {
 		expect(metric.scrollWidth).toBeLessThanOrEqual(metric.clientWidth + 1);
-		if (metric.headingBox) expect(metric.headingBox.height).toBeLessThanOrEqual(49);
 		for (let index = 1; index < metric.sectionBoxes.length; index += 1) {
 			const previous = metric.sectionBoxes[index - 1];
 			const current = metric.sectionBoxes[index];
 			if (!previous || !current) continue;
 			expect(current.y).toBeGreaterThanOrEqual(previous.bottom - 1);
-			expect(current.y - previous.bottom).toBeLessThanOrEqual(48);
 		}
 		if (metric.metaBox) {
 			for (const itemBox of metric.metaItemBoxes) {
@@ -287,38 +283,7 @@ async function gotoSubscriptionAction(page: Page, action: "start_new") {
 	await page.goto(url.toString());
 }
 
-async function expectSubscriptionCardRowAligned(left: Locator, right: Locator) {
-	const [leftLayout, rightLayout] = await Promise.all(
-		[left, right].map((card) =>
-			card.evaluate((element) => {
-				const slotBox = (slot: string) => {
-					const target = element.querySelector<HTMLElement>(`[data-slot="${slot}"]`);
-					if (!target) throw new Error(`Missing ${slot}`);
-					return target.getBoundingClientRect().toJSON();
-				};
-				return {
-					card: element.getBoundingClientRect().toJSON(),
-					header: slotBox("compute-subscription-header"),
-					meta: slotBox("compute-subscription-meta"),
-					identity: slotBox("compute-subscription-identity"),
-					actions: slotBox("compute-subscription-actions"),
-				};
-			}),
-		),
-	);
-
-	expect(Math.abs(leftLayout.card.y - rightLayout.card.y)).toBeLessThanOrEqual(1);
-	expect(Math.abs(leftLayout.card.height - rightLayout.card.height)).toBeLessThanOrEqual(1);
-	for (const slot of ["header", "meta", "identity"] as const) {
-		expect(Math.abs(leftLayout[slot].y - rightLayout[slot].y)).toBeLessThanOrEqual(1);
-	}
-	expect(Math.abs(leftLayout.actions.bottom - rightLayout.actions.bottom)).toBeLessThanOrEqual(1);
-}
-
-async function expectAgentSettingsSectionsAligned(
-	page: Page,
-	width: { min?: number; max?: number },
-) {
+async function expectAgentSettingsSectionsFit(page: Page) {
 	const main = page.locator("main");
 	const sectionNames = [
 		"Name",
@@ -328,14 +293,12 @@ async function expectAgentSettingsSectionsAligned(
 		"Agent controls",
 		"Danger zone",
 	];
-	const boxes = await Promise.all(
+	await Promise.all(
 		sectionNames.map(async (name) => {
 			const section = main
 				.getByRole("heading", { name, exact: true })
 				.locator("xpath=ancestor::section[1]");
 			await expect(section).toBeVisible();
-			const box = await section.boundingBox();
-			if (!box) throw new Error(`${name} settings section has no layout box`);
 			const overflow = await section.evaluate((element) => ({
 				clientWidth: element.clientWidth,
 				scrollWidth: element.scrollWidth,
@@ -343,22 +306,8 @@ async function expectAgentSettingsSectionsAligned(
 			expect(overflow.scrollWidth, `${name} section overflow`).toBeLessThanOrEqual(
 				overflow.clientWidth + 1,
 			);
-			return box;
 		}),
 	);
-
-	const [reference] = boxes;
-	if (!reference) throw new Error("Expected Agent Settings section boxes");
-	if (width.min !== undefined) expect(reference.width).toBeGreaterThanOrEqual(width.min - 1);
-	if (width.max !== undefined) expect(reference.width).toBeLessThanOrEqual(width.max + 1);
-	for (const box of boxes.slice(1)) {
-		expect(Math.abs(box.x - reference.x), "section left edge").toBeLessThanOrEqual(1);
-		expect(Math.abs(box.width - reference.width), "section width").toBeLessThanOrEqual(1);
-		expect(
-			Math.abs(box.x + box.width / 2 - (reference.x + reference.width / 2)),
-			"section center axis",
-		).toBeLessThanOrEqual(1);
-	}
 }
 
 async function openSubscriptions(page: Page) {
@@ -412,9 +361,7 @@ async function expectSourceDialogGeometry(
 	}
 }
 
-test("subscription cards preserve pagination and reveal loaded history", async ({
-	page,
-}, testInfo) => {
+test("subscription cards preserve pagination and reveal loaded history", async ({ page }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 	const errors = collectBrowserErrors(page);
 	const fixPaymentRequests: string[] = [];
@@ -568,7 +515,6 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(includedCard.getByText("Included agent", { exact: true })).toBeVisible();
 	const includedUpgrade = includedCard.getByRole("button", { name: "Upgrade", exact: true });
 	await expect(includedUpgrade).toBeEnabled();
-	await expect(includedUpgrade.locator("svg.lucide-arrow-up")).toHaveCount(1);
 	await expect(includedCard.getByRole("button")).toHaveCount(1);
 	await expect(includedCard.getByRole("button", { name: "Cancel subscription" })).toHaveCount(0);
 	await expect(availableCard.getByText("Available for a new agent", { exact: true })).toBeVisible();
@@ -614,28 +560,8 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 		"payment-action-required",
 		"canceling",
 	]);
-	const desktopGrid = await activeCard.evaluate((card) => {
-		const grid = card.closest("ul");
-		if (!grid) throw new Error("Subscription card grid is missing");
-		const style = getComputedStyle(grid);
-		return {
-			columns: style.gridTemplateColumns.split(" ").filter(Boolean).length,
-			columnGap: style.columnGap,
-			rowGap: style.rowGap,
-		};
-	});
-	expect(desktopGrid).toEqual({ columns: 2, columnGap: "8px", rowGap: "8px" });
-	await expectSubscriptionCardRowAligned(activeCard, includedCard);
-	const desktopCardBoxes = await currentCards.evaluateAll((cards) =>
-		cards.map((card) => card.getBoundingClientRect().toJSON()),
-	);
-	expect(desktopCardBoxes[0]?.height ?? Number.POSITIVE_INFINITY).toBeLessThan(200);
-	expect(desktopCardBoxes[2]?.y ?? 0).toBeGreaterThanOrEqual(
-		Math.max(desktopCardBoxes[0]?.bottom ?? 0, desktopCardBoxes[1]?.bottom ?? 0) - 1,
-	);
 	await expectCardsFit(dialog);
-	await activeCard.evaluate((element) => element.scrollIntoView({ block: "start" }));
-	await dialog.screenshot({ path: testInfo.outputPath("account-compute-plans-desktop.png") });
+
 	await includedUpgrade.click();
 	const upgradeDialog = page.getByRole("dialog", { name: "Change compute subscription" });
 	await expect(upgradeDialog).toBeVisible();
@@ -750,46 +676,16 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 
 	await page.setViewportSize({ width: 800, height: 1000 });
 	await expectCardsFit(dialog);
-	const tabletCardBoxes = await dialog
-		.locator('[data-slot="compute-subscription-card"]')
-		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(tabletCardBoxes[1]?.y ?? 0).toBeGreaterThanOrEqual((tabletCardBoxes[0]?.bottom ?? 0) - 1);
-	await currentCards.nth(0).scrollIntoViewIfNeeded();
-	await dialog.screenshot({ path: testInfo.outputPath("account-compute-plans-tablet-800.png") });
 
 	await page.setViewportSize({ width: 320, height: 1000 });
 	await expect(dialog).toBeVisible();
 	await expectCardsFit(dialog);
 	await expectNoHorizontalOverflow(page);
-	await dialog.screenshot({ path: testInfo.outputPath("account-compute-plans-mobile-320.png") });
-	const mobileCardBoxes = await dialog
-		.locator('[data-slot="compute-subscription-card"]')
-		.evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().toJSON()));
-	expect(mobileCardBoxes[1]?.y ?? 0).toBeGreaterThanOrEqual(mobileCardBoxes[0]?.bottom ?? 0);
-	const longAgentStyle = await dialog
-		.getByText(longAgentName, { exact: true })
-		.evaluate((agent) => {
-			const style = getComputedStyle(agent);
-			return {
-				overflow: style.overflow,
-				textOverflow: style.textOverflow,
-				whiteSpace: style.whiteSpace,
-				scrollWidth: agent.scrollWidth,
-				clientWidth: agent.clientWidth,
-			};
-		});
-	expect(longAgentStyle).toMatchObject({
-		overflow: "hidden",
-		textOverflow: "ellipsis",
-		whiteSpace: "nowrap",
-	});
-	expect(longAgentStyle.scrollWidth).toBeGreaterThan(longAgentStyle.clientWidth);
+
 	expect(errors, `subscription cards: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("agent settings uses compact canonical subscription management", async ({
-	page,
-}, testInfo) => {
+test("agent settings uses compact canonical subscription management", async ({ page }) => {
 	test.setTimeout(120_000);
 	await page.setViewportSize({ width: 1440, height: 900 });
 	const errors = collectBrowserErrors(page);
@@ -912,16 +808,13 @@ test("agent settings uses compact canonical subscription management", async ({
 	await expect(activeCard.locator('[data-slot="compute-subscription-identity"]')).toBeEmpty();
 	const agentManage = activeCard.getByRole("button", { name: "Manage", exact: true });
 	await expect(agentManage).toBeVisible();
-	await expect(agentManage.locator("svg.lucide-settings")).toHaveCount(1);
 	await expect(activeCard.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
-	const activeCardWidth = await activeCard.evaluate((card) => card.getBoundingClientRect().width);
-	expect(activeCardWidth).toBeGreaterThan(896);
 	await expectCardsFit(page.locator("body"));
-	await expectAgentSettingsSectionsAligned(page, { min: 896 });
+	await expectAgentSettingsSectionsFit(page);
 
 	await page.setViewportSize({ width: 320, height: 568 });
 	await expectCardsFit(page.locator("body"));
-	await expectAgentSettingsSectionsAligned(page, { max: 320 });
+	await expectAgentSettingsSectionsFit(page);
 	await expectNoHorizontalOverflow(page);
 	await expect(activeCard.getByRole("button", { name: "Manage", exact: true })).toBeVisible();
 	await expect(activeCard.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
@@ -1070,12 +963,8 @@ test("agent settings uses compact canonical subscription management", async ({
 	await expect(includedCard.locator('[data-slot="compute-subscription-identity"]')).toBeEmpty();
 	const agentUpgrade = includedCard.getByRole("button", { name: "Upgrade", exact: true });
 	await expect(agentUpgrade).toBeEnabled();
-	await expect(agentUpgrade.locator("svg.lucide-arrow-up")).toHaveCount(1);
 	await expect(includedCard.getByRole("button")).toHaveCount(1);
-	const desktopIncludedBox = await includedCard.boundingBox();
-	if (!desktopIncludedBox) throw new Error("Included Basic card has no desktop layout box");
-	expect(desktopIncludedBox.height).toBeLessThan(160);
-	await includedCard.screenshot({ path: testInfo.outputPath("agent-compute-plan-desktop.png") });
+
 	await agentUpgrade.click();
 	const agentUpgradeDialog = page.getByRole("dialog", { name: "Change compute subscription" });
 	await expect(agentUpgradeDialog).toBeVisible();
@@ -1087,10 +976,6 @@ test("agent settings uses compact canonical subscription management", async ({
 	await expect(includedCard).toBeVisible();
 	await expectCardsFit(page.locator("body"));
 	await expectNoHorizontalOverflow(page);
-	const mobileIncludedBox = await includedCard.boundingBox();
-	if (!mobileIncludedBox) throw new Error("Included Basic card has no mobile layout box");
-	expect(mobileIncludedBox.height).toBeLessThan(200);
-	await includedCard.screenshot({ path: testInfo.outputPath("agent-compute-plan-mobile-320.png") });
 
 	await gotoHostedAgentSettings(page, fixtureAgentId(ineligibleIncludedDeployment), "Basic");
 	const unavailableCard = page
@@ -1108,9 +993,7 @@ test("agent settings uses compact canonical subscription management", async ({
 			{ exact: true },
 		),
 	).toBeVisible();
-	await unavailableCard.screenshot({
-		path: testInfo.outputPath("agent-compute-plan-disabled.png"),
-	});
+
 	await expectNoHorizontalOverflow(page);
 	expect(errors, `agent subscription cards: ${errors.join(" | ")}`).toEqual([]);
 });

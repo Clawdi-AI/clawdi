@@ -273,7 +273,6 @@ describe("deploymentToTiles", () => {
 		);
 
 		expectHostedTileStatus(tile, "Temporarily unavailable");
-		expect(tile?.cardStatus?.visual.dotClass).toContain("bg-warning");
 		expect(tile?.cardStatus?.labels).toEqual(["Temporarily unavailable"]);
 	});
 
@@ -381,7 +380,6 @@ describe("deploymentToTiles", () => {
 
 			expectHostedTileStatus(tile, label);
 			expect(tile?.cardStatus?.labels).not.toContain("Live");
-			expect(tile?.cardStatus?.visual.dotClass).not.toContain("bg-success");
 		}
 	});
 

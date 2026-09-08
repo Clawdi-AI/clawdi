@@ -34,7 +34,6 @@ test("explains Project access once and opens the Project after accepting", async
 		expect(
 			await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
 		).toBe(true);
-		await page.screenshot({ path: `test-results/invitation-${width}.png`, fullPage: true });
 	}
 	await page.getByRole("button", { name: "Accept invitation" }).click();
 	await expect(page).toHaveURL(/\/projects\/team-knowledge\?joined=share/);

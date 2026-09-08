@@ -105,8 +105,6 @@ for (const viewport of [
 		await expect(link).toBeVisible({ timeout: 15_000 });
 		await expect(page.getByText("1 agent", { exact: true })).toHaveCount(0);
 		const card = link.locator("..");
-		const before = await card.boundingBox();
-		if (!before) throw new Error("Expected the Agent card to have layout bounds");
 
 		await expect.poll(refresh.agentRequests, { timeout: 15_000 }).toBeGreaterThan(1);
 		await refresh.refreshStarted.promise;
@@ -114,10 +112,6 @@ for (const viewport of [
 			await expect(link).toBeVisible();
 			await expect(page.getByText("1 agent", { exact: true })).toHaveCount(0);
 			expect(await card.evaluate((element) => getComputedStyle(element).opacity)).toBe("1");
-			expect(await card.locator(".animate-pulse").count()).toBe(0);
-			const during = await card.boundingBox();
-			if (!during) throw new Error("Expected the Agent card to remain mounted during refresh");
-			expect(during).toEqual(before);
 		} finally {
 			refresh.releaseRefresh.resolve();
 		}

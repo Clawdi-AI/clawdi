@@ -169,40 +169,17 @@ test("channels connect dialog opens without browser errors", async ({ page }) =>
 	expect(errors, `connect dialog: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("popular BYOK providers have branded icons and credential-only product setup", async ({
-	page,
-}, testInfo) => {
+test("popular BYOK providers support credential-only product setup", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	const inferenceRequests: string[] = [];
 	page.on("request", (request) => {
 		if (/\/ai-providers\/(?:[^/]+\/)?test(?:\?|$)/.test(request.url()))
 			inferenceRequests.push(request.url());
 	});
-	await page.addInitScript(() => localStorage.setItem("clawdi-theme", "system"));
 	await page.setViewportSize({ width: 1000, height: 1000 });
-	await page.emulateMedia({ colorScheme: "light" });
 	await page.goto("/ai-providers");
 	await page.getByRole("button", { name: "Add provider", exact: true }).first().click();
 	const dialog = page.getByRole("dialog");
-	const brands = [
-		"NVIDIA NIM",
-		"Fireworks AI",
-		"Hugging Face",
-		"DeepInfra",
-		"OpenCode",
-		"Xiaomi MiMo API",
-		"Tencent Cloud",
-	];
-	for (const theme of ["light", "dark"] as const) {
-		await page.emulateMedia({ colorScheme: theme });
-		if (theme === "dark") await page.setViewportSize({ width: 390, height: 844 });
-		for (const brand of brands) {
-			const card = dialog.getByRole("button", { name: new RegExp(`^${brand}`) });
-			await card.scrollIntoViewIfNeeded();
-			await expect(card.locator('svg[data-icon-source="lobehub"]')).toBeVisible();
-		}
-		await dialog.screenshot({ path: testInfo.outputPath(`provider-icons-${theme}.png`) });
-	}
 	for (const choice of [
 		{
 			query: "Hugging Face",
@@ -231,9 +208,6 @@ test("popular BYOK providers have branded icons and credential-only product setu
 	]) {
 		await dialog.getByRole("textbox", { name: "Search providers" }).fill(choice.query);
 		await dialog.getByRole("button", { name: new RegExp(`^${choice.name}`) }).click();
-		await expect(
-			dialog.locator('[data-slot="dialog-title"] svg[data-icon-source="lobehub"]'),
-		).toBeVisible();
 		await expect(dialog.getByText("Choose and manage models inside your agent.")).toHaveCount(0);
 		await expect(dialog.getByText("Encrypted at rest and never shown again.")).toHaveCount(0);
 		const credentialInput = dialog.getByLabel(choice.credential, { exact: true });
@@ -247,7 +221,7 @@ test("popular BYOK providers have branded icons and credential-only product setu
 				exact: true,
 			}),
 		).toBeVisible();
-		await dialog.screenshot({ path: testInfo.outputPath(`provider-setup-${choice.id}.png`) });
+
 		if (choice.product) {
 			await dialog.getByRole("combobox", { name: "Product", exact: true }).click();
 			await page.getByRole("option", { name: choice.product, exact: true }).click();

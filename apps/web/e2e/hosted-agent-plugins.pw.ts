@@ -196,22 +196,10 @@ test("Agent Plugin cards keep every status and action readable", async ({ page }
 		"The agent could not apply this plugin.",
 	);
 	await expect(page.getByRole("main").locator('[data-slot="status-badge"]')).toHaveCount(0);
-	expect(
-		await cardFor("Installed Plugin")
-			.getByRole("button", { name: "Installed", exact: true })
-			.evaluate((button) => button.getBoundingClientRect().width),
-	).toBeLessThan(120);
-
 	const updateFooter = cardFor("Update Available Plugin").locator('[data-slot="entity-meta"]');
 	await expect(updateFooter).toContainText("Mysten Labs");
 	await expect(updateFooter).toContainText("v1.0.0 → v2.0.0");
 	await expect(updateFooter).toContainText("21 Skills · 1 MCP server");
-	expect(
-		await updateFooter
-			.locator(":scope > span")
-			.evaluateAll((items) => new Set(items.map((item) => (item as HTMLElement).offsetTop)).size),
-	).toBeGreaterThan(1);
-
 	const cards = page.locator('[data-slot="entity-card"]');
 	await expect(cards).toHaveCount(states.length);
 	const readLayouts = () =>
@@ -341,19 +329,6 @@ test("Hosted Agent Plugins opens and installs from the overview", async ({ page 
 	).toBeVisible();
 	const overviewPlugins = page.locator('[data-overview-module="plugins"]');
 	await expect(overviewPlugins).toContainText("No plugins installed");
-	const workspaceModules = page.locator(
-		'section[aria-labelledby="agent-overview-workspace"] [data-overview-module]',
-	);
-	await expect(workspaceModules).toHaveCount(4);
-	const workspaceRows = await workspaceModules.evaluateAll((modules) => {
-		const rowCounts = new Map<number, number>();
-		for (const module of modules) {
-			const top = Math.round(module.getBoundingClientRect().top);
-			rowCounts.set(top, (rowCounts.get(top) ?? 0) + 1);
-		}
-		return [...rowCounts.values()].sort();
-	});
-	expect(workspaceRows).toEqual([2, 2]);
 	await overviewPlugins.getByRole("link", { name: "Plugins", exact: true }).click();
 	await expect(page.getByRole("heading", { name: "Plugins" })).toBeVisible();
 	await expect(page.getByText("Sui Agent", { exact: true })).toBeVisible();

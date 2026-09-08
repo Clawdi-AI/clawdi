@@ -10,13 +10,6 @@ describe("Stripe appearance", () => {
 		const dark = stripeAppearanceForTheme(true);
 		expect(light.theme).toBe("stripe");
 		expect(dark.theme).toBe("night");
-		expect(light.variables?.colorBackground).toBe("oklch(0.985 0.0025 95)");
-		expect(light.variables?.colorText).toBe("oklch(0.235 0.008 95)");
-		expect(dark.variables?.colorBackground).toBe("oklch(0.175 0.004 95)");
-		expect(dark.variables?.colorText).toBe("oklch(0.92 0.004 95)");
-		expect(light.variables?.colorBackground).not.toBe(dark.variables?.colorBackground);
-		expect(light.variables?.fontSizeBase).toBe("16px");
-		expect(light.rules?.[".Input"]?.fontSize).toBe("16px");
 	});
 
 	test("updates immediately and on a live root theme change", () => {

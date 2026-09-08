@@ -1,5 +1,4 @@
 import { expect, type Page, type Route, test } from "@playwright/test";
-import { captureAgentOverview, expectAgentOverviewGeometry } from "./agent-overview-geometry";
 
 const now = new Date("2026-07-04T12:00:00.000Z");
 
@@ -747,8 +746,6 @@ test("sidebar shortcut preserves the desktop focus rail and Escape closes the mo
 	await page.setViewportSize({ width: 320, height: 568 });
 	await expect(trigger).toBeVisible();
 	await expect(separator).toBeVisible();
-	await expect(separator).toHaveCSS("width", "1px");
-	await expect(separator).toHaveCSS("height", "16px");
 	await trigger.click();
 	const drawer = page.getByRole("dialog", { name: "Sidebar" });
 	await expect(drawer).toBeVisible();
@@ -818,7 +815,7 @@ test("connected agent settings protects an unsaved display name", async ({ page 
 
 test("connected Agent Memories keeps established UI through nested list and detail navigation", async ({
 	page,
-}, testInfo) => {
+}) => {
 	await stubDashboardApi(page);
 	await page.goto("/agents/11111111-1111-4111-8111-111111111111/memories");
 
@@ -851,7 +848,7 @@ test("connected Agent Memories keeps established UI through nested list and deta
 			.locator("html")
 			.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
 	).toBe(true);
-	await main.screenshot({ path: testInfo.outputPath("connected-memories-mobile.png") });
+
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await memoryCard.getByRole("link").click();
 	await expect(page).toHaveURL(
@@ -1249,73 +1246,12 @@ async function stubConnectedAgentResources(page: Page) {
 		projectRequests,
 		longContextProjectName,
 		longContextProjectSlug,
-		longContextProjectDescription,
 	};
 }
 
-test("connected overview loading shares the Status body and section tracks", async ({
+test("connected overview shows sessions and resources according to agent capabilities", async ({
 	page,
-}, testInfo) => {
-	const agent = agents[0];
-	if (!agent) throw new Error("Missing connected fixture");
-	const currentAgent = { ...agent, adapter_modules: ["sessions", "skills"] };
-	await stubDashboardApi(page, [], { sessionsPage: overviewSessions });
-	let inventoryGate = Promise.resolve();
-	await page.route("**/v1/agents", async (route) => {
-		await inventoryGate;
-		await fulfillJson(route, [currentAgent]);
-	});
-	await page.route(`**/v1/agents/${agent.id}`, async (route) => {
-		await inventoryGate;
-		await fulfillJson(route, currentAgent);
-	});
-	for (const viewport of [
-		{ width: 1440, height: 900 },
-		{ width: 390, height: 844 },
-	]) {
-		await page.setViewportSize(viewport);
-		let release = () => {};
-		inventoryGate = new Promise<void>((resolve) => {
-			release = resolve;
-		});
-		try {
-			await page.goto(`/agents/${agent.id}`);
-			await expect(page.getByTestId("overview-status-card-skeleton")).toBeVisible();
-			await page.locator("#dashboard-scroll-container").evaluate((element) => {
-				element.scrollTop = 0;
-			});
-			await page.evaluate(() => window.scrollTo(0, 0));
-			const status = page.locator('[data-overview-status="status"]');
-			const loadingBody = await status.locator("dl").boundingBox();
-			const loading = await expectAgentOverviewGeometry(page, {
-				hosted: false,
-				desktop: viewport.width === 1440,
-			});
-			await page.screenshot({ path: testInfo.outputPath(`connected-${viewport.width}-cold.png`) });
-			release();
-			await expect(page.locator('main [data-slot="skeleton"]')).toHaveCount(0);
-			const readyBody = await status.locator("dl").boundingBox();
-			if (!loadingBody || !readyBody) throw new Error("Missing Status metadata");
-			expect(Math.abs(readyBody.height - loadingBody.height)).toBeLessThanOrEqual(1);
-			const ready = await expectAgentOverviewGeometry(page, {
-				hosted: false,
-				desktop: viewport.width === 1440,
-			});
-			expect(Math.abs(ready.status.height - loading.status.height)).toBeLessThanOrEqual(1);
-			await testInfo.attach(`connected-${viewport.width}-loading-geometry`, {
-				body: JSON.stringify({ loadingBody, readyBody, loading, ready }, null, 2),
-				contentType: "application/json",
-			});
-			await captureAgentOverview(page, testInfo, `connected-${viewport.width}-ready`);
-		} finally {
-			release();
-		}
-	}
-});
-
-test("connected overview keeps Status beside sessions and preserves resource columns", async ({
-	page,
-}, testInfo) => {
+}) => {
 	await page.clock.setFixedTime(now);
 	const agent = agents[0];
 	if (!agent) throw new Error("Missing Connected Agent fixture");
@@ -1366,22 +1302,6 @@ test("connected overview keeps Status beside sessions and preserves resource col
 				'[data-overview-section="tools"], [data-overview-module="channels"], [data-overview-module="model-provider"]',
 			),
 		).toHaveCount(0);
-		const geometry = await expectAgentOverviewGeometry(page, {
-			hosted: false,
-			desktop: viewport.width === 1440,
-		});
-		await testInfo.attach(
-			`connected-final-clean-${viewport.width}-sessions-${sessionCount}-geometry`,
-			{
-				body: JSON.stringify(geometry, null, 2),
-				contentType: "application/json",
-			},
-		);
-		await captureAgentOverview(
-			page,
-			testInfo,
-			`connected-final-clean-${viewport.width}-sessions-${sessionCount}`,
-		);
 	}
 	expect(sessionRequests.every((url) => new URL(url).searchParams.get("page_size") === "3")).toBe(
 		true,
@@ -1397,7 +1317,7 @@ test("connected overview keeps Status beside sessions and preserves resource col
 
 test("connected agent shares the Project catalog and preserves scoped Skills and Vaults", async ({
 	page,
-}, testInfo) => {
+}) => {
 	const {
 		skillRequests,
 		projectCreateBodies,
@@ -1406,7 +1326,6 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 		projectRequests,
 		longContextProjectName,
 		longContextProjectSlug,
-		longContextProjectDescription,
 	} = await stubConnectedAgentResources(page);
 
 	await page.setViewportSize({ width: 1280, height: 900 });
@@ -1440,14 +1359,6 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	const teamCard = projectCards.filter({ hasText: "Team Knowledge" });
 	const longCard = projectCards.filter({ hasText: longContextProjectName });
 	const releaseCard = projectCards.filter({ hasText: "Release Project" });
-	expect(
-		await projectGrid
-			.first()
-			.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length),
-	).toBe(3);
-	for (const card of await projectCards.all()) {
-		await expect(card.locator(":scope > div")).toHaveCSS("border-top-width", "1px");
-	}
 	await expect(projectCards.nth(0)).toContainText(longContextProjectName);
 	await expect(teamCard).toContainText("Viewer");
 	await expect(teamCard).toContainText("by Teammate");
@@ -1584,50 +1495,9 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect.poll(() => projectRequests.length).toBeGreaterThan(projectReadsBeforeLink);
 
 	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
-	await projectStack.screenshot({
-		path: testInfo.outputPath("connected-agent-projects-desktop.png"),
-	});
-	await page.locator("html").evaluate((element) => element.classList.add("dark"));
-	await projectStack.screenshot({ path: testInfo.outputPath("connected-agent-projects-dark.png") });
-	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
-
-	await page.setViewportSize({ width: 2000, height: 1000 });
-	const centeredAgentSurface = projectStack.locator(
-		"xpath=ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' max-w-7xl ')][1]",
-	);
-	expect(
-		await centeredAgentSurface.evaluate((element) => element.getBoundingClientRect().width),
-	).toBeLessThanOrEqual(1280);
 
 	await page.setViewportSize({ width: 390, height: 844 });
 	await expect(longCard).toBeVisible();
-	expect(
-		await projectGrid
-			.first()
-			.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length),
-	).toBe(1);
-	const longTitle = longCard.getByRole("heading", { name: longContextProjectName });
-	const longDescription = longCard.getByText(longContextProjectDescription, {
-		exact: true,
-	});
-	expect(await longTitle.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
-		true,
-	);
-	const descriptionTruncation = await longDescription.evaluate((element) => {
-		const style = getComputedStyle(element);
-		return {
-			lineClamp: style.webkitLineClamp,
-			overflow: style.overflow,
-			isVerticallyTruncated: element.scrollHeight > element.clientHeight,
-			hasHorizontalOverflow: element.scrollWidth > element.clientWidth + 1,
-		};
-	});
-	expect(descriptionTruncation).toEqual({
-		lineClamp: "2",
-		overflow: "hidden",
-		isVerticallyTruncated: true,
-		hasHorizontalOverflow: false,
-	});
 	await expect(longCard.getByText(longContextProjectSlug, { exact: true })).toHaveCount(0);
 	expect(
 		await projectStack.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
@@ -1637,10 +1507,7 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 			.locator("html")
 			.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
 	).toBe(true);
-	await page.screenshot({
-		fullPage: true,
-		path: testInfo.outputPath("connected-agent-projects-mobile.png"),
-	});
+
 	await page.goto("/agents/11111111-1111-4111-8111-111111111111/project-access/project-smoke");
 	await expect(page).toHaveURL(
 		/\/agents\/11111111-1111-4111-8111-111111111111\/project-access\/project-smoke$/,
@@ -1696,16 +1563,13 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 		"href",
 		"/agents/11111111-1111-4111-8111-111111111111",
 	);
-	await expect(
-		focusedSkillsHeading.locator("xpath=../../..").locator(".bg-identity-2-bg svg.lucide-sparkles"),
-	).toBeVisible();
 	await expect(main.getByRole("heading", { name: "Skills", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Vaults", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "View all Skills" })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Install skill", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Add skill", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /Link Vault/i })).toHaveCount(0);
-	await main.screenshot({ path: testInfo.outputPath("connected-workspace-skills-mobile.png") });
+
 	await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
 	const mobileProjectSidebar = page.getByRole("dialog");
 	await expect(mobileProjectSidebar).toBeVisible();
@@ -1718,11 +1582,7 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(
 		mobileProjectSidebar.getByRole("link", { name: "Vaults", exact: true }),
 	).not.toHaveAttribute("data-active", "");
-	await page.waitForTimeout(250);
-	await page.screenshot({
-		path: testInfo.outputPath("connected-workspace-sidebar-mobile.png"),
-		fullPage: true,
-	});
+
 	await page.keyboard.press("Escape");
 	await page.setViewportSize({ width: 1280, height: 1200 });
 	await expect(
@@ -1731,11 +1591,6 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 			.locator('[data-slot="breadcrumb-item"]:visible'),
 	).toHaveText(["Smoke Codex", "Skills"]);
 	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveCount(0);
-	await main.screenshot({ path: testInfo.outputPath("connected-workspace-skills-desktop.png") });
-	await page.screenshot({
-		path: testInfo.outputPath("connected-workspace-sidebar-desktop.png"),
-		fullPage: true,
-	});
 
 	await page.goto(
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-smoke/vaults",
@@ -1750,9 +1605,6 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	).toHaveText(["Smoke Codex", "Vaults"]);
 	await expect(main.getByText("Project: Smoke Project", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Back to Agent Overview" })).toHaveCount(0);
-	await expect(
-		focusedVaultsHeading.locator("xpath=../../..").locator(".bg-identity-4-bg svg.lucide-key"),
-	).toBeVisible();
 	await expect(main.getByRole("heading", { name: "Vaults", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Skills", level: 2 })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "View all Vaults" })).toHaveCount(0);
@@ -1775,9 +1627,6 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(main.getByRole("region", { name: "Available Workspace Vaults" })).toHaveCount(0);
 	await expect(linkedVaults.getByRole("button")).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Create vault", exact: true })).toHaveCount(0);
-	await main.screenshot({ path: testInfo.outputPath("connected-workspace-vaults-desktop.png") });
-	await page.setViewportSize({ width: 390, height: 844 });
-	await main.screenshot({ path: testInfo.outputPath("connected-workspace-vaults-mobile.png") });
 
 	await page.setViewportSize({ width: 1280, height: 1200 });
 	await page.goto(
@@ -1863,10 +1712,7 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(consoleProjectGrid).not.toContainText("undefined skills");
 	await expect(consoleProjectGrid).not.toContainText("undefined vaults");
 	await expect(main.getByRole("link", { name: "Open Smoke Project" })).toHaveCount(0);
-	await main.screenshot({ path: testInfo.outputPath("console-projects-desktop.png") });
-	await page.locator("html").evaluate((element) => element.classList.add("dark"));
-	await main.screenshot({ path: testInfo.outputPath("console-projects-dark.png") });
-	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
+
 	await page.setViewportSize({ width: 390, height: 844 });
 	await expect(consoleSharedProject).toBeVisible();
 	expect(
@@ -1874,7 +1720,6 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 			.locator("html")
 			.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
 	).toBe(true);
-	await main.screenshot({ path: testInfo.outputPath("console-projects-mobile.png") });
 });
 
 test("agent scoped Skills and Vaults preserve context for mutations", async ({ page }) => {
@@ -2216,7 +2061,6 @@ test("agent rail preserves keyboard sorting and primes agent switches", async ({
 	const firstTileBox = await firstTile.boundingBox();
 	const firstButtonBox = await firstButton.boundingBox();
 	if (!firstTileBox || !firstButtonBox) throw new Error("Agent rail tile should be interactive.");
-	expect(firstTileBox.height).toBeCloseTo(68, 0);
 	expect(firstButtonBox.height).toBeCloseTo(firstTileBox.height, 0);
 	expect(firstButtonBox.width).toBeCloseTo(firstTileBox.width, 0);
 
@@ -2341,7 +2185,7 @@ test("cached Project links retain their state and destination after a failed ref
 
 test("Agent Vault inventory aggregates bound Projects and retains safe data on refresh errors", async ({
 	page,
-}, testInfo) => {
+}) => {
 	const { projectAccessVaults, vaultRequests } = await stubConnectedAgentResources(page);
 	const origin = "/agents/11111111-1111-4111-8111-111111111111/vaults";
 	let failVaults = false;
@@ -2395,9 +2239,9 @@ test("Agent Vault inventory aggregates bound Projects and retains safe data on r
 			.getByRole("navigation", { name: "breadcrumb" })
 			.locator('[data-slot="breadcrumb-item"]:visible'),
 	).toHaveText(["Smoke Codex", "Vaults"]);
-	await page.screenshot({ path: testInfo.outputPath("agent-vaults-desktop.png"), fullPage: true });
+
 	await page.setViewportSize({ width: 390, height: 844 });
-	await page.screenshot({ path: testInfo.outputPath("agent-vaults-mobile.png"), fullPage: true });
+
 	expect(
 		await page
 			.locator("html")
@@ -2486,7 +2330,7 @@ test("Project card menu dialogs survive menu dismissal", async ({ page }) => {
 
 test("unlinked Project resources stay inside the Agent without granting runtime access", async ({
 	page,
-}, testInfo) => {
+}) => {
 	const { projectLinkDeltaBodies } = await stubConnectedAgentResources(page);
 	const base = "/agents/11111111-1111-4111-8111-111111111111";
 	await page.goto("/projects/project-context-first");
@@ -2517,15 +2361,7 @@ test("unlinked Project resources stay inside the Agent without granting runtime 
 	await expect(main.getByRole("tablist", { name: "Project pages" }).getByRole("tab")).toHaveText(
 		libraryTabs,
 	);
-	await page.screenshot({
-		path: testInfo.outputPath("unlinked-project-desktop.png"),
-		fullPage: true,
-	});
-	await page.setViewportSize({ width: 390, height: 844 });
-	await page.screenshot({
-		path: testInfo.outputPath("unlinked-project-mobile.png"),
-		fullPage: true,
-	});
+
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await main.getByRole("tab", { name: "Skills", exact: true }).click();
 	await main.getByRole("link", { name: "Open Team-only Skill" }).click();

@@ -217,10 +217,6 @@ for (const viewport of [
 		}));
 		expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.width);
 		expect(dimensions.scrollHeight).toBeLessThanOrEqual(dimensions.height);
-		if (process.env.SHARING_PREVIEW_DIR)
-			await page.screenshot({
-				path: `${process.env.SHARING_PREVIEW_DIR}/sharing-empty-${viewport.width}.png`,
-			});
 
 		await dialog.getByRole("textbox", { name: "Invitee email" }).fill("new-person@example.com");
 		await dialog.getByRole("button", { name: "Invite email to project" }).click();
@@ -247,17 +243,6 @@ test("sharing management stays disclosed and failed actions remain retryable", a
 	const dialog = page.getByRole("dialog");
 	await expect(dialog.getByText("member@example.com", { exact: true })).toBeVisible();
 	await expect(dialog.getByText("Old invite link", { exact: true })).toBeHidden();
-	if (process.env.SHARING_PREVIEW_DIR) {
-		for (const viewport of [
-			{ width: 1280, height: 900 },
-			{ width: 320, height: 720 },
-		]) {
-			await page.setViewportSize(viewport);
-			await page.screenshot({
-				path: `${process.env.SHARING_PREVIEW_DIR}/sharing-people-${viewport.width}.png`,
-			});
-		}
-	}
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await expect(dialog.getByText("Expired invite link", { exact: true })).toBeHidden();
 	await dialog.getByText("Inactive links (2)", { exact: true }).click();

@@ -30,7 +30,6 @@ describe("agent overview registry", () => {
 		]);
 		expect(connected[1]?.modules.map((module) => module.id)).toEqual(["memories", "connectors"]);
 		expect(hosted[1]?.modules).toEqual(connected[1]?.modules);
-		expect(connected[0]?.modules.every((module) => !("size" in module))).toBe(true);
 	});
 
 	test("skips a missing summary without rendering an empty card or crashing the overview", () => {

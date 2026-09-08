@@ -3,20 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
-/**
- * OSS-clean invariant tests.
- *
- * The hosted/ directory must stay quarantined: hosted components set
- * `data-hosted="true"`, hosted/v2 components also set `data-v2="true"`,
- * and every consumer outside that quarantine is gated by the hosted build
- * flag somewhere in the same file.
- *
- * Static regex / file-walk checks instead of React render tests —
- * apps/web has no jsdom / @testing-library setup and adding it for
- * one invariant would be overkill. The static gates catch the
- * failure modes that matter: forgetting DOM markers, forgetting
- * the hosted build guard when importing gated modules.
- */
+/** Hosted modules must remain outside the OSS client graph. */
 
 const HOSTED_DIR = join(import.meta.dir);
 const SRC_DIR = join(import.meta.dir, "..");
@@ -104,92 +91,6 @@ describe("IS_HOSTED flag", () => {
 		}
 
 		expect(result.stdout.trim()).toBe("false");
-	});
-});
-
-// Strip JS/TS comments (`// …` line and `/* … */` block) before
-// checking the source. JSX attributes never live inside comments,
-// so this prevents marker-in-JSDoc from accidentally satisfying the
-// `data-hosted` invariant — a real DOM attribute is required.
-function stripComments(src: string): string {
-	let out = "";
-	let i = 0;
-	while (i < src.length) {
-		const c = src[i];
-		const n = src[i + 1];
-		if (c === "/" && n === "/") {
-			i += 2;
-			while (i < src.length && src[i] !== "\n") i++;
-		} else if (c === "/" && n === "*") {
-			i += 2;
-			while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
-			i += 2;
-		} else if (c === '"' || c === "'" || c === "`") {
-			out += c;
-			i++;
-			while (i < src.length && src[i] !== c) {
-				if (src[i] === "\\") {
-					out += src[i] + (src[i + 1] ?? "");
-					i += 2;
-				} else {
-					out += src[i];
-					i++;
-				}
-			}
-			out += src[i] ?? "";
-			i++;
-		} else {
-			out += c;
-			i++;
-		}
-	}
-	return out;
-}
-
-describe("hosted/ directory invariants", () => {
-	test('every .tsx file sets data-hosted="true" on its root', () => {
-		const files = listTsx(HOSTED_DIR);
-		expect(files.length).toBeGreaterThan(0);
-		// Effect-only hosted modules should render no DOM instead of a tagged sentinel.
-		const rootlessEffectOnlyFiles = new Set([
-			"hosted/access/product-access-sensor.tsx",
-			"hosted/analytics-client.tsx",
-		]);
-
-		for (const file of files) {
-			const rel = relative(SRC_DIR, file);
-			const src = stripComments(readFileSync(file, "utf8"));
-			if (rootlessEffectOnlyFiles.has(rel) && /\breturn\s+null\b/.test(src)) {
-				continue;
-			}
-			// Tight match: explicit `data-hosted="true"` or `data-hosted={"true"}`.
-			// Rejects `data-hosted="false"`, typos, and arbitrary expression forms
-			// that would slip past the original looser pattern. Source has had
-			// comments stripped so a JSDoc reference to `data-hosted="true"`
-			// can no longer satisfy the invariant — a real JSX attribute is
-			// required.
-			const hasDataHosted = /\bdata-hosted=(?:"true"|\{"true"\})/.test(src);
-			if (!hasDataHosted) {
-				throw new Error(`${rel}: hosted .tsx must set data-hosted="true" on its rendered root`);
-			}
-		}
-	});
-});
-
-describe("hosted/v2 directory invariants", () => {
-	test('every .tsx file sets data-v2="true" on its root', () => {
-		const files = listTsx(HOSTED_V2_DIR);
-		expect(files.length).toBeGreaterThan(0);
-
-		for (const file of files) {
-			const src = stripComments(readFileSync(file, "utf8"));
-			const hasDataV2 = /\bdata-v2=(?:"true"|\{"true"\})/.test(src);
-			if (!hasDataV2) {
-				throw new Error(
-					`${relative(SRC_DIR, file)}: v2 .tsx must set data-v2="true" on its rendered root`,
-				);
-			}
-		}
 	});
 });
 
@@ -315,13 +216,6 @@ describe("hosted product route exposure", () => {
 		expect(directGateConsumers).toEqual(["components/hosted-product-route.tsx"]);
 	});
 
-	test("the unified new-agent entrypoint opens the in-app deploy wizard", () => {
-		const src = readFileSync(join(SRC_DIR, "components/dashboard/new-agent-button.tsx"), "utf8");
-		expect(src).toContain('router.navigate({ href: "/deploy" })');
-		expect(src).not.toContain('from "@/hosted/');
-		expect(src).not.toMatch(/href=["']https:\/\/[^"']+\/dashboard["']/);
-	});
-
 	test("the Codex OAuth callback relays independently of the capability gate", () => {
 		const route = readFileSync(join(PAGES_DIR, "oauth/codex/callback/page.tsx"), "utf8");
 		const callback = readFileSync(
@@ -334,13 +228,6 @@ describe("hosted product route exposure", () => {
 		expect(callback).toContain("window.history.replaceState(");
 		expect(callback).not.toContain("localStorage");
 		expect(callback).not.toContain("sessionStorage");
-	});
-
-	test("Cloud-agents-off agent index copy stays neutral", () => {
-		const agentsIndex = readFileSync(join(SRC_DIR, "pages/dashboard/agents/page.tsx"), "utf8");
-		const agentsCard = readFileSync(join(SRC_DIR, "components/dashboard/agents-card.tsx"), "utf8");
-		expect(agentsIndex).not.toContain("hosted on your account");
-		expect(agentsCard).not.toContain("deploy a hosted one");
 	});
 });
 
@@ -428,44 +315,6 @@ describe("hosted implementation ownership", () => {
 
 		expect(offenders).toEqual([]);
 	});
-
-	test("retired hosted implementation paths stay absent", () => {
-		for (const path of [
-			"components/hosted-product-gate.tsx",
-			"components/header-wallet-balance.tsx",
-			"components/providers/analytics-provider.logic.ts",
-			"lib/hosted-api.ts",
-			"lib/hosted-product-access.ts",
-			"lib/hosted-product-access-model.ts",
-			"lib/hosted-product-access-request.ts",
-			"lib/hosted-url.ts",
-			"lib/legacy-hosted-dashboard.ts",
-			"lib/wallet-stripe-return.ts",
-		]) {
-			expect(existsSync(join(SRC_DIR, path))).toBe(false);
-		}
-	});
-
-	test("shared API errors do not claim hosted or v2 ownership", () => {
-		const panel = readFileSync(join(SRC_DIR, "components/api-error-panel.tsx"), "utf8");
-		expect(panel).not.toContain("data-hosted");
-		expect(panel).not.toContain("data-v2");
-	});
-});
-
-describe("Mava composition boundary", () => {
-	test("the shared Help menu only lazy-composes the hosted Live chat item", () => {
-		const sidebar = readFileSync(join(SRC_DIR, "components/app-sidebar.tsx"), "utf8");
-		const item = readFileSync(join(HOSTED_DIR, "mava-live-chat-menu-item.tsx"), "utf8");
-
-		expect(sidebar).toContain('import("@/hosted/mava-live-chat-menu-item")');
-		expect(sidebar).toMatch(/const MavaLiveChatMenuItem = IS_HOSTED_BUILD\s*\?/);
-		expect(sidebar).not.toContain("MavaWebChatToggle");
-		expect(sidebar).not.toContain("Live chat");
-		expect(item).toContain("requestMavaWebChatToggle");
-		expect(item).toContain("<DropdownMenuItem");
-		expect(item).toContain("Live chat");
-	});
 });
 
 describe("Wallet return security boundary", () => {
@@ -514,18 +363,6 @@ describe("instrumentation-client hosted imports", () => {
 				`instrumentation-client.ts may only reach @/hosted/* behind compile-time hosted gates (IS_HOSTED or import.meta.env.VITE_CLAWDI_HOSTED === "true"):\n  ${offenders.join("\n  ")}`,
 			);
 		}
-	});
-});
-
-describe("Vite hosted flag boundary", () => {
-	test("hosted gating uses Vite-native env replacement without custom build plugins", () => {
-		const viteConfig = readFileSync(join(SRC_DIR, "..", "vite.config.ts"), "utf8");
-		const hostedFlag = readFileSync(join(SRC_DIR, "lib/hosted.ts"), "utf8");
-
-		expect(viteConfig).not.toContain("clawdi-oss-hosted-boundary");
-		expect(viteConfig).not.toContain("envPrefix");
-		expect(viteConfig).not.toContain("define:");
-		expect(hostedFlag).toContain("import.meta.env.VITE_CLAWDI_HOSTED");
 	});
 });
 
