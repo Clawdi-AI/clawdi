@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import hashlib
 import secrets
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ import anyio
 import httpx
 import pytest
 from sqlalchemy import event, text
+from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from app.core import database
@@ -21,6 +23,105 @@ def _database_pool() -> QueuePool:
     pool = database.engine.sync_engine.pool
     assert isinstance(pool, QueuePool)
     return pool
+
+
+@pytest.mark.parametrize("owner", ["session", "connection"])
+async def test_cancelled_pre_ping_returns_unowned_connection(monkeypatch, caplog, owner):
+    engine = database._create_engine(pool_size=1, max_overflow=0)
+    sessions = async_sessionmaker(engine, class_=database.async_session_factory.class_)
+    pool = engine.sync_engine.pool
+    assert isinstance(pool, QueuePool)
+    ping_started = asyncio.Event()
+    cancellations: list[asyncio.CancelledError] = []
+    ping = engine.sync_engine.dialect.do_ping
+
+    def mark_ping(connection):
+        # Preserve real driver I/O; wake the canceller as pre-ping enters it.
+        ping_started.set()
+        return ping(connection)
+
+    async def request():
+        try:
+            async with sessions() if owner == "session" else engine.connect() as resource:
+                await resource.execute(text("SELECT 1"))
+        except asyncio.CancelledError as exc:
+            # Retain the traceback so GC cannot hide a missed pool checkin.
+            cancellations.append(exc)
+            raise
+
+    try:
+        async with engine.connect() as connection:
+            original_pid = await connection.scalar(text("SELECT pg_backend_pid()"))
+        monkeypatch.setattr(engine.sync_engine.dialect, "do_ping", mark_ping)
+        async with asyncio.timeout(5):
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(request)
+                await ping_started.wait()
+                tasks.cancel_scope.cancel()
+        assert cancellations
+        assert pool.checkedout() == 0
+        async with engine.connect() as connection:
+            assert await connection.scalar(text("SELECT pg_backend_pid()")) != original_pid
+    finally:
+        cancellations.clear()
+        gc.collect()
+        await engine.dispose()
+
+    assert not [record for record in caplog.records if record.name.startswith("sqlalchemy.pool")]
+
+
+@pytest.mark.parametrize("owner", ["session", "connection"])
+async def test_level_cancelled_running_query_terminates_and_returns_connection(
+    engine, caplog, owner
+):
+    query_engine = database._create_engine(pool_size=1, max_overflow=0)
+    sessions = async_sessionmaker(query_engine, class_=database.async_session_factory.class_)
+    pool = query_engine.sync_engine.pool
+    assert isinstance(pool, QueuePool)
+    query_started = asyncio.Event()
+    query_pid: int | None = None
+    cancelled = False
+
+    async def request():
+        nonlocal query_pid, cancelled
+        try:
+            async with sessions() if owner == "session" else query_engine.connect() as resource:
+                query_pid = await resource.scalar(text("SELECT pg_backend_pid()"))
+                query_started.set()
+                await resource.execute(text("SELECT pg_sleep(30)"))
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+
+    try:
+        async with engine.connect() as observer, asyncio.timeout(5):
+            async with anyio.create_task_group() as tasks:
+                tasks.start_soon(request)
+                await query_started.wait()
+                # Cancel an executing server query, not just its initial checkout.
+                while (
+                    await observer.scalar(
+                        text("SELECT wait_event FROM pg_stat_activity WHERE pid = :pid"),
+                        {"pid": query_pid},
+                    )
+                    != "PgSleep"
+                ):
+                    await observer.rollback()
+                    await asyncio.sleep(0.01)
+                tasks.cancel_scope.cancel()
+            assert cancelled
+            assert pool.checkedout() == 0
+            await observer.rollback()
+            assert not await observer.scalar(
+                text("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = :pid)"),
+                {"pid": query_pid},
+            )
+            async with query_engine.connect() as connection:
+                assert await connection.scalar(text("SELECT 1")) == 1
+    finally:
+        await query_engine.dispose()
+
+    assert not [record for record in caplog.records if record.name.startswith("sqlalchemy.pool")]
 
 
 async def test_externally_cancelled_dependency_waits_for_session_close() -> None:

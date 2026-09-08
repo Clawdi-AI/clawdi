@@ -445,6 +445,16 @@ must retain its ordinary connection for the consumer lifetime; releasing it woul
 duplicate consumers. Delivery transactions that fence authority across sends
 also retain their locks deliberately.
 
+All three runtime engines use the asyncpg dialect in
+`backend/app/core/asyncpg_dialect.py`. It shields only driver termination from
+[AnyIO level cancellation](https://github.com/agronholm/anyio/blob/4.14.2/docs/cancellation.rst).
+In [SQLAlchemy 2.0.52](https://github.com/sqlalchemy/sqlalchemy/blob/rel_2_0_52/lib/sqlalchemy/pool/base.py),
+cancellation during pre-ping precedes session ownership; another cancellation
+during termination can interrupt `_checkin_failed()` before pool return.
+Session close cannot recover that unowned connection. The dialect preserves
+query cancellation and upstream graceful-close timeout/force-close behavior;
+the existing session and reserved-connection cleanup remains necessary.
+
 Pool timeout handling distinguishes HTTP from WebSocket: HTTP returns 503
 with `Retry-After: 1`; WebSocket sends `websocket.close` (1013 after acceptance,
 handshake rejection before acceptance). This follows the pinned
@@ -456,12 +466,15 @@ WebSocket close frame can be delivered before the upgrade.
 
 ```bash
 scripts/test.sh backend tests/test_runtime_manifest_pool.py tests/test_platform_workload_oauth.py tests/test_smoke.py
+scripts/test.sh backend tests/test_database_session_cleanup.py
 ```
 
 Done: slow admin provider I/O and real PostgreSQL pool contention leave
 deployment control and concurrent nested snapshots usable, both
 WebSocket timeout paths close without HTTP ASGI messages, synchronized manifests
 complete without nested pool starvation, and the command exits 0.
+Cancelled pre-ping and running-query tests return connections before GC,
+preserve cancellation, and allow the next checkout without pool warnings.
 
 Admin endpoints are disabled by default. The local setup and key-minting flow is
 in [`AGENTS.md`](../AGENTS.md#local-end-to-end). To exercise admin endpoints
