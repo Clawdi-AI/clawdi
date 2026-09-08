@@ -219,21 +219,23 @@ export default function DashboardPage() {
 
 				<section className="min-w-0 space-y-2 lg:col-span-2 lg:row-start-2">
 					<h2 className="text-base font-semibold">Activity</h2>
-					<div>
-						{blockingStatsError ? (
-							<ApiErrorPanel
-								error={blockingStatsError}
-								onRetry={() => {
-									void refetchStats();
-								}}
-								title="Couldn't load activity"
-							/>
-						) : statsLoading ? (
-							<ActivityGraphSkeleton />
-						) : contribution ? (
-							<ContributionGraph data={contribution} />
-						) : null}
-					</div>
+					<Card>
+						<CardContent>
+							{blockingStatsError ? (
+								<ApiErrorPanel
+									error={blockingStatsError}
+									onRetry={() => {
+										void refetchStats();
+									}}
+									title="Couldn't load activity"
+								/>
+							) : statsLoading ? (
+								<ActivityGraphSkeleton />
+							) : contribution ? (
+								<ContributionGraph data={contribution} />
+							) : null}
+						</CardContent>
+					</Card>
 				</section>
 
 				{/* This source order is also the mobile reading and focus order. */}
@@ -312,7 +314,7 @@ function ActivityGraphSkeleton() {
 					{Array.from({ length: 7 }).map((_, index) => (
 						<Skeleton
 							key={index}
-							className={cn("h-[11px] rounded-[2px]", index % 2 === 1 ? "w-5" : "w-2")}
+							className={cn("h-[11px] rounded-[3px]", index % 2 === 1 ? "w-5" : "w-2")}
 						/>
 					))}
 				</div>
@@ -324,7 +326,7 @@ function ActivityGraphSkeleton() {
 									<Skeleton
 										key={dayIndex}
 										className={cn(
-											"size-[11px] rounded-[2px]",
+											"size-[11px] rounded-[3px]",
 											(weekIndex + dayIndex) % 5 === 0 && "opacity-50",
 										)}
 									/>

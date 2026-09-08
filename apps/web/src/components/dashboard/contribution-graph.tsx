@@ -130,7 +130,7 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 									<div
 										key={di}
 										className={cn(
-											"rounded-[2px]",
+											"rounded-[3px]",
 											day.date ? LEVEL_COLORS[clampLevel(day.level)] : "bg-transparent",
 										)}
 										style={{ width: CELL, height: CELL }}
