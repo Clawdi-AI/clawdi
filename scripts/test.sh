@@ -123,6 +123,7 @@ web_tests() {
 
 web_build() {
 	bun run --cwd apps/web build:oss
+	bun run --cwd apps/web test:ssr:internal
 }
 
 cli_typecheck() {

@@ -180,6 +180,9 @@ jobs:
             exit 2
           fi
           bunx turbo typecheck build "${filters[@]}" --output-logs=errors-only
+      - name: Production SSR public routes
+        if: needs.changes.outputs.web == 'true'
+        run: bun run --cwd apps/web test:ssr:internal
       - name: Set up native Agent test dependencies
         if: needs.changes.outputs.cli == 'true'
         uses: astral-sh/setup-uv@v10.0.1

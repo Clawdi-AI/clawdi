@@ -47,7 +47,13 @@ export default defineConfig(({ mode }) => {
 					client: { specifiers: ["@clerk/tanstack-react-start/server"] },
 				},
 			}),
-			nitro(),
+			nitro({
+				rolldownConfig: {
+					// Server chunks must initialize dependencies before Clerk captures
+					// its provider exports, even when chunking introduces a cycle.
+					output: { strictExecutionOrder: true },
+				},
+			}),
 			tailwindcss(),
 			viteReact(),
 			...sentryPlugins,
