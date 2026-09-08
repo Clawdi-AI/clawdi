@@ -223,7 +223,9 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 	await catalog.getByLabel("Search Vaults").fill("release");
 	await expect(catalog.getByTestId("project-vault-card")).toHaveCount(1);
 	await releaseVault.getByRole("button", { name: "Attach Release archive to Project" }).click();
-	await expect(releaseVault).toContainText("Attached to Project");
+	await expect(
+		releaseVault.getByRole("button", { name: "Attached Release archive to Project" }),
+	).toBeVisible();
 	await expect.poll(() => vaultCreateRequests).toHaveLength(1);
 	expect(vaultCreateRequests[0]?.body).toEqual({
 		slug: "release-archive",
@@ -231,7 +233,6 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 	});
 	expect(vaultCreateRequests[0]?.url.searchParams.get("project_id")).toBe(projectId);
 	await releaseVault.getByRole("button", { name: "Detach Release archive from Project" }).click();
-	await expect(releaseVault).toContainText("Not attached");
 	await expect(
 		releaseVault.getByRole("button", { name: "Attach Release archive to Project" }),
 	).toBeEnabled();
@@ -278,7 +279,8 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 		.getByRole("tablist", { name: "Project pages" })
 		.getByRole("tab", { name: "Access" })
 		.click();
-	await page.getByRole("button", { name: "Edit Client Review" }).click();
+	await page.getByRole("button", { name: "Actions for Client Review" }).click();
+	await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
 	const editDialog = page.getByRole("dialog", { name: "Edit project" });
 	await editDialog.getByLabel("Name").fill("Client Review Updated");
 	await editDialog.getByLabel("Description").fill("Updated Project purpose.");

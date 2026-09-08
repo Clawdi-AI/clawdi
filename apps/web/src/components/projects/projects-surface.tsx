@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
-import { Link2, Plus, Unlink } from "lucide-react";
+import { Check, Link2, Plus, Unlink } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, useRef } from "react";
 import { toast } from "sonner";
@@ -228,6 +228,11 @@ export function ProjectsSurface({
 					{rows.map((project) => {
 						const linked = linksKnown && linkedIds.has(project.id);
 						const pending = updateLink.isPending && updateLink.variables.projectId === project.id;
+						const toggleLink = () => {
+							if (actionsDisabled || linkLocked.current) return;
+							linkLocked.current = true;
+							updateLink.mutate({ projectId: project.id, linked });
+						};
 						return (
 							<li
 								key={project.id}
@@ -243,7 +248,6 @@ export function ProjectsSurface({
 										project.id,
 										search || (agentId && !linked) ? from : undefined,
 									)}
-									status={agentId && linksKnown ? (linked ? "Linked" : "Not linked") : undefined}
 									footer={[
 										formatResourceCount(project.skill_count, "skill"),
 										formatResourceCount(project.vault_count, "vault"),
@@ -251,44 +255,63 @@ export function ProjectsSurface({
 											? `by ${project.owner_display || project.owner_handle}`
 											: null,
 									]}
-									primaryAction={
-										agentId ? (
-											<Button
-												size="sm"
-												variant={linked ? "outline" : "default"}
-												disabled={actionsDisabled}
-												aria-label={
-													linksKnown
-														? `${linked ? "Unlink" : "Link"} ${project.name}`
-														: `Link status unavailable for ${project.name}`
-												}
-												onClick={() => {
-													if (actionsDisabled || linkLocked.current) return;
-													linkLocked.current = true;
-													updateLink.mutate({ projectId: project.id, linked });
-												}}
-											>
-												{pending || bindings.isLoading ? (
-													<Spinner className="size-3.5" />
-												) : linked ? (
-													<Unlink className="size-3.5" />
-												) : (
-													<Link2 className="size-3.5" />
-												)}
-												{linksKnown
-													? linked
-														? "Unlink"
-														: "Link"
-													: bindings.isLoading
-														? "Loading…"
-														: "Link unavailable"}
-											</Button>
-										) : undefined
-									}
+									actionsVisibility="always"
 									actions={
-										canManageCustomProject(project) ? (
-											<ProjectActions project={project} onChanged={refresh} />
-										) : undefined
+										<>
+											{agentId ? (
+												<Button
+													size="sm"
+													variant={linked ? "ghost" : "default"}
+													className={
+														linked
+															? "text-success-muted-foreground disabled:opacity-100"
+															: undefined
+													}
+													disabled={linked || actionsDisabled}
+													aria-busy={pending}
+													aria-label={
+														linksKnown
+															? `${linked ? "Linked" : "Link"} ${project.name}`
+															: `Link status unavailable for ${project.name}`
+													}
+													onClick={toggleLink}
+												>
+													{pending || bindings.isLoading ? (
+														<Spinner />
+													) : linked ? (
+														<Check />
+													) : (
+														<Link2 />
+													)}
+													{pending
+														? linked
+															? "Unlinking…"
+															: "Linking…"
+														: linksKnown
+															? linked
+																? "Linked"
+																: "Link"
+															: bindings.isLoading
+																? "Loading…"
+																: "Unavailable"}
+												</Button>
+											) : null}
+											{agentId && linked ? (
+												<Button
+													variant="ghost"
+													size="icon-sm"
+													disabled={actionsDisabled}
+													aria-label={`Unlink ${project.name}`}
+													title={`Unlink ${project.name}`}
+													onClick={toggleLink}
+												>
+													<Unlink />
+												</Button>
+											) : null}
+											{canManageCustomProject(project) ? (
+												<ProjectActions project={project} onChanged={refresh} />
+											) : null}
+										</>
 									}
 								/>
 							</li>

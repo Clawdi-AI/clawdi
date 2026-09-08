@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation } from "@tanstack/react-query";
-import { Link2, Unlink } from "lucide-react";
+import { Check, Link2, Unlink } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { useRef } from "react";
 import { toast } from "sonner";
@@ -172,6 +172,16 @@ export function ProjectVaultCatalog({
 								: undefined;
 						const pending =
 							updateAttachment.isPending && updateAttachment.variables.vault.id === vault.id;
+						const actionsDisabled =
+							!attachmentsKnown ||
+							Boolean(error) ||
+							updateAttachment.isPending ||
+							(!attached && (catalog.data === undefined || Boolean(catalog.error)));
+						const toggleAttachment = () => {
+							if (actionsDisabled || locked.current) return;
+							locked.current = true;
+							updateAttachment.mutate({ vault, attached });
+						};
 						const detailScope = attached
 							? scope
 							: inherited && scope.kind === "agent"
@@ -196,51 +206,62 @@ export function ProjectVaultCatalog({
 									status={
 										attachmentsKnown
 											? attached
-												? `Attached to ${context}`
+												? canAttach && vault.is_owner !== false
+													? undefined
+													: `Attached to ${context}`
 												: inherited
 													? inherited.binding_type === "primary"
 														? "Via Workspace"
 														: "Via linked Project"
 													: scope.kind === "agent" && !agentBindings
 														? "Agent access unavailable"
-														: "Not attached"
+														: undefined
 											: isLoading
 												? "Loading attachments…"
 												: "Attachment status unavailable"
 									}
-									primaryAction={
+									actions={
 										canAttach && vault.is_owner !== false ? (
-											<Button
-												size="sm"
-												variant={attached ? "outline" : "default"}
-												disabled={
-													!attachmentsKnown ||
-													Boolean(error) ||
-													updateAttachment.isPending ||
-													(!attached && (catalog.data === undefined || Boolean(catalog.error)))
-												}
-												aria-label={`${attached ? "Detach" : "Attach"} ${vault.name} ${attached ? "from" : "to"} ${context}`}
-												onClick={() => {
-													if (locked.current) return;
-													locked.current = true;
-													updateAttachment.mutate({ vault, attached });
-												}}
-											>
-												{pending || isLoading ? (
-													<Spinner className="size-3.5" />
-												) : attached ? (
-													<Unlink className="size-3.5" />
-												) : (
-													<Link2 className="size-3.5" />
-												)}
-												{attachmentsKnown
-													? attached
-														? "Detach"
-														: "Attach"
-													: isLoading
-														? "Loading…"
-														: "Unavailable"}
-											</Button>
+											<>
+												<Button
+													size="sm"
+													variant={attached ? "ghost" : "default"}
+													className={
+														attached
+															? "text-success-muted-foreground disabled:opacity-100"
+															: undefined
+													}
+													disabled={attached || actionsDisabled}
+													aria-busy={pending}
+													aria-label={`${attached ? "Attached" : "Attach"} ${vault.name} to ${context}`}
+													onClick={toggleAttachment}
+												>
+													{pending || isLoading ? <Spinner /> : attached ? <Check /> : <Link2 />}
+													{pending
+														? attached
+															? "Detaching…"
+															: "Attaching…"
+														: attachmentsKnown
+															? attached
+																? "Attached"
+																: "Attach"
+															: isLoading
+																? "Loading…"
+																: "Unavailable"}
+												</Button>
+												{attached ? (
+													<Button
+														variant="ghost"
+														size="icon-sm"
+														disabled={actionsDisabled}
+														aria-label={`Detach ${vault.name} from ${context}`}
+														title={`Detach ${vault.name} from ${context}`}
+														onClick={toggleAttachment}
+													>
+														<Unlink />
+													</Button>
+												) : null}
+											</>
 										) : undefined
 									}
 								/>

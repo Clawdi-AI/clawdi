@@ -75,7 +75,8 @@ test("sharing row mutations retain targets through Base UI exit and reopen clean
 	await stubSharingApi(page);
 	await page.setViewportSize({ width: 320, height: 720 });
 	await page.goto("/projects");
-	await page.getByRole("button", { name: "Share Shared workspace" }).click();
+	await page.getByRole("button", { name: "Actions for Shared workspace" }).click();
+	await page.getByRole("menuitem", { name: "Share", exact: true }).click();
 
 	const cases = [
 		{
@@ -109,7 +110,8 @@ test("sharing row mutations retain targets through Base UI exit and reopen clean
 
 	await page.keyboard.press("Escape");
 	await expect(page.getByRole("dialog")).toBeHidden();
-	await page.getByRole("button", { name: "Share Shared workspace" }).click();
+	await page.getByRole("button", { name: "Actions for Shared workspace" }).click();
+	await page.getByRole("menuitem", { name: "Share", exact: true }).click();
 	await expect(
 		page.getByRole("button", { name: /Turn off share link|Cancel invitation|Remove / }),
 	).toHaveCount(0);

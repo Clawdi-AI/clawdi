@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Share2, Trash2 } from "lucide-react";
+import { Ellipsis, Pencil, Share2, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { displayProjectName } from "@/components/projects/project-metadata";
@@ -15,8 +15,14 @@ import {
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
-	DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
@@ -39,6 +45,8 @@ export function ProjectActions({
 	const api = useApi();
 	const queryClient = useQueryClient();
 	const [editOpen, setEditOpen] = useState(false);
+	const [shareOpen, setShareOpen] = useState(false);
+	const [archiveOpen, setArchiveOpen] = useState(false);
 	const [name, setName] = useState(project.name);
 	const [description, setDescription] = useState(project.description ?? "");
 	const editLockedRef = useRef(false);
@@ -91,6 +99,37 @@ export function ProjectActions({
 
 	return (
 		<>
+			<DropdownMenu>
+				<DropdownMenuTrigger
+					render={
+						<Button variant="ghost" size="icon-sm" aria-label={`Actions for ${projectName}`}>
+							<Ellipsis />
+						</Button>
+					}
+				/>
+				<DropdownMenuContent align="end" className="min-w-40">
+					<DropdownMenuItem
+						onClick={() => {
+							setName(project.name);
+							setDescription(project.description ?? "");
+							setEditOpen(true);
+						}}
+					>
+						<Pencil /> Edit
+					</DropdownMenuItem>
+					<DropdownMenuItem onClick={() => setShareOpen(true)}>
+						<Share2 /> Share
+					</DropdownMenuItem>
+					<DropdownMenuSeparator />
+					<DropdownMenuItem
+						variant="destructive"
+						disabled={archive.isPending}
+						onClick={() => setArchiveOpen(true)}
+					>
+						<Trash2 /> Archive
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
 			<Dialog
 				open={editOpen}
 				onOpenChange={(nextOpen) => {
@@ -107,13 +146,6 @@ export function ProjectActions({
 					}
 				}}
 			>
-				<DialogTrigger
-					render={
-						<Button variant="ghost" size="icon-sm" aria-label={`Edit ${projectName}`}>
-							<Pencil className="size-3.5" />
-						</Button>
-					}
-				/>
 				<DialogContent className="sm:max-w-md">
 					<DialogHeader>
 						<DialogTitle>Edit project</DialogTitle>
@@ -166,10 +198,10 @@ export function ProjectActions({
 				projectId={project.id}
 				projectName={projectName}
 				projectKind={project.kind}
+				open={shareOpen}
+				onOpenChange={setShareOpen}
 			>
-				<Button variant="ghost" size="icon-sm" aria-label={`Share ${projectName}`}>
-					<Share2 className="size-3.5" />
-				</Button>
+				{null}
 			</ShareProjectDialog>
 
 			<ConfirmAction
@@ -183,17 +215,9 @@ export function ProjectActions({
 				confirmLabel="Archive project"
 				destructive
 				onConfirm={() => archive.mutateAsync()}
-			>
-				<Button
-					variant="ghost"
-					size="icon-sm"
-					disabled={archive.isPending}
-					className="text-muted-foreground hover:text-destructive"
-					aria-label={`Archive ${projectName}`}
-				>
-					{archive.isPending ? <Spinner className="size-3.5" /> : <Trash2 className="size-3.5" />}
-				</Button>
-			</ConfirmAction>
+				open={archiveOpen}
+				onOpenChange={setArchiveOpen}
+			/>
 		</>
 	);
 }

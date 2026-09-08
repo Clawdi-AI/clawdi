@@ -28,8 +28,7 @@ export function ProjectResourceCard({
 	project,
 	footer,
 	actions,
-	primaryAction,
-	status,
+	actionsVisibility,
 	showKind = false,
 	navigationScope = LIBRARY_RESOURCE_SCOPE,
 	link,
@@ -39,8 +38,7 @@ export function ProjectResourceCard({
 	project: ProjectMetadata;
 	footer?: ReactNode | ReactNode[];
 	actions?: ReactNode;
-	primaryAction?: ReactNode;
-	status?: ReactNode;
+	actionsVisibility?: "responsive" | "always";
 	showKind?: boolean;
 	navigationScope?: ResourceNavigationScope;
 	/** Optional collection-local destination while retaining the canonical card. */
@@ -84,9 +82,8 @@ export function ProjectResourceCard({
 				)
 			}
 			footer={footer}
-			status={status}
-			primaryAction={primaryAction}
 			actions={actions}
+			actionsVisibility={actionsVisibility}
 			link={detailLink}
 			ariaLabel={`Open ${projectName}`}
 			className={className}

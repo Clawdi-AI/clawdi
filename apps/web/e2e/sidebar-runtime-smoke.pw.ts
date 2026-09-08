@@ -1475,7 +1475,6 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	const bindingReadsBeforeLink = projectBindingRequests.length;
 	const projectReadsBeforeLink = projectRequests.length;
 	await teamCard.getByRole("button", { name: "Unlink Team Knowledge" }).click();
-	await expect(teamCard.getByText("Not linked", { exact: true })).toBeVisible();
 	await expect(
 		teamCard.getByRole("button", { name: "Link Team Knowledge", exact: true }),
 	).toBeEnabled();
@@ -2234,7 +2233,6 @@ test("Project catalog stays readable while link state fails and recovers", async
 	);
 	await card.getByRole("button", { name: "Link Unrelated Project", exact: true }).click();
 	await expect(page.getByText("Couldn't update Project link", { exact: true })).toBeVisible();
-	await expect(card.getByText("Not linked", { exact: true })).toBeVisible();
 	await expect(
 		card.getByRole("button", { name: "Link Unrelated Project", exact: true }),
 	).toBeEnabled();
@@ -2301,7 +2299,9 @@ test("Vault catalog failures preserve scoped attachments and catalog return navi
 	await expect(
 		catalog.getByText("Couldn't load Workspace Vault attachments", { exact: true }),
 	).toBeVisible();
-	await expect(scoped.getByText("Attached to Workspace", { exact: true })).toBeVisible();
+	await expect(
+		scoped.getByRole("button", { name: "Attached Scoped Vault to Workspace" }),
+	).toBeVisible();
 	await expect(link).toHaveAttribute("href", href ?? "");
 	await expect(detach).toBeDisabled();
 	await page.unroute(vaultRoute);
@@ -2334,4 +2334,43 @@ test("Vault catalog failures preserve scoped attachments and catalog return navi
 	);
 	await page.getByRole("button", { name: "Back to Agent Vaults" }).click();
 	await expect(catalog.getByLabel("Search Vaults")).toHaveValue("Team");
+});
+
+test("Project card menu dialogs survive menu dismissal", async ({ page }) => {
+	await stubDashboardApi(page);
+	await page.route(
+		/\/v1\/projects\/project-unrelated\/(members|invitations|share-links)$/,
+		(route) => fulfillJson(route, []),
+	);
+	await page.goto("/projects");
+	const card = page.getByTestId("project-card").filter({ hasText: "Unrelated Project" });
+	const trigger = card.getByRole("button", { name: "Actions for Unrelated Project" });
+	for (const width of [1280, 390]) {
+		await page.setViewportSize({ width, height: 900 });
+		await trigger.click();
+		await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+		await expect(page.getByRole("menu")).toBeHidden();
+		const edit = page.getByRole("dialog", { name: "Edit project", exact: true });
+		await expect(edit).toBeVisible();
+		await expect(edit.getByLabel("Name", { exact: true })).toHaveValue("Unrelated Project");
+		await edit.getByLabel("Name", { exact: true }).fill("Unsaved name");
+		await edit.getByRole("button", { name: "Cancel", exact: true }).click();
+		await expect(edit).toBeHidden();
+		await trigger.click();
+		await page.getByRole("menuitem", { name: "Share", exact: true }).click();
+		await expect(page.getByRole("menu")).toBeHidden();
+		const share = page.getByRole("dialog", { name: "Share Unrelated Project", exact: true });
+		await expect(share).toBeVisible();
+		await expect(share.getByRole("heading", { name: "People", exact: true })).toBeVisible();
+		await page.keyboard.press("Escape");
+		await expect(share).toBeHidden();
+		await trigger.click();
+		await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
+		await expect(page.getByRole("menu")).toBeHidden();
+		const archive = page.getByRole("alertdialog", { name: "Archive Unrelated Project?" });
+		await expect(archive).toBeVisible();
+		await archive.getByRole("button", { name: "Cancel", exact: true }).click();
+		await expect(archive).toBeHidden();
+		await expect(card.getByRole("link", { name: "Open Unrelated Project" })).toBeVisible();
+	}
 });

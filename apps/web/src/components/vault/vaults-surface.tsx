@@ -295,7 +295,6 @@ export function VaultCard({
 	navigationScope,
 	shared = false,
 	actions,
-	primaryAction,
 	status,
 	returnHref,
 	searchQuery,
@@ -308,7 +307,6 @@ export function VaultCard({
 	navigationScope: ResourceNavigationScope;
 	shared?: boolean;
 	actions?: ReactNode;
-	primaryAction?: ReactNode;
 	status?: ReactNode;
 	returnHref?: string;
 	searchQuery?: string;
@@ -382,6 +380,7 @@ export function VaultCard({
 				) : undefined
 			}
 			footer={[
+				status,
 				keyCountLabel,
 				usedBy.length > 0 ? (
 					<Tooltip>
@@ -399,24 +398,28 @@ export function VaultCard({
 					"not in any Project yet"
 				),
 			]}
-			status={status}
-			primaryAction={primaryAction}
+			footerWrap
+			actionsVisibility="always"
 			actions={
 				canManageVault || actions ? (
 					<>
+						{actions}
 						{canManageVault ? (
 							<AddKeysDialog
 								vaultSlug={vault.slug}
 								vaultId={vault.id}
 								vaultProjectId={itemProjectId}
 							>
-								<Button variant="ghost" size="sm" aria-label={`Add keys to ${vault.name}`}>
+								<Button
+									variant="ghost"
+									size="icon-sm"
+									aria-label={`Add keys to ${vault.name}`}
+									title={`Add keys to ${vault.name}`}
+								>
 									<Plus className="size-3.5" />
-									Add keys
 								</Button>
 							</AddKeysDialog>
 						) : null}
-						{actions}
 					</>
 				) : undefined
 			}
