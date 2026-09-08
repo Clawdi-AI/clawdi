@@ -18,6 +18,7 @@ const environment = {
 	VITE_CLAWDI_API_URL: "http://127.0.0.1:9",
 	VITE_CLAWDI_DEPLOY_API_URL: "http://127.0.0.1:9",
 	SENTRY_AUTH_TOKEN: "",
+	VITE_SENTRY_DSN: "",
 };
 const build = spawnSync("bun", ["run", "build"], {
 	cwd,
@@ -39,6 +40,17 @@ const server = spawn(process.execPath, [".output/server/index.mjs"], {
 	stdio: ["ignore", "pipe", "pipe"],
 });
 const exited = once(server, "exit");
+let shutdownDeadline;
+function stopServer() {
+	server.kill("SIGTERM");
+	shutdownDeadline ??= setTimeout(() => server.kill("SIGKILL"), 5_000);
+}
+function cancel() {
+	process.exitCode = 1;
+	stopServer();
+}
+process.once("SIGINT", cancel);
+process.once("SIGTERM", cancel);
 let logs = "";
 for (const stream of [server.stdout, server.stderr]) {
 	stream.on("data", (chunk) => {
@@ -69,8 +81,12 @@ try {
 		console.log(`${path}: production Clerk SSR passed`);
 	}
 } finally {
-	server.kill("SIGTERM");
-	const deadline = setTimeout(() => server.kill("SIGKILL"), 5_000);
-	await exited;
-	clearTimeout(deadline);
+	stopServer();
+	try {
+		await exited;
+	} finally {
+		clearTimeout(shutdownDeadline);
+		process.off("SIGINT", cancel);
+		process.off("SIGTERM", cancel);
+	}
 }
