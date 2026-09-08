@@ -108,7 +108,7 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 			<div className="flex gap-1.5">
 				{/* Day-of-week labels: only label odd rows so they don't overflow the cell heights. */}
 				<div
-					className="flex shrink-0 flex-col gap-[3px] pt-5 text-3xs text-muted-foreground tabular-nums"
+					className="flex shrink-0 flex-col gap-[3px] text-3xs text-muted-foreground tabular-nums"
 					style={{ width: DAY_LABEL_W - 6 }}
 					aria-hidden
 				>
@@ -122,21 +122,6 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 				</div>
 
 				<div className="min-w-0 flex-1">
-					{/* Month labels, positioned absolutely above the week they start. */}
-					<div className="relative mb-1 h-4 text-3xs leading-4 text-muted-foreground">
-						{monthLabels.map((m, i) =>
-							m ? (
-								<span
-									key={i}
-									className="absolute whitespace-nowrap"
-									style={{ left: i * WEEK_STRIDE }}
-								>
-									{m}
-								</span>
-							) : null,
-						)}
-					</div>
-
 					{/* Week columns grid. */}
 					<div className="flex gap-[3px]">
 						{weeks.map((week, wi) => (
@@ -145,7 +130,7 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 									<div
 										key={di}
 										className={cn(
-											"rounded-sm",
+											"rounded-[2px]",
 											day.date ? LEVEL_COLORS[clampLevel(day.level)] : "bg-transparent",
 										)}
 										style={{ width: CELL, height: CELL }}
@@ -155,16 +140,21 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 							</div>
 						))}
 					</div>
+					{/* Keep the final month inside the row; omit a partial first month if its label would overlap the next. */}
+					<div className="relative mt-1 h-4 text-3xs leading-4 text-muted-foreground">
+						{monthLabels.map((m, i) =>
+							m && !monthLabels[i + 1] ? (
+								<span
+									key={i}
+									className="absolute whitespace-nowrap"
+									style={{ left: `min(${i * WEEK_STRIDE}px, calc(100% - 3ch))` }}
+								>
+									{m}
+								</span>
+							) : null,
+						)}
+					</div>
 				</div>
-			</div>
-
-			{/* Legend, right-aligned like GitHub's. */}
-			<div className="mt-3 flex items-center justify-end gap-1.5 text-xs text-muted-foreground">
-				<span>Less</span>
-				{LEVEL_COLORS.map((c, i) => (
-					<div key={i} className={cn("rounded-sm", c)} style={{ width: CELL, height: CELL }} />
-				))}
-				<span>More</span>
 			</div>
 		</div>
 	);

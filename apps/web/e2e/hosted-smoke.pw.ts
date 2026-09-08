@@ -4960,6 +4960,23 @@ test("Breadcrumbs show the full trail on desktop and only the current page on na
 	});
 });
 
+test("Console shows every agent when the fleet exceeds six", async ({ page }) => {
+	const agents = Array.from({ length: 8 }, (_, index) => ({
+		...railConnectedCloudAgent,
+		id: `99999999-9999-4999-8999-${String(index).padStart(12, "0")}`,
+		display_name: `Console Agent ${index + 1}`,
+		sort_order: index,
+	}));
+	await stubHostedApi(page, { cloudAgents: agents });
+	await page.goto("/");
+	const main = page.locator("main");
+	for (const agent of agents) {
+		await expect(
+			main.getByRole("link", { name: `Open ${agent.display_name}.`, exact: false }),
+		).toBeVisible();
+	}
+});
+
 test("Console keeps its desktop columns and places Recent sessions last on narrow screens", async ({
 	page,
 }, testInfo) => {
