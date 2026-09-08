@@ -9233,7 +9233,7 @@ export interface components {
             /** Name */
             name: string;
             /** Description */
-            description?: string | null;
+            description: string;
             /** Instructions */
             instructions: string;
             /** Content Hash */
@@ -9244,7 +9244,7 @@ export interface components {
             /** Name */
             name: string;
             /** Description */
-            description?: string | null;
+            description: string;
             /** Instructions */
             instructions: string;
         };

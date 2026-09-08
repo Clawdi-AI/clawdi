@@ -314,9 +314,9 @@ async def test_agent_project_cleanup_captures_reference_consumers(
     db_session.add(source)
     await db_session.commit()
     await _make_runtime_renderable(db_session, user=seed_user, agent_id=second_channel_agent.id)
-    path = f"/v1/agents/{second_channel_agent.id}/skill-references/{source.id}"
-    response = await client.put(path)
-    assert response.status_code == 202, response.text
+    # Historical references remain removable even when no valid archive survives.
+    db_session.add(AgentSkillReference(agent_id=second_channel_agent.id, skill_id=source.id))
+    await db_session.commit()
     state = await db_session.get(HostedRuntimeState, second_channel_agent.id)
     previous_revision = state.source_revision
     if cleanup == "archive":
@@ -328,3 +328,120 @@ async def test_agent_project_cleanup_captures_reference_consumers(
     assert state.source_revision != previous_revision
     response = await client.get(f"/v1/agents/{second_channel_agent.id}/skills")
     assert response.status_code == 200 and response.json()["skills"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "document,name",
+    [
+        ("# Legacy instructions\n", "runbook"),
+        ("---\nname: runbook\ndescription: valid\nmetadata: {version: 1}\n---\n", "runbook"),
+        ("---\nname: runbook\ndescription: valid\nname: runbook\n---\n", "runbook"),
+        ("---\nname: runbook\ndescription: valid\n---\n", "Old display name"),
+        ("---\nname: café\ndescription: valid\n---\n", "café"),
+    ],
+)
+async def test_reference_admission_validates_original_document_but_preserves_legacy_reads(
+    client, db_session, seed_user, workspace_project, channel_agent, document, name
+):
+    from app.routes import skills as skill_routes
+    from app.services.tar_utils import tar_from_content
+
+    skill = await source_skill(client, db_session, workspace_project)
+    await _make_runtime_renderable(db_session, user=seed_user, agent_id=channel_agent.id)
+    path = f"/v1/agents/{channel_agent.id}/skill-references/{skill.id}"
+    assert (await client.put(path)).status_code == 202
+    # Model a historical source, without asking a new cloud write to accept it.
+    archive, _ = tar_from_content(skill.skill_key, document)
+    skill.file_key = f"skills/test-historical-{uuid.uuid4().hex}.tar.gz"
+    skill.content_hash = skill_routes._compute_file_tree_hash(archive, skill.skill_key)
+    skill.name = name
+    await skill_routes.file_store.put(skill.file_key, archive)
+    await db_session.commit()
+    assert (await client.get(path)).json()["content"] == document
+    assert (await client.get(f"/v1/agents/{channel_agent.id}/skills")).status_code == 200
+    rejected = await client.put(path)
+    assert rejected.status_code == 409, rejected.text
+    assert (await client.delete(path)).status_code == 202
+    assert (await client.put(path)).status_code == 409
+    assert await db_session.get(AgentSkillReference, (channel_agent.id, skill.id)) is None
+    assert (
+        await client.get(f"/v1/projects/{workspace_project.id}/skills/devops/runbook")
+    ).status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_format", ["md", "tar.gz", "support-file"])
+async def test_reference_legacy_single_document_hash_matches_cli_contract(
+    client, db_session, seed_user, workspace_project, channel_agent, legacy_format
+):
+    import hashlib
+
+    from app.routes import skills as skill_routes
+    from tests.test_skills import _archive_with_files
+
+    skill = await source_skill(client, db_session, workspace_project)
+    await _make_runtime_renderable(db_session, user=seed_user, agent_id=channel_agent.id)
+    document = b"---\nname: runbook\ndescription: valid\n---\n"
+    files = {"SKILL.md": document}
+    if legacy_format == "support-file":
+        files["references/notes.md"] = b"Support bytes require a tree hash."
+    stored = document if legacy_format == "md" else _archive_with_files(skill.skill_key, files)
+    skill.content_hash = hashlib.sha256(document).hexdigest()
+    skill.file_key = f"skills/test-legacy-{uuid.uuid4().hex}.{legacy_format}"
+    await skill_routes.file_store.put(skill.file_key, stored)
+    await db_session.commit()
+    response = await client.put(f"/v1/agents/{channel_agent.id}/skill-references/{skill.id}")
+    assert response.status_code == (409 if legacy_format == "support-file" else 202), response.text
+
+
+@pytest.mark.asyncio
+async def test_reference_checks_immutable_identity_after_storage_io_without_transaction(
+    client, db_session, seed_user, workspace_project, channel_agent, monkeypatch
+):
+    from app.routes import skills as skill_routes
+
+    skill = await source_skill(client, db_session, workspace_project)
+    await _make_runtime_renderable(db_session, user=seed_user, agent_id=channel_agent.id)
+    original_get = skill_routes.file_store.get
+
+    async def changed_during_read(file_key):
+        assert not db_session.in_transaction()
+        data = await original_get(file_key)
+        skill.content_hash = "a" * 64
+        await db_session.commit()
+        return data
+
+    monkeypatch.setattr(skill_routes.file_store, "get", changed_during_read)
+    response = await client.put(f"/v1/agents/{channel_agent.id}/skill-references/{skill.id}")
+    assert response.status_code == 409, response.text
+    assert "changed" in response.json()["detail"]
+    assert await db_session.get(AgentSkillReference, (channel_agent.id, skill.id)) is None
+
+
+@pytest.mark.asyncio
+async def test_invalid_source_update_keeps_installed_reference_and_hash(
+    client, db_session, seed_user, workspace_project, channel_agent
+):
+    from app.services.tar_utils import tar_from_content
+
+    skill = await source_skill(client, db_session, workspace_project)
+    await _make_runtime_renderable(db_session, user=seed_user, agent_id=channel_agent.id)
+    path = f"/v1/agents/{channel_agent.id}/skill-references/{skill.id}"
+    assert (await client.put(path)).status_code == 202
+    content_hash = skill.content_hash
+    original = await rendered(db_session, channel_agent.id)
+    invalid, _ = tar_from_content(
+        skill.skill_key,
+        "---\nname: runbook\ndescription: Valid\ncompatibility: {runtime: hermes}\n---\n",
+    )
+    response = await client.post(
+        f"/v1/projects/{workspace_project.id}/skills/upload",
+        data={"skill_key": skill.skill_key},
+        files={"file": ("runbook.tar.gz", invalid, "application/gzip")},
+    )
+    assert response.status_code == 400, response.text
+    current = await rendered(db_session, channel_agent.id)
+    assert current.source_revision == original.source_revision
+    assert (await client.get(path)).json()["content_hash"] == content_hash
+    assert (await client.delete(path)).status_code == 202

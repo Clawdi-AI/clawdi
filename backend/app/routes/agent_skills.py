@@ -22,7 +22,7 @@ from app.models.runtime_observation import (
 )
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, AgentSkillReference, Skill
-from app.routes.skills import build_skill_detail
+from app.routes.skills import build_skill_detail, validate_stored_skill
 from app.schemas.runtime import (
     PersistedHostedRuntimeSkills,
     PersistedHostedRuntimeSourcedSkillEntry,
@@ -38,9 +38,11 @@ from app.schemas.skill import (
 from app.services.agent_bindings import assert_project_visible_to_user, get_owned_agent_or_404
 from app.services.audit import record_control_plane_audit
 from app.services.project_runtime_skills import (
+    ProjectSkillRuntimeIdentity,
     agent_project_skill_sources,
     assert_agent_accepts_project_skills,
     assert_agent_project_skill_total,
+    assert_project_skill_runtime_identity,
     lock_project_binding_change,
     project_skill_context_binding,
     project_skill_runtime_identity,
@@ -248,6 +250,17 @@ async def put_agent_skill_reference(
 ) -> AgentSkillReferenceResponse:
     await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
     skill = await _source_skill(db, auth, skill_id)
+    await _hosted_state(db, agent_id)
+    snapshot = (skill.project_id, skill.skill_key, skill.file_key, skill.content_hash, skill.name)
+    await db.commit()
+    analysis = await validate_stored_skill(snapshot[1], snapshot[2], snapshot[3])
+    identity = ProjectSkillRuntimeIdentity(snapshot[1], analysis.name)
+    assert_project_skill_runtime_identity(identity)
+    if analysis.name != snapshot[4]:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This Skill's name does not match its saved document. Import it again.",
+        )
     await lock_project_binding_change(db, project_id=skill.project_id, agent_id=agent_id)
     await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
     await _hosted_state(db, agent_id)
@@ -256,6 +269,17 @@ async def put_agent_skill_reference(
     await db.execute(select(Project.id).where(Project.id == skill.project_id).with_for_update())
     await db.refresh(skill)
     skill = await _source_skill(db, auth, skill_id)
+    if (
+        skill.project_id,
+        skill.skill_key,
+        skill.file_key,
+        skill.content_hash,
+        skill.name,
+    ) != snapshot:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This Skill changed during installation. Reload it and retry.",
+        )
     sources = [
         source
         for _, source in await db.execute(
@@ -267,7 +291,7 @@ async def put_agent_skill_reference(
         for source in sources
         if source.project_id == skill.project_id and source.id != skill.id
     ]
-    identities.append(project_skill_runtime_identity(skill.skill_key, skill.name))
+    identities.append(identity)
     if identities[-1].local_skill_key == "clawdi":
         raise HTTPException(status.HTTP_409_CONFLICT, {"code": "runtime_manifest_managed_skill"})
     await assert_agent_accepts_project_skills(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import re
 import tarfile
+import unicodedata
 from copy import copy
 from pathlib import Path, PurePosixPath
 from typing import TypeGuard
@@ -43,6 +44,24 @@ class TarValidationError(ValueError):
 
 class SkillTextValidationError(ValueError):
     """Raised when SKILL.md text cannot be stored safely."""
+
+
+def validate_skill_name(name: str) -> str:
+    """Check the specification's Unicode name rules without rewriting identity."""
+    normalized = unicodedata.normalize("NFKC", name)
+    if (
+        not 1 <= len(name) <= 64
+        or not 1 <= len(normalized) <= 64
+        or normalized != normalized.lower()
+        or normalized.startswith("-")
+        or normalized.endswith("-")
+        or "--" in normalized
+        or not all(character.isalnum() or character == "-" for character in normalized)
+    ):
+        raise SkillTextValidationError(
+            "Skill name must contain 1–64 lowercase letters, numbers, or single inner hyphens."
+        )
+    return name
 
 
 def _is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
@@ -279,7 +298,29 @@ def _preservable_frontmatter(content: str) -> dict[object, object]:
     if len(raw.encode("utf-8")) > _FRONTMATTER_BYTES_MAX:
         raise SkillTextValidationError("Skill frontmatter exceeds the safe size limit")
     try:
-        loaded: object = yaml.safe_load(raw)
+        loader = yaml.SafeLoader(raw)
+        try:
+            node = loader.get_single_node()
+            if isinstance(node, yaml.MappingNode):
+                known = {
+                    "name",
+                    "description",
+                    "license",
+                    "compatibility",
+                    "metadata",
+                    "allowed-tools",
+                }
+                fields: set[str] = set()
+                for key, _ in node.value:
+                    if isinstance(key, yaml.ScalarNode) and key.value in known:
+                        if key.value in fields:
+                            raise SkillTextValidationError(
+                                f"Skill frontmatter contains duplicate {key.value} fields."
+                            )
+                        fields.add(key.value)
+            loaded: object = yaml.safe_load(raw)
+        finally:
+            loader.dispose()
     except (RecursionError, UnicodeError, yaml.YAMLError) as exc:
         raise SkillTextValidationError("Skill frontmatter is malformed") from exc
     if loaded is None:
@@ -339,9 +380,9 @@ def skill_document(
     import yaml
 
     metadata = _preservable_frontmatter(existing_content) if existing_content is not None else {}
-    metadata["name"] = name.strip()
-    if description and description.strip():
-        metadata["description"] = description.strip()
+    metadata["name"] = name
+    if description is not None:
+        metadata["description"] = description
     else:
         metadata.pop("description", None)
     try:
@@ -356,6 +397,48 @@ def skill_document(
     if len(frontmatter.encode("utf-8")) > _FRONTMATTER_BYTES_MAX:
         raise SkillTextValidationError("Skill frontmatter exceeds the safe size limit")
     return f"---\n{frontmatter}\n---\n\n{instructions.strip()}\n"
+
+
+def validate_skill_frontmatter(
+    content: str, *, directory_name: str | None = None
+) -> dict[str, str]:
+    """Validate new authored content; legacy reads keep their lenient parser.
+
+    Known optional fields follow agentskills.io. Runtime extension fields remain
+    supported, and validation never rewrites the document or its declared name.
+    """
+    metadata = _preservable_frontmatter(content)
+    name = metadata.get("name")
+    if not isinstance(name, str):
+        raise SkillTextValidationError("SKILL.md requires a string name in YAML frontmatter.")
+    validate_skill_name(name)
+    if directory_name is not None and unicodedata.normalize(
+        "NFKC", directory_name
+    ) != unicodedata.normalize("NFKC", name):
+        raise SkillTextValidationError("Skill name must match its parent directory name.")
+    description = metadata.get("description")
+    if not isinstance(description, str) or not description.strip() or len(description) > 1024:
+        raise SkillTextValidationError("Skill description must contain 1–1024 characters.")
+    for field in ("license", "allowed-tools"):
+        if field in metadata and not isinstance(metadata[field], str):
+            raise SkillTextValidationError(f"Skill {field} must be a string when provided.")
+    if "compatibility" in metadata:
+        compatibility = metadata["compatibility"]
+        if (
+            not isinstance(compatibility, str)
+            or not compatibility.strip()
+            or len(compatibility) > 500
+        ):
+            raise SkillTextValidationError(
+                "Skill compatibility must contain 1–500 characters when provided."
+            )
+    if "metadata" in metadata:
+        extra = metadata["metadata"]
+        if not _is_object_dict(extra) or any(
+            not isinstance(key, str) or not isinstance(value, str) for key, value in extra.items()
+        ):
+            raise SkillTextValidationError("Skill metadata must map string keys to string values.")
+    return {"name": name, "description": description}
 
 
 def parse_frontmatter(content: str) -> dict[str, str]:

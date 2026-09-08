@@ -15,8 +15,8 @@ from app.services.tar_utils import (
     MAX_FILES,
     MAX_SKILL_TAR_BYTES,
     TarValidationError,
-    parse_frontmatter,
     tar_from_content,
+    validate_skill_frontmatter,
     validate_tar,
 )
 
@@ -85,7 +85,7 @@ async def fetch_skill_from_github(repo: str, path: str | None = None) -> SkillPa
                     raise SkillSourceError(
                         f"No SKILL.md found in {repo}" + (f"/{path}" if path else "")
                     )
-                skill_key = path or repo.split("/")[-1]
+                skill_key = skill_dir.split("/")[-1] if skill_dir else repo.split("/")[-1]
                 tar_bytes, file_count = tar_from_content(skill_key, skill_md_content)
     except (httpx.HTTPError, httpx.InvalidURL) as exc:
         raise SkillSourceError("GitHub skill source request failed") from exc
@@ -109,13 +109,14 @@ async def fetch_skill_from_github(repo: str, path: str | None = None) -> SkillPa
             f"Built skill archive exceeds {MAX_SKILL_TAR_BYTES // (1024 * 1024)}MB"
         )
 
-    fm = parse_frontmatter(skill_md_content or "")
-    name = fm.get("name", path or repo.split("/")[-1])
-    description = fm.get("description", "")
+    fm = validate_skill_frontmatter(
+        skill_md_content or "",
+        directory_name=skill_dir.split("/")[-1] if skill_dir else repo.split("/")[-1],
+    )
 
     return SkillPackage(
-        name=name,
-        description=description,
+        name=fm["name"],
+        description=fm["description"],
         tar_bytes=tar_bytes,
         file_count=file_count,
         repo=repo,
@@ -171,9 +172,6 @@ async def _list_github_dir(
     count through the recursion and bail the moment we'd cross
     `MAX_FILES`.
     """
-    if not dir_path:
-        return []
-
     url = f"{GITHUB_API}/repos/{repo}/contents/{dir_path}?ref={branch}"
     resp = await client.get(url)
     if resp.status_code == 404:
@@ -270,7 +268,7 @@ async def _download_and_tar(
                 raise SkillSourceError(f"Unsafe path in repo: {rel_path}")
 
             # Archive path: skill_key/relative_path
-            skill_key = skill_dir.split("/")[-1] if "/" in skill_dir else skill_dir
+            skill_key = skill_dir.split("/")[-1] if skill_dir else repo.split("/")[-1]
             arc_name = f"{skill_key}/{rel_path}"
 
             info = tarfile.TarInfo(name=arc_name)

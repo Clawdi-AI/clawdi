@@ -3,7 +3,6 @@ import hashlib
 import io
 import json
 import logging
-import re
 import tarfile
 from dataclasses import dataclass
 from typing import TypedDict
@@ -82,6 +81,7 @@ from app.services.connected_agent_fence import (
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains
 from app.services.project_runtime_skills import (
+    RUNTIME_PROJECT_SKILL_LOCAL_KEY_PATTERN,
     assert_agent_workspace_skill_write_compatible,
     assert_project_skill_write_compatible,
 )
@@ -103,6 +103,7 @@ from app.services.tar_utils import (
     replace_skill_md,
     skill_document,
     tar_from_content,
+    validate_skill_frontmatter,
     validate_tar,
 )
 
@@ -292,6 +293,7 @@ class _SkillUploadAnalysis:
     name: str
     description: str
     content_hash: str
+    legacy_single_file_hash: str | None
 
 
 class _SkillArchiveRootMismatch(ValueError):
@@ -304,28 +306,87 @@ class _SkillDocumentMissing(ValueError):
     pass
 
 
-def _analyze_skill_upload_sync(data: bytes, skill_key: str) -> _SkillUploadAnalysis:
+def _analyze_skill_upload_sync(
+    data: bytes, skill_key: str, strict_frontmatter: bool = False
+) -> _SkillUploadAnalysis:
     file_count = validate_tar(data)
     expected_prefix = f"{skill_key}/"
+    root_documents = 0
+    single_document_only = True
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
         for member in tf.getmembers():
             if member.name != skill_key and not member.name.startswith(expected_prefix):
                 raise _SkillArchiveRootMismatch(member.name)
+            if member.isfile() and member.name == f"{skill_key}/SKILL.md":
+                root_documents += 1
+            if member.name not in (skill_key, f"{skill_key}/SKILL.md"):
+                single_document_only = False
 
-    skill_md = extract_skill_md(data)
+    if strict_frontmatter and root_documents != 1:
+        raise SkillTextValidationError("Archive must contain exactly one root SKILL.md.")
+    skill_md = extract_skill_md(data, skill_key if strict_frontmatter else None)
     if not skill_md:
         raise _SkillDocumentMissing
-    frontmatter = parse_frontmatter(skill_md)
+    frontmatter = (
+        validate_skill_frontmatter(skill_md) if strict_frontmatter else parse_frontmatter(skill_md)
+    )
     return _SkillUploadAnalysis(
         file_count=file_count,
         name=frontmatter.get("name", skill_key),
         description=frontmatter.get("description", ""),
         content_hash=_compute_file_tree_hash(data, skill_key),
+        legacy_single_file_hash=(
+            hashlib.sha256(skill_md.encode("utf-8")).hexdigest()
+            if single_document_only and file_count == 1
+            else None
+        ),
     )
 
 
-async def _analyze_skill_upload(data: bytes, skill_key: str) -> _SkillUploadAnalysis:
-    return await asyncio.to_thread(_analyze_skill_upload_sync, data, skill_key)
+async def _analyze_skill_upload(
+    data: bytes, skill_key: str, strict_frontmatter: bool = False
+) -> _SkillUploadAnalysis:
+    return await asyncio.to_thread(_analyze_skill_upload_sync, data, skill_key, strict_frontmatter)
+
+
+async def validate_stored_skill(
+    skill_key: str, file_key: str | None, content_hash: str
+) -> _SkillUploadAnalysis:
+    """Check stored bytes for new admission, after the caller releases its transaction."""
+    if file_key is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This Skill's files are unavailable.")
+    try:
+        data = await file_store.get(file_key)
+    except Exception:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This Skill's files are unavailable. Retry or import it again.",
+        ) from None
+    try:
+        if file_key.endswith(".md"):
+            data, _ = tar_from_content(skill_key, data.decode("utf-8"))
+        analysis = await _analyze_skill_upload(data, skill_key, strict_frontmatter=True)
+    except SkillTextValidationError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "code": "invalid_skill_text",
+                "message": f"{exc} Correct the source Skill or import it again.",
+            },
+        ) from None
+    except (TarValidationError, _SkillArchiveRootMismatch, _SkillDocumentMissing, UnicodeError):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This Skill's archive is invalid. Correct the source Skill or import it again.",
+        ) from None
+    # Match the released CLI's legacy lone-SKILL.md proof. Support files always
+    # require the canonical tree hash; never accept a document-only hash for them.
+    if content_hash not in (analysis.content_hash, analysis.legacy_single_file_hash):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This Skill's files do not match its saved content hash. Import it again.",
+        )
+    return analysis
 
 
 # ---------------------------------------------------------------------------
@@ -1333,31 +1394,13 @@ async def refresh_project_skill(
 
     # Do not retain database locks while checking the immutable source object.
     await db.commit()
-    try:
-        source_exists = await file_store.exists(source_file_key)
-    except Exception as exc:
-        log.warning(
-            "project_skill_refresh_source_check_failed user=%s project=%s skill_key=%s error=%s",
-            auth.user_id,
-            project_id,
-            body.skill_key,
-            _sanitize_log(exc),
-        )
-        source_exists = False
-    if not source_exists:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail={
-                "code": "project_skill_refresh_source_unavailable",
-                "message": "The source Agent's Skill archive is unavailable.",
-            },
-        )
+    analysis = await validate_stored_skill(body.skill_key, source_file_key, source_snapshot[1])
 
     await assert_project_skill_write_compatible(
         db,
         project_id=project_id,
         skill_key=body.skill_key,
-        local_skill_key=source.name,
+        local_skill_key=analysis.name,
         enforce_total_limit=False,
         source_agent_id=body.source_agent_id,
     )
@@ -1383,8 +1426,8 @@ async def refresh_project_skill(
     previous_content_hash = target.content_hash
     changed = any(
         (
-            target.name != source.name,
-            target.description != source.description,
+            target.name != analysis.name,
+            target.description != analysis.description,
             target.content_hash != source.content_hash,
             target.file_key != source_file_key,
             target.file_count != source_file_count,
@@ -1393,8 +1436,8 @@ async def refresh_project_skill(
         )
     )
     if changed:
-        target.name = source.name
-        target.description = source.description
+        target.name = analysis.name
+        target.description = analysis.description
         target.content_hash = source.content_hash
         target.file_key = source_file_key
         target.file_count = source_file_count
@@ -1497,14 +1540,14 @@ async def upload_skill_project_legacy(
 # Agent Workspace projections are rejected because their filesystem is
 # authoritative.
 def _native_skill_key(name: str) -> str:
-    key = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")[:64].rstrip("-")
-    if not key:
+    if RUNTIME_PROJECT_SKILL_LOCAL_KEY_PATTERN.fullmatch(name) is None:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Use a Skill name containing letters or numbers.",
+            "Creating a Skill currently requires an ASCII name: lowercase a–z, numbers, "
+            "or single inner hyphens (1–64 characters).",
         )
     try:
-        return validate_derived_skill_key(key)
+        return validate_derived_skill_key(name)
     except SkillKeyValidationError as exc:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -1601,7 +1644,12 @@ async def update_skill_content(
                 existing_content=existing_skill_md,
             ),
         )
-    except (SkillTextValidationError, TarValidationError, UnicodeDecodeError):
+    except SkillTextValidationError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            {"code": "invalid_skill_text", "message": str(exc)},
+        ) from None
+    except (TarValidationError, UnicodeDecodeError):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "This Skill's files could not be preserved. Retry or import it again.",
@@ -1667,7 +1715,9 @@ async def _do_upload_skill(
             f"({', '.join(sorted(RESERVED_SKILL_KEY_SUFFIXES))})",
         )
     try:
-        analysis = await _analyze_skill_upload(data, skill_key)
+        analysis = await _analyze_skill_upload(
+            data, skill_key, strict_frontmatter=authority == SKILL_AUTHORITY_CLOUD
+        )
     except TarValidationError as e:
         # `str(e)` echoes raw tar member names (attacker-controlled)
         # back to the client. Log internally, return a fixed message.
@@ -1694,12 +1744,12 @@ async def _do_upload_skill(
             status.HTTP_400_BAD_REQUEST,
             "Archive must contain a SKILL.md",
         ) from None
-    except SkillTextValidationError:
+    except SkillTextValidationError as exc:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail={
                 "code": "invalid_skill_text",
-                "message": "SKILL.md must not contain NUL characters.",
+                "message": str(exc),
             },
         ) from None
     file_count = analysis.file_count
@@ -2551,6 +2601,11 @@ async def _do_install_skill(
 
     try:
         fetched = await fetch_skill_from_github(body.repo, body.path)
+    except SkillTextValidationError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            {"code": "invalid_skill_text", "message": str(exc)},
+        ) from None
     except ValueError as e:
         # Fetcher's ValueError messages can contain raw GitHub URLs
         # or HTTP-status text. Log internally, return a generic
@@ -2563,9 +2618,17 @@ async def _do_install_skill(
         )
         raise HTTPException(status.HTTP_404_NOT_FOUND, "skill not found in repository") from None
 
+    skill_key = _native_skill_key(fetched.name)
     try:
-        validate_tar(fetched.tar_bytes)
-    except TarValidationError as e:
+        analysis = await _analyze_skill_upload(
+            fetched.tar_bytes, skill_key, strict_frontmatter=True
+        )
+    except SkillTextValidationError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            {"code": "invalid_skill_text", "message": str(exc)},
+        ) from None
+    except (TarValidationError, _SkillArchiveRootMismatch, _SkillDocumentMissing) as e:
         log.warning(
             "skill_install_validation_failed repo=%s path=%s error=%s",
             _sanitize_log(body.repo),
@@ -2574,15 +2637,7 @@ async def _do_install_skill(
         )
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "archive validation failed") from None
 
-    content_hash = _compute_file_tree_hash(fetched.tar_bytes)
-    # The `name` comes from the marketplace SKILL.md frontmatter
-    # which the user controls. A malicious `name: "../etc/passwd"`
-    # would otherwise traverse the file store. Validate the derived
-    # key against the same pattern the upload route enforces.
-    try:
-        skill_key = validate_derived_skill_key(fetched.name.lower().replace(" ", "-"))
-    except SkillKeyValidationError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
+    content_hash = analysis.content_hash
     fk = _file_key(auth.user_id, project_id, skill_key, content_hash)
 
     # Fail predictable graph conflicts before object I/O, then release the

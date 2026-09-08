@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.services.tar_utils import validate_skill_name
+
 PersistedSkillAuthority = Literal["agent_sync", "cloud"]
 PersistedProjectKind = Literal["environment", "personal", "workspace"]
 
@@ -108,69 +110,38 @@ class ProjectSkillRefreshRequest(BaseModel):
     source_agent_id: UUID
 
 
-class SkillContentUpdateRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
-    description: str | None = Field(default=None, max_length=2000)
+class SkillCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    description: str = Field(min_length=1, max_length=1024)
     instructions: str = Field(min_length=1, max_length=200 * 1024)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        return validate_skill_name(value)
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("description is required")
+        return value
+
+    @field_validator("instructions")
+    @classmethod
+    def normalize_instructions(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("instructions are required")
+        return normalized
+
+
+class SkillContentUpdateRequest(SkillCreateRequest):
     content_hash: str = Field(
         min_length=64,
         max_length=64,
         pattern=r"^[a-f0-9]{64}$",
     )
-
-    @field_validator("name")
-    @classmethod
-    def normalize_name(cls, value: str) -> str:
-        normalized = " ".join(value.split())
-        if not normalized:
-            raise ValueError("name is required")
-        return normalized
-
-    @field_validator("description")
-    @classmethod
-    def normalize_description(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip()
-        return normalized or None
-
-    @field_validator("instructions")
-    @classmethod
-    def normalize_instructions(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("instructions are required")
-        return normalized
-
-
-class SkillCreateRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
-    description: str | None = Field(default=None, max_length=2000)
-    instructions: str = Field(min_length=1, max_length=200 * 1024)
-
-    @field_validator("name")
-    @classmethod
-    def normalize_name(cls, value: str) -> str:
-        normalized = " ".join(value.split())
-        if not normalized:
-            raise ValueError("name is required")
-        return normalized
-
-    @field_validator("description")
-    @classmethod
-    def normalize_description(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = value.strip()
-        return normalized or None
-
-    @field_validator("instructions")
-    @classmethod
-    def normalize_instructions(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("instructions are required")
-        return normalized
 
 
 class SkillDeleteResponse(BaseModel):

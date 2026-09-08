@@ -239,7 +239,8 @@ def assert_project_skill_runtime_identity(identity: ProjectSkillRuntimeIdentity)
             "code": "project_skill_name_incompatible",
             "message": (
                 f'Skill "{identity.source_skill_key}" cannot be linked to an Agent. '
-                "Update its SKILL.md name to use lowercase letters, numbers, or inner "
+                "This runtime supports ASCII names only. Update its SKILL.md name to use "
+                "lowercase a–z, numbers, or single inner "
                 "hyphens (up to 64 characters)."
             ),
             "skill_key": identity.source_skill_key,
@@ -504,7 +505,7 @@ async def assert_project_skill_write_compatible(
                 and (linked is not None or identity.source_skill_key in source_keys)
             )
             if linked is not None or skill_key in source_keys:
-                proposed_identities += (project_skill_runtime_identity(skill_key, local_skill_key),)
+                proposed_identities += (ProjectSkillRuntimeIdentity(skill_key, local_skill_key),)
             await assert_agent_accepts_project_skills(
                 db,
                 agent_id=agent_id,
