@@ -6,6 +6,10 @@ import {
 	type CatalogProviderConfigurationResult,
 	providerProjectionProgramImpact,
 } from "./catalog-provider-config";
+import {
+	applyConnectionProviderTransfers,
+	type ConnectionProviderOwnership,
+} from "./connection-provider-config";
 import type { HermesConfigTransaction } from "./hermes-config";
 import { applyHermesNativeProviders } from "./hermes-native-provider";
 import type { OpenClawHostedContext } from "./hosted-openclaw-context";
@@ -21,6 +25,7 @@ import { recordValue, stringValue } from "./manifest-shared";
 import {
 	applyOpenClawNativeProviders,
 	buildNativeOpenClawProviderPatch,
+	discoverNativeOpenClawProviderIds,
 	ensureNativeOpenClawProviderPlugins,
 } from "./openclaw-native-provider";
 import {
@@ -63,11 +68,40 @@ export function applyHostedAiProviderProjection(
 	hermesConfig: HermesConfigTransaction | null,
 	providerRevision: string,
 	previousNativeProviderIds: readonly string[] = [],
+	connectionOwnership?: ConnectionProviderOwnership,
 ): HostedAiProviderProjectionResult {
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath)
 		return { path: null, revision: null, providerIds: [] };
-	const { native, catalog } = hostedProviderConfiguration(manifest, name);
-	if (manifest.runtimes[name]?.providerMode === "configured" && !catalog && native.length === 0) {
+	const { native, catalog, connections } = hostedProviderConfiguration(manifest, name);
+	const transferredIds = new Set([
+		...Object.keys(connectionOwnership?.providers ?? {}),
+		...connections.map((connection) => connection.id),
+	]);
+	previousProviderIds = previousProviderIds.filter((id) => !transferredIds.has(id));
+	if (connections.length > 0 && !connectionOwnership)
+		throw new Error("Connection providers require durable ownership");
+	const hasTransfers = transferredIds.size > 0;
+	const preserveModelSelection = !catalog?.primaryModel && (native.length > 0 || hasTransfers);
+	let connectionChanged = false;
+	if (hasTransfers && connectionOwnership)
+		connectionChanged = applyConnectionProviderTransfers({
+			runtime: name,
+			manifest,
+			observation,
+			home,
+			openClawContext,
+			workspaceRoot,
+			hermesConfig,
+			secretValues,
+			ownership: connectionOwnership,
+		});
+	if (
+		manifest.runtimes[name]?.providerMode === "configured" &&
+		!catalog &&
+		native.length === 0 &&
+		connections.length === 0 &&
+		!hasTransfers
+	) {
 		if (name === "openclaw")
 			applyOpenClawGatewayHostedProjection(
 				observation.commandPath,
@@ -100,11 +134,11 @@ export function applyHostedAiProviderProjection(
 			home,
 			hermesConfig,
 			true,
-			native.length > 0,
+			preserveModelSelection,
 		);
 		return {
 			...projection,
-			nativeCredentialsChanged: auth.changed,
+			nativeCredentialsChanged: auth.changed || connectionChanged,
 			nativeCredentialProviderIds: auth.providerIds,
 		};
 	}
@@ -114,6 +148,15 @@ export function applyHostedAiProviderProjection(
 		previousProviderIds,
 		native.length > 0 ? "merge" : "replace",
 	);
+	// Tombstones protect old rows; an explicitly selected catalog still owns its primary model.
+	if (hasTransfers) {
+		const content = recordValue(JSON.parse(patch.content));
+		const models = recordValue(content?.models);
+		if (models && (connections.length > 0 || !catalog)) delete models.mode;
+		const defaults = recordValue(recordValue(content?.agents)?.defaults);
+		if (defaults && preserveModelSelection) delete defaults.model;
+		patch.content = JSON.stringify(content);
+	}
 	const { placeholderEnv, configEnv, secretEnv } = hostedProviderEnvironment(manifest, name);
 	const environment = { ...placeholderEnv, ...configEnv };
 	for (const [key, ref] of Object.entries(secretEnv)) {
@@ -121,13 +164,14 @@ export function applyHostedAiProviderProjection(
 		if (!value) throw new Error("OpenClaw provider credential is unavailable");
 		environment[key] = value;
 	}
-	let nativeChanged = ensureNativeOpenClawProviderPlugins(
-		native,
-		observation.commandPath,
-		openClawContext.home,
-		workspaceRoot,
-		environment,
-	);
+	let nativeChanged =
+		ensureNativeOpenClawProviderPlugins(
+			native,
+			observation.commandPath,
+			openClawContext.home,
+			workspaceRoot,
+			environment,
+		) || connectionChanged;
 	applyOpenClawGatewayHostedProjection(
 		observation.commandPath,
 		manifest,
@@ -147,13 +191,24 @@ export function applyHostedAiProviderProjection(
 			workspaceRoot,
 			providerRevision,
 		);
+	const ownedNativeProviderIds = [
+		...new Set([
+			...previousNativeProviderIds,
+			...discoverNativeOpenClawProviderIds(
+				observation.commandPath,
+				openClawContext,
+				workspaceRoot,
+				environment,
+			),
+		]),
+	];
 	const nativePatch = buildNativeOpenClawProviderPatch(
 		native,
-		previousNativeProviderIds.filter(
+		ownedNativeProviderIds.filter(
 			(id) => !patch.providerIds.includes(id) && !previousProviderIds.includes(id),
 		),
 	);
-	if (native.length > 0 || previousNativeProviderIds.length > 0) {
+	if (native.length > 0 || ownedNativeProviderIds.length > 0) {
 		nativeChanged =
 			applyOpenClawNativeProviders({
 				patch: nativePatch,
@@ -192,24 +247,37 @@ export function previewHostedAiProviderProjectionRevision(
 		!observation.commandPath
 	)
 		return null;
-	const { native, catalog } = hostedProviderConfiguration(manifest, name);
-	if (manifest.runtimes[name]?.providerMode === "configured" && !catalog && native.length === 0)
+	const { native, catalog, connections } = hostedProviderConfiguration(manifest, name);
+	previousProviderIds = previousProviderIds.filter(
+		(id) => !connections.some((connection) => connection.id === id),
+	);
+	if (
+		manifest.runtimes[name]?.providerMode === "configured" &&
+		!catalog &&
+		native.length === 0 &&
+		connections.length === 0
+	)
 		return null;
-	if (name === "hermes")
-		return applyHostedHermesAiProviderProjection(
+	if (name === "hermes") {
+		const revision = applyHostedHermesAiProviderProjection(
 			catalog,
 			previousProviderIds,
 			home,
 			null,
 			false,
-			native.length > 0,
+			native.length > 0 || connections.length > 0,
 		).revision;
+		return connections.length
+			? runtimeImpactRevision({ connections, catalog: revision })
+			: revision;
+	}
 	const patch = buildOpenClawHostedProviderPatch(
 		catalog,
 		previousProviderIds,
 		native.length > 0 ? "merge" : "replace",
 	);
 	return runtimeImpactRevision({
+		...(connections.length ? { connections } : {}),
 		catalog: providerProjectionProgramImpact("openclaw", JSON.parse(patch.content), catalog),
 		native: buildNativeOpenClawProviderPatch(
 			native,
@@ -226,7 +294,10 @@ export function validateHostedProviderConfiguration(
 	name: string,
 	previousProviderIds: readonly string[],
 ): void {
-	const { native, catalog } = hostedProviderConfiguration(manifest, name);
+	const { native, catalog, connections } = hostedProviderConfiguration(manifest, name);
+	previousProviderIds = previousProviderIds.filter(
+		(id) => !connections.some((connection) => connection.id === id),
+	);
 	if (name === "openclaw") {
 		buildOpenClawHostedProviderPatch(
 			catalog,
@@ -270,6 +341,7 @@ export function providerHealthReasons(
 	}
 	if (
 		provider.configurationMode !== "native" &&
+		provider.configurationMode !== "connection" &&
 		!stringValue(provider.model) &&
 		!providerHasModels(provider)
 	) {

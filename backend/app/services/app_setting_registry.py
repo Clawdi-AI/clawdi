@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import JsonValue, TypeAdapter, ValidationError
+from pydantic import Field, JsonValue, TypeAdapter, ValidationError
 
 from app.services.clerk_cli_oauth_settings import (
     CLERK_CLI_OAUTH_SETTING_ADAPTER,
@@ -30,7 +30,22 @@ CLERK_CLI_OAUTH_SPEC = AppSettingSpec[ClerkCliOAuthSetting](
     adapter=CLERK_CLI_OAUTH_SETTING_ADAPTER,
     description="Global Clerk Public OAuth Application configuration for the Clawdi CLI",
 )
-APP_SETTING_SPECS: tuple[AppSettingSpec[Any], ...] = (CLERK_CLI_OAUTH_SPEC,)
+SUPPORTED_CONNECTION_CLI_VERSIONS_SPEC = AppSettingSpec[list[str]](
+    key="supported_connection_cli_versions",
+    adapter=TypeAdapter(
+        list[
+            Annotated[
+                str,
+                Field(strict=True, pattern=r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"),
+            ]
+        ]
+    ),
+    description="Qualified exact CLI releases for existing-runtime connection ownership handoff",
+)
+APP_SETTING_SPECS: tuple[AppSettingSpec[Any], ...] = (
+    CLERK_CLI_OAUTH_SPEC,
+    SUPPORTED_CONNECTION_CLI_VERSIONS_SPEC,
+)
 APP_SETTING_SPEC_BY_KEY = {spec.key: spec for spec in APP_SETTING_SPECS}
 _JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 

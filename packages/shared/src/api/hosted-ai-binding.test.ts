@@ -75,6 +75,36 @@ const codexProvider = {
 	auth: { type: "agent_profile", tool: "codex", profile: "default" },
 } satisfies HostedSavedAiProvider;
 
+test("connection bindings cannot bootstrap a new agent or regain model authority", () => {
+	const provider = {
+		...apiKeyProvider,
+		configuration_mode: "connection",
+	} satisfies HostedSavedAiProvider;
+	const selection = {
+		mode: "saved",
+		providerId: provider.provider_id,
+		model: "old-model",
+	} as const;
+	for (const mode of ["create", "update"] as const) {
+		expect(() =>
+			buildHostedAiBindingFields({ managedModels, mode, providers: [provider], selection }),
+		).toThrow("existing agent");
+	}
+	const retained = buildHostedAiBindingFields({
+		managedModels,
+		mode: "update",
+		providers: [provider],
+		selection,
+		currentProviderIds: [provider.provider_id],
+	});
+	expect(retained.primary_model).toBeNull();
+	expect(retained.ai_provider_bootstrap?.catalog.providers[0]?.configuration_mode).toBe(
+		"connection",
+	);
+	expect(retained.ai_provider_bootstrap?.catalog.providers[0]?.models).toBeUndefined();
+	expect(provider.models).toEqual(apiKeyProvider.models);
+});
+
 test("native API key and OAuth bindings carry credential readiness without choosing a model", () => {
 	for (const saved of [apiKeyProvider, codexProvider]) {
 		const provider: HostedSavedAiProvider = {

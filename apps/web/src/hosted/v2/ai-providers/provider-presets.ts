@@ -160,11 +160,3 @@ export function providerPresetForSavedProvider({
 		) ?? null
 	);
 }
-
-export function providerTypeForPreset(preset: ProviderPreset): ProviderTypeId {
-	return preset.provider_type;
-}
-
-export function presetRuntimeEnvName(preset: ProviderPreset): string {
-	return preset.runtime_env_name;
-}

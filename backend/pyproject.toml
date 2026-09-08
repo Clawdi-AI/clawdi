@@ -242,6 +242,7 @@ strict = [
     "app/services/ai_provider_auth_transition.py",
     "app/services/ai_provider_capabilities.py",
     "app/services/ai_provider_connection.py",
+    "app/services/ai_provider_connection_ownership.py",
     "app/services/ai_provider_credentials.py",
     "app/services/ai_provider_oauth_attempt.py",
     "app/services/ai_provider_oauth_lifecycle.py",

@@ -58,6 +58,7 @@ from app.schemas.runtime import (
     validate_clawdi_cli_package_spec,
     validate_hosted_runtime_desired_state,
 )
+from app.services.ai_provider_capabilities import effective_provider_api_mode
 from app.services.channels import (
     HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS,
     channel_runtime_account_key,
@@ -770,14 +771,22 @@ def render_runtime_source(
     providers = {
         provider_id: provider_material[provider_id] for provider_id in runtime["provider_ids"]
     }
+    if (
+        primary_model
+        and providers.get(primary_model["provider_id"], {}).get("configurationMode") == "connection"
+    ):
+        runtime["primary_model"] = None
+        primary_model = None
     if runtime.get("providerMode") == "configured" and not primary_model:
         native_chat = [
-            entry for entry in providers.values() if entry.get("configurationMode") == "native"
+            entry
+            for entry in providers.values()
+            if entry.get("configurationMode") in {"native", "connection"}
         ]
         catalog_chat = [
             entry
             for entry in providers.values()
-            if entry.get("configurationMode") != "native"
+            if entry.get("configurationMode") not in {"native", "connection"}
             and not (
                 entry.get("managed_by") == "clawdi"
                 and entry.get("models")
@@ -1175,12 +1184,27 @@ def _provider_entry(
         result["configurationMode"] = "native"
         result["nativeProvider"] = runtime_routing.provider
         runtime_env = runtime_routing.env or routing.runtime_env_name
+    if provider.configuration_mode == "connection":
+        api_mode = effective_provider_api_mode(provider.type, api_mode)
+        if (
+            managed
+            or provider.managed_by != "user"
+            or provider.auth_type not in {"api_key", "secret_ref"}
+            or not runtime_env
+            or not api_mode
+            or not secret_ref
+            or provider.native_provider
+            or provider.native_variant
+        ):
+            raise RuntimeSourceError("Connection management requires user API-key routing")
+        result["configurationMode"] = "connection"
+        result["managed_by"] = "user"
     if api_mode:
         result["apiMode"] = api_mode
     if provider.managed_by == "clawdi":
         result["managed_by"] = provider.managed_by
     models: list[dict[str, Any]] = []
-    if provider.models is not None:
+    if provider.models is not None and provider.configuration_mode != "connection":
         try:
             models = [
                 model.model_dump(exclude_none=True)
@@ -1189,7 +1213,7 @@ def _provider_entry(
         except ValidationError as exc:
             raise RuntimeSourceError("Stored AI provider model metadata is invalid") from exc
     if (
-        provider.configuration_mode != "native"
+        provider.configuration_mode not in {"native", "connection"}
         and selected_model
         and not any(model["id"] == selected_model for model in models)
     ):

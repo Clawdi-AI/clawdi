@@ -1,7 +1,15 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { readRuntimeAppliedState } from "./applied-state";
+import {
+	applyHostedHermesAiProviderProjection,
+	buildOpenClawHostedProviderPatch,
+} from "./catalog-provider-config";
 import { removeHostedCliPathExposure } from "./cli-update";
+import {
+	type PreparedConnectionProviderTransfers,
+	prepareConnectionProviderTransfers,
+} from "./connection-provider-config";
 import { buildEgressProfileBundle, hasEnabledEgressProfiles } from "./egress-profiles";
 import {
 	ensureFileBrowserCompanion,
@@ -24,6 +32,7 @@ import {
 	repairHostedOpenClawWorkspace,
 	resolveHostedOpenClawWorkspace,
 } from "./hosted-openclaw-context";
+import { hostedProviderConfiguration } from "./hosted-provider-resolution";
 import { assertHostedRuntimeContract } from "./hosted-runtime-contract";
 import type { HostedSkillEvidence } from "./hosted-skill-evidence";
 import { reconcileManagedBaileysCompatibility } from "./managed-baileys-compat";
@@ -96,6 +105,11 @@ import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
 import { removeLegacyManagedOpenClawProviderPlugin } from "./openclaw-legacy-provider-plugin";
 import type { RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
+import {
+	type ProviderOwnership,
+	readProviderOwnership,
+	writeProviderOwnership,
+} from "./provider-ownership";
 import { runtimeRunConfigId, writeRuntimeRunConfig } from "./run-config";
 import { runtimeImpactRevision, runtimeProviderRevision } from "./runtime-impact-revision";
 import {
@@ -137,6 +151,8 @@ interface RuntimeConvergenceContext {
 	plannedEgressProfileBundlePath: string | null;
 	appliedState: ReturnType<typeof readRuntimeAppliedState>;
 	previousProjectedProviderIds: Record<string, string[]>;
+	providerOwnership: ProviderOwnership;
+	connectionPlans: Record<string, PreparedConnectionProviderTransfers>;
 	runtimeEntries: RuntimeEntry[];
 	preparedHostedSourcedSkills: NonNullable<
 		RuntimeConvergenceOptions["preparedHostedSourcedSkills"]
@@ -263,7 +279,13 @@ function initializeRuntimeConvergence(
 		? paths.egressProfileBundle
 		: null;
 	const appliedState = readRuntimeAppliedState(paths);
-	const previousProjectedProviderIds = appliedState?.projectedProviderIds ?? {};
+	const providerOwnership = readProviderOwnership(
+		paths,
+		manifest.instanceId,
+		projectionHome,
+		appliedState?.projectedProviderIds ?? {},
+	);
+	const previousProjectedProviderIds = providerOwnership.providers;
 	const retainPreviousProjectedProviderIds = () =>
 		Object.fromEntries(
 			Object.entries(previousProjectedProviderIds).map(([runtime, providerIds]) => [
@@ -322,6 +344,8 @@ function initializeRuntimeConvergence(
 			plannedEgressProfileBundlePath,
 			appliedState,
 			previousProjectedProviderIds,
+			providerOwnership,
+			connectionPlans: {},
 			runtimeEntries,
 			preparedHostedSourcedSkills,
 			sourcedSkillsPrepared,
@@ -748,9 +772,51 @@ function applyRuntimeResourceProjections(
 		openClawOwnerBrowserBootstrapSupported: state.openClawOwnerBrowserBootstrapSupported,
 	});
 	const providerProjectionRevisions: Partial<Record<string, string | null>> = {};
+	const pendingProviderIds = { ...previousProjectedProviderIds };
 	for (const [name] of runtimeEntries) {
 		const observation = state.observations.get(name);
 		if (!observation) throw new Error(`runtime ${name} install observation is missing`);
+		if (
+			(name === "openclaw" || name === "hermes") &&
+			observation.enabled &&
+			observation.status !== "install_failed" &&
+			observation.commandPath &&
+			((manifest.runtimes[name]?.provider_ids ?? []).some(
+				(id) => manifest.projection?.providers?.[id]?.configurationMode === "connection",
+			) ||
+				Object.keys(context.providerOwnership.transfers[name] ?? {}).length > 0)
+		) {
+			const previous = context.providerOwnership.transfers[name] ?? {};
+			const prepared = withRuntimeUserFileAccess(
+				() =>
+					prepareConnectionProviderTransfers({
+						runtime: name,
+						manifest,
+						observation,
+						home: projectionHome,
+						openClawContext,
+						workspaceRoot,
+						hermesConfig,
+						secretValues,
+						ownership: { providers: previous },
+					}),
+				context.hostedRuntimeContract.identity,
+			);
+			if (
+				Object.entries(previous).some(
+					([id, value]) => prepared.providers[id]?.envName !== value.envName,
+				)
+			)
+				throw new Error(
+					"Connection transfer cannot remove ownership or change its credential environment",
+				);
+			context.connectionPlans[name] = prepared;
+			context.providerOwnership.transfers[name] = prepared.providers;
+			previousProjectedProviderIds[name] = (previousProjectedProviderIds[name] ?? []).filter(
+				(id) => !Object.hasOwn(prepared.providers, id),
+			);
+			pendingProviderIds[name] = previousProjectedProviderIds[name];
+		}
 		providerProjectionRevisions[name] = previewHostedAiProviderProjectionRevision(
 			name,
 			observation,
@@ -759,7 +825,26 @@ function applyRuntimeResourceProjections(
 			previousProjectedProviderIds[name] ?? [],
 			context.appliedState?.nativeCredentialProviderIds?.[name] ?? [],
 		);
+		if (
+			(name === "openclaw" || name === "hermes") &&
+			observation.enabled &&
+			observation.status !== "install_failed" &&
+			observation.commandPath
+		) {
+			const { catalog } = hostedProviderConfiguration(manifest, name);
+			const desired =
+				name === "openclaw"
+					? buildOpenClawHostedProviderPatch(catalog, []).providerIds
+					: applyHostedHermesAiProviderProjection(catalog, [], projectionHome, null, false)
+							.providerIds;
+			if (desired.some((id) => Object.hasOwn(context.providerOwnership.transfers[name] ?? {}, id)))
+				throw new Error("An agent-owned connection cannot return to catalog management");
+			pendingProviderIds[name] = [...new Set([...(pendingProviderIds[name] ?? []), ...desired])];
+		}
 	}
+	// Record ownership before either runtime can commit config independently.
+	context.providerOwnership.providers = pendingProviderIds;
+	writeProviderOwnership(paths, manifest.instanceId, projectionHome, context.providerOwnership);
 	try {
 		const codexProjection = withRuntimeUserFileAccess(
 			() => applyHostedCodexManagedProviderProjection(manifest, projectionHome, codexCli),
@@ -904,6 +989,10 @@ function applyRuntimeEntryProjections(
 					hermesConfig,
 					runtimeProbeRevision(context, name),
 					context.appliedState?.nativeCredentialProviderIds?.[name] ?? [],
+					{
+						providers: context.providerOwnership.transfers[name] ?? {},
+						prepared: context.connectionPlans[name],
+					},
 				);
 				state.projectedProviderIds[name] = providerProjection.providerIds;
 				state.nativeCredentialProviderIds[name] =
@@ -1171,6 +1260,17 @@ function commitRuntimeConvergence(
 		activated: state.activated,
 		officialServiceCommandRevisions: state.officialServiceCommandRevisions,
 		skillEvidence: state.skillEvidence,
+	});
+	writeProviderOwnership(paths, manifest.instanceId, context.projectionHome, {
+		providers: {
+			...context.providerOwnership.providers,
+			...Object.fromEntries(
+				Object.entries(state.projectedProviderIds).filter(
+					([name]) => state.observations.get(name)?.enabled === true,
+				),
+			),
+		},
+		transfers: context.providerOwnership.transfers,
 	});
 	try {
 		gcFileBrowserCompanionCandidates(manifest, paths);

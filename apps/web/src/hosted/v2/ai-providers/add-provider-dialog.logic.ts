@@ -1,9 +1,6 @@
 import { nativeAiProvider } from "@clawdi/shared";
 import { CLAWDI_CODEX_OAUTH_PROVIDER_ID } from "@/hosted/v2/ai-providers/codex-oauth";
-import {
-	type ProviderPreset,
-	presetRuntimeEnvName,
-} from "@/hosted/v2/ai-providers/provider-presets";
+import type { ProviderPreset } from "@/hosted/v2/ai-providers/provider-presets";
 import {
 	type ApiMode,
 	type ProviderTypeId,
@@ -13,6 +10,7 @@ import {
 import type {
 	AiProvider,
 	AiProviderConnectionTestResponse,
+	AiProviderPatch,
 	AiProviderUpsert,
 	AiProviderUpsertAuth,
 } from "@/hosted/v2/ai-providers/types";
@@ -28,7 +26,6 @@ export interface DerivedProviderFields {
 	baseUrl: string;
 	apiMode: ApiMode;
 	runtimeEnv: string;
-	modelsText: string;
 }
 
 export function authFor(method: AuthMethod): AiProviderUpsertAuth {
@@ -52,7 +49,8 @@ export async function runPostSaveProviderConnectionTest(
 		Partial<Pick<AiProvider, "configuration_mode">>,
 	execute: (input: SavedProviderConnectionTestInput) => Promise<SavedProviderConnectionTestResult>,
 ): Promise<SavedProviderConnectionTestResult | null> {
-	if (provider.configuration_mode === "native") return null;
+	if (provider.configuration_mode === "native" || provider.configuration_mode === "connection")
+		return null;
 	if (provider.auth.type !== "api_key" || provider.auth.source !== "managed") return null;
 	const model = provider.models?.[0]?.id;
 	try {
@@ -64,6 +62,24 @@ export async function runPostSaveProviderConnectionTest(
 		// Saving is authoritative. A follow-up test failure must not turn it into a failed mutation.
 		return null;
 	}
+}
+
+/** Connection edits never carry stored model metadata or change credential identity. */
+export function connectionProviderPatch(
+	provider: AiProvider,
+	fields: { label: string | null; baseUrl: string; apiMode: ApiMode; apiKey: string },
+): AiProviderPatch {
+	if (provider.configuration_mode !== "connection")
+		throw new Error("Expected an existing connection");
+	return {
+		configuration_mode: "connection",
+		label: fields.label,
+		base_url: fields.baseUrl.trim(),
+		api_mode: fields.apiMode,
+		...(fields.apiKey.trim()
+			? { credential: { type: "api_key", value: fields.apiKey.trim() } }
+			: {}),
+	};
 }
 
 export function modelsToText(models: ReadonlyArray<{ id: string }> | null | undefined): string {
@@ -105,9 +121,7 @@ export function derivedProviderFields(
 	return {
 		baseUrl: route?.base_url ?? preset?.base_url ?? meta.defaultBaseUrl,
 		apiMode: route?.api_mode ?? preset?.api_mode ?? meta.defaultApiMode,
-		runtimeEnv:
-			route?.runtime_env_name ?? (preset ? presetRuntimeEnvName(preset) : meta.defaultRuntimeEnv),
-		modelsText: "",
+		runtimeEnv: route?.runtime_env_name ?? preset?.runtime_env_name ?? meta.defaultRuntimeEnv,
 	};
 }
 

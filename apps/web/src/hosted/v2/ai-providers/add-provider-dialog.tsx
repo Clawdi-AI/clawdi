@@ -22,6 +22,7 @@ import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
 	type AuthMethod,
 	authFor,
+	connectionProviderPatch,
 	derivedProviderFields,
 	modelsFromText,
 	modelsToText,
@@ -37,6 +38,7 @@ import {
 	usePatchProvider,
 	useTestDraftProviderConnection,
 	useTestProviderConnection,
+	useUpdateConnectionProvider,
 } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { codexProviderBody } from "@/hosted/v2/ai-providers/codex-oauth";
 import { type ProviderChoice, ProviderChooser } from "@/hosted/v2/ai-providers/provider-chooser";
@@ -47,7 +49,6 @@ import {
 	providerPresetById,
 	providerPresetForSavedProvider,
 	providerPresetRegion,
-	providerTypeForPreset,
 } from "@/hosted/v2/ai-providers/provider-presets";
 import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 import type {
@@ -85,6 +86,7 @@ export function AddProviderDialog({
 	const providers = useAiProviders();
 	const acceptProvider = useAcceptProvider();
 	const patchProvider = usePatchProvider();
+	const updateConnection = useUpdateConnectionProvider();
 	const testDraft = useTestDraftProviderConnection();
 	const testSaved = useTestProviderConnection();
 	const oauthDeviceStart = useOAuthDeviceStart();
@@ -186,8 +188,7 @@ export function AddProviderDialog({
 				type,
 				label: editing.label ?? "",
 				baseUrl: editing.base_url || defaults.baseUrl,
-				modelsText:
-					(editing.models?.length ?? 0) > 0 ? modelsToText(editing.models) : defaults.modelsText,
+				modelsText: modelsToText(editing.models),
 				apiMode: editing.api_mode ?? defaults.apiMode,
 				runtimeEnv: editing.runtime_env_name ?? defaults.runtimeEnv,
 				authMethod,
@@ -205,7 +206,7 @@ export function AddProviderDialog({
 			type: "openai",
 			label: "",
 			baseUrl: defaults.baseUrl,
-			modelsText: defaults.modelsText,
+			modelsText: "",
 			apiMode: defaults.apiMode,
 			runtimeEnv: defaults.runtimeEnv,
 			authMethod: "api_key",
@@ -219,7 +220,7 @@ export function AddProviderDialog({
 	function selectProvider(choice: ProviderChoice) {
 		acceptAttemptRef.current = null;
 		if (choice.kind === "preset") {
-			const type = providerTypeForPreset(choice.preset);
+			const type = choice.preset.provider_type;
 			const defaults = derivedProviderFields(type, "api_key", choice.preset);
 			const region = providerPresetRegion(choice.preset, null);
 			resetForm({
@@ -227,7 +228,7 @@ export function AddProviderDialog({
 				type,
 				label: "",
 				baseUrl: region?.base_url ?? defaults.baseUrl,
-				modelsText: defaults.modelsText,
+				modelsText: "",
 				apiMode: defaults.apiMode,
 				runtimeEnv: defaults.runtimeEnv,
 				authMethod: "api_key",
@@ -242,7 +243,7 @@ export function AddProviderDialog({
 				type: choice.type,
 				label: "",
 				baseUrl: defaults.baseUrl,
-				modelsText: defaults.modelsText,
+				modelsText: "",
 				apiMode: defaults.apiMode,
 				runtimeEnv: defaults.runtimeEnv,
 				authMethod: "api_key",
@@ -262,7 +263,7 @@ export function AddProviderDialog({
 			authMethod,
 			apiKey: "",
 			baseUrl: defaults.baseUrl,
-			modelsText: defaults.modelsText,
+			modelsText: "",
 			apiMode: defaults.apiMode,
 			runtimeEnv: defaults.runtimeEnv,
 		});
@@ -377,6 +378,23 @@ export function AddProviderDialog({
 		if (!canSubmit) return;
 		if (editing) {
 			const replacementKey = form.apiKey.trim();
+			if (editing.configuration_mode === "connection") {
+				const saved = await updateConnection
+					.execute({
+						providerId: editing.provider_id,
+						body: connectionProviderPatch(editing, {
+							label: identity.label,
+							baseUrl: form.baseUrl,
+							apiMode: form.apiMode,
+							apiKey: replacementKey,
+						}),
+					})
+					.catch(() => null);
+				if (!saved) return;
+				toast.success("Provider updated");
+				requestClose(false);
+				return;
+			}
 			if (replacementKey) {
 				const body = {
 					provider: providerBody(),
@@ -489,6 +507,7 @@ export function AddProviderDialog({
 	const busy =
 		acceptProvider.isPending ||
 		patchProvider.isPending ||
+		updateConnection.isPending ||
 		testDraft.isPending ||
 		testSaved.isPending ||
 		oauthDeviceStart.isPending ||
@@ -568,20 +587,6 @@ export function AddProviderDialog({
 							) : null}
 							<ProviderFieldsForm
 								nativeConnection={nativeConnection}
-								onUseNative={
-									nativeRoute && !nativeConnection && !isOAuthEdit
-										? () => {
-												updateForm({
-													configurationMode: "native",
-													modelsText: "",
-													baseUrl: nativeRoute.base_url,
-													apiMode: nativeRoute.api_mode,
-													runtimeEnv: nativeRoute.runtime_env_name,
-												});
-												setDraftTestResult(null);
-											}
-										: undefined
-								}
 								form={form}
 								editing={editing ?? null}
 								preset={selectedPreset}
@@ -640,7 +645,9 @@ export function AddProviderDialog({
 									{isEdit ? null : <ArrowLeft />}
 									{isEdit ? "Cancel" : "Back"}
 								</Button>
-								{form.authMethod === "api_key" && !nativeConnection ? (
+								{form.authMethod === "api_key" &&
+								!nativeConnection &&
+								form.configurationMode !== "connection" ? (
 									<Button
 										variant="outline"
 										onClick={() => void runAction(testDraftConnection)}

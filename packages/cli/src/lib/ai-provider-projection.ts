@@ -98,7 +98,7 @@ const HERMES_TRANSPORT_LABELS: Partial<Record<AiProviderApiMode, string>> = {
 export function buildAgentTargetProjection(
 	target: AgentTarget,
 	catalog: AiProviderCatalog,
-	primaryModel?: AgentPrimaryModel | null,
+	primaryModel: AgentPrimaryModel | null,
 	options: { freezeManagedModelCatalog?: boolean } = {},
 ): AgentTargetProjection {
 	if (catalog.providers.some((provider) => provider.configuration_mode === "native"))
@@ -153,7 +153,7 @@ export function buildAgentTargetProjection(
 function selectProjectionProviders(
 	target: AgentTarget,
 	catalog: AiProviderCatalog,
-	primaryModel: AgentPrimaryModel | null | undefined,
+	primaryModel: AgentPrimaryModel | null,
 ): {
 	providers: ProjectionProvider[];
 	primaryProvider: ProjectionProvider | null;
@@ -183,15 +183,14 @@ function selectProjectionProviders(
 	) {
 		return { providers, primaryProvider: null, primaryModel: null, warnings };
 	}
-	const selectedPrimaryModelInput = primaryModel ?? legacyCatalogPrimaryModel(catalog, providers);
-	if (!selectedPrimaryModelInput) {
+	if (!primaryModel) {
 		throw new Error(
 			`No primary model is configured for ${target}; pass agent primary_model {provider_id, model} before agent config apply.`,
 		);
 	}
 	const selectedPrimaryModel = {
-		...selectedPrimaryModelInput,
-		provider_id: agentFacingProviderId(selectedPrimaryModelInput.provider_id),
+		...primaryModel,
+		provider_id: agentFacingProviderId(primaryModel.provider_id),
 	};
 	if (hasLegacyOpenAiCodexModelPrefix(selectedPrimaryModel.model)) {
 		throw new Error(
@@ -265,24 +264,6 @@ function normalizeProjectionProvider(
 	return projectionProvider;
 }
 
-function legacyCatalogPrimaryModel(
-	catalog: AiProviderCatalog,
-	providers: ProjectionProvider[],
-): AgentPrimaryModel | undefined {
-	const preferredProviderId = agentFacingProviderId(
-		catalog.defaults?.chat_provider_id ?? catalog.providers[0]?.id ?? "",
-	);
-	const preferredProvider =
-		providers.find((provider) => provider.id === preferredProviderId) ?? providers[0];
-	if (!preferredProvider) return undefined;
-	const source = catalog.providers.find(
-		(provider) => agentFacingProviderId(provider.id) === preferredProvider.id,
-	);
-	const model = source ? (legacyProviderDefaultModel(source) ?? source.models?.[0]?.id) : undefined;
-	if (!model) return undefined;
-	return { provider_id: preferredProvider.id, model };
-}
-
 function agentFacingProviderId(providerId: string): string {
 	return isClawdiManagedV2ProviderId(providerId) ? CLAWDI_MANAGED_PROVIDER_ID : providerId;
 }
@@ -336,7 +317,7 @@ function buildOpenClawProjection(
 					compactObject({
 						baseUrl: openClawBaseUrlForProvider(provider),
 						api: openClawProviderApiLabel(provider.api_mode),
-						auth: apiKeyEnv && provider.id === CLAWDI_MANAGED_PROVIDER_ID ? "api-key" : undefined,
+						auth: apiKeyEnv ? "api-key" : undefined,
 						apiKey: apiKeyEnv ? { source: "env", provider: "default", id: apiKeyEnv } : undefined,
 						models: openClawModels(
 							provider,

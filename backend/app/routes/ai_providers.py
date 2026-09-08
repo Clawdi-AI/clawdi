@@ -76,6 +76,7 @@ from app.services.ai_provider_capabilities import (
     provider_readiness,
 )
 from app.services.ai_provider_connection import test_ai_provider_connection
+from app.services.ai_provider_connection_ownership import require_connection_ownership_migration
 from app.services.ai_provider_credentials import (
     OAuthCredentialClaimConflict,
     OAuthCredentialConsumer,
@@ -670,7 +671,40 @@ async def patch_ai_provider(
     previous_non_auth_signature = runtime_manifest_provider_non_auth_signature(provider)
     auth_event_queued = False
     merged = await _to_response(db, auth, provider)
-    update = {field: getattr(body, field) for field in body.model_fields_set}
+    update = {
+        field: getattr(body, field) for field in body.model_fields_set if field != "credential"
+    }
+    if body.credential is not None and provider.configuration_mode != "connection":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Inline key replacement requires an existing connection"
+        )
+    if provider.configuration_mode == "connection":
+        if (
+            ("configuration_mode" in update and update["configuration_mode"] != "connection")
+            or "models" in update
+            or ("auth" in update and update["auth"] != merged.auth)
+            or (
+                "runtime_env_name" in update
+                and update["runtime_env_name"] != provider.runtime_env_name
+            )
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Agent-owned models and credential environment cannot be replaced.",
+            )
+    elif update.get("configuration_mode") == "connection":
+        if provider.configuration_mode != "catalog" or set(update) != {"configuration_mode"}:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Transfer model ownership separately from connection changes.",
+            )
+        if merged.readiness is None or not merged.readiness.deployable:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Model ownership transfer requires a deliverable API key"
+            )
+        await require_connection_ownership_migration(
+            db, owner_user_id=auth.user_id, provider_id=provider.provider_id
+        )
     null_errors = _validate_patch_nulls(update)
     if null_errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, {"errors": null_errors})
@@ -705,7 +739,7 @@ async def patch_ai_provider(
     )
     await _validate_runtime_env_unique(db, auth, merged, exclude_provider_id=provider.provider_id)
     _apply_provider_body(provider, merged, apply_auth=False)
-    if "auth" in body.model_fields_set:
+    if "auth" in body.model_fields_set or body.credential is not None:
         auth_ref, auth_metadata = merged.auth.persistence_fields()
         try:
             transition = await transition_ai_provider_auth(
@@ -715,6 +749,16 @@ async def patch_ai_provider(
                 auth_type=merged.auth.type,
                 auth_ref=auth_ref,
                 auth_metadata=auth_metadata,
+                credential=(
+                    AuthCredentialWrite(
+                        profile=str((auth_metadata or {}).get("profile") or "default"),
+                        kind="api_key",
+                        plaintext=body.credential.value.get_secret_value(),
+                        metadata=auth_metadata,
+                    )
+                    if body.credential is not None
+                    else None
+                ),
             )
         except OAuthCredentialClaimConflict as exc:
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
@@ -794,6 +838,14 @@ async def set_ai_provider_api_key(
     if runtime_env_name is not None and not _is_runtime_env_name(runtime_env_name):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid runtime_env_name")
     proposed_runtime_env_name = runtime_env_name or provider.runtime_env_name
+    if (
+        provider.configuration_mode == "connection"
+        and runtime_env_name is not None
+        and runtime_env_name != provider.runtime_env_name
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Connection credential environment is immutable"
+        )
     if provider.configuration_mode == "native":
         try:
             routing = native_provider_routing(provider.native_provider, provider.native_variant)
@@ -849,6 +901,10 @@ async def import_ai_provider_auth(
     await lock_ai_provider_owner(db, auth.user_id)
     provider = await _get_provider_or_404_for_update(db, auth, provider_id)
     auth_import = body.root
+    if provider.configuration_mode == "connection":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Connection providers require API-key authentication"
+        )
     profile = _normalize_profile(auth_import.profile)
     if auth_import.type == "oauth_profile":
         raise HTTPException(
@@ -1616,6 +1672,10 @@ def _apply_provider_body(
     *,
     apply_auth: bool = True,
 ) -> None:
+    if provider.configuration_mode == "connection" and body.configuration_mode != "connection":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Connection ownership cannot be replaced through upsert"
+        )
     provider.type = body.type
     provider.configuration_mode = body.configuration_mode or "catalog"
     provider.native_provider = body.native_provider
@@ -1624,7 +1684,8 @@ def _apply_provider_body(
     provider.base_url = body.base_url
     provider.api_mode = managed_provider_api_mode(body.provider_id) or body.api_mode
     provider.capabilities = body.capabilities
-    provider.models = _provider_models_payload(body.models)
+    if body.configuration_mode != "connection":
+        provider.models = _provider_models_payload(body.models)
     provider.managed_by = body.managed_by
     provider.runtime_env_name = body.runtime_env_name
     if apply_auth:
@@ -1887,6 +1948,12 @@ def _connection_test_failure_with_readiness(
 
 def _validate_provider(body: AiProviderUpsert | AiProviderResponse) -> list[str]:
     errors: list[str] = []
+    if body.configuration_mode == "connection" and (
+        body.managed_by != "user"
+        or body.auth.type not in {"api_key", "secret_ref"}
+        or not body.runtime_env_name
+    ):
+        errors.append("connection management requires a user API-key connection")
     if body.configuration_mode != "native" and (body.native_provider or body.native_variant):
         errors.append("catalog configuration cannot include native provider identity")
     if body.configuration_mode == "native":
@@ -1896,7 +1963,8 @@ def _validate_provider(body: AiProviderUpsert | AiProviderResponse) -> list[str]
     errors.extend(_validate_base_url(body.base_url, body.auth))
     if body.runtime_env_name is not None and not _is_runtime_env_name(body.runtime_env_name):
         errors.append("runtime_env_name must be an uppercase environment variable name")
-    errors.extend(_validate_provider_models(body))
+    if body.configuration_mode != "connection":
+        errors.extend(_validate_provider_models(body))
     allowed_modes = ALLOWED_API_MODES[body.type]
     if body.api_mode is not None and body.api_mode not in allowed_modes:
         errors.append(f"type {body.type} is incompatible with api_mode {body.api_mode}")

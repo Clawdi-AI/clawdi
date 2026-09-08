@@ -78,10 +78,12 @@ export function buildAiBindingFields(
 		managedModels,
 		mode,
 		providers,
+		currentProviderIds,
 	}: {
 		managedModels: readonly ManagedModelCatalogItem[];
 		mode: AiBindingOperationMode;
 		providers: readonly AiProvider[];
+		currentProviderIds?: readonly string[];
 	},
 ): AiBindingFields {
 	if (draft.bindingMode === "unmanaged") {
@@ -115,6 +117,7 @@ export function buildAiBindingFields(
 			managedModels,
 			mode,
 			providers,
+			currentProviderIds,
 			selection: {
 				mode: "saved",
 				model: draft.primaryModel,

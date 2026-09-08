@@ -2040,6 +2040,7 @@ function hostedSingleProviderModeLoad(
 	runtimeName: "openclaw" | "hermes",
 	providerMode: "configured" | "unmanaged",
 	generation: number,
+	instanceId = "iid_provider_mode",
 ): RuntimeManifestLoad {
 	const configuredRuntime =
 		runtimeName === "openclaw"
@@ -2094,7 +2095,7 @@ function hostedSingleProviderModeLoad(
 			...hostedRequiredState(),
 			providers,
 			terminalTooling,
-			instanceId: "iid_provider_mode",
+			instanceId,
 			generation,
 			issuedAt: "2026-07-14T00:00:00Z",
 			locale: TEST_HOSTED_LOCALE,
@@ -4361,7 +4362,13 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			"post-reconnect-rotated-access",
 		);
 
-		const removedLoad = hostedSingleProviderModeLoad(home, "hermes", "unmanaged", 3);
+		const removedLoad = hostedSingleProviderModeLoad(
+			home,
+			"hermes",
+			"unmanaged",
+			3,
+			firstLoad.manifest.instanceId,
+		);
 		convergeRuntimeManifest(removedLoad, paths);
 		auth = JSON.parse(readFileSync(authPath, "utf8"));
 		expect(auth.providers["openai-codex"].tokens.access_token).toBe("user-access");
@@ -4515,7 +4522,13 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			"post-reconnect-rotated-access",
 		);
 
-		const removedLoad = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 3);
+		const removedLoad = hostedSingleProviderModeLoad(
+			home,
+			"openclaw",
+			"unmanaged",
+			3,
+			firstLoad.manifest.instanceId,
+		);
 		convergeRuntimeManifest(removedLoad, paths);
 		store = JSON.parse(readFileSync(storePath, "utf8"));
 		expect(store.profiles[nativeProfileId]).toBeUndefined();

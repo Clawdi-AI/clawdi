@@ -89,7 +89,7 @@ export interface AiProviderModel {
 export interface AiProvider {
 	id: string;
 	type: AiProviderType;
-	configuration_mode?: "native" | "catalog";
+	configuration_mode?: "native" | "catalog" | "connection";
 	native_provider?: string;
 	native_variant?: string;
 	readiness?: NonNullable<components["schemas"]["AiProviderResponse"]["readiness"]>;
@@ -390,7 +390,8 @@ export function aiProviderRuntimeCompatibility(
 	return {
 		openclaw: RUNTIME_API_MODES.openclaw.includes(apiMode),
 		hermes: RUNTIME_API_MODES.hermes.includes(apiMode),
-		codex: RUNTIME_API_MODES.codex.includes(apiMode),
+		codex:
+			provider.configuration_mode !== "connection" && RUNTIME_API_MODES.codex.includes(apiMode),
 	};
 }
 
@@ -473,6 +474,15 @@ function validateProvider(
 	options: AiProviderValidationOptions,
 ): void {
 	const prefix = provider.id || "<missing>";
+	if (
+		provider.configuration_mode === "connection" &&
+		(provider.managed_by !== "user" ||
+			!["api_key", "secret_ref"].includes(provider.auth?.type) ||
+			!provider.runtime_env_name ||
+			provider.native_provider ||
+			provider.native_variant)
+	)
+		errors.push(`Provider ${prefix} connection management requires a user API-key connection.`);
 	if (provider.configuration_mode === "native") {
 		const native = nativeAiProvider(provider.native_provider, provider.native_variant);
 		if (

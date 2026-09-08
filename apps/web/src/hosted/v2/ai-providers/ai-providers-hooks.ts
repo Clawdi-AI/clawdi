@@ -14,6 +14,7 @@ import type {
 	AiProviderList,
 	AiProviderOAuthDevicePollResponse,
 	AiProviderOAuthDeviceStartResponse,
+	AiProviderPatch,
 } from "@/hosted/v2/ai-providers/types";
 import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
@@ -75,6 +76,28 @@ export function usePatchProvider() {
 		onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
 		onError: toastApiError("Couldn't update provider"),
 	});
+}
+
+export function useUpdateConnectionProvider() {
+	const api = useApi();
+	const qc = useQueryClient();
+	return useSensitiveAction(
+		async ({ providerId, body }: { providerId: string; body: AiProviderPatch }) => {
+			try {
+				const saved = unwrap(
+					await api.PATCH("/v1/ai-providers/{provider_id}", {
+						params: { path: { provider_id: providerId } },
+						body,
+					}),
+				);
+				void qc.invalidateQueries({ queryKey: KEY });
+				return saved;
+			} catch (error) {
+				toastApiError("Couldn't update provider")(error);
+				throw error;
+			}
+		},
+	);
 }
 
 export function useDeleteProvider() {

@@ -7,8 +7,7 @@ import type { AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
 
 /**
  * The six AI provider types (backend `ProviderType`) with the defaults the
- * add flow prefills: base URL, allowed API modes, runtime env var, and a
- * model placeholder.
+ * add flow prefills: base URL, allowed API modes, and runtime env var.
  */
 export const PROVIDER_TYPES = [
 	"openai",
@@ -29,7 +28,6 @@ export interface ProviderTypeMeta {
 	apiModes: ApiMode[];
 	defaultApiMode: ApiMode;
 	defaultRuntimeEnv: string;
-	modelPlaceholder: string;
 	apiKeyUrl?: string;
 	/** base_url + api_mode are user-supplied / required. */
 	custom?: boolean;
@@ -38,7 +36,6 @@ export interface ProviderTypeMeta {
 }
 
 const CUSTOM_OPENAI_COMPATIBLE_RUNTIME_ENV = "CUSTOM_API_KEY";
-const CUSTOM_OPENAI_COMPATIBLE_MODEL_PLACEHOLDER = "model name";
 
 export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 	openai: {
@@ -48,7 +45,6 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 		apiModes: ["openai_chat", "openai_responses"],
 		defaultApiMode: defaultAiProviderApiMode("openai") ?? "openai_responses",
 		defaultRuntimeEnv: defaultAiProviderRuntimeEnvName("openai") ?? "",
-		modelPlaceholder: "model name",
 		apiKeyUrl: "https://platform.openai.com/settings/organization/api-keys",
 		oauth: true,
 	},
@@ -59,7 +55,6 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 		apiModes: ["anthropic_messages"],
 		defaultApiMode: defaultAiProviderApiMode("anthropic") ?? "anthropic_messages",
 		defaultRuntimeEnv: defaultAiProviderRuntimeEnvName("anthropic") ?? "",
-		modelPlaceholder: "model name",
 		apiKeyUrl: "https://platform.claude.com/settings/keys",
 	},
 	openrouter: {
@@ -69,7 +64,6 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 		apiModes: ["openai_chat"],
 		defaultApiMode: defaultAiProviderApiMode("openrouter") ?? "openai_chat",
 		defaultRuntimeEnv: defaultAiProviderRuntimeEnvName("openrouter") ?? "",
-		modelPlaceholder: "model name",
 		apiKeyUrl: "https://openrouter.ai/keys",
 	},
 	gemini: {
@@ -79,7 +73,6 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 		apiModes: ["google_generate_content"],
 		defaultApiMode: defaultAiProviderApiMode("gemini") ?? "google_generate_content",
 		defaultRuntimeEnv: defaultAiProviderRuntimeEnvName("gemini") ?? "",
-		modelPlaceholder: "model name",
 		apiKeyUrl: "https://aistudio.google.com/apikey",
 	},
 	mistral: {
@@ -89,7 +82,6 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 		apiModes: ["openai_chat"],
 		defaultApiMode: defaultAiProviderApiMode("mistral") ?? "openai_chat",
 		defaultRuntimeEnv: defaultAiProviderRuntimeEnvName("mistral") ?? "",
-		modelPlaceholder: "model name",
 		apiKeyUrl: "https://console.mistral.ai/api-keys",
 	},
 	custom_openai_compatible: {
@@ -99,7 +91,6 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 		apiModes: ["openai_chat", "openai_responses"],
 		defaultApiMode: "openai_chat",
 		defaultRuntimeEnv: CUSTOM_OPENAI_COMPATIBLE_RUNTIME_ENV,
-		modelPlaceholder: CUSTOM_OPENAI_COMPATIBLE_MODEL_PLACEHOLDER,
 		custom: true,
 	},
 };

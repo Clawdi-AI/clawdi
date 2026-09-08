@@ -62,6 +62,17 @@ def provider_runtime_compatibility(
     """Return runtime projection support from the same fields agents consume."""
 
     api_mode = effective_provider_api_mode(provider.provider_type, provider.api_mode)
+    if provider.configuration_mode == "connection":
+        valid = (
+            provider.auth_type == "api_key"
+            and provider.auth_source == "managed"
+            and bool(provider.runtime_env_name)
+        )
+        return AiProviderRuntimeCompatibility(
+            openclaw=valid and api_mode in _RUNTIME_API_MODES["openclaw"],
+            hermes=valid and api_mode in _RUNTIME_API_MODES["hermes"],
+            codex=False,
+        )
     if provider.configuration_mode == "native":
         try:
             routing = native_provider(provider.native_provider, provider.native_variant)

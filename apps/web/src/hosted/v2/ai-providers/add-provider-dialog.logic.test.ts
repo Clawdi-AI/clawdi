@@ -8,11 +8,9 @@ import {
 } from "@/hosted/v2/ai-providers/add-provider-dialog.logic";
 import { providerPresetSummary } from "@/hosted/v2/ai-providers/model-binding";
 import {
-	PROVIDER_PRESETS,
 	providerPresetById,
 	providerPresetForSavedProvider,
 	providerPresetRegion,
-	providerTypeForPreset,
 } from "@/hosted/v2/ai-providers/provider-presets";
 
 function testPreset(id: string) {
@@ -228,7 +226,7 @@ describe("providerFormIdentity", () => {
 		const kimi = testPreset("kimi-coding");
 		expect(
 			providerFormIdentity({
-				type: providerTypeForPreset(kimi),
+				type: kimi.provider_type,
 				authMethod: "api_key",
 				labelInput: "Work Kimi",
 				existingProviderIds: [],
@@ -239,7 +237,7 @@ describe("providerFormIdentity", () => {
 		const openrouter = testPreset("openrouter");
 		expect(
 			providerFormIdentity({
-				type: providerTypeForPreset(openrouter),
+				type: openrouter.provider_type,
 				authMethod: "api_key",
 				labelInput: "Team Router",
 				existingProviderIds: ["openrouter"],
@@ -250,17 +248,6 @@ describe("providerFormIdentity", () => {
 });
 
 describe("native provider form defaults", () => {
-	test("leaves model selection to the agent for every native choice", () => {
-		for (const preset of PROVIDER_PRESETS) {
-			expect(
-				derivedProviderFields(providerTypeForPreset(preset), "api_key", preset).modelsText,
-			).toBe("");
-			expect(preset).not.toHaveProperty("catalog");
-		}
-		expect(derivedProviderFields("openai", "api_key").modelsText).toBe("");
-		expect(derivedProviderFields("openai", "oauth").modelsText).toBe("");
-	});
-
 	test("preserves region and plan choices without asking for endpoint details", () => {
 		const preset = testPreset("qwen-dashscope");
 		const region = providerPresetRegion(preset, "coding-global");
@@ -280,20 +267,6 @@ describe("native provider form defaults", () => {
 			"TokenPlan",
 		]);
 		expect(testPreset("huggingface").credential_label).toBe("Access token");
-		for (const id of [
-			"nvidia",
-			"fireworks",
-			"huggingface",
-			"deepinfra",
-			"opencode",
-			"xiaomi",
-			"tencent",
-		]) {
-			const preset = testPreset(id);
-			expect(
-				derivedProviderFields(providerTypeForPreset(preset), "api_key", preset).modelsText,
-			).toBe("");
-		}
 	});
 
 	test("keeps custom endpoint input empty", () => {
@@ -301,7 +274,6 @@ describe("native provider form defaults", () => {
 			baseUrl: "",
 			apiMode: "openai_chat",
 			runtimeEnv: "CUSTOM_API_KEY",
-			modelsText: "",
 		});
 	});
 });

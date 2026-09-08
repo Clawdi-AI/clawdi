@@ -1,4 +1,9 @@
-import type { AiProviderAuth, AiProviderCatalog, NativeAiProvider } from "@clawdi/shared";
+import type {
+	AiProviderApiMode,
+	AiProviderAuth,
+	AiProviderCatalog,
+	NativeAiProvider,
+} from "@clawdi/shared";
 import {
 	CLAWDI_MANAGED_PROVIDER_ID,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
@@ -25,6 +30,45 @@ export interface NativeProviderConnection {
 	id: string;
 	routing: NativeAiProvider;
 	auth: { kind: "api-key"; secretRef: string; envName: string } | { kind: "codex" };
+}
+
+export interface CustomProviderConnection {
+	id: string;
+	baseUrl: string;
+	apiMode: AiProviderApiMode;
+	envName: string;
+	secretRef: string;
+}
+
+export function customProviderConnections(
+	manifest: RuntimeManifest,
+	runtimeName: string,
+): CustomProviderConnection[] {
+	const entries = hostedProviderEntries(
+		manifest.projection?.providers ?? {},
+		runtimeName,
+		manifest,
+	).filter(([, input]) => input.configurationMode === "connection");
+	return entries.map(([id, input]) => {
+		if (
+			(runtimeName !== "openclaw" && runtimeName !== "hermes") ||
+			input.managed_by !== "user" ||
+			!input.apiKeySecretRef ||
+			input.auth ||
+			input.nativeProvider ||
+			!input.baseUrl ||
+			!input.apiMode ||
+			input.status === "error"
+		)
+			throw new Error("Invalid custom provider connection");
+		return {
+			id,
+			baseUrl: input.baseUrl,
+			apiMode: input.apiMode,
+			envName: hostedProviderRuntimeEnvName(id, input, runtimeName),
+			secretRef: input.apiKeySecretRef,
+		};
+	});
 }
 
 /** Native credentials go directly from the manifest to their runtime adapter. */
@@ -69,19 +113,21 @@ export function nativeProviderConnections(
 export function hostedProviderConfiguration(manifest: RuntimeManifest, runtimeName: string) {
 	hostedProviderEnvironment(manifest, runtimeName, { validateOverlap: true });
 	const native = nativeProviderConnections(manifest, runtimeName);
+	const connections = customProviderConnections(manifest, runtimeName);
 	const nativeIds = native.map(({ routing }) =>
 		runtimeName === "hermes" ? routing.hermes.provider : routing.openclaw.provider,
 	);
-	if (new Set(nativeIds).size !== nativeIds.length)
+	const runtimeIds = [...nativeIds, ...connections.map((connection) => connection.id)];
+	if (new Set(runtimeIds).size !== runtimeIds.length)
 		throw new Error("Native provider credential identity is selected more than once");
 	const catalog = agentTargetProjectionInput(hostedAiProviderCatalog(manifest, runtimeName));
 	if (
 		manifest.runtimes[runtimeName]?.providerMode === "unmanaged" &&
-		(catalog || native.length > 0)
+		(catalog || native.length > 0 || connections.length > 0)
 	) {
 		throw new Error(`runtime ${runtimeName} unmanaged provider mode has a provider projection`);
 	}
-	return { native, catalog };
+	return { native, catalog, connections };
 }
 
 export function agentTargetProjectionInput(
@@ -141,7 +187,7 @@ export function hostedAiProviderCatalog(
 	const providers = manifest.projection?.providers;
 	if (!providers || Object.keys(providers).length === 0) return null;
 	const providerEntries = hostedProviderEntries(providers, runtimeName, manifest).filter(
-		([, input]) => input.configurationMode !== "native",
+		([, input]) => input.configurationMode !== "native" && input.configurationMode !== "connection",
 	);
 	const requestedModel = hostedRuntimePrimaryModel(manifest, runtimeName);
 	const primaryModel =

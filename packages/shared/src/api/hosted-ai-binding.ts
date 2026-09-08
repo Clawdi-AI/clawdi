@@ -60,8 +60,21 @@ export type HostedAiProviderAvailabilityIssue = {
 
 export function hostedAiProviderAvailabilityIssue(
 	provider: HostedSavedAiProvider,
-	context: { runtime: HostedAiProviderRuntime; environmentId: string | null },
+	context: {
+		runtime: HostedAiProviderRuntime;
+		environmentId: string | null;
+		currentProviderIds?: readonly string[];
+	},
 ): HostedAiProviderAvailabilityIssue | null {
+	if (
+		provider.configuration_mode === "connection" &&
+		(!context.environmentId || !context.currentProviderIds?.includes(provider.provider_id))
+	) {
+		return {
+			kind: "delivery",
+			message: "This connection can only remain on an agent that already uses it.",
+		};
+	}
 	if (
 		provider.consumer &&
 		(context.environmentId === null ||
@@ -159,7 +172,8 @@ function toHostedRuntimeAiProvider(provider: HostedSavedAiProvider): RuntimeAiPr
 			: {}),
 	};
 	if (provider.label) runtimeProvider.label = provider.label;
-	const models = toRuntimeModels(provider.models);
+	const models =
+		provider.configuration_mode === "connection" ? [] : toRuntimeModels(provider.models);
 	if (models.length > 0) runtimeProvider.models = models;
 	if (provider.api_mode) runtimeProvider.api_mode = provider.api_mode;
 	if (provider.runtime_env_name) runtimeProvider.runtime_env_name = provider.runtime_env_name;
@@ -174,11 +188,13 @@ export function buildHostedAiBindingFields({
 	mode,
 	providers,
 	selection,
+	currentProviderIds,
 }: {
 	managedModels: readonly HostedDeployManagedModel[];
 	mode: HostedAiBindingOperationMode;
 	providers: readonly HostedSavedAiProvider[];
 	selection: HostedAiBindingSelection;
+	currentProviderIds?: readonly string[];
 }): Omit<HostedDeployAiFields, "primary_model"> & {
 	primary_model?: Exclude<HostedDeployAiFields["primary_model"], string>;
 	ai_provider_bootstrap?: HostedAiProviderBootstrap | null;
@@ -223,7 +239,20 @@ export function buildHostedAiBindingFields({
 	}
 
 	const provider = savedProviderForId(selection.providerId, providers);
-	if (provider.configuration_mode !== "native" && !model) {
+	if (
+		provider.configuration_mode === "connection" &&
+		(mode !== "update" || !currentProviderIds?.includes(provider.provider_id))
+	) {
+		throw new HostedAiBindingError(
+			"provider_unusable",
+			"Connection ownership can only be retained on its existing agent.",
+		);
+	}
+	if (
+		provider.configuration_mode !== "native" &&
+		provider.configuration_mode !== "connection" &&
+		!model
+	) {
 		throw new HostedAiBindingError("model_required", "Choose a catalog model or enter a model id.");
 	}
 	const authKind = hostedAiProviderAuthKind(provider);
@@ -232,7 +261,7 @@ export function buildHostedAiBindingFields({
 		ai_provider_id: provider.provider_id,
 		provider_ids: [provider.provider_id],
 		primary_model:
-			provider.configuration_mode === "native"
+			provider.configuration_mode === "native" || provider.configuration_mode === "connection"
 				? null
 				: { provider_id: provider.provider_id, model },
 		ai_provider_bootstrap: buildHostedAiProviderBootstrap(provider),

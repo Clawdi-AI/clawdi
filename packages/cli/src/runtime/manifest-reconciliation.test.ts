@@ -2536,7 +2536,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(envFile).not.toContain("OPENCLAW_GATEWAY_TOKEN");
 	});
 
-	test("connects a native key without replacing models or native user provider settings", () => {
+	test.each(["switch", "unbind"])("recovers a native key after failed commit then %s", (action) => {
 		const paths = tempRuntimePaths();
 		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, {
 			initialConfig: {
@@ -2546,7 +2546,10 @@ describe("runtime manifest reconciliation invariants", () => {
 					providers: { default: { source: "file", path: "/user/secrets.json" } },
 					defaults: { file: "default" },
 				},
-				models: { mode: "replace", providers: { google: { timeoutSeconds: 45 } } },
+				models: {
+					mode: "replace",
+					providers: { google: { timeoutSeconds: 45, models: [{ id: "user-selected-model" }] } },
+				},
 				plugins: { entries: { google: { config: { webSearch: { enabled: false } } } } },
 			},
 		});
@@ -2611,24 +2614,27 @@ fi
 				runtimes: { openclaw: hostedRuntimeFixture({ primary_model: null }) },
 			}),
 		);
+		const egressEngine = installCachedTestEgressEngine(paths, "12.2.3-native-google");
 		const connected = convergeRuntimeManifest(
-			manifestLoad(
-				{ ...manifest, egressEngine: installCachedTestEgressEngine(paths, "12.2.3-native-google") },
-				"native-google",
-				{
-					...TEST_HOSTED_SECRET_VALUES,
-					"secret://provider.google.apiKey": "native-google-test-key",
-				},
-			),
+			manifestLoad({ ...manifest, egressEngine }, "native-google", {
+				...TEST_HOSTED_SECRET_VALUES,
+				"secret://provider.google.apiKey": "native-google-test-key",
+			}),
 			paths,
+			{
+				commitAuthority: () => {
+					throw new Error("Injected authority commit failure");
+				},
+			},
 		);
-		expect(connected.installErrors).toEqual([]);
-		expect(connected.nativeCredentialProviderIds).toEqual({ openclaw: ["google"] });
+		expect(connected.installErrors.join("\n")).toContain("Injected authority commit failure");
+		expect(readRuntimeAppliedState(paths)).toBeNull();
 		const configured = JSON.parse(readFileSync(configPath, "utf8"));
 		expect(configured.agents.defaults.model.primary).toBe("google/user-selected-model");
 		expect(configured.auth.profiles.personal).toEqual({ provider: "google", mode: "api_key" });
 		expect(configured.models.providers.google).toEqual({
 			timeoutSeconds: 45,
+			models: [{ id: "user-selected-model" }],
 			baseUrl: provider.baseUrl,
 			auth: "api-key",
 			apiKey: { source: "env", provider: "clawdi-native", id: "GEMINI_API_KEY" },
@@ -2645,6 +2651,64 @@ fi
 		expect(readFileSync(pluginLog, "utf8")).toContain("config patch --stdin");
 		expect(readFileSync(pluginLog, "utf8")).not.toContain("native-google-test-key");
 		expect(readFileSync(configPath, "utf8")).not.toContain("native-google-test-key");
+
+		writeFileSync(
+			pluginState,
+			JSON.stringify({
+				plugins: [{ id: "anthropic", enabled: true, status: "loaded" }],
+			}),
+		);
+		const nextProvider = {
+			...provider,
+			type: "anthropic",
+			nativeProvider: "anthropic",
+			baseUrl: "https://api.anthropic.com",
+			apiMode: "anthropic_messages",
+			runtimeEnvName: "ANTHROPIC_API_KEY",
+			apiKeySecretRef: "secret://provider.anthropic.apiKey",
+		};
+		const nextRuntime = hostedRuntimeFixture({
+			primary_model: null,
+			...(action === "unbind" ? { providerMode: "unmanaged", provider_ids: [] } : {}),
+		});
+		if (action === "unbind") delete nextRuntime.primary_model;
+		const nextManifest = hostedRuntimeBundleV2ManifestSchema.parse(
+			hostedOpenClawV2ManifestFixture({
+				providers: action === "switch" ? { default: nextProvider } : {},
+				runtimes: { openclaw: nextRuntime },
+			}),
+		);
+		const nextLoad = manifestLoad(
+			{ ...nextManifest, generation: 2, egressEngine },
+			"native-recovery",
+			{
+				...TEST_HOSTED_SECRET_VALUES,
+				...(action === "switch"
+					? { "secret://provider.anthropic.apiKey": "next-native-test-key" }
+					: {}),
+			},
+		);
+		const recovered = convergeRuntimeManifest(nextLoad, paths);
+		expect(recovered.installErrors).toEqual([]);
+		expect(recovered.nativeCredentialProviderIds?.openclaw).toEqual(
+			action === "switch" ? ["anthropic"] : [],
+		);
+		const restored = JSON.parse(readFileSync(configPath, "utf8"));
+		expect(restored.models.providers.google).toEqual({
+			timeoutSeconds: 45,
+			models: [{ id: "user-selected-model" }],
+		});
+		expect(restored.agents.defaults.model).toEqual(configured.agents.defaults.model);
+		expect(restored.auth).toEqual(configured.auth);
+		if (action === "switch")
+			expect(restored.models.providers.anthropic.apiKey).toEqual({
+				source: "env",
+				provider: "clawdi-native",
+				id: "ANTHROPIC_API_KEY",
+			});
+		const retried = convergeRuntimeManifest(nextLoad, paths);
+		expect(retried.installErrors).toEqual([]);
+		expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual(restored);
 	});
 
 	test("repairs legacy managed memory config and keeps the provider key out of agent env", () => {

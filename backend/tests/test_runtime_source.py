@@ -385,6 +385,38 @@ def _render(batch: RuntimeSourceBatch):
     )
 
 
+def connection_source_fixture() -> RuntimeSourceBatch:
+    batch = _batch()
+    _replace_runtime_provider(
+        batch, provider_id="saved-connection", provider_row_id=uuid4(), auth_row_id=uuid4()
+    )
+    provider = batch.providers[(USER_ID, "saved-connection")]
+    provider.configuration_mode = "connection"
+    provider.managed_by = "user"
+    provider.api_mode = "openai_responses"
+    provider.runtime_env_name = "SAVED_CONNECTION_KEY"
+    provider.models = [{"id": "historic-model", "context_window": 8192}]
+    return batch
+
+
+def test_connection_source_emits_only_owned_routing_and_credentials() -> None:
+    batch = connection_source_fixture()
+    source = _render(batch)
+    provider = source.manifest["providers"]["saved-connection"]
+    assert provider["configurationMode"] == "connection"
+    assert provider["managed_by"] == "user"
+    assert provider["runtimeEnvName"] == "SAVED_CONNECTION_KEY"
+    assert provider["apiKeySecretRef"]
+    assert "models" not in provider
+    assert "nativeProvider" not in provider
+    assert source.manifest["runtimes"]["openclaw"]["primary_model"] is None
+    assert batch.providers[(USER_ID, "saved-connection")].models == [
+        {"id": "historic-model", "context_window": 8192}
+    ]
+    batch.providers[(USER_ID, "saved-connection")].api_mode = None
+    assert _render(batch).manifest["providers"]["saved-connection"]["apiMode"] == "openai_responses"
+
+
 def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sources() -> None:
     initial = _render(_batch())
     irrelevant = _render(_batch(provider_label="Renamed", channel_name="Renamed bot"))

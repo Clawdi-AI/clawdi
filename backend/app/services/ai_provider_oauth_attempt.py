@@ -288,6 +288,10 @@ async def purge_expired_oauth_records(
 
 
 def validate_codex_oauth_provider_shape(provider: AiProvider | object) -> None:
+    if getattr(provider, "configuration_mode", None) == "connection":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Connection providers require API-key authentication"
+        )
     provider_type = getattr(provider, "type", None)
     api_mode = getattr(provider, "api_mode", None)
     base_url = getattr(provider, "base_url", "")

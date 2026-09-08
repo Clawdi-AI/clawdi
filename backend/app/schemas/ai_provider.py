@@ -338,7 +338,7 @@ class AiProviderModel(BaseModel):
 
 
 class AiProviderBase(BaseModel):
-    configuration_mode: Literal["native", "catalog"] | SkipJsonSchema[None] = None
+    configuration_mode: Literal["native", "catalog", "connection"] | SkipJsonSchema[None] = None
     native_provider: AuthProfile | None = None
     native_variant: AuthProfile | None = None
     type: ProviderType
@@ -376,6 +376,12 @@ class AiProviderBase(BaseModel):
 
 
 class AiProviderUpsert(AiProviderBase):
+    @model_validator(mode="after")
+    def _require_existing_connection(self) -> "AiProviderUpsert":
+        if self.configuration_mode == "connection":
+            raise ValueError("connection management requires an existing provider migration")
+        return self
+
     provider_id: str = Field(min_length=2, max_length=80, pattern=r"^[a-z][a-z0-9._-]{1,62}$")
     auth: AiProviderUpsertAuth
 
@@ -385,8 +391,25 @@ class AiProviderUpsert(AiProviderBase):
         return _reject_normal_upsert_oauth(value)
 
 
+class AiProviderApiKeyAcceptCredential(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    type: Literal["api_key"]
+    value: SecretStr
+
+    @field_validator("value")
+    @classmethod
+    def _reject_blank_value(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("credential cannot be blank")
+        return value
+
+
 class AiProviderPatch(BaseModel):
-    configuration_mode: Literal["native", "catalog"] | None = None
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    credential: AiProviderApiKeyAcceptCredential | SkipJsonSchema[None] = None
+    configuration_mode: Literal["native", "catalog", "connection"] | None = None
     native_provider: AuthProfile | None = None
     native_variant: AuthProfile | None = None
     type: ProviderType | None = None
@@ -402,6 +425,7 @@ class AiProviderPatch(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _reject_unsupported_oauth_profile(cls, value: object) -> object:
+        _reject_explicit_nulls(value, frozenset({"credential"}))
         return _reject_normal_upsert_oauth(value)
 
 
@@ -477,20 +501,6 @@ class AiProviderManagedApiKeyRequest(BaseModel):
 
     value: SecretStr
     runtime_env_name: str | None = Field(default=None, max_length=128)
-
-    @field_validator("value")
-    @classmethod
-    def _reject_blank_value(cls, value: SecretStr) -> SecretStr:
-        if not value.get_secret_value().strip():
-            raise ValueError("credential cannot be blank")
-        return value
-
-
-class AiProviderApiKeyAcceptCredential(BaseModel):
-    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
-
-    type: Literal["api_key"]
-    value: SecretStr
 
     @field_validator("value")
     @classmethod
