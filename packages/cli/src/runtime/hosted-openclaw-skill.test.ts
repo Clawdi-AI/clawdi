@@ -17,6 +17,7 @@ import {
 	resolveHostedOpenClawWorkspace,
 } from "./hosted-openclaw-context";
 import { activateHostedOpenClawSkill } from "./hosted-openclaw-skill";
+import type { HostedSkillSource } from "./manifest-resources";
 
 let root = "";
 const originalSystemctlPath = process.env.CLAWDI_SYSTEMCTL_PATH;
@@ -411,17 +412,36 @@ exit 2
 	}
 });
 
-test("runs official install from home and rolls back failed replacement", () => {
-	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-driver-"));
-	const home = join(root, "home");
-	const workspaceRoot = join(home, "agent-workspace");
-	const command = join(home, ".local", "bin", "openclaw");
-	const installLog = join(root, "install.log");
-	const installCwdLog = join(root, "install-cwd.log");
-	mkdirSync(dirname(command), { recursive: true });
-	writeFileSync(
-		command,
-		`#!/bin/sh
+const stagedSources: Array<HostedSkillSource | undefined> = [
+	undefined,
+	{
+		type: "github",
+		url: "https://github.com/example/skills",
+		path: "review-pr",
+		commit: "a".repeat(40),
+	},
+	{
+		type: "project",
+		projectId: "00000000-0000-4000-8000-000000000001",
+		contentHash: "a".repeat(64),
+		archiveUrl: "https://api.example.test/archive",
+		installUrl: "https://api.example.test/install",
+	},
+];
+
+test.each(stagedSources)(
+	"runs staged official install and rolls back failed replacement for %j",
+	(source) => {
+		root = mkdtempSync(join(tmpdir(), "hosted-openclaw-driver-"));
+		const home = join(root, "home");
+		const workspaceRoot = join(home, "agent-workspace");
+		const command = join(home, ".local", "bin", "openclaw");
+		const installLog = join(root, "install.log");
+		const installCwdLog = join(root, "install-cwd.log");
+		mkdirSync(dirname(command), { recursive: true });
+		writeFileSync(
+			command,
+			`#!/bin/sh
 set -eu
 test "$1 $2" = "skills install"
 printf '%s\n' "$*" >> '${installLog}'
@@ -440,30 +460,31 @@ mkdir -p '${workspaceRoot}/skills/'"$skill_id"'/.openclaw'
 printf '{}\n' > '${workspaceRoot}/skills/'"$skill_id"'/.openclaw/source-origin.json'
 if test "\${FAKE_OPENCLAW_FAIL_AFTER_WRITE:-}" = "1"; then exit 45; fi
 `,
-	);
-	chmodSync(command, 0o755);
-	const sourceDir = join(root, "source", "review-pr");
-	mkdirSync(sourceDir, { recursive: true });
-	writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR\n");
-	const target = join(workspaceRoot, "skills", "review-pr");
-	const activate = () =>
-		activateHostedOpenClawSkill({ home, workspaceRoot, sourceDir, targetDir: target });
+		);
+		chmodSync(command, 0o755);
+		const sourceDir = join(root, "source", "review-pr");
+		mkdirSync(sourceDir, { recursive: true });
+		writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR\n");
+		const target = join(workspaceRoot, "skills", "review-pr");
+		const activate = () =>
+			activateHostedOpenClawSkill({ home, workspaceRoot, sourceDir, targetDir: target, source });
 
-	expect(existsSync(workspaceRoot)).toBe(false);
-	activate();
-	expect(readFileSync(installCwdLog, "utf8")).toBe(`${home}\n`);
-	expect(readFileSync(installLog, "utf8")).toMatch(
-		/^skills install .* --agent main --as review-pr --force\n$/,
-	);
-	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
-	activate();
-	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
-	writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR v2\n");
-	process.env.FAKE_OPENCLAW_FAIL_AFTER_WRITE = "1";
-	expect(activate).toThrow("official Skill install failed: exit code 45 without output");
-	expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
-	delete process.env.FAKE_OPENCLAW_FAIL_AFTER_WRITE;
-});
+		expect(existsSync(workspaceRoot)).toBe(false);
+		activate();
+		expect(readFileSync(installCwdLog, "utf8")).toBe(`${home}\n`);
+		expect(readFileSync(installLog, "utf8")).toMatch(
+			/^skills install .* --agent main --as review-pr --force\n$/,
+		);
+		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
+		activate();
+		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
+		writeFileSync(join(sourceDir, "SKILL.md"), "# Review PR v2\n");
+		process.env.FAKE_OPENCLAW_FAIL_AFTER_WRITE = "1";
+		expect(activate).toThrow("official Skill install failed: exit code 45 without output");
+		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review PR\n");
+		delete process.env.FAKE_OPENCLAW_FAIL_AFTER_WRITE;
+	},
+);
 
 test("reports a spawn error when the official install process cannot start", () => {
 	root = mkdtempSync(join(tmpdir(), "hosted-openclaw-spawn-error-"));

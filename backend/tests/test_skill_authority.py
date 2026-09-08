@@ -504,7 +504,7 @@ async def test_agent_project_cloud_content_and_install_mutations_fail_closed(
     environment_project,
 ):
     content_payload = {
-        "name": "Denied",
+        "name": "denied",
         "description": "denied",
         "instructions": "# Denied",
         "content_hash": "0" * 64,

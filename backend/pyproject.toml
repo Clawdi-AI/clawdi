@@ -75,6 +75,7 @@ dev = [
     "botocore-stubs==1.43.67",
     # Public annotations for the pinned asyncpg 0.31 runtime contract.
     "asyncpg-stubs==0.31.3",
+    "types-pyyaml==6.0.12.20260906",
 ]
 
 [tool.basedpyright]
@@ -169,6 +170,7 @@ strict = [
     "app/routes/__init__.py",
     "app/routes/admin.py",
     "app/routes/agent_project_bindings.py",
+    "app/routes/agent_skills.py",
     "app/routes/ai_providers.py",
     "app/routes/audit.py",
     "app/routes/auth.py",

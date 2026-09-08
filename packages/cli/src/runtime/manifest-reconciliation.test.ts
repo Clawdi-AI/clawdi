@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { commitRuntimeAppliedState } from "../commands/runtime";
+import { installHermesNativeFixture } from "../test-support/hermes-native-fixture";
 import {
 	readRuntimeAppliedState,
 	runtimeContentSha256,
@@ -33,6 +34,7 @@ import type {
 } from "./hosted-agent-plugin-package";
 import type { HostedAgentPluginCommandRunner } from "./hosted-agent-plugin-runtime";
 import { resolveHostedBundledSkill } from "./hosted-bundled-skill";
+import { hostedHermesSkillSourceMatches } from "./hosted-hermes-skill";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
 import {
@@ -914,6 +916,7 @@ function fileBrowserManifest(
 }
 
 function writeFakeHermesCli(paths: RuntimePaths): string {
+	installHermesNativeFixture(paths.userHome);
 	const path = join(paths.userHome, ".local", "bin", "hermes");
 	writeFakeGatewayCli({
 		path,
@@ -3943,7 +3946,7 @@ fi
 			{ preparedHostedSourcedSkills: new Map([[movedPrepared.id, movedPrepared]]) },
 		);
 		expect([...moved.installErrors, ...moved.resourceProjectionErrors]).toEqual([]);
-		expect(statSync(skillDir).ino).toBe(stableInode);
+		expect(hostedHermesSkillSourceMatches(paths.userHome, skillDir, movedSource)).toBe(true);
 		expect(
 			JSON.parse(readFileSync(managedSkillReservationLedgerPath(), "utf8")).reservations[skillDir]
 				.sourceIdentity,

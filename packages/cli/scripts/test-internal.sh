@@ -7,8 +7,22 @@ cd "$package_root"
 
 test_args=(--isolate --max-concurrency=1 --timeout=30000)
 
+hermes_fixture_needed=false
+if [[ $# -eq 0 ]]; then hermes_fixture_needed=true; fi
+for test_arg in "$@"; do
+	case "$test_arg" in
+		src|src/|src/runtime|src/runtime/|*hosted-hermes-skill*|*hosted-skill-observation*|*manifest-reconciliation*|--test-name-pattern*|-t)
+			hermes_fixture_needed=true
+			;;
+	esac
+done
+if [[ "$hermes_fixture_needed" == true && -z "${CLAWDI_TEST_HERMES_VENV:-}" ]]; then
+	source "$script_dir/prepare-hermes-native-fixture.sh"
+fi
+
 if [[ $# -gt 0 ]]; then
-	exec bun test "${test_args[@]}" "$@"
+	bun test "${test_args[@]}" "$@"
+	exit $?
 fi
 
 # Bun 1.4.0 can leave an otherwise completed multi-file suite idle after a

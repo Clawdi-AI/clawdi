@@ -34,6 +34,7 @@ from app.middleware.skill_upload_preflight import SkillUploadPreflightMiddleware
 from app.routes.admin import router as admin_router
 from app.routes.admin import whatsapp_pairing_router as admin_whatsapp_pairing_router
 from app.routes.agent_project_bindings import router as agent_project_bindings_router
+from app.routes.agent_skills import router as agent_skills_router
 from app.routes.ai_providers import router as ai_providers_router
 from app.routes.audit import router as audit_router
 from app.routes.auth import router as auth_router
@@ -354,6 +355,7 @@ _VERSIONED_ROUTERS = (
     capabilities_router,
     platform_router,
     plugin_catalog_router,
+    agent_skills_router,
     vault_router,
     connectors_router,
     mcp_bridge_router,

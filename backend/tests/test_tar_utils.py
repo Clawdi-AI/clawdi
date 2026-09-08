@@ -77,3 +77,90 @@ def test_unicode_tree_hash_matches_typescript_archive_fixture() -> None:
     assert _compute_file_tree_hash(archive, "unicode") == (
         "18e78f6921e3d0fe6443fa12b74921e9b4bb5bead518ca9b3af638a2ab1eda10"
     )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("name", ""),
+        ("name", "Uppercase"),
+        ("name", "a--b"),
+        ("name", "a" * 65),
+        ("name", " name"),
+        ("name", 123),
+        ("description", ""),
+        ("description", " \t "),
+        ("description", "a" * 1025),
+        ("description", False),
+        ("license", None),
+        ("license", ["MIT"]),
+        ("compatibility", ""),
+        ("compatibility", " \t "),
+        ("compatibility", "a" * 501),
+        ("compatibility", {"runtime": "hermes"}),
+        ("metadata", None),
+        ("metadata", {"version": 1.0}),
+        ("metadata", {1: "value"}),
+        ("metadata", []),
+        ("allowed-tools", None),
+        ("allowed-tools", ["Read"]),
+    ],
+)
+def test_strict_frontmatter_rejects_invalid_known_fields(field, value) -> None:
+    import yaml
+
+    metadata = {"name": "example", "description": "Valid description", field: value}
+    document = f"---\n{yaml.safe_dump(metadata)}---\nInstructions.\n"
+    with pytest.raises(tar_utils.SkillTextValidationError):
+        tar_utils.validate_skill_frontmatter(document)
+
+
+@pytest.mark.parametrize("ending", ["---", "---\r\n", "---\n"])
+def test_strict_frontmatter_preserves_boundaries_unicode_and_extensions(ending: str) -> None:
+    import yaml
+
+    metadata = {
+        "name": "café",
+        "description": "a" * 1024,
+        "license": "MIT",
+        "compatibility": "a" * 500,
+        "metadata": {"version": "1.0"},
+        "allowed-tools": "Read Bash(git:*)",
+        "x-runtime": {"mode": "native", "nested": [1, True]},
+    }
+    document = (
+        "---\r\n" + yaml.safe_dump(metadata, allow_unicode=True).replace("\n", "\r\n") + ending
+    )
+    assert tar_utils.validate_skill_frontmatter(document, directory_name="cafe\u0301") == {
+        "name": "café",
+        "description": "a" * 1024,
+    }
+    edited = tar_utils.skill_document(
+        "café", "New description", "New body", existing_content=document
+    )
+    rendered = yaml.safe_load(edited.split("---")[1])
+    assert rendered["x-runtime"] == metadata["x-runtime"]
+    assert rendered["metadata"] == {"version": "1.0"}
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        "Instructions without metadata",
+        "---\nname: example\n---",
+        "---\n[name, example]\n---",
+        "---\nname: [malformed\n---",
+        "---\nname: first\nname: example\ndescription: valid\n---",
+        "---\nname: example\ndescription: valid\nmetadata: {}\nmetadata: {}\n---",
+    ],
+)
+def test_strict_frontmatter_does_not_accept_fallbacks_or_duplicate_fields(document: str) -> None:
+    with pytest.raises(tar_utils.SkillTextValidationError):
+        tar_utils.validate_skill_frontmatter(document)
+
+
+def test_strict_frontmatter_requires_source_directory_match() -> None:
+    with pytest.raises(tar_utils.SkillTextValidationError, match="parent directory"):
+        tar_utils.validate_skill_frontmatter(
+            "---\nname: example\ndescription: valid\n---", directory_name="different"
+        )

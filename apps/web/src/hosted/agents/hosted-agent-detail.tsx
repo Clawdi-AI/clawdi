@@ -71,6 +71,7 @@ import {
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { OverviewComputeBody } from "@/components/dashboard/overview-compute-body";
+import { useWorkspaceSkills } from "@/components/dashboard/workspace-skills-query";
 import { DetailPanel } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import {
@@ -124,6 +125,7 @@ import {
 } from "@/components/unsaved-navigation-state";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { AgentDashboardOverview } from "@/hosted/agents/agent-dashboard-overview";
+import { useAgentManagedSkills } from "@/hosted/agents/agent-skills-query";
 import { DeploymentCancelAction } from "@/hosted/agents/deployment-cancel-action";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
 import {
@@ -1295,7 +1297,6 @@ function OverviewTab({
 				),
 			);
 	const runtimeStatusPresentation = deploymentRuntimeStatusPresentation(deployment.resource.status);
-	const deploymentStatus = runtimeStatusPresentation.status;
 	const deploymentFailure = deploymentFailurePresentation(deployment);
 	const computeStatusPresentation = deploymentFailure?.status ?? {
 		label: runtimeStatusPresentation.label,
@@ -1338,9 +1339,15 @@ function OverviewTab({
 	const runtimeSkills = useQuery({
 		queryKey: billingKeys.workspaceSkills(deployment.resource.id),
 		queryFn: () => billingClient.listWorkspaceSkills(deployment.resource.id),
-		enabled: isRunningStatus(deploymentStatus),
 		retry: billingQueryRetry,
+		refetchInterval: eventStreamFallbackInterval(10_000, eventStreamActive),
 	});
+	const managedSkills = useAgentManagedSkills(agentId, workspaceResolution === "ready");
+	const workspaceSkills = useWorkspaceSkills(
+		agentId,
+		workspaceProjectId,
+		workspaceResolution === "ready",
+	);
 	const pluginDesiredState = useQuery(
 		agentPluginDesiredStateQueryOptions(useOpenApi(), agentId, eventStreamActive),
 	);
@@ -1361,13 +1368,24 @@ function OverviewTab({
 				pluginOverview.description
 			),
 	};
-	const skillsModule = runtimeSkills.isLoading
-		? { description: <OverviewDescriptionSkeleton label="skills" /> }
-		: shouldBlockQueryError(runtimeSkills.error, runtimeSkills.data)
-			? { description: "Unavailable right now" }
-			: overviewWorkspaceSkillsModule(
-					(runtimeSkills.data?.items ?? []).map((skill) => skill.skill_key),
-				);
+	const skillsModule =
+		runtimeSkills.isLoading ||
+		managedSkills.isLoading ||
+		workspaceSkills.isLoading ||
+		workspaceResolution === "loading"
+			? { description: <OverviewDescriptionSkeleton label="skills" /> }
+			: shouldBlockQueryError(runtimeSkills.error, runtimeSkills.data) ||
+					shouldBlockQueryError(managedSkills.error, managedSkills.data) ||
+					shouldBlockQueryError(workspaceSkills.error, workspaceSkills.data) ||
+					workspaceResolution === "unavailable"
+				? { description: "Unavailable right now" }
+				: overviewWorkspaceSkillsModule(
+						[
+							...(runtimeSkills.data?.items ?? []),
+							...(managedSkills.data?.skills ?? []),
+							...(workspaceSkills.data ?? []),
+						].map((skill) => skill.skill_key),
+					);
 	const vaultsModule = useOverviewVaultsModule({
 		projectIds: workspaceProjectId ? [workspaceProjectId] : [],
 		resolution: workspaceResolution,

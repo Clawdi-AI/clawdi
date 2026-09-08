@@ -45,6 +45,7 @@ export function SkillCard({
 	sourceLabel,
 	provenanceLabel,
 	skillLink,
+	entityLink,
 	searchQuery,
 }: {
 	skill: SkillCardEntity;
@@ -62,21 +63,25 @@ export function SkillCard({
 	provenanceLabel?: string | null;
 	/** Build the detail link for the current navigation scope. */
 	skillLink?: SkillLinkBuilder;
+	/** Navigation for a hosted Skill whose content belongs to the runtime manifest. */
+	entityLink?: EntityCardLinkOptions;
 	/** Collection-local search context; highlights and explains the matching field. */
 	searchQuery?: string;
 }) {
 	const id = identityFor(skill.name || skill.skill_key);
 	const canUninstall = !readOnly && !!onUninstall && !!cloudSkill?.project_id;
 	const canSend = !readOnly && !!cloudSkill?.project_id;
-	const detailLink = !cloudSkill
-		? undefined
-		: skillLink === undefined
-			? {
-					to: "/skills/$key" as const,
-					params: { key: cloudSkill.skill_key },
-					search: cloudSkill.project_id ? { project: cloudSkill.project_id } : undefined,
-				}
-			: (skillLink(cloudSkill) ?? undefined);
+	const detailLink =
+		entityLink ??
+		(!cloudSkill
+			? undefined
+			: skillLink === undefined
+				? {
+						to: "/skills/$key" as const,
+						params: { key: cloudSkill.skill_key },
+						search: cloudSkill.project_id ? { project: cloudSkill.project_id } : undefined,
+					}
+				: (skillLink(cloudSkill) ?? undefined));
 	const cardActions =
 		actions || canSend || canUninstall ? (
 			<>

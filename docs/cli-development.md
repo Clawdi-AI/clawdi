@@ -237,7 +237,12 @@ bun run --cwd packages/cli build       # produces dist/
 The public package `test` command runs through the clean Docker runner with a
 fake `HOME`; pass a test path or Bun test filter after the command for a focused
 run. `test:internal` is reserved for the Docker runner and CI and must not be
-used as a normal host-local entrypoint. Tests do not use a real agent install.
+used as a normal host-local entrypoint. Most tests use synthetic agent homes.
+Hosted Hermes Skill tests use unmodified native modules from a fixed upstream
+fork commit in a disposable Python fixture. The Docker runner provisions it
+only for those test files, their containing runtime group, name-filtered runs,
+or the full suite; it never uses or changes a user's Hermes install. The
+fixture source and venv are removed when the runner exits.
 
 For daemon end-to-end and manual browser verification, see
 [`clawdi-daemon-test-guide.md`](clawdi-daemon-test-guide.md).

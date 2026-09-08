@@ -2992,6 +2992,7 @@ def _legacy_runtime_observed(value: RuntimeObservationEventV2) -> dict:
         "eventId",
         "capturedAt",
         "agentPlugins",
+        "skills",
         "userActivity",
     ):
         payload.pop(field)

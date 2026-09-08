@@ -88,6 +88,9 @@ async def archive_agent_and_project(
         ).all()
     )
     await db.execute(update(ApiKey).where(ApiKey.id.in_(key_ids)).values(revoked_at=archived_at))
+    from app.services.project_runtime_skills import remove_project_skill_references
+
+    await remove_project_skill_references(db, project.id)
     await notify_sync_subscriptions_changed(db, [locked_agent.user_id])
     return tuple(key_ids)
 

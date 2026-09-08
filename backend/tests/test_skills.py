@@ -59,10 +59,12 @@ async def test_skill_upload_analysis_runs_off_the_event_loop(
     analysis_thread: int | None = None
     analyze = skill_routes._analyze_skill_upload_sync
 
-    def capture_thread(data: bytes, skill_key: str) -> skill_routes._SkillUploadAnalysis:
+    def capture_thread(
+        data: bytes, skill_key: str, strict_frontmatter: bool = False
+    ) -> skill_routes._SkillUploadAnalysis:
         nonlocal analysis_thread
         analysis_thread = threading.get_ident()
-        return analyze(data, skill_key)
+        return analyze(data, skill_key, strict_frontmatter)
 
     monkeypatch.setattr(skill_routes, "_analyze_skill_upload_sync", capture_thread)
     archive, _ = tar_from_content("threaded", "# Threaded\n")
@@ -111,7 +113,7 @@ async def test_project_copy_move_preconditions_preserve_existing_skill(
     skill_key = "conflict-safe-copy"
     original, _ = tar_from_content(
         skill_key,
-        "---\nname: Conflict safe copy\ndescription: original\n---\n# Original\n",
+        "---\nname: conflict-safe-copy\ndescription: original\n---\n# Original\n",
     )
     created = await client.post(
         f"/v1/projects/{project_id}/skills/upload",
@@ -123,7 +125,7 @@ async def test_project_copy_move_preconditions_preserve_existing_skill(
 
     replacement, _ = tar_from_content(
         skill_key,
-        "---\nname: Conflict safe copy\ndescription: replacement\n---\n# Replacement\n",
+        "---\nname: conflict-safe-copy\ndescription: replacement\n---\n# Replacement\n",
     )
     conflict = await client.post(
         f"/v1/projects/{project_id}/skills/upload",
@@ -181,26 +183,24 @@ async def test_skill_upload_rejects_nul_text_before_persistence(
     )
 
     assert response.status_code == 400, response.text
-    assert response.json()["detail"] == {
-        "code": "invalid_skill_text",
-        "message": "SKILL.md must not contain NUL characters.",
-    }
+    assert response.json()["detail"]["code"] == "invalid_skill_text"
+    assert "NUL" in response.json()["detail"]["message"]
     missing = await client.get(f"/v1/projects/{project_id}/skills/invalid-nul")
     assert missing.status_code == 404
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("parser_error", [RecursionError, UnicodeError])
-async def test_skill_upload_treats_yaml_parser_failures_as_empty_frontmatter(
+async def test_cloud_skill_upload_rejects_yaml_parser_failures(
     client: httpx.AsyncClient,
     project_id: str,
     monkeypatch: pytest.MonkeyPatch,
     parser_error: type[Exception],
 ):
-    def fail_to_parse(_raw: str):
+    def fail_to_parse(_loader):
         raise parser_error("pathological frontmatter")
 
-    monkeypatch.setattr(yaml, "safe_load", fail_to_parse)
+    monkeypatch.setattr(yaml.SafeLoader, "get_single_node", fail_to_parse)
     tar_bytes, _ = tar_from_content(
         "parser-failure",
         "---\nname: ignored\ndescription: ignored\n---\nInstructions.\n",
@@ -212,8 +212,8 @@ async def test_skill_upload_treats_yaml_parser_failures_as_empty_frontmatter(
         files={"file": ("parser-failure.tar.gz", tar_bytes, "application/gzip")},
     )
 
-    assert response.status_code == 200, response.text
-    assert response.json()["name"] == "parser-failure"
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"]["code"] == "invalid_skill_text"
 
 
 @pytest.mark.asyncio
@@ -248,7 +248,7 @@ async def test_dashboard_edit_with_stale_content_hash_returns_412(
     r = await client.put(
         f"/v1/projects/{project_id}/skills/editme/content",
         json={
-            "name": "Edit me",
+            "name": "editme",
             "description": "edited",
             "instructions": "# Edited",
             "content_hash": stale,
@@ -268,7 +268,7 @@ async def test_dashboard_edit_with_stale_content_hash_returns_412(
     ok = await client.put(
         f"/v1/projects/{project_id}/skills/editme/content",
         json={
-            "name": "Edit me",
+            "name": "editme",
             "description": "edited",
             "instructions": "# Edited",
             "content_hash": current_hash,
@@ -293,7 +293,7 @@ async def test_dashboard_edit_requires_content_hash(client: httpx.AsyncClient, p
     r = await client.put(
         f"/v1/projects/{project_id}/skills/lww/content",
         json={
-            "name": "LWW",
+            "name": "lww",
             "description": "edited",
             "instructions": "# Edited",
         },
@@ -311,7 +311,7 @@ async def test_native_create_is_project_explicit_and_conflict_safe(
     created = await client.post(
         f"/v1/projects/{project_id}/skills",
         json={
-            "name": "Review pull requests",
+            "name": "review-pull-requests",
             "description": "Review code carefully",
             "instructions": "Check correctness, tests, and rollback safety.",
         },
@@ -320,14 +320,14 @@ async def test_native_create_is_project_explicit_and_conflict_safe(
     assert created.json()["skill_key"] == "review-pull-requests"
     detail = await client.get(f"/v1/projects/{project_id}/skills/review-pull-requests")
     assert detail.status_code == 200, detail.text
-    assert detail.json()["name"] == "Review pull requests"
+    assert detail.json()["name"] == "review-pull-requests"
     assert detail.json()["description"] == "Review code carefully"
     assert "Check correctness" in detail.json()["content"]
 
     duplicate = await client.post(
         f"/v1/projects/{project_id}/skills",
         json={
-            "name": "Review pull requests",
+            "name": "review-pull-requests",
             "description": "A conflicting create",
             "instructions": "This must not overwrite the first Skill.",
         },
@@ -345,16 +345,15 @@ async def test_edit_preserves_imported_support_files(
 ):
     skill_key = "preserve-files"
     original_md = b"""---
-name: Preserve files
+name: preserve-files
 description: Imported
 license: Apache-2.0
-compatibility:
-  runtimes:
-    - openclaw
-    - hermes
-  options:
-    retries: 3
-    strict: true
+compatibility: Requires git
+metadata:
+  version: "1.0"
+x-runtime:
+  retries: 3
+  strict: true
 tags:
   - review
   - safety
@@ -380,8 +379,8 @@ Use the references.
     edited = await client.put(
         f"/v1/projects/{project_id}/skills/{skill_key}/content",
         json={
-            "name": "Preserve files",
-            "description": None,
+            "name": "preserve-files",
+            "description": "Updated description",
             "instructions": "Read references/notes.md, then run scripts/check.sh.",
             "content_hash": uploaded.json()["content_hash"],
         },
@@ -403,19 +402,19 @@ Use the references.
     raw_frontmatter, body = rendered.removeprefix("---\n").split("\n---\n", 1)
     metadata = yaml.safe_load(raw_frontmatter)
     assert metadata == {
-        "name": "Preserve files",
+        "name": "preserve-files",
         "license": "Apache-2.0",
-        "compatibility": {
-            "runtimes": ["openclaw", "hermes"],
-            "options": {"retries": 3, "strict": True},
-        },
+        "description": "Updated description",
+        "compatibility": "Requires git",
+        "metadata": {"version": "1.0"},
+        "x-runtime": {"retries": 3, "strict": True},
         "tags": ["review", "safety"],
     }
     assert body.strip() == "Read references/notes.md, then run scripts/check.sh."
 
 
 @pytest.mark.asyncio
-async def test_edit_fails_closed_without_exact_root_skill_md(
+async def test_cloud_upload_fails_closed_without_exact_root_skill_md(
     client: httpx.AsyncClient,
     project_id: str,
 ):
@@ -432,22 +431,9 @@ async def test_edit_fails_closed_without_exact_root_skill_md(
         data={"skill_key": skill_key},
         files={"file": ("missing-root-document.tar.gz", archive, "application/gzip")},
     )
-    assert uploaded.status_code == 200, uploaded.text
-
-    edited = await client.put(
-        f"/v1/projects/{project_id}/skills/{skill_key}/content",
-        json={
-            "name": "Replacement",
-            "description": None,
-            "instructions": "This must not be written.",
-            "content_hash": uploaded.json()["content_hash"],
-        },
-    )
-    assert edited.status_code == 409, edited.text
-
-    downloaded = await client.get(f"/v1/projects/{project_id}/skills/{skill_key}/download")
-    assert downloaded.status_code == 200, downloaded.text
-    assert downloaded.content == archive
+    assert uploaded.status_code == 400, uploaded.text
+    assert uploaded.json()["detail"]["code"] == "invalid_skill_text"
+    assert (await client.get(f"/v1/projects/{project_id}/skills/{skill_key}")).status_code == 404
 
 
 @pytest.mark.asyncio
@@ -461,7 +447,7 @@ async def test_failed_db_commit_cannot_change_committed_skill_object_identity(
     skill_key = "immutable-object"
     old_archive, _ = tar_from_content(
         skill_key,
-        "---\nname: Immutable object\ndescription: old\n---\n# Old\n",
+        "---\nname: immutable-object\ndescription: old\n---\n# Old\n",
     )
     seeded = await client.post(
         f"/v1/projects/{project_id}/skills/upload",
@@ -487,7 +473,7 @@ async def test_failed_db_commit_cannot_change_committed_skill_object_identity(
 
     new_archive, _ = tar_from_content(
         skill_key,
-        "---\nname: Immutable object\ndescription: new\n---\n# New\n",
+        "---\nname: immutable-object\ndescription: new\n---\n# New\n",
     )
     new_hash = _compute_file_tree_hash(new_archive, skill_key)
     new_file_key = skill_routes._file_key(
@@ -962,7 +948,7 @@ async def test_nested_skill_round_trips_through_project_routes(
     r_put = await client.put(
         f"/v1/projects/{project_id}/skills/{nested_key}/content",
         json={
-            "name": "Nested",
+            "name": "nested",
             "description": "edited via project PUT",
             "instructions": "# Nested v2",
             "content_hash": r_upload.json()["content_hash"],
@@ -1077,7 +1063,7 @@ async def test_explicit_skills_list_hides_archived_project(
     project_id = str(workspace_project.id)
     tar_bytes, _ = tar_from_content(
         "archived-skill",
-        "---\nname: Archived skill\ndescription: hidden after archive\n---\nInstructions.\n",
+        "---\nname: archived-skill\ndescription: hidden after archive\n---\nInstructions.\n",
     )
     uploaded = await client.post(
         f"/v1/projects/{project_id}/skills/upload",
@@ -1875,3 +1861,38 @@ async def test_legacy_delete_still_410s_for_browser(client: httpx.AsyncClient, p
     # write side-effect.
     listing = (await client.get("/v1/skills")).json()["items"]
     assert any(s["skill_key"] == "legacy-del" for s in listing)
+
+
+@pytest.mark.asyncio
+async def test_cloud_unicode_document_remains_editable_without_name_rewrite(client, project_id):
+    document = "---\r\nname: café\r\ndescription: Original\r\nx-runtime: {enabled: true}\r\n---"
+    archive, _ = tar_from_content("team/cafe", document)
+    uploaded = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "team/cafe"},
+        files={"file": ("cafe.tar.gz", archive, "application/gzip")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    assert (await client.get(f"/v1/projects/{project_id}/skills/team/cafe")).json()[
+        "content"
+    ] == document
+    edited = await client.put(
+        f"/v1/projects/{project_id}/skills/team/cafe/content",
+        json={
+            "name": "café",
+            "description": " Updated description ",
+            "instructions": "Updated",
+            "content_hash": uploaded.json()["content_hash"],
+        },
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["name"] == "café"
+    detail = (await client.get(f"/v1/projects/{project_id}/skills/team/cafe")).json()
+    assert detail["description"] == " Updated description "
+    assert "x-runtime" in detail["content"]
+    unsupported_create = await client.post(
+        f"/v1/projects/{project_id}/skills",
+        json={"name": "café", "description": "Valid", "instructions": "Instructions"},
+    )
+    assert unsupported_create.status_code == 400
+    assert "ASCII" in unsupported_create.json()["detail"]

@@ -14,11 +14,15 @@ database migration, CI, and implementation details.
 
 ### Added
 
+- Agent Skills can be installed from Library or public GitHub repositories,
+  with source details, updates, and removal from the Agent page.
 - Session search now matches visible user and assistant message text in addition to summaries, folders, and IDs. CLI and Web results show the best matching message excerpt; private reasoning, tool payloads, system messages, and hidden events remain excluded.
 - Session detail pages can search the current transcript directly, move between matches, and highlight matching text without loading the whole conversation.
 
 ### Changed
 
+- CLI 0.14.55 installs sourced Skills through Hermes and OpenClaw native
+  capabilities, preserving supporting files and recovering interrupted changes.
 - CLI 0.14.54 delivers native BYOK credentials through OpenClaw configuration
   commands and Hermes authentication APIs while preserving agent model choices.
 

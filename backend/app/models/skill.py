@@ -89,3 +89,21 @@ class Skill(Base, TimestampMixin):
             postgresql_where=("is_active = true"),
         ),
     )
+
+
+class AgentSkillReference(Base, TimestampMixin):
+    """An Agent's intent to consume one Cloud Project Skill, without owning bytes."""
+
+    __tablename__ = "agent_skill_references"
+
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agent_environments.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    skill_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("skills.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )

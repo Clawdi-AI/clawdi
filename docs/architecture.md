@@ -276,6 +276,30 @@ carry durable `authority` provenance:
 | `cloud` | Cloud-owned user Project | Normal authenticated Cloud UI/API and explicit `--project` CLI operations |
 | `agent_sync` | One Agent Workspace's guarded filesystem target | Agent-authenticated claim/upload and absence/delete only; dashboard is read-only |
 
+New Cloud-authored creates, uploads, imports, edits, and explicit refreshes from
+an Agent validate the [Agent Skills format](https://agentskills.io/specification.md)
+using the bounded parser in `backend/app/services/tar_utils.py`. `name` is the
+actual declared Skill name, not a separate display label; description is
+required. Known optional fields are type-checked, while custom frontmatter
+and support files are preserved. Validation never silently slugifies or
+renames supplied content. GitHub imports also require the declared name to
+match the source directory (the repository name for a root Skill).
+
+Historical stored Skills and Agent-sync projections retain their existing read
+and removal behavior. A new Agent Library reference validates the actual
+stored document and content hash before admission, then rechecks its immutable
+identity under the Project lock. The released lone-`SKILL.md` raw hash remains
+supported; multi-file packages require the tree hash. Malformed historical
+content must be corrected or reimported before a new installation. Current
+runtime directory contracts and native creation support ASCII names only;
+Unicode names valid under the specification remain storable and editable in
+Cloud. Namespaced storage keys remain distinct from the declared local name:
+runtime archives are rerooted under that name without rewriting file bytes.
+
+Done: `scripts/test.sh backend tests/test_tar_utils.py tests/test_skills.py
+tests/test_agent_skill_references.py tests/test_skill_installer_boundary.py`
+exits 0 using the throwaway Docker PostgreSQL runner.
+
 Historical rows are backfilled as `cloud`; Project kind, source strings, and
 old environment metadata are not ownership evidence. A live authenticated
 Agent upload may atomically claim the matching row as `agent_sync`, including
@@ -440,7 +464,9 @@ renders support/runtime service plans, and exposes the managed operator ABI:
 `clawdi run -- <command>`.
 
 Cloud API is the single desired-state composer for Skills. It merges Hosted V2
-Agent Workspace Skill intent with Cloud-owned Skills from linked Projects. The
+Agent Workspace Skill intent with Cloud-owned Skills from linked Projects and
+individual Library references. References retain source Project authorization
+and do not copy content or bind the whole Project. The
 Project rows remain the only content writer; runtime observations never become
 another catalog. Each Project Skill entry uses the runtime-neutral `project`
 source discriminator and carries immutable content identity plus an authenticated

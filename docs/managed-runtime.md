@@ -866,6 +866,93 @@ ownership or timestamps, rejects source symlinks, and treats target symlinks as
 drift without following them. The public sync hash remains unchanged for old
 and new clients.
 
+### Library Skill References And Runtime Evidence
+
+For a GitHub Skill whose source path is empty (repository root), OpenClaw
+activation invokes `openclaw skills install git:<repository-url>#<commit>
+--agent main --as <skill-key> --force`. OpenClaw owns Git fetching, install
+policy and native source metadata; `--force` selects replacement and does not
+override its scan policy. Clawdi verifies the resulting bytes against the
+prepared immutable archive and reads `.openclaw/source-origin.json` to check
+the Git URL, ref and commit. A reserved installation with matching bytes but
+missing or stale native provenance is reinstalled through that same command.
+Native refusal, changed bytes or mismatched provenance fail the operation and
+retain the existing filesystem/reservation rollback; there is no local-path
+retry after a Git install fails. Heartbeat evidence also detects native origin
+changes for these root Git installs. Unmanaged local targets remain protected.
+
+GitHub subdirectories and Project/Library archives use OpenClaw's existing
+native staged-directory install entrance. That entrance runs native install
+policy; its `local-path` transport describes the verified staging directory,
+while Cloud and Clawdi retain the original immutable source identity. It does
+not mark the content as trusted or builtin. Clawdi removes only its reserved
+OpenClaw directories on the native filesystem discovery surface; this is
+managed ownership cleanup, not a claim that OpenClaw provides a Hub uninstall.
+No upload RPC or additional source fields are required. These paths were
+checked against OpenClaw commit `cef6e690d5573d06f3feef5fdf103906e842c618`
+([source install](https://github.com/openclaw/openclaw/blob/cef6e690d5573d06f3feef5fdf103906e842c618/src/skills/lifecycle/source-install.ts)).
+
+Hermes sourced Skills use its public `SkillBundle`, `quarantine_bundle`,
+`scan_skill`, `should_allow_install(force=False)` and `install_from_quarantine`
+functions. Prepared file bytes remain intact, including supporting files and
+binary assets. Scanning receives the real source identifier; a refusal or
+confirmation requirement remains a refusal. Native metadata records the
+secret-free GitHub commit or Project content identity. Signed download URLs
+are transport credentials and never enter native metadata. Cloud and Clawdi
+remain the source and reservation authorities.
+
+Reconciliation verifies both the exact installed tree and native provenance.
+Missing provenance causes a native reinstall, including migration of existing
+Clawdi-owned local files. Heartbeat checks the same per-Skill native identity,
+without treating unrelated Hub changes as drift. Ambiguous or partial native
+failures retain pending ownership for ordinary retry; a definitive refusal
+before target mutation releases only the newly attempted reservation. Clawdi
+does not restore directories or snapshot/restore Hub metadata around native
+mutations. An unreadable or torn Hub lock fails before mutation
+so native loading cannot silently discard sibling records. Native removal uses
+`uninstall_skill` for known Hub records; a known legacy local Skill uses the
+public `skill_manage(action="delete")` tool, preserving its pinned protection
+without requiring an installation scan before deleting old content. The
+platform bundled `clawdi` bootstrap retains its platform-owned local path.
+These contracts were checked against Hermes fork commit
+[`736fc4d86a1acd8c96473aeb55f9c783e2170dca`](https://github.com/Clawdi-AI/hermes-agent/tree/736fc4d86a1acd8c96473aeb55f9c783e2170dca).
+
+Done: `scripts/test.sh cli src/runtime/hosted-hermes-skill.test.ts src/runtime/hosted-skill-observation.test.ts`
+passes CLI typecheck and the real
+native scan, bytes, provenance, uninstall and retry tests in Docker. The test
+runner provisions the pinned native source and minimal Python dependencies in
+a disposable fixture; none are published with the CLI.
+
+`PUT /v1/agents/{agent_id}/skill-references/{skill_id}` selects one accessible
+Cloud-authority Skill for a Hosted Agent; `DELETE` removes that reference.
+`GET` on the reference returns the existing Skill detail with its real source
+Project. Linked copies make PUT a no-op. Agent-sync projections cannot be
+selected. References share Project Skill composition, signed downloads,
+conflict locks, source updates and access revocation; they never own bytes.
+
+`GET /v1/agents/{agent_id}/skills` combines Hosted GitHub/bundled intent with
+Library and linked Project sources. It distinguishes the runtime `skill_key`
+from `source_skill_key` and returns source authority and read-only metadata.
+Installation evidence requires a unique fresh observation head matching the
+current deployment, instance, generation, source revision and source identity.
+Missing evidence yields `not_observed`. Current absent failures appear only in
+`removal_failures`; they never recreate desired rows.
+
+The existing CLI reconcile records per-Skill bytes/absence verification in its
+private applied-state receipt. The v2 companion heartbeat rechecks ownership and
+installed tree digests and emits optional `skills` diagnostics. Source identity
+is SHA-256 of UTF-8 NUL-joined fields: `github`, local key, repository URL, path,
+commit; or `project`, local key, Project UUID, content hash; or `bundled`, local
+key, version. It excludes transport URLs. Diagnostics share the full applied
+identity, including failed resources. The wire retains at most 2048 entries,
+prioritizes failures deterministically, and explicitly sets `skills.truncated`
+and the existing top-level flag; private applied evidence remains complete.
+The v1 heartbeat shape is unchanged.
+
+Done: `scripts/test.sh backend tests/test_agent_skill_references.py` and
+`scripts/test.sh cli src/runtime/hosted-skill-observation.test.ts` pass in the
+isolated Docker runners (the backend runner provisions and migrates PostgreSQL).
+
 ### Skill And MCP Authority Boundaries
 
 Agent Plugins 1.0.0 defines package manifests and Skill/MCP component loading;

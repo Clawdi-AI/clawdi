@@ -1758,7 +1758,10 @@ test("agent scoped Skills and Vaults preserve context for mutations", async ({ p
 	await expect(addSkillButton).toBeVisible();
 	await addSkillButton.click();
 	const addSkillDialog = page.getByRole("dialog", { name: "Add skill" });
-	await addSkillDialog.getByLabel("Name").fill("Release checklist");
+	await addSkillDialog.getByLabel("Skill name").fill("release-checklist");
+	await addSkillDialog
+		.getByLabel("Description")
+		.fill("Review the release checklist before deploy.");
 	await addSkillDialog
 		.getByLabel("Instructions")
 		.fill("Review the release checklist before deploy.");
@@ -1773,8 +1776,8 @@ test("agent scoped Skills and Vaults preserve context for mutations", async ({ p
 			{
 				projectId: "project-context-later",
 				body: {
-					name: "Release checklist",
-					description: null,
+					name: "release-checklist",
+					description: "Review the release checklist before deploy.",
 					instructions: "Review the release checklist before deploy.",
 				},
 			},

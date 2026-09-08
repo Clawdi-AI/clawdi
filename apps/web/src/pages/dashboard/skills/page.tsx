@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { FolderKanban, Import as ImportIcon, Plus } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -54,6 +54,11 @@ import { cn } from "@/lib/utils";
 type ProjectRow = components["schemas"]["ProjectResponse"];
 
 const PAGE_SIZE = 30;
+const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+const LibrarySkillInstallAction = IS_HOSTED_BUILD
+	? lazy(() => import("@/hosted/agents/library-skill-install-action"))
+	: null;
+
 const SKILLS_RESOURCE = getProjectResourceDefinition("skills");
 
 export default function SkillsPage() {
@@ -332,6 +337,13 @@ function SkillsPageInner() {
 									: "No Skills are in this Project yet."
 						}
 						capabilitiesFor={(skill) => skillCapabilities(skill, selectedProject)}
+						actionsFor={(skill) =>
+							LibrarySkillInstallAction && skill.authority === "cloud" ? (
+								<Suspense fallback={null}>
+									<LibrarySkillInstallAction skill={skill} />
+								</Suspense>
+							) : null
+						}
 						onUninstall={writable ? (skillKey) => removeSkill.mutateAsync(skillKey) : undefined}
 						uninstallPending={removeSkill.isPending}
 						searchQuery={search.trim() || undefined}

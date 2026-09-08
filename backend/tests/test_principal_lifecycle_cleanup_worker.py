@@ -12,6 +12,7 @@ from app.models.agent_project_binding import AgentProjectBinding
 from app.models.principal_lifecycle import PrincipalLifecycle
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_membership import ProjectMembership
+from app.models.skill import AgentSkillReference, Skill
 from app.models.user import User
 from app.services import sync_events
 from app.services.principal_lifecycle import (
@@ -144,7 +145,10 @@ async def test_cleanup_claim_recovers_after_crash_and_rejects_stale_worker(engin
         await _delete_lifecycles(session_factory, [lifecycle.id])
 
 
-async def test_owner_cleanup_unlinks_and_notifies_member_agents(db_session, seed_user):
+@pytest.mark.parametrize("reference_only", [False, True])
+async def test_owner_cleanup_unlinks_and_notifies_member_agents(
+    db_session, seed_user, reference_only
+):
     now = datetime.now(UTC)
     nonce = uuid.uuid4().hex
     owner = User(
@@ -201,6 +205,24 @@ async def test_owner_cleanup_unlinks_and_notifies_member_agents(db_session, seed
         ]
     )
     await db_session.commit()
+    skill = Skill(
+        user_id=owner.id,
+        project_id=project.id,
+        skill_key="shared-runbook",
+        name="shared-runbook",
+        content_hash="a" * 64,
+    )
+    db_session.add(skill)
+    await db_session.flush()
+    db_session.add(AgentSkillReference(agent_id=agent.id, skill_id=skill.id))
+    if reference_only:
+        await db_session.execute(
+            delete(AgentProjectBinding).where(
+                AgentProjectBinding.agent_id == agent.id,
+                AgentProjectBinding.project_id == project.id,
+            )
+        )
+    await db_session.commit()
     lifecycle_id = lifecycle.id
     project_id = project.id
     owner_id = owner.id
@@ -211,6 +233,7 @@ async def test_owner_cleanup_unlinks_and_notifies_member_agents(db_session, seed
         await db_session.commit()
 
         assert result.user_disabled is True
+        assert await db_session.get(AgentSkillReference, (agent.id, skill.id)) is None
         assert queue.get_nowait() == {
             "type": "runtime_manifest_changed",
             "environment_id": str(agent.id),

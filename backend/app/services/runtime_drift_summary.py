@@ -155,6 +155,7 @@ async def read_runtime_drift_summaries(
                         "active_cli_version"
                     ),
                     V2RuntimeObservationInbox.diagnostics["applied"].label("applied_diagnostics"),
+                    V2RuntimeObservationInbox.diagnostics["skills"].label("skills"),
                     V2RuntimeObservationInbox.diagnostics["agentPlugins"].label("agent_plugins"),
                     V2RuntimeObservationInbox.diagnostics["userActivity"].label("user_activity"),
                 )
@@ -193,6 +194,7 @@ async def read_runtime_drift_summaries(
                     "diagnostics": {
                         "activeCliVersion": row.active_cli_version,
                         "applied": row.applied_diagnostics,
+                        "skills": row.skills,
                         "agentPlugins": row.agent_plugins,
                         "userActivity": row.user_activity,
                     },

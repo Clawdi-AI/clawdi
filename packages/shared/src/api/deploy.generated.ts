@@ -356,7 +356,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Get V2 Workspace Skill */
+        get: operations["get_v2_workspace_skill_v2_deployments__deployment_id__workspace_skills__skill_key__get"];
         put?: never;
         post?: never;
         /** Uninstall V2 Workspace Skill */
@@ -3179,6 +3180,18 @@ export interface components {
             /** Failure Message */
             failure_message?: string | null;
         };
+        /** V2WorkspaceSkillDetailResponse */
+        V2WorkspaceSkillDetailResponse: {
+            /** Skill Key */
+            skill_key: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Content */
+            content: string;
+            source: components["schemas"]["V2WorkspaceSkillSource"];
+        };
         /** V2WorkspaceSkillInstallRequest */
         V2WorkspaceSkillInstallRequest: {
             /** Repo */
@@ -4394,6 +4407,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2WorkspaceSkillMutationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_v2_workspace_skill_v2_deployments__deployment_id__workspace_skills__skill_key__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+                skill_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WorkspaceSkillDetailResponse"];
                 };
             };
             /** @description Validation Error */

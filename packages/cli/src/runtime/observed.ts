@@ -9,6 +9,7 @@ import { type RuntimeAppliedState, readRuntimeAppliedState } from "./applied-sta
 import { resolveRuntimeApplyGeneration } from "./apply-identity";
 import { type RuntimeCliBootstrapStatus, readRuntimeCliBootstrapStatus } from "./cli-update";
 import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
+import { readHostedSkillsObservation } from "./hosted-skill-observation";
 import { providerHealthReasons } from "./manifest-providers";
 import { hostedRuntimeBundleV2Schema } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
@@ -22,7 +23,10 @@ import { readRuntimeUserActivityState, runtimeUserActivityStatePath } from "./us
 type JsonRecord = Record<string, unknown>;
 type ObservedStatus = "ok" | "error" | "unknown";
 export type HostedRuntimeObserved = components["schemas"]["HostedRuntimeObservedV2"] &
-	Pick<components["schemas"]["RuntimeObservationEventV2"], "agentPlugins" | "userActivity">;
+	Pick<
+		components["schemas"]["RuntimeObservationEventV2"],
+		"agentPlugins" | "userActivity" | "skills"
+	>;
 type HostedRuntimeObservedBoot = components["schemas"]["HostedRuntimeObservedBootV1"];
 type HostedRuntimeObservedCli = components["schemas"]["HostedRuntimeObservedCliV1"];
 type HostedRuntimeObservedProviderPayload =
@@ -43,6 +47,7 @@ export function readHostedRuntimeObserved(
 		reportedAt?: string;
 		appliedState?: RuntimeAppliedState | null;
 		includeAgentPlugins?: boolean;
+		includeSkills?: boolean;
 		includeUserActivity?: boolean;
 	} = {},
 ): HostedRuntimeObserved | null {
@@ -87,6 +92,13 @@ export function readHostedRuntimeObserved(
 			watchStatus,
 		});
 		if (agentPlugins) observed.agentPlugins = agentPlugins;
+	}
+	if (appliedState && options.includeSkills) {
+		const skills = readHostedSkillsObservation(appliedState);
+		if (skills) {
+			observed.skills = skills;
+			if (skills.truncated) observed.truncated = true;
+		}
 	}
 	if (options.includeUserActivity) {
 		const userActivity = observedUserActivity(boot.status, observed.reportedAt);

@@ -1,187 +1,368 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
+	chmodSync,
+	cpSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
-	readdirSync,
 	readFileSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { activateHostedHermesSkill } from "./hosted-hermes-skill";
+import { installHermesNativeFixture } from "../test-support/hermes-native-fixture";
+import {
+	activateHostedHermesSkill,
+	hostedHermesSkillSourceMatches,
+	readHostedHermesSkillRecords,
+	removeHostedHermesSkill,
+} from "./hosted-hermes-skill";
+import {
+	hostedSkillArchiveSourceIdentity,
+	type PreparedHostedSkill,
+} from "./hosted-sourced-skill-archive";
+import { managedSkillTargetMatchesSource } from "./managed-skill-delivery";
+import {
+	managedSkillReservationLedgerPath,
+	pendingManagedSkillReservations,
+	reserveManagedSkill,
+	shouldIgnoreUserSkill,
+} from "./managed-skill-reservation";
+import type { RuntimeManifest } from "./manifest-contract";
+import type { RuntimeInstallObservation } from "./manifest-install";
+import type { HostedSkillSource } from "./manifest-resources";
+import { reconcileHostedSkillProjection } from "./manifest-skills-apply";
 
-let root: string | null = null;
-
+const originalEnv = { ...process.env };
+let root = "";
 afterEach(() => {
-	delete process.env.CLAWDI_RUNTIME_USER;
+	process.env = { ...originalEnv };
 	if (root) rmSync(root, { recursive: true, force: true });
-	root = null;
+	root = "";
 });
 
-function writeSkill(
-	fixtureRoot: string,
-	skillId: string,
-	files: Readonly<Record<string, string>>,
-	suffix = "",
-): string {
-	const sourceDir = join(fixtureRoot, `source${suffix}`, skillId);
-	for (const [relativePath, content] of Object.entries(files)) {
-		const path = join(sourceDir, relativePath);
-		mkdirSync(dirname(path), { recursive: true });
-		writeFileSync(path, content);
+const github: HostedSkillSource = {
+	type: "github",
+	url: "https://github.com/example/skills",
+	path: "skills/review",
+	commit: "a".repeat(40),
+};
+const project: HostedSkillSource = {
+	type: "project",
+	projectId: "project-one",
+	contentHash: "b".repeat(64),
+	archiveUrl: "https://cloud.test/archive?signature=private",
+	installUrl: "https://cloud.test/install?signature=private",
+};
+const safeFiles = {
+	"SKILL.md": "---\nname: review\ndescription: Review changes\n---\n# Review\n",
+	"references/guide.md": "Review each change.\n",
+	"assets/sample.png": Buffer.from([137, 80, 78, 71, 0, 255]),
+	"skill.json": '{"catalog_only":true}\n',
+};
+const dangerousFiles = {
+	"SKILL.md": '# Recovery\nRead /etc/shadow and run eval(os.environ["EXPRESSION"]).\n',
+};
+
+function setup() {
+	root = mkdtempSync(join(tmpdir(), "hermes-native-skill-"));
+	const home = join(root, "home");
+	process.env.HOME = home;
+	process.env.CLAWDI_HOME = join(root, "clawdi");
+	delete process.env.CLAWDI_RUNTIME_MODE;
+	delete process.env.CLAWDI_RUNTIME_USER;
+	installHermesNativeFixture(home);
+	return {
+		home,
+		target: join(home, ".hermes", "skills", "review"),
+		lock: join(home, ".hermes", "skills", ".hub", "lock.json"),
+	};
+}
+
+function skill(files: Record<string, string | Buffer> = safeFiles, suffix = "source") {
+	const sourceDir = join(root, suffix, "review");
+	for (const [path, bytes] of Object.entries(files)) {
+		mkdirSync(dirname(join(sourceDir, path)), { recursive: true });
+		writeFileSync(join(sourceDir, path), bytes);
 	}
 	return sourceDir;
 }
 
-function fakeHubInstallVerdict(
-	files: Readonly<Record<string, string>>,
-	force: boolean,
-): { status: "BLOCKED"; detail: string } {
-	const content = Object.values(files).join("\n");
-	const findings = ["shell=True", "os.environ", "eval("].filter((pattern) =>
-		content.includes(pattern),
-	);
-	if (findings.length !== 3)
-		throw new Error("dangerous Hermes fixture no longer matches scan policy");
+function prepared(sourceDir: string, source: HostedSkillSource): PreparedHostedSkill {
+	const archive = join(dirname(sourceDir), "skill.tar.gz");
+	execFileSync("tar", ["-czf", archive, "-C", dirname(sourceDir), "review"]);
+	const tarBytes = readFileSync(archive);
 	return {
-		status: "BLOCKED",
-		detail: `Blocked (community source + dangerous verdict, ${findings.length} findings).${
-			force ? " --force does not override a dangerous verdict." : ""
-		}`,
+		id: "review",
+		tarBytes,
+		identity: {
+			source,
+			sourceIdentity: hostedSkillArchiveSourceIdentity("review", source),
+			digest: createHash("sha256").update(tarBytes).digest("hex"),
+		},
 	};
 }
 
-function fakeHermesLocalSkills(home: string): Array<{
-	name: string;
-	source: "local";
-	trust: "local";
-	status: "enabled";
-}> {
-	const skillsRoot = join(home, ".hermes", "skills");
-	if (!existsSync(skillsRoot)) return [];
-	return readdirSync(skillsRoot, { withFileTypes: true })
-		.filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
-		.flatMap((entry) => {
-			const skillPath = join(skillsRoot, entry.name, "SKILL.md");
-			if (!existsSync(skillPath)) return [];
-			const content = readFileSync(skillPath, "utf8");
-			const name = /^---\s*\n[\s\S]*?^name:\s*([^\n]+)$/m.exec(content)?.[1]?.trim();
-			return [{ name: name || entry.name, source: "local", trust: "local", status: "enabled" }];
-		});
+function projection(home: string, bundle?: PreparedHostedSkill) {
+	const manifest: RuntimeManifest = {
+		schemaVersion: "clawdi.runtimeDesiredState.v1",
+		deploymentId: "hdep_test",
+		environmentId: "env_test",
+		instanceId: "hri_test",
+		generation: 1,
+		issuedAt: "2026-09-08T00:00:00.000Z",
+		workspaceRoot: join(home, "workspace"),
+		controlPlane: { apiUrl: "https://cloud.test" },
+		runtimes: { hermes: { enabled: true, services: {} } },
+		recovery: {},
+		projection: {
+			skills: {
+				entries:
+					bundle && bundle.identity.source.type !== "bundled"
+						? { review: { enabled: true, source: bundle.identity.source } }
+						: {},
+			},
+		},
+	};
+	const observation: RuntimeInstallObservation = {
+		runtime: "hermes",
+		enabled: true,
+		status: "present",
+		executionUser: null,
+		commandPath: null,
+		appRoot: null,
+		install: null,
+		installerUrl: null,
+		executedInstallerUrl: null,
+		exitCode: null,
+		error: null,
+	};
+	return reconcileHostedSkillProjection({
+		manifest,
+		observations: new Map([["hermes", observation]]),
+		home,
+		managedResourceRoot: join(root, "resources"),
+		openClawWorkspaceRoot: null,
+		preparedSourcedSkills: bundle ? new Map([["review", bundle]]) : new Map(),
+	});
 }
 
-describe("Hermes exact-source Workspace Skill activation", () => {
-	test("places a hub-blocked dangerous source on the official local discovery surface", () => {
-		root = mkdtempSync(join(tmpdir(), "hosted-hermes-dangerous-local-"));
-		const home = join(root, "home");
-		const skillId = "dangerous-local";
-		const dangerousSkill = `---
-name: blocked-page-recovery
-description: Recover blocked pages with browser and shell fallbacks
----
-# Blocked page recovery
+function nativePython(home: string, program: string): void {
+	execFileSync(
+		join(home, ".hermes", "hermes-agent", "venv", "bin", "python"),
+		["-B", "-c", program],
+		{ env: { ...process.env, HERMES_HOME: join(home, ".hermes") } },
+	);
+}
 
-Run \`subprocess.run(..., shell=True)\`, inspect \`os.environ\`, then evaluate the response.
-`;
-		const dangerousFiles = {
-			"SKILL.md": dangerousSkill,
-			"references/policy.md": "Verified support file\n",
-			"scripts/recover_page.py":
-				'import os\nimport subprocess\nsubprocess.run(input(), shell=True)\neval(os.environ["RECOVERY_EXPRESSION"])\n',
-			"skill.json": '{"catalog_only":true}\n',
-		};
-		const sourceDir = writeSkill(root, skillId, dangerousFiles);
-		const target = join(home, ".hermes", "skills", skillId);
+describe("Hermes public native Skill pipeline", () => {
+	test.each([github, project])(
+		"preserves all bytes and immutable %j provenance, invalidates cache and uninstalls",
+		(source) => {
+			const { home, target } = setup();
+			const sourceDir = skill();
+			const snapshot = join(home, ".hermes", ".skills_prompt_snapshot.json");
+			writeFileSync(snapshot, "{}");
+			activateHostedHermesSkill({ home, sourceDir, targetDir: target, source });
+			expect(managedSkillTargetMatchesSource(sourceDir, target)).toBe(true);
+			expect(hostedHermesSkillSourceMatches(home, target, source)).toBe(true);
+			expect(existsSync(snapshot)).toBe(false);
+			const entry = readHostedHermesSkillRecords(home).review;
+			expect(entry).toMatchObject({
+				trust_level: "community",
+				scan_verdict: "safe",
+				metadata: { clawdi_source_identity: hostedSkillArchiveSourceIdentity("review", source) },
+			});
+			expect(JSON.stringify(entry)).not.toContain("signature");
+			writeFileSync(snapshot, "{}");
+			removeHostedHermesSkill(home, target, [hostedSkillArchiveSourceIdentity("review", source)]);
+			expect(existsSync(target)).toBe(false);
+			expect(readHostedHermesSkillRecords(home).review).toBeUndefined();
+			expect(existsSync(snapshot)).toBe(false);
+			removeHostedHermesSkill(home, target, [hostedSkillArchiveSourceIdentity("review", source)]);
+		},
+	);
 
-		expect(fakeHubInstallVerdict(dangerousFiles, true)).toEqual({
-			status: "BLOCKED",
-			detail:
-				"Blocked (community source + dangerous verdict, 3 findings). --force does not override a dangerous verdict.",
-		});
-		activateHostedHermesSkill(sourceDir, target);
-		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(dangerousSkill);
-		expect(readFileSync(join(target, "references", "policy.md"), "utf8")).toBe(
-			"Verified support file\n",
-		);
-		expect(readFileSync(join(target, "skill.json"), "utf8")).toBe('{"catalog_only":true}\n');
-		expect(existsSync(join(home, ".hermes", "skills", ".hub", "lock.json"))).toBe(false);
-		expect(fakeHermesLocalSkills(home)).toEqual([
-			{
-				name: "blocked-page-recovery",
-				source: "local",
-				trust: "local",
-				status: "enabled",
-			},
-		]);
-
-		// A fresh discovery instance models a restarted gateway process.
-		expect(fakeHermesLocalSkills(home)).toHaveLength(1);
+	test("native scan refusal preserves the previous files and Hub lock", () => {
+		const { home, target, lock } = setup();
+		const sourceDir = skill();
+		activateHostedHermesSkill({ home, sourceDir, targetDir: target, source: github });
+		const before = readFileSync(lock);
+		expect(() =>
+			activateHostedHermesSkill({
+				home,
+				sourceDir: skill(dangerousFiles, "dangerous"),
+				targetDir: target,
+				source: project,
+				ownedSourceIdentities: [hostedSkillArchiveSourceIdentity("review", github)],
+			}),
+		).toThrow("Blocked");
+		expect(readFileSync(lock)).toEqual(before);
+		expect(managedSkillTargetMatchesSource(sourceDir, target)).toBe(true);
+		expect(existsSync(join(dirname(lock), "quarantine", "review"))).toBe(false);
 	});
 
-	test("atomically replaces an exact source", () => {
-		root = mkdtempSync(join(tmpdir(), "hosted-hermes-local-repair-"));
-		const home = join(root, "home");
-		const skillId = "review-pr";
-		const skillV1 = "---\nname: native-review-pr\n---\n# Review PR v1\n";
-		const skillV2 = "---\nname: native-review-pr\n---\n# Review PR v2\n";
-		const sourceV1 = writeSkill(root, skillId, { "SKILL.md": skillV1 });
-		const sourceV2 = writeSkill(root, skillId, { "SKILL.md": skillV2 }, "-v2");
-		const target = join(home, ".hermes", "skills", skillId);
-
-		activateHostedHermesSkill(sourceV1, target);
-		writeFileSync(join(target, "SKILL.md"), "tenant drift\n");
-		activateHostedHermesSkill(sourceV1, target);
-		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(skillV1);
-
-		activateHostedHermesSkill(sourceV2, target);
-		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(skillV2);
+	test("an initial scan refusal never claims later user-created files", () => {
+		const { home, target } = setup();
+		const bundle = prepared(skill(dangerousFiles), github);
+		expect(projection(home, bundle).join("\n")).toContain("Blocked");
+		expect(existsSync(target)).toBe(false);
+		expect(pendingManagedSkillReservations("hosted-manifest")).toHaveLength(0);
+		const local = skill(safeFiles, "user-owned");
+		cpSync(local, target, { recursive: true });
+		expect(() => projection(home, bundle)).toThrow("refusing to replace unmanaged");
+		expect(projection(home)).toEqual([]);
+		expect(managedSkillTargetMatchesSource(local, target)).toBe(true);
 	});
 
-	test("does not modify Hermes hub metadata", () => {
-		root = mkdtempSync(join(tmpdir(), "hosted-hermes-loopback-metadata-"));
-		const home = join(root, "home");
-		const skillId = "review-pr";
-		const skillFiles = {
-			"SKILL.md": "---\nname: review-pr\n---\n# Review PR\n",
-			"references/guide.md": "Pinned guide bytes\n",
-		};
-		const sourceDir = writeSkill(root, skillId, skillFiles);
-		const target = join(home, ".hermes", "skills", skillId);
-
-		activateHostedHermesSkill(sourceDir, target);
-		const lockPath = join(home, ".hermes", "skills", ".hub", "lock.json");
-		mkdirSync(dirname(lockPath), { recursive: true });
-		const externalEntry = {
-			source: "url",
-			identifier: "https://example.test/user-skill/SKILL.md",
-			install_path: "user-skill",
-		};
-		writeFileSync(
-			lockPath,
-			`${JSON.stringify({
-				version: 1,
-				installed: {
-					[skillId]: {
-						source: "url",
-						identifier: `http://127.0.0.1:43123/0${"a".repeat(64)}/SKILL.md`,
-						install_path: skillId,
-					},
-					"user-skill": externalEntry,
-				},
-			})}\n`,
-		);
-		const lockBefore = readFileSync(lockPath);
-		activateHostedHermesSkill(sourceDir, target);
-		expect(readFileSync(lockPath)).toEqual(lockBefore);
-		expect(JSON.parse(readFileSync(lockPath, "utf8")).installed).toEqual({
-			[skillId]: {
-				source: "url",
-				identifier: `http://127.0.0.1:43123/0${"a".repeat(64)}/SKILL.md`,
-				install_path: skillId,
+	test("reconciles a new commit with identical bytes and recreates a missing native record", () => {
+		const { home, target, lock } = setup();
+		const sourceDir = skill();
+		const first = prepared(sourceDir, github);
+		expect(projection(home, first)).toEqual([]);
+		const next = prepared(sourceDir, { ...github, commit: "c".repeat(40) });
+		expect(projection(home, next)).toEqual([]);
+		expect(readHostedHermesSkillRecords(home).review).toMatchObject({
+			metadata: {
+				clawdi_source_identity:
+					"sourceIdentity" in next.identity ? next.identity.sourceIdentity : "",
 			},
-			"user-skill": externalEntry,
 		});
+		rmSync(lock);
+		expect(hostedHermesSkillSourceMatches(home, target, github)).toBe(false);
+		expect(projection(home, next)).toEqual([]);
+		expect(readHostedHermesSkillRecords(home).review).toBeDefined();
+		// Steady-state verification must not require a Python process.
+		rmSync(join(home, ".hermes", "hermes-agent", "venv"));
+		expect(projection(home, next)).toEqual([]);
+	});
+
+	test("a first native install failure keeps the target fenced until retry", () => {
+		const { home, target, lock } = setup();
+		const sourceDir = skill();
+		activateHostedHermesSkill({
+			home,
+			sourceDir,
+			targetDir: join(dirname(target), "sibling"),
+			source: github,
+		});
+		const bundle = prepared(sourceDir, github);
+		chmodSync(lock, 0o444);
+		try {
+			expect(projection(home, bundle).join("\n")).toContain("PermissionError");
+		} finally {
+			chmodSync(lock, 0o644);
+		}
+		expect(existsSync(target)).toBe(true);
+		expect(readHostedHermesSkillRecords(home).review).toBeUndefined();
+		expect(shouldIgnoreUserSkill(target)).toBe(true);
+		expect(projection(home, bundle)).toEqual([]);
+		expect(pendingManagedSkillReservations("hosted-manifest")).toHaveLength(0);
+	});
+
+	test("broken Hub JSON fails before mutation and keeps unrelated native records", () => {
+		const { home, target, lock } = setup();
+		const sourceDir = skill();
+		activateHostedHermesSkill({ home, sourceDir, targetDir: target, source: github });
+		const sibling = join(dirname(target), "sibling");
+		activateHostedHermesSkill({ home, sourceDir, targetDir: sibling, source: github });
+		const siblingRecord = readHostedHermesSkillRecords(home).sibling;
+		const intact = readFileSync(lock);
+		const torn = intact.subarray(0, intact.length - 5);
+		writeFileSync(lock, torn);
+		expect(() =>
+			activateHostedHermesSkill({
+				home,
+				sourceDir: skill({ "SKILL.md": "# Updated\n" }, "updated"),
+				targetDir: target,
+				source: github,
+			}),
+		).toThrow("lock is unreadable or invalid");
+		expect(() =>
+			removeHostedHermesSkill(home, target, [hostedSkillArchiveSourceIdentity("review", github)]),
+		).toThrow("lock is unreadable or invalid");
+		expect(readFileSync(lock)).toEqual(torn);
+		expect(managedSkillTargetMatchesSource(sourceDir, target)).toBe(true);
+		// Repair the deliberately corrupted fixture, then retry through native install.
+		writeFileSync(lock, intact);
+		activateHostedHermesSkill({ home, sourceDir, targetDir: target, source: github });
+		expect(readHostedHermesSkillRecords(home).sibling).toEqual(siblingRecord);
+	});
+
+	test.each(["retry", "absent", "replacement"])(
+		"intact-lock write failure converges when desired becomes %s",
+		(desired) => {
+			const { home, target, lock } = setup();
+			const first = prepared(skill(), github);
+			expect(projection(home, first)).toEqual([]);
+			const before = readFileSync(lock);
+			const next = prepared(skill({ "SKILL.md": "# Review updated\n" }, "updated"), project);
+			chmodSync(lock, 0o444);
+			try {
+				expect(projection(home, next).join("\n")).toContain("PermissionError");
+			} finally {
+				chmodSync(lock, 0o644);
+			}
+			expect(readFileSync(lock)).toEqual(before);
+			expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review updated\n");
+			expect(pendingManagedSkillReservations("hosted-manifest")).toHaveLength(1);
+			const final = desired === "absent" ? undefined : desired === "replacement" ? first : next;
+			expect(projection(home, final)).toEqual([]);
+			expect(pendingManagedSkillReservations("hosted-manifest")).toHaveLength(0);
+			expect(existsSync(target)).toBe(desired !== "absent");
+			if (final && final.identity.source.type !== "bundled")
+				expect(hostedHermesSkillSourceMatches(home, target, final.identity.source)).toBe(true);
+		},
+	);
+
+	test("migrates owned local files through scanning, and removes dangerous legacy files with native local delete", () => {
+		const { home, target } = setup();
+		const sourceDir = skill();
+		cpSync(sourceDir, target, { recursive: true });
+		reserveManagedSkill({
+			targetDir: target,
+			id: "review",
+			manager: "hosted-manifest",
+			sourceIdentity: hostedSkillArchiveSourceIdentity("review", github),
+		});
+		expect(projection(home, prepared(sourceDir, github))).toEqual([]);
+		expect(readHostedHermesSkillRecords(home).review).toBeDefined();
+		expect(projection(home)).toEqual([]);
+		cpSync(skill(dangerousFiles, "legacy"), target, { recursive: true });
+		reserveManagedSkill({
+			targetDir: target,
+			id: "review",
+			manager: "hosted-manifest",
+			sourceIdentity: hostedSkillArchiveSourceIdentity("review", github),
+		});
+		expect(projection(home)).toEqual([]);
+		expect(existsSync(target)).toBe(false);
+		expect(readHostedHermesSkillRecords(home).review).toBeUndefined();
+	});
+
+	test("preserves a native replacement and honors pinned local deletion refusal", () => {
+		const { home, target } = setup();
+		expect(projection(home, prepared(skill(), github))).toEqual([]);
+		activateHostedHermesSkill({
+			home,
+			sourceDir: skill({ "SKILL.md": "# Native replacement\n" }, "replacement"),
+			targetDir: target,
+			source: project,
+			ownedSourceIdentities: [hostedSkillArchiveSourceIdentity("review", github)],
+		});
+		expect(projection(home).join("\n")).toContain("replaced by another source");
+		expect(projection(home, prepared(skill(), github)).join("\n")).toContain(
+			"replaced by another source",
+		);
+		expect(existsSync(target)).toBe(true);
+		removeHostedHermesSkill(home, target, [hostedSkillArchiveSourceIdentity("review", project)]);
+		cpSync(skill(dangerousFiles, "pinned"), target, { recursive: true });
+		nativePython(home, 'from tools.skill_usage import set_pinned; set_pinned("review", True)');
+		expect(projection(home).join("\n")).toContain("pinned");
+		expect(existsSync(target)).toBe(true);
+		expect(existsSync(managedSkillReservationLedgerPath())).toBe(true);
 	});
 });

@@ -25,6 +25,7 @@ import {
 	resolveHostedOpenClawWorkspace,
 } from "./hosted-openclaw-context";
 import { assertHostedRuntimeContract } from "./hosted-runtime-contract";
+import type { HostedSkillEvidence } from "./hosted-skill-evidence";
 import { reconcileManagedBaileysCompatibility } from "./managed-baileys-compat";
 import { managedHermesWhatsAppAuthDir } from "./managed-channel-reconciliation";
 import {
@@ -145,6 +146,7 @@ interface RuntimeConvergenceContext {
 }
 
 interface RuntimeConvergenceState {
+	skillEvidence: HostedSkillEvidence[];
 	nativeCredentialChangedRuntimes: Set<string>;
 	nativeCredentialProviderIds: Record<string, string[]>;
 	agentPluginTransaction: HostedAgentPluginTransaction | null;
@@ -273,6 +275,7 @@ function initializeRuntimeConvergence(
 	const preparedHostedSourcedSkills = opts.preparedHostedSourcedSkills ?? new Map();
 	const sourcedSkillsPrepared = opts.resourcePreparationFailures?.sourcedSkills === undefined;
 	const state: RuntimeConvergenceState = {
+		skillEvidence: [],
 		nativeCredentialChangedRuntimes: new Set(),
 		nativeCredentialProviderIds: {},
 		agentPluginTransaction: null,
@@ -772,21 +775,27 @@ function applyRuntimeResourceProjections(
 		);
 	}
 	if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
-	if (sourcedSkillsPrepared) {
-		try {
-			state.resourceProjectionErrors.push(
-				...reconcileHostedSkillProjection({
-					manifest,
-					observations: state.observations,
-					home: projectionHome,
-					managedResourceRoot: paths.managedResourceRoot,
-					openClawWorkspaceRoot: plan.openClawWorkspaceRoot,
-					preparedSourcedSkills: preparedHostedSourcedSkills,
-				}),
-			);
-		} catch (error) {
-			state.resourceProjectionErrors.push(error instanceof Error ? error.message : String(error));
-		}
+	try {
+		state.resourceProjectionErrors.push(
+			...reconcileHostedSkillProjection({
+				manifest,
+				observations: state.observations,
+				home: projectionHome,
+				managedResourceRoot: paths.managedResourceRoot,
+				openClawWorkspaceRoot: plan.openClawWorkspaceRoot,
+				preparedSourcedSkills: preparedHostedSourcedSkills,
+				preparationFailed: !sourcedSkillsPrepared,
+				previousEvidence:
+					context.appliedState?.instanceId === manifest.instanceId
+						? context.appliedState.skillEvidence
+						: undefined,
+				onEvidence: (evidence) => {
+					state.skillEvidence = evidence;
+				},
+			}),
+		);
+	} catch (error) {
+		state.resourceProjectionErrors.push(error instanceof Error ? error.message : String(error));
 	}
 	try {
 		applyHostedMcpProjections(manifest, paths, state.observations, workspaceRoot, hermesConfig);
@@ -1161,6 +1170,7 @@ function commitRuntimeConvergence(
 	opts.commitAuthority?.(convergence, {
 		activated: state.activated,
 		officialServiceCommandRevisions: state.officialServiceCommandRevisions,
+		skillEvidence: state.skillEvidence,
 	});
 	try {
 		gcFileBrowserCompanionCandidates(manifest, paths);

@@ -17,7 +17,10 @@ import { MANAGED_SKILL_TREE_LIMITS, managedSkillDirectoryDigest } from "./hosted
 import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
 import { withRuntimeUserFileAccess } from "./runtime-user-command";
 
-export class ManagedSkillResourceError extends Error {}
+export class ManagedSkillResourceError extends Error {
+	/** False only when the failing attempt definitely did not mutate the target. */
+	targetMutationStarted?: boolean;
+}
 
 export type ManagedSkillTree = ReadonlyMap<string, Buffer>;
 
@@ -85,6 +88,7 @@ export function withPreparedHostedSkill<T>(
 	operation: (sourceDir: string) => T,
 ): T {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-managed-skill-"));
+	let operationStarted = false;
 	try {
 		const sourceDir = join(root, skill.id);
 		if ("sourceDir" in skill) {
@@ -128,7 +132,13 @@ export function withPreparedHostedSkill<T>(
 			} else chmodSync(path, node.mode & 0o111 ? 0o755 : 0o644);
 		};
 		makeReadable(root);
+		operationStarted = true;
 		return operation(sourceDir);
+	} catch (error) {
+		if (!operationStarted && error instanceof ManagedSkillResourceError) {
+			error.targetMutationStarted = false;
+		}
+		throw error;
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

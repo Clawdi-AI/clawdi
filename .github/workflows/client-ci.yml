@@ -180,6 +180,12 @@ jobs:
             exit 2
           fi
           bunx turbo typecheck build "${filters[@]}" --output-logs=errors-only
+      - name: Set up native Agent test dependencies
+        if: needs.changes.outputs.cli == 'true'
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: "0.12.5"
+          python-version: "3.12"
       # Smoke tests exercise the compiled bin wrapper, built above by Turbo.
       - name: Build native CLI
         if: needs.changes.outputs.cli == 'true'
