@@ -1513,6 +1513,7 @@ function hostedOAuthRuntimeLoad(input: {
 	accessToken: string;
 	refreshToken: string;
 }): RuntimeManifestLoad {
+	seedMitmproxyCache();
 	const providerId = "openai-codex";
 	const secretRef = `secret://provider.${providerId}.oauthProfile`;
 	const runtime =
@@ -5159,6 +5160,7 @@ cp '${sdkSource}' '${sdkTarget}'
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 
+		seedMitmproxyCache();
 		const fixture = hostedCliManifestResponse(home, TEST_RUNNING_CLI_SPEC);
 		fixture.manifest.runtimes = {
 			openclaw: hostedOpenClawRuntime({
