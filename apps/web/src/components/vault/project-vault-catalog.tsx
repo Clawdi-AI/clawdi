@@ -5,7 +5,6 @@ import { parseAsString, useQueryState } from "nuqs";
 import { useRef } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import type { AgentProjectBinding } from "@/components/dashboard/agent-project-scope";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
@@ -22,7 +21,6 @@ import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
-	agentResourceScope,
 	LIBRARY_RESOURCE_SCOPE,
 	type ResourceNavigationScope,
 	resourceCollectionTarget,
@@ -40,7 +38,6 @@ export function ProjectVaultCatalog({
 	error,
 	onRetry,
 	scope,
-	agentBindings,
 	onChanged,
 }: {
 	project: Project;
@@ -50,7 +47,6 @@ export function ProjectVaultCatalog({
 	error: unknown;
 	onRetry: () => void;
 	scope: ResourceNavigationScope;
-	agentBindings: readonly AgentProjectBinding[] | undefined;
 	onChanged: () => Promise<void>;
 }) {
 	const api = useApi();
@@ -58,7 +54,12 @@ export function ProjectVaultCatalog({
 	const projectNames = new Map(
 		(projects.data ?? []).map((row) => [row.id, displayProjectName(row)]),
 	);
-	projectNames.set(project.id, displayProjectName(project));
+	projectNames.set(
+		project.id,
+		scope.kind === "agent" && project.kind === "environment"
+			? "Workspace"
+			: displayProjectName(project),
+	);
 	const [search, setSearch] = useQueryState(
 		"q",
 		parseAsString.withDefault("").withOptions({ clearOnDefault: true, history: "replace" }),
@@ -72,7 +73,7 @@ export function ProjectVaultCatalog({
 	else returnSearch.delete("q");
 	const returnHref = `${location.pathname}${returnSearch.size ? `?${returnSearch}` : ""}`;
 	const locked = useRef(false);
-	const canAttach = project.is_owner !== false;
+	const canAttach = scope.kind !== "agent" && project.is_owner !== false;
 	const catalog = useVaultCatalog({ enabled: canAttach });
 	const context = project.kind === "environment" ? "Workspace" : "Project";
 	const attachedIds = new Set(attachedVaults?.map((vault) => vault.id));
@@ -99,7 +100,7 @@ export function ProjectVaultCatalog({
 		);
 	const groups = attachmentsKnown
 		? [
-				{ label: "Linked", rows: rows.filter((vault) => attachedIds.has(vault.id)) },
+				{ label: `In this ${context}`, rows: rows.filter((vault) => attachedIds.has(vault.id)) },
 				{ label: "Available", rows: rows.filter((vault) => !attachedIds.has(vault.id)) },
 			]
 		: [{ label: null, rows }];
@@ -131,10 +132,10 @@ export function ProjectVaultCatalog({
 		},
 		onSuccess: async (_, { attached }) => {
 			await onChanged();
-			toast.success(`Vault ${attached ? "unlinked from" : "linked to"} ${context}`);
+			toast.success(`Vault ${attached ? "removed from" : "added to"} ${context}`);
 		},
 		onError: (error) =>
-			toast.error("Couldn't update Vault link", { description: normalizeApiError(error) }),
+			toast.error("Couldn't update Project Vaults", { description: normalizeApiError(error) }),
 		onSettled: () => {
 			locked.current = false;
 		},
@@ -154,8 +155,8 @@ export function ProjectVaultCatalog({
 			/>
 			{canAttach ? (
 				<p className="text-sm text-muted-foreground">
-					Vaults linked to this {context} and the rest of your Library. Unlinking preserves keys and
-					other links.
+					Add Vaults from your Library to this {context}. Removing a Vault preserves its keys and
+					other Projects.
 				</p>
 			) : null}
 			{error ? (
@@ -178,7 +179,11 @@ export function ProjectVaultCatalog({
 						<section
 							key={group.label ?? "catalog"}
 							className="space-y-3"
-							aria-label={group.label ? `${group.label} ${context} Vaults` : undefined}
+							aria-label={
+								group.label
+									? `${group.label}${group.label === "Available" ? ` ${context}` : ""} Vaults`
+									: undefined
+							}
 						>
 							{group.label ? (
 								<SectionLabel count={group.rows.length}>{group.label}</SectionLabel>
@@ -186,14 +191,6 @@ export function ProjectVaultCatalog({
 							<div className={HERO_GRID_CLASS}>
 								{group.rows.map((vault) => {
 									const attached = attachmentsKnown && attachedIds.has(vault.id);
-									const inherited =
-										scope.kind === "agent" && !attached
-											? agentBindings?.find(
-													(binding) =>
-														binding.project_id !== project.id &&
-														vault.project_ids.includes(binding.project_id),
-												)
-											: undefined;
 									const pending =
 										updateAttachment.isPending && updateAttachment.variables.vault.id === vault.id;
 									const actionsDisabled =
@@ -206,11 +203,7 @@ export function ProjectVaultCatalog({
 										locked.current = true;
 										updateAttachment.mutate({ vault, attached });
 									};
-									const detailScope = attached
-										? scope
-										: inherited && scope.kind === "agent"
-											? agentResourceScope(scope.agentId, inherited.project_id)
-											: LIBRARY_RESOURCE_SCOPE;
+									const detailScope = attached ? scope : LIBRARY_RESOURCE_SCOPE;
 									return (
 										<div key={vault.id} data-testid="project-vault-card" className="min-w-0">
 											<VaultCard
@@ -220,8 +213,8 @@ export function ProjectVaultCatalog({
 													projects.error,
 													projects.data,
 												)}
-												visibleProjectIds={null}
-												projectId={attached ? project.id : inherited?.project_id}
+												visibleProjectIds={scope.kind === "agent" ? new Set([project.id]) : null}
+												projectId={attached ? project.id : undefined}
 												navigationScope={detailScope}
 												returnHref={
 													returnHref !== resourceCollectionTarget(detailScope, "vaults").href
@@ -230,23 +223,6 @@ export function ProjectVaultCatalog({
 												}
 												shared={vault.is_owner === false}
 												searchQuery={search.trim() || undefined}
-												status={
-													attachmentsKnown
-														? attached
-															? canAttach && vault.is_owner !== false
-																? undefined
-																: `Linked to ${context}`
-															: inherited
-																? inherited.binding_type === "primary"
-																	? "Via Workspace"
-																	: "Via linked Project"
-																: scope.kind === "agent" && !agentBindings
-																	? "Agent access unavailable"
-																	: undefined
-														: isLoading
-															? "Loading links…"
-															: "Link status unavailable"
-												}
 												actions={
 													canAttach && vault.is_owner !== false ? (
 														<Button
@@ -256,7 +232,7 @@ export function ProjectVaultCatalog({
 															aria-busy={pending}
 															aria-label={
 																attachmentsKnown
-																	? `${attached ? "Unlink" : "Link"} ${vault.name} ${attached ? "from" : "to"} ${context}`
+																	? `${attached ? "Remove" : "Add"} ${vault.name} ${attached ? "from" : "to"} ${context}`
 																	: `Link status unavailable for ${vault.name}`
 															}
 															onClick={toggleAttachment}
@@ -264,12 +240,12 @@ export function ProjectVaultCatalog({
 															{pending || isLoading ? <Spinner /> : null}
 															{pending
 																? updateAttachment.variables.attached
-																	? "Unlinking…"
-																	: "Linking…"
+																	? "Removing…"
+																	: "Adding…"
 																: attachmentsKnown
 																	? attached
-																		? "Unlink"
-																		: "Link"
+																		? "Remove"
+																		: "Add"
 																	: isLoading
 																		? "Loading…"
 																		: "Unavailable"}

@@ -2,18 +2,7 @@
 
 import { buildShareAgentHandoffPrompt } from "@clawdi/shared/sharing";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-	AlertCircle,
-	CheckCircle2,
-	Copy,
-	Link2,
-	MailPlus,
-	Plus,
-	Share2,
-	Trash2,
-	UserMinus,
-	Users,
-} from "lucide-react";
+import { AlertCircle, CheckCircle2, Copy, Link2, Share2, Trash2, UserMinus } from "lucide-react";
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { isCustomProject } from "@/components/projects/project-metadata";
@@ -40,7 +29,6 @@ import {
 	DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
 import { ApiError, unwrap, useApi } from "@/lib/api";
@@ -48,23 +36,6 @@ import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
-
-/**
- * Owner-side project-sharing surface.
- *
- * One stacked surface (no tabs): invite by email, current people, and the
- * share link — in reading order, with a single line explaining what a
- * viewer can do.
- *
- * Backend endpoints:
- *   GET    /api/projects/{project_id}/share-links
- *   POST   /api/projects/{project_id}/share-links
- *   DELETE /api/projects/{project_id}/share-links/{link_id}
- *   GET    /api/projects/{project_id}/invitations
- *   POST   /api/projects/{project_id}/invitations
- *   DELETE /api/projects/{project_id}/invitations/{invitation_id}
- *
- */
 
 type ShareLinkRow = components["schemas"]["ShareLinkResponse"];
 type ShareLinkCreated = components["schemas"]["ShareLinkCreated"];
@@ -108,50 +79,25 @@ export function ShareProjectDialog({
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			{trigger ? <DialogTrigger render={trigger} /> : null}
-			{/* `sm:` prefix is load-bearing: the primitive's base classes include
-			    `sm:max-w-lg`, so an unprefixed `max-w-2xl` loses at sm+ and the
-			    content gets clipped at 512px wide. */}
-			<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
+			<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
 				<DialogHeader>
-					<DialogTitle>
+					<DialogTitle className="pr-8 leading-snug break-words">
 						{isShareableProject ? `Share ${projectName}` : "Only Projects you create can be shared"}
 					</DialogTitle>
 					<DialogDescription>
 						{isShareableProject
-							? "Share this Project without sharing ownership. People join as Viewers with read access; agent use is a separate choice they make later."
+							? "People can view this Project and let their Agents use its keys. Secret values stay hidden in the dashboard. Only you can edit."
 							: "Sharing is available for Projects you create. An Agent's private Workspace cannot be shared."}
 					</DialogDescription>
 				</DialogHeader>
 				{isShareableProject ? (
-					<div className="space-y-5">
-						{/* One surface, no tabs (journey J4): invite people, see who's
-						    in, manage the link — top to bottom. */}
-						<section className="space-y-3">
-							<h3 className="flex items-center gap-1.5 text-sm font-semibold">
-								<MailPlus className="size-3.5 text-muted-foreground" />
-								Invite by email
-							</h3>
-							<InvitationsPanel projectId={projectId} />
-						</section>
-						<section className="space-y-3 border-t pt-4">
-							<h3 className="flex items-center gap-1.5 text-sm font-semibold">
-								<Users className="size-3.5 text-muted-foreground" />
-								People
-							</h3>
-							<MembersPanel projectId={projectId} />
-						</section>
-						<section className="space-y-3 border-t pt-4">
-							<h3 className="flex items-center gap-1.5 text-sm font-semibold">
-								<Link2 className="size-3.5 text-muted-foreground" />
-								Share link
-							</h3>
+					<div key={projectId} className="space-y-4">
+						<InvitationsPanel projectId={projectId} />
+						<MembersPanel projectId={projectId} />
+						<section className="space-y-3 border-t pt-4" aria-label="Invite links">
 							<ShareLinksPanel projectId={projectId} open={open} />
 						</section>
-						<p className="border-t pt-3 text-xs text-muted-foreground">
-							Everyone joins as a viewer: they read skills and key names here, and their agents can
-							use key values when the Project is linked. Key values stay protected, and only you can
-							edit anything.
-						</p>
+						<StopSharingPanel projectId={projectId} />
 					</div>
 				) : (
 					<Alert>
@@ -170,7 +116,6 @@ export function ShareProjectDialog({
 function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean }) {
 	const api = useApi();
 	const qc = useQueryClient();
-	const [label, setLabel] = useState("");
 	// The just-created link's full URL is shown once because the server
 	// stores only the prefix going forward.
 	const [freshLink, setFreshLink] = useState<ShareLinkCreated | null>(null);
@@ -197,16 +142,14 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 			),
 	});
 
-	const create = useSensitiveAction(async (nextLabel: string): Promise<ShareLinkCreated> => {
+	const create = useSensitiveAction(async (): Promise<ShareLinkCreated> => {
 		try {
-			const trimmedLabel = nextLabel.trim();
 			const body = unwrap(
 				await api.POST("/v1/projects/{project_id}/share-links", {
 					params: { path: { project_id: projectId } },
-					body: { label: trimmedLabel.length > 0 ? trimmedLabel : null },
+					body: {},
 				}),
 			);
-			setLabel("");
 			setFreshLink(body);
 			qc.invalidateQueries({ queryKey: ["share-links", projectId] });
 			// Best-effort auto-copy. Browsers without the async
@@ -215,9 +158,7 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 			if (typeof navigator !== "undefined" && navigator.clipboard) {
 				navigator.clipboard.writeText(body.url).catch(() => {});
 			}
-			toast.success("Share link created", {
-				description: "Copy it before closing this dialog. You can turn it off later.",
-			});
+			toast.success("Invite link created");
 			return body;
 		} catch (e) {
 			toast.error(
@@ -241,7 +182,7 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 			revokeSucceededRef.current = true;
 			revokeExit.beginClose();
 			setRevokeOpen(false);
-			toast.success("Share link turned off");
+			toast.success("Invite link turned off");
 		},
 		onError: (e) => {
 			toast.error("Couldn't turn off link", {
@@ -250,69 +191,42 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 		},
 	});
 
-	const visibleLinks = links.data ?? [];
+	const activeLinks = (links.data ?? []).filter(
+		(link) => link.revoked_at === null && !isExpiredLink(link),
+	);
+	const inactiveLinks = (links.data ?? []).filter(
+		(link) => link.revoked_at !== null || isExpiredLink(link),
+	);
 
 	return (
 		<div className="space-y-3">
-			<div className="space-y-1">
-				<p className="text-xs text-muted-foreground">
-					Create a link when you want to send access yourself, or when the person may not have a
-					Clawdi account yet.
-				</p>
+			<div className="flex flex-wrap items-center justify-between gap-2">
+				<h3 className="text-sm font-semibold">Invite link</h3>
+				<Button
+					variant="outline"
+					size="sm"
+					disabled={create.isPending}
+					onClick={() => {
+						void create.execute().catch(() => undefined);
+					}}
+				>
+					<Link2 className="mr-1.5 size-4" />
+					{create.isPending ? "Creating…" : "Create invite link"}
+				</Button>
 			</div>
-			<form
-				className="space-y-2 rounded-lg border p-3"
-				onSubmit={(e) => {
-					e.preventDefault();
-					void create.execute(label).catch(() => undefined);
-				}}
-			>
-				<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-					<Input
-						name="share-link-label"
-						value={label}
-						onChange={(e) => setLabel(e.target.value)}
-						maxLength={200}
-						placeholder="Bob onboarding…"
-						aria-label="Share link label"
-						autoComplete="off"
-						className="min-w-0 flex-1"
-						spellCheck={false}
-					/>
-					<Button type="submit" size="sm" disabled={create.isPending}>
-						<Plus className="mr-1.5 size-3.5" />
-						{create.isPending ? "Creating…" : "Create link"}
-					</Button>
-				</div>
-				<p className="text-xs text-muted-foreground">
-					The full URL is shown once after creation. Labels stay visible so you can recognize links
-					before turning them off.
-				</p>
-			</form>
-
-			<div className="flex items-center justify-between gap-2">
-				<p className="text-xs text-muted-foreground">
-					Anyone with an active link can preview this Project and join as a read-only Viewer. Turn
-					off a link anytime to stop new accepts.
-				</p>
-				<Badge variant="secondary" className="text-xs">
-					{visibleLinks.filter((link) => link.revoked_at === null).length} Active
-				</Badge>
-			</div>
-
-			{freshLink ? <FreshLinkBanner link={freshLink} onDismiss={() => setFreshLink(null)} /> : null}
-
-			<Separator />
-
+			<p className="text-sm text-muted-foreground">
+				Anyone with the link can preview and join this Project.
+			</p>
+			{freshLink && !inactiveLinks.some((link) => link.id === freshLink.id) ? (
+				<FreshLinkBanner link={freshLink} onDismiss={() => setFreshLink(null)} />
+			) : null}
 			{links.isLoading ? (
-				<Skeleton className="h-16 w-full" />
+				<Skeleton className="h-10 w-full" />
 			) : shouldBlockQueryError(links.error, links.data) ? (
 				<EmptyHint variant="destructive" message={normalizeApiError(links.error)} />
-			) : visibleLinks.length === 0 ? (
-				<EmptyHint message="No share links yet. Create one when you need a lightweight invite." />
-			) : (
-				<ul className="space-y-2">
-					{visibleLinks.map((link) => (
+			) : activeLinks.length > 0 ? (
+				<ul className="space-y-1">
+					{activeLinks.map((link) => (
 						<LinkRow
 							key={link.id}
 							link={link}
@@ -325,7 +239,19 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 						/>
 					))}
 				</ul>
-			)}
+			) : null}
+			{inactiveLinks.length > 0 ? (
+				<details className="text-sm">
+					<summary className="cursor-pointer text-muted-foreground">
+						Inactive links ({inactiveLinks.length})
+					</summary>
+					<ul className="mt-2 space-y-1">
+						{inactiveLinks.map((link) => (
+							<LinkRow key={link.id} link={link} revoking={false} />
+						))}
+					</ul>
+				</details>
+			) : null}
 			<AlertDialog
 				open={revokeOpen}
 				onOpenChange={(nextOpen) => {
@@ -347,10 +273,10 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Turn off this share link?</AlertDialogTitle>
+						<AlertDialogTitle>Turn off this invite link?</AlertDialogTitle>
 						<AlertDialogDescription>
-							New Viewers will no longer be able to join from this link. Existing Viewers retain
-							access until removed from People.
+							People will no longer be able to join from this link. Existing members retain access
+							until removed from People.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -364,7 +290,7 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 							disabled={!renderedRevokeTarget || revoke.isPending}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
-							{revoke.isPending ? "Turning off…" : "Turn Off Link"}
+							{revoke.isPending ? "Turning off…" : "Turn off link"}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -392,25 +318,13 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 			<CheckCircle2 />
 			<AlertTitle>Copy this link now</AlertTitle>
 			<AlertDescription>
-				<p className="text-xs text-muted-foreground">
-					Send this URL to the person you want to invite. They sign in or create an account, accept
-					as a read-only Viewer, then open the Project from their dashboard.
-				</p>
-				<p className="mt-1 text-xs text-muted-foreground">
-					This is the only time the full URL is visible here. After this, only the prefix{" "}
-					<span className="font-mono">{link.prefix}</span> remains available.
-				</p>
-				{link.label ? (
-					<p className="mt-1 text-xs text-muted-foreground">
-						Label: <span className="font-medium text-foreground">{link.label}</span>
-					</p>
-				) : null}
+				<p>Save it before closing this dialog.</p>
 				<div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
 					<Input
 						readOnly
 						value={link.url}
 						name="fresh-share-link-url"
-						aria-label="New share link URL"
+						aria-label="New invite link URL"
 						autoComplete="off"
 						spellCheck={false}
 						className="min-w-0 font-mono text-xs"
@@ -418,9 +332,9 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 					<Button
 						variant="outline"
 						size="sm"
-						onClick={() => copyText(link.url, "Link Copied")}
+						onClick={() => copyText(link.url, "Link copied")}
 						className="sm:size-9 sm:px-0"
-						aria-label="Copy Share Link"
+						aria-label="Copy invite link"
 					>
 						<Copy className="size-3.5" />
 						<span className="sm:sr-only">Copy</span>
@@ -429,28 +343,26 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 						Done
 					</Button>
 				</div>
-				<div className="mt-2 rounded-md border bg-background/60 p-2">
-					<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-						<div className="min-w-0">
-							<div className="text-xs font-medium">Agent Handoff Prompt</div>
-							<div className="truncate font-mono text-2xs text-muted-foreground">
-								Viewer access · add to an agent later · {link.prefix}
-							</div>
-						</div>
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => copyText(agentPrompt, "Agent Prompt Copied")}
-							aria-label={`Copy agent handoff prompt for share link ${link.prefix}`}
-						>
-							<Copy className="mr-1.5 size-3.5" />
-							Copy Prompt
-						</Button>
-					</div>
-				</div>
+				<details className="mt-2 text-sm">
+					<summary className="cursor-pointer">Send to an Agent</summary>
+					<Button
+						variant="ghost"
+						size="sm"
+						className="mt-2"
+						onClick={() => copyText(agentPrompt, "Agent prompt copied")}
+						aria-label={`Copy agent handoff prompt for invite link ${link.prefix}`}
+					>
+						<Copy className="mr-1.5 size-3.5" />
+						Copy prompt
+					</Button>
+				</details>
 			</AlertDescription>
 		</Alert>
 	);
+}
+
+function isExpiredLink(link: ShareLinkRow) {
+	return link.expires_at !== null && new Date(link.expires_at).getTime() <= Date.now();
 }
 
 function LinkRow({
@@ -459,26 +371,20 @@ function LinkRow({
 	revoking,
 }: {
 	link: ShareLinkRow;
-	onRevoke: () => void;
+	onRevoke?: () => void;
 	revoking: boolean;
 }) {
 	const revoked = link.revoked_at !== null;
+	const expired = isExpiredLink(link);
 	return (
-		<li className={`rounded-lg border p-3 ${revoked ? "bg-muted/30 text-muted-foreground" : ""}`}>
+		<li className={`py-2 ${revoked || expired ? "text-muted-foreground" : ""}`}>
 			<div className="flex items-center justify-between gap-2">
 				<div className="min-w-0 flex-1">
 					<div className="flex items-center gap-2 text-sm">
-						<Badge variant="outline" className="font-mono">
-							{link.prefix}…
-						</Badge>
-						{link.label ? (
-							<span className="truncate font-medium">{link.label}</span>
-						) : (
-							<span className="text-xs italic text-muted-foreground">No Label</span>
-						)}
-						{revoked ? (
+						<span className="truncate font-medium">{link.label ?? "Invite link"}</span>
+						{revoked || expired ? (
 							<Badge variant="secondary" className="text-xs">
-								Off
+								{revoked ? "Off" : "Expired"}
 							</Badge>
 						) : null}
 					</div>
@@ -494,27 +400,15 @@ function LinkRow({
 						<span>
 							{link.redeem_count} accept{link.redeem_count === 1 ? "" : "s"}
 						</span>
-						{link.last_redeemed_at ? (
-							<>
-								<span aria-hidden>·</span>
-								<span>
-									Last used{" "}
-									{new Date(link.last_redeemed_at).toLocaleDateString(undefined, {
-										month: "short",
-										day: "numeric",
-									})}
-								</span>
-							</>
-						) : null}
 					</div>
 				</div>
-				{!revoked ? (
+				{!revoked && !expired ? (
 					<Button
 						variant="ghost"
 						size="icon"
 						disabled={revoking}
 						title="Turn off link"
-						aria-label={`Turn off share link ${link.prefix}`}
+						aria-label={`Turn off invite link ${link.prefix}`}
 						onClick={onRevoke}
 					>
 						<Trash2 className="size-3.5 text-destructive" />
@@ -561,8 +455,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			qc.invalidateQueries({ queryKey: ["invitations", projectId] });
 			setEmail("");
 			toast.success("Invitation sent", {
-				description:
-					"They will see it under the top-right Notification Center bell after signing in with that email.",
+				description: "They can accept in Clawdi notifications.",
 			});
 		},
 		onError: (e) => {
@@ -584,7 +477,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			cancelSucceededRef.current = true;
 			cancelExit.beginClose();
 			setCancelOpen(false);
-			toast.success("Invitation cancelled");
+			toast.success("Invitation canceled");
 		},
 		onError: (e) => {
 			toast.error("Couldn't cancel invitation", {
@@ -593,28 +486,22 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 		},
 	});
 
-	const looksLikeEmail = /^\S+@\S+\.\S+$/.test(email);
+	const looksLikeEmail = /^\S+@\S+\.\S+$/.test(email.trim());
 
 	return (
 		<div className="space-y-3">
-			<div className="space-y-1">
-				<p className="text-xs text-muted-foreground">
-					Use email when the person already signs in with this address. If they may be new to
-					Clawdi, create a share link instead.
-				</p>
-			</div>
 			<form
 				onSubmit={(e) => {
 					e.preventDefault();
 					if (!looksLikeEmail) return;
-					invite.mutate(email);
+					invite.mutate(email.trim());
 				}}
-				className="flex flex-col gap-2 sm:flex-row"
+				className="flex gap-2"
 			>
 				<Input
 					type="email"
 					name="project-invite-email"
-					placeholder="email@example.com…"
+					placeholder="Enter email address"
 					value={email}
 					onChange={(e) => setEmail(e.target.value)}
 					autoComplete="email"
@@ -630,12 +517,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 					{invite.isPending ? "Sending…" : "Invite"}
 				</Button>
 			</form>
-			<p className="text-xs text-muted-foreground">
-				Invitees join as Viewers with read access to Skills and key names. Key values stay protected
-				and can be used by their linked Agents. After signing in, they accept from the top-right
-				Notification Center bell.
-			</p>
-			<Separator />
+
 			{invites.isLoading ? (
 				<Skeleton className="h-16 w-full" />
 			) : shouldBlockQueryError(invites.error, invites.data) ? (
@@ -647,27 +529,16 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 							: normalizeApiError(invites.error)
 					}
 				/>
-			) : (invites.data ?? []).length === 0 ? (
-				<EmptyHint message="No pending invites." />
-			) : (
+			) : (invites.data ?? []).length === 0 ? null : (
 				<ul className="space-y-2">
 					{invites.data?.map((inv) => (
-						<li
-							key={inv.id}
-							className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm"
-						>
+						<li key={inv.id} className="flex items-center justify-between gap-2 py-1 text-sm">
 							<div className="min-w-0">
-								<div className="truncate font-medium">{inv.invitee_email}</div>
+								<div className="truncate font-medium" title={inv.invitee_email}>
+									{inv.invitee_email}
+								</div>
 								<div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
 									<Badge variant="outline">Pending</Badge>
-									<span aria-hidden>·</span>
-									<span>
-										Sent{" "}
-										{new Date(inv.created_at).toLocaleDateString(undefined, {
-											month: "short",
-											day: "numeric",
-										})}
-									</span>
 								</div>
 							</div>
 							<Button
@@ -726,7 +597,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 							disabled={!renderedCancelTarget || cancel.isPending}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
-							{cancel.isPending ? "Cancelling…" : "Cancel invitation"}
+							{cancel.isPending ? "Canceling…" : "Cancel invitation"}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -738,7 +609,6 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 function MembersPanel({ projectId }: { projectId: string }) {
 	const api = useApi();
 	const qc = useQueryClient();
-	const [stopAllOpen, setStopAllOpen] = useState(false);
 	const [removeOpen, setRemoveOpen] = useState(false);
 	const [removeTarget, setRemoveTarget] = useState<Member | null>(null);
 	const removeSucceededRef = useRef(false);
@@ -787,100 +657,27 @@ function MembersPanel({ projectId }: { projectId: string }) {
 			}),
 	});
 
-	const unshare = useMutation({
-		mutationFn: async () =>
-			unwrap(
-				await api.POST("/v1/projects/{project_id}/unshare", {
-					params: { path: { project_id: projectId } },
-				}),
-			),
-		onSuccess: (body) => {
-			setStopAllOpen(false);
-			refreshSharingState();
-			toast.success("Sharing stopped", {
-				description: `Turned off ${body.links_revoked} link(s) and removed ${body.members_removed} member(s).`,
-			});
-		},
-		onError: (e) =>
-			toast.error("Couldn't stop sharing", {
-				description: normalizeApiError(e),
-			}),
-	});
-
 	const rows = members.data ?? [];
 
 	return (
 		<div className="space-y-3">
-			<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-				<div className="space-y-1">
-					<p className="text-xs text-muted-foreground sm:max-w-sm">
-						People who accepted access. Viewers can read this Project until you remove them.
-					</p>
-				</div>
-				<AlertDialog
-					open={stopAllOpen}
-					onOpenChange={(nextOpen) => {
-						if (!unshare.isPending) setStopAllOpen(nextOpen);
-					}}
-				>
-					<AlertDialogTrigger
-						render={
-							<Button
-								variant="destructive"
-								size="sm"
-								disabled={unshare.isPending}
-								aria-label="Stop all sharing for this Project"
-							/>
-						}
-					>
-						{unshare.isPending ? "Stopping…" : "Stop all sharing"}
-					</AlertDialogTrigger>
-					<AlertDialogContent>
-						<AlertDialogHeader>
-							<AlertDialogTitle>Stop Sharing This Project?</AlertDialogTitle>
-							<AlertDialogDescription>
-								This turns off active links, cancels pending invitations, and removes accepted
-								Viewers. Project content remains yours.
-							</AlertDialogDescription>
-						</AlertDialogHeader>
-						<AlertDialogFooter>
-							<AlertDialogCancel disabled={unshare.isPending}>Keep Sharing</AlertDialogCancel>
-							<AlertDialogAction
-								onClick={() => unshare.mutate()}
-								disabled={unshare.isPending}
-								className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-							>
-								Stop all sharing
-							</AlertDialogAction>
-						</AlertDialogFooter>
-					</AlertDialogContent>
-				</AlertDialog>
-			</div>
-			<Separator />
+			<h3 className="text-sm font-semibold">People with access</h3>
 			{members.isLoading ? (
 				<Skeleton className="h-16 w-full" />
 			) : shouldBlockQueryError(members.error, members.data) ? (
 				<EmptyHint variant="destructive" message={normalizeApiError(members.error)} />
 			) : rows.length === 0 ? (
-				<EmptyHint message="No accepted Viewers yet. Invite someone or create a link." />
+				<p className="text-sm text-muted-foreground">Only you have access</p>
 			) : (
 				<ul className="space-y-2">
 					{rows.map((member) => {
 						const label = member.user_email ?? member.user_display ?? member.user_id;
 						return (
-							<li
-								key={member.id}
-								className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm"
-							>
+							<li key={member.id} className="flex items-center justify-between gap-2 py-1 text-sm">
 								<div className="min-w-0">
 									<div className="truncate font-medium">{label}</div>
 									<div className="text-xs text-muted-foreground">
-										{formatMembershipToken(member.role)} · Joined via{" "}
-										{formatMembershipToken(member.joined_via)} ·{" "}
-										{new Date(member.joined_at).toLocaleDateString(undefined, {
-											month: "short",
-											day: "numeric",
-										})}
+										{formatMembershipToken(member.role)}
 									</div>
 								</div>
 								<Button
@@ -902,6 +699,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 					})}
 				</ul>
 			)}
+
 			<AlertDialog
 				open={removeOpen}
 				onOpenChange={(nextOpen) => {
@@ -944,12 +742,92 @@ function MembersPanel({ projectId }: { projectId: string }) {
 							disabled={!renderedRemoveTarget || remove.isPending}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
-							{remove.isPending ? "Removing…" : "Remove Member"}
+							{remove.isPending ? "Removing…" : "Remove member"}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
 			</AlertDialog>
 		</div>
+	);
+}
+
+function StopSharingPanel({ projectId }: { projectId: string }) {
+	const api = useApi();
+	const qc = useQueryClient();
+	const [stopAllOpen, setStopAllOpen] = useState(false);
+	const unshare = useMutation({
+		mutationFn: async () =>
+			unwrap(
+				await api.POST("/v1/projects/{project_id}/unshare", {
+					params: { path: { project_id: projectId } },
+				}),
+			),
+		onSuccess: (body) => {
+			setStopAllOpen(false);
+			for (const queryKey of [
+				["project-members", projectId],
+				["share-links", projectId],
+				["invitations", projectId],
+				["skills"],
+				["get", "/v1/projects"],
+			])
+				void qc.invalidateQueries({ queryKey });
+			toast.success("Sharing stopped", {
+				description: `Turned off ${body.links_revoked} link(s) and removed ${body.members_removed} member(s).`,
+			});
+		},
+		onError: (e) =>
+			toast.error("Couldn't stop sharing", {
+				description: normalizeApiError(e),
+			}),
+	});
+
+	return (
+		<details className="text-sm">
+			<summary className="cursor-pointer text-muted-foreground">Manage sharing</summary>
+			<AlertDialog
+				open={stopAllOpen}
+				onOpenChange={(nextOpen) => {
+					if (!unshare.isPending) setStopAllOpen(nextOpen);
+				}}
+			>
+				<AlertDialogTrigger
+					render={
+						<Button
+							variant="ghost"
+							className="text-destructive"
+							size="sm"
+							disabled={unshare.isPending}
+							aria-label="Stop all sharing for this Project"
+						/>
+					}
+				>
+					{unshare.isPending ? "Stopping…" : "Stop all sharing"}
+				</AlertDialogTrigger>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Stop all sharing?</AlertDialogTitle>
+						<AlertDialogDescription>
+							All invite links and pending invitations will stop working. Members will lose access.
+							Your Project content stays unchanged.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel disabled={unshare.isPending}>Keep sharing</AlertDialogCancel>
+						<AlertDialogAction
+							onClick={(event) => {
+								event.preventDefault();
+								if (!unshare.isPending) unshare.mutate();
+							}}
+							disabled={unshare.isPending}
+							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+						>
+							Stop all sharing
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+		</details>
 	);
 }
 

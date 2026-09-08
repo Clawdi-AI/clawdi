@@ -41,7 +41,6 @@ const COMPLETION_ONLY = [
 	"hosted/v2/channels/link-channel-agent-action.tsx",
 	"hosted/v2/channels/whatsapp-repair-dialog.tsx",
 	"pages/dashboard/skills/page.tsx",
-	"pages/dashboard/vault/[slug]/page.tsx",
 ] as const;
 
 // Intentional exceptions: stateless wrappers/simple confirmations, navigation-owned shells,

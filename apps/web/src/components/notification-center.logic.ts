@@ -88,7 +88,7 @@ export function getNotificationCenterDescription(): string {
 }
 
 export function getProjectInvitationAccessCopy(): string {
-	return "Project invitations give read-only access (view, not edit). Adding the Project to an agent is a separate step.";
+	return "View shared Projects and link them to your Agents. Only the owner can edit.";
 }
 
 export function getAcceptedProjectInvitationToastCopy(projectName?: string): {
@@ -96,8 +96,7 @@ export function getAcceptedProjectInvitationToastCopy(projectName?: string): {
 	description: string;
 } {
 	return {
-		title: projectName ? `Joined ${projectName}` : "Project Joined",
-		description:
-			"Read-only access granted. Open the Project to review shared resources, then link it to an Agent when needed.",
+		title: projectName ? `Joined ${projectName}` : "Project joined",
+		description: "Open the Project to view its resources or link it to an Agent.",
 	};
 }

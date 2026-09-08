@@ -41,8 +41,7 @@ export interface ProjectResourceDefinition {
 	countLabel?: string;
 }
 
-export const PROJECT_CANONICAL_DEFINITION =
-	"A Project owns Skills and links Vault access for a workflow or team.";
+export const PROJECT_CANONICAL_DEFINITION = "A Project groups Skills and Vaults for your Agents.";
 
 const PROJECT_RESOURCE_DEFINITIONS = [
 	{
@@ -52,7 +51,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Projects",
 		description: PROJECT_CANONICAL_DEFINITION,
 		managementDescription:
-			"Create shareable Projects that bundle Skills with linked Vault access. Each Agent also has a private Workspace on that Agent's page.",
+			"Group Skills and Vaults into Projects, then choose which Agents use them.",
 		href: PROJECT_RESOURCE_LIST_PATHS.projects,
 		emptyCta: "Create project",
 		routeGroup: "projects",
@@ -82,9 +81,9 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Vaults",
 		singularLabel: "Vault",
 		navLabel: "Vaults",
-		description: "Encrypted key collections linked to one or more Projects.",
+		description: "Encrypted key collections used by Projects.",
 		managementDescription:
-			"Keep API keys in a Vault, then link it to the Projects where Agents should use those keys.",
+			"Keep API keys in a Vault, then add it to the Projects where Agents should use those keys.",
 		href: PROJECT_RESOURCE_LIST_PATHS.vaults,
 		emptyCta: "Create vault",
 		routeGroup: "library",

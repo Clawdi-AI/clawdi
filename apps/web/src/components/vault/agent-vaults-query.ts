@@ -11,10 +11,11 @@ export function useAgentProjectVaults(
 	const api = useApi();
 	return useQuery({
 		queryKey: ["vaults", "agent-projects", ...projectIds],
-		queryFn: async () =>
+		queryFn: async ({ signal }) =>
 			fetchAgentProjectVaults(projectIds, async (projectId, page, pageSize) =>
 				unwrap(
 					await api.GET("/v1/vault", {
+						signal,
 						params: { query: { project_id: projectId, page, page_size: pageSize } },
 					}),
 				),

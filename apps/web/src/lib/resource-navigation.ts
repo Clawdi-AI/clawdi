@@ -61,8 +61,8 @@ export function resourceCollectionTarget(
 					label: "Vaults",
 				}
 			: {
-					href: agentSectionHref(scope.agentId, "projects"),
-					label: "Projects",
+					href: agentSectionHref(scope.agentId, "vaults"),
+					label: "Vaults",
 				};
 	}
 	return {
@@ -150,6 +150,7 @@ export function resourceCatalogReturnTarget(from: unknown): ResourceNavigationTa
 	const url = new URL(from, "https://catalog.invalid");
 	const path = url.pathname;
 	const href = `${path}${url.search}`;
+	if (/^\/agents\/[^/]+\/vaults\/?$/.test(path)) return { href, label: "Agent Vaults" };
 	if (/^\/agents\/[^/]+\/project-access\/?$/.test(path)) return { href, label: "Agent Projects" };
 	if (/^\/agents\/[^/]+\/project-access\/[^/]+\/vaults\/?$/.test(path))
 		return { href, label: "Agent Vaults" };

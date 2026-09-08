@@ -214,13 +214,15 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 	await projectTabs.getByRole("tab", { name: "Vaults" }).click();
 	await expect(page.getByRole("heading", { name: "Vaults", exact: true })).toBeVisible();
 	const catalog = page.getByTestId("project-vault-catalog");
-	const linked = catalog.getByRole("region", { name: "Linked Project Vaults", exact: true });
+	const linked = catalog.getByRole("region", { name: "In this Project Vaults", exact: true });
 	const available = catalog.getByRole("region", { name: "Available Project Vaults" });
 	await expect(catalog.getByRole("region").nth(0)).toHaveAttribute(
 		"aria-label",
-		"Linked Project Vaults",
+		"In this Project Vaults",
 	);
-	await expect(linked.getByText("Linked", { exact: true }).locator("..")).toHaveText("Linked1");
+	await expect(linked.getByText("In this Project", { exact: true }).locator("..")).toHaveText(
+		"In this Project1",
+	);
 	await expect(available.getByText("Available", { exact: true }).locator("..")).toHaveText(
 		"Available1",
 	);
@@ -228,7 +230,7 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 		.getByTestId("project-vault-card")
 		.filter({ hasText: "Release archive" });
 	await expect(
-		catalog.getByRole("button", { name: "Unlink Already attached from Project" }),
+		catalog.getByRole("button", { name: "Remove Already attached from Project" }),
 	).toBeVisible();
 	await catalog.getByLabel("Search Vaults").fill("release");
 	await expect(catalog.getByTestId("project-vault-card")).toHaveCount(1);
@@ -245,17 +247,21 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 		await route.fallback();
 	});
 	try {
-		await releaseVault.getByRole("button", { name: "Link Release archive to Project" }).click();
+		await releaseVault.getByRole("button", { name: "Add Release archive to Project" }).click();
 		await expect(linked.getByRole("link", { name: "Open vault Release archive" })).toBeVisible();
-		await expect(releaseVault.getByRole("button")).toHaveText(["Linking…"]);
-		await expect(linked.getByText("Linked", { exact: true }).locator("..")).toHaveText("Linked1");
+		await expect(releaseVault.getByRole("button")).toHaveText(["Adding…"]);
+		await expect(linked.getByText("In this Project", { exact: true }).locator("..")).toHaveText(
+			"In this Project1",
+		);
 		await expect(available).toHaveCount(0);
 	} finally {
 		releaseRefresh();
 	}
-	await expect(releaseVault.getByRole("button")).toHaveText(["Unlink"]);
+	await expect(releaseVault.getByRole("button")).toHaveText(["Remove"]);
 	await catalog.getByLabel("Search Vaults").fill("");
-	await expect(linked.getByText("Linked", { exact: true }).locator("..")).toHaveText("Linked2");
+	await expect(linked.getByText("In this Project", { exact: true }).locator("..")).toHaveText(
+		"In this Project2",
+	);
 	await expect(available).toHaveCount(0);
 	await expect.poll(() => vaultCreateRequests).toHaveLength(1);
 	expect(vaultCreateRequests[0]?.body).toEqual({
@@ -263,12 +269,14 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 		name: "Release archive",
 	});
 	expect(vaultCreateRequests[0]?.url.searchParams.get("project_id")).toBe(projectId);
-	await releaseVault.getByRole("button", { name: "Unlink Release archive from Project" }).click();
+	await releaseVault.getByRole("button", { name: "Remove Release archive from Project" }).click();
 	await expect(
-		releaseVault.getByRole("button", { name: "Link Release archive to Project" }),
+		releaseVault.getByRole("button", { name: "Add Release archive to Project" }),
 	).toBeEnabled();
 	await expect(available.getByRole("link", { name: "Open vault Release archive" })).toBeVisible();
-	await expect(linked.getByText("Linked", { exact: true }).locator("..")).toHaveText("Linked1");
+	await expect(linked.getByText("In this Project", { exact: true }).locator("..")).toHaveText(
+		"In this Project1",
+	);
 	await expect(available.getByText("Available", { exact: true }).locator("..")).toHaveText(
 		"Available1",
 	);

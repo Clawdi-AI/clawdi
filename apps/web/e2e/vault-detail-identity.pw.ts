@@ -20,7 +20,7 @@ const vaults = [
 		slug: "collision",
 		name: "Owned Collision",
 		project_id: "project-owned",
-		project_ids: ["project-owned"],
+		project_ids: ["project-owned", "old-workspace"],
 		is_owner: true,
 		item_count: 1,
 		created_at: now,
@@ -67,7 +67,13 @@ test("same-slug Vault cards preserve UUID identity through detail and cache", as
 		}
 		if (url.pathname === "/v1/vault/collision" && route.request().method() === "DELETE") {
 			expect(url.searchParams.get("vault_id")).toBe(ownedId);
-			expect(url.searchParams.has("project_id")).toBe(false);
+			if (url.searchParams.has("project_id")) {
+				expect(url.searchParams.get("project_id")).toBe("old-workspace");
+				const vault = catalog.find((vault) => vault.id === ownedId);
+				if (!vault) throw new Error("Owned Vault missing");
+				vault.project_ids = vault.project_ids.filter((id) => id !== "old-workspace");
+				return fulfill(route, { status: "deleted" });
+			}
 			const index = catalog.findIndex((vault) => vault.id === ownedId);
 			if (index < 0) throw new Error("Owned Vault missing");
 			catalog.splice(index, 1);
@@ -91,6 +97,11 @@ test("same-slug Vault cards preserve UUID identity through detail and cache", as
 		}
 		if (url.pathname === "/v1/projects") {
 			return fulfill(route, [
+				...[
+					{ id: "old-workspace", name: "Old private workspace", kind: "environment" },
+					{ id: "new-workspace", name: "New private workspace", kind: "environment" },
+					{ id: "custom-project", name: "Release Project", kind: "workspace" },
+				].map((project) => ({ ...project, slug: project.id, is_owner: true, created_at: now })),
 				{
 					id: "project-shared",
 					name: "Shared",
@@ -127,6 +138,23 @@ test("same-slug Vault cards preserve UUID identity through detail and cache", as
 	await expect(page.getByRole("heading", { name: "Owned Collision" })).toBeVisible();
 	await expect(page.getByText("OWNED_ONLY", { exact: true })).toBeVisible();
 	await expect(page.getByText("SHARED_ONLY", { exact: true })).toHaveCount(0);
+
+	await page.getByRole("combobox", { name: "Project to add this Vault to" }).click();
+	await expect(page.getByRole("option", { name: "Release Project" })).toBeVisible();
+	await expect(page.getByRole("option", { name: /private workspace|Owned/ })).toHaveCount(0);
+	await page.keyboard.press("Escape");
+	await expect(page.getByText("Workspace", { exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Workspace", exact: true })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Share keys", exact: true })).toHaveCount(0);
+	await page.getByRole("button", { name: "Remove from Workspace", exact: true }).click();
+	await page
+		.getByRole("alertdialog")
+		.getByRole("button", { name: "Remove vault", exact: true })
+		.click();
+	await expect(
+		page.getByRole("button", { name: "Remove from Workspace", exact: true }),
+	).toHaveCount(0);
+	await expect(page.getByText("OWNED_ONLY", { exact: true })).toBeVisible();
 
 	await page.getByRole("button", { name: "Add keys" }).click();
 	await page.getByPlaceholder(/OPENAI_API_KEY/).fill("ADDED_TO_OWNED=secret-value");

@@ -47,6 +47,7 @@ test("uses direct message actions and keeps older live links revocable", async (
 	let legacyLinkActive = true;
 	let shares: Array<Record<string, unknown>> = [];
 	let createdBody: unknown;
+	let failRefresh = false;
 	let requestedTimelineCategories: string[] = [];
 
 	await page.route("**/v1/**", async (route) => {
@@ -90,7 +91,12 @@ test("uses direct message actions and keeps older live links revocable", async (
 			});
 		}
 		if (url.pathname === `/v1/sessions/${SESSION_ID}/shares`) {
-			if (route.request().method() === "GET") return fulfillJson(route, { shares });
+			if (route.request().method() === "GET")
+				return fulfillJson(
+					route,
+					failRefresh ? { detail: "Unavailable" } : { shares },
+					failRefresh ? 503 : 200,
+				);
 			createdBody = route.request().postDataJSON();
 			const created = {
 				id: SHARE_ID,
@@ -103,6 +109,7 @@ test("uses direct message actions and keeps older live links revocable", async (
 				created_at: now,
 			};
 			shares = [created];
+			failRefresh = true;
 			return fulfillJson(route, created, 201);
 		}
 		if (url.pathname === `/v1/sessions/${SESSION_ID}/permissions`) {
@@ -156,10 +163,15 @@ test("uses direct message actions and keeps older live links revocable", async (
 	await expect(responseDialog.getByLabel("Session share URL")).toHaveValue(
 		`http://127.0.0.1:3200/s/${SHARE_ID}`,
 	);
+	await expect(responseDialog.getByText("Couldn't load share links")).toBeVisible();
+	await expect(responseDialog.getByLabel("Session share URL")).toBeVisible();
+	failRefresh = false;
 	await responseDialog.getByRole("button", { name: "Close" }).click();
 
 	await page.getByRole("button", { name: "Share", exact: true }).click();
 	const sessionDialog = page.getByRole("dialog", { name: "Share session" });
+	await expect(sessionDialog.getByText("Older link")).not.toBeVisible();
+	await sessionDialog.getByText("Other active links (2)", { exact: true }).click();
 	await expect(sessionDialog.getByText("Older link")).toBeVisible();
 	const legacyRow = sessionDialog
 		.getByText("Live Session link", { exact: true })

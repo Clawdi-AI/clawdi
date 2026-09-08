@@ -1,20 +1,10 @@
 "use client";
 
 import { Link, useRouter } from "@tanstack/react-router";
-import {
-	AlertCircle,
-	CheckCircle2,
-	FileText,
-	KeyRound,
-	Lock,
-	LogIn,
-	ShieldCheck,
-	Sparkles,
-} from "lucide-react";
+import { AlertCircle, CheckCircle2, KeyRound, LogIn, ShieldCheck, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -152,7 +142,7 @@ export default function SharePage({ token }: { token: string }) {
 				<CardHeader>
 					<div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
 						<Sparkles className="size-4" />
-						You've been invited to a Shared Project
+						Project invitation
 					</div>
 					<CardTitle className="mt-2 text-2xl">{data.project_name}</CardTitle>
 					<p className="text-sm text-muted-foreground">
@@ -161,40 +151,26 @@ export default function SharePage({ token }: { token: string }) {
 					</p>
 				</CardHeader>
 				<CardContent className="space-y-6">
-					<div className="grid grid-cols-2 gap-3">
-						<ContentTile
-							icon={<FileText className="size-5" />}
-							label="Skills"
-							count={data.skill_count}
-							hint="Readable on any device"
-						/>
-						<ContentTile
-							icon={<Lock className="size-5" />}
-							label="Vaults"
-							count={data.vault_count}
-							hint="Key names only; values stay private"
-							muted={data.vault_count === 0}
-						/>
-					</div>
+					<p className="text-sm text-muted-foreground">
+						{data.skill_count} {data.skill_count === 1 ? "Skill" : "Skills"} · {data.vault_count}{" "}
+						{data.vault_count === 1 ? "Vault" : "Vaults"}
+					</p>
 
-					<ViewerAccessCard hasVaults={data.vault_count > 0} />
+					<ViewerAccessSummary hasVaults={data.vault_count > 0} />
 
 					<Separator />
 
 					{upgradeSucceeded ? (
 						<Alert>
 							<CheckCircle2 />
-							<AlertTitle>You're In</AlertTitle>
-							<AlertDescription>
-								Added to your Projects with Viewer access. Adding it to an agent is a separate step.
-								Redirecting…
-							</AlertDescription>
+							<AlertTitle>Invitation accepted</AlertTitle>
+							<AlertDescription>Opening Project…</AlertDescription>
 						</Alert>
 					) : isOwner ? (
 						<Alert>
 							<ShieldCheck />
-							<AlertTitle>This is your project</AlertTitle>
-							<AlertDescription>You don't need to accept it — it's already yours.</AlertDescription>
+							<AlertTitle>This is your Project</AlertTitle>
+							<AlertDescription>You already have access.</AlertDescription>
 						</Alert>
 					) : isSignedIn ? (
 						<div className="space-y-3">
@@ -205,20 +181,13 @@ export default function SharePage({ token }: { token: string }) {
 								size="lg"
 							>
 								<CheckCircle2 className="mr-2 size-4" />
-								{upgrade.isPending ? "Joining…" : "Accept Project Access"}
+								{upgrade.isPending ? "Joining…" : "Accept invitation"}
 							</Button>
-							<p className="text-xs text-muted-foreground">
-								You'll join as a <Badge variant="secondary">Viewer</Badge> with read access to
-								skills
-								{data.vault_count > 0 ? " and Vault values from the Clawdi CLI" : ""}. The dashboard
-								does not reveal key values.
-							</p>
 							{upgrade.error instanceof ShareError && upgrade.error.code === "already_member" ? (
 								<Alert>
 									<CheckCircle2 />
 									<AlertDescription>
-										You're already a member. Open the Project from your dashboard, then add it to an
-										agent when needed.
+										You already have access. Open this Project from your dashboard.
 									</AlertDescription>
 								</Alert>
 							) : upgrade.error ? (
@@ -239,92 +208,34 @@ export default function SharePage({ token }: { token: string }) {
 								size="lg"
 							>
 								<LogIn className="mr-2 size-4" />
-								Continue in Browser
+								Sign in to accept
 							</Button>
 							<p className="text-xs text-muted-foreground">
-								Sign in or create a free account. After signing in, click Accept here to join the
-								Project.
+								Sign in or create an account to accept this invitation.
 							</p>
 							<details className="group rounded-lg border bg-muted/30 p-4">
 								<summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium marker:hidden">
 									<KeyRound className="size-4 shrink-0" />
-									<span>Advanced CLI Option</span>
+									<span>Accept with CLI</span>
 								</summary>
-								<p className="mt-1 text-xs text-muted-foreground">
-									Use this if you're already familiar with command line tools. The browser flow
-									above is the normal path.
-								</p>
 								<CopyableCommand command={`clawdi inbox accept ${buildLandingUrl(token)}`} />
 							</details>
 						</div>
 					)}
 				</CardContent>
 			</Card>
-			<p className="text-center text-xs text-muted-foreground">
-				Shared Projects never grant write access. The owner can turn off this link anytime.
-			</p>
 		</Shell>
 	);
 }
 
-function ViewerAccessCard({ hasVaults }: { hasVaults: boolean }) {
-	const vaultCopy = hasVaults
-		? "Use Vault values from the Clawdi CLI"
-		: "Use Vault values from the Clawdi CLI if added later";
+function ViewerAccessSummary({ hasVaults }: { hasVaults: boolean }) {
 	return (
-		<div className="grid gap-3 rounded-lg border bg-muted/30 p-4 text-sm sm:grid-cols-2">
-			<div className="space-y-2">
-				<p className="font-medium">Viewer Can</p>
-				<ul className="space-y-1.5 text-muted-foreground">
-					<li className="flex items-center gap-2">
-						<CheckCircle2 aria-hidden="true" className="size-4 shrink-0 text-foreground" />
-						<span>View skills</span>
-					</li>
-					<li className="flex items-center gap-2">
-						<CheckCircle2 aria-hidden="true" className="size-4 shrink-0 text-foreground" />
-						<span>{vaultCopy}</span>
-					</li>
-				</ul>
-			</div>
-			<div className="space-y-2">
-				<p className="font-medium">Viewer Cannot</p>
-				<ul className="space-y-1.5 text-muted-foreground">
-					<li className="flex items-center gap-2">
-						<AlertCircle aria-hidden="true" className="size-4 shrink-0 text-foreground" />
-						<span>Reveal key values in the dashboard</span>
-					</li>
-					<li className="flex items-center gap-2">
-						<AlertCircle aria-hidden="true" className="size-4 shrink-0 text-foreground" />
-						<span>Edit anything</span>
-					</li>
-				</ul>
-			</div>
-		</div>
-	);
-}
-
-function ContentTile({
-	icon,
-	label,
-	count,
-	hint,
-	muted,
-}: {
-	icon: React.ReactNode;
-	label: string;
-	count: number;
-	hint: string;
-	muted?: boolean;
-}) {
-	return (
-		<div className={`rounded-lg border p-4 ${muted ? "bg-muted/30 text-muted-foreground" : ""}`}>
-			<div className="flex items-center gap-2 text-sm">
-				{icon}
-				<span className="font-medium">{label}</span>
-			</div>
-			<div className="mt-2 text-2xl font-semibold">{count}</div>
-			<div className="text-xs text-muted-foreground">{hint}</div>
-		</div>
+		<p className="text-sm text-muted-foreground">
+			You can view this Project and link it to your Agents. Only the owner can edit.
+			{hasVaults
+				? " Your Agents and the Clawdi CLI can use its keys; secret values stay hidden in the dashboard."
+				: ""}
+		</p>
 	);
 }
 
@@ -368,7 +279,7 @@ function ErrorView({ error }: { error: unknown }) {
 				<Alert variant="destructive">
 					<AlertCircle />
 					<AlertTitle>Something went wrong</AlertTitle>
-					<AlertDescription>Share link unavailable. Ask the owner for a new link.</AlertDescription>
+					<AlertDescription>Couldn't load this invitation. Please try again.</AlertDescription>
 				</Alert>
 			</Shell>
 		);
@@ -387,30 +298,30 @@ function ErrorView({ error }: { error: unknown }) {
 function titleForError(code: ShareErrorCode): string {
 	switch (code) {
 		case "not_found":
-			return "Share Link Not Found";
+			return "Invite link not found";
 		case "revoked":
-			return "Share Link Turned Off";
+			return "Invite link unavailable";
 		case "already_member":
-			return "Already a Member";
+			return "Already joined";
 		case "already_owner":
-			return "That's Your Project";
+			return "This is your Project";
 		default:
-			return "Couldn't load this share";
+			return "Couldn't load invitation";
 	}
 }
 
 function describeError(code: ShareErrorCode): string {
 	switch (code) {
 		case "not_found":
-			return "This link doesn't exist. Ask the owner to send you a fresh one.";
+			return "Ask the owner for a new invite link.";
 		case "revoked":
-			return "The owner turned off this link. Ask them to send you a new one.";
+			return "This invite link is no longer active. Ask the owner for a new one.";
 		case "already_member":
-			return "You already accepted this share. Open it from your dashboard.";
+			return "You already have access. Open this Project from your dashboard.";
 		case "already_owner":
 			return "You own this Project. There is nothing to accept.";
 		default:
-			return "Please try again. If the problem persists, ping the owner.";
+			return "Try again. If the problem continues, contact the owner.";
 	}
 }
 

@@ -20,7 +20,13 @@ import {
 
 describe("resource navigation scopes", () => {
 	it("preserves catalog search without allowing a return link to grant Agent access", () => {
-		const from = "/agents/agent-1/project-access/workspace-1/vaults?q=release%26keys";
+		const from = "/agents/agent-1/vaults?q=release%26keys&project=workspace-1";
+		expect(
+			resourceCatalogReturnTarget("/agents/agent-1/project-access/workspace-1/vaults?q=keys"),
+		).toEqual({
+			href: "/agents/agent-1/project-access/workspace-1/vaults?q=keys",
+			label: "Agent Vaults",
+		});
 		expect(resourceCatalogReturnTarget(from)).toEqual({ href: from, label: "Agent Vaults" });
 		expect(resourceCatalogReturnTarget("/projects/project-1?tab=vaults&q=release")).toEqual({
 			href: "/projects/project-1?tab=vaults&q=release",

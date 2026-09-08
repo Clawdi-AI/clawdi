@@ -1,5 +1,6 @@
 import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
 import { AgentProjectResourceCanonicalizer } from "@/components/dashboard/agent-project-resource-canonicalizer";
+import { AgentVaultsSurface } from "@/components/vault/agent-vaults-surface";
 import {
 	agentSectionLabel,
 	agentSectionLink,
@@ -47,7 +48,8 @@ function AgentSectionRoute() {
 	const { id } = Route.useParams();
 	const { section } = Route.useRouteContext();
 	const search = Route.useSearch();
-	if (section === "skills" || section === "vaults") {
+	if (section === "vaults") return <AgentVaultsSurface agentId={id} />;
+	if (section === "skills") {
 		return (
 			<AgentProjectResourceCanonicalizer agentId={id} resource={section} routeSearch={search} />
 		);

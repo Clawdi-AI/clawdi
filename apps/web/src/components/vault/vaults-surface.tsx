@@ -50,11 +50,13 @@ import { identityFor } from "@/lib/identity";
 import { formatResourceCount, getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
+	agentResourceScope,
 	LIBRARY_RESOURCE_SCOPE,
 	type ResourceNavigationScope,
 	vaultDetailHrefForScope,
 	vaultDetailLink,
 } from "@/lib/resource-navigation";
+import { useCommittedLocation } from "@/lib/use-committed-location";
 import { cn } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
@@ -67,13 +69,17 @@ const VAULTS_RESOURCE = getProjectResourceDefinition("vaults");
 export function VaultsSurface({
 	embedded = false,
 	agentProjectIds,
+	workspaceProjectId,
 	navigationScope = LIBRARY_RESOURCE_SCOPE,
 }: {
 	embedded?: boolean;
 	agentProjectIds?: readonly string[];
+	workspaceProjectId?: string;
 	navigationScope?: ResourceNavigationScope;
 }) {
 	const $api = useOpenApi();
+	const location = useCommittedLocation();
+	const isAgent = navigationScope.kind === "agent";
 	// URL-backed like the other lists: open a vault and come back with the
 	// filter text intact.
 	const [search, setSearch] = useQueryState(
@@ -110,8 +116,13 @@ export function VaultsSurface({
 	);
 	const projectNameById = useMemo(
 		() =>
-			new Map((projects.data ?? []).map((project) => [project.id, displayProjectName(project)])),
-		[projects.data],
+			new Map(
+				(projects.data ?? []).map((project) => [
+					project.id,
+					project.id === workspaceProjectId ? "Workspace" : displayProjectName(project),
+				]),
+			),
+		[projects.data, workspaceProjectId],
 	);
 	const projectNamesUnavailable = shouldBlockQueryError(projects.error, projects.data);
 
@@ -121,6 +132,12 @@ export function VaultsSurface({
 		() => (agentProjectIds ? new Set(agentProjectIds) : null),
 		[agentProjectIds],
 	);
+	const returnSearch = new URLSearchParams();
+	if (search) returnSearch.set("q", search);
+	if (projectFilter !== "all") returnSearch.set("project", projectFilter);
+	const returnHref = isAgent
+		? `${location.pathname}${returnSearch.size ? `?${returnSearch}` : ""}`
+		: undefined;
 	const hasActiveFilter = search.trim().length > 0 || projectFilter !== "all";
 	const filtered = useMemo(() => {
 		const q = search.trim();
@@ -143,13 +160,17 @@ export function VaultsSurface({
 	}, [items, visibleProjectIds]);
 	const filterableProjects = useMemo(() => {
 		return (projects.data ?? [])
-			.filter((p) => (vaultCountByProject.get(p.id) ?? 0) > 0 || p.id === projectFilter)
+			.filter(
+				(p) =>
+					(!visibleProjectIds || visibleProjectIds.has(p.id)) &&
+					((vaultCountByProject.get(p.id) ?? 0) > 0 || p.id === projectFilter),
+			)
 			.sort(
 				(a, b) =>
 					(vaultCountByProject.get(b.id) ?? 0) - (vaultCountByProject.get(a.id) ?? 0) ||
 					a.name.localeCompare(b.name),
 			);
-	}, [projectFilter, projects.data, vaultCountByProject]);
+	}, [projectFilter, projects.data, vaultCountByProject, visibleProjectIds]);
 	const sortVaults = (a: VaultSummary, b: VaultSummary) => compareVaultsForCatalog(a, b, search);
 	const mine = filtered.filter((v) => v.is_owner !== false).sort(sortVaults);
 	const shared = filtered.filter((v) => v.is_owner === false).sort(sortVaults);
@@ -165,17 +186,23 @@ export function VaultsSurface({
 			{embedded ? null : (
 				<PageHeader
 					title="Vaults"
-					description={VAULTS_RESOURCE.managementDescription}
+					description={
+						isAgent
+							? "Vaults available through this Agent’s Workspace and linked Projects. Configure Vaults in the source Project."
+							: VAULTS_RESOURCE.managementDescription
+					}
 					actions={
-						<>
-							<AddKeysDialog>
-								<Button size="sm" variant="outline">
-									<Plus className="size-3.5" />
-									Add keys
-								</Button>
-							</AddKeysDialog>
-							<NewVaultDialog navigationScope={navigationScope} />
-						</>
+						isAgent ? null : (
+							<>
+								<AddKeysDialog>
+									<Button size="sm" variant="outline">
+										<Plus className="size-3.5" />
+										Add keys
+									</Button>
+								</AddKeysDialog>
+								<NewVaultDialog navigationScope={navigationScope} />
+							</>
+						)
 					}
 				/>
 			)}
@@ -186,7 +213,7 @@ export function VaultsSurface({
 					filterableProjects.length > 1 ? (
 						<>
 							<FilterChip active={projectFilter === "all"} onClick={() => setProjectFilter("all")}>
-								All projects
+								All Vaults
 								<span className="text-muted-foreground tabular-nums">{items.length}</span>
 							</FilterChip>
 							{filterableProjects.map((p) => (
@@ -198,7 +225,7 @@ export function VaultsSurface({
 									<span aria-hidden className="select-none">
 										{identityFor(p.name).emoji}
 									</span>
-									{p.name}
+									{projectNameById.get(p.id)}
 									<span className="text-muted-foreground tabular-nums">
 										{vaultCountByProject.get(p.id) ?? 0}
 									</span>
@@ -209,6 +236,13 @@ export function VaultsSurface({
 				}
 			/>
 
+			{vaultsQuery.error && vaultsQuery.data !== undefined ? (
+				<ApiErrorPanel
+					error={vaultsQuery.error}
+					onRetry={() => void vaultsQuery.refetch()}
+					title="Couldn’t refresh Vaults"
+				/>
+			) : null}
 			{shouldBlockQueryError(vaultsQuery.error, vaultsQuery.data) ? (
 				<ApiErrorPanel
 					error={vaultsQuery.error}
@@ -229,7 +263,7 @@ export function VaultsSurface({
 					description={
 						hasActiveFilter
 							? "Try a different search or Project filter."
-							: embedded
+							: isAgent || embedded
 								? "This agent does not have any Vaults through its Projects yet."
 								: "Create a vault to group API keys for your agents."
 					}
@@ -254,6 +288,8 @@ export function VaultsSurface({
 								projectNamesUnavailable={projectNamesUnavailable}
 								visibleProjectIds={visibleProjectIds}
 								navigationScope={navigationScope}
+								actions={isAgent ? null : undefined}
+								returnHref={returnHref}
 								searchQuery={search.trim() || undefined}
 							/>
 						))}
@@ -274,6 +310,8 @@ export function VaultsSurface({
 										visibleProjectIds={visibleProjectIds}
 										navigationScope={navigationScope}
 										shared
+										actions={isAgent ? null : undefined}
+										returnHref={returnHref}
 										searchQuery={search.trim() || undefined}
 									/>
 								))}
@@ -314,8 +352,9 @@ export function VaultCard({
 	const api = useApi();
 	const itemProjectId =
 		projectId ??
-		vault.project_ids?.find((projectId) => visibleProjectIds?.has(projectId)) ??
-		vault.project_ids?.[0];
+		(navigationScope.kind === "agent"
+			? (navigationScope.projectId ?? vault.project_ids?.find((id) => visibleProjectIds?.has(id)))
+			: vault.project_ids?.[0]);
 	const canManageVault = vault.is_owner !== false;
 	// Key count ships on the list response (names only, never values) —
 	// no per-card items fetch. EXCEPT under deploy skew: a web build that
@@ -385,7 +424,8 @@ export function VaultCard({
 				usedBy.length > 0 ? (
 					<Tooltip>
 						<TooltipTrigger render={<span className="truncate" />}>
-							used by {usedBy.slice(0, 2).join(", ")}
+							{navigationScope.kind === "agent" ? "From " : "used by "}
+							{usedBy.slice(0, 2).join(", ")}
 							{usedBy.length > 2 ? ` +${usedBy.length - 2}` : ""}
 						</TooltipTrigger>
 						<TooltipContent>{usedBy.join(", ")}</TooltipContent>
@@ -411,7 +451,14 @@ export function VaultCard({
 					</AddKeysDialog>
 				) : undefined
 			}
-			link={vaultDetailLink(navigationScope, vault.slug, vault.id, returnHref)}
+			link={vaultDetailLink(
+				navigationScope.kind === "agent"
+					? agentResourceScope(navigationScope.agentId, navigationScope.projectId ?? itemProjectId)
+					: navigationScope,
+				vault.slug,
+				vault.id,
+				returnHref,
+			)}
 			ariaLabel={`Open vault ${vault.name}`}
 		/>
 	);
@@ -457,7 +504,7 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			setOpen(false);
 			toast.success("Vault created", {
-				description: "Use Add keys on its card, then link it to a Project.",
+				description: "Use Add keys on its card, then add it to a Project.",
 				action: {
 					label: "Open vault",
 					onClick: () =>
@@ -486,7 +533,7 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 				<DialogHeader>
 					<DialogTitle>Create vault</DialogTitle>
 					<DialogDescription>
-						A bundle of API keys your Agents can use. Link it to Projects to control access.
+						A bundle of API keys your Agents can use. Add it to Projects to control access.
 					</DialogDescription>
 				</DialogHeader>
 				{vaultsQuery.error ? (
