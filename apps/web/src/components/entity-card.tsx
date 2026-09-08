@@ -402,6 +402,7 @@ export function HeroCard({
 	ariaLabel,
 	className,
 	titleClassName,
+	titleAttribute,
 	descriptionClassName,
 	footerClassName,
 	footerWrap = false,
@@ -421,6 +422,8 @@ export function HeroCard({
 	ariaLabel?: string;
 	className?: string;
 	titleClassName?: string;
+	/** Plain-text identity when the visible title contains search highlighting. */
+	titleAttribute?: string;
 	descriptionClassName?: string;
 	footerClassName?: string;
 	/** Wrap dense footer facts between intact items. */
@@ -446,7 +449,8 @@ export function HeroCard({
 					<h3
 						className={cn("min-w-0 flex-1 truncate text-sm font-medium", titleClassName)}
 						title={
-							typeof title === "string" || typeof title === "number" ? String(title) : undefined
+							titleAttribute ??
+							(typeof title === "string" || typeof title === "number" ? String(title) : undefined)
 						}
 					>
 						{title}

@@ -75,7 +75,9 @@ interface ShareProjectDialogProps {
 	projectId: string;
 	projectName: string;
 	projectKind?: string;
-	children?: ReactElement;
+	children?: ReactElement | null;
+	open?: boolean;
+	onOpenChange?: (open: boolean) => void;
 }
 
 export function ShareProjectDialog({
@@ -83,19 +85,29 @@ export function ShareProjectDialog({
 	projectName,
 	projectKind,
 	children,
+	open: controlledOpen,
+	onOpenChange,
 }: ShareProjectDialogProps) {
-	const [open, setOpen] = useState(false);
+	const [internalOpen, setInternalOpen] = useState(false);
+	const open = controlledOpen ?? internalOpen;
+	const setOpen = (nextOpen: boolean) => {
+		if (controlledOpen === undefined) setInternalOpen(nextOpen);
+		onOpenChange?.(nextOpen);
+	};
 	const isShareableProject = isCustomProject({ kind: projectKind });
-	const trigger = children ?? (
-		<Button variant="outline" size="sm" aria-label={`Share ${projectName}`}>
-			<Share2 className="mr-2 size-4" />
-			Share project
-		</Button>
-	);
+	const trigger =
+		children === undefined ? (
+			<Button variant="outline" size="sm" aria-label={`Share ${projectName}`}>
+				<Share2 className="mr-2 size-4" />
+				Share project
+			</Button>
+		) : (
+			children
+		);
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
-			<DialogTrigger render={trigger} />
+			{trigger ? <DialogTrigger render={trigger} /> : null}
 			{/* `sm:` prefix is load-bearing: the primitive's base classes include
 			    `sm:max-w-lg`, so an unprefixed `max-w-2xl` loses at sm+ and the
 			    content gets clipped at 512px wide. */}

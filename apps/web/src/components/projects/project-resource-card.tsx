@@ -28,6 +28,7 @@ export function ProjectResourceCard({
 	project,
 	footer,
 	actions,
+	actionsVisibility,
 	showKind = false,
 	navigationScope = LIBRARY_RESOURCE_SCOPE,
 	link,
@@ -37,6 +38,7 @@ export function ProjectResourceCard({
 	project: ProjectMetadata;
 	footer?: ReactNode | ReactNode[];
 	actions?: ReactNode;
+	actionsVisibility?: "responsive" | "always";
 	showKind?: boolean;
 	navigationScope?: ResourceNavigationScope;
 	/** Optional collection-local destination while retaining the canonical card. */
@@ -60,6 +62,7 @@ export function ProjectResourceCard({
 			title={
 				searchQuery ? <SearchHighlightedText text={projectName} query={searchQuery} /> : projectName
 			}
+			titleAttribute={projectName}
 			badges={
 				showKind || showViewer ? (
 					<>
@@ -80,6 +83,7 @@ export function ProjectResourceCard({
 			}
 			footer={footer}
 			actions={actions}
+			actionsVisibility={actionsVisibility}
 			link={detailLink}
 			ariaLabel={`Open ${projectName}`}
 			className={className}

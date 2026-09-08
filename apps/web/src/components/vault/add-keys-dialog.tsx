@@ -190,7 +190,7 @@ export function AddKeysDialog({
 				description:
 					summary.updated > 0 || summary.skipped > 0
 						? `${summary.created} new, ${summary.updated} updated, ${summary.skipped} skipped.`
-						: "Key values stay protected, and attached Projects and Agents can use them.",
+						: "Key values stay protected, and linked Projects and Agents can use them.",
 			});
 			setOpen(false);
 		} catch (error) {

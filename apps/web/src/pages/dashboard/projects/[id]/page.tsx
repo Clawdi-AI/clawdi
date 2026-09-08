@@ -9,12 +9,10 @@ import {
 	ChevronRight,
 	ExternalLink,
 	Eye,
-	Link2,
 	LogOut,
 	Plus,
 	Save,
 	Share2,
-	Trash2,
 } from "lucide-react";
 import {
 	lazy,
@@ -75,7 +73,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
 	Dialog,
 	DialogContent,
@@ -87,19 +84,11 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { SearchInput } from "@/components/ui/search-input";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ProjectVaultCatalog } from "@/components/vault/project-vault-catalog";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
-import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface";
 import { agentDetailQueryKey, agentDetailQueryOptions } from "@/lib/agent-queries";
 import {
 	agentProjectDetailHref,
@@ -123,6 +112,7 @@ import {
 	projectDetailHrefForScope,
 	type ResourceNavigationScope,
 	type ResourceNavigationTarget,
+	resourceCatalogReturnTarget,
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
 import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
@@ -157,6 +147,7 @@ function projectLocalTabHref(
 ): string {
 	const nextSearch = new URLSearchParams(searchParams);
 	nextSearch.set("tab", tab);
+	if (tab !== "vaults") nextSearch.delete("q");
 	if (tab !== "overview") {
 		nextSearch.delete("joined");
 		nextSearch.delete("useWithAgent");
@@ -220,13 +211,10 @@ export default function ProjectDetailPage({
 		searchParams.get("useWithAgent") === "1",
 	);
 	const [skillsPage, setSkillsPage] = useState(1);
-	const [vaultsPage, setVaultsPage] = useState(1);
 	const joinedFromShare = !isAgentScope && searchParams.get("joined") === "share";
-	const returnHref = searchParams.get("from");
-	const safeAgentReturnHref = returnHref?.startsWith("/agents/") ? returnHref : null;
+	const catalogReturnTarget = resourceCatalogReturnTarget(searchParams.get("from"));
 	useEffect(() => {
 		setSkillsPage(1);
-		setVaultsPage(1);
 	}, [projectId]);
 
 	const projectQuery = $api.useQuery("get", "/v1/projects/{project_id}", {
@@ -245,11 +233,6 @@ export default function ProjectDetailPage({
 					skills: projectResourceHref("skills", projectId),
 					vaults: projectResourceHref("vaults", projectId),
 				};
-	const projectNameById = useMemo(
-		() => new Map(project ? [[project.id, displayProjectName(project)]] : []),
-		[project],
-	);
-	const visibleProjectIds = useMemo(() => new Set([projectId]), [projectId]);
 	const isOwner = project?.is_owner !== false;
 	const canManageSkills = isBrowserWritableSkillProject(project);
 	const isShareableProject = project ? isCustomProject(project) : false;
@@ -263,7 +246,6 @@ export default function ProjectDetailPage({
 	const scopedBinding =
 		orderedScopedBindings.find((binding) => binding.project_id === projectId) ?? null;
 	const isWorkspace = isAgentScope && scopedBinding?.binding_type === "primary";
-	const isWorkspaceContext = isWorkspace || project?.kind === "environment";
 	const canManageProjectSkills = canManageSkills && !isWorkspace;
 	const pageReturnTarget: ResourceNavigationTarget =
 		focus && scope.kind === "agent"
@@ -276,9 +258,7 @@ export default function ProjectDetailPage({
 						href: projectDetailHrefForScope(scope, projectId),
 						label: projectName ?? "Project",
 					}
-			: safeAgentReturnHref
-				? { href: safeAgentReturnHref, label: "Agent Projects" }
-				: projectsTarget;
+			: (catalogReturnTarget ?? projectsTarget);
 	const workspaceAgent = useQuery({
 		...agentDetailQueryOptions($api, qc, scope.kind === "agent" ? scope.agentId : ""),
 		enabled: scope.kind === "agent" && isWorkspace && showSkills && !IS_HOSTED_BUILD,
@@ -339,18 +319,17 @@ export default function ProjectDetailPage({
 	);
 
 	const vaults = useQuery({
-		queryKey: ["vaults", "project-detail", projectId, vaultsPage],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/vault", {
-					params: {
-						query: {
-							project_id: projectId,
-							page: vaultsPage,
-							page_size: PROJECT_RESOURCE_PAGE_SIZE,
-						},
-					},
-				}),
+		queryKey: ["get", "/v1/vault", "project-detail", projectId],
+		queryFn: ({ signal }) =>
+			fetchAllPages<VaultSummary>(
+				async (page, pageSize) =>
+					unwrap(
+						await api.GET("/v1/vault", {
+							signal,
+							params: { query: { project_id: projectId, page, page_size: pageSize } },
+						}),
+					),
+				{ pageSize: 200, resourceName: "Project Vaults" },
 			),
 		enabled: showVaults && (!isAgentScope || !!scopedBinding),
 	});
@@ -359,11 +338,6 @@ export default function ProjectDetailPage({
 		const pageCount = Math.max(1, Math.ceil(skills.data.total / PROJECT_RESOURCE_PAGE_SIZE));
 		setSkillsPage((page) => Math.min(page, pageCount));
 	}, [skills.data?.total]);
-	useEffect(() => {
-		if (vaults.data?.total === undefined) return;
-		const pageCount = Math.max(1, Math.ceil(vaults.data.total / PROJECT_RESOURCE_PAGE_SIZE));
-		setVaultsPage((page) => Math.min(page, pageCount));
-	}, [vaults.data?.total]);
 
 	// People tile/section — members list is owner-only on the API; viewers
 	// simply don't get the section.
@@ -385,12 +359,15 @@ export default function ProjectDetailPage({
 		{ enabled: !isAgentScope && !!project && (localTab === "agents" || useWithAgentOpen) },
 	);
 
-	const refresh = () => {
-		qc.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
-		qc.invalidateQueries({ queryKey: ["skills"] });
-		qc.invalidateQueries({ queryKey: ["vaults"] });
-		qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
-		qc.invalidateQueries({ queryKey: ["get", "/v1/agents"] });
+	const refresh = async () => {
+		await Promise.all([
+			qc.invalidateQueries({ queryKey: ["get", "/v1/projects"] }),
+			qc.invalidateQueries({ queryKey: ["get", "/v1/projects/{project_id}"] }),
+			qc.invalidateQueries({ queryKey: ["skills"] }),
+			qc.invalidateQueries({ queryKey: ["vaults"] }),
+			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] }),
+			qc.invalidateQueries({ queryKey: ["get", "/v1/agents"] }),
+		]);
 	};
 
 	const removeProjectSkill = useMutation({
@@ -414,27 +391,6 @@ export default function ProjectDetailPage({
 			toast.error("Couldn't remove Skill from Project", {
 				description: normalizeApiError(error),
 			}),
-	});
-
-	const detachProjectVault = useMutation({
-		mutationFn: async (vault: VaultSummary) =>
-			unwrap(
-				await api.DELETE("/v1/vault/{slug}", {
-					params: {
-						path: { slug: vault.slug },
-						query: { project_id: projectId, vault_id: vault.id },
-					},
-				}),
-			),
-		onSuccess: () => {
-			refresh();
-			toast.success(isWorkspace ? "Vault detached from Workspace" : "Vault detached from Project");
-		},
-		onError: (error) =>
-			toast.error(
-				isWorkspace ? "Couldn't detach vault from Workspace" : "Couldn't detach vault from Project",
-				{ description: normalizeApiError(error) },
-			),
 	});
 
 	const leaveSharedProject = useMutation({
@@ -478,8 +434,8 @@ export default function ProjectDetailPage({
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<DetailBackLink
-					href={projectsTarget.href}
-					label={projectsTarget.label}
+					href={catalogReturnTarget?.href ?? projectsTarget.href}
+					label={catalogReturnTarget?.label ?? projectsTarget.label}
 					mobileOnly={false}
 				/>
 				<PageHeaderSkeleton icon actions />
@@ -507,8 +463,8 @@ export default function ProjectDetailPage({
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<DetailBackLink
-					href={projectsTarget.href}
-					label={projectsTarget.label}
+					href={catalogReturnTarget?.href ?? projectsTarget.href}
+					label={catalogReturnTarget?.label ?? projectsTarget.label}
 					mobileOnly={false}
 				/>
 				{isApiNotFoundError(blockingError) ? (
@@ -538,8 +494,8 @@ export default function ProjectDetailPage({
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<DetailBackLink
-					href={projectsTarget.href}
-					label={projectsTarget.label}
+					href={catalogReturnTarget?.href ?? projectsTarget.href}
+					label={catalogReturnTarget?.label ?? projectsTarget.label}
 					mobileOnly={false}
 				/>
 				<DetailNotFound
@@ -554,8 +510,8 @@ export default function ProjectDetailPage({
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<DetailBackLink
-					href={projectsTarget.href}
-					label={projectsTarget.label}
+					href={catalogReturnTarget?.href ?? projectsTarget.href}
+					label={catalogReturnTarget?.label ?? projectsTarget.label}
 					mobileOnly={false}
 				/>
 				<DetailNotFound
@@ -570,8 +526,8 @@ export default function ProjectDetailPage({
 		return (
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 				<DetailBackLink
-					href={projectsTarget.href}
-					label={projectsTarget.label}
+					href={catalogReturnTarget?.href ?? projectsTarget.href}
+					label={catalogReturnTarget?.label ?? projectsTarget.label}
 					mobileOnly={false}
 				/>
 				<DetailNotFound
@@ -686,7 +642,11 @@ export default function ProjectDetailPage({
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<DetailBackLink href={pageReturnTarget.href} label={pageReturnTarget.label} />
+			<DetailBackLink
+				href={pageReturnTarget.href}
+				label={pageReturnTarget.label}
+				mobileOnly={!catalogReturnTarget}
+			/>
 
 			{isWorkspace && focus === "skills" ? null : (
 				<PageHeader
@@ -714,13 +674,15 @@ export default function ProjectDetailPage({
 								? focus === "skills"
 									? "Skills available in this Agent's Workspace. Skills synced from the Agent are read-only."
 									: focus === "vaults"
-										? "Vaults attached to this Agent's Workspace."
-										: "This Agent's fixed Workspace for installed Skills and attached Vaults."
+										? "Your Vault library and this Agent's Workspace Vault links."
+										: "This Agent's fixed Workspace for installed Skills and linked Vaults."
 								: focus === "skills"
 									? "Skills this Agent uses through this linked Project."
 									: focus === "vaults"
-										? "Vaults this Agent can use through this Project. Key values stay protected."
-										: "This Agent uses the Project's Skills and attached Vaults as one bundle."
+										? isOwner
+											? "Your Vault library and this linked Project’s Vault links."
+											: "Vaults this Agent can use through this Project. Key values stay protected."
+										: "This Agent uses the Project's Skills and linked Vaults as one bundle."
 							: projectDetailDescription(project, isOwner)
 					}
 					status={
@@ -739,7 +701,7 @@ export default function ProjectDetailPage({
 								</Button>
 							</CreateSkillDialog>
 						) : focus === "vaults" && isOwner ? (
-							<ProjectVaultActions
+							<CreateProjectVaultDialog
 								projectId={project.id}
 								contextLabel={isWorkspace ? "Workspace" : "Project"}
 								onChanged={refresh}
@@ -757,10 +719,7 @@ export default function ProjectDetailPage({
 								{isOwner ? (
 									<ProjectActions
 										project={project}
-										onChanged={async () => {
-											refresh();
-											await projectQuery.refetch();
-										}}
+										onChanged={refresh}
 										onArchived={() => router.navigate({ href: projectsTarget.href })}
 									/>
 								) : null}
@@ -776,7 +735,7 @@ export default function ProjectDetailPage({
 					<AlertTitle>Project added</AlertTitle>
 					<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 						<span>
-							Linking lets an Agent use this Project&apos;s Skills and attached Vaults together.
+							Linking lets an Agent use this Project&apos;s Skills and linked Vaults together.
 						</span>
 						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
 							<Bot className="mr-1.5 size-3.5" />
@@ -948,10 +907,10 @@ export default function ProjectDetailPage({
 				description={
 					isAgentScope
 						? isWorkspace
-							? "Vaults attached to this Agent's Workspace."
+							? "Your Vault library and this Agent's Workspace Vault links."
 							: "Vaults this Agent can use through this Project."
 						: isOwner
-							? "API keys and secrets this Project can use."
+							? "Your Vault library and this Project’s Vault links."
 							: "Read-only vaults shared through this Project."
 				}
 				action={
@@ -964,7 +923,7 @@ export default function ProjectDetailPage({
 								/>
 							) : null}
 							{isOwner ? (
-								<ProjectVaultActions
+								<CreateProjectVaultDialog
 									projectId={project.id}
 									contextLabel={isWorkspace ? "Workspace" : "Project"}
 									onChanged={refresh}
@@ -974,74 +933,17 @@ export default function ProjectDetailPage({
 					) : undefined
 				}
 			>
-				{vaults.isLoading ? (
-					<div className={HERO_GRID_CLASS}>
-						{Array.from({ length: 3 }).map((_, index) => (
-							<VaultCardSkeleton key={index} />
-						))}
-					</div>
-				) : blockingVaultsError ? (
-					<ApiErrorPanel
-						error={blockingVaultsError}
-						onRetry={() => {
-							void vaults.refetch();
-						}}
-						title={
-							isWorkspaceContext ? "Couldn't load Workspace Vaults" : "Couldn't load Project vaults"
-						}
-					/>
-				) : vaults.data?.items.length ? (
-					<div className={HERO_GRID_CLASS}>
-						{vaults.data.items.map((vault) => (
-							<VaultCard
-								key={vault.id}
-								vault={vault}
-								projectNameById={projectNameById}
-								projectNamesUnavailable={false}
-								visibleProjectIds={visibleProjectIds}
-								navigationScope={scope}
-								shared={vault.is_owner === false}
-								actions={
-									vault.is_owner !== false ? (
-										<ConfirmAction
-											title={`Detach ${vault.name} from ${isWorkspace ? "Workspace" : "Project"}?`}
-											description={
-												<p>The Vault remains in your account and attached to any other Projects.</p>
-											}
-											confirmLabel="Detach vault"
-											destructive
-											onConfirm={() => detachProjectVault.mutateAsync(vault)}
-										>
-											<Button
-												variant="ghost"
-												size="icon-sm"
-												disabled={detachProjectVault.isPending}
-												className="text-muted-foreground hover:text-destructive"
-												aria-label={`Detach ${vault.name} from ${isWorkspace ? "Workspace" : "Project"}`}
-											>
-												<Trash2 className="size-3.5" />
-											</Button>
-										</ConfirmAction>
-									) : undefined
-								}
-							/>
-						))}
-					</div>
-				) : (
-					<EmptyLine
-						message={
-							isWorkspaceContext
-								? "No Vaults are attached to this Workspace yet."
-								: "No Vaults are attached to this Project yet."
-						}
-					/>
-				)}
-				<ResourcePageControls
-					page={vaultsPage}
-					total={vaults.data?.total}
-					pageSize={PROJECT_RESOURCE_PAGE_SIZE}
-					isFetching={vaults.isFetching}
-					onPageChange={setVaultsPage}
+				<ProjectVaultCatalog
+					key={project.id}
+					project={project}
+					attachedVaults={vaults.data?.items}
+					attachedVaultsUpdatedAt={vaults.dataUpdatedAt}
+					isLoading={vaults.isLoading}
+					error={vaults.error}
+					onRetry={() => void vaults.refetch()}
+					scope={scope}
+					agentBindings={scopedBindings.data ? orderedScopedBindings : undefined}
+					onChanged={refresh}
 				/>
 			</HubSection>
 
@@ -1098,7 +1000,7 @@ export default function ProjectDetailPage({
 				<HubSection
 					id="people"
 					title="Your access"
-					description="You have viewer access. Linked Agents use this Project's Skills and attached Vaults together."
+					description="You have viewer access. Linked Agents use this Project's Skills and linked Vaults together."
 				>
 					<SharedAccessPanel
 						project={project}
@@ -1120,7 +1022,7 @@ export default function ProjectDetailPage({
 							? "Agent that owns this Workspace."
 							: project.kind === "personal"
 								? "Private library items are not linked to individual Agents."
-								: "Agents you own that use this Project's Skills and attached Vaults."
+								: "Agents you own that use this Project's Skills and linked Vaults."
 					}
 				>
 					{boundAgents.isLoading ? (
@@ -1140,7 +1042,7 @@ export default function ProjectDetailPage({
 									? "The home Agent for this Workspace is unavailable."
 									: project.kind === "personal"
 										? "Private library items have no Agent links."
-										: "None of your Agents are linked yet. Link this Project to let one use its Skills and attached Vaults."
+										: "None of your Agents are linked yet. Link this Project to let one use its Skills and linked Vaults."
 							}
 						/>
 					) : (
@@ -1318,8 +1220,8 @@ function projectDetailDescription(project: ProjectRow, isOwner: boolean) {
 	const access = isOwner ? "you own" : "shared with you";
 	if (project.kind === "workspace") {
 		return isOwner
-			? "Project you own. Add Skills and attach Vaults, then link the whole bundle to Agents that need it."
-			: "Project shared with you. Linked Agents use its Skills and attached Vaults together.";
+			? "Project you own. Add Skills and link Vaults, then link the whole bundle to Agents that need it."
+			: "Project shared with you. Linked Agents use its Skills and linked Vaults together.";
 	}
 	if (project.kind === "environment") {
 		return `Workspace ${access}. This private Workspace belongs to one Agent and cannot be shared.`;
@@ -1352,7 +1254,7 @@ function SharedAccessPanel({
 				</div>
 				<p className="text-xs text-muted-foreground">
 					You can read this Project and link it to an Agent. The Agent then uses the Project&apos;s
-					Skills and attached Vaults together.
+					Skills and linked Vaults together.
 				</p>
 			</div>
 			<div className="rounded-md border bg-background/60 p-3">
@@ -1380,7 +1282,7 @@ function SharedAccessPanel({
 						<AlertDialogTitle>Leave {displayProjectName(project)}?</AlertDialogTitle>
 						<AlertDialogDescription>
 							This removes your access and unlinks the Project from your Agents. Those Agents will
-							stop using its Skills and attached Vaults.
+							stop using its Skills and linked Vaults.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -1594,7 +1496,7 @@ function ManageProjectAgentsDialog({
 	);
 }
 
-function ProjectVaultActions({
+function CreateProjectVaultDialog({
 	projectId,
 	contextLabel,
 	onChanged,
@@ -1605,66 +1507,8 @@ function ProjectVaultActions({
 }) {
 	const api = useApi();
 	const [vaultName, setVaultName] = useState("");
-	const [selectedVaultId, setSelectedVaultId] = useState("");
-	const [attachSearch, setAttachSearch] = useState("");
-	const [attachOpen, setAttachOpen] = useState(false);
 	const [createOpen, setCreateOpen] = useState(false);
-	const accountVaults = useQuery({
-		queryKey: ["vaults", "project-attachment-options", projectId],
-		enabled: attachOpen,
-		queryFn: async () =>
-			fetchAllPages<VaultSummary>(
-				async (page, pageSize) =>
-					unwrap(
-						await api.GET("/v1/vault", {
-							params: { query: { page, page_size: pageSize } },
-						}),
-					),
-				{ pageSize: 200, resourceName: "account Vaults" },
-			),
-	});
-	const availableVaults = (accountVaults.data?.items ?? []).filter(
-		(vault) => vault.is_owner !== false && !(vault.project_ids ?? []).includes(projectId),
-	);
-	const normalizedAttachSearch = attachSearch.trim().toLowerCase();
-	const attachableVaults = normalizedAttachSearch
-		? availableVaults.filter((vault) =>
-				[vault.name, vault.slug].join(" ").toLowerCase().includes(normalizedAttachSearch),
-			)
-		: availableVaults;
-	const attachableItems = attachableVaults.map((vault) => ({
-		value: vault.id,
-		label: vault.name,
-	}));
-	const blockingAccountVaultsError = shouldBlockQueryError(accountVaults.error, accountVaults.data)
-		? accountVaults.error
-		: null;
 	const newVaultSlug = slugFromVaultName(vaultName);
-	const attach = useMutation({
-		mutationFn: async (vaultId: string) => {
-			const vault = attachableVaults.find((candidate) => candidate.id === vaultId);
-			if (!vault) throw new Error("Choose an available Vault");
-			return unwrap(
-				await api.POST("/v1/vault", {
-					params: { query: { project_id: projectId } },
-					body: { slug: vault.slug, name: vault.name },
-				}),
-			);
-		},
-		onSuccess: () => {
-			setSelectedVaultId("");
-			setAttachOpen(false);
-			onChanged();
-			toast.success(`Vault attached to ${contextLabel}`, {
-				description:
-					"Its key values stay protected, and attached Projects and Agents can use them.",
-			});
-		},
-		onError: (error) =>
-			toast.error(`Couldn't attach vault to ${contextLabel}`, {
-				description: normalizeApiError(error),
-			}),
-	});
 	const create = useMutation({
 		mutationFn: async (nextName: string) => {
 			const normalizedName = nextName.trim();
@@ -1695,119 +1539,6 @@ function ProjectVaultActions({
 				<Plus className="size-3.5" />
 				Create vault
 			</Button>
-			<Button size="sm" onClick={() => setAttachOpen(true)}>
-				<Link2 className="size-3.5" />
-				Attach vault
-			</Button>
-
-			<Dialog
-				open={attachOpen}
-				onOpenChange={setAttachOpen}
-				onOpenChangeComplete={(open) => {
-					if (!open) {
-						setSelectedVaultId("");
-						setAttachSearch("");
-					}
-				}}
-			>
-				<DialogContent className="sm:max-w-md">
-					<DialogHeader>
-						<DialogTitle>Attach vault</DialogTitle>
-						<DialogDescription>
-							Choose an account-owned Vault to attach to this {contextLabel}. The Vault remains
-							available in your account.
-						</DialogDescription>
-					</DialogHeader>
-					{accountVaults.isLoading ? (
-						<Skeleton className="h-9 w-full" />
-					) : blockingAccountVaultsError ? (
-						<div className="space-y-4">
-							<ApiErrorPanel
-								error={blockingAccountVaultsError}
-								onRetry={() => {
-									void accountVaults.refetch();
-								}}
-								title="Couldn't load account Vaults"
-							/>
-							<DialogFooter>
-								<Button type="button" variant="ghost" onClick={() => setAttachOpen(false)}>
-									Cancel
-								</Button>
-							</DialogFooter>
-						</div>
-					) : availableVaults.length === 0 ? (
-						<div className="space-y-4">
-							<p className="text-sm text-muted-foreground">
-								All account-owned Vaults are already attached to this {contextLabel}.
-							</p>
-							<DialogFooter>
-								<Button type="button" variant="ghost" onClick={() => setAttachOpen(false)}>
-									Cancel
-								</Button>
-							</DialogFooter>
-						</div>
-					) : (
-						<form
-							className="space-y-4"
-							onSubmit={(event) => {
-								event.preventDefault();
-								if (selectedVaultId && !attach.isPending) attach.mutate(selectedVaultId);
-							}}
-						>
-							<div className="space-y-1.5">
-								<Label htmlFor={`project-vault-search-${projectId}`}>Search Vaults</Label>
-								<SearchInput
-									id={`project-vault-search-${projectId}`}
-									value={attachSearch}
-									onChange={(value) => {
-										setAttachSearch(value);
-										setSelectedVaultId("");
-									}}
-									placeholder="Search Vaults…"
-									ariaLabel="Search Vaults"
-								/>
-							</div>
-							{attachableVaults.length === 0 ? (
-								<p className="text-sm text-muted-foreground">No Vaults match that search.</p>
-							) : (
-								<>
-									<Label htmlFor={`project-vault-attachment-${projectId}`}>Existing Vault</Label>
-									<Select
-										items={attachableItems}
-										value={selectedVaultId}
-										onValueChange={(value) => {
-											if (value !== null) setSelectedVaultId(value);
-										}}
-									>
-										<SelectTrigger
-											id={`project-vault-attachment-${projectId}`}
-											className="min-w-0 flex-1"
-										>
-											<SelectValue placeholder="Choose a Vault…" />
-										</SelectTrigger>
-										<SelectContent>
-											{attachableVaults.map((vault) => (
-												<SelectItem key={vault.id} value={vault.id}>
-													{vault.name}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
-								</>
-							)}
-							<DialogFooter>
-								<Button type="button" variant="ghost" onClick={() => setAttachOpen(false)}>
-									Cancel
-								</Button>
-								<Button type="submit" disabled={!selectedVaultId || attach.isPending}>
-									{attach.isPending ? <Spinner /> : <Link2 className="size-3.5" />}
-									Attach vault
-								</Button>
-							</DialogFooter>
-						</form>
-					)}
-				</DialogContent>
-			</Dialog>
 
 			<Dialog
 				open={createOpen}

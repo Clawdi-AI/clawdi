@@ -25,8 +25,12 @@ export function ConfirmAction({
 	secondaryAction,
 	destructive = false,
 	onConfirm,
+	open: controlledOpen,
+	onOpenChange,
 }: {
-	children: ReactElement;
+	children?: ReactElement;
+	open?: boolean;
+	onOpenChange?: (open: boolean) => void;
 	title: string;
 	description: ReactNode;
 	confirmLabel?: string;
@@ -43,7 +47,12 @@ export function ConfirmAction({
 	 */
 	onConfirm: () => unknown;
 }) {
-	const [open, setOpen] = useState(false);
+	const [internalOpen, setInternalOpen] = useState(false);
+	const open = controlledOpen ?? internalOpen;
+	const setOpen = (nextOpen: boolean) => {
+		if (controlledOpen === undefined) setInternalOpen(nextOpen);
+		onOpenChange?.(nextOpen);
+	};
 	const [pendingAction, setPendingAction] = useState<"confirm" | "secondary" | null>(null);
 	// Synchronous lock: `disabled` only takes effect on the next render, leaving
 	// a sub-frame window where a fast double-click (or Enter repeat) could fire
@@ -80,7 +89,7 @@ export function ConfirmAction({
 				}
 			}}
 		>
-			<AlertDialogTrigger render={children} />
+			{children ? <AlertDialogTrigger render={children} /> : null}
 			<AlertDialogContent>
 				<AlertDialogHeader>
 					<AlertDialogTitle>{title}</AlertDialogTitle>

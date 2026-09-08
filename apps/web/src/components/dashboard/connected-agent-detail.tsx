@@ -358,6 +358,7 @@ export function ConnectedAgentDetail({
 
 					{activeTab === "projects" ? (
 						<AgentProjectsTab
+							key={id}
 							agentId={id}
 							headerAdornment={headerStatus}
 							headerIcon={

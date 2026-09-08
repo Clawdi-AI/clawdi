@@ -21,3 +21,15 @@ export function vaultSearchSupportingText(vault: SearchableVault, query: string)
 	}
 	return null;
 }
+
+export function compareVaultsForCatalog(
+	a: SearchableVault & { id: string; item_count?: number },
+	b: SearchableVault & { id: string; item_count?: number },
+	query: string,
+): number {
+	const rank = query.trim()
+		? (vaultSearchRank(a, query) ?? Number.MAX_SAFE_INTEGER) -
+			(vaultSearchRank(b, query) ?? Number.MAX_SAFE_INTEGER)
+		: (b.item_count ?? 0) - (a.item_count ?? 0);
+	return rank || a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
+}

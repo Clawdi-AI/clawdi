@@ -89,7 +89,7 @@ export function CreateProjectDialog({
 					<DialogDescription>
 						{agentId
 							? "Create a shareable bundle and link it to this Agent immediately."
-							: "Create a shareable bundle for Skills and attached Vault access."}
+							: "Create a shareable bundle for Skills and linked Vault access."}
 					</DialogDescription>
 				</DialogHeader>
 				<form

@@ -736,6 +736,7 @@ export function HostedAgentDetail({
 					{activeTab === "projects" ? (
 						projection.status === "resolved" ? (
 							<AgentProjectsTab
+								key={environmentId}
 								agentId={environmentId}
 								headerAdornment={<AgentSourceBadge source="hosted" compact />}
 								headerIcon={
