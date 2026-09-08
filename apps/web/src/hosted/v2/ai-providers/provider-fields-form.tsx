@@ -91,6 +91,7 @@ export function ProviderFieldsForm({
 	const apiModes = meta.apiModes;
 	const regions = preset?.region_variants ?? [];
 	const credentialLabel = preset?.credential_label ?? "API key";
+	const credentialName = credentialLabel === "API key" ? "API key" : credentialLabel.toLowerCase();
 	const isCustomEndpoint = meta.custom === true && preset === null;
 	const showPrimaryName = isCustomEndpoint;
 	const showAdvancedName = preset !== null || (!showPrimaryName && isEdit);
@@ -195,7 +196,20 @@ export function ProviderFieldsForm({
 				</div>
 			) : form.authMethod === "api_key" ? (
 				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="provider-key">{credentialLabel}</Label>
+					<div className="flex items-center justify-between gap-2">
+						<Label htmlFor="provider-key">{credentialLabel}</Label>
+						{apiKeyUrl ? (
+							<a
+								href={apiKeyUrl}
+								target="_blank"
+								rel="noreferrer"
+								className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary hover:underline"
+							>
+								{preset?.credential_link_label ?? `Get ${credentialName}`}{" "}
+								<ExternalLink className="size-3" aria-hidden="true" />
+							</a>
+						) : null}
+					</div>
 					<InputGroup>
 						<InputGroupInput
 							id="provider-key"
@@ -205,7 +219,7 @@ export function ProviderFieldsForm({
 							placeholder={
 								isEdit && savedCredentialAvailable
 									? "Leave blank to keep current credential"
-									: `Enter ${credentialLabel.toLowerCase()}`
+									: `Enter ${credentialName}`
 							}
 							autoComplete="off"
 							autoCapitalize="none"
@@ -216,7 +230,7 @@ export function ProviderFieldsForm({
 							<InputGroupButton
 								size="icon-xs"
 								onClick={() => setApiKeyVisible((visible) => !visible)}
-								aria-label={`${apiKeyVisible ? "Hide" : "Show"} ${credentialLabel.toLowerCase()}`}
+								aria-label={`${apiKeyVisible ? "Hide" : "Show"} ${credentialName}`}
 								aria-pressed={apiKeyVisible}
 							>
 								{apiKeyVisible ? <EyeOff /> : <Eye />}
@@ -227,17 +241,6 @@ export function ProviderFieldsForm({
 						<p className="text-xs text-muted-foreground">
 							Testing sends one minimal inference request and may incur a small provider charge.
 						</p>
-					) : null}
-					{apiKeyUrl ? (
-						<a
-							href={apiKeyUrl}
-							target="_blank"
-							rel="noreferrer"
-							className="inline-flex w-fit items-center gap-1 text-xs font-medium text-primary hover:underline"
-						>
-							{preset?.credential_link_label ?? `Get ${credentialLabel.toLowerCase()}`}{" "}
-							<ExternalLink className="size-3" />
-						</a>
 					) : null}
 				</div>
 			) : null}

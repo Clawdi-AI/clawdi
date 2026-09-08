@@ -504,7 +504,7 @@ export function AddProviderDialog({
 				<DialogHeader className="shrink-0 px-5 pt-5 pr-14 sm:px-6 sm:pt-6 sm:pr-14">
 					<DialogTitle className="flex min-w-0 items-center gap-3">
 						{step === "configure" || isEdit || renderedOAuth ? (
-							<span aria-hidden="true">
+							<span aria-hidden="true" className="shrink-0">
 								<EntityIcon
 									kind="provider"
 									id={
