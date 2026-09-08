@@ -182,7 +182,7 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 			revokeSucceededRef.current = true;
 			revokeExit.beginClose();
 			setRevokeOpen(false);
-			toast.success("Share link turned off");
+			toast.success("Invite link turned off");
 		},
 		onError: (e) => {
 			toast.error("Couldn't turn off link", {
@@ -273,10 +273,10 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Turn off this share link?</AlertDialogTitle>
+						<AlertDialogTitle>Turn off this invite link?</AlertDialogTitle>
 						<AlertDialogDescription>
-							New Viewers will no longer be able to join from this link. Existing Viewers retain
-							access until removed from People.
+							People will no longer be able to join from this link. Existing members retain access
+							until removed from People.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -290,7 +290,7 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 							disabled={!renderedRevokeTarget || revoke.isPending}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
-							{revoke.isPending ? "Turning off…" : "Turn Off Link"}
+							{revoke.isPending ? "Turning off…" : "Turn off link"}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -324,7 +324,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 						readOnly
 						value={link.url}
 						name="fresh-share-link-url"
-						aria-label="New share link URL"
+						aria-label="New invite link URL"
 						autoComplete="off"
 						spellCheck={false}
 						className="min-w-0 font-mono text-xs"
@@ -332,9 +332,9 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 					<Button
 						variant="outline"
 						size="sm"
-						onClick={() => copyText(link.url, "Link Copied")}
+						onClick={() => copyText(link.url, "Link copied")}
 						className="sm:size-9 sm:px-0"
-						aria-label="Copy Share Link"
+						aria-label="Copy invite link"
 					>
 						<Copy className="size-3.5" />
 						<span className="sm:sr-only">Copy</span>
@@ -349,11 +349,11 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 						variant="ghost"
 						size="sm"
 						className="mt-2"
-						onClick={() => copyText(agentPrompt, "Agent Prompt Copied")}
-						aria-label={`Copy agent handoff prompt for share link ${link.prefix}`}
+						onClick={() => copyText(agentPrompt, "Agent prompt copied")}
+						aria-label={`Copy agent handoff prompt for invite link ${link.prefix}`}
 					>
 						<Copy className="mr-1.5 size-3.5" />
-						Copy Prompt
+						Copy prompt
 					</Button>
 				</details>
 			</AlertDescription>
@@ -408,7 +408,7 @@ function LinkRow({
 						size="icon"
 						disabled={revoking}
 						title="Turn off link"
-						aria-label={`Turn off share link ${link.prefix}`}
+						aria-label={`Turn off invite link ${link.prefix}`}
 						onClick={onRevoke}
 					>
 						<Trash2 className="size-3.5 text-destructive" />
@@ -455,7 +455,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			qc.invalidateQueries({ queryKey: ["invitations", projectId] });
 			setEmail("");
 			toast.success("Invitation sent", {
-				description: "They can accept in Clawdi notifications after signing in.",
+				description: "They can accept in Clawdi notifications.",
 			});
 		},
 		onError: (e) => {
@@ -477,7 +477,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			cancelSucceededRef.current = true;
 			cancelExit.beginClose();
 			setCancelOpen(false);
-			toast.success("Invitation cancelled");
+			toast.success("Invitation canceled");
 		},
 		onError: (e) => {
 			toast.error("Couldn't cancel invitation", {
@@ -597,7 +597,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 							disabled={!renderedCancelTarget || cancel.isPending}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
-							{cancel.isPending ? "Cancelling…" : "Cancel invitation"}
+							{cancel.isPending ? "Canceling…" : "Cancel invitation"}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -742,7 +742,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 							disabled={!renderedRemoveTarget || remove.isPending}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
-							{remove.isPending ? "Removing…" : "Remove Member"}
+							{remove.isPending ? "Removing…" : "Remove member"}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -806,14 +806,14 @@ function StopSharingPanel({ projectId }: { projectId: string }) {
 				</AlertDialogTrigger>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Stop Sharing This Project?</AlertDialogTitle>
+						<AlertDialogTitle>Stop all sharing?</AlertDialogTitle>
 						<AlertDialogDescription>
-							This turns off active links, cancels pending invitations, and removes accepted
-							Viewers. Project content remains yours.
+							All invite links and pending invitations will stop working. Members will lose access.
+							Your Project content stays unchanged.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
-						<AlertDialogCancel disabled={unshare.isPending}>Keep Sharing</AlertDialogCancel>
+						<AlertDialogCancel disabled={unshare.isPending}>Keep sharing</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={(event) => {
 								event.preventDefault();

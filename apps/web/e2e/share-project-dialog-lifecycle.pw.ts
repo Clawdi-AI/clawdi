@@ -154,9 +154,9 @@ test("sharing row mutations retain targets through Base UI exit and reopen clean
 
 	const cases = [
 		{
-			trigger: "Turn off share link link-prefix",
-			action: "Turn Off Link",
-			retained: "Turn off this share link?",
+			trigger: "Turn off invite link link-prefix",
+			action: "Turn off link",
+			retained: "Turn off this invite link?",
 		},
 		{
 			trigger: "Cancel invitation for invitee@example.com",
@@ -165,7 +165,7 @@ test("sharing row mutations retain targets through Base UI exit and reopen clean
 		},
 		{
 			trigger: "Remove member member@example.com",
-			action: "Remove Member",
+			action: "Remove member",
 			retained: "member@example.com",
 		},
 	] as const;
@@ -187,7 +187,7 @@ test("sharing row mutations retain targets through Base UI exit and reopen clean
 	await page.getByRole("button", { name: "Actions for Team Knowledge" }).click();
 	await page.getByRole("menuitem", { name: "Share", exact: true }).click();
 	await expect(
-		page.getByRole("button", { name: /Turn off share link|Cancel invitation|Remove / }),
+		page.getByRole("button", { name: /Turn off invite link|Cancel invitation|Remove / }),
 	).toHaveCount(0);
 });
 
@@ -227,7 +227,7 @@ for (const viewport of [
 		await expect(dialog.getByText("new-person@example.com", { exact: true })).toBeVisible();
 		await expect(dialog.getByText("Pending", { exact: true })).toBeVisible();
 		await dialog.getByRole("button", { name: "Create invite link" }).click();
-		await expect(dialog.getByRole("textbox", { name: "New share link URL" })).toHaveValue(
+		await expect(dialog.getByRole("textbox", { name: "New invite link URL" })).toHaveValue(
 			"https://example.com/share/test-token",
 		);
 		await expect(dialog.getByRole("button", { name: /Copy agent handoff prompt/ })).toBeHidden();
@@ -237,7 +237,7 @@ for (const viewport of [
 		await expect(dialog).toBeHidden();
 		await page.getByRole("button", { name: "Actions for Team Knowledge" }).click();
 		await page.getByRole("menuitem", { name: "Share", exact: true }).click();
-		await expect(dialog.getByRole("textbox", { name: "New share link URL" })).toHaveCount(0);
+		await expect(dialog.getByRole("textbox", { name: "New invite link URL" })).toHaveCount(0);
 	});
 }
 
@@ -263,7 +263,7 @@ test("sharing management stays disclosed and failed actions remain retryable", a
 	await dialog.getByText("Inactive links (2)", { exact: true }).click();
 	await expect(dialog.getByText("Expired", { exact: true })).toBeVisible();
 	await expect(
-		dialog.getByRole("button", { name: "Turn off share link expired-prefix" }),
+		dialog.getByRole("button", { name: "Turn off invite link expired-prefix" }),
 	).toHaveCount(0);
 	await expect(dialog.getByText("Old invite link", { exact: true })).toBeVisible();
 	await page.route("**/v1/projects/project-sharing/share-links", async (route) => {
@@ -276,7 +276,7 @@ test("sharing management stays disclosed and failed actions remain retryable", a
 	await dialog.getByText("Manage sharing", { exact: true }).click();
 	await dialog.getByRole("button", { name: "Stop all sharing for this Project" }).press("Enter");
 	const confirmation = page.getByRole("alertdialog");
-	await confirmation.getByRole("button", { name: "Keep Sharing" }).click();
+	await confirmation.getByRole("button", { name: "Keep sharing" }).click();
 	await expect(confirmation).toBeHidden();
 	await expect(dialog.getByText("member@example.com", { exact: true })).toBeVisible();
 	await dialog.getByRole("button", { name: "Stop all sharing for this Project" }).press("Enter");
@@ -292,7 +292,7 @@ test("sharing management stays disclosed and failed actions remain retryable", a
 	await expect(confirmation).toBeHidden();
 	await expect(dialog.getByText("Only you have access", { exact: true })).toBeVisible();
 	await expect(dialog.getByText("invitee@example.com", { exact: true })).toHaveCount(0);
-	await expect(dialog.getByRole("button", { name: /Turn off share link/ })).toHaveCount(0);
+	await expect(dialog.getByRole("button", { name: /Turn off invite link/ })).toHaveCount(0);
 });
 
 test("a newly created URL survives failed refresh and clipboard access", async ({ page }) => {
@@ -321,9 +321,9 @@ test("a newly created URL survives failed refresh and clipboard access", async (
 	);
 	await dialog.getByRole("button", { name: "Create invite link" }).click();
 	await failedRefresh;
-	const url = dialog.getByRole("textbox", { name: "New share link URL" });
+	const url = dialog.getByRole("textbox", { name: "New invite link URL" });
 	await expect(url).toHaveValue("https://example.com/share/test-token");
-	await dialog.getByRole("button", { name: "Copy Share Link", exact: true }).click();
+	await dialog.getByRole("button", { name: "Copy invite link", exact: true }).click();
 	await expect(
 		page.getByText("Select the text and copy it manually.", { exact: true }),
 	).toBeVisible();

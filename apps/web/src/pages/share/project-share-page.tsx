@@ -142,7 +142,7 @@ export default function SharePage({ token }: { token: string }) {
 				<CardHeader>
 					<div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
 						<Sparkles className="size-4" />
-						You've been invited to a Shared Project
+						Project invitation
 					</div>
 					<CardTitle className="mt-2 text-2xl">{data.project_name}</CardTitle>
 					<p className="text-sm text-muted-foreground">
@@ -163,14 +163,14 @@ export default function SharePage({ token }: { token: string }) {
 					{upgradeSucceeded ? (
 						<Alert>
 							<CheckCircle2 />
-							<AlertTitle>You're In</AlertTitle>
-							<AlertDescription>Invitation accepted. Opening Project…</AlertDescription>
+							<AlertTitle>Invitation accepted</AlertTitle>
+							<AlertDescription>Opening Project…</AlertDescription>
 						</Alert>
 					) : isOwner ? (
 						<Alert>
 							<ShieldCheck />
-							<AlertTitle>This is your project</AlertTitle>
-							<AlertDescription>You don't need to accept it — it's already yours.</AlertDescription>
+							<AlertTitle>This is your Project</AlertTitle>
+							<AlertDescription>You already have access.</AlertDescription>
 						</Alert>
 					) : isSignedIn ? (
 						<div className="space-y-3">
@@ -187,8 +187,7 @@ export default function SharePage({ token }: { token: string }) {
 								<Alert>
 									<CheckCircle2 />
 									<AlertDescription>
-										You're already a member. Open the Project from your dashboard, then add it to an
-										agent when needed.
+										You already have access. Open this Project from your dashboard.
 									</AlertDescription>
 								</Alert>
 							) : upgrade.error ? (
@@ -212,18 +211,13 @@ export default function SharePage({ token }: { token: string }) {
 								Sign in to accept
 							</Button>
 							<p className="text-xs text-muted-foreground">
-								Sign in or create a free account. After signing in, click Accept here to join the
-								Project.
+								Sign in or create an account to accept this invitation.
 							</p>
 							<details className="group rounded-lg border bg-muted/30 p-4">
 								<summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-medium marker:hidden">
 									<KeyRound className="size-4 shrink-0" />
-									<span>Advanced CLI Option</span>
+									<span>Accept with CLI</span>
 								</summary>
-								<p className="mt-1 text-xs text-muted-foreground">
-									Use this if you're already familiar with command line tools. The browser flow
-									above is the normal path.
-								</p>
 								<CopyableCommand command={`clawdi inbox accept ${buildLandingUrl(token)}`} />
 							</details>
 						</div>
@@ -285,7 +279,7 @@ function ErrorView({ error }: { error: unknown }) {
 				<Alert variant="destructive">
 					<AlertCircle />
 					<AlertTitle>Something went wrong</AlertTitle>
-					<AlertDescription>Share link unavailable. Ask the owner for a new link.</AlertDescription>
+					<AlertDescription>Couldn't load this invitation. Please try again.</AlertDescription>
 				</Alert>
 			</Shell>
 		);
@@ -304,30 +298,30 @@ function ErrorView({ error }: { error: unknown }) {
 function titleForError(code: ShareErrorCode): string {
 	switch (code) {
 		case "not_found":
-			return "Share Link Not Found";
+			return "Invite link not found";
 		case "revoked":
-			return "Share Link Turned Off";
+			return "Invite link unavailable";
 		case "already_member":
-			return "Already a Member";
+			return "Already joined";
 		case "already_owner":
-			return "That's Your Project";
+			return "This is your Project";
 		default:
-			return "Couldn't load this share";
+			return "Couldn't load invitation";
 	}
 }
 
 function describeError(code: ShareErrorCode): string {
 	switch (code) {
 		case "not_found":
-			return "This link doesn't exist. Ask the owner to send you a fresh one.";
+			return "Ask the owner for a new invite link.";
 		case "revoked":
-			return "The owner turned off this link. Ask them to send you a new one.";
+			return "This invite link is no longer active. Ask the owner for a new one.";
 		case "already_member":
-			return "You already accepted this share. Open it from your dashboard.";
+			return "You already have access. Open this Project from your dashboard.";
 		case "already_owner":
 			return "You own this Project. There is nothing to accept.";
 		default:
-			return "Please try again. If the problem persists, ping the owner.";
+			return "Try again. If the problem continues, contact the owner.";
 	}
 }
 
