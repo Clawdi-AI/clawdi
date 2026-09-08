@@ -286,7 +286,9 @@ function reservationMatches(
 export function shouldIgnoreUserSkill(targetDir: string, skillId = basename(targetDir)): boolean {
 	let reservation: ManagedSkillReservation | undefined;
 	try {
-		reservation = readLedger(ledgerPath()).reservations[resolve(targetDir)];
+		const ledger = readLedger(ledgerPath());
+		reservation =
+			ledger.reservations[resolve(targetDir)] ?? ledger.pendingReservations[resolve(targetDir)];
 	} catch {
 		throw new Error("managed Skill ownership state is invalid");
 	}
@@ -424,7 +426,7 @@ export function installReservedManagedSkill<T>(
 		manager: ManagedSkillReservationManager;
 	},
 	install: () => T,
-	verification: { verify: () => boolean; discard: () => void },
+	verification: { verify: () => boolean; discard: () => void; nativeMutation?: boolean },
 ): T {
 	const path = ledgerPath();
 	const target = resolve(input.targetDir);
@@ -459,11 +461,25 @@ export function installReservedManagedSkill<T>(
 		try {
 			result = install();
 		} catch (error) {
+			// Native installs may have committed files or provenance before failing.
+			// Retain ownership for reconciliation; never roll back only their files.
+			if (
+				verification.nativeMutation &&
+				(pending ||
+					!(error instanceof ManagedSkillResourceError) ||
+					error.targetMutationStarted !== false)
+			)
+				throw error;
 			delete ledger.pendingReservations[target];
 			writeLedger(path, ledger);
 			throw error;
 		}
 		if (!verification.verify()) {
+			if (verification.nativeMutation) {
+				throw new ManagedSkillResourceError(
+					`managed Skill ${input.id} native installation requires retry`,
+				);
+			}
 			verification.discard();
 			if (previous?.id === input.id && previous.manager === input.manager) {
 				delete ledger.reservations[target];
@@ -494,7 +510,8 @@ export function recoverPendingManagedSkillInstallation(input: {
 	manager: ManagedSkillReservationManager;
 	verify: () => boolean;
 	discard: () => void;
-}): "absent" | "promoted" | "discarded" {
+	retryNative?: boolean;
+}): "absent" | "promoted" | "discarded" | "retry" {
 	const path = ledgerPath();
 	const target = resolve(input.targetDir);
 	return withLedgerWriteLock(input.manager, () => {
@@ -517,6 +534,7 @@ export function recoverPendingManagedSkillInstallation(input: {
 			writeLedger(path, ledger);
 			return "promoted";
 		}
+		if (input.retryNative) return "retry";
 		const committed = ledger.reservations[target];
 		if (committed && committed.id === pending.id && committed.manager === pending.manager) {
 			delete ledger.reservations[target];

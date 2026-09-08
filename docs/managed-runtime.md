@@ -881,21 +881,47 @@ retain the existing filesystem/reservation rollback; there is no local-path
 retry after a Git install fails. Heartbeat evidence also detects native origin
 changes for these root Git installs. Unmanaged local targets remain protected.
 
-This is a limited source-preservation fix, not a complete native lifecycle
-integration. GitHub subdirectories and Project/Library archives still use the
-existing OpenClaw staged-path install; Hermes still uses directory activation.
-Their native lifecycle gaps remain unresolved, and this change adds no native
-uninstall or adoption of untracked Skills. OpenClaw's uploaded-archive API does
-not yet accept the required persistent Git/Project source identity, and it has
-no native uninstall for Git/uploaded Skills. The platform bundled `clawdi`
-bootstrap retains its existing path. These boundaries were checked against
-OpenClaw commit `cef6e690d5573d06f3feef5fdf103906e842c618`
-([source install](https://github.com/openclaw/openclaw/blob/cef6e690d5573d06f3feef5fdf103906e842c618/src/skills/lifecycle/source-install.ts),
-[upload install](https://github.com/openclaw/openclaw/blob/cef6e690d5573d06f3feef5fdf103906e842c618/src/skills/lifecycle/upload-install.ts)).
+GitHub subdirectories and Project/Library archives use OpenClaw's existing
+native staged-directory install entrance. That entrance runs native install
+policy; its `local-path` transport describes the verified staging directory,
+while Cloud and Clawdi retain the original immutable source identity. It does
+not mark the content as trusted or builtin. Clawdi removes only its reserved
+OpenClaw directories on the native filesystem discovery surface; this is
+managed ownership cleanup, not a claim that OpenClaw provides a Hub uninstall.
+No upload RPC or additional source fields are required. These paths were
+checked against OpenClaw commit `cef6e690d5573d06f3feef5fdf103906e842c618`
+([source install](https://github.com/openclaw/openclaw/blob/cef6e690d5573d06f3feef5fdf103906e842c618/src/skills/lifecycle/source-install.ts)).
 
-Done: run `scripts/test.sh cli src/runtime/hosted-openclaw-skill.test.ts` and
-`scripts/test.sh cli src/runtime/hosted-skill-observation.test.ts` separately;
-both Docker runners pass their CLI typecheck and focused tests.
+Hermes sourced Skills use its public `SkillBundle`, `quarantine_bundle`,
+`scan_skill`, `should_allow_install(force=False)` and `install_from_quarantine`
+functions. Prepared file bytes remain intact, including supporting files and
+binary assets. Scanning receives the real source identifier; a refusal or
+confirmation requirement remains a refusal. Native metadata records the
+secret-free GitHub commit or Project content identity. Signed download URLs
+are transport credentials and never enter native metadata. Cloud and Clawdi
+remain the source and reservation authorities.
+
+Reconciliation verifies both the exact installed tree and native provenance.
+Missing provenance causes a native reinstall, including migration of existing
+Clawdi-owned local files. Heartbeat checks the same per-Skill native identity,
+without treating unrelated Hub changes as drift. Ambiguous or partial native
+failures retain pending ownership for ordinary retry; a definitive refusal
+before target mutation releases only the newly attempted reservation. Clawdi
+does not restore directories or snapshot/restore Hub metadata around native
+mutations. An unreadable or torn Hub lock fails before mutation
+so native loading cannot silently discard sibling records. Native removal uses
+`uninstall_skill` for known Hub records; a known legacy local Skill uses the
+public `skill_manage(action="delete")` tool, preserving its pinned protection
+without requiring an installation scan before deleting old content. The
+platform bundled `clawdi` bootstrap retains its platform-owned local path.
+These contracts were checked against Hermes fork commit
+[`736fc4d86a1acd8c96473aeb55f9c783e2170dca`](https://github.com/Clawdi-AI/hermes-agent/tree/736fc4d86a1acd8c96473aeb55f9c783e2170dca).
+
+Done: `scripts/test.sh cli src/runtime/hosted-hermes-skill.test.ts src/runtime/hosted-skill-observation.test.ts`
+passes CLI typecheck and the real
+native scan, bytes, provenance, uninstall and retry tests in Docker. The test
+runner provisions the pinned native source and minimal Python dependencies in
+a disposable fixture; none are published with the CLI.
 
 `PUT /v1/agents/{agent_id}/skill-references/{skill_id}` selects one accessible
 Cloud-authority Skill for a Hosted Agent; `DELETE` removes that reference.

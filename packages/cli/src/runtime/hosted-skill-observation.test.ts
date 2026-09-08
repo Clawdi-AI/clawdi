@@ -12,7 +12,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { installHermesNativeFixture } from "../test-support/hermes-native-fixture";
 import { type RuntimeAppliedState, runtimeAppliedStateSchema } from "./applied-state";
+import { activateHostedHermesSkill } from "./hosted-hermes-skill";
 import type { HostedSkillEvidence } from "./hosted-skill-evidence";
 import { readHostedSkillsObservation } from "./hosted-skill-observation";
 import { hostedSkillArchiveSourceIdentity } from "./hosted-sourced-skill-archive";
@@ -43,6 +45,7 @@ function setup() {
 	process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 	process.env.CLAWDI_RUN_DIR = join(root, "run");
 	delete process.env.CLAWDI_RUNTIME_USER;
+	installHermesNativeFixture(join(root, "home"));
 	const paths = getRuntimePaths();
 	mkdirSync(paths.serviceStateRoot, { recursive: true });
 	const fixture = hostedRuntimeBundleV2Schema.parse(
@@ -356,4 +359,51 @@ cp '${originFixture}' '${originPath}'
 	expect(readFileSync(commandLog, "utf8")).toBe(oldCalls + argv());
 	expect(JSON.parse(readFileSync(originPath, "utf8")).git.commit).toBe(source.commit);
 	expect(readHostedSkillsObservation(state())?.entries[0]?.status).toBe("installed");
+});
+
+test("Hermes heartbeat detects native provenance drift without invalidating sibling changes", () => {
+	const { input, state } = setup();
+	const source: HostedSkillSource = {
+		type: "github",
+		url: "https://github.com/example/skills",
+		path: "skills/review",
+		commit: "a".repeat(40),
+	};
+	const fixture = join(root, "source", "review");
+	mkdirSync(fixture, { recursive: true });
+	writeFileSync(join(fixture, "SKILL.md"), "# Review\n");
+	const archive = join(root, "skill.tar.gz");
+	execFileSync("tar", ["-czf", archive, "-C", join(root, "source"), "review"]);
+	const tarBytes = readFileSync(archive);
+	const identity = {
+		source,
+		sourceIdentity: hostedSkillArchiveSourceIdentity("review", source),
+		digest: createHash("sha256").update(tarBytes).digest("hex"),
+	};
+	input.manifest.projection = { skills: { entries: { review: { enabled: true, source } } } };
+	input.preparedSourcedSkills.set("review", { id: "review", identity, tarBytes });
+	expect(reconcileHostedSkillProjection(input)).toEqual([]);
+	activateHostedHermesSkill({
+		home: input.home,
+		sourceDir: fixture,
+		targetDir: join(input.home, ".hermes", "skills", "sibling"),
+		source,
+	});
+	const lockPath = join(input.home, ".hermes", "skills", ".hub", "lock.json");
+	const lock = JSON.parse(readFileSync(lockPath, "utf8"));
+	lock.installed.sibling.updated_at = "2026-09-08T01:00:00Z";
+	writeFileSync(lockPath, JSON.stringify(lock));
+	expect(readHostedSkillsObservation(state())?.entries[0]?.status).toBe("installed");
+	lock.installed.review.metadata.clawdi_source_identity = hostedSkillArchiveSourceIdentity(
+		"review",
+		{ ...source, commit: "b".repeat(40) },
+	);
+	writeFileSync(lockPath, JSON.stringify(lock));
+	expect(readHostedSkillsObservation(state())?.entries[0]).toMatchObject({
+		status: "unknown",
+		errorCode: "evidence_mismatch",
+	});
+	delete lock.installed.review;
+	writeFileSync(lockPath, JSON.stringify(lock));
+	expect(readHostedSkillsObservation(state())?.entries[0]?.status).toBe("unknown");
 });

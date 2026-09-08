@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto";
+import { resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import type { z } from "zod";
 import { collectRegularFileTree, sha256TreeDigest } from "../lib/file-tree";
 import type { RuntimeAppliedState } from "./applied-state";
 import { resolveRuntimeApplyGeneration } from "./apply-identity";
 import { MANAGED_SKILL_TREE_LIMITS } from "./hosted-bundled-skill";
+import {
+	hostedHermesSkillRecordMatches,
+	readHostedHermesSkillRecords,
+} from "./hosted-hermes-skill";
 import type { HostedSkillEvidence } from "./hosted-skill-evidence";
 import { hostedSkillArchiveSourceIdentity } from "./hosted-sourced-skill-archive";
 import { collectManagedSkillTree } from "./managed-skill-delivery";
@@ -53,6 +58,23 @@ export function readHostedSkillsObservation(
 	applied: RuntimeAppliedState,
 ): SkillsObservation | null {
 	if (!applied.skillEvidence?.length) return null;
+	const hermesRecords = new Map<string, Record<string, unknown> | Error>();
+	const nativeHermesMatches = (target: string, identity: string): boolean => {
+		const home = resolve(target, "../../..");
+		return withRuntimeUserFileAccess(() => {
+			let records = hermesRecords.get(home);
+			if (!records) {
+				try {
+					records = readHostedHermesSkillRecords(home);
+				} catch {
+					records = new Error("Hermes Hub provenance is unavailable");
+				}
+				hermesRecords.set(home, records);
+			}
+			if (records instanceof Error) throw records;
+			return hostedHermesSkillRecordMatches(home, target, identity, records);
+		});
+	};
 	let reservations: ReturnType<typeof managedSkillReservations> | null;
 	try {
 		reservations = managedSkillReservations("hosted-manifest");
@@ -89,7 +111,10 @@ export function readHostedSkillsObservation(
 								evidence.targetDir,
 								evidence.runtime,
 								reservation.sourceIdentity,
-							) === evidence.treeDigest
+							) === evidence.treeDigest &&
+							(evidence.runtime !== "hermes" ||
+								!reservation.sourceIdentity ||
+								nativeHermesMatches(evidence.targetDir, reservation.sourceIdentity))
 						: !reservation &&
 							withRuntimeUserFileAccess(() => collectManagedSkillTree(evidence.targetDir ?? ""))
 								.status === "absent");

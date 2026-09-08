@@ -2,7 +2,12 @@ import { existsSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { hostedBundledSkillIds, resolveHostedBundledSkill } from "./hosted-bundled-skill";
-import { activateHostedHermesSkill } from "./hosted-hermes-skill";
+import {
+	activateHostedHermesSkill,
+	hostedHermesSkillSourceMatches,
+	readHostedHermesSkillRecords,
+	removeHostedHermesSkill,
+} from "./hosted-hermes-skill";
 import {
 	activateHostedOpenClawSkill,
 	hostedOpenClawSkillSourceMatches,
@@ -46,6 +51,8 @@ interface HostedSkillProjectionDriver {
 	skillsRoot: string | null;
 	activate(sourceDir: string, targetDir: string, source?: HostedSkillSource): void;
 	sourceMatches?(targetDir: string, source?: HostedSkillSource): boolean;
+	nativeSourcedMutations?: boolean;
+	removeSourced?(targetDir: string, sourceIdentities: readonly string[]): void;
 	exclude?: ReadonlySet<string>;
 }
 type HostedSkillRuntime = "hermes" | "openclaw";
@@ -106,7 +113,12 @@ function requirePreparedSkillTarget(
 	const targetDir = join(skillsRoot, prepared.id);
 	if (
 		withRuntimeUserSkillFiles(() => existsSync(targetDir)) &&
-		managedSkillReservationOwner(targetDir, skillId) !== "hosted-manifest"
+		managedSkillReservationOwner(targetDir, skillId) !== "hosted-manifest" &&
+		!pendingManagedSkillReservations("hosted-manifest").some(
+			(reservation) =>
+				reservation.targetDir === targetDir &&
+				pendingReservationMatchesPrepared(reservation, prepared),
+		)
 	) {
 		throw new Error(`refusing to replace unmanaged ${skillId} skill at ${targetDir}`);
 	}
@@ -144,6 +156,7 @@ function hostedSkillProjectionDrivers(input: {
 	openClawWorkspaceRoot: string | null;
 }): ReadonlyArray<readonly [HostedSkillRuntime, HostedSkillProjectionDriver]> {
 	const hermesSkillsRoot = join(input.home, ".hermes", "skills");
+	let hermesRecords: Record<string, unknown> | undefined;
 	const openClawSkillsRoot = input.openClawWorkspaceRoot
 		? join(input.openClawWorkspaceRoot, "skills")
 		: null;
@@ -152,8 +165,35 @@ function hostedSkillProjectionDrivers(input: {
 			"hermes",
 			{
 				skillsRoot: hermesSkillsRoot,
-				activate: (sourceDir, targetDir) =>
-					withRuntimeUserSkillFiles(() => activateHostedHermesSkill(sourceDir, targetDir)),
+				nativeSourcedMutations: true,
+				sourceMatches: (targetDir, source) => {
+					if (!source) return true;
+					hermesRecords ??= readHostedHermesSkillRecords(input.home);
+					return hostedHermesSkillSourceMatches(input.home, targetDir, source, hermesRecords);
+				},
+				removeSourced: (targetDir, sourceIdentities) => {
+					try {
+						removeHostedHermesSkill(input.home, targetDir, sourceIdentities);
+					} finally {
+						hermesRecords = undefined;
+					}
+				},
+				activate: (sourceDir, targetDir, source) => {
+					try {
+						const ownedSourceIdentities = ownedSourcedSkillIdentities(targetDir);
+						withRuntimeUserSkillFiles(() =>
+							activateHostedHermesSkill({
+								home: input.home,
+								sourceDir,
+								targetDir,
+								source,
+								ownedSourceIdentities,
+							}),
+						);
+					} finally {
+						hermesRecords = undefined;
+					}
+				},
 			},
 		],
 		[
@@ -229,9 +269,39 @@ function recoverPendingHostedSkillInstallations(
 			verify: () =>
 				promotable !== null &&
 				installedHostedSkillMatches(driver, promotable, reservation.targetDir),
-			discard: () => discardPendingHostedSkill(reservation.targetDir),
+			retryNative:
+				driver.nativeSourcedMutations && Boolean(reservation.sourceIdentity) && promotable !== null,
+			discard: () => removeReservedHostedSkill(driver, reservation),
 		});
 	}
+}
+function ownedSourcedSkillIdentities(targetDir: string): string[] {
+	return [
+		...new Set(
+			[
+				...managedSkillReservations("hosted-manifest"),
+				...pendingManagedSkillReservations("hosted-manifest"),
+			].flatMap((owned) =>
+				owned.targetDir === targetDir && owned.sourceIdentity ? [owned.sourceIdentity] : [],
+			),
+		),
+	];
+}
+
+function removeReservedHostedSkill(
+	driver: HostedSkillProjectionDriver,
+	reservation: ManagedSkillReservationSnapshot,
+): void {
+	if (reservation.sourceIdentity && driver.removeSourced) {
+		const remove = driver.removeSourced;
+		const identities = [
+			...new Set([
+				reservation.sourceIdentity,
+				...ownedSourcedSkillIdentities(reservation.targetDir),
+			]),
+		];
+		withRuntimeUserSkillFiles(() => remove(reservation.targetDir, identities));
+	} else discardPendingHostedSkill(reservation.targetDir);
 }
 function validateHostedSkillsPlan(
 	runtime: HostedSkillRuntime,
@@ -286,11 +356,7 @@ function applyHostedSkills(
 					targetDir: reservation.targetDir,
 					id: skillId,
 					manager: "hosted-manifest",
-					removeTarget: () => {
-						withRuntimeUserSkillFiles(() =>
-							rmSync(reservation.targetDir, { recursive: true, force: true }),
-						);
-					},
+					removeTarget: () => removeReservedHostedSkill(driver, reservation),
 				});
 			} catch (error) {
 				if (!(error instanceof ManagedSkillResourceError)) throw error;
@@ -343,6 +409,8 @@ function applyHostedSkills(
 				{
 					verify: () => installedHostedSkillMatches(driver, prepared, targetDir),
 					discard: () => discardPendingHostedSkill(targetDir),
+					nativeMutation:
+						driver.nativeSourcedMutations && prepared.identity.source.type !== "bundled",
 				},
 			);
 		} catch (error) {
