@@ -24,14 +24,7 @@ import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { buildCredentialPayload, getVisibleCredentialFields } from "./credentials-dialog.logic";
 
 /**
- * API-key / credentials connect form.
- *
- * Connectors split into two flows server-side: OAuth (handled by the
- * detail page's existing `window.open(connect_url)`) and credentials
- * (this dialog). The dialog fetches the field schema lazily on open
- * so the user pays no cost for OAuth-only deployments. All hosted vs
- * OSS branching is encapsulated in `useAuthFields`; credential submission is
- * an imperative sensitive action so plaintext never enters MutationCache.
+ * Credential fields load on open; sensitive submissions keep plaintext out of MutationCache.
  */
 export function ConnectorCredentialsDialog({
 	open,

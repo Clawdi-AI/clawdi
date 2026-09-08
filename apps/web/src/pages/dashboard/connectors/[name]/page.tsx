@@ -108,9 +108,6 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 		void setOauthState({ error: null, status: null }, { history: "replace" });
 	}, [oauthState.error, oauthState.status, setOauthState]);
 
-	// All hosted/cloud branching is encapsulated in the `connectors-data`
-	// hooks — both branches are always-called, network is gated by the
-	// `enabled` flag inside, and the returned shapes are unified.
 	const appQ = useAvailableApp(name);
 	const connectionsQ = useConnections();
 	const toolsQ = useConnectorTools(name);
@@ -188,10 +185,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 		);
 	}
 
-	// `appQ.error` covers both "connector not found" (404 from cloud-api,
-	// thrown 404 from the hosted catalog adapter) and outright network
-	// failures. Surface it so the user sees what's wrong instead of a
-	// silently-broken connect page.
+	// Saved accounts remain manageable even when catalog metadata is unavailable.
 	if (!app && appConnections.length === 0) {
 		const appNotFound = isApiNotFoundError(appQ.error) || !appQ.error;
 		return (

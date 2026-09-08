@@ -96,7 +96,6 @@ class _ToolkitMeta(_ComposioWireModel):
 
 
 class _AuthField(_ComposioWireModel):
-    user_visible: bool = True
     name: str = Field(min_length=1)
     display_name: str = ""
     description: str = ""
