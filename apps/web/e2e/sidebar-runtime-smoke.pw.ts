@@ -2475,7 +2475,9 @@ test("Project card menu dialogs survive menu dismissal", async ({ page }) => {
 		await expect(page.getByRole("menu")).toBeHidden();
 		const share = page.getByRole("dialog", { name: "Share Unrelated Project", exact: true });
 		await expect(share).toBeVisible();
-		await expect(share.getByRole("heading", { name: "People", exact: true })).toBeVisible();
+		await expect(
+			share.getByRole("heading", { name: "People with access", exact: true }),
+		).toBeVisible();
 		await page.keyboard.press("Escape");
 		await expect(share).toBeHidden();
 		await trigger.click();

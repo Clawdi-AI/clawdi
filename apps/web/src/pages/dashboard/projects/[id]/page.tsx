@@ -675,14 +675,14 @@ export default function ProjectDetailPage({
 									? "Skills available in this Agent's Workspace. Skills synced from the Agent are read-only."
 									: focus === "vaults"
 										? "Vaults available through this Agent’s Workspace."
-										: "This Agent's fixed Workspace for installed Skills and linked Vaults."
+										: "This Agent's fixed Workspace for installed Skills and Vaults."
 								: focus === "skills"
 									? "Skills this Agent uses through this linked Project."
 									: focus === "vaults"
 										? isOwner
 											? "Vaults this Agent can use through this Project."
 											: "Vaults this Agent can use through this Project. Key values stay protected."
-										: "This Agent uses the Project's Skills and linked Vaults as one bundle."
+										: "This Agent uses the Project's Skills and Vaults as one bundle."
 							: projectDetailDescription(project, isOwner)
 					}
 					status={
@@ -734,9 +734,7 @@ export default function ProjectDetailPage({
 					<CheckCircle2 className="size-4" />
 					<AlertTitle>Project added</AlertTitle>
 					<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-						<span>
-							Linking lets an Agent use this Project&apos;s Skills and linked Vaults together.
-						</span>
+						<span>Linking lets an Agent use this Project&apos;s Skills and Vaults together.</span>
 						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
 							<Bot className="mr-1.5 size-3.5" />
 							Manage agents
@@ -910,7 +908,7 @@ export default function ProjectDetailPage({
 							? "Vaults available through this Agent’s Workspace."
 							: "Vaults this Agent can use through this Project."
 						: isOwner
-							? "Your Vault library and this Project’s Vault links."
+							? "Vaults included in this Project."
 							: "Read-only vaults shared through this Project."
 				}
 				action={
@@ -999,7 +997,7 @@ export default function ProjectDetailPage({
 				<HubSection
 					id="people"
 					title="Your access"
-					description="You have viewer access. Linked Agents use this Project's Skills and linked Vaults together."
+					description="You have viewer access. Linked Agents use this Project's Skills and Vaults together."
 				>
 					<SharedAccessPanel
 						project={project}
@@ -1021,7 +1019,7 @@ export default function ProjectDetailPage({
 							? "Agent that owns this Workspace."
 							: project.kind === "personal"
 								? "Private library items are not linked to individual Agents."
-								: "Agents you own that use this Project's Skills and linked Vaults."
+								: "Agents you own that use this Project's Skills and Vaults."
 					}
 				>
 					{boundAgents.isLoading ? (
@@ -1041,7 +1039,7 @@ export default function ProjectDetailPage({
 									? "The home Agent for this Workspace is unavailable."
 									: project.kind === "personal"
 										? "Private library items have no Agent links."
-										: "None of your Agents are linked yet. Link this Project to let one use its Skills and linked Vaults."
+										: "None of your Agents are linked yet. Link this Project to let one use its Skills and Vaults."
 							}
 						/>
 					) : (
@@ -1219,8 +1217,8 @@ function projectDetailDescription(project: ProjectRow, isOwner: boolean) {
 	const access = isOwner ? "you own" : "shared with you";
 	if (project.kind === "workspace") {
 		return isOwner
-			? "Project you own. Add Skills and link Vaults, then link the whole bundle to Agents that need it."
-			: "Project shared with you. Linked Agents use its Skills and linked Vaults together.";
+			? "Add Skills and Vaults here, then choose which Agents use this Project."
+			: "Project shared with you. Linked Agents use its Skills and Vaults together.";
 	}
 	if (project.kind === "environment") {
 		return `Workspace ${access}. This private Workspace belongs to one Agent and cannot be shared.`;
@@ -1253,7 +1251,7 @@ function SharedAccessPanel({
 				</div>
 				<p className="text-xs text-muted-foreground">
 					You can read this Project and link it to an Agent. The Agent then uses the Project&apos;s
-					Skills and linked Vaults together.
+					Skills and Vaults together.
 				</p>
 			</div>
 			<div className="rounded-md border bg-background/60 p-3">
@@ -1281,7 +1279,7 @@ function SharedAccessPanel({
 						<AlertDialogTitle>Leave {displayProjectName(project)}?</AlertDialogTitle>
 						<AlertDialogDescription>
 							This removes your access and unlinks the Project from your Agents. Those Agents will
-							stop using its Skills and linked Vaults.
+							stop using its Skills and Vaults.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>

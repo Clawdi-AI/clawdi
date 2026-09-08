@@ -167,7 +167,7 @@ export function ProjectsSurface({
 				titleAdornment={headerAdornment}
 				description={
 					agentId
-						? "Your Projects and Projects shared with you. Link a Project to use its Skills and linked Vaults together."
+						? "Choose the Projects this Agent can use."
 						: getProjectResourceDefinition("projects").managementDescription
 				}
 				actions={
@@ -177,7 +177,7 @@ export function ProjectsSurface({
 							await refresh();
 							toast.success(agentId ? "Project created and linked" : "Project created", {
 								description: agentId
-									? "This Agent can use its Skills and linked Vaults immediately."
+									? "This Agent can use its Skills and Vaults immediately."
 									: "It is ready for Skills, Vaults, and Agent links.",
 								action: {
 									label: "Open project",

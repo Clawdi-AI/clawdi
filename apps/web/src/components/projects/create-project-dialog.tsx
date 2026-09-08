@@ -87,9 +87,7 @@ export function CreateProjectDialog({
 				<DialogHeader>
 					<DialogTitle>Create project</DialogTitle>
 					<DialogDescription>
-						{agentId
-							? "Create a shareable bundle and link it to this Agent immediately."
-							: "Create a shareable bundle for Skills and linked Vault access."}
+						{agentId ? "Create a Project for this Agent." : "Group Skills and Vaults in a Project."}
 					</DialogDescription>
 				</DialogHeader>
 				<form

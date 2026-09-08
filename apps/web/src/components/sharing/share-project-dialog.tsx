@@ -91,7 +91,7 @@ export function ShareProjectDialog({
 					</DialogDescription>
 				</DialogHeader>
 				{isShareableProject ? (
-					<div className="space-y-4">
+					<div key={projectId} className="space-y-4">
 						<InvitationsPanel projectId={projectId} />
 						<MembersPanel projectId={projectId} />
 						<section className="space-y-3 border-t pt-4" aria-label="Invite links">

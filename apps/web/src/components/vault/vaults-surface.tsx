@@ -213,7 +213,7 @@ export function VaultsSurface({
 					filterableProjects.length > 1 ? (
 						<>
 							<FilterChip active={projectFilter === "all"} onClick={() => setProjectFilter("all")}>
-								All projects
+								All Vaults
 								<span className="text-muted-foreground tabular-nums">{items.length}</span>
 							</FilterChip>
 							{filterableProjects.map((p) => (
