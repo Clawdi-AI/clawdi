@@ -86,6 +86,9 @@ async def require_connection_ownership_migration(
                     for state in batch
                 ]
             ),
+            expected_generations={
+                state.environment_id: state.apply_generation or state.generation for state in batch
+            },
         )
         by_environment = {state.environment_id: state for state in batch}
         for summary in summaries.items:

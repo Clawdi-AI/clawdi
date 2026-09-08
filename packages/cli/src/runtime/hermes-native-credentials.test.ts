@@ -1,9 +1,20 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HERMES_NATIVE_CREDENTIALS_HELPER } from "./hermes-native-credentials";
+import {
+	HERMES_NATIVE_CREDENTIALS_HELPER,
+	reconcileHermesNativeCredentials,
+} from "./hermes-native-credentials";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -108,6 +119,29 @@ const credential = {
 	apiKey: "connected-key",
 	baseUrl: "https://api.anthropic.com",
 };
+
+test("native credentials use the official managed Hermes interpreter", () => {
+	const f = fixture();
+	const bin = join(f.home, ".hermes", "hermes-agent", "venv", "bin");
+	mkdirSync(bin, { recursive: true });
+	symlinkSync("/usr/bin/python3", join(bin, "python"));
+	const result = reconcileHermesNativeCredentials({
+		home: f.home,
+		workspaceRoot: f.home,
+		providers: [credential],
+		previousProviderIds: [],
+		strategies: {},
+	});
+	expect(result.changed).toBe(true);
+	expect(
+		f
+			.pool()
+			.anthropic.some(
+				(row: { id: string; access_token: string }) =>
+					row.id === "clawdi-native-api-key" && row.access_token === credential.apiKey,
+			),
+	).toBe(true);
+});
 
 test("native credentials take priority, rotate only their row, and retain cooldown until rotation", () => {
 	const f = fixture();

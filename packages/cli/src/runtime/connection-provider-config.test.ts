@@ -126,7 +126,7 @@ with open(path, "w") as file: json.dump(config, file)
 	};
 	if (runtime === "hermes") {
 		const app = join(home, ".hermes/hermes-agent");
-		for (const directory of ["agent", "hermes_cli", ".venv/bin"])
+		for (const directory of ["agent", "hermes_cli", "venv/bin"])
 			mkdirSync(join(app, directory), { recursive: true });
 		// Public API contract doubles; no private pool layout knowledge in the adapter.
 		writeFileSync(
@@ -137,7 +137,7 @@ with open(path, "w") as file: json.dump(config, file)
 			join(app, "hermes_cli/auth.py"),
 			"import os\ndef read_credential_pool(key):\n    return [object()] if os.path.exists(os.path.join(os.environ['HERMES_HOME'], 'pool-conflict')) else []\n",
 		);
-		symlinkSync("/usr/bin/python3", join(app, ".venv/bin/python"));
+		symlinkSync("/usr/bin/python3", join(app, "venv/bin/python"));
 	}
 	const observation: RuntimeInstallObservation = {
 		runtime,
@@ -405,6 +405,48 @@ test("Hermes public pool conflict prevents ownership transfer and config mutatio
 		const before = f.read();
 		expect(() => f.prepare()).toThrow("credential conflict");
 		expect(f.read()).toEqual(before);
+		expect(f.input().ownership.providers).toEqual({});
+	} finally {
+		f.cleanup();
+	}
+});
+
+test.each(["empty", "occupied", "no-match"])(
+	"Hermes uses the installed legacy public pool resolver: %s",
+	(state) => {
+		const f = fixture("hermes");
+		try {
+			const app = join(f.home, ".hermes/hermes-agent");
+			writeFileSync(
+				join(app, "agent/credential_pool.py"),
+				`def get_custom_provider_pool_key(base_url, provider_name=None):\n    return ${state === "no-match" ? "None" : '"custom:resolved-by-native"'}\n`,
+			);
+			writeFileSync(
+				join(app, "hermes_cli/auth.py"),
+				state === "no-match"
+					? "def read_credential_pool(key):\n    raise AssertionError('No native pool matched')\n"
+					: `def read_credential_pool(key):\n    assert key == "custom:resolved-by-native"\n    return ${state === "occupied" ? "[object()]" : "[]"}\n`,
+			);
+			const before = f.read();
+			if (state === "occupied") {
+				expect(() => f.prepare()).toThrow("credential conflict");
+				expect(f.input().ownership.providers).toEqual({});
+			} else {
+				f.prepare();
+				expect(f.input().ownership.providers[id]?.envName).toBe(envName);
+			}
+			expect(f.read()).toEqual(before);
+		} finally {
+			f.cleanup();
+		}
+	},
+);
+
+test("Hermes refuses unknown public pool APIs", () => {
+	const f = fixture("hermes");
+	try {
+		writeFileSync(join(f.home, ".hermes/hermes-agent/agent/credential_pool.py"), "pass\n");
+		expect(() => f.prepare()).toThrow("unsupported public pool API");
 		expect(f.input().ownership.providers).toEqual({});
 	} finally {
 		f.cleanup();
