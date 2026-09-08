@@ -1406,13 +1406,31 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	const projectGrid = projectStack.getByTestId("agent-project-grid");
 	const projectCards = projectGrid.getByTestId("agent-project-card");
 	await expect(projectCards).toHaveCount(4);
+	const linkedProjects = projectStack.getByRole("region", { name: "Linked Projects", exact: true });
+	const availableProjects = projectStack.getByRole("region", { name: "Available Projects" });
+	await expect(projectStack.getByRole("region").nth(0)).toHaveAttribute(
+		"aria-label",
+		"Linked Projects",
+	);
+	await expect(projectStack.getByRole("region").nth(1)).toHaveAttribute(
+		"aria-label",
+		"Available Projects",
+	);
+	await expect(linkedProjects.getByText("Linked", { exact: true }).locator("..")).toHaveText(
+		"Linked2",
+	);
+	await expect(availableProjects.getByText("Available", { exact: true }).locator("..")).toHaveText(
+		"Available2",
+	);
+	await expect(linkedProjects.getByTestId("agent-project-card")).toHaveCount(2);
+	await expect(availableProjects.getByTestId("agent-project-card")).toHaveCount(2);
 	const teamCard = projectCards.filter({ hasText: "Team Knowledge" });
 	const longCard = projectCards.filter({ hasText: longContextProjectName });
 	const releaseCard = projectCards.filter({ hasText: "Release Project" });
 	expect(
-		await projectGrid.evaluate(
-			(element) => getComputedStyle(element).gridTemplateColumns.split(" ").length,
-		),
+		await projectGrid
+			.first()
+			.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length),
 	).toBe(3);
 	for (const card of await projectCards.all()) {
 		await expect(card.locator(":scope > div")).toHaveCSS("border-top-width", "1px");
@@ -1431,11 +1449,26 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 		/\/projects\/project-batch-second\?from=/,
 	);
 	const search = projectStack.getByPlaceholder("Search projects…");
+	await search.fill("protected");
+	await expect(linkedProjects.getByTestId("agent-project-card")).toHaveCount(2);
+	await expect(availableProjects.getByTestId("agent-project-card")).toHaveCount(1);
+	await expect(availableProjects.getByText("Available", { exact: true }).locator("..")).toHaveText(
+		"Available1",
+	);
 	await search.fill("Teammate");
 	await expect(projectCards).toHaveCount(1);
 	await expect(teamCard).toBeVisible();
+	await expect(linkedProjects.getByText("Linked", { exact: true }).locator("..")).toHaveText(
+		"Linked1",
+	);
+	await expect(availableProjects).toHaveCount(0);
+	await search.fill("Release");
+	await expect(releaseCard).toBeVisible();
+	await expect(linkedProjects).toHaveCount(0);
+	await expect(availableProjects.getByTestId("agent-project-card")).toHaveCount(1);
 	await search.fill("[]$");
 	await expect(projectStack.getByText("No matching Projects", { exact: true })).toBeVisible();
+	await expect(projectStack.getByRole("region")).toHaveCount(0);
 	await search.fill("");
 	await expect(projectCards).toHaveCount(4);
 	await expect(
@@ -1459,7 +1492,10 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 		]);
 	expect(projectLinkDeltaBodies).toEqual([]);
 	await expect(projectGrid.getByTestId("agent-project-card")).toHaveCount(5);
-	await expect(projectGrid.getByText("Release Review", { exact: true })).toBeVisible();
+	await expect(linkedProjects.getByText("Release Review", { exact: true })).toBeVisible();
+	await expect(linkedProjects.getByText("Linked", { exact: true }).locator("..")).toHaveText(
+		"Linked3",
+	);
 	const createdToast = page
 		.locator("[data-sonner-toast]")
 		.filter({ hasText: "Project created and linked" });
@@ -1478,14 +1514,51 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(
 		teamCard.getByRole("button", { name: "Link Team Knowledge", exact: true }),
 	).toBeEnabled();
-	await releaseCard.getByRole("button", { name: "Link Release Project", exact: true }).click();
-	await expect(releaseCard.getByRole("button", { name: "Unlink Release Project" })).toBeVisible();
+	await expect(availableProjects.getByRole("link", { name: "Open Team Knowledge" })).toBeVisible();
+	await expect(linkedProjects.getByText("Linked", { exact: true }).locator("..")).toHaveText(
+		"Linked2",
+	);
+	await expect(availableProjects.getByText("Available", { exact: true }).locator("..")).toHaveText(
+		"Available3",
+	);
+	let releaseProjectRefresh = () => {};
+	const projectRefreshGate = new Promise<void>((resolve) => {
+		releaseProjectRefresh = resolve;
+	});
+	await page.route("**/v1/projects", async (route) => {
+		await projectRefreshGate;
+		await route.fallback();
+	});
+	try {
+		await releaseCard.getByRole("button", { name: "Link Release Project", exact: true }).click();
+		await expect(linkedProjects.getByRole("link", { name: "Open Release Project" })).toBeVisible();
+		await expect(releaseCard.getByRole("button", { name: "Unlink Release Project" })).toHaveText(
+			"Linking…",
+		);
+	} finally {
+		releaseProjectRefresh();
+	}
+	await expect(releaseCard.getByRole("button", { name: "Unlink Release Project" })).toHaveText(
+		"Unlink",
+	);
+	await expect(linkedProjects.getByText("Linked", { exact: true }).locator("..")).toHaveText(
+		"Linked3",
+	);
+	await expect(availableProjects.getByText("Available", { exact: true }).locator("..")).toHaveText(
+		"Available2",
+	);
 	await expect(releaseCard.getByRole("link", { name: "Open Release Project" })).toHaveAttribute(
 		"href",
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-batch-second",
 	);
 	await teamCard.getByRole("button", { name: "Link Team Knowledge", exact: true }).click();
 	await expect(teamCard.getByRole("button")).toHaveText(["Unlink"]);
+	await expect(linkedProjects.getByText("Linked", { exact: true }).locator("..")).toHaveText(
+		"Linked4",
+	);
+	await expect(availableProjects.getByText("Available", { exact: true }).locator("..")).toHaveText(
+		"Available1",
+	);
 	await expect
 		.poll(() => projectLinkDeltaBodies)
 		.toEqual([
@@ -1515,9 +1588,9 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await page.setViewportSize({ width: 390, height: 844 });
 	await expect(longCard).toBeVisible();
 	expect(
-		await projectGrid.evaluate(
-			(element) => getComputedStyle(element).gridTemplateColumns.split(" ").length,
-		),
+		await projectGrid
+			.first()
+			.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length),
 	).toBe(1);
 	const longTitle = longCard.getByRole("heading", { name: longContextProjectName });
 	const longDescription = longCard.getByText(longContextProjectDescription, {
@@ -1688,6 +1761,17 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(
 		desktopWorkspace.getByRole("link", { name: "Skills", exact: true }),
 	).not.toHaveAttribute("data-active", "");
+	const linkedVaults = main.getByRole("region", { name: "Linked Workspace Vaults", exact: true });
+	const availableVaults = main.getByRole("region", { name: "Available Workspace Vaults" });
+	await expect(linkedVaults.getByText("Linked", { exact: true }).locator("..")).toHaveText(
+		"Linked2",
+	);
+	await expect(availableVaults.getByText("Available", { exact: true }).locator("..")).toHaveText(
+		"Available2",
+	);
+	await expect(
+		availableVaults.getByTestId("project-vault-card").filter({ hasText: "Team Vault" }),
+	).toContainText("Via linked Project");
 	const sharedVaultCard = main
 		.getByTestId("project-vault-card")
 		.filter({ hasText: "Shared Vault" });
@@ -1704,6 +1788,15 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await sharedVaultCard.getByRole("button", { name: "Unlink Shared Vault from Workspace" }).click();
 	await expect(sharedVaultCard).toContainText("Via linked Project");
 	await expect(sharedVaultCard).toContainText("used by Team Knowledge");
+	await expect(linkedVaults.getByText("Linked", { exact: true }).locator("..")).toHaveText(
+		"Linked1",
+	);
+	await expect(availableVaults.getByText("Available", { exact: true }).locator("..")).toHaveText(
+		"Available3",
+	);
+	await expect(
+		availableVaults.getByRole("link", { name: "Open vault Shared Vault" }),
+	).toBeVisible();
 	await expect(
 		sharedVaultCard.getByRole("button", { name: "Link Shared Vault to Workspace" }),
 	).toBeEnabled();
@@ -1723,6 +1816,12 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(main.getByText("Team Vault", { exact: true })).toBeVisible();
 	await expect(main.getByText("Shared Vault", { exact: true })).toBeVisible();
 	await expect(main.getByText("Scoped Vault", { exact: true })).toHaveCount(0);
+	await expect(
+		main
+			.getByRole("region", { name: "Linked Project Vaults", exact: true })
+			.getByTestId("project-vault-card"),
+	).toHaveCount(2);
+	await expect(main.getByRole("region", { name: "Available Project Vaults" })).toHaveCount(0);
 	await expect(
 		main.getByRole("button", { name: /^(Link|Unlink) .* (to|from) Project$/ }),
 	).toHaveCount(0);
@@ -1763,6 +1862,14 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(
 		main.getByTestId("project-vault-card").filter({ hasText: "Scoped Vault" }),
 	).toContainText("Via Workspace");
+	await expect(
+		main.getByRole("region", { name: "Linked Project Vaults", exact: true }),
+	).toHaveCount(0);
+	await expect(
+		main
+			.getByRole("region", { name: "Available Project Vaults" })
+			.getByTestId("project-vault-card"),
+	).toHaveCount(4);
 	await expect(main.getByRole("button", { name: "View all Skills" })).toHaveAttribute(
 		"href",
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-context-later/skills",
@@ -2210,15 +2317,28 @@ test("agent rail preserves keyboard sorting and primes agent switches", async ({
 });
 
 test("Project catalog stays readable while link state fails and recovers", async ({ page }) => {
+	let releaseBindings = () => {};
 	const options: DashboardApiStubOptions = {
 		projectBindingsError: { status: 503, detail: "Project links temporarily unavailable" },
+		projectBindingsGate: new Promise<void>((resolve) => {
+			releaseBindings = resolve;
+		}),
 	};
 	await stubDashboardApi(page, [], options);
 	const main = page.locator("main");
 	await page.goto("/agents/11111111-1111-4111-8111-111111111111/project-access");
 	const card = main.getByTestId("agent-project-card").filter({ hasText: "Unrelated Project" });
-	await expect(card.getByRole("link", { name: "Open Unrelated Project" })).toBeVisible();
+	try {
+		await expect(card.getByRole("link", { name: "Open Unrelated Project" })).toBeVisible();
+		await expect(
+			card.getByRole("button", { name: "Link status unavailable for Unrelated Project" }),
+		).toHaveText("Loading…");
+		await expect(main.getByTestId("agent-project-stack").getByRole("region")).toHaveCount(0);
+	} finally {
+		releaseBindings();
+	}
 	await expect(main.getByText("Couldn't load Project links", { exact: true })).toBeVisible();
+	await expect(main.getByTestId("agent-project-stack").getByRole("region")).toHaveCount(0);
 	await expect(
 		card.getByRole("button", { name: "Link status unavailable for Unrelated Project" }),
 	).toBeDisabled();
@@ -2228,11 +2348,19 @@ test("Project catalog stays readable while link state fails and recovers", async
 	await expect(
 		card.getByRole("button", { name: "Link Unrelated Project", exact: true }),
 	).toBeEnabled();
+	const available = main.getByRole("region", { name: "Available Projects" });
+	await expect(available.getByText("Available", { exact: true }).locator("..")).toHaveText(
+		"Available1",
+	);
+	await expect(main.getByRole("region", { name: "Linked Projects", exact: true })).toHaveCount(0);
 	await page.route("**/v1/agents/*/projects", (route) =>
 		fulfillJson(route, { detail: "Skill key conflict" }, 409),
 	);
 	await card.getByRole("button", { name: "Link Unrelated Project", exact: true }).click();
 	await expect(page.getByText("Couldn't update Project link", { exact: true })).toBeVisible();
+	await expect(available.getByText("Available", { exact: true }).locator("..")).toHaveText(
+		"Available1",
+	);
 	await expect(
 		card.getByRole("button", { name: "Link Unrelated Project", exact: true }),
 	).toBeEnabled();
@@ -2248,6 +2376,8 @@ test("cached Project links retain their state and destination after a failed ref
 	const unlink = card.getByRole("button", { name: "Unlink Team Knowledge" });
 	await expect(unlink).toBeEnabled();
 	const href = await link.getAttribute("href");
+	const linked = page.getByRole("region", { name: "Linked Projects", exact: true });
+	await expect(linked.getByText("Linked", { exact: true }).locator("..")).toHaveText("Linked2");
 	const bindingRoute = "**/v1/agents/*/project-bindings";
 	await page.route(bindingRoute, (route) =>
 		fulfillJson(route, { detail: "Temporary refresh failure" }, 503),
@@ -2256,6 +2386,8 @@ test("cached Project links retain their state and destination after a failed ref
 	await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
 	await expect(page.getByText("Couldn't load Project links", { exact: true })).toBeVisible();
 	await expect(unlink).toBeDisabled();
+	await expect(linked.getByText("Linked", { exact: true }).locator("..")).toHaveText("Linked2");
+	await expect(page.getByRole("region", { name: "Available Projects" })).toHaveCount(0);
 	await expect(link).toHaveAttribute("href", href ?? "");
 	await page.unroute(bindingRoute);
 	await page.locator("main").getByRole("button", { name: "Retry" }).click();
@@ -2269,17 +2401,57 @@ test("cached Project links retain their state and destination after a failed ref
 test("Vault catalog failures preserve scoped attachments and catalog return navigation", async ({
 	page,
 }) => {
-	await stubConnectedAgentResources(page);
+	const { projectAccessVaults } = await stubConnectedAgentResources(page);
+	projectAccessVaults.push({
+		...vaults.items[0],
+		id: "vault-viewer",
+		slug: "viewer-vault",
+		name: "Viewer Vault",
+		is_owner: false,
+		project_ids: ["project-context-first"],
+	});
 	const origin = "/agents/11111111-1111-4111-8111-111111111111/project-access/project-smoke/vaults";
+	const vaultRoute = "**/v1/vault?*";
+	let releaseAttachments = () => {};
+	const attachmentGate = new Promise<void>((resolve) => {
+		releaseAttachments = resolve;
+	});
+	await page.route(vaultRoute, async (route) => {
+		if (!new URL(route.request().url()).searchParams.has("project_id")) return route.fallback();
+		await attachmentGate;
+		return fulfillJson(route, { detail: "Links unavailable" }, 503);
+	});
 	await page.goto(origin);
 	const catalog = page.getByTestId("project-vault-catalog");
+	try {
+		await expect(catalog.getByTestId("project-vault-card")).toHaveCount(5);
+		await expect(catalog.getByText("Loading links…", { exact: true })).toHaveCount(5);
+		await expect(catalog.getByRole("region")).toHaveCount(0);
+	} finally {
+		releaseAttachments();
+	}
+	await expect(
+		catalog.getByText("Couldn't load Workspace Vault links", { exact: true }),
+	).toBeVisible();
+	await expect(catalog.getByRole("region")).toHaveCount(0);
+	await expect(catalog.getByText("Link status unavailable", { exact: true })).toHaveCount(5);
+	await page.unroute(vaultRoute);
+	await catalog.getByRole("button", { name: "Retry" }).click();
+	const linked = catalog.getByRole("region", { name: "Linked Workspace Vaults", exact: true });
+	const available = catalog.getByRole("region", { name: "Available Workspace Vaults" });
+	await expect(linked.getByText("Linked", { exact: true }).locator("..")).toHaveText("Linked2");
+	await expect(available.getByText("Available", { exact: true }).locator("..")).toHaveText(
+		"Available3",
+	);
+	const viewer = available.getByTestId("project-vault-card").filter({ hasText: "Viewer Vault" });
+	await expect(viewer).toContainText("Via linked Project");
+	await expect(viewer.getByRole("button")).toHaveCount(0);
 	const scoped = catalog.getByTestId("project-vault-card").filter({ hasText: "Scoped Vault" });
 	const detach = scoped.getByRole("button", { name: "Unlink Scoped Vault from Workspace" });
 	const link = scoped.getByRole("link", { name: "Open vault Scoped Vault" });
 	await expect(detach).toBeEnabled();
 	const href = await link.getAttribute("href");
 	let failAttachments = false;
-	const vaultRoute = "**/v1/vault?*";
 	await page.route(vaultRoute, (route) => {
 		if (!failAttachments && new URL(route.request().url()).searchParams.has("project_id"))
 			return route.fallback();
@@ -2298,6 +2470,11 @@ test("Vault catalog failures preserve scoped attachments and catalog return navi
 	await expect(
 		catalog.getByText("Couldn't load Workspace Vault links", { exact: true }),
 	).toBeVisible();
+	await expect(linked.getByText("Linked", { exact: true }).locator("..")).toHaveText("Linked2");
+	await expect(available.getByText("Available", { exact: true }).locator("..")).toHaveText(
+		"Available3",
+	);
+	await expect(viewer).toContainText("Via linked Project");
 	await expect(detach).toHaveText("Unlink");
 	await expect(link).toHaveAttribute("href", href ?? "");
 	await expect(detach).toBeDisabled();
@@ -2313,7 +2490,14 @@ test("Vault catalog failures preserve scoped attachments and catalog return navi
 		.getByRole("button", { name: "Retry" })
 		.click();
 	await expect(detach).toBeEnabled();
+	await catalog.getByLabel("Search Vaults").fill("Vault");
+	await expect(linked.getByTestId("project-vault-card")).toHaveCount(2);
+	await expect(available.getByTestId("project-vault-card")).toHaveCount(3);
 	await catalog.getByLabel("Search Vaults").fill("Unrelated");
+	await expect(linked).toHaveCount(0);
+	await expect(available.getByText("Available", { exact: true }).locator("..")).toHaveText(
+		"Available1",
+	);
 	await catalog.getByRole("link", { name: "Open vault Unrelated Vault" }).click();
 	await expect(page).toHaveURL(
 		(url) =>
@@ -2340,6 +2524,11 @@ test("Project card menu dialogs survive menu dismissal", async ({ page }) => {
 		(route) => fulfillJson(route, []),
 	);
 	await page.goto("/projects");
+	await expect(page.getByTestId("project-card")).toHaveCount(1);
+	await expect(page.getByTestId("projects-surface").getByRole("region")).toHaveCount(0);
+	await expect(
+		page.getByTestId("projects-surface").getByRole("button", { name: /^(Link|Unlink) / }),
+	).toHaveCount(0);
 	const card = page.getByTestId("project-card").filter({ hasText: "Unrelated Project" });
 	const trigger = card.getByRole("button", { name: "Actions for Unrelated Project" });
 	for (const width of [1280, 390]) {

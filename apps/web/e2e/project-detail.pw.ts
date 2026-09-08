@@ -214,6 +214,16 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 	await projectTabs.getByRole("tab", { name: "Vaults" }).click();
 	await expect(page.getByRole("heading", { name: "Vaults", exact: true })).toBeVisible();
 	const catalog = page.getByTestId("project-vault-catalog");
+	const linked = catalog.getByRole("region", { name: "Linked Project Vaults", exact: true });
+	const available = catalog.getByRole("region", { name: "Available Project Vaults" });
+	await expect(catalog.getByRole("region").nth(0)).toHaveAttribute(
+		"aria-label",
+		"Linked Project Vaults",
+	);
+	await expect(linked.getByText("Linked", { exact: true }).locator("..")).toHaveText("Linked1");
+	await expect(available.getByText("Available", { exact: true }).locator("..")).toHaveText(
+		"Available1",
+	);
 	const releaseVault = catalog
 		.getByTestId("project-vault-card")
 		.filter({ hasText: "Release archive" });
@@ -222,8 +232,31 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 	).toBeVisible();
 	await catalog.getByLabel("Search Vaults").fill("release");
 	await expect(catalog.getByTestId("project-vault-card")).toHaveCount(1);
-	await releaseVault.getByRole("button", { name: "Link Release archive to Project" }).click();
+	await expect(linked).toHaveCount(0);
+	await expect(available.getByText("Available", { exact: true }).locator("..")).toHaveText(
+		"Available1",
+	);
+	let releaseRefresh = () => {};
+	const refreshGate = new Promise<void>((resolve) => {
+		releaseRefresh = resolve;
+	});
+	await page.route("**/v1/projects", async (route) => {
+		await refreshGate;
+		await route.fallback();
+	});
+	try {
+		await releaseVault.getByRole("button", { name: "Link Release archive to Project" }).click();
+		await expect(linked.getByRole("link", { name: "Open vault Release archive" })).toBeVisible();
+		await expect(releaseVault.getByRole("button")).toHaveText(["Linking…"]);
+		await expect(linked.getByText("Linked", { exact: true }).locator("..")).toHaveText("Linked1");
+		await expect(available).toHaveCount(0);
+	} finally {
+		releaseRefresh();
+	}
 	await expect(releaseVault.getByRole("button")).toHaveText(["Unlink"]);
+	await catalog.getByLabel("Search Vaults").fill("");
+	await expect(linked.getByText("Linked", { exact: true }).locator("..")).toHaveText("Linked2");
+	await expect(available).toHaveCount(0);
 	await expect.poll(() => vaultCreateRequests).toHaveLength(1);
 	expect(vaultCreateRequests[0]?.body).toEqual({
 		slug: "release-archive",
@@ -234,6 +267,15 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 	await expect(
 		releaseVault.getByRole("button", { name: "Link Release archive to Project" }),
 	).toBeEnabled();
+	await expect(available.getByRole("link", { name: "Open vault Release archive" })).toBeVisible();
+	await expect(linked.getByText("Linked", { exact: true }).locator("..")).toHaveText("Linked1");
+	await expect(available.getByText("Available", { exact: true }).locator("..")).toHaveText(
+		"Available1",
+	);
+	await catalog.getByLabel("Search Vaults").fill("[]$");
+	await expect(catalog.getByText("No Vaults match that search.")).toBeVisible();
+	await expect(catalog.getByRole("region")).toHaveCount(0);
+	await catalog.getByLabel("Search Vaults").fill("");
 	expect(vaultDetachRequests[0]?.searchParams.get("vault_id")).toBe(
 		"88888888-8888-4888-8888-888888888888",
 	);

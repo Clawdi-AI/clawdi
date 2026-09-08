@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
 import { displayProjectName } from "@/components/projects/project-metadata";
+import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
 import { Spinner } from "@/components/ui/spinner";
@@ -88,6 +89,12 @@ export function ProjectVaultCatalog({
 				Number(a.is_owner === false) - Number(b.is_owner === false) ||
 				compareVaultsForCatalog(a, b, search),
 		);
+	const groups = attachmentsKnown
+		? [
+				{ label: "Linked", rows: rows.filter((vault) => attachedIds.has(vault.id)) },
+				{ label: "Available", rows: rows.filter((vault) => !attachedIds.has(vault.id)) },
+			]
+		: [{ label: null, rows }];
 	const updateAttachment = useMutation({
 		mutationFn: async ({ vault, attached }: { vault: Vault; attached: boolean }) => {
 			if (
@@ -139,7 +146,8 @@ export function ProjectVaultCatalog({
 			/>
 			{canAttach ? (
 				<p className="text-sm text-muted-foreground">
-					Link a Vault to grant this {context} access. Unlinking preserves its keys and other links.
+					Vaults linked to this {context} and the rest of your Library. Unlinking preserves keys and
+					other links.
 				</p>
 			) : null}
 			{error ? (
@@ -157,101 +165,117 @@ export function ProjectVaultCatalog({
 				/>
 			) : null}
 			{rows.length ? (
-				<div className={HERO_GRID_CLASS}>
-					{rows.map((vault) => {
-						const attached = attachmentsKnown && attachedIds.has(vault.id);
-						const inherited =
-							scope.kind === "agent" && !attached
-								? agentBindings?.find(
-										(binding) =>
-											binding.project_id !== project.id &&
-											vault.project_ids.includes(binding.project_id),
-									)
-								: undefined;
-						const pending =
-							updateAttachment.isPending && updateAttachment.variables.vault.id === vault.id;
-						const actionsDisabled =
-							!attachmentsKnown ||
-							Boolean(error) ||
-							updateAttachment.isPending ||
-							(!attached && (catalog.data === undefined || Boolean(catalog.error)));
-						const toggleAttachment = () => {
-							if (actionsDisabled || locked.current) return;
-							locked.current = true;
-							updateAttachment.mutate({ vault, attached });
-						};
-						const detailScope = attached
-							? scope
-							: inherited && scope.kind === "agent"
-								? agentResourceScope(scope.agentId, inherited.project_id)
-								: LIBRARY_RESOURCE_SCOPE;
-						return (
-							<div key={vault.id} data-testid="project-vault-card" className="min-w-0">
-								<VaultCard
-									vault={vault}
-									projectNameById={projectNames}
-									projectNamesUnavailable={shouldBlockQueryError(projects.error, projects.data)}
-									visibleProjectIds={null}
-									projectId={attached ? project.id : inherited?.project_id}
-									navigationScope={detailScope}
-									returnHref={
-										returnHref !== resourceCollectionTarget(detailScope, "vaults").href
-											? returnHref
-											: undefined
-									}
-									shared={vault.is_owner === false}
-									searchQuery={search.trim() || undefined}
-									status={
-										attachmentsKnown
-											? attached
-												? canAttach && vault.is_owner !== false
-													? undefined
-													: `Linked to ${context}`
-												: inherited
-													? inherited.binding_type === "primary"
-														? "Via Workspace"
-														: "Via linked Project"
-													: scope.kind === "agent" && !agentBindings
-														? "Agent access unavailable"
+				groups.map((group) =>
+					group.rows.length > 0 ? (
+						<section
+							key={group.label ?? "catalog"}
+							className="space-y-3"
+							aria-label={group.label ? `${group.label} ${context} Vaults` : undefined}
+						>
+							{group.label ? (
+								<SectionLabel count={group.rows.length}>{group.label}</SectionLabel>
+							) : null}
+							<div className={HERO_GRID_CLASS}>
+								{group.rows.map((vault) => {
+									const attached = attachmentsKnown && attachedIds.has(vault.id);
+									const inherited =
+										scope.kind === "agent" && !attached
+											? agentBindings?.find(
+													(binding) =>
+														binding.project_id !== project.id &&
+														vault.project_ids.includes(binding.project_id),
+												)
+											: undefined;
+									const pending =
+										updateAttachment.isPending && updateAttachment.variables.vault.id === vault.id;
+									const actionsDisabled =
+										!attachmentsKnown ||
+										Boolean(error) ||
+										updateAttachment.isPending ||
+										(!attached && (catalog.data === undefined || Boolean(catalog.error)));
+									const toggleAttachment = () => {
+										if (actionsDisabled || locked.current) return;
+										locked.current = true;
+										updateAttachment.mutate({ vault, attached });
+									};
+									const detailScope = attached
+										? scope
+										: inherited && scope.kind === "agent"
+											? agentResourceScope(scope.agentId, inherited.project_id)
+											: LIBRARY_RESOURCE_SCOPE;
+									return (
+										<div key={vault.id} data-testid="project-vault-card" className="min-w-0">
+											<VaultCard
+												vault={vault}
+												projectNameById={projectNames}
+												projectNamesUnavailable={shouldBlockQueryError(
+													projects.error,
+													projects.data,
+												)}
+												visibleProjectIds={null}
+												projectId={attached ? project.id : inherited?.project_id}
+												navigationScope={detailScope}
+												returnHref={
+													returnHref !== resourceCollectionTarget(detailScope, "vaults").href
+														? returnHref
 														: undefined
-											: isLoading
-												? "Loading links…"
-												: "Link status unavailable"
-									}
-									actions={
-										canAttach && vault.is_owner !== false ? (
-											<Button
-												size="sm"
-												variant={attached ? "ghost" : "default"}
-												disabled={actionsDisabled}
-												aria-busy={pending}
-												aria-label={
-													attachmentsKnown
-														? `${attached ? "Unlink" : "Link"} ${vault.name} ${attached ? "from" : "to"} ${context}`
-														: `Link status unavailable for ${vault.name}`
 												}
-												onClick={toggleAttachment}
-											>
-												{pending || isLoading ? <Spinner /> : null}
-												{pending
-													? attached
-														? "Unlinking…"
-														: "Linking…"
-													: attachmentsKnown
+												shared={vault.is_owner === false}
+												searchQuery={search.trim() || undefined}
+												status={
+													attachmentsKnown
 														? attached
-															? "Unlink"
-															: "Link"
+															? canAttach && vault.is_owner !== false
+																? undefined
+																: `Linked to ${context}`
+															: inherited
+																? inherited.binding_type === "primary"
+																	? "Via Workspace"
+																	: "Via linked Project"
+																: scope.kind === "agent" && !agentBindings
+																	? "Agent access unavailable"
+																	: undefined
 														: isLoading
-															? "Loading…"
-															: "Unavailable"}
-											</Button>
-										) : null
-									}
-								/>
+															? "Loading links…"
+															: "Link status unavailable"
+												}
+												actions={
+													canAttach && vault.is_owner !== false ? (
+														<Button
+															size="sm"
+															variant={attached ? "ghost" : "default"}
+															disabled={actionsDisabled}
+															aria-busy={pending}
+															aria-label={
+																attachmentsKnown
+																	? `${attached ? "Unlink" : "Link"} ${vault.name} ${attached ? "from" : "to"} ${context}`
+																	: `Link status unavailable for ${vault.name}`
+															}
+															onClick={toggleAttachment}
+														>
+															{pending || isLoading ? <Spinner /> : null}
+															{pending
+																? updateAttachment.variables.attached
+																	? "Unlinking…"
+																	: "Linking…"
+																: attachmentsKnown
+																	? attached
+																		? "Unlink"
+																		: "Link"
+																	: isLoading
+																		? "Loading…"
+																		: "Unavailable"}
+														</Button>
+													) : null
+												}
+											/>
+										</div>
+									);
+								})}
 							</div>
-						);
-					})}
-				</div>
+						</section>
+					) : null,
+				)
 			) : isLoading || (canAttach && catalog.isLoading) ? (
 				<div className={HERO_GRID_CLASS}>
 					{Array.from({ length: 3 }).map((_, index) => (

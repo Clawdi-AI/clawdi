@@ -29,6 +29,7 @@ import {
 	ProjectResourceCardSkeleton,
 	UnavailableProjectResourceCard,
 } from "@/components/projects/project-resource-card";
+import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
 import { Spinner } from "@/components/ui/spinner";
@@ -95,6 +96,21 @@ export function ProjectsSurface({
 						!projects.data?.some((project) => project.id === binding.project_id),
 				)
 			: [];
+	const groups =
+		agentId && linksKnown
+			? [
+					{
+						label: "Linked",
+						rows: rows.filter((project) => linkedIds.has(project.id)),
+						missingBindings,
+					},
+					{
+						label: "Available",
+						rows: rows.filter((project) => !linkedIds.has(project.id)),
+						missingBindings: [],
+					},
+				]
+			: [{ label: null, rows, missingBindings }];
 	const refresh = async () => {
 		await Promise.all([
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] }),
@@ -220,86 +236,103 @@ export function ProjectsSurface({
 					}
 				/>
 			) : (
-				<ul
-					className={HERO_GRID_CLASS}
-					aria-label="Projects"
-					data-testid={agentId ? "agent-project-grid" : "project-grid"}
-				>
-					{rows.map((project) => {
-						const linked = linksKnown && linkedIds.has(project.id);
-						const pending = updateLink.isPending && updateLink.variables.projectId === project.id;
-						const toggleLink = () => {
-							if (actionsDisabled || linkLocked.current) return;
-							linkLocked.current = true;
-							updateLink.mutate({ projectId: project.id, linked });
-						};
-						return (
-							<li
-								key={project.id}
-								className="min-w-0"
-								data-testid={agentId ? "agent-project-card" : "project-card"}
+				groups.map((group) =>
+					group.rows.length + group.missingBindings.length > 0 ? (
+						<section
+							key={group.label ?? "catalog"}
+							className="space-y-3"
+							aria-label={group.label ? `${group.label} Projects` : undefined}
+						>
+							{group.label ? (
+								<SectionLabel count={group.rows.length + group.missingBindings.length}>
+									{group.label}
+								</SectionLabel>
+							) : null}
+							<ul
+								className={HERO_GRID_CLASS}
+								aria-label={group.label ? `${group.label} Projects` : "Projects"}
+								data-testid={agentId ? "agent-project-grid" : "project-grid"}
 							>
-								<ProjectResourceCard
-									className="h-full"
-									project={project}
-									searchQuery={search.trim() || undefined}
-									link={projectDetailLink(
-										linked ? scope : LIBRARY_RESOURCE_SCOPE,
-										project.id,
-										search || (agentId && !linked) ? from : undefined,
-									)}
-									footer={[
-										formatResourceCount(project.skill_count, "skill"),
-										formatResourceCount(project.vault_count, "vault"),
-										project.is_owner === false && (project.owner_display || project.owner_handle)
-											? `by ${project.owner_display || project.owner_handle}`
-											: null,
-									]}
-									actionsVisibility="always"
-									actions={
-										<>
-											{agentId ? (
-												<Button
-													size="sm"
-													variant={linked ? "ghost" : "default"}
-													disabled={actionsDisabled}
-													aria-busy={pending}
-													aria-label={
-														linksKnown
-															? `${linked ? "Unlink" : "Link"} ${project.name}`
-															: `Link status unavailable for ${project.name}`
-													}
-													onClick={toggleLink}
-												>
-													{pending || bindings.isLoading ? <Spinner /> : null}
-													{pending
-														? linked
-															? "Unlinking…"
-															: "Linking…"
-														: linksKnown
-															? linked
-																? "Unlink"
-																: "Link"
-															: bindings.isLoading
-																? "Loading…"
-																: "Unavailable"}
-												</Button>
-											) : null}
-											{canManageCustomProject(project) ? (
-												<ProjectActions project={project} onChanged={refresh} />
-											) : null}
-										</>
-									}
-								/>
-							</li>
-						);
-					})}
-					{missingBindings.map((binding) => (
-						<li key={binding.id}>
-							<UnavailableProjectResourceCard />
-						</li>
-					))}
-				</ul>
+								{group.rows.map((project) => {
+									const linked = linksKnown && linkedIds.has(project.id);
+									const pending =
+										updateLink.isPending && updateLink.variables.projectId === project.id;
+									const toggleLink = () => {
+										if (actionsDisabled || linkLocked.current) return;
+										linkLocked.current = true;
+										updateLink.mutate({ projectId: project.id, linked });
+									};
+									return (
+										<li
+											key={project.id}
+											className="min-w-0"
+											data-testid={agentId ? "agent-project-card" : "project-card"}
+										>
+											<ProjectResourceCard
+												className="h-full"
+												project={project}
+												searchQuery={search.trim() || undefined}
+												link={projectDetailLink(
+													linked ? scope : LIBRARY_RESOURCE_SCOPE,
+													project.id,
+													search || (agentId && !linked) ? from : undefined,
+												)}
+												footer={[
+													formatResourceCount(project.skill_count, "skill"),
+													formatResourceCount(project.vault_count, "vault"),
+													project.is_owner === false &&
+													(project.owner_display || project.owner_handle)
+														? `by ${project.owner_display || project.owner_handle}`
+														: null,
+												]}
+												actionsVisibility="always"
+												actions={
+													<>
+														{agentId ? (
+															<Button
+																size="sm"
+																variant={linked ? "ghost" : "default"}
+																disabled={actionsDisabled}
+																aria-busy={pending}
+																aria-label={
+																	linksKnown
+																		? `${linked ? "Unlink" : "Link"} ${project.name}`
+																		: `Link status unavailable for ${project.name}`
+																}
+																onClick={toggleLink}
+															>
+																{pending || bindings.isLoading ? <Spinner /> : null}
+																{pending
+																	? updateLink.variables.linked
+																		? "Unlinking…"
+																		: "Linking…"
+																	: linksKnown
+																		? linked
+																			? "Unlink"
+																			: "Link"
+																		: bindings.isLoading
+																			? "Loading…"
+																			: "Unavailable"}
+															</Button>
+														) : null}
+														{canManageCustomProject(project) ? (
+															<ProjectActions project={project} onChanged={refresh} />
+														) : null}
+													</>
+												}
+											/>
+										</li>
+									);
+								})}
+								{group.missingBindings.map((binding) => (
+									<li key={binding.id}>
+										<UnavailableProjectResourceCard />
+									</li>
+								))}
+							</ul>
+						</section>
+					) : null,
+				)
 			)}
 		</div>
 	);
