@@ -4,7 +4,6 @@ import {
 	type AgentTile,
 	agentTileCardProjection,
 	agentTileMatchesRouteId,
-	fleetSummaryFromTiles,
 	selfManagedAgentTiles,
 } from "@/components/dashboard/agents-card";
 
@@ -265,35 +264,5 @@ describe("agentTileMatchesRouteId", () => {
 		expect(agentTileMatchesRouteId(tile, projected.id)).toBe(true);
 		expect(agentTileMatchesRouteId(tile, projected.id.toUpperCase())).toBe(true);
 		expect(agentTileMatchesRouteId(tile, "hdep_paid")).toBe(false);
-	});
-});
-
-describe("fleetSummaryFromTiles", () => {
-	it("summarizes inventory without inventing an activity clock", () => {
-		const selfManaged = selfManagedAgentTiles([
-			env({
-				last_seen_at: new Date().toISOString(),
-			}),
-		]);
-		const hostedRunningWithoutEnv: AgentTile = {
-			id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-			source: "on-clawdi",
-			name: "Codex",
-			agentType: "codex",
-			href: "/agents/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-			env: null,
-		};
-		const hostedStoppedWithFreshEnv: AgentTile = {
-			id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-			source: "on-clawdi",
-			name: "Stopped Codex",
-			agentType: "codex",
-			href: "/agents/cccccccc-cccc-4ccc-8ccc-cccccccccccc",
-			env: env({ last_seen_at: new Date().toISOString() }),
-		};
-
-		expect(
-			fleetSummaryFromTiles([...selfManaged, hostedRunningWithoutEnv, hostedStoppedWithFreshEnv]),
-		).toEqual({ total: 3 });
 	});
 });

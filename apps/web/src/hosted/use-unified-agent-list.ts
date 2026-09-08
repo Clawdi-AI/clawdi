@@ -1,13 +1,8 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { type ReactNode, useEffect, useMemo } from "react";
-import {
-	type AgentFleetSummary,
-	type AgentTile,
-	fleetSummaryFromTiles,
-	selfManagedAgentTiles,
-} from "@/components/dashboard/agents-card";
+import { useEffect, useMemo } from "react";
+import { type AgentTile, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
 import { useLegacyEnvIds } from "@/hosted/agents/ownership-sensor";
 import type { HostedInventoryStatus } from "@/hosted/hosted-agent-resolution";
 import { legacyConnectedAgentTiles } from "@/hosted/legacy-agent-tiles";
@@ -155,31 +150,4 @@ export function HostedUnifiedAgentListSensor({
 	useEffect(() => () => onChange(null, false, false), [onChange]);
 
 	return null;
-}
-
-export function HostedFleetSummary({
-	cloudEnvs,
-	showCloudDeployments = true,
-	showLegacyAgents = false,
-	children,
-}: {
-	cloudEnvs: Env[];
-	showCloudDeployments?: boolean;
-	showLegacyAgents?: boolean;
-	children: (
-		summary: AgentFleetSummary,
-		state: { membershipResolved: boolean; error: Error | null; isLoading: boolean },
-	) => ReactNode;
-}) {
-	const unified = useUnifiedAgentList({
-		cloudEnvs,
-		showCloudDeployments,
-		showLegacyAgents,
-	});
-	const summary = useMemo(() => fleetSummaryFromTiles(unified.tiles), [unified.tiles]);
-	return children(summary, {
-		membershipResolved: unified.membershipResolved,
-		error: unified.error,
-		isLoading: unified.isLoading,
-	});
 }

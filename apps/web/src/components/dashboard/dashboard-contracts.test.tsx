@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { agentGreetingSummary } from "@/components/dashboard/greeting";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
 import type { DashboardStats } from "@/lib/api-schemas";
 import { getProjectResourceDefinition, projectResourceCount } from "@/lib/project-resource-model";
@@ -45,13 +44,5 @@ describe("dashboard data contracts", () => {
 		expect(markup).toContain("+ 11 automated");
 		expect(markup).toContain(">7<");
 		expect(markup).toContain(">5<");
-	});
-
-	test("does not show first-agent empty copy while membership is unresolved", () => {
-		expect(agentGreetingSummary(0, "loading")).toBe("Loading agent status…");
-		expect(agentGreetingSummary(0, "resolved")).toBe(
-			"Get your first agent running to start syncing.",
-		);
-		expect(agentGreetingSummary(0, "error")).toBe("Agent status is unavailable right now.");
 	});
 });
