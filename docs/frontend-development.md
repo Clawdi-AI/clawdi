@@ -132,6 +132,21 @@ new user-visible copy in English and colocated with the UI, matching existing
 copy style. If a future change introduces an i18n system, route new product copy
 through that system instead of adding another hardcoded string layer.
 
+## Connector account management
+
+Connector management uses the same account-wide API in the library and Agent
+detail views. Keep non-active accounts discoverable for recovery; only active,
+enabled accounts count as connected. Display aliases alongside provider identity
+or a connection ID, and allow an empty alias to clear it. Alias input is bounded
+to 256 characters by Clawdi, not by a documented Composio format restriction.
+
+Use the saved connection's `reconnect_strategy`, rather than the toolkit's
+preferred authentication scheme: OAuth opens a user-initiated popup, enabling
+needs no popup, and credential recovery loads that account's saved auth fields.
+Recovery must retain the connection ID and alias. A saved credential update is
+not proof of valid credentials; render the returned account state and sanitize
+failures.
+
 ## Generated API types
 
 The web app imports API types from `@clawdi/shared/api`, which re-exports
