@@ -4,8 +4,8 @@ import { expect, type Page, type Route, test } from "@playwright/test";
 const now = "2026-08-02T12:00:00.000Z";
 const project = {
 	id: "project-sharing",
-	name: "Shared workspace",
-	slug: "shared-workspace",
+	name: "Team Knowledge",
+	slug: "team-knowledge",
 	kind: "workspace",
 	origin_environment_id: null,
 	archived_at: null,
@@ -140,7 +140,7 @@ async function stubSharingApi(page: Page, empty = false) {
 
 async function openSharing(page: Page) {
 	await page.goto("/projects");
-	await page.getByRole("button", { name: "Actions for Shared workspace" }).click();
+	await page.getByRole("button", { name: "Actions for Team Knowledge" }).click();
 	await page.getByRole("menuitem", { name: "Share", exact: true }).click();
 	await expect(page.getByRole("dialog")).toBeVisible();
 }
@@ -184,7 +184,7 @@ test("sharing row mutations retain targets through Base UI exit and reopen clean
 
 	await page.keyboard.press("Escape");
 	await expect(page.getByRole("dialog")).toBeHidden();
-	await page.getByRole("button", { name: "Actions for Shared workspace" }).click();
+	await page.getByRole("button", { name: "Actions for Team Knowledge" }).click();
 	await page.getByRole("menuitem", { name: "Share", exact: true }).click();
 	await expect(
 		page.getByRole("button", { name: /Turn off share link|Cancel invitation|Remove / }),
@@ -206,7 +206,9 @@ for (const viewport of [
 		await expect(
 			dialog.getByRole("button", { name: "Stop all sharing for this Project" }),
 		).toBeHidden();
-		await expect(dialog.getByText(/Their linked Agents can use its Vault values/)).toHaveCount(1);
+		await expect(
+			dialog.getByText(/People can view this Project and let their Agents use its keys/),
+		).toHaveCount(1);
 		const dimensions = await dialog.evaluate((element) => ({
 			width: element.clientWidth,
 			scrollWidth: element.scrollWidth,
@@ -233,7 +235,7 @@ for (const viewport of [
 		await expect(dialog.getByRole("button", { name: /Copy agent handoff prompt/ })).toBeVisible();
 		await page.keyboard.press("Escape");
 		await expect(dialog).toBeHidden();
-		await page.getByRole("button", { name: "Actions for Shared workspace" }).click();
+		await page.getByRole("button", { name: "Actions for Team Knowledge" }).click();
 		await page.getByRole("menuitem", { name: "Share", exact: true }).click();
 		await expect(dialog.getByRole("textbox", { name: "New share link URL" })).toHaveCount(0);
 	});
