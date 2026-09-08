@@ -19,6 +19,9 @@ database migration, CI, and implementation details.
 
 ### Changed
 
+- CLI 0.14.54 delivers native BYOK credentials through OpenClaw configuration
+  commands and Hermes authentication APIs while preserving agent model choices.
+
 - Native BYOK now also supports NVIDIA NIM, Fireworks, Hugging Face, DeepInfra,
   OpenCode Zen/Go, Xiaomi MiMo API, and Tencent TokenHub/TokenPlan, with official
   provider icons and product-specific credential prompts.
