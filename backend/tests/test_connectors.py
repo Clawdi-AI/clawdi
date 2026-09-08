@@ -1712,7 +1712,10 @@ async def test_alias_patch_uses_owned_account_and_returns_fresh_identity(
         "alias": "old",
         "is_disabled": True,
         "data": {"email": "work@example.test", "access_token": "private-token"},
-        "state": {"authScheme": "API_KEY", "val": {"status": status}},
+        "state": {
+            "authScheme": "OAUTH2",
+            "val": {"status": status, "access_token": "private-token"},
+        },
     }
     requests = []
 
