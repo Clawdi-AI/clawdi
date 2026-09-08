@@ -146,6 +146,13 @@ the same path; never repeat it through another path.
 
 ## Connector Workflow
 
+For explicit account management, use `connector_account_update` with the exact
+`connection_id` and `alias` (an empty string clears it), or `connector_account_delete`
+with the exact `connection_id` to disconnect it. These tools require
+`connectors:invoke` and affect the account across all agents. Deletion removes the
+Clawdi connection; it does not revoke the provider's grant. Use only tools present
+in `tools/list`, and do not guess an account ID or automatically retry an ambiguous mutation.
+
 When the Clawdi connector path is selected, use the Composio Tool Router meta-tools returned
 by `tools/list` on the `clawdi` MCP server. Treat their live names and schemas as
 authoritative; never assume a fixed meta-tool set.
