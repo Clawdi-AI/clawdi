@@ -57,8 +57,8 @@ export function CreateSkillDialog({
 				await api.POST("/v1/projects/{project_id}/skills", {
 					params: { path: { project_id: project.id } },
 					body: {
-						name: name.trim(),
-						description: description.trim() || null,
+						name,
+						description,
 						instructions: instructions.trim(),
 					},
 				}),
@@ -107,30 +107,36 @@ export function CreateSkillDialog({
 					className="space-y-4"
 					onSubmit={(event) => {
 						event.preventDefault();
-						if (!name.trim() || !instructions.trim() || submitLockedRef.current) return;
+						if (!name || !description.trim() || !instructions.trim() || submitLockedRef.current)
+							return;
 						submitLockedRef.current = true;
 						create.mutate();
 					}}
 				>
 					<div className="space-y-1.5">
-						<Label htmlFor="skill-name">Name</Label>
+						<Label htmlFor="skill-name">Skill name</Label>
 						<Input
 							id="skill-name"
 							value={name}
-							maxLength={200}
+							maxLength={64}
+							required
+							pattern="[a-z0-9]+(-[a-z0-9]+)*"
+							aria-describedby="skill-name-help"
 							autoFocus
 							onChange={(event) => setName(event.target.value)}
-							placeholder="Review pull requests"
+							placeholder="review-pull-requests"
 						/>
+						<p id="skill-name-help" className="text-xs text-muted-foreground">
+							Use lowercase letters, numbers, and single hyphens, such as review-pull-requests.
+						</p>
 					</div>
 					<div className="space-y-1.5">
-						<Label htmlFor="skill-description">
-							Description <span className="text-muted-foreground">(optional)</span>
-						</Label>
+						<Label htmlFor="skill-description">Description</Label>
 						<Input
 							id="skill-description"
 							value={description}
-							maxLength={2000}
+							maxLength={1024}
+							required
 							onChange={(event) => setDescription(event.target.value)}
 							placeholder="When and why an Agent should use this Skill"
 						/>
@@ -152,7 +158,7 @@ export function CreateSkillDialog({
 						</Button>
 						<Button
 							type="submit"
-							disabled={!name.trim() || !instructions.trim() || create.isPending}
+							disabled={!name || !description.trim() || !instructions.trim() || create.isPending}
 						>
 							{create.isPending ? <Spinner /> : <Plus />}
 							{create.isPending ? "Adding…" : "Add skill"}

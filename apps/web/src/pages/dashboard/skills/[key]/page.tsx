@@ -329,8 +329,8 @@ export function SkillDetailContent({
 				await api.PUT("/v1/projects/{project_id}/skills/{skill_key}/content", {
 					params: { path: { project_id: targetProjectId, skill_key: skillKey } },
 					body: {
-						name: draftName.trim(),
-						description: draftDescription.trim() || null,
+						name: draftName,
+						description: draftDescription,
 						instructions: draftInstructions.trim(),
 						content_hash: editingHash,
 					},
@@ -570,6 +570,7 @@ export function SkillDetailContent({
 										disabled={
 											saveEdit.isPending ||
 											!draftName.trim() ||
+											!draftDescription.trim() ||
 											!draftInstructions.trim() ||
 											(draftName.trim() === skill.name &&
 												draftDescription.trim() === (skill.description ?? "") &&
@@ -672,24 +673,22 @@ export function SkillDetailContent({
 								</p>
 							</div>
 							<div className="space-y-1.5">
-								<Label htmlFor="edit-skill-name">Name</Label>
+								<Label htmlFor="edit-skill-name">Skill name</Label>
 								<Input
 									id="edit-skill-name"
 									value={draftName}
 									onChange={(event) => setDraftName(event.target.value)}
-									maxLength={200}
+									maxLength={64}
 									disabled={saveEdit.isPending}
 								/>
 							</div>
 							<div className="space-y-1.5">
-								<Label htmlFor="edit-skill-description">
-									Description <span className="text-muted-foreground">(optional)</span>
-								</Label>
+								<Label htmlFor="edit-skill-description">Description</Label>
 								<Input
 									id="edit-skill-description"
 									value={draftDescription}
 									onChange={(event) => setDraftDescription(event.target.value)}
-									maxLength={2000}
+									maxLength={1024}
 									disabled={saveEdit.isPending}
 								/>
 							</div>

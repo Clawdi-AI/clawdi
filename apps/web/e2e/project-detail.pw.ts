@@ -373,7 +373,7 @@ test("Skills library selects one Project before reading or creating Skills", asy
 			createBodies.push(request.postDataJSON());
 			return fulfill(route, {
 				skill_key: "review-pull-requests",
-				name: "Review pull requests",
+				name: "review-pull-requests",
 				version: 1,
 				file_count: 1,
 				content_hash: "a".repeat(64),
@@ -402,7 +402,12 @@ test("Skills library selects one Project before reading or creating Skills", asy
 
 	await page.getByRole("button", { name: "Add skill" }).click();
 	const dialog = page.getByRole("dialog", { name: "Add skill" });
-	await dialog.getByLabel("Name").fill("Review pull requests");
+	await dialog.getByLabel("Skill name").fill("Review pull requests");
+	await dialog.getByLabel("Description").fill("Review code before approval");
+	await dialog.getByLabel("Instructions").fill("Inspect the diff.");
+	await dialog.getByRole("button", { name: "Add skill" }).click();
+	expect(createBodies).toEqual([]);
+	await dialog.getByLabel("Skill name").fill("review-pull-requests");
 	await dialog.getByLabel("Description").fill("Review code before approval");
 	await dialog
 		.getByLabel("Instructions")
@@ -412,7 +417,7 @@ test("Skills library selects one Project before reading or creating Skills", asy
 		.poll(() => createBodies)
 		.toEqual([
 			{
-				name: "Review pull requests",
+				name: "review-pull-requests",
 				description: "Review code before approval",
 				instructions: "Inspect the diff and report blocking issues first.",
 			},
