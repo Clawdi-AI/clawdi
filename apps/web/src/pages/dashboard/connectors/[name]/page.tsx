@@ -6,6 +6,7 @@ import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
+import { AccountAliasDialog } from "@/components/connectors/account-alias-dialog";
 import { getConnectorAuthFlow } from "@/components/connectors/auth-flow.logic";
 import { ConnectorConnectAction } from "@/components/connectors/connector-connect-action";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
@@ -69,7 +70,7 @@ export default function ConnectorDetailPage({
 }) {
 	return (
 		<Suspense fallback={<DetailSkeletonShell />}>
-			<ConnectorDetail name={name} scope={scope} />
+			<ConnectorDetail key={name} name={name} scope={scope} />
 		</Suspense>
 	);
 }
@@ -126,6 +127,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	// flips synchronously and rejects the second click before the
 	// mutation queues. Both are kept in lockstep so the visible spinner
 	// always matches the in-flight set.
+	const [editingId, setEditingId] = useState<string | null>(null);
 	const disconnectMutation = useDisconnect();
 	const inflightDisconnectsRef = useRef<Set<string>>(new Set());
 	const [disconnectingIds, setDisconnectingIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -155,6 +157,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 
 	const activeConnections =
 		connections?.filter((c) => c.app_name === name && isActiveConnection(c)) ?? [];
+	const editingConnection = activeConnections.find((connection) => connection.id === editingId);
 	const isConnected = activeConnections.length > 0;
 	const isLoading = isAppLoading || appQ.isPending;
 
@@ -217,7 +220,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					<Plug />
 					<AlertTitle>Shared across all agents</AlertTitle>
 					<AlertDescription>
-						Connections belong to this account. Connecting or disconnecting here affects all agents.
+						Connections and aliases belong to this account. Changes here affect all agents.
 					</AlertDescription>
 				</Alert>
 			) : null}
@@ -314,51 +317,84 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					) : (
 						<div className="divide-y overflow-hidden rounded-lg border bg-card">
 							{activeConnections.map((c) => (
-								<div key={c.id} className="flex items-center justify-between gap-3 px-4 py-3">
+								<div
+									key={c.id}
+									className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+								>
 									<div className="min-w-0">
-										{/* Identity first — `account_display` (e.g. the user's Gmail
-										    address) is the only thing that tells two same-app rows
-										    apart. Falls back to a shortened connection id so OSS
-										    users (whose backend doesn't surface account_display
-										    yet) still see something distinct per row. */}
-										<p className="truncate text-sm font-medium">
-											{c.account_display || `Account ${c.id.slice(-6)}`}
+										<p
+											className="truncate text-sm font-medium"
+											title={c.alias || c.account_display || c.id}
+										>
+											{c.alias || c.account_display || `Account ${c.id.slice(-6)}`}
 										</p>
+										{c.alias ? (
+											<p
+												className="truncate text-xs text-muted-foreground"
+												title={
+													c.account_display && c.account_display !== c.alias
+														? c.account_display
+														: c.id
+												}
+											>
+												{c.account_display && c.account_display !== c.alias
+													? c.account_display
+													: `Account ${c.id}`}
+											</p>
+										) : null}
 										<p className="mt-0.5 text-xs text-muted-foreground">
 											{connectionStatusLabel(c.status)}
 										</p>
 									</div>
-									<ConfirmAction
-										title={`Disconnect ${c.account_display || "this account"}?`}
-										description={
-											<p>
-												All agents will lose access immediately. To restore access, sign in again.
-											</p>
-										}
-										confirmLabel="Disconnect"
-										destructive
-										onConfirm={() => handleDisconnect(c.id)}
-									>
+									<div className="flex shrink-0 items-center gap-1">
 										<Button
 											variant="ghost"
 											size="xs"
 											disabled={isDisconnecting(c.id)}
-											className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+											onClick={() => setEditingId(c.id)}
 										>
-											{isDisconnecting(c.id) ? (
-												<Spinner className="size-3.5" />
-											) : (
-												<Link2Off className="size-3.5" />
-											)}
-											Disconnect
+											Edit alias
 										</Button>
-									</ConfirmAction>
+										<ConfirmAction
+											title={`Disconnect ${c.alias || c.account_display || "this account"}?`}
+											description={
+												<p>
+													All agents will lose access immediately. To restore access, sign in again.
+												</p>
+											}
+											confirmLabel="Disconnect"
+											destructive
+											onConfirm={() => handleDisconnect(c.id)}
+										>
+											<Button
+												variant="ghost"
+												size="xs"
+												disabled={isDisconnecting(c.id)}
+												className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+											>
+												{isDisconnecting(c.id) ? (
+													<Spinner className="size-3.5" />
+												) : (
+													<Link2Off className="size-3.5" />
+												)}
+												Disconnect
+											</Button>
+										</ConfirmAction>
+									</div>
 								</div>
 							))}
 						</div>
 					)}
 				</div>
 			</DashboardSection>
+
+			{editingConnection ? (
+				<AccountAliasDialog
+					key={editingConnection.id}
+					connection={editingConnection}
+					onClose={() => setEditingId(null)}
+				/>
+			) : null}
 
 			{/* Tools — matches clawdi ConnectorToolsList */}
 			<ConnectorToolsList

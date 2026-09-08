@@ -1,9 +1,10 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
+import { AccountAliasField } from "@/components/connectors/account-alias-field";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -43,18 +44,22 @@ export function ConnectorCredentialsDialog({
 	appName: string;
 	displayName: string;
 }) {
+	const formId = useId();
 	const fields = useAuthFields(appName, { enabled: open });
 	const api = useApi();
 	const queryClient = useQueryClient();
-	const submit = useSensitiveAction(async (credentials: Record<string, string>): Promise<void> => {
-		unwrap(
-			await api.POST("/v1/connectors/{app_name}/connect-credentials", {
-				params: { path: { app_name: appName } },
-				body: { credentials },
-			}),
-		);
-		queryClient.invalidateQueries({ queryKey: ["get", "/v1/connectors"] });
-	});
+	const submit = useSensitiveAction(
+		async (credentials: Record<string, string>, alias: string): Promise<void> => {
+			unwrap(
+				await api.POST("/v1/connectors/{app_name}/connect-credentials", {
+					params: { path: { app_name: appName } },
+					body: { credentials, ...(alias ? { alias } : {}) },
+				}),
+			);
+			queryClient.invalidateQueries({ queryKey: ["get", "/v1/connectors"] });
+		},
+	);
+	const [alias, setAlias] = useState("");
 	const [values, setValues] = useState<Record<string, string>>({});
 	const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -80,7 +85,11 @@ export function ConnectorCredentialsDialog({
 		if (!open) return;
 		openGenRef.current += 1;
 		setValues({});
+		setAlias("");
 		setSubmitError(null);
+		return () => {
+			openGenRef.current += 1;
+		};
 	}, [open]);
 
 	const allFields = fields.data?.expected_input_fields ?? [];
@@ -96,7 +105,7 @@ export function ConnectorCredentialsDialog({
 		setSubmitError(null);
 		try {
 			const credentials = buildCredentialPayload(allFields, values);
-			await submit.execute(credentials);
+			await submit.execute(credentials, alias.trim());
 			// Drop the result if the dialog has been reopened — toasts
 			// and `onOpenChange(false)` should target the session that
 			// initiated the mutation, not whatever the user is doing now.
@@ -106,7 +115,9 @@ export function ConnectorCredentialsDialog({
 			onOpenChange(false);
 		} catch {
 			if (gen !== openGenRef.current) return;
-			setSubmitError("The credentials couldn’t be saved. Check the values and try again.");
+			setSubmitError(
+				"The account couldn’t be connected. Try again. If the problem persists, contact support.",
+			);
 		} finally {
 			inflightSubmitRef.current = false;
 		}
@@ -155,6 +166,7 @@ export function ConnectorCredentialsDialog({
 						</p>
 					) : (
 						<form
+							id={formId}
 							className="flex flex-col gap-3"
 							onSubmit={(e) => {
 								e.preventDefault();
@@ -175,6 +187,7 @@ export function ConnectorCredentialsDialog({
 											type={f.is_secret ? "password" : "text"}
 											value={values[f.name] ?? ""}
 											onChange={(e) => setValues((prev) => ({ ...prev, [f.name]: e.target.value }))}
+											disabled={submit.isPending}
 											autoComplete="off"
 											required={f.required}
 											spellCheck={false}
@@ -185,6 +198,7 @@ export function ConnectorCredentialsDialog({
 									</div>
 								);
 							})}
+							<AccountAliasField value={alias} onChange={setAlias} disabled={submit.isPending} />
 							{submitError ? (
 								<p role="alert" className="text-sm text-destructive">
 									{submitError}
@@ -195,10 +209,16 @@ export function ConnectorCredentialsDialog({
 				</DialogBody>
 
 				<DialogFooter>
-					<Button variant="outline" onClick={() => onOpenChange(false)}>
+					<Button
+						variant="outline"
+						onClick={() => {
+							openGenRef.current += 1;
+							onOpenChange(false);
+						}}
+					>
 						Cancel
 					</Button>
-					<Button onClick={handleSubmit} disabled={!canSubmit || submit.isPending}>
+					<Button type="submit" form={formId} disabled={!canSubmit || submit.isPending}>
 						{submit.isPending ? <Spinner className="size-3.5" /> : null}
 						Connect
 					</Button>

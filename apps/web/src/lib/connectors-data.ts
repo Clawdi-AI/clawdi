@@ -178,6 +178,14 @@ export function useAuthFields(appName: string, { enabled }: { enabled: boolean }
 // ─────────────────────────────────────────────────────────────────────
 // Mutations
 
+export function useUpdateConnectionAlias() {
+	const api = useOpenApi();
+	const qc = useQueryClient();
+	return api.useMutation("patch", "/v1/connectors/{connection_id}", {
+		onSuccess: () => qc.invalidateQueries({ queryKey: ["get", "/v1/connectors"] }),
+	});
+}
+
 export function useDisconnect() {
 	const api = useOpenApi();
 	const qc = useQueryClient();
