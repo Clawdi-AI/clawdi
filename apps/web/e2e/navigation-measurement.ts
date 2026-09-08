@@ -60,34 +60,8 @@ export async function measureNavigation(
 		{ href, destination },
 	);
 	page.off("request", onRequest);
-	const overview = await page.locator("main").evaluate((main) => {
-		const box = (element: Element | null | undefined) =>
-			element?.getBoundingClientRect().toJSON() ?? null;
-		return {
-			sections: ["tools", "entry"].map((id) => ({
-				id,
-				box: box(main.querySelector(`[data-overview-section="${id}"]`)),
-			})),
-			headings: Array.from(
-				main.querySelectorAll(
-					'h2[id$="recent-sessions"], #agent-overview-workspace, #agent-overview-shared',
-				),
-			).map((heading) => ({
-				id: heading.id,
-				heading: box(heading),
-				row: box(heading.parentElement),
-				content: box(heading.parentElement?.nextElementSibling),
-			})),
-			compute: box(main.querySelector('[data-overview-status="compute"]')),
-			computeFacts: Array.from(
-				main.querySelectorAll(
-					'[data-overview-status="compute"] dt, [data-overview-status="compute"] dd',
-				),
-			).map((element) => ({ text: element.textContent, box: box(element) })),
-		};
-	});
 	await testInfo.attach(name, {
-		body: JSON.stringify({ ...samples, requests, overview }, null, 2),
+		body: JSON.stringify({ ...samples, requests }, null, 2),
 		contentType: "application/json",
 	});
 	if (process.env.NAVIGATION_BASELINE !== "true") {

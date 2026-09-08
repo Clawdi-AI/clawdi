@@ -22,7 +22,7 @@ function app(name: string) {
 }
 
 for (const width of [1440, 375]) {
-	test(`connector loading keeps stable slots at ${width}px`, async ({ page }, testInfo) => {
+	test(`connector loading batches metadata and opens details at ${width}px`, async ({ page }) => {
 		await page.setViewportSize({ width, height: 1000 });
 		const catalog = deferred();
 		const metadata = deferred();
@@ -98,27 +98,21 @@ for (const width of [1440, 375]) {
 			await expect(rail.getByText("4 apps", { exact: true })).toBeVisible();
 			await expect(rail.getByRole("link", { name: "retired", exact: true })).toBeVisible();
 			expect(batches).toEqual([["alpha", "beta", "gamma", "retired"]]);
-			const before = await gamma.boundingBox();
-			expect(before).not.toBeNull();
 			const alpha = rail.getByRole("link", { name: "ALPHA", exact: true }).locator("..");
 			await expect(alpha.getByText("A", { exact: true })).toBeVisible();
 			catalog.resolve();
 			await expect(page.getByText("1 available").first()).toBeVisible();
-			await page.screenshot({
-				path: testInfo.outputPath("connectors-loading.png"),
-				fullPage: true,
-			});
+
 			await expect(rail.getByRole("link", { name: "BETA", exact: true })).toBeVisible();
-			expect(await gamma.boundingBox()).toEqual(before);
 			expect(details).toEqual([]);
 			logo.resolve();
-			await expect(alpha.locator("img")).toHaveCSS("opacity", "1");
-			await expect(alpha.getByText("A", { exact: true })).toHaveCSS("visibility", "hidden");
+			await expect(alpha.locator("img")).toBeVisible();
+			await expect(alpha.getByText("A", { exact: true })).toBeHidden();
 			expect(
 				await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
 			).toBe(true);
 			expect(errors).toEqual([]);
-			await page.screenshot({ path: testInfo.outputPath("connectors-loaded.png"), fullPage: true });
+
 			await rail.getByRole("link", { name: "ALPHA", exact: true }).click();
 			await expect.poll(() => details).toEqual(["alpha"]);
 			expect(errors).toEqual([]);

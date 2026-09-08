@@ -13,7 +13,7 @@ import {
 for (const width of [1440, 320]) {
 	test(`ended subscription power entries reuse subscription selection at ${width}px`, async ({
 		page,
-	}, testInfo) => {
+	}) => {
 		test.setTimeout(120_000);
 		await page.setViewportSize({ width, height: 900 });
 		const errors = collectBrowserErrors(page);
@@ -73,12 +73,6 @@ for (const width of [1440, 320]) {
 			).toBeVisible();
 			await expect(page.getByRole("button", { name: /^(Start|Start agent)$/ })).toHaveCount(0);
 			await expect.poll(() => startRequests.length).toBe(0);
-			if (section === "settings") {
-				await page.screenshot({
-					path: testInfo.outputPath(`subscribe-to-start-${width}.png`),
-					fullPage: true,
-				});
-			}
 			await page.keyboard.press("Escape");
 		}
 		expect(errors).toEqual([]);
@@ -243,7 +237,7 @@ for (const state of [
 	for (const width of state.status === "canceled" ? [1440, 320] : [1440]) {
 		test(`${state.status} does not sell a replacement or duplicate payment at ${width}px`, async ({
 			page,
-		}, testInfo) => {
+		}) => {
 			await page.setViewportSize({ width, height: 900 });
 			const startRequests: string[] = [];
 			const deployment = {
@@ -279,10 +273,6 @@ for (const state of [
 					page.getByText(/Payment processing|Waiting for payment confirmation/),
 				).toHaveCount(0);
 				await page.getByRole("button", { name: state.label, exact: true }).scrollIntoViewIfNeeded();
-				await page.screenshot({
-					path: testInfo.outputPath(`subscription-updating-${width}.png`),
-					fullPage: true,
-				});
 			}
 			expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
 				width,

@@ -1262,23 +1262,6 @@ export async function expectNoQuarterlyCopy(page: Page) {
 	await expect(page.getByText(/\/qtr/)).toHaveCount(0);
 }
 
-export async function capturePricingScreenshot(page: Page, path: string) {
-	await page.addStyleTag({
-		content: `
-			* { animation: none !important; transition: none !important; }
-			::view-transition-old(root), ::view-transition-new(root) {
-				animation: none !important;
-			}
-		`,
-	});
-	const basicCard = page.getByRole("button", { name: /^Basic/ });
-	await basicCard.evaluate((element) => {
-		element.scrollIntoView({ block: "center", inline: "nearest" });
-	});
-	await page.waitForTimeout(1_000);
-	await basicCard.locator("xpath=ancestor::section[1]").screenshot({ path });
-}
-
 export function collectBrowserErrors(page: Page): string[] {
 	const errors: string[] = [];
 	page.on("console", (m) => {

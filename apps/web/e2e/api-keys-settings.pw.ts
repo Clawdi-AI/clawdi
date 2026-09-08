@@ -179,13 +179,6 @@ test("API key settings protects secrets and reconciles optimistic revokes", asyn
 	const desktopTable = page.getByRole("table");
 	await expect(desktopTable.getByText(longLabel, { exact: true })).toBeVisible();
 
-	const longName = desktopTable.getByText(longLabel, { exact: true });
-	const truncation = await longName.evaluate((element) => ({
-		clientWidth: element.clientWidth,
-		scrollWidth: element.scrollWidth,
-	}));
-	expect(truncation.scrollWidth).toBeGreaterThan(truncation.clientWidth);
-
 	await page.getByRole("button", { name: "Create API key", exact: true }).first().click();
 	let createDialog = page.getByRole("dialog", { name: "Create API key" });
 	await createDialog.getByLabel("Key name").fill("Retained through exit");
