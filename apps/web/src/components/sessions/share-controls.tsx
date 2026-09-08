@@ -48,7 +48,21 @@ export function SessionShareButton({ onClick }: { onClick: () => void }) {
 	);
 }
 
-export function SessionShareDialog({
+export function SessionShareDialog(props: {
+	sessionId: string;
+	target: SessionShareTarget;
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+}) {
+	return (
+		<SessionShareDialogContent
+			key={`${props.sessionId}:${props.target.scope}:${"position" in props.target ? props.target.position : ""}`}
+			{...props}
+		/>
+	);
+}
+
+function SessionShareDialogContent({
 	sessionId,
 	target,
 	open,
@@ -120,15 +134,18 @@ export function SessionShareDialog({
 				: "Share session";
 	const description =
 		target.scope === "response"
-			? "Create a link containing only this Agent response."
+			? "Anyone with the link can view this Agent response."
 			: target.scope === "through"
-				? "Create a link containing the conversation through this message."
-				: "Create a snapshot of the current conversation. Future messages won’t be added.";
+				? "Anyone with the link can view the conversation through this message."
+				: "Anyone with the link can view this conversation. Future messages won’t be added.";
 	const shares = sharesQuery.data?.shares ?? [];
 	const matchingShares = shares.filter((share) => {
 		if (share.scope !== target.scope) return false;
 		return target.scope === "session" || share.end_position === target.position;
 	});
+	const latestShare =
+		matchingShares.find((share) => share.id === createdShareId) ?? matchingShares[0];
+	const previousShares = matchingShares.filter((share) => share.id !== latestShare?.id);
 	const otherShares =
 		target.scope === "session" ? shares.filter((share) => share.scope !== "session") : [];
 	const legacyLink =
@@ -181,7 +198,8 @@ export function SessionShareDialog({
 						<div className="flex min-h-16 items-center justify-center text-muted-foreground">
 							<Spinner className="size-4" />
 						</div>
-					) : loadError ? (
+					) : null}
+					{loadError ? (
 						<ApiErrorPanel
 							error={loadError}
 							title="Couldn't load share links"
@@ -190,61 +208,54 @@ export function SessionShareDialog({
 								if (target.scope === "session") void permissionsQuery.refetch();
 							}}
 						/>
-					) : matchingShares.length > 0 ? (
-						<div className="space-y-2">
-							{matchingShares.map((share) => (
+					) : null}
+					{latestShare ? (
+						<ShareLinkRow
+							key={latestShare.id}
+							url={latestShare.share_url}
+							label={shareLabel(latestShare)}
+							detail={shareDetail(latestShare)}
+							autoFocus={latestShare.id === createdShareId}
+							onRevoke={() => revokeShare(latestShare.id)}
+							onRevoked={refreshShares}
+						/>
+					) : null}
+
+					{previousShares.length + otherShares.length + (legacyLink ? 1 : 0) > 0 ? (
+						<details className="space-y-3">
+							<summary className="cursor-pointer text-sm text-muted-foreground">
+								Other active links (
+								{previousShares.length + otherShares.length + (legacyLink ? 1 : 0)})
+							</summary>
+							{[...previousShares, ...otherShares].map((share) => (
 								<ShareLinkRow
 									key={share.id}
 									url={share.share_url}
 									label={shareLabel(share)}
 									detail={shareDetail(share)}
-									autoFocus={share.id === createdShareId}
 									onRevoke={() => revokeShare(share.id)}
 									onRevoked={refreshShares}
 								/>
 							))}
-						</div>
-					) : (
-						<div className="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground">
-							No snapshot has been created for this view yet.
-						</div>
-					)}
-
-					{legacyLink ? (
-						<div className="border-t pt-3">
-							<p className="mb-2 text-xs font-medium text-muted-foreground">Older link</p>
-							<ShareLinkRow
-								url={legacyUrl}
-								label="Live Session link"
-								detail={`Reflects future uploads · created ${relativeTime(legacyLink.created_at)}`}
-								onRevoke={revokeLegacyLink}
-								onRevoked={refreshShares}
-							/>
-						</div>
-					) : null}
-
-					{otherShares.length > 0 ? (
-						<div className="border-t pt-3">
-							<p className="mb-2 text-xs font-medium text-muted-foreground">Other active links</p>
-							<div className="space-y-2">
-								{otherShares.map((share) => (
+							{legacyLink ? (
+								<div className="border-t pt-3">
+									<p className="mb-2 text-xs font-medium text-muted-foreground">Older link</p>
 									<ShareLinkRow
-										key={share.id}
-										url={share.share_url}
-										label={shareLabel(share)}
-										detail={shareDetail(share)}
-										onRevoke={() => revokeShare(share.id)}
+										url={legacyUrl}
+										label="Live Session link"
+										detail={`Reflects future uploads · created ${relativeTime(legacyLink.created_at)}`}
+										onRevoke={revokeLegacyLink}
 										onRevoked={refreshShares}
-										compact
 									/>
-								))}
-							</div>
-						</div>
+								</div>
+							) : null}
+						</details>
 					) : null}
 				</div>
 
 				<DialogFooter>
 					<Button
+						variant={latestShare ? "outline" : "default"}
 						onClick={() => createShare.mutate()}
 						disabled={createShare.isPending || isLoading || Boolean(loadError)}
 					>
@@ -274,7 +285,6 @@ function ShareLinkRow({
 	onRevoke,
 	onRevoked,
 	autoFocus = false,
-	compact = false,
 }: {
 	url: string;
 	label: string;
@@ -282,7 +292,6 @@ function ShareLinkRow({
 	onRevoke: () => Promise<void>;
 	onRevoked: () => void;
 	autoFocus?: boolean;
-	compact?: boolean;
 }) {
 	const { copied, copy } = useCopyToClipboard({ success: "Share link copied" });
 	const [confirmOpen, setConfirmOpen] = useState(false);
@@ -297,7 +306,7 @@ function ShareLinkRow({
 		onError: (error) => toast.error(errorMessage(error)),
 	});
 	return (
-		<div className={cn("rounded-lg border p-3", compact && "p-2.5")}>
+		<div className="rounded-lg border p-3">
 			<div className="mb-2 flex items-center justify-between gap-3">
 				<div className="min-w-0">
 					<p className="truncate text-sm font-medium">{label}</p>
@@ -335,7 +344,9 @@ function ShareLinkRow({
 
 			<AlertDialog
 				open={confirmOpen}
-				onOpenChange={setConfirmOpen}
+				onOpenChange={(nextOpen) => {
+					if (!revoke.isPending) setConfirmOpen(nextOpen);
+				}}
 				onOpenChangeComplete={(nextOpen) => {
 					if (!nextOpen && revokeSucceeded) {
 						setRevokeSucceeded(false);

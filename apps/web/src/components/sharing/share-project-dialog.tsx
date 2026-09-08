@@ -86,7 +86,7 @@ export function ShareProjectDialog({
 					</DialogTitle>
 					<DialogDescription>
 						{isShareableProject
-							? "People can view this Project and let their Agents use its keys. Secret values stay hidden. Only you can edit."
+							? "People can view this Project and let their Agents use its keys. Secret values stay hidden in the dashboard. Only you can edit."
 							: "Sharing is available for Projects you create. An Agent's private Workspace cannot be shared."}
 					</DialogDescription>
 				</DialogHeader>

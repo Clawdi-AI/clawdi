@@ -1,20 +1,10 @@
 "use client";
 
 import { Link, useRouter } from "@tanstack/react-router";
-import {
-	AlertCircle,
-	CheckCircle2,
-	FileText,
-	KeyRound,
-	Lock,
-	LogIn,
-	ShieldCheck,
-	Sparkles,
-} from "lucide-react";
+import { AlertCircle, CheckCircle2, KeyRound, LogIn, ShieldCheck, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -161,23 +151,12 @@ export default function SharePage({ token }: { token: string }) {
 					</p>
 				</CardHeader>
 				<CardContent className="space-y-6">
-					<div className="grid grid-cols-2 gap-3">
-						<ContentTile
-							icon={<FileText className="size-5" />}
-							label="Skills"
-							count={data.skill_count}
-							hint="Readable on any device"
-						/>
-						<ContentTile
-							icon={<Lock className="size-5" />}
-							label="Vaults"
-							count={data.vault_count}
-							hint="Key names only; values stay private"
-							muted={data.vault_count === 0}
-						/>
-					</div>
+					<p className="text-sm text-muted-foreground">
+						{data.skill_count} {data.skill_count === 1 ? "Skill" : "Skills"} · {data.vault_count}{" "}
+						{data.vault_count === 1 ? "Vault" : "Vaults"}
+					</p>
 
-					<ViewerAccessCard hasVaults={data.vault_count > 0} />
+					<ViewerAccessSummary hasVaults={data.vault_count > 0} />
 
 					<Separator />
 
@@ -185,10 +164,7 @@ export default function SharePage({ token }: { token: string }) {
 						<Alert>
 							<CheckCircle2 />
 							<AlertTitle>You're In</AlertTitle>
-							<AlertDescription>
-								Added to your Projects with Viewer access. Adding it to an agent is a separate step.
-								Redirecting…
-							</AlertDescription>
+							<AlertDescription>Invitation accepted. Opening Project…</AlertDescription>
 						</Alert>
 					) : isOwner ? (
 						<Alert>
@@ -205,14 +181,8 @@ export default function SharePage({ token }: { token: string }) {
 								size="lg"
 							>
 								<CheckCircle2 className="mr-2 size-4" />
-								{upgrade.isPending ? "Joining…" : "Accept Project Access"}
+								{upgrade.isPending ? "Joining…" : "Accept invitation"}
 							</Button>
-							<p className="text-xs text-muted-foreground">
-								You'll join as a <Badge variant="secondary">Viewer</Badge> with read access to
-								skills
-								{data.vault_count > 0 ? " and Vault values from the Clawdi CLI" : ""}. The dashboard
-								does not reveal key values.
-							</p>
 							{upgrade.error instanceof ShareError && upgrade.error.code === "already_member" ? (
 								<Alert>
 									<CheckCircle2 />
@@ -239,7 +209,7 @@ export default function SharePage({ token }: { token: string }) {
 								size="lg"
 							>
 								<LogIn className="mr-2 size-4" />
-								Continue in Browser
+								Sign in to accept
 							</Button>
 							<p className="text-xs text-muted-foreground">
 								Sign in or create a free account. After signing in, click Accept here to join the
@@ -260,71 +230,18 @@ export default function SharePage({ token }: { token: string }) {
 					)}
 				</CardContent>
 			</Card>
-			<p className="text-center text-xs text-muted-foreground">
-				Shared Projects never grant write access. The owner can turn off this link anytime.
-			</p>
 		</Shell>
 	);
 }
 
-function ViewerAccessCard({ hasVaults }: { hasVaults: boolean }) {
-	const vaultCopy = hasVaults
-		? "Use Vault values from the Clawdi CLI"
-		: "Use Vault values from the Clawdi CLI if added later";
+function ViewerAccessSummary({ hasVaults }: { hasVaults: boolean }) {
 	return (
-		<div className="grid gap-3 rounded-lg border bg-muted/30 p-4 text-sm sm:grid-cols-2">
-			<div className="space-y-2">
-				<p className="font-medium">Viewer Can</p>
-				<ul className="space-y-1.5 text-muted-foreground">
-					<li className="flex items-center gap-2">
-						<CheckCircle2 aria-hidden="true" className="size-4 shrink-0 text-foreground" />
-						<span>View skills</span>
-					</li>
-					<li className="flex items-center gap-2">
-						<CheckCircle2 aria-hidden="true" className="size-4 shrink-0 text-foreground" />
-						<span>{vaultCopy}</span>
-					</li>
-				</ul>
-			</div>
-			<div className="space-y-2">
-				<p className="font-medium">Viewer Cannot</p>
-				<ul className="space-y-1.5 text-muted-foreground">
-					<li className="flex items-center gap-2">
-						<AlertCircle aria-hidden="true" className="size-4 shrink-0 text-foreground" />
-						<span>Reveal key values in the dashboard</span>
-					</li>
-					<li className="flex items-center gap-2">
-						<AlertCircle aria-hidden="true" className="size-4 shrink-0 text-foreground" />
-						<span>Edit anything</span>
-					</li>
-				</ul>
-			</div>
-		</div>
-	);
-}
-
-function ContentTile({
-	icon,
-	label,
-	count,
-	hint,
-	muted,
-}: {
-	icon: React.ReactNode;
-	label: string;
-	count: number;
-	hint: string;
-	muted?: boolean;
-}) {
-	return (
-		<div className={`rounded-lg border p-4 ${muted ? "bg-muted/30 text-muted-foreground" : ""}`}>
-			<div className="flex items-center gap-2 text-sm">
-				{icon}
-				<span className="font-medium">{label}</span>
-			</div>
-			<div className="mt-2 text-2xl font-semibold">{count}</div>
-			<div className="text-xs text-muted-foreground">{hint}</div>
-		</div>
+		<p className="text-sm text-muted-foreground">
+			You can view this Project and link it to your Agents. Only the owner can edit.
+			{hasVaults
+				? " Your Agents and the Clawdi CLI can use its keys; secret values stay hidden in the dashboard."
+				: ""}
+		</p>
 	);
 }
 

@@ -25,7 +25,9 @@ database migration, CI, and implementation details.
   actions. Agent Vaults show the keys available through those Projects and the
   existing Workspace, with their sources; Vaults are configured in Projects.
 - Project sharing uses a compact invitation and access view, with inactive
-  links and bulk sharing controls tucked away.
+  links and bulk sharing controls tucked away. Invitation previews explain access
+  once, and Session sharing prioritizes the latest link while keeping older
+  links available on demand.
 - CLI 0.14.56 installs sourced Skills through Hermes and OpenClaw native
   capabilities, preserving supporting files and recovering interrupted changes.
 - CLI 0.14.54 delivers native BYOK credentials through OpenClaw configuration
