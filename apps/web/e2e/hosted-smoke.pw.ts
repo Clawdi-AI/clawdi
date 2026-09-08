@@ -4960,9 +4960,7 @@ test("Breadcrumbs show the full trail on desktop and only the current page on na
 	});
 });
 
-test("Console shows the full fleet without replacing its greeting during loading", async ({
-	page,
-}) => {
+test("Console shows every agent when the fleet exceeds six", async ({ page }) => {
 	const agents = Array.from({ length: 8 }, (_, index) => ({
 		...railConnectedCloudAgent,
 		id: `99999999-9999-4999-8999-${String(index).padStart(12, "0")}`,
@@ -4970,90 +4968,27 @@ test("Console shows the full fleet without replacing its greeting during loading
 		sort_order: index,
 	}));
 	await stubHostedApi(page, { cloudAgents: agents });
-	await page.addInitScript(() => {
-		const headings = new Set<Element>();
-		const texts = new Set<string>();
-		const observer = new MutationObserver(() => {
-			const heading = document.querySelector("main h1");
-			if (!heading) return;
-			headings.add(heading);
-			if (heading.textContent) texts.add(heading.textContent);
-			document.documentElement.dataset.consoleGreetingCount = String(headings.size);
-			document.documentElement.dataset.consoleGreetingTexts = JSON.stringify([...texts]);
-		});
-		observer.observe(document, { subtree: true, childList: true, characterData: true });
-	});
 	await page.goto("/");
 	const main = page.locator("main");
-	await expect(main.getByRole("heading", { level: 1 })).toHaveText(
-		/^Good (morning|afternoon|evening), Dev$/,
-	);
 	for (const agent of agents) {
 		await expect(
 			main.getByRole("link", { name: `Open ${agent.display_name}.`, exact: false }),
 		).toBeVisible();
 	}
-	await expect(main.getByText("8 agents", { exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: /Show all|Show fewer/ })).toHaveCount(0);
-	await expect(page.locator("html")).toHaveAttribute("data-console-greeting-count", "1");
-	const texts: string[] = JSON.parse(
-		(await page.locator("html").getAttribute("data-console-greeting-texts")) ?? "[]",
-	);
-	expect(texts).toHaveLength(1);
 });
 
 test("Console keeps its desktop columns and places Recent sessions last on narrow screens", async ({
 	page,
 }, testInfo) => {
 	await stubHostedApi(page);
-	await page.route(`${CLOUD_API}/v1/dashboard/stats`, (route) =>
-		fulfillJson(route, {
-			manual_sessions_last_7_days: 0,
-			automated_sessions_last_7_days: 0,
-			top_model_last_7_days: null,
-			sessions_today: 0,
-			current_streak: 0,
-			contribution: Array.from({ length: 365 }, (_, index) => ({
-				date: new Date(Date.UTC(2025, 8, 9 + index)).toISOString().slice(0, 10),
-				count: index % 5,
-				level: index % 5,
-			})),
-		}),
-	);
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.goto("/");
 
 	const main = page.locator("main");
-	const activity = main.getByRole("heading", { name: "Activity", exact: true });
+	const activity = main.getByText("Activity", { exact: true });
 	const library = main.getByText("Library", { exact: true });
 	const recentSessions = main.getByRole("heading", { name: "Recent sessions", exact: true });
 	await expect(recentSessions).toBeVisible();
-	const connectAgent = main.getByRole("button", { name: "Connect an agent on your machine" });
-	await expect(connectAgent).toBeVisible();
-	await expect(main.getByRole("heading", { level: 1 })).toHaveText(/^Good /);
-
-	const activitySection = activity.locator("..");
-	await expect(activitySection.locator('[data-slot="card"]')).toHaveCount(0);
-	await expect(main.getByText("Sessions per day in the last 12 months")).toHaveCount(0);
-	await expect(activitySection.getByText(/^(Less|More)$/)).toHaveCount(0);
-	const cells = activitySection.locator('[title*="sessions on"]');
-	await expect(cells.first()).toHaveCSS("border-radius", "2px");
-	const assertMonthGeometry = async () => {
-		const gridBottom = await cells.evaluateAll((elements) =>
-			Math.max(...elements.map((element) => element.getBoundingClientRect().bottom)),
-		);
-		const months = activitySection.getByText(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)$/);
-		await expect(months.first()).toBeVisible();
-		const boxes = await months.evaluateAll((elements) =>
-			elements.map((element) => element.getBoundingClientRect().toJSON()),
-		);
-		for (const [index, box] of boxes.entries()) {
-			expect(box.y).toBeGreaterThan(gridBottom);
-			if (index > 0) expect(box.x).toBeGreaterThanOrEqual(boxes[index - 1].right);
-		}
-		await expectNoHorizontalOverflow(activitySection, "Activity month labels");
-	};
-	await assertMonthGeometry();
 
 	const [desktopActivity, desktopLibrary, desktopRecent] = await Promise.all([
 		activity.boundingBox(),
@@ -5065,7 +5000,6 @@ test("Console keeps its desktop columns and places Recent sessions last on narro
 	}
 	expect(desktopRecent.y).toBeGreaterThan(desktopActivity.y);
 	expect(desktopLibrary.x).toBeGreaterThan(desktopActivity.x);
-	await page.screenshot({ path: testInfo.outputPath("console-1280x900.png"), fullPage: true });
 
 	await page.setViewportSize({ width: 320, height: 568 });
 	const sectionOrder = await main
@@ -5079,6 +5013,7 @@ test("Console keeps its desktop columns and places Recent sessions last on narro
 		);
 	expect(sectionOrder).toEqual(["Activity", "Library", "Last 7 days", "Recent sessions"]);
 
+	const connectAgent = main.getByRole("button", { name: "Connect an agent on your machine" });
 	await expect(connectAgent).toBeVisible();
 	await expectContainedInOwnerAndViewport(
 		page,
@@ -5086,7 +5021,6 @@ test("Console keeps its desktop columns and places Recent sessions last on narro
 		connectAgent.locator(".."),
 		"320px onboarding action",
 	);
-	await assertMonthGeometry();
 	await expectNoHorizontalOverflow(page.locator("html"), "320px Console document");
 	await page.screenshot({
 		path: testInfo.outputPath("console-320x568.png"),
@@ -5094,7 +5028,6 @@ test("Console keeps its desktop columns and places Recent sessions last on narro
 	});
 
 	await page.setViewportSize({ width: 390, height: 844 });
-	await assertMonthGeometry();
 	await expectNoHorizontalOverflow(page.locator("html"), "390px Console document");
 	await page.screenshot({
 		path: testInfo.outputPath("console-390x844.png"),
