@@ -340,11 +340,14 @@ class FakeLink:
         auth_config_id: str,
         user_id: str,
         callback_url: str | None = None,
+        alias: object = None,
     ) -> _FakeConnectLinkResponse:
         self.created = {
             "auth_config_id": auth_config_id,
             "user_id": user_id,
         }
+        if isinstance(alias, str):
+            self.created["alias"] = alias
         if callback_url is not None:
             self.created["callback_url"] = callback_url
         return _FakeConnectLinkResponse(
@@ -703,6 +706,7 @@ async def test_oauth_connect_uses_managed_auth_config_and_link(monkeypatch: pyte
         "clerk_user_123",
         "gmail",
         "https://cloud.example.test/connectors/gmail",
+        alias="Work Gmail",
     )
 
     assert result.model_dump() == {
@@ -722,6 +726,7 @@ async def test_oauth_connect_uses_managed_auth_config_and_link(monkeypatch: pyte
         "auth_config_id": "ac_1",
         "user_id": "clerk_user_123",
         "callback_url": "https://cloud.example.test/connectors/gmail",
+        "alias": "Work Gmail",
     }
     assert "clerk_user_123" not in composio._tool_router_session_cache
 
@@ -1101,6 +1106,7 @@ async def test_credentials_connect_uses_custom_auth_config_and_connected_account
         "clerk_user_123",
         "posthog",
         {"generic_api_key": "phx_123"},
+        alias="Work PostHog",
     )
 
     assert result.model_dump() == {"id": "ca_posthog", "status": "active", "ok": True}
@@ -1119,6 +1125,7 @@ async def test_credentials_connect_uses_custom_auth_config_and_connected_account
         "auth_config": {"id": "ac_1"},
         "connection": {
             "user_id": "clerk_user_123",
+            "alias": "Work PostHog",
             "state": {
                 "auth_scheme": "API_KEY",
                 "val": {"status": "ACTIVE", "generic_api_key": "phx_123"},
@@ -1180,7 +1187,10 @@ async def test_connect_credentials_route_rejects_non_active_connection(
         user_id: str,
         app_name: str,
         credentials: dict[str, str],
+        *,
+        alias: str | None = None,
     ):
+        assert alias is None
         assert user_id == "clerk_user_123"
         assert app_name == "posthog"
         assert credentials == {"generic_api_key": "phx_123"}
@@ -1364,6 +1374,7 @@ async def test_connect_link_rejects_missing_provider_account_id(
             auth_config_id: str,
             user_id: str,
             callback_url: str | None = None,
+            alias: object = None,
         ) -> _MalformedConnectLinkResponse:
             assert auth_config_id and user_id and callback_url
             return _MalformedConnectLinkResponse(
@@ -1580,6 +1591,8 @@ def test_connected_account_identity_exposes_only_allowlisted_labels() -> None:
     account = composio._ConnectedAccount.model_validate(
         {
             "id": "ca_github",
+            "alias": "Work GitHub",
+            "word_id": "github_red-castle",
             "created_at": "2026-09-03T00:00:00Z",
             "status": "ACTIVE",
             "toolkit": {"slug": "github"},
@@ -1603,6 +1616,7 @@ def test_connected_account_identity_exposes_only_allowlisted_labels() -> None:
 
     assert identity == {
         "id": "ca_github",
+        "alias": "Work GitHub",
         "app_name": "github",
         "status": "ACTIVE",
         "account_display": "octocat@example.test",
@@ -1652,3 +1666,138 @@ async def test_close_composio_client_uses_public_sdk_lifecycles(monkeypatch):
     assert composio._tool_router_tools_inflight == {}
     assert composio._client is None
     assert composio._sdk_client is None
+
+
+@pytest.mark.parametrize("alias", ["", "Work Gmail", "工作邮箱", "a" * 256])
+def test_alias_request_accepts_provider_strings(alias: str) -> None:
+    assert connectors.ConnectorUpdateRequest(alias=alias).alias == alias
+    assert connectors.ConnectRequest(alias=alias).alias == alias
+    assert (
+        connectors.ConnectorCredentialsConnectRequest(
+            credentials={"api_key": "secret"}, alias=alias
+        ).alias
+        == alias
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"alias": None},
+        {"alias": 123},
+        {"alias": "a" * 257},
+        {"alias": "work", "connection": {}},
+    ],
+)
+def test_alias_patch_rejects_invalid_input(body) -> None:
+    with pytest.raises(ValidationError):
+        connectors.ConnectorUpdateRequest.model_validate(body)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alias,status", [("工作邮箱", "EXPIRED"), ("", "ACTIVE")])
+async def test_alias_patch_uses_owned_account_and_returns_fresh_identity(
+    monkeypatch, alias, status
+):
+    import json
+
+    from composio_client import AsyncComposio
+
+    account = {
+        "id": "ca_gmail",
+        "toolkit": {"slug": "gmail"},
+        "status": status,
+        "created_at": "2026-09-03T00:00:00Z",
+        "alias": "old",
+        "is_disabled": True,
+        "data": {"email": "work@example.test", "access_token": "private-token"},
+        "state": {"authScheme": "API_KEY", "val": {"status": status}},
+    }
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        if request.url.path.endswith("/connected_accounts"):
+            assert request.url.params["user_ids"] == "clerk_user_123"
+            assert request.url.params["connected_account_ids"] == "ca_gmail"
+            assert "statuses" not in request.url.params
+            return httpx.Response(200, json={"items": [account]})
+        if request.method == "PATCH":
+            assert json.loads(request.content) == {"alias": alias}
+            account["alias"] = alias or None
+            return httpx.Response(200, json={"id": "ca_gmail", "status": status, "success": True})
+        return httpx.Response(200, json=account)
+
+    async with AsyncComposio(
+        api_key="test", http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    ) as sdk:
+        monkeypatch.setattr(composio, "get_composio_client", lambda: sdk)
+        monkeypatch.setattr(settings, "composio_api_key", "test")
+        composio._tool_router_session_cache["clerk_user_123"] = composio.ComposioMcpSession(
+            url="https://example.test/mcp",
+            headers={},
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        )
+        result = await connectors.update_connection(
+            "ca_gmail",
+            connectors.ConnectorUpdateRequest(alias=alias),
+            AuthContext(user=User(clerk_id="clerk_user_123")),
+        )
+    assert [r.method for r in requests] == ["GET", "PATCH", "GET"]
+    assert result.alias == (alias or None)
+    assert result.account_display == "work@example.test"
+    assert result.status == status
+    assert "private-token" not in result.model_dump_json()
+    assert "clerk_user_123" not in composio._tool_router_session_cache
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "owned,upstream_status,expected", [(False, 200, 404), (True, 409, 409), (True, 500, 502)]
+)
+async def test_alias_patch_denies_other_owners_and_sanitizes_failures(
+    monkeypatch, owned, upstream_status, expected
+):
+    from composio_client import AsyncComposio
+
+    methods = []
+
+    def handle(request):
+        methods.append(request.method)
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "id": "ca_gmail",
+                            "created_at": "2026-09-03T00:00:00Z",
+                            "status": "ACTIVE",
+                            "toolkit": {"slug": "gmail"},
+                            "data": {},
+                            "state": {"authScheme": "API_KEY", "val": {"status": "ACTIVE"}},
+                        }
+                    ]
+                    if owned
+                    else []
+                },
+            )
+        return httpx.Response(
+            upstream_status, json={"error": {"message": "private-provider-detail"}}
+        )
+
+    async with AsyncComposio(
+        api_key="test", http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    ) as sdk:
+        monkeypatch.setattr(composio, "get_composio_client", lambda: sdk)
+        monkeypatch.setattr(settings, "composio_api_key", "test")
+        with pytest.raises(connectors.HTTPException) as exc:
+            await connectors.update_connection(
+                "ca_gmail",
+                connectors.ConnectorUpdateRequest(alias="work"),
+                AuthContext(user=User(clerk_id="clerk_user_123")),
+            )
+    assert exc.value.status_code == expected
+    assert "private-provider-detail" not in exc.value.detail
+    assert methods == (["GET", "PATCH"] if owned else ["GET"])

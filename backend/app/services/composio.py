@@ -166,12 +166,17 @@ class _ConnectedAccountDeleteResponse(_ComposioWireModel):
     success: bool
 
 
+class _ConnectedAccountPatchResponse(_ConnectedAccountCreateResponse):
+    success: bool
+
+
 class ConnectorAccountIdentity(BaseModel):
     """Credential-free identity projection for Agent-side account selection."""
 
     id: str
     app_name: str
     status: ComposioStatus
+    alias: str | None = None
     account_display: str | None = None
     organization_display: str | None = None
     tenant_display: str | None = None
@@ -824,6 +829,7 @@ def _serialize_connected_account(account: _ConnectedAccount) -> ConnectorConnect
         app_name=account.toolkit.slug,
         status=account.status,
         created_at=account.created_at,
+        alias=account.alias,
         account_display=_account_display_label(account),
     )
 
@@ -836,6 +842,7 @@ def _serialize_connected_account_identity(account: _ConnectedAccount) -> Connect
         id=account.id,
         app_name=account.toolkit.slug,
         status=account.status,
+        alias=account.alias,
         account_display=_account_display_label(account),
         organization_display=_first_identity_label(
             containers,
@@ -862,10 +869,6 @@ def _serialize_connected_account_identity(account: _ConnectedAccount) -> Connect
 
 def _account_display_label(account: _ConnectedAccount) -> str | None:
     """Best-effort user-facing label for a Composio connected account."""
-    for value in (account.alias, account.word_id):
-        if value is not None and value.strip():
-            return value.strip()
-
     state_value = _json_object(account.state.get("val"))
     authed_user = _json_object(state_value.get("authed_user") or state_value.get("authedUser"))
     containers = (account.data, state_value, authed_user)
@@ -874,6 +877,9 @@ def _account_display_label(account: _ConnectedAccount) -> str | None:
             value = container.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+    for value in (account.word_id, account.alias):
+        if value is not None and value.strip():
+            return value.strip()
     return None
 
 
@@ -906,7 +912,7 @@ def _json_object(value: JsonValue | None) -> JsonObject:
 
 
 async def create_connect_link(
-    entity_id: str, app_name: str, redirect_url: str | None = None
+    entity_id: str, app_name: str, redirect_url: str | None = None, *, alias: str | None = None
 ) -> ConnectorConnectResponse:
     """Create a Composio Connect Link for an OAuth connector."""
     client = get_composio_client()
@@ -934,6 +940,7 @@ async def create_connect_link(
                 auth_config_id=auth_config.id,
                 user_id=entity_id,
                 callback_url=redirect_url,
+                alias=alias if alias is not None else composio_client.omit,
             )
         )
     else:
@@ -941,6 +948,7 @@ async def create_connect_link(
             client.link.create(
                 auth_config_id=auth_config.id,
                 user_id=entity_id,
+                alias=alias if alias is not None else composio_client.omit,
             )
         )
     result = _normalize_sdk_response(raw_result, _ConnectLinkResponse)
@@ -986,7 +994,7 @@ async def get_auth_fields(app_name: str) -> ConnectorAuthFieldsResponse:
 
 
 async def connect_with_credentials(
-    user_id: str, app_name: str, credentials: dict[str, str]
+    user_id: str, app_name: str, credentials: dict[str, str], *, alias: str | None = None
 ) -> ConnectorCredentialsConnectResponse:
     """Create a connected account with user-supplied credentials."""
     client = get_composio_client()
@@ -1002,6 +1010,7 @@ async def connect_with_credentials(
         app_name=app_name,
         auth_type=auth_type,
         credentials=credentials,
+        alias=alias,
     )
 
 
@@ -1012,6 +1021,7 @@ async def _create_non_oauth_connection(
     app_name: str,
     auth_type: str,
     credentials: dict[str, str],
+    alias: str | None = None,
 ) -> ConnectorCredentialsConnectResponse:
     auth_scheme = _auth_type_to_composio_scheme(auth_type)
     auth_config = await _get_or_create_auth_config(
@@ -1025,6 +1035,7 @@ async def _create_non_oauth_connection(
         user_id=user_id,
         auth_scheme=auth_scheme,
         credentials=credentials,
+        alias=alias,
     )
     raw_result = await _call_generated_sdk(
         client.connected_accounts.create(**request),
@@ -1070,6 +1081,36 @@ async def disconnect_account(connected_account_id: str) -> bool:
     raw_response = await _call_generated_sdk(client.connected_accounts.delete(connected_account_id))
     response = _normalize_sdk_response(raw_response, _ConnectedAccountDeleteResponse)
     return response.success
+
+
+async def update_account_alias(
+    user_id: str, connected_account_id: str, alias: str
+) -> ConnectorConnectionResponse:
+    client = get_composio_client()
+    # Filter server-side by both owner and id, without excluding non-active accounts.
+    # user_id on retrieve responses is deprecated; do not use it as an ownership guard.
+    raw_page = await _call_generated_sdk(
+        client.connected_accounts.list(
+            user_ids=[user_id], connected_account_ids=[connected_account_id], limit=1
+        )
+    )
+    page = _normalize_sdk_response(raw_page, _ConnectedAccountPage)
+    if not any(account.id == connected_account_id for account in page.items):
+        raise ComposioProviderError(ComposioFailure("not_found"))
+    # Do not automatically retry a mutation after a conflict or ambiguous failure.
+    raw_result = await _call_generated_sdk(
+        client.with_options(max_retries=0).connected_accounts.patch(
+            connected_account_id, alias=alias
+        )
+    )
+    await invalidate_tool_router_mcp_session(user_id)
+    result = _normalize_sdk_response(raw_result, _ConnectedAccountPatchResponse)
+    if not result.success or result.id != connected_account_id:
+        raise ComposioProtocolError("Composio returned an invalid update response")
+    raw_account = await _call_generated_sdk(
+        client.connected_accounts.retrieve(connected_account_id)
+    )
+    return _serialize_connected_account(_normalize_sdk_response(raw_account, _ConnectedAccount))
 
 
 async def get_app_tools(app_name: str) -> list[ConnectorToolResponse]:
@@ -1142,6 +1183,7 @@ def _connected_account_create_request(
     user_id: str,
     auth_scheme: str,
     credentials: dict[str, str],
+    alias: str | None = None,
 ) -> ConnectedAccountCreateParams:
     """Validate a complete request against the SDK's public generated type."""
     from composio_client.types import ConnectedAccountCreateParams
@@ -1152,6 +1194,7 @@ def _connected_account_create_request(
             "auth_config": {"id": auth_config_id},
             "connection": {
                 "user_id": user_id,
+                **({"alias": alias} if alias is not None else {}),
                 "state": {
                     "auth_scheme": auth_scheme,
                     "val": {"status": "ACTIVE", **credentials},

@@ -17,6 +17,7 @@ from app.schemas.connector import (
     ConnectorMetadataBatchRequest,
     ConnectorMetadataBatchResponse,
     ConnectorToolResponse,
+    ConnectorUpdateRequest,
     ConnectRequest,
 )
 from app.services.composio import (
@@ -34,6 +35,7 @@ from app.services.composio import (
     get_connector_metadata,
     invalidate_tool_router_mcp_session,
     normalize_composio_failure,
+    update_account_alias,
 )
 
 log = logging.getLogger(__name__)
@@ -90,6 +92,11 @@ def _map_composio_error(exc: ComposioRouteError) -> HTTPException:
             failure.message or "Invalid credentials",
         )
     if failure.kind == "status":
+        if failure.status_code == status.HTTP_409_CONFLICT:
+            return HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Connection conflict. Check the alias or retry shortly.",
+            )
         if failure.status_code == status.HTTP_404_NOT_FOUND:
             return HTTPException(status.HTTP_404_NOT_FOUND, "Connector not found")
         if failure.status_code in {
@@ -230,7 +237,9 @@ async def connect_app(
             )
         if auth_type not in _REDIRECT_AUTH_TYPES:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Connector requires credentials")
-        result = await create_connect_link(require_clerk_id(auth), app_name, redirect_url)
+        result = await create_connect_link(
+            require_clerk_id(auth), app_name, redirect_url, alias=body.alias if body else None
+        )
     except ComposioRouteError as exc:
         raise _map_composio_error(exc) from exc
     return result
@@ -281,7 +290,9 @@ async def connect_credentials(
     if any(not v.strip() for v in body.credentials.values()):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Credential values cannot be empty")
     try:
-        result = await connect_with_credentials(require_clerk_id(auth), app_name, body.credentials)
+        result = await connect_with_credentials(
+            require_clerk_id(auth), app_name, body.credentials, alias=body.alias
+        )
     except ComposioRouteError as exc:
         raise _map_composio_error(exc) from exc
     if not result.ok:
@@ -290,6 +301,21 @@ async def connect_credentials(
             f"Composio returned connection status {result.status}",
         )
     return result
+
+
+@router.patch("/{connection_id}")
+async def update_connection(
+    connection_id: str,
+    body: ConnectorUpdateRequest,
+    auth: AuthContext = Depends(require_user_auth_short_session),
+) -> ConnectorConnectionResponse:
+    """Update or clear the alias of an owned connected account."""
+    if not settings.composio_api_key:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
+    try:
+        return await update_account_alias(require_clerk_id(auth), connection_id, body.alias)
+    except ComposioRouteError as exc:
+        raise _map_composio_error(exc) from exc
 
 
 @router.delete("/{connection_id}")

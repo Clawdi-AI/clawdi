@@ -5,6 +5,9 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from app.core.config import settings
 
+# Composio specifies a string without a format limit; this is a local input bound.
+type ConnectorAlias = Annotated[str, Field(strict=True, max_length=256)]
+
 
 def _allowed_redirect_origins() -> set[str]:
     """Parse `web_origin` (and `cors_origins`) into the set of
@@ -41,6 +44,7 @@ class ConnectRequest(BaseModel):
     """
 
     redirect_url: str | None = Field(default=None, max_length=2048)
+    alias: ConnectorAlias | None = None
 
     @field_validator("redirect_url")
     @classmethod
@@ -73,11 +77,18 @@ class ConnectorConnectionResponse(BaseModel):
     app_name: str
     status: str
     created_at: str
+    alias: str | None = None
     # User-facing identity label (e.g. their Gmail address). `None` when
     # Composio hasn't resolved it yet, which is common right after OAuth
     # completes. Surfacing it lets the UI tell apart multiple
     # connections to the same app.
     account_display: str | None = None
+
+
+class ConnectorUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    alias: ConnectorAlias = Field(description="Account alias; an empty string clears it.")
 
 
 class ConnectorMetadataResponse(BaseModel):
@@ -144,6 +155,7 @@ class ConnectorCredentialsConnectRequest(BaseModel):
     """
 
     credentials: dict[str, str] = Field(..., min_length=1, max_length=20)
+    alias: ConnectorAlias | None = None
 
     @field_validator("credentials")
     @classmethod
