@@ -69,6 +69,12 @@ jobs:
         working-directory: packages/cli
         run: bun run typecheck
 
+      - name: Set up native Agent test dependencies
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: "0.12.5"
+          python-version: "3.12"
+
       - name: Test (ephemeral internal suite)
         timeout-minutes: 20
         run: bun run --cwd packages/cli test:internal

@@ -21,7 +21,7 @@ database migration, CI, and implementation details.
 
 ### Changed
 
-- CLI 0.14.55 installs sourced Skills through Hermes and OpenClaw native
+- CLI 0.14.56 installs sourced Skills through Hermes and OpenClaw native
   capabilities, preserving supporting files and recovering interrupted changes.
 - CLI 0.14.54 delivers native BYOK credentials through OpenClaw configuration
   commands and Hermes authentication APIs while preserving agent model choices.
