@@ -88,14 +88,6 @@ export function agentTileMatchesRouteId(tile: AgentTile, routeId: string): boole
 	return tile.href ? agentRouteIdsEqual(parseAgentPathname(tile.href)?.agentId, routeId) : false;
 }
 
-export interface AgentFleetSummary {
-	total: number;
-}
-
-export function fleetSummaryFromTiles(agents: readonly AgentTile[]): AgentFleetSummary {
-	return { total: agents.length };
-}
-
 export function AgentsCard({
 	agents,
 	isLoading,
@@ -121,10 +113,6 @@ export function AgentsCard({
 }) {
 	const ordered = [...agents].sort(compareAgentTiles);
 
-	// No section header: the greeting directly above already carries the
-	// fleet summary ("N agents"), and a bare
-	// text header here pushed the tile wall below the right rail's card
-	// top — the two columns read as misaligned (Marvin's screenshot).
 	// Tiles start flush with the column, level with the cards on the right.
 	return (
 		<section className="space-y-3">

@@ -3,16 +3,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
-import { lazy, type ReactNode, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
-import {
-	AgentsCard,
-	fleetSummaryFromTiles,
-	selfManagedAgentTiles,
-} from "@/components/dashboard/agents-card";
+import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
-import { type AgentGreetingState, agentGreetingSummary } from "@/components/dashboard/greeting";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { ResourcesCard } from "@/components/dashboard/resources-card";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
@@ -55,14 +50,6 @@ const HostedSecondaryCTA = IS_HOSTED_BUILD
 			})),
 		)
 	: null;
-const HostedFleetSummary = IS_HOSTED_BUILD
-	? lazy(() =>
-			import("@/hosted/use-unified-agent-list").then((m) => ({
-				default: m.HostedFleetSummary,
-			})),
-		)
-	: null;
-
 export default function DashboardPage() {
 	const $api = useOpenApi();
 	const hostedAccess = useProductAccess();
@@ -126,10 +113,6 @@ export default function DashboardPage() {
 		: null;
 
 	const selfManagedTiles = useMemo(() => selfManagedAgentTiles(environments), [environments]);
-	const selfManagedFleetSummary = useMemo(
-		() => fleetSummaryFromTiles(selfManagedTiles),
-		[selfManagedTiles],
-	);
 
 	// Zero-state promotion: when the user has no agents yet, the
 	// secondary CTA (connect one) lives in the right column. The
@@ -146,43 +129,10 @@ export default function DashboardPage() {
 		HostedAgentsSection && hostedAccess.canUseLegacyHostedDashboard,
 	);
 	const hostedSectionEnabled = cloudDeploymentManagementEnabled || legacyHostedAgentsEnabled;
-	const greetingState: AgentGreetingState =
-		hostedAccessLoading || envsLoading
-			? "loading"
-			: blockingEnvsError || hostedAccess.isError
-				? "error"
-				: "resolved";
-	const greeting = agentGreetingSummary(selfManagedFleetSummary.total, greetingState);
-	const loadingGreeting = agentGreetingSummary(selfManagedFleetSummary.total, "loading");
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			<Greeting>
-				{hostedAccessLoading ? (
-					loadingGreeting
-				) : hostedSectionEnabled && HostedFleetSummary ? (
-					<Suspense fallback={loadingGreeting}>
-						<HostedFleetSummary
-							cloudEnvs={environments ?? []}
-							showCloudDeployments={cloudDeploymentManagementEnabled}
-							showLegacyAgents={legacyHostedAgentsEnabled}
-						>
-							{(summary, state) =>
-								agentGreetingSummary(
-									summary.total,
-									blockingEnvsError || hostedAccess.isError || state.error
-										? "error"
-										: envsLoading || state.isLoading || !state.membershipResolved
-											? "loading"
-											: "resolved",
-								)
-							}
-						</HostedFleetSummary>
-					</Suspense>
-				) : (
-					greeting
-				)}
-			</Greeting>
+			<Greeting />
 
 			<div className="grid gap-4 lg:grid-cols-3">
 				<div className="min-w-0 lg:col-span-2 lg:row-start-1">
@@ -359,13 +309,13 @@ function ConnectAnotherCard() {
 	);
 }
 
-/** Time-of-day greeting — personal, no emoji, one quiet fleet summary line. */
+/** Personal time-of-day greeting. */
 function currentDaypart(): "morning" | "afternoon" | "evening" {
 	const hour = new Date().getHours();
 	return hour < 5 ? "evening" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
 }
 
-function Greeting({ children }: { children: ReactNode }) {
+function Greeting() {
 	const { user, isLoaded } = useCurrentUser();
 	const [daypart, setDaypart] = useState<ReturnType<typeof currentDaypart> | null>(null);
 	useEffect(() => {
@@ -381,7 +331,6 @@ function Greeting({ children }: { children: ReactNode }) {
 					<Skeleton className="h-8 w-64 max-w-full" />
 				)}
 			</h1>
-			<p className="mt-1 text-sm text-muted-foreground tabular-nums">{children}</p>
 		</div>
 	);
 }
