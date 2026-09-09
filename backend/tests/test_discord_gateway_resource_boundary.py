@@ -7,8 +7,9 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, text, update
+from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.schema import CreateSchema, DropSchema
 from websockets.exceptions import ConnectionClosedError
 from websockets.frames import Close
 
@@ -82,9 +83,34 @@ class Network:
 
 
 @pytest_asyncio.fixture
+async def engine(engine):
+    """Isolate global account scans while retaining independent real PG observers."""
+    schema = f"discord_gateway_{uuid4().hex}"
+    async with engine.begin() as connection:
+        await connection.execute(CreateSchema(schema))
+    try:
+        async with engine.begin() as connection:
+            quoted_schema = connection.dialect.identifier_preparer.quote(schema)
+            # These probes use only platform-owned accounts and no tenant FKs.
+            # Clone the migrated table's columns, checks, defaults and indexes.
+            await connection.execute(
+                text(
+                    f"CREATE TABLE {quoted_schema}.channel_accounts "
+                    "(LIKE public.channel_accounts INCLUDING ALL)"
+                )
+            )
+        yield engine.execution_options(schema_translate_map={None: schema})
+    finally:
+        async with engine.begin() as connection:
+            await connection.execute(DropSchema(schema, cascade=True))
+
+
+@pytest_asyncio.fixture
 async def provider(engine, monkeypatch):
     monkeypatch.setattr(settings, "db_pool_timeout", 0.1)
-    ordinary = _create_engine(pool_size=2, max_overflow=0)
+    ordinary = _create_engine(pool_size=2, max_overflow=0).execution_options(
+        schema_translate_map=engine.get_execution_options()["schema_translate_map"]
+    )
     accounts = [uuid4() for _ in range(4)]
     async with async_sessionmaker(engine)() as db:
         for account_id in accounts:
@@ -118,9 +144,6 @@ async def provider(engine, monkeypatch):
         yield ordinary, accounts, network, worker
     finally:
         await worker.stop()
-        async with async_sessionmaker(engine)() as db:
-            await db.execute(delete(ChannelAccount).where(ChannelAccount.id.in_(accounts)))
-            await db.commit()
         await ordinary.dispose()
 
 
