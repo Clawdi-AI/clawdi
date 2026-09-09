@@ -219,6 +219,34 @@ function applyProjector(f: ReturnType<typeof fixture>, previousProviderIds: stri
 	);
 }
 
+test("openclaw: reject authentication header overrides before handoff and rotation", () => {
+	const f = fixture("openclaw");
+	try {
+		for (const phase of ["handoff", "rotation"]) {
+			const original = recordValue(f.read()) ?? {};
+			for (const override of [
+				{ authHeader: false },
+				...["Authorization", "X-API-Key", "api-key", "COOKIE"].map((name) => ({
+					headers: { [name]: "user-owned-credential" },
+				})),
+			]) {
+				f.set({ ...original, ...override });
+				const before = f.read();
+				expect(() => f.prepare()).toThrow("authentication header conflict");
+				expect(f.read()).toEqual(before);
+			}
+			f.set({ ...original, headers: { "X-Request-Source": "user-agent" } });
+			if (phase === "rotation")
+				f.secretValues["secret://provider.saved-provider.apiKey"] = "rotated-key";
+			f.prepare();
+			applyConnectionProviderTransfers(f.input());
+			expect(recordValue(f.read())?.headers).toEqual({ "X-Request-Source": "user-agent" });
+		}
+	} finally {
+		f.cleanup();
+	}
+});
+
 for (const runtime of ["openclaw", "hermes"] as const) {
 	test(`${runtime}: explicit catalog primary supersedes connection selection despite permanent tombstone`, () => {
 		const f = fixture(runtime);

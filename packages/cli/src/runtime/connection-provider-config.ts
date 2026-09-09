@@ -193,6 +193,13 @@ export function prepareConnectionProviderTransfers(
 				throw new Error("OpenClaw connection credential ownership conflict");
 			if (existing.auth !== undefined && existing.auth !== "api-key")
 				throw new Error("OpenClaw connection auth mode conflict");
+			if (
+				existing.authHeader === false ||
+				Object.keys(recordValue(existing.headers) ?? {}).some((name) =>
+					["authorization", "x-api-key", "api-key", "cookie"].includes(name.toLowerCase()),
+				)
+			)
+				throw new Error("OpenClaw connection authentication header conflict");
 			fields.auth = "api-key";
 			fields.apiKey = { source: "env", provider: "clawdi-connection", id: envName };
 			if (previous && endpoint !== baseUrl) fields.baseUrl = baseUrl;
