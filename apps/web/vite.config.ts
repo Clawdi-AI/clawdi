@@ -62,7 +62,7 @@ export default defineConfig(({ mode }) => {
 			: [];
 
 	return {
-		...(desktopBuild ? {} : { server: { port: 3000 } }),
+		...(desktopBuild ? { preview: { host: "127.0.0.1" } } : { server: { port: 3000 } }),
 		ssr: {
 			// Published leaf components use extensionless internal ESM imports,
 			// so Vite must transform this package before Node evaluates SSR.
@@ -79,7 +79,7 @@ export default defineConfig(({ mode }) => {
 					? {
 							spa: {
 								enabled: true,
-								prerender: { outputPath: "index.html" },
+								prerender: { outputPath: "index" },
 							},
 						}
 					: {}),
