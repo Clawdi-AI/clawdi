@@ -93,13 +93,10 @@ for (const width of [1440, 375]) {
 			const rail = page
 				.locator("section")
 				.filter({ has: page.getByText("Your connections", { exact: true }) });
-			const gamma = rail.getByRole("link", { name: "GAMMA", exact: true });
-			await expect(gamma).toBeVisible();
-			await expect(gamma.locator("..").getByLabel("Connected", { exact: true })).toHaveCount(0);
-			await expect(gamma.locator("..").getByText("Needs attention")).toBeVisible();
-			await expect(rail.getByText("4 apps", { exact: true })).toBeVisible();
-			await expect(rail.getByRole("link", { name: "retired", exact: true })).toBeVisible();
-			expect(batches).toEqual([["alpha", "beta", "gamma", "retired"]]);
+			await expect(rail.getByRole("link", { name: "GAMMA", exact: true })).toHaveCount(0);
+			await expect(rail.getByText("2 apps", { exact: true })).toBeVisible();
+			await expect(rail.getByRole("link", { name: "retired", exact: true })).toHaveCount(0);
+			expect(batches).toEqual([["alpha", "beta"]]);
 			const alpha = rail.getByRole("link", { name: "ALPHA", exact: true }).locator("..");
 			await expect(alpha.getByText("A", { exact: true })).toBeVisible();
 			catalog.resolve();

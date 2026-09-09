@@ -111,6 +111,7 @@ export function connectionsQueryOptions(api: OpenApiClient) {
 		{},
 		{
 			refetchOnWindowFocus: "always" as const,
+			select: (connections) => connections.filter(isActiveConnection),
 		},
 	);
 }
