@@ -13,6 +13,7 @@ from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_message_retention_worker import ChannelMessageRetentionWorker
 from app.services.channel_wakeups import (
     CHANNEL_DELIVERIES_ENQUEUED,
+    ChannelInboxPage,
     ChannelWakeup,
     wait_for_channel_inbound_messages,
 )
@@ -165,7 +166,7 @@ async def test_channel_inbound_wait_falls_back_when_notification_is_lost():
     async def fetch():
         nonlocal calls
         calls += 1
-        return [] if calls == 1 else ["message"]
+        return ChannelInboxPage([] if calls == 1 else ["message"])
 
     messages = await wait_for_channel_inbound_messages(
         fetch,
