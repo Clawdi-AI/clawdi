@@ -1284,12 +1284,14 @@ function OverviewTab({
 	const managedProvider = !providerId || isManagedProviderId(providerId);
 	const providers = useUserAiProviders({ enabled: !managedProvider });
 	const managedModelCatalog = useManagedModelCatalog({ enabled: managedProvider });
-	const nativeConnection = providers.data?.some(
+	const agentOwnsModels = providers.data?.some(
 		(provider) =>
 			provider.provider_id === providerId &&
-			(provider.configuration_mode === "native" || provider.configuration_mode === "connection"),
+			(provider.configuration_mode === "native" ||
+				provider.configuration_mode === "connection" ||
+				provider.configuration_mode === "custom"),
 	);
-	const model = nativeConnection
+	const model = agentOwnsModels
 		? "Managed in agent"
 		: modelBindingDisplayName(
 				primaryModel,
@@ -2467,7 +2469,9 @@ function AiProviderTab({
 	const agentOwnsModels = list.some(
 		(provider) =>
 			provider.provider_id === primaryProviderRef &&
-			(provider.configuration_mode === "connection" || provider.configuration_mode === "native"),
+			(provider.configuration_mode === "connection" ||
+				provider.configuration_mode === "native" ||
+				provider.configuration_mode === "custom"),
 	);
 	const bindingModelIdentity =
 		currentAuthKind === "unmanaged" || agentOwnsModels
@@ -2511,7 +2515,8 @@ function AiProviderTab({
 	const dirty =
 		bindingMode !== initialMode ||
 		(bindingMode === "configured" &&
-			(primaryProviderChoice !== initialPrimaryChoice || primaryModel !== currentModel));
+			(primaryProviderChoice !== initialPrimaryChoice ||
+				(!agentOwnsModels && primaryModel !== currentModel)));
 	function applyProviderSettings() {
 		let update: DeploymentUpdateRequest;
 		try {

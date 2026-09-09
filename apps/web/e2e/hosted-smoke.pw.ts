@@ -2992,6 +2992,48 @@ for (const projectionFailure of [
 	});
 }
 
+test("Custom model ownership is preserved in agent settings", async ({ page }) => {
+	const id = "existing-provider";
+	const provider = {
+		...userProvider(id, "Existing provider", [{ id: "legacy-first" }, { id: "legacy-second" }]),
+		configuration_mode: "custom" as const,
+	};
+	const deployment: DeploymentMutationFixture = {
+		...railHostedDeployment,
+		config_info: {
+			...railHostedDeployment.config_info,
+			ai_provider_auth_kind: "api_key",
+			runtime_configuration: {
+				providers: [
+					{
+						provider_id: id,
+						auth_kind: "secret_reference",
+						models: ["legacy-first", "legacy-second"],
+					},
+				],
+				primary_model: { provider_id: id, model: "legacy-first" },
+				features: [],
+			},
+		},
+	};
+	const updates: Array<{ body: string; idempotencyKey: string | null; ifMatch: string | null }> =
+		[];
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		cloudAgents: [railHostedCloudAgent],
+		aiProviders: [provider],
+		updateDeploymentRequests: updates,
+	});
+	await page.goto(`/agents/${railHostedEnvironmentId}`);
+	await expect(page.locator('[data-overview-module="model-provider"]')).toContainText(
+		"Managed in agent",
+	);
+	await page.goto(`/agents/${railHostedEnvironmentId}/model-provider`);
+	await expect(page.getByTestId("managed-model-controls")).toHaveCount(0);
+	await expect(page.locator("main").getByRole("button", { name: "Save changes" })).toBeDisabled();
+	expect(updates).toEqual([]);
+});
+
 test("Clawdi AI model selection saves the chosen managed model", async ({ page }, testInfo) => {
 	const updateDeploymentRequests: Array<{
 		body: string;
@@ -3014,7 +3056,7 @@ test("Clawdi AI model selection saves the chosen managed model", async ({ page }
 		"true",
 	);
 	await models.getByRole("combobox", { name: "More managed models" }).click();
-	await page.getByRole("option", { name: /^GPT-5.6 Sol/ }).click();
+	await page.getByRole("option", { name: /GPT-5.6 Sol/ }).click();
 	await expect(models.getByRole("combobox")).toContainText("GPT-5.6 Sol");
 	await expect(page.getByText("Add, validate, or remove providers on")).toHaveCount(0);
 	await page.screenshot({ path: testInfo.outputPath("managed-model-picker.png") });
