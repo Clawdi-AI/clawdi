@@ -18,7 +18,17 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       (github.event.label.name == 'desktop-signing' &&
        github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+            bundle: mac-arm64
+          - runner: macos-15-intel
+            arch: x64
+            bundle: mac
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
@@ -35,13 +45,17 @@ jobs:
           bun run --cwd apps/web typecheck
 
       - name: Build bundled application
+        env:
+          CLAWDI_NATIVE_TARGET: darwin-${{ matrix.arch }}
         run: |
           bun run --cwd apps/desktop build
-          CLAWDI_NATIVE_TARGET=darwin-arm64 bun run --cwd apps/desktop prepare:native
+          bun run --cwd apps/desktop prepare:native
 
       - name: Package and notarize preview
         shell: bash apps/desktop/scripts/with-signing-keychain.sh bash {0}
         env:
+          DESKTOP_ARCH: ${{ matrix.arch }}
+          APP_BUNDLE_DIRECTORY: ${{ matrix.bundle }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
@@ -60,10 +74,10 @@ jobs:
           xcrun notarytool history --key "$APPLE_API_KEY" \
             --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" > /dev/null
           CSC_FOR_PULL_REQUEST=true node apps/desktop/node_modules/electron-builder/cli.js \
-            --projectDir apps/desktop --mac dmg zip --arm64 --publish never \
+            --projectDir apps/desktop --mac dmg zip --"$DESKTOP_ARCH" --publish never \
             --config.forceCodeSigning=true --config.mac.notarize=true --config.dmg.sign=true \
             --config.extraMetadata.clawdiUpdateChannel=disabled
-          app="apps/desktop/release/mac-arm64/Clawdi.app"
+          app="apps/desktop/release/$APP_BUNDLE_DIRECTORY/Clawdi.app"
           cli="$app/Contents/Resources/native/clawdi"
           codesign --verify --deep --strict --verbose=2 "$app"
           codesign --verify --strict --verbose=2 "$cli"
@@ -93,7 +107,7 @@ jobs:
       - name: Upload signed and notarized preview
         uses: actions/upload-artifact@v7
         with:
-          name: clawdi-macos-arm64-signed-preview
+          name: clawdi-macos-${{ matrix.arch }}-signed-preview
           path: |
             apps/desktop/release/Clawdi-*.dmg
             apps/desktop/release/Clawdi-*.zip
