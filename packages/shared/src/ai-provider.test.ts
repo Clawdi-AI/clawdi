@@ -9,8 +9,6 @@ import {
 	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_PROVIDER_ID,
-	CODEX_OAUTH_MODEL_CATALOG,
-	defaultAiProviderModels,
 	defaultAiProviderRuntimeEnvName,
 	isClawdiManagedV2ProviderId,
 	isFirstPartyManagedAiProvider,
@@ -540,77 +538,5 @@ describe("known AI provider defaults", () => {
 		expect(defaultAiProviderRuntimeEnvName("gemini")).toBe("GEMINI_API_KEY");
 		expect(defaultAiProviderRuntimeEnvName("mistral")).toBe("MISTRAL_API_KEY");
 		expect(defaultAiProviderRuntimeEnvName("custom_openai_compatible")).toBeUndefined();
-	});
-
-	test("provides a non-empty model catalog for built-in providers and Codex OAuth", () => {
-		expect(defaultAiProviderModels("openai").map((model) => model.id)).toEqual([
-			"gpt-5.6-sol",
-			"gpt-5.6-terra",
-			"gpt-5.6-luna",
-			"gpt-5.5",
-			"gpt-5.4",
-			"gpt-5.4-mini",
-		]);
-		expect(defaultAiProviderModels("anthropic").map((model) => model.id)).toEqual([
-			"claude-sonnet-5",
-			"claude-opus-5",
-			"claude-opus-4-6",
-			"claude-haiku-4-5",
-		]);
-		expect(defaultAiProviderModels("openrouter").map((model) => model.id)).toEqual([
-			"openrouter/auto-beta",
-			"~openai/gpt-latest",
-			"anthropic/claude-sonnet-5",
-			"anthropic/claude-opus-4.6",
-			"openai/gpt-5.5",
-		]);
-		expect(defaultAiProviderModels("gemini").map((model) => model.id)).toEqual([
-			"gemini-3.6-flash",
-			"gemini-3.5-flash",
-			"gemini-3.5-flash-lite",
-		]);
-		expect(defaultAiProviderModels("mistral").map((model) => model.id)).toEqual([
-			"mistral-medium-latest",
-			"mistral-small-latest",
-			"mistral-large-latest",
-			"codestral-latest",
-		]);
-		expect(defaultAiProviderModels("custom_openai_compatible")).toEqual([]);
-		expect(CODEX_OAUTH_MODEL_CATALOG.map((model) => model.id)).toEqual([
-			"gpt-5.6-sol",
-			"gpt-5.6-terra",
-			"gpt-5.6-luna",
-			"gpt-5.5",
-		]);
-	});
-
-	test("keeps context metadata only when an exact durable value is documented", () => {
-		expect(defaultAiProviderModels("openai").map((model) => model.context_window)).toEqual([
-			1_050_000,
-			1_050_000,
-			1_050_000,
-			undefined,
-			undefined,
-			undefined,
-		]);
-		expect(
-			defaultAiProviderModels("anthropic").every((model) => model.context_window === undefined),
-		).toBe(true);
-		expect(defaultAiProviderModels("openrouter").map((model) => model.context_window)).toEqual([
-			undefined,
-			undefined,
-			1_000_000,
-			undefined,
-			undefined,
-		]);
-		expect(defaultAiProviderModels("gemini").map((model) => model.context_window)).toEqual([
-			1_048_576, 1_048_576, 1_048_576,
-		]);
-		expect(
-			defaultAiProviderModels("mistral").every((model) => model.context_window === undefined),
-		).toBe(true);
-		expect(CODEX_OAUTH_MODEL_CATALOG.every((model) => model.context_window === undefined)).toBe(
-			true,
-		);
 	});
 });

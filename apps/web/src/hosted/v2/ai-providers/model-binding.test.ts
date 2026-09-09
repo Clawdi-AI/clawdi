@@ -12,7 +12,6 @@ import {
 	providerChoiceFromRef,
 	providerDisplayLabel,
 	providerPresentation,
-	providerRuntimeIncompatibility,
 	usableProviders,
 } from "@/hosted/v2/ai-providers/model-binding";
 
@@ -314,8 +313,6 @@ describe("model binding", () => {
 			},
 		} satisfies AiProvider;
 
-		expect(providerRuntimeIncompatibility(geminiProvider, "openclaw")).toBeNull();
-		expect(providerRuntimeIncompatibility(geminiProvider, "hermes")).toContain("Choose OpenClaw");
 		const issue = providerAvailabilityIssue(geminiProvider, {
 			runtime: "hermes",
 			environmentId: null,
@@ -339,8 +336,6 @@ describe("model binding", () => {
 			},
 		} satisfies AiProvider;
 
-		expect(providerRuntimeIncompatibility(provider, "openclaw")).toBeNull();
-		expect(providerRuntimeIncompatibility(provider, "hermes")).toContain("Hermes cannot use");
 		expect(
 			providerAvailabilityIssue(provider, { runtime: "hermes", environmentId: null })?.message,
 		).toBe("Hermes cannot use this provider's authentication or API protocol.");

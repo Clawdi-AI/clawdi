@@ -5,7 +5,7 @@ import {
 	isFirstPartyManagedAiProvider,
 } from "@clawdi/shared";
 import type { AiProviderAuthKind, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
-import { type HostedRuntime, runtimeDisplayName } from "@/hosted/runtimes";
+import type { HostedRuntime } from "@/hosted/runtimes";
 import {
 	type ProviderPreset,
 	providerPresetById,
@@ -73,21 +73,6 @@ export function primaryModelRef(providerId: string, model: string): PrimaryModel
 
 export function isManagedProviderId(providerId: string | null | undefined): boolean {
 	return typeof providerId === "string" && isClawdiManagedProviderId(providerId);
-}
-
-export function providerRuntimeIncompatibility(
-	provider: AiProvider,
-	runtime: HostedRuntime,
-): string | null {
-	const compatible = provider.readiness?.runtime_compatibility[runtime];
-	if (compatible === true) return null;
-	if (runtime === "hermes" && provider.api_mode === "google_generate_content") {
-		return "Hermes cannot use this Gemini connection yet. Choose OpenClaw, or use an OpenAI- or Anthropic-compatible provider.";
-	}
-	if (compatible === false) {
-		return `${runtimeDisplayName(runtime)} cannot use this provider's authentication or API protocol.`;
-	}
-	return null;
 }
 
 export function providerAvailabilityIssue(
