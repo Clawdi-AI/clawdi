@@ -7,7 +7,9 @@ const cloud = "http://localhost:3200";
 async function isolateNetwork(context: BrowserContext) {
 	await context.route("**/*", (route) => {
 		const host = new URL(route.request().url()).hostname;
-		return ["marketing", "localhost", "127.0.0.1"].includes(host) ? route.continue() : route.abort();
+		return ["marketing", "localhost", "127.0.0.1"].includes(host)
+			? route.continue()
+			: route.abort();
 	});
 }
 
