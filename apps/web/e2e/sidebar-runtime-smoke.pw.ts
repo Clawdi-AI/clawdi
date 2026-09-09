@@ -1006,7 +1006,7 @@ test("connector cards complete each authentication flow in Agent scope", async (
 
 	const gmailCard = main.getByRole("link", { name: "Gmail" }).locator("..");
 	await gmailCard.getByRole("button", { name: "Connect", exact: true }).click();
-	await page.getByRole("dialog").getByLabel("Account alias (optional)").fill("work-gmail");
+	await page.getByRole("dialog").getByLabel("Name (optional)").fill("work-gmail");
 	const popupPromise = page.waitForEvent("popup");
 	await page.getByRole("dialog").getByRole("button", { name: "Continue", exact: true }).click();
 	const popup = await popupPromise;

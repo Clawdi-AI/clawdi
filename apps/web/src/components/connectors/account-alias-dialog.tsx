@@ -46,7 +46,7 @@ export function AccountAliasDialog({
 			if (mountedRef.current) onClose();
 		} catch {
 			if (mountedRef.current) {
-				setError("Couldn't save alias. Try again. If the problem persists, refresh the page.");
+				setError("Couldn't rename account. Try again. If the problem persists, refresh the page.");
 			}
 		} finally {
 			inflightRef.current = false;
@@ -62,7 +62,7 @@ export function AccountAliasDialog({
 		>
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
-					<DialogTitle>Edit account alias</DialogTitle>
+					<DialogTitle>Rename account</DialogTitle>
 					<DialogDescription className="break-all">
 						{connection.account_display && connection.account_display !== connection.alias
 							? connection.account_display
@@ -91,7 +91,7 @@ export function AccountAliasDialog({
 							disabled={mutation.isPending || alias.trim() === (connection.alias ?? "")}
 						>
 							{mutation.isPending ? <Spinner className="size-3.5" /> : null}
-							Save
+							Rename
 						</Button>
 					</DialogFooter>
 				</form>

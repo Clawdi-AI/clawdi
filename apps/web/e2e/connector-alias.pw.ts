@@ -45,7 +45,7 @@ async function stub(page: Page, authType = "oauth2") {
 	});
 }
 
-test("inactive accounts remain visible and can be deleted", async ({ page }) => {
+test("inactive accounts are collapsed and can be expanded and deleted", async ({ page }) => {
 	await stub(page);
 	let accounts = [{ id: "ca_expired", app_name: "gmail", alias: "work", status: "EXPIRED" }];
 	await page.route("**/v1/connectors", (route) => route.fulfill({ json: accounts }));
@@ -61,6 +61,8 @@ test("inactive accounts remain visible and can be deleted", async ({ page }) => 
 		.last();
 	await expect(rail.getByText("Needs attention")).toBeVisible();
 	await rail.getByRole("link", { name: "Gmail", exact: true }).click();
+	await expect(page.getByText("Expired", { exact: true })).toBeHidden();
+	await page.getByText("Inactive accounts (1)", { exact: true }).click();
 	await expect(page.getByText("Expired", { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Connect account" })).toBeVisible();
 	await page.getByRole("button", { name: "Delete", exact: true }).click();
@@ -84,12 +86,12 @@ test("credentials connect includes alias without leaking failed response details
 	await page.getByRole("button", { name: "Connect account" }).click();
 	const dialog = page.getByRole("dialog");
 	await dialog.getByLabel("API key").fill("test-key");
-	await dialog.getByLabel("Account alias (optional)").fill("work-gmail");
+	await dialog.getByLabel("Name (optional)").fill("work-gmail");
 	await dialog.getByRole("button", { name: "Connect", exact: true }).click();
 	await expect(dialog.getByRole("alert")).toContainText("The account couldn’t be connected");
 	await expect(page.getByText("secret-upstream-error")).toHaveCount(0);
-	await dialog.getByLabel("Account alias (optional)").fill("");
-	await dialog.getByLabel("Account alias (optional)").press("Enter");
+	await dialog.getByLabel("Name (optional)").fill("");
+	await dialog.getByLabel("Name (optional)").press("Enter");
 	await expect(dialog).toBeHidden();
 	expect(requests).toEqual([
 		{ credentials: { api_key: "test-key" }, alias: "work-gmail" },
@@ -97,7 +99,7 @@ test("credentials connect includes alias without leaking failed response details
 	]);
 });
 
-test("Agent account alias edit, retry and clear retain identity", async ({ page }) => {
+test("Agent account rename, retry and clear retain identity", async ({ page }) => {
 	await page.setViewportSize({ width: 375, height: 900 });
 	await stub(page);
 	const accounts = [
@@ -111,10 +113,18 @@ test("Agent account alias edit, retry and clear retain identity", async ({ page 
 		{
 			id: "ca_personal",
 			app_name: "gmail",
-			alias: null,
+			alias: "personal@example.test",
 			account_display: "personal@example.test",
 			status: "ACTIVE",
 		},
+		{
+			id: "ca_named",
+			app_name: "gmail",
+			alias: "gmail-marvin-phala",
+			account_display: "",
+			status: "ACTIVE",
+		},
+		{ id: "ca_123456", app_name: "gmail", alias: null, account_display: "", status: "ACTIVE" },
 	];
 	await page.route("**/v1/connectors", (route) => route.fulfill({ json: accounts }));
 	let release = () => {};
@@ -130,37 +140,44 @@ test("Agent account alias edit, retry and clear retain identity", async ({ page 
 			return route.fulfill({ status: 409, json: { detail: "secret-upstream-error" } });
 		}
 		accounts[0] = { ...accounts[0], alias: body.alias || null };
-		accounts[0].account_display = body.alias || "work@example.test";
 		await route.fulfill({ json: accounts[0] });
 	});
 	await page.goto(`/agents/${agent.id}/connectors/gmail`);
+	await expect(page.getByText("personal@example.test", { exact: true })).toHaveCount(1);
+	await expect(page.getByText("personal@example.test", { exact: true })).toBeVisible();
+	await expect(page.getByText("gmail-marvin-phala", { exact: true })).toBeVisible();
+	await expect(page.getByText("Account ca_named", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Account 123456", { exact: true })).toBeVisible();
+	await expect(page.getByText("Expired", { exact: true })).toBeHidden();
+	await page.getByText("Inactive accounts (1)", { exact: true }).click();
 	await expect(page.getByText("Expired", { exact: true })).toBeVisible();
-	await expect(page.getByText("1 active · 2 total", { exact: true })).toBeVisible();
+	await expect(page.getByText("3 active · 4 total", { exact: true })).toBeVisible();
 	await expect(page.getByText("work@example.test", { exact: true })).toBeVisible();
 	await expect(page.getByText("personal@example.test", { exact: true })).toBeVisible();
 	await expect(page.getByText("Shared across all agents")).toBeVisible();
-	await page.getByRole("button", { name: "Edit alias", exact: true }).first().click();
+	await page.getByRole("button", { name: "Rename", exact: true }).last().click();
 	const dialog = page.getByRole("dialog");
-	await dialog.getByLabel("Account alias (optional)").fill("office");
+	await expect(dialog.getByRole("heading", { name: "Rename account" })).toBeVisible();
+	await dialog.getByLabel("Name (optional)").fill("office");
 	try {
-		await dialog.getByRole("button", { name: "Save", exact: true }).click();
+		await dialog.getByRole("button", { name: "Rename", exact: true }).click();
 		await expect.poll(() => updates.length).toBe(1);
-		await expect(dialog.getByRole("button", { name: /Save/ })).toBeDisabled();
+		await expect(dialog.getByRole("button", { name: "Rename" })).toBeDisabled();
 		await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
 		await page.keyboard.press("Escape");
 		await expect(dialog).toBeVisible();
 	} finally {
 		release();
 	}
-	await expect(dialog.getByRole("alert")).toContainText("Couldn't save alias");
+	await expect(dialog.getByRole("alert")).toContainText("Couldn't rename account");
 	await expect(page.getByText("secret-upstream-error")).toHaveCount(0);
-	await dialog.getByRole("button", { name: "Save", exact: true }).click();
+	await dialog.getByRole("button", { name: "Rename", exact: true }).click();
 	await expect(dialog).toBeHidden();
 	await expect(page.getByText("office", { exact: true })).toBeVisible();
-	await expect(page.getByText("Account ca_work", { exact: true })).toBeVisible();
-	await page.getByRole("button", { name: "Edit alias", exact: true }).first().click();
-	await dialog.getByLabel("Account alias (optional)").fill("");
-	await dialog.getByRole("button", { name: "Save", exact: true }).click();
+	await expect(page.getByText("work@example.test", { exact: true })).toBeVisible();
+	await page.getByRole("button", { name: "Rename", exact: true }).last().click();
+	await dialog.getByLabel("Name (optional)").fill("");
+	await dialog.getByRole("button", { name: "Rename", exact: true }).click();
 	await expect(dialog).toBeHidden();
 	await expect(page.getByText("office", { exact: true })).toHaveCount(0);
 	await expect(page.getByText("work@example.test", { exact: true })).toBeVisible();

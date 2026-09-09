@@ -148,7 +148,7 @@ export function ConnectorConnectAction({
 					<DialogHeader>
 						<DialogTitle>Connect {app.display_name}</DialogTitle>
 						<DialogDescription>
-							Add an optional alias, then authorize your account in a new window.
+							Add an optional name, then authorize your account in a new window.
 						</DialogDescription>
 					</DialogHeader>
 					<form
