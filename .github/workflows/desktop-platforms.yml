@@ -67,7 +67,7 @@ jobs:
       - name: Check Linux installed application
         if: matrix.platform == 'linux'
         run: |
-          sudo dpkg -i apps/desktop/release/*.deb
+          sudo apt-get install -y ./apps/desktop/release/*.deb
           test -x /opt/Clawdi/resources/native/clawdi
           test -x /opt/Clawdi/clawdi-desktop
           xvfb-run -a node apps/desktop/scripts/smoke-packaged.mjs \
