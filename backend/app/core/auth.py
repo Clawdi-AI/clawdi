@@ -23,7 +23,7 @@ from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.models.principal_lifecycle import PrincipalLifecycle
 from app.models.session import AgentEnvironment
-from app.models.user import PRINCIPAL_KIND_CLERK, User
+from app.models.user import PRINCIPAL_KIND_CLERK, USER_AVATAR_URL_MAX_LENGTH, User
 from app.schemas.problem import ACCOUNT_SUSPENDED_DETAIL, AccountSuspendedProblem
 from app.services.app_setting_registry import CLERK_CLI_OAUTH_SPEC
 from app.services.app_settings import AppSettingUnavailable, resolve_app_setting
@@ -641,7 +641,13 @@ async def auth_via_verified_clerk_jwt(
     raw_name = payload.get("name")
     name = raw_name if isinstance(raw_name, str) and raw_name else None
     raw_picture = payload.get("picture")
-    picture = raw_picture if isinstance(raw_picture, str) and raw_picture else None
+    # Optional profile metadata must fit PostgreSQL's character limit; a signed
+    # but oversized URL must not break bootstrap or retry a failed write on every request.
+    picture = (
+        raw_picture
+        if isinstance(raw_picture, str) and 0 < len(raw_picture) <= USER_AVATAR_URL_MAX_LENGTH
+        else None
+    )
 
     # Backfill email/name on rows that were lazy-created via the
     # admin path (`_resolve_or_create_user` in routes/admin.py) — that

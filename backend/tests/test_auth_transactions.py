@@ -8,7 +8,7 @@ import httpx
 import jwt
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import delete, event, text, update
+from sqlalchemy import delete, event, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.main import app
 from app.models.principal_lifecycle import ClerkPrincipalSuspension, PrincipalLifecycle
+from app.models.project import Project
 from app.models.user import User
 from app.services.principal_lifecycle import (
     fence_clerk_user_deleted,
@@ -56,11 +57,16 @@ def capture_sql(engine) -> Iterator[list[str]]:
     def capture_commit(_connection):
         statements.append("COMMIT")
 
+    def capture_rollback(_connection):
+        statements.append("ROLLBACK")
+
+    event.listen(engine.sync_engine, "rollback", capture_rollback)
     event.listen(engine.sync_engine, "before_cursor_execute", capture)
     event.listen(engine.sync_engine, "commit", capture_commit)
     try:
         yield statements
     finally:
+        event.remove(engine.sync_engine, "rollback", capture_rollback)
         event.remove(engine.sync_engine, "before_cursor_execute", capture)
         event.remove(engine.sync_engine, "commit", capture_commit)
 
@@ -362,8 +368,14 @@ async def test_avatar_write_failure_reloads_persisted_identity_before_authorizat
                     await writer.commit()
 
             monkeypatch.setattr(session, "rollback", rollback_then_change_identity)
-            # A real PostgreSQL varchar(512) error; commit itself is not mocked.
-            token = sign_jwt(subject, picture="https://example.test/" + "a" * 512)
+
+            # Fail inside a real PostgreSQL transaction during the avatar flush.
+            # Commit/rollback still exercise ORM expiration and identity reloading.
+            def fail_avatar_flush(sync_session, _flush_context, _instances):
+                sync_session.connection().execute(text("SELECT 1 / 0"))
+
+            event.listen(session.sync_session, "before_flush", fail_avatar_flush, once=True)
+            token = sign_jwt(subject, picture="https://example.test/new-avatar.png")
             if winner == "unchanged":
                 auth = await _auth_via_clerk_jwt(token, session)
                 assert auth is not None and auth.user_id == user_id
@@ -372,7 +384,7 @@ async def test_avatar_write_failure_reloads_persisted_identity_before_authorizat
                 with pytest.raises(HTTPException) as failure:
                     await _auth_via_clerk_jwt(token, session)
                 assert failure.value.status_code == 401
-            assert postgres_errors == ["22001"]
+            assert postgres_errors == ["22012"]
             assert not session.dirty
     finally:
         event.remove(engine.sync_engine, "handle_error", record_error)
@@ -384,3 +396,58 @@ async def test_avatar_write_failure_reloads_persisted_identity_before_authorizat
                 )
             )
             await cleanup.commit()
+
+
+@pytest.mark.parametrize("picture_length", [512, 513])
+@pytest.mark.parametrize("new_user", [False, True])
+async def test_avatar_character_bounds_preserve_auth_without_repeated_writes(
+    engine, db_session, seed_user, sign_jwt, picture_length, new_user
+):
+    subject = seed_user.clerk_id
+    previous_avatar = "https://example.test/previous.png"
+    seed_user.clerk_issuer = _ISSUER
+    seed_user.avatar_url = previous_avatar
+    if new_user:
+        await db_session.delete(seed_user)
+    await db_session.commit()
+    # Multibyte code points count as one character in PostgreSQL varchar.
+    prefix = "https://example.test/"
+    picture = prefix + "😀" * (picture_length - len(prefix))
+    token = sign_jwt(subject, picture=picture)
+    expected_avatar = picture if picture_length == 512 else None if new_user else previous_avatar
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    measurements = []
+    try:
+        for _ in range(2):
+            async with factory() as session:
+                with capture_sql(engine) as statements:
+                    auth = await _auth_via_clerk_jwt(token, session)
+                assert auth is not None
+                assert auth.user.avatar_url == expected_avatar
+                assert not session.dirty
+                measurements.append(statements)
+            async with factory() as observer:
+                persisted = await observer.scalar(select(User).where(User.clerk_id == subject))
+                assert persisted is not None
+                assert persisted.clerk_issuer == _ISSUER
+                assert persisted.avatar_url == expected_avatar
+                personal = await observer.scalar(
+                    select(Project).where(Project.user_id == persisted.id)
+                )
+                assert personal is not None and personal.slug == "personal"
+        for first_request, statements in zip((True, False), measurements, strict=True):
+            writes = [sql for sql in statements if sql.startswith("UPDATE users ")]
+            expected_updates = int(first_request and not new_user and picture_length == 512)
+            assert len(writes) == expected_updates
+            assert "ROLLBACK" not in statements
+            assert statements.count("COMMIT") == int(
+                first_request and (new_user or picture_length == 512)
+            )
+            if not first_request or (not new_user and picture_length == 513):
+                assert len(statements) == 7
+                assert all(sql.startswith("SELECT ") for sql in statements)
+    finally:
+        if new_user:
+            async with factory() as cleanup:
+                await cleanup.execute(delete(User).where(User.clerk_id == subject))
+                await cleanup.commit()
