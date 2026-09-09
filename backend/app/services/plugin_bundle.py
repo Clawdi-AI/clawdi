@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.agent_plugin import AgentPluginInstallation
 from app.models.session import AgentEnvironment
 from app.models.user import UserSetting
-from app.schemas.plugin_catalog import RESERVED_AGENT_PLUGIN_NAMES
+from app.schemas.plugin_catalog import RESERVED_AGENT_PLUGIN_NAMES, PluginCatalogEntryResponse
 from app.schemas.runtime import MAX_HOSTED_AGENT_PLUGIN_INSTALLATIONS
 from app.services.plugin_catalog import load_current_catalog, load_current_catalog_entry
 from app.services.sync_events import queue_runtime_manifest_changed
@@ -26,7 +26,7 @@ async def initialize_plugin_bundle(
     catalog = await load_current_catalog(db)
     if catalog is None:
         raise HTTPException(503, "Plugin catalog is temporarily unavailable")
-    selected = {}
+    selected: dict[str, PluginCatalogEntryResponse] = {}
     for entry in catalog.plugins:
         if "sui" in entry.keywords and entry.name not in RESERVED_AGENT_PLUGIN_NAMES:
             selected.setdefault(entry.name, entry)
