@@ -12,12 +12,25 @@ the selected provider through the stable runtime bootstrap bundle.
 
 ## Supported Provider Data
 
-New BYOK connections use `configuration_mode: "native"`: choose a provider,
+New built-in BYOK connections use `configuration_mode: "native"`: choose a provider,
 region or plan variant, and an API key, access token, or supported OAuth
 connection. Hermes and OpenClaw own model selection and their native catalogs.
 Clawdi does not pick a default model or copy a catalog for these connections.
 Credentials can be deployable while inference remains `not_tested` and
 `primary_model` is null.
+
+The provider form edits the Clawdi display name independently of its stable ID.
+Built-in providers expose credentials and any required region/plan choice; custom
+endpoints expose Name, API format, Endpoint, and API key. Provider IDs and credential
+environment names are internal, and new custom environment names derive from the
+stable provider ID. The form does not edit model catalogs or send inference requests.
+Renaming sends only `label`; credential replacement preserves legacy model metadata.
+
+New custom endpoints still use the released catalog binding contract, without a
+model catalog collected by the provider form. Their first binding still requires
+an explicit model under that contract. Credential-only initialization on a fresh
+agent is a separate runtime capability; the existing migration-only `connection`
+mode must not be silently used for creation.
 
 The Web editor preserves each saved connection's ownership mode. Existing
 catalog connections can migrate in place through a mode-only

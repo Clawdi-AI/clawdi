@@ -1,6 +1,9 @@
 import { nativeAiProvider } from "@clawdi/shared";
 import { CLAWDI_CODEX_OAUTH_PROVIDER_ID } from "@/hosted/v2/ai-providers/codex-oauth";
-import type { ProviderPreset } from "@/hosted/v2/ai-providers/provider-presets";
+import {
+	type ProviderPreset,
+	providerPresetForSavedProvider,
+} from "@/hosted/v2/ai-providers/provider-presets";
 import {
 	type ApiMode,
 	type ProviderTypeId,
@@ -9,7 +12,6 @@ import {
 } from "@/hosted/v2/ai-providers/provider-types";
 import type {
 	AiProvider,
-	AiProviderConnectionTestResponse,
 	AiProviderPatch,
 	AiProviderUpsert,
 	AiProviderUpsertAuth,
@@ -25,7 +27,6 @@ export interface ProviderFormIdentity {
 export interface DerivedProviderFields {
 	baseUrl: string;
 	apiMode: ApiMode;
-	runtimeEnv: string;
 }
 
 export function authFor(method: AuthMethod): AiProviderUpsertAuth {
@@ -37,31 +38,44 @@ export function providerListAllowsSubmit(isEdit: boolean, listLoaded: boolean): 
 	return isEdit || listLoaded;
 }
 
-export type SavedProviderConnectionTestInput = {
-	params: { path: { provider_id: string } };
-	body: { model?: string };
-};
+export function customProviderRuntimeEnv(
+	providerId: string,
+	existing: readonly Pick<AiProvider, "runtime_env_name">[],
+): string {
+	const base = `CLAWDI_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
+	const names = new Set(existing.map((provider) => provider.runtime_env_name));
+	let name = base;
+	for (let suffix = 2; names.has(name); suffix += 1) name = `${base}_${suffix}`;
+	return name;
+}
 
-type SavedProviderConnectionTestResult = Pick<AiProviderConnectionTestResponse, "ok" | "error">;
-
-export async function runPostSaveProviderConnectionTest(
-	provider: Pick<AiProvider, "provider_id" | "auth" | "models"> &
-		Partial<Pick<AiProvider, "configuration_mode">>,
-	execute: (input: SavedProviderConnectionTestInput) => Promise<SavedProviderConnectionTestResult>,
-): Promise<SavedProviderConnectionTestResult | null> {
-	if (provider.configuration_mode === "native" || provider.configuration_mode === "connection")
-		return null;
-	if (provider.auth.type !== "api_key" || provider.auth.source !== "managed") return null;
-	const model = provider.models?.[0]?.id;
-	try {
-		return await execute({
-			params: { path: { provider_id: provider.provider_id } },
-			body: model ? { model } : {},
-		});
-	} catch {
-		// Saving is authoritative. A follow-up test failure must not turn it into a failed mutation.
-		return null;
+/** Only changed display/routing fields are editable; stored models and auth are not form state. */
+export function providerSettingsPatch(
+	provider: Pick<AiProvider, "type" | "base_url" | "api_mode" | "native_variant" | "auth">,
+	fields: Pick<
+		AiProviderUpsert,
+		"label" | "base_url" | "api_mode" | "configuration_mode" | "native_variant"
+	>,
+): AiProviderPatch {
+	const patch: AiProviderPatch = { label: fields.label };
+	if (fields.base_url !== provider.base_url) patch.base_url = fields.base_url;
+	const currentApiMode =
+		provider.api_mode ??
+		derivedProviderFields(
+			provider.type,
+			provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile"
+				? "oauth"
+				: "api_key",
+			providerPresetForSavedProvider({ baseUrl: provider.base_url }),
+		).apiMode;
+	if (fields.api_mode !== currentApiMode) patch.api_mode = fields.api_mode;
+	if (
+		fields.configuration_mode === "native" &&
+		(fields.native_variant ?? null) !== (provider.native_variant ?? null)
+	) {
+		patch.native_variant = fields.native_variant;
 	}
+	return patch;
 }
 
 /** Connection edits never carry stored model metadata or change credential identity. */
@@ -72,43 +86,15 @@ export function connectionProviderPatch(
 	if (provider.configuration_mode !== "connection")
 		throw new Error("Expected an existing connection");
 	return {
-		configuration_mode: "connection",
-		label: fields.label,
-		base_url: fields.baseUrl.trim(),
-		api_mode: fields.apiMode,
+		...providerSettingsPatch(provider, {
+			label: fields.label,
+			base_url: fields.baseUrl.trim(),
+			api_mode: fields.apiMode,
+		}),
 		...(fields.apiKey.trim()
 			? { credential: { type: "api_key", value: fields.apiKey.trim() } }
 			: {}),
 	};
-}
-
-export function modelsToText(models: ReadonlyArray<{ id: string }> | null | undefined): string {
-	return (models ?? []).map((model) => model.id).join("\n");
-}
-
-export function parseModelIds(input: string): string[] {
-	const seen = new Set<string>();
-	const ids: string[] = [];
-	for (const raw of input.split(/[,\n]/)) {
-		const id = raw.trim();
-		if (!id || seen.has(id)) continue;
-		seen.add(id);
-		ids.push(id);
-	}
-	return ids;
-}
-
-export function modelsFromText(
-	input: string,
-	existing: AiProvider["models"],
-): AiProviderUpsert["models"] {
-	type UpsertModel = NonNullable<AiProviderUpsert["models"]>[number];
-	const knownById = new Map<string, UpsertModel>();
-	for (const model of existing ?? []) {
-		knownById.set(model.id, model);
-	}
-	const models = parseModelIds(input).map((id) => knownById.get(id) ?? { id });
-	return models.length > 0 ? models : null;
 }
 
 export function derivedProviderFields(
@@ -121,7 +107,6 @@ export function derivedProviderFields(
 	return {
 		baseUrl: route?.base_url ?? preset?.base_url ?? meta.defaultBaseUrl,
 		apiMode: route?.api_mode ?? preset?.api_mode ?? meta.defaultApiMode,
-		runtimeEnv: route?.runtime_env_name ?? preset?.runtime_env_name ?? meta.defaultRuntimeEnv,
 	};
 }
 
@@ -155,7 +140,7 @@ export function providerFormIdentity({
 		}
 		return {
 			providerId: suffix === 1 ? baseId : `${baseId}-${suffix}`,
-			label: suffix === 1 ? baseLabel : `${baseLabel} ${suffix}`,
+			label: normalizeLabel(labelInput) ?? (suffix === 1 ? baseLabel : `${baseLabel} ${suffix}`),
 		};
 	}
 	const baseLabel =
@@ -163,11 +148,10 @@ export function providerFormIdentity({
 		(providerTypeMeta(type).custom === true
 			? (normalizeLabel(labelInput) ?? defaultProviderLabel(type))
 			: defaultProviderLabel(type));
-	const requestedPresetLabel = preset ? normalizeLabel(labelInput) : null;
-	const baseId = toProviderId(preset?.id ?? baseLabel);
-	if (!baseId) return { providerId: "", label: baseLabel };
+	const requestedLabel = normalizeLabel(labelInput);
+	const baseId = toProviderId(preset?.id ?? baseLabel) || "custom";
 	if (!existingProviderIds.includes(baseId)) {
-		return { providerId: baseId, label: requestedPresetLabel ?? baseLabel };
+		return { providerId: baseId, label: requestedLabel ?? baseLabel };
 	}
 	let suffix = 2;
 	while (existingProviderIds.includes(`${baseId}-${suffix}`)) {
@@ -175,7 +159,7 @@ export function providerFormIdentity({
 	}
 	return {
 		providerId: `${baseId}-${suffix}`,
-		label: requestedPresetLabel ?? `${baseLabel} ${suffix}`,
+		label: requestedLabel ?? `${baseLabel} ${suffix}`,
 	};
 }
 

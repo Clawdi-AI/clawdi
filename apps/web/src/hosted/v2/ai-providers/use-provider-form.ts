@@ -9,9 +9,7 @@ export interface ProviderFormState {
 	type: ProviderTypeId;
 	label: string;
 	baseUrl: string;
-	modelsText: string;
 	apiMode: ApiMode;
-	runtimeEnv: string;
 	authMethod: AuthMethod;
 	apiKey: string;
 	presetId: string | null;
@@ -23,9 +21,7 @@ const INITIAL_STATE: ProviderFormState = {
 	type: "openai",
 	label: "",
 	baseUrl: "",
-	modelsText: "",
 	apiMode: "openai_responses",
-	runtimeEnv: "OPENAI_API_KEY",
 	authMethod: "api_key",
 	apiKey: "",
 	presetId: null,

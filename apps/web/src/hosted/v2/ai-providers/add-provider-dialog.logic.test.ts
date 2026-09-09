@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+	customProviderRuntimeEnv,
 	derivedProviderFields,
-	modelsFromText,
 	providerFormIdentity,
 	providerListAllowsSubmit,
-	runPostSaveProviderConnectionTest,
+	providerSettingsPatch,
 } from "@/hosted/v2/ai-providers/add-provider-dialog.logic";
 import { providerPresetSummary } from "@/hosted/v2/ai-providers/model-binding";
 import {
@@ -19,6 +19,30 @@ function testPreset(id: string) {
 	return preset;
 }
 
+test("new custom credentials avoid existing normalized environment names", () => {
+	expect(
+		customProviderRuntimeEnv("team.gateway", [{ runtime_env_name: "CLAWDI_TEAM_GATEWAY_API_KEY" }]),
+	).toBe("CLAWDI_TEAM_GATEWAY_API_KEY_2");
+});
+
+test("renaming a legacy provider does not materialize its implicit API format", () => {
+	expect(
+		providerSettingsPatch(
+			{
+				type: "openai",
+				base_url: "https://api.openai.com/v1",
+				api_mode: null,
+				auth: { type: "api_key", source: "managed" },
+			},
+			{
+				label: "Work account",
+				base_url: "https://api.openai.com/v1",
+				api_mode: "openai_responses",
+			},
+		),
+	).toEqual({ label: "Work account" });
+});
+
 describe("provider list submit gate", () => {
 	test("blocks create until the provider list succeeds", () => {
 		expect(providerListAllowsSubmit(false, false)).toBe(false);
@@ -30,83 +54,25 @@ describe("provider list submit gate", () => {
 	});
 });
 
-describe("post-save provider connection test", () => {
-	test("does not send inference when native credentials are saved", async () => {
-		let called = false;
-		const result = await runPostSaveProviderConnectionTest(
-			{
-				provider_id: "openai",
-				configuration_mode: "native",
-				models: null,
-				auth: { type: "api_key", source: "managed" },
-			},
-			async () => {
-				called = true;
-				return { ok: true, error: null };
-			},
-		);
-		expect(called).toBe(false);
-		expect(result).toBeNull();
-	});
-
-	test("tests a saved managed API key against its first model", async () => {
-		const inputs: unknown[] = [];
-		const result = await runPostSaveProviderConnectionTest(
-			{
-				provider_id: "openai",
-				auth: { type: "api_key", source: "managed" },
-				models: [{ id: "gpt-5" }],
-			},
-			async (input) => {
-				inputs.push(input);
-				return { ok: true, error: null };
-			},
-		);
-
-		expect(inputs).toEqual([
-			{
-				params: { path: { provider_id: "openai" } },
-				body: { model: "gpt-5" },
-			},
-		]);
-		expect(result?.ok).toBe(true);
-	});
-
-	test("keeps a successful save authoritative when its follow-up test fails", async () => {
-		const result = await runPostSaveProviderConnectionTest(
-			{
-				provider_id: "openai",
-				auth: { type: "api_key", source: "managed" },
-				models: null,
-			},
-			async () => {
-				throw new Error("offline");
-			},
-		);
-
-		expect(result).toBeNull();
-	});
-
-	test("does not run the API-key test for OAuth providers", async () => {
-		let called = false;
-		const result = await runPostSaveProviderConnectionTest(
-			{
-				provider_id: "openai-codex",
-				auth: { type: "agent_profile", tool: "codex", profile: "default" },
-				models: [{ id: "gpt-5" }],
-			},
-			async () => {
-				called = true;
-				return { ok: true, error: null };
-			},
-		);
-
-		expect(called).toBe(false);
-		expect(result).toBeNull();
-	});
-});
-
 describe("providerFormIdentity", () => {
+	test("allows display names independently of provider IDs", () => {
+		expect(
+			providerFormIdentity({
+				type: "openai",
+				authMethod: "api_key",
+				labelInput: "Work account",
+				existingProviderIds: [],
+			}),
+		).toEqual({ providerId: "openai", label: "Work account" });
+		expect(
+			providerFormIdentity({
+				type: "custom_openai_compatible",
+				authMethod: "api_key",
+				labelInput: "团队模型",
+				existingProviderIds: ["custom"],
+			}),
+		).toEqual({ providerId: "custom-2", label: "团队模型" });
+	});
 	test("keeps editing legacy mixed Kimi/Moonshot providers after retiring the preset", () => {
 		expect(providerPresetById("kimi-moonshot")).toBeNull();
 		expect(
@@ -261,21 +227,6 @@ describe("native provider form defaults", () => {
 		expect(derivedProviderFields("custom_openai_compatible", "api_key")).toEqual({
 			baseUrl: "",
 			apiMode: "openai_chat",
-			runtimeEnv: "CUSTOM_API_KEY",
 		});
-	});
-});
-
-describe("modelsFromText", () => {
-	test("deduplicates model ids while preserving known metadata", () => {
-		expect(
-			modelsFromText("gpt-5.5\ngpt-5.4\ngpt-5.5", [
-				{ id: "gpt-5.4", label: "GPT-5.4" },
-				{ id: "gpt-5.5", label: "GPT-5.5" },
-			]),
-		).toEqual([
-			{ id: "gpt-5.5", label: "GPT-5.5" },
-			{ id: "gpt-5.4", label: "GPT-5.4" },
-		]);
 	});
 });

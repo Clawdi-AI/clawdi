@@ -42,7 +42,6 @@ import {
 	ProviderReadinessBadge,
 } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { providerPresentation } from "@/hosted/v2/ai-providers/model-binding";
-import { ProviderConnectionTest } from "@/hosted/v2/ai-providers/provider-connection-test";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
@@ -166,12 +165,11 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 						: deployable
 							? null
 							: provider.usable
-								? "This setup isn't available for hosted agents. Review Advanced settings."
+								? "This setup isn't available for hosted agents. Review the provider settings."
 								: "Finish setup before assigning this provider to an agent.",
 				]}
 			/>
 			<div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
-				<ProviderConnectionTest provider={provider} providerLabel={presentation.label} />
 				<Button
 					variant="outline"
 					size="sm"
