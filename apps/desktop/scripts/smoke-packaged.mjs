@@ -153,7 +153,8 @@ async function verifyPackagedDashboard(context) {
 	await window
 		.getByRole("heading", { name: "Desktop sign-in expired" })
 		.waitFor({ timeout: 20_000 });
-	const initialTickets = readFileSync(cliLog, "utf8").match(/^auth desktop-session /gm)?.length ?? 0;
+	const initialTickets =
+		readFileSync(cliLog, "utf8").match(/^auth desktop-session /gm)?.length ?? 0;
 	await window.getByRole("button", { name: "Try again", exact: true }).click();
 	const retryDeadline = Date.now() + 10_000;
 	while (Date.now() < retryDeadline) {
