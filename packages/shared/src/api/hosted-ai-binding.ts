@@ -107,9 +107,7 @@ export function hostedAiProviderAvailabilityIssue(
 		};
 	}
 	if (
-		(provider.configuration_mode === "connection" ||
-			provider.configuration_mode === "catalog" ||
-			provider.configuration_mode === undefined) &&
+		provider.configuration_mode === "connection" &&
 		(!context.environmentId ||
 			!(
 				context.currentProviderIds?.includes(provider.provider_id) ||

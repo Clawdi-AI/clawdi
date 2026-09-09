@@ -105,6 +105,19 @@ export function providerAvailabilityIssue(
 			message: "Hermes cannot use this Gemini connection yet. Choose OpenClaw or another provider.",
 		};
 	}
+	if (
+		!issue &&
+		!["native", "custom", "connection"].includes(provider.configuration_mode ?? "catalog") &&
+		!(
+			context.environmentId &&
+			(context.currentProviderIds?.includes(provider.provider_id) ||
+				provider.consumer?.environment_id === context.environmentId)
+		)
+	)
+		return {
+			kind: "delivery",
+			message: "This saved connection must be upgraded before binding it to another agent.",
+		};
 	return issue;
 }
 
