@@ -41,6 +41,7 @@ from app.routes import admin as admin_route
 from app.routes import sync as sync_route
 from app.routes.channel_routers.discord import _discord_gateway_consumer_lease
 from app.services import platform_workload_auth, runtime_source_authority
+from app.services.discord_advisory_session import DiscordAdvisorySession
 from app.services.platform_workload_auth import (
     PLATFORM_WORKLOAD_ACCESS_TOKEN_AUDIENCE,
     PLATFORM_WORKLOAD_ACCESS_TOKEN_TTL_SECONDS,
@@ -276,6 +277,7 @@ async def test_deployment_control_survives_slow_admin_and_gateway_pressure(
     """Real pool contention must not strand token issuance or deployment recovery."""
     monkeypatch.setattr(settings, "db_pool_timeout", 1.0)
     ordinary = database._create_engine(pool_size=2, max_overflow=0)
+    gateway_locks = DiscordAdvisorySession(ordinary)
     control = database._create_engine(pool_size=database.CONTROL_POOL_SIZE, max_overflow=0)
     snapshot = database._create_engine(pool_size=1, max_overflow=0)
     ordinary_sessions = async_sessionmaker(
@@ -318,7 +320,7 @@ async def test_deployment_control_survives_slow_admin_and_gateway_pressure(
         # A gateway lease and a channel transaction awaiting provider I/O consume
         # both ordinary slots. Only the external provider call is stubbed.
         async with _discord_gateway_consumer_lease(
-            account_id=uuid.uuid4(), bot_agent_link_id=uuid.uuid4(), lock_engine=ordinary
+            account_id=uuid.uuid4(), bot_agent_link_id=uuid.uuid4(), lock_session=gateway_locks
         ) as acquired:
             assert acquired
             pressure = asyncio.create_task(
@@ -380,6 +382,7 @@ async def test_deployment_control_survives_slow_admin_and_gateway_pressure(
                 await asyncio.gather(pressure, return_exceptions=True)
         assert (await client.get("/ready")).status_code == 200
     finally:
+        await gateway_locks.close()
         await ordinary.dispose()
         await control.dispose()
         await snapshot.dispose()

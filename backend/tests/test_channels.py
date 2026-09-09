@@ -15987,7 +15987,7 @@ def _install_discord_gateway_test_session_factory(monkeypatch: pytest.MonkeyPatc
         async_sessionmaker(gateway_engine, expire_on_commit=False),
     )
     monkeypatch.setattr(
-        "app.routes.channel_routers.discord.database_engine",
+        "app.main.engine",
         gateway_engine,
     )
 
