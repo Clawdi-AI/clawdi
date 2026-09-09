@@ -3,10 +3,8 @@ import {
 	type AiProviderAuth,
 	type AiProviderCatalog,
 	CLAWDI_MANAGED_PROVIDER_ID,
-	CODEX_OAUTH_MODEL_CATALOG,
 	defaultAiProviderApiMode,
 	defaultAiProviderBaseUrl,
-	defaultAiProviderModels,
 	defaultAiProviderRuntimeEnvName,
 } from "@clawdi/shared";
 import { parse as parseYaml } from "yaml";
@@ -25,7 +23,7 @@ const byokOpenAiCatalog: AiProviderCatalog = {
 			auth: { type: "api_key", source: "managed" },
 			managed_by: "user",
 			runtime_env_name: defaultAiProviderRuntimeEnvName("openai") ?? "OPENAI_API_KEY",
-			models: defaultAiProviderModels("openai").map((model) => ({ ...model })),
+			models: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol", context_window: 1_050_000 }],
 		},
 	],
 	defaults: { chat_provider_id: "openai-main" },
@@ -42,7 +40,7 @@ const codexOAuthCatalog: AiProviderCatalog = {
 			api_mode: "openai_responses",
 			auth: { type: "agent_profile", tool: "codex", profile: "default" },
 			managed_by: "user",
-			models: CODEX_OAUTH_MODEL_CATALOG.map((model) => ({ ...model })),
+			models: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol" }],
 		},
 	],
 	defaults: { chat_provider_id: "openai-codex" },

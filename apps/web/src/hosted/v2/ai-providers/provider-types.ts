@@ -5,19 +5,7 @@ import {
 } from "@clawdi/shared";
 import type { AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
 
-/**
- * The six AI provider types (backend `ProviderType`) with the defaults the
- * add flow prefills: base URL, allowed API modes, and runtime env var.
- */
-export const PROVIDER_TYPES = [
-	"openai",
-	"anthropic",
-	"openrouter",
-	"gemini",
-	"mistral",
-	"custom_openai_compatible",
-] as const;
-export type ProviderTypeId = (typeof PROVIDER_TYPES)[number];
+export type ProviderTypeId = AiProviderUpsert["type"];
 
 export type ApiMode = NonNullable<AiProviderUpsert["api_mode"]>;
 
@@ -31,8 +19,6 @@ export interface ProviderTypeMeta {
 	apiKeyUrl?: string;
 	/** base_url + api_mode are user-supplied / required. */
 	custom?: boolean;
-	/** Offers "Sign in with ChatGPT" (Codex OAuth). */
-	oauth?: boolean;
 }
 
 const CUSTOM_OPENAI_COMPATIBLE_RUNTIME_ENV = "CUSTOM_API_KEY";
@@ -46,7 +32,6 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 		defaultApiMode: defaultAiProviderApiMode("openai") ?? "openai_responses",
 		defaultRuntimeEnv: defaultAiProviderRuntimeEnvName("openai") ?? "",
 		apiKeyUrl: "https://platform.openai.com/settings/organization/api-keys",
-		oauth: true,
 	},
 	anthropic: {
 		id: "anthropic",

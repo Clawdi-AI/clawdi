@@ -21,7 +21,7 @@ afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function fixture() {
+function fixture(legacyWriter = false) {
 	const home = mkdtempSync(join(tmpdir(), "clawdi-native-auth-"));
 	roots.push(home);
 	const app = join(home, ".hermes", "hermes-agent");
@@ -42,13 +42,13 @@ def resolve_provider(provider):
 def read_credential_pool(provider_id=None):
     pool = json.loads(path.read_text()) if path.exists() else {}
     return pool if provider_id is None else pool.get(provider_id, [])
-def write_credential_pool(provider_id, entries, *, removed_ids=(), status_cleared_ids=()):
+def write_credential_pool(provider_id, entries, *, removed_ids=()${legacyWriter ? "" : ", status_cleared_ids=()"}):
     assert all(e["id"] == "clawdi-native-api-key" for e in entries)
     pool = read_credential_pool()
     prior = {e["id"]: e for e in pool.get(provider_id, []) if e["id"] not in removed_ids}
     for entry in entries:
         old = prior.get(entry["id"], {})
-        if old.get("last_status") == "exhausted" and entry["id"] not in status_cleared_ids:
+        if old.get("last_status") == "exhausted" and ${legacyWriter ? 'old.get("access_token") == entry.get("access_token")' : 'entry["id"] not in status_cleared_ids'}:
             entry = {**entry, "last_status": old["last_status"]}
         prior[entry["id"]] = entry
     pool[provider_id] = list(prior.values())
@@ -143,43 +143,50 @@ test("native credentials use the official managed Hermes interpreter", () => {
 	).toBe(true);
 });
 
-test("native credentials take priority, rotate only their row, and retain cooldown until rotation", () => {
-	const f = fixture();
-	const initial = f.run([credential], { anthropic: "random" });
-	expect(initial.status).toBe(0);
-	expect(JSON.parse(initial.stdout)).toEqual({
-		changed: true,
-		selectedProvider: null,
-		strategyUpdates: { anthropic: { exists: true, value: "fill_first" } },
-	});
-	const connected = f.pool();
-	expect(connected.anthropic.find((row: { id: string }) => row.id === "personal")).toEqual(
-		f.userEntry,
-	);
-	const own = connected.anthropic.find((row: { id: string }) => row.id === "clawdi-native-api-key");
-	expect(own.priority).toBeLessThan(f.userEntry.priority);
-	own.last_status = "exhausted";
-	writeFileSync(f.auth, JSON.stringify(connected));
-	const repeat = f.run([credential], { anthropic: "fill_first" });
-	expect(repeat.status).toBe(0);
-	expect(JSON.parse(repeat.stdout).changed).toBe(false);
-	expect(
-		f.pool().anthropic.find((row: { id: string }) => row.id === "clawdi-native-api-key")
-			.last_status,
-	).toBe("exhausted");
-	const rotated = f.run([{ ...credential, apiKey: "rotated-key" }], { anthropic: "fill_first" });
-	expect(rotated.status).toBe(0);
-	const pool = f.pool();
-	expect(
-		pool.anthropic.find((row: { id: string }) => row.id === "clawdi-native-api-key"),
-	).toMatchObject({ access_token: "rotated-key", base_url: credential.baseUrl });
-	expect(
-		pool.anthropic.find((row: { id: string }) => row.id === "clawdi-native-api-key").last_status,
-	).toBeUndefined();
-	expect(pool.anthropic.find((row: { id: string }) => row.id === "personal")).toEqual(f.userEntry);
-	expect(pool.openai).toEqual(connected.openai);
-	expect(readFileSync(f.journal, "utf8")).not.toContain("key");
-});
+test.each([false, true])(
+	"native credentials rotate only their row and preserve other cooldowns (legacy writer: %s)",
+	(legacyWriter) => {
+		const f = fixture(legacyWriter);
+		const initial = f.run([credential], { anthropic: "random" });
+		expect(initial.status).toBe(0);
+		expect(JSON.parse(initial.stdout)).toEqual({
+			changed: true,
+			selectedProvider: null,
+			strategyUpdates: { anthropic: { exists: true, value: "fill_first" } },
+		});
+		const connected = f.pool();
+		expect(connected.anthropic.find((row: { id: string }) => row.id === "personal")).toEqual(
+			f.userEntry,
+		);
+		const own = connected.anthropic.find(
+			(row: { id: string }) => row.id === "clawdi-native-api-key",
+		);
+		expect(own.priority).toBeLessThan(f.userEntry.priority);
+		own.last_status = "exhausted";
+		writeFileSync(f.auth, JSON.stringify(connected));
+		const repeat = f.run([credential], { anthropic: "fill_first" });
+		expect(repeat.status).toBe(0);
+		expect(JSON.parse(repeat.stdout).changed).toBe(false);
+		expect(
+			f.pool().anthropic.find((row: { id: string }) => row.id === "clawdi-native-api-key")
+				.last_status,
+		).toBe("exhausted");
+		const rotated = f.run([{ ...credential, apiKey: "rotated-key" }], { anthropic: "fill_first" });
+		expect(rotated.status).toBe(0);
+		const pool = f.pool();
+		expect(
+			pool.anthropic.find((row: { id: string }) => row.id === "clawdi-native-api-key"),
+		).toMatchObject({ access_token: "rotated-key", base_url: credential.baseUrl });
+		expect(
+			pool.anthropic.find((row: { id: string }) => row.id === "clawdi-native-api-key").last_status,
+		).toBeUndefined();
+		expect(pool.anthropic.find((row: { id: string }) => row.id === "personal")).toEqual(
+			f.userEntry,
+		);
+		expect(pool.openai).toEqual(connected.openai);
+		expect(readFileSync(f.journal, "utf8")).not.toContain("key");
+	},
+);
 
 test("uses the native auth identity for selected aliases and rejects alias pool keys", () => {
 	const f = fixture();
