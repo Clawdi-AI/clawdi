@@ -160,7 +160,6 @@ function withHermesManagedAiDefaults(
 		runtime !== "hermes" ||
 		!desired?.enabled ||
 		!providerId ||
-		!desired.provider_ids?.includes(providerId) ||
 		provider?.managed_by !== "clawdi" ||
 		provider.status === "error" ||
 		provider.apiMode !== "openai_responses" ||

@@ -5,7 +5,6 @@ import { TRANSPARENT_EGRESS_TRANSPORT_VERSION } from "./transparent-egress";
 
 export interface RuntimeProgramRevisionInput {
 	renderedProjection: {
-		hermesStaleTimeout?: string;
 		channels: unknown;
 		gateway: unknown;
 		locale: unknown;

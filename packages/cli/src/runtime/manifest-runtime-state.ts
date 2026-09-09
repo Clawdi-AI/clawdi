@@ -135,12 +135,6 @@ export function runtimeProgramRevisionForManifest(
 	}
 	return runtimeProgramRevision({
 		renderedProjection: {
-			...(runtime === "hermes" &&
-			runtimeSettings?.env.HERMES_API_CALL_STALE_TIMEOUT !== undefined &&
-			runtimeSettings.env.HERMES_API_CALL_STALE_TIMEOUT !==
-				desiredRuntime?.run?.env.HERMES_API_CALL_STALE_TIMEOUT
-				? { hermesStaleTimeout: runtimeSettings.env.HERMES_API_CALL_STALE_TIMEOUT }
-				: {}),
 			channels: channelProjection,
 			gateway:
 				runtime === "openclaw"

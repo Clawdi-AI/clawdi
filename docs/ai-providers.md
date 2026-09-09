@@ -343,6 +343,15 @@ all generated provider fields, so removed models do not survive. Generic and
 BYOK projection leaves Hermes' discovery default unchanged. Hermes has no
 OpenClaw-style global `models.mode` switch.
 
+This provider catalog behavior is verified against Hermes `0.19.1`, source commit
+[`cc4cab2f`](https://github.com/NousResearch/hermes-agent/tree/cc4cab2f592e60a197e796506de9168f74baf3ea):
+[`model_switch.py`](https://github.com/NousResearch/hermes-agent/blob/cc4cab2f592e60a197e796506de9168f74baf3ea/hermes_cli/model_switch.py#L2613-L2658)
+and its custom-provider path
+[`model_switch.py`](https://github.com/NousResearch/hermes-agent/blob/cc4cab2f592e60a197e796506de9168f74baf3ea/hermes_cli/model_switch.py#L2791-L2942)
+probe `/models` by default but honor `discover_models: false`;
+[`config.py`](https://github.com/NousResearch/hermes-agent/blob/cc4cab2f592e60a197e796506de9168f74baf3ea/hermes_cli/config.py#L1310-L1321)
+accepts that provider field.
+
 When the manifest selects an enabled Hermes runtime's Clawdi-managed Responses
 provider (`managed_by: clawdi`), the CLI defaults
 `HERMES_API_CALL_STALE_TIMEOUT=1200` in its generated gateway and dashboard
@@ -372,15 +381,6 @@ that namespace. The service environment avoids adding a bogus provider.
 
 Done: `scripts/test.sh cli src/runtime/manifest-services.test.ts` verifies managed
 selection, repeat convergence, explicit values and BYO withdrawal.
-
-The provider catalog behavior above is verified against Hermes `0.19.1`, source commit
-[`cc4cab2f`](https://github.com/NousResearch/hermes-agent/tree/cc4cab2f592e60a197e796506de9168f74baf3ea):
-[`model_switch.py`](https://github.com/NousResearch/hermes-agent/blob/cc4cab2f592e60a197e796506de9168f74baf3ea/hermes_cli/model_switch.py#L2613-L2658)
-and its custom-provider path
-[`model_switch.py`](https://github.com/NousResearch/hermes-agent/blob/cc4cab2f592e60a197e796506de9168f74baf3ea/hermes_cli/model_switch.py#L2791-L2942)
-probe `/models` by default but honor `discover_models: false`;
-[`config.py`](https://github.com/NousResearch/hermes-agent/blob/cc4cab2f592e60a197e796506de9168f74baf3ea/hermes_cli/config.py#L1310-L1321)
-accepts that provider field.
 
 For explicit catalog connections, OpenClaw Hosted provider convergence uses the public
 `openclaw/plugin-sdk/config-mutation` export. The mutation starts from authored

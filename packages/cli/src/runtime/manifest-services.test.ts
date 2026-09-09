@@ -1252,9 +1252,6 @@ esac
 		};
 		const explicitEnv = applyManaged();
 		expect(explicitEnv.HERMES_API_CALL_STALE_TIMEOUT).toBe("777");
-		expect(explicitEnv.CLAWDI_MANAGED_CONTENT_DIGEST).not.toBe(
-			managedEnv.CLAWDI_MANAGED_CONTENT_DIGEST,
-		);
 		expect(
 			readSystemdEnvironment(paths, "clawdi-hermes-dashboard").HERMES_API_CALL_STALE_TIMEOUT,
 		).toBe("888");
@@ -1268,7 +1265,6 @@ esac
 		delete hermes.services.dashboard.secretEnv.HERMES_API_CALL_STALE_TIMEOUT;
 		const byoEnv = applyManaged();
 		expect(byoEnv).not.toHaveProperty("HERMES_API_CALL_STALE_TIMEOUT");
-		expect(byoEnv.CLAWDI_MANAGED_CONTENT_DIGEST).not.toBe(managedEnv.CLAWDI_MANAGED_CONTENT_DIGEST);
 		expect(readSystemdEnvironment(paths, "clawdi-hermes-dashboard")).not.toHaveProperty(
 			"HERMES_API_CALL_STALE_TIMEOUT",
 		);
