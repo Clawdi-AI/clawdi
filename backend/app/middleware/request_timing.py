@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import math
-import re
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -18,13 +17,11 @@ from typing import Literal, cast
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.core.logging_config import TELEGRAM_BOT_API_PATH_RE, redact_request_path
+
 logger = logging.getLogger(__name__)
 _PROCESS_TIME_HEADER = b"x-process-time-ms"
 _SYNC_EVENTS_PATHS = frozenset(("/v1/sync/events", "/api/sync/events"))
-_TELEGRAM_BOT_API_PATH_RE = re.compile(
-    r"^(?P<prefix>/(?:api|v1)/channels/telegram/(?:file/)?bot/?)[^/]+(?P<suffix>/.*)?$",
-    re.IGNORECASE,
-)
 
 
 # Wall-clock stages include event-loop waits. Initially instrumented only on the
@@ -82,7 +79,7 @@ class RequestTimingMiddleware:
         method = raw_method if isinstance(raw_method, str) else "GET"
         raw_path_value: object = scope.get("path", "")
         raw_path = raw_path_value if isinstance(raw_path_value, str) else ""
-        path = _log_safe_path(raw_path)
+        path = redact_request_path(raw_path)
         status_code = 500
 
         async def timed_send(message: Message) -> None:
@@ -144,17 +141,10 @@ def _is_slow(*, duration_ms: float, slow_ms: float) -> bool:
     return slow_ms > 0 and duration_ms >= slow_ms
 
 
-def _log_safe_path(path: str) -> str:
-    match = _TELEGRAM_BOT_API_PATH_RE.match(path)
-    if match is None:
-        return path
-    return f"{match.group('prefix')}[redacted]{match.group('suffix') or ''}"
-
-
 def _is_expected_long_request(path: str) -> bool:
     if path in _SYNC_EVENTS_PATHS:
         return True
-    match = _TELEGRAM_BOT_API_PATH_RE.match(path)
+    match = TELEGRAM_BOT_API_PATH_RE.match(path)
     if match is None or "/file/" in match.group("prefix").lower():
         return False
     return (match.group("suffix") or "").lower() == "/getupdates"

@@ -84,8 +84,8 @@ async def test_request_timing_logs_errors_without_query_string(caplog: pytest.Lo
     ("path", "expected_path"),
     [
         (
-            "/v1/channels/telegram/bot123456:secret/getUpdates",
-            "/v1/channels/telegram/bot[redacted]/getUpdates",
+            "/v1/channels/telegram/bot123456:secret/getMe",
+            "/v1/channels/telegram/bot[redacted]/getMe",
         ),
         (
             "/api/channels/telegram/bot/123456:secret/sendMessage",
@@ -95,19 +95,59 @@ async def test_request_timing_logs_errors_without_query_string(caplog: pytest.Lo
             "/v1/channels/telegram/file/bot123456:secret/documents/file.txt",
             "/v1/channels/telegram/file/bot[redacted]/documents/file.txt",
         ),
+        (
+            "/v1/channels/discord/v10/interactions/123/123456:secret/callback",
+            "/v1/channels/discord/v10/interactions/123/[redacted]/callback",
+        ),
+        (
+            "/api/channels/discord/api/v10/webhooks/123/123456:secret/messages/@original",
+            "/api/channels/discord/api/v10/webhooks/123/[redacted]/messages/@original",
+        ),
+        (
+            "/v1/channels/discord/api/v10/webhooks/123/123456:secret",
+            "/v1/channels/discord/api/v10/webhooks/123/[redacted]",
+        ),
+        (
+            "/api/channels/discord/v10/interactions/123/123456:secret/callback",
+            "/api/channels/discord/v10/interactions/123/[redacted]/callback",
+        ),
+        (
+            "/v1/channels/discord/gateway/123456:secret",
+            "/v1/channels/discord/gateway/[redacted]",
+        ),
+        (
+            "/v1/channels/discord/v10/channels/123/messages",
+            "/v1/channels/discord/v10/channels/123/messages",
+        ),
     ],
 )
-async def test_request_timing_redacts_telegram_routing_credentials(
+@pytest.mark.parametrize("outcome", ["slow", "error", "exception"])
+async def test_request_timing_redacts_channel_routing_credentials(
     caplog: pytest.LogCaptureFixture,
     path: str,
     expected_path: str,
+    outcome: str,
 ):
     async def inner(_scope: Scope, _receive: Receive, send: Send) -> None:
-        await send({"type": "http.response.start", "status": 500, "headers": []})
+        assert _scope["path"] == path
+        if outcome == "exception":
+            raise RuntimeError("synthetic failure")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200 if outcome == "slow" else 500,
+                "headers": [],
+            }
+        )
         await send({"type": "http.response.body", "body": b"error"})
 
     caplog.set_level(logging.WARNING, logger="app.middleware.request_timing")
-    await _collect(RequestTimingMiddleware(inner, slow_ms=750), _scope(path=path))
+    app = RequestTimingMiddleware(inner, slow_ms=0.000_001)
+    if outcome == "exception":
+        with pytest.raises(RuntimeError, match="synthetic failure"):
+            await _collect(app, _scope(path=path))
+    else:
+        await _collect(app, _scope(path=path))
 
     assert f"path={expected_path}" in caplog.text
     assert "123456:secret" not in caplog.text
