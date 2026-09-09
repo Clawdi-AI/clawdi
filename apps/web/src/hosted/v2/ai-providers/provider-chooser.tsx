@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { EntityChoiceCard } from "@/components/entity-card";
+import { ArrowLeft, ChevronRight } from "lucide-react";
+import { useState } from "react";
 import { EntityIcon } from "@/components/entity-icon";
+import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
-import { providerPresetSummary } from "@/hosted/v2/ai-providers/model-binding";
 import { PROVIDER_PRESETS, type ProviderPreset } from "@/hosted/v2/ai-providers/provider-presets";
 import { type ProviderTypeId, providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 
@@ -16,148 +16,149 @@ export type ProviderChoice =
 interface ChoiceEntry {
 	id: string;
 	label: string;
-	description: string;
-	iconId: string;
-	searchText: string;
 	choice: ProviderChoice;
 }
-
-const FIRST_CLASS_TYPES: readonly ProviderTypeId[] = ["openai", "anthropic", "gemini"];
-function typeDescription(type: ProviderTypeId): string {
-	if (type === "openai") return "API key";
-	if (type === "anthropic") return "Claude model access";
-	if (type === "gemini") return "Gemini model access";
-	return "Connect your own API endpoint";
+interface ProviderGroup {
+	id: string;
+	label: string;
+	iconId: string;
+	entries: ChoiceEntry[];
 }
 
-function typeEntry(type: ProviderTypeId): ChoiceEntry {
-	const meta = providerTypeMeta(type);
+function typeGroup(type: ProviderTypeId): ProviderGroup {
+	const label =
+		type === "custom_openai_compatible" ? "Custom endpoint" : providerTypeMeta(type).label;
 	return {
-		id: `type:${type}`,
-		label: type === "custom_openai_compatible" ? "Custom endpoint" : meta.label,
-		description: typeDescription(type),
+		id: type,
+		label,
 		iconId: type,
-		searchText: `${meta.label} ${type} ${typeDescription(type)}`.toLowerCase(),
-		choice: { kind: "type", type },
+		entries: [{ id: type, label, choice: { kind: "type", type } }],
 	};
 }
 
-function presetEntry(
-	preset: ProviderPreset,
-	region?: NonNullable<ProviderPreset["region_variants"]>[number],
-): ChoiceEntry {
-	const description = region
-		? (preset.credential_label ?? "API key")
-		: providerPresetSummary(preset);
-	return {
-		id: `preset:${preset.id}:${region?.id ?? "default"}`,
-		label: region ? `${preset.label} · ${region.label}` : preset.label,
-		description,
-		iconId: preset.id,
-		searchText: [
-			preset.label,
-			preset.id,
-			description,
-			...(preset.region_variants ?? []).map((variant) => variant.label),
-		]
-			.join(" ")
-			.toLowerCase(),
-		choice: { kind: "preset", preset, ...(region ? { regionId: region.id } : {}) },
-	};
-}
-
-const ALL_ENTRIES: readonly ChoiceEntry[] = [
-	...FIRST_CLASS_TYPES.map(typeEntry),
-	...PROVIDER_PRESETS.flatMap((preset) =>
-		preset.region_variants?.length
-			? preset.region_variants.map((region) => presetEntry(preset, region))
-			: [presetEntry(preset)],
-	),
+const GROUPS: ProviderGroup[] = [
 	{
-		id: "oauth:codex",
-		label: "ChatGPT (Codex)",
-		description: "Sign in with ChatGPT",
+		id: "openai",
+		label: "OpenAI",
 		iconId: "openai",
-		searchText: "chatgpt codex openai subscription oauth",
-		choice: { kind: "oauth" },
+		entries: [
+			{ id: "openai-api", label: "OpenAI API", choice: { kind: "type", type: "openai" } },
+			{ id: "chatgpt-codex", label: "ChatGPT (Codex)", choice: { kind: "oauth" } },
+		],
 	},
-	typeEntry("custom_openai_compatible"),
+	typeGroup("anthropic"),
+	typeGroup("gemini"),
 ];
-
-function ChoiceGrid({
-	entries,
-	onSelect,
-}: {
-	entries: readonly ChoiceEntry[];
-	onSelect: (choice: ProviderChoice) => void;
-}) {
-	return (
-		<div data-testid="provider-choice-grid" className="grid gap-1.5 sm:grid-cols-2">
-			{entries.map((entry) => (
-				<EntityChoiceCard
-					key={entry.id}
-					onClick={() => onSelect(entry.choice)}
-					icon={<EntityIcon kind="provider" id={entry.iconId} label={entry.label} size="sm" />}
-					title={entry.label}
-					description={entry.description}
-					variant="compact"
-				/>
-			))}
-		</div>
+for (const preset of PROVIDER_PRESETS) {
+	const isKimi = preset.id === "moonshot" || preset.id === "kimi-coding";
+	const id = isKimi ? "kimi" : preset.id;
+	let group = GROUPS.find((item) => item.id === id);
+	if (!group) {
+		group = { id, label: isKimi ? "Kimi" : preset.label, iconId: preset.id, entries: [] };
+		GROUPS.push(group);
+	}
+	const regions = preset.region_variants ?? [];
+	group.entries.push(
+		...(regions.length
+			? regions.map((region) => ({
+					id: `${preset.id}:${region.id}`,
+					label: isKimi ? `API · ${region.label}` : region.label,
+					choice: { kind: "preset" as const, preset, regionId: region.id },
+				}))
+			: [
+					{
+						id: preset.id,
+						label: isKimi ? "Kimi Code" : preset.label,
+						choice: { kind: "preset" as const, preset },
+					},
+				]),
 	);
 }
+GROUPS.push(typeGroup("custom_openai_compatible"));
 
 export function ProviderChooser({ onSelect }: { onSelect: (choice: ProviderChoice) => void }) {
 	const [query, setQuery] = useState("");
-	const normalizedQuery = query.trim().toLowerCase();
-	const searchResults = useMemo(
-		() =>
-			normalizedQuery
-				? ALL_ENTRIES.filter((entry) => entry.searchText.includes(normalizedQuery))
-				: [],
-		[normalizedQuery],
+	const [selected, setSelected] = useState<ProviderGroup | null>(null);
+	const normalized = query.trim().toLowerCase();
+	const groups = GROUPS.filter((group) =>
+		[group.id, group.label, ...group.entries.map((entry) => `${entry.id} ${entry.label}`)]
+			.join(" ")
+			.toLowerCase()
+			.includes(normalized),
 	);
 	return (
 		<div data-hosted="true" data-v2="true" className="flex flex-col gap-3">
-			<SearchInput
-				name="provider-search"
-				ariaLabel="Search providers"
-				value={query}
-				onChange={setQuery}
-				placeholder="OpenAI, DeepSeek, Moonshot…"
-			/>
-
-			{normalizedQuery ? (
-				<div className="flex flex-col gap-2">
-					<p className="text-xs font-medium text-muted-foreground">
-						{searchResults.length > 0 ? `${searchResults.length} matches` : "No providers found"}
-					</p>
-					{searchResults.length > 0 ? (
-						<ChoiceGrid entries={searchResults} onSelect={onSelect} />
-					) : (
-						<div data-testid="provider-choice-grid" className="grid gap-1.5 sm:grid-cols-2">
-							<EntityChoiceCard
-								onClick={() => onSelect({ kind: "type", type: "custom_openai_compatible" })}
-								icon={
-									<EntityIcon
-										kind="provider"
-										id="custom_openai_compatible"
-										label="Custom endpoint"
-										size="sm"
-									/>
-								}
-								title="Use a custom endpoint"
-								description={`No matches for “${query.trim()}”. Configure it manually.`}
-								variant="compact"
-							/>
-						</div>
-					)}
-				</div>
+			{selected ? (
+				<>
+					<div className="flex items-center gap-2">
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							aria-label="Back to providers"
+							onClick={() => setSelected(null)}
+						>
+							<ArrowLeft />
+						</Button>
+						<EntityIcon kind="provider" id={selected.iconId} size="sm" />
+						<span className="text-sm font-medium">{selected.label}</span>
+					</div>
+					<div className="grid gap-2 sm:grid-cols-2" data-testid="provider-variant-grid">
+						{selected.entries.map((entry) => (
+							<Button
+								key={entry.id}
+								variant="outline"
+								className="h-auto min-h-11 justify-between whitespace-normal px-3 py-2 text-left"
+								onClick={() => onSelect(entry.choice)}
+							>
+								{entry.label}
+								<ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+							</Button>
+						))}
+					</div>
+				</>
 			) : (
-				<div className="flex flex-col gap-2">
-					<p className="text-xs font-medium text-muted-foreground">Providers</p>
-					<ChoiceGrid entries={ALL_ENTRIES} onSelect={onSelect} />
-				</div>
+				<>
+					<SearchInput
+						name="provider-search"
+						ariaLabel="Search providers"
+						value={query}
+						onChange={setQuery}
+						placeholder="Search providers…"
+					/>
+					<div data-testid="provider-choice-grid" className="grid grid-cols-2 gap-2">
+						{groups.map((group) => (
+							<Button
+								key={group.id}
+								variant="outline"
+								className="h-11 min-w-0 justify-start gap-2 px-3 text-left"
+								onClick={() => {
+									const first = group.entries[0];
+									if (group.entries.length === 1 && first) onSelect(first.choice);
+									else setSelected(group);
+								}}
+							>
+								<span aria-hidden="true" className="shrink-0">
+									<EntityIcon kind="provider" id={group.iconId} size="sm" />
+								</span>
+								<span className="min-w-0 flex-1 truncate">{group.label}</span>
+								{group.entries.length > 1 ? (
+									<ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+								) : null}
+							</Button>
+						))}
+					</div>
+					{!groups.length ? (
+						<div className="flex flex-col items-start gap-2">
+							<p className="text-sm text-muted-foreground">No providers found</p>
+							<Button
+								variant="outline"
+								onClick={() => onSelect({ kind: "type", type: "custom_openai_compatible" })}
+							>
+								Use a custom endpoint
+							</Button>
+						</div>
+					) : null}
+				</>
 			)}
 		</div>
 	);

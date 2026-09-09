@@ -477,7 +477,7 @@ export function AddProviderDialog({
 			<DialogContent
 				data-hosted="true"
 				data-v2="true"
-				className="flex max-h-[min(92vh,calc(100dvh-1rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl"
+				className="flex max-h-[min(36rem,calc(100dvh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl"
 			>
 				<DialogHeader className="shrink-0 px-5 pt-5 pr-14 sm:px-6 sm:pt-6 sm:pr-14">
 					<DialogTitle className="flex min-w-0 items-center gap-3">
