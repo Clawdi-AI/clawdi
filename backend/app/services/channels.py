@@ -3906,6 +3906,7 @@ async def wait_for_telegram_updates(
     return await wait_for_channel_inbound_messages(
         fetch,
         account_id=str(account_id),
+        bot_agent_link_id=str(bot_agent_link_id) if bot_agent_link_id is not None else None,
         timeout_seconds=timeout_seconds,
         fallback_poll_seconds=poll_interval_seconds,
         wakeup=channel_inbound_messages_enqueued,
@@ -4624,6 +4625,7 @@ async def wait_for_channel_inbox_events(
     return await wait_for_channel_inbound_messages(
         fetch,
         account_id=str(account_id),
+        bot_agent_link_id=str(bot_agent_link_id) if bot_agent_link_id is not None else None,
         timeout_seconds=timeout_seconds,
         fallback_poll_seconds=poll_interval_seconds,
         wakeup=channel_inbound_messages_enqueued,

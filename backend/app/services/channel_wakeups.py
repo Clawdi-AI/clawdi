@@ -67,6 +67,7 @@ async def wait_for_channel_inbound_messages[T](
     fetch: Callable[[], Awaitable[ChannelInboxPage[T]]],
     *,
     account_id: str,
+    bot_agent_link_id: str | None = None,
     timeout_seconds: int | float | None,
     fallback_poll_seconds: float | None = None,
     wakeup: ChannelWakeup | None = None,
@@ -83,7 +84,7 @@ async def wait_for_channel_inbound_messages[T](
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     source = wakeup or channel_inbound_messages_enqueued
-    notified = source.subscribe(account_id)
+    notified = source.subscribe(account_id, scope=bot_agent_link_id)
     try:
         while True:
             # Clearing before the query is load-bearing. A commit notification
@@ -109,7 +110,7 @@ async def wait_for_channel_inbound_messages[T](
             except TimeoutError:
                 pass
     finally:
-        source.unsubscribe(account_id, notified)
+        source.unsubscribe(account_id, notified, scope=bot_agent_link_id)
 
 
 async def notify_channel_delivery_enqueued(db: AsyncSession) -> None:

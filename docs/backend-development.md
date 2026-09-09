@@ -95,15 +95,19 @@ Claim, unlock, and liveness SQL share a serial gate. Discovery does not claim
 keys already held by account tasks. Ordinary account/dispatch queries continue
 to use the ordinary pool.
 
-Agent-facing Gateway delivery subscribes to Account/Link-scoped inbound commit
+Agent-facing Gateway, Telegram getUpdates, WhatsApp inbox waits and generic
+inbox calls with a Link ID subscribe to Account/Link-scoped inbound commit
 notifications. Legacy account-only notifications still wake every Link of that
 account. New Link payloads missed by an older listener recover through the
-unchanged polling fallback. Unscoped inbox consumers still receive account
-hints. The socket reader survives notifications and fallback timeouts so
-heartbeat frames are not discarded; DB authority and durable receipt/Resume
+unchanged polling fallback. Generic inbox calls without a Link ID still receive
+account hints. The socket reader survives notifications and fallback timeouts
+so heartbeat frames are not discarded; DB authority and durable receipt/Resume
 remain the delivery boundary. See the
 [bounded fanout measurement](benchmarks/channel-fanout-20260909.md) for the
-reproducible resource limits, results and compatibility contract.
+reproducible resource limits, results and compatibility contract. The
+[Telegram ASGI comparison](benchmarks/telegram-link-fanout-20260909.md) measures
+independent authenticated requests with the production 30-second wait cap and
+five-second fallback, including interleaved Account/Link strategies.
 
 The default liveness interval is one second, with a five-second probe deadline
 including serial-gate waiting. Lock SQL also has a five-second deadline. These
