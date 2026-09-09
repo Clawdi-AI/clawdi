@@ -1578,6 +1578,38 @@ def test_composio_request_boundary_rejects_unknown_auth_scheme():
         )
 
 
+@pytest.mark.parametrize(
+    ("data", "state", "expected"),
+    [
+        ({"email": " work@example.test ", "label": "gmail_red-castle"}, {}, "work@example.test"),
+        ({"username": "octocat"}, {"val": {"email": "work@example.test"}}, "work@example.test"),
+        ({}, {"val": {"authed_user": {"username": " octocat "}}}, "octocat"),
+        ({}, {"val": {"authedUser": {"email": "work@example.test"}}}, "work@example.test"),
+        ({"email": " ", "username": 123}, {}, None),
+        (
+            {"connectionLabel": "gmail_red-castle", "connection_label": "Work", "label": "Work"},
+            {},
+            None,
+        ),
+    ],
+)
+def test_connected_account_display_uses_only_account_identity(data, state, expected):
+    account = composio._ConnectedAccount.model_validate(
+        {
+            "id": "ca_gmail",
+            "alias": "Work Gmail",
+            "word_id": "gmail_red-castle",
+            "created_at": "2026-09-03T00:00:00Z",
+            "status": "ACTIVE",
+            "toolkit": {"slug": "gmail"},
+            "data": data,
+            "state": state,
+        }
+    )
+
+    assert composio._account_display_label(account) == expected
+
+
 def test_connected_account_identity_exposes_only_allowlisted_labels() -> None:
     account = composio._ConnectedAccount.model_validate(
         {

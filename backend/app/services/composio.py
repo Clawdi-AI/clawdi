@@ -929,18 +929,15 @@ def _serialize_connected_account_identity(account: _ConnectedAccount) -> Connect
 
 
 def _account_display_label(account: _ConnectedAccount) -> str | None:
-    """Best-effort user-facing label for a Composio connected account."""
+    """Return a known account identity, never a connection name or word ID."""
     state_value = _json_object(account.state.get("val"))
     authed_user = _json_object(state_value.get("authed_user") or state_value.get("authedUser"))
     containers = (account.data, state_value, authed_user)
-    for container in containers:
-        for key in ("connectionLabel", "connection_label", "label", "email", "username"):
+    for key in ("email", "username"):
+        for container in containers:
             value = container.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
-    for value in (account.word_id, account.alias):
-        if value is not None and value.strip():
-            return value.strip()
     return None
 
 

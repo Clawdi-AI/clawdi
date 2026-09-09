@@ -1,5 +1,6 @@
 "use client";
 
+import type { components } from "@clawdi/shared/api";
 import { AlertCircle, Check, Link2Off, Plug, Wrench } from "lucide-react";
 import { parseAsString, useQueryStates } from "nuqs";
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -158,9 +159,65 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 
 	const appConnections = connections?.filter((c) => c.app_name === name) ?? [];
 	const activeConnections = appConnections.filter(isActiveConnection);
+	const inactiveConnections = appConnections.filter((c) => !isActiveConnection(c));
 	const editingConnection = appConnections.find((connection) => connection.id === editingId);
 	const isConnected = activeConnections.length > 0;
 	const isLoading = isAppLoading || appQ.isPending;
+
+	const renderAccount = (c: components["schemas"]["ConnectorConnectionResponse"]) => (
+		<div key={c.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+			<div className="min-w-0">
+				<p className="truncate text-sm font-medium" title={c.alias || c.account_display || c.id}>
+					{c.alias || c.account_display || `Account ${c.id.slice(-6)}`}
+				</p>
+				{c.alias && c.account_display && c.account_display !== c.alias ? (
+					<p className="truncate text-xs text-muted-foreground" title={c.account_display}>
+						{c.account_display}
+					</p>
+				) : null}
+				<p className="mt-0.5 text-xs text-muted-foreground">
+					{c.is_disabled ? "Disabled" : connectionStatusLabel(c.status)}
+				</p>
+			</div>
+			<div className="flex flex-wrap items-center gap-2">
+				<Button
+					variant="ghost"
+					size="xs"
+					disabled={isDisconnecting(c.id)}
+					onClick={() => setEditingId(c.id)}
+				>
+					Rename
+				</Button>
+				<ConfirmAction
+					title={`${isActiveConnection(c) ? "Disconnect" : "Delete"} ${c.alias || c.account_display || "this account"}?`}
+					description={
+						<p>
+							{isActiveConnection(c)
+								? "All agents will lose access immediately. To restore access, sign in again."
+								: "This removes the saved account and its name for all agents."}
+						</p>
+					}
+					confirmLabel={isActiveConnection(c) ? "Disconnect" : "Delete"}
+					destructive
+					onConfirm={() => handleDisconnect(c.id)}
+				>
+					<Button
+						variant="ghost"
+						size="xs"
+						disabled={isDisconnecting(c.id)}
+						className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+					>
+						{isDisconnecting(c.id) ? (
+							<Spinner className="size-3.5" />
+						) : (
+							<Link2Off className="size-3.5" />
+						)}
+						{isActiveConnection(c) ? "Disconnect" : "Delete"}
+					</Button>
+				</ConfirmAction>
+			</div>
+		</div>
+	);
 
 	const displayName = app?.display_name || formatName(name);
 
@@ -218,7 +275,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					<Plug />
 					<AlertTitle>Shared across all agents</AlertTitle>
 					<AlertDescription>
-						Connections and aliases belong to this account. Changes here affect all agents.
+						Connections and names belong to this account. Changes here affect all agents.
 					</AlertDescription>
 				</Alert>
 			) : null}
@@ -317,75 +374,15 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 						)
 					) : (
 						<div className="divide-y overflow-hidden rounded-lg border bg-card">
-							{appConnections.map((c) => (
-								<div
-									key={c.id}
-									className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
-								>
-									<div className="min-w-0">
-										<p
-											className="truncate text-sm font-medium"
-											title={c.alias || c.account_display || c.id}
-										>
-											{c.alias || c.account_display || `Account ${c.id.slice(-6)}`}
-										</p>
-										{c.alias ? (
-											<p
-												className="truncate text-xs text-muted-foreground"
-												title={
-													c.account_display && c.account_display !== c.alias
-														? c.account_display
-														: c.id
-												}
-											>
-												{c.account_display && c.account_display !== c.alias
-													? c.account_display
-													: `Account ${c.id}`}
-											</p>
-										) : null}
-										<p className="mt-0.5 text-xs text-muted-foreground">
-											{c.is_disabled ? "Disabled" : connectionStatusLabel(c.status)}
-										</p>
-									</div>
-									<div className="flex flex-wrap items-center gap-2">
-										<Button
-											variant="ghost"
-											size="xs"
-											disabled={isDisconnecting(c.id)}
-											onClick={() => setEditingId(c.id)}
-										>
-											Edit alias
-										</Button>
-										<ConfirmAction
-											title={`${isActiveConnection(c) ? "Disconnect" : "Delete"} ${c.alias || c.account_display || "this account"}?`}
-											description={
-												<p>
-													{isActiveConnection(c)
-														? "All agents will lose access immediately. To restore access, sign in again."
-														: "This removes the saved account and its alias for all agents."}
-												</p>
-											}
-											confirmLabel={isActiveConnection(c) ? "Disconnect" : "Delete"}
-											destructive
-											onConfirm={() => handleDisconnect(c.id)}
-										>
-											<Button
-												variant="ghost"
-												size="xs"
-												disabled={isDisconnecting(c.id)}
-												className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
-											>
-												{isDisconnecting(c.id) ? (
-													<Spinner className="size-3.5" />
-												) : (
-													<Link2Off className="size-3.5" />
-												)}
-												{isActiveConnection(c) ? "Disconnect" : "Delete"}
-											</Button>
-										</ConfirmAction>
-									</div>
-								</div>
-							))}
+							{activeConnections.map(renderAccount)}
+							{inactiveConnections.length > 0 ? (
+								<details>
+									<summary className="cursor-pointer px-4 py-3 text-sm text-muted-foreground hover:text-foreground">
+										Inactive accounts ({inactiveConnections.length})
+									</summary>
+									<div className="divide-y border-t">{inactiveConnections.map(renderAccount)}</div>
+								</details>
+							) : null}
 						</div>
 					)}
 				</div>
