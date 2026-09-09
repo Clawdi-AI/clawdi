@@ -8,7 +8,7 @@ import httpx
 import jwt
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import delete, event, text
+from sqlalchemy import delete, event, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -318,3 +318,69 @@ async def test_auth_rollback_accepts_only_a_compatible_persisted_winner(
             assert persisted is not None
             assert persisted.clerk_issuer == winner_issuer
             assert persisted.email == "winner@example.test"
+
+
+@pytest.mark.parametrize("winner", ["unchanged", "deleted", "mismatched", "suspended"])
+async def test_avatar_write_failure_reloads_persisted_identity_before_authorization(
+    engine, db_session, seed_user, sign_jwt, monkeypatch, winner
+):
+    user_id, subject = seed_user.id, seed_user.clerk_id
+    seed_user.clerk_issuer = _ISSUER
+    seed_user.avatar_url = "https://example.test/previous.png"
+    await db_session.commit()
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    postgres_errors = []
+
+    def record_error(context):
+        postgres_errors.append(getattr(context.original_exception, "sqlstate", None))
+
+    event.listen(engine.sync_engine, "handle_error", record_error)
+    try:
+        async with factory() as session:
+            original_rollback = session.rollback
+
+            async def rollback_then_change_identity():
+                await original_rollback()
+                async with factory() as writer:
+                    await writer.execute(text("SET LOCAL lock_timeout='1s'"))
+                    if winner == "deleted":
+                        await writer.execute(delete(User).where(User.id == user_id))
+                    elif winner == "mismatched":
+                        await writer.execute(
+                            update(User)
+                            .where(User.id == user_id)
+                            .values(clerk_issuer="https://other.clerk.example.test")
+                        )
+                    elif winner == "suspended":
+                        await set_clerk_principal_suspension(
+                            writer,
+                            issuer=_ISSUER,
+                            subject=subject,
+                            suspended=True,
+                            reason="avatar_rollback_test",
+                        )
+                    await writer.commit()
+
+            monkeypatch.setattr(session, "rollback", rollback_then_change_identity)
+            # A real PostgreSQL varchar(512) error; commit itself is not mocked.
+            token = sign_jwt(subject, picture="https://example.test/" + "a" * 512)
+            if winner == "unchanged":
+                auth = await _auth_via_clerk_jwt(token, session)
+                assert auth is not None and auth.user_id == user_id
+                assert auth.user.avatar_url == "https://example.test/previous.png"
+            else:
+                with pytest.raises(HTTPException) as failure:
+                    await _auth_via_clerk_jwt(token, session)
+                assert failure.value.status_code == 401
+            assert postgres_errors == ["22001"]
+            assert not session.dirty
+    finally:
+        event.remove(engine.sync_engine, "handle_error", record_error)
+        async with factory() as cleanup:
+            await cleanup.execute(
+                delete(ClerkPrincipalSuspension).where(
+                    ClerkPrincipalSuspension.issuer == _ISSUER,
+                    ClerkPrincipalSuspension.subject == subject,
+                )
+            )
+            await cleanup.commit()

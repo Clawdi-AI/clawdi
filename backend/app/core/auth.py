@@ -839,14 +839,25 @@ async def auth_via_verified_clerk_jwt(
     # clobbered by Clerk on subsequent logins.
     new_avatar = picture
     if new_avatar and user.avatar_url != new_avatar:
+        avatar_user_id = user.id
         user.avatar_url = new_avatar
         try:
             await db.commit()
         except SQLAlchemyError:
-            # Non-fatal — auth still proceeds with the in-memory user.
-            # Narrow to SQLAlchemyError so coding bugs surface instead
-            # of being silently swallowed.
+            # Rollback expires ORM state even with expire_on_commit=False.
+            # Reload the persisted identity before any synchronous attribute
+            # access; a concurrent identity change must fail closed.
             await db.rollback()
+            user = await db.get(User, avatar_user_id, populate_existing=True)
+            if (
+                user is None
+                or user.principal_kind != PRINCIPAL_KIND_CLERK
+                or user.clerk_id != clerk_id
+                or (issuer and user.clerk_issuer != issuer)
+            ):
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED, "Invalid account identity"
+                ) from None
 
     oauth_cli = oauth_setting is not None
     oauth_access_expires_at: datetime | None = None
