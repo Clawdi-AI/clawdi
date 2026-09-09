@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, require_user_auth
 from app.core.database import get_session
-from app.models.user import UserSetting
+from app.models.user import User, UserSetting
 from app.schemas.settings import (
     SECRET_FIELDS,
     SettingsResponse,
@@ -71,6 +71,8 @@ async def update_settings(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> SettingsUpdateResponse:
+    # Serialize partial settings updates, including concurrent first writes.
+    await db.execute(select(User.id).where(User.id == auth.user_id).with_for_update())
     result = await db.execute(select(UserSetting).where(UserSetting.user_id == auth.user_id))
     setting = result.scalar_one_or_none()
 
@@ -117,7 +119,8 @@ async def update_settings(
             stored = current.get(key)
             if isinstance(stored, str) and stored and not is_encrypted_field(stored):
                 current[key] = encrypt_field(stored)
-        setting.settings = current
+        if current != setting.settings:
+            setting.settings = current
     else:
         setting = UserSetting(user_id=auth.user_id, settings=encrypted_patch)
         db.add(setting)

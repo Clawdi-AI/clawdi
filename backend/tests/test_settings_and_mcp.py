@@ -1970,3 +1970,18 @@ async def test_session_reaper_close_failure_does_not_skip_remaining_sessions(
     assert not composio._tool_router_session_cache
     assert all(client.is_closed for client in clients)
     assert "Failed to close expired Composio MCP session" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_deploy_channel_settings_validate_and_repeat_safely(client: httpx.AsyncClient):
+    for value in ("unknown", True, 1, {"channel": "sui"}):
+        response = await client.patch("/v1/settings", json={"settings": {"deploy_channel": value}})
+        assert response.status_code == 422
+    for path in ("/v1/settings", "/api/settings"):
+        for _ in range(2):
+            response = await client.patch(path, json={"settings": {"deploy_channel": "sui"}})
+            assert response.status_code == 200
+        assert (await client.get(path)).json()["deploy_channel"] == "sui"
+    response = await client.patch("/v1/settings", json={"settings": {"deploy_channel": None}})
+    assert response.status_code == 200
+    assert (await client.get("/v1/settings")).json()["deploy_channel"] is None

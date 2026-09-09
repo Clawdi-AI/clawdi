@@ -1140,6 +1140,7 @@ async def test_platform_runtime_state_replays_pre_apply_generation_idempotency_s
         "secretValuesIdentity": runtime_secret_values_idempotency_identity(parsed.secret_values),
     }
     legacy_payload.pop("apply_generation")
+    legacy_payload.pop("plugin_bundle")
     idempotency_key = "runtime-state-before-apply-generation"
     replay_body = {
         "environment_id": str(agent_id),
@@ -1630,3 +1631,105 @@ async def test_platform_routes_are_canonical_and_exposed_in_openapi(platform_cli
     )
     assert missing_alias.status_code == 404
     assert missing_alias.json() == {"detail": "Not Found"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [None, "no_channel", "incompatible"])
+async def test_platform_channel_bundle_initialization_is_atomic(
+    platform_client,
+    db_session,
+    seed_user,
+    failure,
+):
+    from app.models.agent_plugin import AgentPluginInstallation, PluginCatalogEntry
+    from app.models.user import UserSetting
+    from tests.test_agent_plugin_catalog_routes import _activate_catalog
+
+    owner = _clerk_owner(seed_user)
+    agent_id = uuid.uuid4()
+    created = await _create_platform_agent(platform_client, owner, agent_id, key="bundle-agent")
+    assert created.status_code == 200, created.text
+    revision = await _activate_catalog(db_session, name="sui")
+    entry = await db_session.get(PluginCatalogEntry, (revision, "sui", "1.0.0"))
+    assert entry is not None
+    entry.public_metadata = {**entry.public_metadata, "keywords": ["sui"]}
+    db_session.add(
+        PluginCatalogEntry(
+            snapshot_revision=revision,
+            name="walrus",
+            version="1.0.0",
+            agent_plugins_schema=entry.agent_plugins_schema,
+            source={**entry.source, "path": "v2/plugins/walrus"},
+            content_digest=entry.content_digest,
+            public_metadata={**entry.public_metadata, "keywords": ["sui"]},
+            compatible_runtimes=["hermes"] if failure == "incompatible" else ["openclaw", "hermes"],
+        )
+    )
+    if failure != "no_channel":
+        db_session.add(UserSetting(user_id=seed_user.id, settings={"deploy_channel": "sui"}))
+    await db_session.commit()
+    await ensure_canonical_codex_tool_provider(db_session, seed_user)
+    body = {
+        **_runtime_body(owner, agent_id, provider_id=CANONICAL_CODEX_TOOL_PROVIDER_ID),
+        "plugin_bundle": "sui",
+    }
+    response = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("bundle-init"),
+        json=body,
+    )
+    if failure:
+        assert response.status_code == 409, response.text
+        assert await db_session.get(HostedRuntimeState, agent_id) is None
+        agent = await db_session.get(AgentEnvironment, agent_id)
+        assert agent.plugin_bundle_revision is None
+        assert (
+            list(
+                await db_session.scalars(
+                    select(AgentPluginInstallation).where(
+                        AgentPluginInstallation.environment_id == agent_id
+                    )
+                )
+            )
+            == []
+        )
+        return
+    assert response.status_code == 200, response.text
+    batch = await load_runtime_source_batch(db_session, environment_ids=[agent_id])
+    source = render_runtime_source(
+        batch,
+        environment_id=agent_id,
+        public_api_url="https://cloud.test",
+        vault_key_identity="test-key-version",
+        decrypt_secrets=False,
+    )
+    assert set(source.manifest["agentPlugins"]["installations"]) == {"sui", "walrus"}
+    rows = list(
+        await db_session.scalars(
+            select(AgentPluginInstallation).where(
+                AgentPluginInstallation.environment_id == agent_id
+            )
+        )
+    )
+    assert {row.catalog_revision for row in rows} == {revision}
+    # A later runtime checkpoint must not recreate a manually removed plugin.
+    await db_session.delete(rows[0])
+    await db_session.commit()
+    response = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("bundle-repush"),
+        json={**body, "generation": 2},
+    )
+    assert response.status_code == 200, response.text
+    assert (
+        len(
+            list(
+                await db_session.scalars(
+                    select(AgentPluginInstallation).where(
+                        AgentPluginInstallation.environment_id == agent_id
+                    )
+                )
+            )
+        )
+        == 1
+    )

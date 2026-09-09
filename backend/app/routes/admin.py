@@ -2549,6 +2549,16 @@ async def _admin_upsert_runtime_state(
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     if secret_values_changed:
         changed_fields.append("secretValues")
+    if body.plugin_bundle is not None:
+        from app.services.plugin_bundle import initialize_plugin_bundle
+
+        try:
+            await initialize_plugin_bundle(
+                db, agent=env, bundle=body.plugin_bundle, runtime=next(iter(body.runtimes))
+            )
+        except HTTPException:
+            await db.rollback()
+            raise
     if existing_state is not None and body.generation == existing_state.generation:
         current_generation = existing_state.generation
         material_changes = [
