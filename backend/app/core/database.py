@@ -138,31 +138,31 @@ for observed_engine in (engine, control_engine, control_snapshot_engine):
     event.listen(observed_engine.sync_engine.pool, "checkin", _connection_checkin)
 
 
-async def _close_resource(close: Callable[[], Coroutine[object, object, None]]) -> None:
-    """Return the connection before propagating request cancellation."""
-    close_task = asyncio.create_task(close())
+async def finish_cleanup(cleanup: Callable[[], Coroutine[object, object, None]]) -> None:
+    """Finish owned cleanup before propagating request cancellation."""
+    cleanup_task = asyncio.create_task(cleanup())
     cancellation: asyncio.CancelledError | None = None
 
     with anyio.CancelScope(shield=True):
-        while not close_task.done():
+        while not cleanup_task.done():
             try:
-                await asyncio.shield(close_task)
+                await asyncio.shield(cleanup_task)
             except asyncio.CancelledError as exc:
                 cancellation = exc
             except Exception as exc:
                 if cancellation is None:
                     raise
 
-                log.exception("Database resource cleanup failed during request cancellation")
+                log.exception("Cleanup failed during request cancellation")
                 raise cancellation from exc
 
     try:
-        close_task.result()
+        cleanup_task.result()
     except Exception as exc:
         if cancellation is None:
             raise
 
-        log.exception("Database resource cleanup failed during request cancellation")
+        log.exception("Cleanup failed during request cancellation")
         raise cancellation from exc
 
     if cancellation is not None:
@@ -171,7 +171,7 @@ async def _close_resource(close: Callable[[], Coroutine[object, object, None]]) 
 
 class _CancellationSafeAsyncSession(AsyncSession):
     async def close(self) -> None:
-        await _close_resource(super().close)
+        await finish_cleanup(super().close)
 
     async def __aexit__(self, type_: object, value: object, traceback: object) -> None:
         await self.close()
@@ -238,7 +238,7 @@ async def _reserved_connection() -> AsyncGenerator[AsyncConnection, None]:
     try:
         yield connection
     finally:
-        await _close_resource(connection.close)
+        await finish_cleanup(connection.close)
 
 
 async def get_runtime_manifest_sessions() -> AsyncGenerator[RuntimeManifestSessions, None]:
@@ -310,7 +310,7 @@ async def runtime_snapshot_session(
         await _configure_runtime_snapshot(session)
         yield session
     finally:
-        await _close_resource(session.close)
+        await finish_cleanup(session.close)
 
 
 async def _configure_runtime_snapshot(session: AsyncSession) -> None:

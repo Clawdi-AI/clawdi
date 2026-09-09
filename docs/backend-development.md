@@ -610,3 +610,83 @@ health/metrics listener, not an externally routed API endpoint. When running
 that process directly, or from inside its container/network namespace,
 `curl -fsS http://127.0.0.1:8000/metrics | rg 'msg_router_channel_(queue|retention)'`
 prints the queue and retention metric families.
+
+## SSE cancellation ownership
+
+The application middleware is plain ASGI. Uvicorn 0.52.4 advertises ASGI 2.3,
+so Starlette 1.6.0's `StreamingResponse` still owns an internal AnyIO task group.
+On `/v1/sync/events` disconnect, the stream cancels its visibility/lease tasks.
+Awaiting their `asyncio.gather()` directly lets repeated cancellation of the
+stream cancel those children again, including during SQLAlchemy termination.
+An AnyIO shield inside the child cannot stop cancellation forwarded by gather.
+The stream now cancels each child once and uses the existing owned-cleanup
+helper to collect it before propagating cancellation or a child failure. The
+same helper owns lease deletion, replacing its separate cancellation-drain loop.
+Failure inspection runs inside the owned collection operation. If parent
+cancellation arrives during collection, cancellation remains primary and the
+first real child failure is logged and chained as its cause. Without parent
+cancellation, that failure propagates after all siblings finish. Returning an
+exception object as a task result is not treated as raising it.
+
+```bash
+scripts/test.sh backend tests/test_sync_events.py -k 'real_sse_disconnect or stream_cancellation'
+```
+
+Done: real API-key authentication and the full application middleware run with
+ASGI 2.3, without a synthetic `BaseHTTPMiddleware`. Disconnect and repeated
+request cancellation at pre-ping/query time leave the database child with one
+cancellation request. The server query and its locks are gone before the test
+releases the blocking table lock; the lease is deleted, the local slot is
+returned, and no request-owned tasks survive. This reproduces a real route
+mechanism, not the proven causal ordering of a historical production incident.
+
+MCP's outbound transport also has AnyIO scopes, but its transport bodies do not
+execute Clawdi database queries. `tools/list` loads in a separate cached task;
+`tools/call` exits its transport context before request-dependency cleanup.
+The MCP dependency session is lazy and its close already has owned cleanup.
+No MCP-specific cancellation change is justified by the inspected lifecycle.
+
+### Remaining stalled-network requirement
+
+This route fix is **not** a finite-cleanup guarantee under a network partition.
+The pinned asyncpg 0.31.0 `Protocol.close()` waits for `cancel_sent_waiter` and
+`cancel_waiter` before applying the supplied timeout and before entering its
+transport-abort `finally`. A caller timeout cannot safely repair that lifecycle
+using the current public API alone. `Connection.terminate()` also considers a
+protocol already in closing state closed. SQLAlchemy 2.0.52's pool bookkeeping
+can separately be interrupted even by a first cancellation arriving during
+an already-running invalidation.
+No private driver/pool patch or runtime fork is installed here.
+
+```bash
+scripts/test.sh backend tests/test_asyncpg_close_timeout.py --runxfail
+```
+
+Done: the isolated TCP proxy stalls both the original stream and cancellation
+channel. On the pinned driver this intentionally fails because a 50 ms close
+is still pending at 500 ms. The test restores the network, drains both tasks,
+and checks server exit before releasing its resources. Normal test runs mark
+this exact upstream contract as a strict expected failure; setup and cleanup
+errors are not accepted as that failure.
+
+A complete finite-local-cleanup solution requires a reviewed upstream driver
+change that covers cancellation acknowledgement with the close deadline and
+aborts the transport on every exit from that phase. The shielded lease-release
+operation also needs an explicit operation budget with its existing TTL fallback
+once cancellation can actually finish locally. Pool `finally` bookkeeping alone
+does not close an orphaned driver task or transport. These changes must be reviewed
+and tested upstream before being relied on in the application.
+
+Source contracts:
+
+- [Starlette 1.6.0 StreamingResponse](https://github.com/Kludex/starlette/blob/1.6.0/starlette/responses.py)
+- [Uvicorn 0.52.4 ASGI scope](https://github.com/Kludex/uvicorn/blob/0.52.4/uvicorn/protocols/http/httptools_impl.py)
+- [asyncpg 0.31.0 protocol close](https://github.com/MagicStack/asyncpg/blob/v0.31.0/asyncpg/protocol/protocol.pyx)
+- [asyncpg 0.31.0 connection close/terminate](https://github.com/MagicStack/asyncpg/blob/v0.31.0/asyncpg/connection.py)
+- [SQLAlchemy 2.0.52 pool invalidation](https://github.com/sqlalchemy/sqlalchemy/blob/rel_2_0_52/lib/sqlalchemy/pool/base.py)
+
+Psycopg 3.3.5 is not an automatic substitute: its bounded cancel attempt is
+followed by another wait on the original operation in
+[`AsyncConnection.wait()`](https://github.com/psycopg/psycopg/blob/3.3.5/psycopg/psycopg/connection_async.py).
+No driver migration is included without an independently verified ownership and
+network-stall contract.
