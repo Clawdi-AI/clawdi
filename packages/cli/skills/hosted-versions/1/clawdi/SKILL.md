@@ -108,11 +108,27 @@ to have changed:
 - Use the Clawdi connector when no direct option can perform the operation.
 
 Before a side effect, establish the exact service account and organization, Project, or tenant.
-Use `connector_account_list` when the connector is a candidate and its identity is not already clear.
+Use connection details from Composio discovery, or explicitly list accounts with
+`COMPOSIO_MANAGE_CONNECTIONS`, when the connector identity is not already clear.
 Fallback must not silently change that identity. Do not scan for credentials, start an interactive
 login, invent API details, or expose secrets. Choose the path before a side effect and advance
 only after a definite preflight failure. If a mutation's result is ambiguous, inspect it through
 the same path; never repeat it through another path.
+
+## Connector Account Management
+
+Use `COMPOSIO_MANAGE_CONNECTIONS` for account management, following its live schema.
+For the multi-account schema, each `toolkits` item has `name` and `action`:
+
+- `list`: Read account IDs, aliases, and statuses. Always specify this action for a
+  lookup: omitting `action` defaults to `add` and creates an authorization link.
+- `add`: Create a new authorization link when the user wants another connection.
+- `rename`: Set `alias` on the exact `account_id` returned by discovery.
+- `remove`: Delete the exact `account_id` selected by the user.
+
+Reuse the returned `session_id` when available. Never guess account IDs, use a
+mutation to discover accounts, or automatically retry an ambiguous mutation.
+Do not assume an empty alias clears it unless the live contract confirms that behavior.
 
 ## Connector Workflow
 
@@ -128,8 +144,9 @@ authoritative; never assume a fixed meta-tool set.
    Explicit intent authorizes the exact requested action and target, but never authorizes
    guessing a missing recipient, account, resource, or other target. Ask only for what is
    missing, and do not request redundant confirmation once the exact action is authorized.
-3. When search reports no active connection, call `COMPOSIO_MANAGE_CONNECTIONS` with its
-   exposed schema and interpret only the fields it returns. Continue on `active`. On
+3. When search reports no active connection and the user wants to connect, call
+   `COMPOSIO_MANAGE_CONNECTIONS` with explicit `action: "add"` in the multi-account schema.
+   Follow its exposed schema and interpret only the fields it returns. Continue on `active`. On
    `initiated`, present its non-empty `redirect_url` as a clickable authentication link with
    a concise explanation that authorization is pending; the link URL must be exactly that
    value. If `initiated` has no non-empty `redirect_url`, report that authorization cannot
