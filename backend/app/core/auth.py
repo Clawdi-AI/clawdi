@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import and_, bindparam, or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import get_history
 
 from app.core.config import canonical_clerk_issuer, settings
 from app.core.database import get_session
@@ -627,8 +628,13 @@ async def auth_via_verified_clerk_jwt(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated") from None
     except PrincipalIdentityConflictError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid account identity") from None
+    # The user-authority read can autoflush the legacy issuer assignment.
+    # Capture its persistence obligation before that clears attribute history.
+    issuer_binding_pending = user is not None and get_history(user, "clerk_issuer").has_changes()
     if user is not None:
         await _assert_active_user_or_401(db, user.id)
+    authorized_user_id = user.id if user is not None else None
+    authorized_transaction = db.get_nested_transaction() or db.get_transaction()
 
     raw_email = payload.get("email") or payload.get("email_address")
     email = raw_email if isinstance(raw_email, str) and raw_email else None
@@ -648,7 +654,10 @@ async def auth_via_verified_clerk_jwt(
     # NEVER overwrite an existing email/name because that would let
     # a Clerk-side display-name change silently rewrite our row
     # (Clerk is the source of truth for identity, not display).
-    if user is not None and ((user.email is None and email) or (user.name is None and name)):
+    needs_profile_backfill = user is not None and (
+        (user.email is None and email is not None) or (user.name is None and name is not None)
+    )
+    if user is not None and (issuer_binding_pending or needs_profile_backfill):
         if user.email is None and email:
             user.email = email
         if user.name is None and name:
@@ -662,19 +671,33 @@ async def auth_via_verified_clerk_jwt(
             # and is the one whose log line should claim the backfill.
             # Logging here both ways would lie about who wrote what
             # and corrupt audit / debugging trails.
-            logger.info("user_backfill clerk_id=%s user_id=%s", clerk_id, user.id)
+            if needs_profile_backfill:
+                logger.info("user_backfill clerk_id=%s user_id=%s", clerk_id, user.id)
         except IntegrityError:
-            # Concurrent backfill — another request won. Re-read the
-            # row (which now carries the winner's values) instead of
-            # 500-ing the user out of their session.
+            # Accept only a compatible persisted winner. Retrying the binding
+            # here could leave it uncommitted again in a read-only request.
             await db.rollback()
-            result = await db.execute(
-                select(User).where(
-                    User.principal_kind == PRINCIPAL_KIND_CLERK,
-                    User.clerk_id == clerk_id,
+            if issuer:
+                user = await load_clerk_user_for_issuer(
+                    db,
+                    issuer=issuer,
+                    subject=clerk_id,
+                    bind_legacy=False,
+                    allow_issuer_mismatch=True,
                 )
-            )
-            user = result.scalar_one()
+            else:
+                user = (
+                    await db.execute(
+                        select(User).where(
+                            User.principal_kind == PRINCIPAL_KIND_CLERK,
+                            User.clerk_id == clerk_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+            if user is None or (issuer and user.clerk_issuer != issuer):
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED, "Invalid account identity"
+                ) from None
 
     # Sub miss + snapshot-rebind opted in: try to attach to an existing
     # snapshot row by verified email. We deliberately fail closed if any
@@ -816,14 +839,25 @@ async def auth_via_verified_clerk_jwt(
     # clobbered by Clerk on subsequent logins.
     new_avatar = picture
     if new_avatar and user.avatar_url != new_avatar:
+        avatar_user_id = user.id
         user.avatar_url = new_avatar
         try:
             await db.commit()
         except SQLAlchemyError:
-            # Non-fatal — auth still proceeds with the in-memory user.
-            # Narrow to SQLAlchemyError so coding bugs surface instead
-            # of being silently swallowed.
+            # Rollback expires ORM state even with expire_on_commit=False.
+            # Reload the persisted identity before any synchronous attribute
+            # access; a concurrent identity change must fail closed.
             await db.rollback()
+            user = await db.get(User, avatar_user_id, populate_existing=True)
+            if (
+                user is None
+                or user.principal_kind != PRINCIPAL_KIND_CLERK
+                or user.clerk_id != clerk_id
+                or (issuer and user.clerk_issuer != issuer)
+            ):
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED, "Invalid account identity"
+                ) from None
 
     oauth_cli = oauth_setting is not None
     oauth_access_expires_at: datetime | None = None
@@ -839,17 +873,28 @@ async def auth_via_verified_clerk_jwt(
             # timestamps as invalid auth instead of turning them into a 500.
             return None
 
-    try:
-        await assert_clerk_principal_active(
-            db,
-            subject=clerk_id,
-            issuer=issuer or None,
-        )
-    except PrincipalSuspendedError:
-        raise AccountSuspendedHTTPException() from None
-    except PrincipalTerminatedError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated") from None
-    await _assert_active_user_or_401(db, user.id)
+    # Only the same live transaction retains the principal and user fences.
+    # Commits, rollbacks (including inside helpers), and user replacement must
+    # reauthorize. Include savepoints because their rollback releases locks too.
+    if not (
+        authorized_user_id == user.id
+        and authorized_transaction is not None
+        and authorized_transaction.is_active
+        and authorized_transaction is (db.get_nested_transaction() or db.get_transaction())
+    ):
+        try:
+            await assert_clerk_principal_active(
+                db,
+                subject=clerk_id,
+                issuer=issuer or None,
+            )
+        except PrincipalSuspendedError:
+            raise AccountSuspendedHTTPException() from None
+        except PrincipalTerminatedError:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED, "Account has been terminated"
+            ) from None
+        await _assert_active_user_or_401(db, user.id)
     return AuthContext(
         user=user,
         oauth_cli=oauth_cli,
