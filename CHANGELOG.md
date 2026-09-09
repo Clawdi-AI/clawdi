@@ -63,6 +63,8 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- CLI 0.14.64 allows more time for Hermes version checks so slow native update
+  checks do not interrupt agent setup or reconnection.
 - CLI 0.14.63 lets Hermes wait up to 20 minutes for Clawdi AI Responses calls,
   preserving explicit timeout settings and withdrawing the default when switching
   to a self-managed provider.
