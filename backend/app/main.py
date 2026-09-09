@@ -76,7 +76,7 @@ from app.routes.sync import router as sync_router
 from app.routes.vault import router as vault_router
 from app.services.ai_provider_auth_transition import OAuthCredentialPayloadCorruptError
 from app.services.channels import close_channel_provider_http_client
-from app.services.composio import close_composio_client
+from app.services.composio import close_composio_client, run_tool_router_mcp_session_reaper
 from app.services.embedding import LocalEmbedder, LocalServiceEmbedder
 from app.services.memory_types import MemoryProviderUnavailableError, MemoryProviderUpstreamError
 from app.services.metrics import db_control_lock_timeouts, db_pool_timeouts, observe_event_loop_lag
@@ -134,6 +134,12 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     lag_monitor = asyncio.create_task(observe_event_loop_lag(), name="event-loop-lag")
     background.add(lag_monitor)
     lag_monitor.add_done_callback(background.discard)
+
+    session_reaper = asyncio.create_task(
+        run_tool_router_mcp_session_reaper(), name="composio-session-reaper"
+    )
+    background.add(session_reaper)
+    session_reaper.add_done_callback(background.discard)
 
     if settings.memory_embedding_mode.lower() == "local":
 

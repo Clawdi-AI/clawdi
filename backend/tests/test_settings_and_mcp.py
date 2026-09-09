@@ -911,7 +911,7 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("invalidation", ["none", "account-change", "shutdown"])
+@pytest.mark.parametrize("invalidation", ["account-change", "shutdown"])
 async def test_session_creation_cannot_replace_a_newer_session(
     monkeypatch, tool_router_cache, invalidation
 ):
@@ -942,11 +942,8 @@ async def test_session_creation_cannot_replace_a_newer_session(
                 await composio.close_composio_client()
             assert await composio.get_tool_router_mcp_session("publication") is fresh
             release.set()
-            if invalidation != "none":
-                with pytest.raises(composio.ComposioMcpUpstreamError):
-                    await request
-            else:
-                assert await request is fresh
+            with pytest.raises(composio.ComposioMcpUpstreamError):
+                await request
         assert composio._tool_router_session_cache["publication"] is fresh
         assert stale._retired
         assert not fresh._retired
@@ -971,7 +968,7 @@ async def test_cancelled_session_creation_does_not_invalidate_another_creator(
     async def create(_user_id, *, now):
         nonlocal calls
         calls += 1
-        if calls == 2:
+        if calls == 1:
             started.set()
         await release.wait()
         return _mcp_session("survivor")
@@ -982,11 +979,14 @@ async def test_cancelled_session_creation_does_not_invalidate_another_creator(
     try:
         async with asyncio.timeout(3):
             await started.wait()
+            await asyncio.sleep(0)
+            assert calls == 1
             first.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await first
             release.set()
             surviving = await second
+        assert calls == 2
         assert composio._tool_router_session_cache["survivor"] is surviving
         assert not surviving._retired
         assert not composio._tool_router_session_creations
@@ -1672,3 +1672,301 @@ async def test_clawdi_mcp_session_get_share_url_respects_env_binding(
     assert not own_env.get("isError"), own_env
     assert cross_env["isError"] is True, cross_env
     assert not linked.get("isError"), linked
+
+
+@pytest.mark.asyncio
+async def test_session_cold_creation_is_single_flight(monkeypatch, tool_router_cache):
+    composio, _ = tool_router_cache
+    calls = 0
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def create(_user_id, *, now):
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        return _mcp_session("cold")
+
+    monkeypatch.setattr(composio, "_create_tool_router_mcp_session", create)
+    tasks = [asyncio.create_task(composio.get_tool_router_mcp_session("cold")) for _ in range(32)]
+    try:
+        async with asyncio.timeout(3):
+            await started.wait()
+            await asyncio.sleep(0)
+            assert calls == 1
+            release.set()
+            results = await asyncio.gather(*tasks)
+        assert all(result is results[0] for result in results)
+        assert not composio._tool_router_session_creations
+    finally:
+        release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_session_queued_callers_have_one_acquisition_deadline(monkeypatch, tool_router_cache):
+    composio, _ = tool_router_cache
+    calls = 0
+    monkeypatch.setattr(composio, "_TOOL_ROUTER_SESSION_TIMEOUT_SECONDS", 0.05)
+
+    async def fail_create(_user_id, *, now):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.02)
+        raise composio.ComposioProviderError(composio.ComposioFailure("timeout"))
+
+    monkeypatch.setattr(composio, "_create_tool_router_mcp_session", fail_create)
+    started = asyncio.get_running_loop().time()
+    async with asyncio.timeout(3):
+        results = await asyncio.gather(
+            *(composio.get_tool_router_mcp_session("deadline") for _ in range(32)),
+            return_exceptions=True,
+        )
+    elapsed = asyncio.get_running_loop().time() - started
+    assert not composio._tool_router_session_cache
+    assert not composio._tool_router_session_creations
+    assert all(
+        isinstance(result, composio.ComposioProviderError) and result.failure.kind == "timeout"
+        for result in results
+    )
+    # Allow scheduler headroom, but not 32 serial upstream waits (~0.64s).
+    assert elapsed < 0.3, f"{elapsed=:.3f}, {calls=}"
+    assert calls < 32
+
+
+@pytest.mark.asyncio
+async def test_session_acquisition_deadline_drains_retired_client_close(
+    monkeypatch, tool_router_cache
+):
+    composio, sessions = tool_router_cache
+    expired = _mcp_session("deadline")
+    expired.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    composio._tool_router_session_cache["deadline"] = expired
+    sessions["deadline"] = [_mcp_session("deadline", 2)]
+    async with expired.lease_http_client() as client:
+        real_close = client.aclose
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def close():
+        started.set()
+        await release.wait()
+        await real_close()
+
+    monkeypatch.setattr(client, "aclose", close)
+    monkeypatch.setattr(composio, "_TOOL_ROUTER_SESSION_TIMEOUT_SECONDS", 0.02)
+    request = asyncio.create_task(composio.get_tool_router_mcp_session("deadline"))
+    try:
+        async with asyncio.timeout(3):
+            await started.wait()
+            await asyncio.sleep(0.05)
+            assert request.cancelling()
+            assert not request.done()
+            assert not client.is_closed
+            release.set()
+            with pytest.raises(composio.ComposioProviderError) as error:
+                await request
+        assert error.value.failure.kind == "timeout"
+        assert client.is_closed
+        assert len(sessions["deadline"]) == 1
+        assert not composio._tool_router_session_cache
+        assert not composio._tool_router_session_creations
+    finally:
+        release.set()
+        request.cancel()
+        await asyncio.gather(request, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_session_invalidation_rejects_queued_generation(monkeypatch, tool_router_cache):
+    composio, _ = tool_router_cache
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def create(_user_id, *, now):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            await release.wait()
+        return _mcp_session("queued", calls)
+
+    monkeypatch.setattr(composio, "_create_tool_router_mcp_session", create)
+    tasks = [asyncio.create_task(composio.get_tool_router_mcp_session("queued")) for _ in range(2)]
+    try:
+        async with asyncio.timeout(3):
+            await started.wait()
+            await asyncio.sleep(0)
+            assert composio._tool_router_session_creations["queued"].participants == 2
+            await composio.invalidate_tool_router_mcp_session("queued")
+            fresh = await composio.get_tool_router_mcp_session("queued")
+            release.set()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+        assert all(isinstance(result, composio.ComposioMcpUpstreamError) for result in results)
+        assert calls == 2
+        assert composio._tool_router_session_cache["queued"] is fresh
+        assert not composio._tool_router_session_creations
+    finally:
+        release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_session_reaper_rotates_bounded_batches_and_preserves_leases(
+    monkeypatch, tool_router_cache
+):
+    composio, _ = tool_router_cache
+    monkeypatch.setattr(composio, "_TOOL_ROUTER_REAP_BATCH_SIZE", 1)
+    fresh = _mcp_session("fresh")
+    expired = _mcp_session("expired")
+    expired.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    composio._tool_router_session_cache.update(fresh=fresh, expired=expired)
+    composio._tool_router_tools_cache["expired"] = (expired, _mcp_tools("expired"))
+    async with expired.lease_http_client() as client:
+        await composio.reap_expired_tool_router_mcp_sessions()
+        assert "expired" in composio._tool_router_session_cache
+        await composio.reap_expired_tool_router_mcp_sessions()
+        assert "expired" not in composio._tool_router_session_cache
+        assert "expired" not in composio._tool_router_tools_cache
+        assert expired._retired
+        assert not client.is_closed
+    assert client.is_closed
+    assert composio._tool_router_session_cache == {"fresh": fresh}
+
+
+@pytest.mark.asyncio
+async def test_session_reaper_preserves_replacement_and_active_creation(
+    monkeypatch, tool_router_cache
+):
+    composio, _ = tool_router_cache
+    expired = _mcp_session("race")
+    expired.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    fresh = _mcp_session("race", 2)
+    replaced = _mcp_session("replaced")
+    replaced.expires_at = expired.expires_at
+    replacement = _mcp_session("replaced", 2)
+    composio._tool_router_session_cache.update(race=expired, replaced=replaced)
+    composio._tool_router_tools_cache["race"] = (expired, _mcp_tools("old"))
+    close_started = asyncio.Event()
+    close_release = asyncio.Event()
+    create_started = asyncio.Event()
+    create_release = asyncio.Event()
+
+    async with expired.lease_http_client() as client:
+        real_close = client.aclose
+
+    async def close():
+        close_started.set()
+        await close_release.wait()
+        await real_close()
+
+    async def create(_user_id, *, now):
+        if _user_id == "replaced":
+            return replacement
+        create_started.set()
+        await create_release.wait()
+        return fresh
+
+    monkeypatch.setattr(client, "aclose", close)
+    monkeypatch.setattr(composio, "_create_tool_router_mcp_session", create)
+    reaper = asyncio.create_task(composio.reap_expired_tool_router_mcp_sessions())
+    creator = None
+    try:
+        async with asyncio.timeout(3):
+            await close_started.wait()
+            # The sweep already captured the old second entry before yielding.
+            await composio.invalidate_tool_router_mcp_session("replaced")
+            assert await composio.get_tool_router_mcp_session("replaced") is replacement
+            composio._tool_router_tools_cache["replaced"] = (replacement, _mcp_tools("new"))
+            creator = asyncio.create_task(composio.get_tool_router_mcp_session("race"))
+            await create_started.wait()
+            generation = composio._tool_router_session_creations["race"]
+            await composio.reap_expired_tool_router_mcp_sessions()
+            assert composio._tool_router_session_creations["race"] is generation
+            create_release.set()
+            assert await creator is fresh
+            composio._tool_router_tools_cache["race"] = (fresh, _mcp_tools("new"))
+            close_release.set()
+            await reaper
+        assert client.is_closed
+        assert composio._tool_router_session_cache["replaced"] is replacement
+        assert composio._tool_router_tools_cache["replaced"][0] is replacement
+        assert not replacement._retired
+        assert composio._tool_router_session_cache["race"] is fresh
+        assert composio._tool_router_tools_cache["race"][0] is fresh
+    finally:
+        close_release.set()
+        create_release.set()
+        tasks = [reaper] if creator is None else [reaper, creator]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_session_reaper_shutdown_waits_for_removed_client_close(
+    monkeypatch, tool_router_cache
+):
+    composio, _ = tool_router_cache
+    expired = _mcp_session("shutdown")
+    expired.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    composio._tool_router_session_cache["shutdown"] = expired
+    async with expired.lease_http_client() as client:
+        real_close = client.aclose
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def close():
+        started.set()
+        await release.wait()
+        await real_close()
+
+    monkeypatch.setattr(client, "aclose", close)
+    monkeypatch.setattr(composio, "_TOOL_ROUTER_REAP_INTERVAL_SECONDS", 0)
+    reaper = asyncio.create_task(composio.run_tool_router_mcp_session_reaper())
+    try:
+        async with asyncio.timeout(3):
+            await started.wait()
+            assert not composio._tool_router_session_cache
+            reaper.cancel()
+            await asyncio.sleep(0)
+            assert not reaper.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await reaper
+        assert client.is_closed
+    finally:
+        release.set()
+        reaper.cancel()
+        await asyncio.gather(reaper, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_session_reaper_close_failure_does_not_skip_remaining_sessions(
+    monkeypatch, tool_router_cache, caplog
+):
+    composio, _ = tool_router_cache
+    clients = []
+    for user_id in ("failure", "next"):
+        expired = _mcp_session(user_id)
+        expired.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        composio._tool_router_session_cache[user_id] = expired
+        async with expired.lease_http_client() as client:
+            clients.append(client)
+    real_close = clients[0].aclose
+
+    async def fail_close():
+        await real_close()
+        raise OSError("fixture close failure")
+
+    monkeypatch.setattr(clients[0], "aclose", fail_close)
+    await composio.reap_expired_tool_router_mcp_sessions()
+    assert not composio._tool_router_session_cache
+    assert all(client.is_closed for client in clients)
+    assert "Failed to close expired Composio MCP session" in caplog.text
