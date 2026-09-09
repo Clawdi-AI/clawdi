@@ -7,6 +7,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
 
+USER_AVATAR_URL_MAX_LENGTH = 512
+
 PRINCIPAL_KIND_CLERK = "clerk"
 PRINCIPAL_KIND_PARTNER_TENANT = "partner_tenant"
 
@@ -49,7 +51,7 @@ class User(Base, TimestampMixin):
     # the underlying signed URL periodically). Public session-share
     # pages render this so visitors see the owner's avatar in the
     # message stream.
-    avatar_url: Mapped[str | None] = mapped_column(String(512))
+    avatar_url: Mapped[str | None] = mapped_column(String(USER_AVATAR_URL_MAX_LENGTH))
     # Monotonic counter incremented on any skill insert / update /
     # soft-delete (`is_active=False`). Exposed as a collection-level
     # ETag on `GET /v1/skills` and embedded in SSE `skill_changed`
