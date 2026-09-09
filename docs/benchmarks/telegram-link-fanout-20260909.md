@@ -154,3 +154,52 @@ bytecode confined to a disposable container. Existing TestClient protocol
 fixtures emitted non-failing asyncpg cancellation/connection-lost teardown
 diagnostics; these are outside the ASGI load samples. All task-owned containers,
 networks, temporary logs and caches were removed; shared images were retained.
+
+## Final N=1 qualification on main 66c21f7d3
+
+The unpublished branch was rebased without conflicts onto `66c21f7d3` (#1460,
+provider HTTP keep-alive). `git range-diff` reports both patches unchanged:
+`aebdd30e7 → 972d994b7` and `3b4954998 → 5eea266ce`. The measured runtime head
+was `5eea266ce`; subsequent qualification changes only append evidence. No
+provider HTTP path is exercised by this ASGI benchmark, so differences from
+the earlier run cannot be attributed to keep-alive by this experiment.
+
+The existing N=1 case was run once, unchanged: four ABBA blocks, 80 messages,
+the same Python/PG versions, resource limits, pool, wait cap and fallback.
+No test cases or framework were added. Reproduce the measurement with:
+
+```bash
+scripts/measure-channel-fanout.sh 'tests/test_telegram_fanout_load.py::test_telegram_fanout[1]'
+```
+
+Done: one case passes and emits eight records. They are appended to the raw
+JSONL under `run=n1-qualification-66c21f7d3`; all 64 preceding records and the
+original tables remain intact.
+
+| N=1 phase | Responses/strategy | Account p50/p95/max ms | Link p50/p95/max ms | SQL/message Account → Link | Mean CPU/block ms Account → Link |
+| --- | --- | --- | --- | --- | --- |
+| Steady repeat | 16 | 13.037 / 27.684 / 27.684 | 12.925 / 16.016 / 16.016 | 10.000 → 10.000 | 570.823 → 751.353 |
+| Burst repeat | 8 | 11.059 / 14.193 / 14.193 | 12.854 / 15.305 / 15.305 | 3.333 → 3.333 | 283.270 → 294.286 |
+| Earlier burst | 8 | 10.499 / 14.900 / 14.900 | 13.524 / 19.841 / 19.841 | 3.333 → 3.333 | 283.318 → 287.168 |
+
+The aggregate adverse burst direction persists, with a smaller absolute gap:
+p50 +1.795 ms and p95/max +1.112 ms, versus approximately +3.025/+4.941 ms
+previously. Burst process CPU is 3.9% higher. The individual scoped burst
+blocks differ substantially (p50 14.677 and 7.527 ms), and the scoped steady
+CPU blocks are 946.948 and 555.757 ms. Keep those unfavorable measurements;
+there is no N=1 SQL saving and no demonstrated zero-overhead guarantee. This
+single bounded repeat neither isolates a causal subscription cost nor proves
+statistical significance. The larger-N benefit remains the reason for the
+change, with the small-N cost left explicit for review.
+
+The combined qualification command passed **21 existing cases in 63.65 s**:
+N=1 load, protocol wait compatibility, Telegram page/offset/cancellation,
+provider HTTP reuse and all three TLS keep-alive cases, inbound hint
+commit/rollback/legacy behavior, and Discord reader cleanup. Pool timeouts
+were zero; payload, durable offsets, isolation and cancellation assertions all
+passed. Ruff lint/format passed for all five production paths. Exact-path
+typing analyzed `app/routes/channel_routers/discord.py`,
+`app/routes/channel_routers/whatsapp.py`, `app/services/channel_wakeups.py`,
+`app/services/channels.py` and `app/services/sync_events.py`, with zero errors,
+warnings or information diagnostics. Task-owned containers, network and
+transient caches/logs were removed. No push, PR or deployment was performed.
