@@ -9470,9 +9470,16 @@ async def test_telegram_webhook_worker_retries_failed_agent_delivery(
 
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     worker = ChannelWebhookDeliveryWorker(sessionmaker)
-    first_result = await worker.run_once()
-    second_result = await worker.run_once()
-    result = await worker.run_once()
+    results = []
+    for _ in range(3):
+        await db_session.execute(
+            update(ChannelBinding)
+            .where(ChannelBinding.id == message.binding_id)
+            .values(webhook_retry_at=None)
+        )
+        await db_session.commit()
+        results.append(await worker.run_once())
+    first_result, second_result, result = results
     await db_session.refresh(message)
 
     assert first_result is not None
@@ -9653,9 +9660,16 @@ async def test_telegram_webhook_worker_skips_non_webhook_queue_head(
 
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     worker = ChannelWebhookDeliveryWorker(sessionmaker)
-    first_result = await worker.run_once()
-    second_result = await worker.run_once()
-    result = await worker.run_once()
+    results = []
+    for _ in range(3):
+        await db_session.execute(
+            update(ChannelBinding)
+            .where(ChannelBinding.id == webhook_message.binding_id)
+            .values(webhook_retry_at=None)
+        )
+        await db_session.commit()
+        results.append(await worker.run_once())
+    first_result, second_result, result = results
     await db_session.refresh(webhook_message)
 
     assert first_result is not None

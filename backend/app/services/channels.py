@@ -1897,6 +1897,9 @@ async def get_or_create_binding(
         if candidate_name is not None and candidate_name != external_chat_id:
             binding.external_chat_name = candidate_name
         binding.paired_external_user_id = external_user_id
+        if binding.status != BINDING_STATUS_ACTIVE:
+            binding.webhook_retry_at = None
+            binding.webhook_retry_step = 0
         binding.status = BINDING_STATUS_ACTIVE
         await db.execute(
             update(ChannelBindingAlias)
@@ -3217,6 +3220,9 @@ async def consume_pending_inbound_messages_for_bindings(
     bindings: list[ChannelBinding],
 ) -> int:
     """Revoke queued adapter delivery when binding authority is archived."""
+    for binding in bindings:
+        binding.webhook_retry_at = None
+        binding.webhook_retry_step = 0
     binding_ids = {binding.id for binding in bindings}
     if not binding_ids:
         return 0

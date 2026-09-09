@@ -1069,7 +1069,11 @@ async def _deliver_telegram_agent_webhook_for_binding(
         link=current_link,
     ):
         return False
-    return await deliver_telegram_agent_webhook(current_link, payload)
+    delivered = await deliver_telegram_agent_webhook(current_link, payload)
+    if delivered:
+        current_binding.webhook_retry_at = None
+        current_binding.webhook_retry_step = 0
+    return delivered
 
 
 async def _validate_telegram_webhook_url(url: str) -> JSONResponse | None:
