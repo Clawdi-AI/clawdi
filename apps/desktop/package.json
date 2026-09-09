@@ -3,6 +3,7 @@
 	"version": "0.1.0",
 	"description": "Clawdi desktop client",
 	"author": "Clawdi",
+	"homepage": "https://clawdi.ai",
 	"private": true,
 	"type": "module",
 	"main": "dist/main.js",
@@ -54,6 +55,8 @@
 			"clawdiUpdateChannel": "disabled"
 		},
 		"linux": {
+			"maintainer": "Clawdi <hello@clawdi.ai>",
+			"artifactName": "Clawdi-${version}-${arch}.${ext}",
 			"category": "Development",
 			"executableName": "clawdi-desktop",
 			"icon": "../web/public/clawdi-logo-transparent.png",
@@ -73,6 +76,12 @@
 					]
 				}
 			]
+		},
+		"deb": {
+			"packageName": "clawdi-desktop"
+		},
+		"rpm": {
+			"packageName": "clawdi-desktop"
 		},
 		"extraResources": [
 			{
