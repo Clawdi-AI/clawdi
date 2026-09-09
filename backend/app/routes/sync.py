@@ -88,15 +88,27 @@ OAUTH_ACCESS_EXPIRY_SKEW = timedelta(seconds=1)
 
 
 class _SyncStreamingResponse(StreamingResponse):
-    def __init__(self, content: AsyncGenerator[bytes, None], *, headers: dict[str, str]) -> None:
+    def __init__(
+        self,
+        content: AsyncGenerator[bytes, None],
+        *,
+        cleanup: Callable[[], Awaitable[None]],
+        headers: dict[str, str],
+    ) -> None:
         super().__init__(content, media_type="text/event-stream", headers=headers)
         self._content = content
+        self._cleanup = cleanup
 
     async def stream_response(self, send: Send) -> None:
         # Starlette does not close an iterator suspended at yield when send
         # fails or is cancelled by disconnect/backpressure.
-        async with aclosing(self._content):
-            await super().stream_response(send)
+        try:
+            async with aclosing(self._content):
+                await super().stream_response(send)
+        finally:
+            # Header send can fail before iteration: closing an unstarted
+            # generator does not run its finally block.
+            await self._cleanup()
 
 
 def _oauth_cli_access_expired(
@@ -418,6 +430,28 @@ async def events(
                 )
                 subscriber.visible_project_ids = fresh
 
+    cleaned_up = False
+
+    async def cleanup() -> None:
+        nonlocal cleaned_up
+        # The generator closes first; response cleanup also covers a stream
+        # that never started. A started body_iterator also owns direct aclose().
+        if cleaned_up:
+            return
+        cleaned_up = True
+        try:
+            sync_events.sync_subscriptions_changed.unsubscribe(refresh_key, refresh_requested)
+        finally:
+            try:
+                sync_events.unsubscribe(user_id, queue)
+                log.info(
+                    "sync events: unsubscribed user=%s remaining=%s",
+                    user_id,
+                    sync_events.connection_count(user_id),
+                )
+            finally:
+                await _release_subscription_lease_safely(lease_id)
+
     async def gen() -> AsyncGenerator[bytes, None]:
         refresh_task = asyncio.create_task(refresh_visibility())
         expiry_task = asyncio.create_task(_close_on_oauth_access_expiry(auth, revoked))
@@ -430,21 +464,7 @@ async def events(
             try:
                 await _cancel_and_wait(refresh_task, expiry_task, lease_task)
             finally:
-                try:
-                    sync_events.sync_subscriptions_changed.unsubscribe(
-                        refresh_key,
-                        refresh_requested,
-                    )
-                finally:
-                    try:
-                        sync_events.unsubscribe(user_id, queue)
-                        log.info(
-                            "sync events: unsubscribed user=%s remaining=%s",
-                            user_id,
-                            sync_events.connection_count(user_id),
-                        )
-                    finally:
-                        await _release_subscription_lease_safely(lease_id)
+                await cleanup()
 
     # `text/event-stream` is the SSE content type. `X-Accel-Buffering:
     # no` disables nginx response buffering on the off chance an
@@ -452,6 +472,7 @@ async def events(
     # nginx's buffer and the daemon never sees the heartbeat.
     return _SyncStreamingResponse(
         gen(),
+        cleanup=cleanup,
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",

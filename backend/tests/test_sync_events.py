@@ -1526,3 +1526,161 @@ async def test_real_sse_disconnect_drains_database_refresh(
         invalidation_errors.clear()
         await refresh_engine.dispose()
     assert not [record for record in caplog.records if record.name.startswith("sqlalchemy.pool")]
+
+
+@pytest.mark.parametrize(
+    "ending", ["header_error", "header_cancel", "header_peer", "body_error", "exhausted"]
+)
+async def test_real_sse_response_releases_admission_once(
+    db_session: AsyncSession,
+    seed_user: User,
+    ending: str,
+):
+    """Admission survives header backpressure and ends with the ASGI request."""
+    from app.main import app
+    from app.services.api_key import mint_api_key
+
+    minted = await mint_api_key(db_session, user_id=seed_user.id, label="sse-headers")
+    await db_session.commit()
+    headers_started = asyncio.Event()
+    disconnected = asyncio.Event()
+    release_started = asyncio.Event()
+    releases = []
+    bodies = []
+    first_request = True
+    tasks_before = asyncio.all_tasks()
+    refresh_key = str(seed_user.id)
+
+    async def receive():
+        nonlocal first_request
+        if first_request:
+            first_request = False
+            return {"type": "http.request", "body": b"", "more_body": False}
+        await disconnected.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            assert message["status"] == 200
+            headers_started.set()
+            if ending == "header_error":
+                raise OSError("header send failed")
+            if ending in {"header_cancel", "header_peer"}:
+                await asyncio.Event().wait()
+        elif message["type"] == "http.response.body":
+            bodies.append(message["body"])
+            if ending == "body_error":
+                raise OSError("body send failed")
+            if message["body"] == b": connected\n\n":
+                await db_session.execute(
+                    update(ApiKey)
+                    .where(ApiKey.id == minted.api_key.id)
+                    .values(revoked_at=datetime.now(UTC))
+                )
+                await db_session.commit()
+                sync_events.sync_subscriptions_changed.signal(refresh_key)
+
+    def capture_release(_connection, _cursor, statement, *_args):
+        if statement.lstrip().startswith(
+            "DELETE FROM sync_subscription_leases WHERE sync_subscription_leases.id ="
+        ):
+            releases.append(statement)
+            release_started.set()
+
+    event.listen(app_engine.sync_engine, "before_cursor_execute", capture_release)
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/v1/sync/events",
+        "raw_path": b"/v1/sync/events",
+        "query_string": b"",
+        "headers": [(b"authorization", f"Bearer {minted.raw_key}".encode())],
+        "client": ("127.0.0.1", 1),
+        "server": ("test", 80),
+    }
+    request_task = asyncio.create_task(app(scope, receive, send))
+    try:
+        async with asyncio.timeout(8):
+            await headers_started.wait()
+            if ending in {"header_cancel", "header_peer"}:
+                assert sync_events.connection_count(seed_user.id) == 1
+                assert len(sync_events.sync_subscriptions_changed._waiters[refresh_key]) == 1
+                # Hold the real lease DELETE across repeated request cancellation.
+                await db_session.execute(
+                    select(SyncSubscriptionLease.id)
+                    .where(SyncSubscriptionLease.user_id == seed_user.id)
+                    .with_for_update()
+                )
+                if ending == "header_peer":
+                    disconnected.set()
+                else:
+                    assert request_task.cancel("header-backpressure")
+                await release_started.wait()
+                if ending == "header_cancel":
+                    assert request_task.cancel("header-backpressure-again")
+                await asyncio.sleep(0)
+                assert not request_task.done()
+                await db_session.commit()
+            if ending.endswith("error"):
+                with pytest.raises(OSError, match="send failed"):
+                    await request_task
+            elif ending == "header_cancel":
+                with pytest.raises(asyncio.CancelledError):
+                    await request_task
+            else:
+                await request_task
+            assert sync_events.connection_count(seed_user.id) == 0
+            assert refresh_key not in sync_events.sync_subscriptions_changed._waiters
+            assert len(releases) == 1
+            assert not await db_session.scalar(
+                select(SyncSubscriptionLease.id).where(
+                    SyncSubscriptionLease.user_id == seed_user.id
+                )
+            )
+            assert asyncio.all_tasks() <= tasks_before
+            if ending.startswith("header"):
+                assert bodies == []
+            elif ending == "exhausted":
+                assert bodies[-1] == b""
+    finally:
+        await db_session.rollback()
+        disconnected.set()
+        if not request_task.done():
+            request_task.cancel()
+        await asyncio.gather(request_task, return_exceptions=True)
+        event.remove(app_engine.sync_engine, "before_cursor_execute", capture_release)
+
+
+async def test_real_sse_admission_rejects_before_success_headers(
+    db_session: AsyncSession,
+    seed_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+    from app.routes import sync as sync_route
+    from app.services.api_key import mint_api_key
+
+    monkeypatch.setattr(sync_route, "PER_USER_CONNECTION_CAP", 1)
+    _, _, iterator = await _open_api_key_stream(db_session, seed_user)
+    try:
+        minted = await mint_api_key(db_session, user_id=seed_user.id, label="sse-over-cap")
+        await db_session.commit()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/v1/sync/events", headers={"Authorization": f"Bearer {minted.raw_key}"}
+            )
+        assert response.status_code == 429
+        assert response.headers["Retry-After"] == "30"
+        assert sync_events.connection_count(seed_user.id) == 1
+        assert len(sync_events.sync_subscriptions_changed._waiters[str(seed_user.id)]) == 1
+        leases = await db_session.scalars(
+            select(SyncSubscriptionLease.id).where(SyncSubscriptionLease.user_id == seed_user.id)
+        )
+        assert len(leases.all()) == 1
+    finally:
+        await iterator.aclose()
