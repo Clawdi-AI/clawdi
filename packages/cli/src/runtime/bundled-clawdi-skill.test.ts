@@ -44,21 +44,33 @@ describe("bundled Clawdi skill connector contract", () => {
 	const genericWorkflow = section(genericSkill, "Connector Workflow");
 	const hostedWorkflow = section(hostedSkill, "Connector Workflow");
 
-	it("keeps the connector protocol aligned across runtimes", () => {
-		expect(hostedWorkflow).toBe(genericWorkflow);
+	it("uses explicit upstream actions for current account management", () => {
+		const management = section(genericSkill, "Connector Account Management");
+		expect(section(hostedSkill, "Connector Account Management")).toBe(management);
+		expect(management).toContain("`COMPOSIO_MANAGE_CONNECTIONS`");
+		for (const action of ["list", "add", "rename", "remove"]) {
+			expect(management).toContain(`\`${action}\``);
+		}
+		expect(management).toContain("omitting `action` defaults to `add`");
+		expect(management).toContain("exact `account_id`");
+		for (const skill of [genericSkill, hostedSkill]) {
+			expect(skill).not.toMatch(/connector_account_(list|update|delete)/);
+		}
 	});
 
-	it("keeps the same guarded direct-tool selection policy", () => {
-		expect(hostedRouting).toBe(genericRouting);
-
-		const policy = genericRouting.replace(/\s+/g, " ").toLowerCase();
-		expect(policy).toMatch(/installed and authenticated official cli .* use it directly/);
-		expect(policy).toContain("service's official documentation");
-		expect(policy).toContain("trusted direct mcp already configured");
-		expect(policy).toContain("official api or sdk with a verified contract");
-		expect(policy).toContain("clawdi connector when no direct option");
-		expect(policy).toContain("must not silently change that identity");
-		expect(policy).toContain("do not automatically download, install, or start an unfamiliar mcp");
+	it("keeps the guarded direct-tool selection policy across runtimes", () => {
+		for (const routing of [genericRouting, hostedRouting]) {
+			const policy = routing.replace(/\s+/g, " ").toLowerCase();
+			expect(policy).toMatch(/installed and authenticated official cli .* use it directly/);
+			expect(policy).toContain("service's official documentation");
+			expect(policy).toContain("trusted direct mcp already configured");
+			expect(policy).toContain("official api or sdk with a verified contract");
+			expect(policy).toContain("clawdi connector when no direct option");
+			expect(policy).toContain("must not silently change that identity");
+			expect(policy).toContain(
+				"do not automatically download, install, or start an unfamiliar mcp",
+			);
+		}
 	});
 
 	it("limits only Clawdi host management in Hosted", () => {
@@ -144,7 +156,6 @@ describe("bundled Clawdi skill connector contract", () => {
 			"`memory_delete`",
 			"`memory_extract`",
 			"`session_list`",
-			"`connector_account_list`",
 		]) {
 			expect(hostedSkill).toContain(tool);
 			expect(genericSkill).toContain(tool);

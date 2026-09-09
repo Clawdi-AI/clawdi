@@ -21,6 +21,8 @@ database migration, CI, and implementation details.
 
 ### Changed
 
+- CLI 0.14.60 updates bundled and Hosted Skill guidance to manage connector
+  accounts through Composio with explicit list, add, rename, and remove actions.
 - Resources opened from an Agent stay in that Agent, including unlinked Projects,
   newly created Projects, and resource source links. Agent and Library entry points
   use the same Project detail page and controls.
