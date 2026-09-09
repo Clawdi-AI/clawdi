@@ -157,11 +157,9 @@ async function verifyPackagedDashboard(context) {
 	);
 	const child = await childOpened;
 	await child.waitForLoadState("domcontentloaded");
-	assert.equal(new URL(child.url()).pathname, `/terminal/${smokeAgentId}`);
-	await child.locator('main[data-mava-launcher="hidden"]').waitFor({
-		state: "visible",
-		timeout: 20_000,
-	});
+	// The fake ticket cannot authenticate. Main's shared route boundary must
+	// redirect this unprivileged child to sign-in rather than expose Terminal.
+	await child.waitForURL((url) => url.pathname === "/sign-in", { timeout: 20_000 });
 	assert.deepEqual(
 		await child.evaluate(() => ({
 			hasDesktopBridge: window.clawdiDesktop !== undefined,

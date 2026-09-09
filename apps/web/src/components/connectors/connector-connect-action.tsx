@@ -90,7 +90,11 @@ export function ConnectorConnectAction({
 				.href;
 			void connect
 				.execute(redirectUrl, alias.trim())
-				.then((result) => window.open(result.connect_url, "_blank", "noopener"))
+				.then((result) => {
+					if (!mountedRef.current) return;
+					window.open(result.connect_url, "_blank", "noopener");
+					setOauthOpen(false);
+				})
 				.catch(() => {
 					toast.error("Couldn't start connection", {
 						description: "Try again. If the problem persists, contact support.",

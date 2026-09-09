@@ -88,9 +88,9 @@ export default defineConfig(({ mode }) => {
 				},
 			}),
 			viteReact(),
-			...(desktopBuild ? [] : [nitro({
-				rolldownConfig: { output: { strictExecutionOrder: true } },
-			})]),
+			...(desktopBuild
+				? []
+				: [nitro({ rolldownConfig: { output: { strictExecutionOrder: true } } })]),
 			...sentryPlugins,
 		],
 	};
