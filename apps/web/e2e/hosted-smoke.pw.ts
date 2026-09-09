@@ -2992,6 +2992,40 @@ for (const projectionFailure of [
 	});
 }
 
+test("Clawdi AI model selection saves the chosen managed model", async ({ page }, testInfo) => {
+	const updateDeploymentRequests: Array<{
+		body: string;
+		idempotencyKey: string | null;
+		ifMatch: string | null;
+	}> = [];
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		updateDeploymentRequests,
+	});
+	await page.goto(`/agents/${railHostedEnvironmentId}/model-provider`);
+	await page
+		.getByTestId("provider-choice-grid")
+		.getByRole("button", { name: /^Clawdi AI/ })
+		.click();
+	const models = page.getByTestId("managed-model-controls");
+	await expect(models.getByRole("button", { name: /^GPT-5.6 Luna/ })).toHaveAttribute(
+		"aria-pressed",
+		"true",
+	);
+	await models.getByRole("combobox", { name: "More managed models" }).click();
+	await page.getByRole("option", { name: /^GPT-5.6 Sol/ }).click();
+	await expect(models.getByRole("combobox")).toContainText("GPT-5.6 Sol");
+	await expect(page.getByText("Add, validate, or remove providers on")).toHaveCount(0);
+	await page.screenshot({ path: testInfo.outputPath("managed-model-picker.png") });
+	await page.locator("main").getByRole("button", { name: "Save changes" }).click();
+	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
+	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
+		ai_provider_auth_kind: "managed",
+		primary_model: { provider_id: "clawdi", model: "gpt-5.6-sol" },
+	});
+});
+
 for (const kind of ["native", "custom"] as const) {
 	test(`${kind} provider creation stays in context and binds without choosing a model`, async ({
 		page,
@@ -3063,11 +3097,8 @@ for (const kind of ["native", "custom"] as const) {
 		await expect(providerCard).toHaveAttribute("aria-pressed", "true");
 		const mainModel = page.getByRole("combobox", { name: "Main model" });
 		await expect(mainModel).toHaveCount(0);
-		const accountProviderLink = page
-			.locator("main p")
-			.filter({ hasText: "Add, validate, or remove providers" })
-			.getByRole("link", { name: "AI Providers" });
-		await expect(accountProviderLink).toHaveAttribute("href", "/ai-providers");
+		await expect(page.getByText("Add, validate, or remove providers on")).toHaveCount(0);
+		await expect(page.getByTestId("managed-model-controls")).toHaveCount(0);
 		expect(updateDeploymentRequests).toEqual([]);
 		await page.locator("main").getByRole("button", { name: "Save changes" }).click();
 		await expect.poll(() => updateDeploymentRequests.length).toBe(1);

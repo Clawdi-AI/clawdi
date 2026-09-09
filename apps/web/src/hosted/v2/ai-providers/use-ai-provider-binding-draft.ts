@@ -109,6 +109,8 @@ export function useAiProviderBindingDraft({
 			draft.primaryProviderChoice !== MANAGED_AI_CHOICE ||
 			(managedCatalogReady &&
 				modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels).includes(draft.primaryModel)),
+		setPrimaryModel: (primaryModel: string) =>
+			setDraft((current) => ({ ...current, primaryModel })),
 		setBindingMode: (bindingMode: AiBindingMode) =>
 			setDraft((current) => ({ ...current, bindingMode })),
 		selectProvider: (choice: string) =>

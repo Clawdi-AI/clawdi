@@ -167,7 +167,7 @@ import {
 import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderIcon } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
-import { ManagedProviderStatus } from "@/hosted/v2/ai-providers/managed-provider-status";
+import { ManagedModelPicker } from "@/hosted/v2/ai-providers/managed-model-picker";
 import {
 	firstModelForProvider,
 	MANAGED_AI_CHOICE,
@@ -577,6 +577,7 @@ export function DeployWizard() {
 	const {
 		draft: aiBindingDraft,
 		managedPrimaryModelReady,
+		setPrimaryModel,
 		selectCreatedProvider: selectCreatedAiProvider,
 		selectProvider: selectAiProviderChoice,
 		setBindingMode: setAiAccessMode,
@@ -1238,7 +1239,10 @@ export function DeployWizard() {
 							/>
 						</div>
 						{aiAccessMode !== "unmanaged" ? (
-							<ManagedProviderStatus
+							<ManagedModelPicker
+								idPrefix="deploy"
+								primaryModel={primaryModel}
+								onPrimaryModelChange={setPrimaryModel}
 								managedModels={managedModels}
 								loading={managedModels.length === 0 && managedModelCatalog.isFetching}
 								error={managedModelCatalog.error}
