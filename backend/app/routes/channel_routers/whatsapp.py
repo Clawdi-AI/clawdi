@@ -33,6 +33,7 @@ from app.routes.channel_routers.shared import (
 )
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channel_wakeups import (
+    ChannelInboxPage,
     channel_inbound_messages_enqueued,
     wait_for_channel_inbound_messages,
 )
@@ -623,7 +624,7 @@ async def _wait_whatsapp_websocket_inbox(
     after_sequence: int,
     limit: int = 100,
 ) -> list[WhatsAppInboxPumpEvent]:
-    async def fetch() -> list[ChannelMessage]:
+    async def fetch() -> ChannelInboxPage[ChannelMessage]:
         async with async_session_factory() as db:
             result = await db.execute(
                 select(ChannelMessage)
@@ -638,7 +639,7 @@ async def _wait_whatsapp_websocket_inbox(
                 .order_by(ChannelMessage.inbox_sequence, ChannelMessage.created_at)
                 .limit(max(0, limit))
             )
-            return list(result.scalars().all())
+            return ChannelInboxPage(list(result.scalars().all()))
 
     messages = await wait_for_channel_inbound_messages(
         fetch,

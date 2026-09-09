@@ -9,6 +9,8 @@ oversized-Content-Length path doesn't reach the handler at all.
 
 from __future__ import annotations
 
+import logging
+
 import httpx
 import pytest
 from httpx import ASGITransport
@@ -18,6 +20,46 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from app.middleware.body_size_limit import BodySizeLimitMiddleware
+
+
+@pytest.mark.parametrize("declared", [True, False])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/channels/telegram/botsecret/sendMessage",
+        "/api/channels/discord/api/v10/webhooks/123/secret",
+        "/v1/channels/discord/v10/interactions/123/secret/callback",
+    ],
+)
+async def test_body_rejection_redacts_channel_credentials(caplog, declared, path):
+    async def inner(scope, receive, send):
+        assert scope["path"] == path
+        await receive()
+
+    async def receive():
+        return {"type": "http.request", "body": b"xx", "more_body": False}
+
+    messages = []
+
+    async def send(message):
+        messages.append(message)
+
+    caplog.set_level(logging.INFO, logger="app.middleware.body_size_limit")
+    await BodySizeLimitMiddleware(inner, max_bytes=1)(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": path,
+            "headers": [(b"content-length", b"2")] if declared else [],
+        },
+        receive,
+        send,
+    )
+    assert messages[0]["status"] == 413
+    event = "body_size_rejected_header" if declared else "body_size_rejected_stream"
+    assert event in caplog.text
+    assert path.replace("secret", "[redacted]") in caplog.text
+    assert "secret" not in caplog.text
 
 
 def _build_app(*, max_bytes: int) -> tuple[Starlette, list[bool]]:

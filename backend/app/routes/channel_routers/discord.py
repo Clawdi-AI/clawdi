@@ -33,20 +33,20 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, Response
 from pydantic import JsonValue, TypeAdapter, ValidationError
-from sqlalchemy import and_, select, text
+from sqlalchemy import and_, select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile
 
 from app.core.config import settings
-from app.core.database import async_session_factory, get_session
-from app.core.database import engine as database_engine
+from app.core.database import async_session_factory, finish_cleanup, get_session
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_STATUS_ACTIVE,
     ChannelAccount,
+    ChannelAgentReference,
     ChannelBinding,
     ChannelBindingAlias,
     ChannelBotAgentLink,
@@ -72,6 +72,7 @@ from app.routes.channel_routers.shared import (
     require_bound_chat,
     resolve_discord_agent_context,
 )
+from app.services.channel_wakeups import channel_inbound_messages_enqueued
 from app.services.channels import (
     DISCORD_REF_INTERACTION_ID_TOKEN,
     DISCORD_REF_INTERACTION_TOKEN,
@@ -106,9 +107,9 @@ from app.services.channels import (
     verify_discord_signature,
     verify_webhook_secret,
 )
-from app.services.discord_gateway_worker import (
-    release_advisory_lock,
-    try_advisory_lock,
+from app.services.discord_advisory_session import (
+    DiscordAdvisorySession,
+    DiscordAdvisorySessionLost,
 )
 
 router = APIRouter(prefix="/channels/discord", tags=["channels"])
@@ -366,7 +367,9 @@ async def discord_agent_rest(
     if segments == ["users", "@me"]:
         if request.method == "PATCH":
             params = await request_params(request)
-            config = dict(account.config) if isinstance(account.config, dict) else {}
+            # Share the Link lock with command-shadow writes to preserve unrelated config.
+            await db.refresh(agent.link, with_for_update=True)
+            config = dict(agent.link.config) if isinstance(agent.link.config, dict) else {}
             username = optional_str(params.get("username"))
             if username:
                 config["bot_username"] = username
@@ -378,9 +381,9 @@ async def discord_agent_rest(
                         detail="avatar must be a JSON value",
                     )
                 config["bot_avatar"] = avatar
-            account.config = config
+            agent.link.config = config
             await db.commit()
-        return discord_bot_user(account)
+        return discord_bot_user(account, agent.link)
     command_response = await handle_discord_application_commands(
         db,
         agent=agent,
@@ -390,7 +393,7 @@ async def discord_agent_rest(
     if command_response is not None:
         return command_response
     if segments in (["oauth2", "applications", "@me"], ["applications", "@me"]):
-        user = discord_bot_user(account)
+        user = discord_bot_user(account, agent.link)
         return {
             "id": user["id"],
             "name": user["username"],
@@ -865,6 +868,9 @@ async def discord_agent_gateway(
     consumer_lease: AbstractAsyncContextManager[bool] | None = None
     consumer_lease_entered = False
     owns_session_entry = False
+    notified: asyncio.Event | None = None
+    receive_task: asyncio.Task[JsonValue] | None = None
+    wakeup_task: asyncio.Task[bool] | None = None
 
     async def send_gateway_frame(
         payload: JsonObject,
@@ -1068,6 +1074,7 @@ async def discord_agent_gateway(
                 consumer_lease = _discord_gateway_consumer_lease(
                     account_id=resolved_account.id,
                     bot_agent_link_id=resolved_link_id,
+                    lock_session=_consumer_lock_session(websocket),
                 )
                 lease_acquired = await consumer_lease.__aenter__()
                 consumer_lease_entered = True
@@ -1197,6 +1204,7 @@ async def discord_agent_gateway(
                 consumer_lease = _discord_gateway_consumer_lease(
                     account_id=resolved_account.id,
                     bot_agent_link_id=resolved_link_id,
+                    lock_session=_consumer_lock_session(websocket),
                 )
                 lease_acquired = await consumer_lease.__aenter__()
                 consumer_lease_entered = True
@@ -1257,7 +1265,7 @@ async def discord_agent_gateway(
                                 else public_ws_url("/v1/channels/discord/gateway")
                             )
                         ),
-                        "user": discord_bot_user(account),
+                        "user": discord_bot_user(account, resolved_agent.link),
                         "application": {"id": discord_application_id(account)},
                         "guilds": [{"id": guild_id, "unavailable": False} for guild_id in guilds],
                         "private_channels": [
@@ -1277,8 +1285,24 @@ async def discord_agent_gateway(
             await websocket.close(code=4004)
             return
         active_link_id = bot_agent_link_id
+        notified = channel_inbound_messages_enqueued.subscribe(str(account.id))
+        receive_task = asyncio.create_task(websocket.receive_json(), name="discord-gateway-receive")
 
         while True:
+            # Retain the reader across notifications/timeouts, including when
+            # both inputs complete together or dispatch batches keep arriving.
+            if receive_task.done():
+                frame = _JSON_VALUE_ADAPTER.validate_python(receive_task.result())
+                if isinstance(frame, dict) and frame.get("op") == 1:
+                    await acknowledge_gateway_sequence(optional_int_param(frame.get("d")))
+                    await send_gateway_frame({"op": 11, "d": None}, record=False)
+                receive_task = asyncio.create_task(
+                    websocket.receive_json(), name="discord-gateway-receive"
+                )
+            # Clear before querying so a concurrent commit forces a recheck.
+            notified.clear()
+            if wakeup_task is None or wakeup_task.done():
+                wakeup_task = asyncio.create_task(notified.wait(), name="discord-gateway-wakeup")
             checkpoints = (
                 session_state.get("message_checkpoints") if session_state is not None else None
             )
@@ -1438,25 +1462,32 @@ async def discord_agent_gateway(
                 else:
                     continue
 
-            try:
-                frame = _JSON_VALUE_ADAPTER.validate_python(
-                    await asyncio.wait_for(
-                        websocket.receive_json(),
-                        timeout=max(0.001, settings.discord_gateway_poll_interval_seconds),
-                    )
-                )
-                if isinstance(frame, dict) and frame.get("op") == 1:
-                    await acknowledge_gateway_sequence(optional_int_param(frame.get("d")))
-                    await send_gateway_frame({"op": 11, "d": None}, record=False)
-            except TimeoutError:
-                pass
+            await asyncio.wait(
+                {receive_task, wakeup_task},
+                timeout=max(0.001, settings.discord_gateway_poll_interval_seconds),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
     except WebSocketDisconnect:
         return
     finally:
-        if consumer_lease is not None and consumer_lease_entered:
-            await consumer_lease.__aexit__(None, None, None)
-        if owns_session_entry:
-            _DISCORD_GATEWAY_SESSIONS.disconnect(session_id)
+        try:
+            if consumer_lease is not None and consumer_lease_entered:
+                await consumer_lease.__aexit__(None, None, None)
+        finally:
+            if owns_session_entry:
+                _DISCORD_GATEWAY_SESSIONS.disconnect(session_id)
+            if notified is not None and account is not None:
+                channel_inbound_messages_enqueued.unsubscribe(str(account.id), notified)
+            tasks = [task for task in (receive_task, wakeup_task) if task is not None]
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+
+            async def collect_tasks() -> None:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+            if tasks:
+                await finish_cleanup(collect_tasks)
 
 
 @router.post(
@@ -1787,6 +1818,30 @@ async def cleanup_discord_guild_commands_after_authority_revoked(
         return False
 
 
+async def _discord_interaction_reference_is_authorized(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    bot_agent_link_id: UUID,
+    reference: ChannelAgentReference | None,
+) -> bool:
+    # Agent interactions require a live Binding. Unbound/control interactions
+    # are answered by the platform; orphaned historical references grant no authority.
+    if reference is None or reference.binding_id is None:
+        return False
+    binding = await db.get(ChannelBinding, reference.binding_id)
+    if binding is None:
+        return False
+    leased = await lock_active_discord_binding_lease(
+        db,
+        account_id=account.id,
+        bot_agent_link_id=bot_agent_link_id,
+        binding_id=binding.id,
+        external_chat_id=binding.external_chat_id,
+    )
+    return leased is not None and leased.user_id == reference.user_id
+
+
 async def _handle_discord_interaction_callback(
     db: AsyncSession,
     *,
@@ -1807,7 +1862,9 @@ async def _handle_discord_interaction_callback(
         ref_value=f"{interaction_id}:{token}",
         bot_agent_link_id=bot_agent_link_id,
     )
-    if reference is None:
+    if not await _discord_interaction_reference_is_authorized(
+        db, account=account, bot_agent_link_id=bot_agent_link_id, reference=reference
+    ):
         return _discord_rest_error("Unknown Interaction", 10062, 404)
     return await proxy_discord_request(account=account, request=request, path=path)
 
@@ -1835,6 +1892,10 @@ async def _handle_discord_webhook_followup(
     metadata = reference.metadata_ if reference is not None else None
     recorded_application_id = metadata.get("application_id") if isinstance(metadata, dict) else None
     if reference is None or recorded_application_id != application_id:
+        return _discord_rest_error("Unknown Webhook", 10015, 404)
+    if not await _discord_interaction_reference_is_authorized(
+        db, account=account, bot_agent_link_id=bot_agent_link_id, reference=reference
+    ):
         return _discord_rest_error("Unknown Webhook", 10015, 404)
     return await proxy_discord_request(account=account, request=request, path=path)
 
@@ -2035,99 +2096,43 @@ async def _send_discord_gateway_message(
         return "dropped", None
 
 
+def _consumer_lock_session(websocket: WebSocket) -> DiscordAdvisorySession:
+    session = getattr(websocket.app.state, "discord_gateway_locks", None)
+    if not isinstance(session, DiscordAdvisorySession):
+        raise RuntimeError("Discord consumer lock owner is not running")
+    return session
+
+
 @asynccontextmanager
 async def _discord_gateway_consumer_lease(
     *,
     account_id: UUID,
     bot_agent_link_id: UUID,
-    lock_engine: AsyncEngine | None = None,
-    liveness_interval_seconds: float | None = None,
+    lock_session: DiscordAdvisorySession,
 ):
-    """Allow one synthetic shard consumer per AgentLink across processes."""
-    connection = await (lock_engine or database_engine).connect()
-    acquired = False
-    lock_key: int | None = None
-    safe_to_pool = False
-    monitor_failure: Exception | None = None
-    body_error: BaseException | None = None
-    cleanup_error: BaseException | None = None
-    monitor_stop = asyncio.Event()
-    monitor_task: asyncio.Task[None] | None = None
-    owner_task = asyncio.current_task()
-    if owner_task is None:
-        await connection.close()
-        raise RuntimeError("discord gateway consumer lease requires an asyncio task")
-    lock_name = f"discord-agent-gateway:{account_id}:{bot_agent_link_id}"
-
-    async def monitor_connection() -> None:
-        nonlocal monitor_failure
-        interval = max(
-            0.001,
-            liveness_interval_seconds
-            if liveness_interval_seconds is not None
-            else settings.discord_gateway_poll_interval_seconds,
-        )
-        try:
-            while True:
-                try:
-                    await asyncio.wait_for(monitor_stop.wait(), timeout=interval)
-                    return
-                except TimeoutError:
-                    await connection.execute(text("SELECT 1"))
-                    await connection.commit()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            monitor_failure = exc
-            owner_task.cancel()
-
+    """Allow one synthetic shard consumer per AgentLink locally and across processes."""
     try:
-        await connection.execution_options(isolation_level="AUTOCOMMIT")
-        # Keep the transaction-level lease identity used by older rolling-deploy peers.
-        lock_key_result = await connection.execute(
-            text("SELECT hashtextextended(:lock_name, 0)"),
-            {"lock_name": lock_name},
-        )
-        await connection.commit()
-        resolved_lock_key = lock_key_result.scalar_one()
-        if not isinstance(resolved_lock_key, int) or isinstance(resolved_lock_key, bool):
-            raise RuntimeError("discord gateway consumer advisory lock key is invalid")
-        lock_key = resolved_lock_key
-        acquired = await try_advisory_lock(connection, lock_key)
-        safe_to_pool = not acquired
-        if acquired:
-            monitor_task = asyncio.create_task(
-                monitor_connection(),
-                name=f"discord-gateway-consumer-lease-{bot_agent_link_id}",
-            )
-        try:
-            yield acquired
-        except BaseException as exc:
-            body_error = exc
-    finally:
-        monitor_stop.set()
-        try:
-            if monitor_task is not None:
-                await monitor_task
-            if acquired:
-                if lock_key is None:
-                    raise RuntimeError("discord gateway consumer advisory lock key is missing")
-                if not await release_advisory_lock(connection, lock_key):
-                    raise RuntimeError("discord gateway consumer advisory unlock failed")
-                safe_to_pool = True
-        except BaseException as exc:
-            cleanup_error = exc
-        finally:
-            try:
-                if not safe_to_pool:
-                    await connection.invalidate()
-            finally:
-                await connection.close()
-
-    if monitor_failure is not None:
+        lease = await lock_session.claim(f"discord-agent-gateway:{account_id}:{bot_agent_link_id}")
+    except DiscordAdvisorySessionLost as exc:
         raise _DiscordGatewayConsumerLeaseLost(
             "discord gateway consumer lease connection lost"
-        ) from monitor_failure
+        ) from exc
+    body_error: BaseException | None = None
+    cleanup_error: BaseException | None = None
+    try:
+        yield lease is not None
+    except BaseException as exc:
+        body_error = exc
+    finally:
+        if lease is not None:
+            try:
+                await lock_session.release(lease)
+            except BaseException as exc:
+                cleanup_error = exc
+            if lease.failed:
+                raise _DiscordGatewayConsumerLeaseLost(
+                    "discord gateway consumer lease connection lost"
+                ) from (cleanup_error or lease.session.failure)
     if cleanup_error is not None:
         raise cleanup_error
     if body_error is not None:

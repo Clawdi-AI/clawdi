@@ -544,7 +544,7 @@ async def test_telegram_inbox_uses_update_id_offset_and_drains_filtered_updates(
     await db_session.refresh(filtered)
     await db_session.refresh(callback)
 
-    assert updates == [
+    assert updates.items == [
         {
             "update_id": 105,
             "callback_query": {
@@ -557,15 +557,13 @@ async def test_telegram_inbox_uses_update_id_offset_and_drains_filtered_updates(
     assert filtered.delivered_at is not None
     assert callback.delivered_at is None
 
-    assert (
-        await dequeue_telegram_updates(
-            db_session,
-            account_id=account.id,
-            offset=106,
-            limit=100,
-        )
-        == []
+    page = await dequeue_telegram_updates(
+        db_session,
+        account_id=account.id,
+        offset=106,
+        limit=100,
     )
+    assert page.items == []
     await db_session.refresh(callback)
     assert callback.delivered_at is not None
 
@@ -611,7 +609,7 @@ async def test_telegram_inbox_terminally_consumes_updates_older_than_official_re
     await db_session.refresh(expired)
     await db_session.refresh(current)
 
-    assert [update["update_id"] for update in updates] == [202]
+    assert [update["update_id"] for update in updates.items] == [202]
     assert expired.delivered_at is not None
     assert current.delivered_at is None
 

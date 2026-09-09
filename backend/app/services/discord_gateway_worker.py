@@ -14,12 +14,13 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from pydantic import JsonValue, TypeAdapter
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 from app.core.config import settings
+from app.core.database import finish_cleanup
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     CHANNEL_PROVIDER_DISCORD,
@@ -32,6 +33,12 @@ from app.services.channels import (
     record_discord_dispatch,
     update_discord_binding_display_name_from_trusted_event,
 )
+from app.services.discord_advisory_session import (
+    DiscordAdvisorySession,
+    DiscordAdvisorySessionLost,
+)
+from app.services.discord_advisory_session import release_advisory_lock as release_advisory_lock
+from app.services.discord_advisory_session import try_advisory_lock as try_advisory_lock
 from app.services.discord_command_reconciliation_worker import (
     reconcile_discord_guild_commands,
     reconcile_discord_guild_departure,
@@ -119,45 +126,61 @@ class DiscordGatewayWorker:
         scan_interval_seconds: float = 10.0,
         reconnect_initial_seconds: float = 1.0,
         reconnect_max_seconds: float = 60.0,
+        lock_liveness_interval_seconds: float = 1.0,
+        lock_liveness_timeout_seconds: float = 5.0,
         connect_factory: _GatewayConnectFactory = connect,
     ) -> None:
         self._sessionmaker = sessionmaker
-        self._lock_engine = lock_engine or _sessionmaker_bind(sessionmaker)
+        self._locks = DiscordAdvisorySession(
+            lock_engine or _sessionmaker_bind(sessionmaker),
+            liveness_interval_seconds=lock_liveness_interval_seconds,
+            liveness_timeout_seconds=lock_liveness_timeout_seconds,
+        )
         self._scan_interval_seconds = scan_interval_seconds
         self._reconnect_initial_seconds = reconnect_initial_seconds
         self._reconnect_max_seconds = reconnect_max_seconds
         self._connect_factory = connect_factory
         self._tasks: dict[UUID, asyncio.Task[None]] = {}
         self._terminal_account_revisions: dict[UUID, str] = {}
+        self._states: dict[UUID, _GatewayState] = {}
+        self._lifecycle_serial = asyncio.Lock()
 
     async def run_once(self, stop: asyncio.Event | None = None) -> int:
-        accounts = await list_active_discord_gateway_accounts(self._sessionmaker)
-        stop_event = stop or asyncio.Event()
-        self._sync_tasks(accounts, stop_event)
-        return len(accounts)
+        async with self._lifecycle_serial:
+            accounts = await list_active_discord_gateway_accounts(self._sessionmaker)
+            self._sync_tasks(accounts, stop or asyncio.Event())
+            return len(accounts)
 
     async def run_forever(self, stop: asyncio.Event | None = None) -> None:
         stop_event = stop or asyncio.Event()
+        backoff = self._reconnect_initial_seconds
         try:
             while not stop_event.is_set():
-                await self.run_once(stop_event)
                 try:
-                    await asyncio.wait_for(
-                        stop_event.wait(),
-                        timeout=self._scan_interval_seconds,
-                    )
-                except TimeoutError:
-                    pass
+                    await self.run_once(stop_event)
+                except Exception:
+                    log.exception("discord gateway account scan failed")
+                    await _sleep_until_stop(stop_event, backoff)
+                    backoff = min(backoff * 2, self._reconnect_max_seconds)
+                else:
+                    backoff = self._reconnect_initial_seconds
+                    await _sleep_until_stop(stop_event, self._scan_interval_seconds)
         finally:
             await self.stop()
 
     async def stop(self) -> None:
+        async with self._lifecycle_serial:
+            await finish_cleanup(self._close_lock_session)
+            self._terminal_account_revisions.clear()
+            self._states.clear()
+
+    async def _close_lock_session(self) -> None:
         for task in self._tasks.values():
             task.cancel()
         if self._tasks:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         self._tasks.clear()
-        self._terminal_account_revisions.clear()
+        await self._locks.close()
 
     def _sync_tasks(
         self,
@@ -165,6 +188,8 @@ class DiscordGatewayWorker:
         stop: asyncio.Event,
     ) -> None:
         active = set(active_accounts)
+        for account_id in set(self._states) - active:
+            self._states.pop(account_id, None)
         for account_id, task in list(self._tasks.items()):
             if task.done():
                 self._observe_done_task(account_id, task)
@@ -181,6 +206,9 @@ class DiscordGatewayWorker:
                 continue
             if terminal_revision is not None:
                 self._terminal_account_revisions.pop(account_id, None)
+            state = self._states.get(account_id)
+            if state is not None and state.account_revision != revision:
+                self._states.pop(account_id, None)
             self._tasks[account_id] = asyncio.create_task(
                 self._run_account_forever(account_id, stop),
                 name=f"discord-gateway-{account_id}",
@@ -188,7 +216,7 @@ class DiscordGatewayWorker:
 
     async def _run_account_forever(self, account_id: UUID, stop: asyncio.Event) -> None:
         backoff_seconds = self._reconnect_initial_seconds
-        state = _GatewayState()
+        state = self._states.setdefault(account_id, _GatewayState())
         while not stop.is_set():
             try:
                 acquired = await self._run_account_with_lock(account_id, stop, state)
@@ -198,6 +226,8 @@ class DiscordGatewayWorker:
                 backoff_seconds = self._reconnect_initial_seconds
             except asyncio.CancelledError:
                 raise
+            except DiscordAdvisorySessionLost:
+                return
             except _GatewayReconnect:
                 state.session_established = False
                 backoff_seconds = self._reconnect_initial_seconds
@@ -222,6 +252,8 @@ class DiscordGatewayWorker:
             if state.session_established:
                 state.session_established = False
                 backoff_seconds = self._reconnect_initial_seconds
+            if self._locks.failed:
+                return
             await _sleep_until_stop(stop, backoff_seconds)
             backoff_seconds = min(backoff_seconds * 2, self._reconnect_max_seconds)
 
@@ -232,15 +264,16 @@ class DiscordGatewayWorker:
         state: _GatewayState,
     ) -> bool:
         lock_key = discord_gateway_advisory_lock_key(account_id)
-        async with self._lock_engine.connect() as lock_connection:
-            acquired = await try_advisory_lock(lock_connection, lock_key)
-            if not acquired:
-                return False
-            try:
-                await self._connect_and_record(account_id, stop, state)
-            finally:
-                if not await release_advisory_lock(lock_connection, lock_key):
-                    raise RuntimeError("discord gateway advisory unlock failed")
+        lease = await self._locks.claim(lock_key)
+        if lease is None:
+            return False
+        try:
+            await self._connect_and_record(account_id, stop, state)
+        finally:
+            # The shared owner fences siblings on unlock failure. Preserve this
+            # account's transport close code or cancellation for the outer loop.
+            with contextlib.suppress(DiscordAdvisorySessionLost):
+                await self._locks.release(lease)
         return True
 
     async def _connect_and_record(
@@ -672,24 +705,6 @@ def discord_gateway_advisory_lock_key(account_id: UUID) -> int:
 
 def discord_gateway_close_code(exc: ConnectionClosed) -> int | None:
     return exc.rcvd.code if exc.rcvd is not None else None
-
-
-async def try_advisory_lock(connection: AsyncConnection, lock_key: int) -> bool:
-    result = await connection.execute(
-        text("SELECT pg_try_advisory_lock(:lock_key)"),
-        {"lock_key": lock_key},
-    )
-    await connection.commit()
-    return result.scalar_one() is True
-
-
-async def release_advisory_lock(connection: AsyncConnection, lock_key: int) -> bool:
-    result = await connection.execute(
-        text("SELECT pg_advisory_unlock(:lock_key)"),
-        {"lock_key": lock_key},
-    )
-    await connection.commit()
-    return result.scalar_one() is True
 
 
 async def _recv_gateway_frame(websocket: _GatewayConnection) -> GatewayFrame:
