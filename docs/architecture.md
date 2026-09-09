@@ -404,7 +404,9 @@ re-embedding is unavailable; Mem0 updates verify account ownership before the
 provider mutation. `session_list` uses the same account/legacy-environment fence
 as Session search/get and supports bounded time, Agent, and visible Project
 filters. `connector_account_list` exposes active, enabled connection IDs,
-toolkit names, aliases, statuses, and allowlisted display labels; raw provider
+toolkit names, aliases, statuses, disabled state, and allowlisted display labels.
+Its optional `include_inactive: true` flag includes non-active and disabled accounts
+for management without changing the default execution-oriented list. Raw provider
 `data`, `state`, tokens, and credentials never enter the MCP result.
 
 `connector_account_update` changes only an owned account's alias; an empty string

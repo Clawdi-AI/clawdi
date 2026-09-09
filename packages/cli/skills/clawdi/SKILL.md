@@ -146,6 +146,10 @@ the same path; never repeat it through another path.
 
 ## Connector Account Management
 
+For account cleanup, call `connector_account_list` with `include_inactive: true`
+to include expired, failed, and disabled accounts. The default list contains only
+active, enabled accounts.
+
 For explicit account management, use `connector_account_update` with the exact
 `connection_id` and `alias` (an empty string clears it), or `connector_account_delete`
 with the exact `connection_id` to disconnect it. These tools require
