@@ -27,6 +27,7 @@ database migration, CI, and implementation details.
 
 ### Changed
 
+- Discord messages reach connected agents sooner, especially after idle periods.
 - Telegram agents receive available updates sooner when earlier updates have
   already been acknowledged or excluded by their requested update types.
 

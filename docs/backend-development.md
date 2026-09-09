@@ -95,6 +95,12 @@ Claim, unlock, and liveness SQL share a serial gate. Discovery does not claim
 keys already held by account tasks. Ordinary account/dispatch queries continue
 to use the ordinary pool.
 
+Agent-facing Gateway delivery subscribes to the existing account-scoped inbound
+commit notification. The socket reader survives notifications and fallback
+timeouts so heartbeat frames are not discarded. The polling interval remains
+a notification-loss fallback. Another Link's notification may cause one empty
+filtered query; it does not grant that Link's message authority.
+
 The default liveness interval is one second, with a five-second probe deadline
 including serial-gate waiting. Lock SQL also has a five-second deadline. These
 are application cancellation deadlines, not guarantees about TCP blackhole or
