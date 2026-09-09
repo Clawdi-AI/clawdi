@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouterState } from "@tanstack/react-router";
-import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
+import { useRouter } from "@tanstack/react-router";
+import { createContext, type ReactNode, useContext, useEffect, useSyncExternalStore } from "react";
 import { unwrap, useApi } from "@/lib/api";
 import { useRouteAuth } from "@/lib/auth-client";
-import { claimDeployChannel, completeDeployChannelClaim } from "@/lib/deploy-channel";
+import { clearDeployChannelUrl, deployChannelIntent } from "@/lib/deploy-channel";
 import { env } from "@/lib/env";
 
 const queryKey = ["settings", "deploy-channel"];
@@ -27,46 +27,47 @@ export function ChannelBundleBoundary({ children }: { children: ReactNode }) {
 
 function ChannelBundleProvider({ userId, children }: { userId: string; children: ReactNode }) {
 	const api = useApi();
-	const href = useRouterState({ select: (state) => state.location.href });
+	const router = useRouter();
 	const queryClient = useQueryClient();
-	const [claimed, setClaimed] = useState<boolean | null>(null);
-	const started = useRef(false);
+	const snapshot = useSyncExternalStore(
+		deployChannelIntent.subscribe,
+		deployChannelIntent.getSnapshot,
+		deployChannelIntent.getServerSnapshot,
+	);
+	const intent = snapshot.intent?.userId === userId ? snapshot.intent : null;
 	const settings = useQuery({
 		queryKey,
-		queryFn: async () => unwrap(await api.GET("/v1/settings")).deploy_channel === "sui",
+		queryFn: async ({ signal }) =>
+			unwrap(await api.GET("/v1/settings", { signal })).deploy_channel === "sui",
 		staleTime: Infinity,
 	});
-	const save = useMutation({
-		mutationFn: async () => {
-			unwrap(await api.PATCH("/v1/settings", { body: { settings: { deploy_channel: "sui" } } }));
+	const { mutateAsync } = useMutation({
+		onMutate: () => queryClient.cancelQueries({ queryKey }),
+		mutationFn: async (signal: AbortSignal) => {
+			unwrap(
+				await api.PATCH("/v1/settings", { signal, body: { settings: { deploy_channel: "sui" } } }),
+			);
 		},
-		onSuccess: () => {
-			completeDeployChannelClaim(userId);
+		onSuccess: async () => {
+			await queryClient.cancelQueries({ queryKey });
 			queryClient.setQueryData(queryKey, true);
-			setClaimed(false);
+			// The old account's request may finish after a switch. Only clean its own URL.
+			if (deployChannelIntent.getSnapshot().intent?.userId === userId) {
+				router.history.replace(clearDeployChannelUrl(router.history.location.href));
+			}
 		},
 	});
-	const { mutate } = save;
 	useEffect(() => {
-		started.current = false;
-		setClaimed(claimDeployChannel(userId));
-	}, [userId, href]);
-	useEffect(() => {
-		if (!claimed || settings.isPending || settings.isError || started.current) return;
-		started.current = true;
-		if (settings.data) {
-			completeDeployChannelClaim(userId);
-			setClaimed(false);
-		} else mutate();
-	}, [claimed, settings.isPending, settings.isError, settings.data, userId, mutate]);
+		if (intent) void deployChannelIntent.claim(userId, mutateAsync);
+	}, [intent, userId, mutateAsync]);
 	return (
 		<BundleContext.Provider
 			value={{
 				data: settings.data === true,
-				isPending: claimed === null || settings.isPending || (claimed && !save.isError),
-				isError: settings.isError || save.isError,
+				isPending: settings.isPending || Boolean(intent && !snapshot.error),
+				isError: settings.isError || Boolean(intent && snapshot.error),
 				refetch: () => {
-					if (save.isError) mutate();
+					if (intent && snapshot.error) void deployChannelIntent.claim(userId, mutateAsync);
 					else void settings.refetch();
 				},
 			}}

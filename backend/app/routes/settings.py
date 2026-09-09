@@ -119,7 +119,8 @@ async def update_settings(
             stored = current.get(key)
             if isinstance(stored, str) and stored and not is_encrypted_field(stored):
                 current[key] = encrypt_field(stored)
-        setting.settings = current
+        if current != setting.settings:
+            setting.settings = current
     else:
         setting = UserSetting(user_id=auth.user_id, settings=encrypted_patch)
         db.add(setting)

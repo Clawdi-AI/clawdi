@@ -141,12 +141,24 @@ desired state.
 ### Channel bundle initialization
 
 `/deploy?deploy_profile=sui` (also `utm_source=sui`) recommends the optional
-Sui bundle. Anonymous capture survives authentication redirects; the signed-in
-app claims it for that user before deployment and persists `deploy_channel`
-through the existing settings API. Unknown channels do not write settings.
-The deployment form defaults the recommendation on and includes the user's
-choice in its existing checkout/deployment request identity. A channel is a
-recommendation, never a billing entitlement or external-service authorization.
+Sui bundle. First-party marketing captures only known values at its server
+boundary and hands them to a fixed Cloud destination. Marketing attribution
+expires after seven days; navigation and handoff do not renew it.
+
+Cloud has one browser intent owner, with optional session storage and a seven-day
+TTL. It binds anonymous intent to the first authenticated account and writes
+`deploy_channel` through the existing settings API. Changing to a different
+account discards the old pending intent and removes its URL parameters; it never
+transfers a failed claim. Failed saves remain retryable for the same account.
+Successful saves cancel stale settings reads, update that account's query cache,
+and consume the Cloud intent and URL. Unknown values never trigger a write.
+Without browser storage, the current page and explicit auth-return URL work;
+there is no promise of persistence across an unrelated reload.
+
+The deployment form reads only account settings, defaults the recommendation on,
+and includes the checkbox choice in the existing request identity. Unchecking
+applies only to this deployment; it does not erase account attribution. A channel
+is a recommendation, never a billing entitlement or external-service authorization.
 
 Both platform and admin runtime-state writes accept only the known bundle
 identifier. Cloud requires the owner's matching saved channel and selects whole
@@ -160,6 +172,16 @@ upgrade the initialized bundle. Skills and MCP servers remain inside their
 original plugin packages and separate native installation directories. Native
 skill-name collision behavior remains runtime-owned; this path does not rename
 or flatten packaged skills.
+
+Release ordering: publish the Store Sui 0.2.1 artifact/catalog from
+[Store PR #9](https://github.com/Clawdi-AI/store/pull/9) first, then the additive
+Cloud/Hosted APIs and finally their UI consumers. The root reviewer reports
+Docker qualification with official OpenClaw 2026.9.3 (1391f7c): seven plugins,
+72/72 unique skill names model-visible and eligible, none disabled. The three
+shared Walrus Sites skill directories use the same official source commit
+`6d429c88d14e3f9fcd4f95ce183ae6d69804e1d3` and are byte-identical. Native precedence
+warnings remain, without differing skill contents. This evidence does not verify
+third-party MCP authorization, real OAuth, or payment completion.
 
 Done: the Docker backend suites for platform endpoints and plugin catalog
 routes pass; the Docker web checks and `e2e/hosted-channel-bundle.pw.ts` verify
