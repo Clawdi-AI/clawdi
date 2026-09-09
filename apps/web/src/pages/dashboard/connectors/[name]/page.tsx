@@ -26,7 +26,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { ConnectorTool } from "@/lib/api-schemas";
 import {
-	isActiveConnection,
 	useAvailableApp,
 	useConnections,
 	useConnectorTools,
@@ -46,19 +45,6 @@ function formatName(raw: string): string {
 		.replace(/^[_-]+/, "")
 		.replace(/[_-]/g, " ")
 		.replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function connectionStatusLabel(status: string): string {
-	const normalized = status.trim().toLowerCase();
-	if (normalized === "active") return "Connected";
-	if (["pending", "initializing", "initiated", "connecting"].includes(normalized))
-		return "Awaiting authorization";
-	if (normalized === "expired") return "Expired";
-	if (normalized === "inactive") return "Inactive";
-	if (normalized === "disconnected") return "Disconnected";
-	if (normalized === "revoked") return "Access revoked";
-	if (["failed", "error"].includes(normalized)) return "Connection failed";
-	return "Status unavailable";
 }
 
 /**
@@ -158,14 +144,12 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	const isDisconnecting = (connectionId: string) => disconnectingIds.has(connectionId);
 
 	const appConnections = connections?.filter((c) => c.app_name === name) ?? [];
-	const activeConnections = appConnections.filter(isActiveConnection);
-	const inactiveConnections = appConnections.filter((c) => !isActiveConnection(c));
 	const editingConnection = appConnections.find((connection) => connection.id === editingId);
-	const isConnected = activeConnections.length > 0;
+	const isConnected = appConnections.length > 0;
 	const isLoading = isAppLoading || appQ.isPending;
 
 	const renderAccount = (c: components["schemas"]["ConnectorConnectionResponse"]) => (
-		<div key={c.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+		<div key={c.id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5">
 			<div className="min-w-0">
 				<p className="truncate text-sm font-medium" title={c.alias || c.account_display || c.id}>
 					{c.alias || c.account_display || `Account ${c.id.slice(-6)}`}
@@ -175,9 +159,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 						{c.account_display}
 					</p>
 				) : null}
-				<p className="mt-0.5 text-xs text-muted-foreground">
-					{c.is_disabled ? "Disabled" : connectionStatusLabel(c.status)}
-				</p>
+				<p className="mt-0.5 text-xs text-muted-foreground">Connected</p>
 			</div>
 			<div className="flex flex-wrap items-center gap-2">
 				<Button
@@ -189,15 +171,11 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					Rename
 				</Button>
 				<ConfirmAction
-					title={`${isActiveConnection(c) ? "Disconnect" : "Delete"} ${c.alias || c.account_display || "this account"}?`}
+					title={`Disconnect ${c.alias || c.account_display || "this account"}?`}
 					description={
-						<p>
-							{isActiveConnection(c)
-								? "All agents will lose access immediately. To restore access, sign in again."
-								: "This removes the saved account and its name for all agents."}
-						</p>
+						<p>All agents will lose access immediately. To restore access, sign in again.</p>
 					}
-					confirmLabel={isActiveConnection(c) ? "Disconnect" : "Delete"}
+					confirmLabel="Disconnect"
 					destructive
 					onConfirm={() => handleDisconnect(c.id)}
 				>
@@ -212,7 +190,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 						) : (
 							<Link2Off className="size-3.5" />
 						)}
-						{isActiveConnection(c) ? "Disconnect" : "Delete"}
+						Disconnect
 					</Button>
 				</ConfirmAction>
 			</div>
@@ -302,7 +280,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 							? "No account required"
 							: isConnectionsLoading
 								? "Checking accounts"
-								: `${activeConnections.length} active · ${appConnections.length} total`
+								: `${appConnections.length} connected`
 					}
 					description={
 						usesNoAuth
@@ -319,7 +297,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 						) : null
 					}
 				/>
-				<div className="p-4">
+				<div className={isConnected ? undefined : "p-4"}>
 					{!usesNoAuth && shouldBlockQueryError(connectionsQ.error, connectionsQ.data) ? (
 						// Without this, a failed connections fetch silently renders
 						// the "No connected accounts yet" empty state — the user
@@ -333,7 +311,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 							title="Couldn't load connections"
 						/>
 					) : !usesNoAuth && isConnectionsLoading ? (
-						<div className="rounded-lg border bg-card p-4">
+						<div className="p-4">
 							<div className="flex items-center gap-3">
 								<Skeleton className="size-9 shrink-0 rounded-lg" />
 								<div className="min-w-0 flex-1 space-y-2">
@@ -373,17 +351,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 							/>
 						)
 					) : (
-						<div className="divide-y overflow-hidden rounded-lg border bg-card">
-							{activeConnections.map(renderAccount)}
-							{inactiveConnections.length > 0 ? (
-								<details>
-									<summary className="cursor-pointer px-4 py-3 text-sm text-muted-foreground hover:text-foreground">
-										Inactive accounts ({inactiveConnections.length})
-									</summary>
-									<div className="divide-y border-t">{inactiveConnections.map(renderAccount)}</div>
-								</details>
-							) : null}
-						</div>
+						<div className="divide-y">{appConnections.map(renderAccount)}</div>
 					)}
 				</div>
 			</DashboardSection>

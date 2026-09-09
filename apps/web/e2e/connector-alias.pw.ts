@@ -45,21 +45,33 @@ async function stub(page: Page, authType = "oauth2") {
 	});
 }
 
-test("expired accounts are absent from account rows and counts", async ({ page }) => {
+test("only active enabled accounts appear in flat account rows", async ({ page }) => {
 	await stub(page);
 	await page.route("**/v1/connectors", (route) =>
 		route.fulfill({
 			json: [
 				{ id: "ca_expired", app_name: "gmail", alias: "old-work", status: "EXPIRED" },
+				{ id: "ca_failed", app_name: "gmail", alias: "failed-work", status: "FAILED" },
+				{
+					id: "ca_disabled",
+					app_name: "gmail",
+					alias: "disabled-work",
+					status: "ACTIVE",
+					is_disabled: true,
+				},
 				{ id: "ca_active", app_name: "gmail", alias: "work", status: "ACTIVE" },
 			],
 		}),
 	);
 	await page.goto("/connectors/gmail");
-	await expect(page.getByText("1 active · 1 total", { exact: true })).toBeVisible();
+	await expect(page.getByText("1 connected", { exact: true })).toBeVisible();
 	await expect(page.getByText("work", { exact: true })).toBeVisible();
 	await expect(page.getByText("old-work", { exact: true })).toHaveCount(0);
-	await expect(page.getByText(/Inactive accounts/)).toHaveCount(0);
+	await expect(
+		page.getByText(/Inactive accounts|Needs attention|failed-work|disabled-work/),
+	).toHaveCount(0);
+	const row = page.getByText("work", { exact: true }).locator("../..");
+	await expect(row.locator("..")).toHaveClass("divide-y");
 });
 
 test("credentials connect includes alias without leaking failed response details", async ({
@@ -100,7 +112,7 @@ test("Agent account rename, retry and clear retain identity", async ({ page }) =
 			app_name: "gmail",
 			alias: "work",
 			account_display: "work@example.test",
-			status: "INACTIVE",
+			status: "ACTIVE",
 		},
 		{
 			id: "ca_personal",
@@ -140,14 +152,11 @@ test("Agent account rename, retry and clear retain identity", async ({ page }) =
 	await expect(page.getByText("gmail-marvin-phala", { exact: true })).toBeVisible();
 	await expect(page.getByText("Account ca_named", { exact: true })).toHaveCount(0);
 	await expect(page.getByText("Account 123456", { exact: true })).toBeVisible();
-	await expect(page.getByText("Inactive", { exact: true })).toBeHidden();
-	await page.getByText("Inactive accounts (1)", { exact: true }).click();
-	await expect(page.getByText("Inactive", { exact: true })).toBeVisible();
-	await expect(page.getByText("3 active · 4 total", { exact: true })).toBeVisible();
+	await expect(page.getByText("4 connected", { exact: true })).toBeVisible();
 	await expect(page.getByText("work@example.test", { exact: true })).toBeVisible();
 	await expect(page.getByText("personal@example.test", { exact: true })).toBeVisible();
 	await expect(page.getByText("Shared across all agents")).toBeVisible();
-	await page.getByRole("button", { name: "Rename", exact: true }).last().click();
+	await page.getByRole("button", { name: "Rename", exact: true }).first().click();
 	const dialog = page.getByRole("dialog");
 	await expect(dialog.getByRole("heading", { name: "Rename account" })).toBeVisible();
 	await dialog.getByLabel("Name (optional)").fill("office");
@@ -167,7 +176,7 @@ test("Agent account rename, retry and clear retain identity", async ({ page }) =
 	await expect(dialog).toBeHidden();
 	await expect(page.getByText("office", { exact: true })).toBeVisible();
 	await expect(page.getByText("work@example.test", { exact: true })).toBeVisible();
-	await page.getByRole("button", { name: "Rename", exact: true }).last().click();
+	await page.getByRole("button", { name: "Rename", exact: true }).first().click();
 	await dialog.getByLabel("Name (optional)").fill("");
 	await dialog.getByRole("button", { name: "Rename", exact: true }).click();
 	await expect(dialog).toBeHidden();

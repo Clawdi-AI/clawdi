@@ -135,9 +135,8 @@ through that system instead of adding another hardcoded string layer.
 ## Connector account management
 
 Connector management uses the same account-wide API in the library and Agent
-detail views. Hide expired accounts from UI rows and counts without deleting them.
-Other non-active accounts remain manageable; only active, enabled accounts count
-as connected. Display aliases alongside provider identity
+detail views. Show only active, enabled accounts in rows, counts, and connected-app
+lists without deleting other provider records. Accounts use flat divided rows. Display aliases alongside provider identity
 or a connection ID, and allow an empty alias to clear it. Alias input is bounded
 to 256 characters by Clawdi, not by a documented Composio format restriction.
 

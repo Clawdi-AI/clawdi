@@ -151,11 +151,6 @@ function ConnectorsList({
 		[connected.activeConnections],
 	);
 
-	const managedNames = useMemo(
-		() => new Set(connected.connections.flatMap((c) => (c.app_name ? [c.app_name] : []))),
-		[connected.connections],
-	);
-
 	const items = pageData?.items ?? [];
 	const total = pageData?.total ?? 0;
 	const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -221,8 +216,7 @@ function ConnectorsList({
 			{showConnectedRail ? (
 				<ConnectedRail
 					apps={connected.data}
-					appNames={[...managedNames]}
-					activeNames={connectedNames}
+					appNames={[...connectedNames]}
 					isLoading={connected.isLoading}
 					error={connectedError}
 					onRetry={connected.refetch}
@@ -236,7 +230,6 @@ function ConnectorsList({
 				page={page}
 				totalPages={totalPages}
 				connectedNames={connectedNames}
-				managedNames={managedNames}
 				isLoading={isCatalogLoading}
 				error={catalogError}
 				query={debouncedQuery}
@@ -252,12 +245,11 @@ function ConnectorsList({
 }
 
 /**
- * Account management stays discoverable regardless of account status or catalog page.
+ * Connected accounts stay discoverable regardless of catalog page.
  */
 function ConnectedRail({
 	apps,
 	appNames,
-	activeNames,
 	isLoading,
 	error,
 	onRetry,
@@ -265,7 +257,6 @@ function ConnectedRail({
 }: {
 	apps: ConnectorMetadata[];
 	appNames: readonly string[];
-	activeNames: Set<string>;
 	isLoading: boolean;
 	error: Error | null;
 	onRetry: () => void;
@@ -296,13 +287,7 @@ function ConnectedRail({
 					{appNames.map((name) => {
 						const app = byName.get(name);
 						return app ? (
-							<ConnectorCard
-								key={name}
-								app={app}
-								isConnected={activeNames.has(name)}
-								scope={scope}
-								needsAttention={!activeNames.has(name)}
-							/>
+							<ConnectorCard key={name} app={app} isConnected scope={scope} />
 						) : (
 							<ConnectorCardSkeleton key={name} />
 						);
@@ -319,7 +304,6 @@ function CatalogSection({
 	page,
 	totalPages,
 	connectedNames,
-	managedNames,
 	isLoading,
 	error,
 	query,
@@ -333,7 +317,6 @@ function CatalogSection({
 	page: number;
 	totalPages: number;
 	connectedNames: Set<string>;
-	managedNames: Set<string>;
 	isLoading: boolean;
 	error: Error | null;
 	query: string;
@@ -375,11 +358,10 @@ function CatalogSection({
 							key={app.name}
 							app={app}
 							isConnected={connectedNames.has(app.name)}
-							needsAttention={managedNames.has(app.name) && !connectedNames.has(app.name)}
 							scope={scope}
 							searchQuery={query.trim() || undefined}
 							actions={
-								!managedNames.has(app.name) ? (
+								!connectedNames.has(app.name) ? (
 									<ConnectorConnectAction
 										app={app}
 										redirectHref={connectorDetailHrefForScope(scope, app.name)}

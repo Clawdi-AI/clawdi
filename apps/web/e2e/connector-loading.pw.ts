@@ -94,9 +94,9 @@ for (const width of [1440, 375]) {
 				.locator("section")
 				.filter({ has: page.getByText("Your connections", { exact: true }) });
 			await expect(rail.getByRole("link", { name: "GAMMA", exact: true })).toHaveCount(0);
-			await expect(rail.getByText("3 apps", { exact: true })).toBeVisible();
-			await expect(rail.getByRole("link", { name: "retired", exact: true })).toBeVisible();
-			expect(batches).toEqual([["alpha", "beta", "retired"]]);
+			await expect(rail.getByText("2 apps", { exact: true })).toBeVisible();
+			await expect(rail.getByRole("link", { name: "retired", exact: true })).toHaveCount(0);
+			expect(batches).toEqual([["alpha", "beta"]]);
 			const alpha = rail.getByRole("link", { name: "ALPHA", exact: true }).locator("..");
 			await expect(alpha.getByText("A", { exact: true })).toBeVisible();
 			catalog.resolve();
