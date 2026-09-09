@@ -303,16 +303,21 @@ def discord_application_id(account: ChannelAccount) -> str:
     return str(abs(hash(str(account.id))) % 10_000_000_000_000_000_000)
 
 
-def discord_bot_user(account: ChannelAccount) -> JsonObject:
+def discord_bot_user(account: ChannelAccount, link: ChannelBotAgentLink) -> JsonObject:
     config = account.config if isinstance(account.config, dict) else {}
+    shadow = link.config if isinstance(link.config, dict) else {}
     app_id = discord_application_id(account)
-    username = optional_str(config.get("bot_username")) or account.name
+    username = (
+        optional_str(shadow.get("bot_username"))
+        or optional_str(config.get("bot_username"))
+        or account.name
+    )
     return {
         "id": app_id,
         "username": username,
         "global_name": username,
         "discriminator": "0000",
-        "avatar": config.get("bot_avatar"),
+        "avatar": shadow.get("bot_avatar", config.get("bot_avatar")),
         "bot": True,
         "system": False,
     }

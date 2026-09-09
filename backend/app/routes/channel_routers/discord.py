@@ -47,6 +47,7 @@ from app.models.channel import (
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_STATUS_ACTIVE,
     ChannelAccount,
+    ChannelAgentReference,
     ChannelBinding,
     ChannelBindingAlias,
     ChannelBotAgentLink,
@@ -366,7 +367,9 @@ async def discord_agent_rest(
     if segments == ["users", "@me"]:
         if request.method == "PATCH":
             params = await request_params(request)
-            config = dict(account.config) if isinstance(account.config, dict) else {}
+            # Share the Link lock with command-shadow writes to preserve unrelated config.
+            await db.refresh(agent.link, with_for_update=True)
+            config = dict(agent.link.config) if isinstance(agent.link.config, dict) else {}
             username = optional_str(params.get("username"))
             if username:
                 config["bot_username"] = username
@@ -378,9 +381,9 @@ async def discord_agent_rest(
                         detail="avatar must be a JSON value",
                     )
                 config["bot_avatar"] = avatar
-            account.config = config
+            agent.link.config = config
             await db.commit()
-        return discord_bot_user(account)
+        return discord_bot_user(account, agent.link)
     command_response = await handle_discord_application_commands(
         db,
         agent=agent,
@@ -390,7 +393,7 @@ async def discord_agent_rest(
     if command_response is not None:
         return command_response
     if segments in (["oauth2", "applications", "@me"], ["applications", "@me"]):
-        user = discord_bot_user(account)
+        user = discord_bot_user(account, agent.link)
         return {
             "id": user["id"],
             "name": user["username"],
@@ -1257,7 +1260,7 @@ async def discord_agent_gateway(
                                 else public_ws_url("/v1/channels/discord/gateway")
                             )
                         ),
-                        "user": discord_bot_user(account),
+                        "user": discord_bot_user(account, resolved_agent.link),
                         "application": {"id": discord_application_id(account)},
                         "guilds": [{"id": guild_id, "unavailable": False} for guild_id in guilds],
                         "private_channels": [
@@ -1787,6 +1790,30 @@ async def cleanup_discord_guild_commands_after_authority_revoked(
         return False
 
 
+async def _discord_interaction_reference_is_authorized(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    bot_agent_link_id: UUID,
+    reference: ChannelAgentReference | None,
+) -> bool:
+    # Agent interactions require a live Binding. Unbound/control interactions
+    # are answered by the platform; orphaned historical references grant no authority.
+    if reference is None or reference.binding_id is None:
+        return False
+    binding = await db.get(ChannelBinding, reference.binding_id)
+    if binding is None:
+        return False
+    leased = await lock_active_discord_binding_lease(
+        db,
+        account_id=account.id,
+        bot_agent_link_id=bot_agent_link_id,
+        binding_id=binding.id,
+        external_chat_id=binding.external_chat_id,
+    )
+    return leased is not None and leased.user_id == reference.user_id
+
+
 async def _handle_discord_interaction_callback(
     db: AsyncSession,
     *,
@@ -1807,7 +1834,9 @@ async def _handle_discord_interaction_callback(
         ref_value=f"{interaction_id}:{token}",
         bot_agent_link_id=bot_agent_link_id,
     )
-    if reference is None:
+    if not await _discord_interaction_reference_is_authorized(
+        db, account=account, bot_agent_link_id=bot_agent_link_id, reference=reference
+    ):
         return _discord_rest_error("Unknown Interaction", 10062, 404)
     return await proxy_discord_request(account=account, request=request, path=path)
 
@@ -1835,6 +1864,10 @@ async def _handle_discord_webhook_followup(
     metadata = reference.metadata_ if reference is not None else None
     recorded_application_id = metadata.get("application_id") if isinstance(metadata, dict) else None
     if reference is None or recorded_application_id != application_id:
+        return _discord_rest_error("Unknown Webhook", 10015, 404)
+    if not await _discord_interaction_reference_is_authorized(
+        db, account=account, bot_agent_link_id=bot_agent_link_id, reference=reference
+    ):
         return _discord_rest_error("Unknown Webhook", 10015, 404)
     return await proxy_discord_request(account=account, request=request, path=path)
 
