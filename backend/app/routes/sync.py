@@ -37,7 +37,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import aclosing
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -45,6 +46,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.types import Send
 
 from app.core.auth import AuthContext, require_scope_short_session
 from app.core.database import async_session_factory, finish_cleanup
@@ -83,6 +85,18 @@ PER_BOUND_KEY_CONNECTION_CAP = 3
 HEARTBEAT_INTERVAL_S = 25.0
 SUBSCRIPTION_LEASE_TTL = timedelta(seconds=90)
 OAUTH_ACCESS_EXPIRY_SKEW = timedelta(seconds=1)
+
+
+class _SyncStreamingResponse(StreamingResponse):
+    def __init__(self, content: AsyncGenerator[bytes, None], *, headers: dict[str, str]) -> None:
+        super().__init__(content, media_type="text/event-stream", headers=headers)
+        self._content = content
+
+    async def stream_response(self, send: Send) -> None:
+        # Starlette does not close an iterator suspended at yield when send
+        # fails or is cancelled by disconnect/backpressure.
+        async with aclosing(self._content):
+            await super().stream_response(send)
 
 
 def _oauth_cli_access_expired(
@@ -178,7 +192,7 @@ async def _stream(
     queue: sync_events.SyncEventQueue,
     request: Request,
     revoked: asyncio.Event,
-) -> AsyncIterator[bytes]:
+) -> AsyncGenerator[bytes, None]:
     """SSE event source. Drains `queue` (events from
     `bump_skills_revision`, already broker-filtered to the
     subscriber's visible projects) and emits heartbeats so proxies
@@ -187,46 +201,34 @@ async def _stream(
     revocation noticed by the subscription refresher), or whichever
     happens first."""
     yield b": connected\n\n"
-    while True:
-        if await request.is_disconnected() or revoked.is_set():
-            return
-        event_task = asyncio.create_task(queue.get())
-        revoked_task = asyncio.create_task(revoked.wait())
-        child_tasks = (event_task, revoked_task)
-        try:
+    revoked_task = asyncio.create_task(revoked.wait())
+    event_task = None
+    try:
+        while True:
+            if await request.is_disconnected() or revoked.is_set():
+                return
+            event_task = asyncio.create_task(queue.get())
             done, _pending = await asyncio.wait(
-                child_tasks,
+                (event_task, revoked_task),
                 timeout=HEARTBEAT_INTERVAL_S,
                 return_when=asyncio.FIRST_COMPLETED,
             )
-        finally:
-            # A client disconnect cancels the async generator while it may be
-            # parked inside ``asyncio.wait``. Cleanup after a normal wait is
-            # therefore insufficient: Queue.get/Event.wait tasks survive and
-            # asyncio later reports "Task was destroyed but it is pending".
-            # Own both child tasks on every exit, including generator
-            # cancellation and server shutdown.
-            await _cancel_and_wait(*child_tasks)
-        if revoked_task in done or revoked.is_set():
-            return
-        if event_task not in done:
-            # No event in 25s; emit heartbeat comment and loop.
-            yield b": ping\n\n"
-            continue
-        event_payload = event_task.result()
-        # Re-check revocation BEFORE emitting. The refresher can
-        # set `revoked` while `wait_for` is parked on `queue.get()`;
-        # an event landing in the queue right after revocation
-        # would otherwise be emitted (one final `skill_changed`
-        # / `skill_deleted` slipping past). Skill events wake an
-        # Agent-authoritative local rescan, so this is
-        # not cosmetic — without the re-check, a freshly-revoked token could
-        # still trigger client work after its authorization was revoked.
-        if revoked.is_set():
-            return
-        # Real event: write SSE record.
-        payload = json.dumps(event_payload)
-        yield f"event: {event_payload['type']}\ndata: {payload}\n\n".encode()
+            # Revocation wins even when an event completes in the same turn.
+            if revoked_task in done or revoked.is_set():
+                return
+            if event_task not in done:
+                await _cancel_and_wait(event_task)
+                yield b": ping\n\n"
+                continue
+            # The event task has finished; only pending or exiting work needs
+            # shielded collection. Keep the revocation waiter across records.
+            event_payload = event_task.result()
+            payload = json.dumps(event_payload)
+            yield f"event: {event_payload['type']}\ndata: {payload}\n\n".encode()
+    finally:
+        # Own both waiters through disconnect, cancellation, and generator close.
+        child_tasks = (revoked_task,) if event_task is None else (event_task, revoked_task)
+        await _cancel_and_wait(*child_tasks)
 
 
 # Notifications drive normal refreshes. This slow poll only catches a lost
@@ -416,13 +418,14 @@ async def events(
                 )
                 subscriber.visible_project_ids = fresh
 
-    async def gen() -> AsyncIterator[bytes]:
+    async def gen() -> AsyncGenerator[bytes, None]:
         refresh_task = asyncio.create_task(refresh_visibility())
         expiry_task = asyncio.create_task(_close_on_oauth_access_expiry(auth, revoked))
         lease_task = asyncio.create_task(_refresh_subscription_lease(lease_id, revoked))
         try:
-            async for chunk in _stream(queue, request, revoked):
-                yield chunk
+            async with aclosing(_stream(queue, request, revoked)) as stream:
+                async for chunk in stream:
+                    yield chunk
         finally:
             try:
                 await _cancel_and_wait(refresh_task, expiry_task, lease_task)
@@ -447,9 +450,8 @@ async def events(
     # no` disables nginx response buffering on the off chance an
     # operator runs us behind one — without it the bytes pile up in
     # nginx's buffer and the daemon never sees the heartbeat.
-    return StreamingResponse(
+    return _SyncStreamingResponse(
         gen(),
-        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",

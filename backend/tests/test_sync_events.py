@@ -438,6 +438,94 @@ async def test_stream_cancellation_awaits_internal_wait_tasks(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("heartbeat", [False, True])
+@pytest.mark.parametrize("close_mode", ["aclose", "send_failure", "backpressure"])
+async def test_response_close_collects_stream_suspended_at_yield(
+    db_session: AsyncSession,
+    seed_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    heartbeat: bool,
+    close_mode: str,
+):
+    """Closing the response must close its inner stream without relying on GC."""
+    from app.routes import sync as sync_route
+
+    original_stream = sync_route._stream
+    streams = []
+    queues = []
+
+    def retain_stream(queue, request, revoked):
+        stream = original_stream(queue, request, revoked)
+        streams.append(stream)
+        queues.append(queue)
+        return stream
+
+    monkeypatch.setattr(sync_route, "_stream", retain_stream)
+    if heartbeat:
+        monkeypatch.setattr(sync_route, "HEARTBEAT_INTERVAL_S", 0.01)
+    await db_session.commit()
+    response = await sync_route.events(_connected_request(), AuthContext(user=seed_user), None)
+    iterator = response.body_iterator
+    tasks_before = asyncio.all_tasks()
+    sending = asyncio.Event()
+    disconnected = asyncio.Event()
+    request_task = None
+
+    async def send(message):
+        if message.get("body"):
+            sending.set()
+            if close_mode == "send_failure":
+                raise OSError("peer send failed")
+            await asyncio.Event().wait()
+
+    async def receive():
+        await disconnected.wait()
+        return {"type": "http.disconnect"}
+
+    try:
+        assert await iterator.__anext__() == b": connected\n\n"
+        if heartbeat:
+            assert await asyncio.wait_for(iterator.__anext__(), 1) == b": ping\n\n"
+        else:
+            for revision in (1, 2):
+                queues[0].put_nowait({"type": "skill_changed", "skills_revision": revision})
+            for revision in (1, 2):
+                chunk = await asyncio.wait_for(iterator.__anext__(), 1)
+                assert f'"skills_revision": {revision}'.encode() in chunk
+            assert queues[0].empty()
+        if close_mode != "aclose":
+            if not heartbeat:
+                queues[0].put_nowait({"type": "skill_changed", "skills_revision": 3})
+            request_task = asyncio.create_task(
+                response({"type": "http", "asgi": {"spec_version": "2.3"}}, receive, send)
+            )
+            await asyncio.wait_for(sending.wait(), 1)
+            if close_mode == "send_failure":
+                with pytest.raises(OSError, match="peer send failed"):
+                    await asyncio.wait_for(request_task, 2)
+            else:
+                disconnected.set()
+                await asyncio.wait_for(request_task, 2)
+        else:
+            await iterator.aclose()
+        assert streams[0].ag_frame is None
+        assert asyncio.all_tasks() <= tasks_before
+    finally:
+        if request_task is not None and not request_task.done():
+            request_task.cancel()
+            await asyncio.gather(request_task, return_exceptions=True)
+        await iterator.aclose()
+
+    assert sync_events.connection_count(seed_user.id) == 0
+    assert (
+        await db_session.scalar(
+            select(SyncSubscriptionLease.id).where(SyncSubscriptionLease.user_id == seed_user.id)
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_stream_cancellation_waits_for_lease_release_transaction(
     db_session: AsyncSession,
     seed_user: User,
@@ -585,15 +673,8 @@ async def test_cancel_and_wait_preserves_failure_when_parent_is_cancelled(caplog
 
 
 @pytest.mark.asyncio
-async def test_stream_drops_event_queued_before_revoke():
-    """Race: event lands in the queue right before / during the
-    25s `wait_for(queue.get())`. The refresher fires `revoked`
-    while wait_for is parked. wait_for resolves the event without
-    re-checking the flag — pre-fix the daemon got one extra
-    `skill_changed` / `skill_deleted` past revocation. Skill events now wake
-    an Agent-authoritative local rescan rather than mutating local files, but
-    work must still stop at revocation. Verify the second `__anext__` returns
-    (closes the generator) instead of yielding the event."""
+async def test_stream_drops_event_queued_before_revoke(monkeypatch: pytest.MonkeyPatch):
+    """An event and revocation arriving in the same turn must close a parked stream."""
     from app.routes.sync import _stream
 
     queue: asyncio.Queue = asyncio.Queue()
@@ -604,20 +685,33 @@ async def test_stream_drops_event_queued_before_revoke():
     first = await gen.__anext__()
     assert first == b": connected\n\n"
 
-    # Queue an event AND fire revocation in the same tick. The
-    # generator's next iteration sees the revoked flag (via the
-    # post-get re-check) and returns instead of emitting.
-    await queue.put(
-        {
-            "type": "skill_deleted",
-            "skill_key": "x",
-            "project_id": "00000000-0000-0000-0000-000000000099",
-            "skills_revision": 1,
-        }
-    )
-    revoked.set()
-    with pytest.raises(StopAsyncIteration):
-        await gen.__anext__()
+    waiting = asyncio.Event()
+    original_get = queue.get
+
+    async def get():
+        waiting.set()
+        return await original_get()
+
+    monkeypatch.setattr(queue, "get", get)
+    next_chunk = asyncio.create_task(gen.__anext__())
+    try:
+        await asyncio.wait_for(waiting.wait(), 1)
+        queue.put_nowait(
+            {
+                "type": "skill_deleted",
+                "skill_key": "x",
+                "project_id": "00000000-0000-0000-0000-000000000099",
+                "skills_revision": 1,
+            }
+        )
+        revoked.set()
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(next_chunk, 1)
+    finally:
+        if not next_chunk.done():
+            next_chunk.cancel()
+        await asyncio.gather(next_chunk, return_exceptions=True)
+        await gen.aclose()
 
 
 @pytest.mark.asyncio
