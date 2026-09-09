@@ -38,7 +38,11 @@ import {
 	useUpdateConnectionProvider,
 } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { codexProviderBody } from "@/hosted/v2/ai-providers/codex-oauth";
-import { type ProviderChoice, ProviderChooser } from "@/hosted/v2/ai-providers/provider-chooser";
+import {
+	type ProviderChoice,
+	ProviderChooser,
+	type ProviderGroup,
+} from "@/hosted/v2/ai-providers/provider-chooser";
 import { ProviderFieldsForm } from "@/hosted/v2/ai-providers/provider-fields-form";
 import { ProviderOAuthFlow } from "@/hosted/v2/ai-providers/provider-oauth-flow";
 import {
@@ -88,6 +92,7 @@ export function AddProviderDialog({
 	const { state: form, reset: resetForm, update: updateForm } = useProviderForm();
 	const isEdit = Boolean(editing);
 	const [step, setStep] = useState<DialogStep>(editing ? "configure" : "choose");
+	const [providerGroup, setProviderGroup] = useState<ProviderGroup | null>(null);
 	const acceptAttemptRef = useRef<AcceptAttempt | null>(null);
 	const {
 		session: oauth,
@@ -159,6 +164,7 @@ export function AddProviderDialog({
 
 	useEffect(() => {
 		if (!open) return;
+		setProviderGroup(null);
 		oauthExit.beginOpen();
 		invalidateOAuth();
 		clearOAuth();
@@ -472,6 +478,18 @@ export function AddProviderDialog({
 		oauthDeviceStart.isPending ||
 		oauthDevicePoll.isPending;
 
+	const canGoBack = Boolean(renderedOAuth || (!isEdit && (step === "configure" || providerGroup)));
+	function goBack() {
+		if (busy) return;
+		if (renderedOAuth) {
+			invalidateOAuth();
+			clearOAuth();
+			return;
+		}
+		if (step === "configure") setStep("choose");
+		else setProviderGroup(null);
+	}
+
 	return (
 		<Dialog open={open} onOpenChange={requestClose} onOpenChangeComplete={completeOpenChange}>
 			<DialogContent
@@ -479,35 +497,51 @@ export function AddProviderDialog({
 				data-v2="true"
 				className="flex max-h-[min(36rem,calc(100dvh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl"
 			>
-				<DialogHeader className="shrink-0 px-5 pt-5 pr-14 sm:px-6 sm:pt-6 sm:pr-14">
-					<DialogTitle className="flex min-w-0 items-center gap-3">
-						{step === "configure" || isEdit || renderedOAuth ? (
-							<span aria-hidden="true" className="shrink-0">
-								<EntityIcon
-									kind="provider"
-									id={
-										renderedOAuth || form.authMethod === "oauth"
-											? "openai"
-											: (selectedPreset?.id ?? form.type)
-									}
-									label={providerLabel}
-									size="md"
-								/>
-							</span>
+				<DialogHeader className="relative shrink-0 px-5 pt-5 pr-14 sm:px-6 sm:pt-6 sm:pr-14">
+					<div className="flex min-w-0 items-center gap-2">
+						{canGoBack ? (
+							<Button
+								variant="ghost"
+								size="icon-sm"
+								aria-label="Back"
+								disabled={busy}
+								onClick={goBack}
+								className="shrink-0"
+							>
+								<ArrowLeft />
+							</Button>
 						) : null}
-						<span className="min-w-0 break-words">
-							{renderedOAuth
-								? "Sign in with ChatGPT"
-								: isEdit
-									? (editing?.readiness?.deployable ?? editing?.usable) &&
-										editing.auth.type !== "none"
-										? `Edit ${providerLabel}`
-										: `Finish ${providerLabel} setup`
-									: step === "choose"
-										? "Add a provider"
-										: `Set up ${providerLabel}`}
-						</span>
-					</DialogTitle>
+						<DialogTitle className="flex min-w-0 items-center gap-3">
+							{step === "configure" || isEdit || renderedOAuth || providerGroup ? (
+								<span aria-hidden="true" className="shrink-0">
+									<EntityIcon
+										kind="provider"
+										id={
+											renderedOAuth || form.authMethod === "oauth"
+												? "openai"
+												: step === "choose" && providerGroup
+													? providerGroup.iconId
+													: (selectedPreset?.id ?? form.type)
+										}
+										label={step === "choose" && providerGroup ? providerGroup.label : providerLabel}
+										size="md"
+									/>
+								</span>
+							) : null}
+							<span className="min-w-0 break-words">
+								{renderedOAuth
+									? "Sign in with ChatGPT"
+									: isEdit
+										? (editing?.readiness?.deployable ?? editing?.usable) &&
+											editing.auth.type !== "none"
+											? `Edit ${providerLabel}`
+											: `Finish ${providerLabel} setup`
+										: step === "choose"
+											? (providerGroup?.label ?? "Add a provider")
+											: `Set up ${providerLabel}`}
+							</span>
+						</DialogTitle>
+					</div>
 				</DialogHeader>
 
 				<div
@@ -524,7 +558,11 @@ export function AddProviderDialog({
 							onRestart={() => void runAction(restartOAuth)}
 						/>
 					) : step === "choose" && !isEdit ? (
-						<ProviderChooser onSelect={selectProvider} />
+						<ProviderChooser
+							onSelect={selectProvider}
+							selected={providerGroup}
+							onGroupChange={setProviderGroup}
+						/>
 					) : (
 						<div className="flex flex-col gap-3">
 							{!providerListReady ? (
@@ -576,17 +614,11 @@ export function AddProviderDialog({
 							</Button>
 						) : (
 							<>
-								<Button
-									variant="outline"
-									onClick={() => {
-										if (isEdit) requestClose(false);
-										else setStep("choose");
-									}}
-									disabled={busy}
-								>
-									{isEdit ? null : <ArrowLeft />}
-									{isEdit ? "Cancel" : "Back"}
-								</Button>
+								{isEdit ? (
+									<Button variant="outline" onClick={() => requestClose(false)} disabled={busy}>
+										Cancel
+									</Button>
+								) : null}
 								<Button onClick={() => void runAction(submit)} disabled={!canSubmit || busy}>
 									{busy ? <Spinner data-icon="inline-start" /> : null}
 									{form.authMethod === "oauth" && !isEdit

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ interface ChoiceEntry {
 	label: string;
 	choice: ProviderChoice;
 }
-interface ProviderGroup {
+export interface ProviderGroup {
 	id: string;
 	label: string;
 	iconId: string;
@@ -76,9 +76,16 @@ for (const preset of PROVIDER_PRESETS) {
 }
 GROUPS.push(typeGroup("custom_openai_compatible"));
 
-export function ProviderChooser({ onSelect }: { onSelect: (choice: ProviderChoice) => void }) {
+export function ProviderChooser({
+	onSelect,
+	selected,
+	onGroupChange,
+}: {
+	onSelect: (choice: ProviderChoice) => void;
+	selected: ProviderGroup | null;
+	onGroupChange: (group: ProviderGroup | null) => void;
+}) {
 	const [query, setQuery] = useState("");
-	const [selected, setSelected] = useState<ProviderGroup | null>(null);
 	const normalized = query.trim().toLowerCase();
 	const groups = GROUPS.filter((group) =>
 		[group.id, group.label, ...group.entries.map((entry) => `${entry.id} ${entry.label}`)]
@@ -89,33 +96,19 @@ export function ProviderChooser({ onSelect }: { onSelect: (choice: ProviderChoic
 	return (
 		<div data-hosted="true" data-v2="true" className="flex flex-col gap-3">
 			{selected ? (
-				<>
-					<div className="flex items-center gap-2">
+				<div className="grid gap-2 sm:grid-cols-2" data-testid="provider-variant-grid">
+					{selected.entries.map((entry) => (
 						<Button
-							variant="ghost"
-							size="icon-sm"
-							aria-label="Back to providers"
-							onClick={() => setSelected(null)}
+							key={entry.id}
+							variant="outline"
+							className="h-auto min-h-11 justify-between whitespace-normal px-3 py-2 text-left"
+							onClick={() => onSelect(entry.choice)}
 						>
-							<ArrowLeft />
+							{entry.label}
+							<ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
 						</Button>
-						<EntityIcon kind="provider" id={selected.iconId} size="sm" />
-						<span className="text-sm font-medium">{selected.label}</span>
-					</div>
-					<div className="grid gap-2 sm:grid-cols-2" data-testid="provider-variant-grid">
-						{selected.entries.map((entry) => (
-							<Button
-								key={entry.id}
-								variant="outline"
-								className="h-auto min-h-11 justify-between whitespace-normal px-3 py-2 text-left"
-								onClick={() => onSelect(entry.choice)}
-							>
-								{entry.label}
-								<ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-							</Button>
-						))}
-					</div>
-				</>
+					))}
+				</div>
 			) : (
 				<>
 					<SearchInput
@@ -134,7 +127,7 @@ export function ProviderChooser({ onSelect }: { onSelect: (choice: ProviderChoic
 								onClick={() => {
 									const first = group.entries[0];
 									if (group.entries.length === 1 && first) onSelect(first.choice);
-									else setSelected(group);
+									else onGroupChange(group);
 								}}
 							>
 								<span aria-hidden="true" className="shrink-0">

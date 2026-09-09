@@ -237,10 +237,19 @@ test("popular BYOK providers support credential-only product setup", async ({ pa
 	await page.screenshot({ path: testInfo.outputPath("provider-mobile.png") });
 	await page.setViewportSize({ width: 1000, height: 1000 });
 	await dialog.getByRole("button", { name: "Kimi", exact: true }).click();
+	const headerBack = dialog.getByRole("button", { name: "Back", exact: true });
+	await expect(headerBack).toHaveCount(1);
+	expect(
+		await headerBack.evaluate((node) => Boolean(node.closest('[data-slot="dialog-header"]'))),
+	).toBe(true);
+	await dialog.getByRole("button", { name: "Kimi Code", exact: true }).click();
+	await expect(dialog.getByLabel("API key", { exact: true })).toBeVisible();
+	await expect(headerBack).toHaveCount(1);
+	await headerBack.click();
 	await expect(dialog.getByRole("button", { name: "Kimi Code", exact: true })).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "API · Global", exact: true })).toBeVisible();
 	await page.screenshot({ path: testInfo.outputPath("provider-variants.png") });
-	await dialog.getByRole("button", { name: "Back to providers", exact: true }).click();
+	await dialog.getByRole("button", { name: "Back", exact: true }).click();
 	for (const choice of [
 		{
 			query: "Hugging Face",
