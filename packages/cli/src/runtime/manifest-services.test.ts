@@ -24,6 +24,7 @@ import { OFFICIAL_INSTALL_URLS, officialInstallArgs } from "./manifest-contract"
 import {
 	observeRuntimeInstall,
 	runtimeCommandCurrentRevision,
+	runtimeCommandVersion,
 	writeRuntimeInstallerLog,
 } from "./manifest-install";
 import { manifestSecretRefs, type RuntimeManifestLoad } from "./manifest-source";
@@ -76,6 +77,23 @@ printf '%s\n' '${version}'
 	expect(revised).not.toBe(first);
 	expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["--version", "--version"]);
 });
+
+test("accepts a Hermes native version check that takes more than ten seconds", () => {
+	const paths = tempRuntimePaths();
+	const command = join(paths.userHome, ".local", "bin", "hermes");
+	writeFakeGatewayCli({
+		path: command,
+		logPath: join(paths.runRoot, "commands.log"),
+		runtime: "hermes",
+		unitPath: join(paths.systemdUserRoot, "hermes-gateway.service"),
+		version: "Hermes Agent v0.21.1",
+		versionDelaySeconds: 11,
+	});
+
+	expect(runtimeCommandVersion(command, paths.userHome, paths.userHome)).toBe(
+		"Hermes Agent v0.21.1",
+	);
+}, 20_000);
 
 test("adopts a persisted native Hermes service in a fresh process without reinstalling", () => {
 	const paths = tempRuntimePaths();
@@ -361,6 +379,7 @@ function writeFakeGatewayCli(input: {
 	runtime: "openclaw" | "hermes";
 	unitPath: string;
 	version?: string;
+	versionDelaySeconds?: number;
 	hangVersion?: boolean;
 	failVersion?: boolean;
 	failInstall?: boolean;
@@ -393,6 +412,7 @@ function writeFakeGatewayCli(input: {
 	set -euo pipefail
 	case "$*" in
 	  "--version")
+		${input.versionDelaySeconds ? `sleep ${input.versionDelaySeconds}` : ""}
 		${input.hangVersion ? "exec sleep 60" : input.failVersion ? "exit 1" : `printf '%s\\n' '${version}'`}
 		;;
   "gateway install --force --json"|"gateway install --force --no-start-now"|"gateway install")
