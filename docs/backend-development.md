@@ -640,11 +640,112 @@ releases the blocking table lock; the lease is deleted, the local slot is
 returned, and no request-owned tasks survive. This reproduces a real route
 mechanism, not the proven causal ordering of a historical production incident.
 
+The revocation waiter lives for the stream lifetime; completed event tasks do
+not need shielded collection on every record. Pending event waits still use
+owned cleanup on heartbeat timeout, and both waiters are collected on exit.
+Two explicit `aclosing` boundaries are necessary: the SSE response owns `gen()`
+during sends, and `gen()` owns `_stream()` across its yields. Starlette 1.6.0's
+`stream_response()` does not close an iterator when `send()` fails or is
+cancelled while blocked. The route-local response subclass wraps that method
+without changing Starlette's ASGI-version or disconnect handling.
+
+The response and a started generator share once-only admission cleanup. If
+header sending fails before the generator is first iterated, its `aclose()`
+cannot execute a `finally` block; response cleanup still removes the broker and
+refresh registrations and releases the database lease through owned cleanup.
+The real ASGI regression verifies header failure, cancellation during header
+backpressure, peer disconnect, body failure and exhaustion, with exactly one
+lease release and no remaining registrations or child tasks. Admission still
+rejects with HTTP 429 before successful SSE headers are sent.
+
 MCP's outbound transport also has AnyIO scopes, but its transport bodies do not
 execute Clawdi database queries. `tools/list` loads in a separate cached task;
 `tools/call` exits its transport context before request-dependency cleanup.
 The MCP dependency session is lazy and its close already has owned cleanup.
 No MCP-specific cancellation change is justified by the inspected lifecycle.
+
+### SSE scheduling microbenchmark
+
+Against merged baseline `ccf7be8d1ab59645d8964859d6cc9ef569b08ca9`, the
+imported final `_stream` was measured in Docker (2 CPU limit, 3 GiB), Python
+3.14.7, AnyIO 4.14.2, Starlette 1.6.0 and uvloop 0.22.1. Seven alternating
+10,000-record batches followed a 1,000-record warmup. Each record was queued
+immediately before consumption; the request receive callable blocked. CPU
+uses `process_time_ns`, with tracing disabled; allocation instrumentation ran
+separately. Each batch includes explicit generator close.
+
+| Per-stream measurement | Baseline | Final |
+| --- | ---: | ---: |
+| asyncio median CPU, microseconds/record | 134.16 | 82.56 |
+| uvloop median CPU, microseconds/record | 85.95 | 48.97 |
+| Tasks created per 10,000 records, either loop | 30,000 | 10,002 |
+| asyncio traced peak bytes | 17,390 | 15,710 |
+| uvloop traced peak bytes | 16,883 | 15,398 |
+
+These are scheduling/serialization microbenchmarks, **not end-to-end throughput**
+or total allocation counts. They exclude database queries, sockets and send
+backpressure. Idle 25-second heartbeats offer negligible CPU savings.
+
+To reproduce the CPU comparison, export the baseline with
+`git show ccf7be8d1ab59645d8964859d6cc9ef569b08ca9:backend/app/routes/sync.py`
+and mount it read-only as `/baseline-sync.py` in a disposable Docker backend
+environment with the locked dependencies. Run from its `backend/` directory:
+
+```bash
+uv run python - <<'PY'
+from __future__ import annotations
+
+import ast
+import asyncio
+import statistics
+import time
+from pathlib import Path
+import uvloop
+from starlette.requests import Request
+from app.routes import sync
+
+tree = ast.parse(Path('/baseline-sync.py').read_text())
+node = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == '_stream')
+namespace = dict(vars(sync))
+exec(compile(ast.Module(body=[node], type_ignores=[]), '<baseline>', 'exec'), namespace)
+variants = {'baseline': namespace['_stream'], 'final': sync._stream}
+
+async def batch(fn, count):
+    async def receive():
+        await asyncio.Event().wait()
+    queue = asyncio.Queue(maxsize=64)
+    stream = fn(queue, Request({'type': 'http'}, receive), asyncio.Event())
+    await anext(stream)
+    try:
+        for _ in range(count):
+            queue.put_nowait({'type': 'runtime_manifest_changed', 'environment_id': 'test'})
+            await anext(stream)
+    finally:
+        await stream.aclose()
+
+async def measure():
+    samples = {name: [] for name in variants}
+    for fn in variants.values():
+        await batch(fn, 1000)
+    for repetition in range(7):
+        order = list(variants) if repetition % 2 == 0 else list(reversed(variants))
+        for name in order:
+            started = time.process_time_ns()
+            await batch(variants[name], 10000)
+            samples[name].append((time.process_time_ns() - started) / 10000 / 1000)
+    print(type(asyncio.get_running_loop()).__name__,
+          {name: statistics.median(values) for name, values in samples.items()})
+
+for factory in (asyncio.new_event_loop, uvloop.new_event_loop):
+    with asyncio.Runner(loop_factory=factory) as runner:
+        runner.run(measure())
+PY
+```
+
+Done: both event loops print baseline/final median CPU microseconds per record.
+Absolute times depend on the host. To reproduce task counts, count creations
+with a loop task factory during a separate batch; use `tracemalloc` in that
+separate pass for peak live traced memory rather than timing traced execution.
 
 ### Remaining stalled-network requirement
 
