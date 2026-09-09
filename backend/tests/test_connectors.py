@@ -1610,6 +1610,7 @@ def test_connected_account_identity_exposes_only_allowlisted_labels() -> None:
         "alias": "Work GitHub",
         "app_name": "github",
         "status": "ACTIVE",
+        "is_disabled": False,
         "account_display": "octocat@example.test",
         "organization_display": "Clawdi AI",
         "tenant_display": "tenant-primary",

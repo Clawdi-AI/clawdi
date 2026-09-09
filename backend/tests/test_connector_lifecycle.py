@@ -49,7 +49,10 @@ async def test_management_lists_nonactive_but_identity_availability_does_not(mon
     accounts = [account(status) for status in ["ACTIVE", "EXPIRED", "FAILED", "INACTIVE"]]
     accounts.append(account("ACTIVE", disabled=True))
 
+    statuses = []
+
     def handle(request):
+        statuses.append(request.url.params.get("statuses"))
         assert request.url.params["user_ids"] == "owner"
         return httpx.Response(200, json={"items": accounts})
 
@@ -57,10 +60,16 @@ async def test_management_lists_nonactive_but_identity_availability_does_not(mon
         all_accounts = await composio.get_all_connected_accounts("owner")
         available = await composio.get_connected_account_identities("owner")
         counts = await composio.get_connected_accounts("owner")
+        identities = await composio.get_connected_account_identities("owner", include_inactive=True)
     assert {item.status for item in all_accounts} == {"ACTIVE", "EXPIRED", "FAILED", "INACTIVE"}
     assert len(all_accounts) == 5
     assert len(available) == len(counts) == 1
-    assert "private-old-key" not in str(all_accounts)
+    assert statuses == [None, "ACTIVE", "ACTIVE", None]
+    assert [(item.status, item.is_disabled) for item in identities] == [
+        (item.status, item.is_disabled) for item in all_accounts
+    ]
+    assert identities[-1].status == "ACTIVE" and identities[-1].is_disabled
+    assert "private-" not in str([all_accounts, available, identities])
 
 
 async def test_delete_owned_expired_account(monkeypatch):

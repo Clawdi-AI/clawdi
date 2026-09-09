@@ -17,6 +17,7 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    StrictBool,
     StrictInt,
     StrictStr,
     TypeAdapter,
@@ -114,6 +115,13 @@ class _ToolArguments(BaseModel):
 
 class _NoArguments(_ToolArguments):
     pass
+
+
+class _ConnectorAccountListArguments(_ToolArguments):
+    include_inactive: StrictBool = Field(
+        default=False,
+        description="Include inactive, expired, and disabled accounts for management.",
+    )
 
 
 class _ConnectorAccountIdentityArguments(_ToolArguments):
@@ -621,11 +629,11 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     ),
     "connector_account_list": _NativeToolSpec(
         description=(
-            "List active Clawdi connector accounts and credential-free account, organization, "
-            "or tenant labels. Use it to verify the exact service identity before selecting "
-            "the connector for a side effect."
+            "List active, enabled Clawdi connector accounts and credential-free account, "
+            "organization, or tenant labels. Verify the service identity before a side effect. "
+            "Set include_inactive to true for account management."
         ),
-        input_schema=_NoArguments.model_json_schema(),
+        input_schema=_ConnectorAccountListArguments.model_json_schema(),
         scopes=("connectors:read",),
         handler=lambda arguments, auth, db: _tool_connector_account_list(
             arguments, auth=auth, db=db
@@ -1510,10 +1518,12 @@ async def _tool_vault_item_delete(
 async def _tool_connector_account_list(
     arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
 ) -> JsonObject:
-    _validate_arguments(_NoArguments, arguments)
+    parsed = _validate_arguments(_ConnectorAccountListArguments, arguments)
     del db
     try:
-        accounts = await get_connected_account_identities(require_clerk_id(auth))
+        accounts = await get_connected_account_identities(
+            require_clerk_id(auth), include_inactive=parsed.include_inactive
+        )
     except ComposioRouteError:
         logger.info("Connector account identities unavailable")
         raise HTTPException(

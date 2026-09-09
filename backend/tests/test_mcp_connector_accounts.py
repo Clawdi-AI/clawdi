@@ -1,4 +1,4 @@
-"""Native account mutations through MCP HTTP and the pinned Composio HTTP client."""
+"""Native account management through MCP HTTP and the pinned Composio HTTP client."""
 
 import json
 from datetime import UTC, datetime, timedelta
@@ -32,6 +32,9 @@ async def account_provider(monkeypatch, seed_user):
         if request.url.path.endswith("/connected_accounts"):
             assert request.method == "GET"
             assert request.url.params["user_ids"] == seed_user.clerk_id
+            if "connected_account_ids" not in request.url.params:
+                assert request.url.params["limit"] == "100"
+                return httpx.Response(200, json={"items": [account]})
             assert request.url.params["limit"] == "1"
             assert "statuses" not in request.url.params
             owned = request.url.params["connected_account_ids"] == account["id"]
@@ -67,6 +70,32 @@ async def account_provider(monkeypatch, seed_user):
     ) as sdk:
         monkeypatch.setattr(composio, "get_composio_client", lambda: sdk)
         yield account, requests, responses
+
+
+@pytest.mark.parametrize("arguments", [{}, {"include_inactive": False}, {"include_inactive": True}])
+async def test_mcp_account_list_management_opt_in(client, account_provider, arguments):
+    account, requests, _ = account_provider
+    result = await _tool_call(client, 1, "connector_account_list", arguments)
+    expected = (
+        [
+            {
+                "id": account["id"],
+                "app_name": "gmail",
+                "status": "EXPIRED",
+                "is_disabled": True,
+                "alias": "old",
+                "account_display": "work@example.test",
+            }
+        ]
+        if arguments.get("include_inactive")
+        else []
+    )
+    assert _tool_json(result) == {"accounts": expected}
+    assert len(requests) == 1
+    assert requests[0].url.params.get("statuses") == (
+        None if arguments.get("include_inactive") else "ACTIVE"
+    )
+    assert "private-token" not in json.dumps(result)
 
 
 @pytest.mark.parametrize("alias", ["工作邮箱", ""])
@@ -116,11 +145,12 @@ async def test_mcp_account_mutations_refuse_nonowned_id(client, account_provider
     assert seed_user.clerk_id in composio._tool_router_session_cache
 
 
-async def test_mcp_account_mutations_reject_invalid_arguments_before_provider(
-    client, account_provider
-):
+async def test_mcp_account_tools_reject_invalid_arguments_before_provider(client, account_provider):
     _, requests, _ = account_provider
     invalid = [
+        ("connector_account_list", {"include_inactive": "true"}),
+        ("connector_account_list", {"include_inactive": 1}),
+        ("connector_account_list", {"unexpected": True}),
         ("connector_account_update", {"connection_id": "account-exact"}),
         (
             "connector_account_update",

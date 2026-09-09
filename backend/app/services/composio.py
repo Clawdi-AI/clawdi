@@ -177,6 +177,7 @@ class ConnectorAccountIdentity(BaseModel):
     id: str
     app_name: str
     status: ComposioStatus
+    is_disabled: bool = False
     alias: str | None = None
     account_display: str | None = None
     organization_display: str | None = None
@@ -829,9 +830,15 @@ async def get_connected_accounts(user_id: str) -> list[ConnectorConnectionRespon
     return [_serialize_connected_account(account) for account in accounts]
 
 
-async def get_connected_account_identities(user_id: str) -> list[ConnectorAccountIdentity]:
-    """List safe account and tenant labels without exposing provider payloads."""
-    accounts = await _get_active_connected_accounts(user_id)
+async def get_connected_account_identities(
+    user_id: str, *, include_inactive: bool = False
+) -> list[ConnectorAccountIdentity]:
+    """List safe identity labels, optionally including unavailable accounts for management."""
+    accounts = (
+        await _list_connected_accounts(user_id)
+        if include_inactive
+        else await _get_active_connected_accounts(user_id)
+    )
     return [_serialize_connected_account_identity(account) for account in accounts]
 
 
@@ -895,6 +902,7 @@ def _serialize_connected_account_identity(account: _ConnectedAccount) -> Connect
         id=account.id,
         app_name=account.toolkit.slug,
         status=account.status,
+        is_disabled=account.is_disabled,
         alias=account.alias,
         account_display=_account_display_label(account),
         organization_display=_first_identity_label(

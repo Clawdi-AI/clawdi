@@ -1021,7 +1021,10 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
             {"name": "connector_account_delete", "inputSchema": {"type": "object"}},
         ]
 
-    async def connected_account_identities(_user_id: str) -> list[ConnectorAccountIdentity]:
+    async def connected_account_identities(
+        _user_id: str, *, include_inactive: bool = False
+    ) -> list[ConnectorAccountIdentity]:
+        assert include_inactive is False
         return [
             ConnectorAccountIdentity(
                 id="ca_github",
@@ -1063,6 +1066,7 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
                     "id": "ca_github",
                     "app_name": "github",
                     "status": "ACTIVE",
+                    "is_disabled": False,
                     "account_display": "octocat",
                     "organization_display": "clawdi-ai",
                     "tenant_display": "tenant-primary",
