@@ -9,8 +9,6 @@ import { billingKeys } from "@/hosted/billing/query-keys";
 import type {
 	AiProviderAcceptRequest,
 	AiProviderAcceptResponse,
-	AiProviderConnectionTestRequest,
-	AiProviderConnectionTestResponse,
 	AiProviderList,
 	AiProviderOAuthDevicePollResponse,
 	AiProviderOAuthDeviceStartResponse,
@@ -143,26 +141,6 @@ export function useProviderRemovalImpact(providerId: string, enabled: boolean) {
 		queryFn: () => client.getAiProviderRemovalImpact(providerId),
 		enabled: enabled && isDeployApiConfigured(),
 		retry: billingQueryRetry,
-	});
-}
-
-export function useTestDraftProviderConnection() {
-	const api = useApi();
-	return useSensitiveAction(
-		async (body: AiProviderConnectionTestRequest): Promise<AiProviderConnectionTestResponse> => {
-			try {
-				return unwrap(await api.POST("/v1/ai-providers/test", { body }));
-			} catch (error) {
-				toastApiError("Couldn't test connection")(error);
-				throw error;
-			}
-		},
-	);
-}
-
-export function useTestProviderConnection() {
-	return useOpenApi().useMutation("post", "/v1/ai-providers/{provider_id}/test", {
-		onError: toastApiError("Couldn't test connection"),
 	});
 }
 

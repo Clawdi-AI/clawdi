@@ -744,10 +744,12 @@ export async function runDeployFlow(
 		);
 	}
 
-	const nativeProvider = selectedSavedProvider?.configuration_mode === "native";
+	const nativeProvider =
+		selectedSavedProvider?.configuration_mode === "native" ||
+		selectedSavedProvider?.configuration_mode === "custom";
 	if (nativeProvider && parsed.model) {
 		console.error(
-			"Warning: --model is ignored for native saved providers; choose models inside the Agent. Existing model choices are preserved.",
+			"Warning: --model is ignored for agent-owned providers; choose models inside the Agent. Existing model choices are preserved.",
 		);
 	}
 	let model = nativeProvider
@@ -759,18 +761,7 @@ export async function runDeployFlow(
 				"The Clawdi AI model catalog is empty. Retry later or configure AI inside the agent.",
 			);
 		}
-		if (interactive && !parsed.model) {
-			model = await prompts.select(
-				"Primary model",
-				managedModels.map((item) => ({
-					value: item.id,
-					label: item.display_name,
-					hint: item.is_default ? "Recommended" : undefined,
-				})),
-				defaultManagedModel(managedModels),
-			);
-		}
-	} else if (selectedSavedProvider && selectedSavedProvider.configuration_mode !== "native") {
+	} else if (selectedSavedProvider && !nativeProvider) {
 		const catalog = selectedSavedProvider.models ?? [];
 		const automaticModel = savedProviderDefaultModel(selectedSavedProvider);
 		if (interactive && !parsed.model) {

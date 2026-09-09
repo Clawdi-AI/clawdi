@@ -11,7 +11,7 @@ from uuid import UUID
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import JSONResponse
-from pydantic import JsonValue, ValidationError
+from pydantic import JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,6 +61,7 @@ from app.schemas.ai_provider import (
     AiProviderSavedConnectionTestRequest,
     AiProviderUpsert,
     AiProviderValidationResponse,
+    ApiMode,
     ConnectionErrorCategory,
     CredentialMaterialState,
     ai_provider_auth_from_persistence,
@@ -107,6 +108,7 @@ from app.services.ai_provider_oauth_attempt import (
 from app.services.ai_provider_oauth_attempt import (
     validate_redirect_uri as _validate_redirect_uri,
 )
+from app.services.app_setting_registry import SUPPORTED_CUSTOM_PROVIDER_CLI_VERSIONS_SPEC
 from app.services.codex_oauth import (
     CODEX_DEVICE_VERIFICATION_URL,
     CODEX_OAUTH_CLIENT_ID,
@@ -674,13 +676,37 @@ async def patch_ai_provider(
     update = {
         field: getattr(body, field) for field in body.model_fields_set if field != "credential"
     }
-    if body.credential is not None and provider.configuration_mode != "connection":
+    if body.credential is not None and provider.configuration_mode not in {"connection", "custom"}:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Inline key replacement requires an existing connection"
         )
-    if provider.configuration_mode == "connection":
+    if update.get("configuration_mode") == "custom" and provider.configuration_mode != "custom":
+        if provider.configuration_mode not in {"catalog", "connection"} or set(update) != {
+            "configuration_mode"
+        }:
+            raise HTTPException(409, "Transfer model ownership separately from connection changes")
+        if merged.readiness is None or not merged.readiness.deployable:
+            raise HTTPException(409, "Custom providers require a deliverable API key")
+        await require_connection_ownership_migration(
+            db,
+            owner_user_id=auth.user_id,
+            provider_id=provider.provider_id,
+            versions_spec=SUPPORTED_CUSTOM_PROVIDER_CLI_VERSIONS_SPEC,
+            allow_unbound=True,
+        )
+        provider.configuration_mode = "custom"
+        merged.models = None
+        merged.native_provider = None
+        merged.native_variant = None
+        merged.api_mode = TypeAdapter(ApiMode).validate_python(
+            effective_provider_api_mode(provider.type, provider.api_mode)
+        )
+    if provider.configuration_mode in {"connection", "custom"}:
         if (
-            ("configuration_mode" in update and update["configuration_mode"] != "connection")
+            (
+                "configuration_mode" in update
+                and update["configuration_mode"] != provider.configuration_mode
+            )
             or "models" in update
             or ("auth" in update and update["auth"] != merged.auth)
             or (
@@ -839,7 +865,7 @@ async def set_ai_provider_api_key(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "invalid runtime_env_name")
     proposed_runtime_env_name = runtime_env_name or provider.runtime_env_name
     if (
-        provider.configuration_mode == "connection"
+        provider.configuration_mode in {"connection", "custom"}
         and runtime_env_name is not None
         and runtime_env_name != provider.runtime_env_name
     ):
@@ -901,7 +927,7 @@ async def import_ai_provider_auth(
     await lock_ai_provider_owner(db, auth.user_id)
     provider = await _get_provider_or_404_for_update(db, auth, provider_id)
     auth_import = body.root
-    if provider.configuration_mode == "connection":
+    if provider.configuration_mode in {"connection", "custom"}:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Connection providers require API-key authentication"
         )
@@ -1206,6 +1232,10 @@ async def _accept_ai_provider(
         include_archived=True,
     )
     if existing is not None and existing.archived_at is None:
+        if existing.configuration_mode in {"custom", "connection"}:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Edit an existing custom connection with PATCH"
+            )
         existing_response = await _to_response(db, auth, existing)
         can_resume = not existing_response.usable and _accept_can_resume(
             existing,
@@ -1672,11 +1702,26 @@ def _apply_provider_body(
     *,
     apply_auth: bool = True,
 ) -> None:
-    if provider.configuration_mode == "connection" and body.configuration_mode != "connection":
+    if (
+        provider.configuration_mode in {"connection", "custom"}
+        and body.configuration_mode != provider.configuration_mode
+    ):
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Connection ownership cannot be replaced through upsert"
         )
+    if apply_auth and provider.configuration_mode == "custom":
+        if (
+            body.runtime_env_name != provider.runtime_env_name
+            or body.models
+            or body.auth.type != "api_key"
+            or body.auth.source != "managed"
+        ):
+            raise HTTPException(409, "Custom credential identity is immutable; use PATCH to edit")
     provider.type = body.type
+    if body.configuration_mode == "custom" and provider.configuration_mode not in {None, "custom"}:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Transfer existing model ownership separately"
+        )
     provider.configuration_mode = body.configuration_mode or "catalog"
     provider.native_provider = body.native_provider
     provider.native_variant = body.native_variant
@@ -1684,7 +1729,7 @@ def _apply_provider_body(
     provider.base_url = body.base_url
     provider.api_mode = managed_provider_api_mode(body.provider_id) or body.api_mode
     provider.capabilities = body.capabilities
-    if body.configuration_mode != "connection":
+    if body.configuration_mode not in {"connection", "custom"}:
         provider.models = _provider_models_payload(body.models)
     provider.managed_by = body.managed_by
     provider.runtime_env_name = body.runtime_env_name
@@ -1829,7 +1874,7 @@ def _build_response(
             "managed_by": provider.managed_by,
             "runtime_env_name": provider.runtime_env_name,
             "capabilities": provider.capabilities,
-            "models": provider.models,
+            "models": None if provider.configuration_mode == "custom" else provider.models,
             "created_at": provider.created_at,
             "updated_at": provider.updated_at,
         }
@@ -1948,12 +1993,14 @@ def _connection_test_failure_with_readiness(
 
 def _validate_provider(body: AiProviderUpsert | AiProviderResponse) -> list[str]:
     errors: list[str] = []
-    if body.configuration_mode == "connection" and (
+    if body.configuration_mode in {"connection", "custom"} and (
         body.managed_by != "user"
         or body.auth.type not in {"api_key", "secret_ref"}
         or not body.runtime_env_name
     ):
         errors.append("connection management requires a user API-key connection")
+    if body.configuration_mode == "custom" and (not body.api_mode or body.models):
+        errors.append("custom providers require an explicit API format without model metadata")
     if body.configuration_mode != "native" and (body.native_provider or body.native_variant):
         errors.append("catalog configuration cannot include native provider identity")
     if body.configuration_mode == "native":
@@ -1963,10 +2010,14 @@ def _validate_provider(body: AiProviderUpsert | AiProviderResponse) -> list[str]
     errors.extend(_validate_base_url(body.base_url, body.auth))
     if body.runtime_env_name is not None and not _is_runtime_env_name(body.runtime_env_name):
         errors.append("runtime_env_name must be an uppercase environment variable name")
-    if body.configuration_mode != "connection":
+    if body.configuration_mode not in {"connection", "custom"}:
         errors.extend(_validate_provider_models(body))
     allowed_modes = ALLOWED_API_MODES[body.type]
-    if body.api_mode is not None and body.api_mode not in allowed_modes:
+    if (
+        body.configuration_mode != "custom"
+        and body.api_mode is not None
+        and body.api_mode not in allowed_modes
+    ):
         errors.append(f"type {body.type} is incompatible with api_mode {body.api_mode}")
     if body.type == "custom_openai_compatible" and body.api_mode is None:
         errors.append("custom_openai_compatible requires api_mode")

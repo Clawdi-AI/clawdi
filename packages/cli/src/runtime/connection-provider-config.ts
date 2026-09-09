@@ -16,6 +16,7 @@ import { spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
 
 export interface ConnectionProviderTransfer {
+	pendingCreation?: boolean;
 	envName: string;
 	baseUrl: string;
 	apiMode: AiProviderApiMode;
@@ -31,6 +32,7 @@ export interface PreparedConnectionProviderTransfers {
 	providers: Record<string, ConnectionProviderTransfer>;
 	sourceRevision: string;
 	patch: Record<string, Record<string, unknown>>;
+	hermesModelRouting?: { source: string; patch: Record<string, string> };
 }
 
 interface ConnectionContext {
@@ -154,6 +156,26 @@ function ownedOpenClawRef(value: unknown, envName: string): boolean {
 	);
 }
 
+function hasAuthenticationHeaders(value: unknown): boolean {
+	return Object.keys(recordValue(value) ?? {}).some((name) =>
+		["authorization", "x-api-key", "api-key", "x-goog-api-key", "cookie"].includes(
+			name.toLowerCase(),
+		),
+	);
+}
+
+function hermesModelRoutingSource(model: Record<string, unknown> | null): string {
+	return runtimeImpactRevision({
+		provider: model?.provider ?? null,
+		nestedProvider: recordValue(model?.default)?.provider ?? null,
+		credentials: Object.fromEntries(
+			["api_key", "api", "key_env", "auth_mode"].map((field) => [field, model?.[field] ?? null]),
+		),
+		baseUrl: model?.base_url ?? null,
+		apiMode: model?.api_mode ?? null,
+	});
+}
+
 /** Read-only preflight. The root coordinator must durably persist providers before apply. */
 export function prepareConnectionProviderTransfers(
 	input: ConnectionContext,
@@ -168,11 +190,40 @@ export function prepareConnectionProviderTransfers(
 	const patch: Record<string, Record<string, unknown>> = {};
 	for (const connection of connections) {
 		const { id, baseUrl, apiMode, envName } = connection;
-		const existing = recordValue(current[id]);
-		if (!existing) throw new Error(`Connection provider ${id} must already exist`);
 		const previous = providers[id];
+		const existing = recordValue(current[id]);
+		const creating =
+			!existing && connection.initialize && (!previous || previous.pendingCreation === true);
+		if (!existing && !creating) throw new Error(`Connection provider ${id} must already exist`);
+		if (current[id] !== undefined && !existing)
+			throw new Error("Custom provider config must be an object");
 		if (previous && previous.envName !== envName)
 			throw new Error("Connection credential environment is immutable");
+		if (creating) {
+			const protocol = input.runtime === "openclaw" ? OPENCLAW_API[apiMode] : HERMES_API[apiMode];
+			if (!protocol) throw new Error("Connection protocol is unsupported by this runtime");
+			providers[id] = { envName, baseUrl, apiMode, pendingCreation: true };
+			patch[id] =
+				input.runtime === "openclaw"
+					? {
+							baseUrl,
+							api: protocol,
+							models: [],
+							auth: "api-key",
+							apiKey: { source: "env", provider: "clawdi-connection", id: envName },
+						}
+					: { base_url: baseUrl, transport: protocol, key_env: envName };
+			continue;
+		}
+		if (!existing) throw new Error("Connection provider config is unavailable");
+		if (
+			connection.initialize &&
+			!previous &&
+			!(input.runtime === "openclaw"
+				? ownedOpenClawRef(existing.apiKey, envName)
+				: existing.key_env === envName || existing.api_key_env === envName)
+		)
+			throw new Error("Custom provider ID is already owned by another connection");
 		const endpoint =
 			input.runtime === "openclaw"
 				? existing.baseUrl
@@ -193,6 +244,12 @@ export function prepareConnectionProviderTransfers(
 				throw new Error("OpenClaw connection credential ownership conflict");
 			if (existing.auth !== undefined && existing.auth !== "api-key")
 				throw new Error("OpenClaw connection auth mode conflict");
+			if (
+				existing.authHeader === false ||
+				hasAuthenticationHeaders(existing.headers) ||
+				existing.models.some((model) => hasAuthenticationHeaders(recordValue(model)?.headers))
+			)
+				throw new Error("OpenClaw connection authentication header conflict");
 			fields.auth = "api-key";
 			fields.apiKey = { source: "env", provider: "clawdi-connection", id: envName };
 			if (previous && endpoint !== baseUrl) fields.baseUrl = baseUrl;
@@ -217,12 +274,14 @@ export function prepareConnectionProviderTransfers(
 			if (previous && protocol !== expectedApi)
 				fields[Object.hasOwn(existing, "api_mode") ? "api_mode" : "transport"] = expectedApi;
 		}
-		providers[id] = { envName, baseUrl, apiMode };
+		providers[id] = { ...previous, envName, baseUrl, apiMode };
 		patch[id] = fields;
 	}
 	const active = new Set(connections.map((connection) => connection.id));
 	for (const [id, previous] of Object.entries(providers)) {
 		if (active.has(id)) continue;
+		const { pendingCreation: _pending, ...transferred } = previous;
+		providers[id] = transferred;
 		const existing = recordValue(current[id]);
 		if (!existing) continue;
 		if (input.runtime === "openclaw" && ownedOpenClawRef(existing.apiKey, previous.envName))
@@ -236,12 +295,48 @@ export function prepareConnectionProviderTransfers(
 			if (Object.keys(refs).length) patch[id] = refs;
 		}
 	}
+	let hermesModelRouting: PreparedConnectionProviderTransfers["hermesModelRouting"];
+	if (input.runtime === "hermes" && input.hermesConfig) {
+		const model = recordValue(getHermesRawConfigValue(input.hermesConfig, "model").value);
+		const selected = recordValue(model?.default)?.provider ?? model?.provider;
+		const connection = connections.find(({ id }) => selected === id || selected === `custom:${id}`);
+		if (connection) {
+			if (["api_key", "api", "key_env", "auth_mode"].some((field) => Boolean(model?.[field])))
+				throw new Error("Hermes model credentials conflict with the custom connection");
+			const existing = recordValue(current[connection.id]);
+			const oldEndpoint =
+				existing?.api ?? existing?.url ?? existing?.base_url ?? connection.baseUrl;
+			const oldProtocol =
+				existing?.api_mode ?? existing?.transport ?? HERMES_API[connection.apiMode];
+			const modelPatch: Record<string, string> = {};
+			// Hermes /model --global persists these routing mirrors. Preserve model choice;
+			// update only mirrors that still match the connection they describe.
+			if (model?.base_url) {
+				if (
+					typeof model.base_url !== "string" ||
+					typeof oldEndpoint !== "string" ||
+					model.base_url.replace(/\/+$/, "") !== oldEndpoint.replace(/\/+$/, "")
+				)
+					throw new Error("Hermes model endpoint conflicts with the custom connection");
+				if (model.base_url.replace(/\/+$/, "") !== connection.baseUrl.replace(/\/+$/, ""))
+					modelPatch.base_url = connection.baseUrl;
+			}
+			if (model?.api_mode) {
+				if (model.api_mode !== oldProtocol)
+					throw new Error("Hermes model protocol conflicts with the custom connection");
+				const nextProtocol = HERMES_API[connection.apiMode];
+				if (nextProtocol && model.api_mode !== nextProtocol) modelPatch.api_mode = nextProtocol;
+			}
+			hermesModelRouting = { source: hermesModelRoutingSource(model), patch: modelPatch };
+		}
+	}
 	guardHermesPools(input);
 	return {
 		runtime: input.runtime,
 		providers,
 		sourceRevision: revision(current, Object.keys(providers)),
 		patch,
+		...(hermesModelRouting ? { hermesModelRouting } : {}),
 	};
 }
 
@@ -257,7 +352,15 @@ export function applyConnectionProviderTransfers(input: ConnectionContext): bool
 	if (revision(current, Object.keys(plan.providers)) !== plan.sourceRevision)
 		throw new Error("Connection provider config changed after preflight");
 	guardHermesPools(input);
-	let changed = false;
+	if (
+		plan.hermesModelRouting &&
+		(!input.hermesConfig ||
+			hermesModelRoutingSource(
+				recordValue(getHermesRawConfigValue(input.hermesConfig, "model").value),
+			) !== plan.hermesModelRouting.source)
+	)
+		throw new Error("Hermes model routing changed after preflight");
+	let changed = Object.keys(plan.hermesModelRouting?.patch ?? {}).length > 0;
 	const patches: Record<string, Record<string, unknown>> = {};
 	for (const [id, fields] of Object.entries(plan.patch)) {
 		const existing = recordValue(current[id]) ?? {};
@@ -275,6 +378,8 @@ export function applyConnectionProviderTransfers(input: ConnectionContext): bool
 	if (input.runtime === "hermes") {
 		if (!input.hermesConfig) throw new Error("Hermes config command is unavailable");
 		reconcileHermesConfigValue(input.hermesConfig, "providers", current);
+		for (const [field, value] of Object.entries(plan.hermesModelRouting?.patch ?? {}))
+			reconcileHermesConfigValue(input.hermesConfig, `model.${field}`, value);
 	} else {
 		if (!input.observation.commandPath) throw new Error("OpenClaw config command is unavailable");
 		const config = {

@@ -5,6 +5,47 @@ test.beforeEach(async ({ page }) => {
 	await stubCloudApi(page);
 });
 
+for (const kind of ["api-key", "oauth"] as const) {
+	test(`renaming a native ${kind} provider changes only its Clawdi label`, async ({ page }) => {
+		const provider = {
+			id: "rename-row",
+			provider_id: "work-account",
+			label: "Work account",
+			type: "openai",
+			configuration_mode: "native",
+			native_provider: kind === "oauth" ? "openai-codex" : "openai",
+			native_variant: null,
+			base_url: "https://api.openai.com/v1",
+			api_mode: "openai_responses",
+			runtime_env_name: kind === "oauth" ? null : "OPENAI_API_KEY",
+			managed_by: "user",
+			scope: "account",
+			models: null,
+			auth:
+				kind === "oauth"
+					? { type: "agent_profile", tool: "codex", profile: "default" }
+					: { type: "api_key", source: "managed" },
+			usable: true,
+		};
+		const patches: unknown[] = [];
+		await page.route("**/v1/ai-providers", (route) =>
+			route.fulfill({ json: { providers: [provider] } }),
+		);
+		await page.route("**/v1/ai-providers/work-account", async (route) => {
+			const body = route.request().postDataJSON();
+			patches.push(body);
+			await route.fulfill({ json: { ...provider, label: body.label } });
+		});
+		await page.goto("/ai-providers");
+		await page.getByRole("button", { name: "Edit Work account", exact: true }).click();
+		const dialog = page.getByRole("dialog");
+		await dialog.getByLabel("Name", { exact: true }).fill("Personal account");
+		await dialog.getByRole("button", { name: "Save settings", exact: true }).click();
+		await expect(dialog).toBeHidden();
+		expect(patches).toEqual([{ label: "Personal account" }]);
+	});
+}
+
 test("editing and rotating an agent-owned connection sends one atomic patch without models or env changes", async ({
 	page,
 }) => {
@@ -49,18 +90,16 @@ test("editing and rotating an agent-owned connection sends one atomic patch with
 	await expect(dialog).toHaveAccessibleName("Edit Saved connection");
 	await expect(dialog.getByLabel("Model catalog")).toHaveCount(0);
 	await expect(dialog.getByRole("button", { name: "Test connection", exact: true })).toHaveCount(0);
-	await expect(dialog.getByLabel("Agent environment variable")).toHaveAttribute("readonly", "");
+	await expect(dialog.getByLabel("Agent environment variable")).toHaveCount(0);
 	await dialog.getByLabel("Name", { exact: true }).fill("Updated connection");
-	await dialog.getByLabel("Base URL").fill("https://updated.example/v1");
+	await dialog.getByLabel("Endpoint").fill("https://updated.example/v1");
 	await dialog.getByLabel("API key", { exact: true }).fill("synthetic-rotated-key");
 	await dialog.getByRole("button", { name: "Save settings", exact: true }).click();
 	await expect(dialog).toBeHidden();
 	expect(patches).toEqual([
 		{
-			configuration_mode: "connection",
 			label: "Updated connection",
 			base_url: "https://updated.example/v1",
-			api_mode: "openai_responses",
 			credential: { type: "api_key", value: "synthetic-rotated-key" },
 		},
 	]);
@@ -94,8 +133,8 @@ test("native BYOK saves credentials without a model catalog or inference probe",
 	expect((await acceptedRequest).postDataJSON().provider).toMatchObject({
 		configuration_mode: "native",
 		native_provider: "openai",
-		models: null,
 	});
+	expect((await acceptedRequest).postDataJSON().provider).not.toHaveProperty("models");
 
 	await expect(page.getByRole("dialog", { name: /Set up OpenAI/ })).toBeHidden();
 	// The provider icon carries an SVG <title>OpenAI</title> (always hidden) —
@@ -111,6 +150,7 @@ test("editing a catalog connection preserves its models and configuration mode",
 	page,
 }) => {
 	const models = [{ id: "existing-model", capabilities: { tools: true } }];
+	const capabilities = { tools: true };
 	await page.route("**/v1/ai-providers", (route) =>
 		route.fulfill({
 			json: {
@@ -127,6 +167,7 @@ test("editing a catalog connection preserves its models and configuration mode",
 						managed_by: "user",
 						scope: "account",
 						models,
+						capabilities,
 						auth: { type: "api_key", source: "managed" },
 						usable: true,
 						readiness: {
@@ -142,7 +183,7 @@ test("editing a catalog connection preserves its models and configuration mode",
 	await page.goto("/ai-providers");
 	await page.getByRole("button", { name: "Edit Existing OpenAI", exact: true }).click();
 	const dialog = page.getByRole("dialog", { name: "Edit Existing OpenAI" });
-	await expect(dialog.getByRole("button", { name: "Manage models in the agent" })).toHaveCount(0);
+	await expect(dialog.getByLabel("Model catalog")).toHaveCount(0);
 	await dialog.getByLabel("API key", { exact: true }).fill("replacement-fixture-key");
 	const request = page.waitForRequest(
 		(item) => item.url().endsWith("/ai-providers/accept") && item.method() === "POST",
@@ -150,7 +191,7 @@ test("editing a catalog connection preserves its models and configuration mode",
 	await dialog.getByRole("button", { name: "Save settings", exact: true }).click();
 	expect((await request).postDataJSON()).toMatchObject({
 		replace: true,
-		provider: { configuration_mode: "catalog", native_provider: null, models },
+		provider: { configuration_mode: "catalog", native_provider: null, models, capabilities },
 	});
 	await expect(dialog).toBeHidden();
 });
@@ -207,7 +248,11 @@ test("popular BYOK providers support credential-only product setup", async ({ pa
 		},
 	]) {
 		await dialog.getByRole("textbox", { name: "Search providers" }).fill(choice.query);
-		await dialog.getByRole("button", { name: new RegExp(`^${choice.name}`) }).click();
+		await dialog
+			.getByRole("button", {
+				name: new RegExp(`^${choice.name}${choice.product ? ` · ${choice.product}` : ""}`),
+			})
+			.click();
 		const credentialInput = dialog.getByLabel(choice.credential, { exact: true });
 		await expect(credentialInput).toHaveAttribute(
 			"placeholder",
@@ -220,12 +265,8 @@ test("popular BYOK providers support credential-only product setup", async ({ pa
 			}),
 		).toBeVisible();
 
-		if (choice.product) {
-			await dialog.getByRole("combobox", { name: "Product", exact: true }).click();
-			await page.getByRole("option", { name: choice.product, exact: true }).click();
-		}
 		await expect(dialog.getByLabel("Model catalog")).toHaveCount(0);
-		await expect(dialog.getByLabel("Base URL")).toHaveCount(0);
+		await expect(dialog.getByLabel("Endpoint")).toHaveCount(0);
 		await expect(dialog.getByRole("button", { name: "Test connection", exact: true })).toHaveCount(
 			0,
 		);
@@ -240,7 +281,6 @@ test("popular BYOK providers support credential-only product setup", async ({ pa
 			configuration_mode: "native",
 			native_provider: choice.id,
 			native_variant: choice.variant,
-			models: null,
 		});
 		await expect(dialog).toBeHidden();
 		if (choice.variant !== "tokenplan")

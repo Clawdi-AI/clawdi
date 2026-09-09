@@ -89,7 +89,7 @@ export interface AiProviderModel {
 export interface AiProvider {
 	id: string;
 	type: AiProviderType;
-	configuration_mode?: "native" | "catalog" | "connection";
+	configuration_mode?: "native" | "custom" | "catalog" | "connection";
 	native_provider?: string;
 	native_variant?: string;
 	readiness?: NonNullable<components["schemas"]["AiProviderResponse"]["readiness"]>;
@@ -391,7 +391,9 @@ export function aiProviderRuntimeCompatibility(
 		openclaw: RUNTIME_API_MODES.openclaw.includes(apiMode),
 		hermes: RUNTIME_API_MODES.hermes.includes(apiMode),
 		codex:
-			provider.configuration_mode !== "connection" && RUNTIME_API_MODES.codex.includes(apiMode),
+			provider.configuration_mode !== "connection" &&
+			provider.configuration_mode !== "custom" &&
+			RUNTIME_API_MODES.codex.includes(apiMode),
 	};
 }
 
@@ -475,7 +477,7 @@ function validateProvider(
 ): void {
 	const prefix = provider.id || "<missing>";
 	if (
-		provider.configuration_mode === "connection" &&
+		(provider.configuration_mode === "connection" || provider.configuration_mode === "custom") &&
 		(provider.managed_by !== "user" ||
 			!["api_key", "secret_ref"].includes(provider.auth?.type) ||
 			!provider.runtime_env_name ||
@@ -513,7 +515,10 @@ function validateProvider(
 	if (provider.api_mode !== undefined) {
 		if (!isAiProviderApiMode(provider.api_mode)) {
 			errors.push(`Provider ${prefix} has invalid api_mode "${provider.api_mode}".`);
-		} else if (!COMPATIBLE_API_MODES[provider.type].includes(provider.api_mode)) {
+		} else if (
+			provider.configuration_mode !== "custom" &&
+			!COMPATIBLE_API_MODES[provider.type].includes(provider.api_mode)
+		) {
 			errors.push(
 				`Provider ${prefix} type ${provider.type} is incompatible with api_mode ${provider.api_mode}.`,
 			);
@@ -539,6 +544,8 @@ function validateProvider(
 			errors.push(`Provider ${prefix} runtime_env_name must match its env auth ref.`);
 		}
 	}
+	if (provider.configuration_mode === "custom" && provider.models?.length)
+		errors.push("Custom providers do not manage models");
 	validateModels(prefix, (provider as { models?: unknown }).models, errors);
 }
 

@@ -62,7 +62,7 @@ def provider_runtime_compatibility(
     """Return runtime projection support from the same fields agents consume."""
 
     api_mode = effective_provider_api_mode(provider.provider_type, provider.api_mode)
-    if provider.configuration_mode == "connection":
+    if provider.configuration_mode in {"connection", "custom"}:
         valid = (
             provider.auth_type == "api_key"
             and provider.auth_source == "managed"

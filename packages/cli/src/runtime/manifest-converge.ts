@@ -106,6 +106,7 @@ import { removeLegacyManagedOpenClawProviderPlugin } from "./openclaw-legacy-pro
 import type { RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import {
+	commitProviderTransfers,
 	type ProviderOwnership,
 	readProviderOwnership,
 	writeProviderOwnership,
@@ -781,8 +782,10 @@ function applyRuntimeResourceProjections(
 			observation.enabled &&
 			observation.status !== "install_failed" &&
 			observation.commandPath &&
-			((manifest.runtimes[name]?.provider_ids ?? []).some(
-				(id) => manifest.projection?.providers?.[id]?.configurationMode === "connection",
+			((manifest.runtimes[name]?.provider_ids ?? []).some((id) =>
+				["connection", "custom"].includes(
+					manifest.projection?.providers?.[id]?.configurationMode ?? "",
+				),
 			) ||
 				Object.keys(context.providerOwnership.transfers[name] ?? {}).length > 0)
 		) {
@@ -1270,7 +1273,7 @@ function commitRuntimeConvergence(
 				),
 			),
 		},
-		transfers: context.providerOwnership.transfers,
+		transfers: commitProviderTransfers(context.providerOwnership.transfers),
 	});
 	try {
 		gcFileBrowserCompanionCandidates(manifest, paths);

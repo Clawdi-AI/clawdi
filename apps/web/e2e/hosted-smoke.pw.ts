@@ -2992,80 +2992,93 @@ for (const projectionFailure of [
 	});
 }
 
-test("agent provider creation stays in context and updates only after Save changes", async ({
-	page,
-}) => {
-	const providerAcceptRequests: string[] = [];
-	const updateDeploymentRequests: Array<{
-		body: string;
-		idempotencyKey: string | null;
-		ifMatch: string | null;
-	}> = [];
-	const createdProvider: AiProvider = {
-		...userProvider("openai", "OpenAI", [{ id: "gpt-5", label: "GPT-5" }]),
-		type: "openai",
-		base_url: "https://api.openai.com/v1",
-		runtime_env_name: "OPENAI_API_KEY",
-	};
-	await stubHostedApi(page, {
-		deployments: [railHostedDeployment],
-		cloudAgents: [railHostedCloudAgent],
-		providerAcceptRequests,
-		providerAcceptResponses: [
-			{ status: 200, body: { status: "ready", provider: createdProvider } },
-		],
-		updateDeploymentRequests,
-	});
-	const agentPath = `/agents/${railHostedEnvironmentId}/model-provider`;
-	for (let attempt = 0; attempt < 2; attempt += 1) {
-		await page.goto(agentPath);
-		try {
-			await expect(page.getByRole("heading", { name: "AI Providers" })).toBeVisible();
-			break;
-		} catch (error) {
-			if (attempt === 1) throw error;
+for (const kind of ["native", "custom"] as const) {
+	test(`${kind} provider creation stays in context and binds without choosing a model`, async ({
+		page,
+	}) => {
+		const providerAcceptRequests: string[] = [];
+		const updateDeploymentRequests: Array<{
+			body: string;
+			idempotencyKey: string | null;
+			ifMatch: string | null;
+		}> = [];
+		const providerId = kind === "native" ? "openai" : "custom-gateway";
+		const providerName = kind === "native" ? "OpenAI" : "Custom gateway";
+		const createdProvider: AiProvider = {
+			...userProvider(providerId, providerName, []),
+			configuration_mode: kind,
+			native_provider: kind === "native" ? "openai" : null,
+			models: null,
+			api_mode: kind === "native" ? "openai_responses" : "openai_chat",
+			type: kind === "native" ? "openai" : "custom_openai_compatible",
+			base_url: kind === "native" ? "https://api.openai.com/v1" : "https://custom.example/v1",
+			runtime_env_name: "OPENAI_API_KEY",
+		};
+		await stubHostedApi(page, {
+			deployments: [railHostedDeployment],
+			cloudAgents: [railHostedCloudAgent],
+			providerAcceptRequests,
+			providerAcceptResponses: [
+				{ status: 200, body: { status: "ready", provider: createdProvider } },
+			],
+			updateDeploymentRequests,
+		});
+		const agentPath = `/agents/${railHostedEnvironmentId}/model-provider`;
+		for (let attempt = 0; attempt < 2; attempt += 1) {
+			await page.goto(agentPath);
+			try {
+				await expect(page.getByRole("heading", { name: "AI Providers" })).toBeVisible();
+				break;
+			} catch (error) {
+				if (attempt === 1) throw error;
+			}
 		}
-	}
-	const agentPageUrl = page.url();
+		const agentPageUrl = page.url();
 
-	await page.getByRole("button", { name: /Add a provider/ }).click();
-	expect(page.url()).toBe(agentPageUrl);
-	const dialog = page.getByRole("dialog");
-	await expect(dialog).toBeVisible();
-	await expect(dialog).toHaveAccessibleName("Add a provider");
-	await dialog.getByRole("button", { name: /^OpenAI/ }).click();
-	await expect(dialog).toHaveAccessibleName("Set up OpenAI");
-	await dialog.getByRole("textbox", { name: "API key" }).fill("sk-e2e-agent-provider");
-	await dialog.getByRole("button", { name: "Add provider", exact: true }).click();
+		await page.getByRole("button", { name: /Add a provider/ }).click();
+		expect(page.url()).toBe(agentPageUrl);
+		const dialog = page.getByRole("dialog");
+		await expect(dialog).toBeVisible();
+		await expect(dialog).toHaveAccessibleName("Add a provider");
+		await dialog
+			.getByRole("button", { name: kind === "native" ? /^OpenAI/ : /^Custom endpoint/ })
+			.click();
+		if (kind === "custom") {
+			await dialog.getByLabel("Name", { exact: true }).fill(providerName);
+			await dialog.getByLabel("Endpoint").fill("https://custom.example/v1");
+		}
+		await dialog.getByRole("textbox", { name: "API key" }).fill("sk-e2e-agent-provider");
+		await dialog.getByRole("button", { name: "Add provider", exact: true }).click();
 
-	await expect(dialog).toBeHidden();
-	await expect.poll(() => providerAcceptRequests.length).toBe(1);
-	expect(page.url()).toBe(agentPageUrl);
-	const providerCard = page
-		.getByTestId("provider-choice-grid")
-		.getByRole("button", { pressed: true })
-		.filter({ hasText: "OpenAI" });
-	await expect(providerCard).toHaveAttribute("aria-pressed", "true");
-	const mainModel = page.getByRole("combobox", { name: "Main model" });
-	await expect(mainModel).toBeVisible();
-	const accountProviderLink = page
-		.locator("main p")
-		.filter({ hasText: "Add, validate, or remove providers" })
-		.getByRole("link", { name: "AI Providers" });
-	await expect(accountProviderLink).toHaveAttribute("href", "/ai-providers");
-	expect(updateDeploymentRequests).toEqual([]);
-
-	await mainModel.fill("gpt-5-confirmed");
-	expect(updateDeploymentRequests).toEqual([]);
-	await page.locator("main").getByRole("button", { name: "Save changes" }).click();
-	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
-	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
-		ai_provider_auth_kind: "api_key",
-		ai_provider_id: "openai",
-		provider_ids: ["openai"],
-		primary_model: { provider_id: "openai", model: "gpt-5-confirmed" },
+		await expect(dialog).toBeHidden();
+		await expect.poll(() => providerAcceptRequests.length).toBe(1);
+		const saved = JSON.parse(providerAcceptRequests[0] ?? "{}").provider;
+		expect(saved).toMatchObject({ configuration_mode: kind, label: providerName });
+		expect(saved).not.toHaveProperty("models");
+		expect(page.url()).toBe(agentPageUrl);
+		const providerCard = page
+			.getByTestId("provider-choice-grid")
+			.getByRole("button", { pressed: true })
+			.filter({ hasText: providerName });
+		await expect(providerCard).toHaveAttribute("aria-pressed", "true");
+		const mainModel = page.getByRole("combobox", { name: "Main model" });
+		await expect(mainModel).toHaveCount(0);
+		const accountProviderLink = page
+			.locator("main p")
+			.filter({ hasText: "Add, validate, or remove providers" })
+			.getByRole("link", { name: "AI Providers" });
+		await expect(accountProviderLink).toHaveAttribute("href", "/ai-providers");
+		expect(updateDeploymentRequests).toEqual([]);
+		await page.locator("main").getByRole("button", { name: "Save changes" }).click();
+		await expect.poll(() => updateDeploymentRequests.length).toBe(1);
+		expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
+			ai_provider_auth_kind: "api_key",
+			ai_provider_id: providerId,
+			provider_ids: [providerId],
+			primary_model: null,
+		});
 	});
-});
+}
 
 test("hosted live-tool routes keep scrolling inside their viewport", async ({ page }) => {
 	let releaseDeploymentList: (() => void) | undefined;

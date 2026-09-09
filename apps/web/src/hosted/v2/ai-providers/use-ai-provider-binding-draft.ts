@@ -26,7 +26,9 @@ export function selectAiBindingProvider(
 		context.providers.some(
 			(provider) =>
 				provider.provider_id === choice &&
-				(provider.configuration_mode === "native" || provider.configuration_mode === "connection"),
+				(provider.configuration_mode === "native" ||
+					provider.configuration_mode === "connection" ||
+					provider.configuration_mode === "custom"),
 		)
 	) {
 		return { ...draft, bindingMode: "configured", primaryProviderChoice: choice, primaryModel: "" };
@@ -109,8 +111,6 @@ export function useAiProviderBindingDraft({
 				modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels).includes(draft.primaryModel)),
 		setBindingMode: (bindingMode: AiBindingMode) =>
 			setDraft((current) => ({ ...current, bindingMode })),
-		setPrimaryModel: (primaryModel: string) =>
-			setDraft((current) => ({ ...current, primaryModel })),
 		selectProvider: (choice: string) =>
 			setDraft((current) => selectAiBindingProvider(current, choice, context)),
 		selectCreatedProvider: (id: string) =>

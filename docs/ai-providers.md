@@ -12,39 +12,61 @@ the selected provider through the stable runtime bootstrap bundle.
 
 ## Supported Provider Data
 
-New BYOK connections use `configuration_mode: "native"`: choose a provider,
-region or plan variant, and an API key, access token, or supported OAuth
-connection. Hermes and OpenClaw own model selection and their native catalogs.
-Clawdi does not pick a default model or copy a catalog for these connections.
-Credentials can be deployable while inference remains `not_tested` and
-`primary_model` is null.
+The product has three provider kinds:
 
-The Web editor preserves each saved connection's ownership mode. Existing
-catalog connections can migrate in place through a mode-only
-`PATCH /v1/ai-providers/{provider_id}` with `configuration_mode: "connection"`.
-This one-way handoff keeps the saved ID, endpoint, protocol, key, and historical
-model metadata. It requires an already-bound runtime with the existing native
-provider row; it never creates a provider or seeds models on a fresh agent.
+| Kind | User input | Model ownership |
+| --- | --- | --- |
+| Clawdi Managed | None | Clawdi configures its authoritative catalog and default |
+| Custom provider | Name, Endpoint, API format, API key | The agent owns models and selection |
+| Native provider | Choose a supported provider, Name, key/token or supported sign-in | The agent owns models and selection |
 
-For `connection`, the agent owns model selection, model metadata, and model
-parameters. Core retains historical metadata for reference but emits neither
-provider models nor a primary model for this connection. Web hides its model
-editor and automatic inference tests. Connection edits may change the endpoint,
-protocol, or label; an optional `credential: {type: "api_key", value: "..."}`
-in the same PATCH replaces the key atomically. The runtime environment name and
-API-key auth identity remain fixed. Upsert/accept cannot replace a connection,
-and OAuth conversion and model updates are rejected. Unbinding removes only
-owned credential references and retains the native provider's routing and models.
+Native region/plan variants are distinct chooser entries, not extra form settings.
+ChatGPT sign-in remains a native credential option. Every Name is only a Clawdi
+`label`; renaming does not change stable IDs, credential identity, or runtime intent.
+The Web form has no model editor or inference test. Credential environment names
+are internal, unique at creation, and immutable on existing custom connections.
 
-First migration is disabled unless the registered database setting
-`supported_connection_cli_versions` contains a qualified exact stable CLI
-version. Missing or empty settings deny migration. Every existing consumer
-must have a fresh, unambiguous accepted v2 observation with that running CLI
-version and matching current source/applied identity. Installed-version metadata
-alone is insufficient. The allowlist is managed through the audited admin settings
-API and must remain empty until a supporting release is qualified and published.
-Include files whose native inspection redacts credential ownership are excluded
-from this migration rather than guessed.
+New Custom records use `configuration_mode: "custom"`. Create through the normal
+atomic `/v1/ai-providers/accept` API with an API-key credential. No model metadata
+is accepted or emitted. They support first binding, switching agents, and rebind
+without a Clawdi-selected model. The provider remains the same saved connection;
+native model choices remain local to each agent.
+
+CLI initialization creates only a missing custom provider with routing and its env
+credential reference. OpenClaw requires an empty `models` array for a new provider;
+Hermes needs no model directory. This is not a guarantee that an arbitrary endpoint
+supports discovery or that a model is already selected. Users choose models inside
+the native agent. Subsequent convergence never seeds or replaces model fields.
+A durable keyless pending-creation flag allows a retry after journal persistence
+but before the first config write, and is cleared after successful authority commit.
+After success, a user-deleted provider row is an error, not permission to restore it.
+
+Custom edits use PATCH; an optional `credential: {type: "api_key", value: "..."}`
+replaces the key atomically with label/routing changes. Models and auth/environment
+identity cannot be replaced through PATCH or accept. Unbind removes only owned env
+references and keeps routing, models and selection. Rebind restores its owned auth.
+Hermes global model selection persists endpoint/protocol mirrors: matching mirrors
+follow an explicit routing edit, while foreign routing/credentials fail preflight.
+OpenClaw authentication-header overrides and personal Hermes pools cannot silently
+replace the delivered key. No user credential is deleted to resolve a conflict.
+
+The released `catalog` and migration-only `connection` modes remain internal
+compatibility paths. They are not new provider choices. Existing records can use
+"Manage models in agent", a mode-only PATCH to `custom`, preserving stored model
+metadata and encrypted credentials. Bound consumers must first prove fresh current
+source/apply identity on a qualified CLI. Unbound records may upgrade after the
+feature release is enabled and initialize when subsequently bound. A bound runtime
+with conflicting or missing native state still refuses unsafe handoff.
+
+`supported_custom_provider_cli_versions` is an exact stable-release allowlist in
+Core and the first-party control plane. It defaults closed. First-party admission
+and provisioning require the server-selected exact CLI; Core also rejects runtime
+state that would send Custom to an unsupported reader, and requires fresh consumed
+evidence when adding a Custom binding to an existing instance. Enable only after
+publishing and qualifying the supporting CLI. This is capability admission, not a
+second desired-version selector. `supported_connection_cli_versions` continues to
+protect the earlier migration-only contract. No allowlist is enabled by code.
+Redacted include ownership remains excluded rather than guessed.
 
 `native_provider` identifies the connection and `native_variant` optionally
 identifies its region or plan. The shared

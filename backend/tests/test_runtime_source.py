@@ -399,11 +399,13 @@ def connection_source_fixture() -> RuntimeSourceBatch:
     return batch
 
 
-def test_connection_source_emits_only_owned_routing_and_credentials() -> None:
+@pytest.mark.parametrize("mode", ["connection", "custom"])
+def test_connection_source_emits_only_owned_routing_and_credentials(mode: str) -> None:
     batch = connection_source_fixture()
+    batch.providers[(USER_ID, "saved-connection")].configuration_mode = mode
     source = _render(batch)
     provider = source.manifest["providers"]["saved-connection"]
-    assert provider["configurationMode"] == "connection"
+    assert provider["configurationMode"] == mode
     assert provider["managed_by"] == "user"
     assert provider["runtimeEnvName"] == "SAVED_CONNECTION_KEY"
     assert provider["apiKeySecretRef"]

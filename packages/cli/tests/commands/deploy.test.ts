@@ -648,47 +648,51 @@ describe("deploy orchestration", () => {
 		expect(JSON.stringify(codexClient.created?.body)).not.toContain("access_token");
 	});
 
-	test("native saved providers deliver credentials without model selection in either mode", async () => {
-		for (const interactive of [false, true]) {
-			const client = new FakeDeployGateway();
-			client.savedProviders = [
-				{
-					...savedProvider("native", { models: [] }),
-					base_url: "https://api.openai.com/v1",
-					configuration_mode: "native",
-					native_provider: "openai",
-				},
-			];
-			const options = {
-				provider: "native",
-				runtime: "hermes",
-				compute: "basic",
-				name: "Native",
-				language: "en",
-				timezone: "UTC",
-				requestId: "123e4567-e89b-42d3-a456-426614174099",
-				yes: true,
-			};
-			const result = await runDeployFlow(parseDeployCommandOptions(options), {
-				client,
-				interactive,
-				prompts: noUnexpectedPrompts,
-				sleep: async () => undefined,
-			});
-			expect(client.created?.body).toMatchObject({
-				primary_model: null,
-				provider_ids: ["native"],
-				ai_provider_auth_kind: "api_key",
-			});
-			expect(result.primary_model).toBeNull();
-			const legacy = await runDeployFlow(
-				parseDeployCommandOptions({ ...options, model: "legacy-model" }),
-				{ client, interactive: false, sleep: async () => undefined },
-			);
-			expect(legacy.primary_model).toBeNull();
-			expect(client.created?.body.primary_model).toBeNull();
-		}
-	});
+	test.each(["native", "custom"] as const)(
+		"%s saved providers deliver credentials without model selection in either mode",
+		async (kind) => {
+			for (const interactive of [false, true]) {
+				const client = new FakeDeployGateway();
+				client.savedProviders = [
+					{
+						...savedProvider("native", { models: [] }),
+						base_url: "https://api.openai.com/v1",
+						configuration_mode: kind,
+						runtime_env_name: "OPENAI_API_KEY",
+						...(kind === "native" ? { native_provider: "openai" } : {}),
+					},
+				];
+				const options = {
+					provider: "native",
+					runtime: "hermes",
+					compute: "basic",
+					name: "Native",
+					language: "en",
+					timezone: "UTC",
+					requestId: "123e4567-e89b-42d3-a456-426614174099",
+					yes: true,
+				};
+				const result = await runDeployFlow(parseDeployCommandOptions(options), {
+					client,
+					interactive,
+					prompts: noUnexpectedPrompts,
+					sleep: async () => undefined,
+				});
+				expect(client.created?.body).toMatchObject({
+					primary_model: null,
+					provider_ids: ["native"],
+					ai_provider_auth_kind: "api_key",
+				});
+				expect(result.primary_model).toBeNull();
+				const legacy = await runDeployFlow(
+					parseDeployCommandOptions({ ...options, model: "legacy-model" }),
+					{ client, interactive: false, sleep: async () => undefined },
+				);
+				expect(legacy.primary_model).toBeNull();
+				expect(client.created?.body.primary_model).toBeNull();
+			}
+		},
+	);
 
 	test("fails closed for missing, unusable, and ambiguous saved-provider models", async () => {
 		const client = new FakeDeployGateway();

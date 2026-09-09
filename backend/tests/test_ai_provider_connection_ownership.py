@@ -55,6 +55,7 @@ async def consumer(
     captured_at=None,
     source_revision=REVISION,
     boot="boot-connection-test",
+    health="ok",
 ):
     env = await create_env_with_project(
         db,
@@ -98,7 +99,7 @@ async def consumer(
             "reportedAt": now,
             "capturedAt": now,
             "runtimeMode": "hosted",
-            "status": "ok",
+            "status": health,
             "activeCliVersion": version,
             "applied": {
                 "etag": f'"sha256:{source_revision}"',
@@ -344,3 +345,140 @@ async def test_handoff_requires_all_existing_consumers_to_have_qualified_current
     saved = (await client.get(f"/v1/ai-providers/{PROVIDER}")).json()
     assert saved["configuration_mode"] == "catalog"
     assert saved["models"] == MODELS
+
+
+@pytest.mark.asyncio
+async def test_custom_create_rename_rotate_and_reject_catalog_overwrite(
+    client, db_session, seed_user
+):
+    body = {
+        "provider_id": "custom-work",
+        "configuration_mode": "custom",
+        "type": "custom_openai_compatible",
+        "label": "Work",
+        "base_url": "https://provider.example/v1",
+        "api_mode": "anthropic_messages",
+        "runtime_env_name": "CUSTOM_WORK_KEY",
+        "auth": {"type": "api_key", "source": "managed"},
+    }
+    response = await client.post(
+        "/v1/ai-providers/accept",
+        headers={"Idempotency-Key": str(uuid4())},
+        json={"provider": body, "credential": {"type": "api_key", "value": "first-custom-key"}},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["provider"]["configuration_mode"] == "custom"
+    assert response.json()["provider"].get("models") is None
+    payload = await db_session.scalar(
+        select(AiProviderAuthPayload).where(
+            AiProviderAuthPayload.owner_user_id == seed_user.id,
+            AiProviderAuthPayload.provider_id == body["provider_id"],
+        )
+    )
+    before = (payload.encrypted_payload, payload.nonce, payload.credential_revision)
+    renamed = await client.patch("/v1/ai-providers/custom-work", json={"label": "Renamed"})
+    assert renamed.status_code == 200, renamed.text
+    await db_session.refresh(payload)
+    assert (payload.encrypted_payload, payload.nonce, payload.credential_revision) == before
+    rotated = await client.patch(
+        "/v1/ai-providers/custom-work",
+        json={
+            "base_url": "https://new-provider.example/v1",
+            "credential": {"type": "api_key", "value": "rotated-custom-key"},
+        },
+    )
+    assert rotated.status_code == 200, rotated.text
+    assert "rotated-custom-key" not in rotated.text
+    await db_session.refresh(payload)
+    assert decrypt(payload.encrypted_payload, payload.nonce) == "rotated-custom-key"
+    for patch in [
+        {"models": MODELS},
+        {"runtime_env_name": "OTHER_KEY"},
+        {"configuration_mode": "catalog"},
+    ]:
+        rejected = await client.patch("/v1/ai-providers/custom-work", json=patch)
+        assert rejected.status_code == 409, rejected.text
+    overwritten = await client.post(
+        "/v1/ai-providers/accept",
+        headers={"Idempotency-Key": str(uuid4())},
+        json={
+            "provider": body,
+            "replace": True,
+            "credential": {"type": "api_key", "value": "unwanted-key"},
+        },
+    )
+    assert overwritten.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_custom_handoff_and_binding_require_exact_qualified_cli(
+    client, db_session, seed_user
+):
+    from fastapi import HTTPException
+
+    from app.models.ai_provider import AiProvider
+    from app.services.ai_provider_connection_ownership import require_custom_provider_cli
+
+    await create_provider(client)
+    await consumer(db_session, seed_user.id)
+    blocked = await client.patch(
+        f"/v1/ai-providers/{PROVIDER}", json={"configuration_mode": "custom"}
+    )
+    assert blocked.status_code == 409
+    db_session.add(AppSetting(key="supported_custom_provider_cli_versions", value_json=[VERSION]))
+    await db_session.commit()
+    migrated = await client.patch(
+        f"/v1/ai-providers/{PROVIDER}", json={"configuration_mode": "custom"}
+    )
+    assert migrated.status_code == 200, migrated.text
+    assert migrated.json().get("models") is None
+    provider = await db_session.scalar(
+        select(AiProvider).where(
+            AiProvider.owner_user_id == seed_user.id, AiProvider.provider_id == PROVIDER
+        )
+    )
+    assert provider.models == MODELS
+    for version in ["0.14.59", f"{VERSION}-beta.1"]:
+        with pytest.raises(HTTPException):
+            await require_custom_provider_cli(
+                db_session,
+                owner_user_id=seed_user.id,
+                provider_ids=[PROVIDER],
+                cli_package_spec=f"clawdi@{version}",
+            )
+    await require_custom_provider_cli(
+        db_session,
+        owner_user_id=seed_user.id,
+        provider_ids=[PROVIDER],
+        cli_package_spec=f"clawdi@{VERSION}",
+    )
+    # Adding this Custom provider to an existing runtime requires fresh consumed evidence,
+    # not merely a requested upgrade in the incoming state.
+    state = await consumer(db_session, seed_user.id, boot="custom-binding-target")
+    state.runtimes = {
+        "openclaw": {
+            "enabled": True,
+            "providerMode": "unmanaged",
+            "provider_ids": [],
+            "install": {"source": "official"},
+        }
+    }
+    await db_session.flush()
+    await require_custom_provider_cli(
+        db_session,
+        owner_user_id=seed_user.id,
+        provider_ids=[PROVIDER],
+        cli_package_spec=f"clawdi@{VERSION}",
+        previous_state=state,
+    )
+    failed = await consumer(db_session, seed_user.id, boot="custom-binding-failed", health="error")
+    failed.runtimes = state.runtimes
+    await db_session.flush()
+    with pytest.raises(HTTPException):
+        await require_custom_provider_cli(
+            db_session,
+            owner_user_id=seed_user.id,
+            provider_ids=[PROVIDER],
+            cli_package_spec=f"clawdi@{VERSION}",
+            previous_state=failed,
+        )

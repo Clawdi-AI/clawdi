@@ -42,9 +42,15 @@ SUPPORTED_CONNECTION_CLI_VERSIONS_SPEC = AppSettingSpec[list[str]](
     ),
     description="Qualified exact CLI releases for existing-runtime connection ownership handoff",
 )
+SUPPORTED_CUSTOM_PROVIDER_CLI_VERSIONS_SPEC = AppSettingSpec[list[str]](
+    key="supported_custom_provider_cli_versions",
+    adapter=SUPPORTED_CONNECTION_CLI_VERSIONS_SPEC.adapter,
+    description="Qualified exact CLI releases that initialize and rebind custom providers",
+)
 APP_SETTING_SPECS: tuple[AppSettingSpec[Any], ...] = (
     CLERK_CLI_OAUTH_SPEC,
     SUPPORTED_CONNECTION_CLI_VERSIONS_SPEC,
+    SUPPORTED_CUSTOM_PROVIDER_CLI_VERSIONS_SPEC,
 )
 APP_SETTING_SPEC_BY_KEY = {spec.key: spec for spec in APP_SETTING_SPECS}
 _JSON_VALUE_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)

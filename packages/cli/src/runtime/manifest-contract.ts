@@ -493,7 +493,7 @@ const hostedProviderAuthSchema = z
 const hostedProviderBaseSchema = z
 	.object({
 		kind: z.literal("openai-compatible"),
-		configurationMode: z.enum(["native", "catalog", "connection"]).optional(),
+		configurationMode: z.enum(["native", "custom", "catalog", "connection"]).optional(),
 		nativeProvider: z.string().min(1).max(120).optional(),
 		type: z.enum(AI_PROVIDER_TYPES).optional(),
 		baseUrl: z.string().url().optional(),
@@ -519,8 +519,15 @@ function validateHostedProvider(
 	provider: z.infer<typeof hostedProviderBaseSchema>,
 	ctx: z.RefinementCtx,
 ): void {
+	if (provider.configurationMode === "custom" && provider.models?.length) {
+		ctx.addIssue({
+			code: "custom",
+			message: "Custom connections cannot manage model catalogs",
+			path: ["models"],
+		});
+	}
 	if (
-		provider.configurationMode === "connection" &&
+		(provider.configurationMode === "connection" || provider.configurationMode === "custom") &&
 		(provider.managed_by !== "user" ||
 			!provider.apiKeySecretRef ||
 			provider.auth ||
@@ -918,13 +925,17 @@ function validateHostedRuntimeManifest(
 			selectedRuntime.providerMode === "configured" &&
 			!selectedRuntime.primary_model &&
 			(nativeProviders.length +
-				selectedProviders.filter((provider) => provider?.configurationMode === "connection")
-					.length !==
+				selectedProviders.filter(
+					(provider) =>
+						provider?.configurationMode === "connection" ||
+						provider?.configurationMode === "custom",
+				).length !==
 				1 ||
 				selectedProviders.some(
 					(provider) =>
 						provider?.configurationMode !== "native" &&
 						provider?.configurationMode !== "connection" &&
+						provider?.configurationMode !== "custom" &&
 						!(
 							provider?.managed_by === "clawdi" &&
 							provider.models?.length &&

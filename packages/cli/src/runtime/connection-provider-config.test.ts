@@ -19,13 +19,17 @@ import type { RuntimeInstallObservation } from "./manifest-install";
 import { applyHostedAiProviderProjection } from "./manifest-providers";
 import { recordValue } from "./manifest-shared";
 import { getRuntimePaths } from "./paths";
-import { readProviderOwnership, writeProviderOwnership } from "./provider-ownership";
+import {
+	commitProviderTransfers,
+	readProviderOwnership,
+	writeProviderOwnership,
+} from "./provider-ownership";
 
 const id = "saved-provider";
 const envName = "SAVED_PROVIDER_API_KEY";
 const baseUrl = "https://provider.example/v1";
 
-function fixture(runtime: "openclaw" | "hermes") {
+function fixture(runtime: "openclaw" | "hermes", mode: "custom" | "connection" = "connection") {
 	const home = mkdtempSync(join(tmpdir(), "clawdi-connection-"));
 	const manifest: RuntimeManifest = {
 		schemaVersion: "clawdi.runtimeDesiredState.v1",
@@ -51,7 +55,7 @@ function fixture(runtime: "openclaw" | "hermes") {
 				[id]: {
 					kind: "openai-compatible",
 					type: "custom_openai_compatible",
-					configurationMode: "connection",
+					configurationMode: mode,
 					managed_by: "user",
 					baseUrl,
 					apiMode: "openai_chat",
@@ -178,8 +182,10 @@ with open(path, "w") as file: json.dump(config, file)
 			? recordValue(getHermesRawConfigValue(hermesConfig, "providers").value)?.[id]
 			: JSON.parse(readFileSync(openClawContext.configPath, "utf8")).models.providers[id];
 	const set = (value: unknown) => {
-		if (runtime === "hermes") document.setIn(["providers", id], value);
-		else {
+		if (runtime === "hermes") {
+			if (value === undefined) document.deleteIn(["providers", id]);
+			else document.setIn(["providers", id], value);
+		} else {
 			const config = JSON.parse(readFileSync(openClawContext.configPath, "utf8"));
 			config.models.providers[id] = value;
 			writeFileSync(openClawContext.configPath, JSON.stringify(config));
@@ -220,6 +226,65 @@ function applyProjector(f: ReturnType<typeof fixture>, previousProviderIds: stri
 }
 
 for (const runtime of ["openclaw", "hermes"] as const) {
+	test(`${runtime}: custom creation, retry, rotation and rebind preserve agent-owned models`, () => {
+		const f = fixture(runtime, "custom");
+		try {
+			f.set(undefined);
+			const plan = f.prepare();
+			// Crash after the durable write-ahead record, before config creation.
+			f.restoreOwnership(plan.providers);
+			f.prepare();
+			applyConnectionProviderTransfers(f.input());
+			const provider = recordValue(f.read()) ?? {};
+			expect(provider.apiKey ?? provider.key_env).toBeDefined();
+			if (runtime === "openclaw") expect(provider.models).toEqual([]);
+			else expect(provider.models).toBeUndefined();
+			f.restoreOwnership(commitProviderTransfers({ [runtime]: plan.providers })[runtime]);
+			const edited = {
+				...provider,
+				models:
+					runtime === "openclaw"
+						? [{ id: "tenant-model", name: "Tenant model" }]
+						: { "tenant-model": {} },
+				tenant_option: "keep",
+			};
+			f.set(edited);
+			f.secretValues["secret://provider.saved-provider.apiKey"] = "rotated-test-key";
+			f.prepare();
+			applyConnectionProviderTransfers(f.input());
+			expect(f.read()).toEqual(edited);
+			f.manifest.runtimes[runtime].provider_ids = [];
+			f.prepare();
+			applyConnectionProviderTransfers(f.input());
+			expect(recordValue(f.read())?.models).toEqual(edited.models);
+			expect(recordValue(f.read())?.apiKey ?? recordValue(f.read())?.key_env).toBeUndefined();
+			f.manifest.runtimes[runtime].provider_ids = [id];
+			f.prepare();
+			applyConnectionProviderTransfers(f.input());
+			expect(f.read()).toEqual(edited);
+			if (runtime === "hermes") {
+				const config = f.input().hermesConfig;
+				config.document.setIn(["model", "base_url"], baseUrl);
+				config.document.setIn(["model", "api_mode"], "chat_completions");
+				f.prepare();
+				applyConnectionProviderTransfers(f.input());
+				const desired = f.manifest.projection?.providers?.[id];
+				if (!desired) throw new Error("Missing provider fixture");
+				desired.baseUrl = "https://updated.example/v1";
+				f.prepare();
+				applyConnectionProviderTransfers(f.input());
+				expect(config.document.getIn(["model", "base_url"])).toBe(desired.baseUrl);
+				expect(config.document.getIn(["model", "default"])).toBe("existing");
+				expect(recordValue(f.read())?.models).toEqual(edited.models);
+			}
+			// A successful initialization is not permission to recreate a user-deleted row.
+			f.set(undefined);
+			expect(() => f.prepare()).toThrow("must already exist");
+		} finally {
+			f.cleanup();
+		}
+	});
+
 	test(`${runtime}: explicit catalog primary supersedes connection selection despite permanent tombstone`, () => {
 		const f = fixture(runtime);
 		try {
@@ -360,6 +425,22 @@ export async function mutateConfigFile(options) {
 				...(runtime === "openclaw" ? { apiKey: "foreign-key" } : { key_cmd: "foreign-command" }),
 			});
 			expect(() => f.prepare()).toThrow("credential ownership conflict");
+			if (runtime === "openclaw") {
+				for (const fields of [
+					{ authHeader: false },
+					{ headers: { Authorization: "user-token" } },
+					{
+						models: [
+							{ id: "existing", name: "Existing", headers: { "X-Goog-API-Key": "user-key" } },
+						],
+					},
+				]) {
+					f.set({ ...original, ...fields });
+					const before = f.read();
+					expect(() => f.prepare()).toThrow("authentication header conflict");
+					expect(f.read()).toEqual(before);
+				}
+			}
 			f.set({
 				...original,
 				...(runtime === "openclaw"

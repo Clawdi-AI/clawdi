@@ -112,6 +112,7 @@ from app.services.agent_lifecycle import (
     archive_agent_and_project,
 )
 from app.services.ai_provider_auth_transition import transition_ai_provider_auth
+from app.services.ai_provider_connection_ownership import require_custom_provider_cli
 from app.services.ai_provider_credentials import (
     OAuthCredentialClaimConflict,
     lock_ai_provider_owner,
@@ -2476,6 +2477,19 @@ async def _admin_upsert_runtime_state(
         )
     ).scalar_one_or_none()
     existing_state = state
+    await require_custom_provider_cli(
+        db,
+        owner_user_id=target_user_id,
+        provider_ids=[
+            provider_id
+            for runtime in body.runtimes.values()
+            for provider_id in runtime.provider_ids
+        ],
+        cli_package_spec=body.cli_package_spec,
+        previous_state=state
+        if state is not None and state.instance_id == body.instance_id
+        else None,
+    )
     secret_rows = await load_hosted_runtime_secrets_for_update(
         db,
         environment_id=environment_id,

@@ -395,3 +395,33 @@ describe("shared Hosted AI provider binding", () => {
 		).toThrow("Invalid AI provider auth source.");
 	});
 });
+
+test("Managed config selects the authoritative default without user model input", () => {
+	expect(
+		buildHostedAiBindingFields({
+			managedModels,
+			providers: [],
+			mode: "create",
+			selection: { mode: "managed" },
+		}).primary_model,
+	).toEqual({ provider_id: CLAWDI_MANAGED_PROVIDER_ID, model: "gpt-managed" });
+});
+
+test("custom bindings initialize and rebind without a Clawdi-selected model", () => {
+	const provider = {
+		...apiKeyProvider,
+		configuration_mode: "custom",
+		models: null,
+	} satisfies HostedSavedAiProvider;
+	for (const mode of ["create", "update"] as const) {
+		const binding = buildHostedAiBindingFields({
+			managedModels,
+			providers: [provider],
+			mode,
+			selection: { mode: "saved", providerId: provider.provider_id },
+		});
+		expect(binding.primary_model).toBeNull();
+		expect(binding.ai_provider_bootstrap?.catalog.providers[0]?.configuration_mode).toBe("custom");
+		expect(binding.ai_provider_bootstrap?.catalog.providers[0]?.models).toBeUndefined();
+	}
+});

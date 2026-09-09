@@ -33,6 +33,7 @@ export interface NativeProviderConnection {
 }
 
 export interface CustomProviderConnection {
+	initialize: boolean;
 	id: string;
 	baseUrl: string;
 	apiMode: AiProviderApiMode;
@@ -48,7 +49,9 @@ export function customProviderConnections(
 		manifest.projection?.providers ?? {},
 		runtimeName,
 		manifest,
-	).filter(([, input]) => input.configurationMode === "connection");
+	).filter(
+		([, input]) => input.configurationMode === "connection" || input.configurationMode === "custom",
+	);
 	return entries.map(([id, input]) => {
 		if (
 			(runtimeName !== "openclaw" && runtimeName !== "hermes") ||
@@ -63,6 +66,7 @@ export function customProviderConnections(
 			throw new Error("Invalid custom provider connection");
 		return {
 			id,
+			initialize: input.configurationMode === "custom",
 			baseUrl: input.baseUrl,
 			apiMode: input.apiMode,
 			envName: hostedProviderRuntimeEnvName(id, input, runtimeName),
@@ -187,7 +191,10 @@ export function hostedAiProviderCatalog(
 	const providers = manifest.projection?.providers;
 	if (!providers || Object.keys(providers).length === 0) return null;
 	const providerEntries = hostedProviderEntries(providers, runtimeName, manifest).filter(
-		([, input]) => input.configurationMode !== "native" && input.configurationMode !== "connection",
+		([, input]) =>
+			input.configurationMode !== "native" &&
+			input.configurationMode !== "connection" &&
+			input.configurationMode !== "custom",
 	);
 	const requestedModel = hostedRuntimePrimaryModel(manifest, runtimeName);
 	const primaryModel =

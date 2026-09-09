@@ -26,7 +26,7 @@ export interface HostedAiProviderBootstrap extends Record<string, unknown> {
 
 export type HostedAiBindingSelection =
 	| { mode: "unmanaged" }
-	| { mode: "managed"; model: string }
+	| { mode: "managed"; model?: string }
 	| {
 			mode: "saved";
 			model?: string;
@@ -67,15 +67,6 @@ export function hostedAiProviderAvailabilityIssue(
 	},
 ): HostedAiProviderAvailabilityIssue | null {
 	if (
-		provider.configuration_mode === "connection" &&
-		(!context.environmentId || !context.currentProviderIds?.includes(provider.provider_id))
-	) {
-		return {
-			kind: "delivery",
-			message: "This connection can only remain on an agent that already uses it.",
-		};
-	}
-	if (
 		provider.consumer &&
 		(context.environmentId === null ||
 			provider.consumer.environment_id !== context.environmentId ||
@@ -113,6 +104,19 @@ export function hostedAiProviderAvailabilityIssue(
 				context.runtime === "hermes" && provider.api_mode === "google_generate_content"
 					? "Hermes cannot use Gemini GenerateContent yet. Choose OpenClaw, or use an OpenAI- or Anthropic-compatible provider."
 					: `${context.runtime === "hermes" ? "Hermes" : "OpenClaw"} cannot use this provider's authentication or API protocol.`,
+		};
+	}
+	if (
+		provider.configuration_mode === "connection" &&
+		(!context.environmentId ||
+			!(
+				context.currentProviderIds?.includes(provider.provider_id) ||
+				provider.consumer?.environment_id === context.environmentId
+			))
+	) {
+		return {
+			kind: "delivery",
+			message: "This saved connection must be upgraded before binding it to another agent.",
 		};
 	}
 	return null;
@@ -173,7 +177,9 @@ function toHostedRuntimeAiProvider(provider: HostedSavedAiProvider): RuntimeAiPr
 	};
 	if (provider.label) runtimeProvider.label = provider.label;
 	const models =
-		provider.configuration_mode === "connection" ? [] : toRuntimeModels(provider.models);
+		provider.configuration_mode === "connection" || provider.configuration_mode === "custom"
+			? []
+			: toRuntimeModels(provider.models);
 	if (models.length > 0) runtimeProvider.models = models;
 	if (provider.api_mode) runtimeProvider.api_mode = provider.api_mode;
 	if (provider.runtime_env_name) runtimeProvider.runtime_env_name = provider.runtime_env_name;
@@ -211,7 +217,11 @@ export function buildHostedAiBindingFields({
 				};
 	}
 
-	const model = selection.model?.trim() ?? "";
+	const model =
+		selection.model?.trim() ||
+		(selection.mode === "managed"
+			? (managedModels.find((item) => item.is_default)?.id ?? managedModels[0]?.id ?? "")
+			: "");
 
 	if (selection.mode === "managed") {
 		if (!model) {
@@ -251,6 +261,7 @@ export function buildHostedAiBindingFields({
 	if (
 		provider.configuration_mode !== "native" &&
 		provider.configuration_mode !== "connection" &&
+		provider.configuration_mode !== "custom" &&
 		!model
 	) {
 		throw new HostedAiBindingError("model_required", "Choose a catalog model or enter a model id.");
@@ -261,7 +272,9 @@ export function buildHostedAiBindingFields({
 		ai_provider_id: provider.provider_id,
 		provider_ids: [provider.provider_id],
 		primary_model:
-			provider.configuration_mode === "native" || provider.configuration_mode === "connection"
+			provider.configuration_mode === "native" ||
+			provider.configuration_mode === "connection" ||
+			provider.configuration_mode === "custom"
 				? null
 				: { provider_id: provider.provider_id, model },
 		ai_provider_bootstrap: buildHostedAiProviderBootstrap(provider),
