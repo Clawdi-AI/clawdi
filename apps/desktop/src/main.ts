@@ -74,6 +74,7 @@ let trayStateChecking = true;
 let trayStateRefresh: Promise<void> | null = null;
 let availableWindowOpening: Promise<void> | null = null;
 let dashboardWindowOpening: Promise<DashboardLoadResult> | null = null;
+let cancelDashboardReady: (() => void) | null = null;
 let dashboardFailureOpening: Promise<void> | null = null;
 let dashboardSession: Session | null = null;
 let dashboardAccountId: string | null = null;
@@ -86,6 +87,7 @@ let activeCriticalOperations = 0;
 let quitting = false;
 
 class DesktopConnectError extends Error {}
+class DashboardLoadCancelled extends Error {}
 
 type DashboardLoadResult = "opened" | "connect-required" | "failed";
 function runAsync(label: string, operation: Promise<unknown>): void {
@@ -327,11 +329,6 @@ function updateMenuItems(): MenuItemConstructorOptions[] {
 	return items.length > 0 ? [{ type: "separator" }, ...items] : [];
 }
 
-function trayUpdateMenuItems(): MenuItemConstructorOptions[] {
-	const items = updateActionMenuItems();
-	return items.length > 0 ? [{ type: "separator" }, ...items] : [];
-}
-
 function updateActionMenuItems(): MenuItemConstructorOptions[] {
 	if (updateState.status === "disabled") return [];
 	const status = desktopUpdateStatusLabel(updateState);
@@ -487,6 +484,7 @@ function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.signIn, (event) =>
 		safeDashboardAction(event, "sign in", async () => {
 			assertRuntimeLocation();
+			cancelPendingDashboardAuthentication(event);
 			let result: DesktopAuthenticationFlowResult;
 			try {
 				result = await authenticateAndResumeSync(true);
@@ -541,6 +539,7 @@ function registerIpc(): void {
 	);
 	ipcMain.handle(DESKTOP_IPC.retryDashboard, (event) =>
 		safeDashboardAction(event, "reconnect the dashboard", async () => {
+			cancelPendingDashboardAuthentication(event);
 			if ((await loadDashboardWithRecovery(true)) === "failed") {
 				throw new Error("Dashboard reconnection failed.");
 			}
@@ -1080,7 +1079,7 @@ function renderTrayMenu(): void {
 			click: () => runAsync("open Connect Agent", showConnectWindow()),
 		},
 	];
-	template.push(...trayUpdateMenuItems());
+	template.push(...updateMenuItems());
 
 	if (process.platform === "darwin") {
 		const loginItem = readLoginItemSettings();
@@ -1390,6 +1389,7 @@ async function loadDashboardWithRecovery(
 			await presentMainWindow(readyWindow);
 			return "opened" as const;
 		} catch (error) {
+			if (error instanceof DashboardLoadCancelled) return "failed" as const;
 			console.error("Could not open the dashboard", error);
 			try {
 				const auth = await cli.getAuthState();
@@ -1497,6 +1497,8 @@ async function showConnectRequired(): Promise<void> {
 
 function waitForDashboardReady(window: BrowserWindow, timeoutMs: number): Promise<void> {
 	return new Promise((resolvePromise, reject) => {
+		const cancel = () => finish(new DashboardLoadCancelled());
+		cancelDashboardReady = cancel;
 		const timer = setTimeout(() => finish(new Error("Dashboard sign-in timed out")), timeoutMs);
 		const onNavigate = (_event: Electron.Event, url: string) => {
 			if (isDashboardContentUrl(url)) finish();
@@ -1506,6 +1508,7 @@ function waitForDashboardReady(window: BrowserWindow, timeoutMs: number): Promis
 		window.webContents.once("destroyed", onDestroyed);
 
 		function finish(error?: Error) {
+			if (cancelDashboardReady === cancel) cancelDashboardReady = null;
 			clearTimeout(timer);
 			window.webContents.off("did-navigate", onNavigate);
 			window.webContents.off("destroyed", onDestroyed);
@@ -1513,6 +1516,13 @@ function waitForDashboardReady(window: BrowserWindow, timeoutMs: number): Promis
 			else resolvePromise();
 		}
 	});
+}
+
+function cancelPendingDashboardAuthentication(event: IpcMainInvokeEvent): void {
+	// Called only after the dashboard sender and main frame have been validated.
+	if (new URL(event.senderFrame?.url ?? "").pathname === "/desktop-auth") {
+		cancelDashboardReady?.();
+	}
 }
 
 async function clearDashboardSession(): Promise<void> {
@@ -1527,7 +1537,7 @@ async function waitForDashboardOpening(): Promise<void> {
 	try {
 		await pending;
 	} catch {
-		// The caller is replacing this process-scoped session; only completion matters.
+		// The caller is replacing the pending navigation; only completion matters.
 	}
 }
 

@@ -150,6 +150,21 @@ async function verifyPackagedDashboard(context) {
 		"signIn",
 		"signOut",
 	]);
+	await window
+		.getByRole("heading", { name: "Desktop sign-in expired" })
+		.waitFor({ timeout: 20_000 });
+	const initialTickets = readFileSync(cliLog, "utf8").match(/^auth desktop-session /gm)?.length ?? 0;
+	await window.getByRole("button", { name: "Try again", exact: true }).click();
+	const retryDeadline = Date.now() + 10_000;
+	while (Date.now() < retryDeadline) {
+		const tickets = readFileSync(cliLog, "utf8").match(/^auth desktop-session /gm)?.length ?? 0;
+		if (tickets > initialTickets) break;
+		await delay(100);
+	}
+	assert.ok(
+		(readFileSync(cliLog, "utf8").match(/^auth desktop-session /gm)?.length ?? 0) > initialTickets,
+		"Retry waited for the previous sign-in timeout instead of requesting a fresh ticket.",
+	);
 	const childOpened = context.waitForEvent("page", { timeout: 20_000 });
 	await window.evaluate(
 		(agentId) => window.clawdiDesktop.openTerminalWindow(`${location.origin}/terminal/${agentId}`),

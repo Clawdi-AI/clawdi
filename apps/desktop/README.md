@@ -83,5 +83,7 @@ Workflows become dispatchable once present on the default branch.
 The standard electron-updater client selects `latest` or `beta`, checks after
 30 seconds and every six hours, and supports Check for Updates. Automatic
 downgrades are disabled. Channel selection is build-time, not an in-app switch.
+Beta remains on the beta feed even after a stable release; install the signed
+stable DMG manually to leave beta. Stable publication never changes beta metadata.
 Validate a signed beta-to-beta upgrade on a Mac before general distribution;
 the old disabled preview cannot self-update.

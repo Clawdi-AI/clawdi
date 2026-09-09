@@ -33,29 +33,26 @@ GitHub release bodies are the published release notes. `CHANGELOG.md` is the
 curated user-facing history in the repository. Keep them aligned for notable
 releases.
 
-## Desktop Release Blocker
+## Desktop Releases
 
-Desktop stable updates use an independent electron-updater generic feed. Preview
-builds are ad-hoc signed, carry `clawdiUpdateChannel=disabled`, and never enter
-that feed. The bundled CLI also remains ineligible for self-update.
+The Desktop Release workflow builds signed and notarized macOS arm64 packages.
+Its publish input defaults to false. Explicit publication creates an immutable
+`desktop-v<version>` GitHub Release, marks beta versions as prereleases, and never
+changes the monorepo's Latest release. Desktop Update Site then deploys standard
+electron-updater metadata to GitHub Pages, pointing to the release's ZIP assets.
+See [Desktop packaging](../../apps/desktop/README.md) for inputs and recovery.
 
-Stable packaging requires an explicit `CLAWDI_DESKTOP_UPDATE_FEED_URL`: an
-owner-controlled strict HTTPS directory URL ending in `/`. The build embeds the
-feed URL, `stable` channel, and expected Developer ID Team ID in signed
-application metadata. Missing or invalid feed metadata fails closed. Runtime
-updates additionally require that the installed application's Developer ID Team
-matches the signed metadata; there is no hard-coded download host or GitHub
-`releases/latest` fallback.
+The signed application embeds its feed URL and stable or beta channel. Stable
+reads `latest-mac.yml`; beta reads `beta-mac.yml`. Channels remain independent:
+publishing stable does not promote beta users. To leave beta, install the signed
+stable DMG manually. Automatic downgrades are disabled. No Team ID secret or
+metadata pin is required; codesign, notarization, and Gatekeeper validate the
+build, and Squirrel.Mac verifies update signatures against the installed app.
 
-Before stable Desktop updates can operate, a reviewed credentialed workflow must
-run `bun run --cwd apps/desktop package:mac:release`, verify the app and bundled
-CLI signatures, stapler validation, Gatekeeper assessment, DMG, ZIP,
-`latest-mac.yml`, version, Team ID, and checksum, then atomically publish the
-immutable ZIP and matching `latest-mac.yml` to that generic feed. This repository
-does not currently contain that workflow or feed infrastructure. Until both are
-owner-controlled and reviewed, stable Desktop publication is blocked. The local
-packaging command never publishes and no production publication is part of this
-runbook change.
+Disabled preview builds do not self-update. Before broad distribution, verify
+real-account cold restart without repeated login notifications and one signed
+beta-to-beta upgrade preserving the session. CI with fake tickets does not prove
+these two behaviors. The bundled CLI remains ineligible for self-update.
 
 ## Pre-Merge Checklist
 

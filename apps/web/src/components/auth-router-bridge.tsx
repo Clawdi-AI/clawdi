@@ -39,7 +39,9 @@ export function AuthRouterBridge({ children }: { children: React.ReactNode }) {
 		if (auth.status === "loading" || auth.status === "unavailable") return;
 		if (previousAuthKey.current === authKey) return;
 		const hadSession = previouslySignedIn.current;
-		previouslySignedIn.current = auth.status === "signed-in";
+		if (auth.status === "signed-in" || auth.status === "signed-out") {
+			previouslySignedIn.current = auth.status === "signed-in";
+		}
 		previousAuthKey.current = authKey;
 		if (hadSession && auth.status === "signed-out" && window.clawdiDesktop) {
 			void window.clawdiDesktop
