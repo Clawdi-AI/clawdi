@@ -3158,7 +3158,11 @@ async def _record_inbound_message_with_status(
         if existing is not None:
             return existing, False
         raise
-    await notify_channel_inbound_message_enqueued(db, account_id=str(account.id))
+    await notify_channel_inbound_message_enqueued(
+        db,
+        account_id=str(account.id),
+        bot_agent_link_id=str(message.bot_agent_link_id) if message.bot_agent_link_id else None,
+    )
     inbound_messages.labels(channel=account.provider).inc()
     return message, True
 
