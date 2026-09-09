@@ -1610,46 +1610,6 @@ def test_connected_account_display_uses_only_account_identity(data, state, expec
     assert composio._account_display_label(account) == expected
 
 
-def test_connected_account_identity_exposes_only_allowlisted_labels() -> None:
-    account = composio._ConnectedAccount.model_validate(
-        {
-            "id": "ca_github",
-            "alias": "Work GitHub",
-            "word_id": "github_red-castle",
-            "created_at": "2026-09-03T00:00:00Z",
-            "status": "ACTIVE",
-            "toolkit": {"slug": "github"},
-            "data": {
-                "email": "octocat@example.test",
-                "organization": {"name": "Clawdi AI", "access_token": "secret-org-token"},
-                "api_key": "secret-api-key",
-            },
-            "state": {
-                "val": {
-                    "tenant": {"id": "tenant-primary", "token": "secret-tenant-token"},
-                    "refresh_token": "secret-refresh-token",
-                }
-            },
-        }
-    )
-
-    identity = composio._serialize_connected_account_identity(account).model_dump(
-        mode="json", exclude_none=True
-    )
-
-    assert identity == {
-        "id": "ca_github",
-        "alias": "Work GitHub",
-        "app_name": "github",
-        "status": "ACTIVE",
-        "is_disabled": False,
-        "account_display": "octocat@example.test",
-        "organization_display": "Clawdi AI",
-        "tenant_display": "tenant-primary",
-    }
-    assert "secret" not in str(identity)
-
-
 async def test_close_composio_client_uses_public_sdk_lifecycles(monkeypatch):
     from composio import Composio
     from composio_client import AsyncComposio

@@ -26,7 +26,6 @@ from app.models.user import User
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.routes import mcp_bridge
 from app.routes import memories as memory_routes
-from app.services.composio import ConnectorAccountIdentity
 from app.services.memory_provider import Mem0Provider
 from app.services.vault_crypto import decrypt as decrypt_vault_value
 from app.services.vault_crypto import encrypt as encrypt_vault_value
@@ -1011,37 +1010,16 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
     async def override_auth() -> AuthContext:
         return runtime_auth
 
-    async def colliding_connectors(_auth: AuthContext) -> list[dict[str, Any]]:
+    async def colliding_connectors(_user_id: str) -> list[dict[str, Any]]:
         return [
             {"name": "memory_search", "inputSchema": {"type": "object"}},
             {"name": "project_get", "inputSchema": {"type": "object"}},
             {"name": "vault_create", "inputSchema": {"type": "object"}},
             {"name": "connector_safe", "inputSchema": {"type": "object"}},
-            {"name": "connector_account_update", "inputSchema": {"type": "object"}},
-            {"name": "connector_account_delete", "inputSchema": {"type": "object"}},
+            {"name": "COMPOSIO_MANAGE_CONNECTIONS", "inputSchema": {"type": "object"}},
         ]
 
-    async def connected_account_identities(
-        _user_id: str, *, include_inactive: bool = False
-    ) -> list[ConnectorAccountIdentity]:
-        assert include_inactive is False
-        return [
-            ConnectorAccountIdentity(
-                id="ca_github",
-                app_name="github",
-                status="ACTIVE",
-                account_display="octocat",
-                organization_display="clawdi-ai",
-                tenant_display="tenant-primary",
-            )
-        ]
-
-    monkeypatch.setattr(mcp_bridge, "_connector_mcp_tools", colliding_connectors)
-    monkeypatch.setattr(
-        mcp_bridge,
-        "get_connected_account_identities",
-        connected_account_identities,
-    )
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_tools", colliding_connectors)
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_auth] = override_auth
     app.dependency_overrides[get_auth_short_session] = override_auth
@@ -1051,28 +1029,12 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
             listed = await _rpc(client, 1, "tools/list", {})
             names = [tool["name"] for tool in listed["tools"]]
             assert "connector_safe" in names
-            assert "connector_account_list" in names
+            assert "COMPOSIO_MANAGE_CONNECTIONS" in names
             assert "memory_search" not in names
             assert "project_get" not in names
             assert "vault_list" not in names
             assert "vault_resolve" not in names
             assert "vault_create" not in names
-
-            accounts = _tool_json(await _tool_call(client, 11, "connector_account_list"))[
-                "accounts"
-            ]
-            assert accounts == [
-                {
-                    "id": "ca_github",
-                    "app_name": "github",
-                    "status": "ACTIVE",
-                    "is_disabled": False,
-                    "account_display": "octocat",
-                    "organization_display": "clawdi-ai",
-                    "tenant_display": "tenant-primary",
-                }
-            ]
-            assert not ({"data", "state", "credentials", "token"} & accounts[0].keys())
 
             missing_memory = await _tool_call(
                 client,
@@ -1119,32 +1081,19 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
             assert missing_write["isError"] is True
             assert "missing scope: vault:write" in missing_write["content"][0]["text"]
 
-            for name in ("connector_account_update", "connector_account_delete"):
-                assert name not in names
-                missing_mutation = await _tool_call(
-                    client, 44, name, {"connection_id": "ca_github"}
-                )
-                assert missing_mutation["isError"] is True
-                assert "missing scope: connectors:invoke" in missing_mutation["content"][0]["text"]
+            missing_invoke = await _tool_call(
+                client,
+                44,
+                "COMPOSIO_MANAGE_CONNECTIONS",
+                {"toolkits": [{"name": "github", "action": "list"}]},
+            )
+            assert missing_invoke["isError"] is True
+            assert "missing scope: connectors:invoke" in missing_invoke["content"][0]["text"]
 
             runtime_auth.api_key.scopes = ["connectors:invoke"]
             mutation_tools = (await _rpc(client, 45, "tools/list", {}))["tools"]
-            mutation_names = [tool["name"] for tool in mutation_tools]
-            assert "connector_account_list" not in mutation_names
-            for name in ("connector_account_update", "connector_account_delete"):
-                assert mutation_names.count(name) == 1
-                schema = next(
-                    tool["inputSchema"] for tool in mutation_tools if tool["name"] == name
-                )
-                assert schema["additionalProperties"] is False
-                assert "connection_id" in schema["required"]
-                if name == "connector_account_update":
-                    assert "alias" in schema["required"]
-
+            assert "COMPOSIO_MANAGE_CONNECTIONS" not in [tool["name"] for tool in mutation_tools]
             runtime_auth.api_key.scopes = ["projects:read", "vault:write"]
-            missing_accounts = await _tool_call(client, 43, "connector_account_list")
-            assert missing_accounts["isError"] is True
-            assert "missing scope: connectors:read" in missing_accounts["content"][0]["text"]
             invalid = await _tool_call(
                 client,
                 5,

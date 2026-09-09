@@ -162,3 +162,19 @@ Before merging API-shape changes:
 4. Add or update compatibility tests for old paths.
 5. Regenerate and check `packages/shared/src/api/api.generated.ts`.
 6. Audit external `/api` strings before broad search-and-replace edits.
+
+## Connector MCP account management consolidation
+
+The native `connector_account_list`, `connector_account_update`, and
+`connector_account_delete` tools are removed in favor of the session's
+`COMPOSIO_MANAGE_CONNECTIONS`. This is an intentional MCP tool removal; the
+`/v1/connectors` dashboard API remains supported. Refresh cached `tools/list`
+definitions and update Agent instructions before using the consolidated surface.
+Use explicit `action: "list"` for reads and exact discovered account IDs for
+`rename` and `remove`. Empty-alias clearing is not established by the supplied
+multi-account MCP schema; the dashboard API still supports it.
+
+Hosted `clawdi` version `1` remains the existing compatibility label. Its packaged
+Skill and catalog digest are updated together with the current generic Skill.
+Deploy the updated CLI/Skill instructions and refresh MCP tool lists when removing
+these backend tools; a backend-only update cannot refresh already-installed Skills.

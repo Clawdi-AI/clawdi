@@ -392,8 +392,7 @@ tool names use singular `<resource>[_<subresource>]_<action>` identifiers;
 connector-provided names remain unchanged. Native tools cover Memory
 search/list/create/exact update/delete, Session search/list/get,
 read-only Project metadata, Vault metadata/references, explicit single-reference
-Vault plaintext resolution, narrow Vault writes, and connector account identity
-and management.
+Vault plaintext resolution and narrow Vault writes.
 Tools requiring unavailable scopes are omitted from `tools/list`, while direct
 calls still fail the scope check. Connector names can never shadow a declared
 native tool, including one hidden by scope.
@@ -403,33 +402,30 @@ metadata and provenance. Built-in memory updates clear a stale embedding when
 re-embedding is unavailable; Mem0 updates verify account ownership before the
 provider mutation. `session_list` uses the same account/legacy-environment fence
 as Session search/get and supports bounded time, Agent, and visible Project
-filters. `connector_account_list` exposes active, enabled connection IDs,
-toolkit names, aliases, statuses, disabled state, and allowlisted display labels.
-Its optional `include_inactive: true` flag includes non-active and disabled accounts
-for management without changing the default execution-oriented list. Raw provider
-`data`, `state`, tokens, and credentials never enter the MCP result.
+filters.
 
-`connector_account_update` changes only an owned account's alias; an empty string
-clears it. `connector_account_delete` disconnects the exact owned connection.
-Both require `connectors:invoke`, affect all agents using that account, and reuse
-the dashboard's service-layer ownership checks and session invalidation. Deleting
-a connection does not revoke the provider's authorization grant. Account discovery
-retains the separate `connectors:read` permission.
+Composio owns connector account discovery and management through the session's
+`COMPOSIO_MANAGE_CONNECTIONS` tool. Its multi-account schema accepts toolkit items
+with explicit `list`, `add`, `rename`, or `remove` actions. Listing is read-only;
+omitting an action defaults to `add`, which creates an authorization link.
+Rename and remove target an exact `account_id` from discovery. Clawdi forwards
+the live schemas and results without a second account-management MCP API.
+Discovery retains `connectors:read`; all upstream tool calls require
+`connectors:invoke`, including `COMPOSIO_MANAGE_CONNECTIONS` list actions.
 
 Composio sessions enable multiple accounts per toolkit with
 `require_explicit_selection=False` explicitly set. The pinned SDK otherwise
 inserts `True`, contrary to the documented default. Agents can select an account
 ID or alias through the upstream tool's live schema; omitted selection uses the
-default active account. Upstream MCP tools remain authoritative: SDK support for
-editing an alias does not establish the parameters of a session's MCP tools.
+default active account. Upstream MCP tools remain authoritative.
 
 The connector management API lists all account states. Alias edits and deletion
 verify ownership independently of account status. To authorize again, use the
 standard new-connection flow; it creates a separate account rather than repairing
 an existing ID. Existing accounts and aliases are never deleted or reassigned
 automatically. Clear or change an old alias before reusing it on a new account.
-Account mutations invalidate cached MCP sessions. Dashboard counts and Agent
-account identities remain active-only.
+Dashboard account mutations invalidate cached MCP sessions; dashboard counts
+remain active-only.
 
 For agents that only support stdio MCP, `clawdi mcp` is a protocol-transparent
 stdio-to-HTTP wrapper: it forwards MCP messages and does not declare a second

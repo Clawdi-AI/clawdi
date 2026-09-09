@@ -45,7 +45,7 @@ async def client(monkeypatch, handler):
         yield AuthContext(user=User(clerk_id="owner"))
 
 
-async def test_management_lists_nonactive_but_identity_availability_does_not(monkeypatch):
+async def test_management_lists_nonactive_but_available_accounts_do_not(monkeypatch):
     accounts = [account(status) for status in ["ACTIVE", "EXPIRED", "FAILED", "INACTIVE"]]
     accounts.append(account("ACTIVE", disabled=True))
 
@@ -58,18 +58,13 @@ async def test_management_lists_nonactive_but_identity_availability_does_not(mon
 
     async with client(monkeypatch, handle):
         all_accounts = await composio.get_all_connected_accounts("owner")
-        available = await composio.get_connected_account_identities("owner")
         counts = await composio.get_connected_accounts("owner")
-        identities = await composio.get_connected_account_identities("owner", include_inactive=True)
     assert {item.status for item in all_accounts} == {"ACTIVE", "EXPIRED", "FAILED", "INACTIVE"}
     assert len(all_accounts) == 5
-    assert len(available) == len(counts) == 1
-    assert statuses == [None, "ACTIVE", "ACTIVE", None]
-    assert [(item.status, item.is_disabled) for item in identities] == [
-        (item.status, item.is_disabled) for item in all_accounts
-    ]
-    assert identities[-1].status == "ACTIVE" and identities[-1].is_disabled
-    assert "private-" not in str([all_accounts, available, identities])
+    assert len(counts) == 1
+    assert statuses == [None, "ACTIVE"]
+    assert all_accounts[-1].is_disabled
+    assert "private-" not in str([all_accounts, counts])
 
 
 async def test_delete_owned_expired_account(monkeypatch):
