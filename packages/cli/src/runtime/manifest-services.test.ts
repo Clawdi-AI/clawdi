@@ -1201,6 +1201,76 @@ esac
 		expect(sourceChangedWatchUnit).toBe(rotatedWatchUnit);
 		expect(sourceChangedWatchUnit).not.toContain("next-runtime-source-value");
 		expect(warnings.join("\n")).not.toContain("next-runtime-source-value");
+
+		// The existing service env owns managed defaults, including withdrawal on BYO.
+		const managed = structuredClone(manifest);
+		const hermes = managed.runtimes.hermes;
+		if (!hermes?.run || !hermes.services.dashboard) throw new Error("missing Hermes fixture");
+		hermes.provider_ids = ["selected-ai"];
+		hermes.primary_model = { provider_id: "selected-ai", model: "gpt-6-astra" };
+		managed.projection = {
+			providers: {
+				"selected-ai": {
+					type: "custom_openai_compatible",
+					managed_by: "clawdi",
+					baseUrl: "https://provider.example.test/v1",
+					apiMode: "openai_responses",
+					runtimeEnvName: "CLAWDI_AI_API_KEY",
+					apiKeySecretRef: "secret://provider.clawdi.apiKey",
+					models: [{ id: "gpt-6-astra" }],
+				},
+			},
+		};
+		const managedLoad: RuntimeManifestLoad = {
+			...load,
+			manifest: managed,
+			secretValues: { ...load.secretValues, "secret://provider.clawdi.apiKey": "managed-test-key" },
+		};
+		const applyManaged = () => {
+			expect(convergeRuntimeManifest(managedLoad, paths).installErrors).toEqual([]);
+			return readSystemdEnvironment(paths, "hermes-gateway");
+		};
+		const managedEnv = applyManaged();
+		expect(managedEnv.HERMES_API_CALL_STALE_TIMEOUT).toBe("1200");
+		expect(managedEnv).not.toHaveProperty("HERMES_API_TIMEOUT");
+		expect(
+			readSystemdEnvironment(paths, "clawdi-hermes-dashboard").HERMES_API_CALL_STALE_TIMEOUT,
+		).toBe("1200");
+		expect(applyManaged()).toEqual(managedEnv);
+		expect(readFileSync(join(paths.userHome, ".hermes", "config.yaml"), "utf8")).not.toContain(
+			"stale_timeout_seconds",
+		);
+		expect(readFileSync(watchEnvPath, "utf8")).not.toContain("HERMES_API_CALL_STALE_TIMEOUT");
+
+		hermes.run.env.HERMES_API_CALL_STALE_TIMEOUT = "777";
+		hermes.services.dashboard.secretEnv = {
+			HERMES_API_CALL_STALE_TIMEOUT: "secret://runtime/custom-timeout",
+		};
+		managedLoad.secretValues = {
+			...managedLoad.secretValues,
+			"secret://runtime/custom-timeout": "888",
+		};
+		const explicitEnv = applyManaged();
+		expect(explicitEnv.HERMES_API_CALL_STALE_TIMEOUT).toBe("777");
+		expect(
+			readSystemdEnvironment(paths, "clawdi-hermes-dashboard").HERMES_API_CALL_STALE_TIMEOUT,
+		).toBe("888");
+
+		// Same provider ID, URL and model, but authoritative ownership is BYO.
+		const provider = managed.projection.providers?.["selected-ai"];
+		if (!provider) throw new Error("missing managed provider fixture");
+		provider.managed_by = "user";
+		expect(applyManaged().HERMES_API_CALL_STALE_TIMEOUT).toBe("777");
+		delete hermes.run.env.HERMES_API_CALL_STALE_TIMEOUT;
+		delete hermes.services.dashboard.secretEnv.HERMES_API_CALL_STALE_TIMEOUT;
+		const byoEnv = applyManaged();
+		expect(byoEnv).not.toHaveProperty("HERMES_API_CALL_STALE_TIMEOUT");
+		expect(readSystemdEnvironment(paths, "clawdi-hermes-dashboard")).not.toHaveProperty(
+			"HERMES_API_CALL_STALE_TIMEOUT",
+		);
+		expect(
+			JSON.parse(readFileSync(runtimeRunConfigPath("hermes", paths), "utf8")).env,
+		).not.toHaveProperty("HERMES_API_CALL_STALE_TIMEOUT");
 	});
 
 	test("enumerates only enabled schema-known secret consumers", () => {

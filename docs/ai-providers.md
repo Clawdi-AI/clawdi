@@ -343,7 +343,7 @@ all generated provider fields, so removed models do not survive. Generic and
 BYOK projection leaves Hermes' discovery default unchanged. Hermes has no
 OpenClaw-style global `models.mode` switch.
 
-This behavior is verified against Hermes `0.19.1`, source commit
+This provider catalog behavior is verified against Hermes `0.19.1`, source commit
 [`cc4cab2f`](https://github.com/NousResearch/hermes-agent/tree/cc4cab2f592e60a197e796506de9168f74baf3ea):
 [`model_switch.py`](https://github.com/NousResearch/hermes-agent/blob/cc4cab2f592e60a197e796506de9168f74baf3ea/hermes_cli/model_switch.py#L2613-L2658)
 and its custom-provider path
@@ -351,6 +351,36 @@ and its custom-provider path
 probe `/models` by default but honor `discover_models: false`;
 [`config.py`](https://github.com/NousResearch/hermes-agent/blob/cc4cab2f592e60a197e796506de9168f74baf3ea/hermes_cli/config.py#L1310-L1321)
 accepts that provider field.
+
+When the manifest selects an enabled Hermes runtime's Clawdi-managed Responses
+provider (`managed_by: clawdi`), the CLI defaults
+`HERMES_API_CALL_STALE_TIMEOUT=1200` in its generated gateway and dashboard
+service environments. Explicit `run.env` / service `env` or `secretEnv` values
+win. Hermes also gives explicit provider/model timeout config and the user's
+`.hermes/.env` precedence. Generated run files and service environments retract
+the default on a manifest switch to BYO, without editing user config or `.env`.
+Provider names, gateway hostnames and merely running on hosted compute do not
+identify Clawdi AI; no additional manifest policy field is needed.
+
+The 1200-second scalar is the maximum native Codex context stale floor, not
+dynamic equivalence. Hermes
+[`9e6c4100` watchdogs](https://github.com/NousResearch/hermes-agent/blob/9e6c4100cbf5222fb473ecc2b51fd17874f6ee75/agent/chat_completion_helpers.py)
+use 600/900/1200 seconds above 10k/50k/100k context tokens for native Codex.
+The 1500-second native hard ceiling is not a stale baseline. The CLI leaves the
+normal 1800-second request budget, Responses TTFB/event-idle settings, auth,
+reasoning, retries, model capabilities and UI streaming defaults unchanged.
+The user dotenv precedence is verified in
+[`env_loader.py`](https://github.com/NousResearch/hermes-agent/blob/9e6c4100cbf5222fb473ecc2b51fd17874f6ee75/hermes_cli/env_loader.py#L349).
+
+This default follows the manifest-selected deployment: a local/session-only
+switch to another provider before authoritative manifest convergence shares
+the service default for all models. Hermes collapses named custom profiles to
+runtime provider `custom`; writing timeout-only `providers.custom` entries is
+unsafe because its model-selection and provider metadata readers also consume
+that namespace. The service environment avoids adding a bogus provider.
+
+Done: `scripts/test.sh cli src/runtime/manifest-services.test.ts` verifies managed
+selection, repeat convergence, explicit values and BYO withdrawal.
 
 For explicit catalog connections, OpenClaw Hosted provider convergence uses the public
 `openclaw/plugin-sdk/config-mutation` export. The mutation starts from authored

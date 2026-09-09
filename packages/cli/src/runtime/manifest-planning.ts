@@ -191,6 +191,7 @@ export function resolveRuntimeRunConfigs(input: {
 	const { placeholderEnv, configEnv, secretEnv: providerSecretEnv } = providerEnvironment;
 	const providerPlaceholderEnv = { ...placeholderEnv, ...configEnv };
 	const runtimeRunSettings = resolvedRuntimeSettings(
+		input.manifest,
 		runtimeName,
 		input.runtime.run,
 		providerPlaceholderEnv,

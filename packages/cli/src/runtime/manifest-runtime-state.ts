@@ -108,7 +108,12 @@ export function runtimeProgramRevisionForManifest(
 		? hostedProviderEnvironment(manifest, runtime)
 		: { placeholderEnv: {}, secretEnv: {} };
 	const runtimeSettings = desiredRuntime
-		? resolvedRuntimeSettings(runtime, desiredRuntime.run, providerEnvironment.placeholderEnv)
+		? resolvedRuntimeSettings(
+				manifest,
+				runtime,
+				desiredRuntime.run,
+				providerEnvironment.placeholderEnv,
+			)
 		: undefined;
 	const runtimeSecretRefs = desiredRuntime
 		? [

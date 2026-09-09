@@ -125,17 +125,54 @@ export function resolvedRuntimeServiceSettings(
 	settings: RuntimeRunSettings,
 	providerEnv: Record<string, string>,
 ): RuntimeRunSettings {
-	const merged = mergeRuntimeEnvWithProviderPlaceholders(runtime, settings, providerEnv, service);
+	const merged = mergeRuntimeEnvWithProviderPlaceholders(
+		runtime,
+		withHermesManagedAiDefaults(manifest, runtime, settings) ?? settings,
+		providerEnv,
+		service,
+	);
 	return runtime === "hermes" && service === "dashboard"
 		? (withHermesDashboardAuthEnvironment(manifest, merged) ?? merged)
 		: merged;
 }
 export function resolvedRuntimeSettings(
+	manifest: RuntimeManifest,
 	runtime: string,
 	settings: RuntimeRunSettings | undefined,
 	providerEnv: Record<string, string>,
 ): RuntimeRunSettings | undefined {
-	return mergeRuntimeEnvWithProviderPlaceholders(runtime, settings, providerEnv);
+	return mergeRuntimeEnvWithProviderPlaceholders(
+		runtime,
+		withHermesManagedAiDefaults(manifest, runtime, settings),
+		providerEnv,
+	);
+}
+
+function withHermesManagedAiDefaults(
+	manifest: RuntimeManifest,
+	runtime: string,
+	settings: RuntimeRunSettings | undefined,
+): RuntimeRunSettings | undefined {
+	const desired = manifest.runtimes[runtime];
+	const providerId = desired?.primary_model?.provider_id;
+	const provider = providerId ? manifest.projection?.providers?.[providerId] : undefined;
+	if (
+		runtime !== "hermes" ||
+		!desired?.enabled ||
+		!providerId ||
+		provider?.managed_by !== "clawdi" ||
+		provider.status === "error" ||
+		provider.apiMode !== "openai_responses" ||
+		settings?.secretEnv?.HERMES_API_CALL_STALE_TIMEOUT !== undefined
+	)
+		return settings;
+	return {
+		...settings,
+		prependPath: settings?.prependPath ?? [],
+		// Maximum native Codex context floor, not a dynamic-policy equivalent.
+		// Hermes provider/model config and its user .env still take precedence.
+		env: { HERMES_API_CALL_STALE_TIMEOUT: "1200", ...settings?.env },
+	};
 }
 export function mergeRuntimeSecretEnv(
 	runtimeName: string,

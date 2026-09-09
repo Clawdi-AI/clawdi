@@ -63,6 +63,9 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- CLI 0.14.63 lets Hermes wait up to 20 minutes for Clawdi AI Responses calls,
+  preserving explicit timeout settings and withdrawing the default when switching
+  to a self-managed provider.
 - Native Hermes API-key connections now support older credential-pool APIs while
   preserving personal credentials and native key-rotation behavior.
 
