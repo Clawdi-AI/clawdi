@@ -450,3 +450,45 @@ async def test_reserved_clawdi_catalog_and_historical_desired_state_are_safe(
     assert removed.status_code == 202, removed.text
     assert removed.json()["desired_state"] == "absent"
     assert await db_session.get(AgentPluginInstallation, row.id) is None
+
+
+@pytest.mark.asyncio
+async def test_channel_bundle_pins_catalog_once_and_preserves_user_removal(
+    client,
+    db_session,
+    channel_agent,
+    seed_user,
+) -> None:
+    from app.models.user import UserSetting
+    from app.services.plugin_bundle import initialize_plugin_bundle
+
+    await _activate_catalog(db_session, name="sui", version="0.9.0")
+    existing = await client.put(f"/v1/agents/{channel_agent.id}/agent-plugins/sui", json={})
+    assert existing.status_code == 202, existing.text
+    revision = await _activate_catalog(db_session, name="sui")
+    entry = await db_session.get(PluginCatalogEntry, (revision, "sui", "1.0.0"))
+    entry.public_metadata = {**entry.public_metadata, "keywords": ["sui"]}
+    db_session.add(UserSetting(user_id=seed_user.id, settings={"deploy_channel": "sui"}))
+    await db_session.commit()
+    agent = await db_session.scalar(
+        select(type(channel_agent))
+        .where(type(channel_agent).id == channel_agent.id)
+        .with_for_update()
+    )
+    await initialize_plugin_bundle(db_session, agent=agent, bundle="unknown", runtime="hermes")
+    assert agent.plugin_bundle_revision is None
+    await initialize_plugin_bundle(db_session, agent=agent, bundle="sui", runtime="hermes")
+    await db_session.commit()
+    assert agent.plugin_bundle_revision == revision
+    installed = await client.get(f"/v1/agents/{agent.id}/agent-plugins")
+    assert installed.status_code == 200
+    assert installed.json()["plugins"][0]["version"] == "0.9.0"
+    assert installed.json()["plugins"][0]["installation_id"] == existing.json()["installation_id"]
+    assert [row["plugin_name"] for row in installed.json()["plugins"]] == ["sui"]
+    removed = await client.delete(f"/v1/agents/{agent.id}/agent-plugins/sui")
+    assert removed.status_code == 202
+    await _activate_catalog(db_session, name="sui", version="2.0.0")
+    await initialize_plugin_bundle(db_session, agent=agent, bundle="sui", runtime="hermes")
+    await db_session.commit()
+    assert agent.plugin_bundle_revision == revision
+    assert (await client.get(f"/v1/agents/{agent.id}/agent-plugins")).json()["plugins"] == []

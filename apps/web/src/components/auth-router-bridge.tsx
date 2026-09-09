@@ -1,8 +1,10 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { RouterContextProvider, useRouter } from "@tanstack/react-router";
+import { RouterContextProvider, useRouter, useRouterState } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ChannelBundleBoundary } from "@/hosted/billing/deploy/channel-bundle";
 import { clearAccountSuspension } from "@/lib/account-suspension";
 import { useRouteAuth } from "@/lib/auth-client";
+import { captureDeployChannel } from "@/lib/deploy-channel";
 import { createAppQueryClient } from "@/lib/query-client";
 import { routeAuthIdentity } from "@/lib/route-auth";
 
@@ -10,6 +12,10 @@ const isProtectedMatch = (match: { routeId: string }) => match.routeId.startsWit
 
 export function AuthRouterBridge({ children }: { children: React.ReactNode }) {
 	const router = useRouter();
+	const href = useRouterState({ select: (state) => state.location.href });
+	useLayoutEffect(() => {
+		captureDeployChannel();
+	}, [href]);
 	const auth = useRouteAuth();
 	const identity = routeAuthIdentity(auth);
 	const authKey = identity ?? auth.status;
@@ -40,7 +46,9 @@ export function AuthRouterBridge({ children }: { children: React.ReactNode }) {
 
 	return (
 		<RouterContextProvider router={router} context={{ auth }}>
-			<QueryClientProvider client={scope.queryClient}>{children}</QueryClientProvider>
+			<QueryClientProvider client={scope.queryClient}>
+				<ChannelBundleBoundary>{children}</ChannelBundleBoundary>
+			</QueryClientProvider>
 		</RouterContextProvider>
 	);
 }

@@ -80,6 +80,8 @@ class AgentEnvironment(Base, TimestampMixin):
     # observed metadata, but machine_name is no longer the identity label.
     default_name: Mapped[str | None] = mapped_column(String(200))
     display_name: Mapped[str | None] = mapped_column(String(120))
+    # Successful channel bundle initialization; survives plugin removal/runtime replacement.
+    plugin_bundle_revision: Mapped[str | None] = mapped_column(String(40))
     avatar_asset_key: Mapped[str | None] = mapped_column(String(512))
     sort_order: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
 

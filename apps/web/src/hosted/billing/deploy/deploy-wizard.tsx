@@ -29,6 +29,7 @@ import { SettingsSection } from "@/components/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -185,6 +186,7 @@ import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 import { env } from "@/lib/env";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
+import { useChannelBundle } from "./channel-bundle";
 
 type Compute = "basic" | "performance";
 type DeployPaymentMethod = "card" | "wallet";
@@ -294,6 +296,8 @@ function ComputeResources({
 }
 
 export function DeployWizard() {
+	const channelBundle = useChannelBundle();
+	const [preinstallBundle, setPreinstallBundle] = useState(true);
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const billingClient = useBillingClient();
@@ -665,7 +669,11 @@ export function DeployWizard() {
 		return null;
 	})();
 	const canSubmit =
-		!submitting && acceptedDeploymentRecovery === null && submitBlockingReason === null;
+		!submitting &&
+		!channelBundle.isPending &&
+		!channelBundle.isError &&
+		acceptedDeploymentRecovery === null &&
+		submitBlockingReason === null;
 
 	function selectCreatedProvider(providerId: string) {
 		selectCreatedAiProvider(providerId);
@@ -768,16 +776,19 @@ export function DeployWizard() {
 		aiFields: DeployAiFields,
 		computePlanSlug: ComputePlanSlug,
 	): DeployRequest {
-		return buildHostedDeployRequest({
-			computePlanSlug,
-			runtime,
-			persona: {
-				agentName,
-				language,
-				timezone,
-			},
-			aiFields,
-		});
+		return {
+			...buildHostedDeployRequest({
+				computePlanSlug,
+				runtime,
+				persona: {
+					agentName,
+					language,
+					timezone,
+				},
+				aiFields,
+			}),
+			...(channelBundle.data && preinstallBundle ? { plugin_bundle: "sui" as const } : {}),
+		};
 	}
 
 	function redirectTo(url: string | null | undefined): boolean {
@@ -1114,6 +1125,7 @@ export function DeployWizard() {
 			primaryModel: defaultPrimaryModel,
 		},
 		checkoutOpen: false,
+		preinstallBundle: true,
 	};
 	const deployDirty = deployWizardDraftIsDirty(
 		{
@@ -1127,6 +1139,7 @@ export function DeployWizard() {
 			subscriptionSource,
 			aiBindingDraft,
 			checkoutOpen: checkoutSession !== null,
+			preinstallBundle: channelBundle.data ? preinstallBundle : true,
 		},
 		deployBaseline,
 		deploymentCommitted,
@@ -1173,6 +1186,34 @@ export function DeployWizard() {
 					</div>
 				</SettingsSection>
 
+				{channelBundle.isError ? (
+					<Alert variant="destructive">
+						<AlertTitle>Couldn’t load deployment preferences</AlertTitle>
+						<AlertDescription>
+							<Button variant="outline" onClick={() => void channelBundle.refetch()}>
+								Retry
+							</Button>
+						</AlertDescription>
+					</Alert>
+				) : null}
+				{channelBundle.data ? (
+					<SettingsSection title="Preinstalled plugins">
+						<label htmlFor="sui-plugin-bundle" className="flex items-start gap-3">
+							<Checkbox
+								id="sui-plugin-bundle"
+								checked={preinstallBundle}
+								disabled={submitting}
+								onCheckedChange={(checked) => setPreinstallBundle(checked === true)}
+							/>
+							<span>
+								<span className="font-medium">Sui bundle</span>
+								<span className="block text-sm text-muted-foreground">
+									Includes Sui ecosystem Store plugins and their skills and MCP servers.
+								</span>
+							</span>
+						</label>
+					</SettingsSection>
+				) : null}
 				<SettingsSection title="AI providers">
 					<div className="flex flex-col gap-4">
 						<div className={ENTITY_CHOICE_GRID_CLASS} data-testid="provider-choice-grid">

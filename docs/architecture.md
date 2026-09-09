@@ -91,10 +91,13 @@ API compatibility policy lives in [`api-compatibility.md`](api-compatibility.md)
 ## Plugin Catalog And Desired State
 
 Clawdi is the sole authority for user Agent Plugin selection. New and existing
-Agents have no plugin desired state by default. Authenticated product APIs read
+Agents have no plugin desired state unless the user accepts a channel bundle
+at deployment. Authenticated product APIs read
 the last-known-good catalog and mutate one owned Agent's desired installation;
-they do not proxy selection through a hosted control plane and do not claim
-that native installation has converged.
+they do not claim that native installation has converged. A control plane may
+request the narrowly defined initial `sui` bundle through the runtime-state
+contract; Cloud resolves its contents from the trusted catalog, never from
+caller-supplied plugin sources.
 
 The catalog worker resolves `Clawdi-AI/store` `main` externally, then fetches
 `v2/catalog.json` at that exact 40-hex commit. The strict Store catalog v1 is a
@@ -134,6 +137,33 @@ lifecycle. Protected remote MCP authorization is separate owner-managed native
 runtime state; a same-name native server override may opt into the runtime's
 official OAuth flow without changing Store metadata, package bytes, or Clawdi
 desired state.
+
+### Channel bundle initialization
+
+`/deploy?deploy_profile=sui` (also `utm_source=sui`) recommends the optional
+Sui bundle. Anonymous capture survives authentication redirects; the signed-in
+app claims it for that user before deployment and persists `deploy_channel`
+through the existing settings API. Unknown channels do not write settings.
+The deployment form defaults the recommendation on and includes the user's
+choice in its existing checkout/deployment request identity. A channel is a
+recommendation, never a billing entitlement or external-service authorization.
+
+Both platform and admin runtime-state writes accept only the known bundle
+identifier. Cloud requires the owner's matching saved channel and selects whole
+plugins whose trusted catalog keywords contain exactly `sui`. Latest versions
+are selected from one catalog snapshot. Existing desired installations remain
+unchanged. The stable Agent's `plugin_bundle_revision` and all new installation
+rows commit together, with normal manifest invalidation. A failed batch rolls
+back completely; successful initialization never repeats, including after
+manual uninstall or runtime-state deletion. Catalog refresh does not extend or
+upgrade the initialized bundle. Skills and MCP servers remain inside their
+original plugin packages and separate native installation directories. Native
+skill-name collision behavior remains runtime-owned; this path does not rename
+or flatten packaged skills.
+
+Done: the Docker backend suites for platform endpoints and plugin catalog
+routes pass; the Docker web checks and `e2e/hosted-channel-bundle.pw.ts` verify
+capture, optional selection, and persistence in the actual deployment surface.
 
 ## CLI And Adapters
 

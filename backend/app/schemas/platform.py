@@ -88,6 +88,7 @@ class PlatformApiKeyCreate(PlatformMutationBody):
 
 
 class PlatformRuntimeStateUpsert(PlatformMutationBody):
+    plugin_bundle: Literal["sui"] | None = None
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     deployment_id: str = Field(min_length=1, max_length=200)
