@@ -24338,7 +24338,10 @@ async def test_archived_agent_cannot_route_channels_and_reactivation_restores_au
 
 
 @pytest.mark.asyncio
-async def test_discord_gateway_commit_delivery_phases(client, db_session, monkeypatch):
+@pytest.mark.parametrize("legacy_listener", [False, True])
+async def test_discord_gateway_commit_delivery_phases(
+    client, db_session, monkeypatch, legacy_listener
+):
     """Real commits and TCP WebSockets; phases start after an empty inbox query."""
     import statistics
     from time import perf_counter
@@ -24351,6 +24354,15 @@ async def test_discord_gateway_commit_delivery_phases(client, db_session, monkey
     from tests.conftest import create_env_with_project
 
     _reset_discord_gateway_sessions(monkeypatch)
+    if legacy_listener:
+        # Released listeners match the entire payload as an account key. The
+        # new Link payload misses that key; real DB polling must still deliver.
+        def legacy_notification(_pid, _channel, payload):
+            sync_events.channel_inbound_messages_enqueued.signal(payload)
+
+        monkeypatch.setattr(
+            sync_events, "_on_channel_inbound_message_enqueued", legacy_notification
+        )
     monkeypatch.setattr(settings, "discord_gateway_poll_interval_seconds", 1.0)
     created = await _create_paired_discord_channel(client, name=f"gateway-phases-{uuid4().hex}")
     account_id = UUID(created["id"])
@@ -24474,7 +24486,9 @@ async def test_discord_gateway_commit_delivery_phases(client, db_session, monkey
                 db_session.add(message)
                 await db_session.flush()
                 await notify_channel_inbound_message_enqueued(
-                    db_session, account_id=str(account_id)
+                    db_session,
+                    account_id=str(account_id),
+                    bot_agent_link_id=created["agent_link_id"],
                 )
                 before_sql = sql_count
                 await db_session.commit()
@@ -24664,7 +24678,7 @@ async def test_discord_gateway_wakeup_owns_reader_and_cleanup(monkeypatch, engin
             )
             with pytest.raises(expected):
                 await asyncio.wait_for(task, 2)
-        assert not source._waiters
+        assert not source._waiters and not source._scoped_waiters
         entry = discord_router._DISCORD_GATEWAY_SESSIONS._entries[ready["d"]["session_id"]]
         assert entry.connection_count == 0
         assert not [

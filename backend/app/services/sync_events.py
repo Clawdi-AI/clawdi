@@ -775,7 +775,15 @@ def _on_channel_delivery_enqueued(_pid: int, _channel: str, payload: str) -> Non
 
 
 def _on_channel_inbound_message_enqueued(_pid: int, _channel: str, payload: str) -> None:
-    channel_inbound_messages_enqueued.signal(payload)
+    account_id, separator, link_id = payload.partition(":")
+    if not separator:
+        channel_inbound_messages_enqueued.signal(payload)
+        return
+    try:
+        account_id, link_id = str(UUID(account_id)), str(UUID(link_id))
+    except ValueError:
+        return
+    channel_inbound_messages_enqueued.signal(account_id, scope=link_id)
 
 
 def _on_sync_subscriptions_changed(_pid: int, _channel: str, payload: str) -> None:

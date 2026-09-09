@@ -644,6 +644,7 @@ async def _wait_whatsapp_websocket_inbox(
     messages = await wait_for_channel_inbound_messages(
         fetch,
         account_id=str(account_id),
+        bot_agent_link_id=str(bot_agent_link_id),
         timeout_seconds=settings.channel_long_poll_max_seconds,
         wakeup=channel_inbound_messages_enqueued,
     )

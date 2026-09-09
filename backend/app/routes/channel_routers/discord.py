@@ -1285,7 +1285,9 @@ async def discord_agent_gateway(
             await websocket.close(code=4004)
             return
         active_link_id = bot_agent_link_id
-        notified = channel_inbound_messages_enqueued.subscribe(str(account.id))
+        notified = channel_inbound_messages_enqueued.subscribe(
+            str(account.id), scope=str(active_link_id)
+        )
         receive_task = asyncio.create_task(websocket.receive_json(), name="discord-gateway-receive")
 
         while True:
@@ -1477,7 +1479,9 @@ async def discord_agent_gateway(
             if owns_session_entry:
                 _DISCORD_GATEWAY_SESSIONS.disconnect(session_id)
             if notified is not None and account is not None:
-                channel_inbound_messages_enqueued.unsubscribe(str(account.id), notified)
+                channel_inbound_messages_enqueued.unsubscribe(
+                    str(account.id), notified, scope=str(bot_agent_link_id)
+                )
             tasks = [task for task in (receive_task, wakeup_task) if task is not None]
             for task in tasks:
                 if not task.done():
