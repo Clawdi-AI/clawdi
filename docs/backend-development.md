@@ -81,6 +81,30 @@ uv run ruff format --check .
 uv run python -m compileall app scripts tests alembic
 ```
 
+## Discord provider Gateway ownership
+
+Each `DiscordGatewayWorker` holds one PostgreSQL connection for its account
+advisory locks. Account tasks claim the existing per-account key once per
+transport attempt and release it after the transport closes; discovery scans
+do not reacquire held keys. Lock SQL and liveness probes share a serial gate.
+Ordinary account/dispatch queries continue to use the ordinary pool.
+
+The default liveness interval is one second, with a five-second probe deadline
+including serial-gate waiting. Lock SQL also has a five-second deadline. These
+are application cancellation deadlines, not guarantees about TCP blackhole or
+driver/transport cleanup latency. A failed or uncertain lock operation fences
+the shared session and cancels its Gateway tasks. The worker joins those tasks
+before invalidating the connection; it never returns that ownership session
+to the pool on shutdown or recovery. Recovery acquires fresh locks and keeps
+the existing Gateway resume state and last durably admitted sequence.
+
+Account discovery errors retry with bounded backoff without ending the channel
+worker TaskGroup. Account terminal close codes still require a credential or
+configuration revision before retrying.
+
+Done: `scripts/test.sh backend tests/test_discord_gateway_resource_boundary.py`
+starts its own disposable PostgreSQL and reports passing ownership tests.
+
 ## Python type governance
 
 BasedPyright runs from the uv development environment. The owned gate covers
