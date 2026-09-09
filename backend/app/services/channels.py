@@ -100,7 +100,13 @@ def get_channel_provider_http_client() -> httpx.AsyncClient:
     """Return the process-wide client for Telegram and Discord APIs."""
     global _channel_provider_http_client
     if _channel_provider_http_client is None:
-        _channel_provider_http_client = httpx.AsyncClient(timeout=30.0)
+        # Explicit Limits must retain httpx's client caps; bare Limits is unbounded.
+        _channel_provider_http_client = httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(
+                max_connections=100, max_keepalive_connections=20, keepalive_expiry=30.0
+            ),
+        )
     return _channel_provider_http_client
 
 
