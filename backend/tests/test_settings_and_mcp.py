@@ -8,6 +8,7 @@ endpoint must remain the only public MCP surface.
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -395,7 +396,8 @@ async def test_clawdi_mcp_initializes_and_lists_native_tools(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_clawdi_mcp_preserves_standard_composio_tool_contract(monkeypatch):
+@pytest.mark.parametrize("action", ["add", "list", "rename", "remove"])
+async def test_clawdi_mcp_preserves_standard_composio_tool_contract(monkeypatch, action):
     from app.core.auth import AuthContext, get_auth_short_session
     from app.core.database import get_session
     from app.models.user import User
@@ -403,18 +405,31 @@ async def test_clawdi_mcp_preserves_standard_composio_tool_contract(monkeypatch)
     from app.services.composio import ComposioMcpSession
 
     expected_tool = {
-        "name": "COMPOSIO_FUTURE_META_TOOL",
-        "description": "A future schema-driven meta-tool",
+        "name": "COMPOSIO_MANAGE_CONNECTIONS",
+        "description": "Manage toolkit connections",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "target": {
-                    "type": "object",
-                    "properties": {"id": {"type": "string"}},
-                    "required": ["id"],
-                }
+                "toolkits": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "action": {
+                                "type": "string",
+                                "enum": ["add", "rename", "list", "remove"],
+                                "default": "add",
+                            },
+                            "alias": {"type": "string"},
+                            "account_id": {"type": "string"},
+                        },
+                        "required": ["name"],
+                    },
+                },
+                "session_id": {"type": "string"},
             },
-            "required": ["target"],
+            "required": ["toolkits"],
         },
         "outputSchema": {
             "type": "object",
@@ -423,18 +438,23 @@ async def test_clawdi_mcp_preserves_standard_composio_tool_contract(monkeypatch)
         "annotations": {"openWorldHint": True},
         "_meta": {"composio": {"future_contract": True}},
     }
-    expected_arguments = {"target": {"id": "recipient_123"}, "preserve": [1, {"x": True}]}
+    toolkit = {"name": "github"}
+    if action != "add":
+        toolkit["action"] = action
+    if action in {"rename", "remove"}:
+        toolkit["account_id"] = "ca_github"
+    if action == "rename":
+        toolkit["alias"] = "Work"
+    expected_arguments = {"toolkits": [toolkit], "session_id": "session_123"}
+    payload = {"action": action, "accounts": [{"id": "ca_github", "alias": "Work"}]}
     expected_result = {
         "content": [
             {
                 "type": "text",
-                "text": '{"status":"initiated","redirect_url":"https://connect.test/link"}',
+                "text": json.dumps(payload),
             }
         ],
-        "structuredContent": {
-            "status": "initiated",
-            "redirect_url": "https://connect.test/link",
-        },
+        "structuredContent": payload,
         "isError": False,
         "resultType": "complete",
         "_meta": {"future": {"preserved": True}},
@@ -496,7 +516,7 @@ async def test_clawdi_mcp_preserves_standard_composio_tool_contract(monkeypatch)
                     "id": 11,
                     "method": "tools/call",
                     "params": {
-                        "name": "COMPOSIO_FUTURE_META_TOOL",
+                        "name": "COMPOSIO_MANAGE_CONNECTIONS",
                         "arguments": expected_arguments,
                     },
                 },
@@ -511,7 +531,7 @@ async def test_clawdi_mcp_preserves_standard_composio_tool_contract(monkeypatch)
     )
     assert listed_composio_tool == expected_tool
     assert called.json() == {"jsonrpc": "2.0", "id": 11, "result": expected_result}
-    assert forwarded[1] == ("COMPOSIO_FUTURE_META_TOOL", expected_arguments)
+    assert forwarded[1] == ("COMPOSIO_MANAGE_CONNECTIONS", expected_arguments)
 
 
 @pytest.mark.asyncio
