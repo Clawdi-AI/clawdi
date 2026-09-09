@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from websockets.asyncio.server import ServerConnection, serve
@@ -14,6 +15,7 @@ from websockets.exceptions import ConnectionClosedError
 
 import app.services.discord_gateway_worker as discord_gateway_worker_module
 from app.routes.channel_routers import discord as discord_router
+from app.services.discord_advisory_session import DiscordAdvisorySession
 from app.services.discord_gateway_worker import (
     DiscordGatewayWorker,
     GatewayFrame,
@@ -22,6 +24,17 @@ from app.services.discord_gateway_worker import (
     discord_gateway_uri,
     parse_gateway_frame,
 )
+
+
+@pytest_asyncio.fixture
+async def consumer_locks(engine, request):
+    locks = DiscordAdvisorySession(
+        engine, liveness_interval_seconds=getattr(request, "param", 60.0)
+    )
+    try:
+        yield locks
+    finally:
+        await locks.close()
 
 
 @dataclass
@@ -78,6 +91,7 @@ async def _legacy_consumer_lease_lock_key(
 @pytest.mark.asyncio
 async def test_synthetic_gateway_consumer_lease_preserves_legacy_key_without_transaction(
     engine: AsyncEngine,
+    consumer_locks: DiscordAdvisorySession,
 ) -> None:
     account_id = UUID("00000000-0000-4000-8000-000000000910")
     link_id = UUID("00000000-0000-4000-8000-000000000911")
@@ -86,8 +100,7 @@ async def test_synthetic_gateway_consumer_lease_preserves_legacy_key_without_tra
     async with discord_router._discord_gateway_consumer_lease(
         account_id=account_id,
         bot_agent_link_id=link_id,
-        lock_engine=engine,
-        liveness_interval_seconds=60,
+        lock_session=consumer_locks,
     ) as acquired:
         assert acquired is True
         backend_pid = await _consumer_lease_backend_pid(engine, legacy_lock_key)
@@ -106,6 +119,7 @@ async def test_synthetic_gateway_consumer_lease_preserves_legacy_key_without_tra
 @pytest.mark.asyncio
 async def test_synthetic_gateway_consumer_lease_rejects_lock_contention(
     engine: AsyncEngine,
+    consumer_locks: DiscordAdvisorySession,
 ) -> None:
     account_id = UUID("00000000-0000-4000-8000-000000000912")
     link_id = UUID("00000000-0000-4000-8000-000000000913")
@@ -113,14 +127,12 @@ async def test_synthetic_gateway_consumer_lease_rejects_lock_contention(
     async with discord_router._discord_gateway_consumer_lease(
         account_id=account_id,
         bot_agent_link_id=link_id,
-        lock_engine=engine,
-        liveness_interval_seconds=60,
+        lock_session=consumer_locks,
     ) as first_acquired:
         async with discord_router._discord_gateway_consumer_lease(
             account_id=account_id,
             bot_agent_link_id=link_id,
-            lock_engine=engine,
-            liveness_interval_seconds=60,
+            lock_session=consumer_locks,
         ) as second_acquired:
             assert first_acquired is True
             assert second_acquired is False
@@ -129,6 +141,7 @@ async def test_synthetic_gateway_consumer_lease_rejects_lock_contention(
 @pytest.mark.asyncio
 async def test_synthetic_gateway_consumer_lease_unlocks_on_normal_exit(
     engine: AsyncEngine,
+    consumer_locks: DiscordAdvisorySession,
 ) -> None:
     account_id = UUID("00000000-0000-4000-8000-000000000914")
     link_id = UUID("00000000-0000-4000-8000-000000000915")
@@ -136,16 +149,14 @@ async def test_synthetic_gateway_consumer_lease_unlocks_on_normal_exit(
     async with discord_router._discord_gateway_consumer_lease(
         account_id=account_id,
         bot_agent_link_id=link_id,
-        lock_engine=engine,
-        liveness_interval_seconds=60,
+        lock_session=consumer_locks,
     ) as acquired:
         assert acquired is True
 
     async with discord_router._discord_gateway_consumer_lease(
         account_id=account_id,
         bot_agent_link_id=link_id,
-        lock_engine=engine,
-        liveness_interval_seconds=60,
+        lock_session=consumer_locks,
     ) as reacquired:
         assert reacquired is True
 
@@ -153,6 +164,7 @@ async def test_synthetic_gateway_consumer_lease_unlocks_on_normal_exit(
 @pytest.mark.asyncio
 async def test_synthetic_gateway_consumer_lease_unlocks_when_cancelled(
     engine: AsyncEngine,
+    consumer_locks: DiscordAdvisorySession,
 ) -> None:
     account_id = UUID("00000000-0000-4000-8000-000000000916")
     link_id = UUID("00000000-0000-4000-8000-000000000917")
@@ -162,8 +174,7 @@ async def test_synthetic_gateway_consumer_lease_unlocks_when_cancelled(
         async with discord_router._discord_gateway_consumer_lease(
             account_id=account_id,
             bot_agent_link_id=link_id,
-            lock_engine=engine,
-            liveness_interval_seconds=60,
+            lock_session=consumer_locks,
         ) as acquired:
             assert acquired is True
             entered.set()
@@ -178,15 +189,16 @@ async def test_synthetic_gateway_consumer_lease_unlocks_when_cancelled(
     async with discord_router._discord_gateway_consumer_lease(
         account_id=account_id,
         bot_agent_link_id=link_id,
-        lock_engine=engine,
-        liveness_interval_seconds=60,
+        lock_session=consumer_locks,
     ) as reacquired:
         assert reacquired is True
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("consumer_locks", [0.01], indirect=True)
 async def test_synthetic_gateway_consumer_stops_when_lease_connection_is_lost(
     engine: AsyncEngine,
+    consumer_locks: DiscordAdvisorySession,
 ) -> None:
     account_id = UUID("00000000-0000-4000-8000-000000000918")
     link_id = UUID("00000000-0000-4000-8000-000000000919")
@@ -197,8 +209,7 @@ async def test_synthetic_gateway_consumer_stops_when_lease_connection_is_lost(
         async with discord_router._discord_gateway_consumer_lease(
             account_id=account_id,
             bot_agent_link_id=link_id,
-            lock_engine=engine,
-            liveness_interval_seconds=0.01,
+            lock_session=consumer_locks,
         ) as acquired:
             assert acquired is True
             entered.set()

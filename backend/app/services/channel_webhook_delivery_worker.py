@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.channel import (
@@ -49,10 +50,19 @@ class ChannelWebhookDeliveryWorker:
         backoff_cap_seconds: float = 60.0,
         ttl_seconds: int = int(TELEGRAM_UPDATE_RETENTION.total_seconds()),
     ) -> None:
+        if not (
+            math.isfinite(backoff_base_seconds)
+            and math.isfinite(backoff_cap_seconds)
+            and 0 < backoff_base_seconds <= backoff_cap_seconds
+        ):
+            raise ValueError("webhook backoff must be finite, positive, and capped above its base")
         self._sessionmaker = sessionmaker
         self._poll_interval_seconds = poll_interval_seconds
         self._backoff_base_seconds = backoff_base_seconds
         self._backoff_cap_seconds = backoff_cap_seconds
+        self._max_retry_step = (
+            math.ceil(math.log2(backoff_cap_seconds) - math.log2(backoff_base_seconds)) + 1
+        )
         self._ttl = timedelta(seconds=ttl_seconds)
 
     async def run_once(self) -> ChannelWebhookDeliveryResult | None:
@@ -61,14 +71,27 @@ class ChannelWebhookDeliveryWorker:
             if candidate is None:
                 await db.rollback()
                 return None
-            message, account, link = candidate
+            message, account, link, binding = candidate
             result = await self._deliver_message(db, message, account, link)
+            if result.delivered or result.expired:
+                binding.webhook_retry_at = None
+                binding.webhook_retry_step = 0
+            else:
+                binding.webhook_retry_step = min(
+                    binding.webhook_retry_step + 1, self._max_retry_step
+                )
+                delay = (
+                    self._backoff_cap_seconds
+                    if binding.webhook_retry_step == self._max_retry_step
+                    else math.ldexp(self._backoff_base_seconds, binding.webhook_retry_step - 1)
+                )
+                binding.webhook_retry_at = datetime.now(UTC) + timedelta(seconds=delay)
             await db.commit()
             return result
 
     async def run_forever(self, stop: asyncio.Event | None = None) -> None:
         stop_event = stop or asyncio.Event()
-        backoff = self._backoff_base_seconds
+        error_backoff = self._backoff_base_seconds
         while not stop_event.is_set():
             try:
                 result = await self.run_once()
@@ -76,23 +99,20 @@ class ChannelWebhookDeliveryWorker:
                 raise
             except Exception as exc:  # noqa: BLE001 - worker must survive one bad webhook.
                 log.exception("channel webhook delivery worker failed: %s", exc)
-                result = None
+                await _sleep_until_stop(stop_event, error_backoff)
+                error_backoff = min(error_backoff * 2, self._backoff_cap_seconds)
+                continue
 
+            error_backoff = self._backoff_base_seconds
             if result is None:
                 await _sleep_until_stop(stop_event, self._poll_interval_seconds)
-                continue
-            if result.delivered or result.expired:
-                backoff = self._backoff_base_seconds
-                continue
-            await _sleep_until_stop(stop_event, backoff)
-            backoff = min(backoff * 2, self._backoff_cap_seconds)
 
     async def _claim_next_telegram_webhook_message(
         self,
         db: AsyncSession,
-    ) -> tuple[ChannelMessage, ChannelAccount, ChannelBotAgentLink] | None:
+    ) -> tuple[ChannelMessage, ChannelAccount, ChannelBotAgentLink, ChannelBinding] | None:
         result = await db.execute(
-            select(ChannelMessage, ChannelAccount, ChannelBotAgentLink)
+            select(ChannelMessage, ChannelAccount, ChannelBotAgentLink, ChannelBinding)
             .join(
                 ChannelBinding,
                 ChannelBinding.id == ChannelMessage.binding_id,
@@ -112,6 +132,10 @@ class ChannelWebhookDeliveryWorker:
                 ChannelBinding.account_id == ChannelMessage.account_id,
                 ChannelBinding.bot_agent_link_id == ChannelMessage.bot_agent_link_id,
                 ChannelBinding.status == BINDING_STATUS_ACTIVE,
+                or_(
+                    ChannelBinding.webhook_retry_at.is_(None),
+                    ChannelBinding.webhook_retry_at <= datetime.now(UTC),
+                ),
                 ChannelAccount.provider == CHANNEL_PROVIDER_TELEGRAM,
                 ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
                 ChannelAccount.archived_at.is_(None),
@@ -141,8 +165,8 @@ class ChannelWebhookDeliveryWorker:
         row = result.first()
         if row is None:
             return None
-        message, account, link = row
-        return message, account, link
+        message, account, link, binding = row
+        return message, account, link, binding
 
     async def _deliver_message(
         self,

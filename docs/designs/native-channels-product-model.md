@@ -505,9 +505,18 @@ Required behavior:
   `.local`/`.localhost` names, private DNS results, and unresolved DNS names
   are rejected.
 - Telegram webhook delivery only acknowledges messages after a successful
-  `2xx` or `3xx` response. Telegram makes one inline delivery attempt and
+  `2xx` response. Telegram makes one inline delivery attempt and
   leaves `5xx`, network, `4xx`, and DNS failures pending for
-  `ChannelWebhookDeliveryWorker` retry or TTL drop.
+  `ChannelWebhookDeliveryWorker` retry or TTL drop. Fallback failures defer only
+  their Binding using persisted retry steps (1, 2, 4, 8, 16, 32, then 60 seconds).
+  Other due Bindings remain eligible after the failed HTTP attempt returns;
+  delivery remains serial, so an in-flight request can still delay them.
+  Success, TTL/authority consumption, retirement, and reactivation clear retry
+  state. Inline ingress still attempts
+  delivery separately; this does not guarantee ordering across both paths.
+  `setWebhook`/`deleteWebhook` do not reset Binding cooldowns: a replacement URL
+  may inherit up to 60 seconds of the previous cooldown, plus the worker's
+  polling interval. Configuration updates do not wait for Binding delivery locks.
 
 ## Message Routing Model
 

@@ -81,6 +81,50 @@ uv run ruff format --check .
 uv run python -m compileall app scripts tests alembic
 ```
 
+## Discord Gateway ownership
+
+[`DiscordAdvisorySession`](../backend/app/services/discord_advisory_session.py)
+shares one PostgreSQL connection across a role's Gateway locks. The provider
+worker owns one instance; ASGI lifespan owns the agent-facing consumer instance
+in application state. Tests inject an explicit shared instance. There is no
+engine-keyed global cache or per-lease connection. Existing provider account
+keys and consumer Account/Link keys remain unchanged. A local ownership table
+rejects duplicate keys before PostgreSQL's reentrant lock can admit them.
+
+Claim, unlock, and liveness SQL share a serial gate. Discovery does not claim
+keys already held by account tasks. Ordinary account/dispatch queries continue
+to use the ordinary pool.
+
+Agent-facing Gateway delivery subscribes to the existing account-scoped inbound
+commit notification. The socket reader survives notifications and fallback
+timeouts so heartbeat frames are not discarded. The polling interval remains
+a notification-loss fallback. Another Link's notification may cause one empty
+filtered query; it does not grant that Link's message authority.
+
+The default liveness interval is one second, with a five-second probe deadline
+including serial-gate waiting. Lock SQL also has a five-second deadline. These
+are application cancellation deadlines, not guarantees about TCP blackhole or
+driver/transport cleanup latency. A failed or uncertain lock operation fences
+the session and cancels its owners. One observed retirement task joins owners
+and invalidates the connection without waiting for another request or scan.
+The account whose unlock failed exits through its original transport exception;
+failure retirement does not cancel it again. Normal shutdown cancels owners,
+joins them outside the SQL gate, then invalidates the connection. Cleanup uses
+`finish_cleanup`, including repeated cancellation. Closing or recovering one's
+own active lease is rejected before entering cleanup; lifespan and worker
+supervisors own those operations.
+
+Recovery obtains new locks without carrying ownership across sessions. Provider
+resume state, consumer LeaseLost/4008 behavior, and durable sequence acknowledgements
+remain at their existing protocol boundaries.
+
+Account discovery errors retry with bounded backoff without ending the channel
+worker TaskGroup. Account terminal close codes still require a credential or
+configuration revision before retrying.
+
+Done: `scripts/test.sh backend tests/test_discord_gateway_resource_boundary.py tests/test_discord_consumer_resource_boundary.py`
+starts disposable PostgreSQL and reports passing ownership tests.
+
 ## Python type governance
 
 BasedPyright runs from the uv development environment. The owned gate covers
@@ -444,6 +488,11 @@ setting lookup before waiting on Clerk JWKS. Discord's session advisory lock
 must retain its ordinary connection for the consumer lifetime; releasing it would permit
 duplicate consumers. Delivery transactions that fence authority across sends
 also retain their locks deliberately.
+
+Telegram long polls immediately fetch another page after consuming acknowledged
+or filtered updates. Each page commits before the next scan, releasing its
+Binding locks. The request deadline bounds repeated scans, and cancellation
+remains observable between pages. A zero-timeout request still scans one page.
 
 All three runtime engines use the asyncpg dialect in
 `backend/app/core/asyncpg_dialect.py`. It shields only driver termination from

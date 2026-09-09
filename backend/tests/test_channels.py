@@ -107,6 +107,7 @@ from app.services.channels import (
     telegram_message_thread_id_from_update,
     wait_for_telegram_updates,
 )
+from app.services.discord_advisory_session import DiscordAdvisorySession
 from app.services.discord_command_reconciliation_worker import (
     DiscordCommandReconciliationWorker,
     reconcile_discord_guild_commands,
@@ -9470,9 +9471,16 @@ async def test_telegram_webhook_worker_retries_failed_agent_delivery(
 
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     worker = ChannelWebhookDeliveryWorker(sessionmaker)
-    first_result = await worker.run_once()
-    second_result = await worker.run_once()
-    result = await worker.run_once()
+    results = []
+    for _ in range(3):
+        await db_session.execute(
+            update(ChannelBinding)
+            .where(ChannelBinding.id == message.binding_id)
+            .values(webhook_retry_at=None)
+        )
+        await db_session.commit()
+        results.append(await worker.run_once())
+    first_result, second_result, result = results
     await db_session.refresh(message)
 
     assert first_result is not None
@@ -9653,9 +9661,16 @@ async def test_telegram_webhook_worker_skips_non_webhook_queue_head(
 
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     worker = ChannelWebhookDeliveryWorker(sessionmaker)
-    first_result = await worker.run_once()
-    second_result = await worker.run_once()
-    result = await worker.run_once()
+    results = []
+    for _ in range(3):
+        await db_session.execute(
+            update(ChannelBinding)
+            .where(ChannelBinding.id == webhook_message.binding_id)
+            .values(webhook_retry_at=None)
+        )
+        await db_session.commit()
+        results.append(await worker.run_once())
+    first_result, second_result, result = results
     await db_session.refresh(webhook_message)
 
     assert first_result is not None
@@ -11203,6 +11218,173 @@ async def test_discord_interaction_callback_and_followup_require_recorded_token(
         f"/webhooks/{DISCORD_TEST_APPLICATION_ID}/interaction-token-1"
     )
     assert _FakeProviderClient.calls[2]["method"] == "PATCH"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["callback", "followup"])
+@pytest.mark.parametrize("binding_state", ["unpaired", "reassigned", "missing"])
+async def test_discord_interaction_reference_requires_current_binding(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    second_channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+    binding_state: str,
+):
+    _reset_fake_provider_client({"id": "discord-upstream"})
+    monkeypatch.setattr(shared_router.httpx, "AsyncClient", _FakeProviderClient)
+    created = await _create_paired_discord_channel(
+        client, name="discord-reference-revocation", agent_id=channel_agent.id
+    )
+    ingress = await _record_discord_interaction(
+        client,
+        created=created,
+        interaction_id="revoked-interaction",
+        token="revoked-token",
+        application_id=DISCORD_TEST_APPLICATION_ID,
+    )
+    assert ingress.status_code == 202
+    binding = await db_session.scalar(
+        select(ChannelBinding).where(ChannelBinding.account_id == UUID(created["id"]))
+    )
+    assert binding is not None
+    unpaired = await client.delete(f"/v1/channels/{created['id']}/bindings/{binding.id}")
+    assert unpaired.status_code == 200, unpaired.text
+    assert unpaired.json()["unpaired"] is True
+    if binding_state == "reassigned":
+        second = await client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(second_channel_agent.id)},
+        )
+        assert second.status_code == 201, second.text
+        pair = await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": second.json()["id"], "ttl_seconds": 900},
+        )
+        assert pair.status_code == 201, pair.text
+        repaired = await client.post(
+            f"/v1/channels/discord/{created['id']}/webhook",
+            headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+            json={
+                "type": 2,
+                "id": "repair-interaction",
+                "token": "repair-token",
+                "application_id": DISCORD_TEST_APPLICATION_ID,
+                "channel_id": "discord-chan-1",
+                "guild_id": "discord-guild-1",
+                "context": 0,
+                "authorizing_integration_owners": {"0": "discord-guild-1"},
+                "member": {"permissions": "32", "user": {"id": "discord-pair-user"}},
+                "data": {
+                    "name": "clawdi_pair",
+                    "options": [{"name": "code", "value": pair.json()["code"]}],
+                },
+            },
+        )
+        assert repaired.status_code == 200, repaired.text
+        assert repaired.json()["data"]["content"].startswith("Server paired.")
+        await db_session.refresh(binding)
+        assert binding.status == BINDING_STATUS_ACTIVE
+        assert str(binding.bot_agent_link_id) == second.json()["id"]
+    elif binding_state == "missing":
+        # Historical references can lose their Binding through ON DELETE SET NULL.
+        await db_session.delete(binding)
+        await db_session.commit()
+
+    _reset_fake_provider_client({"id": "must-not-send"})
+    path = (
+        "interactions/revoked-interaction/revoked-token/callback"
+        if endpoint == "callback"
+        else f"webhooks/{DISCORD_TEST_APPLICATION_ID}/revoked-token"
+    )
+    response = await client.post(
+        f"/v1/channels/discord/v10/{path}",
+        headers={"Authorization": f"Bot {created['agent_token']}"},
+        json={"type": 4, "data": {"content": "must not send"}, "content": "must not send"},
+    )
+    assert (response.status_code, len(_FakeProviderClient.calls)) == (404, 0)
+
+
+@pytest.mark.asyncio
+async def test_discord_shared_profile_shadow_is_link_scoped(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    second_channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _reset_discord_gateway_sessions(monkeypatch)
+    created_response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": "discord",
+            "name": "discord-shared-profile",
+            "provider_token": "discord-provider-token",
+            "config": _discord_ready_config(),
+            "agent_id": str(channel_agent.id),
+        },
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+    second_response = await client.post(
+        f"/v1/channels/{created['id']}/agent-links",
+        json={"agent_id": str(second_channel_agent.id)},
+    )
+    assert second_response.status_code == 201, second_response.text
+    second = second_response.json()
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    account.visibility = CHANNEL_VISIBILITY_PUBLIC
+    account.user_id = None
+    account.config = {**account.config, "bot_username": "Legacy Bot", "bot_avatar": "legacy"}
+    await db_session.commit()
+    original_config = dict(account.config)
+    headers_a = {"Authorization": f"Bot {created['agent_token']}"}
+    headers_b = {"Authorization": f"Bot {second['agent_token']}"}
+    patched = await client.patch(
+        "/v1/channels/discord/v10/users/@me",
+        headers=headers_a,
+        json={"username": "Link A", "avatar": None},
+    )
+    assert patched.status_code == 200, patched.text
+    # An omitted avatar preserves an explicit clear, rather than restoring the fallback.
+    patched = await client.patch(
+        "/v1/channels/discord/v10/users/@me", headers=headers_a, json={"username": "Link A"}
+    )
+    assert patched.status_code == 200
+    for path in ("users/@me", "applications/@me", "oauth2/applications/@me"):
+        first = await client.get(f"/v1/channels/discord/v10/{path}", headers=headers_a)
+        second_get = await client.get(f"/v1/channels/discord/v10/{path}", headers=headers_b)
+        assert first.status_code == second_get.status_code == 200
+        user_a = first.json() if path == "users/@me" else first.json()["bot"]
+        user_b = second_get.json() if path == "users/@me" else second_get.json()["bot"]
+        assert (user_a["username"], user_a["avatar"]) == ("Link A", None)
+        assert (user_b["username"], user_b["avatar"]) == ("Legacy Bot", "legacy")
+
+    _install_discord_gateway_test_session_factory(monkeypatch)
+    placeholder = channel_runtime_placeholder_token(
+        CHANNEL_PROVIDER_DISCORD, channel_runtime_account_key(account.id)
+    )
+
+    def ready_user(token: str) -> dict[str, Any]:
+        with TestClient(app) as sync_client:
+            with sync_client.websocket_connect(
+                "/v1/channels/discord/gateway?v=10&encoding=json",
+                headers={"Authorization": f"Bearer {token}"},
+            ) as websocket:
+                assert websocket.receive_json()["op"] == 10
+                websocket.send_json({"op": 2, "d": {"token": placeholder, "intents": 0}})
+                ready = websocket.receive_json()
+                assert ready["t"] == "READY"
+                return ready["d"]["user"]
+
+    user_a = ready_user(created["agent_token"])
+    user_b = ready_user(second["agent_token"])
+    assert (user_a["username"], user_a["avatar"]) == ("Link A", None)
+    assert (user_b["username"], user_b["avatar"]) == ("Legacy Bot", "legacy")
+    await db_session.refresh(account)
+    assert account.config == original_config
 
 
 @pytest.mark.asyncio
@@ -15806,7 +15988,7 @@ def _install_discord_gateway_test_session_factory(monkeypatch: pytest.MonkeyPatc
         async_sessionmaker(gateway_engine, expire_on_commit=False),
     )
     monkeypatch.setattr(
-        "app.routes.channel_routers.discord.database_engine",
+        "app.main.engine",
         gateway_engine,
     )
 
@@ -24153,3 +24335,345 @@ async def test_archived_agent_cannot_route_channels_and_reactivation_restores_au
         user_id=seed_user.id,
     )
     assert restored.id == channel_agent.id
+
+
+@pytest.mark.asyncio
+async def test_discord_gateway_commit_delivery_phases(client, db_session, monkeypatch):
+    """Real commits and TCP WebSockets; phases start after an empty inbox query."""
+    import statistics
+    from time import perf_counter
+
+    import uvicorn
+    from websockets.asyncio.client import connect
+
+    from app.services.channel_wakeups import notify_channel_inbound_message_enqueued
+    from app.services.sync_events import start_postgres_listener, stop_postgres_listener
+    from tests.conftest import create_env_with_project
+
+    _reset_discord_gateway_sessions(monkeypatch)
+    monkeypatch.setattr(settings, "discord_gateway_poll_interval_seconds", 1.0)
+    created = await _create_paired_discord_channel(client, name=f"gateway-phases-{uuid4().hex}")
+    account_id = UUID(created["id"])
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(ChannelBinding.account_id == account_id)
+        )
+    ).scalar_one()
+    other_agent = await create_env_with_project(
+        db_session,
+        user_id=binding.user_id,
+        machine_id=f"phase-other-{uuid4().hex}",
+        machine_name="Other phase agent",
+    )
+    other_link = ChannelBotAgentLink(
+        account_id=account_id, user_id=binding.user_id, agent_id=other_agent.id
+    )
+    db_session.add(other_link)
+    await db_session.flush()
+    other_binding = ChannelBinding(
+        account_id=account_id,
+        bot_agent_link_id=other_link.id,
+        user_id=binding.user_id,
+        external_chat_id="other-phase-guild",
+        external_chat_type="guild",
+    )
+    db_session.add(other_binding)
+    await db_session.commit()
+    gateway_engine = create_async_engine(settings.database_url)
+    monkeypatch.setattr(
+        discord_router,
+        "async_session_factory",
+        async_sessionmaker(gateway_engine, expire_on_commit=False),
+    )
+    consumer_locks = DiscordAdvisorySession(gateway_engine)
+    monkeypatch.setattr(app.state, "discord_gateway_locks", consumer_locks, raising=False)
+    sql_count = 0
+    empty_queries = asyncio.Queue()
+    original_dequeue = discord_router.dequeue_discord_gateway_events
+
+    def count_sql(*_args):
+        nonlocal sql_count
+        sql_count += 1
+
+    async def observed_dequeue(*args, **kwargs):
+        values = await original_dequeue(*args, **kwargs)
+        if not values:
+            empty_queries.put_nowait(perf_counter())
+        return values
+
+    async def provider(*, path, **_kwargs):
+        assert path == "channels/discord-chan-1"
+        return shared_router.DiscordProviderResult(
+            content=json.dumps(
+                {
+                    "id": "discord-chan-1",
+                    "guild_id": "discord-guild-1",
+                    "type": 0,
+                    "name": "phase-test",
+                }
+            ).encode(),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    sqlalchemy_event.listen(gateway_engine.sync_engine, "before_cursor_execute", count_sql)
+    monkeypatch.setattr(discord_router, "dequeue_discord_gateway_events", observed_dequeue)
+    monkeypatch.setattr(discord_router, "request_discord_provider", provider)
+    server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    server_task = asyncio.create_task(server.serve(sockets=[listener]))
+    samples = []
+    try:
+        await start_postgres_listener()
+        async with asyncio.timeout(10):
+            while not server.started:
+                await asyncio.sleep(0.01)
+        async with connect(f"ws://127.0.0.1:{port}/v1/channels/discord/gateway") as ws:
+
+            async def receive():
+                return json.loads(await asyncio.wait_for(ws.recv(), 5))
+
+            assert (await receive())["op"] == 10
+            await ws.send(
+                json.dumps({"op": 2, "d": {"token": created["agent_token"], "intents": 0}})
+            )
+            assert (await receive())["t"] == "READY"
+            assert (await receive())["t"] == "GUILD_CREATE"
+            assert (await receive())["t"] == "CHANNEL_CREATE"
+            for index, phase in enumerate([0.05, 0.25, 0.5, 0.75, 0.95] * 3 + [0.05]):
+                if index == 15:
+                    await stop_postgres_listener()
+                while not empty_queries.empty():
+                    empty_queries.get_nowait()
+                # Heartbeat gives each sample a fresh empty-query boundary.
+                await ws.send(json.dumps({"op": 1, "d": None}))
+                assert (await receive())["op"] == 11
+                idle_at = await asyncio.wait_for(empty_queries.get(), 5)
+                await asyncio.sleep(max(0, idle_at + phase - perf_counter()))
+                message = ChannelMessage(
+                    account_id=account_id,
+                    bot_agent_link_id=UUID(created["agent_link_id"]),
+                    binding_id=binding.id,
+                    user_id=binding.user_id,
+                    direction=MESSAGE_DIRECTION_INBOUND,
+                    external_chat_id=binding.external_chat_id,
+                    provider_message_id=f"phase-{index}",
+                    payload={
+                        "t": "MESSAGE_CREATE",
+                        "d": {
+                            "id": f"phase-{index}",
+                            "channel_id": "discord-chan-1",
+                            "guild_id": "discord-guild-1",
+                            "content": "phase test",
+                            "author": {"id": "phase-user"},
+                        },
+                    },
+                )
+                db_session.add(message)
+                await db_session.flush()
+                await notify_channel_inbound_message_enqueued(
+                    db_session, account_id=str(account_id)
+                )
+                before_sql = sql_count
+                await db_session.commit()
+                committed_at = perf_counter()
+                dispatch = await receive()
+                elapsed = (perf_counter() - committed_at) * 1000
+                assert dispatch["t"] == "MESSAGE_CREATE"
+                assert dispatch["d"]["id"] == f"phase-{index}"
+                samples.append(
+                    {
+                        "phase": phase,
+                        "ms": round(elapsed, 3),
+                        "sql": sql_count - before_sql,
+                        "listening": index < 15,
+                    }
+                )
+                await ws.send(json.dumps({"op": 1, "d": dispatch["s"]}))
+                assert (await receive())["op"] == 11
+                await db_session.refresh(message)
+                assert message.delivered_at is not None
+            await start_postgres_listener()
+            unrelated = []
+            for index in range(3):
+                while not empty_queries.empty():
+                    empty_queries.get_nowait()
+                await ws.send(json.dumps({"op": 1, "d": None}))
+                assert (await receive())["op"] == 11
+                await asyncio.wait_for(empty_queries.get(), 5)
+                # Let the heartbeat's query and any already-coalesced wakeup
+                # finish before attributing SQL to the next foreign commit.
+                await asyncio.sleep(0.05)
+                while not empty_queries.empty():
+                    empty_queries.get_nowait()
+                foreign = ChannelMessage(
+                    account_id=account_id,
+                    bot_agent_link_id=other_link.id,
+                    binding_id=other_binding.id,
+                    user_id=binding.user_id,
+                    direction=MESSAGE_DIRECTION_INBOUND,
+                    external_chat_id=other_binding.external_chat_id,
+                    provider_message_id=f"other-phase-{index}",
+                    payload={"t": "MESSAGE_CREATE", "d": {"content": "other link"}},
+                )
+                db_session.add(foreign)
+                await db_session.flush()
+                await notify_channel_inbound_message_enqueued(
+                    db_session, account_id=str(account_id)
+                )
+                before_sql = sql_count
+                await db_session.commit()
+                committed_at = perf_counter()
+                await asyncio.wait_for(empty_queries.get(), 2)
+                unrelated.append(
+                    {
+                        "ms": round((perf_counter() - committed_at) * 1000, 3),
+                        "sql": sql_count - before_sql,
+                    }
+                )
+                # Other Link's message must not leak through this socket.
+                await ws.send(json.dumps({"op": 1, "d": None}))
+                assert (await receive())["op"] == 11
+            print("GATEWAY_OTHER_LINK", json.dumps(unrelated))
+        times = sorted(sample["ms"] for sample in samples if sample["listening"])
+        print(
+            "GATEWAY_PHASES",
+            json.dumps(
+                {
+                    "p50_ms": statistics.median(times),
+                    "p95_ms": times[int(len(times) * 0.95)],
+                    "samples": samples,
+                }
+            ),
+        )
+    finally:
+        try:
+            server.should_exit = True
+            await asyncio.wait_for(server_task, 10)
+        finally:
+            listener.close()
+            try:
+                await stop_postgres_listener()
+            finally:
+                try:
+                    await consumer_locks.close()
+                finally:
+                    await gateway_engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exit_kind", ["disconnect", "cancel", "lease_lost"])
+async def test_discord_gateway_wakeup_owns_reader_and_cleanup(monkeypatch, engine, exit_kind):
+    from fastapi import WebSocket
+
+    from app.services.channel_wakeups import ChannelWakeup
+
+    _install_discord_gateway_protocol_fakes(monkeypatch)
+    consumer_locks = DiscordAdvisorySession(engine)
+    monkeypatch.setattr(app.state, "discord_gateway_locks", consumer_locks, raising=False)
+    source = ChannelWakeup()
+    monkeypatch.setattr(discord_router, "channel_inbound_messages_enqueued", source)
+    monkeypatch.setattr(settings, "discord_gateway_poll_interval_seconds", 60)
+    account_key = str(_discord_gateway_protocol_agent().account.id)
+    inbox_checked = asyncio.Queue()
+    incoming = asyncio.Queue()
+    outgoing = asyncio.Queue()
+    original_dequeue = discord_router.dequeue_discord_gateway_events
+    cancelled_receives = 0
+
+    async def dequeue(*args, **kwargs):
+        result = await original_dequeue(*args, **kwargs)
+        inbox_checked.put_nowait(None)
+        return result
+
+    async def receive():
+        nonlocal cancelled_receives
+        try:
+            return await incoming.get()
+        except asyncio.CancelledError:
+            cancelled_receives += 1
+            raise
+
+    @asynccontextmanager
+    async def lost_lease(**_kwargs):
+        try:
+            yield True
+        finally:
+            raise discord_router._DiscordGatewayConsumerLeaseLost("test lease lost on exit")
+
+    monkeypatch.setattr(discord_router, "dequeue_discord_gateway_events", dequeue)
+    if exit_kind == "lease_lost":
+        monkeypatch.setattr(discord_router, "_discord_gateway_consumer_lease", lost_lease)
+    websocket = WebSocket(
+        {
+            "type": "websocket",
+            "path": "/v1/channels/discord/gateway",
+            "app": app,
+            "headers": [],
+            "query_string": b"",
+        },
+        receive,
+        outgoing.put,
+    )
+    incoming.put_nowait({"type": "websocket.connect"})
+    task = asyncio.create_task(discord_router.discord_agent_gateway(websocket))
+
+    def frame(payload):
+        incoming.put_nowait({"type": "websocket.receive", "text": json.dumps(payload)})
+
+    async def dispatch():
+        message = await asyncio.wait_for(outgoing.get(), 2)
+        return json.loads(message["text"])
+
+    try:
+        assert (await outgoing.get())["type"] == "websocket.accept"
+        assert (await dispatch())["op"] == 10
+        frame({"op": 2, "d": {"token": "valid-discord-token", "intents": 0}})
+        ready = await dispatch()
+        assert ready["t"] == "READY"
+        assert (await dispatch())["t"] == "GUILD_CREATE"
+        assert (await dispatch())["t"] == "CHANNEL_CREATE"
+        await asyncio.wait_for(inbox_checked.get(), 2)
+        # A notification alone must leave the outstanding ASGI receive intact.
+        source.signal(account_key)
+        await asyncio.wait_for(inbox_checked.get(), 2)
+        assert cancelled_receives == 0
+        monkeypatch.setattr(settings, "discord_gateway_poll_interval_seconds", 0.01)
+        source.signal(account_key)
+        await asyncio.wait_for(inbox_checked.get(), 2)
+        await asyncio.wait_for(inbox_checked.get(), 2)
+        assert cancelled_receives == 0
+        monkeypatch.setattr(settings, "discord_gateway_poll_interval_seconds", 60)
+        # Make both inputs runnable in the same tick; neither may be discarded.
+        source.signal(account_key)
+        frame({"op": 1, "d": None})
+        assert (await dispatch()) == {"op": 11, "d": None}
+        assert cancelled_receives == 0
+        source.signal(account_key)
+        if exit_kind == "disconnect":
+            incoming.put_nowait({"type": "websocket.disconnect", "code": 1000})
+            await asyncio.wait_for(task, 2)
+        else:
+            task.cancel()
+            expected = (
+                discord_router._DiscordGatewayConsumerLeaseLost
+                if exit_kind == "lease_lost"
+                else asyncio.CancelledError
+            )
+            with pytest.raises(expected):
+                await asyncio.wait_for(task, 2)
+        assert not source._waiters
+        entry = discord_router._DISCORD_GATEWAY_SESSIONS._entries[ready["d"]["session_id"]]
+        assert entry.connection_count == 0
+        assert not [
+            child
+            for child in asyncio.all_tasks()
+            if child.get_name() in {"discord-gateway-receive", "discord-gateway-wakeup"}
+        ]
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await consumer_locks.close()

@@ -10,6 +10,7 @@ from sqlalchemy import (
     Index,
     Integer,
     LargeBinary,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -361,8 +362,16 @@ class ChannelBinding(Base, TimestampMixin):
         default=BINDING_STATUS_ACTIVE,
         server_default=BINDING_STATUS_ACTIVE,
     )
+    webhook_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    webhook_retry_step: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=0, server_default="0"
+    )
 
     __table_args__ = (
+        CheckConstraint(
+            "webhook_retry_step >= 0",
+            name="ck_channel_bindings_webhook_retry_step_nonnegative",
+        ),
         Index(
             "uq_channel_bindings_account_external_chat_active",
             "account_id",

@@ -73,6 +73,7 @@ from app.services.channel_config import (
 )
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channel_wakeups import (
+    ChannelInboxPage,
     channel_inbound_messages_enqueued,
     notify_channel_delivery_enqueued,
     notify_channel_inbound_message_enqueued,
@@ -1897,6 +1898,9 @@ async def get_or_create_binding(
         if candidate_name is not None and candidate_name != external_chat_id:
             binding.external_chat_name = candidate_name
         binding.paired_external_user_id = external_user_id
+        if binding.status != BINDING_STATUS_ACTIVE:
+            binding.webhook_retry_at = None
+            binding.webhook_retry_step = 0
         binding.status = BINDING_STATUS_ACTIVE
         await db.execute(
             update(ChannelBindingAlias)
@@ -3217,6 +3221,9 @@ async def consume_pending_inbound_messages_for_bindings(
     bindings: list[ChannelBinding],
 ) -> int:
     """Revoke queued adapter delivery when binding authority is archived."""
+    for binding in bindings:
+        binding.webhook_retry_at = None
+        binding.webhook_retry_step = 0
     binding_ids = {binding.id for binding in bindings}
     if not binding_ids:
         return 0
@@ -3783,7 +3790,7 @@ async def dequeue_telegram_updates(
     offset: int | None,
     limit: int,
     allowed_updates: set[str] | None = None,
-) -> list[JsonObject]:
+) -> ChannelInboxPage[JsonObject]:
     now = datetime.now(UTC)
     filters = [
         ChannelMessage.account_id == account_id,
@@ -3840,23 +3847,26 @@ async def dequeue_telegram_updates(
         )
     )
     updates: list[JsonObject] = []
+    progressed = False
     for message in result.scalars().all():
         update_payload = telegram_update_payload(message)
         update_id = telegram_update_id(message)
         if offset is not None and update_id < offset:
             message.delivered_at = now
+            progressed = True
             continue
         if allowed_updates and not _telegram_update_allowed(
             update_payload,
             allowed_updates,
         ):
             message.delivered_at = now
+            progressed = True
             continue
         updates.append(update_payload)
         if len(updates) >= limit:
             break
     await db.flush()
-    return updates
+    return ChannelInboxPage(updates, progressed=progressed)
 
 
 async def wait_for_telegram_updates(
@@ -3870,7 +3880,7 @@ async def wait_for_telegram_updates(
     timeout_seconds: int | float | None = None,
     poll_interval_seconds: float | None = None,
 ) -> list[JsonObject]:
-    async def fetch() -> list[JsonObject]:
+    async def fetch() -> ChannelInboxPage[JsonObject]:
         async with sessionmaker() as db:
             updates = await dequeue_telegram_updates(
                 db,
@@ -4589,7 +4599,7 @@ async def wait_for_channel_inbox_events(
     timeout_seconds: int | float | None = None,
     poll_interval_seconds: float | None = None,
 ) -> list[ChannelMessage]:
-    async def fetch() -> list[ChannelMessage]:
+    async def fetch() -> ChannelInboxPage[ChannelMessage]:
         async with sessionmaker() as db:
             events = await dequeue_channel_inbox_events(
                 db,
@@ -4599,7 +4609,7 @@ async def wait_for_channel_inbox_events(
                 limit=limit,
             )
             await db.commit()
-            return events
+            return ChannelInboxPage(events)
 
     return await wait_for_channel_inbound_messages(
         fetch,
