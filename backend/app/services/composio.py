@@ -177,6 +177,7 @@ class ConnectorAccountIdentity(BaseModel):
     id: str
     app_name: str
     status: ComposioStatus
+    is_disabled: bool = False
     alias: str | None = None
     account_display: str | None = None
     organization_display: str | None = None
@@ -829,9 +830,15 @@ async def get_connected_accounts(user_id: str) -> list[ConnectorConnectionRespon
     return [_serialize_connected_account(account) for account in accounts]
 
 
-async def get_connected_account_identities(user_id: str) -> list[ConnectorAccountIdentity]:
-    """List safe account and tenant labels without exposing provider payloads."""
-    accounts = await _get_active_connected_accounts(user_id)
+async def get_connected_account_identities(
+    user_id: str, *, include_inactive: bool = False
+) -> list[ConnectorAccountIdentity]:
+    """List safe identity labels, optionally including unavailable accounts for management."""
+    accounts = (
+        await _list_connected_accounts(user_id)
+        if include_inactive
+        else await _get_active_connected_accounts(user_id)
+    )
     return [_serialize_connected_account_identity(account) for account in accounts]
 
 
@@ -895,6 +902,7 @@ def _serialize_connected_account_identity(account: _ConnectedAccount) -> Connect
         id=account.id,
         app_name=account.toolkit.slug,
         status=account.status,
+        is_disabled=account.is_disabled,
         alias=account.alias,
         account_display=_account_display_label(account),
         organization_display=_first_identity_label(
@@ -1131,11 +1139,23 @@ async def _wait_for_connection_status(
 
 
 async def disconnect_account(connected_account_id: str) -> bool:
-    """Disconnect/revoke a connected account."""
+    """Delete a connected account."""
     client = get_composio_client()
-    raw_response = await _call_generated_sdk(client.connected_accounts.delete(connected_account_id))
+    # A failed response may follow a completed deletion; never replay it automatically.
+    raw_response = await _call_generated_sdk(
+        client.with_options(max_retries=0).connected_accounts.delete(connected_account_id)
+    )
     response = _normalize_sdk_response(raw_response, _ConnectedAccountDeleteResponse)
     return response.success
+
+
+async def disconnect_owned_account(user_id: str, connected_account_id: str) -> bool:
+    """Disconnect one owned account and discard sessions even after ambiguous failures."""
+    await get_owned_account(user_id, connected_account_id)
+    try:
+        return await disconnect_account(connected_account_id)
+    finally:
+        await invalidate_tool_router_mcp_session(user_id)
 
 
 async def get_owned_account(user_id: str, connected_account_id: str) -> _ConnectedAccount:

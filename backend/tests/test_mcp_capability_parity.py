@@ -1017,9 +1017,14 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
             {"name": "project_get", "inputSchema": {"type": "object"}},
             {"name": "vault_create", "inputSchema": {"type": "object"}},
             {"name": "connector_safe", "inputSchema": {"type": "object"}},
+            {"name": "connector_account_update", "inputSchema": {"type": "object"}},
+            {"name": "connector_account_delete", "inputSchema": {"type": "object"}},
         ]
 
-    async def connected_account_identities(_user_id: str) -> list[ConnectorAccountIdentity]:
+    async def connected_account_identities(
+        _user_id: str, *, include_inactive: bool = False
+    ) -> list[ConnectorAccountIdentity]:
+        assert include_inactive is False
         return [
             ConnectorAccountIdentity(
                 id="ca_github",
@@ -1061,6 +1066,7 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
                     "id": "ca_github",
                     "app_name": "github",
                     "status": "ACTIVE",
+                    "is_disabled": False,
                     "account_display": "octocat",
                     "organization_display": "clawdi-ai",
                     "tenant_display": "tenant-primary",
@@ -1112,6 +1118,28 @@ async def test_mcp_scope_listing_strict_arguments_and_native_name_reservation(
             )
             assert missing_write["isError"] is True
             assert "missing scope: vault:write" in missing_write["content"][0]["text"]
+
+            for name in ("connector_account_update", "connector_account_delete"):
+                assert name not in names
+                missing_mutation = await _tool_call(
+                    client, 44, name, {"connection_id": "ca_github"}
+                )
+                assert missing_mutation["isError"] is True
+                assert "missing scope: connectors:invoke" in missing_mutation["content"][0]["text"]
+
+            runtime_auth.api_key.scopes = ["connectors:invoke"]
+            mutation_tools = (await _rpc(client, 45, "tools/list", {}))["tools"]
+            mutation_names = [tool["name"] for tool in mutation_tools]
+            assert "connector_account_list" not in mutation_names
+            for name in ("connector_account_update", "connector_account_delete"):
+                assert mutation_names.count(name) == 1
+                schema = next(
+                    tool["inputSchema"] for tool in mutation_tools if tool["name"] == name
+                )
+                assert schema["additionalProperties"] is False
+                assert "connection_id" in schema["required"]
+                if name == "connector_account_update":
+                    assert "alias" in schema["required"]
 
             runtime_auth.api_key.scopes = ["projects:read", "vault:write"]
             missing_accounts = await _tool_call(client, 43, "connector_account_list")

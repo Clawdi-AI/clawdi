@@ -392,8 +392,8 @@ tool names use singular `<resource>[_<subresource>]_<action>` identifiers;
 connector-provided names remain unchanged. Native tools cover Memory
 search/list/create/exact update/delete, Session search/list/get,
 read-only Project metadata, Vault metadata/references, explicit single-reference
-Vault plaintext resolution, narrow Vault writes, and credential-free connector
-account identity.
+Vault plaintext resolution, narrow Vault writes, and connector account identity
+and management.
 Tools requiring unavailable scopes are omitted from `tools/list`, while direct
 calls still fail the scope check. Connector names can never shadow a declared
 native tool, including one hidden by scope.
@@ -404,8 +404,17 @@ re-embedding is unavailable; Mem0 updates verify account ownership before the
 provider mutation. `session_list` uses the same account/legacy-environment fence
 as Session search/get and supports bounded time, Agent, and visible Project
 filters. `connector_account_list` exposes active, enabled connection IDs,
-toolkit names, aliases, statuses, and allowlisted display labels; raw provider
+toolkit names, aliases, statuses, disabled state, and allowlisted display labels.
+Its optional `include_inactive: true` flag includes non-active and disabled accounts
+for management without changing the default execution-oriented list. Raw provider
 `data`, `state`, tokens, and credentials never enter the MCP result.
+
+`connector_account_update` changes only an owned account's alias; an empty string
+clears it. `connector_account_delete` disconnects the exact owned connection.
+Both require `connectors:invoke`, affect all agents using that account, and reuse
+the dashboard's service-layer ownership checks and session invalidation. Deleting
+a connection does not revoke the provider's authorization grant. Account discovery
+retains the separate `connectors:read` permission.
 
 Composio sessions enable multiple accounts per toolkit with
 `require_explicit_selection=False` explicitly set. The pinned SDK otherwise
