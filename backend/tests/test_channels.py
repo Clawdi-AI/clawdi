@@ -107,6 +107,7 @@ from app.services.channels import (
     telegram_message_thread_id_from_update,
     wait_for_telegram_updates,
 )
+from app.services.discord_advisory_session import DiscordAdvisorySession
 from app.services.discord_command_reconciliation_worker import (
     DiscordCommandReconciliationWorker,
     reconcile_discord_guild_commands,
@@ -24384,7 +24385,8 @@ async def test_discord_gateway_commit_delivery_phases(client, db_session, monkey
         "async_session_factory",
         async_sessionmaker(gateway_engine, expire_on_commit=False),
     )
-    monkeypatch.setattr(discord_router, "database_engine", gateway_engine)
+    consumer_locks = DiscordAdvisorySession(gateway_engine)
+    monkeypatch.setattr(app.state, "discord_gateway_locks", consumer_locks, raising=False)
     sql_count = 0
     empty_queries = asyncio.Queue()
     original_dequeue = discord_router.dequeue_discord_gateway_events
@@ -24555,17 +24557,22 @@ async def test_discord_gateway_commit_delivery_phases(client, db_session, monkey
             try:
                 await stop_postgres_listener()
             finally:
-                await gateway_engine.dispose()
+                try:
+                    await consumer_locks.close()
+                finally:
+                    await gateway_engine.dispose()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exit_kind", ["disconnect", "cancel", "lease_lost"])
-async def test_discord_gateway_wakeup_owns_reader_and_cleanup(monkeypatch, exit_kind):
+async def test_discord_gateway_wakeup_owns_reader_and_cleanup(monkeypatch, engine, exit_kind):
     from fastapi import WebSocket
 
     from app.services.channel_wakeups import ChannelWakeup
 
     _install_discord_gateway_protocol_fakes(monkeypatch)
+    consumer_locks = DiscordAdvisorySession(engine)
+    monkeypatch.setattr(app.state, "discord_gateway_locks", consumer_locks, raising=False)
     source = ChannelWakeup()
     monkeypatch.setattr(discord_router, "channel_inbound_messages_enqueued", source)
     monkeypatch.setattr(settings, "discord_gateway_poll_interval_seconds", 60)
@@ -24603,6 +24610,7 @@ async def test_discord_gateway_wakeup_owns_reader_and_cleanup(monkeypatch, exit_
         {
             "type": "websocket",
             "path": "/v1/channels/discord/gateway",
+            "app": app,
             "headers": [],
             "query_string": b"",
         },
@@ -24668,3 +24676,4 @@ async def test_discord_gateway_wakeup_owns_reader_and_cleanup(monkeypatch, exit_
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+        await consumer_locks.close()
