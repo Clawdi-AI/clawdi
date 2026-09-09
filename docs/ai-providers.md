@@ -20,7 +20,8 @@ The product has three provider kinds:
 | Custom provider | Name, Endpoint, API format, API key | The agent owns models and selection |
 | Native provider | Choose a supported provider, Name, key/token or supported sign-in | The agent owns models and selection |
 
-Native region/plan variants are distinct chooser entries, not extra form settings.
+The provider chooser groups brands; a second step selects native region, plan,
+or product variants before credential setup.
 ChatGPT sign-in remains a native credential option. Every Name is only a Clawdi
 `label`; renaming does not change stable IDs, credential identity, or runtime intent.
 Provider credential forms have no model catalog editor or inference test.

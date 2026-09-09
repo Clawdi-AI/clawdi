@@ -230,16 +230,6 @@ export function providerCatalogDescription(provider: AiProvider): string {
 	return providerPresentation(provider).summary;
 }
 
-export function providerPresetSummary(preset: ProviderPreset): string {
-	if (preset.variant_label === "Product")
-		return preset.region_variants?.map((variant) => variant.label).join(" / ") || "API key";
-	if (preset.credential_label) return `Connect using an ${preset.credential_label.toLowerCase()}`;
-	if (preset.id === "xiaomi") return "Pay-as-you-go API access";
-	return preset.region_variants?.length
-		? "API key · region / plan options"
-		: "Connect with an API key";
-}
-
 function providerModelSummary(provider: AiProvider, preset: ProviderPreset | null): string {
 	if (
 		provider.configuration_mode === "native" ||

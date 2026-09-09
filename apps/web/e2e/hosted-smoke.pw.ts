@@ -3119,6 +3119,8 @@ for (const kind of ["native", "custom"] as const) {
 		await dialog
 			.getByRole("button", { name: kind === "native" ? /^OpenAI/ : /^Custom endpoint/ })
 			.click();
+		if (kind === "native")
+			await dialog.getByRole("button", { name: "OpenAI API", exact: true }).click();
 		if (kind === "custom") {
 			await dialog.getByLabel("Name", { exact: true }).fill(providerName);
 			await dialog.getByLabel("Endpoint").fill("https://custom.example/v1");

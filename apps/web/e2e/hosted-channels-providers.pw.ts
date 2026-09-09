@@ -123,6 +123,7 @@ test("native BYOK saves credentials without a model catalog or inference probe",
 
 	// The chooser gates the fields: pick a provider first.
 	await page.getByRole("button", { name: /^OpenAI/ }).click();
+	await page.getByRole("button", { name: "OpenAI API", exact: true }).click();
 	await page.getByRole("textbox", { name: "API key" }).fill("sk-e2e-test-key");
 	await expect(page.getByLabel("Model catalog")).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Test connection", exact: true })).toHaveCount(0);
@@ -210,7 +211,7 @@ test("channels connect dialog opens without browser errors", async ({ page }) =>
 	expect(errors, `connect dialog: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("popular BYOK providers support credential-only product setup", async ({ page }) => {
+test("popular BYOK providers support credential-only product setup", async ({ page }, testInfo) => {
 	const errors = collectBrowserErrors(page);
 	const inferenceRequests: string[] = [];
 	page.on("request", (request) => {
@@ -221,6 +222,25 @@ test("popular BYOK providers support credential-only product setup", async ({ pa
 	await page.goto("/ai-providers");
 	await page.getByRole("button", { name: "Add provider", exact: true }).first().click();
 	const dialog = page.getByRole("dialog");
+	await expect(dialog.getByRole("button", { name: "Kimi", exact: true })).toHaveCount(1);
+	await expect(
+		dialog.getByRole("button", { name: "Qwen (Model Studio)", exact: true }),
+	).toHaveCount(1);
+	const bounds = await dialog.boundingBox();
+	expect(bounds?.height).toBeLessThanOrEqual(576);
+	await page.screenshot({ path: testInfo.outputPath("provider-brands.png") });
+	await page.setViewportSize({ width: 390, height: 844 });
+	const mobileBounds = await dialog.boundingBox();
+	expect(mobileBounds?.height).toBeLessThanOrEqual(576);
+	expect(mobileBounds?.width).toBeLessThanOrEqual(390);
+	await expect(dialog.getByTestId("provider-dialog-body")).toHaveJSProperty("scrollLeft", 0);
+	await page.screenshot({ path: testInfo.outputPath("provider-mobile.png") });
+	await page.setViewportSize({ width: 1000, height: 1000 });
+	await dialog.getByRole("button", { name: "Kimi", exact: true }).click();
+	await expect(dialog.getByRole("button", { name: "Kimi Code", exact: true })).toBeVisible();
+	await expect(dialog.getByRole("button", { name: "API · Global", exact: true })).toBeVisible();
+	await page.screenshot({ path: testInfo.outputPath("provider-variants.png") });
+	await dialog.getByRole("button", { name: "Back to providers", exact: true }).click();
 	for (const choice of [
 		{
 			query: "Hugging Face",
@@ -250,9 +270,12 @@ test("popular BYOK providers support credential-only product setup", async ({ pa
 		await dialog.getByRole("textbox", { name: "Search providers" }).fill(choice.query);
 		await dialog
 			.getByRole("button", {
-				name: new RegExp(`^${choice.name}${choice.product ? ` · ${choice.product}` : ""}`),
+				name: choice.name,
+				exact: true,
 			})
 			.click();
+		if (choice.product)
+			await dialog.getByRole("button", { name: choice.product, exact: true }).click();
 		const credentialInput = dialog.getByLabel(choice.credential, { exact: true });
 		await expect(credentialInput).toHaveAttribute(
 			"placeholder",

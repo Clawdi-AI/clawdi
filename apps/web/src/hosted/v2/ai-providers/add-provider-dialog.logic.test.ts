@@ -6,7 +6,6 @@ import {
 	providerListAllowsSubmit,
 	providerSettingsPatch,
 } from "@/hosted/v2/ai-providers/add-provider-dialog.logic";
-import { providerPresetSummary } from "@/hosted/v2/ai-providers/model-binding";
 import {
 	providerPresetById,
 	providerPresetForSavedProvider,
@@ -220,7 +219,6 @@ describe("native provider form defaults", () => {
 		const region = providerPresetRegion(preset, "coding-global");
 		expect(region?.id).toBe("coding-global");
 		expect(region?.base_url.startsWith("https://")).toBe(true);
-		expect(providerPresetSummary(preset)).toBe("API key · region / plan options");
 		expect(providerPresetForSavedProvider({ baseUrl: preset.base_url })?.id).toBe(preset.id);
 	});
 
