@@ -649,6 +649,15 @@ during sends, and `gen()` owns `_stream()` across its yields. Starlette 1.6.0's
 cancelled while blocked. The route-local response subclass wraps that method
 without changing Starlette's ASGI-version or disconnect handling.
 
+The response and a started generator share once-only admission cleanup. If
+header sending fails before the generator is first iterated, its `aclose()`
+cannot execute a `finally` block; response cleanup still removes the broker and
+refresh registrations and releases the database lease through owned cleanup.
+The real ASGI regression verifies header failure, cancellation during header
+backpressure, peer disconnect, body failure and exhaustion, with exactly one
+lease release and no remaining registrations or child tasks. Admission still
+rejects with HTTP 429 before successful SSE headers are sent.
+
 MCP's outbound transport also has AnyIO scopes, but its transport bodies do not
 execute Clawdi database queries. `tools/list` loads in a separate cached task;
 `tools/call` exits its transport context before request-dependency cleanup.
