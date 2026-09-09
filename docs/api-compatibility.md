@@ -174,10 +174,7 @@ Use explicit `action: "list"` for reads and exact discovered account IDs for
 `rename` and `remove`. Empty-alias clearing is not established by the supplied
 multi-account MCP schema; the dashboard API still supports it.
 
-The Hosted `clawdi` version `1` is a compatibility label within the CLI package,
-not a separately versioned content release. Update the bundled Skill and its
-catalog digest together, then publish a new exact CLI version and let managed
-runtimes apply it before removing backend tools. A backend deployment alone
-cannot update already-installed Skill instructions. Refresh client tool lists
-and discard stale instructions as part of the rollout; no native alias adapter
-is retained. See [managed Skill delivery](managed-runtime.md#library-skill-references-and-runtime-evidence).
+Hosted `clawdi` version `1` remains the existing compatibility label. Its packaged
+Skill and catalog digest are updated together with the current generic Skill.
+Deploy the updated CLI/Skill instructions and refresh MCP tool lists when removing
+these backend tools; a backend-only update cannot refresh already-installed Skills.
