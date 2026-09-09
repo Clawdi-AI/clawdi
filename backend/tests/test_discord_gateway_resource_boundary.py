@@ -15,6 +15,7 @@ from websockets.frames import Close
 from app.core.config import settings
 from app.core.database import _create_engine
 from app.models.channel import ChannelAccount
+from app.services import discord_advisory_session as locks
 from app.services import discord_gateway_worker as gateway
 from app.services.vault_crypto import encrypt
 from app.workers import channels
@@ -312,8 +313,10 @@ async def test_uncertain_unlock_fences_siblings_and_never_pools_session(
     await worker.run_once()
     await connected(network)
     pid = await lock_pid(engine, accounts[0])
-    original_release = gateway.release_advisory_lock
+    original_release = locks.release_advisory_lock
     releasing = asyncio.Event()
+    session = worker._locks._session
+    assert session is not None
 
     async def interrupted_release(connection, key):
         if key == gateway.discord_gateway_advisory_lock_key(accounts[0]):
@@ -324,7 +327,7 @@ async def test_uncertain_unlock_fences_siblings_and_never_pools_session(
                 await connection.execute(text("SELECT pg_sleep(10)"))
         return await original_release(connection, key)
 
-    monkeypatch.setattr(gateway, "release_advisory_lock", interrupted_release)
+    monkeypatch.setattr(locks, "release_advisory_lock", interrupted_release)
     await archive(engine, accounts[0])
     await worker.run_once()
     await asyncio.wait_for(releasing.wait(), 2)
@@ -332,13 +335,13 @@ async def test_uncertain_unlock_fences_siblings_and_never_pools_session(
         worker._tasks[accounts[0]].cancel()
     await eventually(
         lambda: (
-            worker._lock_lost
+            session.failure is not None
             and all(t.closed for t in network.transports)
             and all(t.done() for t in worker._tasks.values())
         )
     )
     await worker.stop()
-    monkeypatch.setattr(gateway, "release_advisory_lock", original_release)
+    monkeypatch.setattr(locks, "release_advisory_lock", original_release)
     for account_id in accounts:
         assert await legacy_can_claim(engine, account_id)
     async with ordinary.connect() as db:
@@ -347,14 +350,14 @@ async def test_uncertain_unlock_fences_siblings_and_never_pools_session(
 
 async def test_cancelled_claim_waiter_does_not_invalidate_sibling_ownership(provider, engine):
     _, accounts, network, worker = provider
-    async with worker._lock_serial:
+    async with worker._locks._serial:
         await worker.run_once()
         task = worker._tasks[accounts[0]]
         await asyncio.sleep(0)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        assert not worker._lock_lost
+        assert not worker._locks.failed
         assert all(not task.done() for key, task in worker._tasks.items() if key != accounts[0])
     await worker.run_once()
     await connected(network)
@@ -365,8 +368,8 @@ async def test_ping_deadline_includes_serial_wait_and_stops_transports(provider)
     _, _, network, worker = provider
     await worker.run_once()
     await connected(network)
-    async with worker._lock_serial:
-        await eventually(lambda: worker._lock_lost and all(t.closed for t in network.transports))
+    async with worker._locks._serial:
+        await eventually(lambda: worker._locks.failed and all(t.closed for t in network.transports))
     await worker.stop()
 
 
@@ -407,21 +410,21 @@ async def test_terminal_close_survives_unlock_failure_and_session_recovery(provi
     await worker.run_once()
     await connected(network)
     account_id = accounts[0]
-    original_release = gateway.release_advisory_lock
+    original_release = locks.release_advisory_lock
 
     async def failed_unlock(connection, key):
         if key == gateway.discord_gateway_advisory_lock_key(account_id):
             await connection.execute(text("SELECT 1 / 0"))
         return await original_release(connection, key)
 
-    monkeypatch.setattr(gateway, "release_advisory_lock", failed_unlock)
+    monkeypatch.setattr(locks, "release_advisory_lock", failed_unlock)
     transport = next(t for t in network.transports if t.account_id == account_id)
     transport.frames.put_nowait(
         ConnectionClosedError(Close(4004, "test invalid token"), None, None)
     )
     await eventually(lambda: all(t.done() for t in worker._tasks.values()))
     assert account_id in worker._terminal_account_revisions
-    monkeypatch.setattr(gateway, "release_advisory_lock", original_release)
+    monkeypatch.setattr(locks, "release_advisory_lock", original_release)
     await worker.run_once()
     await connected(network, 7)
     assert all(t.account_id != account_id for t in network.transports[4:])

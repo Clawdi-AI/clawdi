@@ -6,8 +6,6 @@ import hashlib
 import json
 import logging
 import random
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Protocol
@@ -16,8 +14,8 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from pydantic import JsonValue, TypeAdapter
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
@@ -35,6 +33,12 @@ from app.services.channels import (
     record_discord_dispatch,
     update_discord_binding_display_name_from_trusted_event,
 )
+from app.services.discord_advisory_session import (
+    DiscordAdvisorySession,
+    DiscordAdvisorySessionLost,
+)
+from app.services.discord_advisory_session import release_advisory_lock as release_advisory_lock
+from app.services.discord_advisory_session import try_advisory_lock as try_advisory_lock
 from app.services.discord_command_reconciliation_worker import (
     reconcile_discord_guild_commands,
     reconcile_discord_guild_departure,
@@ -57,10 +61,6 @@ _GATEWAY_JSON_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 class _GatewayReconnect(RuntimeError):
     """Discord requested an immediate reconnect so the session can resume."""
-
-
-class _GatewayLockLost(RuntimeError):
-    """The shared PostgreSQL session no longer owns the provider transports."""
 
 
 class _GatewayConnection(Protocol):
@@ -131,7 +131,11 @@ class DiscordGatewayWorker:
         connect_factory: _GatewayConnectFactory = connect,
     ) -> None:
         self._sessionmaker = sessionmaker
-        self._lock_engine = lock_engine or _sessionmaker_bind(sessionmaker)
+        self._locks = DiscordAdvisorySession(
+            lock_engine or _sessionmaker_bind(sessionmaker),
+            liveness_interval_seconds=lock_liveness_interval_seconds,
+            liveness_timeout_seconds=lock_liveness_timeout_seconds,
+        )
         self._scan_interval_seconds = scan_interval_seconds
         self._reconnect_initial_seconds = reconnect_initial_seconds
         self._reconnect_max_seconds = reconnect_max_seconds
@@ -139,25 +143,11 @@ class DiscordGatewayWorker:
         self._tasks: dict[UUID, asyncio.Task[None]] = {}
         self._terminal_account_revisions: dict[UUID, str] = {}
         self._states: dict[UUID, _GatewayState] = {}
-        self._lock_connection: AsyncConnection | None = None
-        self._lock_monitor: asyncio.Task[None] | None = None
-        self._lock_lost = False
-        self._lock_serial = asyncio.Lock()
         self._lifecycle_serial = asyncio.Lock()
-        self._lock_liveness_interval_seconds = max(0.001, lock_liveness_interval_seconds)
-        self._lock_liveness_timeout_seconds = max(0.001, lock_liveness_timeout_seconds)
 
     async def run_once(self, stop: asyncio.Event | None = None) -> int:
         async with self._lifecycle_serial:
-            if self._lock_lost:
-                await finish_cleanup(self._close_lock_session)
             accounts = await list_active_discord_gateway_accounts(self._sessionmaker)
-            if accounts and self._lock_connection is None:
-                self._lock_connection = await self._lock_engine.connect()
-                self._lock_lost = False
-                self._lock_monitor = asyncio.create_task(
-                    self._monitor_lock_session(), name="discord-gateway-lock-monitor"
-                )
             self._sync_tasks(accounts, stop or asyncio.Event())
             return len(accounts)
 
@@ -185,63 +175,12 @@ class DiscordGatewayWorker:
             self._states.clear()
 
     async def _close_lock_session(self) -> None:
-        # Fence new claims, then join transports before closing the session.
-        # Invalidate even on orderly shutdown: remaining session locks must not
-        # become reentrant locks on a later borrow from the ordinary pool.
-        self._lock_lost = True
-        if self._lock_monitor is not None:
-            self._lock_monitor.cancel()
-            await asyncio.gather(self._lock_monitor, return_exceptions=True)
-            self._lock_monitor = None
         for task in self._tasks.values():
             task.cancel()
         if self._tasks:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         self._tasks.clear()
-        connection = self._lock_connection
-        if connection is not None:
-            try:
-                await connection.invalidate()
-            finally:
-                await connection.close()
-                self._lock_connection = None
-
-    @asynccontextmanager
-    async def _locked_connection(
-        self, owner: asyncio.Task[None] | None = None
-    ) -> AsyncGenerator[AsyncConnection]:
-        async with self._lock_serial:
-            if self._lock_connection is None or self._lock_lost:
-                raise _GatewayLockLost
-            try:
-                async with asyncio.timeout(self._lock_liveness_timeout_seconds):
-                    yield self._lock_connection
-            except BaseException as exc:
-                self._lose_lock_session(owner)
-                if isinstance(exc, asyncio.CancelledError):
-                    raise
-                raise _GatewayLockLost from exc
-
-    def _lose_lock_session(self, owner: asyncio.Task[None] | None = None) -> None:
-        if not self._lock_lost:
-            self._lock_lost = True
-            for task in self._tasks.values():
-                if task is not (owner or asyncio.current_task()):
-                    task.cancel()
-
-    async def _monitor_lock_session(self) -> None:
-        try:
-            while not self._lock_lost:
-                await asyncio.sleep(self._lock_liveness_interval_seconds)
-                # The deadline includes waiting for a claim/unlock. It bounds
-                # detection, not the transport/driver's cancellation cleanup.
-                async with asyncio.timeout(self._lock_liveness_timeout_seconds):
-                    async with self._locked_connection() as connection:
-                        await connection.execute(text("SELECT 1"))
-                        await connection.commit()
-        except (TimeoutError, _GatewayLockLost):
-            self._lose_lock_session()
-            log.exception("discord gateway lock session lost")
+        await self._locks.close()
 
     def _sync_tasks(
         self,
@@ -287,7 +226,7 @@ class DiscordGatewayWorker:
                 backoff_seconds = self._reconnect_initial_seconds
             except asyncio.CancelledError:
                 raise
-            except _GatewayLockLost:
+            except DiscordAdvisorySessionLost:
                 return
             except _GatewayReconnect:
                 state.session_established = False
@@ -313,7 +252,7 @@ class DiscordGatewayWorker:
             if state.session_established:
                 state.session_established = False
                 backoff_seconds = self._reconnect_initial_seconds
-            if self._lock_lost:
+            if self._locks.failed:
                 return
             await _sleep_until_stop(stop, backoff_seconds)
             backoff_seconds = min(backoff_seconds * 2, self._reconnect_max_seconds)
@@ -325,26 +264,17 @@ class DiscordGatewayWorker:
         state: _GatewayState,
     ) -> bool:
         lock_key = discord_gateway_advisory_lock_key(account_id)
-        async with self._locked_connection() as lock_connection:
-            acquired = await try_advisory_lock(lock_connection, lock_key)
-        if not acquired:
+        lease = await self._locks.claim(lock_key)
+        if lease is None:
             return False
         try:
             await self._connect_and_record(account_id, stop, state)
         finally:
-            # Preserve transport close codes/cancellation even if unlock fails.
-            # _locked_connection fences every sibling on failure; the lifecycle
-            # owner then invalidates this session rather than returning locks.
-            owner = asyncio.current_task()
-            await finish_cleanup(lambda: self._release_account_lock(lock_key, owner))
+            # The shared owner fences siblings on unlock failure. Preserve this
+            # account's transport close code or cancellation for the outer loop.
+            with contextlib.suppress(DiscordAdvisorySessionLost):
+                await self._locks.release(lease)
         return True
-
-    async def _release_account_lock(self, lock_key: int, owner: asyncio.Task[None] | None) -> None:
-        if not self._lock_lost:
-            with contextlib.suppress(_GatewayLockLost):
-                async with self._locked_connection(owner) as connection:
-                    if not await release_advisory_lock(connection, lock_key):
-                        raise RuntimeError("discord gateway advisory unlock failed")
 
     async def _connect_and_record(
         self,
@@ -775,24 +705,6 @@ def discord_gateway_advisory_lock_key(account_id: UUID) -> int:
 
 def discord_gateway_close_code(exc: ConnectionClosed) -> int | None:
     return exc.rcvd.code if exc.rcvd is not None else None
-
-
-async def try_advisory_lock(connection: AsyncConnection, lock_key: int) -> bool:
-    result = await connection.execute(
-        text("SELECT pg_try_advisory_lock(:lock_key)"),
-        {"lock_key": lock_key},
-    )
-    await connection.commit()
-    return result.scalar_one() is True
-
-
-async def release_advisory_lock(connection: AsyncConnection, lock_key: int) -> bool:
-    result = await connection.execute(
-        text("SELECT pg_advisory_unlock(:lock_key)"),
-        {"lock_key": lock_key},
-    )
-    await connection.commit()
-    return result.scalar_one() is True
 
 
 async def _recv_gateway_frame(websocket: _GatewayConnection) -> GatewayFrame:
