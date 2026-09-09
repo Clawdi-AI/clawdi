@@ -63,6 +63,9 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- Native Hermes API-key connections now support older credential-pool APIs while
+  preserving personal credentials and native key-rotation behavior.
+
 - CLI 0.14.53 ships only the Python egress addon source in npm and native packages,
   rejecting generated Python caches and bytecode before publication.
 - CLI 0.14.52 avoids redundant managed service restarts when the watcher inherits
