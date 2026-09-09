@@ -29,6 +29,7 @@ from starlette.datastructures import UploadFile
 
 from app.core.config import settings
 from app.core.database import async_session_factory, get_session
+from app.middleware.request_timing import channel_stage
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BINDING_STATUS_ARCHIVED,
@@ -387,11 +388,12 @@ async def telegram_bot_api(
     # Read the bounded request body before checking out an auth connection.
     raw_body = await request.body()
     params = await _telegram_request_params(request)
-    agent, _agent_token = await _resolve_telegram_agent(
-        db,
-        routing_id=routing_id,
-        authorization=authorization,
-    )
+    with channel_stage(request.scope, "channel_auth_ms"):
+        agent, _agent_token = await _resolve_telegram_agent(
+            db,
+            routing_id=routing_id,
+            authorization=authorization,
+        )
     account = agent.account
     duplicate_parameter = await _telegram_duplicate_security_parameter(request, raw_body, params)
     if duplicate_parameter is not None:
@@ -2653,7 +2655,8 @@ async def _telegram_provider_response(
     translate_direct_topic: bool = False,
 ) -> httpx.Response:
     base_url = settings.channel_telegram_api_base_url.strip()
-    await _validate_telegram_provider_base_url(base_url)
+    with channel_stage(request.scope, "channel_url_validation_ms"):
+        await _validate_telegram_provider_base_url(base_url)
     url = httpx.URL(f"{base_url.rstrip('/')}/bot{provider_token}/{method}")
     headers: dict[str, str] = {}
     content_type = request.headers.get("content-type")
@@ -2670,7 +2673,10 @@ async def _telegram_provider_response(
     if query_string:
         url = url.copy_with(query=query_string)
     try:
-        with track_proxy_latency("telegram", method):
+        with (
+            track_proxy_latency("telegram", method),
+            channel_stage(request.scope, "channel_provider_ms"),
+        ):
             response = await get_channel_provider_http_client().request(
                 request.method,
                 url,

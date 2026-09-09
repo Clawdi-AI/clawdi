@@ -137,3 +137,138 @@ async def test_request_timing_does_not_warn_for_successful_long_request(
     )
 
     assert caplog.text == ""
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected_event", "expected_stages"),
+    [
+        ("slow", "request_slow", (11, 23, 37)),
+        ("fast", None, (11, 23, 37)),
+        ("auth_error", "request_error", (11, None, None)),
+        ("validation_failure", "request_failed", (11, 23, None)),
+        ("provider_error", "request_error", (11, 23, 37)),
+        ("cancel", None, (11, 23, 37)),
+    ],
+)
+async def test_telegram_route_stage_timings(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    outcome: str,
+    expected_event: str | None,
+    expected_stages: tuple[int | None, ...],
+):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+
+    import httpx
+    from fastapi import FastAPI, HTTPException
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.core.database import get_session
+    from app.middleware import request_timing
+    from app.routes.channel_routers import telegram
+
+    elapsed = 0.0
+    monkeypatch.setattr(request_timing.time, "perf_counter", lambda: elapsed)
+    db = AsyncMock(spec=AsyncSession)
+    account = SimpleNamespace(
+        id=uuid4(), encrypted_provider_token="encrypted", provider_token_nonce="nonce"
+    )
+
+    async def resolve(*_args, **_kwargs):
+        nonlocal elapsed
+        elapsed += 0.011
+        if outcome == "auth_error":
+            raise HTTPException(500, "test auth failure")
+        return SimpleNamespace(account=account, link=SimpleNamespace(id=uuid4())), "token"
+
+    async def validate(_url):
+        nonlocal elapsed
+        elapsed += 0.023
+        if outcome == "validation_failure":
+            raise RuntimeError("test validation failure")
+
+    async def provider(request: httpx.Request) -> httpx.Response:
+        nonlocal elapsed
+        db.rollback.assert_awaited_once()
+        elapsed += 0.037
+        if outcome == "provider_error":
+            raise httpx.ConnectError("test connection failure")
+        if outcome == "cancel":
+            raise asyncio.CancelledError
+        return httpx.Response(200, json={"ok": True, "result": True})
+
+    monkeypatch.setattr(telegram, "_resolve_telegram_agent", resolve)
+    monkeypatch.setattr(telegram, "_validate_telegram_provider_base_url", validate)
+    monkeypatch.setattr(telegram, "decrypt_provider_token", lambda _account: "provider-secret")
+    app = FastAPI()
+    app.include_router(telegram.router, prefix="/v1")
+    app.dependency_overrides[get_session] = lambda: db
+    scope = _scope(path="/v1/channels/telegram/botrouting-secret/getMe")
+    caplog.set_level(logging.WARNING, logger="app.middleware.request_timing")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as upstream:
+        monkeypatch.setattr(telegram, "get_channel_provider_http_client", lambda: upstream)
+        timed = RequestTimingMiddleware(app, slow_ms=100 if outcome == "fast" else 50)
+        if outcome == "validation_failure":
+            with pytest.raises(RuntimeError, match="test validation failure"):
+                await _collect(timed, scope)
+        elif outcome == "cancel":
+            with pytest.raises(asyncio.CancelledError):
+                await _collect(timed, scope)
+        else:
+            messages = await _collect(timed, scope)
+            assert messages[0]["status"] == (
+                500 if outcome == "auth_error" else 502 if outcome == "provider_error" else 200
+            )
+
+    stages = ("channel_auth_ms", "channel_url_validation_ms", "channel_provider_ms")
+    timings = scope["state"]["_channel_stage_timings"]
+    assert timings == pytest.approx(
+        {stage: value for stage, value in zip(stages, expected_stages) if value is not None}
+    )
+    records = [r.getMessage() for r in caplog.records if r.name == request_timing.__name__]
+    if expected_event is None:
+        assert records == []
+    else:
+        assert len(records) == 1
+        assert records[0].startswith(expected_event + " ")
+        for stage, value in zip(stages, expected_stages):
+            if value is None:
+                assert stage not in records[0]
+            else:
+                assert f"{stage}={value:.1f}" in records[0]
+        assert "bot[redacted]/getMe" in records[0]
+    assert "routing-secret" not in caplog.text
+    assert "provider-secret" not in caplog.text
+    assert "secret=value" not in caplog.text
+
+
+async def test_request_timing_isolates_stage_state_and_filters_fields(caplog):
+    from app.middleware.request_timing import _CHANNEL_TIMING_STATE
+
+    inherited = {"channel_auth_ms": 999.0}
+    scope = _scope()
+    scope["state"][_CHANNEL_TIMING_STATE] = inherited
+
+    async def inner(scope: Scope, _receive: Receive, send: Send) -> None:
+        timings = scope["state"][_CHANNEL_TIMING_STATE]
+        assert timings == {}
+        assert timings is not inherited
+        timings.update(
+            channel_auth_ms=float("nan"),
+            channel_url_validation_ms=float("inf"),
+            channel_provider_ms="secret",
+            unknown="secret",
+        )
+        await send({"type": "http.response.start", "status": 500, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    caplog.set_level(logging.WARNING, logger="app.middleware.request_timing")
+    await _collect(RequestTimingMiddleware(inner, slow_ms=750), scope)
+    assert "request_error" in caplog.text
+    assert "channel_" not in caplog.text
+    assert "unknown" not in caplog.text
+    assert "secret" not in caplog.text
+    assert inherited == {"channel_auth_ms": 999.0}
