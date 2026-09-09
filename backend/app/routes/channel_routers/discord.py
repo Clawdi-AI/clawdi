@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile
 
 from app.core.config import settings
-from app.core.database import async_session_factory, get_session
+from app.core.database import async_session_factory, finish_cleanup, get_session
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ACTIVE,
@@ -72,6 +72,7 @@ from app.routes.channel_routers.shared import (
     require_bound_chat,
     resolve_discord_agent_context,
 )
+from app.services.channel_wakeups import channel_inbound_messages_enqueued
 from app.services.channels import (
     DISCORD_REF_INTERACTION_ID_TOKEN,
     DISCORD_REF_INTERACTION_TOKEN,
@@ -867,6 +868,9 @@ async def discord_agent_gateway(
     consumer_lease: AbstractAsyncContextManager[bool] | None = None
     consumer_lease_entered = False
     owns_session_entry = False
+    notified: asyncio.Event | None = None
+    receive_task: asyncio.Task[JsonValue] | None = None
+    wakeup_task: asyncio.Task[bool] | None = None
 
     async def send_gateway_frame(
         payload: JsonObject,
@@ -1281,8 +1285,24 @@ async def discord_agent_gateway(
             await websocket.close(code=4004)
             return
         active_link_id = bot_agent_link_id
+        notified = channel_inbound_messages_enqueued.subscribe(str(account.id))
+        receive_task = asyncio.create_task(websocket.receive_json(), name="discord-gateway-receive")
 
         while True:
+            # Retain the reader across notifications/timeouts, including when
+            # both inputs complete together or dispatch batches keep arriving.
+            if receive_task.done():
+                frame = _JSON_VALUE_ADAPTER.validate_python(receive_task.result())
+                if isinstance(frame, dict) and frame.get("op") == 1:
+                    await acknowledge_gateway_sequence(optional_int_param(frame.get("d")))
+                    await send_gateway_frame({"op": 11, "d": None}, record=False)
+                receive_task = asyncio.create_task(
+                    websocket.receive_json(), name="discord-gateway-receive"
+                )
+            # Clear before querying so a concurrent commit forces a recheck.
+            notified.clear()
+            if wakeup_task is None or wakeup_task.done():
+                wakeup_task = asyncio.create_task(notified.wait(), name="discord-gateway-wakeup")
             checkpoints = (
                 session_state.get("message_checkpoints") if session_state is not None else None
             )
@@ -1442,25 +1462,32 @@ async def discord_agent_gateway(
                 else:
                     continue
 
-            try:
-                frame = _JSON_VALUE_ADAPTER.validate_python(
-                    await asyncio.wait_for(
-                        websocket.receive_json(),
-                        timeout=max(0.001, settings.discord_gateway_poll_interval_seconds),
-                    )
-                )
-                if isinstance(frame, dict) and frame.get("op") == 1:
-                    await acknowledge_gateway_sequence(optional_int_param(frame.get("d")))
-                    await send_gateway_frame({"op": 11, "d": None}, record=False)
-            except TimeoutError:
-                pass
+            await asyncio.wait(
+                {receive_task, wakeup_task},
+                timeout=max(0.001, settings.discord_gateway_poll_interval_seconds),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
     except WebSocketDisconnect:
         return
     finally:
-        if consumer_lease is not None and consumer_lease_entered:
-            await consumer_lease.__aexit__(None, None, None)
-        if owns_session_entry:
-            _DISCORD_GATEWAY_SESSIONS.disconnect(session_id)
+        try:
+            if consumer_lease is not None and consumer_lease_entered:
+                await consumer_lease.__aexit__(None, None, None)
+        finally:
+            if owns_session_entry:
+                _DISCORD_GATEWAY_SESSIONS.disconnect(session_id)
+            if notified is not None and account is not None:
+                channel_inbound_messages_enqueued.unsubscribe(str(account.id), notified)
+            tasks = [task for task in (receive_task, wakeup_task) if task is not None]
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+
+            async def collect_tasks() -> None:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+            if tasks:
+                await finish_cleanup(collect_tasks)
 
 
 @router.post(

@@ -24334,3 +24334,337 @@ async def test_archived_agent_cannot_route_channels_and_reactivation_restores_au
         user_id=seed_user.id,
     )
     assert restored.id == channel_agent.id
+
+
+@pytest.mark.asyncio
+async def test_discord_gateway_commit_delivery_phases(client, db_session, monkeypatch):
+    """Real commits and TCP WebSockets; phases start after an empty inbox query."""
+    import statistics
+    from time import perf_counter
+
+    import uvicorn
+    from websockets.asyncio.client import connect
+
+    from app.services.channel_wakeups import notify_channel_inbound_message_enqueued
+    from app.services.sync_events import start_postgres_listener, stop_postgres_listener
+    from tests.conftest import create_env_with_project
+
+    _reset_discord_gateway_sessions(monkeypatch)
+    monkeypatch.setattr(settings, "discord_gateway_poll_interval_seconds", 1.0)
+    created = await _create_paired_discord_channel(client, name=f"gateway-phases-{uuid4().hex}")
+    account_id = UUID(created["id"])
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(ChannelBinding.account_id == account_id)
+        )
+    ).scalar_one()
+    other_agent = await create_env_with_project(
+        db_session,
+        user_id=binding.user_id,
+        machine_id=f"phase-other-{uuid4().hex}",
+        machine_name="Other phase agent",
+    )
+    other_link = ChannelBotAgentLink(
+        account_id=account_id, user_id=binding.user_id, agent_id=other_agent.id
+    )
+    db_session.add(other_link)
+    await db_session.flush()
+    other_binding = ChannelBinding(
+        account_id=account_id,
+        bot_agent_link_id=other_link.id,
+        user_id=binding.user_id,
+        external_chat_id="other-phase-guild",
+        external_chat_type="guild",
+    )
+    db_session.add(other_binding)
+    await db_session.commit()
+    gateway_engine = create_async_engine(settings.database_url)
+    monkeypatch.setattr(
+        discord_router,
+        "async_session_factory",
+        async_sessionmaker(gateway_engine, expire_on_commit=False),
+    )
+    monkeypatch.setattr(discord_router, "database_engine", gateway_engine)
+    sql_count = 0
+    empty_queries = asyncio.Queue()
+    original_dequeue = discord_router.dequeue_discord_gateway_events
+
+    def count_sql(*_args):
+        nonlocal sql_count
+        sql_count += 1
+
+    async def observed_dequeue(*args, **kwargs):
+        values = await original_dequeue(*args, **kwargs)
+        if not values:
+            empty_queries.put_nowait(perf_counter())
+        return values
+
+    async def provider(*, path, **_kwargs):
+        assert path == "channels/discord-chan-1"
+        return shared_router.DiscordProviderResult(
+            content=json.dumps(
+                {
+                    "id": "discord-chan-1",
+                    "guild_id": "discord-guild-1",
+                    "type": 0,
+                    "name": "phase-test",
+                }
+            ).encode(),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    sqlalchemy_event.listen(gateway_engine.sync_engine, "before_cursor_execute", count_sql)
+    monkeypatch.setattr(discord_router, "dequeue_discord_gateway_events", observed_dequeue)
+    monkeypatch.setattr(discord_router, "request_discord_provider", provider)
+    server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    server_task = asyncio.create_task(server.serve(sockets=[listener]))
+    samples = []
+    try:
+        await start_postgres_listener()
+        async with asyncio.timeout(10):
+            while not server.started:
+                await asyncio.sleep(0.01)
+        async with connect(f"ws://127.0.0.1:{port}/v1/channels/discord/gateway") as ws:
+
+            async def receive():
+                return json.loads(await asyncio.wait_for(ws.recv(), 5))
+
+            assert (await receive())["op"] == 10
+            await ws.send(
+                json.dumps({"op": 2, "d": {"token": created["agent_token"], "intents": 0}})
+            )
+            assert (await receive())["t"] == "READY"
+            assert (await receive())["t"] == "GUILD_CREATE"
+            assert (await receive())["t"] == "CHANNEL_CREATE"
+            for index, phase in enumerate([0.05, 0.25, 0.5, 0.75, 0.95] * 3 + [0.05]):
+                if index == 15:
+                    await stop_postgres_listener()
+                while not empty_queries.empty():
+                    empty_queries.get_nowait()
+                # Heartbeat gives each sample a fresh empty-query boundary.
+                await ws.send(json.dumps({"op": 1, "d": None}))
+                assert (await receive())["op"] == 11
+                idle_at = await asyncio.wait_for(empty_queries.get(), 5)
+                await asyncio.sleep(max(0, idle_at + phase - perf_counter()))
+                message = ChannelMessage(
+                    account_id=account_id,
+                    bot_agent_link_id=UUID(created["agent_link_id"]),
+                    binding_id=binding.id,
+                    user_id=binding.user_id,
+                    direction=MESSAGE_DIRECTION_INBOUND,
+                    external_chat_id=binding.external_chat_id,
+                    provider_message_id=f"phase-{index}",
+                    payload={
+                        "t": "MESSAGE_CREATE",
+                        "d": {
+                            "id": f"phase-{index}",
+                            "channel_id": "discord-chan-1",
+                            "guild_id": "discord-guild-1",
+                            "content": "phase test",
+                            "author": {"id": "phase-user"},
+                        },
+                    },
+                )
+                db_session.add(message)
+                await db_session.flush()
+                await notify_channel_inbound_message_enqueued(
+                    db_session, account_id=str(account_id)
+                )
+                before_sql = sql_count
+                await db_session.commit()
+                committed_at = perf_counter()
+                dispatch = await receive()
+                elapsed = (perf_counter() - committed_at) * 1000
+                assert dispatch["t"] == "MESSAGE_CREATE"
+                assert dispatch["d"]["id"] == f"phase-{index}"
+                samples.append(
+                    {
+                        "phase": phase,
+                        "ms": round(elapsed, 3),
+                        "sql": sql_count - before_sql,
+                        "listening": index < 15,
+                    }
+                )
+                await ws.send(json.dumps({"op": 1, "d": dispatch["s"]}))
+                assert (await receive())["op"] == 11
+                await db_session.refresh(message)
+                assert message.delivered_at is not None
+            await start_postgres_listener()
+            unrelated = []
+            for index in range(3):
+                while not empty_queries.empty():
+                    empty_queries.get_nowait()
+                await ws.send(json.dumps({"op": 1, "d": None}))
+                assert (await receive())["op"] == 11
+                await asyncio.wait_for(empty_queries.get(), 5)
+                # Let the heartbeat's query and any already-coalesced wakeup
+                # finish before attributing SQL to the next foreign commit.
+                await asyncio.sleep(0.05)
+                while not empty_queries.empty():
+                    empty_queries.get_nowait()
+                foreign = ChannelMessage(
+                    account_id=account_id,
+                    bot_agent_link_id=other_link.id,
+                    binding_id=other_binding.id,
+                    user_id=binding.user_id,
+                    direction=MESSAGE_DIRECTION_INBOUND,
+                    external_chat_id=other_binding.external_chat_id,
+                    provider_message_id=f"other-phase-{index}",
+                    payload={"t": "MESSAGE_CREATE", "d": {"content": "other link"}},
+                )
+                db_session.add(foreign)
+                await db_session.flush()
+                await notify_channel_inbound_message_enqueued(
+                    db_session, account_id=str(account_id)
+                )
+                before_sql = sql_count
+                await db_session.commit()
+                committed_at = perf_counter()
+                await asyncio.wait_for(empty_queries.get(), 2)
+                unrelated.append(
+                    {
+                        "ms": round((perf_counter() - committed_at) * 1000, 3),
+                        "sql": sql_count - before_sql,
+                    }
+                )
+                # Other Link's message must not leak through this socket.
+                await ws.send(json.dumps({"op": 1, "d": None}))
+                assert (await receive())["op"] == 11
+            print("GATEWAY_OTHER_LINK", json.dumps(unrelated))
+        times = sorted(sample["ms"] for sample in samples if sample["listening"])
+        print(
+            "GATEWAY_PHASES",
+            json.dumps(
+                {
+                    "p50_ms": statistics.median(times),
+                    "p95_ms": times[int(len(times) * 0.95)],
+                    "samples": samples,
+                }
+            ),
+        )
+    finally:
+        try:
+            server.should_exit = True
+            await asyncio.wait_for(server_task, 10)
+        finally:
+            listener.close()
+            try:
+                await stop_postgres_listener()
+            finally:
+                await gateway_engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exit_kind", ["disconnect", "cancel", "lease_lost"])
+async def test_discord_gateway_wakeup_owns_reader_and_cleanup(monkeypatch, exit_kind):
+    from fastapi import WebSocket
+
+    from app.services.channel_wakeups import ChannelWakeup
+
+    _install_discord_gateway_protocol_fakes(monkeypatch)
+    source = ChannelWakeup()
+    monkeypatch.setattr(discord_router, "channel_inbound_messages_enqueued", source)
+    monkeypatch.setattr(settings, "discord_gateway_poll_interval_seconds", 60)
+    account_key = str(_discord_gateway_protocol_agent().account.id)
+    inbox_checked = asyncio.Queue()
+    incoming = asyncio.Queue()
+    outgoing = asyncio.Queue()
+    original_dequeue = discord_router.dequeue_discord_gateway_events
+    cancelled_receives = 0
+
+    async def dequeue(*args, **kwargs):
+        result = await original_dequeue(*args, **kwargs)
+        inbox_checked.put_nowait(None)
+        return result
+
+    async def receive():
+        nonlocal cancelled_receives
+        try:
+            return await incoming.get()
+        except asyncio.CancelledError:
+            cancelled_receives += 1
+            raise
+
+    @asynccontextmanager
+    async def lost_lease(**_kwargs):
+        try:
+            yield True
+        finally:
+            raise discord_router._DiscordGatewayConsumerLeaseLost("test lease lost on exit")
+
+    monkeypatch.setattr(discord_router, "dequeue_discord_gateway_events", dequeue)
+    if exit_kind == "lease_lost":
+        monkeypatch.setattr(discord_router, "_discord_gateway_consumer_lease", lost_lease)
+    websocket = WebSocket(
+        {
+            "type": "websocket",
+            "path": "/v1/channels/discord/gateway",
+            "headers": [],
+            "query_string": b"",
+        },
+        receive,
+        outgoing.put,
+    )
+    incoming.put_nowait({"type": "websocket.connect"})
+    task = asyncio.create_task(discord_router.discord_agent_gateway(websocket))
+
+    def frame(payload):
+        incoming.put_nowait({"type": "websocket.receive", "text": json.dumps(payload)})
+
+    async def dispatch():
+        message = await asyncio.wait_for(outgoing.get(), 2)
+        return json.loads(message["text"])
+
+    try:
+        assert (await outgoing.get())["type"] == "websocket.accept"
+        assert (await dispatch())["op"] == 10
+        frame({"op": 2, "d": {"token": "valid-discord-token", "intents": 0}})
+        ready = await dispatch()
+        assert ready["t"] == "READY"
+        assert (await dispatch())["t"] == "GUILD_CREATE"
+        assert (await dispatch())["t"] == "CHANNEL_CREATE"
+        await asyncio.wait_for(inbox_checked.get(), 2)
+        # A notification alone must leave the outstanding ASGI receive intact.
+        source.signal(account_key)
+        await asyncio.wait_for(inbox_checked.get(), 2)
+        assert cancelled_receives == 0
+        monkeypatch.setattr(settings, "discord_gateway_poll_interval_seconds", 0.01)
+        source.signal(account_key)
+        await asyncio.wait_for(inbox_checked.get(), 2)
+        await asyncio.wait_for(inbox_checked.get(), 2)
+        assert cancelled_receives == 0
+        monkeypatch.setattr(settings, "discord_gateway_poll_interval_seconds", 60)
+        # Make both inputs runnable in the same tick; neither may be discarded.
+        source.signal(account_key)
+        frame({"op": 1, "d": None})
+        assert (await dispatch()) == {"op": 11, "d": None}
+        assert cancelled_receives == 0
+        source.signal(account_key)
+        if exit_kind == "disconnect":
+            incoming.put_nowait({"type": "websocket.disconnect", "code": 1000})
+            await asyncio.wait_for(task, 2)
+        else:
+            task.cancel()
+            expected = (
+                discord_router._DiscordGatewayConsumerLeaseLost
+                if exit_kind == "lease_lost"
+                else asyncio.CancelledError
+            )
+            with pytest.raises(expected):
+                await asyncio.wait_for(task, 2)
+        assert not source._waiters
+        entry = discord_router._DISCORD_GATEWAY_SESSIONS._entries[ready["d"]["session_id"]]
+        assert entry.connection_count == 0
+        assert not [
+            child
+            for child in asyncio.all_tasks()
+            if child.get_name() in {"discord-gateway-receive", "discord-gateway-wakeup"}
+        ]
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
