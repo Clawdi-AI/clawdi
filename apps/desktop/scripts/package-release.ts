@@ -19,7 +19,10 @@ await run("bun", ["run", "build"]);
 await run("bun", ["run", "prepare:native"], {
 	CLAWDI_NATIVE_TARGET: `darwin-${configuration.arch}`,
 });
-await run("bun", desktopReleaseBuilderArgs(configuration));
+await run("bun", [
+	...desktopReleaseBuilderArgs(configuration),
+	`--config.afterPack=${join(desktopRoot, "scripts/after-pack.mjs")}`,
+]);
 await verifyReleaseSignature();
 await verifyReleaseArtifacts(configuration.version);
 
