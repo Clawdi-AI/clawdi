@@ -26,6 +26,7 @@ from collections.abc import AsyncGenerator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from itertools import islice
 from typing import TYPE_CHECKING, Literal, TypedDict
 
 import composio_client
@@ -38,6 +39,7 @@ from mcp.types import CallToolResult, ListToolsResult
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, ValidationError
 
 from app.core.config import settings
+from app.core.database import finish_cleanup
 from app.schemas.connector import (
     ConnectorAuthFieldResponse,
     ConnectorAuthFieldsResponse,
@@ -245,8 +247,10 @@ _client: AsyncComposio | None = None
 _sdk_client: Composio[OpenAITool, OpenAIToolCollection] | None = None
 _TOOL_ROUTER_SESSION_TIMEOUT_SECONDS = 10.0
 _TOOL_ROUTER_DISCOVERY_TIMEOUT_SECONDS = 25.0
+_TOOL_ROUTER_REAP_INTERVAL_SECONDS = 60.0
+_TOOL_ROUTER_REAP_BATCH_SIZE = 128
 _tool_router_session_cache: dict[str, ComposioMcpSession] = {}
-_tool_router_session_creations: dict[str, set[object]] = {}
+_tool_router_session_creations: dict[str, _ToolRouterSessionCreation] = {}
 _tool_router_tools_cache: dict[str, tuple[ComposioMcpSession, ListToolsResult]] = {}
 _tool_router_tools_inflight: dict[str, asyncio.Task[ListToolsResult]] = {}
 
@@ -434,6 +438,12 @@ def _bounded_scrubbed_message(
     return " ".join(safe.split())[:500]
 
 
+@dataclass(eq=False)
+class _ToolRouterSessionCreation:
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    participants: int = 0
+
+
 class _ComposioMcpSessionRetired(RuntimeError):
     pass
 
@@ -476,7 +486,9 @@ class ComposioMcpSession:
         client = self._http_client
         self._http_client = None
         if client is not None:
-            await client.aclose()
+            # A reaper/request may be cancelled after detaching this session.
+            # Keep ownership of the removed client's close until it finishes.
+            await finish_cleanup(client.aclose)
 
 
 _MCP_OPERATION_ERRORS = (
@@ -597,28 +609,76 @@ async def get_tool_router_mcp_session(user_id: str) -> ComposioMcpSession:
     if cached and cached.expires_at > now:
         return cached
 
-    # Invalidation detaches this group; its in-flight requests cannot republish.
-    pending = _tool_router_session_creations.setdefault(user_id, set())
-    creation = object()
-    pending.add(creation)
+    # Invalidation detaches this generation, including its queued waiters.
+    pending = _tool_router_session_creations.get(user_id)
+    if pending is None:
+        pending = _ToolRouterSessionCreation()
+        _tool_router_session_creations[user_id] = pending
+    pending.participants += 1
     try:
-        if cached is not None:
-            await cached.retire()
-        session = await _create_tool_router_mcp_session(user_id, now=now)
-        if _tool_router_session_creations.get(user_id) is not pending:
-            await session.retire()
-            raise ComposioMcpUpstreamError("Composio session invalidated during creation")
-        current = _tool_router_session_cache.get(user_id)
-        if current is not None and current.expires_at > datetime.now(UTC):
-            if current is not session:
+        # Each caller's budget includes queueing and retirement, not just SDK
+        # creation. Owned client cleanup still drains before cancellation exits.
+        async with asyncio.timeout(_TOOL_ROUTER_SESSION_TIMEOUT_SECONDS), pending.lock:
+            if _tool_router_session_creations.get(user_id) is not pending:
+                raise ComposioMcpUpstreamError("Composio session invalidated during creation")
+            now = datetime.now(UTC)
+            cached = _tool_router_session_cache.get(user_id)
+            if cached is not None:
+                if cached.expires_at > now:
+                    return cached
+                _detach_tool_router_mcp_session(user_id, cached)
+                await cached.retire()
+                if _tool_router_session_creations.get(user_id) is not pending:
+                    raise ComposioMcpUpstreamError("Composio session invalidated during creation")
+            session = await _create_tool_router_mcp_session(user_id, now=now)
+            if _tool_router_session_creations.get(user_id) is not pending:
                 await session.retire()
-            return current
-        _tool_router_session_cache[user_id] = session
-        return session
+                raise ComposioMcpUpstreamError("Composio session invalidated during creation")
+            _tool_router_session_cache[user_id] = session
+            return session
+    except TimeoutError:
+        raise ComposioProviderError(ComposioFailure("timeout")) from None
     finally:
-        pending.discard(creation)
-        if not pending and _tool_router_session_creations.get(user_id) is pending:
+        pending.participants -= 1
+        if pending.participants == 0 and _tool_router_session_creations.get(user_id) is pending:
             _tool_router_session_creations.pop(user_id)
+
+
+def _detach_tool_router_mcp_session(user_id: str, session: ComposioMcpSession) -> None:
+    if _tool_router_session_cache.get(user_id) is session:
+        _tool_router_session_cache.pop(user_id)
+    tools = _tool_router_tools_cache.get(user_id)
+    if tools is not None and tools[0] is session:
+        _tool_router_tools_cache.pop(user_id)
+
+
+async def reap_expired_tool_router_mcp_sessions() -> None:
+    """Inspect one bounded batch, rotating retained entries for eventual reclamation."""
+    now = datetime.now(UTC)
+    batch = tuple(islice(_tool_router_session_cache.items(), _TOOL_ROUTER_REAP_BATCH_SIZE))
+    for user_id, session in batch:
+        if _tool_router_session_cache.get(user_id) is not session:
+            continue
+        if session.expires_at > now:
+            # Dict insertion order provides a bounded round-robin scan without
+            # a second index that would itself need invalidation and cleanup.
+            _tool_router_session_cache.pop(user_id)
+            _tool_router_session_cache[user_id] = session
+            continue
+        _detach_tool_router_mcp_session(user_id, session)
+        try:
+            await session.retire()
+        except Exception as exc:
+            logger.warning(
+                "Failed to close expired Composio MCP session: error_type=%s", type(exc).__name__
+            )
+
+
+async def run_tool_router_mcp_session_reaper() -> None:
+    """Reclaim idle sessions independently of requests; owned by ASGI lifespan."""
+    while True:
+        await asyncio.sleep(_TOOL_ROUTER_REAP_INTERVAL_SECONDS)
+        await reap_expired_tool_router_mcp_sessions()
 
 
 async def invalidate_tool_router_mcp_session(user_id: str) -> None:
