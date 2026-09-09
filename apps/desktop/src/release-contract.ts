@@ -2,6 +2,7 @@ import { normalizeDesktopUpdateFeedUrl } from "./update-policy";
 
 export interface DesktopReleaseConfiguration {
 	version: string;
+	arch: "arm64" | "x64";
 	channel: "stable" | "beta";
 	updateFeedUrl: string;
 }
@@ -11,6 +12,8 @@ export function readDesktopReleaseConfiguration(
 	platform: NodeJS.Platform,
 ): DesktopReleaseConfiguration {
 	if (platform !== "darwin") throw new Error("Desktop release packaging must run on macOS.");
+	const arch = env.CLAWDI_DESKTOP_ARCH?.trim() || process.arch;
+	if (arch !== "arm64" && arch !== "x64") throw new Error("Unsupported Desktop architecture.");
 	const version = env.CLAWDI_DESKTOP_VERSION?.trim() ?? "";
 	const channel = env.CLAWDI_DESKTOP_UPDATE_CHANNEL?.trim() || "stable";
 	if (channel !== "stable" && channel !== "beta") {
@@ -44,7 +47,7 @@ export function readDesktopReleaseConfiguration(
 			"Apple notarization requires APPLE_API_KEY, APPLE_API_KEY_ID, and APPLE_API_ISSUER.",
 		);
 	}
-	return { version, channel, updateFeedUrl };
+	return { version, arch, channel, updateFeedUrl };
 }
 
 export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfiguration): string[] {
@@ -54,12 +57,15 @@ export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfigura
 		"--mac",
 		"dmg",
 		"zip",
-		"--arm64",
+		`--${configuration.arch}`,
 		"--publish",
 		"never",
 		"--config.forceCodeSigning=true",
 		"--config.mac.notarize=true",
 		"--config.dmg.sign=true",
+		// electron-builder expands these placeholders after selecting the target.
+		// biome-ignore lint/suspicious/noTemplateCurlyInString: electron-builder template
+		"--config.artifactName=Clawdi-${version}-${arch}.${ext}",
 		`--config.extraMetadata.version=${configuration.version}`,
 		`--config.extraMetadata.clawdiUpdateChannel=${configuration.channel}`,
 		`--config.extraMetadata.clawdiUpdateFeedUrl=${configuration.updateFeedUrl}`,

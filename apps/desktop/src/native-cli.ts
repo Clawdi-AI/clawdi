@@ -142,10 +142,10 @@ export class DesktopCliService {
 		for (const { type, reconnectAgentId } of requested) {
 			const agent = available.get(type);
 			if (!agent?.detected && !agent?.registered) {
-				throw new Error(`${displayNameFor(type)} is no longer available on this Mac.`);
+				throw new Error(`${displayNameFor(type)} is no longer available on this computer.`);
 			}
 			if (reconnectAgentId && agent.registered) {
-				throw new Error(`${displayNameFor(type)} is already connected on this Mac.`);
+				throw new Error(`${displayNameFor(type)} is already connected on this computer.`);
 			}
 		}
 

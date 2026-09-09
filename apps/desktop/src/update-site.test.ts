@@ -19,6 +19,7 @@ function fixture(missingAsset = false) {
 		draft: false,
 		assets: [
 			{ name: prerelease ? "beta-mac.yml" : "latest-mac.yml", id: 1 },
+			{ name: prerelease ? "beta-mac-x64.yml" : "latest-mac-x64.yml", id: prerelease ? 1 : 2 },
 			...(missingAsset ? [] : [{ name: "Clawdi.zip" }]),
 		],
 	});
@@ -90,6 +91,8 @@ test("Pages keeps both channels, paginates releases and selects semantic version
 			`https://github.com/owner/repo/releases/download/desktop-v${version}/Clawdi.zip`,
 		);
 		expect(metadata.path).toBe(metadata.files[0].url);
+		const intel = parse(readFileSync(join(root, "site/desktop/darwin-x64", file), "utf8"));
+		expect(intel.version).toBe(version);
 	}
 });
 

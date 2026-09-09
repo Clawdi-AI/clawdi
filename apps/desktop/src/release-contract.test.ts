@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { desktopReleaseBuilderArgs, readDesktopReleaseConfiguration } from "./release-contract";
 
 const RELEASE_ENV = {
+	CLAWDI_DESKTOP_ARCH: "arm64",
 	CLAWDI_DESKTOP_VERSION: "1.2.3",
 	CLAWDI_DESKTOP_UPDATE_FEED_URL: "https://downloads.example.test/clawdi/desktop/stable/",
 	CSC_NAME: "Developer ID Application: Clawdi, Inc.",
@@ -11,6 +12,16 @@ const RELEASE_ENV = {
 } as const;
 
 describe("Desktop release contract", () => {
+	test("builds the selected Intel target and rejects unsupported architectures", () => {
+		const intel = readDesktopReleaseConfiguration(
+			{ ...RELEASE_ENV, CLAWDI_DESKTOP_ARCH: "x64" },
+			"darwin",
+		);
+		expect(desktopReleaseBuilderArgs(intel)).toContain("--x64");
+		expect(() =>
+			readDesktopReleaseConfiguration({ ...RELEASE_ENV, CLAWDI_DESKTOP_ARCH: "ia32" }, "darwin"),
+		).toThrow();
+	});
 	test("accepts an imported CI signing keychain", () => {
 		expect(
 			readDesktopReleaseConfiguration(
@@ -57,6 +68,7 @@ describe("Desktop release contract", () => {
 	test("accepts API key notarization without a separate Team ID", () => {
 		expect(readDesktopReleaseConfiguration(RELEASE_ENV, "darwin")).toEqual({
 			version: "1.2.3",
+			arch: "arm64",
 			channel: "stable",
 			updateFeedUrl: "https://downloads.example.test/clawdi/desktop/stable/",
 		});

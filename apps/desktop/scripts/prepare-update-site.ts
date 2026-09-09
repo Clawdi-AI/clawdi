@@ -30,7 +30,9 @@ const releases = pages.flat().filter(record);
 const desktop = join(output, "desktop");
 mkdirSync(desktop, { recursive: true });
 let channels = 0;
-for (const channel of ["stable", "beta"] as const) {
+for (const { channel, arch } of (["stable", "beta"] as const).flatMap((channel) =>
+	(["arm64", "x64"] as const).map((arch) => ({ channel, arch })),
+)) {
 	const pattern =
 		channel === "stable"
 			? /^desktop-v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/
@@ -49,7 +51,10 @@ for (const channel of ["stable", "beta"] as const) {
 	if (!Array.isArray(release.assets)) throw new Error("Missing release assets.");
 	const assets = release.assets;
 	const filename = channel === "stable" ? "latest-mac.yml" : "beta-mac.yml";
-	const asset = assets.find((item: unknown) => record(item) && item.name === filename);
+	const assetName = arch === "arm64" ? filename : filename.replace(".yml", "-x64.yml");
+	const asset = assets.find((item: unknown) => record(item) && item.name === assetName);
+	// Releases predating Intel support contain only the arm64 metadata.
+	if (!asset && arch === "x64") continue;
 	if (!record(asset) || typeof asset.id !== "number") throw new Error(`Missing ${filename}.`);
 	const metadata: unknown = parse(
 		gh([
@@ -74,7 +79,9 @@ for (const channel of ["stable", "beta"] as const) {
 		file.url = assetUrl(file.url);
 	}
 	if (metadata.path !== undefined) metadata.path = assetUrl(metadata.path);
-	writeFileSync(join(desktop, filename), stringify(metadata));
+	const directory = arch === "arm64" ? desktop : join(desktop, "darwin-x64");
+	mkdirSync(directory, { recursive: true });
+	writeFileSync(join(directory, filename), stringify(metadata));
 	channels++;
 }
 if (!channels) throw new Error("No published Desktop update channels found.");

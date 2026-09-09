@@ -16,13 +16,19 @@ const configuration = readDesktopReleaseConfiguration(process.env, process.platf
 
 rmSync(releaseRoot, { recursive: true, force: true });
 await run("bun", ["run", "build"]);
-await run("bun", ["run", "prepare:native"], { CLAWDI_NATIVE_TARGET: "darwin-arm64" });
+await run("bun", ["run", "prepare:native"], {
+	CLAWDI_NATIVE_TARGET: `darwin-${configuration.arch}`,
+});
 await run("bun", desktopReleaseBuilderArgs(configuration));
 await verifyReleaseSignature();
 await verifyReleaseArtifacts(configuration.version);
 
 async function verifyReleaseSignature(): Promise<void> {
-	const appBundle = join(releaseRoot, "mac-arm64", "Clawdi.app");
+	const appBundle = join(
+		releaseRoot,
+		configuration.arch === "arm64" ? "mac-arm64" : "mac",
+		"Clawdi.app",
+	);
 	const executable = join(appBundle, "Contents", "MacOS", "Clawdi");
 	const cli = join(appBundle, "Contents", "Resources", "native", "clawdi");
 	await run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appBundle]);

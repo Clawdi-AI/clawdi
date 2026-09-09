@@ -1,5 +1,26 @@
 # Clawdi Desktop
 
+## Platform coverage
+
+| Platform | Architectures | Packages | Updates |
+| --- | --- | --- | --- |
+| macOS | arm64, x64 | signed/notarized DMG and ZIP | electron-updater, isolated architecture feeds |
+| Linux with systemd user services | x64, arm64 | DEB and RPM | install package updates manually |
+| Windows | unavailable | no release package | blocked by native CLI and service support |
+
+Desktop Platform Packages builds and executes each additional supported target
+on a native runner. macOS arm64 retains the existing packaged dashboard smoke.
+Linux packages install to `/opt/Clawdi`; its bundled native CLI is allowed to
+install the per-user daemon only from that fixed package layout. AppImage is
+intentionally excluded because its transient mount cannot own a durable daemon.
+Linux runs must have a working systemd user manager and desktop keyring.
+
+Windows is not a packaging-only gap: the CLI target catalog currently has no
+Windows executable, and daemon install/stop/restart/uninstall have no Windows
+backend. Native Windows x64/arm64 lifecycle implementation and Authenticode
+signing credentials must be supplied and tested before NSIS/MSIX distribution.
+Do not label Linux package builds or unsigned previews as full release validation.
+
 Clawdi Desktop packages the production TanStack dashboard as a local SPA. The
 renderer keeps the `https://cloud.clawdi.ai` origin for Clerk and API behavior,
 but executable UI is served only from the signed application bundle. CLI owns

@@ -225,7 +225,7 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 
 			<section className="content">
 				{stage === "loading" ? (
-					<Centered icon={<LoaderCircle className="spin" />} title="Checking this Mac" />
+					<Centered icon={<LoaderCircle className="spin" />} title="Checking this computer" />
 				) : null}
 
 				{stage === "install" ? (
@@ -376,12 +376,12 @@ function Welcome({ agents, onContinue }: { agents: DesktopDetectedAgent[]; onCon
 				<h2>Welcome to Clawdi</h2>
 				<p>
 					{detected.length > 0
-						? `We found ${detected.length} supported Agent${detected.length === 1 ? "" : "s"} on this Mac. Sign in to connect or recover them.`
-						: "Sign in to Clawdi, then connect a supported Agent whenever it is available on this Mac."}
+						? `We found ${detected.length} supported Agent${detected.length === 1 ? "" : "s"} on this computer. Sign in to connect or recover them.`
+						: "Sign in to Clawdi, then connect a supported Agent whenever it is available on this computer."}
 				</p>
 			</div>
 			{detected.length > 0 ? (
-				<ul className="welcome-agents" aria-label="Agents found on this Mac">
+				<ul className="welcome-agents" aria-label="Agents found on this computer">
 					{detected.map((agent) => (
 						<li className="welcome-agent" key={agent.type}>
 							<AgentBrandIcon type={agent.type} />
@@ -543,7 +543,7 @@ function AgentSelection({
 										`${candidate.name} will replace its binding to ${candidate.machineName}`,
 								)
 								.join(". ")}
-							. Stop background sync on the previous Mac before continuing.
+							. Stop background sync on the previous computer before continuing.
 						</p>
 					</div>
 				</div>

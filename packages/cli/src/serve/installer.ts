@@ -178,9 +178,12 @@ function currentDaemonInvocation(opts: InstallOpts): CurrentCliInvocation {
 	try {
 		const layout = resolveCurrentCliLayout();
 		const applicationManagedNative =
-			platform() === "darwin" &&
 			process.env.CLAWDI_NO_AUTO_UPDATE === "1" &&
-			isMacApplicationBundleExecutable(layout.executablePath);
+			((platform() === "darwin" && isMacApplicationBundleExecutable(layout.executablePath)) ||
+				(platform() === "linux" &&
+					layout.executablePath === "/opt/Clawdi/resources/native/clawdi" &&
+					existsSync("/opt/Clawdi/resources/app.asar") &&
+					existsSync("/opt/Clawdi/clawdi-desktop")));
 		if (layout.kind === "native" && !layout.nativeOwnership && !applicationManagedNative) {
 			throw new Error(
 				"an unowned native executable cannot install a daemon; install the native distribution or use the CLI bundled with Clawdi Desktop",

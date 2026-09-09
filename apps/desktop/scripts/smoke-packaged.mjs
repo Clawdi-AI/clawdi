@@ -7,7 +7,7 @@ import { chromium } from "@playwright/test";
 
 const [executablePath, runtimeRoot, surface = "install"] = process.argv.slice(2);
 const smokeAgentId = "00000000-0000-4000-8000-000000000001";
-if (!executablePath || !runtimeRoot || !["install", "dashboard"].includes(surface)) {
+if (!executablePath || !runtimeRoot || !["install", "dashboard", "welcome"].includes(surface)) {
 	throw new Error("usage: smoke-packaged.mjs <executable> <runtime-root> [install|dashboard]");
 }
 
@@ -48,7 +48,10 @@ try {
 	browser = await chromium.connectOverCDP(endpoint);
 	const context = browser.contexts()[0];
 	if (!context) throw new Error("Packaged app did not create a browser context.");
-	if (surface === "dashboard") await verifyPackagedDashboard(context);
+	if (surface === "welcome") {
+		const window = await waitForWindow(context, null, 30_000);
+		await window.getByRole("heading", { name: "Welcome to Clawdi" }).waitFor({ timeout: 30_000 });
+	} else if (surface === "dashboard") await verifyPackagedDashboard(context);
 	else await verifyInstallGate(context, desktop, output, cliLog);
 } catch (error) {
 	failure = error;

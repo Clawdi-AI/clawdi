@@ -26,8 +26,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  macos-arm64:
-    runs-on: macos-latest
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+            bundle: mac-arm64
+            feed_path: desktop
+          - runner: macos-15-intel
+            arch: x64
+            bundle: mac
+            feed_path: desktop/darwin-x64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -48,8 +60,10 @@ jobs:
         shell: bash apps/desktop/scripts/with-signing-keychain.sh bash {0}
         env:
           CLAWDI_DESKTOP_VERSION: ${{ inputs.version }}
+          CLAWDI_DESKTOP_ARCH: ${{ matrix.arch }}
           CLAWDI_DESKTOP_UPDATE_CHANNEL: ${{ inputs.channel }}
-          CLAWDI_DESKTOP_UPDATE_FEED_URL: ${{ steps.pages.outputs.base_url }}/desktop/
+          CLAWDI_DESKTOP_UPDATE_FEED_URL: ${{ steps.pages.outputs.base_url }}/${{ matrix.feed_path }}/
+          APP_BUNDLE_DIRECTORY: ${{ matrix.bundle }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
@@ -64,31 +78,35 @@ jobs:
           unset APPLE_API_KEY_CONTENT
           bun run --cwd apps/desktop package:mac:release
           node apps/desktop/scripts/smoke-packaged.mjs \
-            "$PWD/apps/desktop/release/mac-arm64/Clawdi.app/Contents/MacOS/Clawdi" \
+            "$PWD/apps/desktop/release/$APP_BUNDLE_DIRECTORY/Clawdi.app/Contents/MacOS/Clawdi" \
             "$RUNNER_TEMP/desktop-channel-smoke" install
           cd apps/desktop/release
-          shasum -a 256 Clawdi-*.dmg Clawdi-*.zip > SHA256SUMS
+          shasum -a 256 Clawdi-*.dmg Clawdi-*.zip > "SHA256SUMS-$CLAWDI_DESKTOP_ARCH"
+          if [ "$CLAWDI_DESKTOP_ARCH" = x64 ]; then
+            for metadata in *-mac.yml; do mv "$metadata" "${metadata%.yml}-x64.yml"; done
+          fi
       - uses: actions/upload-artifact@v7
         with:
-          name: clawdi-macos-arm64-${{ inputs.channel }}
+          name: clawdi-macos-${{ matrix.arch }}-${{ inputs.channel }}
           path: |
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
-            apps/desktop/release/*-mac.yml
-            apps/desktop/release/SHA256SUMS
+            apps/desktop/release/*-mac*.yml
+            apps/desktop/release/SHA256SUMS-*
           if-no-files-found: error
           retention-days: 14
 
   publish:
     if: inputs.publish
-    needs: macos-arm64
+    needs: macos
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: clawdi-macos-arm64-${{ inputs.channel }}
+          pattern: clawdi-macos-*-${{ inputs.channel }}
+          merge-multiple: true
           path: release
       - name: Publish immutable Desktop release
         env:
