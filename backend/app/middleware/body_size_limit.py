@@ -27,6 +27,8 @@ import logging
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.core.logging_config import redact_request_path
+
 logger = logging.getLogger(__name__)
 
 
@@ -75,7 +77,7 @@ class BodySizeLimitMiddleware:
                     logger.info(
                         "body_size_rejected_header method=%s path=%s declared=%d cap=%d",
                         method,
-                        scope.get("path", ""),
+                        redact_request_path(scope.get("path", "")),
                         declared,
                         self.max_bytes,
                     )
@@ -117,7 +119,7 @@ class BodySizeLimitMiddleware:
                 logger.info(
                     "body_size_rejected_stream method=%s path=%s read=%d cap=%d",
                     method,
-                    scope.get("path", ""),
+                    redact_request_path(scope.get("path", "")),
                     total,
                     self.max_bytes,
                 )
