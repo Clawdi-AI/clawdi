@@ -8,6 +8,7 @@ credential-free write-ahead journal preserving strategy ownership across retries
 
 import contextlib
 import fcntl
+import inspect
 import io
 import json
 import os
@@ -89,7 +90,11 @@ def write_journal(path, records):
 
 def reconcile(payload):
     from agent.credential_pool import PooledCredential
-    from hermes_cli.auth import read_credential_pool, resolve_provider, write_credential_pool
+    from hermes_cli.auth import (
+        read_credential_pool,
+        resolve_provider,
+        write_credential_pool,
+    )
 
     desired = {}
     for item in payload["providers"]:
@@ -187,9 +192,14 @@ def reconcile(payload):
                 if entry != existing:
                     # Omitted siblings are merged from disk, including concurrent
                     # key rotations; no snapshot of another credential is replayed.
-                    write_credential_pool(
-                        provider, [entry], status_cleared_ids=[ENTRY_ID] if rotated else []
+                    # Older Hermes writers clear cooldown when the token changes
+                    # but do not expose the explicit status-reset keyword.
+                    options = (
+                        {"status_cleared_ids": [ENTRY_ID] if rotated else []}
+                        if "status_cleared_ids" in inspect.signature(write_credential_pool).parameters
+                        else {}
                     )
+                    write_credential_pool(provider, [entry], **options)
                     changed = True
                 if strategies.get(provider) != "fill_first":
                     updates[provider] = {"exists": True, "value": "fill_first"}
