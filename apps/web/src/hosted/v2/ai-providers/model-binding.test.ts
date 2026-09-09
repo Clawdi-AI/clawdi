@@ -5,11 +5,9 @@ import {
 	isManagedProviderId,
 	MANAGED_AI_CHOICE,
 	MANAGED_PROVIDER_LABEL,
-	managedModelPickerItems,
 	modelBindingDisplayName,
 	modelDisplayName,
 	modelOptionsForProvider,
-	modelPickerItems,
 	providerAvailabilityIssue,
 	providerChoiceFromRef,
 	providerDisplayLabel,
@@ -137,128 +135,8 @@ describe("model binding", () => {
 		).toEqual(["gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra"]);
 		expect(firstModelForProvider(MANAGED_AI_CHOICE, [], managedModels)).toBe("gpt-5.6-luna");
 		expect(modelOptionsForProvider(MANAGED_AI_CHOICE, [], managedModels)).toEqual(managedModels);
-		expect(modelPickerItems(MANAGED_AI_CHOICE, [], managedModels)).toEqual([
-			{ value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-			{ value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
-			{ value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-		]);
+
 		expect(modelDisplayName("gpt-5.6-sol", managedModels)).toBe("GPT-5.6 Sol");
-	});
-
-	test("splits featured and overflow models without changing backend order", () => {
-		const managedModels = [
-			{
-				...managedMetadata,
-				description: "Higher cost for complex work.",
-				id: "gpt-5.6-sol",
-				display_name: "GPT-5.6 Sol",
-				is_default: false,
-				is_featured: true,
-			},
-			{
-				...managedMetadata,
-				description: "Variable cost for long, detailed work.",
-				id: "z-ai/glm-5.3",
-				display_name: "GLM-5.3",
-				provider_id: "redpill",
-				is_default: false,
-				is_featured: true,
-			},
-			{
-				...managedMetadata,
-				id: "deepseek-v4-flash-0731",
-				display_name: "DeepSeek V4 Flash 0731",
-				provider_id: "redpill",
-				is_default: false,
-				is_featured: true,
-			},
-			{
-				...managedMetadata,
-				description: "Low cost for routine work.",
-				id: "gpt-5.6-luna",
-				display_name: "GPT-5.6 Luna",
-				is_default: true,
-				is_featured: false,
-			},
-			{
-				...managedMetadata,
-				description: "Balanced cost for everyday work.",
-				id: "gpt-5.6-terra",
-				display_name: "GPT-5.6 Terra",
-				is_default: false,
-				is_featured: false,
-			},
-		];
-
-		expect(managedModelPickerItems(managedModels)).toEqual({
-			featured: [
-				{
-					value: "gpt-5.6-sol",
-					label: "GPT-5.6 Sol",
-					iconId: "openai-codex",
-					description: "Higher cost for complex work.",
-				},
-				{
-					value: "z-ai/glm-5.3",
-					label: "GLM-5.3",
-					iconId: "zai",
-					description: "Variable cost for long, detailed work.",
-				},
-				{
-					value: "deepseek-v4-flash-0731",
-					label: "DeepSeek V4 Flash 0731",
-					iconId: "deepseek",
-				},
-			],
-			overflow: [
-				{
-					value: "gpt-5.6-luna",
-					label: "GPT-5.6 Luna",
-					iconId: "openai-codex",
-					description: "Low cost for routine work.",
-				},
-				{
-					value: "gpt-5.6-terra",
-					label: "GPT-5.6 Terra",
-					iconId: "openai-codex",
-					description: "Balanced cost for everyday work.",
-				},
-			],
-		});
-	});
-
-	test("keeps authoritative managed display names unchanged", () => {
-		const items = managedModelPickerItems([
-			{
-				...managedMetadata,
-				id: "provider-model-a",
-				display_name: "Provider Model A (Canonical)",
-				is_default: true,
-				is_featured: true,
-			},
-			{
-				...managedMetadata,
-				id: "provider-model-b",
-				display_name: "Provider Model B — Full Name",
-				is_default: false,
-				is_featured: false,
-			},
-		]);
-
-		expect(items.featured).toEqual([
-			{
-				value: "provider-model-a",
-				label: "Provider Model A (Canonical)",
-				iconId: "openai-codex",
-			},
-		]);
-		expect(items.overflow).toEqual([
-			{
-				value: "provider-model-b",
-				label: "Provider Model B — Full Name",
-				iconId: "openai-codex",
-			},
-		]);
 	});
 
 	test("uses catalog metadata before the shared formatter and raw id fallback", () => {
@@ -319,13 +197,13 @@ describe("model binding", () => {
 		} satisfies AiProvider;
 		expect(providerPresentation(proxy)).toMatchObject({
 			label: "DeepSeek proxy",
-			brandLabel: "Custom (OpenAI-compatible)",
+			brandLabel: "Custom provider",
 			iconId: "custom_openai_compatible",
-			summary: "Custom (OpenAI-compatible) · DeepSeek V4 Flash",
+			summary: "Custom provider · DeepSeek V4 Flash",
 		});
 	});
 
-	test("native providers never populate the model picker", () => {
+	test("native providers never seed a model", () => {
 		const provider = {
 			...savedOpenAiProvider,
 			configuration_mode: "native",
@@ -333,10 +211,9 @@ describe("model binding", () => {
 			models: null,
 		} satisfies AiProvider;
 		expect(firstModelForProvider(provider.provider_id, [provider])).toBe("");
-		expect(modelPickerItems(provider.provider_id, [provider], [])).toEqual([]);
 	});
 
-	test("uses a custom provider catalog when present and no fallback when absent", () => {
+	test("preserves a legacy provider catalog when present and no fallback when absent", () => {
 		const withCatalog = {
 			...savedOpenAiProvider,
 			provider_id: "custom-with-catalog",
@@ -350,9 +227,7 @@ describe("model binding", () => {
 		} satisfies AiProvider;
 
 		expect(firstModelForProvider(withCatalog.provider_id, [withCatalog])).toBe("owner-default");
-		expect(modelPickerItems(withCatalog.provider_id, [withCatalog], [])).toHaveLength(2);
 		expect(firstModelForProvider(withoutCatalog.provider_id, [withoutCatalog])).toBe("");
-		expect(modelPickerItems(withoutCatalog.provider_id, [withoutCatalog], [])).toEqual([]);
 	});
 
 	test("does not offer an unfinished provider as a deploy selection", () => {

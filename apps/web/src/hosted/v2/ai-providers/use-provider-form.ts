@@ -5,7 +5,7 @@ import type { AuthMethod } from "@/hosted/v2/ai-providers/add-provider-dialog.lo
 import type { ApiMode, ProviderTypeId } from "@/hosted/v2/ai-providers/provider-types";
 
 export interface ProviderFormState {
-	configurationMode: "native" | "catalog" | "connection";
+	configurationMode: "native" | "custom" | "catalog" | "connection";
 	type: ProviderTypeId;
 	label: string;
 	baseUrl: string;

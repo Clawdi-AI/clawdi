@@ -20,6 +20,7 @@ function testPreset(id: string) {
 }
 
 test("new custom credentials avoid existing normalized environment names", () => {
+	expect(customProviderRuntimeEnv("ai", [])).toBe("CLAWDI_AI_API_KEY_2");
 	expect(
 		customProviderRuntimeEnv("team.gateway", [{ runtime_env_name: "CLAWDI_TEAM_GATEWAY_API_KEY" }]),
 	).toBe("CLAWDI_TEAM_GATEWAY_API_KEY_2");

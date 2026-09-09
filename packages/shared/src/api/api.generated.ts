@@ -4466,7 +4466,7 @@ export interface components {
             /** Credential */
             credential?: components["schemas"]["AiProviderApiKeyAcceptCredential"];
             /** Configuration Mode */
-            configuration_mode?: ("native" | "catalog" | "connection") | null;
+            configuration_mode?: ("native" | "custom" | "catalog" | "connection") | null;
             /** Native Provider */
             native_provider?: string | null;
             /** Native Variant */
@@ -4529,7 +4529,7 @@ export interface components {
              * Configuration Mode
              * @enum {string}
              */
-            configuration_mode?: "native" | "catalog" | "connection";
+            configuration_mode?: "native" | "custom" | "catalog" | "connection";
             /** Native Provider */
             native_provider?: string | null;
             /** Native Variant */
@@ -4616,7 +4616,7 @@ export interface components {
              * Configuration Mode
              * @enum {string}
              */
-            configuration_mode?: "native" | "catalog" | "connection";
+            configuration_mode?: "native" | "custom" | "catalog" | "connection";
             /** Native Provider */
             native_provider?: string | null;
             /** Native Variant */

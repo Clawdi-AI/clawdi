@@ -342,6 +342,7 @@ export function providerHealthReasons(
 	if (
 		provider.configurationMode !== "native" &&
 		provider.configurationMode !== "connection" &&
+		provider.configurationMode !== "custom" &&
 		!stringValue(provider.model) &&
 		!providerHasModels(provider)
 	) {

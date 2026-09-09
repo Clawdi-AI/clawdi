@@ -9,6 +9,7 @@ const PROVIDER_RUNTIMES = ["openclaw", "hermes"] as const;
 
 const transferSchema = z
 	.object({
+		pendingCreation: z.boolean().optional(),
 		envName: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/),
 		baseUrl: z.string().url(),
 		apiMode: z.enum([
@@ -95,5 +96,22 @@ export function writeProviderOwnership(
 		join(paths.serviceStateRoot, "provider-ownership.json"),
 		`${JSON.stringify(journal)}\n`,
 		{ trustedRoot: paths.serviceStateRoot, durable: true },
+	);
+}
+
+/** Commit closes only first-write recovery; transfer tombstones remain permanent. */
+export function commitProviderTransfers(
+	transfers: ProviderOwnership["transfers"],
+): ProviderOwnership["transfers"] {
+	return Object.fromEntries(
+		Object.entries(transfers).map(([runtime, providers]) => [
+			runtime,
+			Object.fromEntries(
+				Object.entries(providers).map(([id, { pendingCreation: _pending, ...transfer }]) => [
+					id,
+					transfer,
+				]),
+			),
+		]),
 	);
 }

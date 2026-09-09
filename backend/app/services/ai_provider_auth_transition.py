@@ -345,7 +345,7 @@ async def transition_ai_provider_auth(
 
     await lock_ai_provider_owner(db, owner_user_id)
     if (
-        provider.configuration_mode == "connection"
+        provider.configuration_mode in {"connection", "custom"}
         and not archive_provider
         and (
             auth_type != "api_key"

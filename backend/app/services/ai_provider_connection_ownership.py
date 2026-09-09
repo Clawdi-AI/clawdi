@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.ai_provider import AiProvider
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.schemas.runtime import validate_hosted_runtime_desired_state
@@ -14,17 +15,26 @@ from app.schemas.runtime_observation import (
     RuntimeDriftBindingRequest,
     RuntimeDriftSummaryReadRequest,
 )
-from app.services.app_setting_registry import SUPPORTED_CONNECTION_CLI_VERSIONS_SPEC
+from app.services.app_setting_registry import (
+    SUPPORTED_CONNECTION_CLI_VERSIONS_SPEC,
+    SUPPORTED_CUSTOM_PROVIDER_CLI_VERSIONS_SPEC,
+    AppSettingSpec,
+)
 from app.services.app_settings import AppSettingUnavailable, resolve_app_setting
 from app.services.runtime_drift_summary import read_runtime_drift_summaries
 
 
 async def require_connection_ownership_migration(
-    db: AsyncSession, *, owner_user_id: UUID, provider_id: str
+    db: AsyncSession,
+    *,
+    owner_user_id: UUID,
+    provider_id: str,
+    versions_spec: AppSettingSpec[list[str]] = SUPPORTED_CONNECTION_CLI_VERSIONS_SPEC,
+    allow_unbound: bool = False,
 ) -> None:
     """The caller holds the provider-owner lock shared by runtime-state mutations."""
     try:
-        versions = await resolve_app_setting(db, SUPPORTED_CONNECTION_CLI_VERSIONS_SPEC)
+        versions = await resolve_app_setting(db, versions_spec)
     except AppSettingUnavailable as exc:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Connection ownership migration is not enabled"
@@ -55,6 +65,8 @@ async def require_connection_ownership_migration(
             )
         ).all()
     )
+    if not states and allow_unbound:
+        return
     if not states:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -122,3 +134,82 @@ async def require_connection_ownership_migration(
                     "Every bound runtime must have fresh, current evidence "
                     "from a qualified running CLI",
                 )
+
+
+async def require_custom_provider_cli(
+    db: AsyncSession,
+    *,
+    owner_user_id: UUID,
+    provider_ids: list[str],
+    cli_package_spec: str,
+    previous_state: HostedRuntimeState | None = None,
+) -> None:
+    if not provider_ids:
+        return
+    custom = set(
+        await db.scalars(
+            select(AiProvider.provider_id).where(
+                AiProvider.owner_user_id == owner_user_id,
+                AiProvider.provider_id.in_(provider_ids),
+                AiProvider.archived_at.is_(None),
+                AiProvider.configuration_mode == "custom",
+            )
+        )
+    )
+    if not custom:
+        return
+    try:
+        versions = await resolve_app_setting(db, SUPPORTED_CUSTOM_PROVIDER_CLI_VERSIONS_SPEC)
+    except AppSettingUnavailable as exc:
+        raise HTTPException(409, "Custom provider initialization is not enabled") from exc
+    if cli_package_spec not in {f"clawdi@{version}" for version in versions}:
+        raise HTTPException(409, "Custom providers require a qualified CLI release")
+    if previous_state is not None:
+        previous_ids = {
+            provider_id
+            for runtime in previous_state.runtimes.values()
+            for provider_id in validate_hosted_runtime_desired_state(runtime).provider_ids
+        }
+        if custom - previous_ids:
+            evidence = await read_runtime_drift_summaries(
+                db,
+                RuntimeDriftSummaryReadRequest(
+                    bindings=[
+                        RuntimeDriftBindingRequest(
+                            environmentId=previous_state.environment_id,
+                            deploymentId=previous_state.deployment_id,
+                        )
+                    ]
+                ),
+                expected_generations={
+                    previous_state.environment_id: previous_state.apply_generation
+                    or previous_state.generation
+                },
+            )
+            if len(evidence.items) != 1:
+                raise HTTPException(
+                    409, "Custom provider binding requires current runtime evidence"
+                )
+            summary = evidence.items[0]
+            head = summary.observation.head
+            authority = summary.source_authority
+            applied = head.diagnostics.applied if head else None
+            if (
+                summary.binding != "active"
+                or summary.observation.status != "fresh"
+                or head is None
+                or head.health != "ok"
+                or head.captured_at > evidence.observed_at
+                or head.diagnostics.active_cli_version not in versions
+                or previous_state.cli_package_spec
+                != f"clawdi@{head.diagnostics.active_cli_version}"
+                or authority.status != "present"
+                or applied is None
+                or applied.instance_id != authority.instance_id
+                or authority.instance_id != previous_state.instance_id
+                or applied.source_revision != authority.source_revision
+                or applied.etag != authority.etag
+                or applied.generation
+                != (previous_state.apply_generation or previous_state.generation)
+            ):
+                raise HTTPException(409, "Custom provider binding requires a qualified running CLI")

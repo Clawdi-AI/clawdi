@@ -86,7 +86,7 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 	},
 	custom_openai_compatible: {
 		id: "custom_openai_compatible",
-		label: "Custom (OpenAI-compatible)",
+		label: "Custom provider",
 		defaultBaseUrl: "",
 		apiModes: ["openai_chat", "openai_responses"],
 		defaultApiMode: "openai_chat",

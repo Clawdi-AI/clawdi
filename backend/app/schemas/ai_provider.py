@@ -338,7 +338,9 @@ class AiProviderModel(BaseModel):
 
 
 class AiProviderBase(BaseModel):
-    configuration_mode: Literal["native", "catalog", "connection"] | SkipJsonSchema[None] = None
+    configuration_mode: (
+        Literal["native", "custom", "catalog", "connection"] | SkipJsonSchema[None]
+    ) = None
     native_provider: AuthProfile | None = None
     native_variant: AuthProfile | None = None
     type: ProviderType
@@ -354,6 +356,17 @@ class AiProviderBase(BaseModel):
     @classmethod
     def _hydrate_native_provider(cls, value: object) -> object:
         _reject_explicit_nulls(value, frozenset({"configuration_mode"}))
+        if _is_string_object_dict(value) and value.get("configuration_mode") == "custom":
+            if (
+                value.get("managed_by", "user") != "user"
+                or value.get("models")
+                or value.get("native_provider")
+                or value.get("native_variant")
+                or not value.get("api_mode")
+                or not value.get("runtime_env_name")
+                or value.get("default_model") is not None
+            ):
+                raise ValueError("custom providers contain connection fields only")
         if not _is_string_object_dict(value) or value.get("configuration_mode") != "native":
             return value
         identity = value.get("native_provider")
@@ -409,7 +422,7 @@ class AiProviderPatch(BaseModel):
     model_config = ConfigDict(hide_input_in_errors=True)
 
     credential: AiProviderApiKeyAcceptCredential | SkipJsonSchema[None] = None
-    configuration_mode: Literal["native", "catalog", "connection"] | None = None
+    configuration_mode: Literal["native", "custom", "catalog", "connection"] | None = None
     native_provider: AuthProfile | None = None
     native_variant: AuthProfile | None = None
     type: ProviderType | None = None

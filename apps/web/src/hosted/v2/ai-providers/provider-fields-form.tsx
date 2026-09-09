@@ -1,9 +1,7 @@
 "use client";
 
-import { ExternalLink, Eye, EyeOff, KeyRound, RefreshCw, UserRound } from "lucide-react";
+import { ExternalLink, Eye, EyeOff, RefreshCw, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
-import { EntityChoiceCard } from "@/components/entity-card";
-import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -21,11 +19,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import type { AuthMethod } from "@/hosted/v2/ai-providers/add-provider-dialog.logic";
-import type {
-	ProviderPreset,
-	ProviderPresetRegionVariant,
-} from "@/hosted/v2/ai-providers/provider-presets";
+import type { ProviderPreset } from "@/hosted/v2/ai-providers/provider-presets";
 import {
 	API_MODE_LABEL,
 	type ApiMode,
@@ -48,12 +42,9 @@ export function ProviderFieldsForm({
 	showCustomRouting,
 	editing,
 	preset,
-	region,
 	providerLabel,
 	apiKeyUrl,
 	onUpdate,
-	onAuthMethodChange,
-	onRegionChange,
 	onReconnectOAuth,
 	startingOAuth,
 }: {
@@ -61,12 +52,9 @@ export function ProviderFieldsForm({
 	showCustomRouting: boolean;
 	editing: AiProvider | null;
 	preset: ProviderPreset | null;
-	region: ProviderPresetRegionVariant | null;
 	providerLabel: string;
 	apiKeyUrl: string | null;
 	onUpdate: (value: Partial<ProviderFormState>) => void;
-	onAuthMethodChange: (method: AuthMethod) => void;
-	onRegionChange: (regionId: string) => void;
 	onReconnectOAuth: () => void;
 	startingOAuth: boolean;
 }) {
@@ -75,8 +63,10 @@ export function ProviderFieldsForm({
 	const isOAuthEdit =
 		editing?.auth.type === "agent_profile" || editing?.auth.type === "oauth_profile";
 	const savedCredentialAvailable = editing !== null && editing.auth.type !== "none";
-	const apiModes = meta.apiModes;
-	const regions = preset?.region_variants ?? [];
+	const apiModes =
+		form.configurationMode === "custom"
+			? Object.keys(API_MODE_LABEL).filter(isApiMode)
+			: meta.apiModes;
 	const credentialLabel = preset?.credential_label ?? "API key";
 	const credentialName = credentialLabel === "API key" ? "API key" : credentialLabel.toLowerCase();
 	const [apiKeyVisible, setApiKeyVisible] = useState(false);
@@ -97,62 +87,6 @@ export function ProviderFieldsForm({
 					required={meta.custom === true && preset === null}
 				/>
 			</div>
-
-			{regions.length > 0 ? (
-				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="provider-region">{preset?.variant_label ?? "Region / plan"}</Label>
-					<Select
-						items={regions.map((item) => ({ value: item.id, label: item.label }))}
-						value={region?.id ?? regions[0]?.id ?? ""}
-						onValueChange={(value) => {
-							if (value) onRegionChange(value);
-						}}
-					>
-						<SelectTrigger id="provider-region" className="w-full">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							{regions.map((item) => (
-								<SelectItem key={item.id} value={item.id}>
-									{item.label}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-				</div>
-			) : null}
-
-			{!isEdit && meta.oauth ? (
-				<fieldset className="flex flex-col gap-2">
-					<legend className="text-sm font-medium">Authentication</legend>
-					<div className="grid gap-2 sm:grid-cols-2">
-						<EntityChoiceCard
-							selected={form.authMethod === "api_key"}
-							onClick={() => onAuthMethodChange("api_key")}
-							icon={
-								<IconChip size="sm" className="size-6">
-									<KeyRound />
-								</IconChip>
-							}
-							title="Sign in with an API key"
-							description="For usage-based access"
-							variant="compact"
-						/>
-						<EntityChoiceCard
-							selected={form.authMethod === "oauth"}
-							onClick={() => onAuthMethodChange("oauth")}
-							icon={
-								<IconChip size="sm" className="size-6">
-									<UserRound />
-								</IconChip>
-							}
-							title="Sign in with ChatGPT"
-							description="For subscription access"
-							variant="compact"
-						/>
-					</div>
-				</fieldset>
-			) : null}
 
 			{form.authMethod === "api_key" && showCustomRouting ? (
 				<>

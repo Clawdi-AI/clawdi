@@ -32,6 +32,7 @@ import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import {
 	useDeleteProvider,
+	usePatchProvider,
 	useProviderRemovalImpact,
 	useUserAiProviders,
 } from "@/hosted/v2/ai-providers/ai-providers-hooks";
@@ -143,6 +144,11 @@ export function AiProvidersPage() {
 
 function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () => void }) {
 	const presentation = providerPresentation(provider);
+	const upgrade = usePatchProvider();
+	const legacy =
+		!["native", "custom"].includes(provider.configuration_mode ?? "catalog") &&
+		provider.auth.type === "api_key" &&
+		provider.auth.source === "managed";
 	const deployable =
 		(provider.readiness?.deployable ?? provider.usable) && provider.auth.type !== "none";
 
@@ -179,6 +185,21 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 					{deployable ? <Pencil /> : <CircleAlert />}
 					{deployable ? "Edit" : "Finish setup"}
 				</Button>
+				{legacy && deployable ? (
+					<Button
+						variant="ghost"
+						size="sm"
+						disabled={upgrade.isPending}
+						onClick={() =>
+							upgrade.mutate({
+								params: { path: { provider_id: provider.provider_id } },
+								body: { configuration_mode: "custom" },
+							})
+						}
+					>
+						{upgrade.isPending ? <Spinner /> : null}Manage models in agent
+					</Button>
+				) : null}
 				<RemoveProviderAction provider={provider} />
 			</div>
 		</div>

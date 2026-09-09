@@ -139,9 +139,12 @@ export function AddProviderDialog({
 	);
 	const nativeConnection = form.configurationMode === "native" && nativeRoute !== undefined;
 	const showCustomRouting =
-		!nativeRoute ||
+		form.configurationMode === "custom" ||
+		(form.configurationMode === "connection" && !nativeRoute) ||
 		(!nativeConnection &&
-			(form.baseUrl !== nativeRoute.base_url || form.apiMode !== nativeRoute.api_mode));
+			(!nativeRoute ||
+				form.baseUrl !== nativeRoute.base_url ||
+				form.apiMode !== nativeRoute.api_mode));
 	const providerListReady = providerListAllowsSubmit(isEdit, providers.data !== undefined);
 	const savedCredentialAvailable = editing != null && editing.auth.type !== "none";
 	const customNameProvided =
@@ -213,14 +216,27 @@ export function AddProviderDialog({
 
 	function selectProvider(choice: ProviderChoice) {
 		acceptAttemptRef.current = null;
-		if (choice.kind === "preset") {
+		if (choice.kind === "oauth") {
+			const defaults = derivedProviderFields("openai", "oauth");
+			resetForm({
+				configurationMode: "native",
+				type: "openai",
+				label: "",
+				baseUrl: defaults.baseUrl,
+				apiMode: defaults.apiMode,
+				authMethod: "oauth",
+				apiKey: "",
+				presetId: null,
+				regionId: null,
+			});
+		} else if (choice.kind === "preset") {
 			const type = choice.preset.provider_type;
 			const defaults = derivedProviderFields(type, "api_key", choice.preset);
-			const region = providerPresetRegion(choice.preset, null);
+			const region = providerPresetRegion(choice.preset, choice.regionId ?? null);
 			resetForm({
 				configurationMode: "native",
 				type,
-				label: "",
+				label: region ? `${choice.preset.label} · ${region.label}` : "",
 				baseUrl: region?.base_url ?? defaults.baseUrl,
 
 				apiMode: defaults.apiMode,
@@ -233,7 +249,7 @@ export function AddProviderDialog({
 		} else {
 			const defaults = derivedProviderFields(choice.type, "api_key");
 			resetForm({
-				configurationMode: choice.type === "custom_openai_compatible" ? "catalog" : "native",
+				configurationMode: choice.type === "custom_openai_compatible" ? "custom" : "native",
 				type: choice.type,
 				label: "",
 				baseUrl: defaults.baseUrl,
@@ -249,34 +265,12 @@ export function AddProviderDialog({
 		setStep("configure");
 	}
 
-	function changeAuthMethod(authMethod: AuthMethod) {
-		const defaults = derivedProviderFields(form.type, authMethod, selectedPreset);
-		acceptAttemptRef.current = null;
-
-		updateForm({
-			authMethod,
-			apiKey: "",
-			baseUrl: defaults.baseUrl,
-
-			apiMode: defaults.apiMode,
-		});
-	}
-
-	function changeRegion(regionId: string) {
-		if (!selectedPreset) return;
-		const region = providerPresetRegion(selectedPreset, regionId);
-		if (!region) return;
-		acceptAttemptRef.current = null;
-
-		updateForm({ regionId: region.id, baseUrl: region.base_url });
-	}
-
 	function providerBody(): AiProviderUpsert {
 		return {
 			provider_id: providerId,
 			type: nativeConnection ? nativeRoute.type : form.type,
 			label: identity.label,
-			configuration_mode: nativeConnection ? "native" : "catalog",
+			configuration_mode: form.configurationMode,
 			native_provider: nativeConnection ? nativeRoute.id : null,
 			native_variant: nativeConnection ? nativeRoute.variant : null,
 			base_url: nativeConnection ? nativeRoute.base_url : form.baseUrl.trim(),
@@ -375,7 +369,7 @@ export function AddProviderDialog({
 		if (!canSubmit) return;
 		if (editing) {
 			const replacementKey = form.apiKey.trim();
-			if (editing.configuration_mode === "connection") {
+			if (editing.configuration_mode === "connection" || editing.configuration_mode === "custom") {
 				const saved = await updateConnection
 					.execute({
 						providerId: editing.provider_id,
@@ -555,7 +549,6 @@ export function AddProviderDialog({
 								form={form}
 								editing={editing ?? null}
 								preset={selectedPreset}
-								region={selectedRegion}
 								providerLabel={providerLabel}
 								apiKeyUrl={
 									selectedRegion?.api_key_url ??
@@ -568,8 +561,6 @@ export function AddProviderDialog({
 
 									updateForm(value);
 								}}
-								onAuthMethodChange={changeAuthMethod}
-								onRegionChange={changeRegion}
 								onReconnectOAuth={() => void runAction(beginReconnectOAuth)}
 								startingOAuth={oauthDeviceStart.isPending}
 							/>

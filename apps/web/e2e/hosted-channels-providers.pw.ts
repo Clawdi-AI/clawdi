@@ -24,6 +24,7 @@ test("custom provider creation collects connection fields without model or envir
 	await dialog.getByRole("button", { name: "Add provider", exact: true }).click();
 	const body = (await request).postDataJSON();
 	expect(body.provider).toMatchObject({
+		configuration_mode: "custom",
 		label: "Team gateway",
 		base_url: "https://team.example/v1",
 		api_mode: "openai_chat",
@@ -211,7 +212,7 @@ test("editing a catalog connection preserves its models and configuration mode",
 	await page.goto("/ai-providers");
 	await page.getByRole("button", { name: "Edit Existing OpenAI", exact: true }).click();
 	const dialog = page.getByRole("dialog", { name: "Edit Existing OpenAI" });
-	await expect(dialog.getByRole("button", { name: "Manage models in the agent" })).toHaveCount(0);
+	await expect(dialog.getByLabel("Model catalog")).toHaveCount(0);
 	await dialog.getByLabel("API key", { exact: true }).fill("replacement-fixture-key");
 	const request = page.waitForRequest(
 		(item) => item.url().endsWith("/ai-providers/accept") && item.method() === "POST",
@@ -276,7 +277,11 @@ test("popular BYOK providers support credential-only product setup", async ({ pa
 		},
 	]) {
 		await dialog.getByRole("textbox", { name: "Search providers" }).fill(choice.query);
-		await dialog.getByRole("button", { name: new RegExp(`^${choice.name}`) }).click();
+		await dialog
+			.getByRole("button", {
+				name: new RegExp(`^${choice.name}${choice.product ? ` · ${choice.product}` : ""}`),
+			})
+			.click();
 		const credentialInput = dialog.getByLabel(choice.credential, { exact: true });
 		await expect(credentialInput).toHaveAttribute(
 			"placeholder",
@@ -289,10 +294,6 @@ test("popular BYOK providers support credential-only product setup", async ({ pa
 			}),
 		).toBeVisible();
 
-		if (choice.product) {
-			await dialog.getByRole("combobox", { name: "Product", exact: true }).click();
-			await page.getByRole("option", { name: choice.product, exact: true }).click();
-		}
 		await expect(dialog.getByLabel("Model catalog")).toHaveCount(0);
 		await expect(dialog.getByLabel("Endpoint")).toHaveCount(0);
 		await expect(dialog.getByRole("button", { name: "Test connection", exact: true })).toHaveCount(
@@ -309,7 +310,6 @@ test("popular BYOK providers support credential-only product setup", async ({ pa
 			configuration_mode: "native",
 			native_provider: choice.id,
 			native_variant: choice.variant,
-			models: null,
 		});
 		await expect(dialog).toBeHidden();
 		if (choice.variant !== "tokenplan")

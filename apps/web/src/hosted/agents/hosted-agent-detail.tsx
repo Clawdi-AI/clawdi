@@ -261,6 +261,7 @@ import {
 import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderIcon } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
+import { ManagedProviderStatus } from "@/hosted/v2/ai-providers/managed-provider-status";
 import {
 	firstModelForProvider,
 	isManagedProviderId,
@@ -276,7 +277,6 @@ import {
 	providerChoiceFromRef,
 	providerDisplayLabel,
 } from "@/hosted/v2/ai-providers/model-binding";
-import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import type { ChannelAccountSummary } from "@/hosted/v2/channels/agent-channel-bindings.logic";
 import {
@@ -2494,7 +2494,6 @@ function AiProviderTab({
 		selectCreatedProvider,
 		selectProvider,
 		setBindingMode,
-		setPrimaryModel,
 	} = useAiProviderBindingDraft({
 		initialDraft: {
 			bindingMode: initialMode,
@@ -2602,17 +2601,13 @@ function AiProviderTab({
 					starts.
 				</p>
 			) : (
-				<ModelBindingPicker
-					idPrefix="agent"
-					providers={list}
+				<ManagedProviderStatus
 					managedModels={managedModels}
-					managedModelsLoading={managedModels.length === 0 && managedModelCatalog.isFetching}
-					managedModelsError={managedModelCatalog.error}
-					managedModelsErrorNormalizer={billingErrorNormalizer}
-					onManagedModelsRetry={() => void managedModelCatalog.refetch()}
-					primaryProviderChoice={primaryProviderChoice}
-					primaryModel={primaryModel}
-					onPrimaryModelChange={setPrimaryModel}
+					loading={managedModels.length === 0 && managedModelCatalog.isFetching}
+					error={managedModelCatalog.error}
+					errorNormalizer={billingErrorNormalizer}
+					onRetry={() => void managedModelCatalog.refetch()}
+					providerChoice={primaryProviderChoice}
 				/>
 			)}
 

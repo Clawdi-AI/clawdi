@@ -14,6 +14,12 @@ database migration, CI, and implementation details.
 
 ### Added
 
+- Custom providers need only a name, endpoint, API format, and key; supported agents
+  initialize the connection without a Clawdi model catalog and preserve native model
+  choices across key changes and rebinding. Requires a supporting CLI release.
+- Provider names are editable for native API-key, OAuth, and Custom connections.
+  Clawdi Managed configures its model automatically.
+
 - Agent Skills can be installed from Library or public GitHub repositories,
   with source details, updates, and removal from the Agent page.
 - Session search now matches visible user and assistant message text in addition to summaries, folders, and IDs. CLI and Web results show the best matching message excerpt; private reasoning, tool payloads, system messages, and hidden events remain excluded.

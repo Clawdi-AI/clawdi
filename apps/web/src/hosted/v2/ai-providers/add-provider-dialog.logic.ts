@@ -1,4 +1,8 @@
-import { nativeAiProvider } from "@clawdi/shared";
+import {
+	isFirstPartyManagedAiProvider,
+	MANAGED_AI_PROVIDER_RUNTIME_ENV,
+	nativeAiProvider,
+} from "@clawdi/shared";
 import { CLAWDI_CODEX_OAUTH_PROVIDER_ID } from "@/hosted/v2/ai-providers/codex-oauth";
 import {
 	type ProviderPreset,
@@ -43,7 +47,10 @@ export function customProviderRuntimeEnv(
 	existing: readonly Pick<AiProvider, "runtime_env_name">[],
 ): string {
 	const base = `CLAWDI_${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`;
-	const names = new Set(existing.map((provider) => provider.runtime_env_name));
+	const names = new Set([
+		MANAGED_AI_PROVIDER_RUNTIME_ENV,
+		...existing.map((provider) => provider.runtime_env_name),
+	]);
 	let name = base;
 	for (let suffix = 2; names.has(name); suffix += 1) name = `${base}_${suffix}`;
 	return name;
@@ -83,7 +90,7 @@ export function connectionProviderPatch(
 	provider: AiProvider,
 	fields: { label: string | null; baseUrl: string; apiMode: ApiMode; apiKey: string },
 ): AiProviderPatch {
-	if (provider.configuration_mode !== "connection")
+	if (provider.configuration_mode !== "connection" && provider.configuration_mode !== "custom")
 		throw new Error("Expected an existing connection");
 	return {
 		...providerSettingsPatch(provider, {
@@ -131,44 +138,35 @@ export function providerFormIdentity({
 			label: normalizeLabel(labelInput) ?? editing.label ?? null,
 		};
 	}
-	if (authMethod === "oauth") {
-		const baseId = CLAWDI_CODEX_OAUTH_PROVIDER_ID;
-		const baseLabel = "ChatGPT (Codex)";
-		let suffix = 1;
-		while (existingProviderIds.includes(suffix === 1 ? baseId : `${baseId}-${suffix}`)) {
-			suffix += 1;
-		}
-		return {
-			providerId: suffix === 1 ? baseId : `${baseId}-${suffix}`,
-			label: normalizeLabel(labelInput) ?? (suffix === 1 ? baseLabel : `${baseLabel} ${suffix}`),
-		};
-	}
-	const baseLabel =
-		preset?.label ??
-		(providerTypeMeta(type).custom === true
-			? (normalizeLabel(labelInput) ?? defaultProviderLabel(type))
-			: defaultProviderLabel(type));
 	const requestedLabel = normalizeLabel(labelInput);
-	const baseId = toProviderId(preset?.id ?? baseLabel) || "custom";
-	if (!existingProviderIds.includes(baseId)) {
-		return { providerId: baseId, label: requestedLabel ?? baseLabel };
-	}
-	let suffix = 2;
-	while (existingProviderIds.includes(`${baseId}-${suffix}`)) {
+	const baseLabel =
+		authMethod === "oauth"
+			? "ChatGPT (Codex)"
+			: (preset?.label ??
+				(providerTypeMeta(type).custom
+					? (requestedLabel ?? "Custom provider")
+					: providerTypeMeta(type).label));
+	let baseId =
+		authMethod === "oauth"
+			? CLAWDI_CODEX_OAUTH_PROVIDER_ID
+			: toProviderId(preset?.id ?? baseLabel) || "custom";
+	if (isFirstPartyManagedAiProvider({ provider_id: baseId }))
+		baseId = toProviderId(`custom-${baseId}`);
+	const taken = new Set(existingProviderIds);
+	let providerId = baseId;
+	let suffix = 1;
+	while (taken.has(providerId)) {
 		suffix += 1;
+		const ending = `-${suffix}`;
+		providerId = `${baseId.slice(0, 63 - ending.length)}${ending}`;
 	}
 	return {
-		providerId: `${baseId}-${suffix}`,
-		label: requestedLabel ?? `${baseLabel} ${suffix}`,
+		providerId,
+		label: requestedLabel ?? (suffix === 1 ? baseLabel : `${baseLabel} ${suffix}`),
 	};
 }
 
 function normalizeLabel(value: string | null | undefined): string | null {
 	const trimmed = value?.trim();
 	return trimmed ? trimmed : null;
-}
-
-function defaultProviderLabel(type: ProviderTypeId): string {
-	if (type === "custom_openai_compatible") return "Custom endpoint";
-	return providerTypeMeta(type).label;
 }

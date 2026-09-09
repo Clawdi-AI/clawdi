@@ -22,21 +22,6 @@ export const MANAGED_PROVIDER_LABEL = "Clawdi AI";
 type AiProviderModel = NonNullable<AiProvider["models"]>[number];
 export type ModelCatalogItem = ManagedModelCatalogItem | AiProviderModel;
 
-export type ModelBindingPickerItem = {
-	value: string;
-	label: string;
-	description?: string;
-};
-
-export type ManagedModelBindingPickerItem = ModelBindingPickerItem & {
-	iconId: string;
-};
-
-export type ManagedModelPickerItems = {
-	featured: ManagedModelBindingPickerItem[];
-	overflow: ManagedModelBindingPickerItem[];
-};
-
 export type PrimaryModelRef = {
 	provider_id: string;
 	model: string;
@@ -211,7 +196,9 @@ export function modelOptionsForProvider(
 	} else {
 		const provider = providers.find((item) => item.id === choice || item.provider_id === choice);
 		models =
-			provider?.configuration_mode === "native" || provider?.configuration_mode === "connection"
+			provider?.configuration_mode === "native" ||
+			provider?.configuration_mode === "connection" ||
+			provider?.configuration_mode === "custom"
 				? []
 				: (provider?.models ?? []);
 	}
@@ -256,7 +243,11 @@ export function providerPresetSummary(preset: ProviderPreset): string {
 }
 
 function providerModelSummary(provider: AiProvider, preset: ProviderPreset | null): string {
-	if (provider.configuration_mode === "native" || provider.configuration_mode === "connection") {
+	if (
+		provider.configuration_mode === "native" ||
+		provider.configuration_mode === "connection" ||
+		provider.configuration_mode === "custom"
+	) {
 		const variant = preset?.region_variants?.find((item) => item.id === provider.native_variant);
 		return variant ? `${variant.label} · Models managed in agent` : "Models managed in agent";
 	}
@@ -296,54 +287,6 @@ export function modelBindingDisplayName(
 	if (authKind === "managed") return "Clawdi AI default";
 	if (authKind === "unmanaged") return "Configured in agent";
 	return "Not set";
-}
-
-export function modelPickerItems(
-	choice: string,
-	providers: readonly AiProvider[],
-	managedModels: readonly ManagedModelCatalogItem[],
-): ModelBindingPickerItem[] {
-	const models = modelOptionsForProvider(choice, providers, managedModels);
-	const isManagedChoice = choice === MANAGED_AI_CHOICE || isManagedProviderId(choice);
-	return models.map((model) => ({
-		value: model.id,
-		label:
-			isManagedChoice && "display_name" in model
-				? model.display_name
-				: modelDisplayName(model.id, [model]),
-	}));
-}
-
-export function managedModelPickerItems(
-	managedModels: readonly ManagedModelCatalogItem[],
-): ManagedModelPickerItems {
-	const sections: ManagedModelPickerItems = { featured: [], overflow: [] };
-	const seen = new Set<string>();
-	for (const model of managedModels) {
-		const modelId = model.id.trim();
-		if (!modelId || seen.has(modelId)) continue;
-		seen.add(modelId);
-		const item = {
-			value: modelId,
-			iconId: managedModelBrandIconId(modelId, model.provider_id),
-			// Managed display names are authoritative catalog data. Keep them
-			// verbatim instead of deriving a friendlier label from the model id.
-			label: model.display_name,
-			...(model.description?.trim() ? { description: model.description.trim() } : {}),
-		};
-		sections[model.is_featured ? "featured" : "overflow"].push(item);
-	}
-	return sections;
-}
-
-function managedModelBrandIconId(modelId: string, providerId: string): string {
-	const normalizedModelId = modelId.toLowerCase();
-	const providerSeparator = normalizedModelId.indexOf("/");
-	const modelName =
-		providerSeparator === -1 ? normalizedModelId : normalizedModelId.slice(providerSeparator + 1);
-	if (modelName.startsWith("deepseek-")) return "deepseek";
-	if (modelName.startsWith("glm-")) return "zai";
-	return providerId;
 }
 
 export function firstModelForProvider(

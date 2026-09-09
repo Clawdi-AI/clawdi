@@ -10,7 +10,8 @@ import { type ProviderTypeId, providerTypeMeta } from "@/hosted/v2/ai-providers/
 
 export type ProviderChoice =
 	| { kind: "type"; type: ProviderTypeId }
-	| { kind: "preset"; preset: ProviderPreset };
+	| { kind: "preset"; preset: ProviderPreset; regionId?: string }
+	| { kind: "oauth" };
 
 interface ChoiceEntry {
 	id: string;
@@ -23,10 +24,10 @@ interface ChoiceEntry {
 
 const FIRST_CLASS_TYPES: readonly ProviderTypeId[] = ["openai", "anthropic", "gemini"];
 function typeDescription(type: ProviderTypeId): string {
-	if (type === "openai") return "API key or ChatGPT sign-in";
+	if (type === "openai") return "API key";
 	if (type === "anthropic") return "Claude model access";
 	if (type === "gemini") return "Gemini model access";
-	return "Bring any OpenAI-compatible endpoint";
+	return "Connect your own API endpoint";
 }
 
 function typeEntry(type: ProviderTypeId): ChoiceEntry {
@@ -41,11 +42,16 @@ function typeEntry(type: ProviderTypeId): ChoiceEntry {
 	};
 }
 
-function presetEntry(preset: ProviderPreset): ChoiceEntry {
-	const description = providerPresetSummary(preset);
+function presetEntry(
+	preset: ProviderPreset,
+	region?: NonNullable<ProviderPreset["region_variants"]>[number],
+): ChoiceEntry {
+	const description = region
+		? (preset.credential_label ?? "API key")
+		: providerPresetSummary(preset);
 	return {
-		id: `preset:${preset.id}`,
-		label: preset.label,
+		id: `preset:${preset.id}:${region?.id ?? "default"}`,
+		label: region ? `${preset.label} · ${region.label}` : preset.label,
 		description,
 		iconId: preset.id,
 		searchText: [
@@ -56,13 +62,25 @@ function presetEntry(preset: ProviderPreset): ChoiceEntry {
 		]
 			.join(" ")
 			.toLowerCase(),
-		choice: { kind: "preset", preset },
+		choice: { kind: "preset", preset, ...(region ? { regionId: region.id } : {}) },
 	};
 }
 
 const ALL_ENTRIES: readonly ChoiceEntry[] = [
 	...FIRST_CLASS_TYPES.map(typeEntry),
-	...PROVIDER_PRESETS.map(presetEntry),
+	...PROVIDER_PRESETS.flatMap((preset) =>
+		preset.region_variants?.length
+			? preset.region_variants.map((region) => presetEntry(preset, region))
+			: [presetEntry(preset)],
+	),
+	{
+		id: "oauth:codex",
+		label: "ChatGPT (Codex)",
+		description: "Sign in with ChatGPT",
+		iconId: "openai",
+		searchText: "chatgpt codex openai subscription oauth",
+		choice: { kind: "oauth" },
+	},
 	typeEntry("custom_openai_compatible"),
 ];
 

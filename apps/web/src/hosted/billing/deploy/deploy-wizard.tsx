@@ -167,6 +167,7 @@ import {
 import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderIcon } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
+import { ManagedProviderStatus } from "@/hosted/v2/ai-providers/managed-provider-status";
 import {
 	firstModelForProvider,
 	MANAGED_AI_CHOICE,
@@ -179,7 +180,6 @@ import {
 	providerDisplayLabel,
 	usableProviders,
 } from "@/hosted/v2/ai-providers/model-binding";
-import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 import { env } from "@/lib/env";
@@ -580,7 +580,6 @@ export function DeployWizard() {
 		selectCreatedProvider: selectCreatedAiProvider,
 		selectProvider: selectAiProviderChoice,
 		setBindingMode: setAiAccessMode,
-		setPrimaryModel,
 	} = useAiProviderBindingDraft({
 		initialDraft: {
 			bindingMode: DEFAULT_DEPLOY_AI_ACCESS_MODE,
@@ -1239,17 +1238,13 @@ export function DeployWizard() {
 							/>
 						</div>
 						{aiAccessMode !== "unmanaged" ? (
-							<ModelBindingPicker
-								idPrefix="deploy"
-								providers={providerList}
+							<ManagedProviderStatus
 								managedModels={managedModels}
-								managedModelsLoading={managedModels.length === 0 && managedModelCatalog.isFetching}
-								managedModelsError={managedModelCatalog.error}
-								managedModelsErrorNormalizer={billingErrorNormalizer}
-								onManagedModelsRetry={() => void managedModelCatalog.refetch()}
-								primaryProviderChoice={primaryProviderChoice}
-								primaryModel={primaryModel}
-								onPrimaryModelChange={setPrimaryModel}
+								loading={managedModels.length === 0 && managedModelCatalog.isFetching}
+								error={managedModelCatalog.error}
+								errorNormalizer={billingErrorNormalizer}
+								onRetry={() => void managedModelCatalog.refetch()}
+								providerChoice={primaryProviderChoice}
 							/>
 						) : null}
 					</div>
