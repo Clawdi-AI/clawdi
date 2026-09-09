@@ -1610,7 +1610,6 @@ def test_connected_account_display_uses_only_account_identity(data, state, expec
     assert composio._account_display_label(account) == expected
 
 
-
 async def test_close_composio_client_uses_public_sdk_lifecycles(monkeypatch):
     from composio import Composio
     from composio_client import AsyncComposio
