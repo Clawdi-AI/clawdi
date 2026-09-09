@@ -175,8 +175,11 @@ or flatten packaged skills.
 
 Release ordering: publish the Store Sui 0.2.1 artifact/catalog from
 [Store PR #9](https://github.com/Clawdi-AI/store/pull/9) first, then the additive
-Cloud/Hosted APIs and finally their UI consumers. The root reviewer reports
-Docker qualification with official OpenClaw 2026.9.3 (1391f7c): seven plugins,
+[Cloud API #1459](https://github.com/Clawdi-AI/clawdi/pull/1459),
+[Hosted API #2164](https://github.com/Clawdi-AI/clawdi-hosted/pull/2164), and finally
+their UI consumers. API-only prerequisites allow the normal server-first release
+flow without relaxing the live Hosted OpenAPI check. Docker qualification with
+official OpenClaw 2026.9.3 (1391f7c): seven plugins,
 72/72 unique skill names model-visible and eligible, none disabled. The three
 shared Walrus Sites skill directories use the same official source commit
 `6d429c88d14e3f9fcd4f95ce183ae6d69804e1d3` and are byte-identical. Native precedence
