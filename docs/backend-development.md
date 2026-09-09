@@ -445,6 +445,11 @@ must retain its ordinary connection for the consumer lifetime; releasing it woul
 duplicate consumers. Delivery transactions that fence authority across sends
 also retain their locks deliberately.
 
+Telegram long polls immediately fetch another page after consuming acknowledged
+or filtered updates. Each page commits before the next scan, releasing its
+Binding locks. The request deadline bounds repeated scans, and cancellation
+remains observable between pages. A zero-timeout request still scans one page.
+
 All three runtime engines use the asyncpg dialect in
 `backend/app/core/asyncpg_dialect.py`. It shields only driver termination from
 [AnyIO level cancellation](https://github.com/agronholm/anyio/blob/4.14.2/docs/cancellation.rst).

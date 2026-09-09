@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,8 +43,14 @@ channel_deliveries_enqueued = ChannelWakeup()
 channel_inbound_messages_enqueued = ChannelWakeup()
 
 
+@dataclass(frozen=True)
+class ChannelInboxPage[T]:
+    items: list[T]
+    progressed: bool = False
+
+
 async def wait_for_channel_inbound_messages[T](
-    fetch: Callable[[], Awaitable[list[T]]],
+    fetch: Callable[[], Awaitable[ChannelInboxPage[T]]],
     *,
     account_id: str,
     timeout_seconds: int | float | None,
@@ -69,9 +76,15 @@ async def wait_for_channel_inbound_messages[T](
             # during or immediately after the query remains set and forces a
             # recheck, closing the query-to-wait lost-wakeup window.
             notified.clear()
-            values = await fetch()
-            if values or timeout == 0 or loop.time() >= deadline:
-                return values
+            page = await fetch()
+            if page.items or timeout == 0 or loop.time() >= deadline:
+                return page.items
+            if page.progressed:
+                # The caller committed a consumed page, not an empty queue.
+                # Yield for cancellation/fairness; the request deadline bounds
+                # repeated progress, while timeout=0 retains its single-page limit.
+                await asyncio.sleep(0)
+                continue
             if notified.is_set():
                 continue
             try:

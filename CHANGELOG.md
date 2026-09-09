@@ -27,6 +27,9 @@ database migration, CI, and implementation details.
 
 ### Changed
 
+- Telegram agents receive available updates sooner when earlier updates have
+  already been acknowledged or excluded by their requested update types.
+
 - CLI 0.14.60 updates bundled and Hosted Skill guidance to manage connector
   accounts through Composio with explicit list, add, rename, and remove actions.
 - Resources opened from an Agent stay in that Agent, including unlinked Projects,
