@@ -679,7 +679,7 @@ class _FakeProviderClient:
     response_content: bytes | None = None
     response_headers: dict[str, str] | None = None
 
-    def __init__(self, *, timeout):
+    def __init__(self, *, timeout, limits=None):
         self.timeout = timeout
 
     async def __aenter__(self):
