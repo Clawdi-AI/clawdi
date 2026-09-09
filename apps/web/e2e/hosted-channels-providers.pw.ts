@@ -55,7 +55,7 @@ test("editing and rotating an agent-owned connection sends one atomic patch with
 		provider_id: "saved-connection",
 		label: "Saved connection",
 		type: "custom_openai_compatible",
-		configuration_mode: "connection",
+		configuration_mode: "custom",
 		base_url: "https://custom.example/v1",
 		api_mode: "openai_responses",
 		runtime_env_name: "SAVED_CONNECTION_KEY",

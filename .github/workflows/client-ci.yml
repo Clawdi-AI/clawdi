@@ -280,6 +280,18 @@ jobs:
         run: bun run --cwd apps/web e2e --config=playwright.auth.config.ts
       - name: OSS web e2e
         run: bun run --cwd apps/web e2e
+      - name: Set up Hosted browser fixture dependencies
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: "0.12.5"
+          python-version: "3.12"
+      - name: Install Hosted browser fixture dependencies
+        run: uv sync --project backend --frozen
+      - name: Hosted provider flows
+        run: >-
+          bun run --cwd apps/web e2e --config=playwright.hosted.config.ts
+          e2e/hosted-deploy-flow.pw.ts e2e/hosted-smoke.pw.ts e2e/hosted-channels-providers.pw.ts
+          --grep "deploy wizard creates|Clawdi AI model selection|provider creation stays|Custom model ownership|renaming a native|editing and rotating an agent-owned"
 
   whatsapp-native-e2e:
     needs: changes
