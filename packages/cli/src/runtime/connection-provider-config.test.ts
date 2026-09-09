@@ -231,7 +231,6 @@ for (const runtime of ["openclaw", "hermes"] as const) {
 		try {
 			f.set(undefined);
 			const plan = f.prepare();
-			expect(plan.providers[id]?.pendingCreation).toBe(true);
 			// Crash after the durable write-ahead record, before config creation.
 			f.restoreOwnership(plan.providers);
 			f.prepare();

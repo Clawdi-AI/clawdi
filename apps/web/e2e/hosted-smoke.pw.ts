@@ -3052,6 +3052,9 @@ for (const kind of ["native", "custom"] as const) {
 
 		await expect(dialog).toBeHidden();
 		await expect.poll(() => providerAcceptRequests.length).toBe(1);
+		const saved = JSON.parse(providerAcceptRequests[0] ?? "{}").provider;
+		expect(saved).toMatchObject({ configuration_mode: kind, label: providerName });
+		expect(saved).not.toHaveProperty("models");
 		expect(page.url()).toBe(agentPageUrl);
 		const providerCard = page
 			.getByTestId("provider-choice-grid")
@@ -3065,8 +3068,6 @@ for (const kind of ["native", "custom"] as const) {
 			.filter({ hasText: "Add, validate, or remove providers" })
 			.getByRole("link", { name: "AI Providers" });
 		await expect(accountProviderLink).toHaveAttribute("href", "/ai-providers");
-		expect(updateDeploymentRequests).toEqual([]);
-
 		expect(updateDeploymentRequests).toEqual([]);
 		await page.locator("main").getByRole("button", { name: "Save changes" }).click();
 		await expect.poll(() => updateDeploymentRequests.length).toBe(1);

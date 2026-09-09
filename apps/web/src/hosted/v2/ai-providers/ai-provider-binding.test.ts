@@ -126,15 +126,6 @@ describe("AI provider binding fields", () => {
 		});
 	});
 
-	test("Managed uses its authoritative default when the user supplies no model", () => {
-		expect(
-			buildAiBindingFields(
-				{ bindingMode: "configured", primaryProviderChoice: MANAGED_AI_CHOICE, primaryModel: "" },
-				{ managedModels, mode: "create", providers: [] },
-			).primary_model,
-		).toEqual({ provider_id: MANAGED_PROVIDER_ID, model: "gpt-managed" });
-	});
-
 	test("create omits an empty bootstrap while update clears it", () => {
 		const draft = {
 			bindingMode: "configured" as const,

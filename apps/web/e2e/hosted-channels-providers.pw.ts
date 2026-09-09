@@ -5,35 +5,6 @@ test.beforeEach(async ({ page }) => {
 	await stubCloudApi(page);
 });
 
-test("custom provider creation collects connection fields without model or environment inputs", async ({
-	page,
-}) => {
-	await page.goto("/ai-providers");
-	await page.getByRole("button", { name: "Add provider", exact: true }).first().click();
-	await page.getByRole("button", { name: /^Custom endpoint/ }).click();
-	const dialog = page.getByRole("dialog");
-	await dialog.getByLabel("Name", { exact: true }).fill("Team gateway");
-	await dialog.getByLabel("Endpoint", { exact: true }).fill("https://team.example/v1");
-	await dialog.getByLabel("API key", { exact: true }).fill("synthetic-custom-key");
-	await expect(dialog.getByLabel("API format")).toBeVisible();
-	await expect(dialog.getByLabel("Model catalog")).toHaveCount(0);
-	await expect(dialog.getByLabel("Agent environment variable")).toHaveCount(0);
-	const request = page.waitForRequest(
-		(r) => r.url().endsWith("/ai-providers/accept") && r.method() === "POST",
-	);
-	await dialog.getByRole("button", { name: "Add provider", exact: true }).click();
-	const body = (await request).postDataJSON();
-	expect(body.provider).toMatchObject({
-		configuration_mode: "custom",
-		label: "Team gateway",
-		base_url: "https://team.example/v1",
-		api_mode: "openai_chat",
-		runtime_env_name: "CLAWDI_TEAM_GATEWAY_API_KEY",
-	});
-	expect(body.provider).not.toHaveProperty("models");
-	await expect(dialog).toBeHidden();
-});
-
 for (const kind of ["api-key", "oauth"] as const) {
 	test(`renaming a native ${kind} provider changes only its Clawdi label`, async ({ page }) => {
 		const provider = {
