@@ -1475,9 +1475,13 @@ async function prepareDashboardSession(accountId: string): Promise<void> {
 
 	const url = new URL("/desktop-auth", DASHBOARD_ORIGIN);
 	url.hash = new URLSearchParams({ account: accountId }).toString();
+	const retryingAuthPage =
+		window.webContents.getURL().split(/[?#]/)[0] === `${DASHBOARD_ORIGIN}/desktop-auth`;
 	const ready = waitForDashboardReady(window, DASHBOARD_LOAD_TIMEOUT_MS);
 	try {
 		await loadWindowUrl(window, url.toString());
+		// A hash-only navigation retains React's completed sign-in attempt.
+		if (retryingAuthPage) window.webContents.reload();
 		await ready;
 		await dashboardSession.cookies.flushStore();
 		dashboardSession.flushStorageData();
