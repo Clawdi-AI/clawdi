@@ -38,6 +38,14 @@ test("deploy wizard creates one selected runtime and renders mock status transit
 						description: "Low cost for routine work.",
 						capabilities: { vision: false, reasoning: false },
 					},
+					{
+						id: "gpt-5.6-sol",
+						display_name: "GPT-5.6 Sol",
+						provider_id: "openai-codex",
+						is_default: false,
+						is_featured: true,
+						capabilities: { vision: false, reasoning: false },
+					},
 				],
 			}),
 		});
@@ -68,6 +76,13 @@ test("deploy wizard creates one selected runtime and renders mock status transit
 	await includedBasic.click();
 	await expect(includedBasic).toHaveAttribute("aria-pressed", "true");
 
+	const models = page.getByTestId("managed-model-controls");
+	await models.getByRole("button", { name: /^GPT-5.6 Sol/ }).click();
+	await expect(models.getByRole("button", { name: /^GPT-5.6 Sol/ })).toHaveAttribute(
+		"aria-pressed",
+		"true",
+	);
+
 	const createdResponse = page.waitForResponse(
 		(response) =>
 			response.url() === `${DEPLOY_API}/v2/deployments` && response.request().method() === "POST",
@@ -75,6 +90,9 @@ test("deploy wizard creates one selected runtime and renders mock status transit
 	await page.getByTestId("deploy-action-bar").getByRole("button", { name: "Deploy" }).click();
 	const createBody = (await createdResponse).request().postDataJSON() as { runtime?: string };
 	expect(createBody.runtime).toBe("openclaw");
+	expect(createBody).toMatchObject({
+		primary_model: { provider_id: "clawdi", model: "gpt-5.6-sol" },
+	});
 
 	await expect(page).toHaveURL(
 		/\/agents\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,

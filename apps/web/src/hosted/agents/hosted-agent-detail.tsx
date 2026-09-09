@@ -261,7 +261,7 @@ import {
 import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderIcon } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
-import { ManagedProviderStatus } from "@/hosted/v2/ai-providers/managed-provider-status";
+import { ManagedModelPicker } from "@/hosted/v2/ai-providers/managed-model-picker";
 import {
 	firstModelForProvider,
 	isManagedProviderId,
@@ -2491,6 +2491,7 @@ function AiProviderTab({
 	const {
 		draft: aiBindingDraft,
 		managedPrimaryModelReady,
+		setPrimaryModel,
 		selectCreatedProvider,
 		selectProvider,
 		setBindingMode,
@@ -2601,7 +2602,10 @@ function AiProviderTab({
 					starts.
 				</p>
 			) : (
-				<ManagedProviderStatus
+				<ManagedModelPicker
+					idPrefix="agent"
+					primaryModel={primaryModel}
+					onPrimaryModelChange={setPrimaryModel}
 					managedModels={managedModels}
 					loading={managedModels.length === 0 && managedModelCatalog.isFetching}
 					error={managedModelCatalog.error}
@@ -2622,14 +2626,6 @@ function AiProviderTab({
 					Save changes
 				</Button>
 			</div>
-
-			<p className="text-xs text-muted-foreground">
-				Add, validate, or remove providers on{" "}
-				<Link to="/ai-providers" className="underline">
-					AI Providers
-				</Link>
-				.
-			</p>
 
 			<AddProviderDialog
 				open={addProviderOpen}
