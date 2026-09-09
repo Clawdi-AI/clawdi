@@ -11220,6 +11220,173 @@ async def test_discord_interaction_callback_and_followup_require_recorded_token(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["callback", "followup"])
+@pytest.mark.parametrize("binding_state", ["unpaired", "reassigned", "missing"])
+async def test_discord_interaction_reference_requires_current_binding(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    second_channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+    binding_state: str,
+):
+    _reset_fake_provider_client({"id": "discord-upstream"})
+    monkeypatch.setattr(shared_router.httpx, "AsyncClient", _FakeProviderClient)
+    created = await _create_paired_discord_channel(
+        client, name="discord-reference-revocation", agent_id=channel_agent.id
+    )
+    ingress = await _record_discord_interaction(
+        client,
+        created=created,
+        interaction_id="revoked-interaction",
+        token="revoked-token",
+        application_id=DISCORD_TEST_APPLICATION_ID,
+    )
+    assert ingress.status_code == 202
+    binding = await db_session.scalar(
+        select(ChannelBinding).where(ChannelBinding.account_id == UUID(created["id"]))
+    )
+    assert binding is not None
+    unpaired = await client.delete(f"/v1/channels/{created['id']}/bindings/{binding.id}")
+    assert unpaired.status_code == 200, unpaired.text
+    assert unpaired.json()["unpaired"] is True
+    if binding_state == "reassigned":
+        second = await client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(second_channel_agent.id)},
+        )
+        assert second.status_code == 201, second.text
+        pair = await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": second.json()["id"], "ttl_seconds": 900},
+        )
+        assert pair.status_code == 201, pair.text
+        repaired = await client.post(
+            f"/v1/channels/discord/{created['id']}/webhook",
+            headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+            json={
+                "type": 2,
+                "id": "repair-interaction",
+                "token": "repair-token",
+                "application_id": DISCORD_TEST_APPLICATION_ID,
+                "channel_id": "discord-chan-1",
+                "guild_id": "discord-guild-1",
+                "context": 0,
+                "authorizing_integration_owners": {"0": "discord-guild-1"},
+                "member": {"permissions": "32", "user": {"id": "discord-pair-user"}},
+                "data": {
+                    "name": "clawdi_pair",
+                    "options": [{"name": "code", "value": pair.json()["code"]}],
+                },
+            },
+        )
+        assert repaired.status_code == 200, repaired.text
+        assert repaired.json()["data"]["content"].startswith("Server paired.")
+        await db_session.refresh(binding)
+        assert binding.status == BINDING_STATUS_ACTIVE
+        assert str(binding.bot_agent_link_id) == second.json()["id"]
+    elif binding_state == "missing":
+        # Historical references can lose their Binding through ON DELETE SET NULL.
+        await db_session.delete(binding)
+        await db_session.commit()
+
+    _reset_fake_provider_client({"id": "must-not-send"})
+    path = (
+        "interactions/revoked-interaction/revoked-token/callback"
+        if endpoint == "callback"
+        else f"webhooks/{DISCORD_TEST_APPLICATION_ID}/revoked-token"
+    )
+    response = await client.post(
+        f"/v1/channels/discord/v10/{path}",
+        headers={"Authorization": f"Bot {created['agent_token']}"},
+        json={"type": 4, "data": {"content": "must not send"}, "content": "must not send"},
+    )
+    assert (response.status_code, len(_FakeProviderClient.calls)) == (404, 0)
+
+
+@pytest.mark.asyncio
+async def test_discord_shared_profile_shadow_is_link_scoped(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    second_channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _reset_discord_gateway_sessions(monkeypatch)
+    created_response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": "discord",
+            "name": "discord-shared-profile",
+            "provider_token": "discord-provider-token",
+            "config": _discord_ready_config(),
+            "agent_id": str(channel_agent.id),
+        },
+    )
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+    second_response = await client.post(
+        f"/v1/channels/{created['id']}/agent-links",
+        json={"agent_id": str(second_channel_agent.id)},
+    )
+    assert second_response.status_code == 201, second_response.text
+    second = second_response.json()
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    account.visibility = CHANNEL_VISIBILITY_PUBLIC
+    account.user_id = None
+    account.config = {**account.config, "bot_username": "Legacy Bot", "bot_avatar": "legacy"}
+    await db_session.commit()
+    original_config = dict(account.config)
+    headers_a = {"Authorization": f"Bot {created['agent_token']}"}
+    headers_b = {"Authorization": f"Bot {second['agent_token']}"}
+    patched = await client.patch(
+        "/v1/channels/discord/v10/users/@me",
+        headers=headers_a,
+        json={"username": "Link A", "avatar": None},
+    )
+    assert patched.status_code == 200, patched.text
+    # An omitted avatar preserves an explicit clear, rather than restoring the fallback.
+    patched = await client.patch(
+        "/v1/channels/discord/v10/users/@me", headers=headers_a, json={"username": "Link A"}
+    )
+    assert patched.status_code == 200
+    for path in ("users/@me", "applications/@me", "oauth2/applications/@me"):
+        first = await client.get(f"/v1/channels/discord/v10/{path}", headers=headers_a)
+        second_get = await client.get(f"/v1/channels/discord/v10/{path}", headers=headers_b)
+        assert first.status_code == second_get.status_code == 200
+        user_a = first.json() if path == "users/@me" else first.json()["bot"]
+        user_b = second_get.json() if path == "users/@me" else second_get.json()["bot"]
+        assert (user_a["username"], user_a["avatar"]) == ("Link A", None)
+        assert (user_b["username"], user_b["avatar"]) == ("Legacy Bot", "legacy")
+
+    _install_discord_gateway_test_session_factory(monkeypatch)
+    placeholder = channel_runtime_placeholder_token(
+        CHANNEL_PROVIDER_DISCORD, channel_runtime_account_key(account.id)
+    )
+
+    def ready_user(token: str) -> dict[str, Any]:
+        with TestClient(app) as sync_client:
+            with sync_client.websocket_connect(
+                "/v1/channels/discord/gateway?v=10&encoding=json",
+                headers={"Authorization": f"Bearer {token}"},
+            ) as websocket:
+                assert websocket.receive_json()["op"] == 10
+                websocket.send_json({"op": 2, "d": {"token": placeholder, "intents": 0}})
+                ready = websocket.receive_json()
+                assert ready["t"] == "READY"
+                return ready["d"]["user"]
+
+    user_a = ready_user(created["agent_token"])
+    user_b = ready_user(second["agent_token"])
+    assert (user_a["username"], user_a["avatar"]) == ("Link A", None)
+    assert (user_b["username"], user_b["avatar"]) == ("Legacy Bot", "legacy")
+    await db_session.refresh(account)
+    assert account.config == original_config
+
+
+@pytest.mark.asyncio
 async def test_discord_bot_profile_shadow_is_account_scoped(
     client: httpx.AsyncClient,
     channel_agent,
