@@ -1,5 +1,5 @@
 import { useRouterState } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useState } from "react";
+import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
 
 // SDK boundary fixture only. Product routes, auth bridge, and deployment UI are real.
 function identity() {
@@ -8,14 +8,13 @@ function identity() {
 		: (document.cookie.match(/(?:^|; )test-user=([^;]+)/)?.[1] ?? null);
 }
 const getToken = async () => identity();
+const AuthContext = createContext<{ userId: string | null; isLoaded: boolean }>({
+	userId: null,
+	isLoaded: false,
+});
 
 export function useAuth() {
-	const [userId, setUserId] = useState<string | null>(null);
-	const [isLoaded, setLoaded] = useState(false);
-	useEffect(() => {
-		setUserId(identity());
-		setLoaded(true);
-	}, []);
+	const { userId, isLoaded } = useContext(AuthContext);
 	return {
 		isLoaded,
 		isSignedIn: Boolean(userId),
@@ -25,13 +24,33 @@ export function useAuth() {
 	};
 }
 export function useClerk() {
-	return {
-		status: "ready",
-		signOut: async () => {
-			document.cookie = "test-user=; Max-Age=0; Path=/";
-			location.assign("/sign-in");
-		},
-	};
+	const { session } = useSession();
+	return useMemo(
+		() => ({
+			status: "ready",
+			session,
+			signOut: async () => {
+				document.cookie = "test-user=; Max-Age=0; Path=/";
+				location.assign("/sign-in");
+			},
+		}),
+		[session],
+	);
+}
+export function useSession() {
+	const { isLoaded, userId } = useAuth();
+	const session = useMemo(
+		() =>
+			userId
+				? {
+						id: `session-${userId}`,
+						user: { id: userId },
+						getToken: async () => userId,
+					}
+				: null,
+		[userId],
+	);
+	return { isLoaded, session };
 }
 export function useUser() {
 	const auth = useAuth();
@@ -49,7 +68,12 @@ export function useUser() {
 	};
 }
 export function ClerkProvider({ children }: { children: ReactNode }) {
-	return children;
+	const [auth, setAuth] = useState<{ userId: string | null; isLoaded: boolean }>({
+		userId: null,
+		isLoaded: false,
+	});
+	useEffect(() => setAuth({ userId: identity(), isLoaded: true }), []);
+	return <AuthContext.Provider value={auth}>{children}</AuthContext.Provider>;
 }
 function AuthForm({ signup }: { signup: boolean }) {
 	const { isLoaded } = useAuth();
