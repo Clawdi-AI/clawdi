@@ -27,6 +27,9 @@ database migration, CI, and implementation details.
 
 ### Changed
 
+- CLI 0.14.65 reduces local processing during session synchronization and avoids
+  repeated session-list scans when pushing large local histories.
+
 - Discord messages reach connected agents sooner, especially after idle periods.
 - Telegram agents receive available updates sooner when earlier updates have
   already been acknowledged or excluded by their requested update types.

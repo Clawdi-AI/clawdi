@@ -41,6 +41,7 @@ from app.core.auth import (
 from app.core.config import settings
 from app.core.database import get_session
 from app.core.query_utils import SearchQuery
+from app.middleware.request_timing import record_pre_handler, request_stage
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
@@ -139,6 +140,7 @@ from app.services.session_content import (
     SessionContentInvalid,
     SessionContentMissing,
     SessionContentUnavailable,
+    SessionMessageValue,
     load_session_content_projection,
     load_session_messages,
     session_has_uploaded_content,
@@ -3088,6 +3090,7 @@ async def delete_session(
 
 @router.post("/sessions/{local_session_id}/upload")
 async def upload_session_content(
+    request: Request,
     # Constrained to safe filename chars so the legacy object key remains
     # inside the user's Session prefix.
     local_session_id: str = Path(..., pattern=_SESSION_LOCAL_ID_PATTERN),
@@ -3099,63 +3102,65 @@ async def upload_session_content(
     db: AsyncSession = Depends(get_session),
 ) -> SessionUploadResponse:
     """Upload session messages JSON to FileStore."""
-    bound_env = _bound_env_id(auth)
-    stmt = select(Session).where(
-        Session.user_id == auth.user_id,
-        Session.local_session_id == local_session_id,
-    )
-    if bound_env is not None:
-        # Bound api_keys can only write within their env. A NULL
-        # `environment_id` (orphan from a since-deleted env) is
-        # treated as "not yours" — without this an orphaned
-        # session would be a silent shared write target.
-        stmt = stmt.where(Session.origin_environment_id == bound_env)
-    elif environment_id is not None:
-        stmt = stmt.where(Session.origin_environment_id == environment_id)
-    sessions = list((await db.execute(stmt)).scalars())
-    if not sessions:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
-    if len(sessions) != 1:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail={
-                "code": "session_origin_required",
-                "message": (
-                    "More than one Agent owns this local_session_id; "
-                    "use an environment-bound credential."
-                ),
-            },
+    record_pre_handler(request.scope)
+    with request_stage(request.scope, "upload_lookup_lock_ms"):
+        bound_env = _bound_env_id(auth)
+        stmt = select(Session).where(
+            Session.user_id == auth.user_id,
+            Session.local_session_id == local_session_id,
         )
-    session = sessions[0]
-    if session.origin_environment_id is not None:
-        await require_connected_agent_fence(
-            db,
-            auth=auth,
-            agent_ids={session.origin_environment_id},
-            headers=fence_headers,
-            lock=True,
-        )
-    sessions = list((await db.execute(stmt.with_for_update())).scalars())
-    if not sessions:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
-    if len(sessions) != 1:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail={
-                "code": "session_origin_required",
-                "message": (
-                    "More than one Agent owns this local_session_id; "
-                    "use an environment-bound credential."
-                ),
-            },
-        )
-    session = sessions[0]
+        if bound_env is not None:
+            # Bound api_keys can only write within their env. A NULL
+            # `environment_id` (orphan from a since-deleted env) is
+            # treated as "not yours" — without this an orphaned
+            # session would be a silent shared write target.
+            stmt = stmt.where(Session.origin_environment_id == bound_env)
+        elif environment_id is not None:
+            stmt = stmt.where(Session.origin_environment_id == environment_id)
+        sessions = list((await db.execute(stmt)).scalars())
+        if not sessions:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+        if len(sessions) != 1:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "session_origin_required",
+                    "message": (
+                        "More than one Agent owns this local_session_id; "
+                        "use an environment-bound credential."
+                    ),
+                },
+            )
+        session = sessions[0]
+        if session.origin_environment_id is not None:
+            await require_connected_agent_fence(
+                db,
+                auth=auth,
+                agent_ids={session.origin_environment_id},
+                headers=fence_headers,
+                lock=True,
+            )
+        sessions = list((await db.execute(stmt.with_for_update())).scalars())
+        if not sessions:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+        if len(sessions) != 1:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "session_origin_required",
+                    "message": (
+                        "More than one Agent owns this local_session_id; "
+                        "use an environment-bound credential."
+                    ),
+                },
+            )
+        session = sessions[0]
 
-    if session.content_protocol == "events-v1":
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "Session has been upgraded to events-v1",
-        )
+        if session.content_protocol == "events-v1":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Session has been upgraded to events-v1",
+            )
 
     # Stream the upload in bounded chunks, refusing once total
     # bytes cross the cap. The global `BodySizeLimitMiddleware`
@@ -3164,26 +3169,28 @@ async def upload_session_content(
     # streamed uploads (no Content-Length header) where the
     # middleware can't decide. `await file.read()` without bound
     # would pull arbitrarily large bodies into memory first.
-    _MAX_SESSION_CONTENT_BYTES = 50 * 1024 * 1024  # 50 MB
-    chunks: list[bytes] = []
-    total = 0
-    chunk_size = 1024 * 1024  # 1 MB
-    while True:
-        chunk = await file.read(chunk_size)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > _MAX_SESSION_CONTENT_BYTES:
-            raise HTTPException(
-                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                f"Session content exceeds {_MAX_SESSION_CONTENT_BYTES} bytes",
-            )
-        chunks.append(chunk)
-    data = b"".join(chunks)
+    with request_stage(request.scope, "upload_spooled_read_ms"):
+        _MAX_SESSION_CONTENT_BYTES = 50 * 1024 * 1024  # 50 MB
+        chunks: list[bytes] = []
+        total = 0
+        chunk_size = 1024 * 1024  # 1 MB
+        while True:
+            chunk = await file.read(chunk_size)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _MAX_SESSION_CONTENT_BYTES:
+                raise HTTPException(
+                    status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    f"Session content exceeds {_MAX_SESSION_CONTENT_BYTES} bytes",
+                )
+            chunks.append(chunk)
+        data = b"".join(chunks)
     # Hash, JSON validation, and reference extraction are CPU-bound for large
     # snapshots. Keep them together off the event loop so other requests can
     # continue while this upload is analyzed.
-    analysis = await _analyze_session_upload(data)
+    with request_stage(request.scope, "upload_analysis_ms"):
+        analysis = await _analyze_session_upload(data)
     content_hash = analysis.content_hash
 
     # New clients submit the hash announced in the preceding batch as a CAS
@@ -3202,7 +3209,8 @@ async def upload_session_content(
         )
 
     fk = _session_content_key(session)
-    await file_store.put(fk, data)
+    with request_stage(request.scope, "upload_storage_ms"):
+        await file_store.put(fk, data)
 
     session.file_key = fk
     session.content_hash = content_hash
@@ -3215,12 +3223,13 @@ async def upload_session_content(
     # we'd rather have a session with NULL related_refs than a
     # half-committed upload).
     session.related_refs = analysis.related_refs
-    await replace_snapshot_search_index(
-        db,
-        session,
-        content_hash,
-        analysis.search_messages,
-    )
+    with request_stage(request.scope, "upload_index_ms"):
+        await replace_snapshot_search_index(
+            db,
+            session,
+            content_hash,
+            analysis.search_messages,
+        )
     if analysis.parse_error is not None:
         # Preserve the worker-thread traceback for diagnosing malformed
         # snapshots without failing their best-effort upload.
@@ -3231,7 +3240,8 @@ async def upload_session_content(
             exc_info=(type(error), error, error.__traceback__),
         )
 
-    await db.commit()
+    with request_stage(request.scope, "upload_commit_ms"):
+        await db.commit()
 
     return SessionUploadResponse(status="uploaded", file_key=fk, content_hash=content_hash)
 
@@ -3370,17 +3380,18 @@ async def get_session_messages(
     else:
         included_categories = frozenset((view,))
 
+    projected_items: list[SessionMessageValue]
     if included_categories is None:
         projected_items = projection.messages
         source_positions = projection.source_positions
     else:
-        filtered_timeline = [
-            (item, position)
-            for item, position in zip(
-                projection.timeline,
-                projection.timeline_source_positions,
-                strict=True,
-            )
+        projected_items = []
+        filtered_positions: list[int] = []
+        for item, position in zip(
+            projection.timeline,
+            projection.timeline_source_positions,
+            strict=True,
+        ):
             if (
                 (item.get("role") == "user" and "user" in included_categories)
                 or (item.get("role") == "assistant" and "assistant" in included_categories)
@@ -3388,10 +3399,10 @@ async def get_session_messages(
                     "tools" in included_categories
                     and item.get("kind") in ("tool_call", "tool_result")
                 )
-            )
-        ]
-        projected_items = [item for item, _ in filtered_timeline]
-        source_positions = tuple(position for _, position in filtered_timeline)
+            ):
+                projected_items.append(item)
+                filtered_positions.append(position)
+        source_positions = tuple(filtered_positions)
 
     total = len(projected_items)
     page_offset = offset

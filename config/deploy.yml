@@ -73,16 +73,16 @@ servers:
     proxy: false
     options:
       memory: 4g # measured model RSS plus startup/inference headroom
-      cpus: 2 # rollout knob: bound inference so it cannot consume host-wide CPU
+      cpus: 4 # CPU ceiling, not a reservation; lower latency for more CPU work
       init: true
       health-cmd: "python -m app.workers.embedding healthcheck"
     env:
       clear:
         CLAWDI_PROCESS_ROLE: embedding-worker
         # This role does not import the database engine and owns no DB pool.
-        # One ONNX session uses both quota-matched inference threads. Increase
+        # One ONNX session uses four quota-matched inference threads. Increase
         # concurrency only after scraped local-service metrics justify it.
-        MEMORY_EMBEDDING_THREADS: 2
+        MEMORY_EMBEDDING_THREADS: 4
         MEMORY_EMBEDDING_WORKER_MAX_CONCURRENCY: 1
   channels-worker:
     hosts:

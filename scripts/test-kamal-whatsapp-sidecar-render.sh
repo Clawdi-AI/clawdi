@@ -160,7 +160,7 @@ end
 embedding_worker = config.role("embedding-worker")
 embedding_role = embedding_worker.specialized_env.clear == {
   "CLAWDI_PROCESS_ROLE" => "embedding-worker",
-  "MEMORY_EMBEDDING_THREADS" => 2,
+  "MEMORY_EMBEDDING_THREADS" => 4,
   "MEMORY_EMBEDDING_WORKER_MAX_CONCURRENCY" => 1,
 }
 unless embedding_role && !embedding_worker.running_proxy?
@@ -168,7 +168,7 @@ unless embedding_role && !embedding_worker.running_proxy?
 end
 embedding_options = config.raw_config.servers.fetch("embedding-worker").fetch("options")
 raise "embedding worker memory drifted" unless embedding_options.fetch("memory") == "4g"
-raise "embedding worker CPU quota drifted" unless embedding_options.fetch("cpus") == 2
+raise "embedding worker CPU quota drifted" unless embedding_options.fetch("cpus") == 4
 unless embedding_options.fetch("health-cmd") == "python -m app.workers.embedding healthcheck"
   raise "embedding worker healthcheck lost its instance identity gate"
 end

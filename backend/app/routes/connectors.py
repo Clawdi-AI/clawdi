@@ -1,9 +1,10 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.core.auth import AuthContext, require_clerk_id, require_user_auth_short_session
 from app.core.config import settings
+from app.middleware.request_timing import record_pre_handler, request_stage
 from app.schemas.common import Paginated
 from app.schemas.connector import (
     ConnectorAuthFieldsResponse,
@@ -119,14 +120,17 @@ def map_composio_error(exc: ComposioRouteError) -> HTTPException:
 
 @router.get("")
 async def list_connections(
+    request: Request,
     auth: AuthContext = Depends(require_user_auth_short_session),
 ) -> list[ConnectorConnectionResponse]:
     """List user's connected services."""
+    record_pre_handler(request.scope)
     if not settings.composio_api_key:
         return []
     clerk_id = require_clerk_id(auth)
     try:
-        accounts = await get_all_connected_accounts(clerk_id)
+        with request_stage(request.scope, "connector_route_fetch_ms"):
+            accounts = await get_all_connected_accounts(clerk_id)
     except ComposioRouteError as exc:
         if _is_composio_auth_error(exc):
             log.warning("composio_key_invalid path=connectors_list")
@@ -136,8 +140,10 @@ async def list_connections(
     # Composio Tool Router sessions capture the active account set, so
     # observing the latest connected-account state should force the next
     # MCP bridge call to create a fresh session.
-    await invalidate_tool_router_mcp_session(clerk_id)
-    return [ConnectorConnectionResponse.model_validate(account) for account in accounts]
+    with request_stage(request.scope, "connector_invalidation_ms"):
+        await invalidate_tool_router_mcp_session(clerk_id)
+    with request_stage(request.scope, "connector_response_build_ms"):
+        return [ConnectorConnectionResponse.model_validate(account) for account in accounts]
 
 
 @router.post("/metadata:batchRead", response_model=ConnectorMetadataBatchResponse)
@@ -156,6 +162,7 @@ async def read_connector_metadata(
 
 @router.get("/available")
 async def list_available_apps(
+    request: Request,
     auth: AuthContext = Depends(require_user_auth_short_session),
     search: str | None = Query(default=None, max_length=100),
     page: int = Query(default=1, ge=1),
@@ -166,12 +173,14 @@ async def list_available_apps(
     cost a Composio roundtrip per page and the browser only ships one
     page at a time. Search is substring across slug, display name, and
     description (server-side, before pagination)."""
+    record_pre_handler(request.scope)
     if not settings.composio_api_key:
         return Paginated[ConnectorAvailableAppResponse](
             items=[], total=0, page=page, page_size=page_size
         )
     try:
-        page_data = await get_available_apps(search=search, page=page, page_size=page_size)
+        with request_stage(request.scope, "connector_route_fetch_ms"):
+            page_data = await get_available_apps(search=search, page=page, page_size=page_size)
     except ComposioRouteError as exc:
         if _is_composio_auth_error(exc):
             log.warning("composio_key_invalid path=connectors_available")
@@ -179,26 +188,30 @@ async def list_available_apps(
                 items=[], total=0, page=page, page_size=page_size
             )
         raise map_composio_error(exc) from exc
-    return Paginated[ConnectorAvailableAppResponse](
-        items=page_data["items"],
-        total=page_data["total"],
-        page=page_data["page"],
-        page_size=page_data["page_size"],
-    )
+    with request_stage(request.scope, "connector_response_build_ms"):
+        return Paginated[ConnectorAvailableAppResponse](
+            items=page_data["items"],
+            total=page_data["total"],
+            page=page_data["page"],
+            page_size=page_data["page_size"],
+        )
 
 
 @router.get("/available/{app_name}")
 async def get_available_app(
+    request: Request,
     app_name: str,
     auth: AuthContext = Depends(require_user_auth_short_session),
 ) -> ConnectorAvailableAppResponse:
     """Single-app metadata lookup — used by the detail page so it doesn't
     have to page through the whole catalog to find one app's display name.
     Re-uses the cache that `/available` populates."""
+    record_pre_handler(request.scope)
     if not settings.composio_api_key:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
     try:
-        app = await get_app_by_name(app_name)
+        with request_stage(request.scope, "connector_route_fetch_ms"):
+            app = await get_app_by_name(app_name)
     except ComposioRouteError as exc:
         raise map_composio_error(exc) from exc
     if app is None:

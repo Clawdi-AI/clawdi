@@ -2,12 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { RawSession, SessionEvent, SessionModule } from "../adapters/base";
 import { type ApiClient, ApiError } from "./api-client";
 import { canonicalApiOrigin } from "./api-origin";
-import {
-	advanceEventHead,
-	canonicalJson,
-	EMPTY_EVENT_HEAD,
-	encodeEventNdjson,
-} from "./session-events";
+import { advanceEventHead, canonicalJson, EMPTY_EVENT_HEAD } from "./session-events";
 import {
 	type PendingEventUpload,
 	persistFencedSessionEntry,
@@ -220,7 +215,7 @@ async function syncEventSession(input: {
 	if (capabilities === null) {
 		throw new Error("events-v1 capability disappeared after session negotiation");
 	}
-	const heads = eventHeads(events);
+	let heads: readonly string[] | undefined;
 	let uploaded = false;
 	for (let attempt = 0; attempt < EVENT_RETRY_LIMIT; attempt++) {
 		const remote = await input.api.getSessionEventHead(
@@ -239,6 +234,7 @@ async function syncEventSession(input: {
 			return { status: "synced", uploaded, localHash: finalHead };
 		}
 		try {
+			heads ??= eventHeads(events);
 			if (
 				head.protocol === "events-v1" &&
 				head.generation !== null &&
@@ -250,7 +246,7 @@ async function syncEventSession(input: {
 				persistEventSuccess(input, appendResult.head);
 				return { status: "synced", uploaded, localHash: finalHead };
 			}
-			const rewriteResult = await replaceEventGeneration(input, head, events, capabilities);
+			const rewriteResult = await replaceEventGeneration(input, head, events, heads, capabilities);
 			uploaded = uploaded || rewriteResult.uploaded;
 			persistEventSuccess(input, rewriteResult.head);
 			return { status: "synced", uploaded, localHash: finalHead };
@@ -336,6 +332,7 @@ async function replaceEventGeneration(
 	},
 	base: EventHead,
 	events: readonly SessionEvent[],
+	heads: readonly string[],
 	limits: { targetBytes: number; maxBytes: number },
 ): Promise<{ head: EventHead; uploaded: boolean }> {
 	const finalHead = input.plan.finalEventHead;
@@ -404,7 +401,6 @@ async function replaceEventGeneration(
 			uploaded: false,
 		};
 	}
-	const heads = eventHeads(events);
 	const chunks = chunkEvents(events, 0, limits, heads);
 	for (const chunk of chunks) {
 		const response = await input.api.uploadSessionEventGenerationChunk({
@@ -460,18 +456,21 @@ function chunkEvents(
 	while (index < events.length) {
 		const chunkStartIndex = index;
 		let size = 0;
+		const lines: string[] = [];
 		while (index < events.length) {
-			const lineSize = Buffer.byteLength(`${canonicalJson(events[index])}\n`, "ascii");
+			const line = `${canonicalJson(events[index])}\n`;
+			const lineSize = Buffer.byteLength(line, "ascii");
 			if (lineSize > limits.maxBytes) {
 				throw new EventTooLargeError(startSeq + index, lineSize, limits.maxBytes);
 			}
 			if (index > chunkStartIndex && size + lineSize > limits.targetBytes) break;
+			lines.push(line);
 			size += lineSize;
 			index += 1;
 		}
 		const chunkStart = startSeq + chunkStartIndex;
 		const selected = events.slice(chunkStartIndex, index);
-		const bytes = encodeEventNdjson(selected);
+		const bytes = Buffer.from(lines.join(""), "ascii");
 		if (bytes.length > limits.maxBytes) {
 			throw new EventTooLargeError(chunkStart, bytes.length, limits.maxBytes);
 		}
