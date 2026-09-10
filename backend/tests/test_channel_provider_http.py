@@ -12,7 +12,7 @@ async def test_channel_provider_http_client_is_reused_and_closed(monkeypatch):
     clients: list[Any] = []
 
     class FakeClient:
-        def __init__(self, *, timeout: float):
+        def __init__(self, *, timeout: float, limits):
             self.timeout = timeout
             self.closed = False
             clients.append(self)

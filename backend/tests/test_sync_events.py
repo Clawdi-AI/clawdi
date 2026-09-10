@@ -1684,3 +1684,71 @@ async def test_real_sse_admission_rejects_before_success_headers(
         assert len(leases.all()) == 1
     finally:
         await iterator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_inbound_link_hints_commit_rollback_and_legacy_fanout(
+    db_session, seed_user, channel_agent
+):
+    from app.services.channels import record_inbound_message
+    from tests.test_channel_inbox import _create_account_and_binding
+
+    account, binding = await _create_account_and_binding(
+        db_session, user=seed_user, agent=channel_agent, provider="discord", chat_id="hint-fixture"
+    )
+    await db_session.commit()
+    account_key, link_key = str(account.id), str(binding.bot_agent_link_id)
+    source = channel_inbound_messages_enqueued
+    subscriptions = [
+        (account_key, None),
+        (account_key, link_key),
+        (account_key, str(uuid.uuid4())),
+        (str(uuid.uuid4()), link_key),
+    ]
+    waiters = [source.subscribe(key, scope=scope) for key, scope in subscriptions]
+    await sync_events.start_postgres_listener()
+    try:
+        await record_inbound_message(
+            db_session,
+            account=account,
+            binding=binding,
+            external_chat_id=binding.external_chat_id,
+            provider_message_id="hint-fixture",
+            text=None,
+            payload={},
+        )
+        await asyncio.sleep(0.02)
+        assert not any(waiter.is_set() for waiter in waiters)
+        await db_session.commit()
+        await asyncio.wait_for(waiters[1].wait(), 2)
+        assert [waiter.is_set() for waiter in waiters] == [True, True, False, False]
+        for waiter in waiters:
+            waiter.clear()
+
+        # A rolled-back targeted hint never reaches LISTEN. A subsequent legacy
+        # commit is a delivery barrier and wakes all Links of this account only.
+        await notify_channel_inbound_message_enqueued(
+            db_session, account_id=subscriptions[3][0], bot_agent_link_id=link_key
+        )
+        await db_session.rollback()
+        await notify_channel_inbound_message_enqueued(db_session, account_id=account_key)
+        await db_session.commit()
+        await asyncio.wait_for(waiters[2].wait(), 2)
+        assert [waiter.is_set() for waiter in waiters] == [True, True, True, False]
+        for waiter in waiters:
+            waiter.clear()
+        await db_session.execute(
+            text("SELECT pg_notify(:channel, :payload)"),
+            {"channel": "channel_inbound_messages_enqueued", "payload": f"{account_key}:bad"},
+        )
+        await notify_channel_inbound_message_enqueued(
+            db_session, account_id=account_key, bot_agent_link_id=link_key
+        )
+        await db_session.commit()
+        await asyncio.wait_for(waiters[1].wait(), 2)
+        assert [waiter.is_set() for waiter in waiters] == [True, True, False, False]
+    finally:
+        await sync_events.stop_postgres_listener()
+        for (key, scope), waiter in zip(subscriptions, waiters, strict=True):
+            source.unsubscribe(key, waiter, scope=scope)
+    assert account_key not in source._scoped_waiters
