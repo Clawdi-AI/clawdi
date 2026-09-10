@@ -24,7 +24,10 @@ RUN groupadd --gid "${APP_GID}" app \
 WORKDIR /app/backend
 
 COPY backend/pyproject.toml backend/uv.lock backend/alembic.ini ./
-RUN uv sync --frozen --no-dev --no-install-project --extra mem0
+# Health probes repeatedly start a fresh interpreter. Compile imports
+# at build time because runtime bytecode writes are disabled.
+RUN uv sync --frozen --no-dev --no-install-project --extra mem0 --compile-bytecode \
+    && python -m compileall -q /usr/local/lib/python3.14
 
 COPY --chown=app:app backend/ /app/backend/
 COPY --chown=app:app packages/shared/src/native-ai-providers.json /app/packages/shared/src/native-ai-providers.json
