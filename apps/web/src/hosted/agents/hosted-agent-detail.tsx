@@ -678,9 +678,6 @@ export function HostedAgentDetail({
 						}}
 					/>
 				) : null}
-				{showInitialDeploymentPage ? (
-					<AgentDashboardOverview agentId={environmentId} deployment={deployment} />
-				) : null}
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
 					{showInitialDeploymentPage ? (
 						<InitialDeploymentPage

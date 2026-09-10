@@ -842,6 +842,9 @@ test("runtime readiness keeps launch closed across generation and credential rac
 		const launch = page.locator('[data-overview-module="dashboard"]');
 		if (state === "ready") {
 			await expect(launch.getByRole("link", { name: "Chat on the web" })).toBeVisible();
+		} else if (state === "starting") {
+			await expect(page.getByTestId("hosted-initial-deployment-panel")).toBeVisible();
+			await expect(launch).toHaveCount(0);
 		} else {
 			await expect(launch.getByRole("button", { name: "Chat on the web" })).toBeDisabled();
 		}
@@ -1665,6 +1668,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				deploy_request_id: deployRequestId,
 				request_status: unfinished ? "processing" : "succeeded",
 				lineage_tail: {
+					agent_id: fixtureAgentId(deployment),
 					deployment_id: deployment.id,
 					lineage_version: 1,
 					lineage_state: unfinished ? "processing" : "succeeded",
@@ -3562,7 +3566,7 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			const sessionGrid = page.getByTestId("overview-session-grid");
 			await expect(sessionGrid.getByRole("article")).toHaveCount(sessionCount);
 			if (sessionCount === 0) {
-				await expect(sessionGrid.getByRole("status")).toHaveText(
+				await expect(sessionGrid.locator('[data-slot="empty"]')).toHaveText(
 					"No sessions from this agent yet.",
 				);
 			}
@@ -4153,9 +4157,13 @@ for (const entry of ["inline", "return"] as const) {
 	});
 }
 
-test("paid checkout navigates on deployment acceptance without LRO convergence", async ({
+test("paid checkout waits for deployment membership before navigation without LRO convergence", async ({
 	page,
 }) => {
+	let releaseDetail = () => {};
+	const detailGate = new Promise<void>((resolve) => {
+		releaseDetail = resolve;
+	});
 	const checkoutRequests: string[] = [];
 	const deploymentDetailRequests: string[] = [];
 	const deploymentRequestReads: string[] = [];
@@ -4187,7 +4195,10 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 		],
 		deploymentDetailRequests,
 		deploymentRequestReads,
-		deployments: [includedBasicDeployment, startingDeployment],
+		deployments: [includedBasicDeployment],
+		deploymentDetailResponses: [{ status: 200, body: startingDeployment }],
+		deploymentDetailResponseGates: [detailGate],
+		cloudAgentNotFoundIds: [fixtureAgentId(startingDeployment)],
 		plans: [basicPlan],
 		unfinishedDeploymentRequests: true,
 	});
@@ -4202,9 +4213,13 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 
 	await expect.poll(() => deploymentRequestReads).toHaveLength(1);
 	await expect.poll(() => deploymentDetailRequests).toEqual([startingDeployment.id]);
+	await expect(page).toHaveURL("/deploy");
+	releaseDetail();
 	await expect(page).toHaveURL(`/agents/${fixtureAgentId(startingDeployment)}`);
 	await expect(page.getByText("Setting up Hermes", { exact: true })).toBeVisible();
 	await expect(page.getByText("Preparing cloud resources", { exact: true })).toBeVisible();
+	await expect(page.getByTestId("hosted-initial-deployment-panel")).toBeVisible();
+	await expect(page.getByText("Chat on the web", { exact: true })).toHaveCount(0);
 	expect(operationPollRequests).toEqual([]);
 	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);
 });

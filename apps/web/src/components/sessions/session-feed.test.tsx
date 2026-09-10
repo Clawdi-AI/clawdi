@@ -18,7 +18,7 @@ describe("OverviewSessionList", () => {
 		expect(markup).not.toContain("<a");
 	});
 
-	test("renders a visible accessible empty state without blank session cards", () => {
+	test("renders the standard inset empty state without blank session cards", () => {
 		const markup = renderToStaticMarkup(
 			createElement(OverviewSessionList, {
 				sessions: [],
@@ -30,7 +30,8 @@ describe("OverviewSessionList", () => {
 
 		expect(markup).not.toContain("overview-session-placeholder");
 		expect(markup).not.toContain("aria-hidden");
-		expect(markup).toContain('role="status"');
+		expect(markup).toContain('data-slot="empty"');
+		expect(markup).toContain("bg-muted/30");
 		expect(markup).toContain("No recent sessions");
 		expect(markup).not.toContain("sr-only");
 		expect(markup).not.toContain("<article");
