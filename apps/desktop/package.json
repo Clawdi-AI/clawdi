@@ -52,6 +52,7 @@
 			"package.json"
 		],
 		"extraMetadata": {
+			"clawdiDashboardSource": "remote",
 			"clawdiUpdateChannel": "disabled"
 		},
 		"linux": {

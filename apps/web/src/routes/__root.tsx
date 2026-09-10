@@ -70,7 +70,7 @@ function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
 				<script
 					dangerouslySetInnerHTML={{
 						__html:
-							'try{var t=localStorage.getItem("clawdi-theme")||"system";var d=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle("dark",d)}catch(e){}',
+							'if(window.clawdiDesktop){document.documentElement.dataset.clawdiDesktop="true"}try{var t=localStorage.getItem("clawdi-theme")||"system";var d=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle("dark",d)}catch(e){}',
 					}}
 				/>
 				<HeadContent />

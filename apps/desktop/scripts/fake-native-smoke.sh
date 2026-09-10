@@ -10,7 +10,7 @@ case "$1 ${2:-}" in
 		printf '0.0.0-smoke\tdarwin-arm64\n'
 		;;
 	"auth status")
-		if [ "${CLAWDI_DESKTOP_SMOKE_SURFACE:-install}" = "dashboard" ]; then
+		if [ "${CLAWDI_DESKTOP_SMOKE_SURFACE:-install}" = "dashboard" ] || [ "${CLAWDI_DESKTOP_SMOKE_SURFACE:-install}" = "remote" ]; then
 			printf '%s\n' '{"authenticated":true,"credentialType":"clerk-oauth","user":{"id":"smoke-user","email":"smoke@clawdi.ai"}}'
 		else
 			printf '%s\n' '{"authenticated":false,"source":"none"}'

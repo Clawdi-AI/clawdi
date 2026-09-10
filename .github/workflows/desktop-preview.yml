@@ -45,6 +45,7 @@ jobs:
             --arm64 \
             --publish never \
             --config.mac.identity=- \
+            --config.extraMetadata.clawdiDashboardSource=bundled \
             --config.mac.hardenedRuntime=false
           cd apps/desktop/release
           dmg=(Clawdi-*.dmg)
@@ -124,9 +125,8 @@ jobs:
             --publish never \
             --config.directories.output="$smoke_output" \
             --config.mac.identity=- \
+            --config.extraMetadata.clawdiDashboardSource=bundled \
             --config.mac.hardenedRuntime=false
-          cp "$production_cli" "$native_cli"
-          trap - EXIT
           dashboard_app="$runtime_home/Applications/Clawdi.app"
           mkdir -p "$(dirname "$dashboard_app")"
           ditto "$smoke_output/mac-arm64/Clawdi.app" "$dashboard_app"
@@ -135,6 +135,18 @@ jobs:
             "$dashboard_app/Contents/MacOS/Clawdi" \
             "$runtime_home/dashboard-smoke" \
             dashboard
+          CSC_FOR_PULL_REQUEST=true node apps/desktop/node_modules/electron-builder/cli.js \
+            --projectDir apps/desktop --mac dir --arm64 --publish never \
+            --config.directories.output="$RUNNER_TEMP/clawdi-remote-smoke" \
+            --config.mac.identity=- --config.mac.hardenedRuntime=false \
+            --config.extraMetadata.clawdiDashboardSource=remote
+          cp "$production_cli" "$native_cli"
+          trap - EXIT
+          remote_app="$runtime_home/remote/Applications/Clawdi.app"
+          mkdir -p "$(dirname "$remote_app")"
+          ditto "$RUNNER_TEMP/clawdi-remote-smoke/mac-arm64/Clawdi.app" "$remote_app"
+          node apps/desktop/scripts/smoke-packaged.mjs \
+            "$remote_app/Contents/MacOS/Clawdi" "$runtime_home/remote-smoke" remote
           cd "$(dirname "$dmg_path")"
           shasum -a 256 "${dmg[0]}" > "${dmg[0]}.sha256"
 
