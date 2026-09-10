@@ -146,14 +146,22 @@ boundary and hands them to a fixed Cloud destination. Marketing attribution
 expires after seven days; navigation and handoff do not renew it.
 
 Cloud keeps anonymous intent in the deployment URL and Clerk's `redirect_url`
-through sign-in/sign-up. After authentication, a component consumes the known URL
-parameters and saves `deploy_channel` through a TanStack Query mutation. Account
-settings are the only durable Cloud attribution. The existing auth boundary
-isolates each session's query cache; component cleanup aborts pending saves on
-account changes. Failed saves are retryable while that account component remains
-mounted. Saves cancel stale settings reads and update the cache on success.
-Unknown values never trigger a write. Unrelated anonymous Cloud navigation and
-reloads during failed saves do not retain intent; marketing retains its cookie.
+through sign-in/sign-up. After authentication, a component saves `deploy_channel`
+through a TanStack Query mutation and clears the URL only after the server confirms
+the committed write. Failed saves can retry or recover by reloading the original
+URL. Account settings are the only durable Cloud attribution. A single
+`sessionStorage` owner binds the pending intent to its first authenticated user
+until success; another account cannot claim it, but can deploy normally. Returning
+to the original URL as the owner resumes the save. The existing auth boundary
+isolates each session's query cache; layout cleanup aborts pending saves on account
+changes, including requests waiting for a token. Saves cancel stale settings reads
+and update the cache on success. Unknown values never trigger a write.
+
+Unavailable tab storage blocks automatic attribution with an explicit recovery
+message and a link to ordinary deployment. There is no fallback storage. Navigating
+away from the original URL before success and then reloading does not retain the
+intent; deleting browser data also removes the owner protection. Marketing retains
+its cookie until expiry, but cannot retain attribution when cookies are disabled.
 
 The deployment form reads only account settings, defaults the recommendation on,
 and includes the checkbox choice in the existing request identity. Unchecking

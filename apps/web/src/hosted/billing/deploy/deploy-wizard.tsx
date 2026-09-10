@@ -1188,8 +1188,21 @@ export function DeployWizard() {
 
 				{channelBundle.isError ? (
 					<Alert variant="destructive">
-						<AlertTitle>Couldn’t load deployment preferences</AlertTitle>
+						<AlertTitle>
+							{channelBundle.storageError
+								? "Browser storage is unavailable"
+								: "Couldn’t load deployment preferences"}
+						</AlertTitle>
 						<AlertDescription>
+							{channelBundle.storageError ? (
+								<p>
+									Open this link in a window with browser storage enabled and retry, or{" "}
+									<a href="/deploy" className="underline">
+										Continue without the Sui recommendation
+									</a>
+									.
+								</p>
+							) : null}
 							<Button variant="outline" onClick={() => void channelBundle.refetch()}>
 								Retry
 							</Button>
