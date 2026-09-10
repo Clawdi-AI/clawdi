@@ -145,6 +145,7 @@ for (const scenario of [
 	{ search: "?deploy_profile=sui", sidebar: true, signedIn: true, recommended: true },
 	{ search: "?deploy_profile=sui", sidebar: false, signedIn: false, recommended: true },
 	{ search: "", sidebar: false, signedIn: true, recommended: false },
+	{ search: "?utm_source=sui", sidebar: true, signedIn: true, recommended: true },
 	{
 		search: "?deploy_profile=unknown&utm_source=sui",
 		sidebar: true,
@@ -168,6 +169,12 @@ for (const scenario of [
 			await page.getByRole("button", { name: "Complete simulated auth return" }).click();
 		}
 		await expect(page).toHaveURL(`${cloud}/${scenario.search}`);
+		// Intermediate navigation and reload must retain the URL intent without per-link wiring.
+		await page.getByRole("link", { name: "Agents", exact: true }).click();
+		await expect(page).toHaveURL(`${cloud}/agents${scenario.search}`);
+		await page.reload();
+		await page.getByRole("link", { name: "Overview", exact: true }).click();
+		await expect(page).toHaveURL(`${cloud}/${scenario.search}`);
 		if (scenario.sidebar) {
 			await page.getByRole("button", { name: "New Agent", exact: true }).first().click();
 			await page
@@ -176,19 +183,18 @@ for (const scenario of [
 				.click();
 		} else {
 			const link = page.getByRole("button", { name: "Deploy on Clawdi", exact: true });
-			await expect(link).toHaveAttribute(
-				"href",
-				scenario.recommended ? "/deploy?deploy_profile=sui" : "/deploy",
-			);
+			await expect(link).toHaveAttribute("href", `/deploy${scenario.search}`);
 			await link.click();
 		}
-		await expect(page).toHaveURL(
-			`${cloud}/deploy${scenario.recommended ? "?deploy_profile=sui" : ""}`,
-		);
+		await expect(page).toHaveURL(`${cloud}/deploy${scenario.search}`);
 		await expectDeploymentEnabled(page);
 		const bundle = page.getByRole("button", { name: /Sui bundle/ });
 		if (scenario.recommended) await expect(bundle).toHaveAttribute("aria-pressed", "true");
 		else await expect(bundle).toHaveCount(0);
+		// A fresh URL without the parameters clears the intent; there is no hidden persistence.
+		await page.goto(`${cloud}/deploy`);
+		await expectDeploymentEnabled(page);
+		await expect(page.getByRole("button", { name: /Sui bundle/ })).toHaveCount(0);
 		await context.close();
 	});
 }
