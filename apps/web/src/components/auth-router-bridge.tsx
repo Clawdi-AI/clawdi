@@ -1,21 +1,12 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { RouterContextProvider, useRouter } from "@tanstack/react-router";
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { clearAccountSuspension } from "@/lib/account-suspension";
 import { useRouteAuth } from "@/lib/auth-client";
 import { createAppQueryClient } from "@/lib/query-client";
 import { routeAuthIdentity } from "@/lib/route-auth";
 
 const isProtectedMatch = (match: { routeId: string }) => match.routeId.startsWith("/_protected");
-
-const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
-const HostedChannelBundleBoundary = IS_HOSTED_BUILD
-	? lazy(() =>
-			import("@/hosted/billing/deploy/channel-bundle").then((module) => ({
-				default: module.ChannelBundleBoundary,
-			})),
-		)
-	: null;
 
 export function AuthRouterBridge({ children }: { children: React.ReactNode }) {
 	const router = useRouter();
@@ -49,15 +40,7 @@ export function AuthRouterBridge({ children }: { children: React.ReactNode }) {
 
 	return (
 		<RouterContextProvider router={router} context={{ auth }}>
-			<QueryClientProvider client={scope.queryClient}>
-				{HostedChannelBundleBoundary ? (
-					<Suspense fallback={null}>
-						<HostedChannelBundleBoundary>{children}</HostedChannelBundleBoundary>
-					</Suspense>
-				) : (
-					children
-				)}
-			</QueryClientProvider>
+			<QueryClientProvider client={scope.queryClient}>{children}</QueryClientProvider>
 		</RouterContextProvider>
 	);
 }

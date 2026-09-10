@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-	clearDeployChannelUrl,
-	deployChannelAuthSearch,
-	resolveDeployChannel,
-} from "./deploy-channel";
+import { deployChannelAuthSearch, resolveDeployChannel } from "./deploy-channel";
 
 describe("deployment channel links", () => {
 	test("accepts direct and authentication return links", () => {
@@ -25,10 +21,7 @@ describe("deployment channel links", () => {
 	});
 });
 
-test("consumes only known channel parameters and normalizes direct auth entries", () => {
-	expect(clearDeployChannelUrl("/deploy?deploy_profile=sui&view=all#details")).toBe(
-		"/deploy?view=all#details",
-	);
+test("normalizes direct auth entries", () => {
 	expect(resolveDeployChannel("?deploy_profile=sui&deploy_profile=sui")).toBeNull();
 	expect(deployChannelAuthSearch("?deploy_profile=sui")).toBe(
 		"?redirect_url=%2Fdeploy%3Fdeploy_profile%3Dsui",

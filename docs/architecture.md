@@ -145,33 +145,19 @@ Sui bundle. First-party marketing captures only known values at its server
 boundary and hands them to a fixed Cloud destination. Marketing attribution
 expires after seven days; navigation and handoff do not renew it.
 
-Cloud keeps anonymous intent in the deployment URL and Clerk's `redirect_url`
-through sign-in/sign-up. After authentication, a component saves `deploy_channel`
-through a TanStack Query mutation and clears the URL only after the server confirms
-the committed write. Failed saves can retry or recover by reloading the original
-URL. Account settings are the only durable Cloud attribution. A single
-`sessionStorage` owner binds the pending intent to its first authenticated user
-until success; another account cannot claim it, but can deploy normally. Returning
-to the original URL as the owner resumes the save. The existing auth boundary
-isolates each session's query cache; layout cleanup aborts pending saves on account
-changes, including requests waiting for a token. Saves cancel stale settings reads
-and update the cache on success. Unknown values never trigger a write.
-
-Unavailable tab storage blocks automatic attribution with an explicit recovery
-message and a link to ordinary deployment. There is no fallback storage. Navigating
-away from the original URL before success and then reloading does not retain the
-intent; deleting browser data also removes the owner protection. Marketing retains
-its cookie until expiry, but cannot retain attribution when cookies are disabled.
-
-The deployment form reads only account settings, defaults the recommendation on,
-and includes the checkbox choice in the existing request identity. Unchecking
-applies only to this deployment; it does not erase account attribution. A channel
-is a recommendation, never a billing entitlement or external-service authorization.
+Cloud keeps the recommendation in the current URL through Clerk's `redirect_url`
+across sign-in/sign-up. The deployment form resolves only the known URL value and
+shows a checked, optional Sui bundle checkbox. Its choice participates in the
+existing dirty state and request fingerprint. Only this deployment submits
+`plugin_bundle: "sui"`; unchecking omits the field. Cloud does not save channel
+attribution to an account or database, or consume the URL. Anyone using the same
+link can choose the recommendation. Visiting Cloud without the parameter is an
+ordinary deployment; future visits without it and cross-device continuity are
+not guaranteed. A recommendation grants no billing or external-service authority.
 
 Both platform and admin runtime-state writes accept only the known bundle
-identifier. Cloud requires the owner's matching saved channel and selects whole
-plugins whose trusted catalog keywords contain exactly `sui`. Latest versions
-are selected from one catalog snapshot. Existing desired installations remain
+identifier. Cloud selects whole plugins whose trusted catalog keywords contain
+exactly `sui`. Latest versions are selected from one catalog snapshot. Existing desired installations remain
 unchanged. The stable Agent's `plugin_bundle_revision` and all new installation
 rows commit together, with normal manifest invalidation. A failed batch rolls
 back completely; successful initialization never repeats, including after
@@ -195,8 +181,8 @@ warnings remain, without differing skill contents. This evidence does not verify
 third-party MCP authorization, real OAuth, or payment completion.
 
 Done: the Docker backend suites for platform endpoints and plugin catalog
-routes pass; the Docker web checks and `e2e/hosted-channel-bundle.pw.ts` verify
-capture, optional selection, and persistence in the actual deployment surface.
+routes pass; the Docker web checks and paired `e2e/handoff/handoff.pw.ts` verify
+URL selection and optional submission in the actual deployment surface.
 
 ## CLI And Adapters
 

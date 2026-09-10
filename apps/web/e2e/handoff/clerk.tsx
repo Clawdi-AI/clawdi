@@ -1,5 +1,5 @@
 import { useRouterState } from "@tanstack/react-router";
-import { type ReactNode, useEffect, useLayoutEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 // SDK boundary fixture only. Product routes, auth bridge, and deployment UI are real.
 function identity() {
@@ -7,30 +7,14 @@ function identity() {
 		? null
 		: (document.cookie.match(/(?:^|; )test-user=([^;]+)/)?.[1] ?? null);
 }
-const getToken = async () => {
-	if (document.documentElement.dataset.delayToken === "true") {
-		document.documentElement.dataset.tokenWaiting = "true";
-		await new Promise<void>((resolve) =>
-			window.addEventListener("test-token-release", () => resolve(), { once: true }),
-		);
-		document.documentElement.dataset.returnedToken = identity() ?? "";
-	}
-	// Exercise the worst case: an old hook callback returning the new current session's token.
-	return identity();
-};
+const getToken = async () => identity();
 
 export function useAuth() {
 	const [userId, setUserId] = useState<string | null>(null);
 	const [isLoaded, setLoaded] = useState(false);
-	useLayoutEffect(() => {
-		document.documentElement.dataset.committedUser = userId ?? "";
-	}, [userId]);
 	useEffect(() => {
-		const update = () => setUserId(identity());
-		update();
+		setUserId(identity());
 		setLoaded(true);
-		window.addEventListener("test-session-change", update);
-		return () => window.removeEventListener("test-session-change", update);
 	}, []);
 	return {
 		isLoaded,
@@ -68,6 +52,7 @@ export function ClerkProvider({ children }: { children: ReactNode }) {
 	return children;
 }
 function AuthForm({ signup }: { signup: boolean }) {
+	const { isLoaded } = useAuth();
 	const search = useRouterState({ select: (state) => state.location.searchStr });
 	return (
 		<main>
@@ -77,6 +62,7 @@ function AuthForm({ signup }: { signup: boolean }) {
 			</a>
 			<button
 				type="button"
+				disabled={!isLoaded}
 				onClick={() => {
 					document.cookie = "test-user=account-a; Path=/; SameSite=Lax";
 					const target = new URLSearchParams(search).get("redirect_url") ?? "/";

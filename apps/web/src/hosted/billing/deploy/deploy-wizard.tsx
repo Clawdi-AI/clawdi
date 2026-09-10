@@ -2,7 +2,7 @@
 
 import { validateHostedDeployPersona } from "@clawdi/shared/api";
 import { useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "@tanstack/react-router";
+import { useRouter, useRouterState } from "@tanstack/react-router";
 import {
 	Cpu,
 	CreditCard,
@@ -183,10 +183,10 @@ import {
 } from "@/hosted/v2/ai-providers/model-binding";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
+import { resolveDeployChannel } from "@/lib/deploy-channel";
 import { env } from "@/lib/env";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
-import { useChannelBundle } from "./channel-bundle";
 
 type Compute = "basic" | "performance";
 type DeployPaymentMethod = "card" | "wallet";
@@ -296,7 +296,8 @@ function ComputeResources({
 }
 
 export function DeployWizard() {
-	const channelBundle = useChannelBundle();
+	const search = useRouterState({ select: (state) => state.location.searchStr });
+	const channel = resolveDeployChannel(search);
 	const [preinstallBundle, setPreinstallBundle] = useState(true);
 	const router = useRouter();
 	const queryClient = useQueryClient();
@@ -669,11 +670,7 @@ export function DeployWizard() {
 		return null;
 	})();
 	const canSubmit =
-		!submitting &&
-		!channelBundle.isPending &&
-		!channelBundle.isError &&
-		acceptedDeploymentRecovery === null &&
-		submitBlockingReason === null;
+		!submitting && acceptedDeploymentRecovery === null && submitBlockingReason === null;
 
 	function selectCreatedProvider(providerId: string) {
 		selectCreatedAiProvider(providerId);
@@ -787,7 +784,7 @@ export function DeployWizard() {
 				},
 				aiFields,
 			}),
-			...(channelBundle.data && preinstallBundle ? { plugin_bundle: "sui" as const } : {}),
+			...(channel && preinstallBundle ? { plugin_bundle: "sui" as const } : {}),
 		};
 	}
 
@@ -1139,7 +1136,7 @@ export function DeployWizard() {
 			subscriptionSource,
 			aiBindingDraft,
 			checkoutOpen: checkoutSession !== null,
-			preinstallBundle: channelBundle.data ? preinstallBundle : true,
+			preinstallBundle: channel ? preinstallBundle : true,
 		},
 		deployBaseline,
 		deploymentCommitted,
@@ -1186,30 +1183,7 @@ export function DeployWizard() {
 					</div>
 				</SettingsSection>
 
-				{channelBundle.isError ? (
-					<Alert variant="destructive">
-						<AlertTitle>
-							{channelBundle.storageError
-								? "Browser storage is unavailable"
-								: "Couldn’t load deployment preferences"}
-						</AlertTitle>
-						<AlertDescription>
-							{channelBundle.storageError ? (
-								<p>
-									Open this link in a window with browser storage enabled and retry, or{" "}
-									<a href="/deploy" className="underline">
-										Continue without the Sui recommendation
-									</a>
-									.
-								</p>
-							) : null}
-							<Button variant="outline" onClick={() => void channelBundle.refetch()}>
-								Retry
-							</Button>
-						</AlertDescription>
-					</Alert>
-				) : null}
-				{channelBundle.data ? (
+				{channel ? (
 					<SettingsSection title="Preinstalled plugins">
 						<label htmlFor="sui-plugin-bundle" className="flex items-start gap-3">
 							<Checkbox

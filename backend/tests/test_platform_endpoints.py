@@ -1634,7 +1634,7 @@ async def test_platform_routes_are_canonical_and_exposed_in_openapi(platform_cli
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", [None, "no_channel", "incompatible"])
+@pytest.mark.parametrize("failure", [None, "incompatible"])
 async def test_platform_channel_bundle_initialization_is_atomic(
     platform_client,
     db_session,
@@ -1642,7 +1642,6 @@ async def test_platform_channel_bundle_initialization_is_atomic(
     failure,
 ):
     from app.models.agent_plugin import AgentPluginInstallation, PluginCatalogEntry
-    from app.models.user import UserSetting
     from tests.test_agent_plugin_catalog_routes import _activate_catalog
 
     owner = _clerk_owner(seed_user)
@@ -1665,8 +1664,6 @@ async def test_platform_channel_bundle_initialization_is_atomic(
             compatible_runtimes=["hermes"] if failure == "incompatible" else ["openclaw", "hermes"],
         )
     )
-    if failure != "no_channel":
-        db_session.add(UserSetting(user_id=seed_user.id, settings={"deploy_channel": "sui"}))
     await db_session.commit()
     await ensure_canonical_codex_tool_provider(db_session, seed_user)
     body = {

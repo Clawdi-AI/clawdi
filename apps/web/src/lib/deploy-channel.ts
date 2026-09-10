@@ -26,21 +26,6 @@ export function resolveDeployChannel(search: string): "sui" | null {
 	return values.length === 1 && values[0] === "sui" ? "sui" : null;
 }
 
-export function clearDeployChannelUrl(href: string): string {
-	const url = new URL(href, BASE_ORIGIN);
-	const clear = (params: URLSearchParams) => {
-		if (params.get("deploy_profile") === "sui") params.delete("deploy_profile");
-		if (params.get("utm_source") === "sui") params.delete("utm_source");
-	};
-	clear(url.searchParams);
-	const nested = returnUrl(url.searchParams);
-	if (nested) {
-		clear(nested.searchParams);
-		url.searchParams.set("redirect_url", `${nested.pathname}${nested.search}${nested.hash}`);
-	}
-	return `${url.pathname}${url.search}${url.hash}`;
-}
-
 // Normalize direct auth entry links to Clerk's native return URL contract.
 export function deployChannelAuthSearch(search: string): string | null {
 	const params = new URLSearchParams(search);
