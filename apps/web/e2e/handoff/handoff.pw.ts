@@ -139,3 +139,56 @@ test("unknown, duplicate and absent sources hide the recommendation", async ({ b
 	expect(settingsWrites).toBe(0);
 	await context.close();
 });
+
+for (const scenario of [
+	{ search: "?deploy_profile=sui", sidebar: false, signedIn: true, recommended: true },
+	{ search: "?deploy_profile=sui", sidebar: true, signedIn: true, recommended: true },
+	{ search: "?deploy_profile=sui", sidebar: false, signedIn: false, recommended: true },
+	{ search: "", sidebar: false, signedIn: true, recommended: false },
+	{
+		search: "?deploy_profile=unknown&utm_source=sui",
+		sidebar: true,
+		signedIn: true,
+		recommended: false,
+	},
+]) {
+	test(`Cloud home ${scenario.search || "plain"} → ${scenario.sidebar ? "sidebar" : "overview"} deploy (${scenario.signedIn ? "signed in" : "login"})`, async ({
+		browser,
+	}) => {
+		const context = await browser.newContext();
+		await isolateNetwork(context);
+		if (scenario.signedIn)
+			await context.addCookies([{ name: "test-user", value: "account-a", url: cloud }]);
+		const page = await context.newPage();
+		await stubHostedApi(page, { plans: [basicPlan] });
+		await page.goto(`${cloud}/${scenario.search}`);
+		if (!scenario.signedIn) {
+			await page.waitForURL(`${cloud}/sign-in?**`);
+			expect(new URL(page.url()).searchParams.get("redirect_url")).toBe(`/${scenario.search}`);
+			await page.getByRole("button", { name: "Complete simulated auth return" }).click();
+		}
+		await expect(page).toHaveURL(`${cloud}/${scenario.search}`);
+		if (scenario.sidebar) {
+			await page.getByRole("button", { name: "New Agent", exact: true }).first().click();
+			await page
+				.getByRole("dialog")
+				.getByRole("button", { name: /Deploy on Clawdi/ })
+				.click();
+		} else {
+			const link = page.getByRole("button", { name: "Deploy on Clawdi", exact: true });
+			await expect(link).toHaveAttribute(
+				"href",
+				scenario.recommended ? "/deploy?deploy_profile=sui" : "/deploy",
+			);
+			await link.click();
+		}
+		await expect(page).toHaveURL(
+			`${cloud}/deploy${scenario.recommended ? "?deploy_profile=sui" : ""}`,
+		);
+		await expectDeploymentEnabled(page);
+		const bundle = page.getByRole("button", { name: /Sui bundle/ });
+		if (scenario.recommended) await expect(bundle).toHaveAttribute("aria-pressed", "true");
+		else await expect(bundle).toHaveCount(0);
+		await context.close();
+	});
+}

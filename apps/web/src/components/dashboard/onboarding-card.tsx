@@ -1,11 +1,12 @@
 "use client";
 
-import { Link } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 import { Rocket, TerminalSquare } from "lucide-react";
 import { useState } from "react";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { deployChannelSearch } from "@/lib/deploy-channel";
 
 type OnboardingCardProps = {
 	variant?: "first-agent" | "additional-agent";
@@ -23,6 +24,7 @@ export function OnboardingCard({
 	variant = "first-agent",
 	canDeployOnClawdi = false,
 }: OnboardingCardProps) {
+	const search = useRouterState({ select: (state) => state.location.searchStr });
 	const [connectOpen, setConnectOpen] = useState(false);
 	const isAdditionalAgent = variant === "additional-agent";
 	const title = isAdditionalAgent
@@ -56,7 +58,7 @@ export function OnboardingCard({
 					>
 						{canDeployOnClawdi ? (
 							<Button
-								render={<Link to="/deploy" />}
+								render={<Link to="/deploy" search={deployChannelSearch(search)} />}
 								nativeButton={false}
 								size="lg"
 								className="w-full"
