@@ -2,9 +2,10 @@ import { auth } from "@clerk/tanstack-react-start/server";
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { setResponseHeader } from "@tanstack/react-start/server";
-import { ProtectedAuthBoundary, ProtectedRouteError } from "@/components/protected-auth-boundary";
+import { ProtectedAuthBoundary } from "@/components/protected-auth-boundary";
+import RootError from "@/components/root-error";
 import { env } from "@/lib/env";
-import { type RouteAuth, requireRouteIdentity } from "@/lib/route-auth";
+import { requireRouteIdentity } from "@/lib/route-auth";
 
 const getAuthState = createServerFn({ method: "GET" }).handler(async () => {
 	setResponseHeader("cache-control", "no-store");
@@ -17,12 +18,9 @@ const getAuthState = createServerFn({ method: "GET" }).handler(async () => {
 
 export const Route = createFileRoute("/_protected")({
 	beforeLoad: async ({ location }) => {
-		const { userId, sessionId } = await getAuthState();
-		const serverAuth: RouteAuth =
-			userId && sessionId ? { status: "signed-in", userId, sessionId } : { status: "signed-out" };
-		return { authIdentity: requireRouteIdentity(serverAuth, location.href) };
+		return { authIdentity: requireRouteIdentity(await getAuthState(), location.href) };
 	},
-	errorComponent: ProtectedRouteError,
+	errorComponent: RootError,
 	component: ProtectedLayout,
 });
 

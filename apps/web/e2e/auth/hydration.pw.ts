@@ -26,6 +26,7 @@ for (const signedOut of [false, true]) {
 			expect(await page.evaluate(() => window.hydrationTest.errors)).toEqual([]);
 			expect(await header.evaluate((node) => node === document.querySelector("header"))).toBe(true);
 			expect(requests).toEqual([]);
+			expect(await page.evaluate(() => window.hydrationTest.admissions)).toBe(0);
 			await page.evaluate(
 				(signedOut) =>
 					window.hydrationTest.emitSdk({
@@ -46,6 +47,7 @@ for (const signedOut of [false, true]) {
 				await expect.poll(() => requests.length).toBeGreaterThan(0);
 				expect(requests.every((token) => token === "Bearer user-a:session-a")).toBe(true);
 			}
+			expect(await page.evaluate(() => window.hydrationTest.admissions)).toBe(signedOut ? 1 : 0);
 		} finally {
 			entry.resolve();
 		}

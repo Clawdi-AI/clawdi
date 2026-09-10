@@ -84,7 +84,10 @@ resets account-owned layout state.
 
 `AuthRouterBridge` scopes QueryClient and account-suspension observations to the
 live user/session, retires protected preloads, and revalidates server admission
-on settled identity changes. It does not invalidate routes while Clerk is in its
+on settled identity changes. The initial baseline is the Router's restored
+`beforeLoad` identity: matching server admission needs no extra invalidation,
+while a different first browser identity or sign-out still revalidates. It does
+not invalidate routes while Clerk is in its
 transitive unloaded state. Token getters bind to the native SessionResource and
 reject absent tokens or a changed active session instead of sending anonymous
 requests or acquiring another session's credentials. Late suspension responses
@@ -92,6 +95,18 @@ and query/mutation cache callbacks retain their originating account scope.
 API, Files grants, runtime, and stream authorization remain server boundaries.
 An account-admission 401 offers explicit reauthentication; other failures remain
 recoverable without signing the user out.
+
+These boundaries follow Clerk's [server/client auth guidance](https://clerk.com/docs/tanstack-react-start/guides/users/reading),
+[native session readiness](https://clerk.com/docs/tanstack-react-start/reference/hooks/use-session.md),
+and [nullable session tokens](https://clerk.com/docs/tanstack-react-start/reference/objects/session.md).
+TanStack's [route guards](https://raw.githubusercontent.com/TanStack/router/main/docs/router/guide/authenticated-routes.md)
+control navigation, not API authorization. Account-scoped caches and private-region
+[React keys](https://react.dev/learn/preserving-and-resetting-state) isolate business
+data and drafts; they do not manage Clerk activation. The scope's conditional
+[render-time state update](https://react.dev/reference/react/useState#storing-information-from-previous-renders)
+prevents children from committing against the previous account's cache.
+The admission query keeps [Query's `Infinity` stale time](https://raw.githubusercontent.com/TanStack/query/main/docs/framework/react/guides/important-defaults.md)
+and disables focus retries after failures; API authorization remains per request.
 
 Inside an isolated Docker browser-test environment with dependencies and
 Chromium installed, run the SDK-event contract suite:

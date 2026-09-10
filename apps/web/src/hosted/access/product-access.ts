@@ -23,7 +23,7 @@ export const hostedProductAccessKeys = {
 };
 
 async function fetchHostedProductAccessProfile(
-	getToken: () => Promise<string | null>,
+	getToken: () => Promise<string>,
 ): Promise<HostedProductAccessProfile> {
 	const token = await getToken();
 	const api = createClient<DeployPaths>({
@@ -31,7 +31,7 @@ async function fetchHostedProductAccessProfile(
 		fetch: fetchHostedProductAccessWithTimeout,
 	});
 	const result = await api.GET("/v1/me", {
-		headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+		headers: { Authorization: `Bearer ${token}` },
 	});
 	if (!result.response.ok) {
 		throw new ApiError(

@@ -387,6 +387,10 @@ function parseSessionFile(filePath: string, absFilter: string | null): RawSessio
 		rawEntries.push({ raw, recordSeq, model: lastModel });
 	}
 	if (!sessionId) return null;
+	if (absFilter) {
+		if (typeof projectPath !== "string") return null;
+		if (projectPath !== absFilter && !projectPath.startsWith(`${absFilter}/`)) return null;
+	}
 	const events = sequenceSessionEvents(
 		rawEntries.flatMap(({ raw, recordSeq, model }) =>
 			codexEventDrafts(raw, sessionId as string, recordSeq).map((draft) =>
@@ -397,10 +401,6 @@ function parseSessionFile(filePath: string, absFilter: string | null): RawSessio
 	const messages = projectEventsToMessages(events);
 
 	if (messages.length === 0 || !startedAt) return null;
-	if (absFilter) {
-		if (!projectPath) return null;
-		if (projectPath !== absFilter && !projectPath.startsWith(`${absFilter}/`)) return null;
-	}
 
 	endedAt ??= startedAt;
 	const firstRealUser = messages.find(

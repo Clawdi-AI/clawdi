@@ -76,7 +76,7 @@ export { isDeployApiConfigured };
 
 type DeployResult<T> = { data?: T; error?: unknown; response: Response };
 type BillingFetch = (request: Request) => Promise<Response>;
-type BillingAuthTokenGetter = () => Promise<string | null | undefined>;
+type BillingAuthTokenGetter = () => Promise<string>;
 
 export type AcceptedOperation = { deploymentId: string; operation: DeploymentOperation };
 export type DeploymentDeleteResult = AcceptedOperation | { deploymentId: string; operation: null };
@@ -524,7 +524,7 @@ export function createBillingClient(
 	api.use({
 		async onRequest({ request }) {
 			const token = await getToken();
-			if (token) request.headers.set("Authorization", `Bearer ${token}`);
+			request.headers.set("Authorization", `Bearer ${token}`);
 			return request;
 		},
 	});
@@ -566,7 +566,7 @@ export function createBillingClient(
 			Accept: "text/event-stream",
 			"Last-Event-ID": cursor,
 		});
-		if (token) headers.set("Authorization", `Bearer ${token}`);
+		headers.set("Authorization", `Bearer ${token}`);
 		const path = deploymentId
 			? `/v2/deployments/${encodeURIComponent(deploymentId)}/events`
 			: "/v2/events";

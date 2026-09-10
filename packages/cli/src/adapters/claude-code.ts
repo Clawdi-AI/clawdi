@@ -529,8 +529,8 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
  * via Claude Code's file-history-snapshot replay). We drop the predecessor
  * from the upload set and keep the longest leaf.
  *
- * Multi-link chains (A ⊂ B ⊂ C) collapse in a single pass by always linking
- * each predecessor to the LARGEST proper superset in its project group.
+ * Multi-link chains (A ⊂ B ⊂ C) collapse in a single pass: each predecessor
+ * is dropped as soon as any proper superset is found in its project group.
  *
  * Sessions with fewer than 10 uuids are excluded from the predecessor side
  * of the comparison — too short to reliably tell "real subset" from
@@ -563,9 +563,6 @@ function dedupeResumeChains(
 			const a = candidates[i];
 			const aSet = uuids.get(a);
 			if (!aSet) continue;
-			// Find the LARGEST b that strictly contains a — handles A⊂B⊂C
-			// by deduping both A and B into C in a single pass.
-			let bestJ = -1;
 			for (let j = i + 1; j < candidates.length; j++) {
 				const b = candidates[j];
 				const bSet = uuids.get(b);
@@ -577,9 +574,11 @@ function dedupeResumeChains(
 						break;
 					}
 				}
-				if (isSubset) bestJ = j;
+				if (isSubset) {
+					dedupedIds.add(a.localSessionId);
+					break;
+				}
 			}
-			if (bestJ >= 0) dedupedIds.add(a.localSessionId);
 		}
 	}
 

@@ -147,7 +147,7 @@ expires after seven days; navigation and handoff do not renew it.
 
 Cloud keeps the recommendation in the current URL through Clerk's `redirect_url`
 across sign-in/sign-up. The deployment form resolves only the known URL value and
-shows a checked, optional Sui bundle checkbox. Its choice participates in the
+shows a selected, optional Sui bundle card. Its choice participates in the
 existing dirty state and request fingerprint. Only this deployment submits
 `plugin_bundle: "sui"`; unchecking omits the field. Cloud does not save channel
 attribution to an account or database, or consume the URL. Anyone using the same
