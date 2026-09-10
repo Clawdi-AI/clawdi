@@ -1,4 +1,36 @@
-import { useSyncExternalStore } from "react";
+import type { ClerkProvider as NativeClerkProvider } from "@clerk/tanstack-react-start";
+import { useRouter } from "@tanstack/react-router";
+import { type ComponentProps, useSyncExternalStore } from "react";
+
+let navigate: ((to: string) => Promise<void>) | undefined;
+export function ClerkProvider(props: ComponentProps<typeof NativeClerkProvider>) {
+	const router = useRouter();
+	navigate = async (to) => {
+		if (props.routerPush) await props.routerPush(to);
+		else await router.navigate({ href: to });
+	};
+	return props.children;
+}
+
+// setActive updates the cookie before its transitive resource emission and
+// awaits framework navigation before publishing the newly active session.
+let serverState = { userId: "user-a", sessionId: "session-a" };
+export function serverAuth() {
+	return serverState;
+}
+let activation: ReturnType<typeof Promise.withResolvers<void>> | undefined;
+export function releaseActivation() {
+	activation?.resolve();
+}
+export async function activateSession(to: string) {
+	activation = Promise.withResolvers<void>();
+	serverState = { userId: "user-a", sessionId: "session-a" };
+	emitSdk({ isLoaded: false });
+	if (!navigate) throw new Error("Missing native navigation");
+	await navigate(to);
+	await activation.promise;
+	emitSdk({ isLoaded: true, ...serverState });
+}
 
 // SDK contract fixture: resource emissions and status events are independent.
 // No credentials or Clerk network requests are used by this browser suite.
@@ -9,6 +41,7 @@ export type SdkState = {
 	sessionId: string | null;
 	pending: boolean;
 	tokenFailure: boolean;
+	nullToken: boolean;
 };
 const initial: SdkState = {
 	status: "ready",
@@ -17,6 +50,7 @@ const initial: SdkState = {
 	sessionId: "session-a",
 	pending: false,
 	tokenFailure: false,
+	nullToken: false,
 };
 let state = initial;
 const resources = new Set<() => void>();
@@ -25,6 +59,11 @@ export let signOutCalls = 0;
 
 export function emitSdk(update: Partial<SdkState>) {
 	state = { ...state, ...update };
+	if (state.isLoaded)
+		serverState = {
+			userId: state.pending ? "" : (state.userId ?? ""),
+			sessionId: state.pending ? "" : (state.sessionId ?? ""),
+		};
 	if (Object.keys(update).some((key) => key !== "status")) {
 		for (const listener of resources) listener();
 	}
@@ -61,7 +100,37 @@ export function useAuth({ treatPendingAsSignedOut = true } = {}) {
 	};
 }
 
+const sessionResources = new Map<
+	string,
+	{ id: string; user: { id: string | null }; getToken: () => Promise<string | null> }
+>();
+export function useSession() {
+	const auth = useAuth();
+	const resourceReady = useSyncExternalStore(
+		subscribe,
+		() => state.status !== "loading" && state.isLoaded,
+		() => false,
+	);
+	const sessionId = resourceReady ? auth.sessionId : null;
+	let session = sessionId ? sessionResources.get(sessionId) : undefined;
+	if (sessionId && !session) {
+		const token = `${auth.userId}:${auth.sessionId}`;
+		session = {
+			id: sessionId,
+			user: { id: auth.userId },
+			getToken: async () => {
+				if (state.tokenFailure) throw new TypeError("Token refresh unavailable");
+				return state.nullToken ? null : token;
+			},
+		};
+		sessionResources.set(sessionId, session);
+	}
+	return { isLoaded: resourceReady, session };
+}
 const clerk = {
+	get session() {
+		return state.isLoaded && state.sessionId ? { id: state.sessionId } : undefined;
+	},
 	get status() {
 		return state.status;
 	},

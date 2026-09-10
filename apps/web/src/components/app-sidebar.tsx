@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useAccountDataIdentity } from "@/components/account-suspension-boundary";
 import { useSetBreadcrumbSegmentTitle } from "@/components/breadcrumb-title";
 import { useCommandPalette } from "@/components/command-palette";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -320,9 +321,11 @@ function SidebarNavSection({
 }
 
 function usePrefetchConnectorsCatalog() {
+	const ready = Boolean(useAccountDataIdentity());
 	const api = useOpenApi();
 	const queryClient = useQueryClient();
 	return useCallback(() => {
+		if (!ready) return;
 		void queryClient.prefetchQuery(
 			availableAppsQueryOptions(api, {
 				page: 1,
@@ -330,7 +333,7 @@ function usePrefetchConnectorsCatalog() {
 			}),
 		);
 		void queryClient.prefetchQuery(connectionsQueryOptions(api));
-	}, [api, queryClient]);
+	}, [api, queryClient, ready]);
 }
 
 function ConsoleNavigationSections({
@@ -1109,7 +1112,7 @@ function FocusRailContent({
 						</SortableContext>
 					</DndContext>
 					{loading ? <AgentRailLoadingSlots /> : null}
-					<NewAgentButton compact showTooltip={showTooltips} onNavigate={onNavigate} />
+					<ReadyNewAgentButton showTooltips={showTooltips} onNavigate={onNavigate} />
 				</SidebarMenu>
 			</SidebarContent>
 		</>
@@ -1614,6 +1617,18 @@ function SidebarGlobalControlsBar({
 	);
 }
 
+function ReadyNewAgentButton({
+	showTooltips,
+	onNavigate,
+}: {
+	showTooltips: boolean;
+	onNavigate?: () => void;
+}) {
+	return useAccountDataIdentity() ? (
+		<NewAgentButton compact showTooltip={showTooltips} onNavigate={onNavigate} />
+	) : null;
+}
+
 export function AppSidebar({
 	className,
 	variant,
@@ -1623,12 +1638,14 @@ export function AppSidebar({
 	const router = useRouter();
 	const pathname = useLocation({ select: (location) => location.pathname });
 	const routeSearch = useSearch({ from: "/_protected/_dashboard" });
-	const { user } = useCurrentUser();
+	const ready = Boolean(useAccountDataIdentity());
+	const { user: currentUser } = useCurrentUser();
+	const user = ready ? currentUser : null;
 	const { setOpen: setPaletteOpen } = useCommandPalette();
 	const { isMobile, setOpenMobile, state: sidebarState } = useSidebar();
 	const $api = useOpenApi();
 	const hostedAccess = useProductAccess();
-	const hydrated = useHydrated();
+	const hydrated = useHydrated() && ready;
 	const [hostedAgentTiles, setHostedAgentTiles] = useState<AgentTile[] | null>(null);
 	const [hostedMembershipResolved, setHostedMembershipResolved] = useState(false);
 	const [hostedInventoryFetching, setHostedInventoryFetching] = useState(false);
@@ -1648,6 +1665,7 @@ export function AppSidebar({
 		"/v1/agents",
 		{},
 		{
+			enabled: ready,
 			refetchInterval: activeAgentId ? 10_000 : false,
 			refetchIntervalInBackground: false,
 		},
@@ -1845,17 +1863,19 @@ export function AppSidebar({
 					collapsed={sidebarState === "collapsed"}
 				/>
 			) : null}
-			<SettingsDialog
-				open={settingsOpen}
-				section={activeSettingsSection}
-				agentTiles={agents}
-				hasExistingCloudAgents={
-					hostedAgentTiles?.some((tile) => tile.source === "on-clawdi") ?? false
-				}
-				cloudInventoryResolved={agentsLoaded}
-				onSectionChange={changeSettingsSection}
-				onOpenChange={setSettingsOpen}
-			/>
+			{ready ? (
+				<SettingsDialog
+					open={settingsOpen}
+					section={activeSettingsSection}
+					agentTiles={agents}
+					hasExistingCloudAgents={
+						hostedAgentTiles?.some((tile) => tile.source === "on-clawdi") ?? false
+					}
+					cloudInventoryResolved={agentsLoaded}
+					onSectionChange={changeSettingsSection}
+					onOpenChange={setSettingsOpen}
+				/>
+			) : null}
 		</>
 	);
 }

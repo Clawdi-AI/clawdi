@@ -5,10 +5,6 @@ export type RouteAuth =
 	| { status: "loading" | "unavailable" | "signed-out" }
 	| { status: "signed-in"; userId: string; sessionId: string };
 
-export interface AppRouterContext {
-	auth: RouteAuth | undefined;
-}
-
 export function routeAuthIdentity(auth: RouteAuth | undefined): string | null {
 	return auth?.status === "signed-in" ? JSON.stringify([auth.userId, auth.sessionId]) : null;
 }

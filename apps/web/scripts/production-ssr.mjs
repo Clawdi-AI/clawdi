@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { generateKeyPairSync, sign } from "node:crypto";
 import { after, mock, test } from "node:test";
 
 // Exercise the deployed bundle graph with real Clerk middleware and providers.
@@ -26,6 +27,8 @@ execFileSync("bun", ["run", "build"], {
 });
 
 process.env.CLERK_SECRET_KEY = "sk_test_ssr_fixture";
+const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+process.env.CLERK_JWT_KEY = publicKey.export({ type: "spki", format: "pem" });
 process.env.CLERK_TELEMETRY_DISABLED = "1";
 const network = mock.method(globalThis, "fetch", () => {
 	throw new Error("Public signed-out SSR must not need an external service");
@@ -61,6 +64,32 @@ for (const [path, title] of [
 }
 
 for (const path of ["/", "/agents"]) {
+	test(`production SSR renders signed-in ${path} without a session loading replacement`, async (t) => {
+		// Disabled dashboard queries still schedule cache GC; keep those timers
+		// scoped to this SSR request instead of retaining them in the test worker.
+		t.mock.timers.enable({ apis: ["setTimeout"] });
+		const now = Math.floor(Date.now() / 1000);
+		const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+		const payload = `${encode({ alg: "RS256", typ: "JWT", kid: "ssr-fixture" })}.${encode({
+			iss: "https://ssr.clerk.accounts.dev",
+			sub: "user_ssr_fixture",
+			sid: "sess_ssr_fixture",
+			iat: now,
+			nbf: now - 5,
+			exp: now + 60,
+			v: 2,
+			sts: "active",
+		})}`;
+		const token = `${payload}.${sign("RSA-SHA256", Buffer.from(payload), privateKey).toString("base64url")}`;
+		const authenticated = request(path);
+		authenticated.headers.set("authorization", `Bearer ${token}`);
+		const response = await server.fetch(authenticated);
+		const html = await response.text();
+		assert.equal(response.status, 200, html);
+		assert.match(html, /data-testid="dashboard-page-content"/);
+		assert.doesNotMatch(html, /Loading session/);
+	});
+
 	test(`production SSR protects ${path} without auth bypass`, async () => {
 		const response = await server.fetch(request(path));
 		assert.equal(response.status, 307);
