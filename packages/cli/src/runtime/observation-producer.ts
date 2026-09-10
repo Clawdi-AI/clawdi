@@ -86,7 +86,7 @@ export class HostedRuntimeObservationProducer {
 	}
 
 	async sendOnce(): Promise<ObservationSendResult> {
-		let buffered: ReturnType<HostedRuntimeHeartbeatSession["nextEvent"]> = null;
+		let buffered: Awaited<ReturnType<HostedRuntimeHeartbeatSession["nextEvent"]>> = null;
 		try {
 			const context = this.readAttestedContext();
 			if (!context) return { outcome: "idle" };
@@ -98,7 +98,7 @@ export class HostedRuntimeObservationProducer {
 				this.session.refreshAppliedState();
 			}
 
-			buffered = this.session.nextEvent();
+			buffered = await this.session.nextEvent();
 			if (!buffered) return { outcome: "idle" };
 			if (!runtimeApplyIdentitiesEqual(buffered.event, expectedApplyIdentity)) {
 				return { outcome: "idle" };

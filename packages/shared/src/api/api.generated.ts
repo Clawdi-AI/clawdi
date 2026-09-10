@@ -852,6 +852,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sessions/{session_id}/content-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Session Content Events */
+        get: operations["session_content_events_v1_sessions__session_id__content_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/upload-capabilities": {
         parameters: {
             query?: never;
@@ -1518,7 +1535,7 @@ export interface paths {
          *     `GET /v1/sessions/{id}/content` to grab the full JSON blob;
          *     this endpoint slices the same blob server-side so the
          *     dashboard doesn't ship 10+ MB of messages on a long session. The default
-         *     `view=messages` preserves the historical response exactly. Other views and
+         *     `view=messages` preserves the historical message projection. Other views and
          *     the composable `include` filter add a typed message/tool timeline without
          *     exposing reasoning or hidden events.
          *
@@ -1526,7 +1543,9 @@ export interface paths {
          *     starts at the oldest visible message for ascending reads and at the newest
          *     visible message for descending reads. Clients pin pages to the parent
          *     session's `content_hash`, which changes after snapshot replacement or event
-         *     append. A search query without an anchor opens its first transcript match;
+         *     append. `content_revision` pins each page to a verified projection; a
+         *     concurrent content change returns 409 rather than mixing page revisions.
+         *     A search query without an anchor opens its first transcript match;
          *     a complete anchor opens that exact match. Stale anchors degrade to ordinary
          *     offset pagination.
          */
@@ -8861,6 +8880,8 @@ export interface components {
          *     ascending reads and the newest message for descending reads.
          */
         SessionMessagesPage: {
+            /** Content Revision */
+            content_revision?: string | null;
             /** Items */
             items: components["schemas"]["SessionMessageResponse"][];
             /** Total */
@@ -9117,6 +9138,8 @@ export interface components {
          * @description Paginated owner-only projection of visible messages and tool activity.
          */
         SessionTimelinePage: {
+            /** Content Revision */
+            content_revision?: string | null;
             /** Items */
             items: (components["schemas"]["SessionTimelineMessageResponse"] | components["schemas"]["SessionToolCallResponse"] | components["schemas"]["SessionToolResultResponse"])[];
             /** Total */
@@ -11756,6 +11779,37 @@ export interface operations {
             };
         };
     };
+    session_content_events_v1_sessions__session_id__content_events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     session_upload_capabilities_v1_sessions_upload_capabilities_get: {
         parameters: {
             query?: never;
@@ -13247,6 +13301,7 @@ export interface operations {
                 anchor_position?: number | null;
                 anchor_revision?: string | null;
                 search_query?: string | null;
+                content_revision?: string | null;
             };
             header?: never;
             path: {

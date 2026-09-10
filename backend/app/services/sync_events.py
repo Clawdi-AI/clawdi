@@ -93,6 +93,11 @@ from app.services.managed_ai_provider import (
     v2_deployment_managed_provider_id,
 )
 from app.services.postgres_listener import PostgresListener, connect_postgres_listener
+from app.services.session_content_notifications import (
+    SESSION_CONTENT_CHANGED,
+    on_session_content_changed,
+    session_content_changed,
+)
 
 log = logging.getLogger(__name__)
 
@@ -705,10 +710,14 @@ async def _postgres_listener_loop(
                     CHANNEL_DELIVERIES_ENQUEUED: _on_channel_delivery_enqueued,
                     CHANNEL_INBOUND_MESSAGES_ENQUEUED: _on_channel_inbound_message_enqueued,
                     SYNC_SUBSCRIPTIONS_CHANGED: _on_sync_subscriptions_changed,
+                    SESSION_CONTENT_CHANGED: on_session_content_changed,
                 },
                 terminated.set,
             )
             connection = active_connection
+            # Includes subscriptions established while LISTEN was reconnecting.
+            # Each waiter re-reads committed state; hints need no replay log.
+            session_content_changed.signal_all()
             if not ready.done():
                 ready.set_result(None)
             reconnect_delay = 1.0

@@ -15,6 +15,7 @@ const DASHBOARD_SCROLL_CONTAINER_ID = "dashboard-scroll-container";
 interface VirtualizedSessionTimelineListProps extends SessionTimelineListProps {
 	totalItemCount: number;
 	windowStartOffset: number;
+	contentRevision?: string | null;
 	onAtBottomChange?: (atBottom: boolean) => void;
 	highlightScrollRequestKey?: string | null;
 	latestScrollRequestId?: number;
@@ -57,6 +58,14 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 	// contract. It decreases by exactly the number of visual rows prepended,
 	// preserving the viewport while older pages load above the conversation.
 	const firstItemIndex = Math.max(1, props.totalItemCount - rows.length + 1);
+	// Keep followOutput literally false during history loading and measurement.
+	// Virtuoso also treats any function value as enabled for height changes.
+	const previousContentRevision = useRef(props.contentRevision);
+	const wasAtBottom = useRef(true);
+	const hasNewContent = props.contentRevision !== previousContentRevision.current;
+	useIsomorphicLayoutEffect(() => {
+		previousContentRevision.current = props.contentRevision;
+	}, [props.contentRevision]);
 
 	useIsomorphicLayoutEffect(() => {
 		const resolveScrollParent = () => {
@@ -84,10 +93,11 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 		}
 		if (handledScrollRequestRef.current === requestKey) return;
 		handledScrollRequestRef.current = requestKey;
+		// Let Virtuoso correct the target as variable-height rows are measured.
 		virtuoso.scrollToIndex({
 			index: highlightedRowIndex,
 			align: "center",
-			behavior: "smooth",
+			behavior: "auto",
 		});
 	}, [
 		highlightedRowIndex,
@@ -161,6 +171,7 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 
 	const handleAtBottomChange = useCallback(
 		(atBottom: boolean) => {
+			wasAtBottom.current = atBottom;
 			const activeRequest = activeLatestScrollRef.current;
 			if (
 				activeRequest?.requestId === (props.latestScrollRequestId ?? 0) &&
@@ -198,6 +209,7 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 					? { useWindowScroll: true }
 					: { customScrollParent: scrollParent as HTMLElement })}
 				data={rows}
+				followOutput={hasNewContent && wasAtBottom.current ? "auto" : false}
 				firstItemIndex={firstItemIndex}
 				computeItemKey={(_index, row) => row.rowKey}
 				defaultItemHeight={96}

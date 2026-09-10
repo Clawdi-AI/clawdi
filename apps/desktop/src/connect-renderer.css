@@ -13,6 +13,7 @@
 	--destructive-muted: oklch(0.96 0.02 27);
 	--success: oklch(0.56 0.105 150);
 	--success-muted: oklch(0.96 0.022 150);
+	--shadow: 0 1px 2px oklch(0.2 0.01 95 / 0.04), 0 10px 30px oklch(0.2 0.01 95 / 0.035);
 	font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 	font-synthesis: none;
 }
@@ -21,41 +22,57 @@
 	box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+	height: 100%;
+}
+
 body {
 	margin: 0;
 	min-width: 480px;
 	min-height: 560px;
-	background: var(--background);
+	overflow: hidden;
+	background:
+		radial-gradient(
+			circle at 82% -12%,
+			color-mix(in oklch, var(--primary) 9%, transparent),
+			transparent 34%
+		),
+		var(--background);
 	color: var(--foreground);
 	-webkit-font-smoothing: antialiased;
 }
 
 button,
-input {
+input,
+select {
 	font: inherit;
 }
 
-button {
+button,
+select {
 	-webkit-app-region: no-drag;
 }
 
 .app-shell {
-	min-height: 100vh;
+	display: grid;
+	height: 100%;
+	min-height: 0;
+	grid-template-rows: 86px minmax(0, 1fr);
 }
 
 .titlebar {
 	display: flex;
 	align-items: center;
-	gap: 11px;
-	height: 76px;
-	padding: 14px 22px 12px 84px;
+	justify-content: center;
+	gap: 12px;
+	height: 86px;
+	padding: 18px 86px 14px;
 	border-bottom: 1px solid var(--border);
-	background: color-mix(in oklch, var(--surface) 88%, transparent);
+	background: color-mix(in oklch, var(--surface) 82%, transparent);
+	backdrop-filter: blur(18px) saturate(1.15);
 	-webkit-app-region: drag;
-}
-
-.dashboard-titlebar {
-	padding-left: 22px;
 }
 
 .brand-mark,
@@ -71,14 +88,24 @@ button {
 }
 
 .brand-mark {
-	width: 34px;
-	height: 34px;
+	width: 40px;
+	height: 40px;
+	overflow: hidden;
+	border: 1px solid color-mix(in oklch, var(--foreground) 8%, transparent);
+	border-radius: 11px;
+	box-shadow: 0 2px 8px oklch(0.2 0.01 95 / 0.1);
 }
 
-.brand-mark svg,
+.brand-mark img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	-webkit-user-drag: none;
+}
+
 .icon-tile svg,
-.status-icon svg,
-.agent-icon svg {
+.status-icon svg {
 	width: 18px;
 	height: 18px;
 }
@@ -91,24 +118,35 @@ p {
 }
 
 h1 {
-	font-size: 14px;
-	font-weight: 600;
+	font-size: 16px;
+	font-weight: 650;
 	line-height: 1.25;
 }
 
-.titlebar p {
-	margin-top: 2px;
+.titlebar-copy p {
+	margin-bottom: 2px;
 	color: var(--muted-foreground);
-	font-size: 11px;
+	font-size: 10px;
+	font-weight: 650;
+	letter-spacing: 0.08em;
+	line-height: 1.2;
+	text-transform: uppercase;
 }
 
 .content {
-	padding: 26px;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 30px;
+	overscroll-behavior: contain;
+	scrollbar-gutter: stable;
 }
 
 .failure-content {
+	display: grid;
+	width: 100%;
 	max-width: 480px;
-	margin: 10vh auto 0;
+	margin: 0 auto;
+	align-items: center;
 }
 
 .failure-actions {
@@ -117,30 +155,34 @@ h1 {
 
 .stack {
 	display: grid;
-	gap: 18px;
+	min-height: 100%;
+	align-content: start;
+	gap: 20px;
 }
 
 .notice,
 .error-notice {
 	display: flex;
 	gap: 13px;
-	padding: 16px;
+	padding: 18px;
 	border: 1px solid var(--border);
-	border-radius: 8px;
+	border-radius: 14px;
 	background: var(--surface);
+	box-shadow: var(--shadow);
 }
 
 .icon-tile {
-	width: 38px;
-	height: 38px;
+	width: 40px;
+	height: 40px;
+	border-radius: 10px;
 }
 
 .notice h2,
 .error-notice h2,
 .section-heading h2,
 .centered h2 {
-	font-size: 14px;
-	font-weight: 600;
+	font-size: 15px;
+	font-weight: 650;
 	line-height: 1.35;
 }
 
@@ -150,7 +192,7 @@ h1 {
 .centered p {
 	margin-top: 5px;
 	color: var(--muted-foreground);
-	font-size: 12px;
+	font-size: 12.5px;
 	line-height: 1.55;
 }
 
@@ -174,10 +216,20 @@ h1 {
 	display: flex;
 	justify-content: flex-end;
 	gap: 9px;
+	margin-top: auto;
 }
 
 .install-notice {
 	border-color: color-mix(in oklch, var(--primary) 28%, var(--border));
+}
+
+.reconnect-notice {
+	border-color: color-mix(in oklch, var(--destructive) 24%, var(--border));
+}
+
+.reconnect-notice .icon-tile {
+	background: var(--destructive-muted);
+	color: var(--destructive);
 }
 
 .button,
@@ -186,16 +238,16 @@ h1 {
 	align-items: center;
 	justify-content: center;
 	border: 1px solid transparent;
-	border-radius: 7px;
+	border-radius: 10px;
 	cursor: default;
 }
 
 .button {
-	min-height: 36px;
+	min-height: 40px;
 	gap: 8px;
-	padding: 7px 13px;
+	padding: 8px 15px;
 	font-size: 12px;
-	font-weight: 600;
+	font-weight: 650;
 }
 
 .button svg,
@@ -207,6 +259,7 @@ h1 {
 .button.primary {
 	background: var(--primary);
 	color: var(--primary-foreground);
+	box-shadow: 0 1px 2px oklch(0.2 0.01 95 / 0.12);
 }
 
 .button.secondary,
@@ -223,7 +276,8 @@ h1 {
 
 .button:focus-visible,
 .icon-button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
 	outline: 2px solid color-mix(in oklch, var(--primary) 55%, transparent);
 	outline-offset: 2px;
 }
@@ -247,10 +301,82 @@ input:focus-visible {
 	max-width: 350px;
 }
 
-.status-icon {
-	width: 42px;
-	height: 42px;
+.welcome-step {
+	gap: 16px;
+}
+
+.welcome-hero {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 10px 24px 2px;
+	text-align: center;
+}
+
+.welcome-hero p {
+	max-width: 390px;
+	margin-top: 7px;
+	color: var(--muted-foreground);
+	font-size: 12.5px;
+	line-height: 1.55;
+}
+
+.welcome-icon {
 	margin-bottom: 13px;
+}
+
+.welcome-agents {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.welcome-agent {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 12px;
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	background: var(--surface);
+}
+
+.welcome-agent > span:last-child {
+	display: grid;
+	min-width: 0;
+	gap: 2px;
+}
+
+.welcome-agent strong,
+.welcome-agent small {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.welcome-agent strong {
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.welcome-agent small {
+	color: var(--muted-foreground);
+	font-size: 10.5px;
+}
+
+.welcome-security {
+	box-shadow: none;
+}
+
+.status-icon {
+	width: 46px;
+	height: 46px;
+	margin-bottom: 15px;
+	border-radius: 12px;
 }
 
 .status-icon.success {
@@ -275,9 +401,19 @@ input:focus-visible {
 	gap: 16px;
 }
 
+.section-heading > div {
+	min-width: 0;
+}
+
+.section-heading p {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .icon-button {
-	width: 32px;
-	height: 32px;
+	width: 34px;
+	height: 34px;
 	padding: 0;
 	color: var(--muted-foreground);
 }
@@ -285,16 +421,17 @@ input:focus-visible {
 .agent-list {
 	overflow: hidden;
 	border: 1px solid var(--border);
-	border-radius: 8px;
+	border-radius: 14px;
 	background: var(--surface);
+	box-shadow: var(--shadow);
 }
 
 .agent-row {
 	display: flex;
-	min-height: 58px;
+	min-height: 64px;
 	align-items: center;
-	gap: 11px;
-	padding: 9px 12px;
+	gap: 12px;
+	padding: 10px 14px;
 	border-bottom: 1px solid var(--border);
 	font-size: 12px;
 }
@@ -307,6 +444,10 @@ input:focus-visible {
 	background: color-mix(in oklch, var(--muted) 45%, transparent);
 }
 
+.agent-row:not(.unavailable):hover {
+	background: color-mix(in oklch, var(--primary) 3%, var(--surface));
+}
+
 .agent-row input {
 	width: 15px;
 	height: 15px;
@@ -315,10 +456,28 @@ input:focus-visible {
 }
 
 .agent-icon {
-	width: 32px;
-	height: 32px;
-	background: var(--muted);
-	color: var(--muted-foreground);
+	width: 34px;
+	height: 34px;
+	overflow: hidden;
+	border: 1px solid color-mix(in oklch, var(--foreground) 8%, transparent);
+	border-radius: 9px;
+	background: color-mix(in oklch, var(--muted) 45%, transparent);
+	color: var(--foreground);
+}
+
+.agent-icon svg {
+	display: block;
+}
+
+.agent-icon-white {
+	background: white;
+	color: black;
+}
+
+.agent-icon-black {
+	border-color: black;
+	background: black;
+	color: white;
 }
 
 .agent-copy {
@@ -345,6 +504,18 @@ input:focus-visible {
 	font-size: 11px;
 }
 
+.agent-copy select {
+	width: min(100%, 300px);
+	height: 28px;
+	margin-top: 3px;
+	padding: 0 28px 0 9px;
+	border: 1px solid var(--input);
+	border-radius: 7px;
+	background: var(--surface);
+	color: var(--foreground);
+	font-size: 10.5px;
+}
+
 .row-check {
 	width: 16px;
 	height: 16px;
@@ -366,5 +537,6 @@ input:focus-visible {
 		--destructive-muted: oklch(0.245 0.045 27);
 		--success: oklch(0.66 0.11 150);
 		--success-muted: oklch(0.24 0.035 150);
+		--shadow: 0 1px 2px oklch(0.04 0.01 95 / 0.2), 0 12px 34px oklch(0.04 0.01 95 / 0.16);
 	}
 }

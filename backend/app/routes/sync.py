@@ -87,7 +87,7 @@ SUBSCRIPTION_LEASE_TTL = timedelta(seconds=90)
 OAUTH_ACCESS_EXPIRY_SKEW = timedelta(seconds=1)
 
 
-class _SyncStreamingResponse(StreamingResponse):
+class SyncStreamingResponse(StreamingResponse):
     def __init__(
         self,
         content: AsyncGenerator[bytes, None],
@@ -147,7 +147,7 @@ async def _close_on_oauth_access_expiry(
         await sleep(min(remaining, HEARTBEAT_INTERVAL_S))
 
 
-async def _cancel_and_wait(*tasks: asyncio.Task[object]) -> None:
+async def cancel_and_wait(*tasks: asyncio.Task[object]) -> None:
     """Cancel and collect every child before surfacing the first failure."""
     for task in tasks:
         if not task.done():
@@ -167,7 +167,7 @@ async def _cancel_and_wait(*tasks: asyncio.Task[object]) -> None:
     await finish_cleanup(collect)
 
 
-async def _refresh_subscription_lease(lease_id: UUID, close_stream: asyncio.Event) -> None:
+async def refresh_subscription_lease(lease_id: UUID, close_stream: asyncio.Event) -> None:
     """Renew the shared SSE slot and fail closed if its authority is lost."""
     while not close_stream.is_set():
         try:
@@ -190,7 +190,7 @@ async def _refresh_subscription_lease(lease_id: UUID, close_stream: asyncio.Even
             return
 
 
-async def _release_subscription_lease_safely(lease_id: UUID) -> None:
+async def release_subscription_lease_safely(lease_id: UUID) -> None:
     async def release() -> None:
         try:
             await release_sync_subscription_lease(lease_id)
@@ -229,7 +229,7 @@ async def _stream(
             if revoked_task in done or revoked.is_set():
                 return
             if event_task not in done:
-                await _cancel_and_wait(event_task)
+                await cancel_and_wait(event_task)
                 yield b": ping\n\n"
                 continue
             # The event task has finished; only pending or exiting work needs
@@ -240,7 +240,7 @@ async def _stream(
     finally:
         # Own both waiters through disconnect, cancellation, and generator close.
         child_tasks = (revoked_task,) if event_task is None else (event_task, revoked_task)
-        await _cancel_and_wait(*child_tasks)
+        await cancel_and_wait(*child_tasks)
 
 
 # Notifications drive normal refreshes. This slow poll only catches a lost
@@ -343,7 +343,7 @@ async def events(
             )
     except BaseException:
         if lease_id is not None:
-            await _release_subscription_lease_safely(lease_id)
+            await release_subscription_lease_safely(lease_id)
         sync_events.sync_subscriptions_changed.unsubscribe(refresh_key, refresh_requested)
         raise
     queue, subscriber = subscription
@@ -450,19 +450,19 @@ async def events(
                     sync_events.connection_count(user_id),
                 )
             finally:
-                await _release_subscription_lease_safely(lease_id)
+                await release_subscription_lease_safely(lease_id)
 
     async def gen() -> AsyncGenerator[bytes, None]:
         refresh_task = asyncio.create_task(refresh_visibility())
         expiry_task = asyncio.create_task(_close_on_oauth_access_expiry(auth, revoked))
-        lease_task = asyncio.create_task(_refresh_subscription_lease(lease_id, revoked))
+        lease_task = asyncio.create_task(refresh_subscription_lease(lease_id, revoked))
         try:
             async with aclosing(_stream(queue, request, revoked)) as stream:
                 async for chunk in stream:
                     yield chunk
         finally:
             try:
-                await _cancel_and_wait(refresh_task, expiry_task, lease_task)
+                await cancel_and_wait(refresh_task, expiry_task, lease_task)
             finally:
                 await cleanup()
 
@@ -470,7 +470,7 @@ async def events(
     # no` disables nginx response buffering on the off chance an
     # operator runs us behind one — without it the bytes pile up in
     # nginx's buffer and the daemon never sees the heartbeat.
-    return _SyncStreamingResponse(
+    return SyncStreamingResponse(
         gen(),
         cleanup=cleanup,
         headers={

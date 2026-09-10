@@ -157,6 +157,7 @@ class AuthContext:
         api_key_project_id: UUID | None = None,
         oauth_cli: bool = False,
         oauth_access_expires_at: datetime | None = None,
+        credential_expires_at: datetime | None = None,
     ):
         self.user = user
         self.api_key = api_key
@@ -171,6 +172,11 @@ class AuthContext:
         ):
             raise ValueError("OAuth CLI auth requires a timezone-aware access-token expiry")
         self.oauth_access_expires_at: datetime | None = oauth_access_expires_at
+        self.credential_expires_at = (
+            credential_expires_at
+            or oauth_access_expires_at
+            or (api_key.expires_at if api_key is not None else None)
+        )
         self.is_cli = api_key is not None
         self.api_key_project_id = api_key_project_id
         self._user_id = user.id
@@ -867,12 +873,15 @@ async def auth_via_verified_clerk_jwt(
 
     oauth_cli = oauth_setting is not None
     oauth_access_expires_at: datetime | None = None
-    if oauth_cli:
+    credential_expires_at: datetime | None = None
+    if oauth_cli or "exp" in payload:
         expires_at = payload.get("exp")
         if not isinstance(expires_at, (int, float)) or isinstance(expires_at, bool):
             return None
         try:
-            oauth_access_expires_at = datetime.fromtimestamp(expires_at, UTC)
+            credential_expires_at = datetime.fromtimestamp(expires_at, UTC)
+            if oauth_cli:
+                oauth_access_expires_at = credential_expires_at
         except (OverflowError, OSError, ValueError):
             # PyJWT can validate a numerically huge future exp even when the
             # platform datetime cannot represent it. Treat hostile/unusable
@@ -905,6 +914,7 @@ async def auth_via_verified_clerk_jwt(
         user=user,
         oauth_cli=oauth_cli,
         oauth_access_expires_at=oauth_access_expires_at,
+        credential_expires_at=credential_expires_at,
     )
 
 

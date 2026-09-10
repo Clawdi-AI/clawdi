@@ -761,6 +761,7 @@ class SessionMessagesPage(BaseModel):
     ascending reads and the newest message for descending reads.
     """
 
+    content_revision: str | None = Field(default=None, exclude_if=lambda value: value is None)
     items: list[SessionMessageResponse]
     total: int
     offset: int
@@ -781,6 +782,7 @@ class SessionMessagesPage(BaseModel):
 class SessionTimelinePage(BaseModel):
     """Paginated owner-only projection of visible messages and tool activity."""
 
+    content_revision: str | None = Field(default=None, exclude_if=lambda value: value is None)
     items: list[SessionTimelineItemResponse]
     total: int
     offset: int

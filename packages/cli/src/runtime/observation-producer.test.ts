@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import type { components } from "@clawdi/shared/api";
 import { type RuntimeAppliedStateV2, writeRuntimeAppliedState } from "./applied-state";
 import { HostedRuntimeHeartbeatSession } from "./heartbeat-observation";
@@ -146,9 +147,7 @@ async function observationSchedule(
 		},
 		now: () => clock,
 		delay: async (ms) => {
-			await Promise.resolve();
-			await Promise.resolve();
-			await Promise.resolve();
+			await setImmediate();
 			clock += ms;
 			if (transitionToOk && attempts.length === 1) writeObservationHealth(paths, "ok");
 			if (clock >= stopAtMs) abort.abort();
@@ -193,9 +192,7 @@ describe("hosted runtime observation producer", () => {
 				return "accepted";
 			},
 			delay: async (ms) => {
-				await Promise.resolve();
-				await Promise.resolve();
-				await Promise.resolve();
+				await setImmediate();
 				clock += ms;
 				if (clock - epoch > 400_000) abort.abort();
 			},
@@ -490,6 +487,7 @@ describe("hosted runtime observation producer", () => {
 				return "accepted";
 			},
 			delay: async () => {
+				await setImmediate();
 				delayCalls += 1;
 				if (delayCalls === 1) {
 					writeApplyIdentityFile(paths, 2);
@@ -497,7 +495,7 @@ describe("hosted runtime observation producer", () => {
 					return;
 				}
 				if (submitted.some((event) => event.applied.generation === 2)) {
-					await Promise.resolve();
+					await setImmediate();
 					abort.abort();
 				}
 			},
@@ -537,15 +535,12 @@ describe("hosted runtime observation producer", () => {
 			delay: async (ms) => {
 				delayCalls += 1;
 				clock += ms;
-				await Promise.resolve();
-				await Promise.resolve();
-				await Promise.resolve();
+				await setImmediate();
 				if (delayCalls === 1) {
 					writeApplyIdentityFile(paths, 2);
 					writeRuntimeAppliedState(appliedState(2), paths);
 					firstGenerationOneResolve?.("accepted");
-					await Promise.resolve();
-					await Promise.resolve();
+					await setImmediate();
 				} else if (delayCalls === 2 || delayCalls === 4) {
 					writeApplyIdentityFile(paths, 1);
 					writeRuntimeAppliedState(appliedState(1), paths);
@@ -601,9 +596,7 @@ describe("hosted runtime observation producer", () => {
 			},
 			now: () => clock,
 			delay: async (ms) => {
-				await Promise.resolve();
-				await Promise.resolve();
-				await Promise.resolve();
+				await setImmediate();
 				clock += ms;
 				if (attempts.length === 1) {
 					writeFileSync(
