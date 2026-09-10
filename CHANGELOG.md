@@ -70,6 +70,8 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- Signing in keeps the dashboard frame visible while account data loads, instead
+  of replacing the page with a full-screen loading indicator.
 - CLI 0.14.64 allows more time for Hermes version checks so slow native update
   checks do not interrupt agent setup or reconnection.
 - CLI 0.14.63 lets Hermes wait up to 20 minutes for Clawdi AI Responses calls,

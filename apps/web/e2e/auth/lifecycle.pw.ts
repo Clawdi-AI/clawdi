@@ -103,7 +103,6 @@ for (const status of ["degraded", "error"] as const) {
 		await start(page);
 		await page.evaluate((status) => window.authTest.emitSdk({ status }), status);
 		await expect(page.locator("iframe")).toHaveCount(0);
-		await expect(page.locator("iframe")).toHaveCount(0);
 		expect(await page.evaluate(() => window.authTest.signOutCalls)).toBe(0);
 		await page.evaluate(() => window.authTest.emitSdk({ status: "ready" }));
 		await expect(page.locator("[data-private]")).toHaveText("user-a:session-a");
@@ -115,7 +114,6 @@ test("native unknown auth removes an admitted session independently of script st
 }) => {
 	await start(page);
 	await page.evaluate(() => window.authTest.emitSdk({ isLoaded: false }));
-	await expect(page.locator("iframe")).toHaveCount(0);
 	await expect(page.locator("iframe")).toHaveCount(0);
 	expect(await page.evaluate(() => window.authTest.signOutCalls)).toBe(0);
 	await page.evaluate(() => window.authTest.emitSdk({ isLoaded: true }));
