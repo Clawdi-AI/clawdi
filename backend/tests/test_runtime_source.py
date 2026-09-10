@@ -21,6 +21,7 @@ from app.models.hosted_runtime import (
     HostedRuntimeState,
 )
 from app.models.session import AgentEnvironment
+from app.schemas.native_provider import native_provider
 from app.schemas.runtime import HostedCodexProviderProjection
 from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 from app.services.managed_ai_provider import (
@@ -417,6 +418,107 @@ def test_connection_source_emits_only_owned_routing_and_credentials(mode: str) -
     ]
     batch.providers[(USER_ID, "saved-connection")].api_mode = None
     assert _render(batch).manifest["providers"]["saved-connection"]["apiMode"] == "openai_responses"
+
+
+def _mixed_capability_source(mode: str = "custom") -> RuntimeSourceBatch:
+    batch = connection_source_fixture()
+    provider = batch.providers[(USER_ID, "saved-connection")]
+    provider.configuration_mode = mode
+    if mode == "native":
+        routing = native_provider("openai")
+        provider.native_provider = routing.id
+        provider.native_variant = routing.variant
+        for field in ("type", "base_url", "api_mode", "runtime_env_name"):
+            setattr(provider, field, getattr(routing, field))
+        provider.models = []
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    state.runtimes["openclaw"]["primary_model"] = None
+    state.runtimes["openclaw"]["provider_ids"].append(CANONICAL_CODEX_TOOL_PROVIDER_ID)
+    batch.providers[(USER_ID, CANONICAL_CODEX_TOOL_PROVIDER_ID)].models = [
+        {"id": "gpt-test", "capabilities": {"chat": True}},
+        {"id": "multimodal-test", "capabilities": {"chat": True, "embeddings": True}},
+        {
+            "id": "embedding-test",
+            "capabilities": {"chat": False, "embeddings": True},
+            "max_input_tokens": 8192,
+        },
+    ]
+    return batch
+
+
+@pytest.mark.parametrize("mode", ["native", "connection", "custom"])
+def test_native_owned_chat_projects_managed_embeddings_without_changing_sources(mode: str) -> None:
+    batch = _mixed_capability_source(mode)
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    original_state = json.dumps(state.runtimes, sort_keys=True)
+    managed = batch.providers[(USER_ID, CANONICAL_CODEX_TOOL_PROVIDER_ID)]
+    original_models = json.dumps(managed.models, sort_keys=True)
+    tool_before = _render(_batch()).manifest["terminalTooling"]
+
+    source = _render(batch)
+
+    assert source.manifest["runtimes"]["openclaw"].get("primary_model") is None
+    assert source.manifest["providers"]["saved-connection"]["configurationMode"] == mode
+    assert source.manifest["providers"]["saved-connection"]["apiKeySecretRef"]
+    auxiliary = source.manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]
+    assert auxiliary["models"] == [managed.models[-1]]
+    assert auxiliary["apiKeySecretRef"] == "secret://tool.codex.apiKey"
+    assert source.manifest["terminalTooling"] == tool_before
+    assert json.dumps(state.runtimes, sort_keys=True) == original_state
+    assert json.dumps(managed.models, sort_keys=True) == original_models
+
+
+@pytest.mark.parametrize("primary_provider", ["saved-connection", CANONICAL_CODEX_TOOL_PROVIDER_ID])
+def test_explicit_catalog_primary_keeps_full_managed_capabilities(primary_provider: str) -> None:
+    batch = _mixed_capability_source("native")
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    if primary_provider == "saved-connection":
+        provider = batch.providers[(USER_ID, "saved-connection")]
+        provider.configuration_mode = "catalog"
+        provider.native_provider = None
+    state.runtimes["openclaw"]["primary_model"] = {
+        "provider_id": primary_provider,
+        "model": "gpt-test",
+    }
+
+    source = _render(batch)
+
+    assert source.manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]["models"] == (
+        batch.providers[(USER_ID, CANONICAL_CODEX_TOOL_PROVIDER_ID)].models
+    )
+    assert source.manifest["runtimes"]["openclaw"]["primary_model"]["model"] == "gpt-test"
+
+
+@pytest.mark.parametrize("failure", ["no_embeddings", "catalog_chat", "unmanaged_auxiliary"])
+def test_managed_auxiliary_projection_does_not_hide_invalid_chat_bindings(failure: str) -> None:
+    batch = _mixed_capability_source()
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    if failure == "no_embeddings":
+        batch.providers[(USER_ID, CANONICAL_CODEX_TOOL_PROVIDER_ID)].models = [
+            {"id": "gpt-test", "capabilities": {"chat": True}}
+        ]
+    elif failure == "catalog_chat":
+        batch.providers[(USER_ID, "saved-connection")].configuration_mode = "catalog"
+    else:
+        extra = AiProvider(
+            id=uuid4(),
+            owner_user_id=USER_ID,
+            provider_id="extra-catalog",
+            type="openai",
+            base_url="https://extra.example.test/v1",
+            api_mode="openai_responses",
+            auth_type="none",
+            managed_by="user",
+            models=[{"id": "embedding-test", "capabilities": {"chat": False, "embeddings": True}}],
+        )
+        batch.providers[(USER_ID, extra.provider_id)] = extra
+        state.runtimes["openclaw"]["provider_ids"] = ["saved-connection", extra.provider_id]
+    with pytest.raises(RuntimeSourceError, match="Configured chat requires"):
+        _render(batch)
 
 
 def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sources() -> None:
@@ -1298,13 +1400,13 @@ def test_runtime_bundle_matches_shared_golden(monkeypatch) -> None:
     )
     fixture_path = Path(__file__).parents[2] / "test-fixtures/runtime-bundle-v2.golden.json"
     golden = json.loads(fixture_path.read_text())
-    expected_revision = "3560dad84408e66195cdf581512875d71d399df03b4dac43b6a28be318402e0c"
+    expected_revision = "6e3c924e4ef6f11fc1206d52d9608b120b96f0d05e46dbc909df7fd97da048fb"
     assert (
         RUNTIME_SOURCE_RENDERER_REVISION,
         source.source_revision,
         golden["sourceRevision"],
     ) == (
-        "runtime-source.v2",
+        "runtime-source.v3",
         expected_revision,
         expected_revision,
     ), (

@@ -283,6 +283,7 @@ describe("hosted runtime observed v2", () => {
 			let body: unknown = ready;
 			let uiStatus = 200;
 			let probeStatus = 200;
+			let nativeStatus: unknown;
 			let probeWait: Promise<void> | undefined;
 			let releaseProbe: (() => void) | undefined;
 			const server = Bun.serve({
@@ -291,6 +292,10 @@ describe("hosted runtime observed v2", () => {
 				async fetch(request) {
 					if (probeWait) await probeWait;
 					const path = new URL(request.url).pathname;
+					if (path === "/native-status")
+						return new Response(
+							typeof nativeStatus === "string" ? nativeStatus : JSON.stringify(nativeStatus),
+						);
 					if (path === "/control/") return new Response(null, { status: uiStatus });
 					if (path !== "/readyz" && path !== "/api/status")
 						return new Response(null, { status: 404 });
@@ -319,6 +324,66 @@ describe("hosted runtime observed v2", () => {
 				expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
 				probeStatus = 200;
 				if (unit === "openclaw-gateway.service") {
+					// The old native status command proves handshake admission independently of channels.
+					mkdirSync(paths.userLocalBin, { recursive: true });
+					const statusCommand = join(paths.userLocalBin, "openclaw");
+					writeFileSync(
+						statusCommand,
+						`#!/bin/sh
+[ "$*" = "gateway status --json --timeout 3000" ] || exit 1
+[ "$OPENCLAW_CONFIG_PATH" = "$HOME/.openclaw/openclaw.json" ] || exit 1
+exec curl --disable --noproxy '*' --fail --silent http://127.0.0.1:${server.port}/native-status
+`,
+						{ mode: 0o700 },
+					);
+					const connected = {
+						rpc: {
+							ok: true,
+							kind: "connect",
+							capability: "connected_no_operator_scope",
+							auth: { role: "operator", scopes: [] },
+							url: `ws://127.0.0.1:${server.port}`,
+						},
+					};
+					body = { ready: false, failing: ["telegram"], eventLoop: { degraded: false } };
+					probeStatus = 503;
+					for (const response of [
+						connected,
+						{ rpc: { ok: false } },
+						{ rpc: { ...connected.rpc, url: "ws://other.example.test:18789" } },
+						{ ok: true },
+						null,
+						"not JSON",
+						connected,
+					]) {
+						nativeStatus = response;
+						expect((await readHostedRuntimeObserved(paths))?.status).toBe(
+							response === connected ? "ok" : "unknown",
+						);
+					}
+					uiStatus = 503;
+					expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+					uiStatus = 200;
+					probeStatus = 200;
+					expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+					probeStatus = 503;
+					for (const invalid of [
+						{ ready: false, failing: ["gateway-draining"] },
+						{ ready: false, failing: [] },
+						{ ready: false, failing: [null] },
+						{ ok: true },
+						"<html>Control UI</html>",
+					]) {
+						body = invalid;
+						expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+					}
+					body = { ready: false, failing: ["startup-sidecars"] };
+					// Official startup admission returns a failed native handshake, even with a serving UI.
+					nativeStatus = { rpc: { ok: false } };
+					expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+					rmSync(statusCommand);
+					body = ready;
+					probeStatus = 200;
 					for (const status of [503, 404, 302, 200]) {
 						uiStatus = status;
 						expect((await readHostedRuntimeObserved(paths))?.status).toBe(
