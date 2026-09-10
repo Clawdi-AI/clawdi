@@ -33,20 +33,26 @@ GitHub release bodies are the published release notes. `CHANGELOG.md` is the
 curated user-facing history in the repository. Keep them aligned for notable
 releases.
 
-## Desktop Release Blocker
+## Desktop Releases
 
-Desktop auto-update is not a released surface yet. `apps/desktop/package.json`
-has no publish provider, `desktop-preview.yml` uploads only an unsigned DMG PR
-artifact, and the calendar release workflow does not publish a Developer ID
-signed and notarized Desktop ZIP with update metadata. Until one trusted feed
-contract owns those immutable artifacts, Desktop must not call an updater or
-show a Check for Updates command; the bundled CLI also remains ineligible for
-self-update.
+The Desktop Release workflow builds signed and notarized macOS arm64 packages.
+Its publish input defaults to false. Explicit publication creates an immutable
+`desktop-v<version>` GitHub Release, marks beta versions as prereleases, and never
+changes the monorepo's Latest release. Desktop Update Site then deploys standard
+electron-updater metadata to GitHub Pages, pointing to the release's ZIP assets.
+See [Desktop packaging](../../apps/desktop/README.md) for inputs and recovery.
 
-Enabling updates requires one reviewed release change to define the trusted
-provider/feed, attach the signed ZIP and matching update metadata to the same
-release commit, and verify signing, notarization, version, and checksums before
-publication. Unsigned preview artifacts must remain outside that feed.
+The signed application embeds its feed URL and stable or beta channel. Stable
+reads `latest-mac.yml`; beta reads `beta-mac.yml`. Channels remain independent:
+publishing stable does not promote beta users. To leave beta, install the signed
+stable DMG manually. Automatic downgrades are disabled. No Team ID secret or
+metadata pin is required; codesign, notarization, and Gatekeeper validate the
+build, and Squirrel.Mac verifies update signatures against the installed app.
+
+Disabled preview builds do not self-update. Before broad distribution, verify
+real-account cold restart without repeated login notifications and one signed
+beta-to-beta upgrade preserving the session. CI with fake tickets does not prove
+these two behaviors. The bundled CLI remains ineligible for self-update.
 
 ## Pre-Merge Checklist
 

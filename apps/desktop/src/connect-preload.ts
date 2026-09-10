@@ -1,4 +1,4 @@
-import type { ClawdiDesktopConnectBridge, DesktopAgentType } from "@clawdi/shared/desktop";
+import type { ClawdiDesktopConnectBridge, DesktopAgentConnection } from "@clawdi/shared/desktop";
 import { contextBridge, ipcRenderer } from "electron";
 import { DESKTOP_IPC } from "./ipc";
 
@@ -8,8 +8,9 @@ const bridge: ClawdiDesktopConnectBridge = {
 	authenticate: () => ipcRenderer.invoke(DESKTOP_IPC.authenticate),
 	cancelAuthentication: () => ipcRenderer.invoke(DESKTOP_IPC.cancelAuthentication),
 	detectAgents: () => ipcRenderer.invoke(DESKTOP_IPC.detectAgents),
-	connectAgents: (agentTypes: DesktopAgentType[]) =>
-		ipcRenderer.invoke(DESKTOP_IPC.connectAgents, agentTypes),
+	listReconnectableAgents: () => ipcRenderer.invoke(DESKTOP_IPC.listReconnectableAgents),
+	connectAgents: (connections: DesktopAgentConnection[]) =>
+		ipcRenderer.invoke(DESKTOP_IPC.connectAgents, connections),
 	moveToApplicationsFolder: () => ipcRenderer.invoke(DESKTOP_IPC.moveToApplicationsFolder),
 	openDashboard: () => ipcRenderer.invoke(DESKTOP_IPC.openDashboard),
 };

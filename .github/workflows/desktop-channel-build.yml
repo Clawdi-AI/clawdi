@@ -1,0 +1,132 @@
+name: Desktop Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Update channel
+        type: choice
+        options: [stable, beta]
+        required: true
+        default: beta
+      version:
+        description: Version matching channel (e.g. 0.1.0-beta.1)
+        required: true
+        type: string
+      publish:
+        description: Publish Release and update GitHub Pages (otherwise build only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+            bundle: mac-arm64
+            feed_path: desktop
+          - runner: macos-15-intel
+            arch: x64
+            bundle: mac
+            feed_path: desktop/darwin-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-bun-ci
+      - name: Resolve Pages URL
+        id: pages
+        uses: actions/configure-pages@v5
+      - name: Verify Desktop
+        run: |
+          bun run --cwd apps/desktop typecheck
+          bun run --cwd apps/desktop test:internal
+      - name: Package signed channel
+        shell: bash apps/desktop/scripts/with-signing-keychain.sh bash {0}
+        env:
+          CLAWDI_DESKTOP_VERSION: ${{ inputs.version }}
+          CLAWDI_DESKTOP_ARCH: ${{ matrix.arch }}
+          CLAWDI_DESKTOP_UPDATE_CHANNEL: ${{ inputs.channel }}
+          CLAWDI_DESKTOP_UPDATE_FEED_URL: ${{ steps.pages.outputs.base_url }}/${{ matrix.feed_path }}/
+          APP_BUNDLE_DIRECTORY: ${{ matrix.bundle }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          umask 077
+          export APPLE_API_KEY="$RUNNER_TEMP/desktop-notarization.p8"
+          trap 'rm -f "$APPLE_API_KEY"' EXIT
+          printf '%s' "$APPLE_API_KEY_CONTENT" > "$APPLE_API_KEY"
+          unset APPLE_API_KEY_CONTENT
+          bun run --cwd apps/desktop package:mac:release
+          node apps/desktop/scripts/smoke-packaged.mjs \
+            "$PWD/apps/desktop/release/$APP_BUNDLE_DIRECTORY/Clawdi.app/Contents/MacOS/Clawdi" \
+            "$RUNNER_TEMP/desktop-channel-smoke" install
+          cd apps/desktop/release
+          shasum -a 256 Clawdi-*.dmg Clawdi-*.zip > "SHA256SUMS-$CLAWDI_DESKTOP_ARCH"
+          if [ "$CLAWDI_DESKTOP_ARCH" = x64 ]; then
+            for metadata in *-mac.yml; do mv "$metadata" "${metadata%.yml}-x64.yml"; done
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: clawdi-macos-${{ matrix.arch }}-${{ inputs.channel }}
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*-mac*.yml
+            apps/desktop/release/SHA256SUMS-*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: inputs.publish
+    needs: macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: clawdi-macos-*-${{ inputs.channel }}
+          merge-multiple: true
+          path: release
+      - name: Publish immutable Desktop release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          tag="desktop-v$VERSION"
+          args=(--repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
+            --title "Clawdi Desktop $VERSION" --generate-notes --draft --latest=false)
+          if [ "$CHANNEL" = beta ]; then args+=(--prerelease); fi
+          gh release create "$tag" release/* "${args[@]}"
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+
+  update-site:
+    if: inputs.publish
+    needs: publish
+    uses: ./.github/workflows/desktop-update-site.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
