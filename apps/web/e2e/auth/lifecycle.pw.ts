@@ -1,7 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 import type {} from "./lifecycle.browser";
 
-async function start(page: Page) {
+async function start(page: Page, bootstrap?: string) {
 	await page.route("http://127.0.0.1:8000/**", (route) =>
 		route.fulfill({
 			contentType: "application/json",
@@ -12,9 +12,34 @@ async function start(page: Page) {
 					: "[]",
 		}),
 	);
-	await page.goto("/e2e/auth/");
+	await page.goto(bootstrap ? `/e2e/auth/?bootstrap=${bootstrap}` : "/e2e/auth/");
+	if (bootstrap) return;
 	await page.evaluate(() => window.authTest.navigate("/private/a"));
 	await expect(page.locator("[data-private]")).toHaveText("user-a:session-a");
+}
+
+for (const bootstrap of ["same-account", "other-account", "signed-out"]) {
+	test(`first settled mount revalidates only an admission mismatch: ${bootstrap}`, async ({
+		page,
+	}) => {
+		await start(page, bootstrap);
+		if (bootstrap === "signed-out") {
+			await expect(page.getByRole("heading", { level: 1 })).toHaveText("Sign in");
+			await expect(page.locator("[data-private]")).toHaveCount(0);
+		} else {
+			await expect(page.locator("[data-private]")).toHaveText(
+				bootstrap === "same-account" ? "user-a:session-a" : "user-b:session-b",
+			);
+		}
+		expect(await page.evaluate(() => window.authTest.admissions)).toBe(
+			bootstrap === "same-account" ? 1 : 2,
+		);
+		expect(
+			await page.evaluate(() =>
+				window.authTest.commits.filter((commit) => commit.data && commit.data !== commit.identity),
+			),
+		).toEqual([]);
+	});
 }
 
 test("same identity keeps cache, draft and iframe document across navigation and history", async ({

@@ -35,7 +35,6 @@ export function useFilesGrantBootstrap(url: string): FilesGrantBootstrapState {
 		void (async () => {
 			try {
 				const token = await getToken();
-				if (!token) throw new Error("No Clerk session token");
 				await primeFilesGrant(url, token);
 				if (!cancelled) setState("ready");
 			} catch {
@@ -69,7 +68,6 @@ export function useOpenFilesInNewWindow(url: string, deploymentId: string): () =
 		trackRuntimeWindow(deploymentId, popup);
 		try {
 			const token = await getToken();
-			if (!token) throw new Error("No Clerk session token");
 			await primeFilesGrant(url, token);
 			popup.location.replace(url);
 		} catch {

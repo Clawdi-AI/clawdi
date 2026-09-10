@@ -11,12 +11,14 @@ import { useLayoutEffect } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { AccountDataBoundary } from "@/components/account-suspension-boundary";
 import { AuthRouterBridge } from "@/components/auth-router-bridge";
-import { ProtectedAuthBoundary, ProtectedRouteError } from "@/components/protected-auth-boundary";
-import { type RouteAuth, requireRouteIdentity } from "@/lib/route-auth";
+import { ProtectedAuthBoundary } from "@/components/protected-auth-boundary";
+import RootError from "@/components/root-error";
+import { requireRouteIdentity } from "@/lib/route-auth";
 import { useHydrated } from "@/lib/use-hydrated";
 import { emitSdk, serverAuth as readServerAuth } from "./clerk-fixture";
 
-const serverAuth: RouteAuth = { status: "signed-in", userId: "user-a", sessionId: "session-a" };
+const serverAuth = { userId: "user-a", sessionId: "session-a" };
+let admissions = 0;
 const errors: string[] = [];
 let hydrated = false;
 
@@ -49,19 +51,12 @@ function createProbeRouter(isServer: boolean) {
 		getParentRoute: () => root,
 		id: "_protected",
 		beforeLoad: ({ location }) => {
-			const { userId, sessionId } = readServerAuth();
+			admissions += 1;
 			return {
-				authIdentity: requireRouteIdentity(
-					isServer
-						? serverAuth
-						: userId && sessionId
-							? { status: "signed-in", userId, sessionId }
-							: { status: "signed-out" },
-					location.href,
-				),
+				authIdentity: requireRouteIdentity(isServer ? serverAuth : readServerAuth(), location.href),
 			};
 		},
-		errorComponent: ProtectedRouteError,
+		errorComponent: RootError,
 		component: () => (
 			<ProtectedAuthBoundary identity={protectedRoute.useRouteContext().authIdentity}>
 				<header>
@@ -113,6 +108,9 @@ if (typeof document !== "undefined") {
 	const element = document.getElementById("app");
 	if (!element) throw new Error("Missing hydration root");
 	window.hydrationTest = {
+		get admissions() {
+			return admissions;
+		},
 		errors,
 		emitSdk,
 		get hydrated() {
@@ -134,6 +132,7 @@ if (typeof document !== "undefined") {
 declare global {
 	interface Window {
 		hydrationTest: {
+			admissions: number;
 			hydrated: boolean;
 			errors: string[];
 			emitSdk: typeof emitSdk;

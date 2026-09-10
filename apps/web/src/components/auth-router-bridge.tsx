@@ -13,7 +13,12 @@ export function AuthRouterBridge({ children }: { children: React.ReactNode }) {
 	const auth = useRouteAuth();
 	const identity = routeAuthIdentity(auth);
 	const authKey = identity ?? auth.status;
-	const previousAuthKey = useRef<string | undefined>(undefined);
+	// Hydration restores beforeLoad context. Use that admission as the baseline,
+	// so the first live snapshot still revalidates a different user or sign-out.
+	const admittedMatch = router.state.matches.find((match) => match.routeId === "/_protected");
+	const previousAuthKey = useRef(
+		admittedMatch?.status === "success" ? admittedMatch.context.authIdentity : undefined,
+	);
 	const [scope, setScope] = useState(() => ({
 		identity,
 		queryClient: createAppQueryClient(),

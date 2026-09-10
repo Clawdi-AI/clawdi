@@ -61,8 +61,10 @@ export function useDashboardAuth() {
 }
 
 export function useRouteAuth() {
-	const auth = useDashboardAuth();
-	if (env.VITE_DEV_AUTH_BYPASS) return resolveRouteAuth(auth, "ready");
+	if (env.VITE_DEV_AUTH_BYPASS) {
+		return { status: "signed-in", userId: DEV_USER.id, sessionId: "dev_browser_session" } as const;
+	}
+	const auth = useAuth();
 	const clerk = useClerk();
 	// ClerkProvider propagates status changes. useAuth owns the native SSR
 	// snapshot during SDK bootstrap; script loading is not identity loss.

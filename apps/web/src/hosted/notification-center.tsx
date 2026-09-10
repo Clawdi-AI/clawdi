@@ -26,13 +26,6 @@ const accountNotificationKeys = {
 	all: (userId: string) => ["hosted-account-notifications", userId] as const,
 };
 
-async function authorizationHeaders(
-	getToken: () => Promise<string | null>,
-): Promise<{ Authorization: string } | undefined> {
-	const token = await getToken();
-	return token ? { Authorization: `Bearer ${token}` } : undefined;
-}
-
 function responseError(response: Response): ApiError {
 	return new ApiError(response.status, response.statusText || "Hosted notification request failed");
 }
@@ -67,7 +60,7 @@ export function HostedNotificationCenter() {
 						cursor: pageParam,
 					},
 				},
-				headers: await authorizationHeaders(getToken),
+				headers: { Authorization: `Bearer ${await getToken()}` },
 				signal,
 			});
 			if (!result.response.ok || !result.data) throw responseError(result.response);
@@ -98,7 +91,7 @@ export function HostedNotificationCenter() {
 			const result = await notificationApi.PATCH("/v1/me/notifications/{notification_id}", {
 				params: { path: { notification_id: id } },
 				body: { read },
-				headers: await authorizationHeaders(getToken),
+				headers: { Authorization: `Bearer ${await getToken()}` },
 			});
 			if (!result.response.ok || !result.data) throw responseError(result.response);
 			return result.data;
@@ -113,7 +106,7 @@ export function HostedNotificationCenter() {
 		mutationFn: async (id: string) => {
 			const result = await notificationApi.DELETE("/v1/me/notifications/{notification_id}", {
 				params: { path: { notification_id: id } },
-				headers: await authorizationHeaders(getToken),
+				headers: { Authorization: `Bearer ${await getToken()}` },
 			});
 			if (!result.response.ok) throw responseError(result.response);
 		},
@@ -126,7 +119,7 @@ export function HostedNotificationCenter() {
 	const markAllRead = useMutation({
 		mutationFn: async () => {
 			const result = await notificationApi.POST("/v1/me/notifications/read-all", {
-				headers: await authorizationHeaders(getToken),
+				headers: { Authorization: `Bearer ${await getToken()}` },
 			});
 			if (!result.response.ok || !result.data) throw responseError(result.response);
 			return result.data;

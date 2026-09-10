@@ -105,7 +105,7 @@ function useConfiguredApi(throwOnError: boolean) {
 		client.use({
 			async onRequest({ request }) {
 				const token = await getToken();
-				if (token) request.headers.set("Authorization", `Bearer ${token}`);
+				request.headers.set("Authorization", `Bearer ${token}`);
 				return request;
 			},
 		});
@@ -210,7 +210,7 @@ export function useSkillArchiveUploader() {
 
 			const headers = new Headers();
 			const token = await getToken();
-			if (token) headers.set("Authorization", `Bearer ${token}`);
+			headers.set("Authorization", `Bearer ${token}`);
 
 			const response = await accountFetch(
 				new Request(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/skills/upload`), {
@@ -238,7 +238,7 @@ export function useAgentAvatarUploader() {
 
 			const headers = new Headers();
 			const token = await getToken();
-			if (token) headers.set("Authorization", `Bearer ${token}`);
+			headers.set("Authorization", `Bearer ${token}`);
 
 			const response = await accountFetch(
 				new Request(apiUrl(`/v1/agents/${encodeURIComponent(environmentId)}/avatar`), {
