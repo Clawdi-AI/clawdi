@@ -165,7 +165,7 @@ async def test_lost_lease_interrupts_blocked_send(db_session, seed_user, monkeyp
         sending.set()
         await asyncio.Event().wait()
 
-    monkeypatch.setattr(route, "_refresh_subscription_lease", lost_lease)
+    monkeypatch.setattr(route, "refresh_subscription_lease", lost_lease)
     await asyncio.wait_for(response.stream_response(blocked_send), 2)
     assert (
         await db_session.scalar(

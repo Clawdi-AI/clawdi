@@ -29,10 +29,10 @@ from app.routes.sync import (
     PER_BOUND_KEY_CONNECTION_CAP,
     PER_USER_CONNECTION_CAP,
     SUBSCRIPTION_LEASE_TTL,
-    _cancel_and_wait,
-    _refresh_subscription_lease,
-    _release_subscription_lease_safely,
-    _SyncStreamingResponse,
+    SyncStreamingResponse,
+    cancel_and_wait,
+    refresh_subscription_lease,
+    release_subscription_lease_safely,
 )
 from app.services.distributed_state import acquire_sync_subscription_lease
 from app.services.session_content import session_has_uploaded_content
@@ -74,7 +74,7 @@ async def _read_version(
         ), auth
 
 
-class _ContentStreamingResponse(_SyncStreamingResponse):
+class _ContentStreamingResponse(SyncStreamingResponse):
     expires_at: datetime | None = None
     lease_id: UUID
 
@@ -85,7 +85,7 @@ class _ContentStreamingResponse(_SyncStreamingResponse):
             else None
         )
         closed = asyncio.Event()
-        renewal = asyncio.create_task(_refresh_subscription_lease(self.lease_id, closed))
+        renewal = asyncio.create_task(refresh_subscription_lease(self.lease_id, closed))
         sending = asyncio.create_task(super().stream_response(send))
         revoked = asyncio.create_task(closed.wait())
         try:
@@ -96,7 +96,7 @@ class _ContentStreamingResponse(_SyncStreamingResponse):
             pass
         finally:
             try:
-                await _cancel_and_wait(sending, revoked, renewal)
+                await cancel_and_wait(sending, revoked, renewal)
             finally:
                 # Cancellation may precede the sending task's first step.
                 await self._cleanup()
@@ -128,7 +128,7 @@ async def session_content_events(
         session_content_changed.unsubscribe(key, changed)
         sync_subscriptions_changed.unsubscribe(authority_key, authority_changed)
         if lease_id is not None:
-            await _release_subscription_lease_safely(lease_id)
+            await release_subscription_lease_safely(lease_id)
 
     try:
         _, fresh_auth = await _read_version(session_id, credentials, auth.user_id)
@@ -176,7 +176,7 @@ async def session_content_events(
                             tasks, timeout=HEARTBEAT_INTERVAL_S, return_when=asyncio.FIRST_COMPLETED
                         )
                     finally:
-                        await _cancel_and_wait(*tasks)
+                        await cancel_and_wait(*tasks)
                     if not done:
                         yield b": ping\n\n"
         except HTTPException:
