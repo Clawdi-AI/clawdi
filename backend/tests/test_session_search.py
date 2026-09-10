@@ -17,10 +17,12 @@ from uuid import UUID
 
 import httpx
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.pool import QueuePool
 
+from app.core import database
 from app.core.query_utils import search_excerpt, search_highlight_terms, search_terms
 from app.models.session import (
     SESSION_SEARCH_CHUNK_BODY_CHARACTERS,
@@ -435,6 +437,102 @@ async def test_snapshot_search_batches_preserve_rows_and_rollback_together(
         (message.position, message.role, message.content, 0, None, session.search_index_revision)
         for message in messages
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_cancelled_snapshot_search_insert_restores_committed_revision(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    engine,
+) -> None:
+    env_id = await _register_env(client)
+    session_id = UUID(await _push_session(client, env_id, local_session_id="cancel-search-insert"))
+    session = await db_session.get(Session, session_id)
+    assert session is not None
+    original = [SearchableSessionMessage(position=0, role="user", content="committed search")]
+    original_hash, replacement_hash = "a" * 64, "b" * 64
+    session.content_hash = original_hash
+    await replace_snapshot_search_index(db_session, session, session.content_hash, original)
+    await db_session.commit()
+
+    writer_engine = database._create_engine(pool_size=1, max_overflow=0)
+    writers = async_sessionmaker(writer_engine, class_=database.async_session_factory.class_)
+    pool = writer_engine.sync_engine.pool
+    assert isinstance(pool, QueuePool)
+    started = asyncio.Event()
+    writer_pid: int | None = None
+
+    async def replace() -> None:
+        nonlocal writer_pid
+        async with writers() as writer:
+            current = await writer.get(Session, session_id)
+            assert current is not None
+            writer_pid = await writer.scalar(text("SELECT pg_backend_pid()"))
+            started.set()
+            await replace_snapshot_search_index(writer, current, replacement_hash, original)
+            current.content_hash = replacement_hash
+            await writer.commit()
+
+    try:
+        async with engine.connect() as blocker, engine.connect() as observer:
+            await blocker.execute(
+                select(Session.id).where(Session.id == session_id).with_for_update()
+            )
+            blocker_pid = await blocker.scalar(text("SELECT pg_backend_pid()"))
+            async with asyncio.TaskGroup() as tasks:
+                task = tasks.create_task(replace())
+                async with asyncio.timeout(5):
+                    await started.wait()
+                    # Prove cancellation reaches the INSERT's FK wait, after the
+                    # old documents were deleted, rather than an earlier checkout.
+                    while not await observer.scalar(
+                        text(
+                            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                            "WHERE pid = :pid AND wait_event_type = 'Lock' "
+                            "AND query LIKE 'INSERT INTO session_message_search%unnest(%' "
+                            "AND :blocker = ANY(pg_blocking_pids(pid)))"
+                        ),
+                        {"pid": writer_pid, "blocker": blocker_pid},
+                    ):
+                        await observer.rollback()
+                        await asyncio.sleep(0.01)
+                    task.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await task
+                    assert pool.checkedout() == 0
+                    # A gone backend cannot perform a late commit when the parent
+                    # lock is released; do not rely on an arbitrary sleep.
+                    await observer.rollback()
+                    while await observer.scalar(
+                        text("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = :pid)"),
+                        {"pid": writer_pid},
+                    ):
+                        await observer.rollback()
+                        await asyncio.sleep(0.01)
+            await blocker.rollback()
+            await observer.rollback()
+            row = (
+                await observer.execute(
+                    select(Session.content_hash, Session.search_index_revision).where(
+                        Session.id == session_id
+                    )
+                )
+            ).one()
+            assert row == (original_hash, f"snapshot:{original_hash}")
+            documents = (
+                await observer.execute(
+                    select(
+                        SessionMessageSearch.content, SessionMessageSearch.content_revision
+                    ).where(SessionMessageSearch.session_id == session_id)
+                )
+            ).all()
+            assert documents == [("committed search", f"snapshot:{original_hash}")]
+        async with writer_engine.connect() as connection:
+            assert await connection.scalar(text("SELECT 1")) == 1
+        assert pool.checkedout() == 0
+    finally:
+        await writer_engine.dispose()
 
 
 @pytest.mark.asyncio
