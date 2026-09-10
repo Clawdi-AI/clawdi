@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.session import Session, SessionMessageSearch
+from app.models.session import Session, SessionEventGeneration, SessionMessageSearch
 from app.models.user import User
 from app.services.session_events import (
     EMPTY_EVENT_HEAD,
@@ -22,7 +22,7 @@ from app.services.session_events import (
     canonical_event_json,
     project_safe_messages,
 )
-from app.services.session_search import rebuild_session_search_index
+from app.services.session_search import rebuild_session_search_index, stage_event_search_messages
 
 
 def _source(record_id: str, part_index: int | None = None) -> dict[str, Any]:
@@ -976,6 +976,54 @@ async def test_event_search_rebuild_fences_same_head_generation_replacement(
     search = (await client.get("/v1/sessions", params={"q": "same head replacement"})).json()
     assert [item["local_session_id"] for item in search["items"]] == [local_id]
     assert search["items"][0]["search_match"]["anchor"]["revision"] == f"events:{head}"
+
+
+@pytest.mark.asyncio
+async def test_event_search_staging_flushes_pending_generation(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    _, session = await _register_session(
+        client, db_session, local_session_id="pi.pending-search-generation"
+    )
+    generation = SessionEventGeneration(
+        id=uuid.uuid4(),
+        session_id=session.id,
+        append_id=uuid.uuid4(),
+        status="staging",
+        base_revision=0,
+        base_count=0,
+        base_head_hash=EMPTY_EVENT_HEAD,
+        final_count=1,
+        final_head_hash="a" * 64,
+    )
+    db_session.add(generation)
+    await stage_event_search_messages(
+        db_session,
+        user_id=session.user_id,
+        session_id=session.id,
+        generation_id=generation.id,
+        events=[
+            EVENT_ADAPTER.validate_python(
+                _event(
+                    0,
+                    "message",
+                    "pending",
+                    role="user",
+                    parts=[{"type": "text", "text": "pending generation search"}],
+                )
+            )
+        ],
+    )
+    await db_session.commit()
+    row = (
+        await db_session.execute(
+            select(SessionMessageSearch).where(SessionMessageSearch.session_id == session.id)
+        )
+    ).scalar_one()
+    assert row.generation_id == generation.id
+    assert row.content_revision == f"events:{generation.id}"
+    assert row.content == "pending generation search"
 
 
 @pytest.mark.asyncio
