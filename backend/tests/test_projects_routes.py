@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
+from app.models.project_membership import ProjectMembership
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.models.user import User
 from app.models.vault import Vault, VaultProjectAttachment
@@ -13,6 +14,44 @@ from app.services import sync_events
 from tests.conftest import create_env_with_project, create_test_hosted_runtime_state
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.mark.parametrize("prefix", ["/v1", "/api"])
+async def test_project_detail_uses_callers_membership(client, db_session, seed_user, prefix):
+    owner = User(clerk_id=f"project-owner-{uuid.uuid4()}", name="Current Owner")
+    other = User(clerk_id=f"project-viewer-{uuid.uuid4()}")
+    db_session.add_all([owner, other])
+    await db_session.flush()
+    project = Project(
+        user_id=owner.id, name="Shared Project", slug="shared", kind=PROJECT_KIND_WORKSPACE
+    )
+    db_session.add(project)
+    await db_session.flush()
+    memberships = [
+        ProjectMembership(
+            project_id=project.id,
+            member_user_id=user.id,
+            role="viewer",
+            joined_via="link",
+            joined_at=datetime.now(UTC),
+            resolved_owner_handle=handle,
+        )
+        for user, handle in [(seed_user, "original-owner"), (other, "other-owner-handle")]
+    ]
+    db_session.add_all(memberships)
+    await db_session.commit()
+
+    response = await client.get(f"{prefix}/projects/{project.id}")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["is_owner"] is False
+    assert body["owner_display"] == "Current Owner"
+    assert body["owner_handle"] == "original-owner"
+    assert body["member_count"] == 2
+
+    await db_session.delete(memberships[0])
+    await db_session.commit()
+    assert (await client.get(f"{prefix}/projects/{project.id}")).status_code == 404
 
 
 async def test_create_project_generates_workspace_slug(client, db_session, seed_user):

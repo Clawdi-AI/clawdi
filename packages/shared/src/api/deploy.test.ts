@@ -115,6 +115,58 @@ describe("Runtime UI access contracts", () => {
 		).toBe(true);
 	});
 
+	test.each(["", "/", "/openclaw", "/openclaw/", "/nested/openclaw/"])(
+		"accepts a public gateway URL for endpoint path %s",
+		(path) => {
+			const url = `https://runtime.example${path}`;
+			const fragment = new URLSearchParams({
+				bootstrapToken: "one-time+token/&=",
+				bootstrapProfile: "owner",
+				gatewayUrl: `wss://runtime.example${path.replace(/\/+$/, "")}`,
+			});
+			expect(
+				isRuntimeUiCredentials({
+					runtime: "openclaw",
+					auth_mode: "openclaw_token",
+					url,
+					deployment_resource_version: "rv-current",
+					token: "gateway-token",
+					handoff_url: `${url}#${fragment}`,
+				}),
+			).toBe(true);
+		},
+	);
+
+	test.each([
+		...[
+			"",
+			"ws://runtime.example/openclaw",
+			"wss://other.example/openclaw",
+			"wss://runtime.example:18789/openclaw",
+			"wss://runtime.example/other",
+			"wss://runtime.example/openclaw/",
+			"wss://runtime.example/openclaw?redirect=evil",
+			"wss://runtime.example/openclaw#evil",
+			"wss://user@runtime.example/openclaw",
+			"wss://runtime.example/openclaw\n",
+		].map((value) => `gatewayUrl=${encodeURIComponent(value)}`),
+		"unknown=value",
+		"bootstrapToken=other",
+		"bootstrapProfile=owner",
+		"gatewayUrl=wss%3A%2F%2Fruntime.example%2Fopenclaw&gatewayUrl=wss%3A%2F%2Fruntime.example%2Fopenclaw",
+	])("rejects untrusted or duplicate handoff fields: %s", (extra) => {
+		expect(
+			isRuntimeUiCredentials({
+				runtime: "openclaw",
+				auth_mode: "openclaw_token",
+				url: "https://runtime.example/openclaw/",
+				deployment_resource_version: "rv-current",
+				token: "gateway-token",
+				handoff_url: `https://runtime.example/openclaw/#bootstrapToken=token&bootstrapProfile=owner&${extra}`,
+			}),
+		).toBe(false);
+	});
+
 	test("accepts the exact legacy token fallback and rejects mismatched handoffs", () => {
 		const credential = {
 			runtime: "openclaw",
