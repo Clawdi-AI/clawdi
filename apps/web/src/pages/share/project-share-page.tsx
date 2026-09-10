@@ -9,9 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { unwrap, useApi } from "@/lib/api";
+import { getPublicSharePreview, unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
-import { useCurrentUser, useDashboardAuth } from "@/lib/auth-client";
+import { useCurrentUser, useDashboardAuth, useSessionIdentity } from "@/lib/auth-client";
 import { projectDetailHref } from "@/lib/project-resource-model";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
@@ -67,6 +67,7 @@ export default function SharePage({ token }: { token: string }) {
 	const router = useRouter();
 	const { isSignedIn, getToken } = useDashboardAuth();
 	const { user } = useCurrentUser();
+	const sessionIdentity = useSessionIdentity();
 	const previewRequestRef = useRef(0);
 	const [preview, setPreview] = useState<{
 		data: SharePreview | null;
@@ -81,9 +82,7 @@ export default function SharePage({ token }: { token: string }) {
 		setPreview({ data: null, error: null, isLoading: true });
 		void (async () => {
 			try {
-				const result = await api.GET("/v1/share/{token}/preview", {
-					params: { path: { token } },
-				});
+				const result = await getPublicSharePreview(token);
 				if (result.error !== undefined)
 					throw shareErrorFromApi(result.response.status, result.error);
 				if (previewRequestRef.current === requestId) {
@@ -98,7 +97,7 @@ export default function SharePage({ token }: { token: string }) {
 		return () => {
 			previewRequestRef.current += 1;
 		};
-	}, [api, token]);
+	}, [token]);
 
 	const upgrade = useSensitiveAction(async () => {
 		const bearer = await getToken();
@@ -176,7 +175,7 @@ export default function SharePage({ token }: { token: string }) {
 						<div className="space-y-3">
 							<Button
 								onClick={() => void upgrade.execute().catch(() => undefined)}
-								disabled={upgrade.isPending}
+								disabled={upgrade.isPending || !sessionIdentity}
 								className="w-full"
 								size="lg"
 							>

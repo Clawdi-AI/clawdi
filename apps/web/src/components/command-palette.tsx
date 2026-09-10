@@ -18,6 +18,7 @@ import {
 	Sparkles,
 } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useAccountDataIdentity } from "@/components/account-suspension-boundary";
 import { SearchHighlightedText } from "@/components/search-highlighted-text";
 import { SessionSearchMatchExcerpt } from "@/components/sessions/search-match-excerpt";
 import { TruncatedText } from "@/components/truncated-text";
@@ -87,6 +88,7 @@ export function useCommandPalette() {
 }
 
 export function CommandPaletteProvider({ children }: { children: React.ReactNode }) {
+	const ready = Boolean(useAccountDataIdentity());
 	const [open, setOpenInternal] = useState(false);
 
 	const setOpen = useCallback((next: boolean) => {
@@ -97,6 +99,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
 		// Global Cmd+K / Ctrl+K — mirrors Linear, Vercel, GitHub. We skip when
 		// the user is typing in a form field other than our own search input;
 		// cmdk already grabs focus inside the dialog so we just need to open it.
+		if (!ready) return;
 		const handler = (e: KeyboardEvent) => {
 			if (e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault();
@@ -105,14 +108,14 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
 		};
 		document.addEventListener("keydown", handler, true);
 		return () => document.removeEventListener("keydown", handler, true);
-	}, []);
+	}, [ready]);
 
 	const value = useMemo(() => ({ open, setOpen }), [open, setOpen]);
 
 	return (
 		<PaletteContext.Provider value={value}>
 			{children}
-			<CommandPalette open={open} onOpenChange={setOpen} />
+			{ready ? <CommandPalette open={open} onOpenChange={setOpen} /> : null}
 		</PaletteContext.Provider>
 	);
 }

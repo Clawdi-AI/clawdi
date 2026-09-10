@@ -5,6 +5,7 @@ import { Link } from "@tanstack/react-router";
 import { AlertCircle, CheckCircle2, Clock, Terminal, XCircle } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useEffect, useRef, useState } from "react";
+import { AccountDataBoundary } from "@/components/account-suspension-boundary";
 import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -32,15 +33,13 @@ const CLI_AUTHORIZE_ERROR_NORMALIZER: ApiErrorNormalizer = {
 // Keep the URL-state body under Suspense and preserve the existing loading shell.
 export default function CliAuthorizePage() {
 	return (
-		<Suspense
-			fallback={
-				<Shell>
-					<Skeleton className="h-32 w-full" />
-				</Shell>
-			}
-		>
-			<CliAuthorizeContent />
-		</Suspense>
+		<Shell>
+			<Suspense fallback={<Skeleton className="h-32 w-full" />}>
+				<AccountDataBoundary>
+					<CliAuthorizeContent />
+				</AccountDataBoundary>
+			</Suspense>
+		</Shell>
 	);
 }
 
@@ -103,36 +102,28 @@ function CliAuthorizeContent() {
 
 	if (!code) {
 		return (
-			<Shell>
-				<Alert variant="destructive">
-					<AlertCircle />
-					<AlertTitle>Missing authorization code</AlertTitle>
-					<AlertDescription>
-						Open this page through the link `clawdi auth login` printed in your terminal — it
-						already includes the code.
-					</AlertDescription>
-				</Alert>
-			</Shell>
+			<Alert variant="destructive">
+				<AlertCircle />
+				<AlertTitle>Missing authorization code</AlertTitle>
+				<AlertDescription>
+					Open this page through the link `clawdi auth login` printed in your terminal — it already
+					includes the code.
+				</AlertDescription>
+			</Alert>
 		);
 	}
 
 	if (lookup.isLoading) {
-		return (
-			<Shell>
-				<Skeleton className="h-32 w-full" />
-			</Shell>
-		);
+		return <Skeleton className="h-32 w-full" />;
 	}
 
 	if (lookup.error) {
 		return (
-			<Shell>
-				<ApiErrorPanel
-					error={lookup.error}
-					normalizer={CLI_AUTHORIZE_ERROR_NORMALIZER}
-					title="Authorization request unavailable"
-				/>
-			</Shell>
+			<ApiErrorPanel
+				error={lookup.error}
+				normalizer={CLI_AUTHORIZE_ERROR_NORMALIZER}
+				title="Authorization request unavailable"
+			/>
 		);
 	}
 
@@ -145,37 +136,31 @@ function CliAuthorizeContent() {
 
 	if (visibleStatus === "approved") {
 		return (
-			<Shell>
-				<TerminalCard
-					icon={<CheckCircle2 className="size-10 text-success" />}
-					title="CLI authorized"
-					body="Return to your terminal — the CLI should pick up the credentials within a couple of seconds."
-				/>
-			</Shell>
+			<TerminalCard
+				icon={<CheckCircle2 className="size-10 text-success" />}
+				title="CLI authorized"
+				body="Return to your terminal — the CLI should pick up the credentials within a couple of seconds."
+			/>
 		);
 	}
 
 	if (visibleStatus === "denied") {
 		return (
-			<Shell>
-				<TerminalCard
-					icon={<XCircle className="size-10 text-destructive" />}
-					title="Authorization denied"
-					body="The CLI on the other side will see this and stop polling. Re-run `clawdi auth login` to start fresh."
-				/>
-			</Shell>
+			<TerminalCard
+				icon={<XCircle className="size-10 text-destructive" />}
+				title="Authorization denied"
+				body="The CLI on the other side will see this and stop polling. Re-run `clawdi auth login` to start fresh."
+			/>
 		);
 	}
 
 	if (visibleStatus === "expired" || visibleStatus === "consumed") {
 		return (
-			<Shell>
-				<TerminalCard
-					icon={<Clock className="size-10 text-muted-foreground" />}
-					title="Code expired"
-					body="Authorization codes are good for 10 minutes. Run `clawdi auth login` again to get a new one."
-				/>
-			</Shell>
+			<TerminalCard
+				icon={<Clock className="size-10 text-muted-foreground" />}
+				title="Code expired"
+				body="Authorization codes are good for 10 minutes. Run `clawdi auth login` again to get a new one."
+			/>
 		);
 	}
 
@@ -183,57 +168,55 @@ function CliAuthorizeContent() {
 	const minutesLeft = Math.max(0, Math.round((expiresAt.getTime() - Date.now()) / 60000));
 
 	return (
-		<Shell>
-			<Card>
-				<CardHeader className="space-y-1">
-					<CardTitle className="flex items-center gap-2">
-						<Terminal className="size-5" />
-						Authorize the Clawdi CLI
-					</CardTitle>
-					<p className="text-sm text-muted-foreground">
-						A CLI on this machine is asking to act on behalf of your account. Confirm the code below
-						matches what your terminal shows.
-					</p>
-				</CardHeader>
-				<CardContent className="space-y-5">
-					<div className="rounded-lg border bg-muted/30 p-4">
-						<div className="text-xs uppercase tracking-wide text-muted-foreground">Code</div>
-						<div className="mt-1 font-mono text-2xl font-semibold tracking-widest">
-							{data.user_code}
-						</div>
-						{data.client_label ? (
-							<div className="mt-3 text-sm text-muted-foreground">
-								<span className="text-xs uppercase tracking-wide">Client</span>
-								<div className="font-mono text-sm">{data.client_label}</div>
-							</div>
-						) : null}
-						<div className="mt-3 text-xs text-muted-foreground">
-							Expires in ~{minutesLeft} minute{minutesLeft === 1 ? "" : "s"}.
-						</div>
+		<Card>
+			<CardHeader className="space-y-1">
+				<CardTitle className="flex items-center gap-2">
+					<Terminal className="size-5" />
+					Authorize the Clawdi CLI
+				</CardTitle>
+				<p className="text-sm text-muted-foreground">
+					A CLI on this machine is asking to act on behalf of your account. Confirm the code below
+					matches what your terminal shows.
+				</p>
+			</CardHeader>
+			<CardContent className="space-y-5">
+				<div className="rounded-lg border bg-muted/30 p-4">
+					<div className="text-xs uppercase tracking-wide text-muted-foreground">Code</div>
+					<div className="mt-1 font-mono text-2xl font-semibold tracking-widest">
+						{data.user_code}
 					</div>
-
-					<div className="flex items-center justify-end gap-2">
-						<Button
-							variant="ghost"
-							onClick={() => void deny.execute().catch(() => undefined)}
-							disabled={deny.isPending || approve.isPending}
-						>
-							{deny.isPending ? "Denying…" : "Deny"}
-						</Button>
-						<Button
-							onClick={() => void approve.execute().catch(() => undefined)}
-							disabled={approve.isPending || deny.isPending}
-						>
-							{approve.isPending ? "Authorizing…" : "Authorize"}
-						</Button>
-					</div>
-
-					{approve.error || deny.error ? (
-						<ApiErrorPanel error={approve.error || deny.error} title="Action failed" />
+					{data.client_label ? (
+						<div className="mt-3 text-sm text-muted-foreground">
+							<span className="text-xs uppercase tracking-wide">Client</span>
+							<div className="font-mono text-sm">{data.client_label}</div>
+						</div>
 					) : null}
-				</CardContent>
-			</Card>
-		</Shell>
+					<div className="mt-3 text-xs text-muted-foreground">
+						Expires in ~{minutesLeft} minute{minutesLeft === 1 ? "" : "s"}.
+					</div>
+				</div>
+
+				<div className="flex items-center justify-end gap-2">
+					<Button
+						variant="ghost"
+						onClick={() => void deny.execute().catch(() => undefined)}
+						disabled={deny.isPending || approve.isPending}
+					>
+						{deny.isPending ? "Denying…" : "Deny"}
+					</Button>
+					<Button
+						onClick={() => void approve.execute().catch(() => undefined)}
+						disabled={approve.isPending || deny.isPending}
+					>
+						{approve.isPending ? "Authorizing…" : "Authorize"}
+					</Button>
+				</div>
+
+				{approve.error || deny.error ? (
+					<ApiErrorPanel error={approve.error || deny.error} title="Action failed" />
+				) : null}
+			</CardContent>
+		</Card>
 	);
 }
 

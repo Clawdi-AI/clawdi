@@ -5,7 +5,6 @@ import { routeTree } from "./routeTree.gen";
 export function getRouter() {
 	const router = createRouter({
 		routeTree,
-		context: { auth: undefined },
 		defaultPreload: "intent",
 		scrollRestoration: true,
 		scrollToTopSelectors: ["#dashboard-scroll-container"],

@@ -1,4 +1,5 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
+import { AccountDataBoundary } from "@/components/account-suspension-boundary";
 import { isAgentRouteId } from "@/lib/agent-routes";
 import { routeHeadTitle } from "@/lib/document-title";
 import { AgentDetailClient } from "@/pages/dashboard/agents/agent-detail-client";
@@ -20,7 +21,9 @@ function TerminalWindowRoute() {
 			data-mava-launcher="hidden"
 			className="flex h-svh min-h-0 w-full overflow-hidden bg-background"
 		>
-			<AgentDetailClient environmentId={id} section="terminal" routeSearch={{}} standalone />
+			<AccountDataBoundary>
+				<AgentDetailClient environmentId={id} section="terminal" routeSearch={{}} standalone />
+			</AccountDataBoundary>
 		</main>
 	);
 }
