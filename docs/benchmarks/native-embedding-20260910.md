@@ -1,10 +1,10 @@
 # Native embedding CPU ceiling qualification
 
-The owner/root accepted **4 CPU / 4 native threads** to reduce individual request
-waits using available cores. CPU quota is a ceiling, not a reservation. Request
+The qualified configuration uses **4 CPU / 4 native threads** to reduce individual
+request waits using available cores. CPU quota is a ceiling, not a reservation. Request
 capacity stays **1**, memory **4 GiB**, with the same model, single ONNX session,
-DB-free worker and identity healthcheck. This candidate awaits final diff review;
-it is not a production performance guarantee or authorization to raise admission.
+DB-free worker and identity healthcheck. These measurements are not a production
+performance guarantee or a qualification for higher request admission.
 
 Three alternating paired runs (2/2 then 4/4; 4/4 then 2/2; 2/2 then 4/4) used the
 real `LocalEmbedder` worker over UDS, Python 3.14.7 and frozen backend dependencies
