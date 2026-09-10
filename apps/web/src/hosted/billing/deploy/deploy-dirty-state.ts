@@ -13,6 +13,7 @@ export type DeployWizardDirtyState = {
 	subscriptionSource: SubscriptionSource | null;
 	aiBindingDraft: AiProviderBindingDraft;
 	checkoutOpen: boolean;
+	preinstallBundle?: boolean;
 };
 
 function subscriptionSourceEquals(
@@ -48,6 +49,7 @@ export function deployWizardDraftIsDirty(
 ): boolean {
 	if (committed) return false;
 	return (
+		(current.preinstallBundle ?? true) !== (baseline.preinstallBundle ?? true) ||
 		current.runtime !== baseline.runtime ||
 		current.agentName !== baseline.agentName ||
 		current.compute !== baseline.compute ||

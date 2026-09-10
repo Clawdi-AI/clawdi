@@ -1233,6 +1233,8 @@ export interface components {
         };
         /** HostedDeploymentSpec */
         HostedDeploymentSpec: {
+            /** Plugin Bundle */
+            plugin_bundle?: "sui" | null;
             /**
              * Schema Version
              * @default 1
@@ -2420,6 +2422,8 @@ export interface components {
              * @enum {string}
              */
             compute_plan_slug: "compute_basic" | "compute_performance";
+            /** Plugin Bundle */
+            plugin_bundle?: "sui" | null;
             /** Primary Model */
             primary_model?: string | components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
             /** Channel */

@@ -45,6 +45,7 @@ describe("deploy wizard dirty state", () => {
 			aiBindingDraft: { ...baseline.aiBindingDraft, primaryModel: "another-model" },
 		};
 
+		expect(deployWizardDraftIsDirty({ ...baseline, preinstallBundle: false }, baseline)).toBe(true);
 		expect(deployWizardDraftIsDirty(edited, baseline)).toBe(true);
 		expect(deployWizardDraftIsDirty(edited, baseline, true)).toBe(false);
 	});

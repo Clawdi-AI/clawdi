@@ -10,6 +10,8 @@ export default defineConfig({
 	testIgnore: [
 		// SDK lifecycle contracts use their own isolated Clerk fixture server.
 		"**/auth/**",
+		// Paired marketing/Cloud apps and SDK fixtures have a dedicated Docker runner.
+		"**/handoff/**",
 		// Hosted suites run under playwright.hosted.config.ts
 		// (VITE_CLAWDI_HOSTED=true); in the OSS build those surfaces cannot
 		// render.

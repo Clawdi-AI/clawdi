@@ -91,10 +91,13 @@ API compatibility policy lives in [`api-compatibility.md`](api-compatibility.md)
 ## Plugin Catalog And Desired State
 
 Clawdi is the sole authority for user Agent Plugin selection. New and existing
-Agents have no plugin desired state by default. Authenticated product APIs read
+Agents have no plugin desired state unless the user accepts a channel bundle
+at deployment. Authenticated product APIs read
 the last-known-good catalog and mutate one owned Agent's desired installation;
-they do not proxy selection through a hosted control plane and do not claim
-that native installation has converged.
+they do not claim that native installation has converged. A control plane may
+request the narrowly defined initial `sui` bundle through the runtime-state
+contract; Cloud resolves its contents from the trusted catalog, never from
+caller-supplied plugin sources.
 
 The catalog worker resolves `Clawdi-AI/store` `main` externally, then fetches
 `v2/catalog.json` at that exact 40-hex commit. The strict Store catalog v1 is a
@@ -135,18 +138,51 @@ runtime state; a same-name native server override may opt into the runtime's
 official OAuth flow without changing Store metadata, package bytes, or Clawdi
 desired state.
 
-### Initial plugin bundles
+### Channel bundle initialization
 
-Platform and admin runtime-state writes accept an optional `plugin_bundle: "sui"`.
-The caller selects the bundle for that deployment; no account channel is stored
-or required. Cloud selects whole plugins tagged `sui` from one trusted catalog
-snapshot and commits the installation rows with the stable Agent's
-`plugin_bundle_revision` marker.
-Initialization preserves existing installations and never repeats after user
-removal or runtime-state replacement. A failed batch rolls back atomically.
-This is a recommendation contract, not a billing entitlement. Callers that omit
-the field retain their existing behavior and idempotency identity. Deploy this
-API and migration before enabling bundle requests in a hosted control plane.
+`/deploy?deploy_profile=sui` (also `utm_source=sui`) recommends the optional
+Sui bundle. First-party marketing captures only known values at its server
+boundary and hands them to a fixed Cloud destination. Marketing attribution
+expires after seven days; navigation and handoff do not renew it.
+
+Cloud keeps the recommendation in the current URL through Clerk's `redirect_url`
+across sign-in/sign-up. The deployment form resolves only the known URL value and
+shows a selected, optional Sui bundle card. Its choice participates in the
+existing dirty state and request fingerprint. Only this deployment submits
+`plugin_bundle: "sui"`; unchecking omits the field. Cloud does not save channel
+attribution to an account or database, or consume the URL. Anyone using the same
+link can choose the recommendation. Visiting Cloud without the parameter is an
+ordinary deployment; future visits without it and cross-device continuity are
+not guaranteed. A recommendation grants no billing or external-service authority.
+
+Both platform and admin runtime-state writes accept only the known bundle
+identifier. Cloud selects whole plugins whose trusted catalog keywords contain
+exactly `sui`. Latest versions are selected from one catalog snapshot. Existing desired installations remain
+unchanged. The stable Agent's `plugin_bundle_revision` and all new installation
+rows commit together, with normal manifest invalidation. A failed batch rolls
+back completely; successful initialization never repeats, including after
+manual uninstall or runtime-state deletion. Catalog refresh does not extend or
+upgrade the initialized bundle. Skills and MCP servers remain inside their
+original plugin packages and separate native installation directories. Native
+skill-name collision behavior remains runtime-owned; this path does not rename
+or flatten packaged skills.
+
+Release ordering: publish the Store Sui 0.2.1 artifact/catalog from
+[Store PR #9](https://github.com/Clawdi-AI/store/pull/9) first, then the additive
+[Cloud API #1459](https://github.com/Clawdi-AI/clawdi/pull/1459),
+[Hosted API #2164](https://github.com/Clawdi-AI/clawdi-hosted/pull/2164), and finally
+their UI consumers. API-only prerequisites allow the normal server-first release
+flow without relaxing the live Hosted OpenAPI check. Docker qualification with
+official OpenClaw 2026.9.3 (1391f7c): seven plugins,
+72/72 unique skill names model-visible and eligible, none disabled. The three
+shared Walrus Sites skill directories use the same official source commit
+`6d429c88d14e3f9fcd4f95ce183ae6d69804e1d3` and are byte-identical. Native precedence
+warnings remain, without differing skill contents. This evidence does not verify
+third-party MCP authorization, real OAuth, or payment completion.
+
+Done: the Docker backend suites for platform endpoints and plugin catalog
+routes pass; the Docker web checks and paired `e2e/handoff/handoff.pw.ts` verify
+URL selection and optional submission in the actual deployment surface.
 
 ## CLI And Adapters
 

@@ -18,6 +18,7 @@ const stripePublishableKey = process.env.E2E_STRIPE_PUBLISHABLE_KEY ?? "pk_test_
 export default defineConfig({
 	testDir: "./e2e",
 	testMatch: ["**/hosted-*.pw.ts", "**/query-refresh-hosted.pw.ts"],
+	testIgnore: ["**/handoff/**"],
 	timeout: 60_000,
 	expect: { timeout: 12_000 },
 	fullyParallel: false,

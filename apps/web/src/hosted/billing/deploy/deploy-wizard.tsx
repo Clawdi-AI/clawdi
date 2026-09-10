@@ -2,10 +2,11 @@
 
 import { validateHostedDeployPersona } from "@clawdi/shared/api";
 import { useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "@tanstack/react-router";
+import { useRouter, useRouterState } from "@tanstack/react-router";
 import {
 	Cpu,
 	CreditCard,
+	Package,
 	RefreshCw,
 	Rocket,
 	Settings2,
@@ -182,6 +183,7 @@ import {
 } from "@/hosted/v2/ai-providers/model-binding";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
+import { resolveDeployChannel } from "@/lib/deploy-channel";
 import { env } from "@/lib/env";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
@@ -294,6 +296,9 @@ function ComputeResources({
 }
 
 export function DeployWizard() {
+	const search = useRouterState({ select: (state) => state.location.searchStr });
+	const channel = resolveDeployChannel(search);
+	const [preinstallBundle, setPreinstallBundle] = useState(true);
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const billingClient = useBillingClient();
@@ -768,16 +773,19 @@ export function DeployWizard() {
 		aiFields: DeployAiFields,
 		computePlanSlug: ComputePlanSlug,
 	): DeployRequest {
-		return buildHostedDeployRequest({
-			computePlanSlug,
-			runtime,
-			persona: {
-				agentName,
-				language,
-				timezone,
-			},
-			aiFields,
-		});
+		return {
+			...buildHostedDeployRequest({
+				computePlanSlug,
+				runtime,
+				persona: {
+					agentName,
+					language,
+					timezone,
+				},
+				aiFields,
+			}),
+			...(channel && preinstallBundle ? { plugin_bundle: "sui" as const } : {}),
+		};
 	}
 
 	function redirectTo(url: string | null | undefined): boolean {
@@ -1114,6 +1122,7 @@ export function DeployWizard() {
 			primaryModel: defaultPrimaryModel,
 		},
 		checkoutOpen: false,
+		preinstallBundle: true,
 	};
 	const deployDirty = deployWizardDraftIsDirty(
 		{
@@ -1127,6 +1136,7 @@ export function DeployWizard() {
 			subscriptionSource,
 			aiBindingDraft,
 			checkoutOpen: checkoutSession !== null,
+			preinstallBundle: channel ? preinstallBundle : true,
 		},
 		deployBaseline,
 		deploymentCommitted,
@@ -1173,6 +1183,24 @@ export function DeployWizard() {
 					</div>
 				</SettingsSection>
 
+				{channel ? (
+					<SettingsSection title="Preinstalled plugins">
+						<div className={ENTITY_CHOICE_GRID_CLASS}>
+							<EntityChoiceCard
+								selected={preinstallBundle}
+								onClick={() => setPreinstallBundle((selected) => !selected)}
+								disabled={submitting}
+								icon={
+									<IconChip tint="bg-muted text-muted-foreground">
+										<Package />
+									</IconChip>
+								}
+								title="Sui bundle"
+								description="Includes Sui ecosystem Store plugins and their skills and MCP servers."
+							/>
+						</div>
+					</SettingsSection>
+				) : null}
 				<SettingsSection title="AI providers">
 					<div className="flex flex-col gap-4">
 						<div className={ENTITY_CHOICE_GRID_CLASS} data-testid="provider-choice-grid">
