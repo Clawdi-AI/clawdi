@@ -4,7 +4,7 @@ import { type components, extractApiDetail, type paths } from "@clawdi/shared/ap
 import createClient from "openapi-fetch";
 import createQueryClient from "openapi-react-query";
 import { useCallback, useMemo } from "react";
-import { observeAccountSuspensionResponse } from "@/lib/account-suspension";
+import { useAccountSuspension } from "@/lib/account-suspension";
 import { ApiError, ApiNetworkError, apiErrorCode } from "@/lib/api-errors";
 import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
@@ -67,10 +67,6 @@ function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Respons
 		controller.abort();
 	}, REQUEST_TIMEOUT_MS);
 	return fetch(request, { ...init, signal: controller.signal })
-		.then(async (response) => {
-			await observeAccountSuspensionResponse(response);
-			return response;
-		})
 		.catch((cause: unknown) => {
 			if (timedOut) throw new ApiNetworkError("timeout", { cause });
 			if (caller?.aborted) throw cause;
@@ -82,6 +78,18 @@ function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Respons
 		});
 }
 
+function useAccountFetch() {
+	const suspension = useAccountSuspension();
+	return useCallback(
+		async (request: Request, init?: RequestInit) => {
+			const response = await fetchWithTimeout(request, init);
+			await suspension.observeResponse(response);
+			return response;
+		},
+		[suspension],
+	);
+}
+
 /**
  * openapi-fetch client authenticated via Clerk. Response types are inferred
  * from the OpenAPI path + method, so call sites never pass a manual generic.
@@ -90,9 +98,10 @@ function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Respons
  * in the browser tree.
  */
 function useConfiguredApi(throwOnError: boolean) {
+	const accountFetch = useAccountFetch();
 	const { getToken } = useAuthToken();
 	return useMemo(() => {
-		const client = createClient<ApiPaths>({ baseUrl: API_URL, fetch: fetchWithTimeout });
+		const client = createClient<ApiPaths>({ baseUrl: API_URL, fetch: accountFetch });
 		client.use({
 			async onRequest({ request }) {
 				const token = await getToken();
@@ -111,7 +120,17 @@ function useConfiguredApi(throwOnError: boolean) {
 			});
 		}
 		return client;
-	}, [getToken, throwOnError]);
+	}, [accountFetch, getToken, throwOnError]);
+}
+
+/** Share previews are explicitly anonymous; private clients require a session. */
+export function getPublicSharePreview(token: string) {
+	return createClient<paths>({ baseUrl: API_URL, fetch: fetchWithTimeout }).GET(
+		"/v1/share/{token}/preview",
+		{
+			params: { path: { token } },
+		},
+	);
 }
 
 /** Generated fetch client for flows that inspect the typed response envelope directly. */
@@ -174,6 +193,7 @@ async function readJson<T>(response: Response): Promise<T> {
 }
 
 export function useSkillArchiveUploader() {
+	const accountFetch = useAccountFetch();
 	const { getToken } = useAuthToken();
 	return useCallback(
 		async (
@@ -192,7 +212,7 @@ export function useSkillArchiveUploader() {
 			const token = await getToken();
 			if (token) headers.set("Authorization", `Bearer ${token}`);
 
-			const response = await fetchWithTimeout(
+			const response = await accountFetch(
 				new Request(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/skills/upload`), {
 					method: "POST",
 					headers,
@@ -204,11 +224,12 @@ export function useSkillArchiveUploader() {
 			}
 			return readJson<SkillUploadResponse>(response);
 		},
-		[getToken],
+		[accountFetch, getToken],
 	);
 }
 
 export function useAgentAvatarUploader() {
+	const accountFetch = useAccountFetch();
 	const { getToken } = useAuthToken();
 	return useCallback(
 		async (environmentId: string, file: File): Promise<EnvironmentResponse> => {
@@ -219,7 +240,7 @@ export function useAgentAvatarUploader() {
 			const token = await getToken();
 			if (token) headers.set("Authorization", `Bearer ${token}`);
 
-			const response = await fetchWithTimeout(
+			const response = await accountFetch(
 				new Request(apiUrl(`/v1/agents/${encodeURIComponent(environmentId)}/avatar`), {
 					method: "POST",
 					headers,
@@ -229,6 +250,6 @@ export function useAgentAvatarUploader() {
 			if (!response.ok) throw await apiErrorFromResponse(response);
 			return readJson<EnvironmentResponse>(response);
 		},
-		[getToken],
+		[accountFetch, getToken],
 	);
 }

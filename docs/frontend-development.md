@@ -67,30 +67,31 @@ validated env module. If you bypass that Bun config, seed
 
 ## Route admission
 
-Initial SSR still uses Clerk request middleware and server `auth()` with
-`cache-control: no-store`. SPA navigation uses live Clerk `useAuth()` and SDK
-status through typed native Router context; it does not reverify the session
-on the Start server for each navigation. API, Files grants, runtime and stream
-authorization remain independent server boundaries.
+Protected routes use Clerk request middleware and a Start server function calling
+`auth()` for both SSR and SPA admission, with `cache-control: no-store`. This adds
+a server round trip to protected navigation. Clerk's default SPA navigation is
+unchanged: its session cookie is updated before navigation, while its client
+session resource is published after navigation completes.
 
-Clerk-owned navigation uses native document push/replace so login and signup
-enter through fresh SSR admission. Clerk temporarily clears its session while
-awaiting navigation; routing that transition through SPA admission would replace
-the destination with a global auth loading state. Dashboard links remain SPA.
+`ProtectedAuthBoundary` supplies account-data readiness without replacing the
+layout. The actual dashboard frame and navigation remain visible; private page
+content, account actions, notifications, prefetches, and hosted sensors wait for
+the native SessionResource and live auth identity to match server admission.
+SSR does not invent a browser SessionResource. Non-dashboard protected pages
+keep their own layouts. Same ready identity navigation retains mounted pages,
+iframes, drafts, and caches. Identity loss/change clears private regions and
+resets account-owned layout state.
 
-`AuthRouterBridge` replaces the QueryClient on user/session identity changes,
-retires protected route preloads, and invalidates protected matches.
-`ProtectedAuthBoundary` prevents a cached match from rendering under another
-live identity. Same-identity navigation keeps its cache and mounted state.
-Clerk's native authenticated SSR snapshot remains admitted while its browser
-SDK initializes; script loading alone does not replace the cache or unmount
-content. Unknown auth, pending/signed-out sessions and explicit SDK
-degraded/error states do not admit protected UI. No application auth snapshot
-is retained: Clerk owns the handover from SSR to emitted client resources.
-Native auth is not proof of immediate remote revocation or current JWT validity;
-denied API requests remain errors. Account-admission failures block protected content;
-401 offers explicit reauthentication, while other failures remain recoverable
-without signing the user out.
+`AuthRouterBridge` scopes QueryClient and account-suspension observations to the
+live user/session, retires protected preloads, and revalidates server admission
+on settled identity changes. It does not invalidate routes while Clerk is in its
+transitive unloaded state. Token getters bind to the native SessionResource and
+reject absent tokens or a changed active session instead of sending anonymous
+requests or acquiring another session's credentials. Late suspension responses
+and query/mutation cache callbacks retain their originating account scope.
+API, Files grants, runtime, and stream authorization remain server boundaries.
+An account-admission 401 offers explicit reauthentication; other failures remain
+recoverable without signing the user out.
 
 Inside an isolated Docker browser-test environment with dependencies and
 Chromium installed, run the SDK-event contract suite:
@@ -99,8 +100,12 @@ Chromium installed, run the SDK-event contract suite:
 bun run --cwd apps/web e2e --config=playwright.auth.config.ts
 ```
 
-Done: the lifecycle suite passes without Clerk credentials. Its event mocks
-test the integration contract, not a live Clerk tenant.
+Done: the lifecycle suite passes without Clerk credentials. Its simulated SDK
+resource and cookie events exercise the production dashboard layout and Router, including the activation
+ordering, SSR resource handover, null tokens, and late old-account responses.
+They do not authenticate against a live Clerk tenant. Set
+`VITE_CLAWDI_HOSTED=true` and filter to `--grep "native SPA activation"` to also
+exercise hosted notifications and access sensors.
 
 ## OSS build boundary
 

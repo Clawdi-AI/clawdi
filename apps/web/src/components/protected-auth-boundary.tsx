@@ -1,8 +1,8 @@
 import type { ErrorComponentProps } from "@tanstack/react-router";
-import { Fragment } from "react";
+import { AccountSuspensionBoundary } from "@/components/account-suspension-boundary";
 import { AuthStatus } from "@/components/auth-status";
 import RootError from "@/components/root-error";
-import { useRouteAuth } from "@/lib/auth-client";
+import { useRouteAuth, useSessionIdentity } from "@/lib/auth-client";
 import { RouteAuthUnavailable, routeAuthIdentity } from "@/lib/route-auth";
 
 export function ProtectedRouteError({ error, reset }: ErrorComponentProps) {
@@ -21,9 +21,19 @@ export function ProtectedAuthBoundary({
 	children: React.ReactNode;
 }) {
 	const auth = useRouteAuth();
+	const sessionIdentity = useSessionIdentity();
 	const identity = routeAuthIdentity(auth);
-	if (auth.status !== "signed-in") return <AuthStatus status={auth.status} />;
-	// Cached/in-flight matches cannot render under a different live session.
-	if (identity !== admittedIdentity) return <AuthStatus status="loading" />;
-	return <Fragment key={identity}>{children}</Fragment>;
+	const ready = sessionIdentity === admittedIdentity && identity === admittedIdentity;
+	// A settled disagreement is recoverable, not an endless activation skeleton.
+	const status =
+		auth.status !== "signed-in"
+			? auth.status
+			: sessionIdentity && identity !== admittedIdentity
+				? "unavailable"
+				: "loading";
+	return (
+		<AccountSuspensionBoundary identity={ready ? identity : null} status={status}>
+			{children}
+		</AccountSuspensionBoundary>
+	);
 }

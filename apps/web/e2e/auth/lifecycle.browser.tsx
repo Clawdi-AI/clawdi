@@ -1,6 +1,6 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-	createRootRouteWithContext,
+	createRootRoute,
 	createRoute,
 	createRouter,
 	Link,
@@ -9,42 +9,55 @@ import {
 } from "@tanstack/react-router";
 import { useLayoutEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { AccountSuspensionBoundary } from "@/components/account-suspension-boundary";
 import { AuthProvider } from "@/components/auth-provider";
-import { AuthRouterBridge } from "@/components/auth-router-bridge";
 import { AuthStatus } from "@/components/auth-status";
 import { ProtectedAuthBoundary } from "@/components/protected-auth-boundary";
+import { Providers } from "@/components/providers";
 import { UnsavedNavigationGuard } from "@/components/unsaved-navigation-guard";
+import { useApi } from "@/lib/api";
 import { ApiError, normalizeApiError } from "@/lib/api-errors";
 import { useAuthToken, useRouteAuth } from "@/lib/auth-client";
+import { RouteAuthUnavailable, requireRouteIdentity } from "@/lib/route-auth";
+import DashboardLayout from "@/pages/dashboard/layout";
+import SharePage from "@/pages/share/project-share-page";
 import {
-	type AppRouterContext,
-	RouteAuthUnavailable,
-	requireRouteIdentity,
-} from "@/lib/route-auth";
-import { emitSdk, navigateFromClerk, signOutCalls } from "./clerk-fixture";
+	activateSession,
+	emitSdk,
+	releaseActivation,
+	serverAuth,
+	signOutCalls,
+} from "./clerk-fixture";
 import "@/styles/globals.css";
 
 const commits: { identity: string | null; data: string | undefined }[] = [];
 let currentClient: ReturnType<typeof useQueryClient> | undefined;
 let held: ReturnType<typeof Promise.withResolvers<string>> | undefined;
 let abortedPreload = false;
+let savedGetToken: (() => Promise<string>) | undefined;
+let currentGetToken: (() => Promise<string>) | undefined;
+let mutate: (() => Promise<unknown>) | undefined;
 
-const root = createRootRouteWithContext<AppRouterContext>()({
+const root = createRootRoute({
 	component: () => (
 		<AuthProvider>
-			<AuthRouterBridge>
+			<Providers>
 				<Outlet />
-			</AuthRouterBridge>
+			</Providers>
 		</AuthProvider>
 	),
 });
 const protectedRoute = createRoute({
 	getParentRoute: () => root,
 	id: "_protected",
-	beforeLoad: ({ context, location }) => ({
-		authIdentity: requireRouteIdentity(context.auth, location.href),
-	}),
+	beforeLoad: async ({ location }) => {
+		const { userId, sessionId } = serverAuth();
+		return {
+			authIdentity: requireRouteIdentity(
+				userId && sessionId ? { status: "signed-in", userId, sessionId } : { status: "signed-out" },
+				location.href,
+			),
+		};
+	},
 	errorComponent: ({ error }) =>
 		error instanceof RouteAuthUnavailable ? (
 			<AuthStatus status={error.status} />
@@ -55,20 +68,27 @@ const protectedRoute = createRoute({
 		const { authIdentity } = protectedRoute.useRouteContext();
 		return (
 			<ProtectedAuthBoundary identity={authIdentity}>
-				<AccountSuspensionBoundary>
-					<PrivatePane />
-				</AccountSuspensionBoundary>
+				<Outlet />
 			</ProtectedAuthBoundary>
 		);
 	},
 });
-const a = createRoute({
+const dashboard = createRoute({
 	getParentRoute: () => protectedRoute,
+	id: "_dashboard",
+	component: () => (
+		<DashboardLayout>
+			<PrivatePane />
+		</DashboardLayout>
+	),
+});
+const a = createRoute({
+	getParentRoute: () => dashboard,
 	path: "/private/a",
 	component: () => <h1>Destination A</h1>,
 });
 const b = createRoute({
-	getParentRoute: () => protectedRoute,
+	getParentRoute: () => dashboard,
 	path: "/private/b",
 	loader: async ({ abortController }) => {
 		const pending = held;
@@ -96,9 +116,18 @@ const publicRoute = createRoute({
 	path: "/public",
 	component: () => <h1>Public content</h1>,
 });
+const share = createRoute({
+	getParentRoute: () => root,
+	path: "/share/fixture",
+	component: () => <SharePage token="fixture" />,
+});
 const router = createRouter({
-	routeTree: root.addChildren([protectedRoute.addChildren([a, b]), signIn, publicRoute]),
-	context: { auth: undefined },
+	routeTree: root.addChildren([
+		protectedRoute.addChildren([dashboard.addChildren([a, b])]),
+		signIn,
+		publicRoute,
+		share,
+	]),
 	defaultPreload: "intent",
 });
 
@@ -106,6 +135,14 @@ function PrivatePane() {
 	const auth = useRouteAuth();
 	const { getToken } = useAuthToken();
 	const client = useQueryClient();
+	const api = useApi();
+	const mutation = useMutation({
+		mutationFn: () =>
+			api.POST("/v1/me/invitations/{invitation_id}/decline", {
+				params: { path: { invitation_id: "fixture" } },
+			}),
+		onSuccess: () => client.setQueryData(["old-mutation"], "old-account-result"),
+	});
 	const [draft, setDraft] = useState("");
 	const data = useQuery({
 		queryKey: ["private-destination"],
@@ -122,6 +159,8 @@ function PrivatePane() {
 	});
 	useLayoutEffect(() => {
 		currentClient = client;
+		currentGetToken = getToken;
+		mutate = mutation.mutateAsync;
 		commits.push({
 			identity: auth.status === "signed-in" ? `${auth.userId}:${auth.sessionId}` : null,
 			data: data.data,
@@ -152,7 +191,8 @@ function PrivatePane() {
 
 window.authTest = {
 	emitSdk,
-	navigateFromClerk,
+	activateSession,
+	releaseActivation,
 	commits,
 	navigate: (to) => router.navigate({ to }),
 	holdPreload: () => {
@@ -163,6 +203,20 @@ window.authTest = {
 	releasePreload: () => {
 		held?.resolve("old-generation");
 		held = undefined;
+	},
+	saveCredentials: () => {
+		savedGetToken = currentGetToken;
+	},
+	useSavedCredentials: async () => {
+		try {
+			return await savedGetToken?.();
+		} catch {
+			return "retired";
+		}
+	},
+	mutate: () => mutate?.(),
+	get oldMutationPublished() {
+		return currentClient?.getQueryData(["old-mutation"]) !== undefined;
 	},
 	get abortedPreload() {
 		return abortedPreload;
@@ -176,11 +230,16 @@ declare global {
 	interface Window {
 		authTest: {
 			emitSdk: typeof emitSdk;
-			navigateFromClerk: typeof navigateFromClerk;
+			activateSession: typeof activateSession;
+			releaseActivation: typeof releaseActivation;
 			commits: typeof commits;
 			navigate: (to: string) => Promise<void>;
 			holdPreload: () => void;
 			releasePreload: () => void;
+			saveCredentials: () => void;
+			useSavedCredentials: () => Promise<string | undefined>;
+			mutate: () => Promise<unknown> | undefined;
+			oldMutationPublished: boolean;
 			abortedPreload: boolean;
 			signOutCalls: number;
 			refetch: () => Promise<void> | undefined;

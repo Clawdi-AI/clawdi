@@ -1,6 +1,8 @@
 "use client";
 
-import { useAuth, useClerk, useUser } from "@clerk/tanstack-react-start";
+import { useAuth, useClerk, useSession, useUser } from "@clerk/tanstack-react-start";
+import { useCallback } from "react";
+import { ApiError } from "@/lib/api-errors";
 import { env } from "@/lib/env";
 import { resolveRouteAuth } from "@/lib/route-auth";
 
@@ -27,7 +29,19 @@ export function useAuthToken() {
 	if (env.VITE_DEV_AUTH_BYPASS) {
 		return DEV_AUTH_TOKEN_RESULT;
 	}
-	const { getToken } = useAuth();
+	const { session } = useSession();
+	const clerk = useClerk();
+	const getToken = useCallback(async () => {
+		// A retained request must never acquire credentials for a later session.
+		if (!session || clerk.session?.id !== session.id) {
+			throw new ApiError(401, "Session is not available");
+		}
+		const token = await session.getToken();
+		if (!token || clerk.session?.id !== session.id) {
+			throw new ApiError(401, "Session is not available");
+		}
+		return token;
+	}, [clerk, session]);
 	return { getToken };
 }
 
@@ -41,7 +55,9 @@ export function useDashboardAuth() {
 			getToken: async () => DEV_AUTH_BEARER,
 		};
 	}
-	return useAuth();
+	const auth = useAuth();
+	const { getToken } = useAuthToken();
+	return { ...auth, getToken };
 }
 
 export function useRouteAuth() {
@@ -75,4 +91,12 @@ export function useAuthActions() {
 		};
 	}
 	return useClerk();
+}
+
+// Unlike useAuth's SSR snapshot, a SessionResource is usable only after the
+// browser SDK has supplied it. Private data regions wait for that native resource.
+export function useSessionIdentity() {
+	if (env.VITE_DEV_AUTH_BYPASS) return JSON.stringify([DEV_USER.id, "dev_browser_session"]);
+	const { isLoaded, session } = useSession();
+	return isLoaded && session ? JSON.stringify([session.user.id, session.id]) : null;
 }

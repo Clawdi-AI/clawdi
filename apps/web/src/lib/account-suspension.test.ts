@@ -1,10 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import {
-	clearAccountSuspension,
-	getAccountSuspendedSnapshot,
-	isAccountSuspendedProblem,
-	observeAccountSuspensionResponse,
-} from "./account-suspension";
+import { describe, expect, test } from "bun:test";
+import { createAccountSuspensionStore, isAccountSuspendedProblem } from "./account-suspension";
 
 const problem = {
 	type: "urn:clawdi:problem:account-suspended",
@@ -14,8 +9,6 @@ const problem = {
 	code: "account_suspended",
 };
 
-afterEach(() => clearAccountSuspension());
-
 describe("account suspension contract", () => {
 	test("recognizes only the stable typed problem", () => {
 		expect(isAccountSuspendedProblem(problem)).toBe(true);
@@ -23,23 +16,29 @@ describe("account suspension contract", () => {
 		expect(isAccountSuspendedProblem({ detail: "Account is suspended" })).toBe(false);
 	});
 
-	test("a suspension response switches the global access boundary", async () => {
+	test("a late suspension response affects only its originating account scope", async () => {
+		const store = createAccountSuspensionStore();
+		const nextAccount = createAccountSuspensionStore();
 		const response = new Response(JSON.stringify(problem), {
 			status: 401,
 			headers: { "content-type": "application/problem+json" },
 		});
 
-		expect(await observeAccountSuspensionResponse(response)).toBe(true);
-		expect(getAccountSuspendedSnapshot()).toBe(true);
+		expect(await store.observeResponse(response)).toBe(true);
+		expect(store.getSnapshot()).toBe(true);
+		expect(nextAccount.getSnapshot()).toBe(false);
 	});
 
 	test("ordinary authentication failures do not look suspended", async () => {
+		const store = createAccountSuspensionStore();
+		const nextAccount = createAccountSuspensionStore();
 		const response = new Response(JSON.stringify({ detail: "Invalid credentials" }), {
 			status: 401,
 			headers: { "content-type": "application/json" },
 		});
 
-		expect(await observeAccountSuspensionResponse(response)).toBe(false);
-		expect(getAccountSuspendedSnapshot()).toBe(false);
+		expect(await store.observeResponse(response)).toBe(false);
+		expect(store.getSnapshot()).toBe(false);
+		expect(nextAccount.getSnapshot()).toBe(false);
 	});
 });
