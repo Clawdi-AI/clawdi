@@ -143,21 +143,23 @@ function failedWatchStatus(
 }
 
 describe("hosted Agent Plugin heartbeat observation", () => {
-	test("keeps Agent Plugin evidence on the v2 companion heartbeat", () => {
+	test("keeps Agent Plugin evidence on the v2 companion heartbeat", async () => {
 		const paths = tempPaths();
 		const desired = installation("1.0.0", "d");
 		const applied = appliedState();
 		writeAppliedManifest(paths, desired);
 		writeReceipt(paths, desired);
 
-		expect(readHostedRuntimeObserved(paths, { appliedState: applied })).not.toHaveProperty(
+		expect(await readHostedRuntimeObserved(paths, { appliedState: applied })).not.toHaveProperty(
 			"agentPlugins",
 		);
 		expect(
-			readHostedRuntimeObserved(paths, {
-				appliedState: applied,
-				includeAgentPlugins: true,
-			})?.agentPlugins?.installations[0]?.status,
+			(
+				await readHostedRuntimeObserved(paths, {
+					appliedState: applied,
+					includeAgentPlugins: true,
+				})
+			)?.agentPlugins?.installations[0]?.status,
 		).toBe("installed");
 	});
 

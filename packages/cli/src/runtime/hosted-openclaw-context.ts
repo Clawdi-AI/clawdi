@@ -84,7 +84,7 @@ function openClawDeviceIdentityConflict(
 
 export type OpenClawHostedContext = ReturnType<typeof createOpenClawHostedContext>;
 
-function installedCommandPath(home: string): string | null {
+export function installedOpenClawCommandPath(home: string): string | null {
 	for (const candidate of [
 		join(home, ".local", "bin", "openclaw"),
 		join(home, ".openclaw", "bin", "openclaw"),
@@ -95,7 +95,7 @@ function installedCommandPath(home: string): string | null {
 }
 
 function commandPath(home: string): string {
-	const command = installedCommandPath(home);
+	const command = installedOpenClawCommandPath(home);
 	if (command) return command;
 	throw new Error("installed OpenClaw CLI is unavailable");
 }
