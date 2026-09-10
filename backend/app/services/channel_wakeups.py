@@ -20,23 +20,37 @@ class ChannelWakeup:
 
     def __init__(self) -> None:
         self._waiters: dict[str, set[asyncio.Event]] = {}
+        self._scoped_waiters: dict[str, dict[str, set[asyncio.Event]]] = {}
 
-    def subscribe(self, key: str) -> asyncio.Event:
+    def subscribe(self, key: str, *, scope: str | None = None) -> asyncio.Event:
         waiter = asyncio.Event()
-        self._waiters.setdefault(key, set()).add(waiter)
+        if scope is None:
+            self._waiters.setdefault(key, set()).add(waiter)
+        else:
+            self._scoped_waiters.setdefault(key, {}).setdefault(scope, set()).add(waiter)
         return waiter
 
-    def unsubscribe(self, key: str, waiter: asyncio.Event) -> None:
-        waiters = self._waiters.get(key)
+    def unsubscribe(self, key: str, waiter: asyncio.Event, *, scope: str | None = None) -> None:
+        subscriptions = self._waiters if scope is None else self._scoped_waiters.get(key, {})
+        subscription_key = key if scope is None else scope
+        waiters = subscriptions.get(subscription_key)
         if waiters is None:
             return
         waiters.discard(waiter)
         if not waiters:
-            del self._waiters[key]
+            del subscriptions[subscription_key]
+        if scope is not None and not subscriptions:
+            self._scoped_waiters.pop(key, None)
 
-    def signal(self, key: str) -> None:
+    def signal(self, key: str, *, scope: str | None = None) -> None:
         for waiter in self._waiters.get(key, ()):
             waiter.set()
+        scopes = self._scoped_waiters.get(key, {})
+        # An account-only hint also wakes scoped consumers during mixed deployments.
+        groups = scopes.values() if scope is None else (scopes.get(scope, set()),)
+        for waiters in groups:
+            for waiter in waiters:
+                waiter.set()
 
 
 channel_deliveries_enqueued = ChannelWakeup()
@@ -53,6 +67,7 @@ async def wait_for_channel_inbound_messages[T](
     fetch: Callable[[], Awaitable[ChannelInboxPage[T]]],
     *,
     account_id: str,
+    bot_agent_link_id: str | None = None,
     timeout_seconds: int | float | None,
     fallback_poll_seconds: float | None = None,
     wakeup: ChannelWakeup | None = None,
@@ -69,7 +84,7 @@ async def wait_for_channel_inbound_messages[T](
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     source = wakeup or channel_inbound_messages_enqueued
-    notified = source.subscribe(account_id)
+    notified = source.subscribe(account_id, scope=bot_agent_link_id)
     try:
         while True:
             # Clearing before the query is load-bearing. A commit notification
@@ -95,7 +110,7 @@ async def wait_for_channel_inbound_messages[T](
             except TimeoutError:
                 pass
     finally:
-        source.unsubscribe(account_id, notified)
+        source.unsubscribe(account_id, notified, scope=bot_agent_link_id)
 
 
 async def notify_channel_delivery_enqueued(db: AsyncSession) -> None:
@@ -107,9 +122,12 @@ async def notify_channel_delivery_enqueued(db: AsyncSession) -> None:
     )
 
 
-async def notify_channel_inbound_message_enqueued(db: AsyncSession, *, account_id: str) -> None:
-    """Wake inbox consumers after the surrounding transaction commits."""
-    await _notify_channel_work_enqueued(db, CHANNEL_INBOUND_MESSAGES_ENQUEUED, account_id)
+async def notify_channel_inbound_message_enqueued(
+    db: AsyncSession, *, account_id: str, bot_agent_link_id: str | None = None
+) -> None:
+    """Wake inbox consumers after commit; old listeners retain their polling fallback."""
+    key = account_id if bot_agent_link_id is None else f"{account_id}:{bot_agent_link_id}"
+    await _notify_channel_work_enqueued(db, CHANNEL_INBOUND_MESSAGES_ENQUEUED, key)
 
 
 async def _notify_channel_work_enqueued(db: AsyncSession, channel: str, key: str) -> None:

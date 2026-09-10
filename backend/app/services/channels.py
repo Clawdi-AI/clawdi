@@ -100,7 +100,13 @@ def get_channel_provider_http_client() -> httpx.AsyncClient:
     """Return the process-wide client for Telegram and Discord APIs."""
     global _channel_provider_http_client
     if _channel_provider_http_client is None:
-        _channel_provider_http_client = httpx.AsyncClient(timeout=30.0)
+        # Explicit Limits must retain httpx's client caps; bare Limits is unbounded.
+        _channel_provider_http_client = httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(
+                max_connections=100, max_keepalive_connections=20, keepalive_expiry=30.0
+            ),
+        )
     return _channel_provider_http_client
 
 
@@ -3152,7 +3158,11 @@ async def _record_inbound_message_with_status(
         if existing is not None:
             return existing, False
         raise
-    await notify_channel_inbound_message_enqueued(db, account_id=str(account.id))
+    await notify_channel_inbound_message_enqueued(
+        db,
+        account_id=str(account.id),
+        bot_agent_link_id=str(message.bot_agent_link_id) if message.bot_agent_link_id else None,
+    )
     inbound_messages.labels(channel=account.provider).inc()
     return message, True
 
@@ -3896,6 +3906,7 @@ async def wait_for_telegram_updates(
     return await wait_for_channel_inbound_messages(
         fetch,
         account_id=str(account_id),
+        bot_agent_link_id=str(bot_agent_link_id) if bot_agent_link_id is not None else None,
         timeout_seconds=timeout_seconds,
         fallback_poll_seconds=poll_interval_seconds,
         wakeup=channel_inbound_messages_enqueued,
@@ -4614,6 +4625,7 @@ async def wait_for_channel_inbox_events(
     return await wait_for_channel_inbound_messages(
         fetch,
         account_id=str(account_id),
+        bot_agent_link_id=str(bot_agent_link_id) if bot_agent_link_id is not None else None,
         timeout_seconds=timeout_seconds,
         fallback_poll_seconds=poll_interval_seconds,
         wakeup=channel_inbound_messages_enqueued,
