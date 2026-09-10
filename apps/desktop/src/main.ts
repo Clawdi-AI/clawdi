@@ -146,7 +146,9 @@ async function startApplication(): Promise<void> {
 	dashboardSession = session.fromPartition(DASHBOARD_PARTITION);
 	registerAppProtocol(session.defaultSession);
 	registerAppProtocol(dashboardSession);
-	registerDashboardProtocol(dashboardSession);
+	if (readPackageMetadataField("clawdiDashboardSource") === "bundled") {
+		registerDashboardProtocol(dashboardSession);
+	}
 	registerIpc();
 	configurePermissions(dashboardSession);
 	createApplicationMenu();
@@ -788,6 +790,12 @@ function createApplicationMenu(): void {
 	const viewMenu: MenuItemConstructorOptions = {
 		label: "View",
 		submenu: [
+			{
+				label: "Reload Dashboard",
+				accelerator: "CmdOrCtrl+R",
+				click: () => runAsync("reload Dashboard", loadDashboardWithRecovery(true)),
+			},
+			{ type: "separator" },
 			{ role: "resetZoom" },
 			{ role: "zoomIn" },
 			{ role: "zoomOut" },

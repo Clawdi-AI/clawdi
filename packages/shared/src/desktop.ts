@@ -92,6 +92,8 @@ export interface ClawdiDesktopConnectBridge {
 }
 
 export interface ClawdiDesktopShellBridge {
+	/** Absent on the first beta; existing methods form protocol version 1. */
+	readonly apiVersion?: 1;
 	signIn(): Promise<DesktopShellAuthenticationResult>;
 	signOut(): Promise<void>;
 	openFilesWindow(url: string): Promise<boolean>;

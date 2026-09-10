@@ -7,7 +7,11 @@ import { chromium } from "@playwright/test";
 
 const [executablePath, runtimeRoot, surface = "install"] = process.argv.slice(2);
 const smokeAgentId = "00000000-0000-4000-8000-000000000001";
-if (!executablePath || !runtimeRoot || !["install", "dashboard", "welcome"].includes(surface)) {
+if (
+	!executablePath ||
+	!runtimeRoot ||
+	!["install", "dashboard", "welcome", "remote"].includes(surface)
+) {
 	throw new Error("usage: smoke-packaged.mjs <executable> <runtime-root> [install|dashboard]");
 }
 
@@ -48,7 +52,22 @@ try {
 	browser = await chromium.connectOverCDP(endpoint);
 	const context = browser.contexts()[0];
 	if (!context) throw new Error("Packaged app did not create a browser context.");
-	if (surface === "welcome") {
+	if (surface === "remote") {
+		const window = await waitForWindow(context, "dashboard", 30_000);
+		await window
+			.getByRole("heading", { name: "Desktop sign-in expired" })
+			.waitFor({ timeout: 30_000 });
+		const remote = await window.evaluate(async () => {
+			const response = await fetch("/assets/not-packaged.js", { cache: "no-store" });
+			return {
+				version: window.clawdiDesktop?.apiVersion,
+				contentType: response.headers.get("content-type"),
+			};
+		});
+		assert.equal(remote.version, 1);
+		// The production server's response differs from the bundled protocol's empty 404.
+		assert.ok(remote.contentType, "Dashboard did not reach the remote web server.");
+	} else if (surface === "welcome") {
 		const window = await waitForWindow(context, null, 30_000);
 		await window.getByRole("heading", { name: "Welcome to Clawdi" }).waitFor({ timeout: 30_000 });
 	} else if (surface === "dashboard") await verifyPackagedDashboard(context);
@@ -144,6 +163,7 @@ async function verifyPackagedDashboard(context) {
 	);
 	const bridgeMethods = await window.evaluate(() => Object.keys(window.clawdiDesktop ?? {}).sort());
 	assert.deepEqual(bridgeMethods, [
+		"apiVersion",
 		"createDashboardSession",
 		"openConnectWizard",
 		"openFilesWindow",

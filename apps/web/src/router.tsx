@@ -1,10 +1,12 @@
 import * as Sentry from "@sentry/tanstackstart-react";
 import { createRouter } from "@tanstack/react-router";
+import { readCspNonce } from "./lib/csp-nonce";
 import { routeTree } from "./routeTree.gen";
 
 export function getRouter() {
 	const router = createRouter({
 		routeTree,
+		ssr: { nonce: readCspNonce() },
 		defaultPreload: "intent",
 		scrollRestoration: true,
 		scrollToTopSelectors: ["#dashboard-scroll-container"],
