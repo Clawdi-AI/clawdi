@@ -110,6 +110,42 @@ their bound Project, and field deletion is rejected when a Vault is attached to 
 Projects. Whole-Vault deletion, attach/detach, bulk import, and credential profiles remain
 foreground operator workflows; never bypass that boundary through raw HTTP or daemon RPC.
 
+### Request missing credentials
+
+Use `vault_request_create` with exact `project_id`, `vault_id`, canonical `slug`, optional
+`section`, and a batch of environment field names in `fields`. A Vault is a key bundle:
+request related keys together under one link. Supplied or already-pending fields are rejected.
+Show the returned `url` unchanged to the user; do not ask them to paste secrets into chat.
+Opening the link does not consume it. Saving all requested fields consumes it once.
+
+Check `vault_request_status` with its `request_id` after the user finishes. `pending` is not
+a secret value; `supplied` means the exact references are ready. On `expired` or `conflict`,
+inspect the Vault and request only still-missing fields; never replace an existing value to
+retry. If creation times out, use `vault_get` to find recent request IDs before retrying.
+If submission times out, inspect status before repeating a mutation.
+
+### One Vault → one local dotenv file
+
+On a self-managed machine with the CLI, prefer a Vault-file binding over copying individual
+values through chat. Choose an explicit absolute target, untracked and ignored by Git:
+
+```bash
+clawdi vault materialize --vault <vault-uuid> --project <project-uuid> --out /absolute/path/.env
+clawdi vault pull --out /absolute/path/.env
+```
+
+Use `--section <name>` on first pull if different sections repeat field names; `--section ''`
+selects unsectioned fields. Pull reuses the saved API/account/Vault binding, discovers new keys,
+and removes only unchanged previously managed keys deleted in Vault. Unrelated local entries
+remain intact. Restore locally edited managed assignments, or choose a fresh target, to resolve
+conflicts; there is no force overwrite. Vault remains authoritative: no background or reverse
+sync. Keep references for reuse and never commit the materialized file or its binding metadata.
+
+For authorized batch changes, use existing `vault_item_upsert` / `vault_item_delete` fields;
+foreground operators can import an existing dotenv file with `clawdi vault import` (see its
+`--help`). Do not upload local edits automatically. Done: pull reports `synced` with a path
+and field count, without values.
+
 ## Wallet Funding
 
 Use `clawdi wallet status --json` to inspect the authenticated Wallet balance, verified

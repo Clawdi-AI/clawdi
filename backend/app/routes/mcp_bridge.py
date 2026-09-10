@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
 import jwt
@@ -50,6 +50,8 @@ from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.routes.memories import attach_source_machines
 from app.routes.public_sessions import resolve_session_for_view
 from app.schemas.vault import VaultCreate, VaultItemDelete, VaultItemUpsert
+from app.schemas.vault_requests import VaultSecretRequestCreate
+from app.services import vault_requests
 from app.services.composio import (
     ComposioMcpUpstreamError,
     ComposioRouteError,
@@ -87,6 +89,7 @@ from app.services.vault import (
     upsert_owned_vault_items,
 )
 from app.services.vault_crypto import decrypt
+from app.services.vault_requests import exact_vault_reference as _exact_vault_reference
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mcp", tags=["mcp"])
@@ -282,6 +285,14 @@ class _VaultMutationIdentityArguments(_ToolArguments):
     @classmethod
     def _validate_slug(cls, value: str) -> str:
         return VaultCreate.validate_slug(value)
+
+
+class _VaultRequestCreateArguments(_ToolArguments, VaultSecretRequestCreate):
+    pass
+
+
+class _VaultRequestStatusArguments(_ToolArguments):
+    request_id: UUID
 
 
 class _VaultItemUpsertArguments(_VaultMutationIdentityArguments, VaultItemUpsert):
@@ -573,6 +584,26 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         input_schema=_VaultResolveArguments.model_json_schema(),
         scopes=("vault:read",),
         handler=lambda arguments, auth, db: _tool_vault_resolve(arguments, auth=auth, db=db),
+    ),
+    "vault_request_create": _NativeToolSpec(
+        description=(
+            "Request a batch of missing environment fields in one exact owned Vault. "
+            "Returns a one-time write-only URL to show the user; never ask for secrets in chat. "
+            "Existing fields are rejected. The URL expires and is consumed only on successful save."
+        ),
+        input_schema=_VaultRequestCreateArguments.model_json_schema(),
+        scopes=("vault:write",),
+        handler=lambda arguments, auth, db: _tool_vault_request_create(arguments, auth=auth, db=db),
+    ),
+    "vault_request_status": _NativeToolSpec(
+        description=(
+            "Check a Vault request: pending, supplied, expired, or conflict. Returns references, "
+            "never values. local_command is for self-managed CLI installations only; hosted "
+            "runtimes use vault_resolve for authorized reads."
+        ),
+        input_schema=_VaultRequestStatusArguments.model_json_schema(),
+        scopes=("vault:read",),
+        handler=lambda arguments, auth, db: _tool_vault_request_status(arguments, auth=auth, db=db),
     ),
     "vault_create": _NativeToolSpec(
         description=(
@@ -1250,24 +1281,6 @@ async def _tool_vault_list(
     return _tool_json({"vaults": vaults})
 
 
-def _exact_vault_reference(
-    project_id: UUID,
-    vault_slug: str,
-    section: str,
-    field: str,
-) -> str:
-    parts = [
-        "project",
-        str(project_id),
-        "vault",
-        vault_slug,
-        *(["section", section] if section else []),
-        "field",
-        field,
-    ]
-    return "clawdi://" + "/".join(quote(part, safe="") for part in parts)
-
-
 async def _tool_vault_get(
     arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
 ) -> JsonObject:
@@ -1277,7 +1290,7 @@ async def _tool_vault_get(
     project = await _visible_project_or_404(db, auth, project_id)
     vault_row = (
         await db.execute(
-            select(Vault.id, Vault.name, Vault.slug)
+            select(Vault.id, Vault.name, Vault.slug, Vault.user_id)
             .join(VaultProjectAttachment, VaultProjectAttachment.vault_id == Vault.id)
             .where(
                 Vault.id == vault_id,
@@ -1287,7 +1300,7 @@ async def _tool_vault_get(
     ).one_or_none()
     if vault_row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Vault not found")
-    _, vault_name, vault_slug = vault_row
+    _, vault_name, vault_slug, vault_owner_id = vault_row
     item_rows = (
         await db.execute(
             select(VaultItem.section, VaultItem.item_name)
@@ -1308,6 +1321,11 @@ async def _tool_vault_get(
         }
         for section, field in item_rows
     ]
+    requests = (
+        await vault_requests.recent_requests(db, vault_id, project_id)
+        if vault_owner_id == auth.user_id
+        else []
+    )
     return _tool_json(
         {
             "project": _project_payload(project),
@@ -1317,6 +1335,7 @@ async def _tool_vault_get(
                 "slug": vault_slug,
             },
             "keys": keys,
+            "requests": [row.model_dump(mode="json") for row in requests],
         }
     )
 
@@ -1465,3 +1484,19 @@ async def _tool_connector_call(
     return _JSON_OBJECT_ADAPTER.validate_json(
         response.model_dump_json(by_alias=True, exclude_none=True)
     )
+
+
+async def _tool_vault_request_create(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_VaultRequestCreateArguments, arguments)
+    result = await vault_requests.create_request(db, auth, parsed)
+    return _tool_json(result.model_dump(mode="json"))
+
+
+async def _tool_vault_request_status(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_VaultRequestStatusArguments, arguments)
+    row = await vault_requests.owned_request(db, auth, parsed.request_id)
+    return _tool_json((await vault_requests.describe(db, row)).model_dump(mode="json"))

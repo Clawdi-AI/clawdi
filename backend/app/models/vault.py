@@ -1,7 +1,8 @@
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, LargeBinary, String, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, DateTime, ForeignKey, LargeBinary, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -107,3 +108,22 @@ class VaultCredentialProfile(Base, TimestampMixin):
             name="uq_vault_credential_profiles_user_project_tool_profile",
         ),
     )
+
+
+class VaultSecretRequest(Base, TimestampMixin):
+    """A pending field reservation, never a substitute encrypted secret."""
+
+    __tablename__ = "vault_secret_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    vault_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("vaults.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey(Project.id, ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    section: Mapped[str] = mapped_column(String(200), nullable=False)
+    fields: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    supplied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

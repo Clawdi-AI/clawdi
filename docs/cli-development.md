@@ -580,3 +580,60 @@ The OIDC publish job must remain on a GitHub-hosted runner. Do not replace its
 `ubuntu-latest` runner with `vars.CI_RUNNER`, Blacksmith, or another self-hosted
 runner. OIDC is used only to publish the non-production candidate in this
 workflow; production selection is outside this PR.
+
+## Vault requests and local dotenv bindings
+
+Use MCP `vault_request_create` to reserve up to 32 missing environment fields in one
+owned Vault/Project attachment. It returns a URL with a 256-bit capability in its
+fragment. Show that exact URL to the user. The public form supplies only the requested
+names, in one transaction; viewing it does not redeem it. Tokens are hashed at rest,
+expire after one hour by default (five minutes to one day configurable), and cannot
+read or replace supplied secrets. `vault_request_status` returns metadata and exact
+references. Pending requests appear separately on the Vault detail page and are never
+returned as empty secret values. Use a fresh request for remaining missing fields after
+expiry; existing pending requests and supplied fields are rejected.
+
+On a self-managed CLI installation, bind a whole Vault to one explicit local file:
+
+```bash
+clawdi vault materialize --vault <vault-uuid> --project <project-uuid> --out /absolute/project/.env
+clawdi vault pull --out /absolute/project/.env
+```
+
+The first pull records the canonical API URL, authenticated account, exact Project/Vault
+UUIDs, field identities/references, and local assignment fingerprints in a comment in
+that same file. Optional `--section <name>` narrows the binding; `--section ''` selects
+unsectioned keys. Field names must be valid, distinct environment identifiers; duplicate
+names across sections require a section selection or explicit renaming in Vault.
+
+Later pulls refresh existing keys, discover new ones, and remove remotely deleted keys
+only when their previously managed assignments are unchanged locally. Unrelated lines,
+comments, and variables are preserved. User-edited managed assignments, removed metadata,
+new-key collisions, replaced field identities, and changed account/API/source context fail
+closed. Restore the original managed assignment/metadata or choose a fresh target; there
+is no force mode, daemon, background sync, or automatic upload of local changes.
+
+The file is atomically replaced with POSIX permissions `0600`, together with its binding
+(use WSL on Windows).
+Targets in a Git repository must already be untracked and ignored; parent directories
+must not be symlinks or writable by other users. A per-target lock rejects overlapping
+pulls; after a crashed process, remove its `.clawdi-lock` only after confirming it stopped.
+The file uses literal dotenv quoting (including multiline values), not a shell script:
+load it with a dotenv reader, rather than `source`. Values that cannot round-trip safely
+through dotenv quoting are rejected instead of modified. No secret values appear in
+materialization responses or logs. `vault_resolve` remains an explicitly sensitive MCP
+read when the task requires plaintext.
+
+Existing `vault import`, `vault_item_upsert`, and `vault_item_delete` cover authorized
+batch writes/removals; they do not imply reverse synchronization. Hosted runtimes get
+the same request/status MCP tools but do not expose this local CLI binding workflow.
+Their bundled skill directs authorized reads through exact references.
+
+Done: after the user saves the form, status is `supplied`; `vault pull` reports
+`{"status":"synced","path":"…","fields":…}`. Run the focused backend request suite and
+CLI `src/lib/vault-env.test.ts` in the isolated Docker runner for replay, concurrency,
+scope, quoting, and conflict coverage.
+
+Deployment requires migration `c92e8b3d104f`, the updated API/client/web, and a `WEB_ORIGIN`
+that points to the public dashboard. Deploy the API before clients and refresh MCP tool
+lists and packaged skills. No Hosted control-plane schema or tenant operation is needed.
