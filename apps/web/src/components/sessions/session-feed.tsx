@@ -95,9 +95,7 @@ export function OverviewSessionList({
 				/>
 			))}
 			{visibleSessions.length === 0 ? (
-				<p className="py-3 text-sm text-muted-foreground" role="status">
-					{emptyMessage}
-				</p>
+				<EmptyState variant="inset" description={emptyMessage} />
 			) : null}
 		</div>
 	);

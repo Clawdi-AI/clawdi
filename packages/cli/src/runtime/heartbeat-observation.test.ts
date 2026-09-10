@@ -109,7 +109,7 @@ function blockAtomicWrite(path: string): () => void {
 }
 
 describe("hosted runtime heartbeat observation", () => {
-	test("emits the exact apply tuple when checkpoint and apply generations differ", () => {
+	test("emits the exact apply tuple when checkpoint and apply generations differ", async () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(
 			{
@@ -126,7 +126,7 @@ describe("hosted runtime heartbeat observation", () => {
 			createId: idSequence(["boot-session-split", "event-split-000001"]),
 		});
 
-		const event = session.nextEvent()?.event;
+		const event = (await session.nextEvent())?.event;
 		expect(event).toMatchObject({
 			generation: 1,
 			manifestETag: '"frozen-manifest-1"',
@@ -143,7 +143,7 @@ describe("hosted runtime heartbeat observation", () => {
 		});
 	});
 
-	test("captures one immutable apply identity for the entire boot session", () => {
+	test("captures one immutable apply identity for the entire boot session", async () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(companionAppliedState(7), paths);
 		const session = new HostedRuntimeHeartbeatSession({
@@ -165,7 +165,7 @@ describe("hosted runtime heartbeat observation", () => {
 		});
 		expect(statSync(statePath).mode & 0o777).toBe(0o600);
 
-		const first = session.nextEvent();
+		const first = await session.nextEvent();
 		if (!first) throw new Error("expected first companion event");
 		expect(first.event).toMatchObject({
 			generation: 7,
@@ -189,7 +189,7 @@ describe("hosted runtime heartbeat observation", () => {
 		expect(session.acknowledge(first.event.eventId)).toBe(true);
 
 		writeRuntimeAppliedState(companionAppliedState(8), paths);
-		const second = session.nextEvent();
+		const second = await session.nextEvent();
 		if (!second) throw new Error("expected second companion event");
 		expect(second.event).toMatchObject({
 			generation: 7,
@@ -206,7 +206,7 @@ describe("hosted runtime heartbeat observation", () => {
 		});
 	});
 
-	test("re-reads the durable applied tuple and starts a new boot session after rotation", () => {
+	test("re-reads the durable applied tuple and starts a new boot session after rotation", async () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(companionAppliedState(7), paths);
 		const session = new HostedRuntimeHeartbeatSession({
@@ -220,13 +220,13 @@ describe("hosted runtime heartbeat observation", () => {
 				"event-0000000002",
 			]),
 		});
-		const first = session.nextEvent();
+		const first = await session.nextEvent();
 		if (!first) throw new Error("expected first tuple event");
 		expect(session.acknowledge(first.event.eventId)).toBe(true);
 
 		writeRuntimeAppliedState(companionAppliedState(8), paths);
 		expect(session.refreshAppliedState()).toBe(true);
-		const rotated = session.nextEvent();
+		const rotated = await session.nextEvent();
 		if (!rotated) throw new Error("expected rotated tuple event");
 		expect(rotated.event).toMatchObject({
 			generation: 8,
@@ -244,7 +244,7 @@ describe("hosted runtime heartbeat observation", () => {
 		});
 	});
 
-	test("supersedes a pending old-tuple event instead of blocking rotation", () => {
+	test("supersedes a pending old-tuple event instead of blocking rotation", async () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(companionAppliedState(7), paths);
 		const session = new HostedRuntimeHeartbeatSession({
@@ -258,12 +258,12 @@ describe("hosted runtime heartbeat observation", () => {
 				"new-event-000001",
 			]),
 		});
-		const oldPending = session.nextEvent();
+		const oldPending = await session.nextEvent();
 		if (!oldPending) throw new Error("expected old pending event");
 
 		writeRuntimeAppliedState(companionAppliedState(8), paths);
 		expect(session.refreshAppliedState()).toBe(true);
-		const rotated = session.nextEvent();
+		const rotated = await session.nextEvent();
 		if (!rotated) throw new Error("expected rotated event");
 		expect(rotated.event.eventId).toBe("new-event-000001");
 		expect(rotated.event.eventId).not.toBe(oldPending.event.eventId);
@@ -274,24 +274,50 @@ describe("hosted runtime heartbeat observation", () => {
 		});
 	});
 
-	test("persists one exact event across retries and restart until acknowledgement", () => {
+	test.each(["removed", "rotated"] as const)(
+		"discards an in-flight capture when applied authority is %s",
+		async (change) => {
+			const paths = tempRuntimePaths();
+			writeRuntimeAppliedState(companionAppliedState(7), paths);
+			const session = new HostedRuntimeHeartbeatSession({
+				environmentId: "env_capture_rotation",
+				paths,
+			});
+			const pending = session.nextEvent();
+			if (change === "removed") rmSync(paths.appliedState);
+			else writeRuntimeAppliedState(companionAppliedState(8), paths);
+			session.refreshAppliedState();
+			expect(await pending).toBeNull();
+			if (change === "removed") expect(await session.nextEvent()).toBeNull();
+			else expect((await session.nextEvent())?.event.applied.generation).toBe(8);
+		},
+	);
+
+	test("persists one exact event across retries and restart until acknowledgement", async () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(companionAppliedState(7), paths);
 		const firstSession = new HostedRuntimeHeartbeatSession({
 			environmentId: "env_retry",
 			paths,
-			now: clockSequence(["2026-07-16T02:00:00.000Z", "2026-07-16T02:01:00.000Z"]),
+			now: clockSequence([
+				"2026-07-16T02:00:00.000Z",
+				"2026-07-16T02:00:00.000Z",
+				"2026-07-16T02:01:00.000Z",
+			]),
 			createId: idSequence(["boot-session-0001", "event-0000000001", "event-0000000002"]),
 			createSuccessorId: () => "boot-session-0002",
 		});
-		const first = firstSession.nextEvent();
+		const capturingFirst = firstSession.nextEvent();
+		const concurrent = firstSession.nextEvent();
+		const first = await capturingFirst;
+		expect(await concurrent).toBeNull();
 		if (!first) throw new Error("expected first event");
 		expect(firstSession.acknowledge(first.event.eventId)).toBe(true);
-		const second = firstSession.nextEvent();
+		const second = await firstSession.nextEvent();
 		if (!second) throw new Error("expected second event");
 		expect(second.event.sequence).toBe(2);
 
-		const retry = firstSession.nextEvent();
+		const retry = await firstSession.nextEvent();
 		if (!retry) throw new Error("expected retry event");
 		expect(retry).toEqual(second);
 		expect(retry.event.capturedAt).toBe("2026-07-16T02:01:00.000Z");
@@ -304,14 +330,14 @@ describe("hosted runtime heartbeat observation", () => {
 			createId: idSequence(["event-0000000003"]),
 			createSuccessorId: () => "boot-session-0003",
 		});
-		const retryAfterRestart = restarted.nextEvent();
+		const retryAfterRestart = await restarted.nextEvent();
 		if (!retryAfterRestart) throw new Error("expected retry after restart");
 		expect(retryAfterRestart).toEqual(second);
 		expect(restarted.acknowledge("different-event-id")).toBe(false);
-		expect(restarted.nextEvent()).toEqual(second);
+		expect(await restarted.nextEvent()).toEqual(second);
 		expect(restarted.acknowledge(second.event.eventId)).toBe(true);
 
-		const nextBootEvent = restarted.nextEvent();
+		const nextBootEvent = await restarted.nextEvent();
 		if (!nextBootEvent) throw new Error("expected new-boot event");
 		expect(nextBootEvent.event).toMatchObject({
 			bootSessionId: "boot-session-0002",
@@ -323,7 +349,7 @@ describe("hosted runtime heartbeat observation", () => {
 		});
 	});
 
-	test("clamps capture time to the durable boot-session high-water", () => {
+	test("clamps capture time to the durable boot-session high-water", async () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(companionAppliedState(7), paths);
 		const session = new HostedRuntimeHeartbeatSession({
@@ -332,12 +358,12 @@ describe("hosted runtime heartbeat observation", () => {
 			now: clockSequence(["2026-07-16T05:00:00.000Z", "2026-07-16T04:59:00.000Z"]),
 			createId: idSequence(["boot-session-0001", "event-0000000001", "event-0000000002"]),
 		});
-		const first = session.nextEvent();
+		const first = await session.nextEvent();
 		if (!first) throw new Error("expected first event");
 		expect(first.event.capturedAt).toBe("2026-07-16T05:00:00.000Z");
 		expect(session.acknowledge(first.event.eventId)).toBe(true);
 
-		const second = session.nextEvent();
+		const second = await session.nextEvent();
 		if (!second) throw new Error("expected second event");
 		expect(second.event.sequence).toBe(2);
 		expect(second.event.capturedAt).toBe("2026-07-16T05:00:00.000Z");
@@ -348,7 +374,7 @@ describe("hosted runtime heartbeat observation", () => {
 		expect(durable).toMatchObject({ lastCapturedAt: "2026-07-16T05:00:00.000Z" });
 	});
 
-	test("retires only the matching rejected buffered event", () => {
+	test("retires only the matching rejected buffered event", async () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(companionAppliedState(7), paths);
 		const session = new HostedRuntimeHeartbeatSession({
@@ -357,12 +383,12 @@ describe("hosted runtime heartbeat observation", () => {
 			now: clockSequence(["2026-06-01T00:00:00.000Z", "2026-07-16T00:00:00.000Z"]),
 			createId: idSequence(["boot-session-0001", "stale-event-0001", "fresh-event-0002"]),
 		});
-		const stale = session.nextEvent();
+		const stale = await session.nextEvent();
 		if (!stale) throw new Error("expected stale buffered event");
 		expect(session.retireRejected("different-event")).toBe(false);
-		expect(session.nextEvent()).toEqual(stale);
+		expect(await session.nextEvent()).toEqual(stale);
 		expect(session.retireRejected(stale.event.eventId)).toBe(true);
-		expect(session.nextEvent()).not.toEqual(stale);
+		expect(await session.nextEvent()).not.toEqual(stale);
 	});
 
 	test.each([
@@ -371,7 +397,7 @@ describe("hosted runtime heartbeat observation", () => {
 			"unknown schema",
 			JSON.stringify({ schemaVersion: "clawdi.runtimeHeartbeatObservation.v999" }),
 		],
-	] as const)("quarantines %s state and starts fresh", (_name, corruptedState) => {
+	] as const)("quarantines %s state and starts fresh", async (_name, corruptedState) => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(companionAppliedState(7), paths);
 		const statePath = runtimeHeartbeatObservationStatePath(paths, "env_corrupt_state");
@@ -384,7 +410,7 @@ describe("hosted runtime heartbeat observation", () => {
 			now: () => new Date("2026-07-16T06:00:00.000Z"),
 			createId: idSequence(["fresh-boot-session", "fresh-event-000001"]),
 		});
-		const event = session.nextEvent();
+		const event = await session.nextEvent();
 
 		expect(event?.event).toMatchObject({
 			bootSessionId: "fresh-boot-session",
@@ -404,7 +430,7 @@ describe("hosted runtime heartbeat observation", () => {
 		});
 	});
 
-	test("does not advance in-memory sequence when buffering fails to persist", () => {
+	test("does not advance in-memory sequence when buffering fails to persist", async () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(companionAppliedState(7), paths);
 		const session = new HostedRuntimeHeartbeatSession({
@@ -416,14 +442,14 @@ describe("hosted runtime heartbeat observation", () => {
 		const statePath = runtimeHeartbeatObservationStatePath(paths, "env_buffer_write_failure");
 		const unblock = blockAtomicWrite(statePath);
 		try {
-			expect(() => session.nextEvent()).toThrow();
+			await expect(session.nextEvent()).rejects.toThrow();
 		} finally {
 			unblock();
 		}
 
 		const durableAfterFailure: unknown = JSON.parse(readFileSync(statePath, "utf-8"));
 		expect(durableAfterFailure).toMatchObject({ nextSequence: 1, pending: null });
-		const persisted = session.nextEvent();
+		const persisted = await session.nextEvent();
 		if (!persisted) throw new Error("expected event after durable state recovered");
 		expect(persisted.event).toMatchObject({
 			sequence: 1,
@@ -432,7 +458,7 @@ describe("hosted runtime heartbeat observation", () => {
 		});
 	});
 
-	test("does not clear the in-memory pending event when acknowledgement fails to persist", () => {
+	test("does not clear the in-memory pending event when acknowledgement fails to persist", async () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(companionAppliedState(7), paths);
 		const session = new HostedRuntimeHeartbeatSession({
@@ -441,13 +467,13 @@ describe("hosted runtime heartbeat observation", () => {
 			now: clockSequence(["2026-07-16T04:00:00.000Z"]),
 			createId: idSequence(["boot-session-0001", "pending-event-0001"]),
 		});
-		const pending = session.nextEvent();
+		const pending = await session.nextEvent();
 		if (!pending) throw new Error("expected pending event");
 		const statePath = runtimeHeartbeatObservationStatePath(paths, "env_ack_write_failure");
 		const unblock = blockAtomicWrite(statePath);
 		try {
 			expect(() => session.acknowledge(pending.event.eventId)).toThrow();
-			expect(session.nextEvent()).toEqual(pending);
+			expect(await session.nextEvent()).toEqual(pending);
 		} finally {
 			unblock();
 		}
@@ -457,7 +483,7 @@ describe("hosted runtime heartbeat observation", () => {
 		expect(durableAfterAcknowledgement).toMatchObject({ nextSequence: 2, pending: null });
 	});
 
-	test("keeps legacy hosted observations when the complete apply tuple is unavailable", () => {
+	test("keeps legacy hosted observations when the complete apply tuple is unavailable", async () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(legacyAppliedState(7), paths);
 		const session = new HostedRuntimeHeartbeatSession({
@@ -469,9 +495,11 @@ describe("hosted runtime heartbeat observation", () => {
 		});
 
 		expect(session.hasCompanionIdentity).toBe(false);
-		expect(session.nextEvent()).toBeNull();
+		expect(await session.nextEvent()).toBeNull();
 		expect(existsSync(runtimeHeartbeatObservationStatePath(paths, "env_legacy"))).toBe(false);
-		expect(readHostedRuntimeObserved(paths)?.applied?.etag).toBe(`"sha256:${"c".repeat(64)}"`);
+		expect((await readHostedRuntimeObserved(paths))?.applied?.etag).toBe(
+			`"sha256:${"c".repeat(64)}"`,
+		);
 	});
 
 	test("rejects a boot session ID outside the frozen 128-character bound", () => {

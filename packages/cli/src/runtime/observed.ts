@@ -1,7 +1,9 @@
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import type { components } from "@clawdi/shared/api";
+import JSON5 from "json5";
 import { safeTruncate, sanitizeMetadata } from "../lib/sanitize";
 import { getCliVersion } from "../lib/version";
 import { toErrorMessage } from "../serve/log";
@@ -9,11 +11,12 @@ import { type RuntimeAppliedState, readRuntimeAppliedState } from "./applied-sta
 import { resolveRuntimeApplyGeneration } from "./apply-identity";
 import { type RuntimeCliBootstrapStatus, readRuntimeCliBootstrapStatus } from "./cli-update";
 import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
+import { installedOpenClawCommandPath } from "./hosted-openclaw-context";
 import { readHostedSkillsObservation } from "./hosted-skill-observation";
 import { providerHealthReasons } from "./manifest-providers";
 import { hostedRuntimeBundleV2Schema } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
-import { spawnRuntimeUserCommand } from "./runtime-user-command";
+import { execRuntimeUserCommand, spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
 import { type RuntimeBootStatus, readRuntimeBootStatus } from "./state";
 import { managedRuntimeSystemdUnitEntries, parseSystemctlShow, systemctlPath } from "./systemd";
@@ -36,12 +39,14 @@ type HostedRuntimeObservedSystemd = components["schemas"]["HostedRuntimeObserved
 type HostedRuntimeObservedSystemdUnit = components["schemas"]["HostedRuntimeObservedSystemdUnitV1"];
 
 const SYSTEMD_STATUS_TIMEOUT_MS = 1_000;
+const RUNTIME_READINESS_TIMEOUT_MS = 3_000;
+const execFileAsync = promisify(execFile);
 const SYSTEMD_FAILURE_EVIDENCE_MAX_LENGTH = 500;
 const SYSTEMD_OBSERVED_UNIT_LIMIT = 30;
 const SENSITIVE_FAILURE_EVIDENCE =
 	/(?:^|[^a-z0-9])(?:api[_-]?key|key|token|secret|password|passwd|credential|authorization|bearer)(?:[^a-z0-9]|$)|(?:^|\s)[A-Z][A-Z0-9_]{1,}=|(?:^|[^a-z0-9])(?:sk-|gh[pousr]_|clawdi_)[a-z0-9_-]+/i;
 
-export function readHostedRuntimeObserved(
+export async function readHostedRuntimeObserved(
 	paths: RuntimePaths = getRuntimePaths(),
 	options: {
 		reportedAt?: string;
@@ -50,7 +55,7 @@ export function readHostedRuntimeObserved(
 		includeSkills?: boolean;
 		includeUserActivity?: boolean;
 	} = {},
-): HostedRuntimeObserved | null {
+): Promise<HostedRuntimeObserved | null> {
 	if (paths.mode !== "hosted") return null;
 	const boot = readRuntimeBootStatus(paths);
 	const appliedState =
@@ -58,7 +63,11 @@ export function readHostedRuntimeObserved(
 	const watchStatus = readJsonRecord(paths.runtimeWatchStatus);
 	const activeCliVersion = getCliVersion();
 	const cliBootstrap = readRuntimeCliBootstrapStatus(paths);
-	const systemd = readSystemdObserved(paths);
+	const systemd = await readSystemdObserved(
+		paths,
+		appliedState,
+		boot.status?.enabledRuntimes ?? [],
+	);
 	const providers = readProviderObserved(paths);
 	const appliedAuthority = appliedState
 		? {
@@ -81,8 +90,14 @@ export function readHostedRuntimeObserved(
 		cli: observedCli(cliBootstrap),
 	};
 	if (systemd) {
-		observed.systemd = systemd;
-		if (systemd.unitCount > systemd.units.length) observed.truncated = true;
+		observed.systemd = {
+			...systemd,
+			units: representativeSystemdUnits(
+				systemd.units.filter((unit) => unit.scope === "system"),
+				systemd.units.filter((unit) => unit.scope === "user"),
+			),
+		};
+		if (systemd.unitCount > observed.systemd.units.length) observed.truncated = true;
 	}
 	if (providers) observed.providers = providers;
 	if (appliedState && options.includeAgentPlugins) {
@@ -279,20 +294,48 @@ function providerSecretAvailable(secrets: JsonRecord, ref: string): boolean {
 	return runtimeSecretValue(secrets, ref) !== null;
 }
 
-function readSystemdObserved(paths: RuntimePaths): HostedRuntimeObservedSystemd | null {
+async function readSystemdObserved(
+	paths: RuntimePaths,
+	appliedState: RuntimeAppliedState | null,
+	enabledRuntimes: readonly string[],
+): Promise<HostedRuntimeObservedSystemd | null> {
 	const systemUnits = managedSystemdUnitNames(paths.systemdSystemRoot).map((unit) =>
 		systemdUnitStatus("system", unit, paths),
 	);
-	const userUnits = managedSystemdUnitNames(paths.systemdUserRoot).map((unit) =>
-		systemdUnitStatus("user", unit, paths),
+	// The applied receipt survives missing unit files; directory discovery alone fails open.
+	const requiredUserUnits = Object.keys(appliedState?.activated ?? {}).filter((unit) =>
+		[
+			"openclaw-gateway.service",
+			"hermes-gateway.service",
+			"clawdi-hermes-dashboard.service",
+		].includes(unit),
+	);
+	// Older receipts may lack activation inventory. Boot selection still requires native services.
+	if (requiredUserUnits.length === 0) {
+		if (enabledRuntimes.includes("openclaw")) requiredUserUnits.push("openclaw-gateway.service");
+		if (enabledRuntimes.includes("hermes"))
+			requiredUserUnits.push("hermes-gateway.service", "clawdi-hermes-dashboard.service");
+	}
+
+	const userUnits = [
+		...new Set([...managedSystemdUnitNames(paths.systemdUserRoot), ...requiredUserUnits]),
+	]
+		.sort()
+		.map((unit) => systemdUnitStatus("user", unit, paths));
+	await Promise.all(
+		userUnits.map(async (unit) => {
+			if (unit.status === "ok" && !(await runtimeServiceIsReady(unit.name, paths))) {
+				unit.status = "unknown";
+				unit.error = "Runtime service readiness is not established";
+			}
+		}),
 	);
 	const allUnits = [...systemUnits, ...userUnits];
 	if (allUnits.length === 0) return null;
-	const units = representativeSystemdUnits(systemUnits, userUnits);
 	return {
 		status: systemdUnitsStatus(allUnits),
 		unitCount: allUnits.length,
-		units,
+		units: allUnits,
 	};
 }
 
@@ -350,6 +393,88 @@ function systemdUnitStatus(
 					? null
 					: (nonSensitiveFailureEvidence(result.output) ?? "systemctl show failed"),
 	};
+}
+
+/** Native service activation precedes application startup; heartbeat health needs both. */
+async function runtimeServiceIsReady(unit: string, paths: RuntimePaths): Promise<boolean> {
+	if (unit !== "openclaw-gateway.service" && unit !== "clawdi-hermes-dashboard.service")
+		return true;
+	try {
+		if (unit === "openclaw-gateway.service") {
+			// Read the native configuration, not the optional desired-manifest cache.
+			const config = recordValue(
+				JSON5.parse(readFileSync(join(paths.userHome, ".openclaw", "openclaw.json"), "utf8")),
+			);
+			let gateway = recordValue(config?.gateway);
+			if (
+				[config, gateway, recordValue(gateway?.controlUi)].some(
+					(value) => value && Object.hasOwn(value, "$include"),
+				)
+			) {
+				// Let the installed native CLI resolve includes; do not implement its config semantics here.
+				const command = installedOpenClawCommandPath(paths.userHome);
+				if (!command) return false;
+				const result = await execRuntimeUserCommand(
+					command,
+					["config", "get", "gateway", "--json"],
+					paths.userHome,
+					paths.userHome,
+					{
+						runtimeUser: runtimeUserName(),
+						timeoutMs: 15_000,
+						maxBufferBytes: 64 * 1024,
+					},
+				);
+				gateway = recordValue(JSON.parse(result.stdout));
+			}
+			if (!gateway) return false;
+			const port = gateway.port ?? 18789;
+			if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535)
+				return false;
+			const controlUi = recordValue(gateway.controlUi);
+			if (controlUi?.enabled === false) return false;
+			const basePath = controlUi?.basePath ?? "";
+			if (typeof basePath !== "string") return false;
+			const origin = `http://127.0.0.1:${port}`;
+			const status = recordValue(JSON.parse(await runtimeReadinessProbe(`${origin}/readyz`)));
+			if (status?.ready !== true) return false;
+			// Control UI assets are prepared asynchronously after HTTP startup.
+			const uiUrl = new URL(origin);
+			uiUrl.pathname = `${basePath.replace(/\/+$/, "")}/`;
+			return (await runtimeReadinessProbe(uiUrl.href, true)) === "200";
+		}
+		// The managed Hermes dashboard command binds the native port 9119.
+		const status = recordValue(
+			JSON.parse(await runtimeReadinessProbe("http://127.0.0.1:9119/api/status")),
+		);
+		return (
+			status?.gateway_running === true &&
+			status.gateway_state === "running" &&
+			status.auth_required === true &&
+			arrayValue(status.auth_providers).includes("basic")
+		);
+	} catch {
+		return false;
+	}
+}
+
+async function runtimeReadinessProbe(url: string, headersOnly = false): Promise<string> {
+	const { stdout } = await execFileAsync(
+		"curl",
+		[
+			"--disable",
+			"--noproxy",
+			"*",
+			"--fail",
+			"--silent",
+			"--max-time",
+			String(RUNTIME_READINESS_TIMEOUT_MS / 1_000),
+			...(headersOnly ? ["--head", "--output", "/dev/null", "--write-out", "%{http_code}"] : []),
+			url,
+		],
+		{ encoding: "utf8", maxBuffer: 64 * 1024, timeout: RUNTIME_READINESS_TIMEOUT_MS + 500 },
+	);
+	return stdout;
 }
 
 function systemdFailureEvidence(

@@ -2421,8 +2421,8 @@ export async function heartbeatLoop(
 	const send = async () => {
 		const fields = snapshot();
 		const dropped = queue.drainDroppedDelta();
-		const runtimeObserved = readHostedRuntimeObserved();
 		try {
+			const runtimeObserved = await readHostedRuntimeObserved();
 			unwrap(
 				await api.POST("/v1/agents/{agent_id}/sync-heartbeat", {
 					params: { path: { agent_id: opts.environmentId } },

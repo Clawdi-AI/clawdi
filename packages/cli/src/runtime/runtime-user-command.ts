@@ -1,10 +1,13 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { accessSync, chownSync, constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { promisify } from "node:util";
 import { withEffectiveFilesystemIdentity } from "./effective-identity";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import { clearPlatformCredentialEnv } from "./platform-credential-env";
 import { parsePositiveLinuxId } from "./transparent-egress";
+
+const execFileAsync = promisify(execFile);
 
 const RUNTIME_IDENTITY_PROBE_TIMEOUT_MS = 5_000;
 const DEFAULT_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -462,6 +465,23 @@ export function spawnRuntimeUserCommand(
 		cwd,
 		encoding: "utf8",
 		input: options.input,
+		maxBuffer: options.maxBufferBytes,
+		timeout: options.timeoutMs,
+	});
+}
+
+export async function execRuntimeUserCommand(
+	command: string,
+	args: string[],
+	home: string,
+	cwd: string,
+	options: RuntimeUserCommandOptions & { maxBufferBytes: number; timeoutMs: number },
+): Promise<{ stdout: string; stderr: string }> {
+	const child = runtimeUserCommand(command, args, home, options);
+	return execFileAsync(child.command, child.args, {
+		env: child.env,
+		cwd,
+		encoding: "utf8",
 		maxBuffer: options.maxBufferBytes,
 		timeout: options.timeoutMs,
 	});

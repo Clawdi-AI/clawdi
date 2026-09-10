@@ -198,13 +198,15 @@ export class HostedRuntimeHeartbeatSession {
 		return successor;
 	}
 
-	nextEvent(): BufferedRuntimeObservedEvent | null {
+	async nextEvent(): Promise<BufferedRuntimeObservedEvent | null> {
 		if (this.state?.pending) return decodePendingEvent(this.state.pending);
 		if (!this.state || !this.currentBootIdentity || !this.capturedAppliedState) return null;
 		if (this.state.nextSequence === Number.MAX_SAFE_INTEGER) {
 			throw new Error("runtime heartbeat sequence exhausted for this boot session");
 		}
 
+		const capturedState = this.state;
+		const capturedBootIdentity = this.currentBootIdentity;
 		const observedNow = this.now();
 		const durableCaptureFloor = this.state.lastCapturedAt
 			? new Date(this.state.lastCapturedAt)
@@ -212,14 +214,20 @@ export class HostedRuntimeHeartbeatSession {
 		const capturedAt = isoNow(
 			durableCaptureFloor && observedNow < durableCaptureFloor ? durableCaptureFloor : observedNow,
 		);
-		const snapshot = readHostedRuntimeObserved(this.paths, {
+		const snapshot = await readHostedRuntimeObserved(this.paths, {
 			reportedAt: capturedAt,
 			appliedState: this.capturedAppliedState,
 			includeAgentPlugins: true,
 			includeSkills: true,
 			includeUserActivity: true,
 		});
-		if (!snapshot) return null;
+		// A refresh or another capture during probes must not mix heartbeat identities.
+		if (
+			this.state !== capturedState ||
+			this.currentBootIdentity !== capturedBootIdentity ||
+			!snapshot
+		)
+			return null;
 		if (!snapshot.applied) {
 			throw new Error("runtime heartbeat snapshot is missing captured applied state");
 		}

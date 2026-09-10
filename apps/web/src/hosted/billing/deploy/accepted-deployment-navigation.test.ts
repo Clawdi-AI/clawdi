@@ -18,40 +18,42 @@ function deferred<T>() {
 }
 
 describe("accepted deployment navigation", () => {
-	test("opens the canonical route before deployment hydration settles", async () => {
+	test("waits for authoritative membership before opening the accepted Agent route", async () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const authoritative = hostedDeploymentFixture({
 			id: "hdep_fast_handoff",
 			agentId: "11111111-1111-4111-8111-111111111111",
 			status: "creating",
 		});
+		queryClient.setQueryData(billingKeys.deployments, []);
 		const hydration = deferred<HostedDeployment>();
+		const hydrationStarted = deferred<void>();
 		const events: string[] = [];
 
-		await navigateToAcceptedDeployment({
+		const handoff = navigateToAcceptedDeployment({
 			agentId: authoritative.agent_id,
 			deploymentId: authoritative.resource.id,
 			getDeployment: async () => {
 				events.push("hydrate");
+				hydrationStarted.resolve();
 				return hydration.promise;
 			},
 			navigate: async ({ href }) => {
+				expect(queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments)).toEqual([
+					authoritative,
+				]);
 				events.push(`navigate:${href}`);
 			},
 			queryClient,
 		});
 
-		expect(events).toEqual(["hydrate", "navigate:/agents/11111111-1111-4111-8111-111111111111"]);
-		expect(queryClient.getQueryData(billingKeys.deployments)).toBeUndefined();
+		await hydrationStarted.promise;
+		expect(events).toEqual(["hydrate"]);
+		expect(queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments)).toEqual([]);
 
 		hydration.resolve(authoritative);
-		for (
-			let turn = 0;
-			turn < 10 && !queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments);
-			turn += 1
-		) {
-			await Promise.resolve();
-		}
+		await handoff;
+		expect(events).toEqual(["hydrate", "navigate:/agents/11111111-1111-4111-8111-111111111111"]);
 		expect(queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments)).toEqual([
 			authoritative,
 		]);
@@ -93,6 +95,7 @@ describe("accepted deployment navigation", () => {
 
 		const navigations: Parameters<AcceptedDeploymentNavigate>[0][] = [];
 		await navigateToAcceptedDeployment({
+			agentId: authoritative.agent_id,
 			deploymentId: authoritative.resource.id,
 			getDeployment: async () => authoritative,
 			navigate: async (options) => {
@@ -134,6 +137,29 @@ describe("accepted deployment navigation", () => {
 		queryClient.clear();
 	});
 
+	test("propagates accepted deployment hydration failure without navigating", async () => {
+		const queryClient = new QueryClient();
+		queryClient.setQueryData(billingKeys.deployments, []);
+		const failure = new Error("Deployment read unavailable");
+		let navigated = false;
+		await expect(
+			navigateToAcceptedDeployment({
+				agentId: "11111111-1111-4111-8111-111111111111",
+				deploymentId: "hdep_accepted",
+				getDeployment: async () => {
+					throw failure;
+				},
+				navigate: () => {
+					navigated = true;
+				},
+				queryClient,
+			}),
+		).rejects.toBe(failure);
+		expect(navigated).toBe(false);
+		expect(queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments)).toEqual([]);
+		queryClient.clear();
+	});
+
 	test("rejects a deployment response without a canonical Agent UUID", async () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const authoritative = hostedDeploymentFixture({
@@ -151,7 +177,7 @@ describe("accepted deployment navigation", () => {
 				queryClient,
 			}),
 		).rejects.toThrow("invalid Agent identity");
-		expect(queryClient.getQueryData(billingKeys.deployments)).toBeUndefined();
+		expect(queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments)).toBeUndefined();
 		queryClient.clear();
 	});
 
