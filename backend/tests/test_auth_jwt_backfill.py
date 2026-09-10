@@ -16,6 +16,7 @@ These tests pin that contract:
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
@@ -176,3 +177,17 @@ async def test_first_login_creates_user_and_personal_project(db_session, signing
     ).scalar_one_or_none()
     assert personal is not None
     assert personal.slug == "personal"
+
+
+@pytest.mark.asyncio
+async def test_verified_browser_expiry_is_available_to_streams(db_session, seed_user, signing_key):
+    expires_at = datetime.now(UTC).replace(microsecond=0) + timedelta(minutes=1)
+    token = jwt.encode(
+        {"sub": seed_user.clerk_id, "exp": int(expires_at.timestamp())},
+        signing_key,
+        algorithm="RS256",
+    )
+    ctx = await _auth_via_clerk_jwt(token, db_session)
+    assert ctx is not None
+    assert not ctx.oauth_cli
+    assert ctx.credential_expires_at == expires_at
