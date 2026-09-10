@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RawSession, SessionEvent } from "../adapters/base";
 import { PiAdapter } from "../adapters/pi";
-import { ApiClient } from "./api-client";
+import { ApiClient, ApiError } from "./api-client";
 import {
 	advanceEventHead,
 	EMPTY_EVENT_HEAD,
@@ -170,6 +170,76 @@ describe("session upload negotiation and integrity", () => {
 });
 
 describe("events-v1 incremental upload", () => {
+	it.each([-1, 0, 1])(
+		"preserves canonical Unicode bytes at chunk budget boundary %i",
+		async (boundary) => {
+			const api = eventApi();
+			const first = event("one", "中文😀\ud800\n");
+			const content = [first, { ...first, seq: 1 }];
+			// Python json.dumps(ensure_ascii=True, sort_keys=True, separators=(",", ":")) golden.
+			const firstLine =
+				String.raw`{"event_id":"08e6ec3d75bc565a77dac73f766e3e985424d16fbb24077be436e230f09b3527","parts":[{"text":"\u4e2d\u6587\ud83d\ude00\ud800\n","type":"text"}],"role":"assistant","seq":0,"source":{"adapter":"pi","record_id":"one","session_key":"fixture"},"type":"message"}` +
+				"\n";
+			const secondLine = firstLine.replace('"seq":0', '"seq":1');
+			const finalHead = "c27463ce4d853bf824e5016c5a9393fa61ca18775e0aef99ea29cca185cab1c4";
+			const maxBytes = boundary === 1 ? firstLine.length * 2 : firstLine.length + boundary;
+			api.getSessionUploadCapabilities = async () => ({
+				protocols: ["events-v1"],
+				event_chunk_target_bytes: 1024 * 1024,
+				event_chunk_max_bytes: maxBytes,
+			});
+			api.getSessionEventHead = async () => ({
+				protocol: "events-v1",
+				generation: "11111111-1111-4111-8111-111111111111",
+				revision: 1,
+				count: 0,
+				head_hash: EMPTY_EVENT_HEAD,
+			});
+			const uploaded: Buffer[] = [];
+			api.appendSessionEvents = async (input) => {
+				uploaded.push(input.file);
+				expect(input.file.length).toBeLessThanOrEqual(maxBytes);
+				return {
+					generation: input.generation,
+					revision: input.baseRevision + 1,
+					count: input.finalCount,
+					head_hash: advanceEventHead(EMPTY_EVENT_HEAD, content.slice(0, input.finalCount)),
+				};
+			};
+			const session = rawSession(content);
+			const plan = planSessionUpload(session, "events-v1");
+			expect(plan.finalEventHead).toBe(finalHead);
+			const fence = sessionFence(api, {
+				environmentId: "agent-pi",
+				adapter: "pi",
+				sourceSessionKey: session.localSessionId,
+			});
+			const result = await syncSessionContent({
+				api,
+				fence,
+				session,
+				plan,
+				needsSnapshotContent: false,
+			});
+			const entry = readFencedSessionEntry(readSessionsLock(), fence);
+			if (boundary === -1) {
+				expect(result.status).toBe("blocked");
+				expect(uploaded).toHaveLength(0);
+				expect(entry?.blocked).toMatchObject({
+					code: "event_too_large",
+					size_bytes: firstLine.length,
+				});
+			} else {
+				expect(result.status).toBe("synced");
+				expect(uploaded).toHaveLength(boundary === 0 ? 2 : 1);
+				expect(Buffer.concat(uploaded).equals(Buffer.from(firstLine + secondLine, "ascii"))).toBe(
+					true,
+				);
+				expect(entry?.event_head_hash).toBe(finalHead);
+			}
+		},
+	);
+
 	it("does not mark a multi-chunk append complete before the final chunk", async () => {
 		const api = eventApi();
 		const content = events(["one", "a".repeat(700_000)], ["two", "b".repeat(700_000)]);
@@ -223,7 +293,7 @@ describe("events-v1 incremental upload", () => {
 		});
 	});
 
-	it("reuses the durable append id after a retry", async () => {
+	it("reuses the durable append id after a conflict and transport retry", async () => {
 		const api = eventApi();
 		const content = events(["one", "first"], ["two", "second"]);
 		const prefixHead = advanceEventHead(EMPTY_EVENT_HEAD, content.slice(0, 1));
@@ -239,6 +309,9 @@ describe("events-v1 incremental upload", () => {
 		let fail = true;
 		api.appendSessionEvents = async (input) => {
 			appendIds.push(input.appendId);
+			if (appendIds.length === 1) {
+				throw new ApiError({ status: 409, body: "conflict", hint: "retry" });
+			}
 			if (fail) throw new Error("connection reset after request");
 			return {
 				generation: input.generation,
@@ -271,11 +344,11 @@ describe("events-v1 incremental upload", () => {
 			needsSnapshotContent: false,
 		});
 		expect(result).toMatchObject({ status: "synced", localHash: finalHead });
-		expect(appendIds).toEqual([pendingAppendId, pendingAppendId]);
+		expect(appendIds).toEqual([pendingAppendId, pendingAppendId, pendingAppendId]);
 		expect(readFencedSessionEntry(readSessionsLock(), fence)?.pending).toBeUndefined();
 	});
 
-	it("rewrites a generation when the source is truncated", async () => {
+	it("rejects a mismatched rewrite receipt and resumes the staged generation", async () => {
 		const api = eventApi();
 		const remote = events(["old-one", "old first"], ["old-two", "old second"]);
 		const replacement = events(["new-one", "rewritten"]);
@@ -295,13 +368,14 @@ describe("events-v1 incremental upload", () => {
 			stagedGeneration = body.generation;
 			return { generation: body.generation, status: "staging" };
 		};
+		let corruptReceipt = true;
 		api.uploadSessionEventGenerationChunk = async (input) => ({
 			generation: input.generation,
 			start_seq: input.startSeq,
 			end_seq: input.startSeq,
 			count: 1,
 			content_hash: input.contentHash,
-			result_head_hash: finalHead,
+			result_head_hash: corruptReceipt ? "f".repeat(64) : finalHead,
 		});
 		api.commitSessionEventGeneration = async (_localSessionId, generation, body) => ({
 			generation,
@@ -317,6 +391,16 @@ describe("events-v1 incremental upload", () => {
 			sourceSessionKey: session.localSessionId,
 		});
 
+		await expect(
+			syncSessionContent({ api, fence, session, plan, needsSnapshotContent: false }),
+		).rejects.toThrow("server event chunk receipt does not match uploaded bytes");
+		const pendingGeneration = readFencedSessionEntry(readSessionsLock(), fence)?.pending
+			?.generation;
+		if (!pendingGeneration) throw new Error("expected a durable pending generation");
+		expect(pendingGeneration).toBe(stagedGeneration);
+		expect(readFencedSessionEntry(readSessionsLock(), fence)?.event_head_hash).toBeUndefined();
+		corruptReceipt = false;
+
 		const result = await syncSessionContent({
 			api,
 			fence,
@@ -324,6 +408,7 @@ describe("events-v1 incremental upload", () => {
 			plan,
 			needsSnapshotContent: false,
 		});
+		expect(stagedGeneration).toBe(pendingGeneration);
 		expect(result).toMatchObject({ status: "synced", localHash: finalHead });
 		expect(readFencedSessionEntry(readSessionsLock(), fence)).toMatchObject({
 			event_generation: stagedGeneration,
