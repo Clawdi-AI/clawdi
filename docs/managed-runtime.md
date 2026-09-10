@@ -768,7 +768,7 @@ Bootstrap sets both the default and `@openai` scoped registry to the official
 registry; an inherited scoped mirror cannot redirect this installation. Its installed npm metadata retains the actual
 validated semantic version, also bound into the provider impact revision.
 A later reconcile
-does not query the registry for a newer release when package metadata is valid
+does not query the registry for a newer release when the package name and semantic version are valid
 and the command has executable permission. This is an installation-presence check,
 not an execution-health or sandbox qualification. It does not wrap, pin, or roll
 back an existing user-owned Codex install that passes those checks. The Hosted

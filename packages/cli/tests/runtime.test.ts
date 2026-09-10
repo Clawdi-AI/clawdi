@@ -1341,7 +1341,7 @@ function writeHostedCodexNpmInstaller(
 			'  case "$1" in',
 			'    --prefix) prefix="$2"; shift 2 ;;',
 			'    --registry) registry="$2"; shift 2 ;;',
-			'    --@openai:registry) scoped_registry="$2"; shift 2 ;;',
+			'    --@openai:registry=*) scoped_registry="${1#*=}"; shift ;;',
 			"    *) shift ;;",
 			"  esac",
 			"done",
@@ -3745,7 +3745,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 				getRuntimePaths(),
 			);
 			expect(convergence.installErrors.join("\n")).toContain(
-				"Codex bootstrap did not install a valid package version",
+				"Codex bootstrap did not install valid package metadata",
 			);
 			expect(existsSync(join(home, ".codex", "config.toml"))).toBe(false);
 		} finally {

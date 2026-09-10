@@ -96,7 +96,7 @@ export function ensureHostedCodexCli(paths: RuntimePaths): Record<string, string
 		installHostedCodexBootstrap(CODEX_BOOTSTRAP_PACKAGE_SPEC, npmPrefix, paths);
 		installedVersion = hostedCodexInstalledVersion(npmPrefix);
 		if (installedVersion === null) {
-			throw new Error("Codex bootstrap did not install a valid package version");
+			throw new Error("Codex bootstrap did not install valid package metadata");
 		}
 		if (!executableExists(realBin)) {
 			throw new Error(`Codex bootstrap did not create ${realBin}`);
@@ -149,8 +149,7 @@ function installHostedCodexBootstrap(
 			"--ignore-scripts",
 			"--registry",
 			"https://registry.npmjs.org",
-			"--@openai:registry",
-			"https://registry.npmjs.org",
+			"--@openai:registry=https://registry.npmjs.org",
 			"--fetch-retries",
 			"2",
 			"--fetch-retry-mintimeout",
