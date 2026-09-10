@@ -27,6 +27,9 @@ database migration, CI, and implementation details.
 
 ### Changed
 
+- CLI 0.14.66 skips unnecessary content processing when filtering local Codex
+  sessions by project and reduces repeated comparisons in Claude Code resume histories.
+
 - CLI 0.14.65 reduces local processing during session synchronization and avoids
   repeated session-list scans when pushing large local histories.
 
