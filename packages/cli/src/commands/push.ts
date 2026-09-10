@@ -491,8 +491,9 @@ async function scanOneAgent(
 			);
 		});
 		sessionsCacheSkipped = before - sessions.length - sessionsBlocked;
+		const retainedSessionIds = new Set(sessions.map((session) => session.localSessionId));
 		for (const id of [...sessionPlans.keys()]) {
-			if (!sessions.some((session) => session.localSessionId === id)) sessionPlans.delete(id);
+			if (!retainedSessionIds.has(id)) sessionPlans.delete(id);
 		}
 	}
 
