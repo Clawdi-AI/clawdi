@@ -448,7 +448,9 @@ def _reset_composio_app_cache(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(composio, "_toolkits_cache_lock", asyncio.Lock())
     monkeypatch.setattr(composio, "_toolkits_cache", None)
     monkeypatch.setattr(composio, "_toolkits_cache_at", None)
-    monkeypatch.setattr(composio, "_custom_auth_config_index_lock", asyncio.Lock())
+    monkeypatch.setattr(composio, "_custom_auth_config_index_task", None)
+    monkeypatch.setattr(composio, "_custom_auth_config_index_scope", frozenset())
+    monkeypatch.setattr(composio, "_custom_auth_config_index_task_scope", frozenset())
     monkeypatch.setattr(composio, "_custom_auth_config_index", None)
     monkeypatch.setattr(composio, "_custom_auth_config_index_at", None)
     monkeypatch.setattr(composio, "_tool_router_session_cache", {})
@@ -868,7 +870,12 @@ async def test_connector_catalog_hides_oauth_without_managed_or_custom_auth(
     assert page["items"] == []
     assert page["total"] == 0
     assert fake.auth_configs.listed == [
-        {"is_composio_managed": False, "show_disabled": False, "limit": 50}
+        {
+            "is_composio_managed": False,
+            "show_disabled": False,
+            "limit": 50,
+            "toolkit_slug": "twitter",
+        }
     ]
 
 
@@ -901,16 +908,25 @@ async def test_connector_catalog_shows_oauth_without_managed_auth_when_custom_co
     assert page["items"][0].connect_disabled_reason is None
     assert page["total"] == 1
     assert fake.auth_configs.listed == [
-        {"is_composio_managed": False, "show_disabled": False, "limit": 50}
+        {
+            "is_composio_managed": False,
+            "show_disabled": False,
+            "limit": 50,
+            "toolkit_slug": "twitter",
+        }
     ]
 
 
+@pytest.mark.parametrize("oversize", [False, True])
 async def test_catalog_reads_complete_custom_auth_index_with_upstream_page_cap(
     monkeypatch: pytest.MonkeyPatch,
+    oversize: bool,
 ) -> None:
     from composio_client import AsyncComposio
     from composio_client.types.auth_config_list_response import AuthConfigListResponse
 
+    # The encoded value exceeds the budget even though its character count does not.
+    scope = frozenset({"toolkit_0", "twitter"} | ({"é" * 700} if oversize else set()))
     configs = [
         {
             "id": f"ac_{index}",
@@ -919,7 +935,7 @@ async def test_catalog_reads_complete_custom_auth_index_with_upstream_page_cap(
             "no_of_connections": 0,
             "status": "ENABLED",
             "tool_access_config": {},
-            "toolkit": {"slug": f"toolkit_{index}", "logo": ""},
+            "toolkit": {"slug": "toolkit_0", "logo": ""},
             "type": "custom",
             "auth_scheme": "OAUTH2",
             "is_composio_managed": False,
@@ -945,6 +961,7 @@ async def test_catalog_reads_complete_custom_auth_index_with_upstream_page_cap(
             "is_composio_managed": "false",
             "show_disabled": "false",
             "limit": str(limit),
+            **({} if oversize else {"toolkit_slug": "toolkit_0,twitter"}),
         }
         # Observed upstream behavior: pages contain at most 50 records, while
         # total_pages and cursor termination use the requested limit. Larger
@@ -973,7 +990,13 @@ async def test_catalog_reads_complete_custom_auth_index_with_upstream_page_cap(
         "_toolkits_cache",
         [
             composio._normalize_sdk_response(toolkit, composio._Toolkit)
-            for toolkit in [_hackernews_detail_toolkit(), _twitter_detail_toolkit()]
+            for toolkit in [
+                _hackernews_detail_toolkit(),
+                *[
+                    _twitter_detail_toolkit().model_copy(update={"slug": slug})
+                    for slug in sorted(scope)
+                ],
+            ]
         ],
     )
     monkeypatch.setattr(composio, "_toolkits_cache_at", datetime.now(UTC))
@@ -989,11 +1012,11 @@ async def test_catalog_reads_complete_custom_auth_index_with_upstream_page_cap(
         pages = await asyncio.gather(*(composio.get_available_apps() for _ in range(4)))
         page = pages[0]
         assert all(other == page for other in pages)
-        assert [app.name for app in page["items"]] == ["hackernews", "twitter"]
-        assert page["total"] == 2
+        assert [app.name for app in page["items"]] == ["hackernews", "toolkit_0", "twitter"]
+        assert page["total"] == 3
         assert page_sizes == [50, 50, 50, 50, 48]
-        index = await composio._get_custom_auth_config_index(client)
-        assert len(index) == 247
+        index = await composio._get_custom_auth_config_index(client, scope)
+        assert len(index) == 3
         assert {("toolkit_0", "OAUTH2"), ("toolkit_0", "API_KEY"), ("twitter", "OAUTH2")} <= index
         assert await composio.get_available_apps() == page
         assert page_sizes == [50, 50, 50, 50, 48]
@@ -1719,90 +1742,289 @@ async def test_alias_patch_uses_owned_account_and_returns_fresh_identity(
     assert "clerk_user_123" not in composio._tool_router_session_cache
 
 
-@pytest.mark.parametrize("interruption", ["waiter_cancel", "owner_cancel", "owner_error", "cursor"])
-async def test_custom_auth_index_cold_read_ownership(monkeypatch, interruption):
+@pytest.mark.parametrize("failure", ["status", "deadline", "cursor"])
+async def test_custom_auth_index_failure_fans_out_then_retries(monkeypatch, failure):
     from composio_client import AsyncComposio
 
-    second_page = asyncio.Event()
-    release = asyncio.Event()
-    waiter_started = asyncio.Event()
-    calls: list[str | None] = []
-    interrupted = False
+    calls = 0
+    fail = True
+    joined = 0
+    all_joined = asyncio.Event()
+    page_started = asyncio.Event()
 
     async def handle(request: httpx.Request) -> httpx.Response:
-        nonlocal interrupted
+        nonlocal calls
+        calls += 1
         cursor = request.url.params.get("cursor")
-        calls.append(cursor)
-        if cursor and not interrupted:
-            interrupted = True
-            second_page.set()
-            await release.wait()
-            if interruption == "owner_error":
-                return httpx.Response(503, json={"message": "upstream failed"})
-            if interruption == "cursor":
+        if cursor:
+            page_started.set()
+            if fail:
+                await all_joined.wait()
+                if failure == "deadline":
+                    await asyncio.Event().wait()
+                await asyncio.sleep(0.1)
+                if failure == "status":
+                    return httpx.Response(503, json={"message": "private upstream detail"})
                 return httpx.Response(200, json={"items": [], "next_cursor": "next"})
-        return httpx.Response(
-            200,
-            json={
-                "items": [
-                    {
-                        "id": "ac_test",
-                        "auth_scheme": "OAUTH2",
-                        "status": "ENABLED",
-                        "is_composio_managed": False,
-                        "toolkit": {"slug": "twitter"},
-                    }
-                ],
-                "next_cursor": None if cursor else "next",
-            },
-        )
+        return httpx.Response(200, json={"items": [], "next_cursor": None if cursor else "next"})
 
+    monkeypatch.setattr(composio, "_CUSTOM_AUTH_CONFIG_INDEX_TIMEOUT_SECONDS", 0.5)
     async with AsyncComposio(
         api_key="isolated-test",
         max_retries=0,
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
     ) as sdk:
 
-        async def read_waiter():
-            waiter_started.set()
-            return await composio._get_custom_auth_config_index(sdk)
+        async def read():
+            nonlocal joined
+            joined += 1
+            if joined == 8:
+                all_joined.set()
+            return await composio._get_custom_auth_config_index(sdk, frozenset({"twitter"}))
 
-        owner = asyncio.create_task(composio._get_custom_auth_config_index(sdk))
-        waiter = None
+        readers = [asyncio.create_task(read()) for _ in range(8)]
         try:
-            await asyncio.wait_for(second_page.wait(), timeout=2)
-            assert composio._custom_auth_config_index is None
-            waiter = asyncio.create_task(read_waiter())
-            await asyncio.wait_for(waiter_started.wait(), timeout=2)
-            assert calls == [None, "next"]
-            if interruption == "waiter_cancel":
-                waiter.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await waiter
-                release.set()
-                assert await asyncio.wait_for(owner, timeout=2) == {("twitter", "OAUTH2")}
-                assert calls == [None, "next"]
+            await asyncio.wait_for(page_started.wait(), timeout=2)
+            started = asyncio.get_running_loop().time()
+            results = await asyncio.wait_for(
+                asyncio.gather(*readers, return_exceptions=True), timeout=2
+            )
+            elapsed = asyncio.get_running_loop().time() - started
+            assert calls == 2  # One two-page failure, not eight serial retries.
+            assert all(result is results[0] for result in results)
+            error = results[0]
+            if failure == "cursor":
+                assert isinstance(error, composio.ComposioProtocolError)
             else:
-                if interruption == "owner_cancel":
-                    owner.cancel()
-                    error = asyncio.CancelledError
-                else:
-                    release.set()
-                    error = (
-                        composio.ComposioProviderError
-                        if interruption == "owner_error"
-                        else composio.ComposioProtocolError
-                    )
-                with pytest.raises(error) as caught:
-                    await asyncio.wait_for(owner, timeout=2)
-                if interruption == "owner_error":
-                    assert caught.value.failure.status_code == 503
-                assert await asyncio.wait_for(waiter, timeout=2) == {("twitter", "OAUTH2")}
-                assert calls == [None, "next", None, "next"]
-            assert await composio._get_custom_auth_config_index(sdk) == {("twitter", "OAUTH2")}
+                assert isinstance(error, composio.ComposioProviderError)
+                assert error.failure.kind == ("timeout" if failure == "deadline" else "status")
+                assert "private upstream detail" not in str(error)
+            assert composio._custom_auth_config_index is None
+            assert composio._custom_auth_config_index_at is None
+            assert composio._custom_auth_config_index_task is None
+            print(f"index failure={failure} n=8 batch_ms={elapsed * 1000:.1f} sdk_calls={calls}")
+            fail = False
+            assert (
+                await composio._get_custom_auth_config_index(sdk, frozenset({"twitter"}))
+                == frozenset()
+            )
+            assert calls == 4  # A later independent request can retry immediately.
+        finally:
+            for reader in readers:
+                reader.cancel()
+            await asyncio.gather(*readers, return_exceptions=True)
+            task = composio._custom_auth_config_index_task
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("cancel", ["first", "second", "all", "shutdown"])
+async def test_custom_auth_index_waiter_cancellation_and_shutdown(monkeypatch, cancel):
+    from composio_client import AsyncComposio
+
+    started = asyncio.Event()
+    joined = asyncio.Event()
+    release = asyncio.Event()
+    stopped = asyncio.Event()
+    calls = 0
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        cursor = request.url.params.get("cursor")
+        if cursor:
+            started.set()
+            try:
+                await release.wait()
+            finally:
+                # Shutdown must join provider cleanup before closing its client.
+                await asyncio.sleep(0)
+                assert not sdk.is_closed()
+                stopped.set()
+        return httpx.Response(200, json={"items": [], "next_cursor": None if cursor else "next"})
+
+    async with AsyncComposio(
+        api_key="isolated-test",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+    ) as sdk:
+        monkeypatch.setattr(composio, "_client", sdk)
+        monkeypatch.setattr(composio, "_sdk_client", None)
+
+        async def read_second():
+            joined.set()
+            return await composio._get_custom_auth_config_index(sdk, frozenset({"twitter"}))
+
+        first = asyncio.create_task(
+            composio._get_custom_auth_config_index(sdk, frozenset({"twitter"}))
+        )
+        second = None
+        try:
+            await asyncio.wait_for(started.wait(), timeout=2)
+            second = asyncio.create_task(read_second())
+            await asyncio.wait_for(joined.wait(), timeout=2)
+            task = composio._custom_auth_config_index_task
+            assert task is not None
+            if cancel == "shutdown":
+                await asyncio.wait_for(composio.close_composio_client(), timeout=2)
+                assert stopped.is_set() and sdk.is_closed()
+                assert task.cancelled()
+                assert composio._custom_auth_config_index is None
+                assert composio._custom_auth_config_index_at is None
+                assert composio._custom_auth_config_index_task is None
+                for reader in (first, second):
+                    with pytest.raises(asyncio.CancelledError):
+                        await reader
+            else:
+                cancelled = (
+                    (first, second)
+                    if cancel == "all"
+                    else (first if cancel == "first" else second,)
+                )
+                for reader in cancelled:
+                    reader.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await reader
+                assert not task.done()
+                release.set()
+                assert await asyncio.wait_for(asyncio.shield(task), timeout=2) == frozenset()
+                for reader in (first, second):
+                    if reader not in cancelled:
+                        assert await reader == frozenset()
+                assert calls == 2
         finally:
             release.set()
-            pending = [task for task in (owner, waiter) if task is not None]
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
+            readers = [reader for reader in (first, second) if reader is not None]
+            for reader in readers:
+                reader.cancel()
+            await asyncio.gather(*readers, return_exceptions=True)
+            await composio.close_composio_client()
+
+
+@pytest.mark.parametrize("first_fails", [False, True])
+async def test_custom_auth_index_coverage_tracks_full_catalog_not_search(monkeypatch, first_fails):
+    from composio_client import AsyncComposio
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = []
+
+    def catalog(slugs):
+        return [
+            composio._normalize_sdk_response(
+                _twitter_detail_toolkit().model_copy(update={"slug": slug, "name": slug}),
+                composio._Toolkit,
+            )
+            for slug in slugs
+        ]
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        scope = request.url.params["toolkit_slug"]
+        calls.append(scope)
+        if scope == "alpha,beta":
+            started.set()
+            await release.wait()
+            if first_fails:
+                return httpx.Response(503, json={"message": "upstream unavailable"})
+        items = [
+            {
+                "id": "synthetic",
+                "toolkit": {"slug": slug},
+                "auth_scheme": "OAUTH2",
+                "status": "ENABLED",
+                "is_composio_managed": False,
+            }
+            for slug in scope.split(",")
+        ]
+        # Even a provider ignoring its filters must not contaminate the index.
+        items.extend(
+            [
+                {**items[0], "toolkit": {"slug": "unrelated"}},
+                {**items[0], "auth_scheme": "API_KEY", "status": "DISABLED"},
+                {**items[0], "auth_scheme": "BASIC", "is_composio_managed": True},
+                {**items[0], "auth_scheme": ""},
+            ]
+        )
+        return httpx.Response(200, json={"items": items, "next_cursor": None})
+
+    monkeypatch.setattr(composio, "_toolkits_cache", catalog(["alpha", "beta"]))
+    monkeypatch.setattr(composio, "_toolkits_cache_at", datetime.now(UTC))
+    async with AsyncComposio(
+        api_key="isolated-test",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+    ) as sdk:
+        monkeypatch.setattr(composio, "_client", sdk)
+        readers = [
+            asyncio.create_task(composio.get_available_apps(search=slug))
+            for slug in ("alpha", "beta")
+        ]
+        try:
+            await asyncio.wait_for(started.wait(), timeout=2)
+            # A catalog refresh while the old scope is in flight must not share
+            # its incomplete coverage or its failure with a new scope.
+            monkeypatch.setattr(composio, "_toolkits_cache", catalog(["alpha", "beta", "gamma"]))
+            readers.append(asyncio.create_task(composio.get_available_apps(search="gamma")))
+            await asyncio.sleep(0)
+            assert calls == ["alpha,beta"]
+            release.set()
+            results = await asyncio.wait_for(
+                asyncio.gather(*readers, return_exceptions=True), timeout=2
+            )
+            if first_fails:
+                assert isinstance(results[0], composio.ComposioProviderError)
+                assert results[0] is results[1]
+            else:
+                assert [[app.name for app in page["items"]] for page in results[:2]] == [
+                    ["alpha"],
+                    ["beta"],
+                ]
+            assert [app.name for app in results[2]["items"]] == ["gamma"]
+            assert calls == ["alpha,beta", "alpha,beta,gamma"]
+            assert composio._custom_auth_config_index_scope == frozenset({"alpha", "beta", "gamma"})
+            assert composio._custom_auth_config_index == frozenset(
+                (slug, "OAUTH2") for slug in ("alpha", "beta", "gamma")
+            )
+            page = await composio.get_available_apps(search="beta")
+            assert [app.name for app in page["items"]] == ["beta"]
+            assert len(calls) == 2
+            # A subsequent changed set invalidates even an unexpired cache.
+            monkeypatch.setattr(composio, "_toolkits_cache", catalog(["delta"]))
+            page = await composio.get_available_apps(search="delta")
+            assert [app.name for app in page["items"]] == ["delta"]
+            assert calls[-1] == "delta"
+        finally:
+            release.set()
+            for reader in readers:
+                reader.cancel()
+            await asyncio.gather(*readers, return_exceptions=True)
+            await composio.close_composio_client()
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        frozenset(),
+        frozenset({""}),
+        frozenset({"a,b"}),
+        frozenset({"a\nb"}),
+        frozenset({"a\ud800b"}),
+    ],
+)
+async def test_custom_auth_index_empty_or_malformed_scope_never_fetches(scope):
+    from composio_client import AsyncComposio
+
+    def handle(request):
+        pytest.fail("Empty or malformed scope must not trigger an unfiltered request")
+
+    async with AsyncComposio(
+        api_key="isolated-test",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+    ) as sdk:
+        if scope:
+            with pytest.raises(composio.ComposioProtocolError):
+                await composio._get_custom_auth_config_index(sdk, scope)
+        else:
+            assert await composio._get_custom_auth_config_index(sdk, scope) == frozenset()

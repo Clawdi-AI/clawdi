@@ -1,125 +1,69 @@
-# Catalog cold-read coalescing
+# Catalog cold-read optimization
 
-## Result and scope
+Scope: complete eligible-catalog auth-config filtering plus one shared in-flight
+index task. Detail's `managed_by=composio` membership gate is unchanged.
 
-Add one asyncio lock around the existing custom-auth index cache check and
-complete paginated fetch. No additional task, client, cache key, TTL, request
-filter, or API behavior. The toolkit lock already coalesces its two pages;
-this change coalesces the subsequent five auth-config pages too.
+The scope is all custom-OAuth slugs from the full managed toolkit catalog,
+before search/pagination. Cache reuse requires that exact set and the existing
+five-minute TTL. SDK `toolkit_slug` receives sorted comma-separated slugs on
+every page; `limit=50` remains. A local 4096-byte encoded initial-query budget
+falls back to the original full scan, not an assumed provider URL limit.
+Both paths retain only eligible slugs' enabled, custom, nonempty-scheme pairs.
+Empty scope makes no request; malformed CSV slugs fail without upstream calls.
 
-This reduces concurrent upstream work, **not the single-caller seven-page
-critical path**. It does not fix the reported real cold latency of 3597 ms.
-No provider calls, provider credentials, tenant metadata, or Hosted writes
-were used. The root-provided page timings are inputs, not measurements made
-by this benchmark. The named request-chain report was not present at the
-specified Cloud/Hosted workspace paths; no private locations were searched.
+One task slot shares results/errors for equal scopes; a changed scope waits
+for the old task to settle, then fetches its own coverage without inheriting
+old provider errors. There is no multi-generation registry or failure cache.
+Waiters use `shield`; canceling any/all requests does not cancel the fetch.
+The 15-second fetch deadline covers all pages/SDK retries and maps to the
+existing sanitized 504. Shutdown cancels/joins the task before closing clients.
+Only complete results publish index/timestamp/scope. Different generations can
+wait behind one old fetch; this bounds concurrency at the cost of that wait.
 
-## Controlled measurements
+## Evidence
 
-Python 3.14.7, locked backend dependencies (composio-client 1.43.0), Docker
-containers limited to 2 CPUs / 3 GiB, network disabled. Real AsyncComposio SDK
-with async httpx.MockTransport; real FastAPI connector router via ASGITransport.
-Only authentication is replaced with a synthetic user dependency. No database
-or ASGI application lifespan runs. Requests use the frontend's actual list
-path and page size: `/v1/connectors/available?page=1&page_size=24`.
+Root's authorized read-only probe (2026-09-10): 1520 managed toolkits, 171
+eligible slugs, encoded filter 2347 bytes. Full index: five pages, 219 pairs,
+2390.7 ms. Filtered index: one page, 25 pairs, 1518.7 ms; exactly equal to the
+full index restricted to the eligible set. Catalog: two pages, 1523.1 ms.
+This is one sequential provider sample, not a robust latency estimate.
+The leaf read only the aggregate report; no provider/tenant credentials or
+live calls, Hosted/reviewer writes, push, or merge.
 
-Synthetic metadata: 1100 toolkits across 2 pages, 248 custom configs across 5
-pages, including custom OAuth toolkits. Each request verifies the final total,
-page size, and enabled state. Injected page waits are 760/784 ms for toolkits
-and 428/419/353/369/317 ms for configs (3430 ms total). The transport does not
-model provider queuing, rate limits, TCP, TLS, or production payload parsing
-costs. It therefore cannot establish real upstream latency savings.
+Real pinned AsyncComposio SDK + HTTPX mock transport + actual FastAPI router,
+Python 3.14.7 with locked dependencies, Docker 2 CPUs/3 GiB, network disabled.
+Synthetic catalog: 1520 toolkits/171 eligible, 248 configs with 25 eligible;
+1374 visible items verified through `/v1/connectors/available?page=1&page_size=24`.
+Injected waits: catalog 760/763.05 ms, full index five times 478.14 ms, filtered
+index 1518.73 ms. These encode the root's aggregate sample, not new network
+measurements. One batch per N/variant; N=1 includes first-request SDK/schema
+initialization. No provider queue/TLS/rate-limit model or statistical speed claim.
 
-One baseline and candidate batch at each N; cold caches reset before each
-batch, followed by one warm request. Each variant runs in a fresh process;
-N=1 includes first-request SDK/schema initialization, N=4/8 do not. Timing
-variation is not a statistically established speedup. See raw JSON files for
-individual request durations.
-
-| Concurrent cold requests | Total SDK calls before → after | Median cold ms before → after | Warm ms before → after |
+| Cold N | Total SDK calls before → after | Median cold ms before → after | Warm ms before → after |
 | --- | --- | --- | --- |
-| 1 | 7 → 7 | 4143.9 → 4105.2 | 19.6 → 14.8 |
-| 4 | 22 → 7 | 3745.1 → 3762.4 | 8.1 → 8.3 |
-| 8 | 42 → 7 | 3804.4 → 3761.2 | 8.1 → 9.2 |
+| 1 | 7 → 3 | 4686.5 → 3710.9 | 16.6 → 22.2 |
+| 4 | 22 → 3 | 4315.1 → 3328.2 | 10.8 → 17.2 |
+| 8 | 42 → 3 | 4586.7 → 3367.8 | 11.1 → 13.6 |
 
-All warm reads made zero SDK calls. Toolkit calls remain 2; auth-config calls
-fall from 20/40 to 5 at N=4/8 (75%/87.5% fewer config calls). No meaningful
-single-caller latency improvement is claimed.
-
-## Evidence and alternatives
-
-- `apps/web/src/lib/connectors-data.ts`: list query uses `/v1/connectors/available`,
-  detail uses `/v1/connectors/available/{app_name}`, both cache in the browser.
-  `connectors-surface.tsx` uses the paginated list; connector cards prefetch
-  detail/tools and `[name]/page.tsx` queries detail. These are distinct requests,
-  not evidence that a single list request can skip full-catalog filtering.
-- `get_app_by_name` retains the `managed_by="composio"` catalog-membership gate.
-  The pinned retrieve response exposes `type`, `enabled`, and other fields,
-  but their equivalence to list membership is not established. Arbitrary slugs
-  remain untrusted. No detail optimization was made.
-- The installed pinned SDK source (`sdk-contract.txt`) documents `toolkit_slug`
-  as comma-separated slugs and serializes it as a query parameter. This permits
-  scoped requests, but replacing the complete global index with a query subset
-  would give subsequent searches incomplete authority. A separately scoped cache
-  or comprehensive filtered index needs more design/evidence and is outside this
-  minimal patch. No unverified filters or unconditional parallel fetch were added.
-- The existing upstream cap workaround remains `limit=50`, despite the SDK's
-  advertised 1000. All cursor and output filters are unchanged.
-
-## Ownership and tradeoffs
-
-The fetching request owns its SDK await. Canceling a waiter cannot cancel the
-owner; canceling/failing the owner releases the lock and permits a waiter to
-retry from page one. No shared background task retains a client beyond request
-ownership. Partial pages never update the cache; the prior index and timestamp
-remain untouched on failure. Persistent failures are retried serially by waiting
-callers, which can increase their failure latency; this patch introduces neither
-failure caching nor new timeout/retry policy.
-
-Repository search found no external writes/invalidation of this metadata cache
-in production: only initialization and successful fetch publish index/timestamp.
-The existing timestamp is still taken before fetch, and TTL is checked inside
-the lock. Thus this change does not add an invalidate-versus-refresh race. If a
-future explicit invalidator is introduced, it must coordinate with this lock.
-The cache remains deployment-wide as before; no tenant-specific cache is added
-or broadened. `close_composio_client` is unchanged.
+Warm SDK calls: zero throughout. Warm times worsened in this single run;
+full-scope derivation/checks add CPU work. Do not claim a warm improvement.
+The earlier lock-only candidate did not reduce single-caller cold work and
+was rejected because persistent failures retried serially across waiters.
+Its original raw results remain in unpublished commit `bf629e531`; bulky
+reports/fixtures are removed from the final tree.
 
 ## Verification
 
-- 69 passed, 9 deselected: connector service, SDK/error/pagination contracts,
-  and connector request-stage routes. Excluded only the existing PG-dependent
-  metadata batch route and eight unrelated upload-stage cases.
-- Existing five-page completeness/normalization/expiry test now sends four
-  concurrent cold reads through the real SDK transport and verifies one scan.
-- Four interruption cases cover waiter cancellation, owner cancellation,
-  translated SDK 503, and repeated cursor, including retry and no partial publish.
-- BasedPyright `app/services/composio.py`: 0 errors, 0 warnings, 0 notes.
-- Ruff lint/format for changed Python files: passed.
-- Dependency authority and outbound API governance: passed.
-- Image dependency installation used `uv sync --locked --no-install-project`.
+80 passed, 9 deselected: connectors, SDK/error/pagination, connector request
+stages; only existing PostgreSQL metadata-batch and unrelated upload tests
+excluded. Coverage includes multi-page filtered and oversized fallback reads,
+encoded byte size, expiry, output filtering, concurrent different searches,
+changed sets during/after success or failure, malformed/empty scope, cancellation
+of first/second/all waiters, and shutdown joining provider cleanup.
 
-## Reproduce
-
-From the repository root:
-
-```bash
-docker build --memory=3g --cpu-period=100000 --cpu-quota=200000 \
-  -t catalog-cold-check:20260910 \
-  -f reports/catalog-cold-2026-09-10/Dockerfile .
-docker run --rm --cpus=2 --memory=3g --network=none \
-  -v "$PWD/backend:/src:ro" \
-  -v "$PWD/reports/catalog-cold-2026-09-10:/reports:ro" \
-  -e PYTHONPATH=/src catalog-cold-check:20260910 python /reports/benchmark.py
-docker run --rm --cpus=2 --memory=3g --network=none \
-  -v "$PWD/backend:/src:ro" -e PYTHONPATH=/src -w /src \
-  catalog-cold-check:20260910 pytest -q -p no:cacheprovider \
-  tests/test_connectors.py tests/test_composio_mcp_contract.py \
-  tests/test_request_stage_routes.py \
-  -k 'not test_connector_metadata_batch_reads_catalog_once_without_auth_details and not test_upload_stages_real_auth_pg'
-docker image rm catalog-cold-check:20260910
-```
-
-Baseline measurements were taken on the unchanged service before applying the
-lock, using the same benchmark. Containers auto-remove, source mounts are read
-only for verification, and the task image and temporary files are removed after
-verification. No push or merge; root/Fable review of the actual diff is pending.
+Controlled two-page failure with eight waiters: status/cursor failure batches
+102.0/102.3 ms for a 100 ms delay; shared 500 ms deadline batch 499.3 ms after
+page-two entry. Each made two calls, returned the same exception to all waiters,
+published nothing, and allowed the next independent request to retry.
+BasedPyright service gate: zero diagnostics. Ruff lint/format, dependency
+authority, and outbound API governance passed. No full database suite run.

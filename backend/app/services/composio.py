@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from itertools import islice
 from typing import TYPE_CHECKING, Literal, TypedDict
+from urllib.parse import urlencode
 
 import composio_client
 import httpx2
@@ -57,7 +58,11 @@ if TYPE_CHECKING:
     from composio.core.provider._openai import OpenAITool, OpenAIToolCollection
     from composio.exceptions import ComposioError as HighLevelComposioError
     from composio_client import AsyncComposio
-    from composio_client.types import AuthConfigCreateParams, ConnectedAccountCreateParams
+    from composio_client.types import (
+        AuthConfigCreateParams,
+        AuthConfigListParams,
+        ConnectedAccountCreateParams,
+    )
 
 logger = logging.getLogger(__name__)
 type JsonObject = dict[str, JsonValue]
@@ -542,6 +547,10 @@ def get_composio_sdk() -> Composio[OpenAITool, OpenAIToolCollection]:
 async def close_composio_client() -> None:
     """Close the shared Composio HTTP clients on ASGI shutdown."""
     global _client, _sdk_client
+    pending_index = _custom_auth_config_index_task
+    if pending_index is not None:
+        pending_index.cancel()
+        await asyncio.gather(pending_index, return_exceptions=True)
     _tool_router_session_creations.clear()
     pending_tools = tuple(_tool_router_tools_inflight.values())
     _tool_router_tools_inflight.clear()
@@ -1412,69 +1421,122 @@ async def _annotate_connect_status(
 
 _custom_auth_config_index: frozenset[tuple[str, str]] | None = None
 _custom_auth_config_index_at: datetime | None = None
-_custom_auth_config_index_lock = asyncio.Lock()
+_custom_auth_config_index_scope: frozenset[str] = frozenset()
+_custom_auth_config_index_task_scope: frozenset[str] = frozenset()
+_custom_auth_config_index_task: asyncio.Task[frozenset[tuple[str, str]]] | None = None
+_CUSTOM_AUTH_CONFIG_INDEX_TIMEOUT_SECONDS = 15.0
+# Local query budget, not an asserted provider URL limit. Larger catalogs use
+# the original unfiltered pagination and retain the same scope/output checks.
+_CUSTOM_AUTH_CONFIG_FILTER_MAX_BYTES = 4096
 
 
 async def _get_custom_auth_config_index(
     client: AsyncComposio,
+    toolkit_slugs: frozenset[str],
 ) -> frozenset[tuple[str, str]]:
-    """Return enabled custom auth configs keyed by (toolkit slug, auth scheme).
+    """Return enabled custom auth configs for the complete eligible catalog scope.
 
     Upstream caps pages at 50 but computes total_pages/next_cursor from the
     requested limit (verified 2026-09-08 with composio-client 1.43.0). Request
     50 so the returned cursors cover the full index despite the SDK docs
     advertising a maximum of 1000.
     """
-    global _custom_auth_config_index, _custom_auth_config_index_at
-    # The caller owns the fetch: cancellation releases the lock without caching
-    # a partial index or leaving a background task using the shared client.
-    async with _custom_auth_config_index_lock:
+    global _custom_auth_config_index_task, _custom_auth_config_index_task_scope
+    if not toolkit_slugs:
+        return frozenset()
+    if any(
+        not slug or "," in slug or any(char.isspace() or not char.isprintable() for char in slug)
+        for slug in toolkit_slugs
+    ):
+        raise ComposioProtocolError("Composio returned an invalid toolkit slug")
+
+    while True:
         now = datetime.now(UTC)
-        if _custom_auth_config_index is not None and _custom_auth_config_index_at is not None:
-            if (now - _custom_auth_config_index_at) < _COMPOSIO_METADATA_CACHE_TTL:
-                return _custom_auth_config_index
+        if (
+            _custom_auth_config_index is not None
+            and _custom_auth_config_index_at is not None
+            and _custom_auth_config_index_scope == toolkit_slugs
+            and (now - _custom_auth_config_index_at) < _COMPOSIO_METADATA_CACHE_TTL
+        ):
+            return _custom_auth_config_index
 
-        index: set[tuple[str, str]] = set()
-        cursor: str | None = None
-        seen_cursors: set[str] = set()
-        while True:
-            if cursor:
-                raw_response = await _call_generated_sdk(
-                    client.auth_configs.list(
-                        is_composio_managed=False,
-                        show_disabled=False,
-                        limit=50,
-                        cursor=cursor,
-                    )
-                )
-            else:
-                raw_response = await _call_generated_sdk(
-                    client.auth_configs.list(
-                        is_composio_managed=False,
-                        show_disabled=False,
-                        limit=50,
-                    )
-                )
-            response = _normalize_sdk_response(raw_response, _AuthConfigPage)
-            for item in response.items:
-                if item.status != "ENABLED":
-                    continue
-                if item.is_composio_managed:
-                    continue
-                toolkit_slug = _auth_config_toolkit_slug(item)
-                auth_scheme = _normalize_composio_scheme(item.auth_scheme)
-                if toolkit_slug and auth_scheme:
-                    index.add((toolkit_slug, auth_scheme))
-            cursor = response.next_cursor
-            if not cursor:
-                break
-            if cursor in seen_cursors:
-                raise ComposioProtocolError("Composio returned a repeated catalog cursor")
-            seen_cursors.add(cursor)
+        task = _custom_auth_config_index_task
+        if task is None:
+            task = asyncio.create_task(_load_custom_auth_config_index(client, toolkit_slugs))
+            _custom_auth_config_index_task = task
+            _custom_auth_config_index_task_scope = toolkit_slugs
+            task.add_done_callback(_finish_custom_auth_config_index_load)
+        if _custom_auth_config_index_task_scope == toolkit_slugs:
+            return await asyncio.shield(task)
+        # One slot bounds work across catalog refreshes. A different generation
+        # must neither consume this result nor inherit its provider failure.
+        try:
+            await asyncio.shield(task)
+        except ComposioRouteError:
+            pass
 
-        _custom_auth_config_index = frozenset(index)
-        _custom_auth_config_index_at = now
-        return _custom_auth_config_index
+
+def _finish_custom_auth_config_index_load(task: asyncio.Task[frozenset[tuple[str, str]]]) -> None:
+    global _custom_auth_config_index_task
+    if _custom_auth_config_index_task is task:
+        _custom_auth_config_index_task = None
+    if not task.cancelled():
+        task.exception()
+
+
+async def _load_custom_auth_config_index(
+    client: AsyncComposio, toolkit_slugs: frozenset[str]
+) -> frozenset[tuple[str, str]]:
+    global _custom_auth_config_index, _custom_auth_config_index_at, _custom_auth_config_index_scope
+    slug_filter = ",".join(sorted(toolkit_slugs))
+    query = urlencode(
+        {
+            "toolkit_slug": slug_filter,
+            "is_composio_managed": "false",
+            "show_disabled": "false",
+            "limit": 50,
+        }
+    )
+    params: AuthConfigListParams = {
+        "is_composio_managed": False,
+        "show_disabled": False,
+        "limit": 50,
+    }
+    if len(query.encode("ascii")) <= _CUSTOM_AUTH_CONFIG_FILTER_MAX_BYTES:
+        params["toolkit_slug"] = slug_filter
+    now = datetime.now(UTC)
+    try:
+        async with asyncio.timeout(_CUSTOM_AUTH_CONFIG_INDEX_TIMEOUT_SECONDS):
+            index: set[tuple[str, str]] = set()
+            cursor: str | None = None
+            seen_cursors: set[str] = set()
+            while True:
+                if cursor:
+                    params["cursor"] = cursor
+                raw_response = await _call_generated_sdk(client.auth_configs.list(**params))
+                response = _normalize_sdk_response(raw_response, _AuthConfigPage)
+                for item in response.items:
+                    if item.status != "ENABLED":
+                        continue
+                    if item.is_composio_managed:
+                        continue
+                    toolkit_slug = _auth_config_toolkit_slug(item)
+                    auth_scheme = _normalize_composio_scheme(item.auth_scheme)
+                    if toolkit_slug and toolkit_slug in toolkit_slugs and auth_scheme:
+                        index.add((toolkit_slug, auth_scheme))
+                cursor = response.next_cursor
+                if not cursor:
+                    break
+                if cursor in seen_cursors:
+                    raise ComposioProtocolError("Composio returned a repeated catalog cursor")
+                seen_cursors.add(cursor)
+
+            _custom_auth_config_index = frozenset(index)
+            _custom_auth_config_index_at = now
+            _custom_auth_config_index_scope = toolkit_slugs
+            return _custom_auth_config_index
+    except TimeoutError:
+        raise ComposioProviderError(ComposioFailure("timeout")) from None
 
 
 def _auth_config_toolkit_slug(auth_config: _AuthConfig) -> str | None:
@@ -1761,6 +1823,12 @@ async def get_available_apps(
     client = get_composio_client()
     toolkits = await _get_all_toolkits()
     items = [(toolkit, _primary_auth_type(toolkit, allow_unknown=True)) for toolkit in toolkits]
+    # Coverage comes from the complete managed catalog, never a search/page subset.
+    custom_oauth_slugs = frozenset(
+        toolkit.slug.lower()
+        for toolkit, auth_type in items
+        if _requires_preconfigured_custom_oauth(toolkit, auth_type)
+    )
     query = (search or "").strip().casefold()
     if query:
         ranked_items = [
@@ -1778,7 +1846,9 @@ async def get_available_apps(
         for toolkit, auth_type in items
     )
     custom_auth_config_index: frozenset[tuple[str, str]] = (
-        await _get_custom_auth_config_index(client) if needs_custom_oauth else frozenset()
+        await _get_custom_auth_config_index(client, custom_oauth_slugs)
+        if needs_custom_oauth
+        else frozenset()
     )
     visible_items: list[_Toolkit] = []
     for toolkit, auth_type in items:
