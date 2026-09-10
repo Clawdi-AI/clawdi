@@ -1,17 +1,12 @@
 import { expect, test } from "bun:test";
 import { isRedirect } from "@tanstack/react-router";
-import {
-	RouteAuthUnavailable,
-	requireRouteIdentity,
-	resolveRouteAuth,
-	routeAuthIdentity,
-} from "./route-auth";
+import { requireRouteIdentity, resolveRouteAuth, routeAuthIdentity } from "./route-auth";
 
 const signedIn = { isLoaded: true, isSignedIn: true, userId: "user-a", sessionId: "session-a" };
 
-test("admission uses a loaded live session, including same-user session changes", () => {
+test("server admission and live identity agree, including same-user session changes", () => {
 	const auth = resolveRouteAuth(signedIn, "ready");
-	expect(requireRouteIdentity(auth, "/agents")).toBe(JSON.stringify(["user-a", "session-a"]));
+	expect(requireRouteIdentity(signedIn, "/agents")).toBe(JSON.stringify(["user-a", "session-a"]));
 	expect(
 		routeAuthIdentity(resolveRouteAuth({ ...signedIn, sessionId: "session-b" }, "ready")),
 	).not.toBe(routeAuthIdentity(auth));
@@ -24,27 +19,18 @@ test("native authenticated SSR state admits during SDK bootstrap", () => {
 	expect(resolveRouteAuth(signedIn, "loading")).toEqual(resolveRouteAuth(signedIn, "ready"));
 });
 
-test("unknown auth and explicit SDK failures never admit, even with a signed-in SSR snapshot", () => {
+test("unloaded auth and explicit SDK failures block private data despite an SSR snapshot", () => {
 	for (const status of ["degraded", "error"] as const) {
-		expect(() => requireRouteIdentity(resolveRouteAuth(signedIn, status), "/agents")).toThrow(
-			RouteAuthUnavailable,
-		);
+		expect(resolveRouteAuth(signedIn, status)).toEqual({ status: "unavailable" });
 	}
-	expect(() => requireRouteIdentity(undefined, "/agents")).toThrow(RouteAuthUnavailable);
-	for (const status of ["loading", "ready"] as const) {
-		expect(() =>
-			requireRouteIdentity(resolveRouteAuth({ ...signedIn, isLoaded: false }, status), "/agents"),
-		).toThrow(RouteAuthUnavailable);
-	}
+	expect(resolveRouteAuth({ ...signedIn, isLoaded: false }, "ready")).toEqual({
+		status: "loading",
+	});
 });
 
-test("signed-out and Clerk's default pending-as-signed-out result redirect with the destination", () => {
-	const auth = resolveRouteAuth(
-		{ isLoaded: true, isSignedIn: false, userId: null, sessionId: null },
-		"ready",
-	);
+test("signed-out server admission redirects with the destination", () => {
 	try {
-		requireRouteIdentity(auth, "/agents?view=all");
+		requireRouteIdentity({ userId: null, sessionId: null }, "/agents?view=all");
 		throw new Error("Expected a redirect");
 	} catch (error) {
 		expect(isRedirect(error)).toBe(true);

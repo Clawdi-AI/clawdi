@@ -1,12 +1,13 @@
 import type { useAuth, useClerk } from "@clerk/tanstack-react-start";
+import type { auth } from "@clerk/tanstack-react-start/server";
 import { redirect } from "@tanstack/react-router";
 
 export type RouteAuth =
 	| { status: "loading" | "unavailable" | "signed-out" }
 	| { status: "signed-in"; userId: string; sessionId: string };
 
-export function routeAuthIdentity(auth: RouteAuth | undefined): string | null {
-	return auth?.status === "signed-in" ? JSON.stringify([auth.userId, auth.sessionId]) : null;
+export function routeAuthIdentity(auth: RouteAuth): string | null {
+	return auth.status === "signed-in" ? JSON.stringify([auth.userId, auth.sessionId]) : null;
 }
 
 export function resolveRouteAuth(
@@ -19,19 +20,12 @@ export function resolveRouteAuth(
 	return { status: "signed-in", userId: auth.userId, sessionId: auth.sessionId };
 }
 
-export class RouteAuthUnavailable extends Error {
-	constructor(readonly status: "loading" | "unavailable") {
-		super("Authentication is not ready");
-	}
-}
-
-export function requireRouteIdentity(auth: RouteAuth | undefined, href: string): string {
-	if (!auth || auth.status === "loading" || auth.status === "unavailable") {
-		throw new RouteAuthUnavailable(auth?.status === "unavailable" ? "unavailable" : "loading");
-	}
-	const identity = routeAuthIdentity(auth);
-	if (identity === null) {
+export function requireRouteIdentity(
+	{ userId, sessionId }: Pick<Awaited<ReturnType<typeof auth>>, "userId" | "sessionId">,
+	href: string,
+): string {
+	if (!userId || !sessionId) {
 		throw redirect({ to: "/sign-in", search: { redirect_url: href } });
 	}
-	return identity;
+	return JSON.stringify([userId, sessionId]);
 }

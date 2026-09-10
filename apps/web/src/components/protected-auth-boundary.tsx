@@ -1,17 +1,6 @@
-import type { ErrorComponentProps } from "@tanstack/react-router";
 import { AccountSuspensionBoundary } from "@/components/account-suspension-boundary";
-import { AuthStatus } from "@/components/auth-status";
-import RootError from "@/components/root-error";
 import { useRouteAuth, useSessionIdentity } from "@/lib/auth-client";
-import { RouteAuthUnavailable, routeAuthIdentity } from "@/lib/route-auth";
-
-export function ProtectedRouteError({ error, reset }: ErrorComponentProps) {
-	return error instanceof RouteAuthUnavailable ? (
-		<AuthStatus status={error.status} />
-	) : (
-		<RootError error={error} reset={reset} />
-	);
-}
+import { routeAuthIdentity } from "@/lib/route-auth";
 
 export function ProtectedAuthBoundary({
 	identity: admittedIdentity,
