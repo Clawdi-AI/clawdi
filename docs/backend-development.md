@@ -848,3 +848,38 @@ followed by another wait on the original operation in
 [`AsyncConnection.wait()`](https://github.com/psycopg/psycopg/blob/3.3.5/psycopg/psycopg/connection_async.py).
 No driver migration is included without an independently verified ownership and
 network-stall contract.
+
+## Request stage attribution
+
+```bash
+scripts/test.sh backend tests/test_request_timing.py tests/test_request_stage_routes.py
+```
+
+Done: timing contracts pass with real PostgreSQL/API-key authentication and
+local storage for snapshot uploads; connector attribution tests explicitly mock
+authentication and the route-facing adapter calls.
+
+Slow/error request logs reuse the fixed, request-local `channel_stage` fields:
+
+- `pre_handler_ms`: timing middleware entry to handler entry, including body
+  arrival, multipart parsing, authentication and dependencies. It is not pure
+  authentication or time before ASGI entry; rejected dependencies never reach
+  the marker.
+- `upload_lookup_lock_ms`, `upload_spooled_read_ms`, `upload_analysis_ms`,
+  `upload_storage_ms`, `upload_index_ms`, `upload_commit_ms`: snapshot upload
+  lookup/fencing/row locks, already-parsed file reads, analysis, FileStore put,
+  search replacement and commit respectively. Index timing includes its SQL
+  and any autoflush; commit is the remaining transaction commit operation.
+- `connector_route_fetch_ms`: connected-list, available-catalog or single-item
+  adapter call, including cache/lock waits, SDK pagination, normalization and
+  any extra detail/auth-config calls. This is not vendor HTTP time.
+  `connector_invalidation_ms` covers connected-list MCP session invalidation;
+  `connector_response_build_ms` covers route response model construction,
+  excluding FastAPI wire serialization. Single-item models are built in fetch.
+
+Stages record elapsed wall time even when their block raises. Unreached stages
+are absent, not zero. They do not sum to end-to-end latency: middleware outside
+the timer, response serialization/sending and dependency cleanup are not all
+attributed. Existing slow/error-only logging, credential redaction and expected
+long-poll suppression remain in effect. Instrumentation establishes attribution,
+not a performance gain.

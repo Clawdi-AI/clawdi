@@ -300,6 +300,9 @@ async def test_request_timing_isolates_stage_state_and_filters_fields(caplog):
             channel_auth_ms=float("nan"),
             channel_url_validation_ms=float("inf"),
             channel_provider_ms="secret",
+            upload_storage_ms=-1.0,
+            connector_route_fetch_ms=True,
+            connector_invalidation_ms=float("inf"),
             unknown="secret",
         )
         await send({"type": "http.response.start", "status": 500, "headers": []})
@@ -309,6 +312,53 @@ async def test_request_timing_isolates_stage_state_and_filters_fields(caplog):
     await _collect(RequestTimingMiddleware(inner, slow_ms=750), scope)
     assert "request_error" in caplog.text
     assert "channel_" not in caplog.text
+    assert "upload_storage_ms" not in caplog.text
+    assert "connector_" not in caplog.text
     assert "unknown" not in caplog.text
     assert "secret" not in caplog.text
     assert inherited == {"channel_auth_ms": 999.0}
+
+
+async def test_overlapping_requests_do_not_share_lifespan_stage_timings(caplog):
+    import asyncio
+
+    from app.middleware.request_timing import channel_stage, record_pre_handler
+
+    inherited = {"_channel_stage_timings": {"upload_storage_ms": 999.0}}
+    first, second = _scope(), _scope()
+    first["state"] = inherited.copy()
+    second["state"] = inherited.copy()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def inner(scope, _receive, send):
+        record_pre_handler(scope)
+        if scope is first:
+            with channel_stage(scope, "upload_storage_ms"):
+                entered.set()
+                await release.wait()
+                raise RuntimeError("storage failed")
+        await entered.wait()
+        with channel_stage(scope, "connector_route_fetch_ms"):
+            await asyncio.sleep(0)
+        await send({"type": "http.response.start", "status": 500, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+        release.set()
+
+    caplog.set_level(logging.WARNING, logger="app.middleware.request_timing")
+    timed = RequestTimingMiddleware(inner, slow_ms=750)
+    results = await asyncio.gather(
+        _collect(timed, first), _collect(timed, second), return_exceptions=True
+    )
+    assert isinstance(results[0], RuntimeError)
+    assert not isinstance(results[1], BaseException)
+    assert set(first["state"]["_channel_stage_timings"]) == {"pre_handler_ms", "upload_storage_ms"}
+    assert set(second["state"]["_channel_stage_timings"]) == {
+        "pre_handler_ms",
+        "connector_route_fetch_ms",
+    }
+    assert inherited == {"_channel_stage_timings": {"upload_storage_ms": 999.0}}
+    records = [r.getMessage() for r in caplog.records if r.name == "app.middleware.request_timing"]
+    assert len(records) == 2
+    assert "connector_route_fetch_ms=" in records[0] and "upload_storage_ms=" not in records[0]
+    assert "upload_storage_ms=" in records[1] and "connector_route_fetch_ms=" not in records[1]

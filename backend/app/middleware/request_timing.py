@@ -2,7 +2,7 @@
 
 Adds a cheap per-request process-time response header and logs only slow
 requests or server errors. Logs intentionally include method/path/status/time
-and request id, plus fixed channel stage timings; query strings, headers, bodies,
+and request id, plus fixed route stage timings; query strings, headers, bodies,
 and user identity stay out of application logs.
 """
 
@@ -24,18 +24,42 @@ _PROCESS_TIME_HEADER = b"x-process-time-ms"
 _SYNC_EVENTS_PATHS = frozenset(("/v1/sync/events", "/api/sync/events"))
 
 
-# Wall-clock stages include event-loop waits. Initially instrumented only on the
-# Telegram Bot API proxy. Provider time includes pool waits, TCP/TLS and RTT,
-# not just provider processing. Request body arrival/parsing, response parsing
-# and result reference writes remain unattributed: the stage sum is not the
-# whole request duration.
-type ChannelStage = Literal["channel_auth_ms", "channel_url_validation_ms", "channel_provider_ms"]
+# Wall-clock stages include event-loop waits and are not a complete request
+# breakdown. Connector route fetch includes SDK/cache waits and normalization,
+# not only vendor HTTP. Response building excludes FastAPI wire serialization.
+# Telegram provider time includes pool waits, TCP/TLS and RTT.
+type ChannelStage = Literal[
+    "channel_auth_ms",
+    "channel_url_validation_ms",
+    "channel_provider_ms",
+    "pre_handler_ms",
+    "upload_lookup_lock_ms",
+    "upload_spooled_read_ms",
+    "upload_analysis_ms",
+    "upload_storage_ms",
+    "upload_index_ms",
+    "upload_commit_ms",
+    "connector_route_fetch_ms",
+    "connector_invalidation_ms",
+    "connector_response_build_ms",
+]
 _CHANNEL_STAGES: tuple[ChannelStage, ...] = (
     "channel_auth_ms",
     "channel_url_validation_ms",
     "channel_provider_ms",
+    "pre_handler_ms",
+    "upload_lookup_lock_ms",
+    "upload_spooled_read_ms",
+    "upload_analysis_ms",
+    "upload_storage_ms",
+    "upload_index_ms",
+    "upload_commit_ms",
+    "connector_route_fetch_ms",
+    "connector_invalidation_ms",
+    "connector_response_build_ms",
 )
 _CHANNEL_TIMING_STATE = "_channel_stage_timings"
+_REQUEST_STARTED_STATE = "_request_timing_started"
 
 
 @contextmanager
@@ -47,6 +71,17 @@ def channel_stage(scope: Scope, stage: ChannelStage) -> Generator[None]:
         scope.setdefault("state", {}).setdefault(_CHANNEL_TIMING_STATE, {})[stage] = _elapsed_ms(
             started
         )
+
+
+def record_pre_handler(scope: Scope) -> None:
+    """Middleware entry to handler: body arrival/parsing, auth and dependencies.
+
+    Only reached handlers record this interval; rejected dependencies do not.
+    This does not measure time before ASGI middleware entry or pure auth time.
+    """
+    started: object = scope.get("state", {}).get(_REQUEST_STARTED_STATE)
+    if isinstance(started, float):
+        scope["state"][_CHANNEL_TIMING_STATE]["pre_handler_ms"] = _elapsed_ms(started)
 
 
 def _channel_stage_log_fields(scope: Scope) -> str:
@@ -75,6 +110,7 @@ class RequestTimingMiddleware:
         # ASGI lifespan state is shallow-copied; replace the nested dict per request.
         scope.setdefault("state", {})[_CHANNEL_TIMING_STATE] = {}
         started = time.perf_counter()
+        scope["state"][_REQUEST_STARTED_STATE] = started
         raw_method: object = scope.get("method", "GET")
         method = raw_method if isinstance(raw_method, str) else "GET"
         raw_path_value: object = scope.get("path", "")
