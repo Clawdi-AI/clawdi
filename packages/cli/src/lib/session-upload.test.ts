@@ -15,9 +15,14 @@ import {
 	negotiateSessionProtocol,
 	planSessionUpload,
 	sessionFence,
+	sessionPlanIsDurablyBlocked,
 	syncSessionContent,
 } from "./session-upload";
-import { readFencedSessionEntry, readSessionsLock } from "./sessions-lock";
+import {
+	persistFencedSessionEntry,
+	readFencedSessionEntry,
+	readSessionsLock,
+} from "./sessions-lock";
 
 const originalHome = process.env.HOME;
 const originalClawdiHome = process.env.CLAWDI_HOME;
@@ -100,6 +105,35 @@ function eventApi(): ApiClient {
 }
 
 describe("session upload negotiation and integrity", () => {
+	it("uses a supplied scan snapshot while default blocked reads stay fresh", () => {
+		const session = rawSession([event("snapshot", "content")]);
+		const plan = planSessionUpload(session, "events-v1");
+		const fence = sessionFence(new ApiClient({ requireAuth: false }), {
+			environmentId: "agent-pi",
+			adapter: "pi",
+			sourceSessionKey: session.localSessionId,
+		});
+		const entry = { protocol: plan.protocol, local_hash: plan.localHash };
+		persistFencedSessionEntry(fence, entry);
+		const snapshot = readSessionsLock();
+		persistFencedSessionEntry(fence, {
+			...entry,
+			blocked: {
+				code: "event_too_large",
+				content_hash: plan.localHash,
+				size_bytes: 100,
+				message: "blocked after snapshot",
+				blocked_at: new Date().toISOString(),
+			},
+		});
+		expect(sessionPlanIsDurablyBlocked(fence, plan, snapshot)).toBeNull();
+		expect(sessionPlanIsDurablyBlocked(fence, plan)).toBe("blocked after snapshot");
+		expect(sessionPlanIsDurablyBlocked({ ...fence, environmentId: "other" }, plan)).toBeNull();
+		expect(sessionPlanIsDurablyBlocked(fence, { ...plan, localHash: "different" })).toBeNull();
+		persistFencedSessionEntry(fence, entry);
+		expect(sessionPlanIsDurablyBlocked(fence, plan)).toBeNull();
+	});
+
 	it("falls back on an old server and refuses a mismatched stored hash", async () => {
 		const originalFetch = globalThis.fetch;
 		try {

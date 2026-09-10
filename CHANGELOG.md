@@ -27,6 +27,9 @@ database migration, CI, and implementation details.
 
 ### Changed
 
+- CLI 0.14.67 reduces repeated local state reads when scanning large session histories.
+- Project details fetch related owner and membership information together.
+
 - CLI 0.14.66 skips unnecessary content processing when filtering local Codex
   sessions by project and reduces repeated comparisons in Claude Code resume histories.
 

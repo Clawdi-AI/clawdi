@@ -2,8 +2,17 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentType } from "../../src/adapters/agent-types";
+import { CodexAdapter } from "../../src/adapters/codex";
+import { adapterRegistry } from "../../src/adapters/registry";
 import { push } from "../../src/commands/push";
-import { readFencedSessionEntry, readSessionsLock } from "../../src/lib/sessions-lock";
+import { ApiClient } from "../../src/lib/api-client";
+import { EMPTY_EVENT_HEAD } from "../../src/lib/session-events";
+import { planSessionUpload, sessionFence } from "../../src/lib/session-upload";
+import {
+	persistFencedSessionEntry,
+	readFencedSessionEntry,
+	readSessionsLock,
+} from "../../src/lib/sessions-lock";
 import { recordProjectSkillMaterialization } from "../../src/lib/skills-lock";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
 import {
@@ -57,6 +66,120 @@ afterEach(() => {
 	// `bun test` (1.3.13+) inherits the file's final exitCode.
 	process.exitCode = 0;
 	if (tmpHome) cleanupTmp(tmpHome);
+});
+
+describe("push — scan snapshot", () => {
+	it("reads pending and blocked state after collection on every push", async () => {
+		setup("codex");
+		const session = (await new CodexAdapter().sessions.collect({ kind: "complete" })).sessions[0];
+		if (!session?.events) throw new Error("expected Codex event fixture");
+		const eventCount = session.events.length;
+		const plan = planSessionUpload(session, "events-v1");
+		const fence = sessionFence(new ApiClient(), {
+			environmentId: "env-test",
+			adapter: "codex",
+			sourceSessionKey: session.localSessionId,
+		});
+		const entry = { protocol: plan.protocol, local_hash: plan.localHash };
+		const generation = "11111111-1111-4111-8111-111111111111";
+		const entries = {
+			success: entry,
+			pending: {
+				...entry,
+				pending: {
+					kind: "append" as const,
+					append_id: generation,
+					generation,
+					base_generation: generation,
+					base_revision: 1,
+					base_count: 0,
+					base_head_hash: EMPTY_EVENT_HEAD,
+					final_count: eventCount,
+					final_head_hash: plan.localHash,
+				},
+			},
+			blocked: {
+				...entry,
+				blocked: {
+					code: "event_too_large" as const,
+					content_hash: plan.localHash,
+					size_bytes: 100,
+					message: "scan block",
+					blocked_at: new Date().toISOString(),
+				},
+			},
+		};
+		persistFencedSessionEntry(fence, entry);
+		let mode: "pending" | "blocked" | "success" = "pending";
+		const originalCreate = adapterRegistry.codex.create;
+		adapterRegistry.codex.create = () => {
+			const adapter = new CodexAdapter();
+			const collect = adapter.sessions.collect;
+			adapter.sessions.collect = async (request) => {
+				const result = await collect(request);
+				persistFencedSessionEntry(fence, entries[mode]);
+				return result;
+			};
+			return adapter;
+		};
+		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
+			{
+				path: "/v1/sessions/upload-capabilities",
+				response: () =>
+					jsonResponse({
+						protocols: ["snapshot-v1", "events-v1"],
+						event_chunk_target_bytes: 1024 * 1024,
+						event_chunk_max_bytes: 8 * 1024 * 1024,
+					}),
+			},
+			{
+				method: "POST",
+				path: "/v1/sessions/batch",
+				response: () =>
+					jsonResponse({
+						created: 0,
+						updated: 0,
+						unchanged: 1,
+						needs_content: [],
+					}),
+			},
+			{
+				path: `/v1/sessions/${session.localSessionId}/events/head`,
+				response: () =>
+					jsonResponse({
+						protocol: "events-v1",
+						generation,
+						revision: 2,
+						count: eventCount,
+						head_hash: plan.localHash,
+					}),
+			},
+		]);
+		try {
+			for (const [nextMode, expectedBatches] of [
+				["pending", 1],
+				["pending", 2],
+				["blocked", 2],
+				["success", 2],
+			] as const) {
+				mode = nextMode;
+				await push({ agent: "codex", modules: "sessions", all: true });
+				expect(captured.filter((request) => request.path === "/v1/sessions/batch")).toHaveLength(
+					expectedBatches,
+				);
+			}
+		} finally {
+			adapterRegistry.codex.create = originalCreate;
+			restore();
+		}
+		const batches = captured.filter((request) => request.path === "/v1/sessions/batch");
+		expect(
+			batches.map((request) => batchSessions(request).map((item) => item.local_session_id)),
+		).toEqual([[session.localSessionId], [session.localSessionId]]);
+		expect(readFencedSessionEntry(readSessionsLock(), fence)?.pending).toBeUndefined();
+		expect(readFencedSessionEntry(readSessionsLock(), fence)?.blocked).toBeUndefined();
+	});
 });
 
 describe("push — Hermes fixture", () => {
