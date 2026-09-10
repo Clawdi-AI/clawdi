@@ -491,6 +491,33 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
                 "value": "runtime-linked-secret",
             }
 
+            batch = _tool_json(
+                await _tool_call(
+                    client,
+                    86,
+                    "vault_resolve",
+                    {"references": [linked_reference, default_reference]},
+                )
+            )
+            assert batch == {"values": [linked_result, resolved]}
+            for arguments in (
+                {"references": []},
+                {"reference": default_reference, "references": [linked_reference]},
+                {"references": [default_reference] * 101},
+                {"references": [default_reference, default_reference]},
+                {"references": [default_reference, f"{linked_reference}_MISSING"]},
+                {
+                    "references": [
+                        default_reference,
+                        f"clawdi://project/{env_b.default_project_id}/vault/other/field/TOKEN",
+                    ]
+                },
+            ):
+                rejected = await _tool_call(client, 87, "vault_resolve", arguments)
+                assert rejected["isError"] is True
+                assert "runtime-a-default-secret" not in json.dumps(rejected)
+                assert "runtime-linked-secret" not in json.dumps(rejected)
+
             active_auth["value"] = AuthContext(
                 user=seed_user,
                 api_key=ApiKey(

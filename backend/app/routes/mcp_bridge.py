@@ -6,7 +6,7 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal, Self
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
@@ -24,7 +24,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
@@ -259,15 +259,31 @@ class _VaultGetArguments(_ToolArguments):
 
 
 class _VaultResolveArguments(_ToolArguments):
-    reference: StrictStr = Field(min_length=1, max_length=1_000)
+    reference: StrictStr | None = Field(default=None, min_length=1, max_length=1_000)
+    references: list[Annotated[StrictStr, Field(min_length=1, max_length=1_000)]] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        description="Batch of exact references; supply either reference or references.",
+    )
 
     @field_validator("reference")
     @classmethod
-    def _strip_reference(cls, value: str) -> str:
+    def _strip_reference(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         value = value.strip()
         if not value:
             raise ValueError("reference is required")
         return value
+
+    @model_validator(mode="after")
+    def _require_one_input(self) -> Self:
+        if (self.reference is None) == (self.references is None):
+            raise ValueError("Supply either reference or references")
+        if self.references is not None and len(set(self.references)) != len(self.references):
+            raise ValueError("Duplicate references are not allowed")
+        return self
 
 
 class _VaultCreateArguments(_ToolArguments, VaultCreate):
@@ -576,10 +592,12 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     ),
     "vault_resolve": _NativeToolSpec(
         description=(
-            "Resolve one exact Project-scoped clawdi:// reference to its plaintext secret. "
+            "Resolve one exact Project-scoped clawdi:// reference, or up to 100 references, "
+            "to plaintext secrets. Batch calls return values in input order and fail entirely "
+            "if any reference is missing or unauthorized. "
             "Call only when the current task requires the value. The result is sensitive: "
             "never echo it, store it in Memory, or include it in logs. Hosted runtimes are "
-            "restricted to their bound Project."
+            "restricted to Projects available to their bound Agent."
         ),
         input_schema=_VaultResolveArguments.model_json_schema(),
         scopes=("vault:read",),
@@ -1371,32 +1389,45 @@ async def _tool_vault_resolve(
     arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
 ) -> JsonObject:
     parsed = _validate_arguments(_VaultResolveArguments, arguments)
-    project_id, vault_slug, section, field = _parse_exact_project_vault_reference(parsed.reference)
-    await _visible_project_or_404(db, auth, project_id)
+    references = [parsed.reference] if parsed.reference is not None else parsed.references or []
+    identities = [_parse_exact_project_vault_reference(reference) for reference in references]
+    for project_id in dict.fromkeys(identity[0] for identity in identities):
+        await _visible_project_or_404(db, auth, project_id)
     rows = (
         await db.execute(
-            select(VaultItem.encrypted_value, VaultItem.nonce)
+            select(
+                VaultProjectAttachment.project_id,
+                Vault.slug,
+                VaultItem.section,
+                VaultItem.item_name,
+                VaultItem.encrypted_value,
+                VaultItem.nonce,
+            )
             .join(Vault, Vault.id == VaultItem.vault_id)
             .join(VaultProjectAttachment, VaultProjectAttachment.vault_id == Vault.id)
             .where(
-                VaultProjectAttachment.project_id == project_id,
-                Vault.slug == vault_slug,
-                VaultItem.section == section,
-                VaultItem.item_name == field,
+                tuple_(
+                    VaultProjectAttachment.project_id,
+                    Vault.slug,
+                    VaultItem.section,
+                    VaultItem.item_name,
+                ).in_(identities),
             )
         )
     ).all()
-    if not rows:
+    encrypted = {
+        (project, slug, section, field): (value, nonce)
+        for project, slug, section, field, value, nonce in rows
+    }
+    if any(identity not in encrypted for identity in identities):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Vault reference not found")
-    if len(rows) != 1:
+    if len(encrypted) != len(rows):
         raise HTTPException(status.HTTP_409_CONFLICT, "Vault reference is ambiguous")
-    encrypted_value, nonce = rows[0]
-    return _tool_json(
-        {
-            "reference": parsed.reference,
-            "value": decrypt(encrypted_value, nonce),
-        }
-    )
+    values: list[JsonObject] = [
+        {"reference": reference, "value": decrypt(*encrypted[identity])}
+        for reference, identity in zip(references, identities, strict=True)
+    ]
+    return _tool_json(values[0] if parsed.reference is not None else {"values": values})
 
 
 async def _tool_vault_create(

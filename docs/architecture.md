@@ -487,8 +487,13 @@ tokens and bridge credentials out of the agent process.
 
 `vault_list` and `vault_get` select only attachment metadata and field names;
 they never select or decrypt `encrypted_value`, `nonce`, or credential payloads.
-`vault_resolve` requires `vault:read`, accepts one exact Project-scoped
-reference, and returns its decrypted value. Returned references use the exact canonical forms
+`vault_resolve` requires `vault:read`. Supply `reference` for the compatible
+single `{reference, value}` response, or `references` (1–100 distinct exact
+references) for `{values: [{reference, value}, ...]}` in input order. Batch
+resolution authorizes every Project before reading secret rows and fails
+entirely if any reference is missing or inaccessible. This supports authorized
+MCP batch reads without a CLI; it does not write runtime files.
+Returned references use the exact canonical forms
 `clawdi://project/<project-id>/vault/<vault>/field/<field>` and
 `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`.
 Environment-bound callers see only attachments in their bound Agent Project.
