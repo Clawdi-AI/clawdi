@@ -47,7 +47,7 @@ The actual tokenizer truncates at 512 tokens; corpus lengths were 19/28/17/17/50
 The benchmark host was a shared 32-vCPU KVM/Xeon Gold 6530, not the deployment
 hardware. Synthetic p95s are not SLO estimates. Raw samples, corpus, asset hashes,
 collector and logs are retained as separate review artifacts. Any service-level
-before/after measurement belongs to the root operator. Handler cancellation can
+before/after measurement belongs to the service operator. Handler cancellation can
 still release admission before `to_thread` native work finishes; this candidate
 does not change or claim to solve that existing ownership limitation.
 
