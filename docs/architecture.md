@@ -138,9 +138,10 @@ desired state.
 ### Initial plugin bundles
 
 Platform and admin runtime-state writes accept an optional `plugin_bundle: "sui"`.
-The owner must have `deploy_channel: "sui"` in account settings. Cloud selects
-whole plugins tagged `sui` from one trusted catalog snapshot and commits the
-installation rows with the stable Agent's `plugin_bundle_revision` marker.
+The caller selects the bundle for that deployment; no account channel is stored
+or required. Cloud selects whole plugins tagged `sui` from one trusted catalog
+snapshot and commits the installation rows with the stable Agent's
+`plugin_bundle_revision` marker.
 Initialization preserves existing installations and never repeats after user
 removal or runtime-state replacement. A failed batch rolls back atomically.
 This is a recommendation contract, not a billing entitlement. Callers that omit

@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent_plugin import AgentPluginInstallation
 from app.models.session import AgentEnvironment
-from app.models.user import UserSetting
 from app.schemas.plugin_catalog import RESERVED_AGENT_PLUGIN_NAMES, PluginCatalogEntryResponse
 from app.schemas.runtime import MAX_HOSTED_AGENT_PLUGIN_INSTALLATIONS
 from app.services.plugin_catalog import load_current_catalog, load_current_catalog_entry
@@ -20,9 +19,6 @@ async def initialize_plugin_bundle(
     # with runtime-state; rollback leaves initialization retryable.
     if agent.plugin_bundle_revision is not None or bundle != "sui":
         return
-    setting = await db.scalar(select(UserSetting).where(UserSetting.user_id == agent.user_id))
-    if setting is None or setting.settings.get("deploy_channel") != "sui":
-        raise HTTPException(409, {"code": "plugin_bundle_channel_required"})
     catalog = await load_current_catalog(db)
     if catalog is None:
         raise HTTPException(503, "Plugin catalog is temporarily unavailable")

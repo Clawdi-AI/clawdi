@@ -459,7 +459,6 @@ async def test_channel_bundle_pins_catalog_once_and_preserves_user_removal(
     channel_agent,
     seed_user,
 ) -> None:
-    from app.models.user import UserSetting
     from app.services.plugin_bundle import initialize_plugin_bundle
 
     await _activate_catalog(db_session, name="sui", version="0.9.0")
@@ -468,7 +467,6 @@ async def test_channel_bundle_pins_catalog_once_and_preserves_user_removal(
     revision = await _activate_catalog(db_session, name="sui")
     entry = await db_session.get(PluginCatalogEntry, (revision, "sui", "1.0.0"))
     entry.public_metadata = {**entry.public_metadata, "keywords": ["sui"]}
-    db_session.add(UserSetting(user_id=seed_user.id, settings={"deploy_channel": "sui"}))
     await db_session.commit()
     agent = await db_session.scalar(
         select(type(channel_agent))
