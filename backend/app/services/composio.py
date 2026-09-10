@@ -1412,6 +1412,7 @@ async def _annotate_connect_status(
 
 _custom_auth_config_index: frozenset[tuple[str, str]] | None = None
 _custom_auth_config_index_at: datetime | None = None
+_custom_auth_config_index_lock = asyncio.Lock()
 
 
 async def _get_custom_auth_config_index(
@@ -1425,52 +1426,55 @@ async def _get_custom_auth_config_index(
     advertising a maximum of 1000.
     """
     global _custom_auth_config_index, _custom_auth_config_index_at
-    now = datetime.now(UTC)
-    if _custom_auth_config_index is not None and _custom_auth_config_index_at is not None:
-        if (now - _custom_auth_config_index_at) < _COMPOSIO_METADATA_CACHE_TTL:
-            return _custom_auth_config_index
+    # The caller owns the fetch: cancellation releases the lock without caching
+    # a partial index or leaving a background task using the shared client.
+    async with _custom_auth_config_index_lock:
+        now = datetime.now(UTC)
+        if _custom_auth_config_index is not None and _custom_auth_config_index_at is not None:
+            if (now - _custom_auth_config_index_at) < _COMPOSIO_METADATA_CACHE_TTL:
+                return _custom_auth_config_index
 
-    index: set[tuple[str, str]] = set()
-    cursor: str | None = None
-    seen_cursors: set[str] = set()
-    while True:
-        if cursor:
-            raw_response = await _call_generated_sdk(
-                client.auth_configs.list(
-                    is_composio_managed=False,
-                    show_disabled=False,
-                    limit=50,
-                    cursor=cursor,
+        index: set[tuple[str, str]] = set()
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        while True:
+            if cursor:
+                raw_response = await _call_generated_sdk(
+                    client.auth_configs.list(
+                        is_composio_managed=False,
+                        show_disabled=False,
+                        limit=50,
+                        cursor=cursor,
+                    )
                 )
-            )
-        else:
-            raw_response = await _call_generated_sdk(
-                client.auth_configs.list(
-                    is_composio_managed=False,
-                    show_disabled=False,
-                    limit=50,
+            else:
+                raw_response = await _call_generated_sdk(
+                    client.auth_configs.list(
+                        is_composio_managed=False,
+                        show_disabled=False,
+                        limit=50,
+                    )
                 )
-            )
-        response = _normalize_sdk_response(raw_response, _AuthConfigPage)
-        for item in response.items:
-            if item.status != "ENABLED":
-                continue
-            if item.is_composio_managed:
-                continue
-            toolkit_slug = _auth_config_toolkit_slug(item)
-            auth_scheme = _normalize_composio_scheme(item.auth_scheme)
-            if toolkit_slug and auth_scheme:
-                index.add((toolkit_slug, auth_scheme))
-        cursor = response.next_cursor
-        if not cursor:
-            break
-        if cursor in seen_cursors:
-            raise ComposioProtocolError("Composio returned a repeated catalog cursor")
-        seen_cursors.add(cursor)
+            response = _normalize_sdk_response(raw_response, _AuthConfigPage)
+            for item in response.items:
+                if item.status != "ENABLED":
+                    continue
+                if item.is_composio_managed:
+                    continue
+                toolkit_slug = _auth_config_toolkit_slug(item)
+                auth_scheme = _normalize_composio_scheme(item.auth_scheme)
+                if toolkit_slug and auth_scheme:
+                    index.add((toolkit_slug, auth_scheme))
+            cursor = response.next_cursor
+            if not cursor:
+                break
+            if cursor in seen_cursors:
+                raise ComposioProtocolError("Composio returned a repeated catalog cursor")
+            seen_cursors.add(cursor)
 
-    _custom_auth_config_index = frozenset(index)
-    _custom_auth_config_index_at = now
-    return _custom_auth_config_index
+        _custom_auth_config_index = frozenset(index)
+        _custom_auth_config_index_at = now
+        return _custom_auth_config_index
 
 
 def _auth_config_toolkit_slug(auth_config: _AuthConfig) -> str | None:
