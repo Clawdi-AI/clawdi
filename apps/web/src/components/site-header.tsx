@@ -1,10 +1,12 @@
 "use client";
 
 import { lazy, type ReactNode, Suspense } from "react";
+import { useAccountDataIdentity } from "@/components/account-suspension-boundary";
 import { AppBreadcrumb } from "@/components/app-breadcrumb";
 import { NotificationCenter } from "@/components/notification-center";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 
@@ -22,6 +24,7 @@ const HostedNotificationCenter = IS_HOSTED_BUILD
  * with Clawdi-specific breadcrumbs and notifications.
  */
 export function SiteHeader({ actions }: { actions?: ReactNode }) {
+	const ready = Boolean(useAccountDataIdentity());
 	return (
 		<header className="sticky top-0 z-20 flex h-(--header-height) shrink-0 items-center gap-2 border-b bg-background">
 			<div className="flex w-full min-w-0 items-center gap-1 px-4 lg:gap-2 lg:px-6">
@@ -34,7 +37,9 @@ export function SiteHeader({ actions }: { actions?: ReactNode }) {
 					<AppBreadcrumb />
 				</div>
 				{actions}
-				{HostedNotificationCenter ? (
+				{!ready ? (
+					<Skeleton className="size-8 rounded-md" />
+				) : HostedNotificationCenter ? (
 					<Suspense fallback={<NotificationCenter />}>
 						<HostedNotificationCenter />
 					</Suspense>

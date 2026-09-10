@@ -9,9 +9,14 @@ from uuid import UUID
 
 from pydantic import JsonValue
 from sqlalchemy import (
+    Integer,
     String,
+    Text,
+    Uuid,
+    bindparam,
     case,
     cast,
+    column,
     delete,
     func,
     insert,
@@ -21,6 +26,7 @@ from sqlalchemy import (
     select,
     update,
 )
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.selectable import Subquery
 
@@ -404,6 +410,51 @@ def searchable_snapshot_messages(
     return projected
 
 
+_SEARCH_DOCUMENT_ROWS = (
+    func.unnest(
+        bindparam("positions", type_=ARRAY(Integer)),
+        bindparam("chunks", type_=ARRAY(Integer)),
+        bindparam("roles", type_=ARRAY(Text)),
+        bindparam("contents", type_=ARRAY(Text)),
+    )
+    .table_valued(
+        column("position", Integer),
+        column("chunk_index", Integer),
+        column("role", Text),
+        column("content", Text),
+    )
+    .render_derived()
+)
+_INSERT_SEARCH_DOCUMENTS = (
+    insert(SessionMessageSearch)
+    # Use Core parameter handling, while retaining ORM Session autoflush
+    # for pending event generations and the caller's transaction/dialect.
+    .execution_options(dml_strategy="raw")
+    .from_select(
+        [
+            "user_id",
+            "session_id",
+            "generation_id",
+            "content_revision",
+            "position",
+            "chunk_index",
+            "role",
+            "content",
+        ],
+        select(
+            bindparam("owner", type_=Uuid()),
+            bindparam("session", type_=Uuid()),
+            bindparam("generation", type_=Uuid()),
+            bindparam("revision", type_=String(80)),
+            _SEARCH_DOCUMENT_ROWS.c.position,
+            _SEARCH_DOCUMENT_ROWS.c.chunk_index,
+            _SEARCH_DOCUMENT_ROWS.c.role,
+            _SEARCH_DOCUMENT_ROWS.c.content,
+        ),
+    )
+)
+
+
 async def _add_documents(
     db: AsyncSession,
     *,
@@ -414,23 +465,27 @@ async def _add_documents(
     messages: Sequence[SearchableSessionMessage],
 ) -> None:
     documents = (
-        {
-            "user_id": user_id,
-            "session_id": session_id,
-            "generation_id": generation_id,
-            "content_revision": content_revision,
-            "position": message.position,
-            "chunk_index": chunk_index,
-            "role": message.role,
-            "content": content,
-        }
+        (message.position, chunk_index, message.role, content)
         for message in messages
         for chunk_index, content in enumerate(session_search_chunks(message.content))
     )
-    # Bound Python work between database awaits without creating an ORM unit
-    # of work for the entire transcript. All batches share the caller's transaction.
+    # Bound Python work and send one statement per batch, avoiding per-row
+    # PostgreSQL executor setup. All arrays describe the same ordered rows.
     for batch in batched(documents, 500):
-        await db.execute(insert(SessionMessageSearch), list(batch))
+        positions, chunks, roles, contents = zip(*batch)
+        await db.execute(
+            _INSERT_SEARCH_DOCUMENTS,
+            {
+                "owner": user_id,
+                "session": session_id,
+                "generation": generation_id,
+                "revision": content_revision,
+                "positions": positions,
+                "chunks": chunks,
+                "roles": roles,
+                "contents": contents,
+            },
+        )
 
 
 async def stage_event_search_messages(

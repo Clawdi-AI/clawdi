@@ -13,6 +13,8 @@ export default defineConfig({
 		url: "http://127.0.0.1:3111/e2e/auth/",
 		env: {
 			VITE_DEV_AUTH_BYPASS: "false",
+			VITE_CLAWDI_HOSTED: process.env.VITE_CLAWDI_HOSTED ?? "false",
+			VITE_CLAWDI_DEPLOY_API_URL: "http://127.0.0.1:50021",
 			VITE_CLERK_PUBLISHABLE_KEY: "pk_test_contract_fixture",
 			VITE_CLAWDI_API_URL: "http://127.0.0.1:8000",
 		},

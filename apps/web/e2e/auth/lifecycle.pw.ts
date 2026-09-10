@@ -7,7 +7,9 @@ async function start(page: Page) {
 			contentType: "application/json",
 			body: route.request().url().endsWith("private-data")
 				? route.request().headers().authorization?.replace("Bearer ", "")
-				: "{}",
+				: route.request().url().endsWith("/v1/auth/me")
+					? "{}"
+					: "[]",
 		}),
 	);
 	await page.goto("/e2e/auth/");
@@ -22,11 +24,11 @@ test("same identity keeps cache, draft and iframe document across navigation and
 	const frame = page.frameLocator("iframe");
 	await frame.getByRole("textbox").fill("retained-runtime-draft");
 	await page.getByRole("link", { name: "B", exact: true }).click();
-	await expect(page.getByRole("heading")).toHaveText("Destination B");
+	await expect(page.getByRole("heading", { level: 1 })).toHaveText("Destination B");
 	await page.goBack();
-	await expect(page.getByRole("heading")).toHaveText("Destination A");
+	await expect(page.getByRole("heading", { level: 1 })).toHaveText("Destination A");
 	await page.goForward();
-	await expect(page.getByRole("heading")).toHaveText("Destination B");
+	await expect(page.getByRole("heading", { level: 1 })).toHaveText("Destination B");
 	await expect(frame.getByRole("textbox")).toHaveValue("retained-runtime-draft");
 	await page.getByRole("textbox", { name: "Draft", exact: true }).fill("unsaved");
 	await page.getByRole("link", { name: "A", exact: true }).click();
@@ -41,15 +43,15 @@ test("public routes stay available while loading and signed-out client navigatio
 	await page.goto("/e2e/auth/");
 	await page.evaluate(() => window.authTest.emitSdk({ isLoaded: false }));
 	await page.evaluate(() => window.authTest.navigate("/private/a"));
-	await expect(page.locator("main")).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Reload" })).toBeVisible();
+	await expect(page.locator("[data-private]")).toHaveCount(0);
+	await expect(page.locator("iframe")).toHaveCount(0);
 	await page.evaluate(() => window.authTest.navigate("/public"));
-	await expect(page.getByRole("heading")).toHaveText("Public content");
+	await expect(page.getByRole("heading", { level: 1 })).toHaveText("Public content");
 	await page.evaluate(() =>
 		window.authTest.emitSdk({ isLoaded: true, userId: null, sessionId: null }),
 	);
 	await page.evaluate(() => window.authTest.navigate("/private/a"));
-	await expect(page.getByRole("heading")).toHaveText("Sign in");
+	await expect(page.getByRole("heading", { level: 1 })).toHaveText("Sign in");
 	await expect(page.locator("[data-private]")).toHaveCount(0);
 });
 
@@ -86,11 +88,11 @@ for (const update of [{ userId: null, sessionId: null }, { pending: true }]) {
 		await page.evaluate(() => window.authTest.navigate("/private/b"));
 		await page.evaluate((update) => window.authTest.emitSdk(update), update);
 		await expect(page.locator("iframe")).toHaveCount(0);
-		await expect(page.getByRole("heading")).toHaveText("Sign in");
+		await expect(page.getByRole("heading", { level: 1 })).toHaveText("Sign in");
 		await page.goBack();
 		await expect(page.locator("[data-private]")).toHaveCount(0);
 		await page.evaluate(() => window.authTest.navigate("/public"));
-		await expect(page.getByRole("heading")).toHaveText("Public content");
+		await expect(page.getByRole("heading", { level: 1 })).toHaveText("Public content");
 	});
 }
 
@@ -101,7 +103,6 @@ for (const status of ["degraded", "error"] as const) {
 		await start(page);
 		await page.evaluate((status) => window.authTest.emitSdk({ status }), status);
 		await expect(page.locator("iframe")).toHaveCount(0);
-		await expect(page.getByRole("button", { name: "Reload" })).toBeVisible();
 		expect(await page.evaluate(() => window.authTest.signOutCalls)).toBe(0);
 		await page.evaluate(() => window.authTest.emitSdk({ status: "ready" }));
 		await expect(page.locator("[data-private]")).toHaveText("user-a:session-a");
@@ -114,7 +115,6 @@ test("native unknown auth removes an admitted session independently of script st
 	await start(page);
 	await page.evaluate(() => window.authTest.emitSdk({ isLoaded: false }));
 	await expect(page.locator("iframe")).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Reload" })).toBeVisible();
 	expect(await page.evaluate(() => window.authTest.signOutCalls)).toBe(0);
 	await page.evaluate(() => window.authTest.emitSdk({ isLoaded: true }));
 	await expect(page.locator("[data-private]")).toHaveText("user-a:session-a");
@@ -178,6 +178,129 @@ test("401 account admission is denied; resource 403 and refresh/network failures
 	await expect(page.getByRole("button", { name: "Sign in again", exact: true })).toBeVisible();
 	expect(await page.evaluate(() => window.authTest.signOutCalls)).toBe(0);
 	await page.getByRole("button", { name: "Sign in again", exact: true }).click();
-	await expect(page.getByRole("heading")).toHaveText("Sign in");
+	await expect(page.getByRole("heading", { level: 1 })).toHaveText("Sign in");
 	expect(await page.evaluate(() => window.authTest.signOutCalls)).toBe(1);
+});
+
+// Simulated SDK resource/cookie events, real production layout and Router.
+// The activation checkpoint represents setActive awaiting native SPA navigation.
+test("native SPA activation admits the real dashboard frame before private session resources", async ({
+	page,
+}, info) => {
+	const requests: string[] = [];
+	await page.route("http://127.0.0.1:50021/**", (route) => {
+		requests.push(route.request().headers().authorization ?? "missing");
+		return route.fulfill({ status: 503, body: "Unavailable" });
+	});
+	await page.route("http://127.0.0.1:8000/**", (route) => {
+		requests.push(route.request().headers().authorization ?? "missing");
+		return route.fulfill({
+			contentType: "application/json",
+			body: route.request().url().endsWith("private-data")
+				? "user-a:session-a"
+				: route.request().url().endsWith("/v1/auth/me")
+					? "{}"
+					: "[]",
+		});
+	});
+	await page.goto("/e2e/auth/");
+	await page.evaluate(async () => {
+		window.authTest.emitSdk({ userId: null, sessionId: null });
+		await window.authTest.navigate("/sign-in");
+		void window.authTest.activateSession("/private/a");
+	});
+	await expect(page.getByTestId("app-sidebar")).toBeVisible();
+	await expect(page.locator("header")).toBeVisible();
+	await expect(page.getByTestId("dashboard-page-content")).toBeVisible();
+	await expect(page.locator("iframe")).toHaveCount(0);
+	await expect(page.getByTestId("app-sidebar-user-menu-button")).toBeDisabled();
+	await page.keyboard.press("Control+k");
+	await expect(page.getByRole("dialog")).toHaveCount(0);
+	expect(requests).toEqual([]);
+	await info.attach("activation-frame", {
+		body: await page.screenshot(),
+		contentType: "image/png",
+	});
+	await page.evaluate(() => window.authTest.releaseActivation());
+	await expect(page.locator("[data-private]")).toHaveText("user-a:session-a");
+	expect(requests.length).toBeGreaterThan(0);
+	expect(requests.every((token) => token === "Bearer user-a:session-a")).toBe(true);
+	await page.goBack();
+	await expect(page.getByRole("heading", { level: 1 })).toHaveText("Sign in");
+});
+
+test("null native session token never reaches the API", async ({ page }) => {
+	await start(page);
+	let requests = 0;
+	await page.route("http://127.0.0.1:8000/**", (route) => {
+		requests++;
+		return route.fallback();
+	});
+	await page.evaluate(() => window.authTest.emitSdk({ nullToken: true }));
+	await page.evaluate(() => window.authTest.refetch());
+	await expect(page.getByRole("button", { name: "Sign in again" })).toBeVisible();
+	expect(requests).toBe(0);
+});
+
+test("retired credentials and late mutation suspension cannot affect the next account", async ({
+	page,
+}) => {
+	await start(page);
+	const response = Promise.withResolvers<void>();
+	const requested = Promise.withResolvers<void>();
+	await page.route("**/v1/me/invitations/fixture/decline", async (route) => {
+		expect(route.request().headers().authorization).toBe("Bearer user-a:session-a");
+		requested.resolve();
+		await response.promise;
+		await route.fulfill({
+			status: 401,
+			contentType: "application/problem+json",
+			body: JSON.stringify({
+				type: "urn:clawdi:problem:account-suspended",
+				status: 401,
+				code: "account_suspended",
+				detail: "Suspended",
+			}),
+		});
+	});
+	try {
+		await page.evaluate(() => window.authTest.saveCredentials());
+		const mutation = page.evaluate(() => window.authTest.mutate());
+		await requested.promise;
+		await page.evaluate(() =>
+			window.authTest.emitSdk({ userId: "user-b", sessionId: "session-b" }),
+		);
+		await expect(page.locator("[data-private]")).toHaveText("user-b:session-b");
+		expect(await page.evaluate(() => window.authTest.useSavedCredentials())).toBe("retired");
+		response.resolve();
+		await mutation;
+		await expect(page.locator("[data-private]")).toHaveText("user-b:session-b");
+		await expect(page.getByText("Account suspended", { exact: true })).toHaveCount(0);
+		expect(await page.evaluate(() => window.authTest.oldMutationPublished)).toBe(false);
+	} finally {
+		response.resolve();
+	}
+});
+
+test("signed-out public invitations remain anonymous", async ({ page }) => {
+	await page.route("**/v1/share/fixture/preview", (route) => {
+		expect(route.request().headers().authorization).toBeUndefined();
+		return route.fulfill({
+			contentType: "application/json",
+			body: JSON.stringify({
+				project_name: "Shared project",
+				owner_display: "Owner",
+				owner_handle: "owner",
+				skill_count: 1,
+				vault_count: 0,
+			}),
+		});
+	});
+	await page.goto("/e2e/auth/");
+	await page.evaluate(async () => {
+		window.authTest.emitSdk({ userId: null, sessionId: null });
+		await window.authTest.navigate("/share/fixture");
+	});
+	await expect(page.getByText("Sign in to accept", { exact: true })).toBeVisible();
+	await expect(page.getByText("Shared project", { exact: true })).toBeVisible();
 });

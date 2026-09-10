@@ -63,7 +63,6 @@ class _S3GetObjectResponse(BaseModel):
     )
 
     body: StreamingBody = Field(alias="Body")
-    response_metadata: _S3ResponseMetadata = Field(alias="ResponseMetadata")
 
 
 class _Boto3S3ObjectStoreClient:
@@ -126,11 +125,16 @@ class _Boto3S3ObjectStoreClient:
             raise S3ObjectStoreError("S3 object read failed") from exc
         except BotoCoreError as exc:
             raise S3ObjectStoreError("S3 object read failed") from exc
+        # Own the stream before validating metadata so rejection also closes it.
         try:
             body = _S3GetObjectResponse.model_validate(response).body
         except ValidationError:
-            raise S3ObjectStoreError("S3 returned an invalid object body")
+            raise S3ObjectStoreError("S3 returned an invalid object body") from None
         try:
+            try:
+                _S3OperationResponse.model_validate(response)
+            except ValidationError:
+                raise S3ObjectStoreError("S3 returned an invalid object body") from None
             try:
                 raw_data: object = body.read()
             except BotoCoreError as exc:

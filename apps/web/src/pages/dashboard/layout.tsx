@@ -2,6 +2,10 @@
 
 import { useMatches } from "@tanstack/react-router";
 import { lazy, type ReactNode, Suspense, useCallback, useState } from "react";
+import {
+	AccountDataBoundary,
+	useAccountDataIdentity,
+} from "@/components/account-suspension-boundary";
 import { AppSidebar } from "@/components/app-sidebar";
 import { BreadcrumbTitleProvider } from "@/components/breadcrumb-title";
 import { CommandPaletteProvider } from "@/components/command-palette";
@@ -58,6 +62,25 @@ const GlobalWalletBalance = IS_HOSTED_BUILD
 	: null;
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
+	const identity = useAccountDataIdentity();
+	return (
+		<SidebarProvider
+			defaultOpen
+			style={
+				{
+					"--sidebar-width": "calc(var(--spacing) * 64)",
+					"--clawdi-rail-width": "calc(var(--spacing) * 20)",
+					"--header-height": "calc(var(--spacing) * 12)",
+				} as React.CSSProperties
+			}
+		>
+			<DashboardAccountLayout key={identity ?? "pending"}>{children}</DashboardAccountLayout>
+		</SidebarProvider>
+	);
+}
+
+function DashboardAccountLayout({ children }: { children: ReactNode }) {
+	const ready = Boolean(useAccountDataIdentity());
 	// Layout belongs to the presented matches, not the pending destination.
 	const pathname = useMatches({ select: (matches) => matches.at(-1)?.pathname ?? "/" });
 	const hydrated = useHydrated();
@@ -68,7 +91,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 	const [productAccess, setProductAccess] = useState<ProductAccess>(() =>
 		IS_HOSTED_BUILD ? LOADING_PRODUCT_ACCESS : UNAVAILABLE_PRODUCT_ACCESS,
 	);
-	const showOwnershipSensor = hydrated && Boolean(HostedAgentOwnershipSensor);
+	const showOwnershipSensor = ready && hydrated && Boolean(HostedAgentOwnershipSensor);
 	const updateHostedOwnership = useCallback(
 		(nextOwnership: AgentOwnership | null, nextExistingCloudDeploymentCount: number | null) => {
 			setOwnership(nextOwnership);
@@ -90,98 +113,87 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 	const hideHostedLauncher = IS_HOSTED_BUILD && (pathname === "/deploy" || isAgentLiveToolRoute);
 	const reserveHostedLauncherClearance = IS_HOSTED_BUILD && !hideHostedLauncher;
 	return (
-		<SidebarProvider
-			defaultOpen
-			style={
-				{
-					"--sidebar-width": "calc(var(--spacing) * 64)",
-					"--clawdi-rail-width": "calc(var(--spacing) * 20)",
-					"--header-height": "calc(var(--spacing) * 12)",
-				} as React.CSSProperties
-			}
-		>
-			<ProductAccessProvider value={productAccess}>
-				{HostedProductAccessSensor ? (
+		<ProductAccessProvider value={productAccess}>
+			{ready && HostedProductAccessSensor ? (
+				<Suspense fallback={null}>
+					<HostedProductAccessSensor onChange={setProductAccess} />
+				</Suspense>
+			) : null}
+			<AgentOwnershipProvider value={providedOwnership}>
+				{HostedAgentOwnershipSensor && showOwnershipSensor ? (
 					<Suspense fallback={null}>
-						<HostedProductAccessSensor onChange={setProductAccess} />
+						<HostedAgentOwnershipSensor onChange={updateHostedOwnership} />
 					</Suspense>
 				) : null}
-				<AgentOwnershipProvider value={providedOwnership}>
-					{HostedAgentOwnershipSensor && showOwnershipSensor ? (
-						<Suspense fallback={null}>
-							<HostedAgentOwnershipSensor onChange={updateHostedOwnership} />
-						</Suspense>
-					) : null}
-					<CommandPaletteProvider>
-						<BreadcrumbTitleProvider>
-							<AppSidebar variant="inset" />
-							{/* 1rem = SidebarInset's md:m-2 top+bottom when the sidebar uses
+				<CommandPaletteProvider>
+					<BreadcrumbTitleProvider>
+						<AppSidebar variant="inset" />
+						{/* 1rem = SidebarInset's md:m-2 top+bottom when the sidebar uses
 							    dashboard-01's inset variant. Keep the scroll container inside
 							    the inset so the sticky SiteHeader pins correctly. */}
-							<SidebarInset
-								id="dashboard-scroll-container"
-								data-scroll-restoration-id="dashboard-scroll-container"
-								data-live-tool-route={isAgentLiveToolRoute ? "true" : undefined}
+						<SidebarInset
+							id="dashboard-scroll-container"
+							data-scroll-restoration-id="dashboard-scroll-container"
+							data-live-tool-route={isAgentLiveToolRoute ? "true" : undefined}
+							className={cn(
+								"md:h-[calc(100svh-1rem)]",
+								isAgentLiveToolRoute
+									? "h-svh overflow-hidden md:overflow-hidden"
+									: "md:overflow-y-auto",
+							)}
+						>
+							<SiteHeader
+								actions={
+									ready && IS_HOSTED_BUILD ? (
+										<DashboardHeaderActionSlot>
+											{GlobalWalletBalance ? (
+												<Suspense fallback={<Skeleton className="h-8 w-full" />}>
+													<GlobalWalletBalance
+														existingCloudDeploymentCount={existingCloudDeploymentCount}
+													/>
+												</Suspense>
+											) : null}
+										</DashboardHeaderActionSlot>
+									) : null
+								}
+							/>
+							<div
 								className={cn(
-									"md:h-[calc(100svh-1rem)]",
-									isAgentLiveToolRoute
-										? "h-svh overflow-hidden md:overflow-hidden"
-										: "md:overflow-y-auto",
+									"flex flex-1 flex-col",
+									isAgentLiveToolRoute && "min-h-0 overflow-hidden",
 								)}
 							>
-								<SiteHeader
-									actions={
-										IS_HOSTED_BUILD ? (
-											<DashboardHeaderActionSlot>
-												{GlobalWalletBalance ? (
-													<Suspense fallback={<Skeleton className="h-8 w-full" />}>
-														<GlobalWalletBalance
-															existingCloudDeploymentCount={existingCloudDeploymentCount}
-														/>
-													</Suspense>
-												) : null}
-											</DashboardHeaderActionSlot>
-										) : null
-									}
-								/>
 								<div
 									className={cn(
-										"flex flex-1 flex-col",
+										"@container/main flex flex-1 flex-col gap-2",
 										isAgentLiveToolRoute && "min-h-0 overflow-hidden",
 									)}
 								>
 									<div
+										data-testid="dashboard-page-content"
+										data-mava-launcher={hideHostedLauncher ? "hidden" : undefined}
 										className={cn(
-											"@container/main flex flex-1 flex-col gap-2",
-											isAgentLiveToolRoute && "min-h-0 overflow-hidden",
+											"mx-auto flex w-full flex-col",
+											isAgentLiveToolRoute
+												? "min-h-0 flex-1 overflow-hidden"
+												: "gap-4 pt-4 md:gap-5 md:pt-5",
+											CONTENT_MAX_WIDTH,
+											!isAgentLiveToolRoute &&
+												(reserveHostedLauncherClearance
+													? "pb-[calc(--spacing(20)+env(safe-area-inset-bottom))]"
+													: "pb-4 md:pb-5"),
 										)}
 									>
-										<div
-											data-testid="dashboard-page-content"
-											data-mava-launcher={hideHostedLauncher ? "hidden" : undefined}
-											className={cn(
-												"mx-auto flex w-full flex-col",
-												isAgentLiveToolRoute
-													? "min-h-0 flex-1 overflow-hidden"
-													: "gap-4 pt-4 md:gap-5 md:pt-5",
-												CONTENT_MAX_WIDTH,
-												!isAgentLiveToolRoute &&
-													(reserveHostedLauncherClearance
-														? "pb-[calc(--spacing(20)+env(safe-area-inset-bottom))]"
-														: "pb-4 md:pb-5"),
-											)}
-										>
-											{children}
-										</div>
+										<AccountDataBoundary>{children}</AccountDataBoundary>
 									</div>
 								</div>
-							</SidebarInset>
-							<Toaster />
-						</BreadcrumbTitleProvider>
-					</CommandPaletteProvider>
-				</AgentOwnershipProvider>
-			</ProductAccessProvider>
-		</SidebarProvider>
+							</div>
+						</SidebarInset>
+						<Toaster />
+					</BreadcrumbTitleProvider>
+				</CommandPaletteProvider>
+			</AgentOwnershipProvider>
+		</ProductAccessProvider>
 	);
 }
 
