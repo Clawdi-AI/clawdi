@@ -3025,9 +3025,12 @@ test("Custom model ownership is preserved in agent settings", async ({ page }) =
 		updateDeploymentRequests: updates,
 	});
 	await page.goto(`/agents/${railHostedEnvironmentId}`);
-	await expect(page.locator('[data-overview-module="model-provider"]')).toContainText(
-		"Managed in agent",
-	);
+	// Wait for the loaded card, excluding hidden SSR segments and Suspense skeletons.
+	const modelProvider = page
+		.getByRole("main")
+		.getByRole("article")
+		.filter({ has: page.getByRole("link", { name: "AI Providers", exact: true }) });
+	await expect(modelProvider).toContainText("Managed in agent");
 	await page.goto(`/agents/${railHostedEnvironmentId}/model-provider`);
 	await expect(page.getByTestId("managed-model-controls")).toHaveCount(0);
 	await expect(page.locator("main").getByRole("button", { name: "Save changes" })).toBeDisabled();
