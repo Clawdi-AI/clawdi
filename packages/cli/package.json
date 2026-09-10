@@ -24,11 +24,11 @@
 	},
 	"scripts": {
 		"dev": "bun run src/index.ts",
-		"build": "rm -rf dist && bun build src/index.ts --outdir dist --target node --minify --define 'process.env.CLAWDI_DEFAULT_API_URL=\"https://cloud-api.clawdi.ai\"' --define 'process.env.CLAWDI_DEFAULT_DEPLOY_API_URL=\"https://api.clawdi.ai\"'",
+		"build": "rm -rf dist && bun build src/index.ts --outdir dist --target node --splitting --minify --define 'process.env.CLAWDI_DEFAULT_API_URL=\"https://cloud-api.clawdi.ai\"' --define 'process.env.CLAWDI_DEFAULT_DEPLOY_API_URL=\"https://api.clawdi.ai\"'",
 		"build:native": "bun run scripts/build-native.mjs",
 		"build:native-release": "bun run scripts/build-native-release.mjs",
 		"package:native-release": "bun run scripts/package-native-release.mjs",
-		"build:dev": "rm -rf dist && bun build src/index.ts --outdir dist --target node",
+		"build:dev": "rm -rf dist && bun build src/index.ts --outdir dist --target node --splitting",
 		"check:publish-manifest": "node scripts/check-publish-manifest.mjs",
 		"check:native-release": "bun run scripts/check-native-release.mjs",
 		"typecheck": "tsc --noEmit",
