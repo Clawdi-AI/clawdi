@@ -1,9 +1,8 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { RouterContextProvider, useRouter, useRouterState } from "@tanstack/react-router";
+import { RouterContextProvider, useRouter } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { clearAccountSuspension } from "@/lib/account-suspension";
 import { useRouteAuth } from "@/lib/auth-client";
-import { clearDeployChannelUrl, deployChannelIntent } from "@/lib/deploy-channel";
 import { createAppQueryClient } from "@/lib/query-client";
 import { routeAuthIdentity } from "@/lib/route-auth";
 
@@ -20,14 +19,7 @@ const HostedChannelBundleBoundary = IS_HOSTED_BUILD
 
 export function AuthRouterBridge({ children }: { children: React.ReactNode }) {
 	const router = useRouter();
-	const href = useRouterState({ select: (state) => state.location.href });
 	const auth = useRouteAuth();
-	const captureUserId = auth.status === "signed-in" ? auth.userId : null;
-	useLayoutEffect(() => {
-		if (IS_HOSTED_BUILD && deployChannelIntent.capture(window.location.search, captureUserId)) {
-			router.history.replace(clearDeployChannelUrl(router.history.location.href));
-		}
-	}, [href, captureUserId, router]);
 	const identity = routeAuthIdentity(auth);
 	const authKey = identity ?? auth.status;
 	const previousAuthKey = useRef<string | undefined>(undefined);

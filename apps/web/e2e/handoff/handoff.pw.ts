@@ -102,7 +102,8 @@ test("server capture and handoff need no JavaScript and reject expired cookies",
 	await context.addCookies([
 		{
 			name: "clawdi-deploy-intent",
-			value: `sui.${Date.now() - 8 * 86400000}`,
+			value: "sui",
+			expires: Math.floor(Date.now() / 1000) - 1,
 			url: marketing,
 			httpOnly: true,
 		},
@@ -162,6 +163,32 @@ test("claim wins over a delayed settings read and survives disabled browser stor
 	await finished.promise;
 	await expect(bundle).toBeChecked();
 	expect(claims).toBe(1);
+	await expect(page).toHaveURL(`${cloud}/deploy`);
+	await context.close();
+});
+
+test("direct sign-up normalizes the return URL and failed saves can retry", async ({ browser }) => {
+	const context = await browser.newContext();
+	await isolateNetwork(context);
+	const page = await context.newPage();
+	await stubHostedApi(page);
+	let claims = 0;
+	await page.route("http://127.0.0.1:8000/v1/settings", async (route) => {
+		if (route.request().method() === "PATCH") {
+			claims++;
+			await route.fulfill({
+				status: claims === 1 ? 503 : 200,
+				json: claims === 1 ? { detail: "Unavailable" } : { status: "updated" },
+			});
+		} else await route.fulfill({ json: {} });
+	});
+	await page.goto(`${cloud}/sign-up?deploy_profile=sui`);
+	expect(new URL(page.url()).searchParams.get("redirect_url")).toBe("/deploy?deploy_profile=sui");
+	await page.getByRole("link", { name: "Sign in instead" }).click();
+	await page.getByRole("button", { name: "Complete simulated auth return" }).click();
+	await page.getByRole("button", { name: "Retry", exact: true }).click();
+	await expect(page.getByRole("checkbox", { name: /Sui bundle/ })).toBeChecked();
+	expect(claims).toBe(2);
 	await expect(page).toHaveURL(`${cloud}/deploy`);
 	await context.close();
 });

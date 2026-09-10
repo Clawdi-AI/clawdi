@@ -145,15 +145,15 @@ Sui bundle. First-party marketing captures only known values at its server
 boundary and hands them to a fixed Cloud destination. Marketing attribution
 expires after seven days; navigation and handoff do not renew it.
 
-Cloud has one browser intent owner, with optional session storage and a seven-day
-TTL. It binds anonymous intent to the first authenticated account and writes
-`deploy_channel` through the existing settings API. Changing to a different
-account discards the old pending intent and removes its URL parameters; it never
-transfers a failed claim. Failed saves remain retryable for the same account.
-Successful saves cancel stale settings reads, update that account's query cache,
-and consume the Cloud intent and URL. Unknown values never trigger a write.
-Without browser storage, the current page and explicit auth-return URL work;
-there is no promise of persistence across an unrelated reload.
+Cloud keeps anonymous intent in the deployment URL and Clerk's `redirect_url`
+through sign-in/sign-up. After authentication, a component consumes the known URL
+parameters and saves `deploy_channel` through a TanStack Query mutation. Account
+settings are the only durable Cloud attribution. The existing auth boundary
+isolates each session's query cache; component cleanup aborts pending saves on
+account changes. Failed saves are retryable while that account component remains
+mounted. Saves cancel stale settings reads and update the cache on success.
+Unknown values never trigger a write. Unrelated anonymous Cloud navigation and
+reloads during failed saves do not retain intent; marketing retains its cookie.
 
 The deployment form reads only account settings, defaults the recommendation on,
 and includes the checkbox choice in the existing request identity. Unchecking
