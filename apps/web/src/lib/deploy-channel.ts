@@ -13,16 +13,14 @@ function returnUrl(params: URLSearchParams): URL | null {
 }
 
 export function resolveDeployChannel(search: string): "sui" | null {
-	const params = new URLSearchParams(search);
-	const key = params.has("deploy_profile") ? "deploy_profile" : "utm_source";
-	if (params.has(key)) {
-		const values = params.getAll(key);
-		return values.length === 1 && values[0] === "sui" ? "sui" : null;
+	let params = new URLSearchParams(search);
+	if (!params.has("deploy_profile") && !params.has("utm_source")) {
+		const nested = returnUrl(params);
+		if (!nested) return null;
+		params = nested.searchParams;
 	}
-	const nested = returnUrl(params);
-	if (!nested) return null;
-	const nestedKey = nested.searchParams.has("deploy_profile") ? "deploy_profile" : "utm_source";
-	const values = nested.searchParams.getAll(nestedKey);
+	const key = params.has("deploy_profile") ? "deploy_profile" : "utm_source";
+	const values = params.getAll(key);
 	return values.length === 1 && values[0] === "sui" ? "sui" : null;
 }
 
