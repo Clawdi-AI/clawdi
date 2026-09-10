@@ -28,6 +28,7 @@ run("test", ["-x", resolve(nativeDir, "clawdi")]);
 run("test", ["-f", resolve(nativeDir, "egress-addon", "clawdi_egress_addon.py")]);
 run("test", ["-f", resolve(nativeDir, "skills", "clawdi", "SKILL.md")]);
 run("test", ["-f", resolve(nativeDir, "skills", "hosted-versions", "1", "clawdi", "SKILL.md")]);
+run("test", ["-f", resolve(nativeDir, "runtime-mcp", "index.js")]);
 run("tar", [
 	"-C",
 	nativeDir,
@@ -39,6 +40,7 @@ run("tar", [
 	"clawdi",
 	"egress-addon/clawdi_egress_addon.py",
 	"skills",
+	"runtime-mcp",
 ]);
 await validateNativePublicationArchive(readFileSync(assetPath));
 

@@ -5,8 +5,13 @@ description: "Use Clawdi Cloud for missing user memory, past sessions, Project o
 
 # Clawdi Cloud
 
-Use Clawdi Cloud tools through the `clawdi` MCP server when they provide context or
-capabilities unavailable more directly.
+Use Clawdi Cloud tools through the `clawdi` MCP server. Treat the live tool schemas as authoritative.
+
+## Hosted Boundary
+
+Third-party tool routing below applies unchanged in Hosted. Do not inspect, run, or suggest
+Clawdi host-management commands such as `clawdi setup`, `clawdi wallet`, `clawdi vault`, or
+`clawdi ai-provider`.
 
 ## Context Routing
 
@@ -20,7 +25,7 @@ a Session search.
 
 ## Memory
 
-Memory is durable user-specific context shared across agents.
+Memory is shared across the user's Hosted agents, not isolated to the current agent.
 
 - `memory_search` — Search durable memory by natural-language query.
 - `memory_list` — Review stored memories and their stable IDs.
@@ -36,9 +41,6 @@ save routine task completion, code facts, speculation, or plaintext secrets; use
 remember only the exact `clawdi://` reference. List before updating or deleting unless the user
 already supplied the exact memory ID; never infer which stored item to mutate.
 
-CLI fallback for exact updates: `clawdi memory update <full-memory-id> "new content" --json`.
-It preserves metadata; find the exact ID before changing it.
-
 ## Sessions
 
 - Use `session_list` to browse recent sessions or filter by time, Agent, or Project.
@@ -46,69 +48,45 @@ It preserves metadata; find the exact ID before changing it.
 - Use `session_get` to read a session by UUID or Clawdi share URL.
 
 Call `session_get` when the user provides a Clawdi share URL or session UUID and wants its
-contents. For a request to open a specific unnamed past conversation, use `session_search`
-to find the UUID and then read the selected match.
-
-Do NOT call WebFetch on `cloud.clawdi.ai/s/...` URLs — `session_get` is the right tool and avoids the WebFetch permission prompt.
-
-CLI fallback: `clawdi session search "query" --json`, then `clawdi session read <cloud-session-id> --json`.
-`session list` is local; `session export <cloud-session-id>` exports owner Markdown without
-publishing. Publish only with user authorization: `session share <cloud-session-id> --yes`.
-For `--through` or `--response`, use the returned canonical message `position`, never a
-filtered array index. `session shares --json` lists active links; revoke the exact link
-ID with `session unshare <share-id> --yes` (add `--legacy` for `kind=live`).
-
-Remote Skill operations use `clawdi agent skills list/read/install/rm <agent-id>`; local
-`skill --agent <type>` remains separate. Use `install --github owner/repo --path skills/name`
-or `install --library <skill-id>`. Accepted intent is not applied state: check `list` for
-convergence and failures. GitHub exact replay needs both original `--request-id` and
-`--resource-version` from the result/error.
+contents. Use `session_search` to locate a requested unnamed conversation. Do not use a
+generic web fetcher for Clawdi share URLs.
 
 ## Projects
 
-Three read-only tools expose the caller's visible Project context:
-
-- `project_current_get` — Read the current or runtime-bound Project.
-- `project_list` — List visible Projects.
+- `project_current_get` — Read the runtime-bound Project.
+- `project_list` — List Projects visible to the caller.
 - `project_get` — Read one visible Project by UUID.
 
-Hosted runtimes see only their bound Project. Treat a not-found response as an
-access boundary as well as a possible unknown UUID; do not try to bypass it
-through another tool.
+A Hosted runtime is restricted to its bound Project. Treat not-found as an access boundary
+as well as a possible unknown UUID; do not try to bypass it through another tool.
 
 ## Vault
 
-Vault read tools expose metadata and exact references:
-
-- `vault_list` — List Vault attachments and key counts for visible Projects.
-- `vault_get` — List key names, provenance, and exact `clawdi://` references for one attached Vault.
+- `vault_list` — List attached Vaults and key counts for visible Projects.
+- `vault_get` — List key names, provenance, and exact references for an attached Vault.
 
 Use `vault_resolve` only when the current task requires one referenced plaintext value. Pass
 the exact Project-scoped reference. Treat the result as sensitive: never echo it, save it to
 Memory, or include it in logs.
 
-The metadata tools never resolve or return plaintext. Never imply that a returned key name
-is a secret value. Preserve their exact references for `vault_resolve` or when passing them
-to an authorized runtime:
+The metadata tools never return plaintext secret values. Preserve exact references for
+`vault_resolve` or when passing them to an authorized runtime:
 
 - `clawdi://project/<project-id>/vault/<vault>/field/<field>`
 - `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`
 
-Use the live schemas from the `clawdi` MCP server as authoritative; the local
-stdio command only transports the protocol.
-
 Vault write tools are available for explicit user requests:
 
-- `vault_create` — Create a Vault attached to one exact owner Project.
+- `vault_create` — Create a Vault attached to the runtime-bound Project.
 - `vault_item_upsert` — Create or replace exact fields in an attached Vault.
 - `vault_item_delete` — Delete exact fields from a single-Project Vault.
 
 Follow the live schema and supply every required Project, Vault, section, and field identity;
 never infer an overwrite or deletion. Treat field values as sensitive inputs and never echo
-them, save them to Memory, or include them in logs. Environment-bound callers may write only
-their bound Project, and field deletion is rejected when a Vault is attached to multiple
+them, save them to Memory, or include them in logs. Hosted writes are restricted to the
+runtime-bound Project, and field deletion is rejected when a Vault is attached to multiple
 Projects. Whole-Vault deletion, attach/detach, and credential profiles remain
-foreground operator workflows; never bypass that boundary through raw HTTP or daemon RPC.
+unavailable through Agent MCP; do not bypass that boundary through raw HTTP.
 
 ### Request missing credentials
 
@@ -141,14 +119,6 @@ server cannot write local files. Do not invent a CLI fallback or script synchron
 For authorized batch reads/export, use `vault_resolve` with `references` (up to 100 exact
 references). For import/write, pass explicit fields to `vault_item_upsert`; use
 `vault_item_delete` for exact batch deletions. Never upload local edits automatically.
-
-## Wallet Funding
-
-Use `clawdi wallet status --json` to inspect the authenticated Wallet balance, verified
-binding, and x402 readiness. Binding and Base USDC top-up are available only through the
-browser wallet surface; Clawdi does not store the payment private key. Ask the user to fund
-there. Command-line spending requires a future owner-only or hardware signer authority and is not
-available.
 
 ## Connector Routing
 
@@ -228,15 +198,3 @@ authoritative; never assume a fixed meta-tool set.
    follow signed-file metadata, pagination fields, and termination signals exactly as exposed.
    Select an account only when the schema supports it, and use additional or future meta-tools
    only according to their live schemas.
-
-## AI Provider Management
-
-Provider configuration is also a human operator workflow, not an Agent MCP capability. Do
-not execute provider CLI commands or handle provider credentials on the user's behalf. When
-asked, provide an exact `clawdi ai-provider` command for the operator to run and explain its
-effect; suggest `validate` or a non-live `test` before any explicitly requested live probe.
-
-- Treat the local Provider Catalog as multi-record metadata. Do not activate it into local agent config; Core Hosted activation is supplied by the runtime manifest/controller, whose configured runtime binds exactly one provider and whose unmanaged runtime binds none.
-- Keep Codex OAuth ownership singular across Hosted runtimes. Hermes/OpenClaw native refresh, revoke, and ownership state belongs to Hosted convergence, not a local CLI materialization command.
-- Default export/import is metadata-only; `--include-secrets` requires passphrase-encrypted secret export.
-- BYOK model requests go directly from the agent runtime to the configured provider. Clawdi stores metadata and secret references but is not a model proxy.

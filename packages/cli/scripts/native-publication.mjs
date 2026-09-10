@@ -5,12 +5,17 @@ import { validateNativeArchive } from "../src/lib/native-activation.ts";
 export async function validateNativePublicationArchive(archive) {
 	await validateNativeArchive(archive);
 	let forbiddenPath;
+	let hasMcp = false;
+	let hasLocalSkill = false;
 	await new Promise((resolve, reject) => {
 		const stream = tar.list({
 			gzip: true,
 			strict: true,
 			onReadEntry(entry) {
 				const path = entry.path;
+				if (path === "runtime-mcp/index.js" && entry.type === "File") hasMcp = true;
+				if (path === "skills/hosted-versions/2/clawdi/SKILL.md" && entry.type === "File")
+					hasLocalSkill = true;
 				if (
 					path.split("/").includes("__pycache__") ||
 					path.endsWith(".pyc") ||
@@ -25,6 +30,8 @@ export async function validateNativePublicationArchive(archive) {
 		stream.on("error", reject);
 		stream.end(archive);
 	});
+	if (!hasLocalSkill) throw new Error("native publication is missing the local MCP Skill");
+	if (!hasMcp) throw new Error("native publication is missing the standalone MCP artifact");
 	if (forbiddenPath) {
 		throw new Error(
 			`native publication archive contains Python cache or bytecode: ${forbiddenPath}`,

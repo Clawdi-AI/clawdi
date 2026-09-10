@@ -30,6 +30,14 @@ on:
       - "apps/web/tsr.config.json"
       - "apps/web/vite.config.ts"
       - "apps/web/src/hosted/oss-clean.test.ts"
+      - "backend/app/routes/mcp_bridge.py"
+      - "backend/app/routes/runtime.py"
+      - "backend/app/schemas/runtime.py"
+      - "backend/app/services/runtime_source*.py"
+      - "packages/cli/src/runtime/manifest-*.ts"
+      - "packages/runtime-mcp/**"
+      - "packages/cli/src/runtime/builtin-mcp*"
+      - "backend/tests/test_vault_runtime_mcp.py"
       - "packages/cli/package.json"
       - "packages/cli/scripts/test-internal.sh"
       - "packages/cli/tsconfig.json"
@@ -67,6 +75,14 @@ on:
       - "apps/web/tsr.config.json"
       - "apps/web/vite.config.ts"
       - "apps/web/src/hosted/oss-clean.test.ts"
+      - "backend/app/routes/mcp_bridge.py"
+      - "backend/app/routes/runtime.py"
+      - "backend/app/schemas/runtime.py"
+      - "backend/app/services/runtime_source*.py"
+      - "packages/cli/src/runtime/manifest-*.ts"
+      - "packages/runtime-mcp/**"
+      - "packages/cli/src/runtime/builtin-mcp*"
+      - "backend/tests/test_vault_runtime_mcp.py"
       - "packages/cli/package.json"
       - "packages/cli/scripts/test-internal.sh"
       - "packages/cli/tsconfig.json"
@@ -128,3 +144,6 @@ jobs:
       - name: Full clean runner suite
         if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'
         run: scripts/test.sh all
+
+      - name: Vault MCP without tenant CLI
+        run: scripts/test.sh vault-mcp

@@ -593,7 +593,13 @@ references. Pending requests appear separately on the Vault detail page and are 
 returned as empty secret values. Use a fresh request for remaining missing fields after
 expiry; existing pending requests and supplied fields are rejected.
 
-On a self-managed CLI installation, bind a whole Vault to one explicit local file:
+The standalone `clawdi` MCP adapter exposes `vault_bind` with exact `project_id`,
+`vault_id`, an env filename `path`, and optional `section`; `vault_pull` takes `path`.
+Hosted projects this adapter into both native runtimes. It uses authenticated Cloud
+material reads and writes only inside the Agent workspace, with no tenant CLI dependency.
+See [standalone MCP setup](../packages/runtime-mcp/README.md) for self-managed clients.
+
+The CLI remains an optional compatible adapter for an explicit absolute local file:
 
 ```bash
 clawdi vault materialize --vault <vault-uuid> --project <project-uuid> --out /absolute/project/.env
@@ -624,16 +630,19 @@ through dotenv quoting are rejected instead of modified. No secret values appear
 materialization responses or logs. `vault_resolve` remains an explicitly sensitive MCP
 read when the task requires plaintext.
 
-Existing `vault import`, `vault_item_upsert`, and `vault_item_delete` cover authorized
-batch writes/removals; they do not imply reverse synchronization. Hosted runtimes get
-the same request/status MCP tools but do not expose this local CLI binding workflow.
-Their bundled skill directs authorized reads through exact references.
+MCP `vault_resolve` accepts bounded `references` for batch reads/export and `material`
+for whole-Vault environment data. `vault_item_upsert` and `vault_item_delete` cover
+explicit batch import/write/removal; they do not imply reverse synchronization.
+Hosted and self-managed local MCP adapters share the same env library with the CLI.
 
-Done: after the user saves the form, status is `supplied`; `vault pull` reports
-`{"status":"synced","path":"…","fields":…}`. Run the focused backend request suite and
-CLI `src/lib/vault-env.test.ts` in the isolated Docker runner for replay, concurrency,
-scope, quoting, and conflict coverage.
+Done: `scripts/test.sh vault-mcp` executes request → public supply → status → bind →
+cloud mutation → pull with no installed CLI in the tenant process. It checks real file
+output after restart, 0600 permissions, local conflicts, cross-Agent/Project rejection,
+path and symlink protection, and metadata-only bind/pull responses.
 
 Deployment requires migration `c92e8b3d104f`, the updated API/client/web, and a `WEB_ORIGIN`
 that points to the public dashboard. Deploy the API before clients and refresh MCP tool
-lists and packaged skills. No Hosted control-plane schema or tenant operation is needed.
+lists and packaged skills. The local MCP adapter is bundled with management package
+0.14.68 and Hosted Skill version 2. Publish the additive Cloud schema/material tool and
+management artifact before enabling Hosted `localVault: 1` projection. Older management
+packages retain remote-only MCP; their tool lists do not claim local file support.

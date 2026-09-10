@@ -450,7 +450,7 @@ function assertAllowedNativeArchiveEntry(path: string, type: string, size: numbe
 		!normalized ||
 		path.startsWith("/") ||
 		segments.some((segment) => segment === "" || segment === ".." || segment === ".") ||
-		!(["clawdi", "egress-addon", "skills"] as string[]).includes(segments[0] ?? "") ||
+		!(["clawdi", "egress-addon", "skills", "runtime-mcp"] as string[]).includes(segments[0] ?? "") ||
 		(type !== "File" && type !== "Directory")
 	) {
 		throw new Error(`native archive contains unsafe entry: ${path}`);
@@ -529,6 +529,7 @@ function validateStagedResources(directory: string): void {
 	}
 	assertTreeHasNoLinks(join(directory, "egress-addon"));
 	assertTreeHasNoLinks(join(directory, "skills"));
+	if (existsSync(join(directory, "runtime-mcp"))) assertTreeHasNoLinks(join(directory, "runtime-mcp"));
 }
 
 function normalizeNativeTreeModes(directory: string, root = directory): void {

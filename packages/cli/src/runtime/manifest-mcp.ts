@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { type BuiltinMcpPackage, installBuiltinMcp, planBuiltinMcp } from "./builtin-mcp";
 import {
 	getHermesRawConfigValue,
 	type HermesConfigTransaction,
@@ -39,8 +40,17 @@ export function applyHostedMcpProjections(
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
 	workspaceRoot: string,
 	hermesConfig: HermesConfigTransaction | null,
+	openClawWorkspaceRoot: string | null = null,
 ): void {
-	const plan = buildHostedMcpReconciliationPlan(manifest, paths, observations, hermesConfig);
+	const plan = buildHostedMcpReconciliationPlan(
+		manifest,
+		paths,
+		observations,
+		hermesConfig,
+		openClawWorkspaceRoot,
+	);
+	for (const runtime of plan.runtimes)
+		for (const artifact of runtime.packages) installBuiltinMcp(artifact);
 	for (const runtime of [...plan.runtimes].sort((left, right) =>
 		left.name === right.name ? 0 : left.name === "hermes" ? -1 : 1,
 	)) {
@@ -74,7 +84,9 @@ export function applyHostedMcpProjections(
 	}
 }
 type HostedMcpTarget = (typeof HOSTED_RUNTIME_TARGETS)[number];
-type HostedMcpNativeServer = ReturnType<typeof hostedMcpNativeServerConfig>;
+type HostedMcpNativeServer =
+	| ReturnType<typeof hostedMcpNativeServerConfig>
+	| BuiltinMcpPackage["server"];
 type HostedMcpMutation =
 	| { kind: "remove"; serverName: string }
 	| { kind: "set"; serverName: string; server: HostedMcpNativeServer };
@@ -82,6 +94,7 @@ interface HostedMcpNativeState {
 	servers: Record<string, unknown>;
 }
 interface HostedMcpRuntimePlan {
+	packages: BuiltinMcpPackage[];
 	name: HostedMcpTarget;
 	native: HostedMcpNativeState;
 	mutations: HostedMcpMutation[];
@@ -96,6 +109,7 @@ function buildHostedMcpReconciliationPlan(
 	paths: RuntimePaths,
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
 	hermesConfig: HermesConfigTransaction | null = null,
+	openClawWorkspaceRoot: string | null = null,
 ): HostedMcpReconciliationPlan {
 	const intent = hostedMcpIntent(manifest);
 	const home = hostedRuntimeProjectionHome(manifest, paths);
@@ -113,7 +127,7 @@ function buildHostedMcpReconciliationPlan(
 				: { servers: {} };
 		const managedServerNames = new Set(
 			Object.entries(native.servers).flatMap(([serverName, server]) =>
-				hostedMcpNativeServerIsManaged(serverName, server) ? [serverName] : [],
+				hostedMcpNativeServerIsManaged(serverName, server, paths) ? [serverName] : [],
 			),
 		);
 		for (const serverName of Object.keys(desiredServers).sort()) {
@@ -122,6 +136,7 @@ function buildHostedMcpReconciliationPlan(
 			}
 		}
 		const mutations: HostedMcpMutation[] = [];
+		const packages: BuiltinMcpPackage[] = [];
 		for (const serverName of [...managedServerNames].sort()) {
 			if (!Object.hasOwn(desiredServers, serverName) && Object.hasOwn(native.servers, serverName)) {
 				mutations.push({ kind: "remove", serverName });
@@ -130,7 +145,17 @@ function buildHostedMcpReconciliationPlan(
 		for (const [serverName, desired] of Object.entries(desiredServers).sort(([a], [b]) =>
 			a.localeCompare(b),
 		)) {
-			const server = hostedMcpNativeServerConfig(serverName, desired);
+			let server: HostedMcpNativeServer = hostedMcpNativeServerConfig(serverName, desired);
+			if (desired.localVault === 1) {
+				const root =
+					name === "openclaw"
+						? openClawWorkspaceRoot
+						: (manifest.workspaceRoot ?? paths.workspaceRoot);
+				if (!root) throw new Error("Authenticated Agent workspace is unavailable for MCP.");
+				const artifact = planBuiltinMcp(manifest, paths, desired, root);
+				packages.push(artifact);
+				server = artifact.server;
+			}
 			if (!canonicalJsonEqual(native.servers[serverName], server)) {
 				mutations.push({ kind: "set", serverName, server });
 			}
@@ -139,11 +164,33 @@ function buildHostedMcpReconciliationPlan(
 		if (hasSet && (!observation?.enabled || observation.status === "install_failed")) {
 			throw new Error(`could not apply managed ${name} MCP servers: runtime is unavailable`);
 		}
-		return { name, native, mutations, commandPath };
+		return { name, native, mutations, commandPath, packages };
 	});
 	return { home, runtimes };
 }
-function hostedMcpNativeServerIsManaged(serverName: string, server: unknown): boolean {
+function hostedMcpNativeServerIsManaged(
+	serverName: string,
+	server: unknown,
+	paths: RuntimePaths,
+): boolean {
+	if (
+		serverName === "clawdi" &&
+		isPlainRecord(server) &&
+		server.command === "/usr/local/bin/node" &&
+		Array.isArray(server.args)
+	) {
+		const [script, flag, config] = server.args;
+		const root = join(dirname(paths.serviceStateRoot), "clawdi-mcp");
+		if (
+			server.args.length === 3 &&
+			typeof script === "string" &&
+			script.startsWith(`${root}/`) &&
+			/^[a-f0-9]{64}\/index\.mjs$/.test(script.slice(root.length + 1)) &&
+			flag === "--config" &&
+			config === script.replace(/index\.mjs$/, "context.json")
+		)
+			return true;
+	}
 	if (!isPlainRecord(server) || !isPlainRecord(server.headers)) return false;
 	return Object.entries(server.headers).some(
 		([headerName, value]) =>
@@ -216,6 +263,13 @@ export function validateHostedMcpProjectionPlan(
 	paths: RuntimePaths,
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
 	hermesConfig: HermesConfigTransaction | null,
+	openClawWorkspaceRoot: string | null = null,
 ): void {
-	buildHostedMcpReconciliationPlan(manifest, paths, observations, hermesConfig);
+	buildHostedMcpReconciliationPlan(
+		manifest,
+		paths,
+		observations,
+		hermesConfig,
+		openClawWorkspaceRoot,
+	);
 }

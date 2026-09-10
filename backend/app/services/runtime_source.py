@@ -94,6 +94,7 @@ RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
 # Renderer contract: bump this value whenever emitted desired-state material changes.
 # A bump makes each Agent render and backfill once on its next manifest poll, spreading
 # the fleet work naturally. Forgetting it can make an old ETag return 304 indefinitely.
+RUNTIME_LOCAL_VAULT_CAPABILITY = "vault-local-mcp-v1"
 RUNTIME_SOURCE_RENDERER_REVISION = "runtime-source.v2"
 RUNTIME_CAPABILITIES_HEADER = "X-Clawdi-Runtime-Capabilities"
 RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1"
@@ -520,6 +521,7 @@ def render_runtime_source(
     decrypt_secrets: bool,
     project_agent_plugins: bool = True,
     project_agent_plugin_github_release_sources: bool = True,
+    project_local_vault: bool = True,
 ) -> RenderedRuntimeSource:
     row = batch.rows.get(environment_id)
     if row is None:
@@ -587,13 +589,25 @@ def render_runtime_source(
         mcp = None
     else:
         clawdi_mcp = mcp_document.servers.get("clawdi")
+        if (
+            not project_local_vault
+            and isinstance(
+                clawdi_mcp, (HostedRuntimePlatformMcpServer, HostedRuntimeRemoteMcpServer)
+            )
+            and clawdi_mcp.localVault is not None
+        ):
+            clawdi_mcp.localVault = None
+            if workspace_skills is not None and "clawdi" in workspace_skills["entries"]:
+                workspace_skills["entries"]["clawdi"] = {"enabled": True, "version": 1}
         public_clawdi_mcp_url = f"{public_api_url.rstrip('/')}/v1/mcp/clawdi"
         if isinstance(clawdi_mcp, HostedRuntimePlatformMcpServer):
-            mcp_document.servers["clawdi"] = HostedRuntimeRemoteMcpServer(
+            remote_clawdi_mcp = HostedRuntimeRemoteMcpServer(
                 url=public_clawdi_mcp_url,
                 transport=clawdi_mcp.transport,
                 headers=clawdi_mcp.headers,
             )
+            remote_clawdi_mcp.localVault = clawdi_mcp.localVault
+            mcp_document.servers["clawdi"] = remote_clawdi_mcp
         elif isinstance(clawdi_mcp, HostedRuntimeRemoteMcpServer):
             clawdi_mcp.url = public_clawdi_mcp_url
         mcp = mcp_document.model_dump(mode="json")

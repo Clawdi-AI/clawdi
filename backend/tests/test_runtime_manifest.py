@@ -82,6 +82,7 @@ from app.services.runtime_source import (
     RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     RUNTIME_CAPABILITIES_HEADER,
+    RUNTIME_LOCAL_VAULT_CAPABILITY,
     expected_runtime_bundle_v2_etag,
     load_runtime_source_batch,
     render_runtime_source,
@@ -6139,3 +6140,81 @@ async def test_admin_runtime_state_rejects_codex_hosted_runtime(
 
     assert response.status_code == 422, response.text
     assert "unsupported runtime desired state" in response.text
+
+
+@pytest.mark.asyncio
+async def test_local_vault_capability_keeps_legacy_upgrade_manifest_and_etag_distinct(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="vault-capability",
+        machine_name="Vault capability",
+        agent_type="openclaw",
+    )
+    await _write_runtime_state(
+        admin_client,
+        str(env.id),
+        cli_package_spec="clawdi@0.14.68",
+        mcp={
+            "servers": {
+                "clawdi": {
+                    "platform": "clawdi",
+                    "transport": "streamable-http",
+                    "localVault": 1,
+                    "headers": {
+                        "Authorization": {
+                            "secretRef": "secret://clawdi/auth-token",
+                            "prefix": "Bearer ",
+                        }
+                    },
+                }
+            }
+        },
+        skills={"entries": {"clawdi": {"enabled": True, "version": 2}}},
+        secretValues={"secret://clawdi/auth-token": "fixture-runtime-key"},
+    )
+    key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, key) as client:
+        legacy = await client.get("/v1/runtime/manifest")
+        assert legacy.status_code == 200, legacy.text
+        manifest = legacy.json()["manifest"]
+        assert manifest["clawdiCli"]["packageSpec"] == "clawdi@0.14.68"
+        assert "localVault" not in manifest["mcp"]["servers"]["clawdi"]
+        assert manifest["skills"]["entries"]["clawdi"]["version"] == 1
+        capabilities = ", ".join(
+            [
+                RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
+                RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY,
+                RUNTIME_LOCAL_VAULT_CAPABILITY,
+            ]
+        )
+        current = await client.get(
+            "/v1/runtime/manifest",
+            headers={
+                RUNTIME_CAPABILITIES_HEADER: capabilities,
+                "If-None-Match": legacy.headers["etag"],
+            },
+        )
+        assert current.status_code == 200, current.text
+        projected = current.json()["manifest"]
+        assert projected["mcp"]["servers"]["clawdi"]["localVault"] == 1
+        assert projected["skills"]["entries"]["clawdi"]["version"] == 2
+        assert current.headers["etag"] != legacy.headers["etag"]
+        assert (
+            await client.get(
+                "/v1/runtime/manifest",
+                headers={
+                    RUNTIME_CAPABILITIES_HEADER: capabilities,
+                    "If-None-Match": current.headers["etag"],
+                },
+            )
+        ).status_code == 304
+        old_again = await client.get(
+            "/v1/runtime/manifest", headers={"If-None-Match": current.headers["etag"]}
+        )
+        assert old_again.status_code == 200
+        assert old_again.headers["etag"] == legacy.headers["etag"]

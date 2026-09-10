@@ -19,7 +19,9 @@ function payload(): string {
 		"egress-addon/clawdi_egress_addon.py",
 		"skills/clawdi/SKILL.md",
 		"skills/hosted-versions/1/clawdi/SKILL.md",
+		"skills/hosted-versions/2/clawdi/SKILL.md",
 		"skills/future-skill/SKILL.md",
+		"runtime-mcp/index.js",
 	]) {
 		mkdirSync(dirname(join(root, path)), { recursive: true });
 		writeFileSync(join(root, path), "fixture\n");
@@ -29,7 +31,12 @@ function payload(): string {
 
 async function archive(root: string): Promise<Buffer> {
 	const file = join(root, "artifact.tar.gz");
-	await tar.create({ file, cwd: root, gzip: true }, ["clawdi", "egress-addon", "skills"]);
+	await tar.create({ file, cwd: root, gzip: true }, [
+		"clawdi",
+		"egress-addon",
+		"skills",
+		"runtime-mcp",
+	]);
 	return readFileSync(file);
 }
 

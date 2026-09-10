@@ -6808,6 +6808,8 @@ export interface components {
         };
         /** HostedRuntimePlatformMcpServer */
         HostedRuntimePlatformMcpServer: {
+            /** Localvault */
+            localVault?: 1 | null;
             /**
              * Platform
              * @constant
@@ -6839,6 +6841,8 @@ export interface components {
         };
         /** HostedRuntimeRemoteMcpServer */
         HostedRuntimeRemoteMcpServer: {
+            /** Localvault */
+            localVault?: 1 | null;
             /** Url */
             url: string;
             /**

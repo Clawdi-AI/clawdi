@@ -492,7 +492,14 @@ single `{reference, value}` response, or `references` (1–100 distinct exact
 references) for `{values: [{reference, value}, ...]}` in input order. Batch
 resolution authorizes every Project before reading secret rows and fails
 entirely if any reference is missing or inaccessible. This supports authorized
-MCP batch reads without a CLI; it does not write runtime files.
+MCP batch reads without a CLI. The alternative `material` input takes `agent_id`,
+`project_id`, `vault_id`, and optional `section`, returning authenticated source identity
+and whole-Vault environment data only to a key bound to that Agent.
+
+`packages/runtime-mcp` provides a separate tenant stdio entrypoint. It forwards remote
+tools and implements only `vault_bind`/`vault_pull` through the shared env library. Cloud
+never writes runtime files; the local process writes inside its explicit workspace.
+See [standalone MCP](../packages/runtime-mcp/README.md) for limits and verification.
 Returned references use the exact canonical forms
 `clawdi://project/<project-id>/vault/<vault>/field/<field>` and
 `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`.
@@ -504,7 +511,8 @@ Vault UUID and canonical slug attached to that Project. Environment-bound keys
 may target only their bound Project. Responses contain identifiers and counts,
 never plaintext values. Agent MCP deletion has no global-confirmation switch,
 so a Vault attached to multiple Projects is rejected. Attachment changes,
-credential profiles, bulk import, and whole-Vault deletion are not exposed.
+credential profiles and whole-Vault deletion are not exposed. Explicit field maps can
+be imported with the existing batch upsert tool.
 
 The safe MCP inventory API may contain only explicit user declarations whose
 provenance is supported by a user management contract. This release has no such

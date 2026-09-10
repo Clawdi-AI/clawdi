@@ -772,6 +772,7 @@ def _validate_mcp_headers(
 
 
 class HostedRuntimeRemoteMcpServer(_StrictHostedWireModel):
+    localVault: Literal[1] | None = Field(default=None, exclude_if=lambda value: value is None)
     url: str = Field(min_length=1, max_length=2000)
     transport: Literal["streamable-http", "sse"]
     headers: dict[str, str | HostedRuntimeMcpSecretHeader] = Field(default_factory=dict)
@@ -802,6 +803,7 @@ class HostedRuntimeRemoteMcpServer(_StrictHostedWireModel):
 
 
 class HostedRuntimePlatformMcpServer(_StrictHostedWireModel):
+    localVault: Literal[1] | None = Field(default=None, exclude_if=lambda value: value is None)
     platform: Literal["clawdi"]
     transport: Literal["streamable-http"]
     headers: dict[str, str | HostedRuntimeMcpSecretHeader] = Field(default_factory=dict)
@@ -829,6 +831,13 @@ class HostedRuntimeMcp(_StrictHostedWireModel):
     ) -> dict[str, HostedRuntimeMcpServer]:
         if any(_MANAGED_ENTRY_NAME_PATTERN.fullmatch(name) is None for name in value):
             raise ValueError("MCP server names must be canonical")
+        if any(
+            name != "clawdi"
+            and isinstance(server, (HostedRuntimeRemoteMcpServer, HostedRuntimePlatformMcpServer))
+            and server.localVault is not None
+            for name, server in value.items()
+        ):
+            raise ValueError("localVault is reserved for the Clawdi MCP server")
         return value
 
 

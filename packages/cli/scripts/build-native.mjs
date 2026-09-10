@@ -58,3 +58,11 @@ cpSync(resolve(cliRoot, "skills"), resolve(outputDirectory, "skills"), {
 	recursive: true,
 });
 console.log(`copied bundled skills to ${resolve(outputDirectory, "skills")}`);
+
+const mcpBuild = await Bun.build({
+	entrypoints: [resolve(cliRoot, "../runtime-mcp/src/index.ts")],
+	outdir: resolve(outputDirectory, "runtime-mcp"),
+	target: "node",
+	minify: true,
+});
+if (!mcpBuild.success) throw new Error("Standalone MCP build failed");
