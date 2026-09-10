@@ -7,9 +7,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlsplit
 
 import pytest
+from botocore.response import StreamingBody
 
 from app.services.file_store import S3FileStore
-from app.services.file_store_s3 import S3ObjectStoreError, _validate_operation_response
+from app.services.file_store_s3 import (
+    S3ObjectStoreError,
+    _Boto3S3ObjectStoreClient,
+    _validate_operation_response,
+)
 
 
 class _S3CompatibleHandler(BaseHTTPRequestHandler):
@@ -54,10 +59,12 @@ class _S3CompatibleHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = self._record()
-        if path.endswith("/truncated"):
+        if path.endswith(("/truncated", "/bad-checksum")):
             payload = b"short"
+            length = len(payload) + 1 if path.endswith("/truncated") else len(payload)
             self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Length", str(len(payload) + 1))
+            self.send_header("Content-Length", str(length))
+            self.send_header("x-amz-checksum-crc32", "AAAAAA==")
             self.end_headers()
             self.wfile.write(payload)
             self.close_connection = True
@@ -197,13 +204,26 @@ def test_operation_response_metadata_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["truncated", "bad-checksum"])
 async def test_streaming_body_closes_after_read_failure(
     s3_store: tuple[S3FileStore, type[_S3CompatibleHandler]],
+    key: str,
 ) -> None:
     store, handler = s3_store
+    assert isinstance(store.client, _Boto3S3ObjectStoreClient)
+    bodies: list[StreamingBody] = []
+
+    def capture_body(parsed: dict[str, object], **kwargs: object) -> None:
+        body = parsed["Body"]
+        assert isinstance(body, StreamingBody)
+        bodies.append(body)
+
+    store.client._client.meta.events.register("after-call.s3.GetObject", capture_body)
 
     with pytest.raises(S3ObjectStoreError, match="S3 object stream failed"):
-        await store.get("truncated")
+        await store.get(key)
+    assert len(bodies) == 1
+    assert bodies[0]._raw_stream.closed
 
     await store.put("after-truncated", b"ok")
     assert await store.exists("after-truncated") is True
@@ -235,3 +255,27 @@ async def test_default_credential_chain(
     assert path == "/contract-bucket/default-chain"
     assert authorization is not None
     assert authorization.startswith("AWS4-HMAC-SHA256 Credential=chain-access-key/")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("metadata", [None, {"HTTPStatusCode": 500}, {"HTTPStatusCode": "200"}])
+async def test_stream_closes_when_response_metadata_is_rejected(
+    s3_store: tuple[S3FileStore, type[_S3CompatibleHandler]],
+    metadata: object,
+) -> None:
+    store, _ = s3_store
+    assert isinstance(store.client, _Boto3S3ObjectStoreClient)
+    bodies: list[StreamingBody] = []
+
+    def invalidate_metadata(parsed: dict[str, object], **kwargs: object) -> None:
+        body = parsed["Body"]
+        assert isinstance(body, StreamingBody)
+        bodies.append(body)
+        parsed["ResponseMetadata"] = metadata
+
+    await store.put("invalid-metadata", b"unread response body")
+    store.client._client.meta.events.register("after-call.s3.GetObject", invalidate_metadata)
+    with pytest.raises(S3ObjectStoreError, match="S3 returned an invalid object body"):
+        await store.get("invalid-metadata")
+    assert len(bodies) == 1
+    assert bodies[0]._raw_stream.closed
