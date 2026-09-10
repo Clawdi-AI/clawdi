@@ -283,6 +283,7 @@ strict = [
     "app/services/metrics_auth.py",
     "app/services/platform_contract.py",
     "app/services/platform_workload_auth.py",
+    "app/services/plugin_bundle.py",
     "app/services/plugin_catalog.py",
     "app/services/postgres_listener.py",
     "app/services/principal_lifecycle.py",

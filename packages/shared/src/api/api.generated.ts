@@ -7228,6 +7228,8 @@ export interface components {
         /** PlatformRuntimeStateUpsert */
         PlatformRuntimeStateUpsert: {
             owner: components["schemas"]["PlatformOwner"];
+            /** Plugin Bundle */
+            plugin_bundle?: "sui" | null;
             /** Deployment Id */
             deployment_id: string;
             /** Instance Id */

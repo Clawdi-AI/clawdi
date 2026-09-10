@@ -135,6 +135,19 @@ runtime state; a same-name native server override may opt into the runtime's
 official OAuth flow without changing Store metadata, package bytes, or Clawdi
 desired state.
 
+### Initial plugin bundles
+
+Platform and admin runtime-state writes accept an optional `plugin_bundle: "sui"`.
+The caller selects the bundle for that deployment; no account channel is stored
+or required. Cloud selects whole plugins tagged `sui` from one trusted catalog
+snapshot and commits the installation rows with the stable Agent's
+`plugin_bundle_revision` marker.
+Initialization preserves existing installations and never repeats after user
+removal or runtime-state replacement. A failed batch rolls back atomically.
+This is a recommendation contract, not a billing entitlement. Callers that omit
+the field retain their existing behavior and idempotency identity. Deploy this
+API and migration before enabling bundle requests in a hosted control plane.
+
 ## CLI And Adapters
 
 The CLI owns local agent detection, data collection, sync, setup, MCP stdio,

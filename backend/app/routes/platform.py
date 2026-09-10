@@ -1040,6 +1040,16 @@ async def platform_upsert_runtime_state(
         )
     except OAuthCredentialClaimConflict as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    if body.plugin_bundle is not None:
+        from app.services.plugin_bundle import initialize_plugin_bundle
+
+        try:
+            await initialize_plugin_bundle(
+                db, agent=agent, bundle=body.plugin_bundle, runtime=next(iter(body.runtimes))
+            )
+        except HTTPException:
+            await db.rollback()
+            raise
     if runtime_state is None:
         runtime_state = HostedRuntimeState(environment_id=agent_id)
         db.add(runtime_state)
@@ -1360,6 +1370,8 @@ def _assign_runtime_state(
 def _runtime_state_idempotency_payload(body: PlatformRuntimeStateUpsert) -> dict[str, Any]:
     payload = body.model_dump(mode="json", exclude={"secret_values"})
     payload["secretValuesIdentity"] = runtime_secret_values_idempotency_identity(body.secret_values)
+    if body.plugin_bundle is None:
+        payload.pop("plugin_bundle", None)
     if "apply_generation" not in body.model_fields_set:
         payload.pop("apply_generation", None)
     return payload

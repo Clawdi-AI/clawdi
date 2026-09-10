@@ -166,6 +166,7 @@ class AdminRuntimeStateUpsert(BaseModel):
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
+    plugin_bundle: Literal["sui"] | None = None
     target_clerk_id: str | None = None
     deployment_id: str = Field(min_length=1, max_length=200)
     instance_id: str = Field(min_length=1, max_length=200)
