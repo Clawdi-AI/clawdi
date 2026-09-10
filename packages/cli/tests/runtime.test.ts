@@ -1331,6 +1331,7 @@ function writeHostedCodexNpmInstaller(
 			"set -euo pipefail",
 			`printf 'install\\n' >> '${markerPath}'`,
 			"prefix=''",
+			'test "${!#}" = "@openai/codex"',
 			'while [ "$#" -gt 0 ]; do',
 			'  if [ "$1" = "--prefix" ]; then prefix="$2"; shift 2; else shift; fi',
 			"done",
@@ -3613,7 +3614,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		).toMatchObject({ key: "preserve-without-managed-projection" });
 	});
 
-	it("preserves a healthy user-upgraded Hosted Codex package", () => {
+	it.each(["0.100.0", "0.147.0"])("preserves healthy installed Hosted Codex %s", (version) => {
 		const home = join(root, "codex-user-upgraded", "home", "clawdi");
 		const state = join(root, "codex-user-upgraded", "var", "lib", "clawdi");
 		const run = join(root, "codex-user-upgraded", "run", "clawdi");
@@ -3621,7 +3622,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const installMarker = join(root, "codex-user-upgraded", "npm-install.txt");
 		const previousPath = process.env.PATH;
 		seedOpenClawBinary(home);
-		const { packageJson } = seedHostedCodexPackage(home, "0.147.0");
+		const { packageJson } = seedHostedCodexPackage(home, version);
 		writeHostedCodexNpmInstaller(binDir, installMarker, "0.146.0");
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -3644,7 +3645,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		}
 
 		expect(existsSync(installMarker)).toBe(false);
-		expect(JSON.parse(readFileSync(packageJson, "utf8")).version).toBe("0.147.0");
+		expect(JSON.parse(readFileSync(packageJson, "utf8")).version).toBe(version);
 		expect(readFileSync(join(home, ".codex", "config.toml"), "utf8")).toContain(
 			'model_provider = "clawdi"',
 		);
@@ -3675,7 +3676,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 							"validPackageJson" in packageCase ? packageCase.validPackageJson : undefined,
 					});
 				}
-				writeHostedCodexNpmInstaller(binDir, installMarker, "0.146.0");
+				writeHostedCodexNpmInstaller(binDir, installMarker, "0.150.0");
 				process.env.HOME = home;
 				process.env.CLAWDI_RUNTIME_MODE = "hosted";
 				process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -3697,7 +3698,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 							"utf8",
 						),
 					).version,
-				).toBe("0.146.0");
+				).toBe("0.150.0");
 			}
 		} finally {
 			if (previousPath === undefined) delete process.env.PATH;
@@ -3706,15 +3707,15 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		}
 	});
 
-	it("fails closed when npm installs the wrong Codex bootstrap version", () => {
-		const home = join(root, "codex-wrong-version", "home", "clawdi");
-		const state = join(root, "codex-wrong-version", "var", "lib", "clawdi");
-		const run = join(root, "codex-wrong-version", "run", "clawdi");
-		const binDir = join(root, "codex-wrong-version", "fake-bin");
-		const installMarker = join(root, "codex-wrong-version", "npm-install.txt");
+	it("fails closed when npm installs invalid Codex package metadata", () => {
+		const home = join(root, "codex-invalid-version", "home", "clawdi");
+		const state = join(root, "codex-invalid-version", "var", "lib", "clawdi");
+		const run = join(root, "codex-invalid-version", "run", "clawdi");
+		const binDir = join(root, "codex-invalid-version", "fake-bin");
+		const installMarker = join(root, "codex-invalid-version", "npm-install.txt");
 		const previousPath = process.env.PATH;
 		seedOpenClawBinary(home);
-		writeHostedCodexNpmInstaller(binDir, installMarker, "0.145.0");
+		writeHostedCodexNpmInstaller(binDir, installMarker, "invalid");
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -3729,7 +3730,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 				getRuntimePaths(),
 			);
 			expect(convergence.installErrors.join("\n")).toContain(
-				"Codex bootstrap installed version 0.145.0; expected 0.146.0",
+				"Codex bootstrap did not install a valid package version",
 			);
 			expect(existsSync(join(home, ".codex", "config.toml"))).toBe(false);
 		} finally {

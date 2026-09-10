@@ -15,8 +15,7 @@ import { commandExists, executableExists, spawnRuntimeUserCommand } from "./runt
 const CODEX_BOOTSTRAP_TIMEOUT_MS = 600_000;
 const CODEX_MANAGED_PROVIDER_ID = "clawdi";
 export const CODEX_MANAGED_PROVIDER_CONFIG_FILE = "config.toml";
-const CODEX_BOOTSTRAP_PACKAGE_VERSION = "0.146.0";
-const CODEX_BOOTSTRAP_PACKAGE_SPEC = `@openai/codex@${CODEX_BOOTSTRAP_PACKAGE_VERSION}`;
+const CODEX_BOOTSTRAP_PACKAGE_SPEC = "@openai/codex";
 interface HostedCodexManagedProvider {
 	baseUrl: string;
 }
@@ -96,10 +95,8 @@ export function ensureHostedCodexCli(paths: RuntimePaths): Record<string, string
 	if (bootstrapRequired) {
 		installHostedCodexBootstrap(CODEX_BOOTSTRAP_PACKAGE_SPEC, npmPrefix, paths);
 		installedVersion = hostedCodexInstalledVersion(npmPrefix);
-		if (installedVersion !== CODEX_BOOTSTRAP_PACKAGE_VERSION) {
-			throw new Error(
-				`Codex bootstrap installed version ${installedVersion ?? "unknown"}; expected ${CODEX_BOOTSTRAP_PACKAGE_VERSION}`,
-			);
+		if (installedVersion === null) {
+			throw new Error("Codex bootstrap did not install a valid package version");
 		}
 		if (!executableExists(realBin)) {
 			throw new Error(`Codex bootstrap did not create ${realBin}`);
@@ -150,6 +147,8 @@ function installHostedCodexBootstrap(
 			"--prefix",
 			npmPrefix,
 			"--ignore-scripts",
+			"--registry",
+			"https://registry.npmjs.org",
 			"--fetch-retries",
 			"2",
 			"--fetch-retry-mintimeout",
