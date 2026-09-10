@@ -175,7 +175,7 @@ for (const scenario of [
 				.getByRole("button", { name: /Deploy on Clawdi/ })
 				.click();
 		} else {
-			const link = page.getByRole("link", { name: "Deploy on Clawdi", exact: true });
+			const link = page.getByRole("button", { name: "Deploy on Clawdi", exact: true });
 			await expect(link).toHaveAttribute(
 				"href",
 				scenario.recommended ? "/deploy?deploy_profile=sui" : "/deploy",
