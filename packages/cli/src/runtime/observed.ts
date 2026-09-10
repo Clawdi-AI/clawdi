@@ -36,6 +36,7 @@ type HostedRuntimeObservedSystemd = components["schemas"]["HostedRuntimeObserved
 type HostedRuntimeObservedSystemdUnit = components["schemas"]["HostedRuntimeObservedSystemdUnitV1"];
 
 const SYSTEMD_STATUS_TIMEOUT_MS = 1_000;
+const RUNTIME_READINESS_TIMEOUT_MS = 3_000;
 const SYSTEMD_FAILURE_EVIDENCE_MAX_LENGTH = 500;
 const SYSTEMD_OBSERVED_UNIT_LIMIT = 30;
 const SENSITIVE_FAILURE_EVIDENCE =
@@ -336,7 +337,10 @@ function systemdUnitStatus(
 					"--property=ExecMainStatus",
 				]);
 	const parsed = parseSystemctlShow(result.output);
-	const status = systemdUnitObservedStatus(parsed.ActiveState, result.exitCode);
+	const unitStatus = systemdUnitObservedStatus(parsed.ActiveState, result.exitCode);
+	const awaitingReadiness =
+		unitStatus === "ok" && scope === "user" && !runtimeServiceIsReady(unit, paths);
+	const status = awaitingReadiness ? "unknown" : unitStatus;
 	return {
 		scope,
 		name: unit,
@@ -346,10 +350,66 @@ function systemdUnitStatus(
 		error:
 			status === "error"
 				? systemdFailureEvidence(scope, unit, parsed)
-				: result.exitCode === 0
-					? null
-					: (nonSensitiveFailureEvidence(result.output) ?? "systemctl show failed"),
+				: awaitingReadiness
+					? "Runtime service readiness is not established"
+					: result.exitCode === 0
+						? null
+						: (nonSensitiveFailureEvidence(result.output) ?? "systemctl show failed"),
 	};
+}
+
+/** Native service activation precedes application startup; heartbeat health needs both. */
+function runtimeServiceIsReady(unit: string, paths: RuntimePaths): boolean {
+	const url =
+		unit === "openclaw-gateway.service"
+			? "http://127.0.0.1:18789/readyz"
+			: unit === "clawdi-hermes-dashboard.service"
+				? "http://127.0.0.1:9119/api/status"
+				: null;
+	if (!url) return true;
+	const result = runtimeReadinessProbe(url);
+	if (result.status !== 0) return false;
+	try {
+		const status = recordValue(JSON.parse(result.stdout));
+		if (unit === "openclaw-gateway.service") {
+			if (status?.ready !== true) return false;
+			// OpenClaw prepares Control UI assets asynchronously after HTTP startup.
+			const manifest = recordValue(readJsonRecord(paths.manifestLastGood)?.manifest);
+			const system = recordValue(manifest?.system);
+			const basePath = system?.openclawControlUiBasePath;
+			if (basePath !== undefined && typeof basePath !== "string") return false;
+			const uiUrl = new URL("http://127.0.0.1:18789");
+			uiUrl.pathname = `${(basePath ?? "").replace(/\/+$/, "")}/`;
+			const ui = runtimeReadinessProbe(uiUrl.href, true);
+			return ui.status === 0 && ui.stdout === "200";
+		}
+		return (
+			status?.gateway_running === true &&
+			status.gateway_state === "running" &&
+			status.auth_required === true &&
+			arrayValue(status.auth_providers).includes("basic")
+		);
+	} catch {
+		return false;
+	}
+}
+
+function runtimeReadinessProbe(url: string, headersOnly = false) {
+	return spawnSync(
+		"curl",
+		[
+			"--disable",
+			"--noproxy",
+			"*",
+			"--fail",
+			"--silent",
+			"--max-time",
+			"3",
+			...(headersOnly ? ["--head", "--output", "/dev/null", "--write-out", "%{http_code}"] : []),
+			url,
+		],
+		{ encoding: "utf8", maxBuffer: 64 * 1024, timeout: RUNTIME_READINESS_TIMEOUT_MS + 500 },
+	);
 }
 
 function systemdFailureEvidence(

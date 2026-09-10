@@ -7,6 +7,7 @@ import { writeRuntimeAppliedState } from "./applied-state";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths } from "./paths";
 import { buildRuntimeBootStatus, writeRuntimeBootStatus, writeRuntimeWatchStatus } from "./state";
+import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 import { recordRuntimeUserActivityScan } from "./user-activity-state";
 
 const originalEnv = { ...process.env };
@@ -217,6 +218,116 @@ describe("hosted runtime observed v2", () => {
 		const observed = readHostedRuntimeObserved(paths);
 		expect(observed?.status).toBe("error");
 		expect(observed?.convergeError).toBe("runtime apply failed");
+	});
+
+	test.each([
+		{
+			runtime: "openclaw",
+			unit: "openclaw-gateway.service",
+			ready: { ready: true },
+			pending: [{ ready: false }, { ok: true }],
+		},
+		{
+			runtime: "hermes",
+			unit: "clawdi-hermes-dashboard.service",
+			ready: {
+				gateway_running: true,
+				gateway_state: "running",
+				auth_required: true,
+				auth_providers: ["basic"],
+			},
+			pending: [
+				{
+					gateway_running: true,
+					gateway_state: "starting",
+					auth_required: true,
+					auth_providers: ["basic"],
+				},
+				{
+					gateway_running: false,
+					gateway_state: "running",
+					auth_required: true,
+					auth_providers: ["basic"],
+				},
+				{
+					gateway_running: true,
+					gateway_state: "running",
+					auth_required: false,
+					auth_providers: [],
+				},
+			],
+		},
+	])("requires $runtime serving readiness after systemd activation", ({ unit, ready, pending }) => {
+		const paths = healthyAppliedRuntimePaths();
+		process.env.CLAWDI_RUNTIME_USER = userInfo().username;
+		mkdirSync(paths.systemdUserRoot, { recursive: true });
+		writeFileSync(join(paths.systemdUserRoot, unit), GENERATED_RUNTIME_SYSTEMD_FILE_HEADER);
+		if (unit === "clawdi-hermes-dashboard.service") {
+			writeFileSync(
+				join(paths.systemdUserRoot, "hermes-gateway.service"),
+				GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
+			);
+		}
+		const systemctl = join(paths.serviceStateRoot, "systemctl");
+		writeFileSync(systemctl, "#!/bin/sh\nprintf 'ActiveState=active\\nSubState=running\\n'\n", {
+			mode: 0o700,
+		});
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
+		const curl = join(paths.serviceStateRoot, "curl");
+		writeFileSync(
+			curl,
+			`#!/bin/sh
+case "$*" in
+  *--head*http://127.0.0.1:18789/control/) cat "$CLAWDI_SERVICE_STATE_DIR/ui-status" ;;
+  *--head*) exit 1 ;;
+  *) cat "$CLAWDI_SERVICE_STATE_DIR/probe.json" ;;
+esac
+`,
+			{ mode: 0o700 },
+		);
+		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
+		writeFileSync(
+			paths.manifestLastGood,
+			JSON.stringify({ manifest: { system: { openclawControlUiBasePath: "/control" } } }),
+		);
+		const uiStatusPath = join(paths.serviceStateRoot, "ui-status");
+		writeFileSync(uiStatusPath, "200");
+		process.env.PATH = `${paths.serviceStateRoot}:${originalEnv.PATH}`;
+		const responsePath = join(paths.serviceStateRoot, "probe.json");
+
+		for (const response of [...pending, null, "not JSON", ready, ...pending]) {
+			writeFileSync(
+				responsePath,
+				typeof response === "string" ? response : JSON.stringify(response),
+			);
+			const observed = readHostedRuntimeObserved(paths);
+			expect(observed?.status).toBe(response === ready ? "ok" : "unknown");
+			expect(observed?.systemd?.units[0]?.activeState).toBe("active");
+		}
+		writeFileSync(responsePath, JSON.stringify(ready));
+		if (unit === "clawdi-hermes-dashboard.service") {
+			writeFileSync(
+				systemctl,
+				`#!/bin/sh
+case "$*" in
+  *hermes-gateway.service*) printf 'ActiveState=activating\\nSubState=start\\n' ;;
+  *) printf 'ActiveState=active\\nSubState=running\\n' ;;
+esac
+`,
+				{ mode: 0o700 },
+			);
+			expect(readHostedRuntimeObserved(paths)?.status).toBe("unknown");
+		}
+		if (unit === "openclaw-gateway.service") {
+			for (const statusCode of ["503", "404", "302", "200"]) {
+				writeFileSync(uiStatusPath, statusCode);
+				expect(readHostedRuntimeObserved(paths)?.status).toBe(
+					statusCode === "200" ? "ok" : "unknown",
+				);
+			}
+		}
+		writeFileSync(curl, "#!/bin/sh\nexit 28\n", { mode: 0o700 });
+		expect(readHostedRuntimeObserved(paths)?.status).toBe("unknown");
 	});
 
 	test("reports complete systemd counts with representative scoped truncation", () => {
