@@ -1,6 +1,58 @@
 import { expect, type Page, test } from "@playwright/test";
 import type {} from "./lifecycle.browser";
 
+for (const replace of [false, true]) {
+	test(`Clerk ${replace ? "replace" : "push"} enters through a document request during activation`, async ({
+		page,
+	}) => {
+		await page.goto("/e2e/auth/");
+		await page.evaluate(() => window.authTest.navigate("/public"));
+		await page.evaluate(async () => {
+			window.authTest.emitSdk({ userId: null, sessionId: null });
+			await window.authTest.navigate("/sign-in");
+		});
+		await expect(page.getByRole("heading")).toHaveText("Sign in");
+		const response = Promise.withResolvers<void>();
+		const requested = Promise.withResolvers<void>();
+		const path = "/private/a?view=all&redirect_url=%2Fagents#details";
+		await page.route("**/private/a?*", async (route) => {
+			expect(route.request().isNavigationRequest()).toBe(true);
+			requested.resolve();
+			await response.promise;
+			await route.fulfill({ contentType: "text/html", body: "<h1>Document destination</h1>" });
+		});
+		try {
+			const retained = await page.evaluate(
+				({ path, replace }) => {
+					// Match setActive's transitive emission before invoking the actual
+					// AuthProvider callbacks. Clerk publishes the new session afterwards.
+					window.authTest.emitSdk({ isLoaded: false });
+					window.authTest.navigateFromClerk(
+						replace ? new URL(path, location.origin).href : path,
+						replace,
+					);
+					return {
+						heading: document.querySelector("h1")?.textContent,
+						loading: document.querySelector('[aria-label="Loading session"]') !== null,
+					};
+				},
+				{ path, replace },
+			);
+			await requested.promise;
+			expect(retained).toEqual({ heading: "Sign in", loading: false });
+			response.resolve();
+			await expect(page.getByRole("heading")).toHaveText("Document destination");
+			expect(
+				new URL(page.url()).pathname + new URL(page.url()).search + new URL(page.url()).hash,
+			).toBe(path);
+			await page.goBack();
+			await expect(page).toHaveURL(new RegExp(replace ? "/public$" : "/sign-in$"));
+		} finally {
+			response.resolve();
+		}
+	});
+}
+
 async function start(page: Page) {
 	await page.route("http://127.0.0.1:8000/**", (route) =>
 		route.fulfill({

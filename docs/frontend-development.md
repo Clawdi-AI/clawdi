@@ -73,6 +73,11 @@ status through typed native Router context; it does not reverify the session
 on the Start server for each navigation. API, Files grants, runtime and stream
 authorization remain independent server boundaries.
 
+Clerk-owned navigation uses native document push/replace so login and signup
+enter through fresh SSR admission. Clerk temporarily clears its session while
+awaiting navigation; routing that transition through SPA admission would replace
+the destination with a global auth loading state. Dashboard links remain SPA.
+
 `AuthRouterBridge` replaces the QueryClient on user/session identity changes,
 retires protected route preloads, and invalidates protected matches.
 `ProtectedAuthBoundary` prevents a cached match from rendering under another

@@ -1,4 +1,18 @@
-import { useSyncExternalStore } from "react";
+import type { ClerkProvider as NativeClerkProvider } from "@clerk/tanstack-react-start";
+import { type ComponentProps, useSyncExternalStore } from "react";
+
+let providerOptions: ComponentProps<typeof NativeClerkProvider> | undefined;
+
+export function ClerkProvider(props: ComponentProps<typeof NativeClerkProvider>) {
+	providerOptions = props;
+	return props.children;
+}
+
+export function navigateFromClerk(to: string, replace: boolean) {
+	const navigate = replace ? providerOptions?.routerReplace : providerOptions?.routerPush;
+	if (!navigate) throw new Error("Missing Clerk navigation override");
+	return navigate(to);
+}
 
 // SDK contract fixture: resource emissions and status events are independent.
 // No credentials or Clerk network requests are used by this browser suite.

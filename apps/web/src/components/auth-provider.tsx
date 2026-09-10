@@ -11,6 +11,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 		<ClerkProvider
 			appearance={shadcn}
 			publishableKey={env.VITE_CLERK_PUBLISHABLE_KEY}
+			// Clerk clears its session while awaiting post-login navigation. Enter
+			// through SSR so that transient state cannot replace the dashboard.
+			routerPush={(to) => window.location.assign(to)}
+			routerReplace={(to) => window.location.replace(to)}
 			signInFallbackRedirectUrl="/"
 			signInUrl="/sign-in"
 			signUpFallbackRedirectUrl="/"

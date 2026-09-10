@@ -10,6 +10,7 @@ import {
 import { useLayoutEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { AccountSuspensionBoundary } from "@/components/account-suspension-boundary";
+import { AuthProvider } from "@/components/auth-provider";
 import { AuthRouterBridge } from "@/components/auth-router-bridge";
 import { AuthStatus } from "@/components/auth-status";
 import { ProtectedAuthBoundary } from "@/components/protected-auth-boundary";
@@ -21,7 +22,7 @@ import {
 	RouteAuthUnavailable,
 	requireRouteIdentity,
 } from "@/lib/route-auth";
-import { emitSdk, signOutCalls } from "./clerk-fixture";
+import { emitSdk, navigateFromClerk, signOutCalls } from "./clerk-fixture";
 import "@/styles/globals.css";
 
 const commits: { identity: string | null; data: string | undefined }[] = [];
@@ -31,9 +32,11 @@ let abortedPreload = false;
 
 const root = createRootRouteWithContext<AppRouterContext>()({
 	component: () => (
-		<AuthRouterBridge>
-			<Outlet />
-		</AuthRouterBridge>
+		<AuthProvider>
+			<AuthRouterBridge>
+				<Outlet />
+			</AuthRouterBridge>
+		</AuthProvider>
 	),
 });
 const protectedRoute = createRoute({
@@ -149,6 +152,7 @@ function PrivatePane() {
 
 window.authTest = {
 	emitSdk,
+	navigateFromClerk,
 	commits,
 	navigate: (to) => router.navigate({ to }),
 	holdPreload: () => {
@@ -172,6 +176,7 @@ declare global {
 	interface Window {
 		authTest: {
 			emitSdk: typeof emitSdk;
+			navigateFromClerk: typeof navigateFromClerk;
 			commits: typeof commits;
 			navigate: (to: string) => Promise<void>;
 			holdPreload: () => void;
