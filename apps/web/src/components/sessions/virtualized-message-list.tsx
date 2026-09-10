@@ -84,10 +84,11 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 		}
 		if (handledScrollRequestRef.current === requestKey) return;
 		handledScrollRequestRef.current = requestKey;
+		// Let Virtuoso correct the target as variable-height rows are measured.
 		virtuoso.scrollToIndex({
 			index: highlightedRowIndex,
 			align: "center",
-			behavior: "smooth",
+			behavior: "auto",
 		});
 	}, [
 		highlightedRowIndex,
