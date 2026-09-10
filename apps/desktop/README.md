@@ -2,7 +2,8 @@
 
 The tray uses a monochrome Retina template icon and a single Sync checkbox.
 The checkbox reflects the installed service (the user's persistent sync choice);
-health is shown in the tooltip. Turning Sync off removes the service but retains
+health is shown above the checkbox and in the tooltip, refreshed every minute.
+Turning Sync off removes the service but retains
 Agent bindings and credentials. Turning it on restores the service for verified
 bindings or opens Connect an Agent when setup is needed.
 

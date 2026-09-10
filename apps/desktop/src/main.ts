@@ -1035,6 +1035,13 @@ function createTray(): void {
 	tray = new Tray(trayIcon);
 	tray.setToolTip("Clawdi");
 	renderTrayMenu();
+	const statusRefresh = setInterval(() => {
+		if (!quitting && activeCriticalOperations === 0) {
+			runAsync("refresh sync status", refreshTrayState());
+		}
+	}, 60_000);
+	statusRefresh.unref();
+	app.once("before-quit", () => clearInterval(statusRefresh));
 	if (process.platform !== "darwin") {
 		tray.on("click", () => runAsync("show Clawdi", showAvailableWindow()));
 	}
@@ -1044,11 +1051,12 @@ function renderTrayMenu(): void {
 	if (!tray) return;
 	tray.setToolTip(`Clawdi · ${trayStatus()}`);
 	const template: MenuItemConstructorOptions[] = [
+		{ label: trayStatus(), enabled: false },
 		{
 			type: "checkbox",
 			label: "Sync",
 			checked: trayState?.daemon.installed === true,
-			enabled: !trayStateChecking && activeCriticalOperations === 0,
+			enabled: trayState !== null && !trayStateChecking && activeCriticalOperations === 0,
 			click: (item) => runAsync("change sync", setSyncEnabled(item.checked)),
 		},
 		{ type: "separator" },
@@ -1099,7 +1107,7 @@ function trayStatus(): string {
 	if (trayStateChecking) return "Sync: Checking…";
 	if (!trayState) return "Sync: Unavailable";
 	if (!trayState.auth.authenticated) return "Sync: Sign In Required";
-	if (!trayState.daemon.installed) return "Sync: Not Set Up";
+	if (!trayState.daemon.installed) return "Sync: Off";
 	return trayState.daemon.running ? "Sync: Running" : "Sync: Needs Attention";
 }
 
