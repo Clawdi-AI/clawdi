@@ -7,6 +7,7 @@ from typing import Any, Literal
 import httpx
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from starlette.requests import Request
 
 from app.core.auth import AuthContext
 from app.core.config import settings
@@ -1227,7 +1228,9 @@ async def test_list_connections_invalidates_tool_router_session(
         expires_at=datetime.now(UTC) + timedelta(minutes=30),
     )
 
-    result = await connectors.list_connections(AuthContext(user=User(clerk_id="clerk_user_123")))
+    result = await connectors.list_connections(
+        Request({"type": "http"}), AuthContext(user=User(clerk_id="clerk_user_123"))
+    )
 
     assert result == []
     assert "clerk_user_123" not in composio._tool_router_session_cache
