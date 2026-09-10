@@ -95,14 +95,17 @@ function isOpenClawLaunchHandoff(handoff: string, endpoint: string, token: strin
 		const cleanEndpoint = new URL(endpoint);
 		const fragment = new URLSearchParams(target.hash.slice(1));
 		const entries = [...fragment.entries()];
+		// OpenClaw WebSocket links use the base path without a trailing slash.
+		const gatewayUrl = `wss://${cleanEndpoint.host}${cleanEndpoint.pathname.replace(/\/+$/, "")}`;
 		target.hash = "";
 		return (
 			target.href === cleanEndpoint.href &&
-			entries.length === 2 &&
-			new Set(entries.map(([key]) => key)).size === 2 &&
+			entries.length === (fragment.has("gatewayUrl") ? 3 : 2) &&
+			new Set(entries.map(([key]) => key)).size === entries.length &&
 			typeof fragment.get("bootstrapToken") === "string" &&
 			Boolean(fragment.get("bootstrapToken")) &&
-			fragment.get("bootstrapProfile") === "owner"
+			fragment.get("bootstrapProfile") === "owner" &&
+			(!fragment.has("gatewayUrl") || fragment.get("gatewayUrl") === gatewayUrl)
 		);
 	} catch {
 		return false;
