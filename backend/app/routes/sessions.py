@@ -140,6 +140,7 @@ from app.services.session_content import (
     SessionContentInvalid,
     SessionContentMissing,
     SessionContentUnavailable,
+    SessionMessageValue,
     load_session_content_projection,
     load_session_messages,
     session_has_uploaded_content,
@@ -3379,6 +3380,7 @@ async def get_session_messages(
     else:
         included_categories = frozenset((view,))
 
+    projected_items: list[SessionMessageValue]
     if included_categories is None:
         projected_items = projection.messages
         source_positions = projection.source_positions
