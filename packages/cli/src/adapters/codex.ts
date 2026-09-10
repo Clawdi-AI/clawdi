@@ -388,7 +388,7 @@ function parseSessionFile(filePath: string, absFilter: string | null): RawSessio
 	}
 	if (!sessionId) return null;
 	if (absFilter) {
-		if (!projectPath) return null;
+		if (typeof projectPath !== "string") return null;
 		if (projectPath !== absFilter && !projectPath.startsWith(`${absFilter}/`)) return null;
 	}
 	const events = sequenceSessionEvents(

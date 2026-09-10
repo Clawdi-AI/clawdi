@@ -157,6 +157,32 @@ describe("CodexAdapter.collectSessions", () => {
 		expect((await a.sessions.collect({ kind: "complete" })).sessions).toEqual([]);
 	});
 
+	it("skips malformed project metadata during filtered scans", async () => {
+		const path = join(tmpHome, ".codex", "sessions", "invalid-project.jsonl");
+		writeFileSync(
+			path,
+			`${JSON.stringify({ type: "session_meta", payload: { id: "invalid", cwd: 123 } })}\n`,
+		);
+		const adapter = new CodexAdapter();
+		expect(
+			(
+				await adapter.sessions.collect({
+					kind: "complete",
+					projectFilter: "/Users/fixture/project",
+				})
+			).sessions,
+		).toHaveLength(1);
+		expect(
+			(
+				await adapter.sessions.collect({
+					kind: "paths",
+					paths: [path],
+					projectFilter: "/Users/fixture/project",
+				})
+			).sessions,
+		).toEqual([]);
+	});
+
 	it("summary skips <environment_context> prefix user messages", async () => {
 		const a = new CodexAdapter();
 		const s = (await a.sessions.collect({ kind: "complete" })).sessions[0]!;
