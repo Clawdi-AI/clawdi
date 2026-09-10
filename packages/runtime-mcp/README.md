@@ -5,8 +5,10 @@ One stdio server forwards Cloud tools and provides local `vault_bind` and
 installed Clawdi CLI, CLI configuration, daemon, or privileged file RPC.
 
 Build with `bun run --cwd packages/runtime-mcp build`. Copy the resulting
-`dist/index.js` as `clawdi-mcp.mjs`; it bundles its dependencies. Managed release
-archives carry the same entrypoint in `runtime-mcp/index.js`.
+`dist/index.js` as `clawdi-mcp.mjs`; it bundles its dependencies. The management binary embeds the named `runtime-mcp/index.js` resource; npm packages
+also include that file for standalone extraction. Native archives keep only the existing
+`clawdi`, `egress-addon`, and `skills` top-level entries, so older native updaters can
+validate and install them.
 
 For a self-managed MCP client, configure this command and provide
 `CLAWDI_MCP_AUTHORIZATION` through the client's protected environment with the

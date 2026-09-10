@@ -1109,11 +1109,11 @@ convergence never fetches: it revalidates the retained archive and reports the
 resource unavailable when that cache is missing or corrupt.
 
 The built-in remote MCP declaration may carry `localVault: 1` for Clawdi management
-packages 0.14.68 and later. The management process declares `vault-local-mcp-v1` in the
+packages 0.14.70 and later. The management process declares `vault-local-mcp-v1` in the
 existing runtime capability header. Older callers receive a remote-only projection and
 Skill v1 so they can parse the manifest and self-upgrade; their ETag is distinct from the
 local-capable representation. Its URL and secret reference still generate the same exact-path
-egress profile. Native projection installs the separately bundled `runtime-mcp/index.js`
+egress profile. Native projection materializes its embedded `runtime-mcp/index.js` resource
 as a root-owned, content-addressed, tenant-readable package beside the service-state root.
 OpenClaw `mcp.servers.clawdi` and Hermes `mcp_servers.clawdi` then launch Node with this
 entrypoint and its public context file. The context uses `manifest.environmentId` and

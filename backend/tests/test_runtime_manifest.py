@@ -6143,10 +6143,12 @@ async def test_admin_runtime_state_rejects_codex_hosted_runtime(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [True, False])
 async def test_local_vault_capability_keeps_legacy_upgrade_manifest_and_etag_distinct(
     admin_client,
     db_session,
     seed_user,
+    enabled,
 ):
     env = await create_env_with_project(
         db_session,
@@ -6158,7 +6160,7 @@ async def test_local_vault_capability_keeps_legacy_upgrade_manifest_and_etag_dis
     await _write_runtime_state(
         admin_client,
         str(env.id),
-        cli_package_spec="clawdi@0.14.68",
+        cli_package_spec="clawdi@0.14.70",
         mcp={
             "servers": {
                 "clawdi": {
@@ -6174,7 +6176,7 @@ async def test_local_vault_capability_keeps_legacy_upgrade_manifest_and_etag_dis
                 }
             }
         },
-        skills={"entries": {"clawdi": {"enabled": True, "version": 2}}},
+        skills={"entries": {"clawdi": {"enabled": enabled, "version": 2}}},
         secretValues={"secret://clawdi/auth-token": "fixture-runtime-key"},
     )
     key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
@@ -6182,9 +6184,10 @@ async def test_local_vault_capability_keeps_legacy_upgrade_manifest_and_etag_dis
         legacy = await client.get("/v1/runtime/manifest")
         assert legacy.status_code == 200, legacy.text
         manifest = legacy.json()["manifest"]
-        assert manifest["clawdiCli"]["packageSpec"] == "clawdi@0.14.68"
+        assert manifest["clawdiCli"]["packageSpec"] == "clawdi@0.14.70"
         assert "localVault" not in manifest["mcp"]["servers"]["clawdi"]
         assert manifest["skills"]["entries"]["clawdi"]["version"] == 1
+        assert manifest["skills"]["entries"]["clawdi"]["enabled"] is enabled
         capabilities = ", ".join(
             [
                 RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
@@ -6203,6 +6206,7 @@ async def test_local_vault_capability_keeps_legacy_upgrade_manifest_and_etag_dis
         projected = current.json()["manifest"]
         assert projected["mcp"]["servers"]["clawdi"]["localVault"] == 1
         assert projected["skills"]["entries"]["clawdi"]["version"] == 2
+        assert projected["skills"]["entries"]["clawdi"]["enabled"] is enabled
         assert current.headers["etag"] != legacy.headers["etag"]
         assert (
             await client.get(

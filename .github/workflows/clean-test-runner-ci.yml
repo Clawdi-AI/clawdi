@@ -19,6 +19,10 @@ on:
       - "config/postgres-image.txt"
       - "scripts/check_postgres_image_parity.py"
       - "scripts/test.sh"
+      - "scripts/test-vault-native-upgrade.sh"
+      - "packages/cli/tests/e2e/published-native-upgrade.mjs"
+      - "packages/cli/scripts/build-native.mjs"
+      - "packages/cli/scripts/package-native-release.mjs"
       - "package.json"
       - "bun.lock"
       - "patches/libsignal@6.0.0.patch"
@@ -64,6 +68,10 @@ on:
       - "config/postgres-image.txt"
       - "scripts/check_postgres_image_parity.py"
       - "scripts/test.sh"
+      - "scripts/test-vault-native-upgrade.sh"
+      - "packages/cli/tests/e2e/published-native-upgrade.mjs"
+      - "packages/cli/scripts/build-native.mjs"
+      - "packages/cli/scripts/package-native-release.mjs"
       - "package.json"
       - "bun.lock"
       - "patches/libsignal@6.0.0.patch"
@@ -147,3 +155,6 @@ jobs:
 
       - name: Vault MCP without tenant CLI
         run: scripts/test.sh vault-mcp
+
+      - name: Published native updater compatibility and tenant access
+        run: bash scripts/test-vault-native-upgrade.sh

@@ -1,6 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { type BuiltinMcpPackage, installBuiltinMcp, planBuiltinMcp } from "./builtin-mcp";
+import {
+	type BuiltinMcpPackage,
+	installBuiltinMcp,
+	planBuiltinMcp,
+	verifyBuiltinMcpAccess,
+} from "./builtin-mcp";
 import {
 	getHermesRawConfigValue,
 	type HermesConfigTransaction,
@@ -49,8 +54,12 @@ export function applyHostedMcpProjections(
 		hermesConfig,
 		openClawWorkspaceRoot,
 	);
-	for (const runtime of plan.runtimes)
-		for (const artifact of runtime.packages) installBuiltinMcp(artifact);
+	for (const runtime of plan.runtimes) {
+		for (const artifact of runtime.packages) {
+			installBuiltinMcp(artifact);
+			verifyBuiltinMcpAccess(artifact, plan.home, workspaceRoot);
+		}
+	}
 	for (const runtime of [...plan.runtimes].sort((left, right) =>
 		left.name === right.name ? 0 : left.name === "hermes" ? -1 : 1,
 	)) {

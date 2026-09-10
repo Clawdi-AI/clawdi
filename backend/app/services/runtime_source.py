@@ -598,7 +598,7 @@ def render_runtime_source(
         ):
             clawdi_mcp.localVault = None
             if workspace_skills is not None and "clawdi" in workspace_skills["entries"]:
-                workspace_skills["entries"]["clawdi"] = {"enabled": True, "version": 1}
+                workspace_skills["entries"]["clawdi"]["version"] = 1
         public_clawdi_mcp_url = f"{public_api_url.rstrip('/')}/v1/mcp/clawdi"
         if isinstance(clawdi_mcp, HostedRuntimePlatformMcpServer):
             remote_clawdi_mcp = HostedRuntimeRemoteMcpServer(

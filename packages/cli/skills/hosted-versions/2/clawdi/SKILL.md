@@ -105,8 +105,9 @@ If submission times out, inspect status before repeating a mutation.
 ### Bind and refresh a local env file
 
 Use `vault_bind` with `project_id`, `vault_id`, `path: ".env"`, and optional `section`.
-Omit `section` for the entire Vault; an empty string selects unsectioned fields. Choose
-another env filename if sections reuse field names. The filename is directly inside this
+Omit `section` for the entire Vault; an empty string selects unsectioned fields.
+If sections reuse field names, specify `section`; use a distinct env filename for each
+section you bind. The filename is directly inside this
 Agent's authenticated workspace, must be untracked and Git-ignored, and cannot be a symlink.
 
 Use `vault_pull` with the same `path` after cloud changes. It reuses the saved Agent,

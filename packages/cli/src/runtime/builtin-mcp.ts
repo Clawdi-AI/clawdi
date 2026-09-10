@@ -12,12 +12,13 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
+import BUILTIN_MCP_SOURCE from "../../runtime-mcp/index.js" with { type: "text" };
 import { SYSTEM_CA_BUNDLE } from "./egress-env";
 import { managedMcpHeaderPlaceholder } from "./hosted-egress-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { HostedMcpServerDesiredState } from "./manifest-resources";
 import type { RuntimePaths } from "./paths";
+import { spawnRuntimeUserCommand } from "./runtime-user-command";
 
 export interface BuiltinMcpPackage {
 	directory: string;
@@ -41,12 +42,8 @@ export function planBuiltinMcp(
 	) {
 		throw new Error("Built-in local MCP requires the authenticated Clawdi MCP endpoint.");
 	}
-	const source = join(resolveCurrentCliResourceRoot(), "runtime-mcp", "index.js");
-	const stat = lstatSync(source);
-	if (!stat.isFile() || stat.size > 8 * 1024 * 1024)
-		throw new Error("Standalone MCP artifact is unavailable.");
 	const files = {
-		"index.mjs": readFileSync(source, "utf8"),
+		"index.mjs": BUILTIN_MCP_SOURCE,
 		"context.json": JSON.stringify({
 			apiUrl: new URL(desired.url).origin,
 			agentId: manifest.environmentId,
@@ -105,4 +102,28 @@ export function installBuiltinMcp(plan: BuiltinMcpPackage): void {
 	} finally {
 		rmSync(staging, { recursive: true, force: true });
 	}
+}
+
+/** Use the native runtime's tenant identity, not the administrator's access. */
+export function verifyBuiltinMcpAccess(
+	plan: BuiltinMcpPackage,
+	home: string,
+	workspace: string,
+): void {
+	const result = spawnRuntimeUserCommand(
+		plan.server.command,
+		[
+			"--input-type=module",
+			"-e",
+			'import { accessSync, constants } from "node:fs"; if (Number(process.versions.node.split(".")[0]) < 24) process.exit(1); for (const path of process.argv.slice(1)) accessSync(path, constants.R_OK);',
+			...Object.keys(plan.files).map((name) => join(plan.directory, name)),
+		],
+		home,
+		workspace,
+		{ timeoutMs: 5_000 },
+	);
+	if (result.status !== 0)
+		throw new Error(
+			"Tenant MCP requires Node 24 and readable package files through traversable ancestors.",
+		);
 }

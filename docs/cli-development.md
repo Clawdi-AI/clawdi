@@ -643,6 +643,25 @@ path and symlink protection, and metadata-only bind/pull responses.
 Deployment requires migration `c92e8b3d104f`, the updated API/client/web, and a `WEB_ORIGIN`
 that points to the public dashboard. Deploy the API before clients and refresh MCP tool
 lists and packaged skills. The local MCP adapter is bundled with management package
-0.14.68 and Hosted Skill version 2. Publish the additive Cloud schema/material tool and
+0.14.70 and Hosted Skill version 2. Publish the additive Cloud schema/material tool and
 management artifact before enabling Hosted `localVault: 1` projection. Older management
 packages retain remote-only MCP; their tool lists do not claim local file support.
+
+
+### Native updater compatibility for local MCP
+
+Native archives retain exactly the existing `clawdi`, `egress-addon`, and `skills`
+top-level layout. The separately built `runtime-mcp/index.js` is embedded as a named
+text resource in the management executable, using the same Bun resource mechanism as
+other runtime helpers, then materialized into the tenant-readable package. The tenant
+still runs only Node and the standalone entrypoint. npm distributions also carry the
+standalone JS file; Hosted bootstrap and in-place management upgrades use exact npm
+packages in private versioned prefixes, not the public native archive updater.
+
+Done: `TEST_RUNNER_IMAGE=<repository-test-runner-image> bash scripts/test-vault-native-upgrade.sh`
+uses the published, checksum-pinned Linux x64 0.14.68 executable to download, validate
+and activate the actual candidate archive over a container-local TLS fixture. It also
+checks rejection of a checksummed archive with a forbidden new top-level directory,
+and tenant UID startup for both native MCP configurations, blocked ancestors, missing
+Node, and an inaccessible private management CLI. No intermediate release, host DNS
+change, registry publication, or live tenant operation is involved.
