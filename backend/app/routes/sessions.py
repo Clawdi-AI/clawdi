@@ -3383,13 +3383,13 @@ async def get_session_messages(
         projected_items = projection.messages
         source_positions = projection.source_positions
     else:
-        filtered_timeline = [
-            (item, position)
-            for item, position in zip(
-                projection.timeline,
-                projection.timeline_source_positions,
-                strict=True,
-            )
+        projected_items = []
+        filtered_positions: list[int] = []
+        for item, position in zip(
+            projection.timeline,
+            projection.timeline_source_positions,
+            strict=True,
+        ):
             if (
                 (item.get("role") == "user" and "user" in included_categories)
                 or (item.get("role") == "assistant" and "assistant" in included_categories)
@@ -3397,10 +3397,10 @@ async def get_session_messages(
                     "tools" in included_categories
                     and item.get("kind") in ("tool_call", "tool_result")
                 )
-            )
-        ]
-        projected_items = [item for item, _ in filtered_timeline]
-        source_positions = tuple(position for _, position in filtered_timeline)
+            ):
+                projected_items.append(item)
+                filtered_positions.append(position)
+        source_positions = tuple(filtered_positions)
 
     total = len(projected_items)
     page_offset = offset

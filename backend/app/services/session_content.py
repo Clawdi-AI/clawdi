@@ -29,9 +29,7 @@ from app.models.session import Session, SessionEventChunk, SessionEventGeneratio
 from app.schemas.session_events import SessionEvent
 from app.services.session_events import (
     EMPTY_EVENT_HEAD,
-    project_safe_messages,
     project_safe_timeline,
-    project_visible_messages,
     validate_event_chunk_async,
 )
 
@@ -241,11 +239,21 @@ async def load_event_generation_projection(
         file_store=file_store,
         db=db,
     )
-    visible = project_visible_messages(events)
     timeline = project_safe_timeline(events)
+    # Reuse the sanitized text projection, retaining an explicit public-field allowlist.
+    messages = [item for item in timeline if item.kind == "message"]
     projection = SessionContentProjection(
-        messages=_SESSION_MESSAGES_ADAPTER.validate_python(project_safe_messages(events)),
-        source_positions=tuple(message.position for message in visible),
+        messages=_SESSION_MESSAGES_ADAPTER.validate_python(
+            [
+                {
+                    key: value
+                    for key, value in item.value.items()
+                    if key in ("role", "content", "model", "timestamp")
+                }
+                for item in messages
+            ]
+        ),
+        source_positions=tuple(item.position for item in messages),
         timeline=[item.value for item in timeline],
         timeline_source_positions=tuple(item.position for item in timeline),
     )
