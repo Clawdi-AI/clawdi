@@ -2,6 +2,7 @@
 
 import { isSearchQueryReady, SEARCH_QUERY_MAX_LENGTH } from "@clawdi/shared/consts";
 import {
+	type InfiniteData,
 	keepPreviousData,
 	useInfiniteQuery,
 	useQuery,
@@ -50,6 +51,7 @@ import type {
 import { useCurrentUser } from "@/lib/auth-client";
 import { formatDuration } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { sessionContentRevision } from "@/lib/session-content-events";
 import {
 	SESSION_DETAIL_GC_MS,
 	SESSION_DETAIL_STALE_MS,
@@ -68,6 +70,7 @@ import {
 	sessionTimelineViewLink,
 } from "@/lib/session-search-anchor";
 import { useDebouncedValue } from "@/lib/use-debounced";
+import { useSessionContentEvents } from "@/lib/use-session-content-events";
 import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 const SESSION_MESSAGE_PAGE_SIZE = 100;
@@ -92,7 +95,7 @@ function normalizeTimelinePage(
 			return {
 				...item,
 				kind: "message",
-				position: page.offset + index,
+				position: page.total - page.offset - index - 1,
 			};
 		}),
 	};
@@ -213,6 +216,7 @@ export function SessionDetailContent({
 			gcTime: SESSION_DETAIL_GC_MS,
 		},
 	);
+	useSessionContentEvents(sessionId);
 	const { data: scopedAgent } = useQuery({
 		...agentDetailQueryOptions($api, queryClient, agentId ?? ""),
 		enabled: !!agentId,
@@ -242,6 +246,32 @@ export function SessionDetailContent({
 	const debouncedSearchValue = useDebouncedValue(effectiveSearchQuery, 250);
 	const debouncedSearchQuery = effectiveSearchQuery ? debouncedSearchValue || undefined : undefined;
 
+	const contentRevision = session ? sessionContentRevision(session) : null;
+	const messagesQueryKey = useMemo(
+		() =>
+			[
+				"session-messages",
+				sessionId,
+				timelineView,
+				searchAnchor?.kind ?? null,
+				searchAnchor?.position ?? null,
+				searchAnchor?.revision ?? null,
+				debouncedSearchQuery ?? null,
+			] as const,
+		[
+			sessionId,
+			timelineView,
+			searchAnchor?.kind,
+			searchAnchor?.position,
+			searchAnchor?.revision,
+			debouncedSearchQuery,
+		],
+	);
+	const attemptedContentRevision = useRef<{
+		queryKey: typeof messagesQueryKey;
+		queryClient: typeof queryClient;
+		revision: string | null;
+	} | null>(null);
 	// Paginated message fetch via the new `/messages` endpoint.
 	// Long sessions (5k+ messages, 10+ MB JSON) used to ship the
 	// whole blob in one shot and Markdown-render every turn,
@@ -262,48 +292,77 @@ export function SessionDetailContent({
 		isFetching: isContentFetching,
 		isPlaceholderData: isContentPlaceholderData,
 	} = useInfiniteQuery({
-		queryKey: [
-			"session-messages",
-			sessionId,
-			session?.content_hash ?? null,
-			session?.event_head_hash ?? null,
-			timelineView,
-			searchAnchor?.kind ?? null,
-			searchAnchor?.position ?? null,
-			searchAnchor?.revision ?? null,
-			debouncedSearchQuery ?? null,
-		],
-		initialPageParam: 0,
-		queryFn: async ({ pageParam }) => {
+		queryKey: messagesQueryKey,
+		initialPageParam: { offset: 0, revision: contentRevision },
+		queryFn: async ({ pageParam, signal }) => {
+			const requestedRevision = pageParam.offset === 0 ? contentRevision : pageParam.revision;
+			if (pageParam.offset === 0)
+				attemptedContentRevision.current = {
+					queryKey: messagesQueryKey,
+					queryClient,
+					revision: requestedRevision,
+				};
 			const page = unwrap(
 				await api.GET("/v1/sessions/{session_id}/messages", {
+					signal,
 					params: {
 						path: { session_id: sessionId },
 						query: {
-							offset: pageParam,
+							offset: pageParam.offset,
 							limit: SESSION_MESSAGE_PAGE_SIZE,
 							direction: SESSION_MESSAGE_API_DIRECTION,
+							...(requestedRevision ? { content_revision: requestedRevision } : {}),
 							view: "all",
 							...(timelineView === "all" ? {} : { include: timelineCategories }),
-							...(pageParam === 0 && searchAnchor
+							...(pageParam.offset === 0 && searchAnchor
 								? {
 										anchor_kind: searchAnchor.kind,
 										anchor_position: searchAnchor.position,
 										anchor_revision: searchAnchor.revision,
 									}
 								: {}),
-							...(pageParam === 0 && debouncedSearchQuery
+							...(pageParam.offset === 0 && debouncedSearchQuery
 								? { search_query: debouncedSearchQuery }
 								: {}),
 						},
 					},
 				}),
 			);
+			if (
+				requestedRevision &&
+				page.content_revision &&
+				page.content_revision !== requestedRevision
+			) {
+				throw new ApiError(
+					409,
+					"Session content changed. Please retry.",
+					"session_content_revision_changed",
+				);
+			}
+			if (!page.content_revision) {
+				const previous =
+					queryClient.getQueryData<InfiniteData<SessionTimelinePage>>(messagesQueryKey);
+				// Older servers retain ordinary initial reads and pagination.
+				// Never downgrade a pinned page or refresh an unfenced multi-page window.
+				if (
+					(pageParam.offset > 0 && pageParam.revision) ||
+					(pageParam.offset === 0 &&
+						(previous?.pages[0]?.content_revision || (previous?.pages.length ?? 0) > 1))
+				) {
+					throw new ApiError(
+						409,
+						"Reload the page to refresh this conversation.",
+						"session_content_revision_unavailable",
+					);
+				}
+			}
 			return normalizeTimelinePage(page);
 		},
-		getNextPageParam: (last): number | undefined => {
+		getNextPageParam: (last) => {
 			const nextOffset = last.offset + last.items.length;
-			return nextOffset < last.total ? nextOffset : undefined;
+			return nextOffset < last.total
+				? { offset: nextOffset, revision: last.content_revision ?? null }
+				: undefined;
 		},
 		enabled: !!session?.has_content,
 		retry: (failureCount, err) => {
@@ -311,17 +370,70 @@ export function SessionDetailContent({
 			if (status >= 400 && status < 500) return false;
 			return failureCount < 2;
 		},
+		refetchOnMount: (query) => Boolean(query.state.data?.pages[0]?.content_revision),
+		refetchOnWindowFocus: (query) => Boolean(query.state.data?.pages[0]?.content_revision),
+		refetchOnReconnect: (query) => Boolean(query.state.data?.pages[0]?.content_revision),
 		staleTime: SESSION_MESSAGES_STALE_MS,
 		gcTime: SESSION_MESSAGES_GC_MS,
 		placeholderData: keepPreviousData,
 	});
+	// Revision-capable responses identify verified server bytes. TanStack
+	// publishes an infinite refetch atomically; a page conflict leaves the
+	// previous complete window intact and starts again from fresh detail.
+	useEffect(() => {
+		if (
+			!(contentError instanceof ApiError) ||
+			contentError.code !== "session_content_revision_changed"
+		)
+			return;
+		void refetchSession().catch(() => {
+			// The existing detail error surface owns failures.
+		});
+	}, [contentError, refetchSession]);
+	useEffect(() => {
+		if (!session?.has_content || !contentRevision || isContentFetching || isContentPlaceholderData)
+			return;
+		const firstPage = pagesData?.pages[0];
+		if (firstPage && !firstPage.content_revision) return;
+		if (firstPage?.content_revision === contentRevision && !isContentError) return;
+		// A failed read of this same revision waits for explicit retry or a
+		// new committed revision, rather than becoming an effect retry loop.
+		const attempted = attemptedContentRevision.current;
+		if (
+			isContentError &&
+			attempted?.queryKey === messagesQueryKey &&
+			attempted.queryClient === queryClient &&
+			attempted.revision === contentRevision
+		)
+			return;
+		void refetchContent().catch(() => {
+			// Retain the last complete window; the query owns retry state.
+		});
+	}, [
+		session?.has_content,
+		contentRevision,
+		messagesQueryKey,
+		queryClient,
+		pagesData,
+		isContentFetching,
+		isContentError,
+		isContentPlaceholderData,
+		refetchContent,
+	]);
 	const loadMoreMessages = useCallback(() => {
-		if (!isFetchingNextPage) void fetchNextPage();
-	}, [fetchNextPage, isFetchingNextPage]);
+		if (isContentFetching) return;
+		const loadedRevision = pagesData?.pages[0]?.content_revision;
+		// Retry the complete window before extending a revision that has moved.
+		if (loadedRevision && contentRevision && loadedRevision !== contentRevision) {
+			void refetchContent();
+		} else {
+			void fetchNextPage();
+		}
+	}, [contentRevision, fetchNextPage, isContentFetching, pagesData, refetchContent]);
 
 	// Flatten pages → ordered message list, paired with a stable
-	// React key per row. The key is the server page position
-	// (`page.offset + k`) so it stays put when older pages prepend.
+	// React key per canonical source position. Descending page offsets shift
+	// on append; using them as keys would move the reader's scroll anchor.
 	const { timelineItems, timelineKeys } = useMemo(() => {
 		if (!pagesData) return { timelineItems: null, timelineKeys: null };
 		const items: SessionTimelineItem[] = [];
@@ -329,7 +441,7 @@ export function SessionDetailContent({
 		for (const page of pagesData.pages) {
 			for (let k = 0; k < page.items.length; k++) {
 				items.push(page.items[k]);
-				keys.push(`${SESSION_MESSAGE_API_DIRECTION}:${page.offset + k}`);
+				keys.push(`${page.items[k].kind}:${page.items[k].position}`);
 			}
 		}
 		return { timelineItems: items, timelineKeys: keys };
@@ -337,8 +449,17 @@ export function SessionDetailContent({
 	const totalItems = pagesData?.pages[0]?.total ?? 0;
 	const loadedCount = timelineItems?.length ?? 0;
 	const anchorOffset = pagesData?.pages[0]?.anchor_offset;
-	const highlightedMessageKey =
-		typeof anchorOffset === "number" ? `${SESSION_MESSAGE_API_DIRECTION}:${anchorOffset}` : null;
+	const anchorPage =
+		typeof anchorOffset === "number"
+			? pagesData?.pages.find(
+					(page) => anchorOffset >= page.offset && anchorOffset < page.offset + page.items.length,
+				)
+			: undefined;
+	const anchorItem =
+		anchorPage && typeof anchorOffset === "number"
+			? anchorPage.items[anchorOffset - anchorPage.offset]
+			: undefined;
+	const highlightedMessageKey = anchorItem ? `${anchorItem.kind}:${anchorItem.position}` : null;
 	const notifiedStaleAnchorRef = useRef<string | null>(null);
 	const searchNavigation = pagesData?.pages[0]?.search_navigation;
 	const resolvedSearchAnchor = searchNavigation?.current ?? searchAnchor;
@@ -659,7 +780,7 @@ export function SessionDetailContent({
 							<LoadMoreControl
 								loadedCount={loadedCount}
 								totalCount={totalItems}
-								isFetching={isFetchingNextPage}
+								isFetching={isContentFetching}
 								onLoad={loadMoreMessages}
 								label="Load earlier"
 							/>
@@ -677,6 +798,7 @@ export function SessionDetailContent({
 							windowStartOffset={pagesData?.pages[0]?.offset ?? 0}
 							onAtBottomChange={setIsTimelineAtBottom}
 							latestScrollRequestId={latestScrollRequestId}
+							contentRevision={pagesData?.pages[0]?.content_revision}
 							onShareMessage={openShare}
 						/>
 					</div>

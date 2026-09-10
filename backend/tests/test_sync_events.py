@@ -583,7 +583,7 @@ async def test_cancel_and_wait_collects_pending_sibling_before_surfacing_failure
     """Only real failures raise, after every sibling has been awaited."""
     from app.routes import sync as sync_route
 
-    for cancel_and_wait in (sync_route._cancel_and_wait, sync_events._cancel_and_wait):
+    for cancel_and_wait in (sync_route.cancel_and_wait, sync_events._cancel_and_wait):
         failure_started = asyncio.Event()
         sibling_started = asyncio.Event()
         sibling_cleaned = asyncio.Event()
@@ -642,7 +642,7 @@ async def test_cancel_and_wait_preserves_failure_when_parent_is_cancelled(caplog
 
     child_task = asyncio.create_task(child())
     await started.wait()
-    owner = asyncio.create_task(sync_route._cancel_and_wait(child_task))
+    owner = asyncio.create_task(sync_route.cancel_and_wait(child_task))
     try:
         await cleaning.wait()
         assert owner.cancel("disconnect")

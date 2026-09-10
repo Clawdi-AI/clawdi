@@ -385,6 +385,7 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
     )
     assert initial_messages.status_code == 200, initial_messages.text
     assert initial_messages.json() == {
+        "content_revision": f"events:{base_head}",
         "items": [
             {
                 "role": "assistant",
@@ -404,6 +405,7 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
     )
     assert initial_timeline.status_code == 200, initial_timeline.text
     assert initial_timeline.json() == {
+        "content_revision": f"events:{base_head}",
         "items": [
             {
                 "kind": "message",
@@ -730,6 +732,7 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
     )
     assert latest_messages.status_code == 200, latest_messages.text
     assert latest_messages.json() == {
+        "content_revision": f"events:{second_head}",
         "items": [
             {
                 "role": "assistant",
@@ -748,6 +751,13 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
         "offset": 0,
         "limit": 2,
     }
+
+    stale_page = await client.get(
+        f"/v1/sessions/{session.id}/messages",
+        params={"offset": 2, "limit": 2, "content_revision": f"events:{base_head}"},
+    )
+    assert stale_page.status_code == 409, stale_page.text
+    assert stale_page.json()["detail"]["code"] == "session_content_revision_changed"
 
     anchored_messages = await client.get(
         f"/v1/sessions/{session.id}/messages",

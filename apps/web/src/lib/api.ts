@@ -56,17 +56,14 @@ function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Respons
 	const caller = init?.signal ?? request.signal;
 	const controller = new AbortController();
 	let timedOut = false;
-	const onAbort = () => controller.abort();
-	if (caller?.aborted) {
-		controller.abort();
-	} else {
-		caller?.addEventListener("abort", onAbort, { once: true });
-	}
+	// Keep caller cancellation attached while the response body is consumed,
+	// including after fetch has resolved its headers.
+	const signal = caller ? AbortSignal.any([caller, controller.signal]) : controller.signal;
 	const timeoutId = setTimeout(() => {
 		timedOut = true;
 		controller.abort();
 	}, REQUEST_TIMEOUT_MS);
-	return fetch(request, { ...init, signal: controller.signal })
+	return fetch(request, { ...init, signal })
 		.catch((cause: unknown) => {
 			if (timedOut) throw new ApiNetworkError("timeout", { cause });
 			if (caller?.aborted) throw cause;
@@ -74,7 +71,6 @@ function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Respons
 		})
 		.finally(() => {
 			clearTimeout(timeoutId);
-			caller?.removeEventListener("abort", onAbort);
 		});
 }
 

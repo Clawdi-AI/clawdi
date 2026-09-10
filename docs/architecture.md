@@ -277,6 +277,31 @@ Deleting an Agent nulls `environment_id` without deleting history; deletion
 suppression remains fenced to immutable origin, with legacy origin-less
 suppressions read as wildcards.
 
+Open private details subscribe to `GET /v1/sessions/{session_id}/content-events`
+with `sessions:read`, the same owner and bound-Agent fence as detail reads.
+Snapshot upload, event append, and generation commit publish signal-only
+PostgreSQL notifications in the content transaction. The shared listener wakes
+coalescing per-session waiters; initial connections and listener reconnects read
+fresh committed readiness and content hashes. Streams share distributed sync
+connection caps, release their leases on disconnect, and end at credential expiry.
+The dashboard compares hints before refreshing detail, then refetches the
+existing message window to preserve loaded earlier pages and the reader's position.
+Message pages return their verified `content_revision`; an optional request
+revision rejects mixed-version pagination with 409. Snapshot cache entries
+require byte SHA-256 verification before insertion, including after a failed
+mutable-object overwrite. Legacy rows without a hash discover identity from
+bytes; they never reuse a cache entry under an empty hash. Events retain their
+existing chunk/head validation. No read lock is held across object storage.
+Older backends without page revisions retain ordinary initial reads and manual
+pagination. The new dashboard disables automatic refresh for those unfenced
+windows, and refuses to downgrade an already-fenced window during a rolling
+deployment. Deploy the backend first; reload existing legacy windows after
+backend upgrade to enable verified live refresh.
+Heartbeats detect broken transport; they do not poll content.
+
+Done: `scripts/test.sh backend tests/test_session_content_events.py` exits 0
+against the runner's throwaway PostgreSQL.
+
 ## Projects And Agent Use
 
 The product domain has two deliberately distinct subjects:

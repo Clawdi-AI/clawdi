@@ -2399,3 +2399,150 @@ async def test_sessions_default_sort_uses_last_activity(client: httpx.AsyncClien
     a_idx = ids_in_order.index("sess-A-recent-activity")
     b_idx = ids_in_order.index("sess-B-stale-activity")
     assert a_idx < b_idx, "session with more recent activity must rank higher"
+
+
+@pytest.mark.asyncio
+async def test_message_pages_reject_a_rewrite_or_append_between_pages(client: httpx.AsyncClient):
+    env_id = await _register_env(client, machine_id=f"page-fence-{uuid.uuid4().hex}")
+    local_id = f"page-fence-{uuid.uuid4().hex}"
+    await client.post(
+        "/v1/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": local_id,
+                    "started_at": datetime.now(UTC).isoformat(),
+                }
+            ]
+        },
+    )
+
+    async def upload(version: int, count: int) -> str:
+        data = json.dumps(
+            [{"role": "user", "content": f"version {version} row {i}"} for i in range(count)]
+        ).encode()
+        response = await client.post(
+            f"/v1/sessions/{local_id}/upload",
+            data={"environment_id": env_id},
+            files={"file": ("messages.json", data, "application/json")},
+        )
+        assert response.status_code == 200, response.text
+        return f"snapshot:{hashlib.sha256(data).hexdigest()}"
+
+    revision = await upload(0, 4)
+    listing = (await client.get("/v1/sessions", params={"environment_id": env_id})).json()
+    session_id = listing["items"][0]["id"]
+    for version, count in ((1, 4), (2, 6)):
+        first = await client.get(
+            f"/v1/sessions/{session_id}/messages",
+            params={
+                "direction": "desc",
+                "limit": 2,
+                "content_revision": revision,
+            },
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["content_revision"] == revision
+        current = await upload(version, count)
+        # Deterministic commit between page 0 and page 1. A same-count rewrite
+        # is as unsafe as append; neither may be labeled as the old revision.
+        later = await client.get(
+            f"/api/sessions/{session_id}/messages",
+            params={
+                "direction": "desc",
+                "offset": 2,
+                "limit": 2,
+                "content_revision": revision,
+            },
+        )
+        assert later.status_code == 409, later.text
+        assert later.json()["detail"]["code"] == "session_content_revision_changed"
+        fresh = await client.get(
+            f"/v1/sessions/{session_id}/messages",
+            params={
+                "direction": "desc",
+                "offset": 2,
+                "limit": 2,
+                "content_revision": current,
+            },
+        )
+        assert fresh.status_code == 200, fresh.text
+        assert fresh.json()["content_revision"] == current
+        assert all(
+            item["content"].startswith(f"version {version} ") for item in fresh.json()["items"]
+        )
+        revision = current
+
+
+@pytest.mark.asyncio
+async def test_failed_upload_cannot_cache_uncommitted_snapshot_bytes(
+    client: httpx.AsyncClient, db_session: AsyncSession, seed_user, monkeypatch: pytest.MonkeyPatch
+):
+    from app.routes import sessions as route
+
+    env_id = await _register_env(client, machine_id=f"failed-put-{uuid.uuid4().hex}")
+    local_id = f"failed-put-{uuid.uuid4().hex}"
+    await client.post(
+        "/v1/sessions/batch",
+        json={
+            "sessions": [
+                {
+                    "environment_id": env_id,
+                    "local_session_id": local_id,
+                    "started_at": datetime.now(UTC).isoformat(),
+                }
+            ]
+        },
+    )
+    committed = b'[{"role":"user","content":"committed"}]'
+    uncommitted = b'[{"role":"user","content":"never committed"}]'
+    first = await client.post(
+        f"/v1/sessions/{local_id}/upload",
+        files={
+            "file": ("messages.json", committed, "application/json"),
+        },
+    )
+    assert first.status_code == 200, first.text
+    file_key = first.json()["file_key"]
+    listing = (await client.get("/v1/sessions", params={"environment_id": env_id})).json()
+    session_id = listing["items"][0]["id"]
+    revision = f"snapshot:{hashlib.sha256(committed).hexdigest()}"
+
+    async def fail_index(*args, **kwargs):
+        raise RuntimeError("index failure after object put")
+
+    with monkeypatch.context() as failure:
+        failure.setattr(route, "replace_snapshot_search_index", fail_index)
+        with pytest.raises(RuntimeError, match="index failure after object put"):
+            await client.post(
+                f"/v1/sessions/{local_id}/upload",
+                files={
+                    "file": ("messages.json", uncommitted, "application/json"),
+                },
+            )
+    await db_session.rollback()
+    await db_session.refresh(seed_user)
+    assert await route.file_store.get(file_key) == uncommitted
+    detail = await client.get(f"/v1/sessions/{session_id}")
+    assert detail.json()["content_hash"] == hashlib.sha256(committed).hexdigest()
+    for _ in range(2):
+        rejected = await client.get(
+            f"/v1/sessions/{session_id}/messages",
+            params={
+                "content_revision": revision,
+            },
+        )
+        assert rejected.status_code == 409, rejected.text
+    # Restoring the committed bytes succeeds, proving no mislabeled projection
+    # from the failed upload poisoned subsequent cache hits.
+    await route.file_store.put(file_key, committed)
+    recovered = await client.get(
+        f"/v1/sessions/{session_id}/messages",
+        params={
+            "content_revision": revision,
+        },
+    )
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["items"][0]["content"] == "committed"
+    assert recovered.json()["content_revision"] == revision
