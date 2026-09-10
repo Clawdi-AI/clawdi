@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { deployChannelAuthSearch, resolveDeployChannel } from "./deploy-channel";
+import {
+	deployChannelAuthSearch,
+	deployChannelSearch,
+	resolveDeployChannel,
+} from "./deploy-channel";
 
 describe("deployment channel links", () => {
 	test("accepts direct and authentication return links", () => {
@@ -52,4 +56,18 @@ test("normalizes direct auth entries", () => {
 		"?redirect_url=%2Fdeploy%3Fdeploy_profile%3Dsui",
 	);
 	expect(deployChannelAuthSearch("?redirect_url=%2Fdeploy%3Fdeploy_profile%3Dsui")).toBeNull();
+});
+
+test("deployment navigation carries only a valid profile", () => {
+	expect(deployChannelSearch("?deploy_profile=sui&settings=general&other=value")).toEqual({
+		deploy_profile: "sui",
+	});
+	expect(deployChannelSearch("?utm_source=sui")).toEqual({ deploy_profile: "sui" });
+	for (const search of [
+		"",
+		"?deploy_profile=unknown&utm_source=sui",
+		"?deploy_profile=sui&deploy_profile=sui",
+	]) {
+		expect(deployChannelSearch(search)).toEqual({});
+	}
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "@tanstack/react-router";
+import { useRouter, useRouterState } from "@tanstack/react-router";
 import { CirclePlus, Loader2, Rocket, TerminalSquare } from "lucide-react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { deployChannelSearch } from "@/lib/deploy-channel";
 import { useDesktopBridge } from "@/lib/desktop";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useProductAccess } from "@/lib/product-access";
@@ -34,6 +35,7 @@ export function NewAgentButton({
 	className?: string;
 } = {}) {
 	const router = useRouter();
+	const search = useRouterState({ select: (state) => state.location.searchStr });
 	const desktopBridge = useDesktopBridge();
 	const hostedAccess = useProductAccess();
 	const hydrated = useHydrated();
@@ -65,7 +67,7 @@ export function NewAgentButton({
 		if (!canDeployOnClawdi) return;
 		setChooserOpen(false);
 		onNavigate?.();
-		void router.navigate({ href: "/deploy" });
+		void router.navigate({ to: "/deploy", search: deployChannelSearch(search) });
 	}
 
 	const trigger = (

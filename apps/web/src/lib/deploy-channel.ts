@@ -24,6 +24,10 @@ export function resolveDeployChannel(search: string): "sui" | null {
 	return values.length === 1 && values[0] === "sui" ? "sui" : null;
 }
 
+export function deployChannelSearch(search: string): { deploy_profile?: "sui" } {
+	return resolveDeployChannel(search) ? { deploy_profile: "sui" } : {};
+}
+
 // Normalize direct auth entry links to Clerk's native return URL contract.
 export function deployChannelAuthSearch(search: string): string | null {
 	const params = new URLSearchParams(search);
