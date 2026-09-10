@@ -9,6 +9,7 @@ import {
 	readFencedSessionEntry,
 	readSessionsLock,
 	type SessionFence,
+	type SessionsLock,
 } from "./sessions-lock";
 
 export type SelectedSessionProtocol = "snapshot-v1" | "events-v1";
@@ -115,8 +116,9 @@ export function sessionPlanMatchesLock(fence: SessionFence, plan: SessionUploadP
 export function sessionPlanIsDurablyBlocked(
 	fence: SessionFence,
 	plan: SessionUploadPlan,
+	lock: SessionsLock = readSessionsLock(),
 ): string | null {
-	const entry = readFencedSessionEntry(readSessionsLock(), fence);
+	const entry = readFencedSessionEntry(lock, fence);
 	return entry?.local_hash === plan.localHash ? (entry.blocked?.message ?? null) : null;
 }
 

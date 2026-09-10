@@ -25,7 +25,7 @@ import {
 	sessionPlanIsDurablyBlocked,
 	syncSessionContent,
 } from "../lib/session-upload";
-import { readFencedSessionEntry, readSessionsLock, type SessionsLock } from "../lib/sessions-lock";
+import { readFencedSessionEntry, readSessionsLock } from "../lib/sessions-lock";
 import { isValidSkillKey } from "../lib/skill-key";
 import {
 	computeSkillFolderHash,
@@ -143,7 +143,6 @@ export async function push(opts: PushOpts) {
 	const strictModuleSelection = explicitlySelectedModules && targetTypes.length === 1;
 
 	const moduleState = readModuleState();
-	const sessionsLock = readSessionsLock();
 
 	// Project selection is agent-independent (derived only from flags), so
 	// resolve it once and report it once — not per agent.
@@ -177,7 +176,7 @@ export async function push(opts: PushOpts) {
 				moduleSkips.push({ agentType, modules: missing });
 			}
 			if (availableModules.length === 0) continue;
-			const scan = await scanOneAgent(adapter, availableModules, opts, projectFilter, sessionsLock);
+			const scan = await scanOneAgent(adapter, availableModules, opts, projectFilter);
 			if ("error" in scan) {
 				scanError = scan.error;
 				break;
@@ -323,7 +322,6 @@ async function scanOneAgent(
 	modules: string[],
 	opts: PushOpts,
 	projectFilter: string | undefined,
-	sessionsLock: SessionsLock,
 ): Promise<AgentScanResult | { error: string }> {
 	const agentType = adapter.agentType;
 	const envId = getEnvIdByAgent(agentType);
@@ -466,7 +464,9 @@ async function scanOneAgent(
 	// filters can't pollute it because each session has its own entry.
 	let sessionsCacheSkipped = 0;
 	let sessionsBlocked = 0;
-	if (sessionsModule && sessionProtocol) {
+	// This snapshot belongs only to the synchronous eligibility pass after collection.
+	const sessionsLock = modules.includes("sessions") ? readSessionsLock() : null;
+	if (sessionsModule && sessionProtocol && sessionsLock) {
 		const before = sessions.length;
 		sessions = sessions.filter((s) => {
 			const plan = planSessionUpload(s, sessionProtocol);
@@ -477,7 +477,7 @@ async function scanOneAgent(
 				adapter: agentType,
 				sourceSessionKey: s.localSessionId,
 			});
-			const blocked = sessionPlanIsDurablyBlocked(fence, plan);
+			const blocked = sessionPlanIsDurablyBlocked(fence, plan, sessionsLock);
 			if (blocked) {
 				sessionsBlocked += 1;
 				notes.push(blocked);
@@ -498,7 +498,7 @@ async function scanOneAgent(
 	}
 
 	// Guidance when nothing matched at all.
-	if (modules.includes("sessions") && sessions.length === 0 && sessionsCacheSkipped === 0) {
+	if (sessionsLock && sessions.length === 0 && sessionsCacheSkipped === 0) {
 		const isFirstRun = !Object.keys(sessionsLock.sessions).some((k) =>
 			k.startsWith(`${agentType}:`),
 		);

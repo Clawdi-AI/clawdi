@@ -432,7 +432,16 @@ async def get_project(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
     row = (
         await db.execute(
-            select(Project, *_project_count_columns(auth.user_id)).where(
+            select(Project, User, ProjectMembership, *_project_count_columns(auth.user_id))
+            .outerjoin(User, User.id == Project.user_id)
+            .outerjoin(
+                ProjectMembership,
+                and_(
+                    ProjectMembership.project_id == Project.id,
+                    ProjectMembership.member_user_id == auth.user_id,
+                ),
+            )
+            .where(
                 Project.id == project_uuid,
                 active_project_filter(),
             )
@@ -440,16 +449,7 @@ async def get_project(
     ).one_or_none()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "project not found")
-    project, skill_count, vault_count, agent_count, member_count = row
-    owner = (await db.execute(select(User).where(User.id == project.user_id))).scalar_one_or_none()
-    membership = (
-        await db.execute(
-            select(ProjectMembership).where(
-                ProjectMembership.project_id == project.id,
-                ProjectMembership.member_user_id == auth.user_id,
-            )
-        )
-    ).scalar_one_or_none()
+    project, owner, membership, skill_count, vault_count, agent_count, member_count = row
     return _project_response(
         project,
         auth.user_id,
