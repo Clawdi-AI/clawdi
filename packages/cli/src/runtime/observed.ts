@@ -436,16 +436,41 @@ async function runtimeServiceIsReady(unit: string, paths: RuntimePaths): Promise
 			const basePath = controlUi?.basePath ?? "";
 			if (typeof basePath !== "string") return false;
 			const origin = `http://127.0.0.1:${port}`;
-			const status = recordValue(JSON.parse(await runtimeReadinessProbe(`${origin}/readyz`)));
-			if (status?.ready !== true) return false;
+			const probe = await runtimeReadinessProbe(`${origin}/readyz`, false, [200, 503]);
+			const status = recordValue(JSON.parse(probe.body));
+			if (status?.ready === true && probe.status !== 200) return false;
+			if (status?.ready !== true) {
+				if (
+					probe.status !== 503 ||
+					status?.ready !== false ||
+					!Array.isArray(status.failing) ||
+					status.failing.length === 0 ||
+					!status.failing.every((failure) => typeof failure === "string") ||
+					status.failing.includes("gateway-draining")
+				)
+					return false;
+				// Older gateways aggregate downstream channel health into /readyz.
+				// Their native handshake rejects startup but needs no operator scopes.
+				const command = installedOpenClawCommandPath(paths.userHome);
+				if (!command) return false;
+				const result = await execRuntimeUserCommand(
+					command,
+					["gateway", "status", "--json", "--timeout", String(RUNTIME_READINESS_TIMEOUT_MS)],
+					paths.userHome,
+					paths.userHome,
+					{ runtimeUser: runtimeUserName(), timeoutMs: 15_000, maxBufferBytes: 64 * 1024 },
+				);
+				const rpc = recordValue(recordValue(JSON.parse(result.stdout))?.rpc);
+				if (rpc?.ok !== true || rpc.url !== `ws://127.0.0.1:${port}`) return false;
+			}
 			// Control UI assets are prepared asynchronously after HTTP startup.
 			const uiUrl = new URL(origin);
 			uiUrl.pathname = `${basePath.replace(/\/+$/, "")}/`;
-			return (await runtimeReadinessProbe(uiUrl.href, true)) === "200";
+			return (await runtimeReadinessProbe(uiUrl.href, true)).status === 200;
 		}
 		// The managed Hermes dashboard command binds the native port 9119.
 		const status = recordValue(
-			JSON.parse(await runtimeReadinessProbe("http://127.0.0.1:9119/api/status")),
+			JSON.parse((await runtimeReadinessProbe("http://127.0.0.1:9119/api/status")).body),
 		);
 		return (
 			status?.gateway_running === true &&
@@ -458,23 +483,31 @@ async function runtimeServiceIsReady(unit: string, paths: RuntimePaths): Promise
 	}
 }
 
-async function runtimeReadinessProbe(url: string, headersOnly = false): Promise<string> {
+async function runtimeReadinessProbe(
+	url: string,
+	headersOnly = false,
+	acceptedStatuses: readonly number[] = [200],
+): Promise<{ status: number; body: string }> {
 	const { stdout } = await execFileAsync(
 		"curl",
 		[
 			"--disable",
 			"--noproxy",
 			"*",
-			"--fail",
 			"--silent",
 			"--max-time",
 			String(RUNTIME_READINESS_TIMEOUT_MS / 1_000),
-			...(headersOnly ? ["--head", "--output", "/dev/null", "--write-out", "%{http_code}"] : []),
+			...(headersOnly ? ["--head", "--output", "/dev/null"] : []),
+			"--write-out",
+			"\n%{http_code}",
 			url,
 		],
 		{ encoding: "utf8", maxBuffer: 64 * 1024, timeout: RUNTIME_READINESS_TIMEOUT_MS + 500 },
 	);
-	return stdout;
+	const separator = stdout.lastIndexOf("\n");
+	const status = Number(stdout.slice(separator + 1));
+	if (!acceptedStatuses.includes(status)) throw new Error("Runtime probe HTTP failure");
+	return { status, body: stdout.slice(0, separator) };
 }
 
 function systemdFailureEvidence(

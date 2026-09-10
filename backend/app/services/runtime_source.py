@@ -94,7 +94,7 @@ RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
 # Renderer contract: bump this value whenever emitted desired-state material changes.
 # A bump makes each Agent render and backfill once on its next manifest poll, spreading
 # the fleet work naturally. Forgetting it can make an old ETag return 304 indefinitely.
-RUNTIME_SOURCE_RENDERER_REVISION = "runtime-source.v2"
+RUNTIME_SOURCE_RENDERER_REVISION = "runtime-source.v3"
 RUNTIME_CAPABILITIES_HEADER = "X-Clawdi-Runtime-Capabilities"
 RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1"
 RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY = "agent-plugin-github-release-source-v1"
@@ -782,6 +782,20 @@ def render_runtime_source(
             for entry in providers.values()
             if entry.get("configurationMode") in {"native", "connection", "custom"}
         ]
+        if len(native_chat) == 1:
+            # Native-owned chat consumes managed bindings only for embeddings.
+            # Keep the shared source intact for the independently bound Codex tool.
+            for provider_id, entry in providers.items():
+                if entry.get("managed_by") != "clawdi":
+                    continue
+                embedding_models = [
+                    model
+                    for model in entry.get("models", [])
+                    if model.get("capabilities", {}).get("embeddings") is True
+                    and model.get("capabilities", {}).get("chat") is False
+                ]
+                if embedding_models:
+                    providers[provider_id] = {**entry, "models": embedding_models}
         catalog_chat = [
             entry
             for entry in providers.values()
