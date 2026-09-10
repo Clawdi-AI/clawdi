@@ -76,6 +76,11 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- CLI 0.14.68 reports agents as ready only after their gateway and dashboard
+  are serving, so startup and service failures no longer appear ready.
+- Deploying an Agent opens its deployment progress reliably, without briefly
+  showing the overview. Empty session lists use the standard inset empty state.
+
 - Signing in keeps the dashboard frame visible while account data loads, instead
   of replacing the page with a full-screen loading indicator.
 - CLI 0.14.64 allows more time for Hermes version checks so slow native update
