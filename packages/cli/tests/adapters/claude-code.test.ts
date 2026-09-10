@@ -315,6 +315,30 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		expect(result.sessions.map((s) => s.localSessionId)).toEqual(["cccc-cccc"]);
 	});
 
+	it("keeps equal-sized resume leaves, including identical uuid sets", async () => {
+		const cwd = "/Users/fixture/resume-branches";
+		const shared = uuidRange("shared", 10);
+		writeResumeSessionFile({ cwd, sessionId: "predecessor", uuids: shared });
+		for (const [sessionId, suffix] of [
+			["branch-a", "a"],
+			["branch-a-copy", "a"],
+			["branch-b", "b"],
+		]) {
+			writeResumeSessionFile({ cwd, sessionId, uuids: [...shared, suffix] });
+		}
+
+		const adapter = new ClaudeCodeAdapter();
+		const result = await adapter.sessions.collect({ kind: "complete", projectFilter: cwd });
+		expect(result.sessions.map((session) => session.localSessionId).sort()).toEqual([
+			"branch-a",
+			"branch-a-copy",
+			"branch-b",
+		]);
+		expect(result.dedupedCount).toBe(1);
+		expect(await adapter.sessions.resolve("predecessor")).toBeNull();
+		expect((await adapter.sessions.resolve("branch-a-copy"))?.localSessionId).toBe("branch-a-copy");
+	});
+
 	it("does not dedupe across different projects even when uuid sets are subset", async () => {
 		const aUuids = uuidRange("u", 12);
 		const bUuids = [...aUuids, ...uuidRange("v", 8)];
