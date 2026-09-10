@@ -1311,7 +1311,9 @@ function seedHostedCodexPackage(
 	mkdirSync(dirname(realBin), { recursive: true });
 	writeFileSync(
 		packageJson,
-		options.validPackageJson === false ? "not-json\n" : JSON.stringify({ version }),
+		options.validPackageJson === false
+			? "not-json\n"
+			: JSON.stringify({ name: "@openai/codex", version }),
 	);
 	writeFileSync(realBin, "#!/bin/sh\nexit 0\n");
 	chmodSync(realBin, options.executable === false ? 0o600 : 0o755);
@@ -1322,6 +1324,7 @@ function writeHostedCodexNpmInstaller(
 	binDir: string,
 	markerPath: string,
 	installedVersion: string,
+	installedName = "@openai/codex",
 ): void {
 	mkdirSync(binDir, { recursive: true });
 	writeFileSync(
@@ -1331,12 +1334,21 @@ function writeHostedCodexNpmInstaller(
 			"set -euo pipefail",
 			`printf 'install\\n' >> '${markerPath}'`,
 			"prefix=''",
+			"registry=''",
+			"scoped_registry=''",
 			'test "${!#}" = "@openai/codex"',
 			'while [ "$#" -gt 0 ]; do',
-			'  if [ "$1" = "--prefix" ]; then prefix="$2"; shift 2; else shift; fi',
+			'  case "$1" in',
+			'    --prefix) prefix="$2"; shift 2 ;;',
+			'    --registry) registry="$2"; shift 2 ;;',
+			'    --@openai:registry) scoped_registry="$2"; shift 2 ;;',
+			"    *) shift ;;",
+			"  esac",
 			"done",
+			'test "$registry" = "https://registry.npmjs.org"',
+			'test "$scoped_registry" = "$registry"',
 			'mkdir -p "$prefix/bin" "$prefix/lib/node_modules/@openai/codex"',
-			`printf '%s\\n' '{"version":"${installedVersion}"}' > "$prefix/lib/node_modules/@openai/codex/package.json"`,
+			`printf '%s\\n' '{"name":"${installedName}","version":"${installedVersion}"}' > "$prefix/lib/node_modules/@openai/codex/package.json"`,
 			"printf '#!/bin/sh\\nexit 0\\n' > \"$prefix/bin/codex\"",
 			'chmod 755 "$prefix/bin/codex"',
 			"",
@@ -3707,7 +3719,10 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		}
 	});
 
-	it("fails closed when npm installs invalid Codex package metadata", () => {
+	it.each([
+		["invalid", "@openai/codex"],
+		["0.154.0", "other-package"],
+	])("fails closed for Codex metadata %s / %s", (version, name) => {
 		const home = join(root, "codex-invalid-version", "home", "clawdi");
 		const state = join(root, "codex-invalid-version", "var", "lib", "clawdi");
 		const run = join(root, "codex-invalid-version", "run", "clawdi");
@@ -3715,7 +3730,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const installMarker = join(root, "codex-invalid-version", "npm-install.txt");
 		const previousPath = process.env.PATH;
 		seedOpenClawBinary(home);
-		writeHostedCodexNpmInstaller(binDir, installMarker, "invalid");
+		writeHostedCodexNpmInstaller(binDir, installMarker, version, name);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;

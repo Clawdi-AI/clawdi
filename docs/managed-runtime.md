@@ -762,11 +762,17 @@ and decrypts that provider auth payload once. The CLI uses the terminal-tool
 reference to own exactly one Hosted Codex default configuration at
 `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`). When Codex is absent
 or damaged, the CLI installs the official npm package `@openai/codex` at its
-current stable release from `https://registry.npmjs.org` into the tenant's
-standard `~/.local` npm prefix. Its installed npm metadata retains the actual
-validated version, also bound into the provider impact revision. A later reconcile
-does not query the registry for a newer release. It does not wrap, pin, or roll back a healthy user-owned
-Codex install. The Hosted instance environment supplies the public egress
+npm default tag (`latest` unless the user configures another tag) from
+`https://registry.npmjs.org` into the tenant's standard `~/.local` npm prefix.
+Bootstrap sets both the default and `@openai` scoped registry to the official
+registry; an inherited scoped mirror cannot redirect this installation. Its installed npm metadata retains the actual
+validated semantic version, also bound into the provider impact revision.
+A later reconcile
+does not query the registry for a newer release when package metadata is valid
+and the command has executable permission. This is an installation-presence check,
+not an execution-health or sandbox qualification. It does not wrap, pin, or roll
+back an existing user-owned Codex install that passes those checks. The Hosted
+instance environment supplies the public egress
 placeholder, standard CA trust variables, and npm prefix to terminal commands.
 Managed, BYOK, Codex OAuth, and unmanaged runtime-provider modes all receive the
 same terminal Codex default. Unmanaged OpenClaw or Hermes units receive no

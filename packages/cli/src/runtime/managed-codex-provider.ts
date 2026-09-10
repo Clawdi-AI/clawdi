@@ -121,8 +121,8 @@ function hostedCodexInstalledVersion(npmPrefix: string): string | null {
 		"package.json",
 	);
 	try {
-		const parsed = JSON.parse(readFileSync(packageJsonPath, "utf8")) as unknown;
-		if (!parsed || typeof parsed !== "object" || !("version" in parsed)) return null;
+		const parsed = recordValue(JSON.parse(readFileSync(packageJsonPath, "utf8")));
+		if (parsed?.name !== "@openai/codex") return null;
 		return typeof parsed.version === "string" && isValidSemver(parsed.version)
 			? parsed.version
 			: null;
@@ -148,6 +148,8 @@ function installHostedCodexBootstrap(
 			npmPrefix,
 			"--ignore-scripts",
 			"--registry",
+			"https://registry.npmjs.org",
+			"--@openai:registry",
 			"https://registry.npmjs.org",
 			"--fetch-retries",
 			"2",
