@@ -3,8 +3,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, require_user_auth
+from app.core.auth import AuthContext, is_env_bound_api_key, require_user_auth
 from app.core.database import get_session
+from app.core.project import resolve_default_write_project
 from app.schemas.vault_requests import (
     VaultSecretRequestCreate,
     VaultSecretRequestCreated,
@@ -56,6 +57,8 @@ async def list_requests(
     auth: AuthContext = Depends(require_user_auth),
     db: AsyncSession = Depends(get_session),
 ) -> list[VaultSecretRequestStatus]:
+    if project_id is None and is_env_bound_api_key(auth):
+        project_id = await resolve_default_write_project(db, auth)
     await get_vault_for_write(db, auth, slug, project_id=project_id, vault_id=vault_id)
     return await service.recent_requests(db, vault_id, project_id, limit=limit)
 

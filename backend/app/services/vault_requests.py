@@ -2,6 +2,7 @@
 
 import hashlib
 import secrets
+import shlex
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from urllib.parse import quote
@@ -93,7 +94,9 @@ async def describe(db: AsyncSession, row: VaultSecretRequest) -> VaultSecretRequ
         references=references,
         local_command=(
             f"clawdi vault materialize --vault {row.vault_id} "
-            f"--project {row.project_id} --out <absolute-env-path>"
+            f"--project {row.project_id}"
+            + (f" --section={shlex.quote(row.section)}" if row.section else "")
+            + " --out <absolute-env-path>"
         ),
     )
 

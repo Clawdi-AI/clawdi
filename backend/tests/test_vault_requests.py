@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import shlex
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -15,7 +16,7 @@ from app.schemas.vault_requests import VaultSecretRequestSupply
 from app.services.vault_requests import owned_request, supply
 
 
-async def make_request(client, *, fields=None):
+async def make_request(client, *, fields=None, section=""):
     vault = (await client.post("/v1/vault", json={"slug": "requested", "name": "Requested"})).json()
     detail = (
         await client.get("/v1/vault/detail", params={"slug": "requested", "vault_id": vault["id"]})
@@ -25,6 +26,7 @@ async def make_request(client, *, fields=None):
         "vault_id": vault["id"],
         "project_id": detail["project_ids"][0],
         "fields": fields or ["API_KEY", "API_SECRET"],
+        "section": section,
     }
     response = await client.post("/v1/vault/requests", json=body)
     assert response.status_code == 200, response.text
@@ -34,6 +36,7 @@ async def make_request(client, *, fields=None):
 @pytest.mark.asyncio
 async def test_capability_atomic_fields_replay_and_plaintext_boundary(cli_client, db_session):
     body, created = await make_request(cli_client)
+    assert not any(arg.startswith("--section") for arg in shlex.split(created["local_command"]))
     token = created["url"].split("#")[1]
     row = await db_session.get(VaultSecretRequest, uuid.UUID(created["id"]))
     assert row.token_hash == hashlib.sha256(token.encode()).hexdigest()
@@ -266,3 +269,106 @@ async def test_requests_slug_keeps_existing_vault_item_routes(cli_client):
         response = await cli_client.get(f"{prefix}/vault/requests/items")
         assert response.status_code == 200, response.text
         assert response.json() == {"(default)": ["TOKEN"]}
+
+
+@pytest.mark.asyncio
+async def test_bound_request_listing_defaults_to_its_project(cli_client, db_session, seed_user):
+    from app.core.auth import get_auth
+    from app.main import app
+    from app.models.api_key import ApiKey
+    from tests.conftest import create_env_with_project
+
+    body, other_request = await make_request(cli_client, fields=["OTHER_PROJECT_TOKEN"])
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="request-list-bound",
+        machine_name="Request listing Agent",
+    )
+    db_session.add(
+        VaultProjectAttachment(
+            vault_id=uuid.UUID(body["vault_id"]),
+            project_id=env.default_project_id,
+        )
+    )
+    await db_session.commit()
+    response = await cli_client.post(
+        "/v1/vault/requests",
+        json={
+            **body,
+            "project_id": str(env.default_project_id),
+            "fields": ["BOUND_TOKEN"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    own_request = response.json()
+    query = {"slug": body["slug"], "vault_id": body["vault_id"]}
+    # An unbound owner still sees both Projects on the shared Vault.
+    assert {
+        row["id"] for row in (await cli_client.get("/v1/vault/requests", params=query)).json()
+    } == {
+        other_request["id"],
+        own_request["id"],
+    }
+    bound = AuthContext(
+        user=seed_user,
+        api_key=ApiKey(
+            user_id=seed_user.id,
+            key_hash="listing-test",
+            key_prefix="listing-test",
+            environment_id=env.id,
+            scopes=None,
+        ),
+        api_key_project_id=env.default_project_id,
+    )
+    app.dependency_overrides[get_auth] = lambda: bound
+    for prefix in ("/v1", "/api"):
+        response = await cli_client.get(f"{prefix}/vault/requests", params=query)
+        assert response.status_code == 200, response.text
+        assert response.json() == [
+            {key: value for key, value in own_request.items() if key != "url"}
+        ]
+        forbidden = await cli_client.get(
+            f"{prefix}/vault/requests",
+            params={
+                **query,
+                "project_id": body["project_id"],
+            },
+        )
+        assert forbidden.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("section", ["production", "-production"])
+async def test_request_command_selects_only_its_named_section(cli_client, section):
+    body, created = await make_request(cli_client, fields=["TOKEN"], section=section)
+    supplied = await cli_client.post(
+        "/v1/vault/requests/supply",
+        json={
+            "token": created["url"].split("#")[1],
+            "fields": {"TOKEN": "requested-value"},
+        },
+    )
+    assert supplied.status_code == 200, supplied.text
+    await cli_client.put(
+        "/v1/vault/requested/items",
+        json={
+            "section": "other",
+            "fields": {"TOKEN": "unrelated-value", "OTHER": "keep"},
+        },
+    )
+    status = (await cli_client.get(f"/v1/vault/requests/{created['id']}")).json()
+    for command in (created["local_command"], status["local_command"]):
+        args = shlex.split(command)
+        selected_sections = [arg.split("=", 1)[1] for arg in args if arg.startswith("--section=")]
+        assert selected_sections == [section]
+        material = await cli_client.post(
+            "/v1/vault/material",
+            json={
+                "vault_id": body["vault_id"],
+                "project_id": body["project_id"],
+                "section": selected_sections[0],
+            },
+        )
+        assert material.status_code == 200, material.text
+        assert material.json()["values"] == {"TOKEN": "requested-value"}
