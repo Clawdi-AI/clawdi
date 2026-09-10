@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.core.auth import AuthContext, require_clerk_id, require_user_auth_short_session
 from app.core.config import settings
-from app.middleware.request_timing import channel_stage, record_pre_handler
+from app.middleware.request_timing import record_pre_handler, request_stage
 from app.schemas.common import Paginated
 from app.schemas.connector import (
     ConnectorAuthFieldsResponse,
@@ -129,7 +129,7 @@ async def list_connections(
         return []
     clerk_id = require_clerk_id(auth)
     try:
-        with channel_stage(request.scope, "connector_route_fetch_ms"):
+        with request_stage(request.scope, "connector_route_fetch_ms"):
             accounts = await get_all_connected_accounts(clerk_id)
     except ComposioRouteError as exc:
         if _is_composio_auth_error(exc):
@@ -140,9 +140,9 @@ async def list_connections(
     # Composio Tool Router sessions capture the active account set, so
     # observing the latest connected-account state should force the next
     # MCP bridge call to create a fresh session.
-    with channel_stage(request.scope, "connector_invalidation_ms"):
+    with request_stage(request.scope, "connector_invalidation_ms"):
         await invalidate_tool_router_mcp_session(clerk_id)
-    with channel_stage(request.scope, "connector_response_build_ms"):
+    with request_stage(request.scope, "connector_response_build_ms"):
         return [ConnectorConnectionResponse.model_validate(account) for account in accounts]
 
 
@@ -179,7 +179,7 @@ async def list_available_apps(
             items=[], total=0, page=page, page_size=page_size
         )
     try:
-        with channel_stage(request.scope, "connector_route_fetch_ms"):
+        with request_stage(request.scope, "connector_route_fetch_ms"):
             page_data = await get_available_apps(search=search, page=page, page_size=page_size)
     except ComposioRouteError as exc:
         if _is_composio_auth_error(exc):
@@ -188,7 +188,7 @@ async def list_available_apps(
                 items=[], total=0, page=page, page_size=page_size
             )
         raise map_composio_error(exc) from exc
-    with channel_stage(request.scope, "connector_response_build_ms"):
+    with request_stage(request.scope, "connector_response_build_ms"):
         return Paginated[ConnectorAvailableAppResponse](
             items=page_data["items"],
             total=page_data["total"],
@@ -210,7 +210,7 @@ async def get_available_app(
     if not settings.composio_api_key:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
     try:
-        with channel_stage(request.scope, "connector_route_fetch_ms"):
+        with request_stage(request.scope, "connector_route_fetch_ms"):
             app = await get_app_by_name(app_name)
     except ComposioRouteError as exc:
         raise map_composio_error(exc) from exc

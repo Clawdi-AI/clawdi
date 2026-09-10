@@ -264,7 +264,7 @@ async def test_telegram_route_stage_timings(
             )
 
     stages = ("channel_auth_ms", "channel_url_validation_ms", "channel_provider_ms")
-    timings = scope["state"]["_channel_stage_timings"]
+    timings = scope["state"]["_request_stage_timings"]
     assert timings == pytest.approx(
         {stage: value for stage, value in zip(stages, expected_stages) if value is not None}
     )
@@ -286,14 +286,14 @@ async def test_telegram_route_stage_timings(
 
 
 async def test_request_timing_isolates_stage_state_and_filters_fields(caplog):
-    from app.middleware.request_timing import _CHANNEL_TIMING_STATE
+    from app.middleware.request_timing import _REQUEST_TIMING_STATE
 
     inherited = {"channel_auth_ms": 999.0}
     scope = _scope()
-    scope["state"][_CHANNEL_TIMING_STATE] = inherited
+    scope["state"][_REQUEST_TIMING_STATE] = inherited
 
     async def inner(scope: Scope, _receive: Receive, send: Send) -> None:
-        timings = scope["state"][_CHANNEL_TIMING_STATE]
+        timings = scope["state"][_REQUEST_TIMING_STATE]
         assert timings == {}
         assert timings is not inherited
         timings.update(
@@ -322,9 +322,9 @@ async def test_request_timing_isolates_stage_state_and_filters_fields(caplog):
 async def test_overlapping_requests_do_not_share_lifespan_stage_timings(caplog):
     import asyncio
 
-    from app.middleware.request_timing import channel_stage, record_pre_handler
+    from app.middleware.request_timing import record_pre_handler, request_stage
 
-    inherited = {"_channel_stage_timings": {"upload_storage_ms": 999.0}}
+    inherited = {"_request_stage_timings": {"upload_storage_ms": 999.0}}
     first, second = _scope(), _scope()
     first["state"] = inherited.copy()
     second["state"] = inherited.copy()
@@ -334,12 +334,12 @@ async def test_overlapping_requests_do_not_share_lifespan_stage_timings(caplog):
     async def inner(scope, _receive, send):
         record_pre_handler(scope)
         if scope is first:
-            with channel_stage(scope, "upload_storage_ms"):
+            with request_stage(scope, "upload_storage_ms"):
                 entered.set()
                 await release.wait()
                 raise RuntimeError("storage failed")
         await entered.wait()
-        with channel_stage(scope, "connector_route_fetch_ms"):
+        with request_stage(scope, "connector_route_fetch_ms"):
             await asyncio.sleep(0)
         await send({"type": "http.response.start", "status": 500, "headers": []})
         await send({"type": "http.response.body", "body": b""})
@@ -352,12 +352,12 @@ async def test_overlapping_requests_do_not_share_lifespan_stage_timings(caplog):
     )
     assert isinstance(results[0], RuntimeError)
     assert not isinstance(results[1], BaseException)
-    assert set(first["state"]["_channel_stage_timings"]) == {"pre_handler_ms", "upload_storage_ms"}
-    assert set(second["state"]["_channel_stage_timings"]) == {
+    assert set(first["state"]["_request_stage_timings"]) == {"pre_handler_ms", "upload_storage_ms"}
+    assert set(second["state"]["_request_stage_timings"]) == {
         "pre_handler_ms",
         "connector_route_fetch_ms",
     }
-    assert inherited == {"_channel_stage_timings": {"upload_storage_ms": 999.0}}
+    assert inherited == {"_request_stage_timings": {"upload_storage_ms": 999.0}}
     records = [r.getMessage() for r in caplog.records if r.name == "app.middleware.request_timing"]
     assert len(records) == 2
     assert "connector_route_fetch_ms=" in records[0] and "upload_storage_ms=" not in records[0]

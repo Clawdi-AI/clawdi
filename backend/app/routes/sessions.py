@@ -41,7 +41,7 @@ from app.core.auth import (
 from app.core.config import settings
 from app.core.database import get_session
 from app.core.query_utils import SearchQuery
-from app.middleware.request_timing import channel_stage, record_pre_handler
+from app.middleware.request_timing import record_pre_handler, request_stage
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
@@ -3102,7 +3102,7 @@ async def upload_session_content(
 ) -> SessionUploadResponse:
     """Upload session messages JSON to FileStore."""
     record_pre_handler(request.scope)
-    with channel_stage(request.scope, "upload_lookup_lock_ms"):
+    with request_stage(request.scope, "upload_lookup_lock_ms"):
         bound_env = _bound_env_id(auth)
         stmt = select(Session).where(
             Session.user_id == auth.user_id,
@@ -3168,7 +3168,7 @@ async def upload_session_content(
     # streamed uploads (no Content-Length header) where the
     # middleware can't decide. `await file.read()` without bound
     # would pull arbitrarily large bodies into memory first.
-    with channel_stage(request.scope, "upload_spooled_read_ms"):
+    with request_stage(request.scope, "upload_spooled_read_ms"):
         _MAX_SESSION_CONTENT_BYTES = 50 * 1024 * 1024  # 50 MB
         chunks: list[bytes] = []
         total = 0
@@ -3188,7 +3188,7 @@ async def upload_session_content(
     # Hash, JSON validation, and reference extraction are CPU-bound for large
     # snapshots. Keep them together off the event loop so other requests can
     # continue while this upload is analyzed.
-    with channel_stage(request.scope, "upload_analysis_ms"):
+    with request_stage(request.scope, "upload_analysis_ms"):
         analysis = await _analyze_session_upload(data)
     content_hash = analysis.content_hash
 
@@ -3208,7 +3208,7 @@ async def upload_session_content(
         )
 
     fk = _session_content_key(session)
-    with channel_stage(request.scope, "upload_storage_ms"):
+    with request_stage(request.scope, "upload_storage_ms"):
         await file_store.put(fk, data)
 
     session.file_key = fk
@@ -3222,7 +3222,7 @@ async def upload_session_content(
     # we'd rather have a session with NULL related_refs than a
     # half-committed upload).
     session.related_refs = analysis.related_refs
-    with channel_stage(request.scope, "upload_index_ms"):
+    with request_stage(request.scope, "upload_index_ms"):
         await replace_snapshot_search_index(
             db,
             session,
@@ -3239,7 +3239,7 @@ async def upload_session_content(
             exc_info=(type(error), error, error.__traceback__),
         )
 
-    with channel_stage(request.scope, "upload_commit_ms"):
+    with request_stage(request.scope, "upload_commit_ms"):
         await db.commit()
 
     return SessionUploadResponse(status="uploaded", file_key=fk, content_hash=content_hash)

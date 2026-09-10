@@ -859,7 +859,7 @@ Done: timing contracts pass with real PostgreSQL/API-key authentication and
 local storage for snapshot uploads; connector attribution tests explicitly mock
 authentication and the route-facing adapter calls.
 
-Slow/error request logs reuse the fixed, request-local `channel_stage` fields:
+Slow/error request logs reuse the fixed, request-local `request_stage` fields:
 
 - `pre_handler_ms`: timing middleware entry to handler entry, including body
   arrival, multipart parsing, authentication and dependencies. It is not pure

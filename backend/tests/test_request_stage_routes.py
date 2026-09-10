@@ -95,7 +95,7 @@ async def test_upload_stages_real_auth_pg(
         try:
             await timed(scope, delayed_receive, send)
         finally:
-            captured.update(scope["state"]["_channel_stage_timings"])
+            captured.update(scope["state"]["_request_stage_timings"])
 
     caplog.set_level(logging.WARNING, logger=request_timing.__name__)
     data = {"expected_content_hash": "0" * 64} if failure == "cas" else {}

@@ -28,7 +28,7 @@ _SYNC_EVENTS_PATHS = frozenset(("/v1/sync/events", "/api/sync/events"))
 # breakdown. Connector route fetch includes SDK/cache waits and normalization,
 # not only vendor HTTP. Response building excludes FastAPI wire serialization.
 # Telegram provider time includes pool waits, TCP/TLS and RTT.
-type ChannelStage = Literal[
+type RequestStage = Literal[
     "channel_auth_ms",
     "channel_url_validation_ms",
     "channel_provider_ms",
@@ -43,7 +43,7 @@ type ChannelStage = Literal[
     "connector_invalidation_ms",
     "connector_response_build_ms",
 ]
-_CHANNEL_STAGES: tuple[ChannelStage, ...] = (
+_REQUEST_STAGES: tuple[RequestStage, ...] = (
     "channel_auth_ms",
     "channel_url_validation_ms",
     "channel_provider_ms",
@@ -58,17 +58,17 @@ _CHANNEL_STAGES: tuple[ChannelStage, ...] = (
     "connector_invalidation_ms",
     "connector_response_build_ms",
 )
-_CHANNEL_TIMING_STATE = "_channel_stage_timings"
+_REQUEST_TIMING_STATE = "_request_stage_timings"
 _REQUEST_STARTED_STATE = "_request_timing_started"
 
 
 @contextmanager
-def channel_stage(scope: Scope, stage: ChannelStage) -> Generator[None]:
+def request_stage(scope: Scope, stage: RequestStage) -> Generator[None]:
     started = time.perf_counter()
     try:
         yield
     finally:
-        scope.setdefault("state", {}).setdefault(_CHANNEL_TIMING_STATE, {})[stage] = _elapsed_ms(
+        scope.setdefault("state", {}).setdefault(_REQUEST_TIMING_STATE, {})[stage] = _elapsed_ms(
             started
         )
 
@@ -81,16 +81,16 @@ def record_pre_handler(scope: Scope) -> None:
     """
     started: object = scope.get("state", {}).get(_REQUEST_STARTED_STATE)
     if isinstance(started, float):
-        scope["state"][_CHANNEL_TIMING_STATE]["pre_handler_ms"] = _elapsed_ms(started)
+        scope["state"][_REQUEST_TIMING_STATE]["pre_handler_ms"] = _elapsed_ms(started)
 
 
-def _channel_stage_log_fields(scope: Scope) -> str:
-    timings: object = scope.get("state", {}).get(_CHANNEL_TIMING_STATE)
+def _request_stage_log_fields(scope: Scope) -> str:
+    timings: object = scope.get("state", {}).get(_REQUEST_TIMING_STATE)
     if not isinstance(timings, dict):
         return ""
     values = cast(dict[object, object], timings)
     fields: list[str] = []
-    for stage in _CHANNEL_STAGES:
+    for stage in _REQUEST_STAGES:
         value = values.get(stage)
         if isinstance(value, float) and math.isfinite(value) and value >= 0:
             fields.append(f" {stage}={value:.1f}")
@@ -108,7 +108,7 @@ class RequestTimingMiddleware:
             return
 
         # ASGI lifespan state is shallow-copied; replace the nested dict per request.
-        scope.setdefault("state", {})[_CHANNEL_TIMING_STATE] = {}
+        scope.setdefault("state", {})[_REQUEST_TIMING_STATE] = {}
         started = time.perf_counter()
         scope["state"][_REQUEST_STARTED_STATE] = started
         raw_method: object = scope.get("method", "GET")
@@ -139,7 +139,7 @@ class RequestTimingMiddleware:
                 path,
                 duration_ms,
                 _request_id(scope),
-                _channel_stage_log_fields(scope),
+                _request_stage_log_fields(scope),
             )
             raise
 
@@ -152,7 +152,7 @@ class RequestTimingMiddleware:
                 status_code,
                 duration_ms,
                 _request_id(scope),
-                _channel_stage_log_fields(scope),
+                _request_stage_log_fields(scope),
             )
         elif not _is_expected_long_request(raw_path) and _is_slow(
             duration_ms=duration_ms,
@@ -165,7 +165,7 @@ class RequestTimingMiddleware:
                 status_code,
                 duration_ms,
                 _request_id(scope),
-                _channel_stage_log_fields(scope),
+                _request_stage_log_fields(scope),
             )
 
 
