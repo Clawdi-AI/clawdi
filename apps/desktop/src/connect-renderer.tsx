@@ -219,7 +219,7 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 				</div>
 				<div className="titlebar-copy">
 					<p>Clawdi</p>
-					<h1>Connect Agent</h1>
+					<h1>Connect an Agent</h1>
 				</div>
 			</header>
 
@@ -238,7 +238,7 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 								<h2>Move Clawdi to Applications</h2>
 								<p>
 									Clawdi must run from Applications so macOS can safely start its bundled runtime
-									and background sync.
+									and sync.
 								</p>
 							</div>
 						</div>
@@ -318,7 +318,7 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 					<Centered
 						icon={<LoaderCircle className="spin" />}
 						title="Connecting your Agents"
-						description="Clawdi is registering them and starting background sync."
+						description="Clawdi is registering them and starting sync."
 					/>
 				) : null}
 
@@ -327,7 +327,7 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 						<Centered
 							icon={<CircleCheckBig />}
 							title="Agents connected"
-							description="Background sync keeps running when Clawdi is closed."
+							description="Sync keeps running when Clawdi is closed."
 							tone="success"
 						/>
 						<footer className="actions">
@@ -543,7 +543,7 @@ function AgentSelection({
 										`${candidate.name} will replace its binding to ${candidate.machineName}`,
 								)
 								.join(". ")}
-							. Stop background sync on the previous computer before continuing.
+							. Stop sync on the previous computer before continuing.
 						</p>
 					</div>
 				</div>
@@ -557,8 +557,8 @@ function AgentSelection({
 					<div>
 						<h2>Move Clawdi to Applications</h2>
 						<p>
-							Background sync must be installed from Applications so macOS always starts the correct
-							bundled runtime.
+							Sync must be installed from Applications so macOS always starts the correct bundled
+							runtime.
 						</p>
 					</div>
 				</div>
@@ -593,7 +593,7 @@ function AgentSelection({
 								: selected.size > 0
 									? `Connect ${selected.size} Agent${selected.size === 1 ? "" : "s"}`
 									: canRepairDaemon
-										? "Start background sync"
+										? "Start sync"
 										: "Open dashboard"}
 					<ArrowRight />
 				</button>
@@ -636,7 +636,7 @@ function DashboardFailureApp({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
 						title={failed ? "Couldn't reconnect" : "Dashboard unavailable"}
 						description={
 							failed
-								? "Try again, or open Connect Agent to check the local connection."
+								? "Try again, or open Connect an Agent to check the local connection."
 								: "Clawdi couldn't load your dashboard. Check your connection and try again."
 						}
 					/>

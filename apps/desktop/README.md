@@ -1,5 +1,16 @@
 # Clawdi Desktop
 
+The tray uses a monochrome Retina template icon and a single Sync checkbox.
+The checkbox reflects the installed service (the user's persistent sync choice);
+health is shown in the tooltip. Turning Sync off removes the service but retains
+Agent bindings and credentials. Turning it on restores the service for verified
+bindings or opens Connect an Agent when setup is needed.
+
+Download the DMG for first installation. The ZIP is the same application packaged
+for electron-updater/Squirrel.Mac and must remain a release asset; users do not
+need both. Renderer dependencies are bundled at build time and must not also be
+declared as production dependencies of the Electron shell.
+
 ## Platform coverage
 
 | Platform | Architectures | Packages | Updates |

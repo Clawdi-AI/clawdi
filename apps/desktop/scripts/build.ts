@@ -12,6 +12,9 @@ const PRODUCTION_CLERK_PUBLISHABLE_KEY = "pk_live_Y2xlcmsuY2xhd2RpLmFpJA";
 
 rmSync(outputRoot, { recursive: true, force: true });
 mkdirSync(outputRoot, { recursive: true });
+cpSync(join(desktopRoot, "build", "trayTemplate.png"), join(outputRoot, "trayTemplate.png"));
+cpSync(join(desktopRoot, "build", "trayTemplate@2x.png"), join(outputRoot, "trayTemplate@2x.png"));
+cpSync(join(desktopRoot, "build", "tray-LICENSE.txt"), join(outputRoot, "tray-LICENSE.txt"));
 
 await buildWebApp();
 cpSync(webClientRoot, packagedWebRoot, { recursive: true });

@@ -168,7 +168,7 @@ async function startApplication(): Promise<void> {
 			else await loadDashboardWithRecovery();
 		}
 		if (!startup.requiresWizard) {
-			runAsync("reconcile background sync after startup", reconcileBackgroundSyncAfterStartup());
+			runAsync("reconcile sync after startup", reconcileBackgroundSyncAfterStartup());
 		}
 	}
 	runAsync("initialize Desktop updates", initializeUpdates());
@@ -460,7 +460,7 @@ function registerIpc(): void {
 			const result = await withCriticalOperation(() =>
 				cli.connectAgents(readAgentConnections(rawConnections)),
 			);
-			runAsync("refresh background sync status", refreshTrayState());
+			runAsync("refresh sync status", refreshTrayState());
 			return result;
 		}),
 	);
@@ -473,10 +473,7 @@ function registerIpc(): void {
 			const window = connectWindow;
 			const result = await loadDashboardWithRecovery();
 			if (result === "connect-required") return;
-			runAsync(
-				"reconcile background sync after opening Dashboard",
-				reconcileBackgroundSyncAfterStartup(),
-			);
+			runAsync("reconcile sync after opening Dashboard", reconcileBackgroundSyncAfterStartup());
 			restoreMainWindowAfterConnect = false;
 			if (window && !window.isDestroyed()) window.destroy();
 		}),
@@ -530,7 +527,7 @@ function registerIpc(): void {
 	registerDashboardChildWindowIpc(DESKTOP_IPC.openRuntimeWindow, "runtime", "runtime UI");
 	registerDashboardChildWindowIpc(DESKTOP_IPC.openTerminalWindow, "terminal", "Terminal");
 	ipcMain.handle(DESKTOP_IPC.openConnectWizard, (event) =>
-		safeDashboardAction(event, "open Connect Agent", async () => {
+		safeDashboardAction(event, "open Connect an Agent", async () => {
 			const shouldRestore = mainWindow?.isVisible() === true;
 			await showConnectWindow();
 			restoreMainWindowAfterConnect ||= shouldRestore;
@@ -668,13 +665,13 @@ function assertDashboardSender(event: IpcMainInvokeEvent): void {
 
 function assertConnectSender(event: IpcMainInvokeEvent): void {
 	if (event.sender !== connectWindow?.webContents)
-		throw new Error("Unexpected Connect Agent client.");
+		throw new Error("Unexpected Connect an Agent client.");
 	const senderFrame = event.senderFrame;
 	if (!senderFrame || senderFrame !== event.sender.mainFrame)
-		throw new Error("Unexpected Connect Agent frame.");
+		throw new Error("Unexpected Connect an Agent frame.");
 	const senderUrl = senderFrame.url;
 	if (senderUrl !== CONNECT_URL) {
-		throw new Error("Unexpected Connect Agent URL.");
+		throw new Error("Unexpected Connect an Agent URL.");
 	}
 }
 
@@ -1002,7 +999,7 @@ async function showConnectWindow(): Promise<void> {
 		minHeight: 560,
 		show: false,
 		backgroundColor: "#faf9f7",
-		title: "Connect Agent",
+		title: "Connect an Agent",
 		...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : {}),
 		...(icon.isEmpty() ? {} : { icon }),
 		webPreferences: {
@@ -1014,7 +1011,7 @@ async function showConnectWindow(): Promise<void> {
 		},
 	});
 	connectWindow = window;
-	hardenLocalWindow(window, CONNECT_URL, "Connect Agent", 1);
+	hardenLocalWindow(window, CONNECT_URL, "Connect an Agent", 1);
 	window.once("ready-to-show", () => window.show());
 	window.on("closed", () => {
 		const shouldRestore = restoreMainWindowAfterConnect;
@@ -1029,45 +1026,30 @@ async function showConnectWindow(): Promise<void> {
 }
 
 function createTray(): void {
-	const icon = desktopIcon();
-	if (icon.isEmpty()) return;
-	const trayIcon = icon.resize({ width: 18, height: 18 });
+	const trayIcon =
+		process.platform === "darwin"
+			? nativeImage.createFromPath(join(app.getAppPath(), "dist", "trayTemplate.png"))
+			: desktopIcon().resize({ width: 22, height: 22 });
+	if (trayIcon.isEmpty()) throw new Error("Tray icon is missing.");
 	if (process.platform === "darwin") trayIcon.setTemplateImage(true);
 	tray = new Tray(trayIcon);
 	tray.setToolTip("Clawdi");
 	renderTrayMenu();
-	tray.on("click", () => runAsync("show Clawdi", showAvailableWindow()));
+	if (process.platform !== "darwin") {
+		tray.on("click", () => runAsync("show Clawdi", showAvailableWindow()));
+	}
 }
 
 function renderTrayMenu(): void {
 	if (!tray) return;
-	const status = trayStatus();
-	const recoveryLabel = trayState?.daemon.installed
-		? "Restart Background Sync"
-		: "Set Up Background Sync…";
+	tray.setToolTip(`Clawdi · ${trayStatus()}`);
 	const template: MenuItemConstructorOptions[] = [
-		{ label: status, enabled: false },
 		{
-			label: recoveryLabel,
-			enabled: activeCriticalOperations === 0,
-			click: () =>
-				runAsync(
-					"repair background sync",
-					trayState?.daemon.installed ? restartBackgroundSync() : showConnectWindow(),
-				),
-		},
-		...(trayState?.daemon.installed
-			? ([
-					{
-						label: "Turn Off Background Sync",
-						enabled: activeCriticalOperations === 0,
-						click: () => runAsync("turn off background sync", turnOffBackgroundSync()),
-					},
-				] satisfies MenuItemConstructorOptions[])
-			: []),
-		{
-			label: "Refresh Status",
-			click: () => runAsync("refresh background sync status", refreshTrayState()),
+			type: "checkbox",
+			label: "Sync",
+			checked: trayState?.daemon.installed === true,
+			enabled: !trayStateChecking && activeCriticalOperations === 0,
+			click: (item) => runAsync("change sync", setSyncEnabled(item.checked)),
 		},
 		{ type: "separator" },
 		{
@@ -1075,8 +1057,8 @@ function renderTrayMenu(): void {
 			click: () => runAsync("show Clawdi", showAvailableWindow()),
 		},
 		{
-			label: "Connect Agent…",
-			click: () => runAsync("open Connect Agent", showConnectWindow()),
+			label: "Connect an Agent…",
+			click: () => runAsync("open Connect an Agent", showConnectWindow()),
 		},
 	];
 	template.push(...updateMenuItems());
@@ -1114,11 +1096,11 @@ function renderTrayMenu(): void {
 }
 
 function trayStatus(): string {
-	if (trayStateChecking) return "Background Sync: Checking…";
-	if (!trayState) return "Background Sync: Unavailable";
-	if (!trayState.auth.authenticated) return "Background Sync: Sign In Required";
-	if (!trayState.daemon.installed) return "Background Sync: Not Set Up";
-	return trayState.daemon.running ? "Background Sync: Running" : "Background Sync: Needs Attention";
+	if (trayStateChecking) return "Sync: Checking…";
+	if (!trayState) return "Sync: Unavailable";
+	if (!trayState.auth.authenticated) return "Sync: Sign In Required";
+	if (!trayState.daemon.installed) return "Sync: Not Set Up";
+	return trayState.daemon.running ? "Sync: Running" : "Sync: Needs Attention";
 }
 
 function setTrayState(state: DesktopBootstrapState | null): void {
@@ -1139,7 +1121,7 @@ async function refreshTrayState(): Promise<void> {
 		try {
 			setTrayState(await cli.bootstrapState());
 		} catch (error) {
-			console.error("Could not refresh background sync status", error);
+			console.error("Could not refresh sync status", error);
 			setTrayState(null);
 		}
 	})();
@@ -1151,29 +1133,32 @@ async function refreshTrayState(): Promise<void> {
 	}
 }
 
-async function restartBackgroundSync(): Promise<void> {
-	if (installationState().requiresMove) {
-		await promptToMove("Clawdi must be in Applications before it can repair background sync.");
-		return;
-	}
-	trayStateChecking = true;
-	renderTrayMenu();
+async function setSyncEnabled(enabled: boolean): Promise<void> {
+	if (!enabled) return turnOffBackgroundSync();
 	try {
-		await withCriticalOperation(() => cli.restartDaemon());
-		await refreshTrayState();
-		setTimeout(() => runAsync("refresh background sync status", refreshTrayState()), 2_000).unref();
-	} catch (error) {
-		console.error("Could not restart background sync", error);
-		setTrayState(null);
-		const choice = await showMessageBox({
-			type: "warning",
-			message: "Background sync could not be restarted",
-			detail: "Open Connect Agent to inspect and repair the local setup.",
-			buttons: ["Open Connect Agent", "Cancel"],
-			defaultId: 0,
-			cancelId: 1,
+		await withCriticalOperation(async () => {
+			assertSafeDaemonMutation();
+			const state = await cli.bootstrapState();
+			if (!state.auth.authenticated) {
+				await showConnectWindow();
+				return;
+			}
+			const agents = await cli.detectAgents();
+			if (!agents.some((agent) => agent.registered && agent.inspection === "complete")) {
+				await showConnectWindow();
+				return;
+			}
+			await cli.installDaemon();
 		});
-		if (choice.response === 0) await showConnectWindow();
+	} catch (error) {
+		console.error("Could not enable sync", error);
+		await showMessageBox({
+			type: "warning",
+			message: "Sync could not be enabled",
+			detail: "Open Connect an Agent to check the local setup.",
+		});
+	} finally {
+		await refreshTrayState();
 	}
 }
 
@@ -1184,12 +1169,12 @@ async function turnOffBackgroundSync(): Promise<void> {
 		await withCriticalOperation(() => cli.uninstallDaemon());
 		await refreshTrayState();
 	} catch (error) {
-		console.error("Could not turn off background sync", error);
+		console.error("Could not turn off sync", error);
 		await refreshTrayState();
 		await showMessageBox({
 			type: "warning",
-			message: "Background sync could not be turned off",
-			detail: "Try again, or open Connect Agent to inspect the local setup.",
+			message: "Sync could not be turned off",
+			detail: "Try again, or open Connect an Agent to inspect the local setup.",
 		});
 	}
 }
@@ -1253,7 +1238,7 @@ function assertRuntimeLocation(): void {
 function assertSafeDaemonMutation(): void {
 	if (!installationState().requiresMove) return;
 	throw new DesktopConnectError(
-		"Move Clawdi to Applications before connecting Agents or repairing background sync.",
+		"Move Clawdi to Applications before connecting Agents or repairing sync.",
 	);
 }
 
@@ -1269,7 +1254,7 @@ function moveToApplicationsFolder(): DesktopMoveToApplicationsResult {
 						? "Clawdi is already running from Applications"
 						: "Replace the existing Clawdi app?",
 					detail: running
-						? "Open the installed copy and close this one. Background sync remains independent."
+						? "Open the installed copy and close this one. Sync remains independent."
 						: "The existing copy will be moved to the Trash before this copy is installed.",
 					buttons: ["Cancel", running ? "Open Installed Clawdi" : "Replace and Move"],
 					defaultId: 0,
@@ -1337,7 +1322,7 @@ async function showWindowFromTrayState(): Promise<void> {
 		return;
 	}
 	await loadDashboardWithRecovery();
-	runAsync("reconcile background sync after opening Clawdi", reconcileBackgroundSyncAfterStartup());
+	runAsync("reconcile sync after opening Clawdi", reconcileBackgroundSyncAfterStartup());
 }
 
 async function reconcileBackgroundSyncAfterStartup(): Promise<void> {

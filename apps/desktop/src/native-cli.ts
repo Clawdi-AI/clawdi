@@ -178,6 +178,10 @@ export class DesktopCliService {
 		await this.run(this.cli(), ["daemon", "restart"]);
 	}
 
+	async installDaemon(): Promise<void> {
+		await this.run(this.cli(), ["daemon", "install"], { timeoutMs: 60_000 });
+	}
+
 	async stopDaemon(): Promise<void> {
 		await this.run(this.cli(), ["daemon", "stop"], { timeoutMs: 60_000 });
 	}
