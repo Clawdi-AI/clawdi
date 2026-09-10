@@ -46,7 +46,11 @@ Only the trusted main frame receives the versioned, narrow Desktop bridge.
 Web changes must preserve bridge v1 methods and feature-detect new capabilities
 before calling them. Never require a new bridge method without an app update path.
 CLI owns credentials, Agent registration, and daemon lifecycle. The production
-site's CSP and TLS rules apply; no certificate bypass is installed.
+site's CSP and TLS rules apply; no certificate bypass is installed. Production
+documents use per-response CSP nonces through TanStack SSR and Clerk's nonce prop,
+with no script unsafe-inline/unsafe-eval and no shared document caching.
+The Web bridge adapter accepts the released unversioned beta.1 and version 1;
+unknown versions or missing v1 methods display a Desktop upgrade message.
 
 `clawdiDashboardSource=bundled` is retained for packaged SPA regression tests.
 Production defaults to remote; failures show the local recovery UI rather than

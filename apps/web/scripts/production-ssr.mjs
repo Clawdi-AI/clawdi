@@ -45,6 +45,28 @@ function request(path) {
 	});
 }
 
+test("production documents use fresh CSP nonces on every executable script", async () => {
+	const nonces = new Set();
+	for (let i = 0; i < 2; i++) {
+		const response = await server.fetch(request("/sign-in"));
+		assert.equal(response.status, 200);
+		const csp = response.headers.get("content-security-policy") ?? "";
+		const nonce = csp.match(/'nonce-([^']+)'/)?.[1];
+		assert.ok(nonce);
+		assert.match(csp, /'strict-dynamic'/);
+		assert.doesNotMatch(csp, /script-src[^;]*(?:'unsafe-inline'|'unsafe-eval')/);
+		assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+		nonces.add(nonce);
+		const html = await response.text();
+		for (const [tag] of html.matchAll(/<script\b[^>]*>/g)) {
+			if (/type="(?:application\/json|application\/ld\+json)"/.test(tag)) continue;
+			assert.ok(tag.includes(`nonce="${nonce}"`), `Script without matching nonce: ${tag}`);
+		}
+		assert.ok(html.includes(`<meta name="csp-nonce" content="${nonce}"`));
+	}
+	assert.equal(nonces.size, 2);
+});
+
 for (const [path, title] of [
 	["/sign-in", "Sign in"],
 	["/sign-in/factor-one", "Sign in"],

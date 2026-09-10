@@ -1,5 +1,6 @@
 import { ClerkProvider } from "@clerk/tanstack-react-start";
 import { shadcn } from "@clerk/themes";
+import { useRouter } from "@tanstack/react-router";
 import { lazy, Suspense } from "react";
 import { env } from "@/lib/env";
 
@@ -14,6 +15,7 @@ const DesktopAuthProvider =
 		: null;
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+	const nonce = useRouter().options.ssr?.nonce;
 	if (isDevAuthBypass) return <>{children}</>;
 	if (DesktopAuthProvider) {
 		return (
@@ -25,6 +27,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 	return (
 		<ClerkProvider
+			nonce={nonce}
 			appearance={shadcn}
 			publishableKey={env.VITE_CLERK_PUBLISHABLE_KEY}
 			signInFallbackRedirectUrl="/"

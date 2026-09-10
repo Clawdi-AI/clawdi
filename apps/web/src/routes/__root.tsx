@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
+import { createRootRoute, HeadContent, Outlet, Scripts, useRouter } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { AppNotFound } from "@/components/app-not-found";
 import { AuthProvider } from "@/components/auth-provider";
@@ -59,6 +59,7 @@ function RootComponent() {
 }
 
 function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
+	const nonce = useRouter().options.ssr?.nonce;
 	return (
 		<html
 			lang="en"
@@ -67,7 +68,9 @@ function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
 			suppressHydrationWarning
 		>
 			<head>
+				{nonce ? <meta name="csp-nonce" content={nonce} /> : null}
 				<script
+					nonce={nonce}
 					dangerouslySetInnerHTML={{
 						__html:
 							'if(window.clawdiDesktop){document.documentElement.dataset.clawdiDesktop="true"}try{var t=localStorage.getItem("clawdi-theme")||"system";var d=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle("dark",d)}catch(e){}',
