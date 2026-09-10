@@ -6,6 +6,7 @@ import { useRouter, useRouterState } from "@tanstack/react-router";
 import {
 	Cpu,
 	CreditCard,
+	Package,
 	RefreshCw,
 	Rocket,
 	Settings2,
@@ -29,7 +30,6 @@ import { SettingsSection } from "@/components/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -1185,20 +1185,20 @@ export function DeployWizard() {
 
 				{channel ? (
 					<SettingsSection title="Preinstalled plugins">
-						<label htmlFor="sui-plugin-bundle" className="flex items-start gap-3">
-							<Checkbox
-								id="sui-plugin-bundle"
-								checked={preinstallBundle}
+						<div className={ENTITY_CHOICE_GRID_CLASS}>
+							<EntityChoiceCard
+								selected={preinstallBundle}
+								onClick={() => setPreinstallBundle((selected) => !selected)}
 								disabled={submitting}
-								onCheckedChange={(checked) => setPreinstallBundle(checked === true)}
+								icon={
+									<IconChip tint="bg-muted text-muted-foreground">
+										<Package />
+									</IconChip>
+								}
+								title="Sui bundle"
+								description="Includes Sui ecosystem Store plugins and their skills and MCP servers."
 							/>
-							<span>
-								<span className="font-medium">Sui bundle</span>
-								<span className="block text-sm text-muted-foreground">
-									Includes Sui ecosystem Store plugins and their skills and MCP servers.
-								</span>
-							</span>
-						</label>
+						</div>
 					</SettingsSection>
 				) : null}
 				<SettingsSection title="AI providers">

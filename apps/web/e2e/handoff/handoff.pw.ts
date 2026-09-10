@@ -55,10 +55,13 @@ for (const signup of [false, true]) {
 		expect(new URL(page.url()).searchParams.get("redirect_url")).toBe("/deploy?deploy_profile=sui");
 		if (signup) await page.getByRole("link", { name: "Sign up instead" }).click();
 		await page.getByRole("button", { name: "Complete simulated auth return" }).click();
-		const bundle = page.getByRole("checkbox", { name: /Sui bundle/ });
-		await expect(bundle).toBeChecked();
+		const bundle = page.getByRole("button", { name: /Sui bundle/ });
+		await expect(bundle).toHaveAttribute("aria-pressed", "true");
 		await expect(page).toHaveURL(`${cloud}/deploy?deploy_profile=sui`);
-		if (signup) await bundle.uncheck();
+		if (signup) {
+			await bundle.click();
+			await expect(bundle).toHaveAttribute("aria-pressed", "false");
+		}
 		await expectDeploymentEnabled(page);
 		await page.getByRole("button", { name: "Continue", exact: true }).click();
 		await expect.poll(() => checkoutRequests.length).toBe(1);
@@ -131,7 +134,7 @@ test("unknown, duplicate and absent sources hide the recommendation", async ({ b
 		);
 		await page.goto(`${cloud}/deploy${search}`);
 		await expectDeploymentEnabled(page);
-		await expect(page.getByRole("checkbox", { name: /Sui bundle/ })).toHaveCount(0);
+		await expect(page.getByRole("button", { name: /Sui bundle/ })).toHaveCount(0);
 	}
 	expect(settingsWrites).toBe(0);
 	await context.close();

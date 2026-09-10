@@ -1,6 +1,6 @@
 "use client";
 
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { BillingOffer } from "@/hosted/billing/contracts";
 import { billingTermLabel } from "@/hosted/billing/format";
 
@@ -25,32 +25,31 @@ export function TermSwitcher({
 	if (offers.length <= 1) return null;
 	const sorted = [...offers].sort((a, b) => a.billing_term_months - b.billing_term_months);
 	return (
-		<ToggleGroup
+		<Tabs
 			data-hosted="true"
-			value={[String(value)]}
+			value={String(value)}
 			onValueChange={(next) => {
-				const selected = next[0];
-				if (selected) onChange(Number(selected));
+				const offer = sorted.find((item) => String(item.billing_term_months) === next);
+				if (offer) onChange(offer.billing_term_months);
 			}}
-			variant="outline"
-			size="sm"
 			className="w-full"
-			aria-label={ariaLabel}
 		>
-			{sorted.map((offer) => (
-				<ToggleGroupItem
-					key={offer.billing_term_months}
-					value={String(offer.billing_term_months)}
-					className="flex-1 gap-1.5"
-				>
-					{billingTermLabel(offer.billing_term_months)}
-					{showDiscount && offer.discount_percent > 0 ? (
-						<span className="text-xs text-success-muted-foreground">
-							−{offer.discount_percent}%
-						</span>
-					) : null}
-				</ToggleGroupItem>
-			))}
-		</ToggleGroup>
+			<TabsList className="w-full" aria-label={ariaLabel}>
+				{sorted.map((offer) => (
+					<TabsTrigger
+						key={offer.billing_term_months}
+						value={String(offer.billing_term_months)}
+						className="flex-1 gap-1.5"
+					>
+						{billingTermLabel(offer.billing_term_months)}
+						{showDiscount && offer.discount_percent > 0 ? (
+							<span className="text-xs text-success-muted-foreground">
+								−{offer.discount_percent}%
+							</span>
+						) : null}
+					</TabsTrigger>
+				))}
+			</TabsList>
+		</Tabs>
 	);
 }
