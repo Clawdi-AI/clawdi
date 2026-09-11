@@ -886,14 +886,7 @@ function applyRuntimeResourceProjections(
 		state.resourceProjectionErrors.push(error instanceof Error ? error.message : String(error));
 	}
 	try {
-		applyHostedMcpProjections(
-			manifest,
-			paths,
-			state.observations,
-			workspaceRoot,
-			hermesConfig,
-			plan.openClawWorkspaceRoot,
-		);
+		applyHostedMcpProjections(manifest, paths, state.observations, workspaceRoot, hermesConfig);
 	} catch (error) {
 		state.installErrors.push(
 			`runtime MCP projection failed: ${error instanceof Error ? error.message : String(error)}`,

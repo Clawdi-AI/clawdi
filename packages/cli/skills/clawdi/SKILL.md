@@ -92,7 +92,7 @@ is appropriate and creation is within the authorized task. Ask for the exact tar
 when ambiguity affects purpose or access. Linked Vaults can be synced read-only; do not
 request or modify fields outside the write boundary, or create duplicates to bypass access.
 
-Use `vault_sync` to save credentials locally for task use. The metadata tools return
+Use `vault_resolve` only when the authorized task requires plaintext. The metadata tools return
 key names and exact references, never secret values. Preserve those references when
 passing them to an authorized runtime:
 
@@ -128,26 +128,24 @@ inspect the Vault and request only still-missing fields; never replace an existi
 retry. If creation times out, use `vault_get` to find recent request IDs before retrying.
 If submission times out, inspect status before repeating a mutation.
 
-### Save and refresh credentials locally
+After `supplied`, continue the task using existing authorized capabilities. Remote MCP
+cannot save credentials to local files. Never print values, read env contents into chat,
+or save secrets to Memory or logs.
 
-After a request is `supplied`, use `vault_sync` to save credentials locally by default.
-Every call requires `path`: choose a supported env filename in this Agent's authenticated
-workspace based on project conventions and Vault purpose, such as `.env.stripe` or
-`stripe.env`, without routine user reconfirmation. Report the chosen path. A file without
-a binding also requires `project_id`, `vault_id`, and optional `section`. Omit `section`
-for the entire Vault; an empty string selects unsectioned fields. If sections reuse names,
-select one section per file. The target must be untracked, Git-ignored, and not a symlink.
-Check only file/path metadata when choosing a target; never read env contents into the
-conversation. Let `vault_sync` reuse the binding internally and reject local conflicts.
+### Optional CLI environment files
 
-Before later task use, call `vault_sync` with the same explicit `path` when a refresh is
-needed; omit source arguments to reuse that file's durable binding. It adds, updates
-and deletes managed fields while preserving unrelated assignments. Conflicting sources
-or local edits stop the write; restore the managed assignment or choose a new file.
-Return only file path, status and counts; never print keys or the file, log secrets, or
-save them to Memory. Sync does not upload local edits, run in the background, or reload
-a running process's environment. It requires the standalone local MCP adapter; remote-only
-HTTP cannot write files. Do not invent a CLI fallback or script synchronization.
+When local file materialization is requested and the CLI is available, use:
+
+```bash
+clawdi vault materialize --vault <vault-uuid> --project <project-uuid> --out /absolute/project/.env
+clawdi vault pull --out /absolute/project/.env
+```
+
+The first command binds the exact source; later pulls reuse it and preserve unrelated
+assignments. Optional `--section <name>` selects one section. Files must be untracked,
+Git-ignored, and not symlinks. Source changes and local edits fail without overwriting.
+Report only the path, status, and counts. This does not upload local edits, run in the
+background, or reload a running process's environment.
 
 For explicit import/write, pass fields to `vault_item_upsert`; use
 `vault_item_delete` for exact batch deletions. Never upload local edits automatically.

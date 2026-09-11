@@ -41,8 +41,6 @@ describe("CLI pack inventory", () => {
 			{ path: "package.json" },
 			{ path: "egress-addon/clawdi_egress_addon.py" },
 			{ path: "skills/future-skill/SKILL.md" },
-			{ path: "skills/hosted-versions/2/clawdi/SKILL.md" },
-			{ path: "runtime-mcp/index.js" },
 		],
 	};
 	const check = (inventory: unknown) =>

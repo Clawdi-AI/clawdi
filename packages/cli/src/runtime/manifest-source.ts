@@ -47,7 +47,6 @@ export interface RuntimeManifestLoad {
 
 export const HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json";
 export const HOSTED_RUNTIME_CAPABILITIES_HEADER = "x-clawdi-runtime-capabilities";
-export const HOSTED_LOCAL_VAULT_CAPABILITY = "vault-local-mcp-v1";
 export const HOSTED_AGENT_PLUGIN_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1";
 export const HOSTED_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY =
 	"agent-plugin-github-release-source-v1";
@@ -234,7 +233,6 @@ async function fetchRuntimeManifestPayload(
 				[HOSTED_RUNTIME_CAPABILITIES_HEADER]: [
 					HOSTED_AGENT_PLUGIN_MANIFEST_CAPABILITY,
 					HOSTED_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY,
-					HOSTED_LOCAL_VAULT_CAPABILITY,
 				].join(", "),
 				...(opts.ifNoneMatch ? { "if-none-match": opts.ifNoneMatch } : {}),
 			},

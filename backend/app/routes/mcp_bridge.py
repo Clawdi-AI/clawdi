@@ -49,9 +49,8 @@ from app.models.session_share import SessionShare
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.routes.memories import attach_source_machines
 from app.routes.public_sessions import resolve_session_for_view
-from app.routes.vault import materialize_vault
 from app.schemas.vault import VaultCreate, VaultItemDelete, VaultItemUpsert
-from app.schemas.vault_requests import VaultMaterializeInput, VaultSecretRequestCreate
+from app.schemas.vault_requests import VaultSecretRequestCreate
 from app.services import vault_requests
 from app.services.composio import (
     ComposioMcpUpstreamError,
@@ -259,10 +258,6 @@ class _VaultGetArguments(_ToolArguments):
         return value
 
 
-class _VaultMaterialArguments(VaultMaterializeInput):
-    agent_id: UUID
-
-
 class _VaultResolveArguments(_ToolArguments):
     reference: StrictStr | None = Field(default=None, min_length=1, max_length=1_000)
     references: list[Annotated[StrictStr, Field(min_length=1, max_length=1_000)]] | None = Field(
@@ -270,13 +265,6 @@ class _VaultResolveArguments(_ToolArguments):
         min_length=1,
         max_length=100,
         description="Batch of exact references; supply either reference or references.",
-    )
-    material: _VaultMaterialArguments | None = Field(
-        default=None,
-        description=(
-            "Whole Vault or section for an authenticated Agent; returns source identities "
-            "and values for env synchronization."
-        ),
     )
 
     @field_validator("reference")
@@ -291,11 +279,8 @@ class _VaultResolveArguments(_ToolArguments):
 
     @model_validator(mode="after")
     def _require_one_input(self) -> Self:
-        if (
-            sum(value is not None for value in (self.reference, self.references, self.material))
-            != 1
-        ):
-            raise ValueError("Supply exactly one of reference, references, or material")
+        if sum(value is not None for value in (self.reference, self.references)) != 1:
+            raise ValueError("Supply exactly one of reference or references")
         if self.references is not None and len(set(self.references)) != len(self.references):
             raise ValueError("Duplicate references are not allowed")
         return self
@@ -606,7 +591,7 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         description=(
             "List key names and exact clawdi:// references for one Vault attachment. "
             "Returns Project/Vault provenance and recent request metadata, never secret values "
-            "or local CLI commands. Readable linked Vaults may be synced locally; read access "
+            "or local CLI commands. Read access to linked Vaults "
             "does not grant permission to request or modify their fields."
         ),
         input_schema=_VaultGetArguments.model_json_schema(),
@@ -618,10 +603,7 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
             "Resolve one exact Project-scoped clawdi:// reference, or up to 100 references, "
             "to plaintext secrets. Batch calls return values in input order and fail entirely "
             "if any reference is missing or unauthorized. "
-            "Alternatively supply material with agent_id, project_id, vault_id and section "
-            "to read an entire Vault for env synchronization; requires a key bound to that Agent. "
-            "Prefer local vault_sync for saving credentials; call this read only when the task "
-            "requires plaintext. The result is sensitive: "
+            "Call only when the task requires plaintext. The result is sensitive: "
             "never echo it, store it in Memory, or include it in logs. Hosted runtimes are "
             "restricted to Projects available to their bound Agent."
         ),
@@ -643,8 +625,8 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     "vault_request_status": _NativeToolSpec(
         description=(
             "Check a Vault request: pending, supplied, expired, or conflict. Returns references, "
-            "never values. After supply, use local MCP vault_sync with an explicit path chosen "
-            "for the project conventions and Vault purpose; status itself does not write files."
+            "never values. After supply, continue the task using existing authorized capabilities; "
+            "this remote MCP does not save credentials to local files."
         ),
         input_schema=_VaultRequestStatusArguments.model_json_schema(),
         scopes=("vault:read",),
@@ -1421,23 +1403,6 @@ async def _tool_vault_resolve(
     arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
 ) -> JsonObject:
     parsed = _validate_arguments(_VaultResolveArguments, arguments)
-    if parsed.material is not None:
-        material = parsed.material
-        if (
-            not is_env_bound_api_key(auth)
-            or auth.api_key is None
-            or auth.api_key.environment_id != material.agent_id
-        ):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "A key bound to this Agent is required")
-        await _visible_project_or_404(db, auth, material.project_id)
-        result = await materialize_vault(
-            VaultMaterializeInput(
-                project_id=material.project_id, vault_id=material.vault_id, section=material.section
-            ),
-            auth=auth,
-            db=db,
-        )
-        return _tool_json({**result.model_dump(mode="json"), "agent_id": str(material.agent_id)})
     references = [parsed.reference] if parsed.reference is not None else parsed.references or []
     identities = [_parse_exact_project_vault_reference(reference) for reference in references]
     for project_id in dict.fromkeys(identity[0] for identity in identities):

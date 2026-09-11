@@ -606,17 +606,10 @@ requests; REST retains them for compatibility. Pending requests appear separatel
 Vault detail page and are never returned as empty secret values. Use a fresh request for remaining missing fields after
 expiry; existing pending requests and supplied fields are rejected.
 
-The standalone `clawdi` MCP adapter exposes `vault_sync`: every call requires an explicit
-`path`. The agent chooses a supported env filename from project conventions and Vault
-purpose (for example `.env.stripe` or `stripe.env`) without routine user reconfirmation,
-and reports the chosen path. A file without a binding also requires exact `project_id`,
-`vault_id`, and optional `section`. It saves locally and binds the source; later calls
-with the same path reuse that binding. Supplied source arguments must match.
-Check file/path metadata only; never read env contents into the conversation. Sync
-loads the binding internally and rejects conflicting assignments.
-Hosted projects this adapter into both native runtimes. It uses authenticated Cloud
-material reads and writes only inside the Agent workspace, with no tenant CLI dependency.
-See [standalone MCP setup](../packages/runtime-mcp/README.md) for self-managed clients.
+After supply, verify `vault_request_status` and continue with existing authorized
+capabilities. The cloud MCP cannot write local files; Hosted local synchronization
+is unavailable through that remote connection. Never claim a file was saved or ask
+for secret values in chat.
 
 The CLI remains an optional compatible adapter for an explicit absolute local file:
 
@@ -646,43 +639,17 @@ pulls; after a crashed process, remove its `.clawdi-lock` only after confirming 
 The file uses literal dotenv quoting (including multiline values), not a shell script:
 load it with a dotenv reader, rather than `source`. Values that cannot round-trip safely
 through dotenv quoting are rejected instead of modified. No secret values appear in
-materialization responses or logs. The tenant MCP adapter exposes only `vault_sync`
-for credential access: it hides `vault_resolve` and rejects direct agent calls without
-forwarding them. Sync uses the authorized Cloud material read internally.
+materialization responses or logs.
 
-Legacy remote-only HTTP MCP retains the released `vault_resolve` plaintext contract
-for reference reads and whole-Vault material; those clients cannot write local files.
+Remote MCP retains `vault_resolve` for authorized single or batch reference reads;
+it does not expose whole-Vault file materialization.
 `vault_item_upsert` and `vault_item_delete` cover
 explicit batch import/write/removal; they do not imply reverse synchronization.
-Hosted and self-managed local MCP adapters share the same env library with the CLI.
 
-Done: `scripts/test.sh vault-mcp` executes request → public supply → status → sync (chosen explicit path) →
-cloud mutation → restart → sync (same path, no source arguments) with no installed CLI in the tenant process.
-It checks real file output after restart, 0600 permissions, local conflicts, cross-Agent/Project rejection,
-omitted-path rejection without writes, path and symlink protection, and metadata-only sync responses.
+Done: `scripts/test.sh cli src/lib/vault-env.test.ts` verifies file bindings, permissions,
+conflicts, and preservation of unrelated lines. `scripts/test.sh backend tests/test_vault_requests.py`
+verifies request supply/status and the REST material endpoint against isolated PostgreSQL.
 
 Deployment requires migration `c92e8b3d104f`, the updated API/client/web, and a `WEB_ORIGIN`
 that points to the public dashboard. Deploy the API before clients and refresh MCP tool
-lists and packaged skills. The local MCP adapter is bundled with management package
-0.14.71 and Hosted Skill version 2. Publish the additive Cloud schema/material tool and
-management artifact before enabling Hosted `localVault: 1` projection. Older management
-packages retain remote-only MCP; their tool lists do not claim local file support.
-
-
-### Native updater compatibility for local MCP
-
-Native archives retain exactly the existing `clawdi`, `egress-addon`, and `skills`
-top-level layout. The separately built `runtime-mcp/index.js` is embedded as a named
-text resource in the management executable, using the same Bun resource mechanism as
-other runtime helpers, then materialized into the tenant-readable package. The tenant
-still runs only Node and the standalone entrypoint. npm distributions also carry the
-standalone JS file; Hosted bootstrap and in-place management upgrades use exact npm
-packages in private versioned prefixes, not the public native archive updater.
-
-Done: `TEST_RUNNER_IMAGE=<repository-test-runner-image> bash scripts/test-vault-native-upgrade.sh`
-uses the published, checksum-pinned Linux x64 0.14.68 executable to download, validate
-and activate the actual candidate archive over a container-local TLS fixture. It also
-checks rejection of a checksummed archive with a forbidden new top-level directory,
-and tenant UID startup for both native MCP configurations, blocked ancestors, missing
-Node, and an inaccessible private management CLI. No intermediate release, host DNS
-change, registry publication, or live tenant operation is involved.
+lists and packaged skills.

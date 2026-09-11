@@ -517,16 +517,11 @@ The Cloud/legacy HTTP `vault_resolve` contract requires `vault:read`. Supply
 references) for `{values: [{reference, value}, ...]}` in input order. Batch
 resolution authorizes every Project before reading secret rows and fails
 entirely if any reference is missing or inaccessible. This supports authorized
-MCP batch reads without a CLI. The alternative `material` input takes `agent_id`,
-`project_id`, `vault_id`, and optional `section`, returning authenticated source identity
-and whole-Vault environment data only to a key bound to that Agent.
-
-`packages/runtime-mcp` provides a separate tenant stdio entrypoint. It forwards remote
-tools except `vault_resolve`, which it hides and rejects for direct agent calls.
-It implements `vault_sync` (required agent-chosen `path` on every call) through the shared env library,
-using authorized Cloud material reads internally. Cloud never writes runtime files;
-the local process writes inside its explicit workspace.
-See [standalone MCP](../packages/runtime-mcp/README.md) for limits and verification.
+MCP batch reads without a CLI. Remote MCP does not write local files.
+One-time `vault_request_create` / `vault_request_status` collect missing fields through
+a public write-only form and report metadata; after supply, continue using existing
+authorized capabilities. Optional CLI env files use the REST material endpoint and
+[CLI bindings](cli-development.md#vault-requests-and-local-dotenv-bindings).
 Returned references use the exact canonical forms
 `clawdi://project/<project-id>/vault/<vault>/field/<field>` and
 `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`.

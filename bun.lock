@@ -109,7 +109,6 @@
       },
       "devDependencies": {
         "@clack/prompts": "^1.7.0",
-        "@clawdi/runtime-mcp": "workspace:*",
         "@clawdi/shared": "workspace:*",
         "@modelcontextprotocol/sdk": "^1.30.0",
         "@types/bun": "^1.4.0",
@@ -122,21 +121,6 @@
         "tar": "^7.5.22",
         "typescript": "catalog:",
         "yaml": "^2.9.0",
-        "zod": "catalog:",
-      },
-    },
-    "packages/runtime-mcp": {
-      "name": "@clawdi/runtime-mcp",
-      "version": "0.1.0",
-      "bin": {
-        "clawdi-mcp": "dist/index.js",
-      },
-      "devDependencies": {
-        "@clawdi/shared": "workspace:*",
-        "@modelcontextprotocol/sdk": "^1.30.0",
-        "@types/bun": "^1.4.0",
-        "@types/node": "^24.13.3",
-        "typescript": "catalog:",
         "zod": "catalog:",
       },
     },
@@ -312,8 +296,6 @@
     "@clack/prompts": ["@clack/prompts@1.7.0", "", { "dependencies": { "@clack/core": "1.4.3", "fast-string-width": "^3.0.2", "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-y7/yvZ2TPAnR9+jnc00klvNNLkJiXFFrQA/hlLCcxA9a2A4zQIOimyFQ9XfwYKiGD1fb5GY8vbKIIgO8d5Tb2A=="],
 
     "@clawdi/desktop": ["@clawdi/desktop@workspace:apps/desktop"],
-
-    "@clawdi/runtime-mcp": ["@clawdi/runtime-mcp@workspace:packages/runtime-mcp"],
 
     "@clawdi/shared": ["@clawdi/shared@workspace:packages/shared"],
 
@@ -3123,8 +3105,6 @@
 
     "@base-org/account/preact": ["preact@10.24.2", "", {}, "sha512-1cSoF0aCC8uaARATfrlz4VCBqE8LwZwRfLgkxJOQwAlQt6ayTmi0D9OF7nXid1POI5SZidFuG9CnlXbDfLqY/Q=="],
 
-    "@clawdi/runtime-mcp/@types/node": ["@types/node@24.13.3", "", { "dependencies": { "undici-types": "~7.18.0" } }, "sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q=="],
-
     "@clawdi/whatsapp-baileys-sidecar/@types/node": ["@types/node@24.13.3", "", { "dependencies": { "undici-types": "~7.18.0" } }, "sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q=="],
 
     "@clerk/clerk-js/@stripe/stripe-js": ["@stripe/stripe-js@5.6.0", "", {}, "sha512-w8CEY73X/7tw2KKlL3iOk679V9bWseE4GzNz3zlaYxcTjmcmWOathRb0emgo/QQ3eoNzmq68+2Y2gxluAv3xGw=="],
@@ -3716,8 +3696,6 @@
     "@babel/helper-compilation-targets/lru-cache/yallist": ["yallist@3.1.1", "", {}, "sha512-a4UGQaWPH59mOXUYnAG2ewncQS4i4F43Tv3JoAM+s2VDAmS9NsK8GpDMLrCHPksFT7h3K6TOoUNn2pb7RoXx4g=="],
 
     "@base-org/account/ox/@noble/hashes": ["@noble/hashes@1.8.0", "", {}, "sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A=="],
-
-    "@clawdi/runtime-mcp/@types/node/undici-types": ["undici-types@7.18.2", "", {}, "sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w=="],
 
     "@clawdi/whatsapp-baileys-sidecar/@types/node/undici-types": ["undici-types@7.18.2", "", {}, "sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w=="],
 

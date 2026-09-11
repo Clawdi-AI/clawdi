@@ -102,10 +102,11 @@ inspect the Vault and request only still-missing fields; never replace an existi
 retry. If creation times out, use `vault_get` to find recent request IDs before retrying.
 If submission times out, inspect status before repeating a mutation.
 
-Use `vault_resolve` for authorized runtime reads after supply. The returned `local_command`
-is guidance for a self-managed CLI installation, not an available hosted command. This
-runtime does not expose the CLI Vault-file binding/pull workflow; do not invent a local sync
-command or promise durable local environment synchronization here.
+After `supplied`, continue the task using existing authorized capabilities. Use
+`vault_resolve` only when an authorized runtime read requires the value; never echo it,
+save it to Memory, or include it in logs. The existing remote MCP cannot save credentials
+to local files, so Hosted local environment synchronization is unavailable through it.
+Do not invent a local sync tool or promise a local file was saved.
 
 ## Connector Routing
 

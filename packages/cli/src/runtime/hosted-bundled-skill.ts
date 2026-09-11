@@ -13,23 +13,14 @@ const HOSTED_BUNDLED_SKILL_CATALOG = new Map<
 >([
 	[
 		"clawdi",
-		new Map<number, HostedBundledSkillCatalogEntry>([
-			[
-				2,
-				Object.freeze({
-					id: "clawdi",
-					version: 2,
-					assetDirectory: "hosted-versions/2/clawdi",
-					digest: "697363b9b6a8643b7067a74ba1763c2f4de78816b545e6aa574c25dd5399bb52",
-				}),
-			],
+		new Map([
 			[
 				1,
 				Object.freeze({
 					id: "clawdi",
 					version: 1,
 					assetDirectory: "hosted-versions/1/clawdi",
-					digest: "bbd53307863ab13d193bed7d00de57ee0b4379490ab4ed3da4f100191c936b4b",
+					digest: "6f6374b00c719572a688230ca0a41ae0c16c150f101d86e0aa842cb465b28388",
 				}),
 			],
 		]),
