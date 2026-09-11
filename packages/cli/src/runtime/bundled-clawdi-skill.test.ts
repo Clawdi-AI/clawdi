@@ -27,6 +27,28 @@ describe("bundled Clawdi skill context routing", () => {
 			expect(skill.split("---")[1]).toContain("Gmail");
 		}
 	});
+
+	it("documents Session sharing without leaking Connected CLI fallbacks into Hosted", () => {
+		for (const skill of [genericSkill, hostedSkill]) {
+			const sessions = section(skill, "Sessions");
+			for (const tool of [
+				"`session_share_create`",
+				"`session_share_list`",
+				"`session_share_revoke`",
+			]) {
+				expect(sessions).toContain(tool);
+			}
+			expect(sessions).toContain("stable message `position`");
+			expect(sessions).toContain("safe user/Assistant projection");
+			expect(sessions).toContain("exact `share_id` and `kind`");
+		}
+
+		expect(section(genericSkill, "Sessions")).toContain("CLI fallback");
+		expect(section(hostedSkill, "Sessions")).not.toMatch(/`clawdi\s/);
+		expect(section(hostedSkill, "Hosted Boundary")).toContain(
+			"Do not use any `clawdi` CLI command as a Cloud capability fallback",
+		);
+	});
 });
 
 function section(content: string, heading: string): string {
