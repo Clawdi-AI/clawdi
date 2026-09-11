@@ -64,6 +64,7 @@ from app.services.runtime_source import (
     RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     RUNTIME_CAPABILITIES_HEADER,
+    RUNTIME_LOCAL_VAULT_CAPABILITY,
     RenderedRuntimeSource,
     RuntimeSourceError,
     RuntimeSourceNotFoundError,
@@ -180,6 +181,7 @@ async def get_runtime_manifest(
     project_agent_plugin_github_release_sources = (
         RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY in capabilities
     )
+    project_local_vault = RUNTIME_LOCAL_VAULT_CAPABILITY in capabilities
     if_none_match = request.headers.get("if-none-match")
     try:
         snapshot = await _render_runtime_source_snapshot(
@@ -190,6 +192,7 @@ async def get_runtime_manifest(
             if_none_match=if_none_match,
             project_agent_plugins=project_agent_plugins,
             project_agent_plugin_github_release_sources=project_agent_plugin_github_release_sources,
+            project_local_vault=project_local_vault,
         )
         if snapshot.repair_link_ids:
             await ensure_runtime_whatsapp_credentials(
@@ -212,6 +215,7 @@ async def get_runtime_manifest(
                 if_none_match=if_none_match,
                 project_agent_plugins=project_agent_plugins,
                 project_agent_plugin_github_release_sources=project_agent_plugin_github_release_sources,
+                project_local_vault=project_local_vault,
             )
         if snapshot.repair_link_ids or snapshot.etag is None:
             raise RuntimeSourceError(
@@ -243,8 +247,13 @@ async def _render_runtime_source_snapshot(
     if_none_match: str | None,
     project_agent_plugins: bool,
     project_agent_plugin_github_release_sources: bool,
+    project_local_vault: bool = True,
 ) -> _RuntimeManifestSnapshot:
-    canonical_projection = project_agent_plugins and project_agent_plugin_github_release_sources
+    canonical_projection = (
+        project_agent_plugins
+        and project_agent_plugin_github_release_sources
+        and project_local_vault
+    )
     if if_none_match is not None:
         async with runtime_snapshot_session(session_factory=snapshot_sessions) as source_db:
             authority = await load_persisted_runtime_source_authority(
@@ -258,6 +267,7 @@ async def _render_runtime_source_snapshot(
                 project_agent_plugin_github_release_sources=(
                     project_agent_plugin_github_release_sources
                 ),
+                project_local_vault=project_local_vault,
             )
             and authority.etag is not None
             and if_none_match_contains(if_none_match, authority.etag)
@@ -313,6 +323,7 @@ async def _render_runtime_source_snapshot(
                     project_agent_plugin_github_release_sources=(
                         project_agent_plugin_github_release_sources
                     ),
+                    project_local_vault=project_local_vault,
                 )
             )
         except RuntimeSourceError:
@@ -343,6 +354,7 @@ async def _render_runtime_source_snapshot(
                 project_agent_plugin_github_release_sources=(
                     project_agent_plugin_github_release_sources
                 ),
+                project_local_vault=project_local_vault,
             )
             if source.source_revision != source_without_secrets.source_revision:
                 raise RuntimeSourceError("Runtime source revision depends on secret decryption")

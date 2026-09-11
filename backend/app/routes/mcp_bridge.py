@@ -6,8 +6,8 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
-from urllib.parse import quote, unquote, urlsplit
+from typing import Annotated, Literal, Self
+from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
 import jwt
@@ -24,7 +24,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
@@ -49,7 +49,10 @@ from app.models.session_share import SessionShare
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.routes.memories import attach_source_machines
 from app.routes.public_sessions import resolve_session_for_view
+from app.routes.vault import materialize_vault
 from app.schemas.vault import VaultCreate, VaultItemDelete, VaultItemUpsert
+from app.schemas.vault_requests import VaultMaterializeInput, VaultSecretRequestCreate
+from app.services import vault_requests
 from app.services.composio import (
     ComposioMcpUpstreamError,
     ComposioRouteError,
@@ -87,6 +90,7 @@ from app.services.vault import (
     upsert_owned_vault_items,
 )
 from app.services.vault_crypto import decrypt
+from app.services.vault_requests import exact_vault_reference as _exact_vault_reference
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mcp", tags=["mcp"])
@@ -255,16 +259,46 @@ class _VaultGetArguments(_ToolArguments):
         return value
 
 
+class _VaultMaterialArguments(VaultMaterializeInput):
+    agent_id: UUID
+
+
 class _VaultResolveArguments(_ToolArguments):
-    reference: StrictStr = Field(min_length=1, max_length=1_000)
+    reference: StrictStr | None = Field(default=None, min_length=1, max_length=1_000)
+    references: list[Annotated[StrictStr, Field(min_length=1, max_length=1_000)]] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        description="Batch of exact references; supply either reference or references.",
+    )
+    material: _VaultMaterialArguments | None = Field(
+        default=None,
+        description=(
+            "Whole Vault or section for an authenticated Agent; returns source identities "
+            "and values for env synchronization."
+        ),
+    )
 
     @field_validator("reference")
     @classmethod
-    def _strip_reference(cls, value: str) -> str:
+    def _strip_reference(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         value = value.strip()
         if not value:
             raise ValueError("reference is required")
         return value
+
+    @model_validator(mode="after")
+    def _require_one_input(self) -> Self:
+        if (
+            sum(value is not None for value in (self.reference, self.references, self.material))
+            != 1
+        ):
+            raise ValueError("Supply exactly one of reference, references, or material")
+        if self.references is not None and len(set(self.references)) != len(self.references):
+            raise ValueError("Duplicate references are not allowed")
+        return self
 
 
 class _VaultCreateArguments(_ToolArguments, VaultCreate):
@@ -282,6 +316,14 @@ class _VaultMutationIdentityArguments(_ToolArguments):
     @classmethod
     def _validate_slug(cls, value: str) -> str:
         return VaultCreate.validate_slug(value)
+
+
+class _VaultRequestCreateArguments(_ToolArguments, VaultSecretRequestCreate):
+    pass
+
+
+class _VaultRequestStatusArguments(_ToolArguments):
+    request_id: UUID
 
 
 class _VaultItemUpsertArguments(_VaultMutationIdentityArguments, VaultItemUpsert):
@@ -520,8 +562,9 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     ),
     "project_current_get": _NativeToolSpec(
         description=(
-            "Return the caller's current/bound Clawdi Project. Hosted runtimes always "
-            "receive only the Project bound to their authenticated environment."
+            "Return the caller's current/bound Clawdi Project. For Hosted runtimes this is "
+            "their own Workspace, the only Project they may write to; use project_list "
+            "to discover any additional readable Projects."
         ),
         input_schema=_NoArguments.model_json_schema(),
         scopes=("projects:read",),
@@ -529,8 +572,9 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     ),
     "project_list": _NativeToolSpec(
         description=(
-            "List Projects visible to the authenticated caller. Hosted runtimes are "
-            "restricted to their bound environment Project. This tool is read-only."
+            "List readable Projects. Strict-v2 runtimes can read their own Workspace plus "
+            "explicitly linked Projects still readable by the owner, but write only to their "
+            "own Workspace. Legacy Agent-bound keys read only their bound Project. Read-only."
         ),
         input_schema=_ProjectListArguments.model_json_schema(),
         scopes=("projects:read",),
@@ -548,7 +592,11 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     "vault_list": _NativeToolSpec(
         description=(
             "List Vault metadata attached to visible Projects. Returns Vault names, "
-            "slugs, Project provenance, and key counts only; never secret values."
+            "slugs, Project provenance, and key counts only; never secret values. Honor the "
+            "user-selected Vault or existing local binding first; otherwise reuse a Vault "
+            "matching the task's purpose and intended access before considering creation. "
+            "Ask for an exact target when ambiguity affects purpose or access; never create "
+            "duplicates to bypass an access boundary."
         ),
         input_schema=_VaultListArguments.model_json_schema(),
         scopes=("vault:read",),
@@ -557,7 +605,9 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     "vault_get": _NativeToolSpec(
         description=(
             "List key names and exact clawdi:// references for one Vault attachment. "
-            "Returns Project/Vault provenance and never decrypts or returns secret values."
+            "Returns Project/Vault provenance and recent request metadata, never secret values "
+            "or local CLI commands. Readable linked Vaults may be synced locally; read access "
+            "does not grant permission to request or modify their fields."
         ),
         input_schema=_VaultGetArguments.model_json_schema(),
         scopes=("vault:read",),
@@ -565,20 +615,47 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     ),
     "vault_resolve": _NativeToolSpec(
         description=(
-            "Resolve one exact Project-scoped clawdi:// reference to its plaintext secret. "
-            "Call only when the current task requires the value. The result is sensitive: "
+            "Resolve one exact Project-scoped clawdi:// reference, or up to 100 references, "
+            "to plaintext secrets. Batch calls return values in input order and fail entirely "
+            "if any reference is missing or unauthorized. "
+            "Alternatively supply material with agent_id, project_id, vault_id and section "
+            "to read an entire Vault for env synchronization; requires a key bound to that Agent. "
+            "Prefer local vault_sync for saving credentials; call this read only when the task "
+            "requires plaintext. The result is sensitive: "
             "never echo it, store it in Memory, or include it in logs. Hosted runtimes are "
-            "restricted to their bound Project."
+            "restricted to Projects available to their bound Agent."
         ),
         input_schema=_VaultResolveArguments.model_json_schema(),
         scopes=("vault:read",),
         handler=lambda arguments, auth, db: _tool_vault_resolve(arguments, auth=auth, db=db),
     ),
+    "vault_request_create": _NativeToolSpec(
+        description=(
+            "Request a batch of missing environment fields in one exact owned Vault. "
+            "Returns a one-time write-only URL to show the user; never ask for secrets in chat. "
+            "Existing fields are rejected. Runtime requests must target their own Workspace, not "
+            "other readable linked Projects. The URL expires and is consumed only after saving."
+        ),
+        input_schema=_VaultRequestCreateArguments.model_json_schema(),
+        scopes=("vault:write",),
+        handler=lambda arguments, auth, db: _tool_vault_request_create(arguments, auth=auth, db=db),
+    ),
+    "vault_request_status": _NativeToolSpec(
+        description=(
+            "Check a Vault request: pending, supplied, expired, or conflict. Returns references, "
+            "never values. After supply, use local MCP vault_sync with an explicit path chosen "
+            "for the project conventions and Vault purpose; status itself does not write files."
+        ),
+        input_schema=_VaultRequestStatusArguments.model_json_schema(),
+        scopes=("vault:read",),
+        handler=lambda arguments, auth, db: _tool_vault_request_status(arguments, auth=auth, db=db),
+    ),
     "vault_create": _NativeToolSpec(
         description=(
             "Create a new account-owned Vault and attach it to one explicit owner Project. "
-            "Fails if the slug already exists. Hosted runtimes may target only their bound "
-            "Project. Returns identifiers only and never returns secret values."
+            "Create only when no appropriate existing Vault can be reused and the task authorizes "
+            "creation. Fails if the slug already exists. Hosted runtimes may target only their "
+            "own Workspace. Returns identifiers only, never secret values."
         ),
         input_schema=_VaultCreateArguments.model_json_schema(),
         scopes=("vault:write",),
@@ -588,7 +665,8 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         description=(
             "Create or replace exact fields in an attached account-owned Vault. Requires the "
             "explicit Project UUID, Vault UUID, and canonical slug. Field values are plaintext "
-            "inputs encrypted at rest; the response contains identifiers and counts only."
+            "inputs encrypted at rest; the response contains identifiers and counts only. "
+            "Runtime writes are limited to their own Workspace, not other readable linked Projects."
         ),
         input_schema=_VaultItemUpsertArguments.model_json_schema(),
         scopes=("vault:write",),
@@ -598,7 +676,8 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         description=(
             "Delete exact named fields from an attached account-owned Vault. Requires the "
             "explicit Project UUID, Vault UUID, canonical slug, section, and field names. "
-            "Refuses Vaults attached to multiple Projects because deletion is account-wide."
+            "Refuses Vaults attached to multiple Projects because deletion is account-wide. "
+            "Runtime writes are limited to their own Workspace, not other readable linked Projects."
         ),
         input_schema=_VaultItemDeleteArguments.model_json_schema(),
         scopes=("vault:write",),
@@ -1250,24 +1329,6 @@ async def _tool_vault_list(
     return _tool_json({"vaults": vaults})
 
 
-def _exact_vault_reference(
-    project_id: UUID,
-    vault_slug: str,
-    section: str,
-    field: str,
-) -> str:
-    parts = [
-        "project",
-        str(project_id),
-        "vault",
-        vault_slug,
-        *(["section", section] if section else []),
-        "field",
-        field,
-    ]
-    return "clawdi://" + "/".join(quote(part, safe="") for part in parts)
-
-
 async def _tool_vault_get(
     arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
 ) -> JsonObject:
@@ -1277,7 +1338,7 @@ async def _tool_vault_get(
     project = await _visible_project_or_404(db, auth, project_id)
     vault_row = (
         await db.execute(
-            select(Vault.id, Vault.name, Vault.slug)
+            select(Vault.id, Vault.name, Vault.slug, Vault.user_id)
             .join(VaultProjectAttachment, VaultProjectAttachment.vault_id == Vault.id)
             .where(
                 Vault.id == vault_id,
@@ -1287,7 +1348,7 @@ async def _tool_vault_get(
     ).one_or_none()
     if vault_row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Vault not found")
-    _, vault_name, vault_slug = vault_row
+    _, vault_name, vault_slug, vault_owner_id = vault_row
     item_rows = (
         await db.execute(
             select(VaultItem.section, VaultItem.item_name)
@@ -1308,6 +1369,11 @@ async def _tool_vault_get(
         }
         for section, field in item_rows
     ]
+    requests = (
+        await vault_requests.recent_requests(db, vault_id, project_id)
+        if vault_owner_id == auth.user_id
+        else []
+    )
     return _tool_json(
         {
             "project": _project_payload(project),
@@ -1317,6 +1383,9 @@ async def _tool_vault_get(
                 "slug": vault_slug,
             },
             "keys": keys,
+            "requests": [
+                row.model_dump(mode="json", exclude={"local_command"}) for row in requests
+            ],
         }
     )
 
@@ -1352,32 +1421,62 @@ async def _tool_vault_resolve(
     arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
 ) -> JsonObject:
     parsed = _validate_arguments(_VaultResolveArguments, arguments)
-    project_id, vault_slug, section, field = _parse_exact_project_vault_reference(parsed.reference)
-    await _visible_project_or_404(db, auth, project_id)
+    if parsed.material is not None:
+        material = parsed.material
+        if (
+            not is_env_bound_api_key(auth)
+            or auth.api_key is None
+            or auth.api_key.environment_id != material.agent_id
+        ):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "A key bound to this Agent is required")
+        await _visible_project_or_404(db, auth, material.project_id)
+        result = await materialize_vault(
+            VaultMaterializeInput(
+                project_id=material.project_id, vault_id=material.vault_id, section=material.section
+            ),
+            auth=auth,
+            db=db,
+        )
+        return _tool_json({**result.model_dump(mode="json"), "agent_id": str(material.agent_id)})
+    references = [parsed.reference] if parsed.reference is not None else parsed.references or []
+    identities = [_parse_exact_project_vault_reference(reference) for reference in references]
+    for project_id in dict.fromkeys(identity[0] for identity in identities):
+        await _visible_project_or_404(db, auth, project_id)
     rows = (
         await db.execute(
-            select(VaultItem.encrypted_value, VaultItem.nonce)
+            select(
+                VaultProjectAttachment.project_id,
+                Vault.slug,
+                VaultItem.section,
+                VaultItem.item_name,
+                VaultItem.encrypted_value,
+                VaultItem.nonce,
+            )
             .join(Vault, Vault.id == VaultItem.vault_id)
             .join(VaultProjectAttachment, VaultProjectAttachment.vault_id == Vault.id)
             .where(
-                VaultProjectAttachment.project_id == project_id,
-                Vault.slug == vault_slug,
-                VaultItem.section == section,
-                VaultItem.item_name == field,
+                tuple_(
+                    VaultProjectAttachment.project_id,
+                    Vault.slug,
+                    VaultItem.section,
+                    VaultItem.item_name,
+                ).in_(identities),
             )
         )
     ).all()
-    if not rows:
+    encrypted = {
+        (project, slug, section, field): (value, nonce)
+        for project, slug, section, field, value, nonce in rows
+    }
+    if any(identity not in encrypted for identity in identities):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Vault reference not found")
-    if len(rows) != 1:
+    if len(encrypted) != len(rows):
         raise HTTPException(status.HTTP_409_CONFLICT, "Vault reference is ambiguous")
-    encrypted_value, nonce = rows[0]
-    return _tool_json(
-        {
-            "reference": parsed.reference,
-            "value": decrypt(encrypted_value, nonce),
-        }
-    )
+    values: list[JsonObject] = [
+        {"reference": reference, "value": decrypt(*encrypted[identity])}
+        for reference, identity in zip(references, identities, strict=True)
+    ]
+    return _tool_json(values[0] if parsed.reference is not None else {"values": values})
 
 
 async def _tool_vault_create(
@@ -1464,4 +1563,22 @@ async def _tool_connector_call(
     response = await call_tool_router_mcp_tool(session, name, arguments)
     return _JSON_OBJECT_ADAPTER.validate_json(
         response.model_dump_json(by_alias=True, exclude_none=True)
+    )
+
+
+async def _tool_vault_request_create(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_VaultRequestCreateArguments, arguments)
+    result = await vault_requests.create_request(db, auth, parsed)
+    return _tool_json(result.model_dump(mode="json", exclude={"local_command"}))
+
+
+async def _tool_vault_request_status(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_VaultRequestStatusArguments, arguments)
+    row = await vault_requests.owned_request(db, auth, parsed.request_id)
+    return _tool_json(
+        (await vault_requests.describe(db, row)).model_dump(mode="json", exclude={"local_command"})
     )

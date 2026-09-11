@@ -11108,12 +11108,12 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			"no bundled hosted skill is registered for unknown",
 		);
 		const unknownSkillVersion = convergeAndCommitTestRuntimeManifest(
-			loadWithSkillEntry("clawdi", { enabled: true, version: 2 }),
+			loadWithSkillEntry("clawdi", { enabled: true, version: 999 }),
 			getRuntimePaths(),
 		);
 		expect(unknownSkillVersion.installErrors).toEqual([]);
 		expect(unknownSkillVersion.resourceProjectionErrors.join("\n")).toContain(
-			"no bundled hosted skill clawdi version 2 is registered",
+			"no bundled hosted skill clawdi version 999 is registered",
 		);
 
 		const openclawSkill = join(home, ".openclaw", "workspace", "skills", "clawdi");

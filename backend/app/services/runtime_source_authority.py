@@ -39,6 +39,7 @@ class PersistedRuntimeSourceAuthority:
     source_revision: str | None
     has_agent_plugins: bool
     has_github_release_agent_plugins: bool
+    has_local_vault: bool = False
 
     @property
     def etag(self) -> str | None:
@@ -51,7 +52,10 @@ class PersistedRuntimeSourceAuthority:
         *,
         project_agent_plugins: bool,
         project_agent_plugin_github_release_sources: bool,
+        project_local_vault: bool = True,
     ) -> bool:
+        if self.has_local_vault and not project_local_vault:
+            return False
         if not self.has_agent_plugins:
             return True
         if not project_agent_plugins:
@@ -95,6 +99,7 @@ async def load_persisted_runtime_source_authority(
                 HostedRuntimeState.source_revision_contract,
                 has_agent_plugins,
                 has_github_release_agent_plugins,
+                HostedRuntimeState.mcp["servers"]["clawdi"]["localVault"].as_string() == "1",
             )
             .outerjoin(
                 HostedRuntimeState,
@@ -118,6 +123,7 @@ async def load_persisted_runtime_source_authority(
         source_revision_contract,
         has_agent_plugins,
         has_github_release_agent_plugins,
+        has_local_vault,
     ) = row
     if state_environment_id is None:
         raise RuntimeSourceNotFoundError("Hosted runtime state not found")
@@ -132,6 +138,7 @@ async def load_persisted_runtime_source_authority(
         ),
         has_agent_plugins=has_agent_plugins,
         has_github_release_agent_plugins=has_github_release_agent_plugins,
+        has_local_vault=bool(has_local_vault),
     )
 
 

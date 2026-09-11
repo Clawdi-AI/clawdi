@@ -925,6 +925,7 @@ exec /usr/bin/systemctl "$@"
 				expect(refreshed.status, `${refreshed.stdout}\n${refreshed.stderr}`).toBe(0);
 				expect(readFileSync(unitPath, "utf8")).toBe(nativeUnit);
 				expect(statSync(installerLog).mtimeMs).toBe(installedAt);
+				await waitForTcpPort(18789, VIRGIN_RUNTIME_PORT_TIMEOUT_MS);
 				const pid = Number(
 					runUserSystemctl("show", unitName, "--property=MainPID", "--value").stdout,
 				);
@@ -936,7 +937,6 @@ exec /usr/bin/systemctl "$@"
 				expect(runUserSystemctl("show", unitName, "--property=NeedDaemonReload").stdout).toContain(
 					"NeedDaemonReload=no",
 				);
-				await waitForTcpPort(18789, VIRGIN_RUNTIME_PORT_TIMEOUT_MS);
 			}
 		} finally {
 			manifestServer?.stop(true);

@@ -88,6 +88,25 @@ runtime-bound Project, and field deletion is rejected when a Vault is attached t
 Projects. Whole-Vault deletion, attach/detach, bulk import, and credential profiles remain
 unavailable through Agent MCP; do not bypass that boundary through raw HTTP.
 
+### Request missing credentials
+
+Use `vault_request_create` with exact `project_id`, `vault_id`, canonical `slug`, optional
+`section`, and a batch of environment field names in `fields`. A Vault is a key bundle:
+request related keys together under one link. Supplied or already-pending fields are rejected.
+Show the returned `url` unchanged to the user; do not ask them to paste secrets into chat.
+Opening the link does not consume it. Saving all requested fields consumes it once.
+
+Check `vault_request_status` with its `request_id` after the user finishes. `pending` is not
+a secret value; `supplied` means the exact references are ready. On `expired` or `conflict`,
+inspect the Vault and request only still-missing fields; never replace an existing value to
+retry. If creation times out, use `vault_get` to find recent request IDs before retrying.
+If submission times out, inspect status before repeating a mutation.
+
+Use `vault_resolve` for authorized runtime reads after supply. The returned `local_command`
+is guidance for a self-managed CLI installation, not an available hosted command. This
+runtime does not expose the CLI Vault-file binding/pull workflow; do not invent a local sync
+command or promise durable local environment synchronization here.
+
 ## Connector Routing
 
 Respect an explicit user choice. Otherwise inspect installed service CLIs, direct MCP tools

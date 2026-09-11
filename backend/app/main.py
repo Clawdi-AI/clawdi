@@ -77,6 +77,7 @@ from app.routes.skills import router as skills_router
 from app.routes.skills import scope_router as skills_scope_router
 from app.routes.sync import router as sync_router
 from app.routes.vault import router as vault_router
+from app.routes.vault_requests import router as vault_requests_router
 from app.services.ai_provider_auth_transition import OAuthCredentialPayloadCorruptError
 from app.services.channels import close_channel_provider_http_client
 from app.services.composio import close_composio_client, run_tool_router_mcp_session_reaper
@@ -306,6 +307,12 @@ async def request_validation_exception_handler(
     exc: RequestValidationError,
 ) -> Response:
     path = request.url.path
+    if path.startswith(("/v1/vault/requests", "/api/vault/requests")):
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "Invalid secret request"},
+            headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+        )
     if _is_whatsapp_onboarding_request(request):
         return _apply_whatsapp_onboarding_cache_policy(
             request,
@@ -379,6 +386,7 @@ _VERSIONED_ROUTERS = (
     platform_router,
     plugin_catalog_router,
     agent_skills_router,
+    vault_requests_router,
     vault_router,
     connectors_router,
     mcp_bridge_router,

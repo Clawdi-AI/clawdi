@@ -545,6 +545,10 @@ async function stubDashboardApi(
 			});
 			return;
 		}
+		if (url.pathname === "/v1/vault/requests" && route.request().method() === "GET") {
+			await fulfillJson(route, []);
+			return;
+		}
 		if (url.pathname === "/v1/vault/detail") {
 			const vaultId = url.searchParams.get("vault_id");
 			const vault = (options.vaultItems ?? vaults.items).find(
@@ -1023,6 +1027,7 @@ test("connector cards complete each authentication flow in Agent scope", async (
 		throw new Error("Expected the OAuth request to include a redirect_url");
 	}
 	expect(new URL(oauthRequest.body.redirect_url).pathname).toBe(`${agentConnectors}/gmail`);
+	await expect(page.getByRole("dialog")).not.toBeVisible();
 	await popup.close();
 
 	const publicDataCard = main.getByRole("link", { name: "Public Data" }).locator("..");

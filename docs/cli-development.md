@@ -580,3 +580,109 @@ The OIDC publish job must remain on a GitHub-hosted runner. Do not replace its
 `ubuntu-latest` runner with `vars.CI_RUNNER`, Blacksmith, or another self-hosted
 runner. OIDC is used only to publish the non-production candidate in this
 workflow; production selection is outside this PR.
+
+## Vault requests and local dotenv bindings
+
+Strict-v2 runtimes can read their own Workspace and explicitly linked Projects still
+readable by the owner. `project_current_get` returns that Workspace; writes, new
+Vaults, and requests are restricted to it. Legacy Agent-bound keys retain their narrower
+bound-Project read scope.
+
+Honor the user-selected Vault or existing local binding first. Otherwise inspect visible
+`vault_list` / `vault_get` metadata and reuse a Vault matching the task's purpose and
+intended access. Create under the current Workspace only if none is appropriate and the
+task authorizes creation. Ask for the exact target when ambiguity affects purpose or
+access. Linked Vaults may be synced read-only; never request/upsert outside the write
+boundary or create duplicates to sidestep access.
+
+Use MCP `vault_request_create` to reserve up to 32 missing environment fields in one
+owned Vault/Project attachment. It returns a URL with a 256-bit capability in its
+fragment. Show that exact URL to the user. The public form supplies only the requested
+names, in one transaction; viewing it does not redeem it. Tokens are hashed at rest,
+expire after one hour by default (five minutes to one day configurable), and cannot
+read or replace supplied secrets. `vault_request_status` returns metadata and exact
+references. MCP request metadata omits legacy CLI commands, including `vault_get` recent
+requests; REST retains them for compatibility. Pending requests appear separately on the
+Vault detail page and are never returned as empty secret values. Use a fresh request for remaining missing fields after
+expiry; existing pending requests and supplied fields are rejected.
+
+The standalone `clawdi` MCP adapter exposes `vault_sync`: every call requires an explicit
+`path`. The agent chooses a supported env filename from project conventions and Vault
+purpose (for example `.env.stripe` or `stripe.env`) without routine user reconfirmation,
+and reports the chosen path. A file without a binding also requires exact `project_id`,
+`vault_id`, and optional `section`. It saves locally and binds the source; later calls
+with the same path reuse that binding. Supplied source arguments must match.
+Check file/path metadata only; never read env contents into the conversation. Sync
+loads the binding internally and rejects conflicting assignments.
+Hosted projects this adapter into both native runtimes. It uses authenticated Cloud
+material reads and writes only inside the Agent workspace, with no tenant CLI dependency.
+See [standalone MCP setup](../packages/runtime-mcp/README.md) for self-managed clients.
+
+The CLI remains an optional compatible adapter for an explicit absolute local file:
+
+```bash
+clawdi vault materialize --vault <vault-uuid> --project <project-uuid> --out /absolute/project/.env
+clawdi vault pull --out /absolute/project/.env
+```
+
+The first synchronization records the canonical API URL, authenticated account, exact Project/Vault
+UUIDs, field identities/references, and local assignment fingerprints in a comment in
+that same file. Optional `--section <name>` narrows the binding; `--section ''` selects
+unsectioned keys. Field names must be valid, distinct environment identifiers; duplicate
+names across sections require a section selection or explicit renaming in Vault.
+
+Later synchronizations refresh existing keys, discover new ones, and remove remotely deleted keys
+only when their previously managed assignments are unchanged locally. Unrelated lines,
+comments, and variables are preserved. User-edited managed assignments, removed metadata,
+new-key collisions, replaced field identities, and changed account/API/source context fail
+closed. Restore the original managed assignment/metadata or choose a fresh target; there
+is no force mode, daemon, background sync, or automatic upload of local changes.
+
+The file is atomically replaced with POSIX permissions `0600`, together with its binding
+(use WSL on Windows).
+Targets in a Git repository must already be untracked and ignored; parent directories
+must not be symlinks or writable by other users. A per-target lock rejects overlapping
+pulls; after a crashed process, remove its `.clawdi-lock` only after confirming it stopped.
+The file uses literal dotenv quoting (including multiline values), not a shell script:
+load it with a dotenv reader, rather than `source`. Values that cannot round-trip safely
+through dotenv quoting are rejected instead of modified. No secret values appear in
+materialization responses or logs. The tenant MCP adapter exposes only `vault_sync`
+for credential access: it hides `vault_resolve` and rejects direct agent calls without
+forwarding them. Sync uses the authorized Cloud material read internally.
+
+Legacy remote-only HTTP MCP retains the released `vault_resolve` plaintext contract
+for reference reads and whole-Vault material; those clients cannot write local files.
+`vault_item_upsert` and `vault_item_delete` cover
+explicit batch import/write/removal; they do not imply reverse synchronization.
+Hosted and self-managed local MCP adapters share the same env library with the CLI.
+
+Done: `scripts/test.sh vault-mcp` executes request → public supply → status → sync (chosen explicit path) →
+cloud mutation → restart → sync (same path, no source arguments) with no installed CLI in the tenant process.
+It checks real file output after restart, 0600 permissions, local conflicts, cross-Agent/Project rejection,
+omitted-path rejection without writes, path and symlink protection, and metadata-only sync responses.
+
+Deployment requires migration `c92e8b3d104f`, the updated API/client/web, and a `WEB_ORIGIN`
+that points to the public dashboard. Deploy the API before clients and refresh MCP tool
+lists and packaged skills. The local MCP adapter is bundled with management package
+0.14.71 and Hosted Skill version 2. Publish the additive Cloud schema/material tool and
+management artifact before enabling Hosted `localVault: 1` projection. Older management
+packages retain remote-only MCP; their tool lists do not claim local file support.
+
+
+### Native updater compatibility for local MCP
+
+Native archives retain exactly the existing `clawdi`, `egress-addon`, and `skills`
+top-level layout. The separately built `runtime-mcp/index.js` is embedded as a named
+text resource in the management executable, using the same Bun resource mechanism as
+other runtime helpers, then materialized into the tenant-readable package. The tenant
+still runs only Node and the standalone entrypoint. npm distributions also carry the
+standalone JS file; Hosted bootstrap and in-place management upgrades use exact npm
+packages in private versioned prefixes, not the public native archive updater.
+
+Done: `TEST_RUNNER_IMAGE=<repository-test-runner-image> bash scripts/test-vault-native-upgrade.sh`
+uses the published, checksum-pinned Linux x64 0.14.68 executable to download, validate
+and activate the actual candidate archive over a container-local TLS fixture. It also
+checks rejection of a checksummed archive with a forbidden new top-level directory,
+and tenant UID startup for both native MCP configurations, blocked ancestors, missing
+Node, and an inaccessible private management CLI. No intermediate release, host DNS
+change, registry publication, or live tenant operation is involved.

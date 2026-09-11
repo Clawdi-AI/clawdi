@@ -44,10 +44,13 @@ COPY package.json bun.lock ./
 COPY patches/libsignal@6.0.0.patch patches/libsignal@6.0.0.patch
 COPY apps/web/package.json apps/web/package.json
 COPY packages/cli/package.json packages/cli/package.json
+COPY packages/runtime-mcp/package.json packages/runtime-mcp/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/whatsapp-baileys-sidecar/package.json packages/whatsapp-baileys-sidecar/package.json
 RUN --mount=type=cache,target=/root/.bun/install/cache \
 	bun install --frozen-lockfile --ignore-scripts --filter './packages/cli'
+COPY packages/runtime-mcp/src packages/runtime-mcp/src
+RUN bun run --cwd packages/cli build:mcp
 
 FROM base AS mitmproxy
 
@@ -146,6 +149,8 @@ WORKDIR /workspace
 COPY --from=harness-dependencies /opt/e2e-harness/.venv /opt/e2e-harness/.venv
 COPY --from=cli-dependencies /workspace/node_modules /workspace/node_modules
 COPY --from=cli-dependencies /workspace/packages/cli/node_modules /workspace/packages/cli/node_modules
+COPY --from=cli-dependencies /workspace/packages/runtime-mcp /workspace/packages/runtime-mcp
+COPY --from=cli-dependencies /workspace/packages/cli/runtime-mcp /workspace/packages/cli/runtime-mcp
 COPY package.json ./
 COPY packages/cli/package.json packages/cli/package.json
 COPY packages/shared/package.json packages/shared/package.json

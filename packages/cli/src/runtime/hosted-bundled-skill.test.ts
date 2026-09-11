@@ -27,16 +27,21 @@ afterEach(() => {
 });
 
 describe("hosted bundled Skill preparation", () => {
-	test("captures the immutable catalog tree as a prepared bundled source", () => {
-		const prepared = prepareHostedBundledSkill("clawdi", 1);
+	test.each([1, 2])("captures immutable bundled Skill version %i", (version) => {
+		const catalogEntry = resolveHostedBundledSkill("clawdi", version);
+		const bundledSourceDir = resolve(
+			import.meta.dir,
+			`../../skills/hosted-versions/${version}/clawdi`,
+		);
+		const prepared = prepareHostedBundledSkill("clawdi", version);
 		expect(prepared.identity).toEqual({
 			source: {
 				type: "bundled",
-				version: 1,
+				version,
 				digest: catalogEntry.digest,
 				assetDirectory: catalogEntry.assetDirectory,
 			},
-			version: 1,
+			version,
 			digest: catalogEntry.digest,
 		});
 		expect("sourceDir" in prepared && prepared.sourceDir).toBe(bundledSourceDir);
@@ -56,8 +61,8 @@ describe("hosted bundled Skill preparation", () => {
 		expect(() => resolveHostedBundledSkill("unknown", 1)).toThrow(
 			"no bundled hosted skill is registered for unknown",
 		);
-		expect(() => resolveHostedBundledSkill("clawdi", 2)).toThrow(
-			"no bundled hosted skill clawdi version 2 is registered",
+		expect(() => resolveHostedBundledSkill("clawdi", 999)).toThrow(
+			"no bundled hosted skill clawdi version 999 is registered",
 		);
 
 		root = mkdtempSync(join(tmpdir(), "hosted-bundled-source-"));

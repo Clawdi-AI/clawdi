@@ -41,6 +41,19 @@ test("same-slug Vault cards preserve UUID identity through detail and cache", as
 	await page.route("**/v1/**", async (route) => {
 		const url = new URL(route.request().url());
 		if (url.pathname === "/v1/agents") return fulfill(route, []);
+		if (url.pathname === "/v1/vault/requests") {
+			expect(url.searchParams.get("vault_id")).toBe(ownedId);
+			return fulfill(route, [
+				{
+					id: "pending-request",
+					fields: ["WAITING_FOR_USER"],
+					section: "",
+					project_name: "Owned",
+					expires_at: "2099-01-01T00:00:00Z",
+					status: "pending",
+				},
+			]);
+		}
 		if (url.pathname === "/v1/vault") {
 			if (route.request().method() === "POST") {
 				const body = route.request().postDataJSON() as { name: string; slug: string };
@@ -137,6 +150,12 @@ test("same-slug Vault cards preserve UUID identity through detail and cache", as
 	await expect(page).toHaveURL(new RegExp(`/vaults/collision\\?vault=${ownedId}$`));
 	await expect(page.getByRole("heading", { name: "Owned Collision" })).toBeVisible();
 	await expect(page.getByText("OWNED_ONLY", { exact: true })).toBeVisible();
+	await expect(page.getByRole("region", { name: "Secret requests" })).toContainText(
+		"WAITING_FOR_USER",
+	);
+	await expect(page.getByRole("region", { name: "Secret requests" })).toContainText(
+		"Awaiting input",
+	);
 	await expect(page.getByText("SHARED_ONLY", { exact: true })).toHaveCount(0);
 
 	await page.getByRole("combobox", { name: "Project to add this Vault to" }).click();
@@ -155,6 +174,12 @@ test("same-slug Vault cards preserve UUID identity through detail and cache", as
 		page.getByRole("button", { name: "Remove from Workspace", exact: true }),
 	).toHaveCount(0);
 	await expect(page.getByText("OWNED_ONLY", { exact: true })).toBeVisible();
+	await expect(page.getByRole("region", { name: "Secret requests" })).toContainText(
+		"WAITING_FOR_USER",
+	);
+	await expect(page.getByRole("region", { name: "Secret requests" })).toContainText(
+		"Awaiting input",
+	);
 
 	await page.getByRole("button", { name: "Add keys" }).click();
 	await page.getByPlaceholder(/OPENAI_API_KEY/).fill("ADDED_TO_OWNED=secret-value");

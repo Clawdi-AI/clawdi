@@ -25,6 +25,14 @@ const defaultDeployApiUrl = process.env.CLAWDI_DEFAULT_DEPLOY_API_URL || "https:
 rmSync(outputDirectory, { recursive: true, force: true });
 mkdirSync(outputDirectory, { recursive: true });
 
+const mcpBuild = await Bun.build({
+	entrypoints: [resolve(cliRoot, "../runtime-mcp/src/index.ts")],
+	outdir: resolve(cliRoot, "runtime-mcp"),
+	target: "node",
+	minify: true,
+});
+if (!mcpBuild.success) throw new Error("Standalone MCP build failed");
+
 const result = await Bun.build({
 	entrypoints: [resolve(cliRoot, "src/index.ts")],
 	compile: {

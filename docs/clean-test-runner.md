@@ -113,6 +113,9 @@ invocation:
 | Test runner | 8 | 4 GiB | 512 |
 | PostgreSQL | 2 | 1 GiB | 256 |
 
+The runner sets `GOMAXPROCS=2` per process so concurrent native TypeScript
+checks share the PID budget without sizing Go CPU parallelism from the host.
+
 For each service, Compose sets `mem_limit` and `memswap_limit` to the same
 positive value. Docker therefore gives the container no swap allowance. The
 measured `memory.swap.peak` was also zero for both the high-ceiling and default
