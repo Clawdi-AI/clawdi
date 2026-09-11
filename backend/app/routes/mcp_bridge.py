@@ -49,6 +49,7 @@ from app.models.session_share import SessionShare
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.routes.memories import attach_source_machines
 from app.routes.public_sessions import resolve_session_for_view
+from app.schemas.session import SessionShareCreate
 from app.schemas.vault import VaultCreate, VaultItemDelete, VaultItemUpsert
 from app.schemas.vault_requests import VaultSecretRequestCreate
 from app.services import vault_requests
@@ -73,14 +74,19 @@ from app.services.session_content import (
     SessionContentInvalid,
     SessionContentMissing,
     SessionContentUnavailable,
-    load_session_messages,
+    load_session_content_projection,
     session_has_uploaded_content,
 )
 from app.services.session_export import session_share_to_markdown, session_to_markdown
 from app.services.session_search import session_search_matches
 from app.services.session_shares import (
+    SessionShareConflict,
+    create_session_share,
+    list_session_share_inventory,
     load_session_share_view,
+    revoke_session_share_link,
     session_share_metadata,
+    session_share_response,
 )
 from app.services.vault import (
     VaultItemsGlobalDeleteConfirmationRequired,
@@ -211,6 +217,21 @@ class _SessionGetArguments(_ToolArguments):
         return value
 
 
+class _SessionShareCreateArguments(_ToolArguments, SessionShareCreate):
+    session_id: UUID
+
+
+class _SessionShareListArguments(_ToolArguments):
+    session_id: UUID | None = None
+    page: StrictInt = Field(default=1, ge=1, le=1_000)
+    limit: StrictInt = Field(default=25, ge=1, le=100)
+
+
+class _SessionShareRevokeArguments(_ToolArguments):
+    share_id: UUID
+    kind: Literal["snapshot", "live"] = "snapshot"
+
+
 class _ProjectListArguments(_ToolArguments):
     limit: StrictInt = Field(default=50, ge=1, le=100)
 
@@ -338,13 +359,17 @@ class _NativeToolSpec:
     input_schema: object
     scopes: tuple[str, ...]
     handler: _NativeToolHandler
+    annotations: JsonObject | None = None
 
     def definition(self, name: str) -> JsonObject:
-        return {
+        definition: JsonObject = {
             "name": name,
             "description": self.description,
             "inputSchema": _JSON_OBJECT_ADAPTER.validate_python(self.input_schema),
         }
+        if self.annotations is not None:
+            definition["annotations"] = self.annotations
+        return definition
 
 
 _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
@@ -526,7 +551,8 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
             "(https://cloud.clawdi.ai/s/{uuid}) or one of their own sessions by UUID. Handles "
             "owned + shared sessions uniformly — you don't need to know which one. Returns a "
             "YAML front-matter block (source/agent/model/project/messages) followed by "
-            "`## User` / `## Assistant` turn headings."
+            "`## User` / `## Assistant` turn headings. Owned sessions include each message's "
+            "stable position for session_share_create scope=through or scope=response."
         ),
         input_schema={
             "type": "object",
@@ -544,6 +570,59 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         },
         scopes=("sessions:read",),
         handler=lambda arguments, auth, db: _tool_session_get(arguments, auth=auth, db=db),
+    ),
+    "session_share_create": _NativeToolSpec(
+        description=(
+            "Publish an immutable public snapshot of one visible Clawdi session. Call only "
+            "when the user explicitly asks to share or publish the session. By default shares "
+            "the full visible conversation; scope=through freezes the conversation through one "
+            "message position, and scope=response shares one Assistant response. Public shares "
+            "contain only the existing safe user/Assistant projection, never reasoning, system "
+            "messages, hidden events, or tool activity."
+        ),
+        input_schema=_SessionShareCreateArguments.model_json_schema(),
+        scopes=("sessions:read", "sessions:write"),
+        handler=lambda arguments, auth, db: _tool_session_share_create(arguments, auth=auth, db=db),
+        annotations={
+            "title": "Share Session",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        },
+    ),
+    "session_share_list": _NativeToolSpec(
+        description=(
+            "List active snapshot and legacy live links for visible Clawdi sessions. Optionally "
+            "filter by session UUID. Returns exact link IDs and kinds for session_share_revoke."
+        ),
+        input_schema=_SessionShareListArguments.model_json_schema(),
+        scopes=("sessions:read",),
+        handler=lambda arguments, auth, db: _tool_session_share_list(arguments, auth=auth, db=db),
+        annotations={
+            "title": "List Session shares",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    ),
+    "session_share_revoke": _NativeToolSpec(
+        description=(
+            "Turn off one exact Session share link. Call only when the user explicitly asks to "
+            "stop sharing it. Use the share_id and kind returned by session_share_list; existing "
+            "Session content remains unchanged."
+        ),
+        input_schema=_SessionShareRevokeArguments.model_json_schema(),
+        scopes=("sessions:read", "sessions:write"),
+        handler=lambda arguments, auth, db: _tool_session_share_revoke(arguments, auth=auth, db=db),
+        annotations={
+            "title": "Stop sharing Session",
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
     ),
     "project_current_get": _NativeToolSpec(
         description=(
@@ -999,6 +1078,13 @@ async def _tool_memory_delete(
     return _tool_json({"status": "deleted", "memory_id": parsed.memory_id})
 
 
+def _session_environment_fence(auth: AuthContext) -> UUID | None:
+    key = auth.api_key
+    if is_env_bound_api_key(auth) and not is_runtime_deployment_principal(auth) and key:
+        return key.environment_id
+    return None
+
+
 def _user_sessions_stmt(auth: AuthContext):
     """Return account sessions, fencing only legacy environment keys.
 
@@ -1011,11 +1097,7 @@ def _user_sessions_stmt(auth: AuthContext):
         .outerjoin(AgentEnvironment, Session.environment_id == AgentEnvironment.id)
         .where(Session.user_id == auth.user_id)
     )
-    bound_env = (
-        auth.api_key.environment_id
-        if is_env_bound_api_key(auth) and not is_runtime_deployment_principal(auth) and auth.api_key
-        else None
-    )
+    bound_env = _session_environment_fence(auth)
     if bound_env is not None:
         stmt = stmt.where(Session.environment_id == bound_env)
     return stmt
@@ -1029,7 +1111,7 @@ async def _tool_session_search(
     stmt = (
         _user_sessions_stmt(auth)
         .join(matches, matches.c.session_id == Session.id)
-        .add_columns(matches.c.content, matches.c.role)
+        .add_columns(matches.c.content, matches.c.role, matches.c.position)
         .order_by(matches.c.score.desc(), Session.last_activity_at.desc(), Session.id.asc())
         .limit(parsed.limit)
     )
@@ -1037,15 +1119,21 @@ async def _tool_session_search(
     if not rows:
         return _tool_text(f'No sessions matched "{parsed.query}".')
     lines: list[str] = []
-    for session, agent_type, message_content, message_role in rows:
+    for session, agent_type, message_content, message_role, message_position in rows:
         date = session.last_activity_at.date().isoformat() if session.last_activity_at else "-"
         summary = session.summary or session.local_session_id or "(untitled)"
         project = f" · {session.project_path}" if session.project_path else ""
         model = f" · {session.model}" if session.model else ""
         message_match = ""
-        if isinstance(message_content, str) and message_role in ("user", "assistant"):
+        if (
+            isinstance(message_content, str)
+            and message_role in ("user", "assistant")
+            and isinstance(message_position, int)
+        ):
             excerpt = search_excerpt(message_content, parsed.query)
-            message_match = f"\n  - matched {message_role}: {excerpt}"
+            message_match = (
+                f"\n  - matched {message_role} at position {message_position}: {excerpt}"
+            )
         lines.append(
             f"- **{summary}**{project}{model}\n"
             f"  - id: `{session.id}` · {agent_type or 'unknown'} · {date} · "
@@ -1169,7 +1257,7 @@ async def _tool_session_get(
     if not session_has_uploaded_content(session):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
     try:
-        messages = await load_session_messages(session, file_store, db)
+        projection = await load_session_content_projection(session, file_store, db)
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
     except SessionContentUnavailable:
@@ -1182,8 +1270,83 @@ async def _tool_session_get(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
         ) from None
     return _tool_text(
-        session_to_markdown(session, messages, agent_type=agent_type, public=bool(match))
+        session_to_markdown(
+            session,
+            projection.messages,
+            agent_type=agent_type,
+            public=bool(match),
+            source_positions=None if match else projection.source_positions,
+        )
     )
+
+
+async def _tool_session_share_create(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_SessionShareCreateArguments, arguments)
+    row = (
+        await db.execute(_user_sessions_stmt(auth).where(Session.id == parsed.session_id))
+    ).first()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+    session, agent_type = row
+    if not session_has_uploaded_content(session):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
+    try:
+        share = await create_session_share(
+            db,
+            file_store,
+            session,
+            created_by=auth.user_id,
+            agent_type=agent_type,
+            scope=parsed.scope,
+            position=parsed.position,
+        )
+    except SessionShareConflict as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+    except SessionContentMissing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not found") from None
+    except SessionContentUnavailable:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Session storage is temporarily unavailable. Please retry.",
+        ) from None
+    except SessionContentInvalid:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
+        ) from None
+    return _tool_json(session_share_response(share).model_dump(mode="json"))
+
+
+async def _tool_session_share_list(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_SessionShareListArguments, arguments)
+    inventory = await list_session_share_inventory(
+        db,
+        user_id=auth.user_id,
+        page=parsed.page,
+        page_size=parsed.limit,
+        session_id=parsed.session_id,
+        environment_id=_session_environment_fence(auth),
+    )
+    return _tool_json(inventory.model_dump(mode="json"))
+
+
+async def _tool_session_share_revoke(
+    arguments: JsonObject, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject:
+    parsed = _validate_arguments(_SessionShareRevokeArguments, arguments)
+    revoked = await revoke_session_share_link(
+        db,
+        user_id=auth.user_id,
+        share_id=parsed.share_id,
+        kind=parsed.kind,
+        environment_id=_session_environment_fence(auth),
+    )
+    if not revoked:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session share not found")
+    return _tool_json({"status": "revoked", "share_id": str(parsed.share_id), "kind": parsed.kind})
 
 
 def _project_payload(project: Project) -> JsonObject:
