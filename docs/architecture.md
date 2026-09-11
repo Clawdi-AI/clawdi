@@ -530,7 +530,9 @@ See [standalone MCP](../packages/runtime-mcp/README.md) for limits and verificat
 Returned references use the exact canonical forms
 `clawdi://project/<project-id>/vault/<vault>/field/<field>` and
 `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`.
-Environment-bound callers see only attachments in their bound Agent Project.
+Strict-v2 runtime keys can read attachments in their own Workspace and explicitly linked
+Projects still readable by the owner; legacy Agent-bound keys see only their bound Project.
+`project_current_get` returns that Workspace, not the full readable set.
 
 `vault_create`, `vault_item_upsert`, and `vault_item_delete` require `vault:write`.
 Every write takes an explicit owner Project; item writes also require an exact

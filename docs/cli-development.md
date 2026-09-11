@@ -583,14 +583,27 @@ workflow; production selection is outside this PR.
 
 ## Vault requests and local dotenv bindings
 
+Strict-v2 runtimes can read their own Workspace and explicitly linked Projects still
+readable by the owner. `project_current_get` returns that Workspace; writes, new
+Vaults, and requests are restricted to it. Legacy Agent-bound keys retain their narrower
+bound-Project read scope.
+
+Honor the user-selected Vault or existing local binding first. Otherwise inspect visible
+`vault_list` / `vault_get` metadata and reuse a Vault matching the task's purpose and
+intended access. Create under the current Workspace only if none is appropriate and the
+task authorizes creation. Ask for the exact target when ambiguity affects purpose or
+access. Linked Vaults may be synced read-only; never request/upsert outside the write
+boundary or create duplicates to sidestep access.
+
 Use MCP `vault_request_create` to reserve up to 32 missing environment fields in one
 owned Vault/Project attachment. It returns a URL with a 256-bit capability in its
 fragment. Show that exact URL to the user. The public form supplies only the requested
 names, in one transaction; viewing it does not redeem it. Tokens are hashed at rest,
 expire after one hour by default (five minutes to one day configurable), and cannot
 read or replace supplied secrets. `vault_request_status` returns metadata and exact
-references. Pending requests appear separately on the Vault detail page and are never
-returned as empty secret values. Use a fresh request for remaining missing fields after
+references. MCP request metadata omits legacy CLI commands, including `vault_get` recent
+requests; REST retains them for compatibility. Pending requests appear separately on the
+Vault detail page and are never returned as empty secret values. Use a fresh request for remaining missing fields after
 expiry; existing pending requests and supplied fields are rejected.
 
 The standalone `clawdi` MCP adapter exposes `vault_sync`: every call requires an explicit
@@ -599,7 +612,8 @@ purpose (for example `.env.stripe` or `stripe.env`) without routine user reconfi
 and reports the chosen path. A file without a binding also requires exact `project_id`,
 `vault_id`, and optional `section`. It saves locally and binds the source; later calls
 with the same path reuse that binding. Supplied source arguments must match.
-Inspect existing files first; conflicting assignments are never silently overwritten.
+Check file/path metadata only; never read env contents into the conversation. Sync
+loads the binding internally and rejects conflicting assignments.
 Hosted projects this adapter into both native runtimes. It uses authenticated Cloud
 material reads and writes only inside the Agent workspace, with no tenant CLI dependency.
 See [standalone MCP setup](../packages/runtime-mcp/README.md) for self-managed clients.

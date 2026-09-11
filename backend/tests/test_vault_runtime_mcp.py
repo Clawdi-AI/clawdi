@@ -151,6 +151,12 @@ async def test_stdio_vault_flow_without_cli(db_session, seed_user, tmp_path):
             "slug": "runtime-env",
         }
         created = await tool("vault_request_create", {**identity, "fields": ["TOKEN", "REMOVE"]})
+        assert "local_command" not in created
+        metadata = await tool(
+            "vault_get", {"project_id": identity["project_id"], "vault_id": identity["vault_id"]}
+        )
+        assert [row["id"] for row in metadata["requests"]] == [created["id"]]
+        assert "local_command" not in metadata["requests"][0]
         token = created["url"].split("#")[1]
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as public:
             supplied = await public.post(
@@ -167,6 +173,7 @@ async def test_stdio_vault_flow_without_cli(db_session, seed_user, tmp_path):
             ).status_code == 410
         status = await tool("vault_request_status", {"request_id": created["id"]})
         assert status["status"] == "supplied"
+        assert "local_command" not in status
         source = {"project_id": identity["project_id"], "vault_id": identity["vault_id"]}
         initial = (workspace / ".env.stripe").read_bytes()
         calls_before = list(seen_tools)

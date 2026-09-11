@@ -57,13 +57,23 @@ generic web fetcher for Clawdi share URLs.
 - `project_list` — List Projects visible to the caller.
 - `project_get` — Read one visible Project by UUID.
 
-A Hosted runtime is restricted to its bound Project. Treat not-found as an access boundary
-as well as a possible unknown UUID; do not try to bypass it through another tool.
+Strict-v2 Hosted runtimes can read their own Workspace and explicitly linked Projects
+that remain readable by the owner. `project_current_get` returns that Workspace;
+writes, new Vaults, and credential requests are limited to that Workspace. Legacy
+Agent-bound keys retain their narrower bound-Project read scope. Treat not-found as
+an access boundary as well as a possible unknown UUID; never bypass it with another tool.
 
 ## Vault
 
 - `vault_list` — List attached Vaults and key counts for visible Projects.
 - `vault_get` — List key names, provenance, and exact references for an attached Vault.
+
+Honor the user-selected Vault or existing local binding first; never silently switch
+sources. Otherwise inspect `vault_list` / `vault_get` metadata and reuse a Vault matching
+the task's purpose and intended access. Create in the current Workspace only when none
+is appropriate and creation is within the authorized task. Ask for the exact target only
+when ambiguity affects purpose or access. Linked Vaults can be synced read-only; do not
+request or modify fields outside the write boundary, or create duplicates to bypass access.
 
 Use `vault_sync` to save credentials locally for task use. The metadata tools return
 key names and exact references, never secret values. Preserve those references when
@@ -108,7 +118,8 @@ workspace based on project conventions and Vault purpose, such as `.env.stripe` 
 a binding also requires `project_id`, `vault_id`, and optional `section`. Omit `section`
 for the entire Vault; an empty string selects unsectioned fields. If sections reuse names,
 select one section per file. The target must be untracked, Git-ignored, and not a symlink.
-Inspect an existing file before using it; never silently overwrite existing assignments.
+Check only file/path metadata when choosing a target; never read env contents into the
+conversation. Let `vault_sync` reuse the binding internally and reject local conflicts.
 
 Before later task use, call `vault_sync` with the same explicit `path` when a refresh is
 needed; omit source arguments to reuse that file's durable binding. It adds, updates

@@ -562,8 +562,9 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     ),
     "project_current_get": _NativeToolSpec(
         description=(
-            "Return the caller's current/bound Clawdi Project. Hosted runtimes always "
-            "receive only the Project bound to their authenticated environment."
+            "Return the caller's current/bound Clawdi Project. For Hosted runtimes this is "
+            "their own Workspace, the only Project they may write to; use project_list "
+            "to discover any additional readable Projects."
         ),
         input_schema=_NoArguments.model_json_schema(),
         scopes=("projects:read",),
@@ -571,8 +572,9 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     ),
     "project_list": _NativeToolSpec(
         description=(
-            "List Projects visible to the authenticated caller. Hosted runtimes are "
-            "restricted to their bound environment Project. This tool is read-only."
+            "List readable Projects. Strict-v2 runtimes can read their own Workspace plus "
+            "explicitly linked Projects still readable by the owner, but write only to their "
+            "own Workspace. Legacy Agent-bound keys read only their bound Project. Read-only."
         ),
         input_schema=_ProjectListArguments.model_json_schema(),
         scopes=("projects:read",),
@@ -590,7 +592,11 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     "vault_list": _NativeToolSpec(
         description=(
             "List Vault metadata attached to visible Projects. Returns Vault names, "
-            "slugs, Project provenance, and key counts only; never secret values."
+            "slugs, Project provenance, and key counts only; never secret values. Honor the "
+            "user-selected Vault or existing local binding first; otherwise reuse a Vault "
+            "matching the task's purpose and intended access before considering creation. "
+            "Ask for an exact target when ambiguity affects purpose or access; never create "
+            "duplicates to bypass an access boundary."
         ),
         input_schema=_VaultListArguments.model_json_schema(),
         scopes=("vault:read",),
@@ -599,7 +605,9 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     "vault_get": _NativeToolSpec(
         description=(
             "List key names and exact clawdi:// references for one Vault attachment. "
-            "Returns Project/Vault provenance and never decrypts or returns secret values."
+            "Returns Project/Vault provenance and recent request metadata, never secret values "
+            "or local CLI commands. Readable linked Vaults may be synced locally; read access "
+            "does not grant permission to request or modify their fields."
         ),
         input_schema=_VaultGetArguments.model_json_schema(),
         scopes=("vault:read",),
@@ -625,7 +633,8 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         description=(
             "Request a batch of missing environment fields in one exact owned Vault. "
             "Returns a one-time write-only URL to show the user; never ask for secrets in chat. "
-            "Existing fields are rejected. The URL expires and is consumed only on successful save."
+            "Existing fields are rejected. Runtime requests must target their own Workspace, not "
+            "other readable linked Projects. The URL expires and is consumed only after saving."
         ),
         input_schema=_VaultRequestCreateArguments.model_json_schema(),
         scopes=("vault:write",),
@@ -644,8 +653,9 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     "vault_create": _NativeToolSpec(
         description=(
             "Create a new account-owned Vault and attach it to one explicit owner Project. "
-            "Fails if the slug already exists. Hosted runtimes may target only their bound "
-            "Project. Returns identifiers only and never returns secret values."
+            "Create only when no appropriate existing Vault can be reused and the task authorizes "
+            "creation. Fails if the slug already exists. Hosted runtimes may target only their "
+            "own Workspace. Returns identifiers only, never secret values."
         ),
         input_schema=_VaultCreateArguments.model_json_schema(),
         scopes=("vault:write",),
@@ -655,7 +665,8 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         description=(
             "Create or replace exact fields in an attached account-owned Vault. Requires the "
             "explicit Project UUID, Vault UUID, and canonical slug. Field values are plaintext "
-            "inputs encrypted at rest; the response contains identifiers and counts only."
+            "inputs encrypted at rest; the response contains identifiers and counts only. "
+            "Runtime writes are limited to their own Workspace, not other readable linked Projects."
         ),
         input_schema=_VaultItemUpsertArguments.model_json_schema(),
         scopes=("vault:write",),
@@ -665,7 +676,8 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         description=(
             "Delete exact named fields from an attached account-owned Vault. Requires the "
             "explicit Project UUID, Vault UUID, canonical slug, section, and field names. "
-            "Refuses Vaults attached to multiple Projects because deletion is account-wide."
+            "Refuses Vaults attached to multiple Projects because deletion is account-wide. "
+            "Runtime writes are limited to their own Workspace, not other readable linked Projects."
         ),
         input_schema=_VaultItemDeleteArguments.model_json_schema(),
         scopes=("vault:write",),
@@ -1371,7 +1383,9 @@ async def _tool_vault_get(
                 "slug": vault_slug,
             },
             "keys": keys,
-            "requests": [row.model_dump(mode="json") for row in requests],
+            "requests": [
+                row.model_dump(mode="json", exclude={"local_command"}) for row in requests
+            ],
         }
     )
 

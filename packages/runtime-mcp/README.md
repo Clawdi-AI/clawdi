@@ -27,7 +27,8 @@ assignments, and changed account/API/Agent/source identities fail closed.
 Call `vault_sync` with `path` and, for a file without a binding, `project_id`, `vault_id`,
 and optional `section` to save and bind the source. Later calls supply the same `path`
 and can omit source arguments to reuse the binding; supplied source must match.
-Inspect existing files first; conflicting assignments are never silently overwritten.
+Use file/path metadata when choosing a target; do not read env contents into the
+conversation. Sync reads its binding internally and rejects conflicting assignments.
 `vault_sync` follows cloud additions, updates and deletions while preserving
 unrelated assignments. Files and binding metadata advance atomically at 0600.
 
