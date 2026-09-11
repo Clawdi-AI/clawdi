@@ -4167,6 +4167,93 @@ for (const entry of ["inline", "return"] as const) {
 	});
 }
 
+for (const runtime of ["openclaw", "hermes"] as const) {
+	for (const fundingSource of ["stripe", "wallet"] as const) {
+		test(`replayed ${runtime} ${fundingSource} checkout opens the authoritative Agent`, async ({
+			page,
+		}) => {
+			const retryDetail = runtime === "openclaw" && fundingSource === "wallet";
+			const created: DeploymentMutationFixture = {
+				...paidBasicDeployment,
+				id: "hdep_replayed_checkout",
+				name: "Replayed Agent",
+				status: "creating",
+				config_info: { ...paidBasicDeployment.config_info, runtime },
+			};
+			const checkoutRequests: string[] = [];
+			const detailRequests: string[] = [];
+			await stubHostedApi(page, {
+				deployments: [
+					includedBasicDeployment,
+					{ ...paidBasicDeployment, status: "stopped" },
+					created,
+				],
+				plans: [basicPlan],
+				walletState: { ...walletState, balance_usd: "500.00" },
+				checkoutRequests,
+				checkoutResponses: [
+					{
+						status: 202,
+						body: {
+							flow_type: "subscription_activation",
+							funding_source: fundingSource,
+							subscription_id: 42,
+							deployment_id: created.id,
+							agent_id: "00000000-0000-4000-8000-000000000000",
+							deployment_name: created.name,
+							metadata_generation: 1,
+							checkout_url: "",
+						},
+					},
+				],
+				deploymentDetailRequests: detailRequests,
+				deploymentDetailResponses: retryDetail
+					? [
+							{ status: 503, body: { detail: "Temporarily unavailable" } },
+							{ status: 200, body: created },
+						]
+					: [{ status: 200, body: created }],
+				cloudAgentNotFoundIds: [fixtureAgentId(created)],
+			});
+			await page.goto("/deploy");
+			await expect(
+				page
+					.getByTestId("app-sidebar-agent-rail")
+					.getByRole("button", { name: created.name, exact: true }),
+			).toBeVisible();
+			if (runtime === "openclaw") await page.getByRole("button", { name: /OpenClaw/i }).click();
+			if (fundingSource === "wallet")
+				await page
+					.locator("form")
+					.getByRole("button", { name: /Wallet balance/ })
+					.click();
+			await page
+				.getByTestId("deploy-action-bar")
+				.getByRole("button", {
+					name: fundingSource === "wallet" ? "Pay & deploy" : "Continue",
+					exact: true,
+				})
+				.click();
+			if (retryDetail) {
+				await expect(
+					page.getByText("Retrying loads the deployed Agent without creating another one."),
+				).toBeVisible();
+				await page.getByTestId("deploy-action-bar").getByRole("button", { name: /Retry/ }).click();
+			}
+			await expect(page).toHaveURL(`/agents/${fixtureAgentId(created)}`);
+			await expect(page.getByRole("heading", { name: "Deploy an Agent" })).toHaveCount(0);
+			await expect(page.getByTestId("hosted-initial-deployment-panel")).toBeVisible();
+			await expect(page.getByText("Agent couldn’t be opened", { exact: true })).toHaveCount(0);
+			expect(checkoutRequests).toHaveLength(1);
+			expect(JSON.parse(checkoutRequests[0] ?? "{}")).toMatchObject({
+				funding_source: fundingSource,
+				deploy_config: { runtime },
+			});
+			expect(detailRequests).toEqual(Array(retryDetail ? 2 : 1).fill(created.id));
+		});
+	}
+}
+
 test("paid checkout waits for deployment membership before navigation without LRO convergence", async ({
 	page,
 }) => {

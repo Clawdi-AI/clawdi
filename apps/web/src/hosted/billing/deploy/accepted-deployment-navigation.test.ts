@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
+import { createBillingClient } from "@/hosted/billing/billing-client";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import {
 	type AcceptedDeploymentNavigate,
@@ -31,7 +32,6 @@ describe("accepted deployment navigation", () => {
 		const events: string[] = [];
 
 		const handoff = navigateToAcceptedDeployment({
-			agentId: authoritative.agent_id,
 			deploymentId: authoritative.resource.id,
 			getDeployment: async () => {
 				events.push("hydrate");
@@ -95,7 +95,6 @@ describe("accepted deployment navigation", () => {
 
 		const navigations: Parameters<AcceptedDeploymentNavigate>[0][] = [];
 		await navigateToAcceptedDeployment({
-			agentId: authoritative.agent_id,
 			deploymentId: authoritative.resource.id,
 			getDeployment: async () => authoritative,
 			navigate: async (options) => {
@@ -144,7 +143,6 @@ describe("accepted deployment navigation", () => {
 		let navigated = false;
 		await expect(
 			navigateToAcceptedDeployment({
-				agentId: "11111111-1111-4111-8111-111111111111",
 				deploymentId: "hdep_accepted",
 				getDeployment: async () => {
 					throw failure;
@@ -160,24 +158,72 @@ describe("accepted deployment navigation", () => {
 		queryClient.clear();
 	});
 
-	test("rejects a deployment response without a canonical Agent UUID", async () => {
+	test.each([
+		{
+			id: "hdep_other",
+			agentId: "11111111-1111-4111-8111-111111111111",
+			error: "different deployment",
+		},
+		{ id: "hdep_expected", agentId: "hdep_invalid_identity", error: "invalid Agent identity" },
+	])("rejects an authoritative response with $error", async ({ id, agentId, error }) => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-		const authoritative = hostedDeploymentFixture({
-			id: "hdep_invalid_identity",
-			agentId: "hdep_invalid_identity",
-		});
+		const authoritative = hostedDeploymentFixture({ id, agentId });
 
 		await expect(
 			navigateToAcceptedDeployment({
-				deploymentId: authoritative.resource.id,
+				deploymentId: "hdep_expected",
 				getDeployment: async () => authoritative,
 				navigate: () => {
 					throw new Error("navigation must not run");
 				},
 				queryClient,
 			}),
-		).rejects.toThrow("invalid Agent identity");
+		).rejects.toThrow(error);
 		expect(queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments)).toBeUndefined();
+		queryClient.clear();
+	});
+
+	test("opens the authenticated detail identity despite a replayed request's old Agent hint", async () => {
+		const queryClient = new QueryClient();
+		const authoritative = hostedDeploymentFixture({ id: "hdep_replayed", status: "creating" });
+		const requests: string[] = [];
+		const client = createBillingClient(async () => "current-token", {
+			fetch: async (request) => {
+				expect(request.method).toBe("GET");
+				expect(request.headers.get("Authorization")).toBe("Bearer current-token");
+				const path = new URL(request.url).pathname;
+				requests.push(path);
+				return Response.json(
+					path.endsWith("/by-request/replayed")
+						? {
+								request_status: "processing",
+								deploy_request_id: "replayed",
+								lineage_tail: {
+									deployment_id: authoritative.resource.id,
+									agent_id: "00000000-0000-4000-8000-000000000000",
+									lineage_version: 1,
+									lineage_state: "processing",
+								},
+							}
+						: authoritative,
+				);
+			},
+		});
+		const navigations: Parameters<AcceptedDeploymentNavigate>[0][] = [];
+		await navigateToAcceptedDeploymentRequest({
+			deployRequestId: "replayed",
+			resolveDeploymentRequest: client.waitForDeploymentRequest,
+			getDeployment: client.getDeployment,
+			queryClient,
+			navigate: (options) => {
+				navigations.push(options);
+			},
+		});
+		expect(requests).toEqual([
+			"/v2/deployments/by-request/replayed",
+			"/v2/deployments/hdep_replayed",
+		]);
+		expect(navigations).toEqual([{ href: `/agents/${authoritative.agent_id}`, replace: false }]);
 		queryClient.clear();
 	});
 
