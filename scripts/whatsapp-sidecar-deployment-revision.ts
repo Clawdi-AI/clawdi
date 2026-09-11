@@ -55,7 +55,8 @@ export function calculateWhatsAppSidecarDeploymentRevisionFromSnapshot(
 	snapshot: RevisionSnapshot,
 ): string {
 	const dockerfile = snapshot.readText(`${SIDECAR_ROOT}/Dockerfile`);
-	assertDockerInputContract(dockerfile, snapshot.readText(".dockerignore"));
+	const lockText = snapshot.readText("bun.lock");
+	assertDockerInputContract(dockerfile, snapshot.readText(".dockerignore"), lockText);
 
 	const inputs = new Map<string, string>();
 	for (const path of DIRECT_FILE_INPUTS) inputs.set(path, snapshot.readText(path));
@@ -64,7 +65,7 @@ export function calculateWhatsAppSidecarDeploymentRevisionFromSnapshot(
 	}
 	inputs.set(
 		"bun.lock#whatsapp-sidecar-dependency-closure",
-		stableStringify(sidecarDependencyClosure(snapshot.readText("bun.lock"))),
+		stableStringify(sidecarDependencyClosure(lockText)),
 	);
 	inputs.set(
 		"config/deploy.yml#accessories.whatsapp-baileys",
@@ -207,7 +208,21 @@ function extractWhatsAppSidecarAccessory(source: string): string {
 	return source.slice(start + 1, end + 1);
 }
 
-function assertDockerInputContract(dockerfile: string, dockerignore: string): void {
+function assertDockerInputContract(
+	dockerfile: string,
+	dockerignore: string,
+	lockText: string,
+): void {
+	const lock = Bun.JSONC.parse(lockText) as unknown;
+	if (!isRecord(lock) || !isRecord(lock.workspaces)) {
+		throw new Error("bun.lock does not contain the expected workspace package graph");
+	}
+	// Historical snapshots may include the removed runtime-mcp workspace. Validate
+	// its COPY input only when that snapshot's lockfile contains the workspace.
+	const expectedSources = new Set(EXPECTED_DOCKER_CONTEXT_SOURCES);
+	if (Object.hasOwn(lock.workspaces, "packages/runtime-mcp")) {
+		expectedSources.add("packages/runtime-mcp/package.json");
+	}
 	const sources = new Set<string>();
 	for (const line of dockerfile.split("\n")) {
 		const tokens = line.trim().split(/\s+/);
@@ -216,8 +231,8 @@ function assertDockerInputContract(dockerfile: string, dockerignore: string): vo
 		for (const source of positional.slice(0, -1)) sources.add(source);
 	}
 	if (
-		sources.size !== EXPECTED_DOCKER_CONTEXT_SOURCES.size ||
-		[...sources].some((source) => !EXPECTED_DOCKER_CONTEXT_SOURCES.has(source))
+		sources.size !== expectedSources.size ||
+		[...sources].some((source) => !expectedSources.has(source))
 	) {
 		throw new Error("WhatsApp sidecar Docker COPY inputs changed; update the revision contract");
 	}

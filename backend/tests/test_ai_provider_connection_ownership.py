@@ -56,13 +56,15 @@ async def consumer(
     source_revision=REVISION,
     boot="boot-connection-test",
     health="ok",
+    applied_provider_ids=None,
+    runtime_name="openclaw",
 ):
     env = await create_env_with_project(
         db,
         user_id=owner_id,
         machine_id=str(uuid4()),
         machine_name="Connection migration",
-        agent_type="openclaw",
+        agent_type=runtime_name,
     )
     deployment = f"dep-{env.id}"
     state = HostedRuntimeState(
@@ -79,7 +81,7 @@ async def consumer(
         live_sync={},
         recovery={},
         runtimes={
-            "openclaw": {
+            runtime_name: {
                 "enabled": True,
                 "providerMode": "configured",
                 "provider_ids": [PROVIDER],
@@ -106,7 +108,9 @@ async def consumer(
                 "sourceRevision": source_revision,
                 "generation": 1,
                 "instanceId": state.instance_id,
-                "appliedProviderIds": [PROVIDER],
+                "appliedProviderIds": [PROVIDER]
+                if applied_provider_ids is None
+                else applied_provider_ids,
             },
             "boot": None,
             "cli": None,
@@ -454,7 +458,12 @@ async def test_custom_handoff_and_binding_require_exact_qualified_cli(
     )
     # Adding this Custom provider to an existing runtime requires fresh consumed evidence,
     # not merely a requested upgrade in the incoming state.
-    state = await consumer(db_session, seed_user.id, boot="custom-binding-target")
+    state = await consumer(
+        db_session,
+        seed_user.id,
+        boot="custom-binding-target",
+        applied_provider_ids=["different-provider"],
+    )
     state.runtimes = {
         "openclaw": {
             "enabled": True,
@@ -471,7 +480,13 @@ async def test_custom_handoff_and_binding_require_exact_qualified_cli(
         cli_package_spec=f"clawdi@{VERSION}",
         previous_state=state,
     )
-    failed = await consumer(db_session, seed_user.id, boot="custom-binding-failed", health="error")
+    failed = await consumer(
+        db_session,
+        seed_user.id,
+        boot="custom-binding-failed",
+        health="error",
+        applied_provider_ids=["different-provider"],
+    )
     failed.runtimes = state.runtimes
     await db_session.flush()
     with pytest.raises(HTTPException):
@@ -482,3 +497,126 @@ async def test_custom_handoff_and_binding_require_exact_qualified_cli(
             cli_package_spec=f"clawdi@{VERSION}",
             previous_state=failed,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    [
+        "recover",
+        "expired",
+        "wrong-owner",
+        "wrong-instance",
+        "wrong-generation",
+        "wrong-source",
+        "new-provider",
+        "retired",
+        "ambiguous",
+    ],
+)
+async def test_failed_custom_selection_recovers_only_authenticated_applied_ownership(
+    client, db_session, seed_user, case
+):
+    from fastapi import HTTPException
+
+    from app.models.ai_provider import AiProvider
+    from app.services.ai_provider_connection_ownership import require_custom_provider_cli
+
+    await create_provider(client)
+    provider = await db_session.scalar(
+        select(AiProvider).where(
+            AiProvider.owner_user_id == seed_user.id,
+            AiProvider.provider_id == PROVIDER,
+        )
+    )
+    provider.configuration_mode = "custom"
+    db_session.add(AppSetting(key="supported_custom_provider_cli_versions", value_json=[VERSION]))
+    state = await consumer(
+        db_session,
+        seed_user.id,
+        health="error",
+        runtime_name="hermes",
+        captured_at=datetime.now(UTC) - timedelta(hours=2) if case == "expired" else None,
+        applied_provider_ids=["unrelated-provider"] if case == "new-provider" else [PROVIDER],
+    )
+    # A failed desired selection must not erase the last completed ownership
+    # transfer. Source rendering now fails because that desired provider vanished.
+    state.runtimes = {
+        "hermes": {
+            "enabled": True,
+            "providerMode": "configured",
+            "provider_ids": ["missing-provider"],
+            "primary_model": None,
+            "install": {"source": "official"},
+        }
+    }
+    state.source_revision = None
+    if case == "wrong-instance":
+        state.instance_id = "replacement-instance"
+    if case == "wrong-generation":
+        state.apply_generation = 2
+    if case == "wrong-source":
+        state.source_revision = "b" * 64
+    if case == "retired":
+        from app.models.session import AgentEnvironment
+
+        env = await db_session.get(AgentEnvironment, state.environment_id)
+        env.archived_at = datetime.now(UTC)
+    if case == "ambiguous":
+        now = datetime.now(UTC)
+        await ingest_runtime_observation(
+            db_session,
+            environment_id=state.environment_id,
+            credential_deployment_id=state.deployment_id,
+            value=RuntimeObservationEventV2.model_validate(
+                {
+                    "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
+                    "reportedAt": now,
+                    "capturedAt": now,
+                    "runtimeMode": "hosted",
+                    "status": "error",
+                    "activeCliVersion": VERSION,
+                    "applied": {
+                        "etag": f'"sha256:{REVISION}"',
+                        "sourceRevision": REVISION,
+                        "generation": 1,
+                        "instanceId": state.instance_id,
+                        "appliedProviderIds": [PROVIDER],
+                    },
+                    "boot": None,
+                    "cli": None,
+                    "applyReceiptId": "other-receipt-0001",
+                    "bootNonce": "other-nonce-000001",
+                    "bootSessionId": "other-boot",
+                    "sequence": 1,
+                    "eventId": str(uuid4()),
+                }
+            ),
+            received_at=now,
+        )
+    await db_session.flush()
+    if case == "wrong-owner":
+        # Keep the requested provider owned by the caller, but not the environment.
+        from app.models.session import AgentEnvironment
+
+        env = await db_session.get(AgentEnvironment, state.environment_id)
+        from app.models.user import User
+
+        other = User(clerk_id=f"other-{uuid4()}", email="other@example.test", name="Other")
+        db_session.add(other)
+        await db_session.flush()
+        env.user_id = other.id
+        await db_session.flush()
+    call = require_custom_provider_cli(
+        db_session,
+        owner_user_id=seed_user.id,
+        provider_ids=[PROVIDER],
+        cli_package_spec=f"clawdi@{VERSION}",
+        previous_state=state,
+    )
+    if case in {"recover", "expired"}:
+        await call
+    else:
+        with pytest.raises(HTTPException):
+            await call
+    assert state.runtimes["hermes"]["provider_ids"] == ["missing-provider"]

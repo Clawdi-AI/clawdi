@@ -503,3 +503,30 @@ Do not commit decrypted or imported env files.
   providers.
 - Changing the public REST provider-array contract as part of Core Hosted
   binding admission.
+
+
+## Recovering an already-applied custom provider
+
+A failed desired provider change must not prevent restoring a custom provider
+whose ownership was already transferred by a qualified CLI. Same-instance
+runtime-state writes may recover only newly requested custom IDs found in the
+unique authenticated applied observation for the persisted apply generation.
+The active environment owner, deployment binding, instance, CLI selection,
+receipt/boot identity and source/ETag pair must match. Multiple boots (even
+expired ones), missing observations, retired bindings and changed incarnations
+fail closed. The ordinary runtime-state generation and owner locks still apply.
+
+Historical error/expired observations establish previous ownership, never health
+or current convergence. When the current source exists it must match the applied
+source. When rendering fails, the persisted failure must belong to the current
+renderer contract. A historical claim cannot admit an unrelated custom provider;
+new handoffs retain the fresh, healthy, exact-source CLI requirement.
+
+The CLI still creates a missing provider only on initialization when it has no
+previous ownership record or a pending creation. A completed ownership record
+never authorizes recreating a missing provider. Recovery preserves native models
+and user configuration; it does not explain who removed a provider.
+
+Done: `bash scripts/test.sh backend tests/test_ai_provider_connection_ownership.py`
+passes against the runner's isolated PostgreSQL. No CLI or wire-schema change is
+required.

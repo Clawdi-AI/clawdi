@@ -169,6 +169,13 @@ role. Do not bypass that state check or edit the running container environment.
      already ancestors of the successful cumulative SHA. The exact SHA is both
      the commit-addressed OCI image tag and the Kamal deployment version; GHCR
      tags remain mutable and are not a registry immutability guarantee.
+   - Automatic release planning compares the last successfully deployed SHA with
+     the selected source SHA. Docker input validation uses each snapshot's own
+     locked workspace graph: historical sidecar images predate `runtime-mcp`,
+     while snapshots containing that workspace must copy its package manifest.
+     Missing required or unknown COPY inputs remain errors. A planner failure
+     does not build or deploy an image; correct the contract rather than bypassing
+     its validation.
    - Manual dispatch always builds its resolved ref through the same production
      concurrency group. An older ref is an explicit rollback and can defeat the
      intended automatic release history if it waits behind automatic runs.
@@ -188,8 +195,9 @@ role. Do not bypass that state check or edit the running container environment.
      only when the exact npm version is absent, and otherwise verifies exact
      registry integrity before completing the same-commit GitHub Release.
 
-   Done: `bun test packages/cli/tests/clawdi-image-release-workflow.test.ts`
-   exits 0 and the backend image release workflow contract passes.
+   Done: `bash scripts/test.sh cli tests/clawdi-image-release-workflow.test.ts tests/whatsapp-sidecar-deploy-contract.test.ts`
+   exits 0 in the isolated runner. A successful Backend CI is not deployment
+   evidence; verify the exact-source Image Release's `deploy-vps` job succeeds.
 
 ### Discord reserved-command cutover
 
