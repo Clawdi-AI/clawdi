@@ -21,6 +21,22 @@ export function VaultRequestPage() {
 	>("loading");
 	const [error, setError] = useState("");
 	const [attempt, setAttempt] = useState(0);
+	const [copyState, setCopyState] = useState<"idle" | "copying" | "copied" | "error">("idle");
+	const agentMessage =
+		phase === "done" && context
+			? `I've saved the requested credentials. Please check Vault request ${context.id}; once its status is supplied, use vault_sync to save the credentials to an appropriate local env file and continue our previous task.`
+			: "";
+
+	async function copyMessage() {
+		if (!agentMessage || copyState === "copying") return;
+		setCopyState("copying");
+		try {
+			await navigator.clipboard.writeText(agentMessage);
+			setCopyState("copied");
+		} catch {
+			setCopyState("error");
+		}
+	}
 
 	useEffect(() => {
 		// Remove the capability from browser history before making any request.
@@ -71,6 +87,7 @@ export function VaultRequestPage() {
 				signal: AbortSignal.timeout(20000),
 			});
 			if (data) {
+				setContext(data);
 				setValues({});
 				token.current = "";
 				setPhase("done");
@@ -120,10 +137,29 @@ export function VaultRequestPage() {
 							{UNAVAILABLE}
 						</p>
 					)}
-					{phase === "done" && (
-						<p role="status" className="text-muted-foreground">
-							Your secrets are saved. You can close this page.
-						</p>
+					{phase === "done" && agentMessage && (
+						<>
+							<p role="status" className="text-muted-foreground">
+								Your secrets are saved. Send this message to your agent to continue.
+							</p>
+							<p className="select-text rounded-lg border bg-muted/30 p-3 text-sm leading-relaxed break-words">
+								{agentMessage}
+							</p>
+							{copyState === "error" && (
+								<p role="alert" className="text-sm text-destructive">
+									Could not copy. Select and copy the message above manually.
+								</p>
+							)}
+							<div className="flex justify-end">
+								<Button onClick={copyMessage} disabled={copyState === "copying"}>
+									{copyState === "copied"
+										? "Copied"
+										: copyState === "copying"
+											? "Copying…"
+											: "Copy message for agent"}
+								</Button>
+							</div>
+						</>
 					)}
 					{phase === "error" && (
 						<>

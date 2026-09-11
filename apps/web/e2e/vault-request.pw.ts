@@ -19,7 +19,11 @@ const context = {
 
 test("public batch request keeps capability out of URLs and saves all fields once", async ({
 	page,
+	context: browserContext,
 }) => {
+	await browserContext.grantPermissions(["clipboard-read", "clipboard-write"]);
+	const suppliedId = "44444444-4444-4444-8444-444444444444";
+	const message = `I've saved the requested credentials. Please check Vault request ${suppliedId}; once its status is supplied, use vault_sync to save the credentials to an appropriate local env file and continue our previous task.`;
 	let submissions = 0;
 	const requestedUrls: string[] = [];
 	page.on("request", (request) => requestedUrls.push(request.url()));
@@ -35,7 +39,12 @@ test("public batch request keeps capability out of URLs and saves all fields onc
 				API_SECRET: "line1\nline2",
 			});
 			return route.fulfill({
-				json: { ...context, status: "supplied", supplied_at: "2026-09-10T00:00:00Z" },
+				json: {
+					...context,
+					id: suppliedId,
+					status: "supplied",
+					supplied_at: "2026-09-10T00:00:00Z",
+				},
 			});
 		}
 		return route.fulfill({ json: context });
@@ -44,6 +53,7 @@ test("public batch request keeps capability out of URLs and saves all fields onc
 	expect(response?.headers()["cache-control"]).toContain("no-store");
 	await expect(page.getByText("Production API · Agent workspace")).toBeVisible();
 	await expect(page).toHaveURL(/\/vault-request$/);
+	await expect(page.getByRole("button", { name: "Copy message for agent" })).toHaveCount(0);
 	await page.getByLabel("API_KEY", { exact: true }).fill("fake-key");
 	await page.getByLabel("API_SECRET", { exact: true }).fill("line1\nline2");
 	await page.getByRole("button", { name: "Save secrets" }).click();
@@ -51,6 +61,41 @@ test("public batch request keeps capability out of URLs and saves all fields onc
 	expect(submissions).toBe(1);
 	expect(requestedUrls.some((url) => url.includes(token))).toBe(false);
 	await expect(page.getByRole("textbox")).toHaveCount(0);
+	await expect(page.getByText(message, { exact: true })).toBeVisible();
+	await page.getByRole("button", { name: "Copy message for agent" }).click();
+	await expect(page.getByRole("button", { name: "Copied", exact: true })).toBeVisible();
+	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(message);
+
+	// Hold a denied write pending to verify success is never reported before settlement.
+	await page.evaluate(() => {
+		Object.defineProperty(navigator, "clipboard", {
+			configurable: true,
+			value: {
+				writeText: () =>
+					new Promise<void>((_resolve, reject) => {
+						window.addEventListener(
+							"deny-copy",
+							() => reject(new DOMException("Denied", "NotAllowedError")),
+							{ once: true },
+						);
+					}),
+			},
+		});
+	});
+	await page.getByRole("button", { name: "Copied", exact: true }).click();
+	await expect(page.getByRole("button", { name: "Copying…" })).toBeDisabled();
+	await expect(page.getByRole("button", { name: "Copied", exact: true })).toHaveCount(0);
+	await page.evaluate(() => window.dispatchEvent(new Event("deny-copy")));
+	await expect(page.getByRole("alert")).toContainText("copy the message above manually");
+	await expect(page.getByText(message, { exact: true })).toBeVisible();
+
+	await page.evaluate(() =>
+		Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined }),
+	);
+	await page.getByRole("button", { name: "Copy message for agent" }).click();
+	await expect(page.getByRole("alert")).toContainText("copy the message above manually");
+	await expect(page.getByRole("button", { name: "Copied", exact: true })).toHaveCount(0);
+	expect(submissions).toBe(1);
 });
 
 test("expired capability offers no secret form", async ({ page }) => {
@@ -59,5 +104,17 @@ test("expired capability offers no secret form", async ({ page }) => {
 	);
 	await page.goto(`/vault-request#${token}`);
 	await expect(page.getByRole("alert")).toContainText("expired");
+	await expect(page.getByRole("button", { name: "Copy message for agent" })).toHaveCount(0);
 	await expect(page.getByRole("textbox")).toHaveCount(0);
 });
+
+for (const status of ["missing", "error"]) {
+	test(`${status} request offers no agent message`, async ({ page }) => {
+		await page.route("**/v1/vault/requests/inspect", (route) =>
+			route.fulfill({ status: 500, json: { detail: "Unavailable" } }),
+		);
+		await page.goto(status === "missing" ? "/vault-request" : `/vault-request#${token}`);
+		await expect(page.getByRole("alert")).toBeVisible();
+		await expect(page.getByRole("button", { name: "Copy message for agent" })).toHaveCount(0);
+	});
+}
