@@ -41,6 +41,7 @@ PLATFORM_WORKLOAD_SCOPES = (
     "platform:agents:create",
     "platform:agents:delete",
     "platform:runtime-state:write",
+    "platform:provider-environment:repair",
     "platform:keys:mint",
     "platform:keys:revoke",
     "platform:runtime-observations:consume",
@@ -784,3 +785,8 @@ def require_platform_mutation_auth(required_scope: str):
     """Authenticate a workload token or the explicitly enabled legacy admin key."""
 
     return _require_platform_auth(required_scope, allow_legacy_admin=True)
+
+
+def require_platform_workload_auth(required_scope: str):
+    """Require a scoped service attestation; never accept legacy admin credentials."""
+    return _require_platform_auth(required_scope, allow_legacy_admin=False)

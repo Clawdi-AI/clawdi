@@ -32,7 +32,17 @@ from datetime import UTC, datetime
 from typing import Annotated, Any, Never, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Path,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from pydantic import JsonValue, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -91,7 +101,10 @@ from app.schemas.admin import (
     AdminRuntimeStateResponse,
     AdminRuntimeStateUpsert,
 )
-from app.schemas.ai_provider import AiProviderDeleteResponse, ai_provider_auth_from_persistence
+from app.schemas.ai_provider import (
+    AiProviderDeleteResponse,
+    ai_provider_auth_from_persistence,
+)
 from app.schemas.api_key import ApiKeyCreated, ApiKeyRevokeResponse
 from app.schemas.channel import (
     ChannelCommandSyncRequest,
@@ -99,6 +112,10 @@ from app.schemas.channel import (
     ChannelWhatsAppOnboardingSessionResponse,
 )
 from app.schemas.platform import PlatformOwner, RuntimeSourceAuthorityResponse
+from app.schemas.provider_environment_repair import (
+    ProviderEnvironmentVerifierAccess,
+    ProviderEnvironmentVerifierGrant,
+)
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.agent_environments import (
     AgentEnvironmentIdConflict,
@@ -201,6 +218,10 @@ from app.services.principal_lifecycle import (
 )
 from app.services.project_runtime_skills import (
     assert_agent_workspace_skill_write_compatible,
+)
+from app.services.provider_environment_verifier_access import (
+    inspect_verifier_access,
+    update_verifier_access,
 )
 from app.services.runtime_generation import (
     RuntimeApplyGenerationUpdateError,
@@ -2921,3 +2942,36 @@ def _admin_channel_update_audit_details(
     if "secrets" in updates:
         details["secret_names"] = sorted((body.secrets or {}).keys())
     return details
+
+
+@router.get(
+    "/platform/workload-clients/{client_id}/provider-environment-verifier",
+    response_model=ProviderEnvironmentVerifierAccess,
+)
+async def inspect_native_environment_verifier(
+    client_id: str,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_control_session),
+) -> ProviderEnvironmentVerifierAccess:
+    return await inspect_verifier_access(db, client_id)
+
+
+@router.put(
+    "/platform/workload-clients/{client_id}/provider-environment-verifier",
+    response_model=ProviderEnvironmentVerifierAccess,
+)
+async def configure_native_environment_verifier(
+    client_id: str,
+    body: ProviderEnvironmentVerifierGrant,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_control_session),
+) -> ProviderEnvironmentVerifierAccess:
+    return await update_verifier_access(
+        db,
+        client_id=client_id,
+        body=body,
+        idempotency_key=idempotency_key,
+        request_id=str(request.state.request_id),
+    )
