@@ -141,11 +141,9 @@ edit, move or commit them. Hosted agents must not invoke/install the tenant Claw
 Connected operators configure delivery with `clawdi setup --agent <type> --vault-workspace <path>`;
 that changes only the Vault destination, never every repository scanned by the daemon.
 
-After a credential request is supplied, check only index metadata for the expected fields.
-Load the selected JSON file inside the authorized process or SDK; do not return its contents
-as a tool result just to save them elsewhere. If automatic delivery is unavailable, report
-that state and any missing workspace binding instead of inventing a destination or claiming
-credentials were saved. Preserve generated files and unrelated local configuration.
+After a credential request is supplied, wait for the expected fields in index metadata before
+claiming delivery. If delivery is unavailable, report that state and any missing workspace
+binding instead of inventing a destination. Preserve unrelated local configuration.
 
 ### Optional CLI environment files
 

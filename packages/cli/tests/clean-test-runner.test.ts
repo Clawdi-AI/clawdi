@@ -37,12 +37,12 @@ describe("clean runner suite contract", () => {
 		expect(existsSync(repoPath("docker/test-runner.sh"))).toBe(false);
 		expect(runner).toContain(`if [[ "\${1:-}" == "--in-container" ]]`);
 		expect(runner).toContain('test-runner bash /repo/scripts/test.sh --in-container "$suite" "$@"');
-		expect(runner).toContain("all|backend|ci|js|cli|desktop|shared|sidecar|web)");
+		expect(runner).toContain("all|backend|ci|js|cli|desktop|shared|sidecar|web|runtime-vaults)");
 		expect(runnerDockerfile).not.toContain("docker/test-runner.sh");
 		expect(runnerDockerfile).not.toContain("ENTRYPOINT");
 
 		const postgresSelection = section(runner, "needs_postgres() {\n", "run_on_host() {\n");
-		expect(postgresSelection).toContain("all|backend|ci)");
+		expect(postgresSelection).toContain("all|backend|ci|runtime-vaults)");
 		expect(runner).toContain('if ! needs_postgres "$suite"; then');
 		expect(runner).toContain("run_args+=(--no-deps)");
 	});
@@ -141,7 +141,14 @@ describe("clean runner suite contract", () => {
 			"if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'",
 		);
 		expect(fullStep).toContain("run: scripts/test.sh all");
-		expect(occurrences(cleanRunnerWorkflow, "run: scripts/test.sh")).toBe(2);
+		expect(cleanRunnerWorkflow).toContain("run: scripts/test.sh runtime-vaults");
+		expect(occurrences(cleanRunnerWorkflow, "run: scripts/test.sh")).toBe(3);
+		const vaultSuite = section(runner, "run_runtime_vaults() {\n", "run_backend() {\n");
+		expect(vaultSuite).toContain("install_js");
+		expect(vaultSuite).toContain("install_backend");
+		expect(vaultSuite).toContain("backend_tests -s tests/test_runtime_vaults.py");
+		expect(vaultSuite.indexOf("install_js")).toBeLessThan(vaultSuite.indexOf("backend_tests"));
+		expect(vaultSuite.indexOf("install_backend")).toBeLessThan(vaultSuite.indexOf("backend_tests"));
 	});
 });
 
