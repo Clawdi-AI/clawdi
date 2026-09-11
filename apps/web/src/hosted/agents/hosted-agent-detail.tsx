@@ -145,20 +145,16 @@ import {
 } from "@/hosted/agents/hosted-terminal-panel";
 import { overviewComputePresentation } from "@/hosted/agents/overview-compute-presentation";
 import {
-	forgetOpenClawNativeHandoffLoaded,
-	hasOpenClawNativeHandoffLoaded,
-	markOpenClawNativeHandoffLoaded,
 	openClawRuntimeUiWindowTarget,
 	openSecureRuntimeWindow,
-	resolveRuntimeUiCredentials,
 	runtimeUiLaunchTarget,
-	runtimeUiLocalStorage,
 } from "@/hosted/agents/runtime-ui-credentials";
 import { trackRuntimeWindow } from "@/hosted/agents/runtime-window-lifecycle";
 import {
 	useFilesGrantBootstrap,
 	useOpenFilesInNewWindow,
 } from "@/hosted/agents/use-files-grant-bootstrap";
+import { useRuntimeUiCredentials } from "@/hosted/agents/use-runtime-ui-credentials";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import {
 	type CheckoutReturnNavigationTarget,
@@ -624,6 +620,10 @@ export function HostedAgentDetail({
 		shouldShowInitialDeploymentProgress(deploymentStatus, deploymentFailure);
 	const isLiveToolTab =
 		activeTab === "console" || activeTab === "files" || activeTab === "terminal";
+	// The persistent agent layout owns the ready OpenClaw surface. Keep this
+	// route mounted for its breadcrumb and canonical Outlet lifecycle.
+	if (activeTab === "console" && runtime === "openclaw" && deploymentRuntimeUiIsReady(deployment))
+		return <h1 className="sr-only">{availableAgentTitle}</h1>;
 	return (
 		<div
 			data-hosted="true"
@@ -706,6 +706,12 @@ export function HostedAgentDetail({
 					) : null}
 					{deploymentStatus.known && activeTab === "console" ? (
 						<ConsoleTab
+							key={JSON.stringify([
+								deployment.resource.id,
+								deployment.resource.metadata.generation,
+								runtimeConsoleUrl(deployment),
+								deploymentRuntimeUiIsReady(deployment),
+							])}
 							deployment={deployment}
 							runtime={runtime}
 							terminalHref={terminalHref}
@@ -1541,27 +1547,7 @@ function hermesAccessHintStorageKey(deploymentId: string): string {
 	return `${HERMES_ACCESS_HINT_STORAGE_PREFIX}.${deploymentId}`;
 }
 
-function useRuntimeUiCredentialRequest(
-	deployment: HostedDeployment,
-	endpointUrl: string | null,
-	runtime: Runtime,
-): () => Promise<RuntimeUiCredentials> {
-	const client = useBillingClient();
-	const deploymentId = deployment.resource.id;
-	const resourceVersion = deployment.resource.metadata.resourceVersion;
-	return useCallback(async () => {
-		const label = runtimeBrowserUiLabel(runtime);
-		if (!endpointUrl) throw new Error(`${label} isn't available right now.`);
-		const credentials = await client.getRuntimeUiCredentials(deploymentId, resourceVersion);
-		const resolved = resolveRuntimeUiCredentials(credentials, endpointUrl, resourceVersion);
-		if (!resolved || resolved.runtime !== runtime) {
-			throw new Error(`Clawdi couldn't load the ${label} sign-in details.`);
-		}
-		return resolved;
-	}, [client, deploymentId, endpointUrl, resourceVersion, runtime]);
-}
-
-function ConsoleTab({
+export function ConsoleTab({
 	deployment,
 	runtime,
 	terminalHref,
@@ -1585,96 +1571,17 @@ function ConsoleTab({
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const ready = deploymentRuntimeUiIsReady(deployment);
 	const url = ready ? runtimeConsoleUrl(deployment, runtime) : null;
-	const [credentials, setCredentials] = useState<RuntimeUiCredentials | null>(null);
-	const [credentialError, setCredentialError] = useState<Error | null>(null);
-	const [isCredentialLoading, setIsCredentialLoading] = useState(false);
-	const [credentialLoadState, setCredentialLoadState] = useState<"loading" | "ready" | "error">(
-		runtime === "openclaw" ? "loading" : "ready",
-	);
-	const [openClawNativeHandoffLoaded, setOpenClawNativeHandoffLoaded] = useState(false);
-	const [openClawFrameLoaded, setOpenClawFrameLoaded] = useState(false);
-	const requestCredentials = useRuntimeUiCredentialRequest(deployment, url, runtime);
-	const requestVersionRef = useRef(0);
-	const loadedCredentialIdentityRef = useRef<string | null>(null);
-	const credentialIdentity = `${deployment.resource.id}\0${deployment.resource.metadata.generation}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${url ?? ""}\0${ready}`;
-
-	const loadCredentials = useCallback(async (): Promise<RuntimeUiCredentials | null> => {
-		const requestVersion = requestVersionRef.current + 1;
-		requestVersionRef.current = requestVersion;
-		setIsCredentialLoading(true);
-		setCredentialError(null);
-		setCredentialLoadState("loading");
-		if (runtime === "openclaw") {
-			setCredentials(null);
-			setOpenClawNativeHandoffLoaded(false);
-			setOpenClawFrameLoaded(false);
-		}
-		try {
-			const resolved = await requestCredentials();
-			if (requestVersionRef.current !== requestVersion) return null;
-			setCredentials(resolved);
-			setCredentialLoadState("ready");
-			return resolved;
-		} catch (error) {
-			if (requestVersionRef.current === requestVersion) {
-				setCredentialError(
-					error instanceof Error
-						? error
-						: new Error(
-								`Clawdi couldn't load the ${runtimeBrowserUiLabel(runtime)} sign-in details.`,
-							),
-				);
-				setCredentialLoadState("error");
-			}
-			return null;
-		} finally {
-			if (requestVersionRef.current === requestVersion) setIsCredentialLoading(false);
-		}
-	}, [requestCredentials, runtime]);
-
-	const clearCredentials = useCallback(() => {
-		requestVersionRef.current += 1;
-		setCredentials(null);
-		setCredentialError(null);
-		setIsCredentialLoading(false);
-		setCredentialLoadState(runtime === "openclaw" ? "loading" : "ready");
-		setOpenClawNativeHandoffLoaded(false);
-		setOpenClawFrameLoaded(false);
-	}, [runtime]);
-
-	const reconnectOpenClaw = useCallback(() => {
-		forgetOpenClawNativeHandoffLoaded(runtimeUiLocalStorage(), deployment.resource.id);
-		return loadCredentials();
-	}, [deployment.resource.id, loadCredentials]);
-
-	useEffect(() => {
-		if (loadedCredentialIdentityRef.current === credentialIdentity) return;
-		loadedCredentialIdentityRef.current = credentialIdentity;
-		clearCredentials();
-		if (runtime !== "openclaw" || !ready || !url) return;
-		if (
-			hasOpenClawNativeHandoffLoaded(
-				runtimeUiLocalStorage(),
-				deployment.resource.id,
-				url,
-				deployment.resource.metadata.generation,
-			)
-		) {
-			setOpenClawNativeHandoffLoaded(true);
-			setCredentialLoadState("ready");
-			return;
-		}
-		void loadCredentials();
-	}, [
-		clearCredentials,
-		credentialIdentity,
-		deployment.resource.id,
-		deployment.resource.metadata.generation,
-		ready,
-		loadCredentials,
-		runtime,
-		url,
-	]);
+	const {
+		credentials: currentCredentials,
+		error: credentialError,
+		isLoading: isCredentialLoading,
+		attempt,
+		load: loadCredentials,
+		clear: clearCredentials,
+		reconnect: reconnectOpenClaw,
+	} = useRuntimeUiCredentials(deployment, url);
+	const [loadedAttempt, setLoadedAttempt] = useState<number | null>(null);
+	const openClawFrameLoaded = currentCredentials !== null && loadedAttempt === attempt;
 
 	if (status.kind === "stopped") {
 		return <StoppedAgentState deployment={deployment} />;
@@ -1770,31 +1677,15 @@ function ConsoleTab({
 			/>
 		);
 	}
-	const currentCredentials = credentials
-		? resolveRuntimeUiCredentials(credentials, url, deployment.resource.metadata.resourceVersion)
-		: null;
 	const openClawCredentials =
 		currentCredentials?.runtime === "openclaw" ? currentCredentials : null;
-	const openClawFrameCanLoad =
-		loadedCredentialIdentityRef.current === credentialIdentity &&
-		credentialLoadState === "ready" &&
-		(openClawCredentials !== null || openClawNativeHandoffLoaded);
-	const iframeUrl =
-		runtime === "openclaw"
-			? openClawCredentials
-				? runtimeUiLaunchTarget(openClawCredentials)
-				: openClawNativeHandoffLoaded
-					? url
-					: "about:blank"
-			: runtimeDashboardUrl(url, runtime);
+	const openClawFrameCanLoad = openClawCredentials !== null;
+	const iframeUrl = openClawCredentials
+		? runtimeUiLaunchTarget(openClawCredentials)
+		: runtimeDashboardUrl(url, runtime);
 	const windowTarget =
 		runtime === "openclaw"
-			? openClawRuntimeUiWindowTarget(
-					openClawCredentials,
-					url,
-					openClawNativeHandoffLoaded,
-					openClawFrameCanLoad && openClawFrameLoaded,
-				)
+			? openClawRuntimeUiWindowTarget(openClawCredentials, openClawFrameLoaded)
 			: runtimeDashboardUrl(url, runtime);
 
 	return (
@@ -1817,7 +1708,7 @@ function ConsoleTab({
 			}
 		>
 			{runtime === "openclaw" && !openClawFrameCanLoad ? (
-				credentialLoadState === "error" ? (
+				credentialError !== null ? (
 					<EmptyState
 						icon={AlertCircle}
 						title={`${browserUiLabel} could not be opened`}
@@ -1850,27 +1741,17 @@ function ConsoleTab({
 				)
 			) : (
 				<iframe
-					key={`${runtime}:${iframeUrl}`}
+					key={runtime === "openclaw" ? attempt : url}
 					src={iframeUrl}
-					title={browserUiLabel}
+					loading="eager"
 					className="min-h-0 flex-1 border-0 bg-background"
 					allow="clipboard-read; clipboard-write"
+					title={browserUiLabel}
 					onLoad={
 						runtime === "openclaw"
 							? () => {
-									if (loadedCredentialIdentityRef.current !== credentialIdentity) return;
-									if (
-										markOpenClawNativeHandoffLoaded(
-											runtimeUiLocalStorage(),
-											deployment.resource.id,
-											url,
-											openClawCredentials,
-											deployment.resource.metadata.generation,
-										)
-									) {
-										setOpenClawNativeHandoffLoaded(true);
-									}
-									setOpenClawFrameLoaded(true);
+									// A document boundary, never an authentication acknowledgement.
+									setLoadedAttempt(attempt);
 								}
 							: undefined
 					}

@@ -122,6 +122,7 @@ async def test_provider_does_not_retry_a_timed_out_mutation(tls_provider):
     client, url, state, _, _ = tls_provider
     state.mode = "stall"
     with pytest.raises(httpx.ReadTimeout):
-        await client.post(url, json={"message": "test"}, timeout=0.1)
+        # Bound the stalled response without racing local TLS setup under CI load.
+        await client.post(url, json={"message": "test"}, timeout=httpx.Timeout(5.0, read=0.1))
     assert state.connections == 1
     assert state.requests == 1

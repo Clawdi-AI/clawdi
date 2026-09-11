@@ -55,6 +55,7 @@ async def consumer(
     captured_at=None,
     source_revision=REVISION,
     boot="boot-connection-test",
+    successor_boot=None,
     health="ok",
     applied_provider_ids=None,
     runtime_name="openclaw",
@@ -118,6 +119,7 @@ async def consumer(
             "applyReceiptId": "apply-connection-0001",
             "bootNonce": "boot-nonce-connection-0001",
             "bootSessionId": boot,
+            "successorBootSessionId": successor_boot,
             "sequence": 1,
             "eventId": str(uuid4()),
         }
@@ -414,6 +416,29 @@ async def test_custom_create_rename_rotate_and_reject_catalog_overwrite(
     )
     assert overwritten.status_code == 409
 
+    await db_session.refresh(seed_user)
+    changed_environment = {**body, "runtime_env_name": "REPLACED_CUSTOM_KEY"}
+    overwritten = await client.post("/v1/ai-providers?replace=true", json=changed_environment)
+    assert overwritten.status_code == 409, overwritten.text
+    saved = await client.get("/v1/ai-providers/custom-work")
+    assert saved.json()["runtime_env_name"] == body["runtime_env_name"]
+    # Archiving does not revoke the native runtime's permanent ownership journal.
+    deleted = await client.delete("/v1/ai-providers/custom-work")
+    assert deleted.status_code == 200, deleted.text
+    for path, request in (
+        ("/v1/ai-providers", changed_environment),
+        (
+            "/v1/ai-providers/accept",
+            {
+                "provider": changed_environment,
+                "credential": {"type": "api_key", "value": "new-test-key"},
+            },
+        ),
+    ):
+        rejected = await client.post(path, json=request, headers={"Idempotency-Key": str(uuid4())})
+        assert rejected.status_code == 409, rejected.text
+        await db_session.refresh(seed_user)
+
 
 @pytest.mark.asyncio
 async def test_custom_handoff_and_binding_require_exact_qualified_cli(
@@ -509,7 +534,7 @@ async def test_custom_handoff_and_binding_require_exact_qualified_cli(
         "wrong-owner",
         "wrong-instance",
         "wrong-generation",
-        "wrong-source",
+        "changed-source",
         "new-provider",
         "retired",
         "ambiguous",
@@ -556,7 +581,7 @@ async def test_failed_custom_selection_recovers_only_authenticated_applied_owner
         state.instance_id = "replacement-instance"
     if case == "wrong-generation":
         state.apply_generation = 2
-    if case == "wrong-source":
+    if case == "changed-source":
         state.source_revision = "b" * 64
     if case == "retired":
         from app.models.session import AgentEnvironment
@@ -615,7 +640,7 @@ async def test_failed_custom_selection_recovers_only_authenticated_applied_owner
         cli_package_spec=f"clawdi@{VERSION}",
         previous_state=state,
     )
-    if case in {"recover", "expired"}:
+    if case in {"recover", "expired", "changed-source"}:
         await call
     else:
         with pytest.raises(HTTPException):
@@ -748,3 +773,106 @@ async def test_custom_recovery_scopes_all_active_boots_to_current_apply_generati
     assert all(head.state == "active" for head in heads)
     assert state.generation == 81 and state.apply_generation == 26
     assert state.runtimes["hermes"]["provider_ids"] == ["missing-provider"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "history", ["retained", "purged", "unqualified", "other-instance", "other-boot"]
+)
+async def test_custom_rollback_uses_prior_applied_evidence_from_current_boot(
+    client, db_session, seed_user, history
+):
+    from fastapi import HTTPException
+
+    from app.models.ai_provider import AiProvider
+    from app.models.runtime_observation import V2RuntimeObservationInbox
+    from app.services.ai_provider_connection_ownership import require_custom_provider_cli
+
+    await create_provider(client)
+    provider = await db_session.scalar(
+        select(AiProvider).where(
+            AiProvider.owner_user_id == seed_user.id, AiProvider.provider_id == PROVIDER
+        )
+    )
+    provider.configuration_mode = "custom"
+    db_session.add(AppSetting(key="supported_custom_provider_cli_versions", value_json=[VERSION]))
+    state = await consumer(
+        db_session,
+        seed_user.id,
+        runtime_name="hermes",
+        version="98.0.0" if history == "unqualified" else VERSION,
+        successor_boot="next-provider-boot" if history == "other-boot" else None,
+        captured_at=datetime.now(UTC) - timedelta(minutes=5),
+    )
+    old = await db_session.scalar(
+        select(V2RuntimeObservationInbox).where(
+            V2RuntimeObservationInbox.environment_id == state.environment_id
+        )
+    )
+    if history == "purged":
+        old.diagnostics = {}
+        old.payload_purged_at = datetime.now(UTC)
+    if history == "other-instance":
+        state.instance_id = "another-runtime-instance"
+    await db_session.flush()
+    source = "b" * 64
+    now = datetime.now(UTC)
+    event = {
+        "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
+        "reportedAt": now,
+        "capturedAt": now,
+        "runtimeMode": "hosted",
+        "status": "error",
+        "activeCliVersion": VERSION,
+        "applied": {
+            "etag": f'"sha256:{source}"',
+            "sourceRevision": source,
+            "generation": 1,
+            "instanceId": state.instance_id,
+            "appliedProviderIds": ["later-connection"],
+        },
+        "boot": None,
+        "cli": None,
+        "generation": 1,
+        "manifestETag": f'"sha256:{REVISION}"',
+        "applyReceiptId": "apply-connection-0001",
+        "bootNonce": "boot-nonce-connection-0001",
+        "bootSessionId": "boot-connection-test",
+        "sequence": 2,
+        "eventId": str(uuid4()),
+    }
+    if history == "other-boot":
+        event["bootSessionId"] = "next-provider-boot"
+        event["predecessorBootSessionId"] = "boot-connection-test"
+    await ingest_runtime_observation(
+        db_session,
+        environment_id=state.environment_id,
+        credential_deployment_id=state.deployment_id,
+        value=RuntimeObservationEventV2.model_validate(event),
+        received_at=now,
+    )
+    state.source_revision = "c" * 64
+    state.runtimes = {
+        "hermes": {
+            "enabled": True,
+            "providerMode": "configured",
+            "provider_ids": ["later-connection"],
+            "primary_model": None,
+            "install": {"source": "official"},
+        }
+    }
+    await db_session.flush()
+    for _ in range(3):
+        call = require_custom_provider_cli(
+            db_session,
+            owner_user_id=seed_user.id,
+            provider_ids=[PROVIDER],
+            cli_package_spec=f"clawdi@{VERSION}",
+            previous_state=state,
+        )
+        if history == "retained":
+            await call
+        else:
+            with pytest.raises(HTTPException):
+                await call
+    assert state.runtimes["hermes"]["provider_ids"] == ["later-connection"]

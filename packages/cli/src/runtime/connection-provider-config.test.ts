@@ -479,6 +479,43 @@ export async function mutateConfigFile(options) {
 	});
 }
 
+test.each([id, `custom:${id}`])(
+	"Hermes preserves the selected connection's key_env mirror: %s",
+	(selected) => {
+		const f = fixture("hermes", "custom");
+		try {
+			const config = f.input().hermesConfig;
+			config.document.setIn(["model", "provider"], selected);
+			config.document.setIn(["model", "key_env"], envName);
+			const before = config.document.toJS();
+			for (let tick = 0; tick < 3; tick++) {
+				const plan = f.prepare();
+				applyConnectionProviderTransfers(f.input());
+				f.restoreOwnership(commitProviderTransfers({ hermes: plan.providers }).hermes);
+				expect(config.document.toJS()).toEqual(before);
+			}
+			for (const [field, value] of [
+				["key_env", "FOREIGN_API_KEY"],
+				["api_key", "inline-test-key"],
+				["api", "foreign-auth"],
+				["auth_mode", "oauth"],
+			]) {
+				config.document.setIn(["model", field], value);
+				const conflicting = config.document.toString();
+				expect(() => f.prepare()).toThrow("model credentials conflict");
+				expect(config.document.toString()).toBe(conflicting);
+				config.document.deleteIn(["model", field]);
+				config.document.setIn(["model", "key_env"], envName);
+			}
+			f.prepare();
+			config.document.setIn(["model", "key_env"], "RACING_API_KEY");
+			expect(() => applyConnectionProviderTransfers(f.input())).toThrow("changed after preflight");
+		} finally {
+			f.cleanup();
+		}
+	},
+);
+
 test("Hermes public pool conflict prevents ownership transfer and config mutation", () => {
 	const f = fixture("hermes");
 	try {

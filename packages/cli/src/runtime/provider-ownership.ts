@@ -26,7 +26,7 @@ export interface ProviderOwnership {
 	transfers: Record<string, Record<string, ConnectionProviderTransfer>>;
 }
 
-const ownershipSchema = z
+export const providerOwnershipJournalSchema = z
 	.object({
 		schemaVersion: z.literal(1),
 		instanceId: z.string().min(1),
@@ -54,9 +54,9 @@ export function readProviderOwnership(
 			return { providers: applied, transfers: { openclaw: {}, hermes: {} } };
 		throw new Error("Provider ownership journal is unreadable");
 	}
-	let journal: z.infer<typeof ownershipSchema>;
+	let journal: z.infer<typeof providerOwnershipJournalSchema>;
 	try {
-		journal = ownershipSchema.parse(JSON.parse(content));
+		journal = providerOwnershipJournalSchema.parse(JSON.parse(content));
 	} catch {
 		throw new Error("Provider ownership journal is invalid");
 	}
@@ -78,7 +78,7 @@ export function writeProviderOwnership(
 	home: string,
 	ownership: ProviderOwnership,
 ): void {
-	const journal = ownershipSchema.parse({
+	const journal = providerOwnershipJournalSchema.parse({
 		schemaVersion: 1,
 		instanceId,
 		home,

@@ -14,6 +14,12 @@ database migration, CI, and implementation details.
 
 ### Added
 
+- CLI 0.14.73 keeps readable Vault credentials synchronized as JSON files under
+  the native workspace’s `.clawdi/vaults`, with a metadata index. Hosted runtimes
+  use their managed workspace; connected agents on macOS and Linux use the
+  workspace selected during setup. Updates and confirmed access removals sync
+  automatically.
+
 - Collect related missing credentials through one expiring, no-login Vault link.
   After saving, copy a message to the agent to verify the request and continue the task.
 - Optionally materialize Vault credentials into a local env file with the CLI and
@@ -82,6 +88,15 @@ database migration, CI, and implementation details.
 - The product tour now shows messaging Channels and explains the separate bot, Agent link, and paired-chat boundaries.
 
 ### Fixed
+
+- Existing native credential environment identities can be restored through an
+  audited operator CAS without changing provider keys or native model choices.
+
+- Restore previously applied custom connections after a failed selection without
+  overwriting native model choices, and preserve credential environment names
+  when replacing or restoring saved connections.
+- Hermes accepts a model credential environment that matches its selected
+  connection, including after repeated synchronization.
 
 - CLI 0.14.69 keeps ready OpenClaw gateways and dashboards available when a
   downstream channel is unhealthy, while still checking startup and shutdown.
