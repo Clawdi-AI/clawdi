@@ -97,6 +97,8 @@ test("official OpenClaw authenticates before reveal and reuses native auth acros
 		await expect(page).toHaveURL(`/agents/${deployment.agent_id}${section}`);
 	};
 	await page.goto(`/agents/${deployment.agent_id}`);
+	// The official CLI may take up to 20s; wait for issuance before judging the iframe.
+	await expect.poll(() => issued, { timeout: 25_000 }).toBe(1);
 	await expect(iframe).toHaveCount(1);
 	await expect(iframe).toBeHidden();
 	await expect.poll(() => connections[0]?.hello, { timeout: 30_000 }).toBeTruthy();
