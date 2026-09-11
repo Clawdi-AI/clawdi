@@ -7,7 +7,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, JsonValue, TypeAdapter
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
@@ -76,6 +77,8 @@ from app.services.runtime_observation import (
 from app.services.runtime_state_cleanup import cleanup_retired_runtime_state
 
 router = APIRouter(prefix="/v2/runtime", tags=["v2-runtime-observations"])
+
+_DRIFT_STATEMENT_TIMEOUT = "3s"
 _JSON_OBJECT_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 
 IdempotencyKey = Annotated[
@@ -731,7 +734,21 @@ async def read_runtime_drift_summaries_endpoint(
     db: AsyncSession = Depends(get_runtime_observation_session),
 ) -> RuntimeDriftSummaryReadResponse:
     """Read ordered, persisted drift evidence without consuming the observation stream."""
-    return await read_runtime_drift_summaries(db, body)
+    # Two bounded SELECTs share the reserved control connection. The transaction
+    # restores this setting on exit; ordinary observation APIs keep their budget.
+    await db.execute(
+        text("SELECT set_config('statement_timeout', :timeout, true)"),
+        {"timeout": _DRIFT_STATEMENT_TIMEOUT},
+    )
+    try:
+        return await read_runtime_drift_summaries(db, body)
+    except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) != "57014":
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Runtime drift evidence is temporarily unavailable",
+        ) from None
 
 
 async def _commit_cursor_expiry_or_rollback(

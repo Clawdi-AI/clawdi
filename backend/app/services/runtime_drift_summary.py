@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
+from pydantic import ValidationError
 from sqlalchemy import and_, func, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -28,6 +30,8 @@ from app.schemas.runtime_observation import (
 )
 from app.services.runtime_source import expected_runtime_bundle_v2_etag
 from app.services.runtime_source_revision import runtime_source_contract_revision
+
+logger = logging.getLogger(__name__)
 
 
 async def read_runtime_drift_summaries(
@@ -115,6 +119,7 @@ async def read_runtime_drift_summaries(
         binding_states[requested.environment_id] = binding
 
     heads: dict[UUID, RuntimeDriftObservationHead | None] = {}
+    invalid_heads: set[UUID] = set()
     if active:
         fresh = and_(
             V2RuntimeObservationHead.captured_at <= observed_at,
@@ -209,27 +214,31 @@ async def read_runtime_drift_summaries(
                 heads[row.environment_id] = None
                 continue
             # Coalescing advances head metadata, not inbox diagnostic timestamps.
-            heads[row.environment_id] = RuntimeDriftObservationHead.model_validate(
-                {
-                    "runtimeIdentity": {
-                        "generation": row.generation,
-                        "manifestETag": row.manifest_etag,
-                        "applyReceiptId": row.apply_receipt_id,
-                        "bootNonce": row.boot_nonce,
-                        "bootSessionId": row.boot_session_id,
-                    },
-                    "capturedAt": row.captured_at,
-                    "freshnessDeadline": row.freshness_deadline,
-                    "health": row.health,
-                    "diagnostics": {
-                        "activeCliVersion": row.active_cli_version,
-                        "applied": row.applied_diagnostics,
-                        "skills": row.skills,
-                        "agentPlugins": row.agent_plugins,
-                        "userActivity": row.user_activity,
-                    },
-                }
-            )
+            try:
+                heads[row.environment_id] = RuntimeDriftObservationHead.model_validate(
+                    {
+                        "runtimeIdentity": {
+                            "generation": row.generation,
+                            "manifestETag": row.manifest_etag,
+                            "applyReceiptId": row.apply_receipt_id,
+                            "bootNonce": row.boot_nonce,
+                            "bootSessionId": row.boot_session_id,
+                        },
+                        "capturedAt": row.captured_at,
+                        "freshnessDeadline": row.freshness_deadline,
+                        "health": row.health,
+                        "diagnostics": {
+                            "activeCliVersion": row.active_cli_version,
+                            "applied": row.applied_diagnostics,
+                            "skills": row.skills,
+                            "agentPlugins": row.agent_plugins,
+                            "userActivity": row.user_activity,
+                        },
+                    }
+                )
+            except ValidationError:
+                invalid_heads.add(row.environment_id)
+                logger.warning("Runtime drift head invalid environment_id=%s", row.environment_id)
 
     contract = runtime_source_contract_revision()
     items: list[RuntimeDriftSummary] = []
@@ -238,18 +247,28 @@ async def read_runtime_drift_summaries(
         row = by_environment.get(requested.environment_id)
         if binding == "active" and row is not None and row.source_deployment_id is not None:
             revision = row.source_revision if row.source_revision_contract == contract else None
-            source = RuntimeDriftSourceAuthority(
-                status="present" if revision is not None else "unavailable",
-                instanceId=row.instance_id,
-                sourceRevision=revision,
-                etag=expected_runtime_bundle_v2_etag(revision) if revision is not None else None,
-            )
+            try:
+                source = RuntimeDriftSourceAuthority(
+                    status="present" if revision is not None else "unavailable",
+                    instanceId=row.instance_id,
+                    sourceRevision=revision,
+                    etag=expected_runtime_bundle_v2_etag(revision)
+                    if revision is not None
+                    else None,
+                )
+            except ValueError:
+                logger.warning("Runtime drift source invalid environment_id=%s", row.environment_id)
+                source = RuntimeDriftSourceAuthority(
+                    status="unavailable", instanceId=None, sourceRevision=None, etag=None
+                )
         else:
             source = RuntimeDriftSourceAuthority(
                 status="missing", instanceId=None, sourceRevision=None, etag=None
             )
         head = heads.get(requested.environment_id)
-        if head is None:
+        if requested.environment_id in invalid_heads:
+            observation_status = "unavailable"
+        elif head is None:
             observation_status = "ambiguous" if requested.environment_id in heads else "missing"
         else:
             observation_status = "fresh" if head.freshness_deadline > observed_at else "expired"
