@@ -144,15 +144,13 @@ import {
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
 import { overviewComputePresentation } from "@/hosted/agents/overview-compute-presentation";
+import { useRuntimeUiCredentialSession } from "@/hosted/agents/runtime-ui-credential-provider";
+import type { RuntimeUiCredentialSession } from "@/hosted/agents/runtime-ui-credential-session";
 import {
-	forgetOpenClawNativeHandoffLoaded,
-	hasOpenClawNativeHandoffLoaded,
-	markOpenClawNativeHandoffLoaded,
 	openClawRuntimeUiWindowTarget,
 	openSecureRuntimeWindow,
 	resolveRuntimeUiCredentials,
 	runtimeUiLaunchTarget,
-	runtimeUiLocalStorage,
 } from "@/hosted/agents/runtime-ui-credentials";
 import { trackRuntimeWindow } from "@/hosted/agents/runtime-window-lifecycle";
 import {
@@ -1541,26 +1539,6 @@ function hermesAccessHintStorageKey(deploymentId: string): string {
 	return `${HERMES_ACCESS_HINT_STORAGE_PREFIX}.${deploymentId}`;
 }
 
-function useRuntimeUiCredentialRequest(
-	deployment: HostedDeployment,
-	endpointUrl: string | null,
-	runtime: Runtime,
-): () => Promise<RuntimeUiCredentials> {
-	const client = useBillingClient();
-	const deploymentId = deployment.resource.id;
-	const resourceVersion = deployment.resource.metadata.resourceVersion;
-	return useCallback(async () => {
-		const label = runtimeBrowserUiLabel(runtime);
-		if (!endpointUrl) throw new Error(`${label} isn't available right now.`);
-		const credentials = await client.getRuntimeUiCredentials(deploymentId, resourceVersion);
-		const resolved = resolveRuntimeUiCredentials(credentials, endpointUrl, resourceVersion);
-		if (!resolved || resolved.runtime !== runtime) {
-			throw new Error(`Clawdi couldn't load the ${label} sign-in details.`);
-		}
-		return resolved;
-	}, [client, deploymentId, endpointUrl, resourceVersion, runtime]);
-}
-
 function ConsoleTab({
 	deployment,
 	runtime,
@@ -1585,96 +1563,35 @@ function ConsoleTab({
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const ready = deploymentRuntimeUiIsReady(deployment);
 	const url = ready ? runtimeConsoleUrl(deployment, runtime) : null;
-	const [credentials, setCredentials] = useState<RuntimeUiCredentials | null>(null);
-	const [credentialError, setCredentialError] = useState<Error | null>(null);
-	const [isCredentialLoading, setIsCredentialLoading] = useState(false);
-	const [credentialLoadState, setCredentialLoadState] = useState<"loading" | "ready" | "error">(
-		runtime === "openclaw" ? "loading" : "ready",
-	);
-	const [openClawNativeHandoffLoaded, setOpenClawNativeHandoffLoaded] = useState(false);
-	const [openClawFrameLoaded, setOpenClawFrameLoaded] = useState(false);
-	const requestCredentials = useRuntimeUiCredentialRequest(deployment, url, runtime);
-	const requestVersionRef = useRef(0);
-	const loadedCredentialIdentityRef = useRef<string | null>(null);
-	const credentialIdentity = `${deployment.resource.id}\0${deployment.resource.metadata.generation}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${url ?? ""}\0${ready}`;
-
-	const loadCredentials = useCallback(async (): Promise<RuntimeUiCredentials | null> => {
-		const requestVersion = requestVersionRef.current + 1;
-		requestVersionRef.current = requestVersion;
-		setIsCredentialLoading(true);
-		setCredentialError(null);
-		setCredentialLoadState("loading");
-		if (runtime === "openclaw") {
-			setCredentials(null);
-			setOpenClawNativeHandoffLoaded(false);
-			setOpenClawFrameLoaded(false);
-		}
-		try {
-			const resolved = await requestCredentials();
-			if (requestVersionRef.current !== requestVersion) return null;
-			setCredentials(resolved);
-			setCredentialLoadState("ready");
-			return resolved;
-		} catch (error) {
-			if (requestVersionRef.current === requestVersion) {
-				setCredentialError(
-					error instanceof Error
-						? error
-						: new Error(
-								`Clawdi couldn't load the ${runtimeBrowserUiLabel(runtime)} sign-in details.`,
-							),
-				);
-				setCredentialLoadState("error");
-			}
-			return null;
-		} finally {
-			if (requestVersionRef.current === requestVersion) setIsCredentialLoading(false);
-		}
-	}, [requestCredentials, runtime]);
-
-	const clearCredentials = useCallback(() => {
-		requestVersionRef.current += 1;
-		setCredentials(null);
-		setCredentialError(null);
-		setIsCredentialLoading(false);
-		setCredentialLoadState(runtime === "openclaw" ? "loading" : "ready");
-		setOpenClawNativeHandoffLoaded(false);
-		setOpenClawFrameLoaded(false);
-	}, [runtime]);
-
-	const reconnectOpenClaw = useCallback(() => {
-		forgetOpenClawNativeHandoffLoaded(runtimeUiLocalStorage(), deployment.resource.id);
-		return loadCredentials();
-	}, [deployment.resource.id, loadCredentials]);
+	const { session: credentialSession, state: credentialState } = useRuntimeUiCredentialSession();
+	const {
+		credentials,
+		error: credentialError,
+		status: credentialLoadState,
+		nativeHandoffLoaded: openClawNativeHandoffLoaded,
+	} = credentialState;
+	const isCredentialLoading = credentialLoadState === "loading";
+	const [preparedSession, setPreparedSession] = useState<RuntimeUiCredentialSession | null>(null);
+	const [loadedFrame, setLoadedFrame] = useState<{
+		session: RuntimeUiCredentialSession;
+		attempt: number;
+	} | null>(null);
+	const openClawFrameLoaded =
+		loadedFrame?.session === credentialSession && loadedFrame.attempt === credentialState.attempt;
+	const loadCredentials = credentialSession.load;
+	const clearCredentials = credentialSession.clear;
+	const reconnectOpenClaw = credentialSession.reconnect;
 
 	useEffect(() => {
-		if (loadedCredentialIdentityRef.current === credentialIdentity) return;
-		loadedCredentialIdentityRef.current = credentialIdentity;
-		clearCredentials();
 		if (runtime !== "openclaw" || !ready || !url) return;
-		if (
-			hasOpenClawNativeHandoffLoaded(
-				runtimeUiLocalStorage(),
-				deployment.resource.id,
-				url,
-				deployment.resource.metadata.generation,
-			)
-		) {
-			setOpenClawNativeHandoffLoaded(true);
-			setCredentialLoadState("ready");
-			return;
-		}
-		void loadCredentials();
-	}, [
-		clearCredentials,
-		credentialIdentity,
-		deployment.resource.id,
-		deployment.resource.metadata.generation,
-		ready,
-		loadCredentials,
-		runtime,
-		url,
-	]);
+		let active = true;
+		void credentialSession.open().then(() => {
+			if (active) setPreparedSession(credentialSession);
+		});
+		return () => {
+			active = false;
+		};
+	}, [credentialSession, runtime, ready, url]);
 
 	if (status.kind === "stopped") {
 		return <StoppedAgentState deployment={deployment} />;
@@ -1776,7 +1693,7 @@ function ConsoleTab({
 	const openClawCredentials =
 		currentCredentials?.runtime === "openclaw" ? currentCredentials : null;
 	const openClawFrameCanLoad =
-		loadedCredentialIdentityRef.current === credentialIdentity &&
+		preparedSession === credentialSession &&
 		credentialLoadState === "ready" &&
 		(openClawCredentials !== null || openClawNativeHandoffLoaded);
 	const iframeUrl =
@@ -1849,34 +1766,47 @@ function ConsoleTab({
 					</div>
 				)
 			) : (
-				<iframe
-					key={`${runtime}:${iframeUrl}`}
+				<RuntimeUiFrame
+					key={
+						runtime === "openclaw"
+							? `${runtime}:${url}:${credentialState.attempt}`
+							: `${runtime}:${url}`
+					}
 					src={iframeUrl}
 					title={browserUiLabel}
-					className="min-h-0 flex-1 border-0 bg-background"
-					allow="clipboard-read; clipboard-write"
 					onLoad={
 						runtime === "openclaw"
 							? () => {
-									if (loadedCredentialIdentityRef.current !== credentialIdentity) return;
-									if (
-										markOpenClawNativeHandoffLoaded(
-											runtimeUiLocalStorage(),
-											deployment.resource.id,
-											url,
-											openClawCredentials,
-											deployment.resource.metadata.generation,
-										)
-									) {
-										setOpenClawNativeHandoffLoaded(true);
-									}
-									setOpenClawFrameLoaded(true);
+									credentialSession.markLoaded(credentialState.attempt);
+									setLoadedFrame({ session: credentialSession, attempt: credentialState.attempt });
 								}
 							: undefined
 					}
 				/>
 			)}
 		</LiveToolFrame>
+	);
+}
+
+/** Keep the current handoff URL stable when its one-time token is consumed. */
+function RuntimeUiFrame({
+	src,
+	title,
+	onLoad,
+}: {
+	src: string;
+	title: string;
+	onLoad?: () => void;
+}) {
+	const [launchUrl] = useState(src);
+	return (
+		<iframe
+			src={launchUrl}
+			title={title}
+			className="min-h-0 flex-1 border-0 bg-background"
+			allow="clipboard-read; clipboard-write"
+			onLoad={onLoad}
+		/>
 	);
 }
 

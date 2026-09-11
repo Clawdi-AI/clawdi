@@ -3,6 +3,7 @@
 import { getRouteApi, Outlet } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
+import { RuntimeUiCredentialProvider } from "@/hosted/agents/runtime-ui-credential-provider";
 import { useDeploymentEventStream } from "@/hosted/use-deployment-event-stream";
 import { DeploymentEventStreamActiveProvider } from "@/lib/deployment-event-stream-context";
 
@@ -25,7 +26,9 @@ export function HostedAgentEventStreamLayout() {
 	return (
 		<DeploymentEventStreamActiveProvider active={deploymentEvents.active}>
 			<div data-hosted="true" className="contents">
-				<Outlet />
+				<RuntimeUiCredentialProvider deployment={deployment}>
+					<Outlet />
+				</RuntimeUiCredentialProvider>
 			</div>
 		</DeploymentEventStreamActiveProvider>
 	);

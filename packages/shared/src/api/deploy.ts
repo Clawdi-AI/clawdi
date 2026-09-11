@@ -82,6 +82,10 @@ export function isRuntimeUiCredentials(value: unknown): value is RuntimeUiCreden
 		value.auth_mode === "openclaw_token" &&
 		typeof value.token === "string" &&
 		Boolean(value.token) &&
+		(value.browser_bootstrap_expires_at_ms == null ||
+			(typeof value.browser_bootstrap_expires_at_ms === "number" &&
+				Number.isSafeInteger(value.browser_bootstrap_expires_at_ms) &&
+				value.browser_bootstrap_expires_at_ms > 0)) &&
 		typeof value.handoff_url === "string" &&
 		isOpenClawLaunchHandoff(value.handoff_url, value.url, value.token) &&
 		isCleanRuntimeUiUrl(value.url)
