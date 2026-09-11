@@ -761,9 +761,18 @@ runtime providers. When both consumers use the same provider, Cloud resolves
 and decrypts that provider auth payload once. The CLI uses the terminal-tool
 reference to own exactly one Hosted Codex default configuration at
 `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`). When Codex is absent
-or damaged, the CLI bootstraps the audited package into the tenant's standard
-`~/.local` npm prefix. It does not wrap, pin, or roll back a healthy user-owned
-Codex install. The Hosted instance environment supplies the public egress
+or damaged, the CLI installs the official npm package `@openai/codex` at its
+npm default tag (`latest` unless the user configures another tag) from
+`https://registry.npmjs.org` into the tenant's standard `~/.local` npm prefix.
+Bootstrap sets both the default and `@openai` scoped registry to the official
+registry; an inherited scoped mirror cannot redirect this installation. Its installed npm metadata retains the actual
+validated semantic version, also bound into the provider impact revision.
+A later reconcile
+does not query the registry for a newer release when the package name and semantic version are valid
+and the command has executable permission. This is an installation-presence check,
+not an execution-health or sandbox qualification. It does not wrap, pin, or roll
+back an existing user-owned Codex install that passes those checks. The Hosted
+instance environment supplies the public egress
 placeholder, standard CA trust variables, and npm prefix to terminal commands.
 Managed, BYOK, Codex OAuth, and unmanaged runtime-provider modes all receive the
 same terminal Codex default. Unmanaged OpenClaw or Hermes units receive no
@@ -780,8 +789,7 @@ The new CLI writes no Codex `model` or `model_catalog_json`; it writes only the
 custom provider selection, endpoint, canonical env key, and Responses transport.
 On the normal Clawdi-provisioned path, the plain `env_key`, fresh managed home,
 and absence of command or Codex-backend auth leave remote refresh disabled, so
-Codex selects its own default from its bundled catalog (`gpt-5.6-sol` in the
-bootstrap `0.146.0` catalog). A manually written or stale ChatGPT backend auth
+Codex selects its own default from its installed bundled catalog. A manually written or stale ChatGPT backend auth
 file can satisfy Codex's upstream refresh gate. Codex has no native discovery-off
 setting analogous to OpenClaw or Hermes, and Clawdi does not invent one or
 encode a model choice. Manifest v1 `primary_model` remains required only
