@@ -22,6 +22,8 @@ from app.services.app_setting_registry import (
 )
 from app.services.app_settings import AppSettingUnavailable, resolve_app_setting
 from app.services.runtime_drift_summary import read_runtime_drift_summaries
+from app.services.runtime_source import expected_runtime_bundle_v2_etag
+from app.services.runtime_source_revision import persisted_runtime_source_error
 
 
 async def require_connection_ownership_migration(
@@ -186,6 +188,64 @@ async def require_custom_provider_cli(
                     or previous_state.generation
                 },
             )
+            # Applied provider ownership survives a failed desired-state change.
+            # This is not a readiness claim: only the exact previous incarnation's
+            # already-applied providers may use historical evidence. An unscoped
+            # read deliberately refuses multiple boots, including expired ones.
+            historical = await read_runtime_drift_summaries(
+                db,
+                RuntimeDriftSummaryReadRequest(
+                    bindings=[
+                        RuntimeDriftBindingRequest(
+                            environmentId=previous_state.environment_id,
+                            deploymentId=previous_state.deployment_id,
+                        )
+                    ]
+                ),
+            )
+            owned_environment = await db.scalar(
+                select(AgentEnvironment.id).where(
+                    AgentEnvironment.id == previous_state.environment_id,
+                    AgentEnvironment.user_id == owner_user_id,
+                    AgentEnvironment.archived_at.is_(None),
+                )
+            )
+            if owned_environment is None:
+                raise HTTPException(409, "Custom provider recovery binding is invalid")
+            if len(historical.items) == 1:
+                history = historical.items[0]
+                prior_head = history.observation.head
+                prior_applied = prior_head.diagnostics.applied if prior_head else None
+                if (
+                    history.binding == "active"
+                    and history.source_authority.instance_id == previous_state.instance_id
+                    and prior_head is not None
+                    and prior_applied is not None
+                    and prior_head.captured_at <= historical.observed_at
+                    and prior_head.diagnostics.active_cli_version in versions
+                    and previous_state.cli_package_spec
+                    == f"clawdi@{prior_head.diagnostics.active_cli_version}"
+                    and prior_applied.instance_id == previous_state.instance_id
+                    and (
+                        history.source_authority.status == "unavailable"
+                        and persisted_runtime_source_error(previous_state)
+                        or (
+                            history.source_authority.status == "present"
+                            and history.source_authority.source_revision
+                            == prior_applied.source_revision
+                            and history.source_authority.etag == prior_applied.etag
+                        )
+                    )
+                    and prior_applied.generation
+                    == (previous_state.apply_generation or previous_state.generation)
+                    and prior_head.runtime_identity.generation == prior_applied.generation
+                    and prior_head.runtime_identity.apply_receipt_id
+                    and prior_head.runtime_identity.boot_nonce
+                    and prior_applied.etag
+                    == expected_runtime_bundle_v2_etag(prior_applied.source_revision)
+                    and custom - previous_ids <= set(prior_applied.applied_provider_ids)
+                ):
+                    return
             if len(evidence.items) != 1:
                 raise HTTPException(
                     409, "Custom provider binding requires current runtime evidence"

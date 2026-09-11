@@ -682,3 +682,10 @@ Core tables verified under `backend/app/models/`:
 
 Add an ADR or focused design note before turning a known absence into a new
 module.
+
+
+Custom provider recovery uses authenticated prior applied ownership for the same
+runtime incarnation, with separate admission for new handoffs. See
+[AI Provider recovery](ai-providers.md#recovering-an-already-applied-custom-provider).
+This changes Cloud admission only; Hosted owns lifecycle repair and the CLI
+retains native configuration ownership.
