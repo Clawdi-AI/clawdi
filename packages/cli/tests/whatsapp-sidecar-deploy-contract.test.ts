@@ -172,6 +172,48 @@ describe("WhatsApp sidecar production deployment contract", () => {
 		expect(testOnly).toBe(baseline);
 	});
 
+	test("checks each historical Docker input contract against its own locked workspaces", () => {
+		const runtimeMcpCopy =
+			"COPY packages/runtime-mcp/package.json packages/runtime-mcp/package.json\n";
+		const previousDockerfile = dockerfile.replaceAll(runtimeMcpCopy, "");
+		const currentDockerfile = previousDockerfile.replaceAll(
+			"COPY packages/cli/package.json packages/cli/package.json\n",
+			`COPY packages/cli/package.json packages/cli/package.json\n${runtimeMcpCopy}`,
+		);
+		const previousLock = Bun.JSONC.parse(lockfile) as {
+			workspaces: Record<string, unknown>;
+		};
+		delete previousLock.workspaces["packages/runtime-mcp"];
+		const currentLock = {
+			...previousLock,
+			workspaces: {
+				...previousLock.workspaces,
+				"packages/runtime-mcp": { name: "@clawdi/runtime-mcp" },
+			},
+		};
+		const revision = (dockerSource: string, lock: typeof previousLock) =>
+			calculateWhatsAppSidecarDeploymentRevision(
+				repoRoot,
+				new Map([
+					["packages/whatsapp-baileys-sidecar/Dockerfile", dockerSource],
+					["bun.lock", JSON.stringify(lock)],
+				]),
+			);
+		const previous = revision(previousDockerfile, previousLock);
+		const current = revision(currentDockerfile, currentLock);
+		expect(previous).toMatch(/^[a-f0-9]{64}$/);
+		expect(current).not.toBe(previous);
+		for (const [dockerSource, lock] of [
+			[previousDockerfile, currentLock],
+			[currentDockerfile, previousLock],
+			[`${currentDockerfile}\nCOPY extra-input /app/extra-input\n`, currentLock],
+		] as const) {
+			expect(() => revision(dockerSource, lock)).toThrow(
+				"WhatsApp sidecar Docker COPY inputs changed",
+			);
+		}
+	});
+
 	test("changes revision for every effective sidecar runtime and build input class", () => {
 		const baseline = calculateWhatsAppSidecarDeploymentRevision(repoRoot);
 		const cases: Array<[string, ReadonlyMap<string, string>]> = [
