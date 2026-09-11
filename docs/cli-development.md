@@ -606,10 +606,11 @@ requests; REST retains them for compatibility. Pending requests appear separatel
 Vault detail page and are never returned as empty secret values. Use a fresh request for remaining missing fields after
 expiry; existing pending requests and supplied fields are rejected.
 
-After supply, verify `vault_request_status` and continue with existing authorized
-capabilities. The cloud MCP cannot write local files; Hosted local synchronization
-is unavailable through that remote connection. Never claim a file was saved or ask
-for secret values in chat.
+After supply, verify `vault_request_status`, resolve exact references through cloud MCP,
+and use already available native file/execution tools to save within the authorized task.
+Remote MCP itself cannot write local files; report a specific limitation only when safe
+native file capabilities are missing. Claim saved only after successful file-tool completion,
+and never expose secret values in chat. See the [Vault skill workflow](../packages/cli/skills/clawdi/SKILL.md#save-and-refresh-credentials-locally).
 
 The CLI remains an optional compatible adapter for an explicit absolute local file:
 

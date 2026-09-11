@@ -85,12 +85,10 @@ Vault read tools expose metadata and exact references:
 - `vault_list` — List Vault attachments and key counts for visible Projects.
 - `vault_get` — List key names, provenance, and exact `clawdi://` references for one attached Vault.
 
-Honor the user-selected Vault or existing local binding first; never silently switch
-sources. Otherwise inspect `vault_list` / `vault_get` metadata and reuse a Vault matching
-the task's purpose and intended access. Create in the current Workspace only when none
-is appropriate and creation is within the authorized task. Ask for the exact target only
-when ambiguity affects purpose or access. Linked Vaults can be synced read-only; do not
-request or modify fields outside the write boundary, or create duplicates to bypass access.
+Honor an explicit Vault/source or known local mapping first. Otherwise use `vault_list` /
+`vault_get` metadata to reuse a Vault suited to the task's purpose and access. Create in
+your own Workspace only when none is appropriate and the task authorizes creation.
+Clarify ambiguous sources; never create duplicates or write to linked Projects to bypass access.
 
 Use `vault_resolve` only when the authorized task requires plaintext. The metadata tools return
 key names and exact references, never secret values. Preserve those references when
@@ -128,9 +126,30 @@ inspect the Vault and request only still-missing fields; never replace an existi
 retry. If creation times out, use `vault_get` to find recent request IDs before retrying.
 If submission times out, inspect status before repeating a mutation.
 
-After `supplied`, continue the task using existing authorized capabilities. Remote MCP
-cannot save credentials to local files. Never print values, read env contents into chat,
-or save secrets to Memory or logs.
+### Save and refresh credentials locally
+
+For authorized credential use, confirm any user-supplied request is `supplied` with
+`vault_request_status`. Resolve exact reference(s) through cloud `vault_resolve`, then save
+with the agent's already available native file/execution tools. Choose a target from project
+conventions and purpose (for example `.env.stripe`) without routine filename approval.
+Check that it is Git-ignored and untracked, with no symlinks in the target or parent path.
+No CLI installation or dependency is needed; if available tools cannot save safely,
+report the specific missing capability.
+
+Preserve unrelated variables and quote dotenv values literally, without shell interpolation.
+Use restrictive `0600` permissions or equivalent where supported. Values pass through agent
+tool context; use internal file access as needed, but never print or echo secrets into chat,
+Memory, logs, or user-facing messages. Claim saved only after the file operation succeeds;
+verify file metadata and expected key names without dumping values. Report only the path,
+field names/count, and save status, then continue the task.
+
+For reuse, retain only nonsecret Project/Vault IDs and reference-to-filename/variable mappings
+in existing project conventions or context. When refresh is requested or needed, re-read Vault
+and update only selected assignments with native tools. A mapping alone cannot distinguish
+cloud rotation from local edits: without a reliable last-written baseline, preserve differing
+existing values or obtain explicit overwrite authorization. Known local edits or source
+ambiguity require clarification or a separate file. Never keep plaintext baselines in Memory,
+force overwrite, delete assignments automatically, or imply background/bidirectional sync.
 
 ### Optional CLI environment files
 
