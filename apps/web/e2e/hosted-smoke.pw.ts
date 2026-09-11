@@ -3556,7 +3556,7 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			const sessionGrid = page.getByTestId("overview-session-grid");
 			await expect(sessionGrid.getByRole("article")).toHaveCount(sessionCount);
 			if (sessionCount === 0) {
-				await expect(sessionGrid.locator('[data-slot="empty"]')).toHaveText(
+				await expect(sessionGrid.getByTestId("overview-session-placeholder").first()).toHaveText(
 					"No sessions from this agent yet.",
 				);
 			}

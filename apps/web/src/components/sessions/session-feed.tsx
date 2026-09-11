@@ -102,13 +102,20 @@ export function OverviewSessionList({
 					link={sessionLink(session)}
 				/>
 			))}
-			{visibleSessions.length === 0 ? (
-				<EmptyState
-					variant="inset"
-					description={emptyMessage}
-					className="min-h-[calc(3*var(--session-row-height)+--spacing(4))]"
-				/>
-			) : null}
+			{Array.from({ length: 3 - visibleSessions.length }).map((_, index) => (
+				<div
+					key={index}
+					data-testid="overview-session-placeholder"
+					aria-hidden={visibleSessions.length > 0 || index > 0 ? true : undefined}
+					className={cn(
+						ENTITY_CARD_BASE,
+						SESSION_CARD_CLASS,
+						"justify-center border-dashed bg-muted/30 text-center text-sm text-muted-foreground",
+					)}
+				>
+					{visibleSessions.length === 0 && index === 0 ? emptyMessage : null}
+				</div>
+			))}
 		</div>
 	);
 }
