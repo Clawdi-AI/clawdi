@@ -78,6 +78,8 @@ const indexVaultSchema = z.object({
 const receiptSchema = z
 	.object({
 		version: z.literal(1),
+		directory: z.literal(".clawdi/vaults"),
+		digests: z.record(generatedName, z.string().regex(/^[a-f0-9]{64}$/)),
 		apiUrl: z.string(),
 		agentId: z.uuid(),
 		workspace: z.string(),
@@ -116,6 +118,14 @@ function openDirectory(path: string): number {
 				`/proc/self/fd/${fd}/${part}`,
 				constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
 			);
+			const stat = fstatSync(next);
+			if (
+				(stat.uid !== 0 && stat.uid !== process.geteuid?.()) ||
+				((stat.mode & 0o022) !== 0 && (stat.mode & 0o1000) === 0)
+			) {
+				closeSync(next);
+				fail();
+			}
 			closeSync(fd);
 			fd = next;
 		}
@@ -144,6 +154,17 @@ function verifyFile(fd: number, name: string): boolean {
 		if (error && typeof error === "object" && "code" in error && error.code === "ENOENT")
 			return false;
 		return fail();
+	}
+}
+function fileDigest(fd: number, name: string): string | null {
+	if (!verifyFile(fd, name)) return null;
+	const file = openSync(filePath(fd, name), constants.O_RDONLY | constants.O_NOFOLLOW);
+	try {
+		const stat = fstatSync(file);
+		if (!stat.isFile() || stat.nlink !== 1 || stat.size > 16 * 1024 * 1024) fail();
+		return createHash("sha256").update(readFileSync(file)).digest("hex");
+	} finally {
+		closeSync(file);
 	}
 }
 function atomicFile(fd: number, name: string, content: string): void {
@@ -205,7 +226,7 @@ function withDirectory<T>(
 	operation: (fd: number) => T & (T extends PromiseLike<unknown> ? never : unknown),
 ): T {
 	return withRuntimeUserFileAccess(() => {
-		const fd = openDirectory(join(config.workspace, ".secrets"));
+		const fd = openDirectory(join(config.workspace, ".clawdi/vaults"));
 		try {
 			const stat = fstatSync(fd);
 			if (
@@ -233,7 +254,7 @@ function checkTracked(config: RuntimeVaultFilesConfig): void {
 	if (git.status === 0) {
 		const tracked = spawnRuntimeUserCommand(
 			"git",
-			["-C", config.workspace, "ls-files", "--", ".secrets"],
+			["-C", config.workspace, "ls-files", "--", ".clawdi/vaults"],
 			config.home,
 			config.workspace,
 			{ timeoutMs: 5000, maxBufferBytes: 1024 * 1024 },
@@ -248,17 +269,38 @@ function initialize(config: RuntimeVaultFilesConfig): Receipt {
 	const identity = withRuntimeUserFileAccess(() => {
 		const workspace = openDirectory(config.workspace);
 		try {
-			// EEXIST is intentional: an unrelated .secrets must never be adopted/chmodded.
-			mkdirSync(filePath(workspace, ".secrets"), { mode: 0o700 });
-			const fd = openSync(
-				filePath(workspace, ".secrets"),
+			try {
+				mkdirSync(filePath(workspace, ".clawdi"), { mode: 0o700 });
+			} catch (error) {
+				if (!(error && typeof error === "object" && "code" in error && error.code === "EEXIST"))
+					throw error;
+			}
+			const parent = openSync(
+				filePath(workspace, ".clawdi"),
 				constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
 			);
 			try {
-				const stat = fstatSync(fd);
-				return { device: stat.dev, inode: stat.ino };
+				const parentStat = fstatSync(parent);
+				if (
+					(parentStat.uid !== process.geteuid?.() && parentStat.uid !== 0) ||
+					(parentStat.mode & 0o022) !== 0
+				)
+					fail();
+				// Existing .clawdi is shared with other features; only vaults is runtime-owned.
+				// Missing receipt after mkdir requires operator repair; do not adopt an arbitrary directory.
+				mkdirSync(filePath(parent, "vaults"), { mode: 0o700 });
+				const fd = openSync(
+					filePath(parent, "vaults"),
+					constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+				);
+				try {
+					const stat = fstatSync(fd);
+					return { device: stat.dev, inode: stat.ino };
+				} finally {
+					closeSync(fd);
+				}
 			} finally {
-				closeSync(fd);
+				closeSync(parent);
 			}
 		} finally {
 			closeSync(workspace);
@@ -266,6 +308,8 @@ function initialize(config: RuntimeVaultFilesConfig): Receipt {
 	});
 	const receipt: Receipt = {
 		version: 1,
+		directory: ".clawdi/vaults",
+		digests: {},
 		apiUrl: config.apiUrl,
 		agentId: config.agentId,
 		workspace: config.workspace,
@@ -284,7 +328,7 @@ function revoke(config: RuntimeVaultFilesConfig, receipt: Receipt | null): "revo
 			for (const name of receipt.files) if (verifyFile(fd, name)) unlinkSync(filePath(fd, name));
 			fsyncSync(fd);
 		});
-		saveReceipt(config, { ...receipt, files: [], inventory: [], etag: null });
+		saveReceipt(config, { ...receipt, files: [], inventory: [], digests: {}, etag: null });
 	}
 	return "revoked";
 }
@@ -413,12 +457,15 @@ async function readSnapshot(response: Response): Promise<Snapshot> {
 export async function syncRuntimeVaultFiles(
 	input: RuntimeVaultFilesConfig,
 ): Promise<"unchanged" | "synced" | "revoked" | "deferred"> {
+	if (process.platform !== "linux") throw new Error("Runtime Vault file delivery requires Linux.");
 	try {
 		const config = { ...input, apiUrl: normalizeCloudApiBaseUrl(input.apiUrl) };
 		let receipt = readReceipt(config);
 		const intact =
 			receipt &&
-			withDirectory(config, receipt, (fd) => receipt?.files.every((name) => verifyFile(fd, name)));
+			withDirectory(config, receipt, (fd) =>
+				receipt?.files.every((name) => fileDigest(fd, name) === receipt?.digests[name]),
+			);
 		const etag = intact ? receipt?.etag : null;
 		const response = await fetch(`${config.apiUrl}/v1/runtime/vaults`, {
 			headers: {
@@ -476,7 +523,7 @@ export async function syncRuntimeVaultFiles(
 			material.headers.get("etag") !== response.headers.get("etag")
 		)
 			fail();
-		const { files, inventory, names } = render(snapshot, receipt);
+		const { files, inventory, names } = render(snapshot, intact ? receipt : null);
 		if (receipt) checkTracked(config);
 		receipt ??= initialize(config);
 		withDirectory(config, receipt, (fd) => {
@@ -501,6 +548,16 @@ export async function syncRuntimeVaultFiles(
 		saveReceipt(config, {
 			...receipt,
 			files: names,
+			digests: Object.fromEntries(
+				names.map((name) => [
+					name,
+					files.has(name)
+						? createHash("sha256")
+								.update(files.get(name) ?? "")
+								.digest("hex")
+						: receipt.digests[name],
+				]),
+			),
 			inventory,
 			etag: response.headers.get("etag"),
 		});

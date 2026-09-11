@@ -128,34 +128,19 @@ If submission times out, inspect status before repeating a mutation.
 
 ### Save and refresh credentials locally
 
-In a managed runtime, Clawdi supplies `.secrets/` under the native workspace automatically.
+In a managed runtime, Clawdi supplies `.clawdi/vaults/` under the native workspace automatically.
 Inspect only `index.json` to select the intended Vault/section and load its JSON file inside
 the authorized process or SDK without printing values. Files are generated: do not edit or
 commit them, invoke the tenant Clawdi CLI, or read plaintext into model context just to save it.
-The manual workflow below is for self-managed environments without runtime delivery.
+Connected daemons do not yet deliver these files automatically; do not infer a target from
+HOME, daemon CWD, or scanned session projects. The manual workflow below applies to
+self-managed environments without runtime delivery.
 
-For authorized credential use, confirm any user-supplied request is `supplied` with
-`vault_request_status`. Resolve exact reference(s) through cloud `vault_resolve`, then save
-with the agent's already available native file/execution tools. Choose a target from project
-conventions and purpose (for example `.env.stripe`) without routine filename approval.
-Check that it is Git-ignored and untracked, with no symlinks in the target or parent path.
-No CLI installation or dependency is needed; if available tools cannot save safely,
-report the specific missing capability.
-
-Preserve unrelated variables and quote dotenv values literally, without shell interpolation.
-Use restrictive `0600` permissions or equivalent where supported. Values pass through agent
-tool context; use internal file access as needed, but never print or echo secrets into chat,
-Memory, logs, or user-facing messages. Claim saved only after the file operation succeeds;
-verify file metadata and expected key names without dumping values. Report only the path,
-field names/count, and save status, then continue the task.
-
-For reuse, retain only nonsecret Project/Vault IDs and reference-to-filename/variable mappings
-in existing project conventions or context. When refresh is requested or needed, re-read Vault
-and update only selected assignments with native tools. A mapping alone cannot distinguish
-cloud rotation from local edits: without a reliable last-written baseline, preserve differing
-existing values or obtain explicit overwrite authorization. Known local edits or source
-ambiguity require clarification or a separate file. Never keep plaintext baselines in Memory,
-force overwrite, delete assignments automatically, or imply background/bidirectional sync.
+After a credential request is supplied, check only index metadata for the expected fields.
+Load the selected JSON file inside the authorized process or SDK; do not return its contents
+as a tool result just to save them elsewhere. If automatic delivery is unavailable, report
+that state and the missing workspace binding instead of inventing a destination or claiming
+credentials were saved. Preserve generated files and unrelated local configuration.
 
 ### Optional CLI environment files
 

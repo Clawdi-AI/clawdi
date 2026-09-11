@@ -12312,7 +12312,7 @@ it.skipIf(!process.env.CLAWDI_VAULT_FIXTURE_URL)(
 		writeFileSync(join(root, "run", "secrets", "auth-token"), runtimeToken);
 		process.env.CLAWDI_AUTH_TOKEN = runtimeToken;
 		const workspace = resolveHostedOpenClawWorkspace(home);
-		const indexPath = join(workspace, ".secrets", "index.json");
+		const indexPath = join(workspace, ".clawdi", "vaults", "index.json");
 		const originalFetch = globalThis.fetch;
 		const originalLog = console.log;
 		const statuses: string[] = [];
@@ -12355,7 +12355,7 @@ it.skipIf(!process.env.CLAWDI_VAULT_FIXTURE_URL)(
 			if (!existsSync(indexPath)) return null;
 			const index = JSON.parse(readFileSync(indexPath, "utf8"));
 			const section = index.vaults[0]?.sections[0];
-			return section ? join(workspace, ".secrets", section.file) : null;
+			return section ? join(workspace, ".clawdi", "vaults", section.file) : null;
 		};
 		const activeStarts = () =>
 			existsSync(join(root, "systemctl-success.log"))

@@ -14158,8 +14158,12 @@ export interface operations {
     };
     get_runtime_vaults_v1_runtime_vaults_get: {
         parameters: {
-            query?: never;
-            header?: never;
+            query?: {
+                agent_id?: string | null;
+            };
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -14174,12 +14178,25 @@ export interface operations {
                     "application/json": components["schemas"]["RuntimeVaultSnapshot"];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     get_runtime_vault_material_v1_runtime_vaults_material_post: {
         parameters: {
-            query?: never;
-            header?: never;
+            query?: {
+                agent_id?: string | null;
+            };
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };

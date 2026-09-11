@@ -607,7 +607,7 @@ Vault detail page and are never returned as empty secret values. Use a fresh req
 expiry; existing pending requests and supplied fields are rejected.
 
 After supply in a managed runtime, verify `vault_request_status` and inspect only
-`.secrets/index.json` under the native workspace. Existing runtime watch delivers readable
+`.clawdi/vaults/index.json` under the native workspace. Existing runtime watch delivers readable
 Workspace/linked-Project Vaults into separate generated section JSON files. Load the
 selected file inside the authorized process/SDK without exposing values to model context
 just to save them. Do not invoke the tenant CLI or edit generated files. See

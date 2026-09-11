@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import Select, exists, select, update
+from sqlalchemy import Select, exists, select, true, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent_project_binding import AgentProjectBinding
@@ -78,7 +78,7 @@ async def notify_vault_changed(
 
 
 async def vault_snapshot_metadata(
-    db: AsyncSession, user_id: UUID, agent_id: UUID
+    db: AsyncSession, user_id: UUID, agent_id: UUID, *, allow_linked_projects: bool = False
 ) -> tuple[dict[UUID, RuntimeVault], str]:
     agent = await db.scalar(
         select(AgentEnvironment.id).where(
@@ -92,6 +92,9 @@ async def vault_snapshot_metadata(
     sources = (
         agent_vault_projects()
         .where(AgentEnvironment.id == agent_id, AgentEnvironment.user_id == user_id)
+        .where(
+            true() if allow_linked_projects else Project.id == AgentEnvironment.default_project_id
+        )
         .subquery()
     )
     rows = (

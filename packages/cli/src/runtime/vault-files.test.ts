@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
+	chmodSync,
 	linkSync,
 	lstatSync,
 	mkdirSync,
@@ -100,7 +101,10 @@ test("HTTP snapshots: stable sections, 304 no IO rewrite, rotation, additions/re
 	config.apiUrl = server.url.origin;
 	try {
 		expect(await syncRuntimeVaultFiles(config)).toBe("synced");
-		const dir = join(home, ".secrets");
+		const dir = join(home, ".clawdi", "vaults");
+		const parent = join(home, ".clawdi");
+		chmodSync(parent, 0o755);
+		writeFileSync(join(parent, "config.json"), "unrelated");
 		const files = readdirSync(dir).filter(
 			(name) => name !== "index.json" && name.endsWith(".json"),
 		);
@@ -115,6 +119,11 @@ test("HTTP snapshots: stable sections, 304 no IO rewrite, rotation, additions/re
 		);
 		expect(readFileSync(join(dir, "index.json"), "utf8")).not.toContain('"first"');
 		expect(readFileSync(config.receiptPath, "utf8")).not.toContain('"first"');
+		const edited = join(dir, files[0]);
+		const original = readFileSync(edited, "utf8");
+		writeFileSync(edited, "tampered", { mode: 0o600 });
+		expect(await syncRuntimeVaultFiles(config)).toBe("synced");
+		expect(readFileSync(edited, "utf8")).toBe(original);
 		data.vaults[0].fields[0].value = "rotated";
 		revision = "2";
 		data.vaults[0].revision = revision;
@@ -145,7 +154,9 @@ test("HTTP snapshots: stable sections, 304 no IO rewrite, rotation, additions/re
 		status = 403;
 		expect(await syncRuntimeVaultFiles(config)).toBe("revoked");
 		expect(readdirSync(dir)).toHaveLength(0);
-		expect(requests).toBe(12);
+		expect(requests).toBe(14);
+		expect(lstatSync(parent).mode & 0o777).toBe(0o755);
+		expect(readFileSync(join(parent, "config.json"), "utf8")).toBe("unrelated");
 	} finally {
 		server.stop(true);
 	}
@@ -159,9 +170,13 @@ test("unowned directories, symlink ancestors, hardlinks and tracked targets fail
 		fetch: () => Response.json(data, { headers: { etag: "one" } }),
 	});
 	config.apiUrl = server.url.origin;
-	const target = join(home, ".secrets");
+	const target = join(home, ".clawdi", "vaults");
+	const parent = join(home, ".clawdi");
+	mkdirSync(parent, { mode: 0o755 });
+	writeFileSync(join(parent, "config.json"), "unrelated");
 	try {
 		mkdirSync(target);
+		await expect(syncRuntimeVaultFiles(config)).rejects.toThrow();
 		writeFileSync(join(target, "user.txt"), "user");
 		await expect(syncRuntimeVaultFiles(config)).rejects.toThrow();
 		expect(readFileSync(join(target, "user.txt"), "utf8")).toBe("user");
@@ -173,13 +188,18 @@ test("unowned directories, symlink ancestors, hardlinks and tracked targets fail
 		expect(readdirSync(outside)).toEqual([]);
 		unlinkSync(target);
 		execFileSync("git", ["init", home], { stdio: "ignore" });
+		execFileSync("git", ["-C", home, "add", ".clawdi/config.json"]);
 		mkdirSync(target);
 		writeFileSync(join(target, "tracked"), "tracked");
-		execFileSync("git", ["-C", home, "add", ".secrets/tracked"]);
+		execFileSync("git", ["-C", home, "add", ".clawdi/vaults/tracked"]);
 		rmSync(target, { recursive: true });
 		await expect(syncRuntimeVaultFiles(config)).rejects.toThrow();
-		execFileSync("git", ["-C", home, "rm", "--cached", ".secrets/tracked"], { stdio: "ignore" });
+		execFileSync("git", ["-C", home, "rm", "--cached", ".clawdi/vaults/tracked"], {
+			stdio: "ignore",
+		});
 		await syncRuntimeVaultFiles(config);
+		expect(lstatSync(parent).mode & 0o777).toBe(0o755);
+		expect(readFileSync(join(parent, "config.json"), "utf8")).toBe("unrelated");
 		const name = readdirSync(target).find(
 			(name) => name !== "index.json" && name.endsWith(".json"),
 		);
@@ -190,6 +210,32 @@ test("unowned directories, symlink ancestors, hardlinks and tracked targets fail
 		const original = readFileSync(copy, "utf8");
 		await expect(syncRuntimeVaultFiles(config)).rejects.toThrow();
 		expect(readFileSync(copy, "utf8")).toBe(original);
+	} finally {
+		server.stop(true);
+	}
+});
+
+test("symlink and writable .clawdi parents are refused without touching their contents", async () => {
+	const { config, home, root, data } = fixture();
+	const server = Bun.serve({
+		hostname: "127.0.0.1",
+		port: 0,
+		fetch: () => Response.json(data, { headers: { etag: "one" } }),
+	});
+	config.apiUrl = server.url.origin;
+	const outside = join(root, "outside");
+	mkdirSync(outside);
+	const parent = join(home, ".clawdi");
+	symlinkSync(outside, parent);
+	try {
+		await expect(syncRuntimeVaultFiles(config)).rejects.toThrow();
+		expect(readdirSync(outside)).toEqual([]);
+		unlinkSync(parent);
+		mkdirSync(parent);
+		chmodSync(parent, 0o777);
+		await expect(syncRuntimeVaultFiles(config)).rejects.toThrow();
+		expect(lstatSync(parent).mode & 0o777).toBe(0o777);
+		expect(readdirSync(parent)).toEqual([]);
 	} finally {
 		server.stop(true);
 	}

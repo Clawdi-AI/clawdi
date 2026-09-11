@@ -112,8 +112,8 @@ If submission times out, inspect status before repeating a mutation.
 ### Use runtime-supplied credentials
 
 Clawdi runtime synchronizes readable Vaults from your own Workspace and explicitly linked,
-still-readable Projects into `.secrets/` beneath your native workspace. Inspect only
-`.secrets/index.json` for Vault IDs, section names, exact references, field names and files.
+still-readable Projects into `.clawdi/vaults/` beneath your native workspace. Inspect only
+`.clawdi/vaults/index.json` for Vault IDs, section names, exact references, field names and files.
 Each section has a separate JSON file; equal field names in different sections stay separate.
 Select by the user's intended Vault and section, never by an ambiguous field name alone.
 
@@ -121,7 +121,7 @@ Load the selected JSON file inside the authorized process or SDK without printin
 For example, Python can use `json.load(open(path))` and pass the selected key directly to
 its SDK. Do not read plaintext into model/tool-result context merely to save or copy it.
 Do not invoke or install the Clawdi CLI from the tenant. Runtime owns these generated files:
-do not edit, chmod, move, commit, or create your own files in `.secrets/`.
+do not edit, chmod, move, commit, or create your own files in `.clawdi/vaults/`.
 
 After a credential request is supplied, inspect index metadata for the requested fields.
 Pending requests are metadata only, never empty pseudo-secrets. If delivery is delayed,

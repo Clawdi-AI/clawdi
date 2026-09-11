@@ -23,6 +23,7 @@ from app.core.auth import (
     bearer_scheme,
     get_auth,
     is_connected_agent_principal,
+    is_runtime_deployment_principal,
     require_auth_scopes,
     require_cli_auth,
     verify_clerk_jwt,
@@ -737,17 +738,49 @@ def _extract_project_skill_file(
     return result
 
 
+async def _runtime_vault_agent(
+    db: AsyncSession,
+    auth: AuthContext,
+    requested_agent_id: UUID | None,
+    fence_headers: ConnectedAgentFenceHeaders,
+) -> tuple[UUID, bool]:
+    require_auth_scopes(auth, "vault:read")
+    bound = auth.api_key.environment_id if auth.api_key is not None else None
+    if bound is not None:
+        if requested_agent_id is not None and requested_agent_id != bound:
+            raise HTTPException(403, "API key bound to a different Agent")
+        return bound, is_runtime_deployment_principal(auth)
+    if not is_connected_agent_principal(auth) or requested_agent_id is None:
+        raise HTTPException(403, "Vault delivery requires an authenticated Agent identity")
+    if fence_headers.machine_id is None:
+        raise HTTPException(403, "Connected Vault delivery requires machine identity")
+    await _connected_agent(db, auth=auth, agent_id=requested_agent_id)
+    await require_connected_agent_fence(
+        db,
+        auth=auth,
+        agent_ids={requested_agent_id},
+        headers=fence_headers,
+    )
+    return requested_agent_id, True
+
+
 @router.get("/vaults", response_model=RuntimeVaultSnapshot)
 async def get_runtime_vaults(
     request: Request,
-    auth: AuthContext = Depends(require_cli_auth),
+    requested_agent_id: UUID | None = Query(default=None, alias="agent_id"),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
+    auth: AuthContext = Depends(get_auth),
 ) -> Response:
-    require_auth_scopes(auth, "vault:read")
-    if auth.api_key is None or auth.api_key.environment_id is None:
-        raise HTTPException(403, "Runtime Vaults require an Agent-bound key")
-    agent_id = auth.api_key.environment_id
     async with runtime_snapshot_session() as db:
-        inventory, etag = await vault_snapshot_metadata(db, auth.user_id, agent_id)
+        agent_id, allow_linked_projects = await _runtime_vault_agent(
+            db, auth, requested_agent_id, fence_headers
+        )
+        inventory, etag = await vault_snapshot_metadata(
+            db,
+            auth.user_id,
+            agent_id,
+            allow_linked_projects=allow_linked_projects,
+        )
         headers = {"ETag": etag, "Cache-Control": "no-store, no-transform"}
         if if_none_match_contains(request.headers.get("if-none-match"), etag):
             return Response(status_code=304, headers=headers)
@@ -762,14 +795,20 @@ async def get_runtime_vaults(
 @router.post("/vaults/material", response_model=RuntimeVaultSnapshot)
 async def get_runtime_vault_material(
     body: RuntimeVaultMaterialInput,
-    auth: AuthContext = Depends(require_cli_auth),
+    requested_agent_id: UUID | None = Query(default=None, alias="agent_id"),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
+    auth: AuthContext = Depends(get_auth),
 ) -> Response:
-    require_auth_scopes(auth, "vault:read")
-    if auth.api_key is None or auth.api_key.environment_id is None:
-        raise HTTPException(403, "Runtime Vaults require an Agent-bound key")
-    agent_id = auth.api_key.environment_id
     async with runtime_snapshot_session() as db:
-        inventory, etag = await vault_snapshot_metadata(db, auth.user_id, agent_id)
+        agent_id, allow_linked_projects = await _runtime_vault_agent(
+            db, auth, requested_agent_id, fence_headers
+        )
+        inventory, etag = await vault_snapshot_metadata(
+            db,
+            auth.user_id,
+            agent_id,
+            allow_linked_projects=allow_linked_projects,
+        )
         if body.etag != etag:
             raise HTTPException(409, "Vault inventory changed; retry metadata")
         snapshot = await vault_snapshot_values(

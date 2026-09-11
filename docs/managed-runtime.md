@@ -2034,20 +2034,29 @@ request and hashes Vault metadata/revisions; unchanged snapshots do not query/de
 items or download/rewrite plaintext. Changed snapshots batch-read at most 10,000 fields
 and 8 MiB ciphertext; over-limit/error responses are never interpreted as empty inventories.
 
-Only the bound Agent's private Workspace and explicitly linked, readable user Projects
-contribute Vaults. Vault IDs deduplicate multiple attachments. Each Vault/section gets a
+Strict runtime deployment credentials may read the bound Agent's private Workspace and
+explicitly linked, readable user Projects. Legacy Agent-bound keys remain limited to their
+own Workspace, including on the batch material endpoint. Vault IDs deduplicate multiple attachments. Each Vault/section gets a
 JSON object preserving exact field names; section identity is SHA-256 of its name because
 the database has no section ID. Renaming a section replaces its file. `index.json` contains
 only IDs, names, references and filenames; invalid environment names are marked with a
 null `env_name`, not normalized into colliding names. Pending supply requests are not items.
 
-The native workspace's `.secrets` directory is 0700 and its files 0600, owned by the runtime
+The native workspace's `.clawdi/vaults` directory is 0700 and its files 0600, owned by the runtime
 user. Runtime pins directory ancestors without following symlinks and performs tenant IO
 with tenant filesystem credentials. A private platform receipt binds generated directory
 identity and filenames; existing unrelated directories, symlinks, hardlinks, tracked targets,
 and unsafe permissions fail closed. Native workspaces must be beneath the runtime home;
 changing the recorded workspace/directory identity requires operator reconciliation. Writes are atomic per file, not a multi-file transaction.
+An existing legitimate `.clawdi` directory and unrelated children are preserved without
+chmod or adoption; only `vaults` is managed. Symlink or unsafe writable ancestors are refused.
+The receipt records the fixed `.clawdi/vaults` target and private expected content digests.
+Each pass hashes the bounded generated files before accepting a 304; local edits force a
+fresh value fetch and restoration, while unchanged bytes keep their original mtimes.
 The receipt reserves filenames before writes so interrupted delivery can catch up safely.
+A crash after creating `vaults` but before the first receipt requires operator repair:
+without that private proof the runtime refuses even an empty existing directory. This
+bootstrap window does not self-heal by adopting user content.
 No values enter manifest caches, receipts, index metadata, logs or synchronization tool results.
 Authorized tenant programs can still read the files; they must reload already-loaded keys.
 
@@ -2068,3 +2077,11 @@ On 2026-09-11, one Agent/one Vault/one field in the 3-CPU runner measured 260 ms
 Five metadata requests executed 20 SQL statements; three material requests executed 15;
 two saves executed 21. Counts include authentication and permission checks. Native service
 operations were fixtures; no production change latency or high-fanout throughput was measured.
+
+Connected daemon delivery is not yet enabled. Registrations identify cloud Agent, adapter,
+machine and user, but do not bind a durable native workspace. Session/project scans and
+OpenClaw's multi-agent roster cannot supply that missing association safely. The snapshot
+API accepts unbound CLI/OAuth credentials only with an explicit owned,
+registered non-Hosted `agent_id` and matching `X-Clawdi-Machine-Id` header; missing/stale identity
+is rejected on metadata and material reads. A destination binding decision is required before wiring daemon delivery; daemon CWD/HOME are not defaults.
+This file writer uses Linux `/proc/self/fd`; macOS/Windows support is not claimed.

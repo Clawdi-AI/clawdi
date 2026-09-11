@@ -23,7 +23,14 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.committed_db]
 @asynccontextmanager
 async def agent_client(db, user, agent):
     auth = AuthContext(
-        user=user, api_key=ApiKey(user_id=user.id, environment_id=agent.id, scopes=["vault:read"])
+        user=user,
+        api_key=ApiKey(
+            user_id=user.id,
+            environment_id=agent.id,
+            managed=True,
+            runtime_deployment_id="fixture",
+            scopes=["vault:read"],
+        ),
     )
 
     async def session():
@@ -113,7 +120,11 @@ async def test_snapshot_scope_revision_mutations_and_fanout(
         )
         await db_session.commit()
         auth.api_key = ApiKey(
-            user_id=seed_user.id, environment_id=agents[0].id, scopes=["vault:read"]
+            user_id=seed_user.id,
+            environment_id=agents[0].id,
+            managed=True,
+            runtime_deployment_id="fixture",
+            scopes=["vault:read"],
         )
         first = await client.get("/v1/runtime/vaults")
         assert first.status_code == 200, first.text
@@ -125,6 +136,20 @@ async def test_snapshot_scope_revision_mutations_and_fanout(
         assert payload["complete"] is True and len(payload["vaults"]) == 1
         assert len(payload["vaults"][0]["project_ids"]) == 2
         assert {field["value"] for field in payload["vaults"][0]["fields"]} == {"first", "other"}
+        # Legacy Agent-bound keys must neither read linked Projects nor reuse their material ETag.
+        auth.api_key.managed = False
+        legacy = await client.get("/v1/runtime/vaults")
+        assert legacy.status_code == 200
+        assert legacy.json()["vaults"][0]["project_ids"] == [str(agents[0].default_project_id)]
+        assert (
+            await client.post(
+                "/v1/runtime/vaults/material", json={"etag": first.headers["etag"], "revisions": {}}
+            )
+        ).status_code == 409
+        auth.api_key.environment_id = agents[1].id
+        assert (await client.get("/v1/runtime/vaults")).json()["vaults"] == []
+        auth.api_key.environment_id = agents[0].id
+        auth.api_key.managed = True
         etag = first.headers["etag"]
         sql = []
 
@@ -177,7 +202,11 @@ async def test_snapshot_scope_revision_mutations_and_fanout(
             for _, p in signals
         )
         auth.api_key = ApiKey(
-            user_id=seed_user.id, environment_id=agents[0].id, scopes=["vault:read"]
+            user_id=seed_user.id,
+            environment_id=agents[0].id,
+            managed=True,
+            runtime_deployment_id="fixture",
+            scopes=["vault:read"],
         )
         updated = await client.get("/v1/runtime/vaults", headers={"If-None-Match": etag})
         assert updated.status_code == 200 and updated.headers["etag"] != etag
@@ -192,7 +221,11 @@ async def test_snapshot_scope_revision_mutations_and_fanout(
         ).status_code == 200
         assert (await client.delete("/v1/vault/sync", params=params)).status_code == 200
         auth.api_key = ApiKey(
-            user_id=seed_user.id, environment_id=agents[0].id, scopes=["vault:read"]
+            user_id=seed_user.id,
+            environment_id=agents[0].id,
+            managed=True,
+            runtime_deployment_id="fixture",
+            scopes=["vault:read"],
         )
         assert (await client.get("/v1/runtime/vaults")).json()["vaults"] == []
         auth.api_key.scopes = []
@@ -394,12 +427,16 @@ async def test_shared_membership_is_rechecked_and_unchanged_vaults_are_not_decry
         vaults.append(vault)
     await db_session.commit()
     try:
-        inventory, _ = await runtime_vaults.vault_snapshot_metadata(db_session, viewer.id, agent.id)
+        inventory, _ = await runtime_vaults.vault_snapshot_metadata(
+            db_session, viewer.id, agent.id, allow_linked_projects=True
+        )
         assert set(inventory) == {v.id for v in vaults[:2]}
         revisions = {key: value.revision for key, value in inventory.items()}
         await runtime_vaults.notify_vault_changed(db_session, vaults[0].id, values_changed=True)
         await db_session.commit()
-        inventory, _ = await runtime_vaults.vault_snapshot_metadata(db_session, viewer.id, agent.id)
+        inventory, _ = await runtime_vaults.vault_snapshot_metadata(
+            db_session, viewer.id, agent.id, allow_linked_projects=True
+        )
         decrypted = []
         original = runtime_vaults.decrypt
 
@@ -415,10 +452,72 @@ async def test_shared_membership_is_rechecked_and_unchanged_vaults_are_not_decry
         assert next(v for v in snapshot.vaults if v.id == vaults[1].id).fields is None
         await db_session.delete(membership)
         await db_session.commit()
-        revoked, _ = await runtime_vaults.vault_snapshot_metadata(db_session, viewer.id, agent.id)
+        revoked, _ = await runtime_vaults.vault_snapshot_metadata(
+            db_session, viewer.id, agent.id, allow_linked_projects=True
+        )
         assert not revoked  # Stale binding must not retain plaintext access.
     finally:
         for vault in vaults:
             await db_session.delete(vault)
         await db_session.execute(delete(User).where(User.id == viewer.id))
         await db_session.commit()
+
+
+async def test_connected_snapshot_requires_owned_registered_machine_identity(db_session, seed_user):
+    from datetime import UTC, datetime, timedelta
+
+    agent = await create_env_with_project(
+        db_session, user_id=seed_user.id, machine_id=str(uuid.uuid4()), machine_name="connected"
+    )
+    agent.connected_agent_registered_at = datetime.now(UTC)
+    agent.machine_fence_required = True
+    await db_session.commit()
+    async with agent_client(db_session, seed_user, agent) as (client, auth):
+        auth.api_key = ApiKey(user_id=seed_user.id, scopes=["vault:read"])
+        params = {"agent_id": str(agent.id)}
+        assert (await client.get("/v1/runtime/vaults", params=params)).status_code == 403
+        assert (
+            await client.get(
+                "/v1/runtime/vaults", params=params, headers={"X-Clawdi-Machine-Id": "wrong"}
+            )
+        ).status_code == 403
+        headers = {"X-Clawdi-Machine-Id": agent.machine_id}
+        metadata = await client.get("/v1/runtime/vaults", params=params, headers=headers)
+        assert metadata.status_code == 200, metadata.text
+        material = await client.post(
+            "/v1/runtime/vaults/material",
+            params=params,
+            headers=headers,
+            json={"etag": metadata.headers["etag"]},
+        )
+        assert material.status_code == 200, material.text
+        assert material.json()["agent_id"] == str(agent.id)
+        assert (
+            await client.get(
+                "/v1/runtime/vaults", params={"agent_id": str(uuid.uuid4())}, headers=headers
+            )
+        ).status_code == 404
+        agent.connected_agent_registered_at = None
+        await db_session.commit()
+        assert (
+            await client.get("/v1/runtime/vaults", params=params, headers=headers)
+        ).status_code == 409
+        agent.connected_agent_registered_at = datetime.now(UTC)
+        await db_session.commit()
+        previous = app.dependency_overrides[get_auth]
+
+        async def oauth_identity():
+            return AuthContext(
+                user=seed_user,
+                oauth_cli=True,
+                oauth_access_expires_at=datetime.now(UTC) + timedelta(minutes=5),
+            )
+
+        app.dependency_overrides[get_auth] = oauth_identity
+        try:
+            assert (
+                await client.get("/v1/runtime/vaults", params=params, headers=headers)
+            ).status_code == 200
+            assert (await client.get("/v1/runtime/vaults", params=params)).status_code == 403
+        finally:
+            app.dependency_overrides[get_auth] = previous
