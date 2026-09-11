@@ -47,7 +47,7 @@ test("public batch request keeps capability out of URLs and saves all fields onc
 	await page.getByLabel("API_KEY", { exact: true }).fill("fake-key");
 	await page.getByLabel("API_SECRET", { exact: true }).fill("line1\nline2");
 	await page.getByRole("button", { name: "Save secrets" }).click();
-	await expect(page.getByRole("status")).toContainText("Saved securely");
+	await expect(page.getByRole("status")).toContainText("Your secrets are saved");
 	expect(submissions).toBe(1);
 	expect(requestedUrls.some((url) => url.includes(token))).toBe(false);
 	await expect(page.getByRole("textbox")).toHaveCount(0);

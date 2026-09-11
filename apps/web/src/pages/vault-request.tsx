@@ -2,7 +2,7 @@ import type { components, paths } from "@clawdi/shared/api";
 import createClient from "openapi-fetch";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { env } from "@/lib/env";
@@ -10,7 +10,7 @@ import { env } from "@/lib/env";
 type RequestContext = components["schemas"]["VaultSecretRequestStatus"];
 const client = createClient<paths>({ baseUrl: env.VITE_CLAWDI_API_URL });
 const UNAVAILABLE =
-	"This link has expired, was already used, or is no longer available. Ask your agent for a new request.";
+	"This link has expired or is no longer available. Ask your agent for a new link.";
 
 export function VaultRequestPage() {
 	const token = useRef("");
@@ -90,27 +90,47 @@ export function VaultRequestPage() {
 	}
 
 	return (
-		<main className="mx-auto flex min-h-screen max-w-xl items-center px-4 py-12">
+		<main className="mx-auto flex min-h-dvh max-w-lg items-center px-4 py-10">
 			<Card className="w-full">
-				<CardHeader>
-					<CardTitle>Supply Vault secrets</CardTitle>
-					<CardDescription>
-						Save credentials directly to Clawdi Vault without putting them in chat.
-					</CardDescription>
+				<CardHeader className="gap-5">
+					<div className="flex items-center gap-2">
+						<img
+							src="/clawdi-logo-transparent.png"
+							alt=""
+							width={28}
+							height={28}
+							className="size-7 shrink-0 rounded-md"
+						/>
+						<span className="text-sm font-semibold tracking-tight">Clawdi</span>
+					</div>
+					<CardTitle>
+						<h1 className="text-xl font-semibold tracking-tight">
+							{phase === "done"
+								? "Saved securely"
+								: phase === "unavailable"
+									? "Link unavailable"
+									: "Save to Vault"}
+						</h1>
+					</CardTitle>
 				</CardHeader>
-				<CardContent className="space-y-5">
+				<CardContent>
 					{phase === "loading" && <p role="status">Loading request…</p>}
-					{phase === "unavailable" && <p role="alert">{UNAVAILABLE}</p>}
+					{phase === "unavailable" && (
+						<p role="alert" className="text-muted-foreground">
+							{UNAVAILABLE}
+						</p>
+					)}
 					{phase === "done" && (
-						<p role="status">
-							Saved securely. This link is now used. Your agent can read the supplied fields. You
-							can close this page.
+						<p role="status" className="text-muted-foreground">
+							Your secrets are saved. You can close this page.
 						</p>
 					)}
 					{phase === "error" && (
 						<>
 							<p role="alert">{error}</p>
-							<Button onClick={() => setAttempt((value) => value + 1)}>Try again</Button>
+							<div className="flex justify-end">
+								<Button onClick={() => setAttempt((value) => value + 1)}>Try again</Button>
+							</div>
 						</>
 					)}
 					{context && (phase === "ready" || phase === "saving") && (
@@ -121,18 +141,17 @@ export function VaultRequestPage() {
 								void save();
 							}}
 						>
-							<div className="rounded-lg bg-muted p-3 text-sm">
-								<p className="font-medium">
+							<div className="space-y-1 border-b pb-5 text-sm">
+								<p className="font-medium break-words">
 									{context.vault_name} · {context.project_name}
 								</p>
-								{context.section && <p>Section: {context.section}</p>}
+								{context.section && <p className="break-words">Section: {context.section}</p>}
 								<p className="text-muted-foreground">
 									Expires {new Date(context.expires_at).toLocaleString()}
 								</p>
 							</div>
 							<p className="text-sm text-muted-foreground">
-								Only these fields will be added. Anyone with access to this Vault can use the saved
-								credentials.
+								Only these fields will be added. Anyone with Vault access can use them.
 							</p>
 							{context.fields.map((name) => (
 								<div className="space-y-2" key={name}>
@@ -158,9 +177,11 @@ export function VaultRequestPage() {
 									{error}
 								</p>
 							)}
-							<Button type="submit" disabled={phase === "saving"}>
-								{phase === "saving" ? "Saving…" : "Save secrets"}
-							</Button>
+							<div className="flex justify-end">
+								<Button type="submit" disabled={phase === "saving"}>
+									{phase === "saving" ? "Saving…" : "Save secrets"}
+								</Button>
+							</div>
 						</form>
 					)}
 				</CardContent>
