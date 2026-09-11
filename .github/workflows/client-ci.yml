@@ -6,6 +6,7 @@ on:
       - "apps/web/**"
       - "packages/shared/**"
       - "packages/cli/**"
+      - "packages/runtime-mcp/**"
       - "packages/whatsapp-baileys-sidecar/**"
       - "backend/app/routes/channel_routers/whatsapp.py"
       - "backend/app/services/whatsapp_*.py"
@@ -31,6 +32,7 @@ on:
       - "apps/web/**"
       - "packages/shared/**"
       - "packages/cli/**"
+      - "packages/runtime-mcp/**"
       - "packages/whatsapp-baileys-sidecar/**"
       - "backend/app/routes/channel_routers/whatsapp.py"
       - "backend/app/services/whatsapp_*.py"
@@ -97,6 +99,7 @@ jobs:
               - "packages/shared/**"
             cli:
               - "packages/cli/**"
+              - "packages/runtime-mcp/**"
               - "install.sh"
             sidecar:
               - "packages/whatsapp-baileys-sidecar/**"

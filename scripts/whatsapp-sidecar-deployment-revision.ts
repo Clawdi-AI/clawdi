@@ -18,6 +18,7 @@ const EXPECTED_DOCKER_CONTEXT_SOURCES = new Set([
 	"tsconfig.base.json",
 	"apps/web/package.json",
 	"packages/cli/package.json",
+	"packages/runtime-mcp/package.json",
 	"packages/shared/package.json",
 	`${SIDECAR_ROOT}/package.json`,
 	`${SIDECAR_ROOT}/tsconfig.json`,
