@@ -510,7 +510,10 @@ Do not commit decrypted or imported env files.
 A failed desired provider change must not prevent restoring a custom provider
 whose ownership was already transferred by a qualified CLI. Same-instance
 runtime-state writes may recover only newly requested custom IDs found in the
-unique authenticated applied observation for the persisted apply generation.
+unique authenticated active boot for the persisted apply generation. The current
+head or retained accepted inbox evidence from its exact receipt, manifest ETag,
+boot nonce and session must prove those IDs were applied. Older evidence must not
+exceed the head sequence or capture time; purged payloads cannot authorize recovery.
 The active environment owner, deployment binding, instance, CLI selection,
 receipt/boot identity and source/ETag pair must match. Only active heads in the
 persisted apply generation participate in historical ambiguity; unrelated older
@@ -520,10 +523,12 @@ changed incarnations fail closed. The ordinary runtime-state generation and
 owner locks still apply.
 
 Historical error/expired observations establish previous ownership, never health
-or current convergence. When the current source exists it must match the applied
-source. When rendering fails, the persisted failure must belong to the current
-renderer contract. A historical claim cannot admit an unrelated custom provider;
-new handoffs retain the fresh, healthy, exact-source CLI requirement.
+or current convergence. A newer valid desired source does not revoke a completed
+provider transfer: authenticated rollback may restore the previously applied
+connection while that source differs. When rendering fails, the persisted failure
+must belong to the current renderer contract. A historical claim cannot admit an
+unrelated custom provider; new handoffs retain the fresh, healthy, exact-source
+CLI requirement.
 
 The CLI still creates a missing provider only on initialization when it has no
 previous ownership record or a pending creation. A completed ownership record
@@ -531,5 +536,12 @@ never authorizes recreating a missing provider. Recovery preserves native models
 and user configuration; it does not explain who removed a provider.
 
 Done: `bash scripts/test.sh backend tests/test_ai_provider_connection_ownership.py`
-passes against the runner's isolated PostgreSQL. No CLI or wire-schema change is
-required.
+passes against the runner's isolated PostgreSQL. Admission needs no CLI or
+wire-schema change. The Hermes mirror fix requires a new CLI release.
+
+Connection credential environment names remain immutable through PATCH, full
+upsert and archived-provider acceptance. Native ownership journals survive
+unbinding and archiving. Hermes may retain a `model.key_env` mirror equal to the
+selected connection environment; different environments and inline model
+credentials remain conflicts. This follows the native [provider configuration
+contract](https://github.com/Clawdi-AI/hermes-agent/blob/7a963456/hermes_cli/config.py).

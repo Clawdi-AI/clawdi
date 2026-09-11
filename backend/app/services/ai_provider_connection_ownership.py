@@ -9,12 +9,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ai_provider import AiProvider
 from app.models.hosted_runtime import HostedRuntimeState
+from app.models.runtime_observation import (
+    RUNTIME_OBSERVATION_HEAD_ACTIVE,
+    V2RuntimeObservationHead,
+    V2RuntimeObservationInbox,
+)
 from app.models.session import AgentEnvironment
 from app.schemas.runtime import validate_hosted_runtime_desired_state
 from app.schemas.runtime_observation import (
     RuntimeDriftBindingRequest,
     RuntimeDriftSummaryReadRequest,
 )
+from app.schemas.runtime_observed import HostedRuntimeObservedAppliedV2
 from app.services.app_setting_registry import (
     SUPPORTED_CONNECTION_CLI_VERSIONS_SPEC,
     SUPPORTED_CUSTOM_PROVIDER_CLI_VERSIONS_SPEC,
@@ -234,12 +240,7 @@ async def require_custom_provider_cli(
                     and (
                         history.source_authority.status == "unavailable"
                         and persisted_runtime_source_error(previous_state)
-                        or (
-                            history.source_authority.status == "present"
-                            and history.source_authority.source_revision
-                            == prior_applied.source_revision
-                            and history.source_authority.etag == prior_applied.etag
-                        )
+                        or history.source_authority.status == "present"
                     )
                     and prior_applied.generation
                     == (previous_state.apply_generation or previous_state.generation)
@@ -248,9 +249,71 @@ async def require_custom_provider_cli(
                     and prior_head.runtime_identity.boot_nonce
                     and prior_applied.etag
                     == expected_runtime_bundle_v2_etag(prior_applied.source_revision)
-                    and custom - previous_ids <= set(prior_applied.applied_provider_ids)
                 ):
-                    return
+                    restoring = custom - previous_ids
+                    if restoring <= set(prior_applied.applied_provider_ids):
+                        return
+                    # A later successful selection can replace the head's applied
+                    # provider IDs without revoking completed native transfers.
+                    # Consult only accepted evidence from this exact active boot;
+                    # never borrow an old generation or another receipt/session.
+                    identity = prior_head.runtime_identity
+                    applied_payload = await db.scalar(
+                        select(V2RuntimeObservationInbox.diagnostics["applied"])
+                        .join(
+                            V2RuntimeObservationHead,
+                            (
+                                V2RuntimeObservationHead.environment_id
+                                == V2RuntimeObservationInbox.environment_id
+                            )
+                            & (
+                                V2RuntimeObservationHead.deployment_id
+                                == V2RuntimeObservationInbox.deployment_id
+                            )
+                            & (
+                                V2RuntimeObservationHead.boot_session_id
+                                == V2RuntimeObservationInbox.boot_session_id
+                            ),
+                        )
+                        .where(
+                            V2RuntimeObservationHead.state == RUNTIME_OBSERVATION_HEAD_ACTIVE,
+                            V2RuntimeObservationInbox.sequence
+                            <= V2RuntimeObservationHead.highest_sequence,
+                            V2RuntimeObservationInbox.environment_id
+                            == previous_state.environment_id,
+                            V2RuntimeObservationInbox.deployment_id == previous_state.deployment_id,
+                            V2RuntimeObservationInbox.generation == identity.generation,
+                            V2RuntimeObservationInbox.manifest_etag == identity.manifest_etag,
+                            V2RuntimeObservationInbox.apply_receipt_id == identity.apply_receipt_id,
+                            V2RuntimeObservationInbox.boot_nonce == identity.boot_nonce,
+                            V2RuntimeObservationInbox.boot_session_id == identity.boot_session_id,
+                            V2RuntimeObservationInbox.captured_at <= prior_head.captured_at,
+                            V2RuntimeObservationInbox.received_at <= historical.observed_at,
+                            V2RuntimeObservationInbox.payload_purged_at.is_(None),
+                            V2RuntimeObservationInbox.diagnostics["activeCliVersion"].as_string()
+                            == prior_head.diagnostics.active_cli_version,
+                            V2RuntimeObservationInbox.diagnostics["applied"][
+                                "appliedProviderIds"
+                            ].contains(sorted(restoring)),
+                        )
+                        .order_by(V2RuntimeObservationInbox.sequence.desc())
+                        .limit(1)
+                    )
+                    if applied_payload is not None:
+                        try:
+                            applied_history = HostedRuntimeObservedAppliedV2.model_validate(
+                                applied_payload
+                            )
+                        except ValidationError:
+                            applied_history = None
+                        if (
+                            applied_history is not None
+                            and applied_history.instance_id == previous_state.instance_id
+                            and applied_history.generation == identity.generation
+                            and applied_history.etag
+                            == expected_runtime_bundle_v2_etag(applied_history.source_revision)
+                        ):
+                            return
             if len(evidence.items) != 1:
                 raise HTTPException(
                     409, "Custom provider binding requires current runtime evidence"
