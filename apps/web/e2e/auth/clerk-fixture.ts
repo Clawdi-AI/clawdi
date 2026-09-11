@@ -56,6 +56,16 @@ let state = initial;
 const resources = new Set<() => void>();
 const statuses = new Set<() => void>();
 export let signOutCalls = 0;
+const heldTokens = new Map<string, ReturnType<typeof Promise.withResolvers<void>>>();
+export let heldTokenCalls = 0;
+export function holdSessionToken(sessionId: string) {
+	heldTokens.set(sessionId, Promise.withResolvers<void>());
+}
+export function releaseSessionToken(sessionId: string) {
+	const held = heldTokens.get(sessionId);
+	heldTokens.delete(sessionId);
+	held?.resolve();
+}
 
 export function emitSdk(update: Partial<SdkState>) {
 	state = { ...state, ...update };
@@ -119,6 +129,11 @@ export function useSession() {
 			id: sessionId,
 			user: { id: auth.userId },
 			getToken: async () => {
+				const held = heldTokens.get(sessionId);
+				if (held) {
+					heldTokenCalls += 1;
+					await held.promise;
+				}
 				if (state.tokenFailure) throw new TypeError("Token refresh unavailable");
 				return state.nullToken ? null : token;
 			},

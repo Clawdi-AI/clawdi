@@ -24,7 +24,10 @@ import SharePage from "@/pages/share/project-share-page";
 import {
 	activateSession,
 	emitSdk,
+	heldTokenCalls,
+	holdSessionToken,
 	releaseActivation,
+	releaseSessionToken,
 	serverAuth,
 	signOutCalls,
 } from "./clerk-fixture";
@@ -214,6 +217,11 @@ window.authTest = {
 	},
 	emitSdk,
 	activateSession,
+	holdSessionToken,
+	releaseSessionToken,
+	get heldTokenCalls() {
+		return heldTokenCalls;
+	},
 	releaseActivation,
 	commits,
 	navigate: (to) => router.navigate({ to }),
@@ -259,6 +267,9 @@ declare global {
 		authTest: {
 			admissions: number;
 			emitSdk: typeof emitSdk;
+			holdSessionToken: typeof holdSessionToken;
+			releaseSessionToken: typeof releaseSessionToken;
+			heldTokenCalls: number;
 			activateSession: typeof activateSession;
 			releaseActivation: typeof releaseActivation;
 			commits: typeof commits;

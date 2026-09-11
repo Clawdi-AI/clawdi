@@ -1,6 +1,125 @@
 import { expect, type Page, test } from "@playwright/test";
 import type {} from "./lifecycle.browser";
 
+for (const phase of ["getToken", "POST", "HEAD"] as const) {
+	test(`OpenClaw grant retires ${phase} work when the owner changes`, async ({ page, context }) => {
+		test.skip(process.env.VITE_CLAWDI_HOSTED !== "true", "Hosted agent lifecycle");
+		const { includedBasicDeployment, mutationDeploymentReadFixture, stubHostedApi } = await import(
+			"../hosted-stub-api"
+		);
+		const endpoint = "https://runtime.example/";
+		const deployment = mutationDeploymentReadFixture({
+			...includedBasicDeployment,
+			config_info: { ...includedBasicDeployment.config_info, runtime: "openclaw" },
+			openclaw_control_ui_url: endpoint,
+		});
+		if (deployment.runtime_ui_endpoint?.runtime !== "openclaw")
+			throw new Error("Runtime endpoint missing");
+		deployment.runtime_ui_endpoint.browser_session_url = `${endpoint}.well-known/openclaw/browser-session`;
+		await stubHostedApi(page, { deployments: [deployment] });
+		const held = Promise.withResolvers<void>();
+		let holding = false;
+		let pending = false;
+		let aborted = false;
+		let issued = 0;
+		const posts: string[] = [];
+		page.on("requestfailed", (request) => {
+			if (request.url().endsWith("browser-session") && request.method() === phase) aborted = true;
+		});
+		await page.route(
+			"http://127.0.0.1:50021/v2/deployments/*/runtime-ui/credentials",
+			async (route) => {
+				issued += 1;
+				await route.fulfill({
+					json: {
+						runtime: "openclaw",
+						auth_mode: "openclaw_token",
+						url: endpoint,
+						deployment_resource_version: deployment.resource.metadata.resourceVersion,
+						token: "fixture-token",
+						handoff_url: `${endpoint}#bootstrapToken=attempt-${issued}&bootstrapProfile=owner`,
+					},
+				});
+			},
+		);
+		await context.route(`${endpoint}**`, async (route) => {
+			const method = route.request().method();
+			if (route.request().url().endsWith("browser-session")) {
+				if (method === "POST") posts.push(route.request().headers().authorization ?? "missing");
+				if (holding && method === phase && !pending) {
+					pending = true;
+					await held.promise;
+				}
+				if (route.request().failure()) return;
+				await route.fulfill({
+					status: 204,
+					headers: {
+						"Access-Control-Allow-Origin": "http://127.0.0.1:3111",
+						"Access-Control-Allow-Credentials": "true",
+						"Access-Control-Allow-Headers": "Authorization, If-Match",
+						"Access-Control-Allow-Methods": "POST, HEAD, OPTIONS",
+					},
+					body: "",
+				});
+			} else {
+				// Document-only lifecycle fixture; native auth is verified by the paired gateway suite.
+				await route.fulfill({
+					contentType: "text/html",
+					body: "<!doctype html><p>Lifecycle document</p>",
+				});
+			}
+		});
+		try {
+			await page.goto("/e2e/auth/");
+			await page.evaluate(
+				(id) => window.authTest.navigate(`/agents/${id}/console`),
+				deployment.agent_id,
+			);
+			const iframe = page.locator('iframe[title="OpenClaw Control UI"]');
+			await expect(iframe).toHaveCount(1);
+			expect(posts).toEqual(["Bearer user-a:session-a"]);
+			if (phase === "getToken")
+				await page.evaluate(() => window.authTest.holdSessionToken("session-a"));
+			else holding = true;
+			await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+			if (phase === "getToken")
+				await expect
+					.poll(() => page.evaluate(() => window.authTest.heldTokenCalls))
+					.toBeGreaterThan(0);
+			else await expect.poll(() => pending).toBe(true);
+			await expect(iframe).toHaveCount(0);
+			await page.evaluate(() =>
+				window.authTest.emitSdk({ userId: "user-b", sessionId: "session-b" }),
+			);
+			await expect(iframe).toHaveAttribute(
+				"src",
+				`${endpoint}#bootstrapToken=attempt-2&bootstrapProfile=owner`,
+			);
+			expect(issued).toBe(2);
+			held.resolve();
+			await page.evaluate(() => window.authTest.releaseSessionToken("session-a"));
+			if (phase !== "getToken") await expect.poll(() => aborted).toBe(true);
+			await expect(iframe).toHaveAttribute(
+				"src",
+				`${endpoint}#bootstrapToken=attempt-2&bootstrapProfile=owner`,
+			);
+			expect(posts.filter((post) => post === "Bearer user-b:session-b")).toHaveLength(1);
+			expect(issued).toBe(2);
+			expect(
+				await page.evaluate(() =>
+					Object.keys(localStorage).some(
+						(key) =>
+							key.startsWith("clawdi.openclaw-native-handoff-loaded.v1.") && key.includes("user-a"),
+					),
+				),
+			).toBe(false);
+		} finally {
+			held.resolve();
+			await page.evaluate(() => window.authTest.releaseSessionToken("session-a"));
+		}
+	});
+}
+
 async function start(page: Page, bootstrap?: string) {
 	await page.route("http://127.0.0.1:8000/**", (route) =>
 		route.fulfill({

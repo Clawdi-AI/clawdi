@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { request } from "node:http";
+import { createServer as createHttpServer, request } from "node:http";
 import { createServer } from "node:https";
 import { connect } from "node:net";
 
@@ -15,8 +15,15 @@ writeFileSync(
 			mode: "local",
 			port: 18789,
 			bind: "loopback",
+			// The paired test's real Traefik ingress connects over loopback.
+			trustedProxies: ["127.0.0.1"],
 			auth: { mode: "token", token: "isolated-test-gateway-secret" },
-			controlUi: { allowedOrigins: ["https://127.0.0.1:19443"] },
+			controlUi: {
+				allowedOrigins: [
+					"https://127.0.0.1:19443",
+					"https://agent-42-18789.prod.clawdi.test:19444",
+				],
+			},
 		},
 		plugins: { enabled: false },
 	}),
@@ -47,35 +54,58 @@ gateway.on("error", (error) => {
 });
 gateway.on("exit", (code) => {
 	server.close();
+	nativeProxy.close();
 	process.exitCode = code ?? 1;
 });
 // Test-only ingress permits embedding. Official HTML/JS and native WS payloads
 // are untouched. This is not evidence of production ingress configuration.
+const observations = { privateHeaders: 0, nativeCookie: 0, forwardedNonLoopback: 0 };
+function observe(req) {
+	const forwarded = req.headers["x-forwarded-for"];
+	if (typeof forwarded === "string" && !forwarded.startsWith("127.") && forwarded !== "::1")
+		observations.forwardedNonLoopback += 1;
+	if (
+		req.headers.cookie?.includes("__Secure-clawdi_openclaw_owner=") ||
+		req.headers.authorization === "Bearer dev-bypass" ||
+		req.headers["x-clawdi-openclaw-route-proof"]
+	)
+		observations.privateHeaders += 1;
+	if (req.headers.cookie?.includes("native-probe=preserved")) observations.nativeCookie += 1;
+}
+function serve(req, res) {
+	if (req.url === "/__native_fixture__") {
+		res.setHeader("Content-Type", "application/json");
+		res.end(JSON.stringify(observations));
+		return;
+	}
+	observe(req);
+	const upstream = request(
+		{ host: "127.0.0.1", port: 18789, path: req.url, method: req.method, headers: req.headers },
+		(response) => {
+			const headers = { ...response.headers };
+			delete headers["x-frame-options"];
+			if (headers["content-security-policy"])
+				headers["content-security-policy"] = headers["content-security-policy"].replace(
+					/frame-ancestors[^;]*(;|$)/g,
+					"",
+				);
+			res.writeHead(response.statusCode ?? 502, headers);
+			response.pipe(res);
+		},
+	);
+	upstream.on("error", () => {
+		res.writeHead(502);
+		res.end();
+	});
+	req.pipe(upstream);
+}
 const server = createServer(
 	{ key: readFileSync(`${state}/key.pem`), cert: readFileSync(`${state}/cert.pem`) },
-	(req, res) => {
-		const upstream = request(
-			{ host: "127.0.0.1", port: 18789, path: req.url, method: req.method, headers: req.headers },
-			(response) => {
-				const headers = { ...response.headers };
-				delete headers["x-frame-options"];
-				if (headers["content-security-policy"])
-					headers["content-security-policy"] = headers["content-security-policy"].replace(
-						/frame-ancestors[^;]*(;|$)/g,
-						"",
-					);
-				res.writeHead(response.statusCode ?? 502, headers);
-				response.pipe(res);
-			},
-		);
-		upstream.on("error", () => {
-			res.writeHead(502);
-			res.end();
-		});
-		req.pipe(upstream);
-	},
+	serve,
 );
-server.on("upgrade", (req, socket, head) => {
+const nativeProxy = createHttpServer(serve);
+function upgrade(req, socket, head) {
+	observe(req);
 	const upstream = connect(18789, "127.0.0.1", () => {
 		upstream.write(
 			`${req.method} ${req.url} HTTP/${req.httpVersion}\r\n${Object.entries(req.headers)
@@ -89,7 +119,9 @@ server.on("upgrade", (req, socket, head) => {
 	upstream.on("error", () => socket.destroy());
 	socket.on("error", () => upstream.destroy());
 	socket.on("close", () => upstream.destroy());
-});
+}
+server.on("upgrade", upgrade);
+nativeProxy.on("upgrade", upgrade);
 server.on("error", (error) => {
 	console.error(error);
 	gateway.kill();
@@ -97,6 +129,9 @@ server.on("error", (error) => {
 });
 process.on("SIGTERM", () => {
 	server.close();
+	nativeProxy.close();
 	gateway.kill();
 });
 server.listen(19443, "127.0.0.1");
+
+nativeProxy.listen(19446, "127.0.0.1");
