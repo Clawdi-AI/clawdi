@@ -33,6 +33,15 @@ export interface StoredEnvironmentRegistration {
 export function readEnvironmentRegistration(
 	agentType: string,
 ): StoredEnvironmentRegistration | null {
+	const registration = readEnvironmentRegistrationForCleanup(agentType);
+	if (registration?.userId && registration.userId !== getAuth()?.userId?.trim()) return null;
+	return registration;
+}
+
+/** Validated local provenance only; never use this unfiltered read to authorize sync. */
+export function readEnvironmentRegistrationForCleanup(
+	agentType: string,
+): StoredEnvironmentRegistration | null {
 	const value = readRecoverablePrivateJson<unknown>(environmentRegistrationPath(agentType));
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
 	const record = value as Record<string, unknown>;
@@ -68,8 +77,6 @@ export function readEnvironmentRegistration(
 						: {}),
 				}
 			: undefined;
-	const currentUserId = getAuth()?.userId?.trim();
-	if (typeof record.userId === "string" && record.userId !== currentUserId) return null;
 	return {
 		id: record.id,
 		...(vaultWorkspace && record.userId && record.machineId ? { vaultWorkspace } : {}),

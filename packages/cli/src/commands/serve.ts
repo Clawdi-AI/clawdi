@@ -84,6 +84,7 @@ import {
 } from "../serve/operation-runner";
 import { getDaemonControlTokenPath, getServeLogPath, getServeStateDir } from "../serve/paths";
 import { runSyncEngine } from "../serve/sync-engine";
+import { clearAccountMismatchedVaultFiles } from "../serve/vault-sync";
 import { daemonAutoUpdateOnce, startDaemonAutoUpdate } from "./update";
 
 type ServeOpts = Record<string, unknown>;
@@ -218,6 +219,18 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 	}
 
 	const hostedRuntime = detectRuntimeMode() === "hosted";
+	if (!hostedRuntime) {
+		for (const agentType of AGENT_TYPES) {
+			try {
+				clearAccountMismatchedVaultFiles(agentType);
+			} catch {
+				log.warn("serve.vault_cleanup_failed", {
+					agent: agentType,
+					message: "Owned Vault files need local repair.",
+				});
+			}
+		}
+	}
 	const targets = legacyRun
 		? [pickLegacyDaemonRunTarget(legacyRun)]
 		: pickDaemonRunTargets({ allowEmpty: hostedRuntime });

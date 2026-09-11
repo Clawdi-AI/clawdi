@@ -1,13 +1,25 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { serve } from "../commands/serve";
 import { ApiClient } from "../lib/api-client";
 import { getAuth, setAuth, setConfig } from "../lib/config";
-import { writeEnvironmentRegistration } from "../lib/environment-registration";
+import {
+	readEnvironmentRegistration,
+	writeEnvironmentRegistration,
+} from "../lib/environment-registration";
 import { getOrCreateMachineId } from "../lib/machine-identity";
-import { prepareConnectedVaultSync } from "./vault-sync";
+import { clearAccountMismatchedVaultFiles, prepareConnectedVaultSync } from "./vault-sync";
 
 const environment = { ...process.env };
 const roots: string[] = [];
@@ -213,4 +225,154 @@ test("missing targets and Hosted mode never start a second file writer", async (
 	abort.abort();
 	await sync.finish();
 	await hosted.finish();
+});
+
+test("cold account switch clears only matching old provenance, never a replacement binding", async () => {
+	const f = fixture();
+	delete process.env.CLAWDI_AGENT_TYPE;
+	delete process.env.CLAWDI_ENVIRONMENT_ID;
+	delete process.env.CLAWDI_SERVE_MODE;
+	const oldAgent = f.agentId;
+	const oldAbort = new AbortController();
+	const freshAbort = new AbortController();
+	const nextAbort = new AbortController();
+	let requests = 0;
+	const data = {
+		schema_version: 1,
+		complete: true,
+		user_id: f.userId,
+		agent_id: f.agentId,
+		vaults: [
+			{
+				id: randomUUID(),
+				name: "Fixture",
+				slug: "fixture",
+				project_ids: [randomUUID()],
+				revision: "one",
+				fields: [
+					{
+						id: randomUUID(),
+						section: "",
+						name: "TOKEN",
+						references: ["clawdi://fixture/TOKEN"],
+						value: "old",
+					},
+				],
+			},
+		],
+	};
+	const server = Bun.serve({
+		hostname: "127.0.0.1",
+		port: 0,
+		fetch() {
+			requests++;
+			return Response.json(data, { headers: { etag: '"fixture"' } });
+		},
+	});
+	const auth = (userId: string) =>
+		setAuth({
+			apiKey: "fixture",
+			userId,
+			endpointBinding: { version: 1, cloudApiOrigin: server.url.origin },
+		});
+	setConfig({ apiUrl: server.url.origin });
+	auth(f.userId);
+	const register = (id: string, userId: string) =>
+		writeEnvironmentRegistration({
+			id,
+			userId,
+			agentType: "pi",
+			machineId: f.machineId,
+			machineName: "fixture",
+			vaultWorkspace: { path: f.workspace, apiOrigin: server.url.origin },
+		});
+	register(oldAgent, f.userId);
+	const registrationPath = join(f.root, "state", "environments", "pi.json");
+	const oldRegistration = readFileSync(registrationPath);
+	const receiptPath = join(f.root, "serve", "pi", "vault-files.json");
+	const directory = join(f.workspace, ".clawdi", "vaults");
+	const worker = (agentId: string, abort: AbortController) =>
+		prepareConnectedVaultSync({
+			agentType: "pi",
+			agentId,
+			api: new ApiClient(),
+			abort: abort.signal,
+			report() {},
+		});
+	const old = worker(oldAgent, oldAbort);
+	try {
+		await old.reconcile();
+		oldAbort.abort();
+		await old.finish(); // Stop while the original login is still valid.
+		expect(readdirSync(directory)).toHaveLength(3);
+		const nextUser = randomUUID();
+		auth(nextUser);
+		expect(readEnvironmentRegistration("pi")).toBeNull();
+		const restarted = worker(oldAgent, freshAbort);
+		expect(restarted.enabled).toBe(false);
+		expect(readdirSync(directory)).toEqual([]);
+		await restarted.finish();
+		// Recreate an offline cache to exercise daemon selection independently of worker setup.
+		auth(f.userId);
+		const seedAbort = new AbortController();
+		const seed = worker(oldAgent, seedAbort);
+		await seed.reconcile();
+		seedAbort.abort();
+		await seed.finish();
+		expect(readdirSync(directory)).toHaveLength(3);
+		auth(nextUser);
+
+		// Cold daemon selection filters out old-user registrations, so cleanup must precede it.
+		const exit = spyOn(process, "exit").mockImplementation(() => {
+			throw new Error("no current Agent");
+		});
+		try {
+			await expect(serve({})).rejects.toThrow("no current Agent");
+		} finally {
+			exit.mockRestore();
+		}
+		expect(readdirSync(directory)).toEqual([]);
+		const fresh = worker(oldAgent, freshAbort);
+		expect(fresh.enabled).toBe(false);
+		await fresh.reconcile();
+		await fresh.finish();
+		expect(requests).toBe(4);
+
+		const nextAgent = randomUUID();
+		register(nextAgent, nextUser);
+		data.agent_id = nextAgent;
+		data.user_id = nextUser;
+		data.vaults[0].fields[0].value = "new";
+		const next = worker(nextAgent, nextAbort);
+		await next.reconcile();
+		const nextRegistration = readFileSync(registrationPath);
+		const nextReceipt = readFileSync(receiptPath);
+		const file = join(
+			directory,
+			readdirSync(directory).find((name) => name !== "index.json" && name.endsWith(".json")) ??
+				"missing",
+		);
+		try {
+			// A stale registration/worker must not confer authority over the new receipt.
+			writeFileSync(registrationPath, oldRegistration);
+			clearAccountMismatchedVaultFiles("pi");
+			const stale = worker(oldAgent, freshAbort);
+			expect(stale.enabled).toBe(false);
+			await stale.finish();
+			old.revoke();
+			expect(readFileSync(receiptPath)).toEqual(nextReceipt);
+			expect(JSON.parse(readFileSync(file, "utf8")).TOKEN).toBe("new");
+			expect(requests).toBe(6);
+		} finally {
+			writeFileSync(registrationPath, nextRegistration);
+			nextAbort.abort();
+			await next.finish();
+		}
+	} finally {
+		oldAbort.abort();
+		freshAbort.abort();
+		nextAbort.abort();
+		await old.finish();
+		server.stop(true);
+	}
 });

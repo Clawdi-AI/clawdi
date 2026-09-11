@@ -4,12 +4,14 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { ApiClient } from "../lib/api-client";
 import { canonicalApiOrigin } from "../lib/api-origin";
-import { getAuth, getConfig } from "../lib/config";
+import { getAuth, getClawdiDir, getConfig } from "../lib/config";
 import {
 	assertUniqueVaultWorkspace,
 	readEnvironmentRegistration,
+	readEnvironmentRegistrationForCleanup,
 } from "../lib/environment-registration";
 import { readMachineId } from "../lib/machine-identity";
+import { withPrivateDirectoryLockSync } from "../lib/private-directory-lock";
 import { clearConnectedVaultFiles, syncRuntimeVaultFiles } from "../runtime/vault-files";
 import { getServeStateDir } from "./paths";
 
@@ -18,6 +20,39 @@ export interface ConnectedVaultSync {
 	reconcile(force?: boolean): Promise<void>;
 	revoke(): void;
 	finish(): Promise<void>;
+}
+
+/** Cold-start cleanup must run before account-filtered registration selects workers. */
+export function clearAccountMismatchedVaultFiles(agentType: string, agentId?: string): void {
+	if (process.platform !== "linux" || process.env.CLAWDI_RUNTIME_MODE === "hosted") return;
+	withPrivateDirectoryLockSync(join(getClawdiDir(), "environments.lock"), () => {
+		const previous = readEnvironmentRegistrationForCleanup(agentType);
+		const binding = previous?.vaultWorkspace;
+		if (
+			!previous?.userId ||
+			!previous.machineId ||
+			!binding ||
+			previous.userId === getAuth()?.userId ||
+			previous.machineId !== readMachineId() ||
+			(agentId !== undefined && previous.id !== agentId)
+		)
+			return;
+		const stateRoot = getServeStateDir(agentType);
+		clearConnectedVaultFiles(
+			join(stateRoot, "vault-files.json"),
+			stateRoot,
+			process.env.HOME || homedir(),
+			{
+				userId: previous.userId,
+				machineId: previous.machineId,
+				agentId: previous.id,
+				workspace: binding.path,
+				nativeAgentId: binding.nativeAgentId,
+				apiUrl: binding.apiOrigin,
+			},
+			true,
+		);
+	});
 }
 
 /** A single coalescing consumer of the engine's existing SSE and heartbeat ticks. */
@@ -106,9 +141,15 @@ export function prepareConnectedVaultSync(input: {
 			});
 		} catch {
 			enabled = false;
+			try {
+				clearAccountMismatchedVaultFiles(agentType, agentId);
+			} catch {
+				report("Owned Vault files need local repair.", true);
+			}
 			if (registration?.id === agentId && registration.userId === getAuth()?.userId) {
 				try {
-					clearConnectedVaultFiles(receiptPath, stateRoot, home);
+					if (binding) clear();
+					else clearConnectedVaultFiles(receiptPath, stateRoot, home);
 				} catch {
 					report("Owned Vault files need local repair.", true);
 				}
