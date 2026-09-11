@@ -512,9 +512,12 @@ whose ownership was already transferred by a qualified CLI. Same-instance
 runtime-state writes may recover only newly requested custom IDs found in the
 unique authenticated applied observation for the persisted apply generation.
 The active environment owner, deployment binding, instance, CLI selection,
-receipt/boot identity and source/ETag pair must match. Multiple boots (even
-expired ones), missing observations, retired bindings and changed incarnations
-fail closed. The ordinary runtime-state generation and owner locks still apply.
+receipt/boot identity and source/ETag pair must match. Only active heads in the
+persisted apply generation participate in historical ambiguity; unrelated older
+generations remain stored and cannot block recovery. Multiple active boots within
+that generation (even expired ones), missing observations, retired bindings and
+changed incarnations fail closed. The ordinary runtime-state generation and
+owner locks still apply.
 
 Historical error/expired observations establish previous ownership, never health
 or current convergence. When the current source exists it must match the applied

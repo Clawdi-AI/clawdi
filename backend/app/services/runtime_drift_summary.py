@@ -35,12 +35,15 @@ async def read_runtime_drift_summaries(
     body: RuntimeDriftSummaryReadRequest,
     *,
     expected_generations: Mapping[UUID, int] | None = None,
+    require_unique_active_head: bool = False,
 ) -> RuntimeDriftSummaryReadResponse:
     """Read persisted drift evidence without writes in the caller's RR snapshot.
 
     Trusted callers may scope a binding to its persisted generation without
     inventing a receipt or boot nonce. Multiple fresh boots remain ambiguous;
     unscoped legacy reads retain their conservative historical-head behavior.
+    Historical ownership readers can require a unique active head within the
+    requested scope, counting expired boots as competing evidence too.
     """
     observed_at = datetime.now(UTC)
     environment_ids = [binding.environment_id for binding in body.bindings]
@@ -199,7 +202,7 @@ async def read_runtime_drift_summaries(
         for row in head_rows:
             ambiguous = (
                 row.active_head_count > 1
-                if row.environment_id in legacy_environments
+                if require_unique_active_head or row.environment_id in legacy_environments
                 else row.fresh_head_count > 1
             )
             if ambiguous:
