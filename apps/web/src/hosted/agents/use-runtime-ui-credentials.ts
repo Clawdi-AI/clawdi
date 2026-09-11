@@ -15,7 +15,7 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 	const pending = useRef<Promise<RuntimeUiCredentials | null> | null>(null);
 	const active = useRef(false);
 	const revision = useRef(0);
-	const requested = useRef(false);
+	const requestedVersion = useRef<string | null>(null);
 
 	useLayoutEffect(() => {
 		active.current = true;
@@ -36,7 +36,7 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 			if (!active.current || !endpoint) return Promise.resolve(null);
 			if (pending.current) return pending.current;
 			if (!fresh && credentials) return Promise.resolve(credentials);
-			requested.current = true;
+			requestedVersion.current = metadata.resourceVersion;
 			const requestRevision = ++revision.current;
 			setAttempt(requestRevision);
 			setCredentials(null);
@@ -70,8 +70,17 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 	);
 
 	useEffect(() => {
-		if (spec.runtime === "openclaw" && endpoint && !requested.current) void load();
-	}, [spec.runtime, endpoint, load]);
+		// A newer snapshot can invalidate a pending request. Try that version once,
+		// after the request settles, without disturbing an established document.
+		if (
+			spec.runtime === "openclaw" &&
+			endpoint &&
+			!credentials &&
+			!isLoading &&
+			requestedVersion.current !== metadata.resourceVersion
+		)
+			void load();
+	}, [spec.runtime, endpoint, metadata.resourceVersion, credentials, isLoading, load]);
 
 	return {
 		credentials,

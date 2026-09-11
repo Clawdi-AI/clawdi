@@ -1416,6 +1416,9 @@ agent layout and starts the native handoff in the background. Other sections
 hide the surface and make it inert; opening Console reveals the same iframe,
 document, and connection without changing its launch URL or requesting access
 again. Initial deployment readiness uses the same automatic path.
+Before credentials are established, a new resource version permits one background
+attempt after any pending request settles; unchanged versions do not retry
+automatically. An established iframe survives resource-version-only changes.
 Leaving the agent, losing/changing the auth identity, losing readiness, or
 changing the generation or endpoint retires the iframe. No parent-origin load
 marker or bootstrap-expiry cache is used.

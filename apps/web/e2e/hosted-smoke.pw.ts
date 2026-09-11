@@ -5290,3 +5290,113 @@ for (const viewport of [
 		expect(errors).toEqual([]);
 	});
 }
+
+test("OpenClaw retries a new resource version after a pending 412 without replacing an established document", async ({
+	page,
+	context,
+}) => {
+	const deployment = mutationDeploymentReadFixture({
+		...railHostedDeployment,
+		openclaw_control_ui_url: "https://runtime.example/",
+		config_info: { ...railHostedDeployment.config_info, runtime: "openclaw" },
+	});
+	deployment.resource.metadata.resourceVersion = "rv_initial";
+	const requests: Array<string | undefined> = [];
+	let documents = 0;
+	let release = () => {};
+	const firstResponse = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		cloudAgentNotFoundIds: [railHostedEnvironmentId],
+	});
+	await context.route("https://runtime.example/**", (route) => {
+		if (route.request().isNavigationRequest()) documents += 1;
+		return route.fulfill({
+			contentType: "text/html",
+			body: "<!doctype html><p>Runtime document</p>",
+		});
+	});
+	await page.route(`${DEPLOY_API}/v2/deployments/*/runtime-ui/credentials`, async (route) => {
+		const version = deployment.resource.metadata.resourceVersion;
+		requests.push(route.request().headers()["if-match"]);
+		const attempt = requests.length;
+		expect(requests.at(-1)).toBe(`"${version}"`);
+		if (attempt === 1) await firstResponse;
+		if (attempt <= 2)
+			return route.fulfill({ status: 412, json: { detail: "Resource version changed" } });
+		return route.fulfill({
+			json: {
+				runtime: "openclaw",
+				auth_mode: "openclaw_token",
+				url: "https://runtime.example/",
+				deployment_resource_version: version,
+				token: "fixture-token",
+				handoff_url: `https://runtime.example/#bootstrapToken=handoff-${attempt}&bootstrapProfile=owner`,
+			},
+		});
+	});
+	const updateVersion = async (version: string) => {
+		deployment.resource.metadata.resourceVersion = version;
+		deployment.resource.name = `Agent ${version}`;
+		await page.clock.setFixedTime(await page.evaluate(() => Date.now() + 31_000));
+		await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+		// The title confirms React has observed this inventory snapshot, not just its HTTP response.
+		await expect(page.locator("main h1")).toHaveText(deployment.resource.name);
+	};
+	const navigate = (section: string) =>
+		page
+			.getByTestId("app-sidebar")
+			.locator(`a[href="/agents/${railHostedEnvironmentId}${section}"]`)
+			.click();
+	try {
+		await page.goto(`/agents/${railHostedEnvironmentId}`);
+		await expect.poll(() => requests.length).toBe(1);
+		await updateVersion("rv_pending");
+		expect(requests).toEqual(['"rv_initial"']);
+		release();
+		await expect.poll(() => requests.length).toBe(2);
+		await navigate("/console");
+		await expect(page.getByText("Clawdi couldn't establish this browser session.")).toBeVisible();
+		await navigate("");
+		await navigate("/console");
+		await expect(page.getByText("Clawdi couldn't establish this browser session.")).toBeVisible();
+		expect(requests).toHaveLength(2);
+		await navigate("");
+		await updateVersion("rv_retry");
+		const iframe = page.locator('iframe[title="OpenClaw Control UI"]');
+		await expect(iframe).toHaveAttribute(
+			"src",
+			"https://runtime.example/#bootstrapToken=handoff-3&bootstrapProfile=owner",
+		);
+		await expect(iframe).toBeHidden();
+		await expect.poll(() => documents).toBe(1);
+		const original = await iframe.elementHandle();
+		if (!original) throw new Error("Expected an established background iframe.");
+		const document = await (await original.contentFrame())?.evaluateHandle(() => window.document);
+		if (!document) throw new Error("Expected the runtime document.");
+		await updateVersion("rv_cosmetic");
+		await navigate("/console");
+		await expect(iframe).toBeVisible();
+		expect(
+			await original.evaluate(
+				(element) =>
+					element === window.document.querySelector('iframe[title="OpenClaw Control UI"]'),
+			),
+		).toBe(true);
+		expect(
+			await document.evaluate((originalDocument) => originalDocument === window.document),
+		).toBe(true);
+		expect(documents).toBe(1);
+		expect(requests).toHaveLength(3);
+		await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+		await expect.poll(() => documents).toBe(2);
+		expect(await original.evaluate((element) => element.isConnected)).toBe(false);
+		expect(requests).toEqual(['"rv_initial"', '"rv_pending"', '"rv_retry"', '"rv_cosmetic"']);
+		await original.dispose();
+		await document.dispose();
+	} finally {
+		release();
+	}
+});
