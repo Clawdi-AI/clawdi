@@ -4,7 +4,9 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.app_setting import AppSetting
@@ -12,7 +14,10 @@ from app.schemas.provider_environment_repair import (
     PROVIDER_ENVIRONMENT_REPAIR_SCOPE,
     NativeEnvironmentProof,
 )
+from app.services.ai_provider_credentials import lock_ai_provider_owner
 from app.services.provider_environment_repair import native_repair_boundary
+from app.services.runtime_observation import provision_runtime_environment_fence
+from tests.conftest import create_env_with_project
 from tests.test_ai_provider_connection_ownership import (
     PROVIDER,
     VERSION,
@@ -280,3 +285,39 @@ async def test_restore_covers_other_native_owners_and_pending_absence(
         if case in {"conflict", "unbound-pending"}
         else "ESTABLISHED_KEY"
     )
+
+
+@pytest.mark.committed_db
+@pytest.mark.asyncio
+async def test_new_v2_consumer_waits_for_provider_inventory_owner_lock(
+    engine, db_session, seed_user
+):
+    environment = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"repair-inventory-{uuid4()}",
+        machine_name="Repair inventory fence",
+    )
+    await db_session.commit()
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessions() as repair, sessions() as mint:
+        await lock_ai_provider_owner(repair, seed_user.id)
+        await mint.execute(text("SET LOCAL lock_timeout = '100ms'"))
+        with pytest.raises(DBAPIError) as blocked:
+            await provision_runtime_environment_fence(
+                mint,
+                environment_id=environment.id,
+                owner_id=seed_user.id,
+                deployment_id="new-v2-consumer",
+            )
+        assert blocked.value.orig.sqlstate == "55P03"
+        await mint.rollback()
+        await repair.rollback()
+        fence = await provision_runtime_environment_fence(
+            mint,
+            environment_id=environment.id,
+            owner_id=seed_user.id,
+            deployment_id="new-v2-consumer",
+        )
+        assert fence.deployment_id == "new-v2-consumer"
+        await mint.rollback()

@@ -2968,5 +2968,10 @@ async def configure_native_environment_verifier(
     _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_control_session),
 ) -> ProviderEnvironmentVerifierAccess:
-    return await update_verifier_access(db, client_id=client_id, body=body,
-        idempotency_key=idempotency_key, request_id=str(request.state.request_id))
+    return await update_verifier_access(
+        db,
+        client_id=client_id,
+        body=body,
+        idempotency_key=idempotency_key,
+        request_id=str(request.state.request_id),
+    )

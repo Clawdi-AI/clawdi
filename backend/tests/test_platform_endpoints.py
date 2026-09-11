@@ -1609,6 +1609,8 @@ async def test_platform_routes_are_canonical_and_exposed_in_openapi(platform_cli
         "/v1/platform/auth/keys",
         "/v1/platform/auth/keys/{key_id}",
         "/v1/platform/oauth/token",
+        "/v1/platform/ai-providers/{provider_id}/credential-environment-repair",
+        "/v1/platform/ai-providers/{provider_id}/credential-environment-repair/receipt",
     }
     assert all(not path.startswith("/api/platform") for path in paths)
     assert set(paths["/v1/platform/agents/{agent_id}/runtime-state"]) == {
