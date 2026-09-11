@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import secrets
 import threading
 import zlib
@@ -117,6 +118,7 @@ log = logging.getLogger(__name__)
 
 _DISCORD_GATEWAY_RESUME_BUFFER_SIZE = 100
 _DISCORD_GATEWAY_MAX_CHANNELS = 256
+_DISCORD_GATEWAY_STARTUP_TIMEOUT_SECONDS = 30.0
 _DISCORD_GATEWAY_MAX_SESSIONS = 256
 _DISCORD_GATEWAY_SESSION_TTL_SECONDS = 5 * 60.0
 _DISCORD_GATEWAY_CAPABILITY_SUBJECT = "clawdi_discord_gateway"
@@ -871,6 +873,7 @@ async def discord_agent_gateway(
     notified: asyncio.Event | None = None
     receive_task: asyncio.Task[JsonValue] | None = None
     wakeup_task: asyncio.Task[bool] | None = None
+    startup_task: asyncio.Task[dict[str, JsonObject]] | None = None
 
     async def send_gateway_frame(
         payload: JsonObject,
@@ -1222,7 +1225,7 @@ async def discord_agent_gateway(
                     "account_id": account.id,
                     "bot_agent_link_id": bot_agent_link_id,
                     "frames": [],
-                    "identified": True,
+                    "identified": False,
                     "projected_guilds": projected_guilds,
                     "projected_channels": projected_channels,
                     "message_checkpoints": OrderedDict(),
@@ -1235,22 +1238,29 @@ async def discord_agent_gateway(
                         account=account,
                         bot_agent_link_id=bot_agent_link_id,
                     )
-                for channel_id, guild_id in channels.items():
-                    try:
-                        result = await request_discord_provider(
-                            account=account,
-                            method="GET",
-                            path=f"channels/{channel_id}",
+                receive_task = asyncio.create_task(
+                    websocket.receive_json(), name="discord-gateway-receive"
+                )
+                startup_task = asyncio.create_task(
+                    _discord_gateway_startup_channels(account, channels),
+                    name="discord-gateway-startup",
+                )
+                try:
+                    while not startup_task.done():
+                        await asyncio.wait(
+                            {startup_task, receive_task}, return_when=asyncio.FIRST_COMPLETED
                         )
-                    except HTTPException:
-                        continue
-                    channel = _discord_gateway_channel(
-                        result,
-                        channel_id=channel_id,
-                        guild_id=guild_id,
-                    )
-                    if channel is not None:
-                        projected_channels[channel_id] = channel
+                        if receive_task.done():
+                            frame = _JSON_VALUE_ADAPTER.validate_python(receive_task.result())
+                            if isinstance(frame, dict) and frame.get("op") == 1:
+                                await send_gateway_frame({"op": 11, "d": None}, record=False)
+                            receive_task = asyncio.create_task(
+                                websocket.receive_json(), name="discord-gateway-receive"
+                            )
+                    projected_channels.update(startup_task.result())
+                except TimeoutError:
+                    await websocket.close(code=1013, reason="Gateway startup timed out")
+                    return
                 await send_dispatch(
                     "READY",
                     {
@@ -1280,6 +1290,7 @@ async def discord_agent_gateway(
                 for channel_id, channel in projected_channels.items():
                     if channels.get(channel_id) is not None:
                         await send_channel(channel)
+                session_state["identified"] = True
 
         if bot_agent_link_id is None:
             await websocket.close(code=4004)
@@ -1288,7 +1299,10 @@ async def discord_agent_gateway(
         notified = channel_inbound_messages_enqueued.subscribe(
             str(account.id), scope=str(active_link_id)
         )
-        receive_task = asyncio.create_task(websocket.receive_json(), name="discord-gateway-receive")
+        if receive_task is None:
+            receive_task = asyncio.create_task(
+                websocket.receive_json(), name="discord-gateway-receive"
+            )
 
         while True:
             # Retain the reader across notifications/timeouts, including when
@@ -1473,16 +1487,9 @@ async def discord_agent_gateway(
         return
     finally:
         try:
-            if consumer_lease is not None and consumer_lease_entered:
-                await consumer_lease.__aexit__(None, None, None)
-        finally:
-            if owns_session_entry:
-                _DISCORD_GATEWAY_SESSIONS.disconnect(session_id)
-            if notified is not None and account is not None:
-                channel_inbound_messages_enqueued.unsubscribe(
-                    str(account.id), notified, scope=str(bot_agent_link_id)
-                )
-            tasks = [task for task in (receive_task, wakeup_task) if task is not None]
+            tasks: list[asyncio.Task[object]] = [
+                task for task in (receive_task, wakeup_task, startup_task) if task is not None
+            ]
             for task in tasks:
                 if not task.done():
                     task.cancel()
@@ -1492,6 +1499,20 @@ async def discord_agent_gateway(
 
             if tasks:
                 await finish_cleanup(collect_tasks)
+        finally:
+            try:
+                if consumer_lease is not None and consumer_lease_entered:
+                    await consumer_lease.__aexit__(None, None, None)
+            finally:
+                if owns_session_entry:
+                    if session_state is not None and not session_state["identified"]:
+                        _DISCORD_GATEWAY_SESSIONS.discard(session_id)
+                    else:
+                        _DISCORD_GATEWAY_SESSIONS.disconnect(session_id)
+                if notified is not None and account is not None:
+                    channel_inbound_messages_enqueued.unsubscribe(
+                        str(account.id), notified, scope=str(bot_agent_link_id)
+                    )
 
 
 @router.post(
@@ -1995,6 +2016,52 @@ async def _discord_gateway_authority(
         }:
             channels[binding.external_chat_id] = None
     return guilds, channels
+
+
+async def _discord_gateway_startup_channels(
+    account: ChannelAccount, channels: dict[str, str | None]
+) -> dict[str, JsonObject]:
+    """Read the ordered startup snapshot without dropping rate-limited channels."""
+
+    async def read_channel(channel_id: str, guild_id: str | None) -> JsonObject | None:
+        while True:
+            try:
+                result = await request_discord_provider(
+                    account=account, method="GET", path=f"channels/{channel_id}"
+                )
+            except HTTPException as exc:
+                if exc.status_code != status.HTTP_429_TOO_MANY_REQUESTS:
+                    return None
+                result = DiscordProviderResult(
+                    content=b"",
+                    status_code=exc.status_code,
+                    media_type="application/json",
+                    headers=dict(exc.headers or {}),
+                )
+            if result.status_code != status.HTTP_429_TOO_MANY_REQUESTS:
+                return _discord_gateway_channel(result, channel_id=channel_id, guild_id=guild_id)
+            delay = discord_retry_after_seconds(result)
+            if delay is None or not math.isfinite(delay) or delay <= 0:
+                delay = 1.0
+            # The enclosing deadline cancels the batch before a long Retry-After
+            # can expire. A small floor prevents a provider's zero/near-zero loop.
+            await asyncio.sleep(min(max(0.1, delay), _DISCORD_GATEWAY_STARTUP_TIMEOUT_SECONDS))
+
+    projected: dict[str, JsonObject] = {}
+    snapshot = list(channels.items())
+    async with asyncio.timeout(_DISCORD_GATEWAY_STARTUP_TIMEOUT_SECONDS):
+        for offset in range(0, len(snapshot), 4):
+            batch = snapshot[offset : offset + 4]
+            async with asyncio.TaskGroup() as group:
+                reads = [
+                    group.create_task(read_channel(channel_id, guild_id))
+                    for channel_id, guild_id in batch
+                ]
+            for (channel_id, _), read in zip(batch, reads, strict=True):
+                channel = read.result()
+                if channel is not None:
+                    projected[channel_id] = channel
+    return projected
 
 
 def _discord_gateway_channel(

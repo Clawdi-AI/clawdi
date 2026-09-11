@@ -109,6 +109,15 @@ reproducible resource limits, results and compatibility contract. The
 independent authenticated requests with the production 30-second wait cap and
 five-second fallback, including interleaved Account/Link strategies.
 
+Synthetic Gateway IDENTIFY reads channel metadata in ordered batches of four.
+Startup reads honor Discord and local limiter `Retry-After` responses within
+a shared 30-second provider-read deadline, while the socket reader handles
+heartbeats and disconnects. An expired deadline closes with code 1013; an
+incomplete startup cannot Resume. READY private channels and subsequent guild,
+channel, and thread frames retain their order. Message receipts still require
+heartbeat/Resume acknowledgement. Verify with
+`scripts/test.sh backend tests/test_discord_startup_qualification.py`.
+
 The default liveness interval is one second, with a five-second probe deadline
 including serial-gate waiting. Lock SQL also has a five-second deadline. These
 are application cancellation deadlines, not guarantees about TCP blackhole or
