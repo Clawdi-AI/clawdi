@@ -1,5 +1,6 @@
 """Admission for the one-way, existing-runtime provider ownership handoff."""
 
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -18,6 +19,8 @@ from app.models.session import AgentEnvironment
 from app.schemas.runtime import validate_hosted_runtime_desired_state
 from app.schemas.runtime_observation import (
     RuntimeDriftBindingRequest,
+    RuntimeDriftObservationHead,
+    RuntimeDriftSummary,
     RuntimeDriftSummaryReadRequest,
 )
 from app.schemas.runtime_observed import HostedRuntimeObservedAppliedV2
@@ -172,172 +175,170 @@ async def require_custom_provider_cli(
         raise HTTPException(409, "Custom provider initialization is not enabled") from exc
     if cli_package_spec not in {f"clawdi@{version}" for version in versions}:
         raise HTTPException(409, "Custom providers require a qualified CLI release")
-    if previous_state is not None:
-        previous_ids = {
-            provider_id
-            for runtime in previous_state.runtimes.values()
-            for provider_id in validate_hosted_runtime_desired_state(runtime).provider_ids
-        }
-        if custom - previous_ids:
-            evidence = await read_runtime_drift_summaries(
-                db,
-                RuntimeDriftSummaryReadRequest(
-                    bindings=[
-                        RuntimeDriftBindingRequest(
-                            environmentId=previous_state.environment_id,
-                            deploymentId=previous_state.deployment_id,
-                        )
-                    ]
-                ),
-                expected_generations={
-                    previous_state.environment_id: previous_state.apply_generation
-                    or previous_state.generation
-                },
+    if previous_state is None:
+        return
+    previous_ids = {
+        provider_id
+        for runtime in previous_state.runtimes.values()
+        for provider_id in validate_hosted_runtime_desired_state(runtime).provider_ids
+    }
+    added_ids = custom - previous_ids
+    if not added_ids:
+        return
+    owned_environment = await db.scalar(
+        select(AgentEnvironment.id).where(
+            AgentEnvironment.id == previous_state.environment_id,
+            AgentEnvironment.user_id == owner_user_id,
+            AgentEnvironment.archived_at.is_(None),
+        )
+    )
+    if owned_environment is None:
+        raise HTTPException(409, "Custom provider recovery binding is invalid")
+    request = RuntimeDriftSummaryReadRequest(
+        bindings=[
+            RuntimeDriftBindingRequest(
+                environmentId=previous_state.environment_id,
+                deploymentId=previous_state.deployment_id,
             )
-            # Applied provider ownership survives a failed desired-state change.
-            # This is not a readiness claim: only the exact previous incarnation's
-            # already-applied providers may use historical evidence. Ignore other
-            # generations, but refuse competing boots even when all have expired.
-            historical = await read_runtime_drift_summaries(
-                db,
-                RuntimeDriftSummaryReadRequest(
-                    bindings=[
-                        RuntimeDriftBindingRequest(
-                            environmentId=previous_state.environment_id,
-                            deploymentId=previous_state.deployment_id,
-                        )
-                    ]
-                ),
-                expected_generations={
-                    previous_state.environment_id: previous_state.apply_generation
-                    or previous_state.generation
-                },
-                require_unique_active_head=True,
-            )
-            owned_environment = await db.scalar(
-                select(AgentEnvironment.id).where(
-                    AgentEnvironment.id == previous_state.environment_id,
-                    AgentEnvironment.user_id == owner_user_id,
-                    AgentEnvironment.archived_at.is_(None),
-                )
-            )
-            if owned_environment is None:
-                raise HTTPException(409, "Custom provider recovery binding is invalid")
-            if len(historical.items) == 1:
-                history = historical.items[0]
-                prior_head = history.observation.head
-                prior_applied = prior_head.diagnostics.applied if prior_head else None
-                if (
-                    history.binding == "active"
-                    and history.source_authority.instance_id == previous_state.instance_id
-                    and prior_head is not None
-                    and prior_applied is not None
-                    and prior_head.captured_at <= historical.observed_at
-                    and prior_head.diagnostics.active_cli_version in versions
-                    and previous_state.cli_package_spec
-                    == f"clawdi@{prior_head.diagnostics.active_cli_version}"
-                    and prior_applied.instance_id == previous_state.instance_id
-                    and (
-                        history.source_authority.status == "unavailable"
-                        and persisted_runtime_source_error(previous_state)
-                        or history.source_authority.status == "present"
-                    )
-                    and prior_applied.generation
-                    == (previous_state.apply_generation or previous_state.generation)
-                    and prior_head.runtime_identity.generation == prior_applied.generation
-                    and prior_head.runtime_identity.apply_receipt_id
-                    and prior_head.runtime_identity.boot_nonce
-                    and prior_applied.etag
-                    == expected_runtime_bundle_v2_etag(prior_applied.source_revision)
-                ):
-                    restoring = custom - previous_ids
-                    if restoring <= set(prior_applied.applied_provider_ids):
-                        return
-                    # A later successful selection can replace the head's applied
-                    # provider IDs without revoking completed native transfers.
-                    # Consult only accepted evidence from this exact active boot;
-                    # never borrow an old generation or another receipt/session.
-                    identity = prior_head.runtime_identity
-                    applied_payload = await db.scalar(
-                        select(V2RuntimeObservationInbox.diagnostics["applied"])
-                        .join(
-                            V2RuntimeObservationHead,
-                            (
-                                V2RuntimeObservationHead.environment_id
-                                == V2RuntimeObservationInbox.environment_id
-                            )
-                            & (
-                                V2RuntimeObservationHead.deployment_id
-                                == V2RuntimeObservationInbox.deployment_id
-                            )
-                            & (
-                                V2RuntimeObservationHead.boot_session_id
-                                == V2RuntimeObservationInbox.boot_session_id
-                            ),
-                        )
-                        .where(
-                            V2RuntimeObservationHead.state == RUNTIME_OBSERVATION_HEAD_ACTIVE,
-                            V2RuntimeObservationInbox.sequence
-                            <= V2RuntimeObservationHead.highest_sequence,
-                            V2RuntimeObservationInbox.environment_id
-                            == previous_state.environment_id,
-                            V2RuntimeObservationInbox.deployment_id == previous_state.deployment_id,
-                            V2RuntimeObservationInbox.generation == identity.generation,
-                            V2RuntimeObservationInbox.manifest_etag == identity.manifest_etag,
-                            V2RuntimeObservationInbox.apply_receipt_id == identity.apply_receipt_id,
-                            V2RuntimeObservationInbox.boot_nonce == identity.boot_nonce,
-                            V2RuntimeObservationInbox.boot_session_id == identity.boot_session_id,
-                            V2RuntimeObservationInbox.captured_at <= prior_head.captured_at,
-                            V2RuntimeObservationInbox.received_at <= historical.observed_at,
-                            V2RuntimeObservationInbox.payload_purged_at.is_(None),
-                            V2RuntimeObservationInbox.diagnostics["activeCliVersion"].as_string()
-                            == prior_head.diagnostics.active_cli_version,
-                            V2RuntimeObservationInbox.diagnostics["applied"][
-                                "appliedProviderIds"
-                            ].contains(sorted(restoring)),
-                        )
-                        .order_by(V2RuntimeObservationInbox.sequence.desc())
-                        .limit(1)
-                    )
-                    if applied_payload is not None:
-                        try:
-                            applied_history = HostedRuntimeObservedAppliedV2.model_validate(
-                                applied_payload
-                            )
-                        except ValidationError:
-                            applied_history = None
-                        if (
-                            applied_history is not None
-                            and applied_history.instance_id == previous_state.instance_id
-                            and applied_history.generation == identity.generation
-                            and applied_history.etag
-                            == expected_runtime_bundle_v2_etag(applied_history.source_revision)
-                        ):
-                            return
-            if len(evidence.items) != 1:
-                raise HTTPException(
-                    409, "Custom provider binding requires current runtime evidence"
-                )
-            summary = evidence.items[0]
-            head = summary.observation.head
-            authority = summary.source_authority
-            applied = head.diagnostics.applied if head else None
-            if (
-                summary.binding != "active"
-                or summary.observation.status != "fresh"
-                or head is None
-                or head.health != "ok"
-                or head.captured_at > evidence.observed_at
-                or head.diagnostics.active_cli_version not in versions
-                or previous_state.cli_package_spec
-                != f"clawdi@{head.diagnostics.active_cli_version}"
-                or authority.status != "present"
-                or applied is None
-                or applied.instance_id != authority.instance_id
-                or authority.instance_id != previous_state.instance_id
-                or applied.source_revision != authority.source_revision
-                or applied.etag != authority.etag
-                or applied.generation
-                != (previous_state.apply_generation or previous_state.generation)
-            ):
-                raise HTTPException(409, "Custom provider binding requires a qualified running CLI")
+        ]
+    )
+    generations = {
+        previous_state.environment_id: previous_state.apply_generation or previous_state.generation
+    }
+    evidence = await read_runtime_drift_summaries(db, request, expected_generations=generations)
+    if len(evidence.items) != 1:
+        raise HTTPException(409, "Custom provider binding requires current runtime evidence")
+    summary = evidence.items[0]
+    qualified = _qualified_applied_evidence(
+        summary, previous_state, versions=versions, observed_at=evidence.observed_at
+    )
+    if qualified is not None:
+        head, applied = qualified
+        authority = summary.source_authority
+        if (
+            summary.observation.status == "fresh"
+            and head.health == "ok"
+            and authority.status == "present"
+            and applied.source_revision == authority.source_revision
+            and applied.etag == authority.etag
+        ):
+            return
+    if await _has_historical_provider_ownership(
+        db, previous_state, restoring=added_ids, versions=versions, request=request
+    ):
+        return
+    raise HTTPException(409, "Custom provider binding requires a qualified running CLI")
+
+
+def _qualified_applied_evidence(
+    summary: RuntimeDriftSummary,
+    state: HostedRuntimeState,
+    *,
+    versions: list[str],
+    observed_at: datetime,
+) -> tuple[RuntimeDriftObservationHead, HostedRuntimeObservedAppliedV2] | None:
+    """Validate incarnation/CLI identity independently of health or desired source."""
+    head = summary.observation.head
+    applied = head.diagnostics.applied if head else None
+    generation = state.apply_generation or state.generation
+    if (
+        summary.binding != "active"
+        or summary.source_authority.instance_id != state.instance_id
+        or head is None
+        or applied is None
+        or head.captured_at > observed_at
+        or head.diagnostics.active_cli_version not in versions
+        or state.cli_package_spec != f"clawdi@{head.diagnostics.active_cli_version}"
+        or applied.instance_id != state.instance_id
+        or applied.generation != generation
+        or head.runtime_identity.generation != generation
+        or not head.runtime_identity.apply_receipt_id
+        or not head.runtime_identity.boot_nonce
+        or applied.etag != expected_runtime_bundle_v2_etag(applied.source_revision)
+    ):
+        return None
+    return head, applied
+
+
+async def _has_historical_provider_ownership(
+    db: AsyncSession,
+    previous_state: HostedRuntimeState,
+    *,
+    restoring: set[str],
+    versions: list[str],
+    request: RuntimeDriftSummaryReadRequest,
+) -> bool:
+    """Recover completed transfers, never readiness or a new provider handoff."""
+    historical = await read_runtime_drift_summaries(
+        db,
+        request,
+        expected_generations={
+            previous_state.environment_id: previous_state.apply_generation
+            or previous_state.generation
+        },
+        require_unique_active_head=True,
+    )
+    if len(historical.items) != 1:
+        return False
+    summary = historical.items[0]
+    qualified = _qualified_applied_evidence(
+        summary, previous_state, versions=versions, observed_at=historical.observed_at
+    )
+    if qualified is None or not (
+        summary.source_authority.status == "present"
+        or summary.source_authority.status == "unavailable"
+        and persisted_runtime_source_error(previous_state)
+    ):
+        return False
+    prior_head, prior_applied = qualified
+    if restoring <= set(prior_applied.applied_provider_ids):
+        return True
+    # Only retained evidence at or before this exact active boot's head counts.
+    identity = prior_head.runtime_identity
+    applied_payload = await db.scalar(
+        select(V2RuntimeObservationInbox.diagnostics["applied"])
+        .join(
+            V2RuntimeObservationHead,
+            (V2RuntimeObservationHead.environment_id == V2RuntimeObservationInbox.environment_id)
+            & (V2RuntimeObservationHead.deployment_id == V2RuntimeObservationInbox.deployment_id)
+            & (
+                V2RuntimeObservationHead.boot_session_id
+                == V2RuntimeObservationInbox.boot_session_id
+            ),
+        )
+        .where(
+            V2RuntimeObservationHead.state == RUNTIME_OBSERVATION_HEAD_ACTIVE,
+            V2RuntimeObservationInbox.sequence <= V2RuntimeObservationHead.highest_sequence,
+            V2RuntimeObservationInbox.environment_id == previous_state.environment_id,
+            V2RuntimeObservationInbox.deployment_id == previous_state.deployment_id,
+            V2RuntimeObservationInbox.generation == identity.generation,
+            V2RuntimeObservationInbox.manifest_etag == identity.manifest_etag,
+            V2RuntimeObservationInbox.apply_receipt_id == identity.apply_receipt_id,
+            V2RuntimeObservationInbox.boot_nonce == identity.boot_nonce,
+            V2RuntimeObservationInbox.boot_session_id == identity.boot_session_id,
+            V2RuntimeObservationInbox.captured_at <= prior_head.captured_at,
+            V2RuntimeObservationInbox.received_at <= historical.observed_at,
+            V2RuntimeObservationInbox.payload_purged_at.is_(None),
+            V2RuntimeObservationInbox.diagnostics["activeCliVersion"].as_string()
+            == prior_head.diagnostics.active_cli_version,
+            V2RuntimeObservationInbox.diagnostics["applied"]["appliedProviderIds"].contains(
+                sorted(restoring)
+            ),
+        )
+        .order_by(V2RuntimeObservationInbox.sequence.desc())
+        .limit(1)
+    )
+    if applied_payload is not None:
+        try:
+            applied_history = HostedRuntimeObservedAppliedV2.model_validate(applied_payload)
+        except ValidationError:
+            applied_history = None
+        if (
+            applied_history is not None
+            and applied_history.instance_id == previous_state.instance_id
+            and applied_history.generation == identity.generation
+            and applied_history.etag
+            == expected_runtime_bundle_v2_etag(applied_history.source_revision)
+        ):
+            return True
+    return False

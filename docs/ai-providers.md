@@ -544,4 +544,11 @@ upsert and archived-provider acceptance. Native ownership journals survive
 unbinding and archiving. Hermes may retain a `model.key_env` mirror equal to the
 selected connection environment; different environments and inline model
 credentials remain conflicts. This follows the native [provider configuration
-contract](https://github.com/Clawdi-AI/hermes-agent/blob/7a963456/hermes_cli/config.py).
+contract](https://github.com/Clawdi-AI/hermes-agent/blob/7a9634568cdeb8f5363bc99042a24ebff9df0e1c/hermes_cli/config.py).
+
+The native [runtime provider resolver](https://github.com/Clawdi-AI/hermes-agent/blob/7a9634568cdeb8f5363bc99042a24ebff9df0e1c/hermes_cli/runtime_provider.py)
+retains the named custom provider `key_env` and resolves that environment when
+selecting credentials. Equal environment references do not introduce a second
+credential identity. Native fallback credential sources may still exist, so
+manifest credential injection alone is not proof that a model call succeeds or
+fails. No implicit credential-identity migration is authorized by this fix.

@@ -55,6 +55,7 @@ async def consumer(
     captured_at=None,
     source_revision=REVISION,
     boot="boot-connection-test",
+    successor_boot=None,
     health="ok",
     applied_provider_ids=None,
     runtime_name="openclaw",
@@ -118,6 +119,7 @@ async def consumer(
             "applyReceiptId": "apply-connection-0001",
             "bootNonce": "boot-nonce-connection-0001",
             "bootSessionId": boot,
+            "successorBootSessionId": successor_boot,
             "sequence": 1,
             "eventId": str(uuid4()),
         }
@@ -774,7 +776,9 @@ async def test_custom_recovery_scopes_all_active_boots_to_current_apply_generati
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("history", ["retained", "purged", "unqualified", "other-instance"])
+@pytest.mark.parametrize(
+    "history", ["retained", "purged", "unqualified", "other-instance", "other-boot"]
+)
 async def test_custom_rollback_uses_prior_applied_evidence_from_current_boot(
     client, db_session, seed_user, history
 ):
@@ -797,6 +801,7 @@ async def test_custom_rollback_uses_prior_applied_evidence_from_current_boot(
         seed_user.id,
         runtime_name="hermes",
         version="98.0.0" if history == "unqualified" else VERSION,
+        successor_boot="next-provider-boot" if history == "other-boot" else None,
         captured_at=datetime.now(UTC) - timedelta(minutes=5),
     )
     old = await db_session.scalar(
@@ -836,6 +841,9 @@ async def test_custom_rollback_uses_prior_applied_evidence_from_current_boot(
         "sequence": 2,
         "eventId": str(uuid4()),
     }
+    if history == "other-boot":
+        event["bootSessionId"] = "next-provider-boot"
+        event["predecessorBootSessionId"] = "boot-connection-test"
     await ingest_runtime_observation(
         db_session,
         environment_id=state.environment_id,

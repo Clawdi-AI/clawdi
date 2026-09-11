@@ -1715,12 +1715,7 @@ def _apply_provider_body(
     ):
         raise HTTPException(409, "Connection credential environment is immutable")
     if apply_auth and provider.configuration_mode == "custom":
-        if (
-            body.runtime_env_name != provider.runtime_env_name
-            or body.models
-            or body.auth.type != "api_key"
-            or body.auth.source != "managed"
-        ):
+        if body.models or body.auth.type != "api_key" or body.auth.source != "managed":
             raise HTTPException(409, "Custom credential identity is immutable; use PATCH to edit")
     provider.type = body.type
     if body.configuration_mode == "custom" and provider.configuration_mode not in {None, "custom"}:
