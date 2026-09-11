@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 import {
+	forgetOpenClawNativeHandoffLoaded,
+	hasOpenClawNativeHandoffLoaded,
+	markOpenClawNativeHandoffLoaded,
 	openClawRuntimeUiWindowTarget,
 	openSecureRuntimeWindow,
 	resolveRuntimeUiCredentials,
 	runtimeUiLaunchTarget,
+	runtimeUiLocalStorage,
 } from "@/hosted/agents/runtime-ui-credentials";
 
 describe("runtime UI credential targeting", () => {
@@ -174,11 +178,62 @@ describe("runtime UI credential targeting", () => {
 			handoff_url: "https://runtime.example/openclaw/#token=deployment-token",
 		};
 
-		expect(openClawRuntimeUiWindowTarget(native, false)).toBeNull();
-		expect(openClawRuntimeUiWindowTarget(native, true)).toBe(native.url);
-		expect(openClawRuntimeUiWindowTarget(legacy, false)).toBeNull();
-		expect(openClawRuntimeUiWindowTarget(legacy, true)).toBe(legacy.handoff_url);
-		expect(openClawRuntimeUiWindowTarget(null, false)).toBeNull();
-		expect(openClawRuntimeUiWindowTarget(null, true)).toBeNull();
+		expect(openClawRuntimeUiWindowTarget(native, native.url, false, false)).toBeNull();
+		expect(openClawRuntimeUiWindowTarget(native, native.url, false, true)).toBe(native.url);
+		expect(openClawRuntimeUiWindowTarget(legacy, legacy.url, false, false)).toBeNull();
+		expect(openClawRuntimeUiWindowTarget(legacy, legacy.url, false, true)).toBe(legacy.handoff_url);
+		expect(openClawRuntimeUiWindowTarget(null, native.url, true, false)).toBeNull();
+		expect(openClawRuntimeUiWindowTarget(null, native.url, true, true)).toBe(native.url);
+	});
+
+	test("marks native handoff loads with a best-effort non-secret marker", () => {
+		const values = new Map<string, string>();
+		const storage = {
+			getItem: (key: string) => values.get(key) ?? null,
+			setItem: (key: string, value: string) => values.set(key, value),
+			removeItem: (key: string) => values.delete(key),
+		};
+		const endpointUrl = "https://one.runtime.example/";
+		const native: RuntimeUiCredentials = {
+			runtime: "openclaw",
+			auth_mode: "openclaw_token",
+			url: endpointUrl,
+			deployment_resource_version: "rv-current",
+			token: "deployment-token",
+			handoff_url: `${endpointUrl}#bootstrapToken=one-time-token&bootstrapProfile=owner`,
+		};
+		const legacy: RuntimeUiCredentials = {
+			...native,
+			handoff_url: `${endpointUrl}#token=deployment-token`,
+		};
+		values.set("clawdi.openclaw-bootstrap-attempted.hdep_one", endpointUrl);
+
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, 1)).toBeFalse();
+		expect(values.has("clawdi.openclaw-bootstrap-attempted.hdep_one")).toBeFalse();
+		expect(
+			markOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, legacy, 1),
+		).toBeFalse();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, 1)).toBeFalse();
+		expect(markOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, native, 1)).toBeTrue();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, 1)).toBeTrue();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, 2)).toBeFalse();
+		expect(markOpenClawNativeHandoffLoaded(null, "hdep_one", endpointUrl, native, 1)).toBeTrue();
+		expect(hasOpenClawNativeHandoffLoaded(null, "hdep_one", endpointUrl, 1)).toBeFalse();
+		expect(
+			hasOpenClawNativeHandoffLoaded(storage, "hdep_one", "https://moved.runtime.example/", 1),
+		).toBeFalse();
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_two", endpointUrl, 1)).toBeFalse();
+		forgetOpenClawNativeHandoffLoaded(storage, "hdep_one");
+		expect(hasOpenClawNativeHandoffLoaded(storage, "hdep_one", endpointUrl, 1)).toBeFalse();
+	});
+
+	test("treats an unavailable localStorage getter as missing storage", () => {
+		const browserWindow = {
+			get localStorage(): Storage {
+				throw new Error("Storage is unavailable");
+			},
+		};
+
+		expect(runtimeUiLocalStorage(browserWindow)).toBeNull();
 	});
 });

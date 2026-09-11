@@ -1576,12 +1576,14 @@ export function ConsoleTab({
 		error: credentialError,
 		isLoading: isCredentialLoading,
 		attempt,
+		nativeHandoffLoaded,
+		markFrameLoaded,
 		load: loadCredentials,
 		clear: clearCredentials,
 		reconnect: reconnectOpenClaw,
 	} = useRuntimeUiCredentials(deployment, url);
 	const [loadedAttempt, setLoadedAttempt] = useState<number | null>(null);
-	const openClawFrameLoaded = currentCredentials !== null && loadedAttempt === attempt;
+	const openClawFrameLoaded = loadedAttempt === attempt;
 
 	if (status.kind === "stopped") {
 		return <StoppedAgentState deployment={deployment} />;
@@ -1679,13 +1681,18 @@ export function ConsoleTab({
 	}
 	const openClawCredentials =
 		currentCredentials?.runtime === "openclaw" ? currentCredentials : null;
-	const openClawFrameCanLoad = openClawCredentials !== null;
+	const openClawFrameCanLoad = openClawCredentials !== null || nativeHandoffLoaded;
 	const iframeUrl = openClawCredentials
 		? runtimeUiLaunchTarget(openClawCredentials)
 		: runtimeDashboardUrl(url, runtime);
 	const windowTarget =
 		runtime === "openclaw"
-			? openClawRuntimeUiWindowTarget(openClawCredentials, openClawFrameLoaded)
+			? openClawRuntimeUiWindowTarget(
+					openClawCredentials,
+					url,
+					nativeHandoffLoaded,
+					openClawFrameCanLoad && openClawFrameLoaded,
+				)
 			: runtimeDashboardUrl(url, runtime);
 
 	return (
@@ -1752,6 +1759,7 @@ export function ConsoleTab({
 							? () => {
 									// A document boundary, never an authentication acknowledgement.
 									setLoadedAttempt(attempt);
+									markFrameLoaded();
 								}
 							: undefined
 					}
