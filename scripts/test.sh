@@ -307,6 +307,10 @@ run_in_container() {
 			cp /provider-baseline/connection-provider-config.ts packages/cli/src/runtime/connection-provider-config.ts
 			bun build packages/cli/tests/fixtures/provider-recovery-runtime.ts --target=node --outfile=/provider-artifacts/before.mjs
 			sha256sum /provider-artifacts/current-source.ts /provider-baseline/connection-provider-config.ts
+			(cd packages/cli && bun -e 'import {z} from "zod"; import {providerOwnershipJournalSchema} from "./src/runtime/provider-ownership"; console.log(JSON.stringify(z.toJSONSchema(providerOwnershipJournalSchema), null, 2))') > /provider-artifacts/provider-ownership.schema.json
+			install_backend
+			(cd backend && uv run python -m scripts.export_provider_environment_contract) > /provider-artifacts/provider-environment.json
+			(cd backend && uv run python -c 'import json; from app.main import app; print(json.dumps(app.openapi()))') > /provider-artifacts/cloud-openapi.json
 			;;
 		desktop)
 			if [[ $# -gt 0 ]]; then

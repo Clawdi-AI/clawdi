@@ -78,6 +78,9 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- Existing native credential environment identities can be restored through an
+  audited operator CAS without changing provider keys or native model choices.
+
 - Restore previously applied custom connections after a failed selection without
   overwriting native model choices, and preserve credential environment names
   when replacing or restoring saved connections.

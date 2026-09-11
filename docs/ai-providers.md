@@ -552,3 +552,32 @@ selecting credentials. Equal environment references do not introduce a second
 credential identity. Native fallback credential sources may still exist, so
 manifest credential injection alone is not proof that a model call succeeds or
 fails. No implicit credential-identity migration is authorized by this fix.
+
+
+## Restoring a corrupted credential environment
+
+Ordinary edits still cannot change a completed connection's credential environment.
+A narrow platform restoration API accepts only `platform:provider-environment:repair`
+workload tokens. The trusted hosting verifier reads native ownership itself; user
+assertions, legacy admin credentials and general runtime-state scopes do not grant
+restoration authority. No provider or secret is created or replaced.
+
+The owning operator boundary verifies all retained V2 incarnations, fixed-path
+protected journals, local apply receipts and pinned substrate identity. It rejects
+inconsistent owners, unfinished creation and stale expectations. For an unbound
+consumer, its local push checkpoint must be current or its runtime must be stopped;
+content revision alone is not a causal absence proof.
+
+Cloud serializes provider/credential and runtime-fence validation, records an audit
+and durable idempotent receipt, then invalidates the usual manifests. Receipt reads
+allow recovery from a lost response without requiring a second native mutation.
+`already_current` is an audited no-op, not a readiness or model-call assertion.
+
+The new workload scope is not granted by migration. An authenticated admin may
+inspect and CAS grant/revoke only this capability on an existing active runtime
+projection client. This changes neither its keys nor its other scopes, and does not
+invalidate unrelated tokens. Configure only the reviewed hosting verifier; a worker
+that accepts caller-supplied native proof must never hold this scope.
+
+Done: isolated PostgreSQL repair/grant tests verify stale CAS, replay, unchanged
+credential bytes, other-consumer conflicts and rejection of untrusted credentials.

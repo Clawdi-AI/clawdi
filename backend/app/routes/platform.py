@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -29,7 +38,17 @@ from app.schemas.platform import (
     PlatformRuntimeStateUpsert,
     RuntimeSourceAuthorityResponse,
 )
-from app.schemas.platform_oauth import PlatformOAuthErrorResponse, PlatformOAuthTokenResponse
+from app.schemas.platform_oauth import (
+    PlatformOAuthErrorResponse,
+    PlatformOAuthTokenResponse,
+)
+from app.schemas.provider_environment_repair import (
+    PROVIDER_ENVIRONMENT_REPAIR_SCOPE,
+    ProviderEnvironmentInventory,
+    ProviderEnvironmentRepairIntent,
+    ProviderEnvironmentRepairReceipt,
+    ProviderEnvironmentRestore,
+)
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.agent_environments import (
     AgentEnvironmentIdConflict,
@@ -68,6 +87,7 @@ from app.services.platform_workload_auth import (
     get_platform_workload_key_resolver,
     issue_platform_workload_token,
     require_platform_mutation_auth,
+    require_platform_workload_auth,
 )
 from app.services.principal_lifecycle import (
     PrincipalIdentityConflictError,
@@ -79,6 +99,10 @@ from app.services.principal_lifecycle import (
 )
 from app.services.project_runtime_skills import (
     assert_agent_workspace_skill_write_compatible,
+)
+from app.services.provider_environment_repair import (
+    environment_repair_inventory,
+    restore_provider_environment,
 )
 from app.services.runtime_generation import (
     RuntimeApplyGenerationUpdateError,
@@ -1441,3 +1465,113 @@ def _runtime_state_changed_fields(
         if getattr(state, field) != body_value:
             changed.append(field)
     return changed
+
+
+# This scope belongs only to the Hosted native-evidence verifier, not legacy admin
+# callers or general runtime projection workers.
+@router.get(
+    "/ai-providers/{provider_id}/credential-environment-repair",
+    response_model=ProviderEnvironmentInventory,
+)
+async def inspect_provider_environment_repair(
+    provider_id: str,
+    request: Request,
+    kind: Literal["clerk", "partner_tenant"],
+    ref: str = Query(min_length=1, max_length=255),
+    _auth: PlatformMutationAuth = Depends(require_platform_workload_auth(PROVIDER_ENVIRONMENT_REPAIR_SCOPE)),
+    db: AsyncSession = Depends(get_control_session),
+) -> ProviderEnvironmentInventory:
+    try:
+        owner = PlatformOwner.model_validate({"kind": kind, "ref": ref})
+    except ValueError as error:
+        raise HTTPException(422, "Invalid owner reference") from error
+    target = await _resolve_owner(
+        db, owner=owner, resource_type="ai_provider", resource_id=provider_id,
+        action="ai_provider.environment.inspect", request=request, idempotency_key="inspection",
+    )
+    await lock_ai_provider_owner(db, target.id)
+    return await environment_repair_inventory(db, owner_id=target.id, provider_id=provider_id)
+
+
+@router.post(
+    "/ai-providers/{provider_id}/credential-environment-repair/receipt",
+    response_model=ProviderEnvironmentRepairReceipt,
+)
+async def read_provider_environment_repair_receipt(
+    provider_id: str,
+    body: ProviderEnvironmentRepairIntent,
+    request: Request,
+    idempotency_key: IdempotencyKey,
+    _auth: PlatformMutationAuth = Depends(require_platform_workload_auth(PROVIDER_ENVIRONMENT_REPAIR_SCOPE)),
+    db: AsyncSession = Depends(get_control_session),
+) -> Response:
+    if provider_id != body.provider_id:
+        raise HTTPException(422, "Provider identity is inconsistent")
+    target = await _resolve_owner(
+        db, owner=body.owner, resource_type="ai_provider", resource_id=provider_id,
+        action="ai_provider.environment.receipt", request=request, idempotency_key=idempotency_key,
+    )
+    await lock_ai_provider_owner(db, target.id)
+    _, replay = await _begin_mutation(
+        db, operation="ai_provider.environment.restore", idempotency_key=idempotency_key,
+        request_payload=body.model_dump(mode="json"), owner=body.owner, owner_user_id=target.id,
+        resource_type="ai_provider", resource_id=provider_id, action="ai_provider.environment.receipt",
+        request=request,
+    )
+    if replay is None:
+        raise HTTPException(404, "Repair receipt not found")
+    return _replay_response(replay)
+
+
+@router.post(
+    "/ai-providers/{provider_id}/credential-environment-repair",
+    response_model=ProviderEnvironmentRepairReceipt,
+)
+async def repair_provider_environment(
+    provider_id: str,
+    body: ProviderEnvironmentRestore,
+    request: Request,
+    idempotency_key: IdempotencyKey,
+    _auth: PlatformMutationAuth = Depends(require_platform_workload_auth(PROVIDER_ENVIRONMENT_REPAIR_SCOPE)),
+    db: AsyncSession = Depends(get_control_session),
+) -> ProviderEnvironmentRepairReceipt | Response:
+    if provider_id != body.provider_id:
+        raise HTTPException(422, "Provider identity is inconsistent")
+    action = "ai_provider.environment.restore"
+    target = await _resolve_owner(
+        db, owner=body.owner, resource_type="ai_provider", resource_id=provider_id,
+        action=action, request=request, idempotency_key=idempotency_key,
+    )
+    await lock_ai_provider_owner(db, target.id)
+    # Fresh transport attestation is not the caller's immutable retry intent.
+    intent = ProviderEnvironmentRepairIntent.model_validate(
+        body.model_dump(exclude={"observed_at", "proofs"})
+    )
+    request_hash, replay = await _begin_mutation(
+        db, operation=action, idempotency_key=idempotency_key,
+        request_payload=intent.model_dump(mode="json"), owner=body.owner, owner_user_id=target.id,
+        resource_type="ai_provider", resource_id=provider_id, action=action, request=request,
+    )
+    if replay is not None:
+        return _replay_response(replay)
+    try:
+        receipt = await restore_provider_environment(db, owner_id=target.id, body=body)
+    except HTTPException as error:
+        await _reject(
+            db, status_code=error.status_code, detail=error.detail, result="precondition_rejected",
+            owner=body.owner, owner_user_id=target.id, resource_type="ai_provider",
+            resource_id=provider_id, action=action, request=request, idempotency_key=idempotency_key,
+        )
+        raise AssertionError("unreachable")
+    await _complete_mutation(
+        db, operation=action, idempotency_key=idempotency_key, request_hash=request_hash,
+        owner=body.owner, owner_user_id=target.id, resource_type="ai_provider",
+        resource_id=provider_id, action=action, request=request, response_status=200,
+        response_body=receipt, audit_details={
+            "operator_fingerprint": body.operator_fingerprint, "operator_ref": body.operator_ref, "reason": body.reason,
+            "boundary": body.expected_boundary, "proofs": [p.model_dump(mode="json") for p in body.proofs],
+            "before_env_name": receipt.previous_env_name, "after_env_name": receipt.runtime_env_name,
+        },
+    )
+    await db.commit()
+    return receipt

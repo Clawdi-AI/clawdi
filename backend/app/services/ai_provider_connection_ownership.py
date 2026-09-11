@@ -209,7 +209,7 @@ async def require_custom_provider_cli(
     if len(evidence.items) != 1:
         raise HTTPException(409, "Custom provider binding requires current runtime evidence")
     summary = evidence.items[0]
-    qualified = _qualified_applied_evidence(
+    qualified = qualified_applied_runtime_evidence(
         summary, previous_state, versions=versions, observed_at=evidence.observed_at
     )
     if qualified is not None:
@@ -230,7 +230,7 @@ async def require_custom_provider_cli(
     raise HTTPException(409, "Custom provider binding requires a qualified running CLI")
 
 
-def _qualified_applied_evidence(
+def qualified_applied_runtime_evidence(
     summary: RuntimeDriftSummary,
     state: HostedRuntimeState,
     *,
@@ -281,7 +281,7 @@ async def _has_historical_provider_ownership(
     if len(historical.items) != 1:
         return False
     summary = historical.items[0]
-    qualified = _qualified_applied_evidence(
+    qualified = qualified_applied_runtime_evidence(
         summary, previous_state, versions=versions, observed_at=historical.observed_at
     )
     if qualified is None or not (
