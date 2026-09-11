@@ -30,7 +30,15 @@ type SessionMetadataItem = {
 	className?: string;
 };
 
-const SESSION_CARD_CLASS = "flex min-h-16.5 min-w-0 items-center gap-3 px-4 py-3 transition-colors";
+// Title, metadata, padding and borders occupy 80px on narrow layouts; wide
+// layouts use one metadata line and the established 66px minimum.
+const SESSION_ROW_HEIGHT_CLASS =
+	"[--session-row-height:--spacing(20)] @3xl/main:[--session-row-height:--spacing(16.5)]";
+const SESSION_CARD_CLASS = cn(
+	SESSION_ROW_HEIGHT_CLASS,
+	"flex min-h-(--session-row-height) min-w-0 items-center gap-3 px-4 py-3 transition-colors",
+);
+const OVERVIEW_SESSION_LIST_CLASS = cn(SESSION_ROW_HEIGHT_CLASS, "grid gap-2");
 
 function SessionCardSkeleton({ testId }: { testId?: string }) {
 	return (
@@ -57,7 +65,7 @@ export function OverviewSessionListSkeleton() {
 	return (
 		<div
 			data-testid="overview-session-grid"
-			className="grid gap-2"
+			className={OVERVIEW_SESSION_LIST_CLASS}
 			aria-label="Loading recent sessions"
 			role="status"
 		>
@@ -84,7 +92,7 @@ export function OverviewSessionList({
 	}
 	const visibleSessions = sessions.slice(0, 3);
 	return (
-		<div data-testid="overview-session-grid" className="grid gap-2">
+		<div data-testid="overview-session-grid" className={OVERVIEW_SESSION_LIST_CLASS}>
 			{visibleSessions.map((session) => (
 				<SessionCard
 					key={session.id}
@@ -94,9 +102,20 @@ export function OverviewSessionList({
 					link={sessionLink(session)}
 				/>
 			))}
-			{visibleSessions.length === 0 ? (
-				<EmptyState variant="inset" description={emptyMessage} />
-			) : null}
+			{Array.from({ length: 3 - visibleSessions.length }).map((_, index) => (
+				<div
+					key={index}
+					data-testid="overview-session-placeholder"
+					aria-hidden={visibleSessions.length > 0 || index > 0 ? true : undefined}
+					className={cn(
+						ENTITY_CARD_BASE,
+						SESSION_CARD_CLASS,
+						"justify-center border-dashed bg-muted/30 text-center text-sm text-muted-foreground",
+					)}
+				>
+					{visibleSessions.length === 0 && index === 0 ? emptyMessage : null}
+				</div>
+			))}
 		</div>
 	);
 }

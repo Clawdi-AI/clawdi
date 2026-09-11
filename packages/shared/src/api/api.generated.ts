@@ -2557,6 +2557,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/platform/ai-providers/{provider_id}/credential-environment-repair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect Provider Environment Repair */
+        get: operations["inspect_provider_environment_repair_v1_platform_ai_providers__provider_id__credential_environment_repair_get"];
+        put?: never;
+        /** Repair Provider Environment */
+        post: operations["repair_provider_environment_v1_platform_ai_providers__provider_id__credential_environment_repair_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform/ai-providers/{provider_id}/credential-environment-repair/receipt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read Provider Environment Repair Receipt */
+        post: operations["read_provider_environment_repair_receipt_v1_platform_ai_providers__provider_id__credential_environment_repair_receipt_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/plugin-catalog": {
         parameters: {
             query?: never;
@@ -7137,6 +7172,30 @@ export interface components {
             /** Memory Id */
             memory_id: string;
         };
+        /** NativeEnvironmentProof */
+        NativeEnvironmentProof: {
+            binding: components["schemas"]["RepairBinding"];
+            /**
+             * Incus Instance Uuid
+             * Format: uuid
+             */
+            incus_instance_uuid: string;
+            /**
+             * Native State
+             * @enum {string}
+             */
+            native_state: "running" | "stopped";
+            /** Applied Push Generation */
+            applied_push_generation: number;
+            /** Hosted Spec Revision */
+            hosted_spec_revision: string;
+            /** Journal Sha256 */
+            journal_sha256?: string | null;
+            /** Config Sha256 */
+            config_sha256?: string | null;
+            /** Native Env Name */
+            native_env_name?: string | null;
+        };
         /**
          * OAuthConfigResponse
          * @description Public configuration for the first-party Clerk OAuth CLI client.
@@ -7562,6 +7621,104 @@ export interface components {
             /** Description */
             description?: string | null;
         };
+        /** ProviderEnvironmentInventory */
+        ProviderEnvironmentInventory: {
+            /** Provider Id */
+            provider_id: string;
+            /**
+             * Provider Uuid
+             * Format: uuid
+             */
+            provider_uuid: string;
+            /**
+             * Incarnation Id
+             * Format: uuid
+             */
+            incarnation_id: string;
+            /** Revision */
+            revision: string;
+            /** Runtime Env Name */
+            runtime_env_name: string;
+            /** Bindings */
+            bindings: components["schemas"]["RepairBinding"][];
+        };
+        /** ProviderEnvironmentRepairIntent */
+        ProviderEnvironmentRepairIntent: {
+            owner: components["schemas"]["PlatformOwner"];
+            /** Provider Id */
+            provider_id: string;
+            /** Expected Revision */
+            expected_revision: string;
+            /** Expected Boundary */
+            expected_boundary: string;
+            /** Expected Env Name */
+            expected_env_name: string;
+            /** Native Env Name */
+            native_env_name: string;
+            /** Operator Fingerprint */
+            operator_fingerprint: string;
+            /** Operator Ref */
+            operator_ref: string;
+            /** Reason */
+            reason: string;
+        };
+        /** ProviderEnvironmentRepairReceipt */
+        ProviderEnvironmentRepairReceipt: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "restored" | "already_current";
+            /** Provider Id */
+            provider_id: string;
+            /**
+             * Provider Uuid
+             * Format: uuid
+             */
+            provider_uuid: string;
+            /**
+             * Incarnation Id
+             * Format: uuid
+             */
+            incarnation_id: string;
+            /** Previous Env Name */
+            previous_env_name: string;
+            /** Runtime Env Name */
+            runtime_env_name: string;
+            /** Before Revision */
+            before_revision: string;
+            /** After Revision */
+            after_revision: string;
+            /** Boundary */
+            boundary: string;
+        };
+        /** ProviderEnvironmentRestore */
+        ProviderEnvironmentRestore: {
+            owner: components["schemas"]["PlatformOwner"];
+            /** Provider Id */
+            provider_id: string;
+            /** Expected Revision */
+            expected_revision: string;
+            /** Expected Boundary */
+            expected_boundary: string;
+            /** Expected Env Name */
+            expected_env_name: string;
+            /** Native Env Name */
+            native_env_name: string;
+            /** Operator Fingerprint */
+            operator_fingerprint: string;
+            /** Operator Ref */
+            operator_ref: string;
+            /** Reason */
+            reason: string;
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+            /** Proofs */
+            proofs: components["schemas"]["NativeEnvironmentProof"][];
+        };
         /**
          * PublicSessionExportResponse
          * @description Public-safe structured session export payload.
@@ -7723,6 +7880,45 @@ export interface components {
              * @enum {string}
              */
             scope: "session" | "through" | "response";
+        };
+        /** RepairApplyIdentity */
+        RepairApplyIdentity: {
+            /** Generation */
+            generation: number;
+            /** Manifestetag */
+            manifestETag: string;
+            /** Applyreceiptid */
+            applyReceiptId: string;
+            /** Bootnonce */
+            bootNonce: string;
+            /** Bootsessionid */
+            bootSessionId: string;
+        };
+        /** RepairBinding */
+        RepairBinding: {
+            /**
+             * Environment Id
+             * Format: uuid
+             */
+            environment_id: string;
+            /** Deployment Id */
+            deployment_id: string;
+            /** Instance Id */
+            instance_id: string;
+            /** Generation */
+            generation: number;
+            /** Push Generation */
+            push_generation: number;
+            /**
+             * Runtime
+             * @enum {string}
+             */
+            runtime: "hermes" | "openclaw";
+            /** Cli Package Spec */
+            cli_package_spec: string;
+            /** Provider Ids */
+            provider_ids: string[];
+            apply_identity: components["schemas"]["RepairApplyIdentity"];
         };
         /** RuntimeApplyIdentityRequest */
         RuntimeApplyIdentityRequest: {
@@ -15222,6 +15418,121 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiKeyRevokeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    inspect_provider_environment_repair_v1_platform_ai_providers__provider_id__credential_environment_repair_get: {
+        parameters: {
+            query: {
+                kind: "clerk" | "partner_tenant";
+                ref: string;
+            };
+            header?: {
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderEnvironmentInventory"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    repair_provider_environment_v1_platform_ai_providers__provider_id__credential_environment_repair_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderEnvironmentRestore"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderEnvironmentRepairReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_provider_environment_repair_receipt_v1_platform_ai_providers__provider_id__credential_environment_repair_receipt_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderEnvironmentRepairIntent"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderEnvironmentRepairReceipt"];
                 };
             };
             /** @description Validation Error */

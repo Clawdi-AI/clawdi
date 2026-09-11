@@ -301,7 +301,10 @@ export function prepareConnectionProviderTransfers(
 		const selected = recordValue(model?.default)?.provider ?? model?.provider;
 		const connection = connections.find(({ id }) => selected === id || selected === `custom:${id}`);
 		if (connection) {
-			if (["api_key", "api", "key_env", "auth_mode"].some((field) => Boolean(model?.[field])))
+			if (
+				["api_key", "api", "auth_mode"].some((field) => Boolean(model?.[field])) ||
+				(model?.key_env && model.key_env !== connection.envName)
+			)
 				throw new Error("Hermes model credentials conflict with the custom connection");
 			const existing = recordValue(current[connection.id]);
 			const oldEndpoint =

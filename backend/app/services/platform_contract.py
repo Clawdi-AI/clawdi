@@ -61,7 +61,7 @@ def store_platform_response(
     operation: str,
     idempotency_key: str,
     request_hash: str,
-    owner_user_id: UUID,
+    owner_user_id: UUID | None,
     resource_type: str,
     resource_id: str | None,
     response_status: int,

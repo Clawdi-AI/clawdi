@@ -2,7 +2,14 @@ import uuid
 from datetime import datetime
 
 from pydantic import JsonValue
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -54,7 +61,7 @@ class PlatformWorkloadClient(Base, TimestampMixin):
         CheckConstraint(
             "cardinality(allowed_scopes) > 0 AND allowed_scopes <@ "
             "ARRAY['platform:agents:create','platform:agents:delete',"
-            "'platform:runtime-state:write','platform:keys:mint',"
+            "'platform:runtime-state:write','platform:provider-environment:repair','platform:keys:mint',"
             "'platform:keys:revoke','platform:runtime-observations:consume',"
             "'platform:runtime-environments:retire']::varchar[]",
             name="ck_platform_workload_clients_allowed_scopes",

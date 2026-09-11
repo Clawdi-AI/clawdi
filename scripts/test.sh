@@ -6,13 +6,14 @@ repo_root="$(cd -- "$script_dir/.." && pwd)"
 
 compose_project_name="${CLAWDI_TEST_COMPOSE_PROJECT_NAME:-clawdi-test-$$}"
 remove_test_runner_image=false
+provider_baseline_dir=""
 if [[ -z "${TEST_RUNNER_IMAGE:-}" ]]; then
 	export TEST_RUNNER_IMAGE="clawdi-test-runner:${compose_project_name}"
 	remove_test_runner_image=true
 fi
 
 usage() {
-	echo "Usage: scripts/test.sh [all|ci|js|cli|desktop|shared|sidecar|web|backend] [suite args...]"
+	echo "Usage: scripts/test.sh [all|ci|js|cli|desktop|shared|sidecar|web|backend|provider-recovery-fixture] [suite args...]"
 }
 
 compose() {
@@ -21,7 +22,7 @@ compose() {
 
 validate_suite() {
 	case "$1" in
-		all|backend|ci|js|cli|desktop|shared|sidecar|web)
+		all|backend|ci|js|cli|desktop|shared|sidecar|web|provider-recovery-fixture)
 			;;
 		*)
 			echo "Unknown test suite: $1" >&2
@@ -49,20 +50,35 @@ run_on_host() {
 	fi
 	validate_suite "$suite"
 	python3 "$repo_root/scripts/check_postgres_image_parity.py"
+	local provider_output=""
+	if [[ "$suite" == provider-recovery-fixture ]]; then
+		provider_output="$(realpath "${1:?Provide an existing output directory inside this checkout}")"
+		case "$provider_output/" in "$repo_root/"*) ;; *) echo "Fixture output must be inside this checkout" >&2; return 2;; esac
+		local baseline_revision="${2:?Provide the full pre-fix commit SHA}"
+		[[ "$baseline_revision" =~ ^[0-9a-f]{40}$ ]] || return 2
+		provider_baseline_dir="$(mktemp -d "$repo_root/.provider-recovery-baseline.XXXXXX")"
+	fi
 
 	cleanup() {
 		compose down --remove-orphans --volumes >/dev/null
 		if [[ "$remove_test_runner_image" == true ]]; then
 			docker image rm "$TEST_RUNNER_IMAGE" >/dev/null 2>&1 || true
 		fi
+		if [[ -n "$provider_baseline_dir" ]]; then rm -rf "$provider_baseline_dir"; fi
 	}
 	trap cleanup EXIT
+	if [[ -n "$provider_baseline_dir" ]]; then
+		git -C "$repo_root" show "$baseline_revision:packages/cli/src/runtime/connection-provider-config.ts" > "$provider_baseline_dir/connection-provider-config.ts"
+	fi
 
 	if [[ "${CLAWDI_TEST_RUNNER_SKIP_BUILD:-0}" != "1" ]]; then
 		compose build test-runner
 	fi
 
 	local run_args=(run --rm)
+	if [[ -n "$provider_baseline_dir" ]]; then
+		run_args+=(--volume "$provider_baseline_dir:/provider-baseline:ro" --volume "$provider_output:/provider-artifacts")
+	fi
 	if ! needs_postgres "$suite"; then
 		run_args+=(--no-deps)
 	fi
@@ -268,6 +284,20 @@ run_in_container() {
 			;;
 		cli)
 			run_cli "$@"
+			;;
+		provider-recovery-fixture)
+			install_js
+			cli_typecheck
+			cli_tests tests/clean-test-runner.test.ts
+			bun build packages/cli/tests/fixtures/provider-recovery-runtime.ts --target=node --outfile=/provider-artifacts/current.mjs
+			cp packages/cli/src/runtime/connection-provider-config.ts /provider-artifacts/current-source.ts
+			cp /provider-baseline/connection-provider-config.ts packages/cli/src/runtime/connection-provider-config.ts
+			bun build packages/cli/tests/fixtures/provider-recovery-runtime.ts --target=node --outfile=/provider-artifacts/before.mjs
+			sha256sum /provider-artifacts/current-source.ts /provider-baseline/connection-provider-config.ts
+			(cd packages/cli && bun -e 'import {z} from "zod"; import {providerOwnershipJournalSchema} from "./src/runtime/provider-ownership"; console.log(JSON.stringify(z.toJSONSchema(providerOwnershipJournalSchema), null, 2))') > /provider-artifacts/provider-ownership.schema.json
+			install_backend
+			(cd backend && uv run python -m scripts.export_provider_environment_contract) > /provider-artifacts/provider-environment.json
+			(cd backend && uv run python -c 'import json; from app.main import app; print(json.dumps(app.openapi()))') > /provider-artifacts/cloud-openapi.json
 			;;
 		desktop)
 			if [[ $# -gt 0 ]]; then

@@ -4,6 +4,7 @@ import {
 	type HostedDeployCheckoutUiMode,
 } from "@clawdi/shared/api";
 import type { CheckoutOperationResult } from "@/hosted/billing/billing-client";
+import type { CheckoutReturnNavigationTarget } from "@/hosted/billing/checkout-return";
 import type {
 	CheckoutRequest,
 	ComputePlanSlug,
@@ -92,9 +93,7 @@ export type SubscriptionCreateOutcomeView =
 	  }
 	| {
 			flowType: "subscription_activation";
-			target:
-				| { kind: "deployment"; agentId: string | null; deploymentId: string }
-				| { kind: "deploy_request"; deployRequestId: string };
+			target: CheckoutReturnNavigationTarget;
 			currentPeriodEnd: string | null;
 			entitledUntil: string | null;
 	  };
@@ -173,11 +172,9 @@ export function subscriptionCreateOutcome(
 	}
 	const deploymentId = result.deployment_id?.trim();
 	const deployRequestId = result.deploy_request_id?.trim();
-	let target:
-		| { kind: "deployment"; agentId: string | null; deploymentId: string }
-		| { kind: "deploy_request"; deployRequestId: string };
+	let target: CheckoutReturnNavigationTarget;
 	if (deploymentId) {
-		target = { kind: "deployment", agentId: result.agent_id?.trim() || null, deploymentId };
+		target = { kind: "deployment", deploymentId };
 	} else if (deployRequestId) {
 		target = { kind: "deploy_request", deployRequestId };
 	} else {

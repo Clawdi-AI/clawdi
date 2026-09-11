@@ -83,6 +83,15 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- Existing native credential environment identities can be restored through an
+  audited operator CAS without changing provider keys or native model choices.
+
+- Restore previously applied custom connections after a failed selection without
+  overwriting native model choices, and preserve credential environment names
+  when replacing or restoring saved connections.
+- Hermes accepts a model credential environment that matches its selected
+  connection, including after repeated synchronization.
+
 - CLI 0.14.69 keeps ready OpenClaw gateways and dashboards available when a
   downstream channel is unhealthy, while still checking startup and shutdown.
 - Native and custom chat connections retain managed embeddings without replacing

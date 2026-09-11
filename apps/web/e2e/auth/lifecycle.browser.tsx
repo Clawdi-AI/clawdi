@@ -4,8 +4,10 @@ import {
 	createRoute,
 	createRouter,
 	Link,
+	lazyRouteComponent,
 	Outlet,
 	RouterProvider,
+	useMatches,
 } from "@tanstack/react-router";
 import { useLayoutEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -66,11 +68,12 @@ const protectedRoute = createRoute({
 const dashboard = createRoute({
 	getParentRoute: () => protectedRoute,
 	id: "_dashboard",
-	component: () => (
-		<DashboardLayout>
-			<PrivatePane />
-		</DashboardLayout>
-	),
+	component: () => {
+		const agentRoute = useMatches({
+			select: (matches) => matches.some((match) => match.pathname.startsWith("/agents/")),
+		});
+		return <DashboardLayout>{agentRoute ? <Outlet /> : <PrivatePane />}</DashboardLayout>;
+	},
 });
 const a = createRoute({
 	getParentRoute: () => dashboard,
@@ -96,6 +99,30 @@ const b = createRoute({
 	},
 	component: () => <h1>Destination B</h1>,
 });
+const agent = createRoute({
+	getParentRoute: () => dashboard,
+	path: "/agents/$id",
+	component:
+		import.meta.env.VITE_CLAWDI_HOSTED === "true"
+			? lazyRouteComponent(
+					() => import("@/hosted/agents/hosted-agent-event-stream-layout"),
+					"HostedAgentEventStreamLayout",
+				)
+			: Outlet,
+});
+const agentOverview = createRoute({
+	getParentRoute: () => agent,
+	path: "/",
+	component: () => <h1>Agent overview</h1>,
+});
+const agentConsole = createRoute({
+	getParentRoute: () => agent,
+	path: "console",
+	loader: async () => {
+		if (held) await held.promise;
+	},
+	component: () => null,
+});
 const signIn = createRoute({
 	getParentRoute: () => root,
 	path: "/sign-in",
@@ -113,7 +140,9 @@ const share = createRoute({
 });
 const router = createRouter({
 	routeTree: root.addChildren([
-		protectedRoute.addChildren([dashboard.addChildren([a, b])]),
+		protectedRoute.addChildren([
+			dashboard.addChildren([a, b, agent.addChildren([agentOverview, agentConsole])]),
+		]),
 		signIn,
 		publicRoute,
 		share,
@@ -188,6 +217,12 @@ window.authTest = {
 	releaseActivation,
 	commits,
 	navigate: (to) => router.navigate({ to }),
+	get navigationPending() {
+		return router.state.status === "pending";
+	},
+	holdConsole: () => {
+		held = Promise.withResolvers<string>();
+	},
 	holdPreload: () => {
 		router.clearCache({ filter: (match) => match.routeId === b.id });
 		held = Promise.withResolvers<string>();
@@ -228,6 +263,8 @@ declare global {
 			releaseActivation: typeof releaseActivation;
 			commits: typeof commits;
 			navigate: (to: string) => Promise<void>;
+			navigationPending: boolean;
+			holdConsole: () => void;
 			holdPreload: () => void;
 			releasePreload: () => void;
 			saveCredentials: () => void;

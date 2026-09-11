@@ -634,8 +634,7 @@ describe("declarative deployment mutations", () => {
 		);
 		expect(checkout.flow_type).toBe("checkout_session");
 		expect(checkout.checkout_url).toBe("https://checkout.example.com/session");
-		expect(await client.waitForDeploymentRequest(intentKey)).toMatchObject({
-			agentId: "44444444-4444-4444-8444-444444444444",
+		expect(await client.waitForDeploymentRequest(intentKey)).toEqual({
 			deploymentId: "hdep_test",
 			operation: null,
 		});

@@ -35,6 +35,7 @@ from app.schemas.runtime_observation import (
     RuntimeObservationEventV2,
     RuntimeObservationIngestOutcome,
 )
+from app.services.ai_provider_credentials import lock_ai_provider_owner
 from app.services.audit import record_control_plane_audit
 
 _CURSOR_PREFIX = "clawdi-ro-v1"
@@ -186,6 +187,10 @@ async def provision_runtime_environment_fence(
     deployment_id: str,
 ) -> V2RuntimeEnvironmentFence:
     """Create the permanent binding before a v2 runtime credential is inserted."""
+
+    # Serialize entry into the V2 consumer inventory with provider/runtime writes.
+    # The owner is the parent lock; acquire it before the Agent and its fence.
+    await lock_ai_provider_owner(db, owner_id)
 
     environment = (
         await db.execute(
