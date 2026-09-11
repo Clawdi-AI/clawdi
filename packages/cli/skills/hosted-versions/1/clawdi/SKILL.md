@@ -1,6 +1,6 @@
 ---
 name: clawdi
-description: "Use Clawdi Cloud for missing user memory, past sessions, Project or Vault context, Clawdi share URLs, and connected-service fallback such as Gmail, GitHub, Notion, Drive, or Calendar. Prefer an authenticated official service CLI; otherwise choose a trusted direct MCP, safely installable official CLI, official API or SDK, or the Clawdi connector as fallback. Do not invoke solely because a project, person, repo, or tool is named."
+description: "Use Clawdi Cloud for API keys, tokens, passwords, or safely storing/providing credentials needed by a task; missing user memory, past sessions, Project or Vault context, Clawdi share URLs, and connected-service fallback such as Gmail, GitHub, Notion, Drive, or Calendar. Prefer an authenticated official service CLI; otherwise choose a trusted direct MCP, safely installable official CLI, official API or SDK, or the Clawdi connector as fallback. Do not invoke solely because a project, person, repo, or tool is named."
 ---
 
 # Clawdi Cloud
@@ -64,6 +64,11 @@ their narrower bound-Project read scope. Treat not-found as an access boundary a
 as a possible unknown UUID; do not bypass it through another tool.
 
 ## Vault
+
+Vault stores credentials for authorized tools and services; it is not a universal service
+alternative. Reuse ready, authorized mechanisms before requesting missing credentials. An
+already-connected, capable Composio integration does not require duplicate credentials in Vault
+or account migration. Request credentials only when the chosen task path actually needs them.
 
 - `vault_list` — List attached Vaults and key counts for visible Projects.
 - `vault_get` — List key names, provenance, and exact references for an attached Vault.
@@ -140,7 +145,10 @@ already exposed by the runtime, and authorized API or SDK credentials. If an ins
 authenticated official CLI can perform the task, use it directly. Check availability and
 authentication non-destructively and prefer structured output.
 
-Otherwise choose the lowest-setup reliable option for the task. Consult the service's official
+Otherwise reuse a ready, authorized direct integration when it can perform the task. If none
+is usable and Composio is already connected and capable, use it without demanding a new key,
+login, installation, or account migration merely to avoid the connector. For remaining setup
+choices, choose the lowest-setup reliable option for the task. Consult the service's official
 documentation when installation, authentication, commands, or schemas are uncertain or likely
 to have changed:
 
@@ -150,7 +158,7 @@ to have changed:
   official, and no elevation or persistent host change is required.
 - Use the official API or SDK with a verified contract and credentials already authorized for
   the runtime, including through an exact Vault reference.
-- Use the Clawdi connector when no direct option can perform the operation.
+- Use the Clawdi connector when no direct option is usable for the operation.
 
 Before a side effect, establish the exact service account and organization, Project, or tenant.
 Use connection details from Composio discovery, or explicitly list accounts with

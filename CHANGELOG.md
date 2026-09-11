@@ -12,6 +12,12 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### Changed
+
+- CLI 0.14.74 recognizes credential tasks in the Clawdi skill and reuses ready,
+  authorized integrations, including connected Composio services, without
+  requiring duplicate credentials or account migration.
+
 ### Added
 
 - CLI 0.14.73 keeps readable Vault credentials synchronized as JSON files under
