@@ -170,7 +170,7 @@ describe("subscription creation adapter", () => {
 		});
 	});
 
-	test("projects activation identity and entitlement fields consumed by the UI", () => {
+	test("projects activation navigation target and entitlement fields consumed by the UI", () => {
 		const activation: Extract<CheckoutOperationResult, { flow_type: "subscription_activation" }> = {
 			flow_type: "subscription_activation",
 			funding_source: "wallet",
@@ -192,7 +192,6 @@ describe("subscription creation adapter", () => {
 			flowType: "subscription_activation",
 			target: {
 				kind: "deployment",
-				agentId: "33333333-3333-4333-8333-333333333333",
 				deploymentId: "hdep_created",
 			},
 			currentPeriodEnd: "2027-07-15T00:00:00Z",
