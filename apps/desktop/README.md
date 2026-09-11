@@ -33,10 +33,28 @@ backend. Native Windows x64/arm64 lifecycle implementation and Authenticode
 signing credentials must be supplied and tested before NSIS/MSIX distribution.
 Do not label Linux package builds or unsigned previews as full release validation.
 
-Clawdi Desktop packages the production TanStack dashboard as a local SPA. The
-renderer keeps the `https://cloud.clawdi.ai` origin for Clerk and API behavior,
-but executable UI is served only from the signed application bundle. CLI owns
-OAuth credentials, Agent registration, and daemon lifecycle.
+Clawdi Desktop loads the production Dashboard from `https://cloud.clawdi.ai`.
+Web deployments take effect on the next Dashboard load or View > Reload Dashboard
+without installing a new application. An active page is never forcibly reloaded.
+Server-side rollback uses the existing Web deployment workflow. This is remote
+HTTPS content in a sandbox, not downloaded JavaScript executed by the main process.
+The native wizard and failure screen remain bundled and work when the site is
+unavailable. Native shell, IPC additions, and CLI changes still require a signed
+application update; beta.1 must upgrade once to acquire remote Dashboard support.
+
+Only the trusted main frame receives the versioned, narrow Desktop bridge.
+Web changes must preserve bridge v1 methods and feature-detect new capabilities
+before calling them. Never require a new bridge method without an app update path.
+CLI owns credentials, Agent registration, and daemon lifecycle. The production
+site's CSP and TLS rules apply; no certificate bypass is installed. Production
+documents use per-response CSP nonces through TanStack SSR and Clerk's nonce prop,
+with no script unsafe-inline/unsafe-eval and no shared document caching.
+The Web bridge adapter accepts the released unversioned beta.1 and version 1;
+unknown versions or missing v1 methods display a Desktop upgrade message.
+
+`clawdiDashboardSource=bundled` is retained for packaged SPA regression tests.
+Production defaults to remote; failures show the local recovery UI rather than
+silently mixing cached bundled code with current remote assets.
 
 Dashboard uses a persistent Chromium partition for Clerk's browser session.
 Startup first restores that session; only an expired or missing session requests

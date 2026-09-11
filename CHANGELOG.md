@@ -27,6 +27,8 @@ database migration, CI, and implementation details.
 
 ### Changed
 
+- CLI 0.14.70 installs Codex through its official npm default and preserves existing user installations.
+
 - CLI 0.14.67 reduces repeated local state reads when scanning large session histories.
 - Project details fetch related owner and membership information together.
 
