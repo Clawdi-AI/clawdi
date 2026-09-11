@@ -58,6 +58,7 @@ async def consumer(
     health="ok",
     applied_provider_ids=None,
     runtime_name="openclaw",
+    generation=1,
 ):
     env = await create_env_with_project(
         db,
@@ -71,8 +72,8 @@ async def consumer(
         environment_id=env.id,
         deployment_id=deployment,
         instance_id=f"instance-{env.id}",
-        generation=1,
-        apply_generation=1,
+        generation=generation,
+        apply_generation=generation,
         source_revision=REVISION,
         source_revision_contract=runtime_source_contract_revision(),
         cli_package_spec=f"clawdi@{VERSION}",
@@ -106,7 +107,7 @@ async def consumer(
             "applied": {
                 "etag": f'"sha256:{source_revision}"',
                 "sourceRevision": source_revision,
-                "generation": 1,
+                "generation": generation,
                 "instanceId": state.instance_id,
                 "appliedProviderIds": [PROVIDER]
                 if applied_provider_ids is None
@@ -619,4 +620,131 @@ async def test_failed_custom_selection_recovers_only_authenticated_applied_owner
     else:
         with pytest.raises(HTTPException):
             await call
+    assert state.runtimes["hermes"]["provider_ids"] == ["missing-provider"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("competing_current", [False, True])
+async def test_custom_recovery_scopes_all_active_boots_to_current_apply_generation(
+    client, db_session, seed_user, competing_current
+):
+    from fastapi import HTTPException
+
+    from app.models.ai_provider import AiProvider
+    from app.models.runtime_observation import V2RuntimeObservationHead
+    from app.services.ai_provider_connection_ownership import require_custom_provider_cli
+
+    await create_provider(client)
+    provider = await db_session.scalar(
+        select(AiProvider).where(
+            AiProvider.owner_user_id == seed_user.id,
+            AiProvider.provider_id == PROVIDER,
+        )
+    )
+    provider.configuration_mode = "custom"
+    db_session.add(AppSetting(key="supported_custom_provider_cli_versions", value_json=[VERSION]))
+    now = datetime.now(UTC)
+    state = await consumer(
+        db_session,
+        seed_user.id,
+        runtime_name="hermes",
+        generation=26,
+        health="error",
+        captured_at=now - timedelta(hours=2),
+    )
+    # Push sequence and apply generation are independent. A failed selection can
+    # coexist with many active historical boots and one expired current receipt.
+    state.generation = 81
+    state.source_revision = None
+    state.runtimes = {
+        "hermes": {
+            "enabled": True,
+            "providerMode": "configured",
+            "provider_ids": ["missing-provider"],
+            "primary_model": None,
+            "install": {"source": "official"},
+        }
+    }
+    prior_generations = [1, 2, 3, 4, 7, 19, 20, 21, 22]
+    for generation in prior_generations + ([26] if competing_current else []):
+        captured = now - timedelta(hours=3)
+        await ingest_runtime_observation(
+            db_session,
+            environment_id=state.environment_id,
+            credential_deployment_id=state.deployment_id,
+            value=RuntimeObservationEventV2.model_validate(
+                {
+                    "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
+                    "reportedAt": captured,
+                    "capturedAt": captured,
+                    "runtimeMode": "hosted",
+                    "status": "error",
+                    "activeCliVersion": VERSION,
+                    "applied": {
+                        "etag": f'"sha256:{REVISION}"',
+                        "sourceRevision": REVISION,
+                        "generation": generation,
+                        "instanceId": state.instance_id,
+                        "appliedProviderIds": ["different-provider"],
+                    },
+                    "boot": None,
+                    "cli": None,
+                    "applyReceiptId": f"historical-receipt-{generation:04}",
+                    "bootNonce": f"historical-boot-nonce-{generation:04}",
+                    "bootSessionId": f"historical-session-{generation:04}",
+                    "sequence": 1,
+                    "eventId": str(uuid4()),
+                }
+            ),
+            received_at=captured,
+        )
+    await db_session.flush()
+    request = RuntimeDriftSummaryReadRequest(
+        bindings=[
+            RuntimeDriftBindingRequest(
+                environmentId=state.environment_id,
+                deploymentId=state.deployment_id,
+            )
+        ]
+    )
+    legacy = await read_runtime_drift_summaries(db_session, request)
+    assert legacy.items[0].observation.status == "ambiguous"
+    # Ordinary drift reads intentionally choose one expired head. That policy
+    # cannot be used to authorize historical ownership recovery.
+    ordinary = await read_runtime_drift_summaries(
+        db_session,
+        request,
+        expected_generations={state.environment_id: 26},
+    )
+    assert ordinary.items[0].observation.status == "expired"
+    strict = await read_runtime_drift_summaries(
+        db_session,
+        request,
+        expected_generations={state.environment_id: 26},
+        require_unique_active_head=True,
+    )
+    assert strict.items[0].observation.status == ("ambiguous" if competing_current else "expired")
+    call = require_custom_provider_cli(
+        db_session,
+        owner_user_id=seed_user.id,
+        provider_ids=[PROVIDER],
+        cli_package_spec=f"clawdi@{VERSION}",
+        previous_state=state,
+    )
+    if competing_current:
+        with pytest.raises(HTTPException):
+            await call
+    else:
+        await call
+    # Neither reader nor admission retires or deletes historical observations.
+    heads = list(
+        await db_session.scalars(
+            select(V2RuntimeObservationHead).where(
+                V2RuntimeObservationHead.environment_id == state.environment_id,
+            )
+        )
+    )
+    assert len(heads) == 10 + int(competing_current)
+    assert all(head.state == "active" for head in heads)
+    assert state.generation == 81 and state.apply_generation == 26
     assert state.runtimes["hermes"]["provider_ids"] == ["missing-provider"]
