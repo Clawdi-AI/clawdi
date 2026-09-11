@@ -344,13 +344,7 @@ export function validateRuntimeProjectionPlan(input: {
 			buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir);
 		}
 	}
-	validateHostedMcpProjectionPlan(
-		manifest,
-		paths,
-		observations,
-		hermesConfig,
-		openClawWorkspaceRoot,
-	);
+	validateHostedMcpProjectionPlan(manifest, paths, observations, hermesConfig);
 	validateHostedChannelCredentialsPlan(manifest, secretValues, home);
 }
 export function managedWhatsAppCompatibilityRuntime(

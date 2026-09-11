@@ -1116,25 +1116,6 @@ receipt-owned archives and ignores unknown or symlink entries. Offline
 convergence never fetches: it revalidates the retained archive and reports the
 resource unavailable when that cache is missing or corrupt.
 
-The built-in remote MCP declaration may carry `localVault: 1` for Clawdi management
-packages 0.14.71 and later. The management process declares `vault-local-mcp-v1` in the
-existing runtime capability header. Older callers receive a remote-only projection and
-Skill v1 so they can parse the manifest and self-upgrade; their ETag is distinct from the
-local-capable representation. Its URL and secret reference still generate the same exact-path
-egress profile. Native projection materializes its embedded `runtime-mcp/index.js` resource
-as a root-owned, content-addressed, tenant-readable package beside the service-state root.
-OpenClaw `mcp.servers.clawdi` and Hermes `mcp_servers.clawdi` then launch Node with this
-entrypoint and its public context file. The context uses `manifest.environmentId` and
-OpenClaw's resolved native workspace or Hermes' managed `terminal.cwd`; it contains only
-an authorization placeholder. Explicit system CA configuration survives native stdio
-environment filtering. Neither runtime invokes the root Clawdi executable.
-
-Cloud authenticates the material read through `/v1/mcp/clawdi` and fences its Agent and
-Project before decrypting. The tenant process confines env filenames to the configured
-workspace, pins the directory during I/O, and preserves the existing atomic 0600 binding,
-Git safety, and conflict rules. Remote-only clients never receive the two local tools.
-See [standalone MCP](../packages/runtime-mcp/README.md) for the executable verification.
-
 The bundled `clawdi` Skill is platform infrastructure. Hosted constructs its
 private `skills.entries` runtime state internally, and capable CLIs reconcile
 enabled and disabled lifecycle state from that wire. The public deployment

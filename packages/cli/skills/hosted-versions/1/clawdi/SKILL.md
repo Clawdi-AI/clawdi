@@ -57,17 +57,24 @@ generic web fetcher for Clawdi share URLs.
 - `project_list` — List Projects visible to the caller.
 - `project_get` — Read one visible Project by UUID.
 
-A Hosted runtime is restricted to its bound Project. Treat not-found as an access boundary
-as well as a possible unknown UUID; do not try to bypass it through another tool.
+Strict-v2 Hosted runtimes can read their own Workspace and explicitly linked Projects
+that remain readable by the owner. `project_current_get` returns that Workspace; writes,
+new Vaults, and credential requests are limited to it. Legacy Agent-bound keys retain
+their narrower bound-Project read scope. Treat not-found as an access boundary as well
+as a possible unknown UUID; do not bypass it through another tool.
 
 ## Vault
 
 - `vault_list` — List attached Vaults and key counts for visible Projects.
 - `vault_get` — List key names, provenance, and exact references for an attached Vault.
 
-Use `vault_resolve` only when the current task requires one referenced plaintext value. Pass
-the exact Project-scoped reference. Treat the result as sensitive: never echo it, save it to
-Memory, or include it in logs.
+Honor an explicit Vault/source or known local mapping first. Otherwise use `vault_list` /
+`vault_get` metadata to reuse a Vault suited to the task's purpose and access. Create in
+your own Workspace only when none is appropriate and the task authorizes creation.
+Clarify ambiguous sources; never create duplicates or write to linked Projects to bypass access.
+
+Use `vault_resolve` only for authorized credential use, with exact Project-scoped
+reference(s) following its live schema. Never echo values, save them to Memory, or log them.
 
 The metadata tools never return plaintext secret values. Preserve exact references for
 `vault_resolve` or when passing them to an authorized runtime:
@@ -77,15 +84,15 @@ The metadata tools never return plaintext secret values. Preserve exact referenc
 
 Vault write tools are available for explicit user requests:
 
-- `vault_create` — Create a Vault attached to the runtime-bound Project.
+- `vault_create` — Create a Vault attached to your own Workspace.
 - `vault_item_upsert` — Create or replace exact fields in an attached Vault.
 - `vault_item_delete` — Delete exact fields from a single-Project Vault.
 
 Follow the live schema and supply every required Project, Vault, section, and field identity;
 never infer an overwrite or deletion. Treat field values as sensitive inputs and never echo
-them, save them to Memory, or include them in logs. Hosted writes are restricted to the
-runtime-bound Project, and field deletion is rejected when a Vault is attached to multiple
-Projects. Whole-Vault deletion, attach/detach, bulk import, and credential profiles remain
+them, save them to Memory, or include them in logs. Hosted writes are restricted to their
+own Workspace (the runtime-bound Project). Field deletion is rejected when a Vault is
+attached to multiple Projects. Whole-Vault deletion, attach/detach, and credential profiles remain
 unavailable through Agent MCP; do not bypass that boundary through raw HTTP.
 
 ### Request missing credentials
@@ -102,10 +109,30 @@ inspect the Vault and request only still-missing fields; never replace an existi
 retry. If creation times out, use `vault_get` to find recent request IDs before retrying.
 If submission times out, inspect status before repeating a mutation.
 
-Use `vault_resolve` for authorized runtime reads after supply. The returned `local_command`
-is guidance for a self-managed CLI installation, not an available hosted command. This
-runtime does not expose the CLI Vault-file binding/pull workflow; do not invent a local sync
-command or promise durable local environment synchronization here.
+### Save and refresh credentials locally
+
+For authorized credential use, confirm any user-supplied request is `supplied` with
+`vault_request_status`. Resolve exact reference(s) through cloud `vault_resolve`, then save
+with the agent's already available native file/execution tools. Choose a target from project
+conventions and purpose (for example `.env.stripe`) without routine filename approval.
+Check that it is Git-ignored and untracked, with no symlinks in the target or parent path.
+No CLI installation or dependency is needed; if available tools cannot save safely,
+report the specific missing capability.
+
+Preserve unrelated variables and quote dotenv values literally, without shell interpolation.
+Use restrictive `0600` permissions or equivalent where supported. Values pass through agent
+tool context; use internal file access as needed, but never print or echo secrets into chat,
+Memory, logs, or user-facing messages. Claim saved only after the file operation succeeds;
+verify file metadata and expected key names without dumping values. Report only the path,
+field names/count, and save status, then continue the task.
+
+For reuse, retain only nonsecret Project/Vault IDs and reference-to-filename/variable mappings
+in existing project conventions or context. When refresh is requested or needed, re-read Vault
+and update only selected assignments with native tools. A mapping alone cannot distinguish
+cloud rotation from local edits: without a reliable last-written baseline, preserve differing
+existing values or obtain explicit overwrite authorization. Known local edits or source
+ambiguity require clarification or a separate file. Never keep plaintext baselines in Memory,
+force overwrite, delete assignments automatically, or imply background/bidirectional sync.
 
 ## Connector Routing
 

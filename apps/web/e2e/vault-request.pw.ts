@@ -23,7 +23,7 @@ test("public batch request keeps capability out of URLs and saves all fields onc
 }) => {
 	await browserContext.grantPermissions(["clipboard-read", "clipboard-write"]);
 	const suppliedId = "44444444-4444-4444-8444-444444444444";
-	const message = `I've saved the requested credentials. Please check Vault request ${suppliedId}; once its status is supplied, use vault_sync to save the credentials to an appropriate local env file and continue our previous task.`;
+	const message = `I've saved the requested credentials. Please check Vault request ${suppliedId}; once its status is supplied, continue our previous task using existing authorized capabilities. Do not include secret values in chat.`;
 	let submissions = 0;
 	const requestedUrls: string[] = [];
 	page.on("request", (request) => requestedUrls.push(request.url()));

@@ -37,7 +37,6 @@ export const hostedMcpServerDesiredStateSchema = z
 				);
 			}, "must be an HTTP(S) URL without credentials, query, or fragment"),
 		transport: z.enum(["streamable-http", "sse"]),
-		localVault: z.literal(1).optional(),
 		headers: z
 			.record(mcpHeaderNameSchema, z.union([z.string(), mcpSecretHeaderSchema]))
 			.default({}),
@@ -73,13 +72,7 @@ export const hostedMcpDesiredStateSchema = z
 	.object({
 		servers: z.record(managedEntryNameSchema, hostedMcpServerDesiredStateSchema),
 	})
-	.strict()
-	.superRefine((state, ctx) => {
-		for (const [name, server] of Object.entries(state.servers)) {
-			if (server.localVault && name !== "clawdi")
-				ctx.addIssue({ code: "custom", message: "localVault is reserved for clawdi" });
-		}
-	});
+	.strict();
 
 const exactGitCommitSchema = z.string().regex(/^[a-f0-9]{40}$/);
 

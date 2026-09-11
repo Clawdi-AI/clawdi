@@ -26,7 +26,6 @@ from app.models.user import User
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.routes import mcp_bridge
 from app.routes import memories as memory_routes
-from app.routes import vault as vault_routes
 from app.services.memory_provider import Mem0Provider
 from app.services.vault_crypto import decrypt as decrypt_vault_value
 from app.services.vault_crypto import encrypt as encrypt_vault_value
@@ -492,20 +491,6 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
                 "value": "runtime-linked-secret",
             }
 
-            monkeypatch.setattr(
-                vault_routes, "decrypt", lambda encrypted_value, _nonce: encrypted_value.decode()
-            )
-            linked_material = {
-                "agent_id": str(env_a.id),
-                "project_id": str(linked_project.id),
-                "vault_id": str(linked_vault.id),
-            }
-            material = _tool_json(
-                await _tool_call(client, 83, "vault_resolve", {"material": linked_material})
-            )
-            assert material["values"] == {"LINKED_TOKEN": "runtime-linked-secret"}
-            assert material["project_id"] == str(linked_project.id)
-            assert material["agent_id"] == str(env_a.id)
             for name, fields in (
                 ("vault_item_upsert", {"NEW_TOKEN": "must-not-write"}),
                 ("vault_request_create", ["NEW_TOKEN"]),
@@ -530,7 +515,7 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
             )
             legacy_projects = _tool_json(await _tool_call(client, 85, "project_list"))["projects"]
             assert [project["id"] for project in legacy_projects] == [str(env_a.default_project_id)]
-            denied = await _tool_call(client, 85, "vault_resolve", {"material": linked_material})
+            denied = await _tool_call(client, 85, "vault_resolve", {"reference": linked_reference})
             assert denied["isError"] is True
             active_auth["value"] = runtime_auth
 

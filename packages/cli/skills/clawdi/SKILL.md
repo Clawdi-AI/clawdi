@@ -85,14 +85,12 @@ Vault read tools expose metadata and exact references:
 - `vault_list` — List Vault attachments and key counts for visible Projects.
 - `vault_get` — List key names, provenance, and exact `clawdi://` references for one attached Vault.
 
-Honor the user-selected Vault or existing local binding first; never silently switch
-sources. Otherwise inspect `vault_list` / `vault_get` metadata and reuse a Vault matching
-the task's purpose and intended access. Create in the current Workspace only when none
-is appropriate and creation is within the authorized task. Ask for the exact target only
-when ambiguity affects purpose or access. Linked Vaults can be synced read-only; do not
-request or modify fields outside the write boundary, or create duplicates to bypass access.
+Honor an explicit Vault/source or known local mapping first. Otherwise use `vault_list` /
+`vault_get` metadata to reuse a Vault suited to the task's purpose and access. Create in
+your own Workspace only when none is appropriate and the task authorizes creation.
+Clarify ambiguous sources; never create duplicates or write to linked Projects to bypass access.
 
-Use `vault_sync` to save credentials locally for task use. The metadata tools return
+Use `vault_resolve` only when the authorized task requires plaintext. The metadata tools return
 key names and exact references, never secret values. Preserve those references when
 passing them to an authorized runtime:
 
@@ -130,24 +128,43 @@ If submission times out, inspect status before repeating a mutation.
 
 ### Save and refresh credentials locally
 
-After a request is `supplied`, use `vault_sync` to save credentials locally by default.
-Every call requires `path`: choose a supported env filename in this Agent's authenticated
-workspace based on project conventions and Vault purpose, such as `.env.stripe` or
-`stripe.env`, without routine user reconfirmation. Report the chosen path. A file without
-a binding also requires `project_id`, `vault_id`, and optional `section`. Omit `section`
-for the entire Vault; an empty string selects unsectioned fields. If sections reuse names,
-select one section per file. The target must be untracked, Git-ignored, and not a symlink.
-Check only file/path metadata when choosing a target; never read env contents into the
-conversation. Let `vault_sync` reuse the binding internally and reject local conflicts.
+For authorized credential use, confirm any user-supplied request is `supplied` with
+`vault_request_status`. Resolve exact reference(s) through cloud `vault_resolve`, then save
+with the agent's already available native file/execution tools. Choose a target from project
+conventions and purpose (for example `.env.stripe`) without routine filename approval.
+Check that it is Git-ignored and untracked, with no symlinks in the target or parent path.
+No CLI installation or dependency is needed; if available tools cannot save safely,
+report the specific missing capability.
 
-Before later task use, call `vault_sync` with the same explicit `path` when a refresh is
-needed; omit source arguments to reuse that file's durable binding. It adds, updates
-and deletes managed fields while preserving unrelated assignments. Conflicting sources
-or local edits stop the write; restore the managed assignment or choose a new file.
-Return only file path, status and counts; never print keys or the file, log secrets, or
-save them to Memory. Sync does not upload local edits, run in the background, or reload
-a running process's environment. It requires the standalone local MCP adapter; remote-only
-HTTP cannot write files. Do not invent a CLI fallback or script synchronization.
+Preserve unrelated variables and quote dotenv values literally, without shell interpolation.
+Use restrictive `0600` permissions or equivalent where supported. Values pass through agent
+tool context; use internal file access as needed, but never print or echo secrets into chat,
+Memory, logs, or user-facing messages. Claim saved only after the file operation succeeds;
+verify file metadata and expected key names without dumping values. Report only the path,
+field names/count, and save status, then continue the task.
+
+For reuse, retain only nonsecret Project/Vault IDs and reference-to-filename/variable mappings
+in existing project conventions or context. When refresh is requested or needed, re-read Vault
+and update only selected assignments with native tools. A mapping alone cannot distinguish
+cloud rotation from local edits: without a reliable last-written baseline, preserve differing
+existing values or obtain explicit overwrite authorization. Known local edits or source
+ambiguity require clarification or a separate file. Never keep plaintext baselines in Memory,
+force overwrite, delete assignments automatically, or imply background/bidirectional sync.
+
+### Optional CLI environment files
+
+When local file materialization is requested and the CLI is available, use:
+
+```bash
+clawdi vault materialize --vault <vault-uuid> --project <project-uuid> --out /absolute/project/.env
+clawdi vault pull --out /absolute/project/.env
+```
+
+The first command binds the exact source; later pulls reuse it and preserve unrelated
+assignments. Optional `--section <name>` selects one section. Files must be untracked,
+Git-ignored, and not symlinks. Source changes and local edits fail without overwriting.
+Report only the path, status, and counts. This does not upload local edits, run in the
+background, or reload a running process's environment.
 
 For explicit import/write, pass fields to `vault_item_upsert`; use
 `vault_item_delete` for exact batch deletions. Never upload local edits automatically.
