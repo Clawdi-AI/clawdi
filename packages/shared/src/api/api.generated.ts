@@ -8024,7 +8024,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "missing" | "fresh" | "expired" | "ambiguous";
+            status: "missing" | "fresh" | "expired" | "ambiguous" | "unavailable";
             head: components["schemas"]["RuntimeDriftObservationHead"] | null;
         };
         /** RuntimeDriftSourceAuthority */
