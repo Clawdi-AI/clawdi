@@ -11003,7 +11003,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(readFileSync(installerLog, "utf-8")).toBe("installed\n");
 		expect(readOpenClawMcpServers(home).clawdi).toEqual({
 			...nativeManagedRemoteMcpServer("clawdi", "v1"),
-			connectionTimeoutMs: 30_000,
 			requestTimeoutMs: 420_000,
 		});
 
@@ -11018,7 +11017,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		);
 		expect(readOpenClawMcpServers(home).clawdi).toEqual({
 			...nativeManagedRemoteMcpServer("clawdi", "v1"),
-			connectionTimeoutMs: 30_000,
 			requestTimeoutMs: 420_000,
 		});
 	});
@@ -11168,12 +11166,10 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(initial.installErrors).toEqual([]);
 		expect(readOpenClawMcpServers(home).clawdi).toEqual({
 			...nativeManagedRemoteMcpServer("clawdi", "v1"),
-			connectionTimeoutMs: 30_000,
 			requestTimeoutMs: 420_000,
 		});
 		expect(readOpenClawMcpServers(home)["search.proxy"]).toEqual({
 			...nativeManagedRemoteMcpServer("search.proxy", "v1"),
-			connectionTimeoutMs: 30_000,
 			requestTimeoutMs: 420_000,
 		});
 		expect(readOpenClawMcpServers(home)["user-entry"]).toEqual({
@@ -11197,7 +11193,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(readFileSync(join(openclawSkill, "SKILL.md"), "utf-8")).toBe(installedSkill);
 		expect(readOpenClawMcpServers(home).clawdi).toEqual({
 			...nativeManagedRemoteMcpServer("clawdi", "v1"),
-			connectionTimeoutMs: 30_000,
 			requestTimeoutMs: 420_000,
 		});
 
@@ -11208,7 +11203,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(updated.installErrors).toEqual([]);
 		expect(readOpenClawMcpServers(home)["search.proxy"]).toEqual({
 			...nativeManagedRemoteMcpServer("search.proxy", "v2"),
-			connectionTimeoutMs: 30_000,
 			requestTimeoutMs: 420_000,
 		});
 		const updatedConfig = readFileSync(openclawConfigPath, "utf-8");
@@ -11356,7 +11350,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(upgraded.installErrors).toEqual([]);
 		expect(readOpenClawMcpServers(home).clawdi).toMatchObject({
 			url: desiredServer.url,
-			connectionTimeoutMs: 30_000,
 			requestTimeoutMs: 420_000,
 		});
 
@@ -11447,7 +11440,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(managed.installErrors).toEqual([]);
 		expect(readOpenClawMcpServers(home)["owned-server"]).toEqual({
 			...nativeManagedRemoteMcpServer("owned-server", "v1"),
-			connectionTimeoutMs: 30_000,
 			requestTimeoutMs: 420_000,
 		});
 
@@ -11456,7 +11448,6 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(failedRemoval.installErrors.join("\n")).toContain("runtime MCP projection failed");
 		expect(readOpenClawMcpServers(home)["owned-server"]).toEqual({
 			...nativeManagedRemoteMcpServer("owned-server", "v1"),
-			connectionTimeoutMs: 30_000,
 			requestTimeoutMs: 420_000,
 		});
 

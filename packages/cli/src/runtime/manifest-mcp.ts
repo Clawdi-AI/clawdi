@@ -202,7 +202,7 @@ function hostedMcpNativeServerConfig(
 	return {
 		// OpenClaw shares the explicit request budget with catalog discovery;
 		// without it, tools/list has a separate 1.5-second default.
-		...(runtime === "openclaw" ? { connectionTimeoutMs: 30_000, requestTimeoutMs: 420_000 } : {}),
+		...(runtime === "openclaw" ? { requestTimeoutMs: 420_000 } : {}),
 		url: desired.url,
 		transport: desired.transport,
 		headers: Object.fromEntries(

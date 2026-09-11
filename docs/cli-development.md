@@ -49,7 +49,8 @@ creation deadline discards late results from the synchronous SDK worker, which
 cannot be forcibly cancelled. Authentication precedes forwarding and retains its
 existing short network budgets.
 
-Discovery and other MCP methods retain a 30-second forwarding deadline. Backend
+The stdio proxy gives discovery and other MCP methods a 30-second forwarding
+deadline; this is not a server-side cap for every remote MCP endpoint. Backend
 Composio discovery has a 25-second total deadline, including cold session creation
 and any reload after invalidation. Listing drains all cursor pages in a single
 initialized client within 15 seconds and at most 100 pages, leaving 5 seconds
@@ -60,23 +61,24 @@ result metadata, since page metadata has no standardized merge semantics.
 
 The locked JavaScript MCP SDK 1.30 defaults **outgoing client requests** to 60
 seconds; this does not impose a timer on incoming stdio server handlers. MCP
-clients invoking slow tools must set their own request timeout to at least
-420 seconds (for SDK clients, pass `{ timeout: 420_000 }` as the `callTool`
-request options). Clawdi cannot override another client's deadline.
+clients invoking slow tools through the forwarding path described above must
+set their own request timeout to at least 420 seconds (for SDK clients, pass
+`{ timeout: 420_000 }` as the `callTool` request options). Clawdi cannot override
+another client's deadline.
 
-Managed OpenClaw MCP entries explicitly set `connectionTimeoutMs: 30000` and
-`requestTimeoutMs: 420000`. OpenClaw 2026.9.3 uses the explicit request budget
-for both the complete paginated tool catalog and subsequent requests; without
-it, catalog discovery defaults to 1500 ms even though requests default to 60
+Managed OpenClaw MCP entries explicitly set only `requestTimeoutMs: 420000`,
+using that slow-tool caller budget. OpenClaw 2026.9.3 uses the explicit request
+budget for both the complete paginated tool catalog and subsequent requests;
+without it, catalog discovery defaults to 1500 ms even though requests default to 60
 seconds. There is no independent catalog timeout setting, so an unresponsive
-catalog can wait up to 420 seconds. Initialization has a separate 30-second
-budget. Hermes keeps
-its existing native settings.
+catalog can wait up to 420 seconds. Initialization retains the native default
+(30 seconds in OpenClaw 2026.9.3); no connection timeout override is written.
+Hermes keeps its existing native settings.
 
 The official contracts are [catalog timeout selection](https://github.com/openclaw/openclaw/blob/1391f7cd2d40ab5bbcf2f5f831d3a64f520e72d7/src/agents/agent-bundle-mcp-runtime.ts#L156-L177),
 [transport defaults](https://github.com/openclaw/openclaw/blob/1391f7cd2d40ab5bbcf2f5f831d3a64f520e72d7/src/agents/mcp-transport-config.ts#L62-L104),
 and [CLI seconds-to-milliseconds configuration](https://github.com/openclaw/openclaw/blob/1391f7cd2d40ab5bbcf2f5f831d3a64f520e72d7/src/cli/mcp-cli.ts#L1275-L1293).
-Both millisecond fields are also supported by the audited July 1
+The request timeout field is also supported by the audited July 1
 [schema](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/config/zod-schema.ts#L386-L409)
 and [catalog override](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/agents/agent-bundle-mcp-runtime.ts#L285-L305).
 That older runtime applies the catalog timeout per page; 2026.9.3 bounds the
