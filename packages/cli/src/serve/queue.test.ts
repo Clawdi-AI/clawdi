@@ -348,6 +348,60 @@ describe("RetryQueue", () => {
 		await q.flushPersist();
 	});
 
+	it("a failed Skill yields to a healthy session across a daemon restart", async () => {
+		const q = new RetryQueue({ agentType: "claude_code" });
+		q.enqueue({
+			kind: "skill_delete",
+			agent_id: "test-agent",
+			project_id: "test-project",
+			skill_key: "broken",
+			enqueued_at: "2026-01-01T00:00:00Z",
+			attempts: 0,
+		});
+		const failed = q.peek();
+		if (!failed) throw new Error("expected failing Skill");
+		q.enqueue({
+			kind: "session_push",
+			...sessionFence("healthy"),
+			local_session_id: "healthy",
+			content_hash: "h1",
+			enqueued_at: "2026-01-01T00:00:01Z",
+			attempts: 0,
+		});
+		q.bumpAttempts(failed);
+		await q.flushPersist();
+		const reloaded = new RetryQueue({ agentType: "claude_code" });
+		reloaded.load();
+		const healthy = reloaded.peek();
+		if (healthy?.kind !== "session_push") throw new Error("healthy session was starved");
+		expect(reloaded.markDoneIfVersion(healthy)).toBe(true);
+		expect(reloaded.peek()).toEqual({ ...failed, attempts: 1 });
+		await reloaded.flushPersist();
+	});
+
+	it("a stale retry cannot move or increment a replacement operation", async () => {
+		const q = new RetryQueue({ agentType: "claude_code" });
+		const input = {
+			kind: "skill_push" as const,
+			agent_id: "test-agent",
+			project_id: "test-project",
+			skill_key: "alpha",
+			new_hash: "h1",
+			enqueued_at: "2026-01-01T00:00:00Z",
+			attempts: 0,
+		};
+		q.enqueue(input);
+		const stale = q.peek();
+		if (!stale) throw new Error("expected original operation");
+		q.enqueue({ ...input, skill_key: "beta" });
+		q.enqueue({ ...input, new_hash: "h2" });
+		const before = [...q.all()];
+		q.bumpAttempts(stale);
+		expect(q.all()).toEqual(before);
+		expect(q.markDoneIfVersion(stale)).toBe(false);
+		await q.flushPersist();
+	});
+
 	it("bumpAttempts increments the counter and persists", async () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
