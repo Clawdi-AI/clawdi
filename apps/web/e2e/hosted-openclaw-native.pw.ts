@@ -32,6 +32,9 @@ test("official OpenClaw authenticates before reveal and reuses native auth acros
 	await page.route("**/v2/deployments/*/runtime-ui/credentials", async (route) => {
 		const { stdout } = await promisify(execFile)("node", [entry, "dashboard", "--json"], {
 			timeout: 20_000,
+		}).catch(() => {
+			// CLI errors may contain newly issued credentials in captured output.
+			throw new Error("Official dashboard handoff failed");
 		});
 		const native = JSON.parse(stdout);
 		const url = new URL(native.browserUrl);
@@ -141,5 +144,7 @@ test("official OpenClaw authenticates before reveal and reuses native auth acros
 	expect(connections[3]?.connects).toEqual([["bootstrapToken"]]);
 	expect(connections[3]?.device).toBe(initial?.device);
 	expect(issued).toBe(2);
-	console.log(JSON.stringify({ issued, documents, connections }));
+	console.log(
+		JSON.stringify({ issued, documents, helloCount: connections.filter((c) => c.hello).length }),
+	);
 });

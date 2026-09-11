@@ -65,6 +65,25 @@ bun run --cwd apps/web test
 validated env module. If you bypass that Bun config, seed
 `VITE_CLERK_PUBLISHABLE_KEY` yourself.
 
+### Official OpenClaw browser verification
+
+Run `bash scripts/test-openclaw-native.sh` for the pinned official gateway and
+Control UI in a disposable 4-CPU/4-GiB Docker container. The product scenario
+checks bootstrap authentication, retained iframe/WebSocket identity across
+sections, native device reuse after revisits/reload, and explicit reconnect.
+The latency scenario alternates three pairs of `dashboard --help` plus
+`dashboard --json` versus direct JSON after one warmup per command. It records
+CLI phase durations and fresh Chromium navigation to native `hello-ok`.
+
+This measures local official CLI/browser behavior with plugins disabled; it
+does not measure a remote control plane, production ingress or customer devices.
+Hosted API responses in the product scenario are fixtures. Timing output omits
+issued credentials and URLs; browser traces, screenshots and video are disabled.
+Do not infer latency from the number of credential requests alone.
+
+Done: both native tests pass, each of the six latency samples reports one
+owner-authorized `hello-ok`, and the runner removes its container and image.
+
 ## Route admission
 
 Protected routes use Clerk request middleware and a Start server function calling
