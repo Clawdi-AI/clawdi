@@ -23,7 +23,7 @@ export type RemoteCaller = (method: string, params: Record<string, unknown>) => 
 const target = z.string().regex(/^(?:\.env(?:\.[A-Za-z0-9_-]+)*|[A-Za-z0-9_-]+\.env)$/);
 const syncArguments = z
 	.object({
-		path: target.default(".env.local"),
+		path: target,
 		project_id: z.uuid().optional(),
 		vault_id: z.uuid().optional(),
 		section: z.string().max(200).nullable().optional(),
@@ -33,7 +33,7 @@ const localTools = [
 	{
 		name: "vault_sync",
 		description:
-			"Save Vault credentials locally in this Agent's authenticated workspace. Defaults to .env.local; path may select another env filename. First call requires project_id and vault_id, with optional section (omit for entire Vault, empty string for unsectioned fields). Later calls reuse the durable source binding; supplied source must match. Adds, updates and deletes managed fields, preserves unrelated assignments, and refuses local conflicts, tracked or non-ignored files. Returns only status, path and counts. No CLI required.",
+			"Save Vault credentials locally in this Agent's authenticated workspace. Every call requires an explicit path: choose an env filename for the project conventions and Vault purpose (for example .env.stripe or stripe.env), then report the chosen path. A file without a binding also requires project_id and vault_id, with optional section (omit for entire Vault, empty string for unsectioned fields). Later calls reuse the durable source binding; supplied source must match. Adds, updates and deletes managed fields, preserves unrelated assignments, and refuses local conflicts, tracked or non-ignored files. Returns only status, path and counts. No CLI required.",
 		inputSchema: z.toJSONSchema(syncArguments, { io: "input" }),
 	},
 ];

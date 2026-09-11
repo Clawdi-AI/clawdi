@@ -593,10 +593,13 @@ references. Pending requests appear separately on the Vault detail page and are 
 returned as empty secret values. Use a fresh request for remaining missing fields after
 expiry; existing pending requests and supplied fields are rejected.
 
-The standalone `clawdi` MCP adapter exposes `vault_sync`: first supply exact `project_id`,
+The standalone `clawdi` MCP adapter exposes `vault_sync`: every call requires an explicit
+`path`. The agent chooses a supported env filename from project conventions and Vault
+purpose (for example `.env.stripe` or `stripe.env`) without routine user reconfirmation,
+and reports the chosen path. A file without a binding also requires exact `project_id`,
 `vault_id`, and optional `section`. It saves locally and binds the source; later calls
-reuse that binding. `path` defaults to `.env.local` and can select another env filename.
-Supplied source arguments must match the existing binding.
+with the same path reuse that binding. Supplied source arguments must match.
+Inspect existing files first; conflicting assignments are never silently overwritten.
 Hosted projects this adapter into both native runtimes. It uses authenticated Cloud
 material reads and writes only inside the Agent workspace, with no tenant CLI dependency.
 See [standalone MCP setup](../packages/runtime-mcp/README.md) for self-managed clients.
@@ -639,10 +642,10 @@ for reference reads and whole-Vault material; those clients cannot write local f
 explicit batch import/write/removal; they do not imply reverse synchronization.
 Hosted and self-managed local MCP adapters share the same env library with the CLI.
 
-Done: `scripts/test.sh vault-mcp` executes request → public supply → status → sync (default path) →
-cloud mutation → restart → sync (no arguments) with no installed CLI in the tenant process.
+Done: `scripts/test.sh vault-mcp` executes request → public supply → status → sync (chosen explicit path) →
+cloud mutation → restart → sync (same path, no source arguments) with no installed CLI in the tenant process.
 It checks real file output after restart, 0600 permissions, local conflicts, cross-Agent/Project rejection,
-path and symlink protection, and metadata-only sync responses.
+omitted-path rejection without writes, path and symlink protection, and metadata-only sync responses.
 
 Deployment requires migration `c92e8b3d104f`, the updated API/client/web, and a `WEB_ORIGIN`
 that points to the public dashboard. Deploy the API before clients and refresh MCP tool

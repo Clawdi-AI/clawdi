@@ -101,15 +101,17 @@ If submission times out, inspect status before repeating a mutation.
 
 ### Save and refresh credentials locally
 
-After a request is `supplied`, call `vault_sync` with `project_id`, `vault_id`, and
-optional `section`. This is the default credential workflow: it saves to `.env.local`
-in this Agent's authenticated workspace without another filename approval. Use `path`
-only for another supported env filename. Omit `section` for the entire Vault; an empty
-string selects unsectioned fields. If sections reuse names, select one section per file.
-The target must be untracked, Git-ignored, and not a symlink.
+After a request is `supplied`, use `vault_sync` to save credentials locally by default.
+Every call requires `path`: choose a supported env filename in this Agent's authenticated
+workspace based on project conventions and Vault purpose, such as `.env.stripe` or
+`stripe.env`, without routine user reconfirmation. Report the chosen path. A file without
+a binding also requires `project_id`, `vault_id`, and optional `section`. Omit `section`
+for the entire Vault; an empty string selects unsectioned fields. If sections reuse names,
+select one section per file. The target must be untracked, Git-ignored, and not a symlink.
+Inspect an existing file before using it; never silently overwrite existing assignments.
 
-Before later task use, call `vault_sync` when a refresh is needed; omit source and path
-to reuse the default file's durable binding, or supply the chosen `path`. It adds, updates
+Before later task use, call `vault_sync` with the same explicit `path` when a refresh is
+needed; omit source arguments to reuse that file's durable binding. It adds, updates
 and deletes managed fields while preserving unrelated assignments. Conflicting sources
 or local edits stop the write; restore the managed assignment or choose a new file.
 Return only file path, status and counts; never print keys or the file, log secrets, or

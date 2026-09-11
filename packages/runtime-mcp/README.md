@@ -19,13 +19,15 @@ node /absolute/path/clawdi-mcp.mjs --api-url https://cloud-api.clawdi.ai --agent
 ```
 
 The workspace must be a real directory, not writable by other users. Local
-tools accept only an env filename directly inside it. The default is `.env.local`;
-explicit `.env`, `.env.production`, or `service.env` are also supported. Git must
+tools require an explicit env filename directly inside it on every call. Choose it
+from project conventions and Vault purpose, for example `.env.stripe` or `stripe.env`,
+without routine user reconfirmation, and report the chosen path. Git must
 already ignore the untracked target. Symlinks, hardlinks, conflicting local
 assignments, and changed account/API/Agent/source identities fail closed.
-First call `vault_sync` with `project_id`, `vault_id`, and optional `section` to save
-and bind the source. Later calls can omit these arguments to reuse the binding.
-`path` defaults to `.env.local`; supplied source arguments must match the binding.
+Call `vault_sync` with `path` and, for a file without a binding, `project_id`, `vault_id`,
+and optional `section` to save and bind the source. Later calls supply the same `path`
+and can omit source arguments to reuse the binding; supplied source must match.
+Inspect existing files first; conflicting assignments are never silently overwritten.
 `vault_sync` follows cloud additions, updates and deletions while preserving
 unrelated assignments. Files and binding metadata advance atomically at 0600.
 

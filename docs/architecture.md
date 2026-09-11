@@ -523,7 +523,7 @@ and whole-Vault environment data only to a key bound to that Agent.
 
 `packages/runtime-mcp` provides a separate tenant stdio entrypoint. It forwards remote
 tools except `vault_resolve`, which it hides and rejects for direct agent calls.
-It implements `vault_sync` (default `.env.local`) through the shared env library,
+It implements `vault_sync` (required agent-chosen `path` on every call) through the shared env library,
 using authorized Cloud material reads internally. Cloud never writes runtime files;
 the local process writes inside its explicit workspace.
 See [standalone MCP](../packages/runtime-mcp/README.md) for limits and verification.
