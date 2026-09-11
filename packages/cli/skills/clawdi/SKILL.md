@@ -72,9 +72,11 @@ Three read-only tools expose the caller's visible Project context:
 - `project_list` — List visible Projects.
 - `project_get` — Read one visible Project by UUID.
 
-Hosted runtimes see only their bound Project. Treat a not-found response as an
-access boundary as well as a possible unknown UUID; do not try to bypass it
-through another tool.
+Strict-v2 Hosted runtimes can read their own Workspace and explicitly linked Projects
+that remain readable by the owner. `project_current_get` returns that Workspace;
+writes, new Vaults, and credential requests are limited to that Workspace. Legacy
+Agent-bound keys retain their narrower bound-Project read scope. Treat not-found as
+an access boundary as well as a possible unknown UUID; never bypass it with another tool.
 
 ## Vault
 
@@ -83,19 +85,21 @@ Vault read tools expose metadata and exact references:
 - `vault_list` — List Vault attachments and key counts for visible Projects.
 - `vault_get` — List key names, provenance, and exact `clawdi://` references for one attached Vault.
 
-Use `vault_resolve` only when the current task requires one referenced plaintext value. Pass
-the exact Project-scoped reference. Treat the result as sensitive: never echo it, save it to
-Memory, or include it in logs.
+Honor the user-selected Vault or existing local binding first; never silently switch
+sources. Otherwise inspect `vault_list` / `vault_get` metadata and reuse a Vault matching
+the task's purpose and intended access. Create in the current Workspace only when none
+is appropriate and creation is within the authorized task. Ask for the exact target only
+when ambiguity affects purpose or access. Linked Vaults can be synced read-only; do not
+request or modify fields outside the write boundary, or create duplicates to bypass access.
 
-The metadata tools never resolve or return plaintext. Never imply that a returned key name
-is a secret value. Preserve their exact references for `vault_resolve` or when passing them
-to an authorized runtime:
+Use `vault_sync` to save credentials locally for task use. The metadata tools return
+key names and exact references, never secret values. Preserve those references when
+passing them to an authorized runtime:
 
 - `clawdi://project/<project-id>/vault/<vault>/field/<field>`
 - `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`
 
-Use the live schemas from the `clawdi` MCP server as authoritative; the local
-stdio command only transports the protocol.
+Use the live schemas from the `clawdi` MCP server as authoritative.
 
 Vault write tools are available for explicit user requests:
 
@@ -107,8 +111,46 @@ Follow the live schema and supply every required Project, Vault, section, and fi
 never infer an overwrite or deletion. Treat field values as sensitive inputs and never echo
 them, save them to Memory, or include them in logs. Environment-bound callers may write only
 their bound Project, and field deletion is rejected when a Vault is attached to multiple
-Projects. Whole-Vault deletion, attach/detach, bulk import, and credential profiles remain
+Projects. Whole-Vault deletion, attach/detach, and credential profiles remain
 foreground operator workflows; never bypass that boundary through raw HTTP or daemon RPC.
+
+### Request missing credentials
+
+Use `vault_request_create` with exact `project_id`, `vault_id`, canonical `slug`, optional
+`section`, and a batch of environment field names in `fields`. A Vault is a key bundle:
+request related keys together under one link. Supplied or already-pending fields are rejected.
+Show the returned `url` unchanged to the user; do not ask them to paste secrets into chat.
+Opening the link does not consume it. Saving all requested fields consumes it once.
+
+Check `vault_request_status` with its `request_id` after the user finishes. `pending` is not
+a secret value; `supplied` means the exact references are ready. On `expired` or `conflict`,
+inspect the Vault and request only still-missing fields; never replace an existing value to
+retry. If creation times out, use `vault_get` to find recent request IDs before retrying.
+If submission times out, inspect status before repeating a mutation.
+
+### Save and refresh credentials locally
+
+After a request is `supplied`, use `vault_sync` to save credentials locally by default.
+Every call requires `path`: choose a supported env filename in this Agent's authenticated
+workspace based on project conventions and Vault purpose, such as `.env.stripe` or
+`stripe.env`, without routine user reconfirmation. Report the chosen path. A file without
+a binding also requires `project_id`, `vault_id`, and optional `section`. Omit `section`
+for the entire Vault; an empty string selects unsectioned fields. If sections reuse names,
+select one section per file. The target must be untracked, Git-ignored, and not a symlink.
+Check only file/path metadata when choosing a target; never read env contents into the
+conversation. Let `vault_sync` reuse the binding internally and reject local conflicts.
+
+Before later task use, call `vault_sync` with the same explicit `path` when a refresh is
+needed; omit source arguments to reuse that file's durable binding. It adds, updates
+and deletes managed fields while preserving unrelated assignments. Conflicting sources
+or local edits stop the write; restore the managed assignment or choose a new file.
+Return only file path, status and counts; never print keys or the file, log secrets, or
+save them to Memory. Sync does not upload local edits, run in the background, or reload
+a running process's environment. It requires the standalone local MCP adapter; remote-only
+HTTP cannot write files. Do not invent a CLI fallback or script synchronization.
+
+For explicit import/write, pass fields to `vault_item_upsert`; use
+`vault_item_delete` for exact batch deletions. Never upload local edits automatically.
 
 ## Wallet Funding
 

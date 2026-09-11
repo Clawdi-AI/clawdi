@@ -820,6 +820,22 @@ Scope:
 	);
 
 vaultCmd
+	.command("materialize")
+	.alias("pull")
+	.description("Bind one Vault to a local dotenv file, or pull its saved binding")
+	.requiredOption(
+		"--out <absolute-path>",
+		"Explicit local dotenv target (must be Git-ignored in a repository)",
+	)
+	.option("--vault <uuid>", "Exact Vault identity; required on first pull")
+	.option("--project <uuid>", "Exact Project attachment; required on first pull")
+	.option("--section <name>", "Limit to one section (empty string selects unsectioned keys)")
+	.action(async (opts) => {
+		const { vaultMaterialize } = await import("./commands/vault-materialize.js");
+		await vaultMaterialize(opts);
+	});
+
+vaultCmd
 	.command("set <key>")
 	.description("Store a secret")
 	.option(

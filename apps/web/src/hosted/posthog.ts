@@ -51,6 +51,15 @@ export function initHostedPostHog({
 		capture_pageleave: true,
 		autocapture: true,
 		property_denylist: POSTHOG_PROPERTY_DENYLIST,
+		before_send: (event) => {
+			const url = event?.properties?.$current_url;
+			if (
+				(typeof window !== "undefined" && window.location.pathname === "/vault-request") ||
+				(typeof url === "string" && url.includes("/vault-request"))
+			)
+				return null;
+			return event;
+		},
 	});
 	sdk.__loaded = true;
 	return true;

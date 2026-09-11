@@ -45,6 +45,9 @@ class SecurityHeadersMiddleware:
             if message["type"] == "http.response.start":
                 # Only set if absent so an edge proxy value is preserved.
                 headers = MutableHeaders(scope=message)
+                if scope.get("path", "").startswith(("/v1/vault", "/api/vault")):
+                    headers["Cache-Control"] = "no-store"
+                    headers["Referrer-Policy"] = "no-referrer"
                 headers.setdefault("X-Content-Type-Options", "nosniff")
                 headers.setdefault("X-Frame-Options", "DENY")
                 headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")

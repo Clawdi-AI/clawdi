@@ -13,6 +13,7 @@ import { Route as ProtectedRouteImport } from './routes/_protected'
 import { Route as DesktopAuthRouteImport } from './routes/desktop-auth'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as SignUpRouteImport } from './routes/sign-up'
+import { Route as VaultRequestRouteImport } from './routes/vault-request'
 import { Route as ProtectedDashboardRouteImport } from './routes/_protected/_dashboard'
 import { Route as ProtectedCliAuthorizeRouteImport } from './routes/_protected/cli-authorize'
 import { Route as SIdRouteImport } from './routes/s/$id'
@@ -76,6 +77,11 @@ const SignInRoute = SignInRouteImport.update({
 const SignUpRoute = SignUpRouteImport.update({
   id: '/sign-up',
   path: '/sign-up',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VaultRequestRoute = VaultRequestRouteImport.update({
+  id: '/vault-request',
+  path: '/vault-request',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProtectedDashboardRoute = ProtectedDashboardRouteImport.update({
@@ -344,6 +350,7 @@ export interface FileRoutesByFullPath {
   '/desktop-auth': typeof DesktopAuthRoute
   '/sign-in': typeof SignInRouteWithChildren
   '/sign-up': typeof SignUpRouteWithChildren
+  '/vault-request': typeof VaultRequestRoute
   '/cli-authorize': typeof ProtectedCliAuthorizeRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
@@ -393,6 +400,7 @@ export interface FileRoutesByTo {
   '/desktop-auth': typeof DesktopAuthRoute
   '/sign-in': typeof SignInRouteWithChildren
   '/sign-up': typeof SignUpRouteWithChildren
+  '/vault-request': typeof VaultRequestRoute
   '/cli-authorize': typeof ProtectedCliAuthorizeRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
@@ -441,6 +449,7 @@ export interface FileRoutesById {
   '/desktop-auth': typeof DesktopAuthRoute
   '/sign-in': typeof SignInRouteWithChildren
   '/sign-up': typeof SignUpRouteWithChildren
+  '/vault-request': typeof VaultRequestRoute
   '/_protected/_dashboard': typeof ProtectedDashboardRouteWithChildren
   '/_protected/cli-authorize': typeof ProtectedCliAuthorizeRoute
   '/s/$id': typeof SIdRoute
@@ -494,6 +503,7 @@ export interface FileRouteTypes {
     | '/desktop-auth'
     | '/sign-in'
     | '/sign-up'
+    | '/vault-request'
     | '/cli-authorize'
     | '/s/$id'
     | '/s/{$id}.json'
@@ -543,6 +553,7 @@ export interface FileRouteTypes {
     | '/desktop-auth'
     | '/sign-in'
     | '/sign-up'
+    | '/vault-request'
     | '/cli-authorize'
     | '/s/$id'
     | '/s/{$id}.json'
@@ -590,6 +601,7 @@ export interface FileRouteTypes {
     | '/desktop-auth'
     | '/sign-in'
     | '/sign-up'
+    | '/vault-request'
     | '/_protected/_dashboard'
     | '/_protected/cli-authorize'
     | '/s/$id'
@@ -642,6 +654,7 @@ export interface RootRouteChildren {
   DesktopAuthRoute: typeof DesktopAuthRoute
   SignInRoute: typeof SignInRouteWithChildren
   SignUpRoute: typeof SignUpRouteWithChildren
+  VaultRequestRoute: typeof VaultRequestRoute
   SIdRoute: typeof SIdRoute
   SChar123idChar125DotjsonRoute: typeof SChar123idChar125DotjsonRoute
   SChar123idChar125DotmdRoute: typeof SChar123idChar125DotmdRoute
@@ -676,6 +689,13 @@ declare module '@tanstack/react-router' {
       path: '/sign-up'
       fullPath: '/sign-up'
       preLoaderRoute: typeof SignUpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/vault-request': {
+      id: '/vault-request'
+      path: '/vault-request'
+      fullPath: '/vault-request'
+      preLoaderRoute: typeof VaultRequestRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_protected/_dashboard': {
@@ -1157,6 +1177,7 @@ const rootRouteChildren: RootRouteChildren = {
   DesktopAuthRoute: DesktopAuthRoute,
   SignInRoute: SignInRouteWithChildren,
   SignUpRoute: SignUpRouteWithChildren,
+  VaultRequestRoute: VaultRequestRoute,
   SIdRoute: SIdRoute,
   SChar123idChar125DotjsonRoute: SChar123idChar125DotjsonRoute,
   SChar123idChar125DotmdRoute: SChar123idChar125DotmdRoute,

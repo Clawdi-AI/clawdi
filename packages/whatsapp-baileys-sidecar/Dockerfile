@@ -7,6 +7,7 @@ COPY package.json bun.lock ./
 COPY patches/libsignal@6.0.0.patch patches/libsignal@6.0.0.patch
 COPY apps/web/package.json apps/web/package.json
 COPY packages/cli/package.json packages/cli/package.json
+COPY packages/runtime-mcp/package.json packages/runtime-mcp/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/whatsapp-baileys-sidecar/package.json packages/whatsapp-baileys-sidecar/package.json
 RUN bun install --frozen-lockfile --production --filter @clawdi/whatsapp-baileys-sidecar
@@ -18,6 +19,7 @@ COPY package.json bun.lock tsconfig.base.json ./
 COPY patches/libsignal@6.0.0.patch patches/libsignal@6.0.0.patch
 COPY apps/web/package.json apps/web/package.json
 COPY packages/cli/package.json packages/cli/package.json
+COPY packages/runtime-mcp/package.json packages/runtime-mcp/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/whatsapp-baileys-sidecar/package.json packages/whatsapp-baileys-sidecar/package.json
 RUN bun install --frozen-lockfile --filter @clawdi/whatsapp-baileys-sidecar

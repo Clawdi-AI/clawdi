@@ -38,6 +38,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { CopyKeysDialog } from "@/components/vault/copy-keys-dialog";
+import { VaultSecretRequests } from "@/components/vault/secret-requests";
 import { prefixGroupsFor, SplitVaultDialog } from "@/components/vault/split-vault-dialog";
 import { agentProjectDetailHref } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
@@ -511,6 +512,8 @@ export default function VaultDetailPage({
 					) : null
 				}
 			/>
+
+			{isOwner && <VaultSecretRequests slug={slug} vaultId={vault.id} projectId={anyProjectId} />}
 
 			{/* Keys */}
 			<section className="space-y-3">

@@ -26,6 +26,7 @@ from app.models.user import User
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.routes import mcp_bridge
 from app.routes import memories as memory_routes
+from app.routes import vault as vault_routes
 from app.services.memory_provider import Mem0Provider
 from app.services.vault_crypto import decrypt as decrypt_vault_value
 from app.services.vault_crypto import encrypt as encrypt_vault_value
@@ -490,6 +491,75 @@ async def test_hosted_account_memory_and_project_vault_mcp_boundaries(
                 "reference": linked_reference,
                 "value": "runtime-linked-secret",
             }
+
+            monkeypatch.setattr(
+                vault_routes, "decrypt", lambda encrypted_value, _nonce: encrypted_value.decode()
+            )
+            linked_material = {
+                "agent_id": str(env_a.id),
+                "project_id": str(linked_project.id),
+                "vault_id": str(linked_vault.id),
+            }
+            material = _tool_json(
+                await _tool_call(client, 83, "vault_resolve", {"material": linked_material})
+            )
+            assert material["values"] == {"LINKED_TOKEN": "runtime-linked-secret"}
+            assert material["project_id"] == str(linked_project.id)
+            assert material["agent_id"] == str(env_a.id)
+            for name, fields in (
+                ("vault_item_upsert", {"NEW_TOKEN": "must-not-write"}),
+                ("vault_request_create", ["NEW_TOKEN"]),
+            ):
+                rejected = await _tool_call(
+                    client,
+                    84,
+                    name,
+                    {
+                        "project_id": str(linked_project.id),
+                        "vault_id": str(linked_vault.id),
+                        "slug": linked_vault.slug,
+                        "fields": fields,
+                    },
+                )
+                assert rejected["isError"] is True
+
+            runtime_auth = active_auth["value"]
+            active_auth["value"] = AuthContext(
+                user=seed_user,
+                api_key=ApiKey(user_id=seed_user.id, environment_id=env_a.id, scopes=None),
+            )
+            legacy_projects = _tool_json(await _tool_call(client, 85, "project_list"))["projects"]
+            assert [project["id"] for project in legacy_projects] == [str(env_a.default_project_id)]
+            denied = await _tool_call(client, 85, "vault_resolve", {"material": linked_material})
+            assert denied["isError"] is True
+            active_auth["value"] = runtime_auth
+
+            batch = _tool_json(
+                await _tool_call(
+                    client,
+                    86,
+                    "vault_resolve",
+                    {"references": [linked_reference, default_reference]},
+                )
+            )
+            assert batch == {"values": [linked_result, resolved]}
+            for arguments in (
+                {"references": []},
+                {"reference": default_reference, "references": [linked_reference]},
+                {"references": [default_reference] * 101},
+                {"references": [default_reference, default_reference]},
+                {"references": [default_reference, f"{linked_reference}_MISSING"]},
+                {
+                    "references": [
+                        default_reference,
+                        f"clawdi://project/{env_b.default_project_id}/vault/other/field/TOKEN",
+                    ]
+                },
+            ):
+                rejected = await _tool_call(client, 87, "vault_resolve", arguments)
+                assert rejected["isError"] is True
+                assert "runtime-a-default-secret" not in json.dumps(rejected)
+                assert "runtime-linked-secret" not in json.dumps(rejected)
 
             active_auth["value"] = AuthContext(
                 user=seed_user,

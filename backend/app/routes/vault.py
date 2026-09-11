@@ -1,3 +1,4 @@
+import re
 from typing import TypedDict
 from uuid import UUID
 
@@ -47,9 +48,11 @@ from app.schemas.vault import (
     VaultResponse,
     VaultSectionsResponse,
 )
+from app.schemas.vault_requests import VaultMaterializeInput, VaultMaterializeResponse
 from app.services import vault as vault_service
 from app.services.agent_bindings import get_owned_agent_or_404
 from app.services.vault_crypto import decrypt, encrypt
+from app.services.vault_requests import exact_vault_reference
 
 router = APIRouter(prefix="/vault", tags=["vault"])
 VaultItemIndex = dict[tuple[UUID, str, str, str], tuple[Vault, VaultItem]]
@@ -64,6 +67,53 @@ class ProjectPrecedenceEntry(TypedDict):
     display: str
     binding_type: str
     priority: int
+
+
+@router.post("/material")
+async def materialize_vault(
+    body: VaultMaterializeInput,
+    auth: AuthContext = Depends(require_user_cli),
+    db: AsyncSession = Depends(get_session),
+) -> VaultMaterializeResponse:
+    vault = await db.get(Vault, body.vault_id)
+    if vault is None:
+        raise HTTPException(404, "Vault not found")
+    await _get_vault(auth, vault.slug, db, project_id=body.project_id, vault_id=vault.id)
+    rows = (
+        await db.scalars(
+            select(VaultItem)
+            .where(
+                VaultItem.vault_id == vault.id,
+                VaultItem.section == body.section if body.section is not None else true(),
+            )
+            .order_by(VaultItem.section, VaultItem.item_name)
+            .limit(1001)
+        )
+    ).all()
+    if len(rows) > 1000:
+        raise HTTPException(400, "Vault too large; select a section")
+    names = [item.item_name for item in rows]
+    if len(set(names)) != len(names) or any(
+        not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) for name in names
+    ):
+        raise HTTPException(
+            409,
+            "Vault fields must be distinct environment names; select a section or rename fields",
+        )
+    return VaultMaterializeResponse(
+        user_id=auth.user_id,
+        project_id=body.project_id,
+        vault_id=vault.id,
+        section=body.section,
+        item_ids={item.item_name: item.id for item in rows},
+        references={
+            item.item_name: exact_vault_reference(
+                body.project_id, vault.slug, item.section, item.item_name
+            )
+            for item in rows
+        },
+        values={item.item_name: decrypt(item.encrypted_value, item.nonce) for item in rows},
+    )
 
 
 # --- Vault CRUD ---

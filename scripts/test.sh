@@ -12,7 +12,7 @@ if [[ -z "${TEST_RUNNER_IMAGE:-}" ]]; then
 fi
 
 usage() {
-	echo "Usage: scripts/test.sh [all|ci|js|cli|desktop|shared|sidecar|web|backend] [suite args...]"
+	echo "Usage: scripts/test.sh [all|ci|js|cli|desktop|shared|sidecar|web|backend|vault-mcp] [suite args...]"
 }
 
 compose() {
@@ -21,7 +21,7 @@ compose() {
 
 validate_suite() {
 	case "$1" in
-		all|backend|ci|js|cli|desktop|shared|sidecar|web)
+		all|backend|ci|js|cli|desktop|shared|sidecar|web|vault-mcp)
 			;;
 		*)
 			echo "Unknown test suite: $1" >&2
@@ -33,7 +33,7 @@ validate_suite() {
 
 needs_postgres() {
 	case "$1" in
-		all|backend|ci)
+		all|backend|ci|vault-mcp)
 			return 0
 			;;
 		*)
@@ -226,6 +226,19 @@ run_backend() {
 	backend_tests "$@"
 }
 
+run_vault_mcp() {
+	install_js
+	cli_typecheck
+	bun run --cwd packages/runtime-mcp typecheck
+	bun run --cwd packages/runtime-mcp build
+	bun run --cwd packages/runtime-mcp test:internal
+	cli_tests src/lib/vault-env.test.ts src/runtime/hosted-bundled-skill.test.ts src/runtime/builtin-mcp.test.ts src/runtime/runtime-bundle-v2.test.ts tests/native-publication.test.ts
+	install_backend
+	(cd backend && uv run python scripts/check_generated_api.py)
+	export CLAWDI_MCP_TEST_ARTIFACT="$work_dir/packages/runtime-mcp/dist/index.js"
+	backend_tests tests/test_vault_runtime_mcp.py tests/test_vault_requests.py tests/test_mcp_capability_parity.py tests/test_runtime_manifest.py::test_local_vault_capability_keeps_legacy_upgrade_manifest_and_etag_distinct
+}
+
 run_ci() {
 	if [[ $# -gt 0 ]]; then
 		echo "Suite 'ci' does not accept extra arguments" >&2
@@ -292,6 +305,9 @@ run_in_container() {
 			;;
 		web)
 			run_web "$@"
+			;;
+		vault-mcp)
+			run_vault_mcp
 			;;
 		backend)
 			run_backend "$@"

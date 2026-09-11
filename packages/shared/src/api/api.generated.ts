@@ -2663,6 +2663,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/vault/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Requests */
+        get: operations["list_requests_v1_vault_requests_get"];
+        put?: never;
+        /** Create Request */
+        post: operations["create_request_v1_vault_requests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/vault/requests/inspect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Inspect Request */
+        post: operations["inspect_request_v1_vault_requests_inspect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/vault/requests/supply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Supply Request */
+        post: operations["supply_request_v1_vault_requests_supply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/vault/requests/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Request */
+        get: operations["get_request_v1_vault_requests__request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/vault/material": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Materialize Vault */
+        post: operations["materialize_vault_v1_vault_material_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/vault": {
         parameters: {
             query?: never;
@@ -6741,6 +6827,8 @@ export interface components {
         };
         /** HostedRuntimePlatformMcpServer */
         HostedRuntimePlatformMcpServer: {
+            /** Localvault */
+            localVault?: 1 | null;
             /**
              * Platform
              * @constant
@@ -6772,6 +6860,8 @@ export interface components {
         };
         /** HostedRuntimeRemoteMcpServer */
         HostedRuntimeRemoteMcpServer: {
+            /** Localvault */
+            localVault?: 1 | null;
             /** Url */
             url: string;
             /**
@@ -9741,6 +9831,53 @@ export interface components {
             /** Fields */
             fields: number;
         };
+        /** VaultMaterializeInput */
+        VaultMaterializeInput: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /**
+             * Vault Id
+             * Format: uuid
+             */
+            vault_id: string;
+            /** Section */
+            section?: string | null;
+        };
+        /** VaultMaterializeResponse */
+        VaultMaterializeResponse: {
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /**
+             * Vault Id
+             * Format: uuid
+             */
+            vault_id: string;
+            /** Section */
+            section: string | null;
+            /** Item Ids */
+            item_ids: {
+                [key: string]: string;
+            };
+            /** References */
+            references: {
+                [key: string]: string;
+            };
+            /** Values */
+            values: {
+                [key: string]: string;
+            };
+        };
         /** VaultReferenceResolveInput */
         VaultReferenceResolveInput: {
             /** Reference */
@@ -9791,6 +9928,141 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /** VaultSecretRequestCreate */
+        VaultSecretRequestCreate: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /**
+             * Vault Id
+             * Format: uuid
+             */
+            vault_id: string;
+            /** Slug */
+            slug: string;
+            /**
+             * Section
+             * @default
+             */
+            section: string;
+            /** Fields */
+            fields: string[];
+            /**
+             * Expires In Seconds
+             * @default 3600
+             */
+            expires_in_seconds: number;
+        };
+        /** VaultSecretRequestCreated */
+        VaultSecretRequestCreated: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Vault Id
+             * Format: uuid
+             */
+            vault_id: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Vault Name */
+            vault_name: string;
+            /** Project Name */
+            project_name: string;
+            /** Slug */
+            slug: string;
+            /** Section */
+            section: string;
+            /** Fields */
+            fields: string[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "supplied" | "expired" | "conflict";
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Supplied At */
+            supplied_at: string | null;
+            /** References */
+            references: {
+                [key: string]: string;
+            };
+            /** Local Command */
+            local_command: string;
+            /** Url */
+            url: string;
+        };
+        /** VaultSecretRequestStatus */
+        VaultSecretRequestStatus: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Vault Id
+             * Format: uuid
+             */
+            vault_id: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Vault Name */
+            vault_name: string;
+            /** Project Name */
+            project_name: string;
+            /** Slug */
+            slug: string;
+            /** Section */
+            section: string;
+            /** Fields */
+            fields: string[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "supplied" | "expired" | "conflict";
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Supplied At */
+            supplied_at: string | null;
+            /** References */
+            references: {
+                [key: string]: string;
+            };
+            /** Local Command */
+            local_command: string;
+        };
+        /** VaultSecretRequestSupply */
+        VaultSecretRequestSupply: {
+            /** Token */
+            token: string;
+            /** Fields */
+            fields: {
+                [key: string]: string;
+            };
+        };
+        /** VaultSecretRequestToken */
+        VaultSecretRequestToken: {
+            /** Token */
+            token: string;
         };
         /** VaultSectionsResponse */
         VaultSectionsResponse: {
@@ -15265,6 +15537,203 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentSkillReferenceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_requests_v1_vault_requests_get: {
+        parameters: {
+            query: {
+                slug: string;
+                vault_id: string;
+                project_id?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultSecretRequestStatus"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_request_v1_vault_requests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VaultSecretRequestCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultSecretRequestCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    inspect_request_v1_vault_requests_inspect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VaultSecretRequestToken"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultSecretRequestStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    supply_request_v1_vault_requests_supply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VaultSecretRequestSupply"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultSecretRequestStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_request_v1_vault_requests__request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultSecretRequestStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    materialize_vault_v1_vault_material_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VaultMaterializeInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultMaterializeResponse"];
                 };
             };
             /** @description Validation Error */

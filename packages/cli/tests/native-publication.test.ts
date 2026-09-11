@@ -19,6 +19,7 @@ function payload(): string {
 		"egress-addon/clawdi_egress_addon.py",
 		"skills/clawdi/SKILL.md",
 		"skills/hosted-versions/1/clawdi/SKILL.md",
+		"skills/hosted-versions/2/clawdi/SKILL.md",
 		"skills/future-skill/SKILL.md",
 	]) {
 		mkdirSync(dirname(join(root, path)), { recursive: true });

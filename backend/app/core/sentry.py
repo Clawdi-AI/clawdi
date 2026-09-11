@@ -60,6 +60,8 @@ def init_sentry() -> None:
         release=settings.sentry_release or None,
         traces_sample_rate=settings.sentry_traces_sample_rate,
         send_default_pii=False,
+        max_request_body_size="never",
+        include_local_variables=False,
         integrations=[
             FastApiIntegration(),
             StarletteIntegration(),

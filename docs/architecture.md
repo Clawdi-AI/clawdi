@@ -512,11 +512,27 @@ tokens and bridge credentials out of the agent process.
 
 `vault_list` and `vault_get` select only attachment metadata and field names;
 they never select or decrypt `encrypted_value`, `nonce`, or credential payloads.
-`vault_resolve` requires `vault:read`, accepts one exact Project-scoped
-reference, and returns its decrypted value. Returned references use the exact canonical forms
+The Cloud/legacy HTTP `vault_resolve` contract requires `vault:read`. Supply
+`reference` for the compatible single `{reference, value}` response, or `references` (1–100 distinct exact
+references) for `{values: [{reference, value}, ...]}` in input order. Batch
+resolution authorizes every Project before reading secret rows and fails
+entirely if any reference is missing or inaccessible. This supports authorized
+MCP batch reads without a CLI. The alternative `material` input takes `agent_id`,
+`project_id`, `vault_id`, and optional `section`, returning authenticated source identity
+and whole-Vault environment data only to a key bound to that Agent.
+
+`packages/runtime-mcp` provides a separate tenant stdio entrypoint. It forwards remote
+tools except `vault_resolve`, which it hides and rejects for direct agent calls.
+It implements `vault_sync` (required agent-chosen `path` on every call) through the shared env library,
+using authorized Cloud material reads internally. Cloud never writes runtime files;
+the local process writes inside its explicit workspace.
+See [standalone MCP](../packages/runtime-mcp/README.md) for limits and verification.
+Returned references use the exact canonical forms
 `clawdi://project/<project-id>/vault/<vault>/field/<field>` and
 `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`.
-Environment-bound callers see only attachments in their bound Agent Project.
+Strict-v2 runtime keys can read attachments in their own Workspace and explicitly linked
+Projects still readable by the owner; legacy Agent-bound keys see only their bound Project.
+`project_current_get` returns that Workspace, not the full readable set.
 
 `vault_create`, `vault_item_upsert`, and `vault_item_delete` require `vault:write`.
 Every write takes an explicit owner Project; item writes also require an exact
@@ -524,7 +540,8 @@ Vault UUID and canonical slug attached to that Project. Environment-bound keys
 may target only their bound Project. Responses contain identifiers and counts,
 never plaintext values. Agent MCP deletion has no global-confirmation switch,
 so a Vault attached to multiple Projects is rejected. Attachment changes,
-credential profiles, bulk import, and whole-Vault deletion are not exposed.
+credential profiles and whole-Vault deletion are not exposed. Explicit field maps can
+be imported with the existing batch upsert tool.
 
 The safe MCP inventory API may contain only explicit user declarations whose
 provenance is supported by a user management contract. This release has no such
