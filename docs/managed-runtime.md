@@ -1410,16 +1410,24 @@ authentication. Other command, JSON, and handoff errors fail closed with no
 bare-URL fallback. Clawdi implements no parallel device-auth or device-approval
 protocol.
 
-OpenClaw persists the issued device credential in its own browser origin and
-may reuse it when the embedded UI revisits the clean dashboard URL. Clawdi
-records a versioned, non-secret native-handoff-loaded marker only after the
-native handoff document triggers the iframe load event, allowing later Console
-mounts to use the clean endpoint.
+OpenClaw persists the issued device credential in its own browser origin.
+Entering a ready OpenClaw agent mounts its official Control UI in the persistent
+agent layout and starts the native handoff in the background. Other sections
+hide the surface and make it inert; opening Console reveals the same iframe,
+document, and connection without changing its launch URL or requesting access
+again. Initial deployment readiness uses the same automatic path.
+Before credentials are established, a new resource version permits one background
+attempt after any pending request settles; unchanged versions do not retry
+automatically. An established iframe survives resource-version-only changes.
+Leaving the agent, losing/changing the auth identity, losing readiness, or
+changing the generation or endpoint retires the iframe. No parent-origin load
+marker or bootstrap-expiry cache is used.
 New-window access stays disabled until the current iframe loads; it then opens
 the clean endpoint for native access or the exact reusable legacy `#token=` URL.
-It never requests another handoff. `Reconnect` clears the marker and requests a
-fresh iframe handoff. The load event is only a browser boundary; Clawdi cannot
-inspect OpenClaw's cross-origin authentication state.
+It never requests another handoff. `Reconnect` intentionally replaces the iframe
+with one fresh handoff. The load event is only a document boundary, not evidence
+of authentication success; OpenClaw owns authentication and its rendered errors.
+Hermes remains on demand, including its dashboard credentials.
 
 Hermes direct exposure requires `hermes-basic-auth-v1`, a stable HTTPS public
 URL (including any path prefix), exact `0.0.0.0:9119` service args, and the

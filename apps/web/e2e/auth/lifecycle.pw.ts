@@ -329,3 +329,100 @@ test("signed-out public invitations remain anonymous", async ({ page }) => {
 	await expect(page.getByText("Sign in to accept", { exact: true })).toBeVisible();
 	await expect(page.getByText("Shared project", { exact: true })).toBeVisible();
 });
+
+test("OpenClaw retires late auth credentials and retains its hidden surface during pending navigation", async ({
+	page,
+	context,
+}) => {
+	test.skip(process.env.VITE_CLAWDI_HOSTED !== "true", "Hosted agent lifecycle");
+	test.setTimeout(90_000);
+	const { includedBasicDeployment, mutationDeploymentReadFixture, stubHostedApi } = await import(
+		"../hosted-stub-api"
+	);
+	const deployment = mutationDeploymentReadFixture({
+		...includedBasicDeployment,
+		config_info: { ...includedBasicDeployment.config_info, runtime: "openclaw" },
+		openclaw_control_ui_url: "https://runtime.example/",
+	});
+	const requests: string[] = [];
+	let documents = 0;
+	let release = () => {};
+	const oldResponse = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await stubHostedApi(page, { deployments: [deployment] });
+	await page.route(
+		"http://127.0.0.1:50021/v2/deployments/*/runtime-ui/credentials",
+		async (route) => {
+			requests.push(route.request().headers().authorization ?? "missing");
+			const attempt = requests.length;
+			if (attempt === 1) await oldResponse;
+			await route.fulfill({
+				json: {
+					runtime: "openclaw",
+					auth_mode: "openclaw_token",
+					url: "https://runtime.example/",
+					deployment_resource_version: deployment.resource.metadata.resourceVersion,
+					token: "fixture-token",
+					handoff_url: `https://runtime.example/#bootstrapToken=session-${attempt}&bootstrapProfile=owner`,
+				},
+			});
+		},
+	);
+	await context.route("https://runtime.example/**", (route) => {
+		documents += 1;
+		return route.fulfill({
+			contentType: "text/html",
+			body: "<!doctype html><p>Native authentication error</p>",
+		});
+	});
+	try {
+		await page.goto("/e2e/auth/");
+		await page.evaluate(async (id) => {
+			window.authTest.emitSdk({ isLoaded: false });
+			await window.authTest.navigate(`/agents/${id}`);
+		}, deployment.agent_id);
+		const iframe = page.locator('iframe[title="OpenClaw Control UI"]');
+		await expect(iframe).toHaveCount(0);
+		expect(requests).toEqual([]);
+		await page.evaluate(() => window.authTest.emitSdk({ isLoaded: true }));
+		await expect.poll(() => requests.length).toBe(1);
+		await page.evaluate(() =>
+			window.authTest.emitSdk({ userId: "user-b", sessionId: "session-b" }),
+		);
+		await expect.poll(() => requests.length).toBe(2);
+		release();
+		await expect(iframe).toHaveAttribute(
+			"src",
+			"https://runtime.example/#bootstrapToken=session-2&bootstrapProfile=owner",
+		);
+		await expect.poll(() => documents).toBe(1);
+		await expect(iframe).toBeHidden();
+		const original = await iframe.elementHandle();
+		await page.evaluate((id) => {
+			window.authTest.holdConsole();
+			void window.authTest.navigate(`/agents/${id}/console`);
+		}, deployment.agent_id);
+		await expect.poll(() => page.evaluate(() => window.authTest.navigationPending)).toBe(true);
+		await expect(iframe).toBeHidden();
+		await page.evaluate(() => window.authTest.releasePreload());
+		await expect(iframe).toBeVisible();
+		await expect(
+			page
+				.frameLocator('iframe[title="OpenClaw Control UI"]')
+				.getByText("Native authentication error"),
+		).toBeVisible();
+		expect(await original?.evaluate((element) => element.isConnected)).toBe(true);
+		expect(documents).toBe(1);
+		expect(requests).toEqual(["Bearer user-a:session-a", "Bearer user-b:session-b"]);
+		await page.evaluate(() => window.authTest.emitSdk({ sessionId: "session-c" }));
+		await expect.poll(() => requests.length).toBe(3);
+		await expect.poll(() => documents).toBe(2);
+		expect(await original?.evaluate((element) => element.isConnected)).toBe(false);
+		await page.evaluate(() => window.authTest.emitSdk({ userId: null, sessionId: null }));
+		await expect(iframe).toHaveCount(0);
+		await original?.dispose();
+	} finally {
+		release();
+	}
+});
