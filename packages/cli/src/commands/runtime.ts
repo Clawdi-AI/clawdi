@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import chalk from "chalk";
 import { getCliVersion } from "../lib/version";
 import {
@@ -38,6 +39,7 @@ import {
 	readHostedAgentPluginReceipt,
 } from "../runtime/hosted-agent-plugin-package";
 import type { HostedAgentPluginCommandRunner } from "../runtime/hosted-agent-plugin-runtime";
+import { resolveHostedOpenClawWorkspace } from "../runtime/hosted-openclaw-context";
 import {
 	assertHostedRuntimeContract,
 	type HostedRuntimeContractOptions,
@@ -56,6 +58,7 @@ import {
 	type RuntimeResourcePreparationFailures,
 	runtimeRecoverableSecretValues,
 } from "../runtime/manifest";
+import { runtimeWorkspaceRoot } from "../runtime/manifest-planning";
 import {
 	hostedRuntimeBundleV2Schema,
 	loadCommittedRuntimeManifest,
@@ -80,6 +83,7 @@ import {
 	readSystemdUnitSnapshot,
 	withoutStaleSystemdUnits,
 } from "../runtime/systemd-transaction";
+import { syncRuntimeVaultFiles } from "../runtime/vault-files";
 import { toErrorMessage } from "../serve/log";
 import { consumeSse } from "../serve/sse-client";
 
@@ -467,16 +471,35 @@ function ensureRuntimeWatchNotificationSubscription(
 		task: Promise.resolve(),
 		settled: false,
 	};
+	let lastVaultWakeAt = 0;
+	let vaultWakeTimer: ReturnType<typeof setTimeout> | null = null;
+	const wakeVaults = () => {
+		vaultWakeTimer = null;
+		lastVaultWakeAt = Date.now();
+		wakeSignal.signal();
+	};
+	abort.signal.addEventListener(
+		"abort",
+		() => {
+			if (vaultWakeTimer) clearTimeout(vaultWakeTimer);
+		},
+		{ once: true },
+	);
 	subscription.task = consumer({
 		apiUrl: config.apiUrl,
 		apiKey: config.apiKey,
 		abort: abort.signal,
 		onEvent: (event) => {
 			if (
-				event.type === "runtime_manifest_changed" &&
+				(event.type === "runtime_manifest_changed" || event.type === "runtime_vaults_changed") &&
 				event.environment_id === config.environmentId
 			) {
-				wakeSignal.signal();
+				if (event.type === "runtime_manifest_changed") wakeSignal.signal();
+				else if (vaultWakeTimer === null) {
+					const delay = Math.max(0, 250 - (Date.now() - lastVaultWakeAt));
+					if (delay === 0) wakeVaults();
+					else vaultWakeTimer = setTimeout(wakeVaults, delay);
+				}
 			}
 		},
 		// Runtime-watch keeps ETag polling alive after auth failure. The settled
@@ -1497,6 +1520,8 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 	const intervalMs = parsePositiveMs(opts.intervalMs, RUNTIME_WATCH_INTERVAL_MS, "--interval-ms");
 	const selfHealMs = parsePositiveMs(opts.selfHealMs, RUNTIME_WATCH_SELF_HEAL_MS, "--self-heal-ms");
 	let nextCliInstallRetryAt = 0;
+	let vaultRetryAt = 0;
+	let vaultBackoffMs = 0;
 	let failureBackoff: RuntimeWatchFailureBackoff | null = null;
 	const wakeSignal = createRuntimeWatchWakeSignal();
 	let notificationSubscription: RuntimeWatchNotificationSubscription | null = null;
@@ -1568,6 +1593,35 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 			} catch (error) {
 				const message = toErrorMessage(error);
 				event = runtimeWatchError("watch", [message]);
+			}
+			if (!event?.selfReexec && Date.now() >= vaultRetryAt) {
+				try {
+					const config = readRuntimeWatchNotificationConfig(paths);
+					if (config) {
+						const bundle = hostedRuntimeBundleV2Schema.parse(
+							JSON.parse(readFileSync(paths.manifestLastGood, "utf8")),
+						);
+						const workspace = bundle.manifest.runtimes.openclaw?.enabled
+							? resolveHostedOpenClawWorkspace(paths.userHome)
+							: runtimeWorkspaceRoot(bundle.manifest, paths);
+						await syncRuntimeVaultFiles({
+							...config,
+							agentId: config.environmentId,
+							home: paths.userHome,
+							workspace,
+							paths,
+							receiptPath: join(paths.serviceStateRoot, "vault-files.json"),
+						});
+					}
+					vaultBackoffMs = 0;
+					vaultRetryAt = 0;
+				} catch {
+					vaultBackoffMs = nextBoundedBackoffMs(vaultBackoffMs);
+					vaultRetryAt = Date.now() + vaultBackoffMs;
+					console.error(
+						"Runtime Vault file sync deferred; retrying without restarting native agents.",
+					);
+				}
 			}
 			if (event !== null) {
 				const cliUpdateStatus = event.cliUpdate?.status;

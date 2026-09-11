@@ -109,30 +109,26 @@ inspect the Vault and request only still-missing fields; never replace an existi
 retry. If creation times out, use `vault_get` to find recent request IDs before retrying.
 If submission times out, inspect status before repeating a mutation.
 
-### Save and refresh credentials locally
+### Use runtime-supplied credentials
 
-For authorized credential use, confirm any user-supplied request is `supplied` with
-`vault_request_status`. Resolve exact reference(s) through cloud `vault_resolve`, then save
-with the agent's already available native file/execution tools. Choose a target from project
-conventions and purpose (for example `.env.stripe`) without routine filename approval.
-Check that it is Git-ignored and untracked, with no symlinks in the target or parent path.
-No CLI installation or dependency is needed; if available tools cannot save safely,
-report the specific missing capability.
+Clawdi runtime synchronizes readable Vaults from your own Workspace and explicitly linked,
+still-readable Projects into `.secrets/` beneath your native workspace. Inspect only
+`.secrets/index.json` for Vault IDs, section names, exact references, field names and files.
+Each section has a separate JSON file; equal field names in different sections stay separate.
+Select by the user's intended Vault and section, never by an ambiguous field name alone.
 
-Preserve unrelated variables and quote dotenv values literally, without shell interpolation.
-Use restrictive `0600` permissions or equivalent where supported. Values pass through agent
-tool context; use internal file access as needed, but never print or echo secrets into chat,
-Memory, logs, or user-facing messages. Claim saved only after the file operation succeeds;
-verify file metadata and expected key names without dumping values. Report only the path,
-field names/count, and save status, then continue the task.
+Load the selected JSON file inside the authorized process or SDK without printing values.
+For example, Python can use `json.load(open(path))` and pass the selected key directly to
+its SDK. Do not read plaintext into model/tool-result context merely to save or copy it.
+Do not invoke or install the Clawdi CLI from the tenant. Runtime owns these generated files:
+do not edit, chmod, move, commit, or create your own files in `.secrets/`.
 
-For reuse, retain only nonsecret Project/Vault IDs and reference-to-filename/variable mappings
-in existing project conventions or context. When refresh is requested or needed, re-read Vault
-and update only selected assignments with native tools. A mapping alone cannot distinguish
-cloud rotation from local edits: without a reliable last-written baseline, preserve differing
-existing values or obtain explicit overwrite authorization. Known local edits or source
-ambiguity require clarification or a separate file. Never keep plaintext baselines in Memory,
-force overwrite, delete assignments automatically, or imply background/bidirectional sync.
+After a credential request is supplied, inspect index metadata for the requested fields.
+Pending requests are metadata only, never empty pseudo-secrets. If delivery is delayed,
+report that state without claiming the credentials are saved. Runtime refreshes files;
+already-running processes must explicitly reload them. Offline delivery retains last good
+files; confirmed access removal removes generated files. Authorized code can read these
+files, so do not claim that subsequent plaintext exposure is impossible.
 
 ## Connector Routing
 

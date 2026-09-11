@@ -12,7 +12,7 @@ if [[ -z "${TEST_RUNNER_IMAGE:-}" ]]; then
 fi
 
 usage() {
-	echo "Usage: scripts/test.sh [all|ci|js|cli|desktop|shared|sidecar|web|backend] [suite args...]"
+	echo "Usage: scripts/test.sh [all|ci|js|cli|desktop|shared|sidecar|web|backend|runtime-vaults] [suite args...]"
 }
 
 compose() {
@@ -21,7 +21,7 @@ compose() {
 
 validate_suite() {
 	case "$1" in
-		all|backend|ci|js|cli|desktop|shared|sidecar|web)
+		all|backend|ci|js|cli|desktop|shared|sidecar|web|runtime-vaults)
 			;;
 		*)
 			echo "Unknown test suite: $1" >&2
@@ -33,7 +33,7 @@ validate_suite() {
 
 needs_postgres() {
 	case "$1" in
-		all|backend|ci)
+		all|backend|ci|runtime-vaults)
 			return 0
 			;;
 		*)
@@ -221,6 +221,14 @@ run_web() {
 	web_build
 }
 
+run_runtime_vaults() {
+	install_js
+	cli_typecheck
+	cli_tests src/runtime/vault-files.test.ts src/runtime/hosted-bundled-skill.test.ts src/serve/sse-client.test.ts
+	install_backend
+	backend_tests -s tests/test_runtime_vaults.py tests/test_vault_requests.py tests/test_vault.py "$@"
+}
+
 run_backend() {
 	install_backend
 	backend_tests "$@"
@@ -292,6 +300,9 @@ run_in_container() {
 			;;
 		web)
 			run_web "$@"
+			;;
+		runtime-vaults)
+			run_runtime_vaults "$@"
 			;;
 		backend)
 			run_backend "$@"

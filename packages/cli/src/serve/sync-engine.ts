@@ -805,6 +805,7 @@ async function prepareSkillSync(
 	// in this filesystem, so an SSE change/delete must never write or remove a
 	// local target. Re-scan the key and project the latest local state instead.
 	const onServerEvent = async (event: ServerEvent) => {
+		if (event.type === "runtime_vaults_changed") return;
 		if (event.type === "runtime_manifest_changed") {
 			if (event.environment_id !== opts.environmentId || !connectedProjectSkillDelivery) return;
 			try {

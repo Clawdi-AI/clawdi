@@ -471,6 +471,12 @@ connector-provided names remain unchanged. Native tools cover Memory
 search/list/create/exact update/delete, Session search/list/get,
 read-only Project metadata, Vault metadata/references, explicit single-reference
 Vault plaintext resolution and narrow Vault writes.
+Managed runtime Vault delivery is independent of MCP tool results. The existing watch
+loop fetches an Agent-authorized metadata inventory and batches only changed Vault values
+into tenant-owned `.secrets/` section files. SSE and fallback reuse the existing watcher;
+ordinary manifest 304 responses do not suppress delivery. See
+[Runtime Vault files](managed-runtime.md#runtime-vault-files) for authority and cleanup.
+
 Tools requiring unavailable scopes are omitted from `tools/list`, while direct
 calls still fail the scope check. Connector names can never shadow a declared
 native tool, including one hidden by scope.

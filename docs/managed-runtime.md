@@ -2014,3 +2014,57 @@ Primary implementation files:
 | CLI update policy | `packages/cli/src/runtime/cli-update.ts` |
 | Dashboard terminal | `apps/web/src/hosted/agents/hosted-terminal-panel.tsx` |
 | Dashboard hosted detail page | `apps/web/src/hosted/agents/hosted-agent-detail.tsx` |
+
+## Runtime Vault files
+
+The existing runtime watch delivers a complete authenticated `GET /v1/runtime/vaults`
+metadata snapshot independently of manifest convergence, including manifest 304 passes. This adds
+one conditional request per watch pass, using the same SSE connection and jittered
+7.5–22.5 second fallback. `runtime_vaults_changed` is an Agent-scoped commit notification;
+older clients ignore it. Changed inventories use one additional `POST /v1/runtime/vaults/material` batch request,
+fenced to the metadata ETag. Only Vaults whose per-Vault revision changed are read/decrypted;
+unchanged files and metadata are retained from the private receipt. A concurrent graph
+change returns 409 and retries on the next watch pass, never applying mixed inventories.
+Value writes increment only the affected Vault revision and queue
+signals without rendering consumer manifests. Commit delivery batches PostgreSQL
+notifications into one SQL round trip rather than one query per receiving Agent;
+Vault SSE bursts coalesce to at most four wakeups per second. Project binding/removal signals continue
+through existing manifest notifications. The snapshot rechecks current permissions every
+request and hashes Vault metadata/revisions; unchanged snapshots do not query/decrypt
+items or download/rewrite plaintext. Changed snapshots batch-read at most 10,000 fields
+and 8 MiB ciphertext; over-limit/error responses are never interpreted as empty inventories.
+
+Only the bound Agent's private Workspace and explicitly linked, readable user Projects
+contribute Vaults. Vault IDs deduplicate multiple attachments. Each Vault/section gets a
+JSON object preserving exact field names; section identity is SHA-256 of its name because
+the database has no section ID. Renaming a section replaces its file. `index.json` contains
+only IDs, names, references and filenames; invalid environment names are marked with a
+null `env_name`, not normalized into colliding names. Pending supply requests are not items.
+
+The native workspace's `.secrets` directory is 0700 and its files 0600, owned by the runtime
+user. Runtime pins directory ancestors without following symlinks and performs tenant IO
+with tenant filesystem credentials. A private platform receipt binds generated directory
+identity and filenames; existing unrelated directories, symlinks, hardlinks, tracked targets,
+and unsafe permissions fail closed. Native workspaces must be beneath the runtime home;
+changing the recorded workspace/directory identity requires operator reconciliation. Writes are atomic per file, not a multi-file transaction.
+The receipt reserves filenames before writes so interrupted delivery can catch up safely.
+No values enter manifest caches, receipts, index metadata, logs or synchronization tool results.
+Authorized tenant programs can still read the files; they must reload already-loaded keys.
+
+Offline/timeouts/5xx preserve last good files. A complete authenticated metadata inventory
+removes revoked/detached Vault files even if subsequent changed-value delivery fails. An
+explicit API 401/403 removes only receipt-owned files
+(fail closed, including expired credentials); 404 during a server-first rollout preserves
+last good files and retries. Filesystem conflicts defer cleanup and are reported without
+secret values. Sync failures back off from one to five minutes independently of native
+agent installation/restarts. Deploy the additive backend/migration before the updated CLI.
+
+Done: `bash scripts/test.sh runtime-vaults` passes in the bounded Docker runner.
+Its real HTTP/PostgreSQL fixture exercises runtime watch with manifest 304 responses,
+real SSE and disabled-SSE fallback; native installations/systemd are fixtures.
+Timing and SQL counts are printed for those isolated parameters, not a production SLA.
+On 2026-09-11, one Agent/one Vault/one field in the 3-CPU runner measured 260 ms with SSE
+(15-second fallback configured), and 344 ms with SSE disabled and a 200 ms test fallback.
+Five metadata requests executed 20 SQL statements; three material requests executed 15;
+two saves executed 21. Counts include authentication and permission checks. Native service
+operations were fixtures; no production change latency or high-fanout throughput was measured.

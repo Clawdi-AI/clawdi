@@ -61,7 +61,10 @@ import {
 	hostedManifestEgressProfiles,
 	managedMcpHeaderPlaceholder,
 } from "../src/runtime/hosted-egress-profiles";
-import { createOpenClawHostedContext } from "../src/runtime/hosted-openclaw-context";
+import {
+	createOpenClawHostedContext,
+	resolveHostedOpenClawWorkspace,
+} from "../src/runtime/hosted-openclaw-context";
 import { hostedAiProviderCatalog } from "../src/runtime/hosted-provider-resolution";
 import { MANAGED_BAILEYS_STATIC_PATCH_TARGETS } from "../src/runtime/managed-baileys-compat";
 import {
@@ -6296,6 +6299,7 @@ cp '${sdkSource}' '${sdkTarget}'
 
 			expect(captured.map((request) => request.headers["if-none-match"] ?? null)).toEqual([
 				testBundleEtag("manifest-locale-1"),
+				null, // Independent Vault metadata check.
 				badEtag,
 				badEtag,
 			]);
@@ -6359,7 +6363,10 @@ cp '${sdkSource}' '${sdkTarget}'
 			});
 
 			expect(subscriptionCalls).toBe(2);
-			expect(captured).toHaveLength(1);
+			expect(captured.map((request) => request.path)).toEqual([
+				"/v1/runtime/manifest",
+				"/v1/runtime/vaults",
+			]);
 			expect(logs).toHaveLength(1);
 			const originalError = JSON.parse(logs[0]);
 			expect(originalError).toMatchObject({ status: "error", stage: "network" });
@@ -6534,7 +6541,8 @@ exit 64
 			if (process.exitCode !== undefined && process.exitCode !== 0) {
 				throw new Error(logs.join("\n"));
 			}
-			expect(captured).toHaveLength(2);
+			expect(captured).toHaveLength(3);
+			expect(captured.at(-1)?.path).toBe("/v1/runtime/vaults");
 			expect(captured[0].headers.authorization).toBe("Bearer file-runtime-token");
 			expect(captured[0].headers.accept).toBe(HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE);
 			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
@@ -6759,6 +6767,8 @@ exit 64
 				},
 			},
 		]);
+		const manifestRequests = () =>
+			watchFetch.captured.filter((request) => request.path !== "/v1/runtime/vaults");
 
 		try {
 			await runtimeWatch({ once: true, json: true });
@@ -6776,14 +6786,14 @@ exit 64
 			);
 			const initialDaemonUnit = readSystemdSystemUnit(paths, "clawdi-daemon");
 			const initialDaemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
-			const requestsBeforeMatchingTuple = watchFetch.captured.length;
+			const requestsBeforeMatchingTuple = manifestRequests().length;
 			writeFileSync(systemctlLog, "");
 			process.exitCode = undefined;
 			await runtimeWatch({ once: true, json: true });
 
 			expect(process.exitCode ?? 0).toBe(0);
-			expect(watchFetch.captured.slice(requestsBeforeMatchingTuple)).toHaveLength(1);
-			expect(watchFetch.captured.at(-1)?.headers["if-none-match"]).toBe(manifestEtag);
+			expect(manifestRequests().slice(requestsBeforeMatchingTuple)).toHaveLength(1);
+			expect(manifestRequests().at(-1)?.headers["if-none-match"]).toBe(manifestEtag);
 			expect(JSON.parse(logs.at(-1) ?? "{}").status).toBe("not_modified");
 			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
 
@@ -6796,15 +6806,15 @@ exit 64
 				},
 				CANONICAL_TEST_CONTEXT,
 			);
-			const requestsBeforeTupleRefresh = watchFetch.captured.length;
+			const requestsBeforeTupleRefresh = manifestRequests().length;
 			writeFileSync(systemctlLog, "");
 			process.exitCode = undefined;
 			await runtimeWatch({ once: true, json: true });
 
 			expect(process.exitCode ?? 0).toBe(0);
-			expect(watchFetch.captured.slice(requestsBeforeTupleRefresh)).toHaveLength(2);
+			expect(manifestRequests().slice(requestsBeforeTupleRefresh)).toHaveLength(2);
 			expect(
-				watchFetch.captured
+				manifestRequests()
 					.slice(requestsBeforeTupleRefresh)
 					.map((request) => request.headers["if-none-match"] ?? null),
 			).toEqual([manifestEtag, null]);
@@ -6894,7 +6904,7 @@ exit 64
 				applyReceiptId: "apply-receipt-generation-0031",
 				bootNonce: "boot-nonce-generation-0001",
 			});
-			expect(watchFetch.captured).toHaveLength(10);
+			expect(manifestRequests()).toHaveLength(10);
 			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
 				"--user restart openclaw-gateway.service",
 			);
@@ -6930,7 +6940,7 @@ exit 64
 			const rotatedDaemonActivation = rotatedAppliedState?.activated["clawdi-daemon.service"];
 			expect(rotatedDaemonActivation).toMatch(/^[a-f0-9]{64}$/);
 			expect(rotatedDaemonActivation).not.toBe(initialDaemonActivation);
-			expect(watchFetch.captured.at(-1)?.headers.authorization).toBe("Bearer file-runtime-token");
+			expect(manifestRequests().at(-1)?.headers.authorization).toBe("Bearer file-runtime-token");
 			expect(readFileSync(join(run, "secrets", "auth-token"), "utf-8")).toBe(
 				"rotated-runtime-auth-token\n",
 			);
@@ -7245,7 +7255,10 @@ exit 64
 			if (process.exitCode !== undefined && process.exitCode !== 0) {
 				throw new Error(logs.join("\n"));
 			}
-			expect(watchFetch.captured.map((request) => request.path)).toEqual(["/v1/runtime/manifest"]);
+			expect(watchFetch.captured.map((request) => request.path)).toEqual([
+				"/v1/runtime/manifest",
+				"/v1/runtime/vaults",
+			]);
 			expect(watchFetch.captured[0].headers["if-none-match"]).toBe(stableBundleEtag);
 			const event = JSON.parse(logs[0]);
 			expect(event.status).toBe("not_modified");
@@ -8094,6 +8107,8 @@ chmod +x "$prefix/bin/clawdi"
 				},
 			},
 		]);
+		const manifestRequests = () =>
+			captured.filter((request) => request.path !== "/v1/runtime/vaults");
 
 		try {
 			await runtimeWatch({ once: true, json: true });
@@ -8141,7 +8156,7 @@ chmod +x "$prefix/bin/clawdi"
 				throw new Error(logs.join("\n"));
 			}
 			expect(process.exitCode ?? 0).toBe(0);
-			expect(captured).toHaveLength(2);
+			expect(manifestRequests()).toHaveLength(2);
 			const active = paths.cliManagedBin;
 			const sharedPrefixTarget = join(paths.cliNpmPrefix, "bin", "clawdi");
 			const activeTarget = readlinkSync(active);
@@ -8186,7 +8201,7 @@ chmod +x "$prefix/bin/clawdi"
 			await runtimeWatch({ once: true, json: true });
 
 			expect(process.exitCode ?? 0).toBe(0);
-			expect(captured).toHaveLength(3);
+			expect(manifestRequests()).toHaveLength(3);
 			const completedEvent = JSON.parse(logs[0]);
 			expect(completedEvent.status).toBe("applied");
 			expect(completedEvent.selfReexec).toBe(false);
@@ -8239,7 +8254,7 @@ chmod +x "$prefix/bin/clawdi"
 			await runtimeWatch({ once: true, json: true });
 
 			expect(process.exitCode ?? 0).toBe(0);
-			expect(captured).toHaveLength(4);
+			expect(manifestRequests()).toHaveLength(4);
 			expect(JSON.parse(logs[0]).systemdApply).toEqual({
 				applied: true,
 				systemUnitsChanged: ["clawdi-daemon.service"],
@@ -8261,7 +8276,7 @@ chmod +x "$prefix/bin/clawdi"
 			await runtimeWatch({ once: true, json: true });
 
 			expect(process.exitCode ?? 0).toBe(0);
-			expect(captured).toHaveLength(5);
+			expect(manifestRequests()).toHaveLength(5);
 			expect(JSON.parse(logs[0])).toMatchObject({ status: "not_modified" });
 			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
 			expect(readFileSync(paths.appliedState, "utf-8")).toBe(committedAfterRetry);
@@ -12276,3 +12291,143 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(loaded.errors.join("\n")).toContain("pathPrefix must start with /");
 	});
 });
+
+it.skipIf(!process.env.CLAWDI_VAULT_FIXTURE_URL)(
+	"runtime Vault delivery over PostgreSQL HTTP with SSE and missed-event fallback",
+	async () => {
+		const apiUrl = process.env.CLAWDI_VAULT_FIXTURE_URL;
+		const agentId = process.env.CLAWDI_VAULT_FIXTURE_AGENT;
+		const vaultId = process.env.CLAWDI_VAULT_FIXTURE_VAULT;
+		const runtimeToken = process.env.CLAWDI_VAULT_FIXTURE_TOKEN;
+		const ownerToken = process.env.CLAWDI_VAULT_FIXTURE_OWNER;
+		if (!apiUrl || !agentId || !vaultId || !runtimeToken || !ownerToken)
+			throw new Error("Missing isolated Vault fixture");
+		installSuccessfulSystemctlFixture();
+		const home = join(root, "home", "clawdi");
+		const paths = seedRuntimeWatchLocaleBaseline(home, join(root, "platform"), join(root, "run"));
+		const cached = JSON.parse(readFileSync(paths.manifestLastGood, "utf8"));
+		cached.manifest.environmentId = agentId;
+		cached.manifest.controlPlane.cloudApiUrl = apiUrl;
+		writeFileSync(paths.manifestLastGood, JSON.stringify(cached));
+		writeFileSync(join(root, "run", "secrets", "auth-token"), runtimeToken);
+		process.env.CLAWDI_AUTH_TOKEN = runtimeToken;
+		const workspace = resolveHostedOpenClawWorkspace(home);
+		const indexPath = join(workspace, ".secrets", "index.json");
+		const originalFetch = globalThis.fetch;
+		const originalLog = console.log;
+		const statuses: string[] = [];
+		let counts = { metadata: 0, material: 0, manifests: 0, sse: 0 };
+		let sseConnected = Promise.withResolvers<void>();
+		const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+			async (...args: Parameters<typeof fetch>) => {
+				const input = args[0];
+				const url = new URL(input instanceof Request ? input.url : String(input));
+				if (url.pathname === "/v1/runtime/manifest") {
+					counts.manifests++;
+					return new Response(null, { status: 304 });
+				}
+				if (url.pathname === "/v1/runtime/vaults") counts.metadata++;
+				if (url.pathname === "/v1/runtime/vaults/material") counts.material++;
+				const response = await originalFetch(...args);
+				if (url.pathname === "/v1/sync/events") {
+					counts.sse++;
+					if (response.status === 200) sseConnected.resolve();
+				}
+				return response;
+			},
+		);
+		console.log = (line?: unknown) => {
+			const text = String(line);
+			try {
+				statuses.push(JSON.parse(text).status);
+			} catch {
+				originalLog(text);
+			}
+		};
+		async function waitFor(check: () => boolean) {
+			const deadline = Date.now() + 8000;
+			while (!check()) {
+				if (Date.now() > deadline) throw new Error("Vault fixture delivery timeout");
+				await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+			}
+		}
+		const secretFile = () => {
+			if (!existsSync(indexPath)) return null;
+			const index = JSON.parse(readFileSync(indexPath, "utf8"));
+			const section = index.vaults[0]?.sections[0];
+			return section ? join(workspace, ".secrets", section.file) : null;
+		};
+		const activeStarts = () =>
+			existsSync(join(root, "systemctl-success.log"))
+				? readFileSync(join(root, "systemctl-success.log"), "utf8")
+						.split("\n")
+						.filter((line) => /\b(start|restart|try-restart)\b/.test(line))
+				: [];
+		try {
+			for (const notifications of [true, false]) {
+				const abort = new AbortController();
+				const deadline = setTimeout(() => abort.abort(), 12000);
+				const beforeStarts = activeStarts();
+				counts = { metadata: 0, material: 0, manifests: 0, sse: 0 };
+				sseConnected = Promise.withResolvers<void>();
+				const initial = statuses.length;
+				const watcher = runtimeWatch({
+					json: true,
+					intervalMs: notifications ? 15000 : 200,
+					selfHealMs: 300000,
+					notifications,
+					abort: abort.signal,
+				});
+				try {
+					await waitFor(() => statuses.length > initial && secretFile() !== null);
+					if (notifications)
+						await Promise.race([
+							sseConnected.promise,
+							new Promise((_, reject) =>
+								setTimeout(() => reject(new Error("SSE fixture timeout")), 5000),
+							),
+						]);
+					const file = secretFile();
+					if (!file) throw new Error("Missing initial Vault file");
+					const initialMtime = statSync(file, { bigint: true }).mtimeNs;
+					const value = notifications ? "sse-rotated" : "fallback-rotated";
+					const started = performance.now();
+					const saved = await originalFetch(`${apiUrl}/v1/vault/live/items?vault_id=${vaultId}`, {
+						method: "PUT",
+						headers: { Authorization: `Bearer ${ownerToken}`, "Content-Type": "application/json" },
+						body: JSON.stringify({ section: "", fields: { TOKEN: value } }),
+					});
+					expect(saved.status).toBe(200);
+					await waitFor(() => JSON.parse(readFileSync(file, "utf8")).TOKEN === value);
+					const latency = performance.now() - started;
+					expect(statSync(file, { bigint: true }).mtimeNs).not.toBe(initialMtime);
+					expect(activeStarts()).toEqual(beforeStarts);
+					expect(statuses.every((status) => status === "not_modified")).toBe(true);
+					const after = statSync(file, { bigint: true }).mtimeNs;
+					if (!notifications) {
+						const metadataCount = counts.metadata;
+						await waitFor(() => counts.metadata > metadataCount);
+						expect(statSync(file, { bigint: true }).mtimeNs).toBe(after);
+					}
+					originalLog(
+						JSON.stringify({
+							fixture: "PostgreSQL HTTP runtime watch",
+							notifications,
+							fallbackMs: notifications ? 15000 : 200,
+							saveToFileMs: Math.round(latency),
+							requests: counts,
+						}),
+					);
+				} finally {
+					abort.abort();
+					clearTimeout(deadline);
+					await watcher;
+				}
+			}
+		} finally {
+			fetchSpy.mockRestore();
+			console.log = originalLog;
+		}
+	},
+	30000,
+);

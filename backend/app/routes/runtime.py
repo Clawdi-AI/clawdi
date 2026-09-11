@@ -44,6 +44,7 @@ from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.schemas.runtime import ProjectSkillCapabilityReport
 from app.schemas.session import AgentProjectSkillDesiredItem, AgentProjectSkillDesiredResponse
+from app.schemas.vault import RuntimeVaultMaterialInput, RuntimeVaultSnapshot
 from app.services.connected_agent_fence import (
     ConnectedAgentFenceHeaders,
     connected_agent_fence_headers,
@@ -81,6 +82,7 @@ from app.services.runtime_source_revision import (
     repair_runtime_source_revision,
     runtime_source_contract_revision,
 )
+from app.services.runtime_vaults import vault_snapshot_metadata, vault_snapshot_values
 from app.services.sync_events import queue_environment_runtime_manifest_changed
 from app.services.tar_utils import reroot_skill_archive, tar_from_content
 
@@ -733,3 +735,48 @@ def _extract_project_skill_file(
     if len(result) > _MAX_PROJECT_SKILL_FILE_BYTES:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill file not found")
     return result
+
+
+@router.get("/vaults", response_model=RuntimeVaultSnapshot)
+async def get_runtime_vaults(
+    request: Request,
+    auth: AuthContext = Depends(require_cli_auth),
+) -> Response:
+    require_auth_scopes(auth, "vault:read")
+    if auth.api_key is None or auth.api_key.environment_id is None:
+        raise HTTPException(403, "Runtime Vaults require an Agent-bound key")
+    agent_id = auth.api_key.environment_id
+    async with runtime_snapshot_session() as db:
+        inventory, etag = await vault_snapshot_metadata(db, auth.user_id, agent_id)
+        headers = {"ETag": etag, "Cache-Control": "no-store, no-transform"}
+        if if_none_match_contains(request.headers.get("if-none-match"), etag):
+            return Response(status_code=304, headers=headers)
+        snapshot = RuntimeVaultSnapshot(
+            user_id=auth.user_id, agent_id=agent_id, vaults=list(inventory.values())
+        )
+        return Response(
+            content=snapshot.model_dump_json(), media_type="application/json", headers=headers
+        )
+
+
+@router.post("/vaults/material", response_model=RuntimeVaultSnapshot)
+async def get_runtime_vault_material(
+    body: RuntimeVaultMaterialInput,
+    auth: AuthContext = Depends(require_cli_auth),
+) -> Response:
+    require_auth_scopes(auth, "vault:read")
+    if auth.api_key is None or auth.api_key.environment_id is None:
+        raise HTTPException(403, "Runtime Vaults require an Agent-bound key")
+    agent_id = auth.api_key.environment_id
+    async with runtime_snapshot_session() as db:
+        inventory, etag = await vault_snapshot_metadata(db, auth.user_id, agent_id)
+        if body.etag != etag:
+            raise HTTPException(409, "Vault inventory changed; retry metadata")
+        snapshot = await vault_snapshot_values(
+            db, auth.user_id, agent_id, inventory, body.revisions
+        )
+        return Response(
+            content=snapshot.model_dump_json(),
+            media_type="application/json",
+            headers={"ETag": etag, "Cache-Control": "no-store, no-transform"},
+        )

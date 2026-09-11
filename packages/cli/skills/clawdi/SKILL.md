@@ -128,6 +128,12 @@ If submission times out, inspect status before repeating a mutation.
 
 ### Save and refresh credentials locally
 
+In a managed runtime, Clawdi supplies `.secrets/` under the native workspace automatically.
+Inspect only `index.json` to select the intended Vault/section and load its JSON file inside
+the authorized process or SDK without printing values. Files are generated: do not edit or
+commit them, invoke the tenant Clawdi CLI, or read plaintext into model context just to save it.
+The manual workflow below is for self-managed environments without runtime delivery.
+
 For authorized credential use, confirm any user-supplied request is `supplied` with
 `vault_request_status`. Resolve exact reference(s) through cloud `vault_resolve`, then save
 with the agent's already available native file/execution tools. Choose a target from project
