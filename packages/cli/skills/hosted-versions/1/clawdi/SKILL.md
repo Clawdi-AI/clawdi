@@ -91,8 +91,8 @@ Vault write tools are available for explicit user requests:
 Follow the live schema and supply every required Project, Vault, section, and field identity;
 never infer an overwrite or deletion. Treat field values as sensitive inputs and never echo
 them, save them to Memory, or include them in logs. Hosted writes are restricted to their
-own Workspace, and field deletion is rejected when a Vault is attached to multiple
-Projects. Whole-Vault deletion, attach/detach, and credential profiles remain
+own Workspace (the runtime-bound Project). Field deletion is rejected when a Vault is
+attached to multiple Projects. Whole-Vault deletion, attach/detach, and credential profiles remain
 unavailable through Agent MCP; do not bypass that boundary through raw HTTP.
 
 ### Request missing credentials
