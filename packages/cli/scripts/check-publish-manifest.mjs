@@ -36,8 +36,6 @@ const addonEntries = packageFiles.filter(
 if (addonEntries.length !== 1 || addonEntries[0] !== addonSource) {
 	problems.push(`package.json files must include only the exact addon source "${addonSource}"`);
 }
-if (!packageFiles.includes("runtime-mcp"))
-	problems.push('package.json files must include "runtime-mcp"');
 if (!packageFiles.includes("skills")) {
 	problems.push('package.json files must include "skills"');
 }
@@ -57,10 +55,6 @@ if (checkPack) {
 			problems.push("npm pack inventory must describe one exact CLI package with file paths");
 		} else {
 			const paths = packed.files.map((file) => file.path);
-			if (!paths.includes("skills/hosted-versions/2/clawdi/SKILL.md"))
-				problems.push("npm pack inventory is missing local MCP Skill");
-			if (!paths.includes("runtime-mcp/index.js"))
-				problems.push("npm pack inventory is missing standalone MCP");
 			if (!paths.includes(addonSource))
 				problems.push(`npm pack inventory is missing ${addonSource}`);
 			for (const path of paths) {

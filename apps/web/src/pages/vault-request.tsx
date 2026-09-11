@@ -24,7 +24,7 @@ export function VaultRequestPage() {
 	const [copyState, setCopyState] = useState<"idle" | "copying" | "copied" | "error">("idle");
 	const agentMessage =
 		phase === "done" && context
-			? `I've saved the requested credentials. Please check Vault request ${context.id}; once its status is supplied, use vault_sync to save the credentials to an appropriate local env file and continue our previous task.`
+			? `I've saved the requested credentials. Please check Vault request ${context.id}; once its status is supplied, continue our previous task using existing authorized capabilities. Do not include secret values in chat.`
 			: "";
 
 	async function copyMessage() {

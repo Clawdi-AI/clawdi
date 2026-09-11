@@ -18,7 +18,6 @@ const EXPECTED_DOCKER_CONTEXT_SOURCES = new Set([
 	"tsconfig.base.json",
 	"apps/web/package.json",
 	"packages/cli/package.json",
-	"packages/runtime-mcp/package.json",
 	"packages/shared/package.json",
 	`${SIDECAR_ROOT}/package.json`,
 	`${SIDECAR_ROOT}/tsconfig.json`,
@@ -218,11 +217,11 @@ function assertDockerInputContract(
 	if (!isRecord(lock) || !isRecord(lock.workspaces)) {
 		throw new Error("bun.lock does not contain the expected workspace package graph");
 	}
-	// Compare historical and current images against each snapshot's own workspace
-	// graph. The runtime-mcp workspace did not exist in older deployed images.
+	// Historical snapshots may include the removed runtime-mcp workspace. Validate
+	// its COPY input only when that snapshot's lockfile contains the workspace.
 	const expectedSources = new Set(EXPECTED_DOCKER_CONTEXT_SOURCES);
-	if (!Object.hasOwn(lock.workspaces, "packages/runtime-mcp")) {
-		expectedSources.delete("packages/runtime-mcp/package.json");
+	if (Object.hasOwn(lock.workspaces, "packages/runtime-mcp")) {
+		expectedSources.add("packages/runtime-mcp/package.json");
 	}
 	const sources = new Set<string>();
 	for (const line of dockerfile.split("\n")) {
