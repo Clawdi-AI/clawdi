@@ -152,6 +152,7 @@ describe("clean runner resource contract", () => {
 		for (const setting of [
 			`cpus: \${CLAWDI_TEST_RUNNER_CPUS:-8}`,
 			`pids_limit: \${CLAWDI_TEST_RUNNER_PIDS_LIMIT:-512}`,
+			'GOMAXPROCS: "2"',
 			`cpus: \${CLAWDI_TEST_POSTGRES_CPUS:-2}`,
 			`pids_limit: \${CLAWDI_TEST_POSTGRES_PIDS_LIMIT:-256}`,
 		]) {
