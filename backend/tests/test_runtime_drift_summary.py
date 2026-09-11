@@ -263,7 +263,8 @@ async def test_order_binding_source_and_read_only_batch(
         with pytest.raises(ValidationError):
             RuntimeDriftSourceAuthority.model_validate({**authority, **invalid})
     assert all(r["observation"] == {"status": "missing", "head": None} for r in items)
-    assert len(statements) == 2
+    assert len(statements) == 3
+    assert "set_config" in statements[0]
     assert all(query.startswith("SELECT ") and "FOR UPDATE" not in query for query in statements)
     assert all("consumer_cursors" not in query for query in statements)
 
@@ -404,3 +405,68 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
             RuntimeDriftObservationHead.model_validate(
                 {**head, "diagnostics": {**diagnostics, **invalid}}
             )
+
+
+@pytest.mark.parametrize("poison", ["diagnostics", "source"])
+async def test_invalid_persisted_item_keeps_healthy_sibling(
+    summary_client, runtime, db_session, poison
+):
+    bindings = [await runtime(), await runtime()]
+    environment_id = uuid.UUID(bindings[0]["environmentId"])
+
+    def corrupt_insert(mapper, connection, target):
+        if target.environment_id == environment_id:
+            target.diagnostics = {"activeCliVersion": ["invalid"]}
+
+    if poison == "diagnostics":
+        event.listen(V2RuntimeObservationInbox, "before_insert", corrupt_insert)
+    try:
+        for binding in bindings:
+            await observe(db_session, binding, datetime.now(UTC))
+    finally:
+        if poison == "diagnostics":
+            event.remove(V2RuntimeObservationInbox, "before_insert", corrupt_insert)
+    if poison == "source":
+        await db_session.execute(
+            update(HostedRuntimeState)
+            .where(HostedRuntimeState.environment_id == environment_id)
+            .values(source_revision="invalid")
+        )
+    await db_session.commit()
+    response = await summary_client.post(ENDPOINT, json={"bindings": bindings})
+    assert response.status_code == 200
+    bad, good = response.json()["items"]
+    assert [item["environmentId"] for item in (bad, good)] == [
+        item["environmentId"] for item in bindings
+    ]
+    if poison == "diagnostics":
+        assert bad["observation"] == {"status": "unavailable", "head": None}
+    else:
+        assert bad["sourceAuthority"]["status"] == "unavailable"
+        assert bad["sourceAuthority"]["sourceRevision"] is None
+    assert good["observation"]["status"] == "fresh"
+    assert good["sourceAuthority"]["status"] == "present"
+
+
+async def test_slow_drift_query_releases_snapshot_for_next_request(
+    summary_client, runtime, engine, monkeypatch
+):
+    from app.routes import runtime_observation_v2
+
+    binding = await runtime()
+    monkeypatch.setattr(runtime_observation_v2, "_DRIFT_STATEMENT_TIMEOUT", "50ms")
+
+    def stall(connection, cursor, statement, parameters, context, executemany):
+        if "FROM v2_runtime_environment_fences" in statement:
+            return "SELECT pg_sleep(1)", ()
+        return statement, parameters
+
+    event.listen(engine.sync_engine, "before_cursor_execute", stall, retval=True)
+    try:
+        response = await summary_client.post(ENDPOINT, json={"bindings": [binding]})
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", stall)
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Runtime drift evidence is temporarily unavailable"}
+    response = await summary_client.post(ENDPOINT, json={"bindings": [binding]})
+    assert response.status_code == 200

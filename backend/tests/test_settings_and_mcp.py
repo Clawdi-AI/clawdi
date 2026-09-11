@@ -392,7 +392,82 @@ async def test_clawdi_mcp_initializes_and_lists_native_tools(monkeypatch):
         "memory_extract",
         "session_search",
         "session_get",
+        "session_share_create",
+        "session_share_list",
+        "session_share_revoke",
     } <= names
+    tools = {tool["name"]: tool for tool in listed.json()["result"]["tools"]}
+    assert tools["session_share_create"]["annotations"] == {
+        "title": "Share Session",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    }
+    assert tools["session_share_revoke"]["annotations"]["destructiveHint"] is True
+
+
+@pytest.mark.asyncio
+async def test_clawdi_mcp_manages_session_share_lifecycle(client: httpx.AsyncClient):
+    from tests.test_session_shares import _seed_session
+
+    session_id, _, _ = await _seed_session(client)
+
+    async def call(tool: str, arguments: dict[str, object], request_id: int) -> dict:
+        response = await client.post(
+            "/v1/mcp/clawdi",
+            json={
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/call",
+                "params": {"name": tool, "arguments": arguments},
+            },
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["result"]
+
+    owned = await call("session_get", {"reference": session_id}, 1)
+    assert "## User · position 0" in owned["content"][0]["text"]
+    assert "## Assistant (test-model) · position 1" in owned["content"][0]["text"]
+
+    created = await call(
+        "session_share_create",
+        {"session_id": session_id, "scope": "response", "position": 1},
+        2,
+    )
+    created_payload = json.loads(created["content"][0]["text"])
+    assert created_payload["scope"] == "response"
+    assert created_payload["message_count"] == 1
+
+    shared = await call("session_get", {"reference": created_payload["share_url"]}, 3)
+    shared_markdown = shared["content"][0]["text"]
+    assert "Original answer" in shared_markdown
+    assert "Original question" not in shared_markdown
+    assert "· position" not in shared_markdown
+
+    listed = await call("session_share_list", {"session_id": session_id}, 4)
+    listed_payload = json.loads(listed["content"][0]["text"])
+    assert listed_payload["total"] == 1
+    assert listed_payload["items"][0] == {
+        "id": created_payload["id"],
+        "kind": "snapshot",
+        "session_id": session_id,
+        "session_title": "Immutable share",
+        "scope": "response",
+        "message_count": 1,
+        "share_url": created_payload["share_url"],
+        "created_at": created_payload["created_at"],
+    }
+
+    revoked = await call(
+        "session_share_revoke",
+        {"share_id": created_payload["id"], "kind": "snapshot"},
+        5,
+    )
+    assert json.loads(revoked["content"][0]["text"])["status"] == "revoked"
+    unavailable = await call("session_get", {"reference": created_payload["share_url"]}, 6)
+    assert unavailable["isError"] is True
+    assert "revoked" in unavailable["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -750,14 +825,16 @@ async def test_clawdi_mcp_session_search_uses_shared_metadata_and_body_matches(
     assert body_response.status_code == 200, body_response.text
     body_text = body_response.json()["result"]["content"][0]["text"]
     assert "Unrelated title" in body_text
-    assert "matched assistant: The visible body contains a deployment handoff phrase." in body_text
+    assert (
+        "matched assistant at position 0: The visible body contains a deployment handoff phrase."
+    ) in body_text
 
     assert reordered_response.status_code == 200, reordered_response.text
     reordered_text = reordered_response.json()["result"]["content"][0]["text"]
     assert "Unrelated title" in reordered_text
-    assert "matched assistant: The visible body contains a deployment handoff phrase." in (
-        reordered_text
-    )
+    assert (
+        "matched assistant at position 0: The visible body contains a deployment handoff phrase."
+    ) in reordered_text
 
     assert typo_response.status_code == 200, typo_response.text
     assert (
@@ -1339,6 +1416,9 @@ async def test_clawdi_mcp_connector_tools_follow_scoped_key_permissions(
     tool_names = [tool["name"] for tool in listed.json()["result"]["tools"]]
     assert "COMPOSIO_DANGEROUS" not in tool_names
     assert "memory_search" not in tool_names
+    assert "session_share_list" in tool_names
+    assert "session_share_create" not in tool_names
+    assert "session_share_revoke" not in tool_names
 
     assert called.status_code == 200, called.text
     result = called.json()["result"]
@@ -1542,6 +1622,7 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_accoun
     assert "connector_calendar" in names
     assert "session_search" in names
     assert "session_get" in names
+    assert {"session_share_create", "session_share_list", "session_share_revoke"} <= set(names)
     assert {"memory_search", "memory_create", "memory_extract"} <= set(names)
     search_text = searched.json()["result"]["content"][0]["text"]
     assert "Alpha hosted runtime work" in search_text
@@ -1551,6 +1632,14 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_and_accoun
     assert memory.json()["result"]["content"][0]["text"] == "No memories found."
     identity_only_names = {tool["name"] for tool in identity_only_listed.json()["result"]["tools"]}
     assert "session_search" not in identity_only_names
+    assert (
+        not {
+            "session_share_create",
+            "session_share_list",
+            "session_share_revoke",
+        }
+        & identity_only_names
+    )
     assert "connector_calendar" not in identity_only_names
     assert not {"memory_search", "memory_create", "memory_extract"} & identity_only_names
     assert (

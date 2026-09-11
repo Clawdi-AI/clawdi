@@ -126,6 +126,27 @@ entries; `observedAt` is the server's freshness evaluation time. This endpoint
 never registers consumers, ACKs, resets cursors, renders sources, or repairs
 persisted revisions.
 
+Failure-isolation review (2026-09-11; draft for owner review): malformed persisted
+head evidence produces `observation: {status: "unavailable", head: null}` for that
+binding. Malformed source authority produces `sourceAuthority.status:
+"unavailable"` with no asserted instance/revision/etag. Valid siblings keep their
+ordered evidence. Unavailable is not missing or healthy, and must not itself
+trigger runtime repair. Deploy readers accepting the additive observation status
+before this writer; generated API types include it.
+
+The endpoint sets a transaction-local three-second statement timeout for its two
+bulk SELECTs. SQLSTATE 57014 returns a sanitized 503 and closes the snapshot;
+external cancellation still propagates. No persistent timeout setting is changed.
+Pool checkout and a stalled database network are separate dependencies; this
+limit is not a guarantee beyond the documented
+[database cleanup contract](backend-development.md).
+
+Done: `scripts/test.sh backend tests/test_runtime_drift_summary.py tests/test_ai_provider_connection_ownership.py`
+passes against the hermetic PostgreSQL runner, including invalid inserted JSON
+without bypassing inbox immutability, a malformed stored source revision, and
+statement cancellation followed by a successful request. This is local regression
+evidence, not live fleet health verification.
+
 Each result reports `binding` (`active`, `retired`, `missing`, or
 `binding_mismatch`). A missing fence is `missing`; a fence or available runtime
 state bound to another deployment is `binding_mismatch`. Only active matching

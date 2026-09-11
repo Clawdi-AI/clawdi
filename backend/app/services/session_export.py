@@ -3,9 +3,9 @@
 Same output regardless of whether the caller is the OWNER fetching
 their own session via `GET /v1/sessions/{id}/export.md` or a PUBLIC
 visitor hitting `GET /v1/public/sessions/{token}/export.md`.
-Sharing the serializer keeps the agent-facing `.md` body byte-for-byte
-identical across both paths, which is what `session_get` MCP tool
-relies on to give the same agent context regardless of access mode.
+Sharing the serializer keeps the public and owner export formats aligned.
+The `session_get` MCP tool may additionally annotate owner-only message
+headings with stable source positions for scoped sharing.
 
 The Markdown body opens with a YAML front-matter block. That's the
 signal to an LLM (or an MCP wrapper) that this isn't a random web
@@ -49,9 +49,16 @@ def _build_session_share_url(share_id: UUID) -> str:
     return f"{settings.web_origin}/s/{share_id}"
 
 
-def _message_body_lines(messages: Sequence[JsonValue]) -> list[str]:
+def _message_body_lines(
+    messages: Sequence[JsonValue],
+    *,
+    source_positions: Sequence[int] | None = None,
+) -> list[str]:
+    if source_positions is not None and len(source_positions) != len(messages):
+        raise ValueError("message positions must align with messages")
+
     body_lines: list[str] = []
-    for message in messages:
+    for index, message in enumerate(messages):
         if not isinstance(message, dict):
             continue
         role_value = message.get("role")
@@ -66,6 +73,8 @@ def _message_body_lines(messages: Sequence[JsonValue]) -> list[str]:
         heading_parts: list[str] = [f"## {role.capitalize()}"]
         if role == "assistant" and model:
             heading_parts.append(f"({model})")
+        if source_positions is not None:
+            heading_parts.append(f"· position {source_positions[index]}")
         if timestamp:
             heading_parts.append(f"· {timestamp}")
         body_lines.extend((" ".join(heading_parts), ""))
@@ -171,13 +180,15 @@ def session_to_markdown(
     *,
     agent_type: str | None = None,
     public: bool = False,
+    source_positions: Sequence[int] | None = None,
 ) -> str:
     """Serialize one session to Markdown with a YAML front-matter header.
 
     The header carries provenance + summary fields an agent can use to
     decide whether to ingest the body (agent type, model, project, turn
-    counts). The body renders each message as `## <Role> · <timestamp>`
-    followed by the message content as-is.
+    counts). The body renders each message as a role heading followed by
+    the message content as-is. Callers may include stable source positions
+    in those headings when the reader needs to address an exact message.
 
     Plain Markdown — no HTML, no shadcn wrappers — so `WebFetch` returns
     clean readable text and an MCP `session_get` call yields tokens an
@@ -228,7 +239,11 @@ def session_to_markdown(
 
     # Content stays raw: adapters already normalized it and many messages
     # contain Markdown fences that must not be nested inside another fence.
-    return "\n".join(front_matter_lines + body_lines + _message_body_lines(messages))
+    return "\n".join(
+        front_matter_lines
+        + body_lines
+        + _message_body_lines(messages, source_positions=source_positions)
+    )
 
 
 def session_to_json(

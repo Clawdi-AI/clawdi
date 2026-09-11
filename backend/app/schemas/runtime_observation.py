@@ -554,7 +554,7 @@ class RuntimeDriftObservationHead(RuntimeObservationResponseModel):
 
 
 class RuntimeDriftObservationSummary(RuntimeObservationResponseModel):
-    status: Literal["missing", "fresh", "expired", "ambiguous"]
+    status: Literal["missing", "fresh", "expired", "ambiguous", "unavailable"]
     head: RuntimeDriftObservationHead | None
 
 
