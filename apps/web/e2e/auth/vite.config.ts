@@ -5,6 +5,11 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
 	optimizeDeps: { entries: ["e2e/auth/index.html", "e2e/auth/hydration.browser.tsx"] },
+	server: {
+		warmup: {
+			clientFiles: ["e2e/auth/lifecycle.browser.tsx", "e2e/auth/hydration.browser.tsx"],
+		},
+	},
 	plugins: [
 		react(),
 		tailwindcss(),
@@ -14,6 +19,9 @@ export default defineConfig({
 				server.middlewares.use(async (request, response, next) => {
 					if (request.url?.split("?")[0] !== "/__auth-hydration") return next();
 					try {
+						// HTML availability alone does not mean the cold client module graph is ready.
+						await server.transformRequest("/e2e/auth/hydration.browser.tsx");
+						await server.waitForRequestsIdle();
 						const module = await server.ssrLoadModule("/e2e/auth/hydration.browser.tsx");
 						const output: unknown = await module.renderHydrationProbe();
 						if (

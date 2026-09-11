@@ -1,12 +1,13 @@
 /// <reference types="vite/client" />
 
-import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
+import { createRootRoute, HeadContent, Outlet, Scripts, useRouter } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { AppNotFound } from "@/components/app-not-found";
 import { AuthProvider } from "@/components/auth-provider";
 import { Providers } from "@/components/providers";
 import RootError from "@/components/root-error";
 import { APP_TITLE } from "@/lib/document-title";
+import { env } from "@/lib/env";
 import "@/styles/globals.css";
 
 const DESCRIPTION =
@@ -58,13 +59,21 @@ function RootComponent() {
 }
 
 function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
+	const nonce = useRouter().options.ssr?.nonce;
 	return (
-		<html lang="en" className="h-full" suppressHydrationWarning>
+		<html
+			lang="en"
+			className="h-full"
+			data-clawdi-desktop={env.VITE_CLAWDI_DESKTOP_BUILD ? "true" : undefined}
+			suppressHydrationWarning
+		>
 			<head>
+				{nonce ? <meta name="csp-nonce" content={nonce} /> : null}
 				<script
+					nonce={nonce}
 					dangerouslySetInnerHTML={{
 						__html:
-							'try{var t=localStorage.getItem("clawdi-theme")||"system";var d=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle("dark",d)}catch(e){}',
+							'if(window.clawdiDesktop){document.documentElement.dataset.clawdiDesktop="true"}try{var t=localStorage.getItem("clawdi-theme")||"system";var d=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle("dark",d)}catch(e){}',
 					}}
 				/>
 				<HeadContent />

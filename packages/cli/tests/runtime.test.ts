@@ -372,6 +372,7 @@ let originalEnv: Partial<Record<EnvKey, string>>;
 let originalUmask: number;
 let root: string;
 const fakeSystemdStateRoots = new Set<string>();
+const gatewayServers: ReturnType<typeof Bun.serve>[] = [];
 
 function fakeSystemdStatePath(
 	stateRoot: string,
@@ -561,6 +562,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	for (const server of gatewayServers.splice(0)) server.stop(true);
 	for (const stateRoot of fakeSystemdStateRoots) {
 		if (!existsSync(stateRoot)) continue;
 		for (const entry of readdirSync(stateRoot)) {
@@ -1418,6 +1420,25 @@ function installSuccessfulSystemctlFixture(
 	process.env.CLAWDI_SYSTEMD_APPLY = "1";
 	process.env.CLAWDI_SYSTEMCTL_PATH = systemctlPath;
 	process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
+}
+
+function startHealthyOpenClawGateway() {
+	const server = Bun.serve({
+		hostname: "127.0.0.1",
+		port: 0,
+		fetch(request) {
+			const path = new URL(request.url).pathname;
+			if (request.method === "GET" && path === "/readyz") {
+				return Response.json({ ready: true });
+			}
+			if (request.method === "HEAD" && path === "/") {
+				return new Response(null, { status: 200 });
+			}
+			return new Response(null, { status: 404 });
+		},
+	});
+	gatewayServers.push(server);
+	return { port: server.port };
 }
 
 function cachedMitmproxyBinary(paths: RuntimePaths, pin: typeof TEST_EGRESS_ENGINE_PIN): string {
@@ -5163,7 +5184,7 @@ cp '${sdkSource}' '${sdkTarget}'
 		expect(existsSync(join(run, "secrets", "runtimes", "openclaw.json"))).toBe(false);
 	});
 
-	it("does not project a key-required hosted provider without a secret ref as no-auth", () => {
+	it("does not project a key-required hosted provider without a secret ref as no-auth", async () => {
 		delete process.env.OPENCLAW_GATEWAY_TOKEN;
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -5228,7 +5249,8 @@ cp '${sdkSource}' '${sdkTarget}'
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		const providerHealth = readHostedRuntimeObserved(getRuntimePaths())?.providers?.openclaw;
+		const providerHealth = (await readHostedRuntimeObserved(getRuntimePaths()))?.providers
+			?.openclaw;
 		expect(providerHealth?.status).toBe("error");
 		expect(providerHealth?.reasons).toContain("provider_error");
 		expect(providerHealth?.reasons).toContain("provider_secret_unavailable");
@@ -6363,7 +6385,7 @@ cp '${sdkSource}' '${sdkTarget}'
 		const previousLog = console.log;
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
-		writeOpenClawConfigMutationFixture(home);
+		writeOpenClawConfigMutationFixture(home, { gateway: startHealthyOpenClawGateway() });
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(
 			openclawBin,
@@ -6541,7 +6563,7 @@ exit 64
 			});
 			const watchStatus = JSON.parse(readFileSync(getRuntimePaths().runtimeWatchStatus, "utf-8"));
 			expect(watchStatus.event.status).toBe("applied");
-			const observed = readHostedRuntimeObserved(getRuntimePaths());
+			const observed = await readHostedRuntimeObserved(getRuntimePaths());
 			expect(observed?.status).toBe("ok");
 			expect(observed?.applied).toMatchObject({
 				etag: `"sha256:${"a".repeat(64)}"`,
@@ -7383,7 +7405,7 @@ exit 64
 			expect(event.status).toBe("error");
 			expect(event.stage).toBe("auth");
 			expect(event.error).toContain("authentication failed: HTTP 401");
-			const observed = readHostedRuntimeObserved(getRuntimePaths());
+			const observed = await readHostedRuntimeObserved(getRuntimePaths());
 			expect(observed?.status).toBe("error");
 			expect(observed?.convergeError).toContain("authentication failed: HTTP 401");
 		} finally {
@@ -7393,7 +7415,7 @@ exit 64
 		}
 	});
 
-	it("runtime observed samples systemd unit health", () => {
+	it("runtime observed samples systemd unit health", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -7485,7 +7507,7 @@ esac
 		writeRuntimeWatchStatus({ status: "applied", generation: 9, instanceId: "iid-systemd" }, paths);
 
 		try {
-			const observed = readHostedRuntimeObserved(paths);
+			const observed = await readHostedRuntimeObserved(paths);
 
 			expect(observed?.status).toBe("error");
 			expect(observed?.systemd).toEqual({
@@ -7533,7 +7555,7 @@ esac
 		}
 	});
 
-	it("runtime observed keeps runtime-watch auto-restart outside data-plane readiness", () => {
+	it("runtime observed keeps runtime-watch auto-restart outside data-plane readiness", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -7581,7 +7603,7 @@ fi
 			projectedProviderIds: {},
 		};
 
-		const restarting = readHostedRuntimeObserved(paths, { appliedState });
+		const restarting = await readHostedRuntimeObserved(paths, { appliedState });
 
 		expect(restarting?.status).toBe("ok");
 		expect(restarting?.systemd).toEqual({
@@ -7600,7 +7622,7 @@ fi
 		});
 
 		writeFileSync(watchFailed, "");
-		const failed = readHostedRuntimeObserved(paths, { appliedState });
+		const failed = await readHostedRuntimeObserved(paths, { appliedState });
 		expect(failed?.status).toBe("error");
 		expect(failed?.systemd).toMatchObject({
 			status: "error",
@@ -7608,12 +7630,13 @@ fi
 		});
 	});
 
-	it("runtime observed does not report ok when managed systemd units are inactive", () => {
+	it("runtime observed does not report ok when managed systemd units are inactive", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const bin = join(root, "bin");
 		const previousPath = process.env.PATH;
+		mkdirSync(home, { recursive: true });
 		mkdirSync(run, { recursive: true });
 		mkdirSync(bin, { recursive: true });
 		const systemctl = join(bin, "systemctl");
@@ -7627,6 +7650,7 @@ printf 'ActiveState=inactive\\nSubState=dead\\n'
 		process.env.PATH = `${bin}:${previousPath ?? ""}`;
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		mkdirSync(getRuntimePaths().cacheRoot, { recursive: true });
@@ -7666,12 +7690,26 @@ printf 'ActiveState=inactive\\nSubState=dead\\n'
 		);
 
 		try {
-			const observed = readHostedRuntimeObserved(paths);
+			const observed = await readHostedRuntimeObserved(paths);
 
 			expect(observed?.status).toBe("unknown");
 			expect(observed?.systemd).toMatchObject({
 				status: "unknown",
-				unitCount: 1,
+				unitCount: 2,
+				units: [
+					{
+						scope: "system",
+						name: "clawdi-runtime-watch.service",
+						activeState: "inactive",
+						status: "unknown",
+					},
+					{
+						scope: "user",
+						name: "openclaw-gateway.service",
+						activeState: "inactive",
+						status: "unknown",
+					},
+				],
 			});
 		} finally {
 			if (previousPath === undefined) delete process.env.PATH;
@@ -7679,7 +7717,7 @@ printf 'ActiveState=inactive\\nSubState=dead\\n'
 		}
 	});
 
-	it("runtime observed ignores volatile watch timestamps and running uptimes", () => {
+	it("runtime observed ignores volatile watch timestamps and running uptimes", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -7712,12 +7750,12 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		);
 
 		try {
-			const first = readHostedRuntimeObserved(paths);
+			const first = await readHostedRuntimeObserved(paths);
 			writeRuntimeWatchStatus(
 				{ status: "applied", generation: 9, instanceId: "iid-observed-stable" },
 				paths,
 			);
-			const second = readHostedRuntimeObserved(paths);
+			const second = await readHostedRuntimeObserved(paths);
 			const stable = (value: Record<string, unknown> | null) => {
 				if (!value) return value;
 				const copy = { ...value };
@@ -7747,7 +7785,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		}
 	});
 
-	it("runtime observed reports provider secret health without leaking secret values", () => {
+	it("runtime observed reports provider secret health without leaking secret values", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -7756,6 +7794,17 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
+		installSuccessfulSystemctlFixture();
+		writeFileSync(
+			fakeSystemdStatePath(
+				join(root, "systemctl-success-state"),
+				"user",
+				"openclaw-gateway.service",
+				"active",
+			),
+			"",
+		);
+		writeOpenClawConfigMutationFixture(home, { gateway: startHealthyOpenClawGateway() });
 		const paths = getRuntimePaths();
 		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		mkdirSync(paths.cacheRoot, { recursive: true });
@@ -7836,7 +7885,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			paths,
 		);
 
-		const observed = readHostedRuntimeObserved(paths);
+		const observed = await readHostedRuntimeObserved(paths);
 
 		expect(observed?.status).toBe("ok");
 		expect(observed?.providers).toEqual({
@@ -7855,7 +7904,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		expect(JSON.stringify(observed)).not.toContain("sk-observed-provider");
 	});
 
-	it("runtime observed marks provider health error when its secret ref is unavailable", () => {
+	it("runtime observed marks provider health error when its secret ref is unavailable", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -7921,7 +7970,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			paths,
 		);
 
-		const observed = readHostedRuntimeObserved(paths);
+		const observed = await readHostedRuntimeObserved(paths);
 
 		expect(observed?.status).toBe("error");
 		expect(observed?.providers).toEqual({
@@ -11975,7 +12024,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			expect(watchUnit).not.toContain("sk-runtime");
 			expect(watchEnv).not.toContain("sk-runtime");
 			expect(readFileSync(getRuntimePaths().manifestLastGood, "utf-8")).not.toContain("sk-runtime");
-			const providerHealth = readHostedRuntimeObserved(paths)?.providers;
+			const providerHealth = (await readHostedRuntimeObserved(paths))?.providers;
 			expect(providerHealth?.["clawdi-managed-v2"]).toEqual({
 				status: "ok",
 				configured: true,

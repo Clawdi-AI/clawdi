@@ -3,10 +3,11 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { getCliVersion } from "../lib/version";
-import { writeRuntimeAppliedState } from "./applied-state";
+import { readRuntimeAppliedState, writeRuntimeAppliedState } from "./applied-state";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths } from "./paths";
 import { buildRuntimeBootStatus, writeRuntimeBootStatus, writeRuntimeWatchStatus } from "./state";
+import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 import { recordRuntimeUserActivityScan } from "./user-activity-state";
 
 const originalEnv = { ...process.env };
@@ -17,12 +18,13 @@ afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function healthyAppliedRuntimePaths() {
+function healthyAppliedRuntimePaths(enabledRuntimes: string[] = []) {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-observed-v2-watch-error-"));
 	roots.push(root);
 	process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 	process.env.CLAWDI_RUN_DIR = join(root, "run");
 	process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
+	process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = join(root, "systemd");
 	const paths = getRuntimePaths({ mode: "hosted" });
 	mkdirSync(paths.serviceStateRoot);
 	writeRuntimeAppliedState(
@@ -56,7 +58,7 @@ function healthyAppliedRuntimePaths() {
 				runtimeMode: "hosted",
 				activeGeneration: 1,
 				instanceId: "hri_watch_error",
-				enabledRuntimes: ["hermes"],
+				enabledRuntimes,
 				errors: [],
 				exitCode: 0,
 				datasource: "RuntimeSource",
@@ -77,7 +79,7 @@ function healthyAppliedRuntimePaths() {
 }
 
 describe("hosted runtime observed v2", () => {
-	test("reports applied authority and keeps status version separate from the active process", () => {
+	test("reports applied authority and keeps status version separate from the active process", async () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-observed-v2-"));
 		roots.push(root);
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
@@ -135,7 +137,7 @@ describe("hosted runtime observed v2", () => {
 			}),
 		);
 
-		const observed = readHostedRuntimeObserved(paths);
+		const observed = await readHostedRuntimeObserved(paths);
 		expect(observed?.schemaVersion).toBe("clawdi.hostedRuntimeObserved.v2");
 		expect(observed?.activeCliVersion).toBe(getCliVersion());
 		expect(observed?.cli?.version).toBe("0.0.0-stale");
@@ -150,18 +152,18 @@ describe("hosted runtime observed v2", () => {
 		expect(observed?.applied).not.toHaveProperty("contentIdentity");
 	});
 
-	test("reports missing applied state as unknown authority", () => {
+	test("reports missing applied state as unknown authority", async () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-observed-v2-legacy-"));
 		roots.push(root);
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
-		const observed = readHostedRuntimeObserved(getRuntimePaths({ mode: "hosted" }));
+		const observed = await readHostedRuntimeObserved(getRuntimePaths({ mode: "hosted" }));
 		expect(observed?.applied).toBeNull();
 		expect(observed?.status).toBe("unknown");
 	});
 
-	test("keeps last-good runtime healthy when a desired projection fails", () => {
+	test("keeps last-good runtime healthy when a desired projection fails", async () => {
 		const paths = healthyAppliedRuntimePaths();
 		writeRuntimeWatchStatus(
 			{
@@ -173,13 +175,13 @@ describe("hosted runtime observed v2", () => {
 			paths,
 		);
 
-		const observed = readHostedRuntimeObserved(paths);
+		const observed = await readHostedRuntimeObserved(paths);
 		expect(observed?.status).toBe("ok");
 		expect(observed?.convergeError).toBe("runtime hermes sourced Skill projection failed");
 	});
 
-	test("reports durable Hermes user activity through the existing observation contract", () => {
-		const paths = healthyAppliedRuntimePaths();
+	test("reports durable Hermes user activity through the existing observation contract", async () => {
+		const paths = healthyAppliedRuntimePaths(["hermes"]);
 		process.env.CLAWDI_STATE_DIR = join(paths.serviceStateRoot, "activity");
 		recordRuntimeUserActivityScan({
 			agentType: "hermes",
@@ -191,8 +193,10 @@ describe("hosted runtime observed v2", () => {
 			observedAt: new Date("2026-08-19T02:00:00.000Z"),
 		});
 
-		expect(readHostedRuntimeObserved(paths)).not.toHaveProperty("userActivity");
-		expect(readHostedRuntimeObserved(paths, { includeUserActivity: true })?.userActivity).toEqual({
+		expect(await readHostedRuntimeObserved(paths)).not.toHaveProperty("userActivity");
+		expect(
+			(await readHostedRuntimeObserved(paths, { includeUserActivity: true }))?.userActivity,
+		).toEqual({
 			schemaVersion: 1,
 			classifierVersion: 1,
 			classification: "known_last_user_input",
@@ -203,7 +207,7 @@ describe("hosted runtime observed v2", () => {
 		});
 	});
 
-	test("reports an untyped watch apply failure as unhealthy", () => {
+	test("reports an untyped watch apply failure as unhealthy", async () => {
 		const paths = healthyAppliedRuntimePaths();
 		writeRuntimeWatchStatus(
 			{
@@ -214,18 +218,305 @@ describe("hosted runtime observed v2", () => {
 			paths,
 		);
 
-		const observed = readHostedRuntimeObserved(paths);
+		const observed = await readHostedRuntimeObserved(paths);
 		expect(observed?.status).toBe("error");
 		expect(observed?.convergeError).toBe("runtime apply failed");
 	});
 
-	test("reports complete systemd counts with representative scoped truncation", () => {
+	test.each([
+		{
+			runtime: "openclaw",
+			unit: "openclaw-gateway.service",
+			ready: { ready: true },
+			pending: [{ ready: false }, { ok: true }],
+		},
+		{
+			runtime: "hermes",
+			unit: "clawdi-hermes-dashboard.service",
+			ready: {
+				gateway_running: true,
+				gateway_state: "running",
+				auth_required: true,
+				auth_providers: ["basic"],
+			},
+			pending: [
+				{
+					gateway_running: true,
+					gateway_state: "starting",
+					auth_required: true,
+					auth_providers: ["basic"],
+				},
+				{
+					gateway_running: false,
+					gateway_state: "running",
+					auth_required: true,
+					auth_providers: ["basic"],
+				},
+				{
+					gateway_running: true,
+					gateway_state: "running",
+					auth_required: false,
+					auth_providers: [],
+				},
+			],
+		},
+	])(
+		"requires $runtime serving readiness after systemd activation",
+		async ({ runtime, unit, ready, pending }) => {
+			const paths = healthyAppliedRuntimePaths([runtime]);
+			const identity = userInfo();
+			process.env.CLAWDI_RUNTIME_USER = identity.username;
+			// Bun's username follows USER; numeric credentials identify the actual test process.
+			process.env.CLAWDI_RUNTIME_UID = String(identity.uid);
+			process.env.CLAWDI_RUNTIME_GID = String(identity.gid);
+			mkdirSync(paths.systemdUserRoot, { recursive: true });
+			writeFileSync(join(paths.systemdUserRoot, unit), GENERATED_RUNTIME_SYSTEMD_FILE_HEADER);
+			const gatewayUnit = join(paths.systemdUserRoot, "hermes-gateway.service");
+			if (unit === "clawdi-hermes-dashboard.service") {
+				writeFileSync(gatewayUnit, GENERATED_RUNTIME_SYSTEMD_FILE_HEADER);
+			}
+			const systemctl = join(paths.userHome, "systemctl");
+			writeFileSync(systemctl, "#!/bin/sh\nprintf 'ActiveState=active\nSubState=running\n'\n", {
+				mode: 0o700,
+			});
+			process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
+			let body: unknown = ready;
+			let uiStatus = 200;
+			let probeStatus = 200;
+			let nativeStatus: unknown;
+			let probeWait: Promise<void> | undefined;
+			let releaseProbe: (() => void) | undefined;
+			const server = Bun.serve({
+				hostname: "127.0.0.1",
+				port: unit === "openclaw-gateway.service" ? 0 : 9119,
+				async fetch(request) {
+					if (probeWait) await probeWait;
+					const path = new URL(request.url).pathname;
+					if (path === "/native-status")
+						return new Response(
+							typeof nativeStatus === "string" ? nativeStatus : JSON.stringify(nativeStatus),
+						);
+					if (path === "/control/") return new Response(null, { status: uiStatus });
+					if (path !== "/readyz" && path !== "/api/status")
+						return new Response(null, { status: 404 });
+					return new Response(typeof body === "string" ? body : JSON.stringify(body), {
+						status: probeStatus,
+					});
+				},
+			});
+			const configPath = join(paths.userHome, ".openclaw", "openclaw.json");
+			mkdirSync(dirname(configPath), { recursive: true });
+			const config = `{ // Native OpenClaw configuration supports JSON5.
+  gateway: { port: ${server.port}, controlUi: { basePath: '/control' } },
+}`;
+			writeFileSync(configPath, config);
+			try {
+				for (const response of [...pending, null, "not JSON", ready, ...pending]) {
+					body = response;
+					const observed = await readHostedRuntimeObserved(paths);
+					expect(
+						observed?.systemd?.units.find((candidate) => candidate.name === unit)?.activeState,
+					).toBe("active");
+					expect(observed?.status).toBe(response === ready ? "ok" : "unknown");
+				}
+				body = ready;
+				probeStatus = 503;
+				expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+				probeStatus = 200;
+				if (unit === "openclaw-gateway.service") {
+					// The old native status command proves handshake admission independently of channels.
+					mkdirSync(paths.userLocalBin, { recursive: true });
+					const statusCommand = join(paths.userLocalBin, "openclaw");
+					writeFileSync(
+						statusCommand,
+						`#!/bin/sh
+[ "$*" = "gateway status --json --timeout 3000" ] || exit 1
+[ "$OPENCLAW_CONFIG_PATH" = "$HOME/.openclaw/openclaw.json" ] || exit 1
+exec curl --disable --noproxy '*' --fail --silent http://127.0.0.1:${server.port}/native-status
+`,
+						{ mode: 0o700 },
+					);
+					const connected = {
+						rpc: {
+							ok: true,
+							kind: "connect",
+							capability: "connected_no_operator_scope",
+							auth: { role: "operator", scopes: [] },
+							url: `ws://127.0.0.1:${server.port}`,
+						},
+					};
+					body = { ready: false, failing: ["telegram"], eventLoop: { degraded: false } };
+					probeStatus = 503;
+					for (const response of [
+						connected,
+						{ rpc: { ok: false } },
+						{ rpc: { ...connected.rpc, url: "ws://other.example.test:18789" } },
+						{ ok: true },
+						null,
+						"not JSON",
+						connected,
+					]) {
+						nativeStatus = response;
+						expect((await readHostedRuntimeObserved(paths))?.status).toBe(
+							response === connected ? "ok" : "unknown",
+						);
+					}
+					uiStatus = 503;
+					expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+					uiStatus = 200;
+					probeStatus = 200;
+					expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+					probeStatus = 503;
+					for (const invalid of [
+						{ ready: false, failing: ["gateway-draining"] },
+						{ ready: false, failing: [] },
+						{ ready: false, failing: [null] },
+						{ ok: true },
+						"<html>Control UI</html>",
+					]) {
+						body = invalid;
+						expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+					}
+					body = { ready: false, failing: ["startup-sidecars"] };
+					// Official startup admission returns a failed native handshake, even with a serving UI.
+					nativeStatus = { rpc: { ok: false } };
+					expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+					rmSync(statusCommand);
+					body = ready;
+					probeStatus = 200;
+					for (const status of [503, 404, 302, 200]) {
+						uiStatus = status;
+						expect((await readHostedRuntimeObserved(paths))?.status).toBe(
+							status === 200 ? "ok" : "unknown",
+						);
+					}
+					// An absent or stale optional manifest cache must not override native configuration.
+					mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
+					writeFileSync(
+						paths.manifestLastGood,
+						JSON.stringify({ manifest: { system: { openclawControlUiBasePath: "/stale" } } }),
+					);
+					expect((await readHostedRuntimeObserved(paths))?.status).toBe("ok");
+					for (const invalid of ["{}", "not JSON"]) {
+						writeFileSync(configPath, invalid);
+						expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+					}
+					rmSync(configPath);
+					expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+					// Native includes are resolved by OpenClaw's existing config command contract.
+					mkdirSync(paths.userLocalBin, { recursive: true });
+					const nativeCommand = join(paths.userLocalBin, "openclaw");
+					writeFileSync(
+						nativeCommand,
+						`#!/bin/sh
+[ "$*" = "config get gateway --json" ] || exit 1
+[ "$OPENCLAW_CONFIG_PATH" = "$HOME/.openclaw/openclaw.json" ] || exit 1
+printf '%s' '{"port":${server.port},"controlUi":{"basePath":"/control"}}'
+`,
+						{ mode: 0o700 },
+					);
+					for (const included of [
+						{ $include: "native.json" },
+						{ gateway: { $include: "gateway.json" } },
+						{ gateway: { port: server.port, controlUi: { $include: "ui.json" } } },
+					]) {
+						writeFileSync(configPath, JSON.stringify(included));
+						expect((await readHostedRuntimeObserved(paths))?.status).toBe("ok");
+					}
+					rmSync(nativeCommand);
+					expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+					writeFileSync(configPath, config);
+					// An HTTP server that accepts but never replies must not freeze observation.
+					probeWait = new Promise<void>((resolve) => {
+						releaseProbe = resolve;
+					});
+					expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+				} else {
+					writeFileSync(
+						systemctl,
+						`#!/bin/sh
+case "$*" in
+  *hermes-gateway.service*) printf 'ActiveState=activating\\nSubState=start\\n' ;;
+  *) printf 'ActiveState=active\\nSubState=running\\n' ;;
+esac
+`,
+						{ mode: 0o700 },
+					);
+					expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+				}
+			} finally {
+				releaseProbe?.();
+				await server.stop(true);
+			}
+			expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+		},
+	);
+
+	test("requires boot-selected services when the receipt has no activation inventory", async () => {
+		const paths = healthyAppliedRuntimePaths(["hermes"]);
+		const observed = await readHostedRuntimeObserved(paths);
+		expect(observed?.status).toBe("unknown");
+		expect(observed?.systemd?.units.map((unit) => unit.name)).toEqual([
+			"clawdi-hermes-dashboard.service",
+			"hermes-gateway.service",
+		]);
+	});
+
+	test("keeps missing and truncated applied services from reporting healthy", async () => {
+		const paths = healthyAppliedRuntimePaths();
+		const applied = readRuntimeAppliedState(paths);
+		if (!applied) throw new Error("Fixture is missing applied state");
+		writeRuntimeAppliedState(
+			{ ...applied, activated: { "hermes-gateway.service": "a".repeat(64) } },
+			paths,
+		);
+		const identity = userInfo();
+		process.env.CLAWDI_RUNTIME_USER = identity.username;
+		process.env.CLAWDI_RUNTIME_UID = String(identity.uid);
+		process.env.CLAWDI_RUNTIME_GID = String(identity.gid);
+		mkdirSync(paths.userHome, { recursive: true });
+		const systemctl = join(paths.userHome, "systemctl");
+		writeFileSync(
+			systemctl,
+			`#!/bin/sh
+case "$*" in
+  *hermes-gateway.service*) printf 'ActiveState=inactive\\nSubState=dead\\n' ;;
+  *) printf 'ActiveState=active\\nSubState=running\\n' ;;
+esac
+`,
+			{ mode: 0o700 },
+		);
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
+		const missing = await readHostedRuntimeObserved(paths);
+		expect(missing?.status).toBe("unknown");
+		expect(missing?.systemd?.units).toMatchObject([
+			{ name: "hermes-gateway.service", activeState: "inactive" },
+		]);
+		mkdirSync(paths.systemdUserRoot, { recursive: true });
+		for (let index = 0; index < 31; index += 1) {
+			writeFileSync(
+				join(paths.systemdUserRoot, `clawdi-extra-${index}.service`),
+				GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
+			);
+		}
+		const truncated = await readHostedRuntimeObserved(paths);
+		expect(truncated?.truncated).toBe(true);
+		expect(truncated?.systemd?.units.some((unit) => unit.name === "hermes-gateway.service")).toBe(
+			false,
+		);
+		expect(truncated?.status).toBe("unknown");
+	});
+
+	test("reports complete systemd counts with representative scoped truncation", async () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-observed-v2-truncation-"));
 		roots.push(root);
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 		process.env.CLAWDI_RUNTIME_USER = userInfo().username;
+		process.env.CLAWDI_RUNTIME_UID = String(userInfo().uid);
+		process.env.CLAWDI_RUNTIME_GID = String(userInfo().gid);
+		process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = join(root, "systemd");
 		const paths = getRuntimePaths({ mode: "hosted" });
 		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		mkdirSync(paths.systemdSystemRoot, { recursive: true });
@@ -240,7 +531,7 @@ describe("hosted runtime observed v2", () => {
 			writeFileSync(join(paths.systemdUserRoot, `clawdi-user-${suffix}.service`), "");
 		}
 
-		const observed = readHostedRuntimeObserved(paths);
+		const observed = await readHostedRuntimeObserved(paths);
 
 		expect(observed?.truncated).toBe(true);
 		expect(observed?.systemd?.unitCount).toBe(62);

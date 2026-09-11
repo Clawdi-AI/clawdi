@@ -12,6 +12,7 @@ re-upload invalidate cleanly without explicit cache-busting.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 import time
@@ -55,6 +56,7 @@ type SessionMessageDirection = Literal["asc", "desc"]
 
 @dataclass(frozen=True, slots=True)
 class SessionContentProjection:
+    content_revision: str
     messages: list[SessionMessageValue]
     source_positions: tuple[int, ...]
     timeline: list[SessionTimelineValue]
@@ -78,6 +80,10 @@ class SessionContentUnavailable(Exception):
 
 class SessionContentInvalid(Exception):
     """The stored content isn't a JSON array of messages — corrupted upload."""
+
+
+class SessionContentChanged(SessionContentInvalid):
+    """Stored bytes do not match the committed content identity."""
 
 
 def session_has_uploaded_content(session: Session) -> bool:
@@ -179,8 +185,10 @@ async def load_snapshot_projection(
     file_store: _FileStoreLike,
 ) -> SessionContentProjection:
     """Load one immutable-or-current snapshot by its explicit storage identity."""
-    cache_key = (file_key, content_hash)
-    cached = _cache_get(cache_key)
+    # This namespace contains only projections whose raw bytes were verified.
+    # A legacy row without a hash must fetch bytes to discover its identity.
+    cache_key = (f"snapshot-sha256:{file_key}", content_hash)
+    cached = _cache_get(cache_key) if content_hash else None
     if cached is not None:
         return cached
 
@@ -192,6 +200,10 @@ async def load_snapshot_projection(
         log.exception("session_content_fetch_failed file_key=%s", file_key)
         raise SessionContentUnavailable("session content storage is unavailable") from exc
 
+    actual_hash = hashlib.sha256(data).hexdigest()
+    if content_hash and actual_hash != content_hash:
+        raise SessionContentChanged("Stored snapshot differs from committed content")
+
     try:
         parsed = _SESSION_MESSAGES_ADAPTER.validate_json(data, strict=True)
     except ValidationError as exc:
@@ -199,6 +211,7 @@ async def load_snapshot_projection(
         raise SessionContentInvalid("session content is not a valid JSON message array") from exc
 
     projection = SessionContentProjection(
+        content_revision=f"snapshot:{actual_hash}",
         messages=parsed,
         source_positions=tuple(range(len(parsed))),
         timeline=[
@@ -207,7 +220,7 @@ async def load_snapshot_projection(
         ],
         timeline_source_positions=tuple(range(len(parsed))),
     )
-    _cache_put(cache_key, projection)
+    _cache_put((f"snapshot-sha256:{file_key}", actual_hash), projection)
     return projection
 
 
@@ -243,6 +256,7 @@ async def load_event_generation_projection(
     # Reuse the sanitized text projection, retaining an explicit public-field allowlist.
     messages = [item for item in timeline if item.kind == "message"]
     projection = SessionContentProjection(
+        content_revision=f"events:{event_head_hash}",
         messages=_SESSION_MESSAGES_ADAPTER.validate_python(
             [
                 {

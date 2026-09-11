@@ -137,6 +137,7 @@ from app.services.runtime_source_revision import (
     persisted_runtime_source_revision,
 )
 from app.services.session_content import (
+    SessionContentChanged,
     SessionContentInvalid,
     SessionContentMissing,
     SessionContentUnavailable,
@@ -146,6 +147,7 @@ from app.services.session_content import (
     session_has_uploaded_content,
     slice_session_items,
 )
+from app.services.session_content_notifications import notify_session_content_changed
 from app.services.session_export import session_to_markdown
 from app.services.session_refs import extract_related_refs
 from app.services.session_search import (
@@ -3241,6 +3243,7 @@ async def upload_session_content(
         )
 
     with request_stage(request.scope, "upload_commit_ms"):
+        await notify_session_content_changed(db, session.id)
         await db.commit()
 
     return SessionUploadResponse(status="uploaded", file_key=fk, content_hash=content_hash)
@@ -3290,6 +3293,16 @@ async def get_session_content(
     ]
 
 
+def _session_content_revision_conflict() -> HTTPException:
+    return HTTPException(
+        status.HTTP_409_CONFLICT,
+        detail={
+            "code": "session_content_revision_changed",
+            "message": "Session content changed. Please retry.",
+        },
+    )
+
+
 @router.get("/sessions/{session_id}/messages")
 async def get_session_messages(
     session_id: UUID,
@@ -3308,6 +3321,7 @@ async def get_session_messages(
     anchor_position: int | None = Query(default=None, ge=0),
     anchor_revision: str | None = Query(default=None, min_length=1, max_length=80),
     search_query: SearchQuery | None = Query(default=None),
+    content_revision: str | None = Query(default=None, min_length=1, max_length=80),
     auth: AuthContext = Depends(require_scope("sessions:read")),
     db: AsyncSession = Depends(get_session),
 ) -> SessionMessagesPage | SessionTimelinePage:
@@ -3316,7 +3330,7 @@ async def get_session_messages(
     `GET /v1/sessions/{id}/content` to grab the full JSON blob;
     this endpoint slices the same blob server-side so the
     dashboard doesn't ship 10+ MB of messages on a long session. The default
-    `view=messages` preserves the historical response exactly. Other views and
+    `view=messages` preserves the historical message projection. Other views and
     the composable `include` filter add a typed message/tool timeline without
     exposing reasoning or hidden events.
 
@@ -3324,7 +3338,9 @@ async def get_session_messages(
     starts at the oldest visible message for ascending reads and at the newest
     visible message for descending reads. Clients pin pages to the parent
     session's `content_hash`, which changes after snapshot replacement or event
-    append. A search query without an anchor opens its first transcript match;
+    append. `content_revision` pins each page to a verified projection; a
+    concurrent content change returns 409 rather than mixing page revisions.
+    A search query without an anchor opens its first transcript match;
     a complete anchor opens that exact match. Stale anchors degrade to ordinary
     offset pagination.
     """
@@ -3359,6 +3375,8 @@ async def get_session_messages(
     # a 10 MB JSON blob per visitor.
     try:
         projection = await load_session_content_projection(session, file_store, db)
+    except SessionContentChanged:
+        raise _session_content_revision_conflict() from None
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
     except SessionContentUnavailable:
@@ -3370,6 +3388,9 @@ async def get_session_messages(
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
         ) from None
+
+    if content_revision is not None and projection.content_revision != content_revision:
+        raise _session_content_revision_conflict()
 
     if include is not None:
         included_categories = frozenset(include)
@@ -3493,6 +3514,7 @@ async def get_session_messages(
         direction=direction,
     )
     page_values = {
+        "content_revision": projection.content_revision,
         "items": sliced,
         "total": total,
         "offset": page_offset,

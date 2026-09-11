@@ -52,3 +52,36 @@ describe("ApiClient machine fence", () => {
 		).toBe(true);
 	});
 });
+
+describe("ApiClient upload cancellation", () => {
+	it.each(["before request", "during credentials"])(
+		"does not send an upload canceled %s",
+		async (timing) => {
+			const abort = new AbortController();
+			const api = new ApiClient({ requireAuth: false, abortSignal: abort.signal });
+			let requests = 0;
+			globalThis.fetch = (async (_request: Request) => {
+				requests += 1;
+				return Response.json({ status: "ok" });
+			}) as typeof fetch;
+			if (timing === "before request") abort.abort();
+			else {
+				api.getAccessToken = async () => {
+					abort.abort();
+					return "";
+				};
+			}
+			await expect(
+				api.uploadSessionEventGenerationChunk({
+					localSessionId: "session",
+					generation: "generation",
+					startSeq: 0,
+					baseHeadHash: "a".repeat(64),
+					contentHash: "b".repeat(64),
+					file: Buffer.from("{}\n"),
+				}),
+			).rejects.toMatchObject({ name: "ApiError", body: "aborted", isTimeout: false });
+			expect(requests).toBe(0);
+		},
+	);
+});

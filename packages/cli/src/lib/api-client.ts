@@ -624,6 +624,7 @@ export class ApiClient {
 		// frustrating systemd / launchd's restart cadence.
 		const onEngineAbort = () => controller.abort();
 		this.abortSignal?.addEventListener("abort", onEngineAbort, { once: true });
+		if (this.abortSignal?.aborted) controller.abort();
 		try {
 			const headers: Record<string, string> = {
 				Authorization: `Bearer ${accessToken}`,

@@ -6,13 +6,16 @@ export function ProtectedAuthBoundary({
 	identity: admittedIdentity,
 	children,
 }: {
-	identity: string;
+	identity: string | null;
 	children: React.ReactNode;
 }) {
 	const auth = useRouteAuth();
 	const sessionIdentity = useSessionIdentity();
 	const identity = routeAuthIdentity(auth);
-	const ready = sessionIdentity === admittedIdentity && identity === admittedIdentity;
+	const ready =
+		admittedIdentity !== null &&
+		sessionIdentity === admittedIdentity &&
+		identity === admittedIdentity;
 	// A settled disagreement is recoverable, not an endless activation skeleton.
 	const status =
 		auth.status !== "signed-in"

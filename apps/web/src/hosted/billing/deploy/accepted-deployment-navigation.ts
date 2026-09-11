@@ -59,7 +59,7 @@ async function hydrateAcceptedDeployment({
 	return authoritative;
 }
 
-/** Open accepted authority immediately when the API already returned its canonical Agent ID. */
+/** Hydrate deployment membership before opening its canonical Agent route. */
 export async function navigateToAcceptedDeployment({
 	agentId,
 	deploymentId,
@@ -80,21 +80,8 @@ export async function navigateToAcceptedDeployment({
 		throw new Error("The deployment service returned an invalid Agent identity.");
 	}
 
-	if (acceptedAgentId) {
-		const hydration = hydrateAcceptedDeployment({
-			agentId: acceptedAgentId,
-			deploymentId,
-			getDeployment,
-			queryClient,
-		}).catch(() => {
-			void queryClient.invalidateQueries({ queryKey: billingKeys.deployments, exact: true });
-		});
-		await navigate({ href: agentSectionHref(acceptedAgentId), replace });
-		void hydration;
-		return;
-	}
-
 	const authoritative = await hydrateAcceptedDeployment({
+		agentId: acceptedAgentId ?? undefined,
 		deploymentId,
 		getDeployment,
 		queryClient,

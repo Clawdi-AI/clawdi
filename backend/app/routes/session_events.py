@@ -34,6 +34,7 @@ from app.services.connected_agent_fence import (
     require_connected_agent_fence,
 )
 from app.services.file_store import get_file_store
+from app.services.session_content_notifications import notify_session_content_changed
 from app.services.session_events import (
     EMPTY_EVENT_HEAD,
     SessionEventChunkInvalid,
@@ -523,6 +524,7 @@ async def commit_session_event_generation(
         generation_id,
         projection_complete=all(chunk.search_indexed_at is not None for chunk in chunks),
     )
+    await notify_session_content_changed(db, session.id)
     await db.commit()
     return SessionEventAppendResponse(
         generation=generation_id,
@@ -706,6 +708,7 @@ async def append_session_events(
         generation,
         projection_complete=projection_complete,
     )
+    await notify_session_content_changed(db, session.id)
     await db.commit()
     return SessionEventAppendResponse(
         generation=generation,

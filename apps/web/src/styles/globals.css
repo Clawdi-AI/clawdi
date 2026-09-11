@@ -8,3 +8,13 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@clawdi/shared/style/theme.css";
+
+html[data-clawdi-desktop="true"] [data-clawdi-window-drag-region] {
+	-webkit-app-region: drag;
+}
+
+html[data-clawdi-desktop="true"]
+	[data-clawdi-window-drag-region]
+	:is(a, button, input, select, textarea, [role="button"]) {
+	-webkit-app-region: no-drag;
+}

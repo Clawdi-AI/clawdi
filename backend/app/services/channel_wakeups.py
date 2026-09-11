@@ -52,6 +52,11 @@ class ChannelWakeup:
             for waiter in waiters:
                 waiter.set()
 
+    def signal_all(self) -> None:
+        """Reconcile subscribers after a listener connection loses notifications."""
+        for key in self._waiters.keys() | self._scoped_waiters.keys():
+            self.signal(key)
+
 
 channel_deliveries_enqueued = ChannelWakeup()
 channel_inbound_messages_enqueued = ChannelWakeup()

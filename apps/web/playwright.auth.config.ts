@@ -10,7 +10,7 @@ export default defineConfig({
 	webServer: {
 		command:
 			"bun x --no-install vite --config e2e/auth/vite.config.ts --host 127.0.0.1 --port 3111 --strictPort",
-		url: "http://127.0.0.1:3111/e2e/auth/",
+		url: "http://127.0.0.1:3111/__auth-hydration",
 		env: {
 			VITE_DEV_AUTH_BYPASS: "false",
 			VITE_CLAWDI_HOSTED: process.env.VITE_CLAWDI_HOSTED ?? "false",

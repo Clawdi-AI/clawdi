@@ -3,6 +3,7 @@
 	"version": "0.1.0",
 	"description": "Clawdi desktop client",
 	"author": "Clawdi",
+	"homepage": "https://clawdi.ai",
 	"private": true,
 	"type": "module",
 	"main": "dist/main.js",
@@ -13,12 +14,16 @@
 		"test": "../../scripts/test.sh desktop",
 		"test:internal": "bun test src",
 		"prepare:native": "bun run scripts/prepare-native.ts",
-		"package:mac": "bun run build && CLAWDI_NATIVE_TARGET=darwin-arm64 bun run prepare:native && electron-builder --mac dmg --arm64"
+		"package:mac": "bun run scripts/package-preview.ts",
+		"package:linux": "bun run scripts/package-preview.ts",
+		"package:mac:release": "bun run scripts/package-release.ts"
 	},
 	"dependencies": {
-		"@clawdi/shared": "workspace:*"
+		"electron-updater": "6.8.9"
 	},
 	"devDependencies": {
+		"@clawdi/shared": "workspace:*",
+		"@lobehub/icons": "5.16.0",
 		"@electron/fuses": "^2.1.3",
 		"@playwright/test": "^1.62.1",
 		"@types/bun": "^1.4.0",
@@ -30,13 +35,15 @@
 		"lucide-react": "catalog:",
 		"react": "catalog:",
 		"react-dom": "catalog:",
-		"typescript": "catalog:"
+		"typescript": "catalog:",
+		"yaml": "^2.9.0"
 	},
 	"build": {
 		"appId": "ai.clawdi.desktop",
 		"productName": "Clawdi",
 		"asar": true,
 		"directories": {
+			"buildResources": "build",
 			"output": "release"
 		},
 		"afterPack": "apps/desktop/scripts/after-pack.mjs",
@@ -45,7 +52,37 @@
 			"package.json"
 		],
 		"extraMetadata": {
-			"clawdiWebUrl": "https://cloud.clawdi.ai"
+			"clawdiDashboardSource": "remote",
+			"clawdiUpdateChannel": "disabled"
+		},
+		"linux": {
+			"maintainer": "Clawdi <hello@clawdi.ai>",
+			"artifactName": "Clawdi-${version}-${arch}.${ext}",
+			"category": "Development",
+			"executableName": "clawdi-desktop",
+			"icon": "../web/public/clawdi-logo-transparent.png",
+			"target": [
+				{
+					"target": "deb",
+					"arch": [
+						"x64",
+						"arm64"
+					]
+				},
+				{
+					"target": "rpm",
+					"arch": [
+						"x64",
+						"arm64"
+					]
+				}
+			]
+		},
+		"deb": {
+			"packageName": "clawdi-desktop"
+		},
+		"rpm": {
+			"packageName": "clawdi-desktop"
 		},
 		"extraResources": [
 			{
@@ -60,11 +97,20 @@
 		"mac": {
 			"category": "public.app-category.developer-tools",
 			"icon": "../web/public/clawdi-logo-transparent.png",
+			"hardenedRuntime": true,
 			"target": [
 				{
 					"target": "dmg",
 					"arch": [
-						"arm64"
+						"arm64",
+						"x64"
+					]
+				},
+				{
+					"target": "zip",
+					"arch": [
+						"arm64",
+						"x64"
 					]
 				}
 			]

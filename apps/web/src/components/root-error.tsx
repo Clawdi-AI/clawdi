@@ -5,6 +5,7 @@ import { useRouter } from "@tanstack/react-router";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { DesktopBridgeCompatibilityError } from "@/lib/desktop-bridge";
 
 const isDevelopment =
 	(import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.MODE !==
@@ -25,6 +26,7 @@ export default function RootError({
 	reset: () => void;
 }) {
 	const router = useRouter();
+	const needsDesktopUpdate = error instanceof DesktopBridgeCompatibilityError;
 
 	useEffect(() => {
 		if (import.meta.env.VITE_SENTRY_DSN) {
@@ -45,9 +47,13 @@ export default function RootError({
 			<div className="max-w-md w-full text-center space-y-4">
 				<AlertTriangle className="size-10 text-destructive mx-auto" />
 				<div>
-					<h1 className="text-lg font-semibold">Page unavailable</h1>
+					<h1 className="text-lg font-semibold">
+						{needsDesktopUpdate ? "Update Clawdi Desktop" : "Page unavailable"}
+					</h1>
 					<p className="text-sm text-muted-foreground mt-1">
-						This page couldn&apos;t load. Try again. If it keeps happening, contact support.
+						{needsDesktopUpdate
+							? "Install the latest Clawdi Desktop version to continue."
+							: "This page couldn't load. Try again. If it keeps happening, contact support."}
 					</p>
 				</div>
 				{isDevelopment && (
