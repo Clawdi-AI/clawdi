@@ -334,3 +334,232 @@ async def test_startup_snapshot(
         finally:
             listener.close()
             await locks.close()
+
+
+@pytest.mark.parametrize("fault", [None, "disconnect", "cancel", "failure", "timeout", "revoke"])
+async def test_ready_channel_read_supervision(client, db_session, engine, monkeypatch, fault):
+    """A held post-READY GET must not hold ACKs, receipts or socket ownership."""
+    store = _reset_discord_gateway_sessions(monkeypatch)
+    target, fresh, guild = "100000000000000001", "100000000000000002", "200000000000000001"
+    created = await _create_paired_discord_channel(
+        client, name=f"ready-{uuid4().hex}", channel_id=target, guild_id=guild
+    )
+    account_id = UUID(created["id"])
+    binding = (
+        await db_session.scalars(
+            select(ChannelBinding).where(ChannelBinding.account_id == account_id)
+        )
+    ).one()
+
+    def message(channel_id, label):
+        return ChannelMessage(
+            account_id=account_id,
+            bot_agent_link_id=binding.bot_agent_link_id,
+            binding_id=binding.id,
+            user_id=binding.user_id,
+            direction="inbound",
+            external_chat_id=binding.external_chat_id,
+            provider_message_id=label,
+            payload={
+                "t": "MESSAGE_CREATE",
+                "d": {
+                    "id": label,
+                    "channel_id": channel_id,
+                    "guild_id": guild,
+                    "content": label,
+                    "author": {"id": "300000000000000001"},
+                },
+            },
+        )
+
+    initial = message(target, "initial")
+    db_session.add(initial)
+    await db_session.commit()
+    monkeypatch.setattr(
+        discord, "async_session_factory", async_sessionmaker(engine, expire_on_commit=False)
+    )
+    locks = DiscordAdvisorySession(engine)
+    monkeypatch.setattr(app.state, "discord_gateway_locks", locks, raising=False)
+    monkeypatch.setattr(shared, "discord_rate_limiter", DiscordRateLimiter())
+    entered, release, exited = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    active = 0
+    attempts = 0
+    owner = None
+    original_release = locks.release
+
+    async def release_lease(lease):
+        assert active == 0
+        assert not [
+            task
+            for task in asyncio.all_tasks()
+            if task.get_name()
+            in {"discord-gateway-receive", "discord-gateway-wakeup", "discord-gateway-channel-read"}
+        ]
+        await original_release(lease)
+
+    monkeypatch.setattr(locks, "release", release_lease)
+    original_authority = discord._discord_gateway_authority
+
+    async def authority(*args, **kwargs):
+        nonlocal owner
+        owner = asyncio.current_task()
+        return await original_authority(*args, **kwargs)
+
+    monkeypatch.setattr(discord, "_discord_gateway_authority", authority)
+
+    async def transport(request):
+        nonlocal active, attempts
+        channel_id = request.url.path.rsplit("/", 1)[-1]
+        if channel_id == fresh:
+            active += 1
+            attempts += 1
+            entered.set()
+            try:
+                await release.wait()
+                if attempts == 1:
+                    if fault == "failure":
+                        return httpx.Response(503)
+                    if fault == "timeout":
+                        raise httpx.ReadTimeout("synthetic timeout", request=request)
+            finally:
+                active -= 1
+                exited.set()
+        return httpx.Response(
+            200, json={"id": channel_id, "guild_id": guild, "type": 0, "name": "synthetic"}
+        )
+
+    server = uvicorn.Server(
+        uvicorn.Config(app, lifespan="off", log_level="critical", access_log=False)
+    )
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    url = f"ws://127.0.0.1:{listener.getsockname()[1]}/v1/channels/discord/gateway"
+    server_task = asyncio.create_task(server.serve(sockets=[listener]))
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+            monkeypatch.setattr(shared, "get_channel_provider_http_client", lambda: http)
+            async with asyncio.timeout(15):
+                while not server.started:
+                    await asyncio.sleep(0.01)
+                async with connect(url) as ws:
+                    assert json.loads(await ws.recv())["op"] == 10
+                    await ws.send(
+                        json.dumps({"op": 2, "d": {"token": created["agent_token"], "intents": 0}})
+                    )
+                    ready = json.loads(await ws.recv())
+                    assert ready["t"] == "READY"
+                    session_id = ready["d"]["session_id"]
+                    frame = ready
+                    while frame.get("t") != "MESSAGE_CREATE":
+                        frame = json.loads(await ws.recv())
+                    sent_sequence = frame["s"]
+                    alias = ChannelBindingAlias(
+                        account_id=account_id,
+                        bot_agent_link_id=binding.bot_agent_link_id,
+                        binding_id=binding.id,
+                        user_id=binding.user_id,
+                        alias_external_chat_id=fresh,
+                        alias_kind="discord_channel",
+                    )
+                    pending = message(fresh, "fresh")
+                    trailing = message(target, "trailing")
+                    db_session.add(alias)
+                    db_session.add(pending)
+                    await db_session.flush()
+                    db_session.add(trailing)
+                    await db_session.commit()
+                    discord.channel_inbound_messages_enqueued.signal(str(account_id))
+                    await entered.wait()
+                    # Forward and stale sequences cannot receipt the sent message;
+                    # acknowledging it must not receipt either unsent message.
+                    for sequence in (sent_sequence + 100, sent_sequence - 1, sent_sequence):
+                        await ws.send(json.dumps({"op": 1, "d": sequence}))
+                        assert json.loads(await asyncio.wait_for(ws.recv(), 0.3)) == {
+                            "op": 11,
+                            "d": None,
+                        }
+                        await db_session.refresh(initial)
+                        assert (initial.delivered_at is not None) == (sequence == sent_sequence)
+                        for row in (pending, trailing):
+                            await db_session.refresh(row)
+                            assert row.delivered_at is None
+                    assert active == 1
+                    if fault in {"disconnect", "cancel"}:
+                        if fault == "cancel":
+                            assert owner is not None
+                            owner.cancel()
+                        else:
+                            await ws.close()
+                        await asyncio.wait_for(exited.wait(), 0.3)
+                        async with asyncio.timeout(1):
+                            while store._entries[session_id].connection_count:
+                                await asyncio.sleep(0.01)
+                        assert active == 0
+                        release.set()
+                    else:
+                        if fault == "revoke":
+                            await db_session.delete(alias)
+                            await db_session.commit()
+                        release.set()
+                        frames = []
+                        while not frames or frames[-1].get("d", {}).get("id") != "trailing":
+                            frames.append(json.loads(await ws.recv()))
+                        assert [f["t"] for f in frames] == (
+                            ["MESSAGE_CREATE"]
+                            if fault == "revoke"
+                            else ["CHANNEL_CREATE", "MESSAGE_CREATE", "MESSAGE_CREATE"]
+                        )
+                        if fault != "revoke":
+                            assert [f["d"]["id"] for f in frames[1:]] == ["fresh", "trailing"]
+                            await db_session.refresh(pending)
+                            assert pending.delivered_at is None
+                            await ws.send(json.dumps({"op": 1, "d": frames[1]["s"]}))
+                            assert json.loads(await ws.recv())["op"] == 11
+                            await db_session.refresh(pending)
+                            assert pending.delivered_at is not None
+                            sent_sequence = frames[1]["s"]
+                        assert attempts == (2 if fault in {"failure", "timeout"} else 1)
+                async with asyncio.timeout(1):
+                    while store._entries[session_id].connection_count:
+                        await asyncio.sleep(0.01)
+                # Resume replays/continues in original order; only its supplied
+                # checkpoint (and subsequent heartbeat) can acknowledge rows.
+                async with connect(url) as ws:
+                    assert json.loads(await ws.recv())["op"] == 10
+                    await ws.send(
+                        json.dumps(
+                            {
+                                "op": 6,
+                                "d": {
+                                    "token": created["agent_token"],
+                                    "session_id": session_id,
+                                    "seq": sent_sequence,
+                                },
+                            }
+                        )
+                    )
+                    frames = []
+                    while not (
+                        any(f.get("t") == "RESUMED" for f in frames)
+                        and any(f.get("d", {}).get("id") == "trailing" for f in frames)
+                    ):
+                        frames.append(json.loads(await ws.recv()))
+                    assert any(f.get("t") == "RESUMED" for f in frames)
+                    assert [f["d"]["id"] for f in frames if f.get("t") == "MESSAGE_CREATE"] == (
+                        ["fresh", "trailing"] if fault in {"disconnect", "cancel"} else ["trailing"]
+                    )
+                    await db_session.refresh(trailing)
+                    assert trailing.delivered_at is None
+                    await ws.send(json.dumps({"op": 1, "d": frames[-1]["s"]}))
+                    assert json.loads(await ws.recv())["op"] == 11
+                    await db_session.refresh(trailing)
+                    assert trailing.delivered_at is not None
+    finally:
+        release.set()
+        server.should_exit = True
+        try:
+            await asyncio.wait_for(server_task, 10)
+        finally:
+            listener.close()
+            await locks.close()
+        assert active == 0
