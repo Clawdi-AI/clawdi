@@ -10,7 +10,7 @@ export const securityHeaders = createMiddleware().server(async ({ next }) => {
 			"default-src 'self'",
 			`script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
 			"script-src-attr 'none'",
-			"style-src 'self' 'unsafe-inline'",
+			"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
 			"img-src 'self' data: blob: https:",
 			"font-src 'self' data: https:",
 			"connect-src 'self' https: wss:",
