@@ -648,13 +648,10 @@ export function createBillingClient(
 				throw terminalDeployRequestError(status);
 			}
 			if (projection.kind === "operation") {
-				return {
-					...acceptDeclarativeOperation({
-						operation: projection.operation,
-						deploymentId: projection.deploymentId,
-					}),
-					agentId: projection.agentId,
-				};
+				return acceptDeclarativeOperation({
+					operation: projection.operation,
+					deploymentId: projection.deploymentId,
+				});
 			}
 			if (projection.kind === "operation_name") {
 				const remainingMs = deadline - Date.now();
@@ -676,22 +673,16 @@ export function createBillingClient(
 				} finally {
 					globalThis.clearTimeout(operationTimeoutId);
 				}
-				return {
-					...acceptDeclarativeOperation({
-						operation,
-						deploymentId: projection.deploymentId,
-					}),
-					agentId: projection.agentId,
-				};
+				return acceptDeclarativeOperation({
+					operation,
+					deploymentId: projection.deploymentId,
+				});
 			}
 			if (projection.kind === "deployment") {
-				return {
-					...acceptDeclarativeOperation({
-						deploymentId: projection.deploymentId,
-						operation: null,
-					}),
-					agentId: projection.agentId,
-				};
+				return acceptDeclarativeOperation({
+					deploymentId: projection.deploymentId,
+					operation: null,
+				});
 			}
 			if (projection.kind === "invalid_success") {
 				return acceptDeclarativeOperation({ deploymentId: null, operation: null });
