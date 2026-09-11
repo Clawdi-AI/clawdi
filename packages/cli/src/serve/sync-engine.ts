@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { clearConnectedVaultFiles } from "../runtime/vault-files";
+import { clearConnectedVaultFiles, connectedVaultFilesSupported } from "../runtime/vault-files";
 import { type ConnectedVaultSync, prepareConnectedVaultSync } from "./vault-sync";
 /**
  * `clawdi daemon` orchestrator.
@@ -375,7 +375,11 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	const sessions = opts.adapter.sessions;
 	if (!sessions && !skills) throw new Error(`${opts.adapter.agentType} has no sync modules`);
 
-	if (!getAuth() && process.env.CLAWDI_RUNTIME_MODE !== "hosted" && process.platform === "linux") {
+	if (
+		!getAuth() &&
+		process.env.CLAWDI_RUNTIME_MODE !== "hosted" &&
+		connectedVaultFilesSupported()
+	) {
 		const stateRoot = getServeStateDir(opts.adapter.agentType);
 		try {
 			clearConnectedVaultFiles(

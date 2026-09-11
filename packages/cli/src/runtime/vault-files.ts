@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
+	chmodSync,
 	closeSync,
 	constants,
-	existsSync,
 	fstatSync,
 	fsyncSync,
 	lstatSync,
@@ -18,7 +18,12 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import { z } from "zod";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
+import {
+	withPrivateDirectoryLock,
+	withPrivateDirectoryLockSync,
+} from "../lib/private-directory-lock";
 import { writePrivateFileAtomic } from "../lib/private-file";
+import { assertTrustedDirectory, ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
 import type { RuntimePaths } from "./paths";
 import { spawnRuntimeUserCommand, withRuntimeUserFileAccess } from "./runtime-user-command";
 import { writeRuntimePlatformFileAtomic } from "./state";
@@ -164,11 +169,39 @@ function openDirectory(path: string): number {
 		return fail();
 	}
 }
-function filePath(fd: number, name: string): string {
-	return `/proc/self/fd/${fd}/${name}`;
+type VaultDirectory = { fd: number; path: string; connected: boolean };
+
+function assertConnectedDirectory(path: string): void {
+	if (!isAbsolute(path) || resolve(path) !== path) fail();
+	let current = "/";
+	for (const part of path.split("/").filter(Boolean)) {
+		current = join(current, part);
+		assertTrustedDirectory(current);
+		const stat = lstatSync(current);
+		if (
+			(stat.uid !== 0 && stat.uid !== process.geteuid?.()) ||
+			((stat.mode & 0o022) !== 0 && (stat.mode & 0o1000) === 0)
+		)
+			fail();
+	}
 }
-function verifyFile(fd: number, name: string): boolean {
-	const path = filePath(fd, name);
+
+function filePath(directory: VaultDirectory, name: string): string {
+	if (!directory.connected) return `/proc/self/fd/${directory.fd}/${name}`;
+	assertConnectedDirectory(directory.path);
+	const named = lstatSync(directory.path),
+		opened = fstatSync(directory.fd);
+	if (
+		named.dev !== opened.dev ||
+		named.ino !== opened.ino ||
+		named.uid !== process.geteuid?.() ||
+		(named.mode & 0o777) !== 0o700
+	)
+		fail();
+	return join(directory.path, name);
+}
+function verifyFile(directory: VaultDirectory, name: string): boolean {
+	const path = filePath(directory, name);
 	try {
 		const stat = lstatSync(path);
 		if (
@@ -185,9 +218,9 @@ function verifyFile(fd: number, name: string): boolean {
 		return fail();
 	}
 }
-function fileDigest(fd: number, name: string): string | null {
-	if (!verifyFile(fd, name)) return null;
-	const file = openSync(filePath(fd, name), constants.O_RDONLY | constants.O_NOFOLLOW);
+function fileDigest(directory: VaultDirectory, name: string): string | null {
+	if (!verifyFile(directory, name)) return null;
+	const file = openSync(filePath(directory, name), constants.O_RDONLY | constants.O_NOFOLLOW);
 	try {
 		const stat = fstatSync(file);
 		if (!stat.isFile() || stat.nlink !== 1 || stat.size > 16 * 1024 * 1024) fail();
@@ -196,9 +229,9 @@ function fileDigest(fd: number, name: string): string | null {
 		closeSync(file);
 	}
 }
-function atomicFile(fd: number, name: string, content: string): void {
-	if (verifyFile(fd, name)) {
-		const existing = openSync(filePath(fd, name), constants.O_RDONLY | constants.O_NOFOLLOW);
+function atomicFile(directory: VaultDirectory, name: string, content: string): void {
+	if (verifyFile(directory, name)) {
+		const existing = openSync(filePath(directory, name), constants.O_RDONLY | constants.O_NOFOLLOW);
 		try {
 			const stat = fstatSync(existing);
 			if (!stat.isFile() || stat.nlink !== 1) fail();
@@ -207,7 +240,16 @@ function atomicFile(fd: number, name: string, content: string): void {
 			closeSync(existing);
 		}
 	}
-	const temp = filePath(fd, `.clawdi-${randomUUID()}`);
+	if (directory.connected) {
+		writePrivateFileAtomic(filePath(directory, name), content, {
+			mode: 0o600,
+			durable: true,
+			trustedRoot: directory.path,
+		});
+		verifyFile(directory, name);
+		return;
+	}
+	const temp = filePath(directory, `.clawdi-${randomUUID()}`);
 	let opened: number | undefined;
 	try {
 		opened = openSync(
@@ -219,8 +261,8 @@ function atomicFile(fd: number, name: string, content: string): void {
 		fsyncSync(opened);
 		closeSync(opened);
 		opened = undefined;
-		renameSync(temp, filePath(fd, name));
-		fsyncSync(fd);
+		renameSync(temp, filePath(directory, name));
+		fsyncSync(directory.fd);
 	} finally {
 		if (opened !== undefined) closeSync(opened);
 		try {
@@ -245,11 +287,35 @@ function saveReceipt(config: VaultFileContext, receipt: Receipt): void {
 		writeRuntimePlatformFileAtomic(config.paths, config.receiptPath, content, { mode: 0o600 });
 	}
 }
+function readReceiptFile(path: string): Receipt | null {
+	let fd: number;
+	try {
+		fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+	} catch (error) {
+		if (error && typeof error === "object" && "code" in error && error.code === "ENOENT")
+			return null;
+		return fail();
+	}
+	try {
+		const stat = fstatSync(fd);
+		if (
+			!stat.isFile() ||
+			stat.nlink !== 1 ||
+			stat.uid !== process.geteuid?.() ||
+			(stat.mode & 0o777) !== 0o600 ||
+			stat.size > 16 * 1024 * 1024
+		)
+			fail();
+		const parsed = receiptSchema.safeParse(JSON.parse(readFileSync(fd, "utf8")));
+		if (!parsed.success) fail();
+		return parsed.data;
+	} finally {
+		closeSync(fd);
+	}
+}
 function readReceipt(config: VaultFileContext): Receipt | null {
-	if (!existsSync(config.receiptPath)) return null;
-	const result = receiptSchema.safeParse(JSON.parse(readFileSync(config.receiptPath, "utf8")));
-	if (!result.success) fail();
-	const receipt = result.data;
+	const receipt = readReceiptFile(config.receiptPath);
+	if (!receipt) return null;
 	if (
 		receipt.apiUrl !== config.apiUrl ||
 		receipt.agentId !== config.agentId ||
@@ -271,10 +337,14 @@ function withVaultFileAccess<T>(
 function withDirectory<T>(
 	config: VaultFileContext,
 	receipt: Receipt,
-	operation: (fd: number) => T & (T extends PromiseLike<unknown> ? never : unknown),
+	operation: (directory: VaultDirectory) => T & (T extends PromiseLike<unknown> ? never : unknown),
 ): T {
 	return withVaultFileAccess(config, () => {
-		const fd = openDirectory(join(config.workspace, ".clawdi/vaults"));
+		const path = join(config.workspace, ".clawdi/vaults");
+		if (config.connected) assertConnectedDirectory(path);
+		const fd = config.connected
+			? openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
+			: openDirectory(path);
 		try {
 			const stat = fstatSync(fd);
 			if (
@@ -284,7 +354,7 @@ function withDirectory<T>(
 				(stat.mode & 0o777) !== 0o700
 			)
 				fail();
-			return operation(fd);
+			return operation({ fd, path, connected: Boolean(config.connected) });
 		} finally {
 			closeSync(fd);
 		}
@@ -316,16 +386,34 @@ function initialize(config: VaultFileContext): Receipt {
 		fail();
 	checkTracked(config);
 	const identity = withVaultFileAccess(config, () => {
+		if (config.connected) {
+			assertConnectedDirectory(config.workspace);
+			const parent = join(config.workspace, ".clawdi");
+			ensureDirectoryWithinTrustedRoot(config.workspace, parent, { mode: 0o700 });
+			assertConnectedDirectory(parent);
+			if ((lstatSync(parent).mode & 0o022) !== 0) fail();
+			const path = join(parent, "vaults");
+			// EEXIST still requires operator repair without the private receipt.
+			mkdirSync(path, { mode: 0o700 });
+			chmodSync(path, 0o700); // Only the directory just created by this writer.
+			const fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+			try {
+				const stat = fstatSync(fd);
+				return { device: stat.dev, inode: stat.ino };
+			} finally {
+				closeSync(fd);
+			}
+		}
 		const workspace = openDirectory(config.workspace);
 		try {
 			try {
-				mkdirSync(filePath(workspace, ".clawdi"), { mode: 0o700 });
+				mkdirSync(`/proc/self/fd/${workspace}/.clawdi`, { mode: 0o700 });
 			} catch (error) {
 				if (!(error && typeof error === "object" && "code" in error && error.code === "EEXIST"))
 					throw error;
 			}
 			const parent = openSync(
-				filePath(workspace, ".clawdi"),
+				`/proc/self/fd/${workspace}/.clawdi`,
 				constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
 			);
 			try {
@@ -337,9 +425,9 @@ function initialize(config: VaultFileContext): Receipt {
 					fail();
 				// Existing .clawdi is shared with other features; only vaults is runtime-owned.
 				// Missing receipt after mkdir requires operator repair; do not adopt an arbitrary directory.
-				mkdirSync(filePath(parent, "vaults"), { mode: 0o700 });
+				mkdirSync(`/proc/self/fd/${parent}/vaults`, { mode: 0o700 });
 				const fd = openSync(
-					filePath(parent, "vaults"),
+					`/proc/self/fd/${parent}/vaults`,
 					constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
 				);
 				try {
@@ -382,7 +470,7 @@ function revoke(config: VaultFileContext, receipt: Receipt | null): "revoked" {
 		checkTracked(config);
 		withDirectory(config, receipt, (fd) => {
 			for (const name of receipt.files) if (verifyFile(fd, name)) unlinkSync(filePath(fd, name));
-			fsyncSync(fd);
+			fsyncSync(fd.fd);
 		});
 		saveReceipt(config, { ...receipt, files: [], inventory: [], digests: {}, etag: null });
 	}
@@ -409,7 +497,7 @@ function pruneRevoked(
 			"index.json",
 			`${JSON.stringify({ version: 1, agent_id: metadata.agent_id, user_id: metadata.user_id, vaults: inventory }, null, 2)}\n`,
 		);
-		fsyncSync(fd);
+		fsyncSync(fd.fd);
 	});
 	const next = {
 		...receipt,
@@ -509,8 +597,47 @@ async function readSnapshot(response: Response): Promise<Snapshot> {
 	return parsed.data;
 }
 
-/** Local registration/auth revocation removes only the private receipt's generated files. */
+export function connectedVaultFilesSupported(): boolean {
+	return process.platform === "linux" || process.platform === "darwin";
+}
+
+function connectedLockPath(stateRoot: string): string {
+	assertConnectedDirectory(stateRoot);
+	const root = join(stateRoot, "vault-file-lock");
+	ensureDirectoryWithinTrustedRoot(stateRoot, root, { mode: 0o700 });
+	const stat = lstatSync(root);
+	if (stat.uid !== process.geteuid?.() || (stat.mode & 0o777) !== 0o700) fail();
+	const lock = join(root, "writer");
+	try {
+		const entry = lstatSync(lock);
+		if (!entry.isDirectory() || entry.isSymbolicLink()) fail();
+	} catch (error) {
+		if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT"))
+			throw error;
+	}
+	return lock;
+}
+
 export function clearConnectedVaultFiles(
+	...args: Parameters<typeof clearConnectedVaultFilesLocked>
+): void {
+	if (!connectedVaultFilesSupported()) fail();
+	try {
+		lstatSync(args[0]);
+	} catch (error) {
+		if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return;
+		throw error;
+	}
+	// Never block the event loop behind an in-flight async writer. The controller retries after it settles.
+	withPrivateDirectoryLockSync(
+		connectedLockPath(args[1]),
+		() => clearConnectedVaultFilesLocked(...args),
+		{ timeoutMs: 0 },
+	);
+}
+
+/** Local registration/auth revocation removes only the private receipt's generated files. */
+function clearConnectedVaultFilesLocked(
 	receiptPath: string,
 	stateRoot: string,
 	home: string,
@@ -524,8 +651,8 @@ export function clearConnectedVaultFiles(
 	},
 	clearMatching = false,
 ): void {
-	if (!existsSync(receiptPath)) return;
-	const receipt = receiptSchema.parse(JSON.parse(readFileSync(receiptPath, "utf8")));
+	const receipt = readReceiptFile(receiptPath);
+	if (!receipt) return;
 	if (!receipt.userId || !receipt.machineId) fail();
 	const matches = Boolean(
 		expected &&
@@ -565,11 +692,36 @@ export function clearConnectedVaultFiles(
 	}
 }
 
-/** Secrets never enter logs, tool results, native manifests or the root receipt. */
 export async function syncRuntimeVaultFiles(
 	input: RuntimeVaultFilesConfig,
 ): Promise<"unchanged" | "synced" | "revoked" | "deferred"> {
-	if (process.platform !== "linux") throw new Error("Runtime Vault file delivery requires Linux.");
+	if (input.connected ? !connectedVaultFilesSupported() : process.platform !== "linux") {
+		throw new Error("Connected Vault files require macOS or Linux; Hosted requires Linux.");
+	}
+	if (!input.connected) return syncVaultSnapshot(input);
+	const connected = input.connected;
+	try {
+		return await withPrivateDirectoryLock(connectedLockPath(connected.stateRoot), (lease) =>
+			syncVaultSnapshot({
+				...input,
+				connected: {
+					...connected,
+					assertCurrent() {
+						lease.assertOwned();
+						connected.assertCurrent();
+					},
+				},
+			}),
+		);
+	} catch {
+		return fail();
+	}
+}
+
+/** Secrets never enter logs, tool results, native manifests or the root receipt. */
+async function syncVaultSnapshot(
+	input: RuntimeVaultFilesConfig,
+): Promise<"unchanged" | "synced" | "revoked" | "deferred"> {
 	try {
 		const config = { ...input, apiUrl: normalizeCloudApiBaseUrl(input.apiUrl) };
 		config.connected?.assertCurrent();
@@ -670,7 +822,7 @@ export async function syncRuntimeVaultFiles(
 			for (const [name, content] of files) atomicFile(fd, name, content);
 			for (const name of reserved.files)
 				if (!names.includes(name) && verifyFile(fd, name)) unlinkSync(filePath(fd, name));
-			fsyncSync(fd);
+			fsyncSync(fd.fd);
 		});
 		saveReceipt(config, {
 			...receipt,

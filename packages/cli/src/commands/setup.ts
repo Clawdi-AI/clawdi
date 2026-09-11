@@ -236,7 +236,7 @@ async function registerEnv(
 		console.log(
 			chalk.gray(
 				binding
-					? `Vault directory: ${join(binding.path, ".clawdi", "vaults")}${process.platform === "linux" ? "" : " (automatic file sync requires Linux/WSL)"}`
+					? `Vault directory: ${join(binding.path, ".clawdi", "vaults")}${process.platform === "linux" || process.platform === "darwin" ? "" : " (automatic file sync requires macOS or Linux/WSL)"}`
 					: `Vault file sync is disabled. Configure it with clawdi setup --agent ${agentType} --vault-workspace <path>.`,
 			),
 		);

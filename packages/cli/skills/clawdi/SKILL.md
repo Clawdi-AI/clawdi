@@ -129,10 +129,10 @@ If submission times out, inspect status before repeating a mutation.
 ### Save and refresh credentials locally
 
 Hosted runtime supplies `.clawdi/vaults/` under the native workspace automatically.
-Connected Linux/WSL Agents receive the same layout only in the workspace explicitly
+Connected macOS/Linux/WSL Agents receive the same layout only in the workspace explicitly
 confirmed by setup. Use that configured path, which may differ from the current repository;
 do not guess from HOME, daemon CWD, or scanned sessions. Existing registrations without a
-Vault workspace do not download values. Native macOS/Windows file delivery is unsupported.
+Vault workspace do not download values. Native Windows daemon/file delivery is unsupported.
 
 Inspect only the configured `.clawdi/vaults/index.json` to select the intended Vault/section.
 Load its JSON file inside the authorized process or SDK without printing values or returning

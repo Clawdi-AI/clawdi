@@ -45,6 +45,18 @@ jobs:
         run: |
           bun run --cwd apps/desktop typecheck
           bun run --cwd apps/desktop test:internal
+      # Native macOS filesystem coverage; no platform stubs and no writes to runner HOME.
+      - name: Connected Vault native filesystem tests
+        if: matrix.platform == 'darwin'
+        run: |
+          vault_test_root=$(mktemp -d "$RUNNER_TEMP/clawdi-vault-tests.XXXXXX")
+          trap 'rm -rf "$vault_test_root"' EXIT
+          mkdir -p "$vault_test_root/home" "$vault_test_root/state" "$vault_test_root/tmp"
+          HOME="$vault_test_root/home" CLAWDI_HOME="$vault_test_root/state" \
+            CLAWDI_STATE_DIR="$vault_test_root/state/serve" TMPDIR="$vault_test_root/tmp" \
+            CLAWDI_NO_AUTO_UPDATE=1 CLAWDI_NO_UPDATE_CHECK=1 \
+            bun run --cwd packages/cli test:internal src/runtime/vault-files.test.ts \
+              src/serve/vault-sync.test.ts src/lib/environment-registration.test.ts
       - name: Install Linux packaging dependencies
         if: matrix.platform == 'linux'
         run: |

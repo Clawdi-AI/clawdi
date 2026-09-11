@@ -19,7 +19,7 @@ afterEach(() => {
 
 describe("environment registration account binding", () => {
 	it("keeps a legacy registration readable until online ownership inspection", () => {
-		const root = mkdtempSync(join(tmpdir(), "clawdi-registration-account-"));
+		const root = realpathSync(mkdtempSync(join(tmpdir(), "clawdi-registration-account-")));
 		roots.push(root);
 		process.env.CLAWDI_HOME = root;
 		mkdirSync(join(root, "environments"), { recursive: true });
@@ -33,7 +33,7 @@ describe("environment registration account binding", () => {
 	});
 
 	it("does not adopt a registration explicitly bound to another account", () => {
-		const root = mkdtempSync(join(tmpdir(), "clawdi-registration-account-"));
+		const root = realpathSync(mkdtempSync(join(tmpdir(), "clawdi-registration-account-")));
 		roots.push(root);
 		process.env.CLAWDI_HOME = root;
 		mkdirSync(join(root, "environments"), { recursive: true });
@@ -49,7 +49,7 @@ describe("environment registration account binding", () => {
 
 describe("explicit Vault workspace registration", () => {
 	it("preserves only the same identity and refuses a duplicate real workspace", () => {
-		const root = mkdtempSync(join(tmpdir(), "clawdi-vault-registration-"));
+		const root = realpathSync(mkdtempSync(join(tmpdir(), "clawdi-vault-registration-")));
 		roots.push(root);
 		process.env.CLAWDI_HOME = root;
 		setAuth({ apiKey: "fixture", userId: "user-a" });

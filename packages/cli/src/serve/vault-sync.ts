@@ -4,15 +4,18 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { ApiClient } from "../lib/api-client";
 import { canonicalApiOrigin } from "../lib/api-origin";
-import { getAuth, getClawdiDir, getConfig } from "../lib/config";
+import { getAuth, getConfig } from "../lib/config";
 import {
 	assertUniqueVaultWorkspace,
 	readEnvironmentRegistration,
 	readEnvironmentRegistrationForCleanup,
 } from "../lib/environment-registration";
 import { readMachineId } from "../lib/machine-identity";
-import { withPrivateDirectoryLockSync } from "../lib/private-directory-lock";
-import { clearConnectedVaultFiles, syncRuntimeVaultFiles } from "../runtime/vault-files";
+import {
+	clearConnectedVaultFiles,
+	connectedVaultFilesSupported,
+	syncRuntimeVaultFiles,
+} from "../runtime/vault-files";
 import { getServeStateDir } from "./paths";
 
 export interface ConnectedVaultSync {
@@ -24,35 +27,33 @@ export interface ConnectedVaultSync {
 
 /** Cold-start cleanup must run before account-filtered registration selects workers. */
 export function clearAccountMismatchedVaultFiles(agentType: string, agentId?: string): void {
-	if (process.platform !== "linux" || process.env.CLAWDI_RUNTIME_MODE === "hosted") return;
-	withPrivateDirectoryLockSync(join(getClawdiDir(), "environments.lock"), () => {
-		const previous = readEnvironmentRegistrationForCleanup(agentType);
-		const binding = previous?.vaultWorkspace;
-		if (
-			!previous?.userId ||
-			!previous.machineId ||
-			!binding ||
-			previous.userId === getAuth()?.userId ||
-			previous.machineId !== readMachineId() ||
-			(agentId !== undefined && previous.id !== agentId)
-		)
-			return;
-		const stateRoot = getServeStateDir(agentType);
-		clearConnectedVaultFiles(
-			join(stateRoot, "vault-files.json"),
-			stateRoot,
-			process.env.HOME || homedir(),
-			{
-				userId: previous.userId,
-				machineId: previous.machineId,
-				agentId: previous.id,
-				workspace: binding.path,
-				nativeAgentId: binding.nativeAgentId,
-				apiUrl: binding.apiOrigin,
-			},
-			true,
-		);
-	});
+	if (!connectedVaultFilesSupported() || process.env.CLAWDI_RUNTIME_MODE === "hosted") return;
+	const previous = readEnvironmentRegistrationForCleanup(agentType);
+	const binding = previous?.vaultWorkspace;
+	if (
+		!previous?.userId ||
+		!previous.machineId ||
+		!binding ||
+		previous.userId === getAuth()?.userId ||
+		previous.machineId !== readMachineId() ||
+		(agentId !== undefined && previous.id !== agentId)
+	)
+		return;
+	const stateRoot = getServeStateDir(agentType);
+	clearConnectedVaultFiles(
+		join(stateRoot, "vault-files.json"),
+		stateRoot,
+		process.env.HOME || homedir(),
+		{
+			userId: previous.userId,
+			machineId: previous.machineId,
+			agentId: previous.id,
+			workspace: binding.path,
+			nativeAgentId: binding.nativeAgentId,
+			apiUrl: binding.apiOrigin,
+		},
+		true,
+	);
 }
 
 /** A single coalescing consumer of the engine's existing SSE and heartbeat ticks. */
@@ -71,15 +72,17 @@ export function prepareConnectedVaultSync(input: {
 	const binding = registration?.vaultWorkspace;
 	const userId = registration?.userId;
 	const machineId = registration?.machineId;
-	let enabled = process.env.CLAWDI_RUNTIME_MODE !== "hosted" && process.platform === "linux";
+	let enabled = process.env.CLAWDI_RUNTIME_MODE !== "hosted" && connectedVaultFilesSupported();
 	let running: Promise<void> | null = null;
 	let pending = false;
+	let pendingClear = false;
 	let retryAt = 0;
 	let backoff = 0;
 	const clear = () => {
-		if (process.env.CLAWDI_RUNTIME_MODE === "hosted" || process.platform !== "linux") return;
+		if (process.env.CLAWDI_RUNTIME_MODE === "hosted" || !connectedVaultFilesSupported()) return;
 		try {
-			if (binding && userId && machineId)
+			if (binding && userId && machineId) {
+				pendingClear = true;
 				clearConnectedVaultFiles(
 					receiptPath,
 					stateRoot,
@@ -94,9 +97,11 @@ export function prepareConnectedVaultSync(input: {
 					},
 					true,
 				);
+				pendingClear = false;
+			}
 		} catch {
 			report(
-				"Owned Vault files could not be removed; resolve the local filesystem conflict.",
+				"Owned Vault cleanup is deferred; persistent filesystem conflicts require local repair.",
 				true,
 			);
 		}
@@ -125,8 +130,8 @@ export function prepareConnectedVaultSync(input: {
 		assertUniqueVaultWorkspace(agentType, binding.path);
 	};
 	if (process.env.CLAWDI_RUNTIME_MODE === "hosted") enabled = false;
-	else if (process.platform !== "linux") {
-		report("Automatic Vault files require Linux/WSL; native macOS/Windows are unsupported.");
+	else if (!connectedVaultFilesSupported()) {
+		report("Automatic Vault files require macOS or Linux/WSL; native Windows is unsupported.");
 	} else {
 		try {
 			current();
@@ -237,6 +242,7 @@ export function prepareConnectedVaultSync(input: {
 			}
 		})().finally(() => {
 			running = null;
+			if (pendingClear) clear();
 		});
 		return running;
 	};
@@ -248,6 +254,7 @@ export function prepareConnectedVaultSync(input: {
 		revoke: clear,
 		async finish() {
 			await running;
+			if (pendingClear) clear();
 			try {
 				current();
 			} catch {

@@ -606,7 +606,7 @@ requests; REST retains them for compatibility. Pending requests appear separatel
 Vault detail page and are never returned as empty secret values. Use a fresh request for remaining missing fields after
 expiry; existing pending requests and supplied fields are rejected.
 
-After supply in a managed runtime or configured connected Linux Agent, verify `vault_request_status` and inspect only
+After supply in a managed runtime or configured connected macOS/Linux Agent, verify `vault_request_status` and inspect only
 `.clawdi/vaults/index.json` under the native workspace. Existing runtime watch delivers readable
 Workspace/linked-Project Vaults into separate generated section JSON files. Load the
 selected file inside the authorized process/SDK without exposing values to model context

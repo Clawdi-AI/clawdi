@@ -5,6 +5,7 @@ import {
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -29,7 +30,7 @@ afterEach(() => {
 });
 
 function fixture() {
-	const root = mkdtempSync(join(tmpdir(), "connected-vault-"));
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "connected-vault-")));
 	roots.push(root);
 	process.env.HOME = root;
 	process.env.CLAWDI_HOME = join(root, "state");
@@ -38,7 +39,7 @@ function fixture() {
 	process.env.CLAWDI_RUNTIME_USER = "not-the-connected-user";
 	delete process.env.CLAWDI_API_URL;
 	process.env.CLAWDI_STATE_DIR = join(root, "serve");
-	mkdirSync(join(root, "serve", "pi"), { recursive: true, mode: 0o700 });
+	mkdirSync(join(root, "serve", "pi"), { recursive: true, mode: 0o755 });
 	const workspace = join(root, "project");
 	mkdirSync(workspace);
 	const userId = randomUUID(),
@@ -51,6 +52,8 @@ function fixture() {
 test("connected delivery fences identity, retains offline files, coalesces changes and clears old bindings", async () => {
 	const f = fixture();
 	const abort = new AbortController();
+	let requestGate: Promise<void> | undefined;
+	const requestStarted = Promise.withResolvers<void>();
 	let version = 1,
 		status = 200,
 		materialCalls = 0;
@@ -60,7 +63,11 @@ test("connected delivery fences identity, retains offline files, coalesces chang
 	const server = Bun.serve({
 		hostname: "127.0.0.1",
 		port: 0,
-		fetch(req) {
+		async fetch(req) {
+			if (requestGate) {
+				requestStarted.resolve();
+				await requestGate;
+			}
 			expect(req.headers.get("X-Clawdi-Machine-Id")).toBe(f.machineId);
 			expect(new URL(req.url).searchParams.get("agent_id")).toBe(f.agentId);
 			if (status !== 200) return new Response(null, { status });
@@ -127,6 +134,7 @@ test("connected delivery fences identity, retains offline files, coalesces chang
 	try {
 		await sync.reconcile();
 		expect(sync.enabled).toBe(true);
+		expect(statSync(join(f.root, "serve", "pi")).mode & 0o777).toBe(0o755);
 		const file = join(
 			dir,
 			readdirSync(dir).find((name) => name !== "index.json" && name.endsWith(".json")) ?? "missing",
@@ -153,19 +161,24 @@ test("connected delivery fences identity, retains offline files, coalesces chang
 		now += 1000;
 		await sync.reconcile();
 		expect(readdirSync(dir).length).toBeGreaterThan(0);
+		now += 1000;
+		const gate = Promise.withResolvers<void>();
+		requestGate = gate.promise;
+		const pending = sync.reconcile();
+		await requestStarted.promise;
 		const nextUser = randomUUID();
 		setAuth({
 			apiKey: "other-account",
 			userId: nextUser,
 			endpointBinding: { version: 1, cloudApiOrigin: server.url.origin },
 		});
-		now += 1000;
-		await sync.reconcile();
+		sync.revoke(); // Cleanup must defer without blocking the pending native writer.
+		gate.resolve();
+		requestGate = undefined;
+		await pending;
 		expect(sync.enabled).toBe(false);
 		expect(readdirSync(dir)).toEqual([]);
-		expect(
-			messages.some((message) => message?.includes("disabled") || message?.includes("identity")),
-		).toBe(true);
+		expect(JSON.stringify(messages)).not.toContain("value-");
 		f.userId = nextUser;
 		f.agentId = randomUUID();
 		version++;
@@ -188,6 +201,13 @@ test("connected delivery fences identity, retains offline files, coalesces chang
 		await replacement.reconcile();
 		await sync.finish(); // An obsolete worker must not clear the new owner's files.
 		expect(JSON.parse(readFileSync(file, "utf8")).TOKEN).toBe("value-3");
+		writeFileSync(
+			join(f.root, "state", "machine.json"),
+			JSON.stringify({ schemaVersion: "clawdi.machineIdentity.v1", id: randomUUID() }),
+			{ mode: 0o600 },
+		);
+		await replacement.reconcile(true);
+		expect(readdirSync(dir)).toEqual([]);
 		await replacement.finish();
 	} finally {
 		clock.mockRestore();

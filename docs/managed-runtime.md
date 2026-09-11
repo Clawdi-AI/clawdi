@@ -2043,11 +2043,12 @@ only IDs, names, references and filenames; invalid environment names are marked 
 null `env_name`, not normalized into colliding names. Pending supply requests are not items.
 
 The native workspace's `.clawdi/vaults` directory is 0700 and its files 0600, owned by the runtime
-user. Runtime pins directory ancestors without following symlinks and performs tenant IO
-with tenant filesystem credentials. A private platform receipt binds generated directory
-identity and filenames; existing unrelated directories, symlinks, hardlinks, tracked targets,
-and unsafe permissions fail closed. Native workspaces must be beneath the runtime home;
-changing the recorded workspace/directory identity requires operator reconciliation. Writes are atomic per file, not a multi-file transaction.
+user. Hosted runtime pins directory ancestors without following symlinks and performs IO
+with tenant filesystem credentials. Connected native-user IO is described below. A private
+receipt binds generated directory identity and filenames; existing unrelated directories, symlinks, hardlinks, tracked targets,
+and unsafe permissions fail closed. Hosted workspaces must be beneath the tenant home;
+connected targets remain explicitly configured. Changing the recorded directory identity
+requires operator reconciliation. Writes are atomic per file, not a multi-file transaction.
 An existing legitimate `.clawdi` directory and unrelated children are preserved without
 chmod or adoption; only `vaults` is managed. Symlink or unsafe writable ancestors are refused.
 The receipt records the fixed `.clawdi/vaults` target and private expected content digests.
@@ -2080,7 +2081,7 @@ operations were fixtures; no production change latency or high-fanout throughput
 
 ### Connected Agent delivery
 
-Connected Linux Agents reuse their existing daemon, SSE connection and heartbeat fallback
+Connected macOS/Linux Agents reuse their existing daemon, SSE connection and heartbeat fallback
 (45–75 seconds). Session-only adapters open that same engine-owned event connection only
 when Vault delivery is configured. If that Vault-only stream lacks SSE permission, the
 snapshot rechecks Vault access and heartbeat fallback continues without stopping Sessions.
@@ -2118,11 +2119,27 @@ The snapshot API requires an explicit owned, registered non-Hosted `agent_id` an
 both metadata and material reads. No target only disables Vault delivery with setup guidance;
 ordinary session/skill synchronization continues.
 
-Linux and WSL on a filesystem enforcing Unix permissions are supported. Native macOS and
-Windows are explicitly disabled. Existing portable private-file/lock utilities provide
-path-based rename/cooperative locking and best-effort chmod, not equivalent descriptor-pinned
-ancestor protection. This implementation adds no native binary, addon or dependency. WSL
-Windows mounts that cannot enforce 0700/0600 fail closed.
+Connected macOS and Linux/WSL use the native user's filesystem APIs. Native Windows daemon
+supervision remains unsupported; WSL filesystems must enforce Unix permissions. Shared
+network, permission, revision and JSON rendering logic stays the same on both platforms.
+
+Hosted Linux retains descriptor-anchored access under the tenant UID. Connected writes use
+the existing private-file/trusted-directory helpers and a cooperating per-receipt lock in a
+verified 0700 state subdirectory. The lock covers snapshot reconciliation and receipt/file
+updates; revocation waits for an active reconciliation to settle rather than blocking its
+event loop. Existing `.clawdi` parents and unrelated state directories are never chmodded.
+Existing symlinks, hardlinks, unsafe modes, wrong owners and replaced directory identities
+fail closed. This protects the normal private-directory/cooperating-writer boundary. It is
+not absolute race isolation against hostile code with the same UID: that code can read the
+files and can change paths between checks. Path-based APIs are not used for Hosted's
+root-to-tenant writes. No `/dev/fd` substitution, native addon, helper process or package is
+introduced.
+
+The existing Desktop Platform Packages macOS runner executes the actual connected file,
+restart, edit restoration, permission, replacement and identity tests in temporary HOME,
+state and workspace directories. These GitHub runners are disposable native test isolation;
+they do not fake `process.platform`. Linux Docker tests exercise both implementations.
+The macOS CI gate must pass on the reviewed commit before claiming native qualification.
 
 Done: `bash scripts/test.sh runtime-vaults` includes the connected daemon over real isolated
 HTTP/PostgreSQL, using a 15-second test heartbeat to isolate SSE wakeups and a 200 ms
