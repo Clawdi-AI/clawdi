@@ -644,10 +644,8 @@ path and symlink protection, and metadata-only sync responses.
 
 Deployment requires migration `c92e8b3d104f`, the updated API/client/web, and a `WEB_ORIGIN`
 that points to the public dashboard. Deploy the API before clients and refresh MCP tool
-lists and packaged skills. The local MCP adapter is bundled with the management package
-and Hosted Skill version 2. The branch currently selects 0.14.70, but npm already serves
-that version (verified 2026-09-11); a new release version must be selected before publication.
-Publish the additive Cloud schema/material tool and
+lists and packaged skills. The local MCP adapter is bundled with management package
+0.14.71 and Hosted Skill version 2. Publish the additive Cloud schema/material tool and
 management artifact before enabling Hosted `localVault: 1` projection. Older management
 packages retain remote-only MCP; their tool lists do not claim local file support.
 

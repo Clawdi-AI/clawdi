@@ -6160,7 +6160,7 @@ async def test_local_vault_capability_keeps_legacy_upgrade_manifest_and_etag_dis
     await _write_runtime_state(
         admin_client,
         str(env.id),
-        cli_package_spec="clawdi@0.14.70",
+        cli_package_spec="clawdi@0.14.71",
         mcp={
             "servers": {
                 "clawdi": {
@@ -6184,7 +6184,7 @@ async def test_local_vault_capability_keeps_legacy_upgrade_manifest_and_etag_dis
         legacy = await client.get("/v1/runtime/manifest")
         assert legacy.status_code == 200, legacy.text
         manifest = legacy.json()["manifest"]
-        assert manifest["clawdiCli"]["packageSpec"] == "clawdi@0.14.70"
+        assert manifest["clawdiCli"]["packageSpec"] == "clawdi@0.14.71"
         assert "localVault" not in manifest["mcp"]["servers"]["clawdi"]
         assert manifest["skills"]["entries"]["clawdi"]["version"] == 1
         assert manifest["skills"]["entries"]["clawdi"]["enabled"] is enabled
