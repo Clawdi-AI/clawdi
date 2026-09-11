@@ -224,7 +224,7 @@ run_web() {
 run_runtime_vaults() {
 	install_js
 	cli_typecheck
-	cli_tests src/runtime/vault-files.test.ts src/runtime/hosted-bundled-skill.test.ts src/serve/sse-client.test.ts
+	cli_tests src/runtime/vault-files.test.ts src/runtime/hosted-bundled-skill.test.ts src/serve/sse-client.test.ts src/serve/vault-sync.test.ts src/lib/environment-registration.test.ts tests/commands/setup.test.ts
 	install_backend
 	backend_tests -s tests/test_runtime_vaults.py tests/test_vault_requests.py tests/test_vault.py "$@"
 }

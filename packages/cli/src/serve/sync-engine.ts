@@ -1,11 +1,14 @@
+import { homedir } from "node:os";
+import { clearConnectedVaultFiles } from "../runtime/vault-files";
+import { type ConnectedVaultSync, prepareConnectedVaultSync } from "./vault-sync";
 /**
  * `clawdi daemon` orchestrator.
  *
  * Wires the background tasks that make up a sync daemon:
  *
  *   - watcher          — local skill-dir change events (fs.watch / poll)
- *   - sse              — Cloud events wake a local re-scan; they never write
- *                        or remove Agent filesystem content
+ *   - sse              — one connection wakes local Skill scans and authorized
+ *                        Vault snapshot checks for explicitly configured workspaces
  *   - drainQueue       — flush durable skill_push/skill_delete projections
  *   - reconcile        — periodic local inventory vs exact-claim diff
  *   - project-refresh    — periodic re-fetch of the env's default_project_id
@@ -353,6 +356,8 @@ export interface EngineOpts {
 	/** Force the watcher into poll mode. Set by serve.ts based on
 	 * CLAWDI_SERVE_MODE=container. */
 	forcePollWatcher?: boolean;
+	/** Optional interval for embedded engines; otherwise use the normal jittered heartbeat. */
+	heartbeatIntervalMs?: number;
 }
 
 export function stopForDisconnectedAgent(opts: EngineOpts, hint: string): void {
@@ -370,6 +375,18 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	const sessions = opts.adapter.sessions;
 	if (!sessions && !skills) throw new Error(`${opts.adapter.agentType} has no sync modules`);
 
+	if (!getAuth() && process.env.CLAWDI_RUNTIME_MODE !== "hosted" && process.platform === "linux") {
+		const stateRoot = getServeStateDir(opts.adapter.agentType);
+		try {
+			clearConnectedVaultFiles(
+				join(stateRoot, "vault-files.json"),
+				stateRoot,
+				process.env.HOME || homedir(),
+			);
+		} catch {
+			log.warn("engine.vault_cleanup_failed", { message: "Owned Vault files need local repair." });
+		}
+	}
 	const api = new ApiClient({ abortSignal: opts.abort });
 	const shutdownApi = new ApiClient();
 	const health = new SyncHealth();
@@ -395,12 +412,17 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	});
 
 	let lastSeenRevision: number | null = null;
-	const stopDisconnectedAgent = (hint: string): void => stopForDisconnectedAgent(opts, hint);
+	let vaultSync: ConnectedVaultSync | undefined;
+	const stopDisconnectedAgent = (hint: string): void => {
+		vaultSync?.revoke();
+		stopForDisconnectedAgent(opts, hint);
+	};
 
 	let authFailureFired = false;
 	const triggerAuthFailureAbort = (origin: string): void => {
 		if (authFailureFired) return;
 		authFailureFired = true;
+		vaultSync?.revoke();
 		log.error("engine.auth_failed", { origin });
 		health.set("transport", "auth", "auth_revoked: api key rejected by server");
 		void shutdownApi
@@ -427,6 +449,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			return true;
 		}
 		if (!isAuthFailure(error)) return false;
+		vaultSync?.revoke();
 		log.error("engine.auth_failed", { origin });
 		process.exitCode = 2;
 		removeLaunchdDaemonSupervision(opts.adapter.agentType);
@@ -434,6 +457,30 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		return true;
 	};
 
+	vaultSync = prepareConnectedVaultSync({
+		agentType: opts.adapter.agentType,
+		agentId: opts.environmentId,
+		api,
+		abort: opts.abort,
+		report: (message, failure) => {
+			if (!message) health.clear("projection", "vault_files");
+			else if (failure) {
+				health.set("projection", "vault_files", message);
+				log.warn("engine.vault_sync", { message });
+			} else log.info("engine.vault_sync", { message });
+		},
+	});
+	const reconcileVaultFiles = async (force = false): Promise<void> => {
+		try {
+			await vaultSync?.reconcile(force);
+		} catch {
+			health.set(
+				"projection",
+				"vault_files",
+				"Vault reconciliation failed; retrying on the next heartbeat.",
+			);
+		}
+	};
 	const registration = readEnvironmentRegistration(opts.adapter.agentType);
 	let agentIdentity: components["schemas"]["AgentResponse"];
 	try {
@@ -494,34 +541,78 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	if (sessions && sessionSync) moduleTasks.push(runSessionSync(opts, sessions, sessionSync));
 	if (skills && skillSync) moduleTasks.push(runSkillSync(opts, skills, skillSync));
 
-	await Promise.all([
-		...moduleTasks,
-		drainQueueLoop(
-			opts,
-			api,
-			queue,
-			{
-				sessions: sessionSync?.queueModule ?? null,
-				skills: skillSync?.queueModule ?? null,
-			},
-			skillSync?.lastPushedHash ?? new Map(),
-			sessionSync?.lastPushedHash ?? new Map(),
-			inFlightSessionHash,
-			health,
-			triggerAuthFailureAbort,
-		),
-		heartbeatLoop(
-			opts,
-			api,
-			queue,
-			opts.abort,
-			() => ({
-				last_revision_seen: lastSeenRevision,
-				last_sync_error: health.project(),
-			}),
-			stopDisconnectedAgent,
-		),
-	]);
+	try {
+		await Promise.all([
+			...moduleTasks,
+			...(skillSync || vaultSync.enabled
+				? [
+						consumeSse({
+							apiUrl: api.baseUrl,
+							apiKey: api.apiKey,
+							getAccessToken: () => api.getAccessToken(),
+							abort: opts.abort,
+							onEvent: async (event) => {
+								if (
+									(event.type === "runtime_vaults_changed" ||
+										event.type === "runtime_manifest_changed") &&
+									event.environment_id === opts.environmentId
+								)
+									void reconcileVaultFiles();
+								await skillSync?.onEvent(event);
+							},
+							onConnect: () => {
+								health.clear("transport", "sse");
+								void reconcileVaultFiles();
+							},
+							onDisconnect: (info) => {
+								const error = lastSyncErrorForSseReconnect(info);
+								if (error !== null) health.set("transport", "sse", error);
+							},
+							onAuthFailure: () => {
+								if (skillSync) triggerAuthFailureAbort("sse_channel");
+								else {
+									// A Vault-only stream may lack skills:read while session/Vault grants remain valid.
+									health.set(
+										"transport",
+										"sse",
+										"Vault events unavailable; heartbeat fallback is active.",
+									);
+									void reconcileVaultFiles(true);
+								}
+							},
+						}),
+					]
+				: []),
+			drainQueueLoop(
+				opts,
+				api,
+				queue,
+				{
+					sessions: sessionSync?.queueModule ?? null,
+					skills: skillSync?.queueModule ?? null,
+				},
+				skillSync?.lastPushedHash ?? new Map(),
+				sessionSync?.lastPushedHash ?? new Map(),
+				inFlightSessionHash,
+				health,
+				triggerAuthFailureAbort,
+			),
+			heartbeatLoop(
+				opts,
+				api,
+				queue,
+				opts.abort,
+				() => ({
+					last_revision_seen: lastSeenRevision,
+					last_sync_error: health.project(),
+				}),
+				stopDisconnectedAgent,
+				reconcileVaultFiles,
+			),
+		]);
+	} finally {
+		await vaultSync.finish();
+	}
 	log.info("engine.stop", {});
 }
 
@@ -537,6 +628,7 @@ interface CommonSyncRuntime {
 }
 
 interface PreparedSkillSync {
+	onEvent(event: ServerEvent): Promise<void>;
 	queueModule: { module: SkillModule; getProjectId: () => string };
 	lastPushedHash: Map<string, string>;
 	run(): Promise<void>;
@@ -861,6 +953,7 @@ async function prepareSkillSync(
 	};
 
 	return {
+		onEvent: onServerEvent,
 		queueModule: { module: skills, getProjectId: () => defaultProjectId },
 		lastPushedHash,
 		run: async () => {
@@ -894,21 +987,7 @@ async function prepareSkillSync(
 					listSkillKeys: () => skills.listKeys(),
 					onInventoryChanged: onSkillInventoryChanged,
 				}),
-				consumeSse({
-					apiUrl: api.baseUrl,
-					apiKey: api.apiKey,
-					getAccessToken: () => api.getAccessToken(),
-					abort: opts.abort,
-					onEvent: onServerEvent,
-					onConnect: () => {
-						syncHealth.clear("transport", "sse");
-					},
-					onDisconnect: (info) => {
-						const nextError = lastSyncErrorForSseReconnect(info);
-						if (nextError !== null) syncHealth.set("transport", "sse", nextError);
-					},
-					onAuthFailure: () => triggerAuthFailureAbort("sse_channel"),
-				}),
+
 				refreshDefaultProjectIdLoop(opts.abort),
 				// Safety-net for Skills. The local scan recovers evicted watcher work;
 				// the strong-ETag Agent-Project listing catches mixed-version generic
@@ -2417,6 +2496,7 @@ export async function heartbeatLoop(
 	abort: AbortSignal,
 	snapshot: () => { last_revision_seen: number | null; last_sync_error: string | null },
 	stopForDisconnectedAgent: (hint: string) => void,
+	vaultTick?: () => Promise<void>,
 ): Promise<void> {
 	let heartbeatFailureStreak = 0;
 	const send = async () => {
@@ -2475,14 +2555,16 @@ export async function heartbeatLoop(
 	// unknown), the warn log surfaces it; subsequent retries
 	// happen on the normal interval.
 	await send();
+	if (!abort.aborted) await vaultTick?.();
 	while (!abort.aborted) {
 		// Per-cycle jitter so daemons started by the same rollout
 		// don't all heartbeat in the same wall-clock second. The
 		// upper bound stays inside the dashboard's 90s freshness
 		// window after the eager first beat.
-		await sleep(heartbeatDelayMs(), abort);
+		await sleep(opts.heartbeatIntervalMs ?? heartbeatDelayMs(), abort);
 		if (abort.aborted) return;
 		await send();
+		if (!abort.aborted) await vaultTick?.();
 	}
 }
 

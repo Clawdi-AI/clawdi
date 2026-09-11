@@ -2078,10 +2078,59 @@ Five metadata requests executed 20 SQL statements; three material requests execu
 two saves executed 21. Counts include authentication and permission checks. Native service
 operations were fixtures; no production change latency or high-fanout throughput was measured.
 
-Connected daemon delivery is not yet enabled. Registrations identify cloud Agent, adapter,
-machine and user, but do not bind a durable native workspace. Session/project scans and
-OpenClaw's multi-agent roster cannot supply that missing association safely. The snapshot
-API accepts unbound CLI/OAuth credentials only with an explicit owned,
-registered non-Hosted `agent_id` and matching `X-Clawdi-Machine-Id` header; missing/stale identity
-is rejected on metadata and material reads. A destination binding decision is required before wiring daemon delivery; daemon CWD/HOME are not defaults.
-This file writer uses Linux `/proc/self/fd`; macOS/Windows support is not claimed.
+### Connected Agent delivery
+
+Connected Linux Agents reuse their existing daemon, SSE connection and heartbeat fallback
+(45–75 seconds). Session-only adapters open that same engine-owned event connection only
+when Vault delivery is configured. If that Vault-only stream lacks SSE permission, the
+snapshot rechecks Vault access and heartbeat fallback continues without stopping Sessions.
+Hosted daemon workers never start a second Vault writer.
+Vault-only notifications do not trigger Skill installs or native Agent restarts. Transient
+failures retain last good files and back off independently; confirmed access removal clears
+only receipt-owned files. Authentication, machine, API-origin and registration changes fence
+in-flight responses and remove the old binding's generated files. An obsolete worker cannot
+clear a replacement worker's files.
+
+Configure an existing directory explicitly; no default is inferred from CWD, HOME or sessions:
+
+```bash
+clawdi setup --agent codex --vault-workspace /absolute/project
+```
+
+`--vault-workspace` requires `--agent` and a normal CLI login with a stored account identity.
+Environment-only tokens without that local account fence do not enable connected delivery. An explicit path needs no second approval; `--yes`
+alone never selects one. Interactive setup can offer official OpenClaw roster workspaces or
+an absolute, unambiguous Hermes `terminal.cwd`. `--vault-native-agent <id>` selects an
+OpenClaw roster entry; if a path is also provided they must agree. The binding captures that
+path and never follows later native-directory changes automatically. Rerun setup to rebind.
+The configured directory may be outside HOME; it must satisfy the same safe-ancestor checks.
+
+The existing per-adapter registration stores optional `vaultWorkspace` path, API origin and
+native-agent ID alongside its cloud Agent/user/machine identity. No separate registry exists.
+The registration lock rejects another registered Agent using the same real workspace,
+including symlink aliases. Repeated setup preserves a binding only for the same identity;
+reconnect/account/API/machine changes clear it unless deliberately configured again. A binding
+change restarts an existing sync daemon after normal setup installation; `--no-daemon`
+requires the operator to restart it later. Native Agent services are unaffected.
+
+The snapshot API requires an explicit owned, registered non-Hosted `agent_id` and matching
+`X-Clawdi-Machine-Id` for unbound CLI/OAuth credentials; missing/stale identity is rejected on
+both metadata and material reads. No target only disables Vault delivery with setup guidance;
+ordinary session/skill synchronization continues.
+
+Linux and WSL on a filesystem enforcing Unix permissions are supported. Native macOS and
+Windows are explicitly disabled. Existing portable private-file/lock utilities provide
+path-based rename/cooperative locking and best-effort chmod, not equivalent descriptor-pinned
+ancestor protection. This implementation adds no native binary, addon or dependency. WSL
+Windows mounts that cannot enforce 0700/0600 fail closed.
+
+Done: `bash scripts/test.sh runtime-vaults` includes the connected daemon over real isolated
+HTTP/PostgreSQL, using a 15-second test heartbeat to isolate SSE wakeups and a 200 ms
+heartbeat for deliberately missed events,
+offline retention and confirmed detach. The fixture is not a production latency promise.
+
+In the 2026-09-11 connected fixture (one Agent/Vault/field, 3-CPU Docker runner), SSE
+save-to-file measured 249 ms with a 15-second test heartbeat; denied/missed SSE recovery
+measured 460 ms with a 200 ms test heartbeat. Ten metadata requests executed 60 SQL
+statements and four material requests executed 22, including account/machine fences.
+These isolated timings do not describe the normal 45–75 second fallback or production latency.

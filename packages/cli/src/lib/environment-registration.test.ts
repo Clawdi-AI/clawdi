@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setAuth } from "./config";
-import { readEnvironmentRegistration } from "./environment-registration";
+import { getConfig, setAuth } from "./config";
+import {
+	readEnvironmentRegistration,
+	writeEnvironmentRegistration,
+} from "./environment-registration";
 
 const originalClawdiHome = process.env.CLAWDI_HOME;
 const roots: string[] = [];
@@ -41,5 +44,50 @@ describe("environment registration account binding", () => {
 		setAuth({ apiKey: "account-b-key", userId: "account-b" });
 
 		expect(readEnvironmentRegistration("codex")).toBeNull();
+	});
+});
+
+describe("explicit Vault workspace registration", () => {
+	it("preserves only the same identity and refuses a duplicate real workspace", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-vault-registration-"));
+		roots.push(root);
+		process.env.CLAWDI_HOME = root;
+		setAuth({ apiKey: "fixture", userId: "user-a" });
+		const workspace = join(root, "project");
+		mkdirSync(workspace);
+		const identity = {
+			id: "agent-a",
+			agentType: "codex" as const,
+			machineId: "machine-a",
+			machineName: "fixture",
+			userId: "user-a",
+		};
+		writeEnvironmentRegistration({
+			...identity,
+			vaultWorkspace: { path: workspace, apiOrigin: getConfig().apiUrl },
+		});
+		writeEnvironmentRegistration(identity);
+		expect(readEnvironmentRegistration("codex")?.vaultWorkspace?.path).toBe(
+			realpathSync(workspace),
+		);
+		const alias = join(root, "alias");
+		symlinkSync(workspace, alias);
+		expect(() =>
+			writeEnvironmentRegistration({
+				...identity,
+				id: "agent-b",
+				agentType: "claude_code",
+				vaultWorkspace: { path: alias, apiOrigin: getConfig().apiUrl },
+			}),
+		).toThrow("already bound");
+		writeEnvironmentRegistration({ ...identity, machineId: "replacement" });
+		expect(readEnvironmentRegistration("codex")?.vaultWorkspace).toBeUndefined();
+		writeEnvironmentRegistration({
+			...identity,
+			vaultWorkspace: { path: workspace, apiOrigin: getConfig().apiUrl },
+		});
+		setAuth({ apiKey: "fixture-new", userId: "user-b" });
+		writeEnvironmentRegistration({ ...identity, userId: "user-b" });
+		expect(readEnvironmentRegistration("codex")?.vaultWorkspace).toBeUndefined();
 	});
 });

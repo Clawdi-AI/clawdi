@@ -195,6 +195,33 @@ describe("setup daemon install", () => {
 		expect(daemonUnitExists("codex")).toBe(false);
 	});
 
+	it("binds the explicitly selected official OpenClaw workspace", async () => {
+		installEnvironmentMock("env-openclaw");
+		const workspace = join(home, ".openclaw", "agents", "main");
+		mkdirSync(workspace, { recursive: true });
+		await setup({ agent: "openclaw", yes: true, daemon: false, vaultNativeAgent: "main" });
+		const registration = JSON.parse(
+			readFileSync(join(home, ".clawdi", "environments", "openclaw.json"), "utf8"),
+		);
+		expect(registration.vaultWorkspace).toMatchObject({ path: workspace, nativeAgentId: "main" });
+	});
+
+	it("only binds a Vault workspace when explicitly selected", async () => {
+		installEnvironmentMock("env-pi");
+		await setup({ agent: "pi", yes: true, daemon: false });
+		const path = join(home, ".clawdi", "environments", "pi.json");
+		expect(JSON.parse(readFileSync(path, "utf8")).vaultWorkspace).toBeUndefined();
+		const workspace = join(home, "project");
+		mkdirSync(workspace);
+		await setup({ agent: "pi", yes: true, daemon: false, vaultWorkspace: workspace });
+		expect(JSON.parse(readFileSync(path, "utf8")).vaultWorkspace.path).toBe(workspace);
+		await setup({ agent: "pi", yes: true, daemon: false });
+		expect(JSON.parse(readFileSync(path, "utf8")).vaultWorkspace.path).toBe(workspace);
+		await expect(setup({ yes: true, vaultWorkspace: workspace })).rejects.toThrow(
+			"require --agent",
+		);
+	});
+
 	it("honors --no-daemon while still registering the requested agent", async () => {
 		installEnvironmentMock("env-codex");
 

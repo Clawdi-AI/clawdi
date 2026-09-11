@@ -606,14 +606,15 @@ requests; REST retains them for compatibility. Pending requests appear separatel
 Vault detail page and are never returned as empty secret values. Use a fresh request for remaining missing fields after
 expiry; existing pending requests and supplied fields are rejected.
 
-After supply in a managed runtime, verify `vault_request_status` and inspect only
+After supply in a managed runtime or configured connected Linux Agent, verify `vault_request_status` and inspect only
 `.clawdi/vaults/index.json` under the native workspace. Existing runtime watch delivers readable
 Workspace/linked-Project Vaults into separate generated section JSON files. Load the
 selected file inside the authorized process/SDK without exposing values to model context
 just to save them. Do not invoke the tenant CLI or edit generated files. See
 [Runtime Vault files](managed-runtime.md#runtime-vault-files) for permissions, revocation,
-fallback and isolated verification. Self-managed environments without runtime delivery
-retain the [manual skill workflow](../packages/cli/skills/clawdi/SKILL.md#save-and-refresh-credentials-locally).
+fallback and isolated verification. Connected setup uses `--agent <type> --vault-workspace <path>` and stores the binding in
+the existing Agent registration; `--yes` alone never guesses a target. See the
+[skill workflow](../packages/cli/skills/clawdi/SKILL.md#save-and-refresh-credentials-locally).
 
 The CLI remains an optional compatible adapter for an explicit absolute local file:
 

@@ -121,7 +121,9 @@ Load the selected JSON file inside the authorized process or SDK without printin
 For example, Python can use `json.load(open(path))` and pass the selected key directly to
 its SDK. Do not read plaintext into model/tool-result context merely to save or copy it.
 Do not invoke or install the Clawdi CLI from the tenant. Runtime owns these generated files:
-do not edit, chmod, move, commit, or create your own files in `.clawdi/vaults/`.
+do not edit, chmod, move, commit, or create your own files in `.clawdi/vaults/`. Preserve
+unrelated configuration in its `.clawdi` parent. Connected installations use this same
+layout only after an explicit workspace binding; do not assume an arbitrary repo is bound.
 
 After a credential request is supplied, inspect index metadata for the requested fields.
 Pending requests are metadata only, never empty pseudo-secrets. If delivery is delayed,

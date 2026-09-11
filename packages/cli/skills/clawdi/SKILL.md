@@ -128,23 +128,29 @@ If submission times out, inspect status before repeating a mutation.
 
 ### Save and refresh credentials locally
 
-In a managed runtime, Clawdi supplies `.clawdi/vaults/` under the native workspace automatically.
-Inspect only `index.json` to select the intended Vault/section and load its JSON file inside
-the authorized process or SDK without printing values. Files are generated: do not edit or
-commit them, invoke the tenant Clawdi CLI, or read plaintext into model context just to save it.
-Connected daemons do not yet deliver these files automatically; do not infer a target from
-HOME, daemon CWD, or scanned session projects. The manual workflow below applies to
-self-managed environments without runtime delivery.
+Hosted runtime supplies `.clawdi/vaults/` under the native workspace automatically.
+Connected Linux/WSL Agents receive the same layout only in the workspace explicitly
+confirmed by setup. Use that configured path, which may differ from the current repository;
+do not guess from HOME, daemon CWD, or scanned sessions. Existing registrations without a
+Vault workspace do not download values. Native macOS/Windows file delivery is unsupported.
+
+Inspect only the configured `.clawdi/vaults/index.json` to select the intended Vault/section.
+Load its JSON file inside the authorized process or SDK without printing values or returning
+them to model/tool-result context merely to save them. These are generated files: do not
+edit, move or commit them. Hosted agents must not invoke/install the tenant Clawdi CLI.
+Connected operators configure delivery with `clawdi setup --agent <type> --vault-workspace <path>`;
+that changes only the Vault destination, never every repository scanned by the daemon.
 
 After a credential request is supplied, check only index metadata for the expected fields.
 Load the selected JSON file inside the authorized process or SDK; do not return its contents
 as a tool result just to save them elsewhere. If automatic delivery is unavailable, report
-that state and the missing workspace binding instead of inventing a destination or claiming
+that state and any missing workspace binding instead of inventing a destination or claiming
 credentials were saved. Preserve generated files and unrelated local configuration.
 
 ### Optional CLI environment files
 
-When local file materialization is requested and the CLI is available, use:
+For an explicit operator-run compatibility workflow outside Hosted, use the available CLI.
+Choose a target outside the generated `.clawdi/vaults` directory:
 
 ```bash
 clawdi vault materialize --vault <vault-uuid> --project <project-uuid> --out /absolute/project/.env

@@ -471,8 +471,9 @@ connector-provided names remain unchanged. Native tools cover Memory
 search/list/create/exact update/delete, Session search/list/get,
 read-only Project metadata, Vault metadata/references, explicit single-reference
 Vault plaintext resolution and narrow Vault writes.
-Managed runtime Vault delivery is independent of MCP tool results. The existing watch
-loop fetches an Agent-authorized metadata inventory and batches only changed Vault values
+Hosted and explicitly configured connected Linux Vault delivery are independent of MCP
+tool results. The existing watch
+loop (or the connected daemon's shared SSE/heartbeat) fetches an Agent-authorized metadata inventory and batches only changed Vault values
 into tenant-owned `.clawdi/vaults/` section files. SSE and fallback reuse the existing watcher;
 ordinary manifest 304 responses do not suppress delivery. See
 [Runtime Vault files](managed-runtime.md#runtime-vault-files) for authority and cleanup.

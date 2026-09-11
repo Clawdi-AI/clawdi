@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
 	closeSync,
@@ -17,6 +18,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import { z } from "zod";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
+import { writePrivateFileAtomic } from "../lib/private-file";
 import type { RuntimePaths } from "./paths";
 import { spawnRuntimeUserCommand, withRuntimeUserFileAccess } from "./runtime-user-command";
 import { writeRuntimePlatformFileAtomic } from "./state";
@@ -78,6 +80,9 @@ const indexVaultSchema = z.object({
 const receiptSchema = z
 	.object({
 		version: z.literal(1),
+		userId: z.uuid().optional(),
+		machineId: z.string().optional(),
+		nativeAgentId: z.string().optional(),
 		directory: z.literal(".clawdi/vaults"),
 		digests: z.record(generatedName, z.string().regex(/^[a-f0-9]{64}$/)),
 		apiUrl: z.string(),
@@ -92,15 +97,39 @@ const receiptSchema = z
 	.strict();
 type Receipt = z.infer<typeof receiptSchema>;
 
-export interface RuntimeVaultFilesConfig {
+export type RuntimeVaultFilesConfig = {
 	apiUrl: string;
-	apiKey: string;
 	agentId: string;
 	home: string;
 	workspace: string;
 	receiptPath: string;
-	paths: RuntimePaths;
-}
+} & (
+	| {
+			paths: RuntimePaths;
+			apiKey: string;
+			connected?: undefined;
+	  }
+	| {
+			paths?: undefined;
+			apiKey?: undefined;
+			connected: {
+				userId: string;
+				machineId: string;
+				nativeAgentId?: string;
+				stateRoot: string;
+				assertCurrent(): void;
+				request(url: string, init: RequestInit): Promise<Response>;
+			};
+	  }
+);
+
+// Filesystem cleanup needs identity and ownership, never credentials or network callbacks.
+type VaultFileContext = Omit<RuntimeVaultFilesConfig, "connected" | "apiKey"> & {
+	connected?: Pick<
+		NonNullable<RuntimeVaultFilesConfig["connected"]>,
+		"userId" | "machineId" | "nativeAgentId" | "stateRoot"
+	>;
+};
 
 function fail(): never {
 	throw new Error(
@@ -202,12 +231,21 @@ function atomicFile(fd: number, name: string, content: string): void {
 		}
 	}
 }
-function saveReceipt(config: RuntimeVaultFilesConfig, receipt: Receipt): void {
-	writeRuntimePlatformFileAtomic(config.paths, config.receiptPath, `${JSON.stringify(receipt)}\n`, {
-		mode: 0o600,
-	});
+function saveReceipt(config: VaultFileContext, receipt: Receipt): void {
+	const content = `${JSON.stringify(receipt)}\n`;
+	if (config.connected) {
+		writePrivateFileAtomic(config.receiptPath, content, {
+			mode: 0o600,
+			dirMode: 0o700,
+			durable: true,
+			trustedRoot: config.connected.stateRoot,
+		});
+	} else {
+		if (!config.paths) fail();
+		writeRuntimePlatformFileAtomic(config.paths, config.receiptPath, content, { mode: 0o600 });
+	}
 }
-function readReceipt(config: RuntimeVaultFilesConfig): Receipt | null {
+function readReceipt(config: VaultFileContext): Receipt | null {
 	if (!existsSync(config.receiptPath)) return null;
 	const result = receiptSchema.safeParse(JSON.parse(readFileSync(config.receiptPath, "utf8")));
 	if (!result.success) fail();
@@ -215,17 +253,27 @@ function readReceipt(config: RuntimeVaultFilesConfig): Receipt | null {
 	if (
 		receipt.apiUrl !== config.apiUrl ||
 		receipt.agentId !== config.agentId ||
-		receipt.workspace !== config.workspace
+		receipt.workspace !== config.workspace ||
+		receipt.userId !== config.connected?.userId ||
+		receipt.machineId !== config.connected?.machineId ||
+		receipt.nativeAgentId !== config.connected?.nativeAgentId
 	)
 		fail();
 	return receipt;
 }
+function withVaultFileAccess<T>(
+	config: VaultFileContext,
+	operation: () => T & (T extends PromiseLike<unknown> ? never : unknown),
+): T {
+	return config.connected ? operation() : withRuntimeUserFileAccess(operation);
+}
+
 function withDirectory<T>(
-	config: RuntimeVaultFilesConfig,
+	config: VaultFileContext,
 	receipt: Receipt,
 	operation: (fd: number) => T & (T extends PromiseLike<unknown> ? never : unknown),
 ): T {
-	return withRuntimeUserFileAccess(() => {
+	return withVaultFileAccess(config, () => {
 		const fd = openDirectory(join(config.workspace, ".clawdi/vaults"));
 		try {
 			const stat = fstatSync(fd);
@@ -242,31 +290,32 @@ function withDirectory<T>(
 		}
 	});
 }
-function checkTracked(config: RuntimeVaultFilesConfig): void {
+function checkTracked(config: VaultFileContext): void {
 	// Even absent working-tree files may be tracked. Git failure is not proof of absence.
-	const git = spawnRuntimeUserCommand(
-		"git",
-		["-C", config.workspace, "rev-parse", "--show-toplevel"],
-		config.home,
-		config.workspace,
-		{ timeoutMs: 5000, maxBufferBytes: 1024 * 1024 },
-	);
+	const runGit = (args: string[]) =>
+		config.connected
+			? spawnSync("git", args, {
+					cwd: config.workspace,
+					encoding: "utf8",
+					timeout: 5000,
+					maxBuffer: 1024 * 1024,
+				})
+			: spawnRuntimeUserCommand("git", args, config.home, config.workspace, {
+					timeoutMs: 5000,
+					maxBufferBytes: 1024 * 1024,
+				});
+	const git = runGit(["-C", config.workspace, "rev-parse", "--show-toplevel"]);
 	if (git.status === 0) {
-		const tracked = spawnRuntimeUserCommand(
-			"git",
-			["-C", config.workspace, "ls-files", "--", ".clawdi/vaults"],
-			config.home,
-			config.workspace,
-			{ timeoutMs: 5000, maxBufferBytes: 1024 * 1024 },
-		);
+		const tracked = runGit(["-C", config.workspace, "ls-files", "--", ".clawdi/vaults"]);
 		if (tracked.status !== 0 || String(tracked.stdout).trim()) fail();
 	} else if (!String(git.stderr).includes("not a git repository")) fail();
 }
-function initialize(config: RuntimeVaultFilesConfig): Receipt {
+function initialize(config: VaultFileContext): Receipt {
 	const within = relative(config.home, config.workspace);
-	if (within === ".." || within.startsWith("../") || isAbsolute(within)) fail();
+	if (!config.connected && (within === ".." || within.startsWith("../") || isAbsolute(within)))
+		fail();
 	checkTracked(config);
-	const identity = withRuntimeUserFileAccess(() => {
+	const identity = withVaultFileAccess(config, () => {
 		const workspace = openDirectory(config.workspace);
 		try {
 			try {
@@ -309,6 +358,13 @@ function initialize(config: RuntimeVaultFilesConfig): Receipt {
 	const receipt: Receipt = {
 		version: 1,
 		directory: ".clawdi/vaults",
+		...(config.connected
+			? {
+					userId: config.connected.userId,
+					machineId: config.connected.machineId,
+					nativeAgentId: config.connected.nativeAgentId,
+				}
+			: {}),
 		digests: {},
 		apiUrl: config.apiUrl,
 		agentId: config.agentId,
@@ -321,7 +377,7 @@ function initialize(config: RuntimeVaultFilesConfig): Receipt {
 	saveReceipt(config, receipt);
 	return receipt;
 }
-function revoke(config: RuntimeVaultFilesConfig, receipt: Receipt | null): "revoked" {
+function revoke(config: VaultFileContext, receipt: Receipt | null): "revoked" {
 	if (receipt) {
 		checkTracked(config);
 		withDirectory(config, receipt, (fd) => {
@@ -333,7 +389,7 @@ function revoke(config: RuntimeVaultFilesConfig, receipt: Receipt | null): "revo
 	return "revoked";
 }
 function pruneRevoked(
-	config: RuntimeVaultFilesConfig,
+	config: VaultFileContext,
 	receipt: Receipt | null,
 	metadata: Snapshot,
 ): Receipt | null {
@@ -453,6 +509,62 @@ async function readSnapshot(response: Response): Promise<Snapshot> {
 	return parsed.data;
 }
 
+/** Local registration/auth revocation removes only the private receipt's generated files. */
+export function clearConnectedVaultFiles(
+	receiptPath: string,
+	stateRoot: string,
+	home: string,
+	expected?: {
+		userId: string;
+		machineId: string;
+		nativeAgentId?: string;
+		agentId: string;
+		workspace: string;
+		apiUrl: string;
+	},
+	clearMatching = false,
+): void {
+	if (!existsSync(receiptPath)) return;
+	const receipt = receiptSchema.parse(JSON.parse(readFileSync(receiptPath, "utf8")));
+	if (!receipt.userId || !receipt.machineId) fail();
+	const matches = Boolean(
+		expected &&
+			receipt.userId === expected.userId &&
+			receipt.machineId === expected.machineId &&
+			receipt.agentId === expected.agentId &&
+			receipt.workspace === expected.workspace &&
+			receipt.apiUrl === expected.apiUrl &&
+			receipt.nativeAgentId === expected.nativeAgentId,
+	);
+	if (clearMatching ? !matches : matches) return;
+	revoke(
+		{
+			apiUrl: receipt.apiUrl,
+			agentId: receipt.agentId,
+			workspace: receipt.workspace,
+			home,
+			receiptPath,
+			connected: {
+				userId: receipt.userId,
+				machineId: receipt.machineId,
+				nativeAgentId: receipt.nativeAgentId,
+				stateRoot,
+			},
+		},
+		receipt,
+	);
+	if (expected && !clearMatching) {
+		if (receipt.workspace === expected.workspace) {
+			// Explicit setup can rebind a proven, now-empty generated directory.
+			writePrivateFileAtomic(
+				receiptPath,
+				`${JSON.stringify({ ...receipt, ...expected, files: [], inventory: [], digests: {}, etag: null })}\n`,
+				{ mode: 0o600, dirMode: 0o700, durable: true, trustedRoot: stateRoot },
+			);
+		} else unlinkSync(receiptPath);
+	}
+}
+
 /** Secrets never enter logs, tool results, native manifests or the root receipt. */
 export async function syncRuntimeVaultFiles(
 	input: RuntimeVaultFilesConfig,
@@ -460,6 +572,10 @@ export async function syncRuntimeVaultFiles(
 	if (process.platform !== "linux") throw new Error("Runtime Vault file delivery requires Linux.");
 	try {
 		const config = { ...input, apiUrl: normalizeCloudApiBaseUrl(input.apiUrl) };
+		config.connected?.assertCurrent();
+		const request = config.connected?.request ?? fetch;
+		if (!config.connected && !config.apiKey) fail();
+		const query = config.connected ? `?agent_id=${encodeURIComponent(config.agentId)}` : "";
 		let receipt = readReceipt(config);
 		const intact =
 			receipt &&
@@ -467,14 +583,15 @@ export async function syncRuntimeVaultFiles(
 				receipt?.files.every((name) => fileDigest(fd, name) === receipt?.digests[name]),
 			);
 		const etag = intact ? receipt?.etag : null;
-		const response = await fetch(`${config.apiUrl}/v1/runtime/vaults`, {
+		const response = await request(`${config.apiUrl}/v1/runtime/vaults${query}`, {
 			headers: {
-				Authorization: `Bearer ${config.apiKey}`,
+				...(config.connected ? {} : { Authorization: `Bearer ${config.apiKey}` }),
 				...(etag ? { "If-None-Match": etag } : {}),
 			},
 			redirect: "error",
 			signal: AbortSignal.timeout(10000),
 		});
+		config.connected?.assertCurrent();
 		if (response.status === 304) {
 			if (!etag) fail();
 			return "unchanged";
@@ -488,13 +605,21 @@ export async function syncRuntimeVaultFiles(
 			fail();
 		}
 		const metadata = await readSnapshot(response);
-		if (metadata.agent_id !== config.agentId) fail();
+		config.connected?.assertCurrent();
+		if (
+			metadata.agent_id !== config.agentId ||
+			(config.connected && metadata.user_id !== config.connected.userId)
+		)
+			fail();
 		receipt = pruneRevoked(config, receipt, metadata);
-		const material = await fetch(`${config.apiUrl}/v1/runtime/vaults/material`, {
+		const material = await request(`${config.apiUrl}/v1/runtime/vaults/material${query}`, {
 			method: "POST",
 			redirect: "error",
 			signal: AbortSignal.timeout(10000),
-			headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+			headers: {
+				...(config.connected ? {} : { Authorization: `Bearer ${config.apiKey}` }),
+				"Content-Type": "application/json",
+			},
 			body: JSON.stringify({
 				etag: response.headers.get("etag"),
 				revisions: intact
@@ -504,6 +629,7 @@ export async function syncRuntimeVaultFiles(
 					: {},
 			}),
 		});
+		config.connected?.assertCurrent();
 		if (material.status === 401 || material.status === 403) {
 			await material.body?.cancel();
 			return revoke(config, receipt);
@@ -523,6 +649,7 @@ export async function syncRuntimeVaultFiles(
 			material.headers.get("etag") !== response.headers.get("etag")
 		)
 			fail();
+		config.connected?.assertCurrent();
 		const { files, inventory, names } = render(snapshot, intact ? receipt : null);
 		if (receipt) checkTracked(config);
 		receipt ??= initialize(config);

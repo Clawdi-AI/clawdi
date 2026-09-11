@@ -278,6 +278,14 @@ program
 	.command("setup")
 	.description("Detect installed agents, register this machine, and install daemons")
 	.option("--agent <type>", `Agent type (${AGENT_TYPE_HELP_LABEL})`)
+	.option(
+		"--vault-workspace <path>",
+		"Bind this Agent to an explicit Vault workspace (requires --agent)",
+	)
+	.option(
+		"--vault-native-agent <id>",
+		"Select the official OpenClaw agent whose workspace supplies Vault files",
+	)
 	.option("-y, --yes", "Register every detected agent without prompting")
 	.option("--no-daemon", "Skip installing/starting background sync daemons")
 	.addHelpText(

@@ -235,7 +235,8 @@ async def test_snapshot_scope_revision_mutations_and_fanout(
         assert (await client.get("/v1/runtime/vaults")).status_code == 403
 
 
-async def test_real_http_runtime_watch(db_session, seed_user):
+@pytest.mark.parametrize("connected", [False, True])
+async def test_real_http_runtime_watch(db_session, seed_user, monkeypatch, connected):
     """Run the actual watch loop against HTTP/PG; native service operations are fixtures."""
     import asyncio
     import hashlib
@@ -243,6 +244,7 @@ async def test_real_http_runtime_watch(db_session, seed_user):
     import secrets
     import shutil
     import socket
+    from datetime import UTC, datetime
     from pathlib import Path
 
     import uvicorn
@@ -254,11 +256,22 @@ async def test_real_http_runtime_watch(db_session, seed_user):
     if not shutil.which("bun") or not (repo / "node_modules").exists():
         pytest.skip("Combined Docker fixture requires locked JS dependencies")
     agent = await create_env_with_project(
-        db_session, user_id=seed_user.id, machine_id=str(uuid.uuid4()), machine_name="live"
+        db_session,
+        user_id=seed_user.id,
+        machine_id=str(uuid.uuid4()),
+        machine_name="live",
+        agent_type="pi" if connected else "claude_code",
     )
+    if connected:
+        agent.connected_agent_registered_at = datetime.now(UTC)
+        agent.machine_fence_required = True
     runtime_token, owner_token = ["clawdi_" + secrets.token_hex(24) for _ in range(2)]
     for token, bound, scopes in [
-        (runtime_token, agent.id, ["vault:read", "skills:read"]),
+        (
+            runtime_token,
+            None if connected else agent.id,
+            None if connected else ["vault:read", "skills:read"],
+        ),
         (owner_token, None, None),
     ]:
         db_session.add(
@@ -298,16 +311,26 @@ async def test_real_http_runtime_watch(db_session, seed_user):
     from app.core.database import engine as app_engine
 
     active_path = ContextVar("vault_fixture_path", default="")
+    missed_event = ContextVar("vault_fixture_missed", default=False)
+    broadcast = sync_events._broadcast
+
+    def deliver(user_id, payload):
+        if not missed_event.get():
+            broadcast(user_id, payload)
+
+    monkeypatch.setattr(sync_events, "_broadcast", deliver)
     requests, statements = Counter(), Counter()
 
     async def metered(scope, receive, send):
         path = scope.get("path", "")
         token = active_path.set(path)
+        missed_token = missed_event.set((b"x-fixture-missed", b"true") in scope.get("headers", []))
         requests[path] += 1
         try:
             await app(scope, receive, send)
         finally:
             active_path.reset(token)
+            missed_event.reset(missed_token)
 
     def count_sql(*args):
         statements[active_path.get()] += 1
@@ -325,9 +348,11 @@ async def test_real_http_runtime_watch(db_session, seed_user):
         process = await asyncio.create_subprocess_exec(
             "bun",
             "test",
-            "tests/runtime.test.ts",
+            "src/serve/vault-daemon.test.ts" if connected else "tests/runtime.test.ts",
             "--test-name-pattern",
-            "runtime Vault delivery over PostgreSQL",
+            "connected daemon Vault delivery"
+            if connected
+            else "runtime Vault delivery over PostgreSQL",
             cwd=repo / "packages/cli",
             env={
                 **os.environ,
@@ -336,6 +361,8 @@ async def test_real_http_runtime_watch(db_session, seed_user):
                 "CLAWDI_VAULT_FIXTURE_VAULT": str(vault.id),
                 "CLAWDI_VAULT_FIXTURE_TOKEN": runtime_token,
                 "CLAWDI_VAULT_FIXTURE_OWNER": owner_token,
+                "CLAWDI_VAULT_FIXTURE_MACHINE": agent.machine_id,
+                "CLAWDI_VAULT_FIXTURE_USER": str(seed_user.id),
             },
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
