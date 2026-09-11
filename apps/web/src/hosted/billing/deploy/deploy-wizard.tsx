@@ -1648,21 +1648,21 @@ export function DeployWizard() {
 											? "Retry"
 											: deployLabel}
 								</Button>
-								{visibleSubmitBlockingReason ? (
-									<p
-										id="deploy-blocking-reason"
-										className={cn(
-											"max-w-sm text-xs @2xl/main:text-right",
-											nameError ? "text-destructive" : "text-muted-foreground",
-										)}
-										role="status"
-									>
-										{visibleSubmitBlockingReason}
-									</p>
-								) : null}
 							</div>
 						</div>
 					</div>
+					{visibleSubmitBlockingReason ? (
+						<p
+							id="deploy-blocking-reason"
+							className={cn(
+								"mt-1 max-w-sm text-xs @2xl/main:ml-auto @2xl/main:text-right",
+								nameError ? "text-destructive" : "text-muted-foreground",
+							)}
+							role="status"
+						>
+							{visibleSubmitBlockingReason}
+						</p>
+					) : null}
 				</div>
 			</form>
 
