@@ -522,7 +522,7 @@ MCP batch reads without a CLI. The alternative `material` input takes `agent_id`
 and whole-Vault environment data only to a key bound to that Agent.
 
 `packages/runtime-mcp` provides a separate tenant stdio entrypoint. It forwards remote
-tools and implements only `vault_bind`/`vault_pull` through the shared env library. Cloud
+tools and implements only `vault_sync` (default `.env.local`) through the shared env library. Cloud
 never writes runtime files; the local process writes inside its explicit workspace.
 See [standalone MCP](../packages/runtime-mcp/README.md) for limits and verification.
 Returned references use the exact canonical forms

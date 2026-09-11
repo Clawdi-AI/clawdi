@@ -31,7 +31,7 @@ async def test_stdio_vault_flow_without_cli(db_session, seed_user, tmp_path):
     shutil.copyfile(artifact, executable)
     workspace = tmp_path / "workspace"
     workspace.mkdir(mode=0o700)
-    (workspace / ".env").write_text("UNRELATED='keep'\n")
+    (workspace / ".env.local").write_text("UNRELATED='keep'\n")
     agent = await create_env_with_project(
         db_session, user_id=seed_user.id, machine_id="mcp-runtime", machine_name="MCP runtime"
     )
@@ -100,10 +100,11 @@ async def test_stdio_vault_flow_without_cli(db_session, seed_user, tmp_path):
     async def tool(name, arguments, *, error=False):
         result = await rpc("tools/call", {"name": name, "arguments": arguments})
         assert bool(result.get("isError")) == error, result
-        if name in ("vault_bind", "vault_pull") or error:
+        if name == "vault_sync" or error:
             assert "first-secret" not in json.dumps(result)
             assert "second-secret" not in json.dumps(result)
             assert "fresh-secret" not in json.dumps(result)
+            assert "section-secret" not in json.dumps(result)
         return result if error else json.loads(result["content"][0]["text"])
 
     async def stop():
@@ -125,9 +126,11 @@ async def test_stdio_vault_flow_without_cli(db_session, seed_user, tmp_path):
             },
         )
         listing = await rpc("tools/list", {})
-        assert {"vault_bind", "vault_pull", "vault_resolve"}.issubset(
-            {t["name"] for t in listing["tools"]}
-        )
+        assert {"vault_sync", "vault_resolve"}.issubset({t["name"] for t in listing["tools"]})
+        assert not {"vault_bind", "vault_pull"} & {t["name"] for t in listing["tools"]}
+        sync_schema = next(t["inputSchema"] for t in listing["tools"] if t["name"] == "vault_sync")
+        assert not sync_schema.get("required")
+        assert sync_schema["properties"]["path"]["default"] == ".env.local"
         vault = await tool(
             "vault_create",
             {
@@ -159,42 +162,81 @@ async def test_stdio_vault_flow_without_cli(db_session, seed_user, tmp_path):
         status = await tool("vault_request_status", {"request_id": created["id"]})
         assert status["status"] == "supplied"
         source = {"project_id": identity["project_id"], "vault_id": identity["vault_id"]}
-        bound = await tool("vault_bind", {**source, "path": ".env"})
+        initial = (workspace / ".env.local").read_bytes()
+        for incomplete in (
+            {},
+            {"project_id": source["project_id"]},
+            {"vault_id": source["vault_id"]},
+            {"section": ""},
+        ):
+            await tool("vault_sync", incomplete, error=True)
+            assert (workspace / ".env.local").read_bytes() == initial
+        bound = await tool("vault_sync", source)
+        assert bound["path"] == str(workspace / ".env.local")
         assert bound["added"] == 2
-        assert (workspace / ".env").stat().st_mode & 0o777 == 0o600
-        assert "TOKEN='first-secret'" in (workspace / ".env").read_text()
+        assert (workspace / ".env.local").stat().st_mode & 0o777 == 0o600
+        assert "TOKEN='first-secret'" in (workspace / ".env.local").read_text()
+        default_before = (workspace / ".env.local").read_bytes()
+        for mismatch in (
+            {"project_id": str(other.default_project_id)},
+            {"vault_id": str(other.id)},
+            {"section": "other"},
+        ):
+            rejected = await tool("vault_sync", mismatch, error=True)
+            assert "Source differs" in rejected["content"][0]["text"]
+            assert (workspace / ".env.local").read_bytes() == default_before
+        await tool(
+            "vault_item_upsert",
+            {**identity, "section": "production", "fields": {"SCOPED": "section-secret"}},
+        )
+        scoped = await tool(
+            "vault_sync", {**source, "section": "production", "path": ".env.production"}
+        )
+        assert scoped["fields"] == 1
+        assert "SCOPED='section-secret'" in (workspace / ".env.production").read_text()
+        assert "TOKEN=" not in (workspace / ".env.production").read_text()
+        (workspace / "unmanaged.env").write_text("TOKEN='local'\n")
+        await tool("vault_sync", {**source, "path": "unmanaged.env"}, error=True)
+        assert (workspace / "unmanaged.env").read_text() == "TOKEN='local'\n"
         await tool(
             "vault_item_upsert", {**identity, "fields": {"TOKEN": "fresh-secret", "ADDED": "new"}}
         )
         await tool("vault_item_delete", {**identity, "fields": ["REMOVE"]})
         await stop()
         process = await start(agent.id)
-        pulled = await tool("vault_pull", {"path": ".env"})
+        scoped = await tool("vault_sync", {"path": ".env.production"})
+        assert (scoped["fields"], scoped["updated"]) == (1, 0)
+        await tool("vault_item_delete", {**identity, "section": "production", "fields": ["SCOPED"]})
+        pulled = await tool("vault_sync", {})
         assert (pulled["added"], pulled["updated"], pulled["deleted"]) == (1, 1, 1)
-        content = (workspace / ".env").read_text()
+        content = (workspace / ".env.local").read_text()
         assert "UNRELATED='keep'" in content and "REMOVE=" not in content
         assert "TOKEN='fresh-secret'" in content
-        (workspace / ".env").write_text(content.replace("TOKEN='fresh-secret'", "TOKEN='local'"))
-        conflict = await tool("vault_pull", {"path": ".env"}, error=True)
+        (workspace / ".env.local").write_text(
+            content.replace("TOKEN='fresh-secret'", "TOKEN='local'")
+        )
+        conflict = await tool("vault_sync", {}, error=True)
         assert "Local conflict" in conflict["content"][0]["text"]
-        before = (workspace / ".env").read_bytes()
+        before = (workspace / ".env.local").read_bytes()
         for path in ("../escape.env", str(tmp_path / "escape.env"), ".env/../escape.env"):
-            await tool("vault_bind", {**source, "path": path}, error=True)
+            await tool("vault_sync", {**source, "path": path}, error=True)
         outside = tmp_path / "outside"
         outside.write_text("unchanged")
         (workspace / "linked.env").symlink_to(outside)
-        await tool("vault_bind", {**source, "path": "linked.env"}, error=True)
+        await tool("vault_sync", {**source, "path": "linked.env"}, error=True)
         assert outside.read_text() == "unchanged"
         await tool(
-            "vault_bind",
+            "vault_sync",
             {**source, "project_id": str(other.default_project_id), "path": "other.env"},
             error=True,
         )
         await stop()
         process = await start(other.id)
-        await tool("vault_bind", {**source, "path": "other.env"}, error=True)
+        changed = await tool("vault_sync", {}, error=True)
+        assert "context changed" in changed["content"][0]["text"]
+        await tool("vault_sync", {**source, "path": "other.env"}, error=True)
         assert not (workspace / "other.env").exists()
-        assert (workspace / ".env").read_bytes() == before
+        assert (workspace / ".env.local").read_bytes() == before
         assert set(seen_paths) == {"/v1/mcp/clawdi"}
         await stop()
         process = None

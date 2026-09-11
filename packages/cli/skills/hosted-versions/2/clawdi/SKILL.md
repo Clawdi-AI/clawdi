@@ -102,20 +102,23 @@ inspect the Vault and request only still-missing fields; never replace an existi
 retry. If creation times out, use `vault_get` to find recent request IDs before retrying.
 If submission times out, inspect status before repeating a mutation.
 
-### Bind and refresh a local env file
+### Save and refresh credentials locally
 
-Use `vault_bind` with `project_id`, `vault_id`, `path: ".env"`, and optional `section`.
-Omit `section` for the entire Vault; an empty string selects unsectioned fields.
-If sections reuse field names, specify `section`; use a distinct env filename for each
-section you bind. The filename is directly inside this
-Agent's authenticated workspace, must be untracked and Git-ignored, and cannot be a symlink.
+After a request is `supplied`, call `vault_sync` with `project_id`, `vault_id`, and
+optional `section`. This is the default credential workflow: it saves to `.env.local`
+in this Agent's authenticated workspace without another filename approval. Use `path`
+only for another supported env filename. Omit `section` for the entire Vault; an empty
+string selects unsectioned fields. If sections reuse names, select one section per file.
+The target must be untracked, Git-ignored, and not a symlink.
 
-Use `vault_pull` with the same `path` after cloud changes. It reuses the saved Agent,
-API/account and Vault identity; adds, updates and deletes managed fields, preserving other
-assignments. Local conflicts stop the write: restore the managed assignment or bind a new
-file. Results contain only path and counts; never print the file. There is no background or
-reverse sync. These tools require the standalone local MCP adapter; a remote-only HTTP
-server cannot write local files. Do not invent a CLI fallback or script synchronization.
+Before later task use, call `vault_sync` when a refresh is needed; omit source and path
+to reuse the default file's durable binding, or supply the chosen `path`. It adds, updates
+and deletes managed fields while preserving unrelated assignments. Conflicting sources
+or local edits stop the write; restore the managed assignment or choose a new file.
+Return only file path, status and counts; never print keys or the file, log secrets, or
+save them to Memory. Sync does not upload local edits, run in the background, or reload
+a running process's environment. It requires the standalone local MCP adapter; remote-only
+HTTP cannot write files. Do not invent a CLI fallback or script synchronization.
 
 For authorized batch reads/export, use `vault_resolve` with `references` (up to 100 exact
 references). For import/write, pass explicit fields to `vault_item_upsert`; use

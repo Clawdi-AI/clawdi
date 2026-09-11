@@ -1,7 +1,7 @@
 # Standalone Clawdi MCP
 
-One stdio server forwards Cloud tools and provides local `vault_bind` and
-`vault_pull`. It runs with Node 24 and Git on Linux (including WSL), without an
+One stdio server forwards Cloud tools and provides local `vault_sync`. It runs
+with Node 24 and Git on Linux (including WSL), without an
 installed Clawdi CLI, CLI configuration, daemon, or privileged file RPC.
 
 Build with `bun run --cwd packages/runtime-mcp build`. Copy the resulting
@@ -19,11 +19,14 @@ node /absolute/path/clawdi-mcp.mjs --api-url https://cloud-api.clawdi.ai --agent
 ```
 
 The workspace must be a real directory, not writable by other users. Local
-tools accept only an env filename directly inside it, such as `.env`,
-`.env.production`, or `service.env`; nested paths are not supported. Git must
+tools accept only an env filename directly inside it. The default is `.env.local`;
+explicit `.env`, `.env.production`, or `service.env` are also supported. Git must
 already ignore the untracked target. Symlinks, hardlinks, conflicting local
 assignments, and changed account/API/Agent/source identities fail closed.
-`vault_pull` follows cloud additions, updates and deletions while preserving
+First call `vault_sync` with `project_id`, `vault_id`, and optional `section` to save
+and bind the source. Later calls can omit these arguments to reuse the binding.
+`path` defaults to `.env.local`; supplied source arguments must match the binding.
+`vault_sync` follows cloud additions, updates and deletions while preserving
 unrelated assignments. Files and binding metadata advance atomically at 0600.
 
 Hosted uses administrator-projected `--config` containing the authenticated
@@ -36,7 +39,7 @@ subprocess environment filtering.
 `vault_resolve` remains the sole Cloud plaintext read tool. Its `material`
 input reads a whole Vault or section with exact Agent/Project/Vault identities;
 it requires the API key to be bound to that Agent. The adapter verifies the
-returned identities and writes locally. `vault_bind` and `vault_pull` return
+returned identities and writes locally. `vault_sync` returns
 only status, path, field count, and added/updated/deleted counts. A remote-only
 HTTP MCP endpoint does not advertise local tools.
 

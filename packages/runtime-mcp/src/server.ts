@@ -21,27 +21,20 @@ export const contextSchema = z
 export type RuntimeContext = z.infer<typeof contextSchema>;
 export type RemoteCaller = (method: string, params: Record<string, unknown>) => Promise<unknown>;
 const target = z.string().regex(/^(?:\.env(?:\.[A-Za-z0-9_-]+)*|[A-Za-z0-9_-]+\.env)$/);
-const bindArguments = z
+const syncArguments = z
 	.object({
-		path: target,
-		project_id: z.uuid(),
-		vault_id: z.uuid(),
+		path: target.default(".env.local"),
+		project_id: z.uuid().optional(),
+		vault_id: z.uuid().optional(),
 		section: z.string().max(200).nullable().optional(),
 	})
 	.strict();
-const pullArguments = z.object({ path: target }).strict();
 const localTools = [
 	{
-		name: "vault_bind",
+		name: "vault_sync",
 		description:
-			"Bind an entire Vault, or one section, to an env filename directly in this Agent's authenticated workspace. Preserves unrelated assignments; refuses conflicts, tracked files and non-ignored files. Returns only path and counts. No CLI required.",
-		inputSchema: z.toJSONSchema(bindArguments),
-	},
-	{
-		name: "vault_pull",
-		description:
-			"Refresh a bound env filename in this Agent's authenticated workspace. Adds, updates and deletes managed fields; preserves unrelated assignments and rejects local conflicts. Returns only path and counts. No CLI required.",
-		inputSchema: z.toJSONSchema(pullArguments),
+			"Save Vault credentials locally in this Agent's authenticated workspace. Defaults to .env.local; path may select another env filename. First call requires project_id and vault_id, with optional section (omit for entire Vault, empty string for unsectioned fields). Later calls reuse the durable source binding; supplied source must match. Adds, updates and deletes managed fields, preserves unrelated assignments, and refuses local conflicts, tracked or non-ignored files. Returns only status, path and counts. No CLI required.",
+		inputSchema: z.toJSONSchema(syncArguments, { io: "input" }),
 	},
 ];
 
@@ -120,29 +113,14 @@ export function createRuntimeMcpServer(context: RuntimeContext, callRemote: Remo
 	});
 	server.setRequestHandler(CallToolRequestSchema, async (request) => {
 		const { name, arguments: input } = request.params;
-		if (name !== "vault_bind" && name !== "vault_pull") {
+		if (name !== "vault_sync") {
 			return CallToolResultSchema.parse(await callRemote("tools/call", request.params));
 		}
 		try {
-			const bind = name === "vault_bind" ? bindArguments.parse(input) : null;
-			const path = bind?.path ?? pullArguments.parse(input).path;
+			const args = syncArguments.parse(input ?? {});
 			const result = await updateVaultEnv(
-				join(context.root, path),
+				join(context.root, args.path),
 				async (binding) => {
-					const source = bind
-						? {
-								project_id: bind.project_id,
-								vault_id: bind.vault_id,
-								section: bind.section ?? null,
-							}
-						: binding
-							? {
-									project_id: binding.projectId,
-									vault_id: binding.vaultId,
-									section: binding.section,
-								}
-							: undefined;
-					if (!source) throw new Error("No Vault binding exists; use vault_bind first.");
 					if (
 						binding &&
 						(binding.apiUrl !== context.apiUrl ||
@@ -150,6 +128,31 @@ export function createRuntimeMcpServer(context: RuntimeContext, callRemote: Remo
 					) {
 						throw new Error("Vault binding context changed; nothing was written.");
 					}
+					if (
+						binding &&
+						((args.project_id !== undefined && args.project_id !== binding.projectId) ||
+							(args.vault_id !== undefined && args.vault_id !== binding.vaultId) ||
+							(args.section !== undefined && args.section !== binding.section))
+					) {
+						throw new Error("Source differs from the saved Vault binding; choose a new file.");
+					}
+					const source = binding
+						? {
+								project_id: binding.projectId,
+								vault_id: binding.vaultId,
+								section: binding.section,
+							}
+						: args.project_id && args.vault_id
+							? {
+									project_id: args.project_id,
+									vault_id: args.vault_id,
+									section: args.section ?? null,
+								}
+							: undefined;
+					if (!source)
+						throw new Error(
+							"No Vault binding exists; supply project_id and vault_id to vault_sync.",
+						);
 					const response = CallToolResultSchema.parse(
 						await callRemote("tools/call", {
 							name: "vault_resolve",

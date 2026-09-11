@@ -593,8 +593,10 @@ references. Pending requests appear separately on the Vault detail page and are 
 returned as empty secret values. Use a fresh request for remaining missing fields after
 expiry; existing pending requests and supplied fields are rejected.
 
-The standalone `clawdi` MCP adapter exposes `vault_bind` with exact `project_id`,
-`vault_id`, an env filename `path`, and optional `section`; `vault_pull` takes `path`.
+The standalone `clawdi` MCP adapter exposes `vault_sync`: first supply exact `project_id`,
+`vault_id`, and optional `section`. It saves locally and binds the source; later calls
+reuse that binding. `path` defaults to `.env.local` and can select another env filename.
+Supplied source arguments must match the existing binding.
 Hosted projects this adapter into both native runtimes. It uses authenticated Cloud
 material reads and writes only inside the Agent workspace, with no tenant CLI dependency.
 See [standalone MCP setup](../packages/runtime-mcp/README.md) for self-managed clients.
@@ -606,13 +608,13 @@ clawdi vault materialize --vault <vault-uuid> --project <project-uuid> --out /ab
 clawdi vault pull --out /absolute/project/.env
 ```
 
-The first pull records the canonical API URL, authenticated account, exact Project/Vault
+The first synchronization records the canonical API URL, authenticated account, exact Project/Vault
 UUIDs, field identities/references, and local assignment fingerprints in a comment in
 that same file. Optional `--section <name>` narrows the binding; `--section ''` selects
 unsectioned keys. Field names must be valid, distinct environment identifiers; duplicate
 names across sections require a section selection or explicit renaming in Vault.
 
-Later pulls refresh existing keys, discover new ones, and remove remotely deleted keys
+Later synchronizations refresh existing keys, discover new ones, and remove remotely deleted keys
 only when their previously managed assignments are unchanged locally. Unrelated lines,
 comments, and variables are preserved. User-edited managed assignments, removed metadata,
 new-key collisions, replaced field identities, and changed account/API/source context fail
@@ -635,15 +637,17 @@ for whole-Vault environment data. `vault_item_upsert` and `vault_item_delete` co
 explicit batch import/write/removal; they do not imply reverse synchronization.
 Hosted and self-managed local MCP adapters share the same env library with the CLI.
 
-Done: `scripts/test.sh vault-mcp` executes request → public supply → status → bind →
-cloud mutation → pull with no installed CLI in the tenant process. It checks real file
-output after restart, 0600 permissions, local conflicts, cross-Agent/Project rejection,
-path and symlink protection, and metadata-only bind/pull responses.
+Done: `scripts/test.sh vault-mcp` executes request → public supply → status → sync (default path) →
+cloud mutation → restart → sync (no arguments) with no installed CLI in the tenant process.
+It checks real file output after restart, 0600 permissions, local conflicts, cross-Agent/Project rejection,
+path and symlink protection, and metadata-only sync responses.
 
 Deployment requires migration `c92e8b3d104f`, the updated API/client/web, and a `WEB_ORIGIN`
 that points to the public dashboard. Deploy the API before clients and refresh MCP tool
-lists and packaged skills. The local MCP adapter is bundled with management package
-0.14.70 and Hosted Skill version 2. Publish the additive Cloud schema/material tool and
+lists and packaged skills. The local MCP adapter is bundled with the management package
+and Hosted Skill version 2. The branch currently selects 0.14.70, but npm already serves
+that version (verified 2026-09-11); a new release version must be selected before publication.
+Publish the additive Cloud schema/material tool and
 management artifact before enabling Hosted `localVault: 1` projection. Older management
 packages retain remote-only MCP; their tool lists do not claim local file support.
 

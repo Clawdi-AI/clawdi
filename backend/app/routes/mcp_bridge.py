@@ -612,7 +612,8 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
             "if any reference is missing or unauthorized. "
             "Alternatively supply material with agent_id, project_id, vault_id and section "
             "to read an entire Vault for env synchronization; requires a key bound to that Agent. "
-            "Call only when the current task requires the value. The result is sensitive: "
+            "Prefer local vault_sync for saving credentials; call this read only when the task "
+            "requires plaintext. The result is sensitive: "
             "never echo it, store it in Memory, or include it in logs. Hosted runtimes are "
             "restricted to Projects available to their bound Agent."
         ),
@@ -633,7 +634,7 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     "vault_request_status": _NativeToolSpec(
         description=(
             "Check a Vault request: pending, supplied, expired, or conflict. Returns references, "
-            "never values. Use the local MCP vault_bind or vault_pull tools for env files, "
+            "never values. Use local MCP vault_sync to save credentials to .env.local by default, "
             "or vault_resolve for authorized reads."
         ),
         input_schema=_VaultRequestStatusArguments.model_json_schema(),
