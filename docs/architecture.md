@@ -512,8 +512,8 @@ tokens and bridge credentials out of the agent process.
 
 `vault_list` and `vault_get` select only attachment metadata and field names;
 they never select or decrypt `encrypted_value`, `nonce`, or credential payloads.
-`vault_resolve` requires `vault:read`. Supply `reference` for the compatible
-single `{reference, value}` response, or `references` (1–100 distinct exact
+The Cloud/legacy HTTP `vault_resolve` contract requires `vault:read`. Supply
+`reference` for the compatible single `{reference, value}` response, or `references` (1–100 distinct exact
 references) for `{values: [{reference, value}, ...]}` in input order. Batch
 resolution authorizes every Project before reading secret rows and fails
 entirely if any reference is missing or inaccessible. This supports authorized
@@ -522,8 +522,10 @@ MCP batch reads without a CLI. The alternative `material` input takes `agent_id`
 and whole-Vault environment data only to a key bound to that Agent.
 
 `packages/runtime-mcp` provides a separate tenant stdio entrypoint. It forwards remote
-tools and implements only `vault_sync` (default `.env.local`) through the shared env library. Cloud
-never writes runtime files; the local process writes inside its explicit workspace.
+tools except `vault_resolve`, which it hides and rejects for direct agent calls.
+It implements `vault_sync` (default `.env.local`) through the shared env library,
+using authorized Cloud material reads internally. Cloud never writes runtime files;
+the local process writes inside its explicit workspace.
 See [standalone MCP](../packages/runtime-mcp/README.md) for limits and verification.
 Returned references use the exact canonical forms
 `clawdi://project/<project-id>/vault/<vault>/field/<field>` and

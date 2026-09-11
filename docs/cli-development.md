@@ -629,11 +629,13 @@ pulls; after a crashed process, remove its `.clawdi-lock` only after confirming 
 The file uses literal dotenv quoting (including multiline values), not a shell script:
 load it with a dotenv reader, rather than `source`. Values that cannot round-trip safely
 through dotenv quoting are rejected instead of modified. No secret values appear in
-materialization responses or logs. `vault_resolve` remains an explicitly sensitive MCP
-read when the task requires plaintext.
+materialization responses or logs. The tenant MCP adapter exposes only `vault_sync`
+for credential access: it hides `vault_resolve` and rejects direct agent calls without
+forwarding them. Sync uses the authorized Cloud material read internally.
 
-MCP `vault_resolve` accepts bounded `references` for batch reads/export and `material`
-for whole-Vault environment data. `vault_item_upsert` and `vault_item_delete` cover
+Legacy remote-only HTTP MCP retains the released `vault_resolve` plaintext contract
+for reference reads and whole-Vault material; those clients cannot write local files.
+`vault_item_upsert` and `vault_item_delete` cover
 explicit batch import/write/removal; they do not imply reverse synchronization.
 Hosted and self-managed local MCP adapters share the same env library with the CLI.
 

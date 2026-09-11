@@ -36,12 +36,15 @@ the runtime key; the tenant never receives the real platform credential.
 Explicit `NODE_EXTRA_CA_CERTS` preserves system CA trust across native MCP
 subprocess environment filtering.
 
-`vault_resolve` remains the sole Cloud plaintext read tool. Its `material`
-input reads a whole Vault or section with exact Agent/Project/Vault identities;
+The adapter hides Cloud `vault_resolve` from its tool list and rejects direct
+agent calls with a `vault_sync` instruction, without forwarding them. Sync internally
+uses its `material` input to read a whole Vault or section with exact
+Agent/Project/Vault identities;
 it requires the API key to be bound to that Agent. The adapter verifies the
 returned identities and writes locally. `vault_sync` returns
 only status, path, field count, and added/updated/deleted counts. A remote-only
-HTTP MCP endpoint does not advertise local tools.
+HTTP MCP endpoint does not advertise local tools; its released `vault_resolve`
+plaintext contract remains available for legacy clients.
 
 Done: `scripts/test.sh vault-mcp` passes isolated stdio/HTTP/PostgreSQL tests,
 including public supply, restart persistence, conflicts and scope rejection.

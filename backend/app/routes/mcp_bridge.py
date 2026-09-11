@@ -634,8 +634,8 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     "vault_request_status": _NativeToolSpec(
         description=(
             "Check a Vault request: pending, supplied, expired, or conflict. Returns references, "
-            "never values. Use local MCP vault_sync to save credentials to .env.local by default, "
-            "or vault_resolve for authorized reads."
+            "never values. After supply, use local MCP vault_sync to save credentials to "
+            ".env.local by default; status itself does not write files."
         ),
         input_schema=_VaultRequestStatusArguments.model_json_schema(),
         scopes=("vault:read",),

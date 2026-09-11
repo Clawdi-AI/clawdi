@@ -40,10 +40,14 @@ async def test_stdio_vault_flow_without_cli(db_session, seed_user, tmp_path):
     )
     auth = _runtime_auth(seed_user, agent.id, scopes=["vault:read", "vault:write", "projects:read"])
     seen_paths = []
+    seen_tools = []
 
     async def authenticated(request: Request):
         # Test egress authority is deliberately restricted to this exact route/header.
         seen_paths.append(request.url.path)
+        body = await request.json()
+        if body.get("method") == "tools/call":
+            seen_tools.append(body["params"]["name"])
         if (
             request.url.path != "/v1/mcp/clawdi"
             or request.headers.get("authorization") != "Bearer fixture-placeholder"
@@ -126,8 +130,10 @@ async def test_stdio_vault_flow_without_cli(db_session, seed_user, tmp_path):
             },
         )
         listing = await rpc("tools/list", {})
-        assert {"vault_sync", "vault_resolve"}.issubset({t["name"] for t in listing["tools"]})
-        assert not {"vault_bind", "vault_pull"} & {t["name"] for t in listing["tools"]}
+        assert "vault_sync" in {t["name"] for t in listing["tools"]}
+        assert not {"vault_resolve", "vault_bind", "vault_pull"} & {
+            t["name"] for t in listing["tools"]
+        }
         sync_schema = next(t["inputSchema"] for t in listing["tools"] if t["name"] == "vault_sync")
         assert not sync_schema.get("required")
         assert sync_schema["properties"]["path"]["default"] == ".env.local"
@@ -171,7 +177,15 @@ async def test_stdio_vault_flow_without_cli(db_session, seed_user, tmp_path):
         ):
             await tool("vault_sync", incomplete, error=True)
             assert (workspace / ".env.local").read_bytes() == initial
+        calls_before = list(seen_tools)
+        denied = await tool(
+            "vault_resolve", {"material": {**source, "agent_id": str(agent.id)}}, error=True
+        )
+        assert "vault_sync" in denied["content"][0]["text"]
+        assert seen_tools == calls_before
+        assert (workspace / ".env.local").read_bytes() == initial
         bound = await tool("vault_sync", source)
+        assert seen_tools == [*calls_before, "vault_resolve"]
         assert bound["path"] == str(workspace / ".env.local")
         assert bound["added"] == 2
         assert (workspace / ".env.local").stat().st_mode & 0o777 == 0o600

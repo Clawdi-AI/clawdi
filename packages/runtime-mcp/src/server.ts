@@ -105,14 +105,21 @@ export function createRuntimeMcpServer(context: RuntimeContext, callRemote: Remo
 		const remote = ListToolsResultSchema.parse(
 			await callRemote("tools/list", request.params ?? {}),
 		);
-		// Local tools are advertised only alongside the Cloud read capability, never on remote HTTP.
+		// Cloud plaintext reads are internal to local synchronization.
 		if (remote.tools.some((tool) => tool.name === "vault_resolve")) {
 			remote.tools.push(...ListToolsResultSchema.parse({ tools: localTools }).tools);
 		}
+		remote.tools = remote.tools.filter((tool) => tool.name !== "vault_resolve");
 		return remote;
 	});
 	server.setRequestHandler(CallToolRequestSchema, async (request) => {
 		const { name, arguments: input } = request.params;
+		if (name === "vault_resolve") {
+			return {
+				isError: true,
+				content: [{ type: "text", text: "Use vault_sync to save credentials locally." }],
+			};
+		}
 		if (name !== "vault_sync") {
 			return CallToolResultSchema.parse(await callRemote("tools/call", request.params));
 		}

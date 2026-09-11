@@ -65,12 +65,9 @@ as well as a possible unknown UUID; do not try to bypass it through another tool
 - `vault_list` — List attached Vaults and key counts for visible Projects.
 - `vault_get` — List key names, provenance, and exact references for an attached Vault.
 
-Use `vault_resolve` only when the current task requires one referenced plaintext value. Pass
-the exact Project-scoped reference. Treat the result as sensitive: never echo it, save it to
-Memory, or include it in logs.
-
-The metadata tools never return plaintext secret values. Preserve exact references for
-`vault_resolve` or when passing them to an authorized runtime:
+Use `vault_sync` to save credentials locally for task use. The metadata tools return
+key names and exact references, never secret values. Preserve those references when
+passing them to an authorized runtime:
 
 - `clawdi://project/<project-id>/vault/<vault>/field/<field>`
 - `clawdi://project/<project-id>/vault/<vault>/section/<section>/field/<field>`
@@ -120,8 +117,7 @@ save them to Memory. Sync does not upload local edits, run in the background, or
 a running process's environment. It requires the standalone local MCP adapter; remote-only
 HTTP cannot write files. Do not invent a CLI fallback or script synchronization.
 
-For authorized batch reads/export, use `vault_resolve` with `references` (up to 100 exact
-references). For import/write, pass explicit fields to `vault_item_upsert`; use
+For explicit import/write, pass fields to `vault_item_upsert`; use
 `vault_item_delete` for exact batch deletions. Never upload local edits automatically.
 
 ## Connector Routing
