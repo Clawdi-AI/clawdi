@@ -24,7 +24,10 @@ from app.schemas.provider_environment_repair import (
     RepairApplyIdentity,
     RepairBinding,
 )
-from app.schemas.runtime import validate_hosted_runtime_desired_state
+from app.schemas.runtime import (
+    HostedRuntimeDesiredState,
+    validate_hosted_runtime_desired_state,
+)
 from app.schemas.runtime_observation import (
     RuntimeDriftBindingRequest,
     RuntimeDriftSummaryReadRequest,
@@ -178,8 +181,7 @@ async def environment_repair_inventory(
         .order_by(V2RuntimeEnvironmentFence.environment_id)
         .with_for_update()
     )
-    active = []
-    selected = {}
+    selected: dict[UUID, tuple[str, HostedRuntimeDesiredState]] = {}
     for state in states:
         try:
             runtimes = {
@@ -196,8 +198,7 @@ async def environment_repair_inventory(
         if len(primary) != 1:
             _conflict("Runtime primary binding is unavailable")
         selected[state.environment_id] = primary[0]
-        active.append(state)
-    if not active:
+    if not states:
         _conflict("No V2 native ownership can attest this provider")
     summaries = await read_runtime_drift_summaries(
         db,
@@ -206,17 +207,17 @@ async def environment_repair_inventory(
                 RuntimeDriftBindingRequest(
                     environmentId=row.environment_id, deploymentId=row.deployment_id
                 )
-                for row in active
+                for row in states
             ]
         ),
         expected_generations={
-            row.environment_id: row.apply_generation or row.generation for row in active
+            row.environment_id: row.apply_generation or row.generation for row in states
         },
         require_unique_active_head=True,
     )
     versions = await resolve_app_setting(db, SUPPORTED_CUSTOM_PROVIDER_CLI_VERSIONS_SPEC)
-    bindings = []
-    for state, summary in zip(active, summaries.items, strict=True):
+    bindings: list[RepairBinding] = []
+    for state, summary in zip(states, summaries.items, strict=True):
         qualified = qualified_applied_runtime_evidence(
             summary, state, versions=versions, observed_at=summaries.observed_at
         )
