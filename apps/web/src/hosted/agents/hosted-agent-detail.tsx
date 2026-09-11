@@ -144,12 +144,9 @@ import {
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
 import { overviewComputePresentation } from "@/hosted/agents/overview-compute-presentation";
-import { useRuntimeUiCredentialSession } from "@/hosted/agents/runtime-ui-credential-provider";
-import type { RuntimeUiCredentialSession } from "@/hosted/agents/runtime-ui-credential-session";
 import {
 	openClawRuntimeUiWindowTarget,
 	openSecureRuntimeWindow,
-	resolveRuntimeUiCredentials,
 	runtimeUiLaunchTarget,
 } from "@/hosted/agents/runtime-ui-credentials";
 import { trackRuntimeWindow } from "@/hosted/agents/runtime-window-lifecycle";
@@ -157,6 +154,7 @@ import {
 	useFilesGrantBootstrap,
 	useOpenFilesInNewWindow,
 } from "@/hosted/agents/use-files-grant-bootstrap";
+import { useRuntimeUiCredentials } from "@/hosted/agents/use-runtime-ui-credentials";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import {
 	type CheckoutReturnNavigationTarget,
@@ -622,6 +620,10 @@ export function HostedAgentDetail({
 		shouldShowInitialDeploymentProgress(deploymentStatus, deploymentFailure);
 	const isLiveToolTab =
 		activeTab === "console" || activeTab === "files" || activeTab === "terminal";
+	// The persistent agent layout owns the ready OpenClaw surface. Keep this
+	// route mounted for its breadcrumb and canonical Outlet lifecycle.
+	if (activeTab === "console" && runtime === "openclaw" && deploymentRuntimeUiIsReady(deployment))
+		return <h1 className="sr-only">{availableAgentTitle}</h1>;
 	return (
 		<div
 			data-hosted="true"
@@ -704,6 +706,12 @@ export function HostedAgentDetail({
 					) : null}
 					{deploymentStatus.known && activeTab === "console" ? (
 						<ConsoleTab
+							key={JSON.stringify([
+								deployment.resource.id,
+								deployment.resource.metadata.generation,
+								runtimeConsoleUrl(deployment),
+								deploymentRuntimeUiIsReady(deployment),
+							])}
 							deployment={deployment}
 							runtime={runtime}
 							terminalHref={terminalHref}
@@ -1539,7 +1547,7 @@ function hermesAccessHintStorageKey(deploymentId: string): string {
 	return `${HERMES_ACCESS_HINT_STORAGE_PREFIX}.${deploymentId}`;
 }
 
-function ConsoleTab({
+export function ConsoleTab({
 	deployment,
 	runtime,
 	terminalHref,
@@ -1563,23 +1571,17 @@ function ConsoleTab({
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const ready = deploymentRuntimeUiIsReady(deployment);
 	const url = ready ? runtimeConsoleUrl(deployment, runtime) : null;
-	const { session: credentialSession, state: credentialState } = useRuntimeUiCredentialSession();
 	const {
-		credentials,
+		credentials: currentCredentials,
 		error: credentialError,
-		status: credentialLoadState,
-		nativeHandoffLoaded: openClawNativeHandoffLoaded,
-	} = credentialState;
-	const isCredentialLoading = credentialLoadState === "loading";
-	const [loadedFrame, setLoadedFrame] = useState<{
-		session: RuntimeUiCredentialSession;
-		attempt: number;
-	} | null>(null);
-	const openClawFrameLoaded =
-		loadedFrame?.session === credentialSession && loadedFrame.attempt === credentialState.attempt;
-	const loadCredentials = credentialSession.load;
-	const clearCredentials = credentialSession.clear;
-	const reconnectOpenClaw = credentialSession.reconnect;
+		isLoading: isCredentialLoading,
+		attempt,
+		load: loadCredentials,
+		clear: clearCredentials,
+		reconnect: reconnectOpenClaw,
+	} = useRuntimeUiCredentials(deployment, url);
+	const [loadedAttempt, setLoadedAttempt] = useState<number | null>(null);
+	const openClawFrameLoaded = currentCredentials !== null && loadedAttempt === attempt;
 
 	if (status.kind === "stopped") {
 		return <StoppedAgentState deployment={deployment} />;
@@ -1675,31 +1677,15 @@ function ConsoleTab({
 			/>
 		);
 	}
-	const currentCredentials = credentials
-		? resolveRuntimeUiCredentials(credentials, url, deployment.resource.metadata.resourceVersion)
-		: null;
 	const openClawCredentials =
 		currentCredentials?.runtime === "openclaw" ? currentCredentials : null;
-	const openClawFrameCanLoad =
-		credentialState.consoleActive &&
-		credentialLoadState === "ready" &&
-		(openClawCredentials !== null || openClawNativeHandoffLoaded);
-	const iframeUrl =
-		runtime === "openclaw"
-			? openClawCredentials
-				? runtimeUiLaunchTarget(openClawCredentials)
-				: openClawNativeHandoffLoaded
-					? url
-					: "about:blank"
-			: runtimeDashboardUrl(url, runtime);
+	const openClawFrameCanLoad = openClawCredentials !== null;
+	const iframeUrl = openClawCredentials
+		? runtimeUiLaunchTarget(openClawCredentials)
+		: runtimeDashboardUrl(url, runtime);
 	const windowTarget =
 		runtime === "openclaw"
-			? openClawRuntimeUiWindowTarget(
-					openClawCredentials,
-					url,
-					openClawNativeHandoffLoaded,
-					openClawFrameCanLoad && openClawFrameLoaded,
-				)
+			? openClawRuntimeUiWindowTarget(openClawCredentials, openClawFrameLoaded)
 			: runtimeDashboardUrl(url, runtime);
 
 	return (
@@ -1722,7 +1708,7 @@ function ConsoleTab({
 			}
 		>
 			{runtime === "openclaw" && !openClawFrameCanLoad ? (
-				credentialLoadState === "error" ? (
+				credentialError !== null ? (
 					<EmptyState
 						icon={AlertCircle}
 						title={`${browserUiLabel} could not be opened`}
@@ -1754,47 +1740,24 @@ function ConsoleTab({
 					</div>
 				)
 			) : (
-				<RuntimeUiFrame
-					key={
-						runtime === "openclaw"
-							? `${runtime}:${url}:${credentialState.attempt}`
-							: `${runtime}:${url}`
-					}
+				<iframe
+					key={runtime === "openclaw" ? attempt : url}
 					src={iframeUrl}
+					loading="eager"
+					className="min-h-0 flex-1 border-0 bg-background"
+					allow="clipboard-read; clipboard-write"
 					title={browserUiLabel}
 					onLoad={
 						runtime === "openclaw"
 							? () => {
-									credentialSession.markLoaded(credentialState.attempt);
-									setLoadedFrame({ session: credentialSession, attempt: credentialState.attempt });
+									// A document boundary, never an authentication acknowledgement.
+									setLoadedAttempt(attempt);
 								}
 							: undefined
 					}
 				/>
 			)}
 		</LiveToolFrame>
-	);
-}
-
-/** Keep the current handoff URL stable when its one-time token is consumed. */
-function RuntimeUiFrame({
-	src,
-	title,
-	onLoad,
-}: {
-	src: string;
-	title: string;
-	onLoad?: () => void;
-}) {
-	const [launchUrl] = useState(src);
-	return (
-		<iframe
-			src={launchUrl}
-			title={title}
-			className="min-h-0 flex-1 border-0 bg-background"
-			allow="clipboard-read; clipboard-write"
-			onLoad={onLoad}
-		/>
 	);
 }
 

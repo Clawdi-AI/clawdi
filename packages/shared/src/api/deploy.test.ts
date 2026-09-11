@@ -167,27 +167,6 @@ describe("Runtime UI access contracts", () => {
 		).toBe(false);
 	});
 
-	test("validates optional bootstrap expiry without rejecting older credentials", () => {
-		const credential = {
-			runtime: "openclaw",
-			auth_mode: "openclaw_token",
-			url: "https://runtime.example/",
-			deployment_resource_version: "rv-current",
-			token: "gateway-token",
-			handoff_url: "https://runtime.example/#bootstrapToken=one-time-token&bootstrapProfile=owner",
-		};
-		for (const expiry of [undefined, null, 1_900_000_000_123]) {
-			expect(
-				isRuntimeUiCredentials({ ...credential, browser_bootstrap_expires_at_ms: expiry }),
-			).toBe(true);
-		}
-		for (const expiry of ["1900000000123", 0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
-			expect(
-				isRuntimeUiCredentials({ ...credential, browser_bootstrap_expires_at_ms: expiry }),
-			).toBe(false);
-		}
-	});
-
 	test("accepts the exact legacy token fallback and rejects mismatched handoffs", () => {
 		const credential = {
 			runtime: "openclaw",

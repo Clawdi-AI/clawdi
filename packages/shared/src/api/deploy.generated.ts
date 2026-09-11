@@ -2716,11 +2716,6 @@ export interface components {
             token: string;
             /** Handoff Url */
             handoff_url: string;
-            /**
-             * Browser Bootstrap Expires At Ms
-             * @description Exact native browser bootstrap expiry in Unix milliseconds; null for shared-token handoffs.
-             */
-            browser_bootstrap_expires_at_ms?: number | null;
         };
         /** V2OpenClawRuntimeUiEndpointInfo */
         V2OpenClawRuntimeUiEndpointInfo: {

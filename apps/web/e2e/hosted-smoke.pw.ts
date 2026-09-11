@@ -784,6 +784,7 @@ test("runtime readiness keeps launch closed across generation and credential rac
 	page,
 	context,
 }) => {
+	test.setTimeout(120_000);
 	const deployment = mutationDeploymentReadFixture({
 		...railHostedDeployment,
 		openclaw_control_ui_url: "https://runtime.example/",
@@ -792,8 +793,12 @@ test("runtime readiness keeps launch closed across generation and credential rac
 	const readyStatus = deployment.resource.status;
 	const endpoint = deployment.runtime_ui_endpoint;
 	if (!readyStatus || !endpoint) throw new Error("Missing runtime readiness fixture");
-	const handoffUrl = `${endpoint.url}#bootstrapToken=fixture-token&bootstrapProfile=owner`;
+	let handoffUrl = `${endpoint.url}#bootstrapToken=fixture-token&bootstrapProfile=owner`;
 	const credentialRequests: string[] = [];
+	const refreshInventory = async () => {
+		await page.clock.setFixedTime(await page.evaluate(() => Date.now() + 31_000));
+		await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+	};
 	await stubHostedApi(page, {
 		deployments: [deployment],
 		cloudAgents: [],
@@ -810,7 +815,7 @@ test("runtime readiness keeps launch closed across generation and credential rac
 	const credentialGate = new Promise<void>((resolve) => {
 		releaseCredentials = resolve;
 	});
-	let credentialFailures = 1;
+	let credentialFailures = 0;
 	await page.route(`${DEPLOY_API}/v2/deployments/*/runtime-ui/credentials`, async (route) => {
 		credentialRequests.push(route.request().url());
 		const version = deployment.resource.metadata.resourceVersion;
@@ -872,21 +877,24 @@ test("runtime readiness keeps launch closed across generation and credential rac
 		await expect.poll(() => credentialRequests.length, { timeout: 15_000 }).toBe(1);
 		await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}`);
 		await expect(page.locator("main iframe")).toHaveCount(0);
-		await page.getByRole("link", { name: "Chat on the web" }).click();
-		await expect.poll(() => credentialRequests.length).toBe(1);
-		await expect(page.getByText("Requesting secure access from your agent.")).toBeVisible();
-		expect(credentialRequests).toHaveLength(1);
-
 		releaseCredentials();
-		await page.getByRole("button", { name: "Retry", exact: true }).click();
-		await expect(page.locator("main iframe")).toHaveAttribute("src", handoffUrl);
-		await page
-			.getByTestId("app-sidebar")
-			.getByRole("link", { name: "Overview", exact: true })
-			.click();
+		const iframe = page.locator('iframe[title="OpenClaw Control UI"]');
+		await expect(iframe).toHaveAttribute("src", handoffUrl);
+		await expect(iframe).toBeHidden();
+		const firstFrame = await iframe.elementHandle();
 		await page.getByRole("link", { name: "Chat on the web" }).click();
-		await expect(page.locator("main iframe")).toHaveAttribute("src", endpoint.url);
-		expect(credentialRequests).toHaveLength(2);
+		await expect(iframe).toBeVisible();
+		expect(credentialRequests).toHaveLength(1);
+		expect(await firstFrame?.evaluate((element) => element.isConnected)).toBe(true);
+		credentialFailures = 1;
+		await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+		await expect(page.getByText("Clawdi couldn't establish this browser session.")).toBeVisible();
+		await expect(iframe).toHaveCount(0);
+		expect(await firstFrame?.evaluate((element) => element.isConnected)).toBe(false);
+		await page.getByRole("button", { name: "Retry", exact: true }).click();
+		await expect(iframe).toHaveAttribute("src", handoffUrl);
+		expect(credentialRequests).toHaveLength(3);
+		const beforeGeneration = await iframe.elementHandle();
 		deployment.resource.metadata.generation = 2;
 		deployment.resource.metadata.resourceVersion = "rv_generation_2";
 		deployment.resource.status = {
@@ -899,9 +907,25 @@ test("runtime readiness keeps launch closed across generation and credential rac
 				observedGeneration: 2,
 			})),
 		};
-		await page.reload();
-		await expect.poll(() => credentialRequests.length).toBe(3);
-		await expect(page.locator("main iframe")).toHaveAttribute("src", handoffUrl);
+		await refreshInventory();
+		await expect.poll(() => credentialRequests.length, { timeout: 15_000 }).toBe(4);
+		await expect(iframe).toHaveAttribute("src", handoffUrl);
+		expect(await beforeGeneration?.evaluate((element) => element.isConnected)).toBe(false);
+		const beforeEndpoint = await iframe.elementHandle();
+		endpoint.url = "https://runtime.example/moved/";
+		handoffUrl = `${endpoint.url}#bootstrapToken=moved-token&bootstrapProfile=owner`;
+		await refreshInventory();
+		await expect.poll(() => credentialRequests.length, { timeout: 15_000 }).toBe(5);
+		await expect(iframe).toHaveAttribute("src", handoffUrl);
+		expect(await beforeEndpoint?.evaluate((element) => element.isConnected)).toBe(false);
+		deployment.resource.status = { ...deployment.resource.status, summary_state: "stopped" };
+		await refreshInventory();
+		await expect(iframe).toHaveCount(0, { timeout: 15_000 });
+		await expect(page.getByRole("button", { name: "Start", exact: true })).toBeVisible();
+		expect(credentialRequests).toHaveLength(5);
+		await firstFrame?.dispose();
+		await beforeGeneration?.dispose();
+		await beforeEndpoint?.dispose();
 	} finally {
 		releaseCredentials();
 	}
@@ -2638,6 +2662,7 @@ const openClawRuntimeToken = "test-deployment-token";
 async function stubOpenClawRuntime(page: Page, context: BrowserContext, handoffUrl: string) {
 	type FrameGate = { signalStarted: () => void; released: Promise<void> };
 	let nextFrameGate: FrameGate | null = null;
+	let documentLoads = 0;
 	const pauseNextIframe = () => {
 		if (nextFrameGate) throw new Error("An OpenClaw iframe gate is already pending.");
 		let started = false;
@@ -2657,6 +2682,7 @@ async function stubOpenClawRuntime(page: Page, context: BrowserContext, handoffU
 	// A popup's initial navigation belongs to context routing, not this page.
 	await page.route("https://runtime.example/**", async (route) => {
 		if (route.request().isNavigationRequest()) {
+			documentLoads += 1;
 			const gate = nextFrameGate;
 			nextFrameGate = null;
 			if (gate) {
@@ -2678,25 +2704,24 @@ async function stubOpenClawRuntime(page: Page, context: BrowserContext, handoffU
 	await stubHostedApi(page, {
 		deployments: [openClawIncludedDeployment],
 		runtimeUiRedemptionRequests: credentialRequests,
-		runtimeUiRedemptionResponses: [
-			{
-				status: 200,
-				body: {
-					runtime: "openclaw",
-					auth_mode: "openclaw_token",
-					url: openClawRuntimeEndpoint,
-					deployment_resource_version: `rv_${openClawIncludedDeployment.id}`,
-					token: openClawRuntimeToken,
-					handoff_url: handoffUrl,
-				},
+		runtimeUiRedemptionResponses: Array.from({ length: 2 }, () => ({
+			status: 200,
+			body: {
+				runtime: "openclaw",
+				auth_mode: "openclaw_token",
+				url: openClawRuntimeEndpoint,
+				deployment_resource_version: `rv_${openClawIncludedDeployment.id}`,
+				token: openClawRuntimeToken,
+				handoff_url: handoffUrl,
 			},
-		],
+		})),
 	});
 
 	return {
 		agentId: fixtureAgentId(openClawIncludedDeployment),
 		credentialRequests,
 		pauseNextIframe,
+		documentLoads: () => documentLoads,
 	};
 }
 
@@ -3639,13 +3664,13 @@ test("native OpenClaw windows wait for the handoff iframe load and reuse the cle
 	await page.reload({ waitUntil: "domcontentloaded" });
 	await expect.poll(remountedFrame.isStarted).toBe(true);
 	await expect(openButton).toBeDisabled();
-	await expect(iframe).toHaveAttribute("src", openClawRuntimeEndpoint);
-	expect(runtime.credentialRequests).toHaveLength(1);
+	await expect(iframe).toHaveAttribute("src", nativeHandoff);
+	expect(runtime.credentialRequests).toHaveLength(2);
 
 	remountedFrame.release();
 	await expect(openButton).toBeEnabled();
 	await expectOpenClawWindow(context, openButton, openClawRuntimeEndpoint);
-	expect(runtime.credentialRequests).toHaveLength(1);
+	expect(runtime.credentialRequests).toHaveLength(2);
 });
 
 test("legacy OpenClaw windows reuse the exact token handoff", async ({ page, context }) => {
@@ -5186,108 +5211,82 @@ test("channel detail links, pairs, and unlinks an Agent in place", async ({ page
 	expect(errors, `channel detail relationship flow: ${errors.join(" | ")}`).toEqual([]);
 });
 
-for (const initialSection of ["", "/sessions"]) {
-	test(`OpenClaw prefetch from ${initialSection || "overview"} survives Control UI entry and consumes the handoff`, async ({
+for (const viewport of [
+	{ width: 1440, height: 900 },
+	{ width: 390, height: 844 },
+]) {
+	test(`OpenClaw retains the same background document across sections at ${viewport.width}px`, async ({
 		page,
 		context,
 	}) => {
+		const errors = collectBrowserErrors(page);
+		await page.setViewportSize(viewport);
 		const nativeHandoff = `${openClawRuntimeEndpoint}#bootstrapToken=one-time-token&bootstrapProfile=owner`;
 		const runtime = await stubOpenClawRuntime(page, context, nativeHandoff);
-		let release = () => {};
-		let gate = new Promise<void>((resolve) => {
-			release = resolve;
-		});
-		await page.route(`${DEPLOY_API}/v2/deployments/*/runtime-ui/credentials`, async (route) => {
-			runtime.credentialRequests.push(route.request().url());
-			await gate;
-			await route.fulfill({
-				json: {
-					runtime: "openclaw",
-					auth_mode: "openclaw_token",
-					url: openClawRuntimeEndpoint,
-					deployment_resource_version: `rv_${openClawIncludedDeployment.id}`,
-					token: openClawRuntimeToken,
-					handoff_url: nativeHandoff,
-					browser_bootstrap_expires_at_ms: Date.now() + 60_000,
-				},
-			});
-		});
-		const consoleLink = () =>
-			page.getByTestId("app-sidebar").locator(`a[href="/agents/${runtime.agentId}/console"]`);
-		const overviewLink = () =>
-			page.getByTestId("app-sidebar").getByRole("link", { name: "Overview", exact: true });
-		const frame = runtime.pauseNextIframe();
-		try {
-			await page.goto(`/agents/${runtime.agentId}${initialSection}`);
-			await expect.poll(() => runtime.credentialRequests.length).toBe(1);
-			await expect(page.locator("main iframe")).toHaveCount(0);
-			await consoleLink().click();
-			await expect(page.getByText("Requesting secure access from your agent.")).toBeVisible();
+		await page.goto(`/agents/${runtime.agentId}`);
+		const iframe = page.locator('iframe[title="OpenClaw Control UI"]');
+		await expect(iframe).toHaveAttribute("src", nativeHandoff);
+		await expect.poll(runtime.documentLoads).toBe(1);
+		await expect(iframe).toBeHidden();
+		expect(await iframe.evaluate((element) => Boolean(element.closest("[inert]")))).toBe(true);
+		const original = await iframe.elementHandle();
+		if (!original) throw new Error("Background iframe must already exist.");
+		const document = await (await original.contentFrame())?.evaluateHandle(() => window.document);
+		if (!document) throw new Error("Background document must already exist.");
+		// SPA navigation through the product links, including the mobile sidebar.
+		const navigate = async (section: string) => {
+			if (viewport.width < 768) {
+				// Wait for the previous drawer's exit animation and dismissal listeners.
+				await expect(page.locator('[data-slot="sheet-content"]')).toHaveCount(0);
+				await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+			}
+			const sidebar =
+				viewport.width < 768 ? page.getByRole("dialog") : page.getByTestId("app-sidebar");
+			await expect(sidebar).toBeVisible();
+			await sidebar.locator(`a[href="/agents/${runtime.agentId}${section}"]`).click();
+			await expect(page).toHaveURL(`/agents/${runtime.agentId}${section}`);
+			if (viewport.width < 768) await expect(sidebar).toBeHidden();
+		};
+		for (const section of ["/console", "/sessions", "", "/console"]) {
+			await navigate(section);
+			await expect(iframe).toHaveAttribute("src", nativeHandoff);
+			expect(
+				await original.evaluate(
+					(element) =>
+						element === window.document.querySelector('iframe[title="OpenClaw Control UI"]'),
+				),
+			).toBe(true);
+			expect(
+				await document.evaluate((originalDocument) => originalDocument === window.document),
+			).toBe(true);
+			expect(runtime.documentLoads()).toBe(1);
 			expect(runtime.credentialRequests).toHaveLength(1);
-			release();
-			await expect.poll(frame.isStarted).toBe(true);
-			const iframe = page.locator('iframe[title="OpenClaw Control UI"]');
-			await expect(iframe).toHaveAttribute("src", nativeHandoff);
-			frame.release();
-			await expect(
-				page.getByRole("button", { name: "Open OpenClaw Control UI in new window" }),
-			).toBeEnabled();
-			await expect(iframe).toHaveAttribute("src", nativeHandoff);
-			await overviewLink().click();
-			await expect(page).toHaveURL(`/agents/${runtime.agentId}`);
-			await expect(iframe).toHaveCount(0);
-			await consoleLink().click();
-			await expect(iframe).toHaveAttribute("src", openClawRuntimeEndpoint);
-			expect(runtime.credentialRequests).toHaveLength(1);
-			gate = Promise.resolve();
-			await page.getByRole("button", { name: "Reconnect", exact: true }).click();
-			await expect.poll(() => runtime.credentialRequests.length).toBe(2);
-			await expect(iframe).toHaveAttribute("src", nativeHandoff);
-		} finally {
-			release();
-			frame.release();
+			if (section === "/console") {
+				await expect(iframe).toBeVisible();
+				await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toHaveCount(1);
+				const box = await iframe.boundingBox();
+				if (!box) throw new Error("Console iframe must fit the product layout.");
+				expect(box.width).toBeGreaterThan(viewport.width < 768 ? 300 : 800);
+				expect(box.height).toBeGreaterThan(500);
+				expect(box.x).toBeGreaterThanOrEqual(0);
+				expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + 1);
+				expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 1);
+			} else await expect(iframe).toBeHidden();
 		}
+		await page.screenshot({ path: `test-results/persistent-control-ui-${viewport.width}.png` });
+		await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+		await expect.poll(() => runtime.credentialRequests.length).toBe(2);
+		await expect.poll(runtime.documentLoads).toBe(2);
+		expect(await original.evaluate((element) => element.isConnected)).toBe(false);
+		await expect(iframe).toBeVisible();
+		const replacement = await iframe.elementHandle();
+		if (viewport.width < 768) await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+		await page.getByRole("link", { name: "Console", exact: true }).click();
+		await expect(iframe).toHaveCount(0);
+		expect(await replacement?.evaluate((element) => element.isConnected)).toBe(false);
+		await original.dispose();
+		await document.dispose();
+		await replacement?.dispose();
+		expect(errors).toEqual([]);
 	});
 }
-
-test("OpenClaw refreshes an expired prefetch on entry without an overview refresh loop", async ({
-	page,
-	context,
-}) => {
-	const nativeHandoff = `${openClawRuntimeEndpoint}#bootstrapToken=one-time-token&bootstrapProfile=owner`;
-	const runtime = await stubOpenClawRuntime(page, context, nativeHandoff);
-	const expires = Date.now() + 60_000;
-	await page.route(`${DEPLOY_API}/v2/deployments/*/runtime-ui/credentials`, async (route) => {
-		runtime.credentialRequests.push(route.request().url());
-		const index = runtime.credentialRequests.length;
-		await route.fulfill({
-			json: {
-				runtime: "openclaw",
-				auth_mode: "openclaw_token",
-				url: openClawRuntimeEndpoint,
-				deployment_resource_version: `rv_${openClawIncludedDeployment.id}`,
-				token: openClawRuntimeToken,
-				handoff_url: `${openClawRuntimeEndpoint}#bootstrapToken=token-${index}&bootstrapProfile=owner`,
-				browser_bootstrap_expires_at_ms: expires + (index - 1) * 120_000,
-			},
-		});
-	});
-	await page.goto(`/agents/${runtime.agentId}`);
-	await expect.poll(() => runtime.credentialRequests.length).toBe(1);
-	await page.clock.setFixedTime(expires + 1);
-	await page
-		.getByTestId("app-sidebar")
-		.getByRole("link", { name: "Sessions", exact: true })
-		.click();
-	await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
-	expect(runtime.credentialRequests).toHaveLength(1);
-	await page
-		.getByTestId("app-sidebar")
-		.locator(`a[href="/agents/${runtime.agentId}/console"]`)
-		.click();
-	await expect.poll(() => runtime.credentialRequests.length).toBe(2);
-	await expect(page.locator('iframe[title="OpenClaw Control UI"]')).toHaveAttribute(
-		"src",
-		`${openClawRuntimeEndpoint}#bootstrapToken=token-2&bootstrapProfile=owner`,
-	);
-});
