@@ -8,12 +8,15 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import JsonValue
-from sqlalchemy import select
+from sqlalchemy import func, literal, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.session import Session
+from app.models.session_permission import PERMISSION_KIND_LINK, SessionPermission
 from app.models.session_share import SessionShare
+from app.schemas.common import Paginated
+from app.schemas.session import SessionShareListItemResponse, SessionShareResponse
 from app.services.file_store import FileStore
 from app.services.session_content import (
     SessionContentInvalid,
@@ -26,6 +29,7 @@ from app.services.session_content import (
 )
 
 SessionShareScope = Literal["session", "through", "response"]
+SessionShareKind = Literal["snapshot", "live"]
 log = logging.getLogger(__name__)
 
 
@@ -54,6 +58,149 @@ def session_share_snapshot_key(session: Session) -> str:
     if not session.content_hash:
         raise SessionContentMissing("session snapshot has no content hash")
     return f"session-share-sources/{session.user_id}/{session.id}/{session.content_hash}.json"
+
+
+def session_share_response(share: SessionShare) -> SessionShareResponse:
+    _, _, _, _, message_count = session_share_metadata(share)
+    return SessionShareResponse(
+        id=str(share.id),
+        session_id=str(share.session_id),
+        scope=share.scope,
+        start_position=share.start_position,
+        end_position=share.end_position,
+        message_count=message_count,
+        share_url=session_share_url(share.id),
+        created_at=share.created_at,
+    )
+
+
+async def list_session_share_inventory(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    page: int,
+    page_size: int,
+    session_id: UUID | None = None,
+    environment_id: UUID | None = None,
+) -> Paginated[SessionShareListItemResponse]:
+    """List active snapshot and legacy live links inside one visibility fence."""
+    snapshot_rows = (
+        select(
+            SessionShare.id.label("id"),
+            literal("snapshot").label("kind"),
+            Session.id.label("session_id"),
+            Session.summary.label("session_summary"),
+            Session.local_session_id.label("local_session_id"),
+            SessionShare.scope.label("scope"),
+            SessionShare.public_metadata["message_count"].as_integer().label("message_count"),
+            SessionShare.created_at.label("created_at"),
+        )
+        .join(Session, Session.id == SessionShare.session_id)
+        .where(Session.user_id == user_id, SessionShare.revoked_at.is_(None))
+    )
+    live_rows = (
+        select(
+            SessionPermission.id.label("id"),
+            literal("live").label("kind"),
+            Session.id.label("session_id"),
+            Session.summary.label("session_summary"),
+            Session.local_session_id.label("local_session_id"),
+            literal("session").label("scope"),
+            Session.message_count.label("message_count"),
+            SessionPermission.created_at.label("created_at"),
+        )
+        .join(Session, Session.id == SessionPermission.session_id)
+        .where(
+            Session.user_id == user_id,
+            SessionPermission.kind == PERMISSION_KIND_LINK,
+            SessionPermission.revoked_at.is_(None),
+            or_(
+                SessionPermission.expires_at.is_(None),
+                SessionPermission.expires_at > func.now(),
+            ),
+        )
+    )
+    if session_id is not None:
+        snapshot_rows = snapshot_rows.where(Session.id == session_id)
+        live_rows = live_rows.where(Session.id == session_id)
+    if environment_id is not None:
+        snapshot_rows = snapshot_rows.where(Session.environment_id == environment_id)
+        live_rows = live_rows.where(Session.environment_id == environment_id)
+
+    active_links = union_all(snapshot_rows, live_rows).subquery()
+    total = int((await db.execute(select(func.count()).select_from(active_links))).scalar_one())
+    rows = (
+        await db.execute(
+            select(active_links)
+            .order_by(active_links.c.created_at.desc(), active_links.c.id.desc())
+            .limit(page_size)
+            .offset((page - 1) * page_size)
+        )
+    ).all()
+    return Paginated[SessionShareListItemResponse](
+        items=[
+            SessionShareListItemResponse(
+                id=str(row.id),
+                kind=row.kind,
+                session_id=str(row.session_id),
+                session_title=(row.session_summary or "").strip()
+                or f"Session {row.local_session_id[:8]}",
+                scope=row.scope,
+                message_count=row.message_count,
+                share_url=(
+                    session_share_url(row.id)
+                    if row.kind == "snapshot"
+                    else f"{settings.web_origin}/s/{row.session_id}"
+                ),
+                created_at=row.created_at,
+            )
+            for row in rows
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+async def revoke_session_share_link(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    share_id: UUID,
+    kind: SessionShareKind,
+    environment_id: UUID | None = None,
+) -> bool:
+    """Revoke one exact link; return False when it is outside the visibility fence."""
+    if kind == "live":
+        stmt = (
+            select(SessionPermission)
+            .join(Session, Session.id == SessionPermission.session_id)
+            .where(
+                SessionPermission.id == share_id,
+                SessionPermission.kind == PERMISSION_KIND_LINK,
+                Session.user_id == user_id,
+            )
+            .with_for_update(of=SessionPermission)
+        )
+        if environment_id is not None:
+            stmt = stmt.where(Session.environment_id == environment_id)
+        link = (await db.execute(stmt)).scalar_one_or_none()
+    else:
+        stmt = (
+            select(SessionShare)
+            .join(Session, Session.id == SessionShare.session_id)
+            .where(SessionShare.id == share_id, Session.user_id == user_id)
+            .with_for_update(of=SessionShare)
+        )
+        if environment_id is not None:
+            stmt = stmt.where(Session.environment_id == environment_id)
+        link = (await db.execute(stmt)).scalar_one_or_none()
+    if link is None:
+        return False
+    if link.revoked_at is None:
+        link.revoked_at = datetime.now(UTC)
+        await db.commit()
+    return True
 
 
 def _scope_selection(

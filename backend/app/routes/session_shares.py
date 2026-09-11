@@ -1,18 +1,15 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
-from sqlalchemy import func, literal, or_, select, union_all
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, require_user_auth_unbound
-from app.core.config import settings
 from app.core.database import get_session
 from app.models.session import AgentEnvironment, Session
-from app.models.session_permission import PERMISSION_KIND_LINK, SessionPermission
 from app.models.session_share import SessionShare
 from app.schemas.common import Paginated
 from app.schemas.session import (
@@ -38,8 +35,11 @@ from app.services.session_shares import (
     SessionShareConflict,
     SessionShareView,
     create_session_share,
+    list_session_share_inventory,
     load_session_share_view,
+    revoke_session_share_link,
     session_share_metadata,
+    session_share_response,
     session_share_url,
 )
 
@@ -67,20 +67,6 @@ async def _owned_session(
     return session, agent_type
 
 
-def _share_response(share: SessionShare) -> SessionShareResponse:
-    _, _, _, _, message_count = session_share_metadata(share)
-    return SessionShareResponse(
-        id=str(share.id),
-        session_id=str(share.session_id),
-        scope=share.scope,
-        start_position=share.start_position,
-        end_position=share.end_position,
-        message_count=message_count,
-        share_url=session_share_url(share.id),
-        created_at=share.created_at,
-    )
-
-
 @router.get("/session-shares")
 async def list_all_session_shares(
     page: int = Query(default=1, ge=1),
@@ -90,79 +76,14 @@ async def list_all_session_shares(
     db: AsyncSession = Depends(get_session),
 ) -> Paginated[SessionShareListItemResponse]:
     """List every active Session link owned by the signed-in user."""
-    snapshot_rows = (
-        select(
-            SessionShare.id.label("id"),
-            literal("snapshot").label("kind"),
-            Session.id.label("session_id"),
-            Session.summary.label("session_summary"),
-            Session.local_session_id.label("local_session_id"),
-            SessionShare.scope.label("scope"),
-            SessionShare.public_metadata["message_count"].as_integer().label("message_count"),
-            SessionShare.created_at.label("created_at"),
-        )
-        .join(Session, Session.id == SessionShare.session_id)
-        .where(Session.user_id == auth.user_id, SessionShare.revoked_at.is_(None))
-    )
-    live_rows = (
-        select(
-            SessionPermission.id.label("id"),
-            literal("live").label("kind"),
-            Session.id.label("session_id"),
-            Session.summary.label("session_summary"),
-            Session.local_session_id.label("local_session_id"),
-            literal("session").label("scope"),
-            Session.message_count.label("message_count"),
-            SessionPermission.created_at.label("created_at"),
-        )
-        .join(Session, Session.id == SessionPermission.session_id)
-        .where(
-            Session.user_id == auth.user_id,
-            SessionPermission.kind == PERMISSION_KIND_LINK,
-            SessionPermission.revoked_at.is_(None),
-            or_(
-                SessionPermission.expires_at.is_(None),
-                SessionPermission.expires_at > func.now(),
-            ),
-        )
-    )
-    if session_id is not None:
-        snapshot_rows = snapshot_rows.where(Session.id == session_id)
-        live_rows = live_rows.where(Session.id == session_id)
-    active_links = union_all(snapshot_rows, live_rows).subquery()
-    total = int((await db.execute(select(func.count()).select_from(active_links))).scalar_one())
-    rows = (
-        await db.execute(
-            select(active_links)
-            .order_by(active_links.c.created_at.desc(), active_links.c.id.desc())
-            .limit(page_size)
-            .offset((page - 1) * page_size)
-        )
-    ).all()
-    items = [
-        SessionShareListItemResponse(
-            id=str(row.id),
-            kind=row.kind,
-            session_id=str(row.session_id),
-            session_title=(row.session_summary or "").strip()
-            or f"Session {row.local_session_id[:8]}",
-            scope=row.scope,
-            message_count=row.message_count,
-            share_url=(
-                session_share_url(row.id)
-                if row.kind == "snapshot"
-                else f"{settings.web_origin}/s/{row.session_id}"
-            ),
-            created_at=row.created_at,
-        )
-        for row in rows
-    ]
-    return Paginated[SessionShareListItemResponse](
-        items=items,
-        total=total,
+    inventory = await list_session_share_inventory(
+        db,
+        user_id=auth.user_id,
         page=page,
         page_size=page_size,
+        session_id=session_id,
     )
+    return inventory
 
 
 @router.get("/sessions/{session_id}/shares")
@@ -184,7 +105,7 @@ async def list_session_shares(
             )
         ).scalars()
     )
-    return SessionSharesResponse(shares=[_share_response(share) for share in shares])
+    return SessionSharesResponse(shares=[session_share_response(share) for share in shares])
 
 
 @router.post("/sessions/{session_id}/shares", status_code=status.HTTP_201_CREATED)
@@ -220,7 +141,7 @@ async def create_share(
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error"
         ) from None
-    return _share_response(share)
+    return session_share_response(share)
 
 
 @router.delete("/session-shares/{share_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -231,38 +152,14 @@ async def revoke_share(
     db: AsyncSession = Depends(get_session),
 ) -> None:
     """Revoke one owned snapshot or legacy live link by its exact inventory ID."""
-    if kind == "live":
-        permission = (
-            await db.execute(
-                select(SessionPermission)
-                .join(Session, Session.id == SessionPermission.session_id)
-                .where(
-                    SessionPermission.id == share_id,
-                    SessionPermission.kind == PERMISSION_KIND_LINK,
-                    Session.user_id == auth.user_id,
-                )
-                .with_for_update(of=SessionPermission)
-            )
-        ).scalar_one_or_none()
-        if permission is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Session share not found")
-        if permission.revoked_at is None:
-            permission.revoked_at = datetime.now(UTC)
-            await db.commit()
-        return
-    share = (
-        await db.execute(
-            select(SessionShare)
-            .join(Session, Session.id == SessionShare.session_id)
-            .where(SessionShare.id == share_id, Session.user_id == auth.user_id)
-            .with_for_update(of=SessionShare)
-        )
-    ).scalar_one_or_none()
-    if share is None:
+    revoked = await revoke_session_share_link(
+        db,
+        user_id=auth.user_id,
+        share_id=share_id,
+        kind=kind,
+    )
+    if not revoked:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session share not found")
-    if share.revoked_at is None:
-        share.revoked_at = datetime.now(UTC)
-        await db.commit()
 
 
 async def _public_share(db: AsyncSession, share_id: UUID) -> SessionShare:
