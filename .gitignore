@@ -53,5 +53,3 @@ backend/scripts/seed_demo.py
 backend/pdm.lock
 .kamal/secrets
 .kamal/secrets.tmp
-
-/packages/cli/runtime-mcp/

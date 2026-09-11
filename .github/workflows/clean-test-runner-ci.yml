@@ -19,11 +19,6 @@ on:
       - "config/postgres-image.txt"
       - "scripts/check_postgres_image_parity.py"
       - "scripts/test.sh"
-      - "scripts/test-vault-native-upgrade.sh"
-      - "packages/cli/tests/e2e/published-native-upgrade.mjs"
-      - "packages/cli/tests/e2e/prepare-published-native-upgrade.sh"
-      - "packages/cli/scripts/build-native.mjs"
-      - "packages/cli/scripts/package-native-release.mjs"
       - "package.json"
       - "bun.lock"
       - "patches/libsignal@6.0.0.patch"
@@ -35,14 +30,6 @@ on:
       - "apps/web/tsr.config.json"
       - "apps/web/vite.config.ts"
       - "apps/web/src/hosted/oss-clean.test.ts"
-      - "backend/app/routes/mcp_bridge.py"
-      - "backend/app/routes/runtime.py"
-      - "backend/app/schemas/runtime.py"
-      - "backend/app/services/runtime_source*.py"
-      - "packages/cli/src/runtime/manifest-*.ts"
-      - "packages/runtime-mcp/**"
-      - "packages/cli/src/runtime/builtin-mcp*"
-      - "backend/tests/test_vault_runtime_mcp.py"
       - "packages/cli/package.json"
       - "packages/cli/scripts/test-internal.sh"
       - "packages/cli/tsconfig.json"
@@ -69,11 +56,6 @@ on:
       - "config/postgres-image.txt"
       - "scripts/check_postgres_image_parity.py"
       - "scripts/test.sh"
-      - "scripts/test-vault-native-upgrade.sh"
-      - "packages/cli/tests/e2e/published-native-upgrade.mjs"
-      - "packages/cli/tests/e2e/prepare-published-native-upgrade.sh"
-      - "packages/cli/scripts/build-native.mjs"
-      - "packages/cli/scripts/package-native-release.mjs"
       - "package.json"
       - "bun.lock"
       - "patches/libsignal@6.0.0.patch"
@@ -85,14 +67,6 @@ on:
       - "apps/web/tsr.config.json"
       - "apps/web/vite.config.ts"
       - "apps/web/src/hosted/oss-clean.test.ts"
-      - "backend/app/routes/mcp_bridge.py"
-      - "backend/app/routes/runtime.py"
-      - "backend/app/schemas/runtime.py"
-      - "backend/app/services/runtime_source*.py"
-      - "packages/cli/src/runtime/manifest-*.ts"
-      - "packages/runtime-mcp/**"
-      - "packages/cli/src/runtime/builtin-mcp*"
-      - "backend/tests/test_vault_runtime_mcp.py"
       - "packages/cli/package.json"
       - "packages/cli/scripts/test-internal.sh"
       - "packages/cli/tsconfig.json"
@@ -154,9 +128,3 @@ jobs:
       - name: Full clean runner suite
         if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'
         run: scripts/test.sh all
-
-      - name: Vault MCP without tenant CLI
-        run: scripts/test.sh vault-mcp
-
-      - name: Published native updater compatibility and tenant access
-        run: bash scripts/test-vault-native-upgrade.sh

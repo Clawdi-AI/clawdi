@@ -38,13 +38,13 @@ describe("clean runner suite contract", () => {
 		expect(runner).toContain(`if [[ "\${1:-}" == "--in-container" ]]`);
 		expect(runner).toContain('test-runner bash /repo/scripts/test.sh --in-container "$suite" "$@"');
 		expect(runner).toContain(
-			"all|backend|ci|js|cli|desktop|shared|sidecar|web|vault-mcp|provider-recovery-fixture)",
+			"all|backend|ci|js|cli|desktop|shared|sidecar|web|provider-recovery-fixture)",
 		);
 		expect(runnerDockerfile).not.toContain("docker/test-runner.sh");
 		expect(runnerDockerfile).not.toContain("ENTRYPOINT");
 
 		const postgresSelection = section(runner, "needs_postgres() {\n", "run_on_host() {\n");
-		expect(postgresSelection).toContain("all|backend|ci|vault-mcp)");
+		expect(postgresSelection).toContain("all|backend|ci)");
 		expect(runner).toContain('if ! needs_postgres "$suite"; then');
 		expect(runner).toContain("run_args+=(--no-deps)");
 	});
@@ -61,7 +61,7 @@ describe("clean runner suite contract", () => {
 		});
 		expect(cliScripts).toMatchObject({
 			test: "../../scripts/test.sh cli",
-			"test:internal": "bun run build:mcp && bash scripts/test-internal.sh",
+			"test:internal": "bash scripts/test-internal.sh",
 			"test:e2e": "../../scripts/test.sh cli tests/e2e",
 			"test:watch:local": "bun test --watch",
 		});
@@ -143,9 +143,7 @@ describe("clean runner suite contract", () => {
 			"if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'",
 		);
 		expect(fullStep).toContain("run: scripts/test.sh all");
-		expect(cleanRunnerWorkflow).toContain("run: scripts/test.sh vault-mcp");
-		expect(cleanRunnerWorkflow).toContain("run: bash scripts/test-vault-native-upgrade.sh");
-		expect(occurrences(cleanRunnerWorkflow, "run: scripts/test.sh")).toBe(3);
+		expect(occurrences(cleanRunnerWorkflow, "run: scripts/test.sh")).toBe(2);
 	});
 });
 

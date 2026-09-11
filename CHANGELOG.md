@@ -14,6 +14,11 @@ database migration, CI, and implementation details.
 
 ### Added
 
+- Collect related missing credentials through one expiring, no-login Vault link.
+  After saving, copy a message to the agent to verify the request and continue the task.
+- Optionally materialize Vault credentials into a local env file with the CLI and
+  refresh it later without overwriting unrelated settings or local edits.
+
 - Custom providers need only a name, endpoint, API format, and key; supported agents
   initialize the connection without a Clawdi model catalog and preserve native model
   choices across key changes and rebinding. Requires a supporting CLI release.
