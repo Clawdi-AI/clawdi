@@ -64,6 +64,24 @@ clients invoking slow tools must set their own request timeout to at least
 420 seconds (for SDK clients, pass `{ timeout: 420_000 }` as the `callTool`
 request options). Clawdi cannot override another client's deadline.
 
+Managed OpenClaw MCP entries explicitly set `connectionTimeoutMs: 30000` and
+`requestTimeoutMs: 420000`. OpenClaw 2026.9.3 uses the explicit request budget
+for both the complete paginated tool catalog and subsequent requests; without
+it, catalog discovery defaults to 1500 ms even though requests default to 60
+seconds. There is no independent catalog timeout setting, so an unresponsive
+catalog can wait up to 420 seconds. Initialization has a separate 30-second
+budget. Hermes keeps
+its existing native settings.
+
+The official contracts are [catalog timeout selection](https://github.com/openclaw/openclaw/blob/1391f7cd2d40ab5bbcf2f5f831d3a64f520e72d7/src/agents/agent-bundle-mcp-runtime.ts#L156-L177),
+[transport defaults](https://github.com/openclaw/openclaw/blob/1391f7cd2d40ab5bbcf2f5f831d3a64f520e72d7/src/agents/mcp-transport-config.ts#L62-L104),
+and [CLI seconds-to-milliseconds configuration](https://github.com/openclaw/openclaw/blob/1391f7cd2d40ab5bbcf2f5f831d3a64f520e72d7/src/cli/mcp-cli.ts#L1275-L1293).
+Both millisecond fields are also supported by the audited July 1
+[schema](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/config/zod-schema.ts#L386-L409)
+and [catalog override](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/agents/agent-bundle-mcp-runtime.ts#L285-L305).
+That older runtime applies the catalog timeout per page; 2026.9.3 bounds the
+complete pagination operation.
+
 Timeout or transport loss does not confirm cancellation or failure of an external
 side effect. The proxy never automatically retries tool calls. Check the provider
 outcome before retrying a call that may have changed external state.

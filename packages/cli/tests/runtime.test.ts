@@ -11001,9 +11001,11 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 
 		expect(installed.installErrors).toEqual([]);
 		expect(readFileSync(installerLog, "utf-8")).toBe("installed\n");
-		expect(readOpenClawMcpServers(home).clawdi).toEqual(
-			nativeManagedRemoteMcpServer("clawdi", "v1"),
-		);
+		expect(readOpenClawMcpServers(home).clawdi).toEqual({
+			...nativeManagedRemoteMcpServer("clawdi", "v1"),
+			connectionTimeoutMs: 30_000,
+			requestTimeoutMs: 420_000,
+		});
 
 		rmSync(commandPath);
 		const unavailable = convergeAndCommitTestRuntimeManifest(
@@ -11014,9 +11016,11 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(unavailable.installErrors.join("\n")).toContain(
 			"could not mutate managed OpenClaw MCP servers: runtime is unavailable",
 		);
-		expect(readOpenClawMcpServers(home).clawdi).toEqual(
-			nativeManagedRemoteMcpServer("clawdi", "v1"),
-		);
+		expect(readOpenClawMcpServers(home).clawdi).toEqual({
+			...nativeManagedRemoteMcpServer("clawdi", "v1"),
+			connectionTimeoutMs: 30_000,
+			requestTimeoutMs: 420_000,
+		});
 	});
 
 	it("reconciles generic MCP maps and cleans the previously managed runtime on switch", () => {
@@ -11162,12 +11166,16 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			getRuntimePaths(),
 		);
 		expect(initial.installErrors).toEqual([]);
-		expect(readOpenClawMcpServers(home).clawdi).toEqual(
-			nativeManagedRemoteMcpServer("clawdi", "v1"),
-		);
-		expect(readOpenClawMcpServers(home)["search.proxy"]).toEqual(
-			nativeManagedRemoteMcpServer("search.proxy", "v1"),
-		);
+		expect(readOpenClawMcpServers(home).clawdi).toEqual({
+			...nativeManagedRemoteMcpServer("clawdi", "v1"),
+			connectionTimeoutMs: 30_000,
+			requestTimeoutMs: 420_000,
+		});
+		expect(readOpenClawMcpServers(home)["search.proxy"]).toEqual({
+			...nativeManagedRemoteMcpServer("search.proxy", "v1"),
+			connectionTimeoutMs: 30_000,
+			requestTimeoutMs: 420_000,
+		});
 		expect(readOpenClawMcpServers(home)["user-entry"]).toEqual({
 			command: "user-owned",
 			args: ["keep"],
@@ -11187,18 +11195,22 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		);
 		expect(restarted.installErrors).toEqual([]);
 		expect(readFileSync(join(openclawSkill, "SKILL.md"), "utf-8")).toBe(installedSkill);
-		expect(readOpenClawMcpServers(home).clawdi).toEqual(
-			nativeManagedRemoteMcpServer("clawdi", "v1"),
-		);
+		expect(readOpenClawMcpServers(home).clawdi).toEqual({
+			...nativeManagedRemoteMcpServer("clawdi", "v1"),
+			connectionTimeoutMs: 30_000,
+			requestTimeoutMs: 420_000,
+		});
 
 		const updated = convergeAndCommitTestRuntimeManifest(
 			load(2, "openclaw", updatedServers),
 			getRuntimePaths(),
 		);
 		expect(updated.installErrors).toEqual([]);
-		expect(readOpenClawMcpServers(home)["search.proxy"]).toEqual(
-			nativeManagedRemoteMcpServer("search.proxy", "v2"),
-		);
+		expect(readOpenClawMcpServers(home)["search.proxy"]).toEqual({
+			...nativeManagedRemoteMcpServer("search.proxy", "v2"),
+			connectionTimeoutMs: 30_000,
+			requestTimeoutMs: 420_000,
+		});
 		const updatedConfig = readFileSync(openclawConfigPath, "utf-8");
 		const callsBeforeIdempotent = readFileSync(openclawCalls, "utf-8");
 		const idempotent = convergeAndCommitTestRuntimeManifest(
@@ -11307,7 +11319,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		const desiredServer = managedRemoteMcpServer("clawdi", "v2");
 		writeFileSync(
 			openclawConfigPath,
-			`${JSON.stringify({ mcp: { servers: { clawdi: nativeManagedRemoteMcpServer("clawdi", "v1") } } }, null, 2)}\n`,
+			`${JSON.stringify({ mcp: { servers: { clawdi: nativeManagedRemoteMcpServer("clawdi", "v2") } } }, null, 2)}\n`,
 		);
 		ensureRuntimeStateDirs(paths);
 		writeRuntimeAppliedState(
@@ -11344,6 +11356,8 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(upgraded.installErrors).toEqual([]);
 		expect(readOpenClawMcpServers(home).clawdi).toMatchObject({
 			url: desiredServer.url,
+			connectionTimeoutMs: 30_000,
+			requestTimeoutMs: 420_000,
 		});
 
 		writeFileSync(
@@ -11431,16 +11445,20 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			getRuntimePaths(),
 		);
 		expect(managed.installErrors).toEqual([]);
-		expect(readOpenClawMcpServers(home)["owned-server"]).toEqual(
-			nativeManagedRemoteMcpServer("owned-server", "v1"),
-		);
+		expect(readOpenClawMcpServers(home)["owned-server"]).toEqual({
+			...nativeManagedRemoteMcpServer("owned-server", "v1"),
+			connectionTimeoutMs: 30_000,
+			requestTimeoutMs: 420_000,
+		});
 
 		writeFileSync(failUnset, "fail\n");
 		const failedRemoval = convergeRuntimeManifest(load(5, {}), getRuntimePaths());
 		expect(failedRemoval.installErrors.join("\n")).toContain("runtime MCP projection failed");
-		expect(readOpenClawMcpServers(home)["owned-server"]).toEqual(
-			nativeManagedRemoteMcpServer("owned-server", "v1"),
-		);
+		expect(readOpenClawMcpServers(home)["owned-server"]).toEqual({
+			...nativeManagedRemoteMcpServer("owned-server", "v1"),
+			connectionTimeoutMs: 30_000,
+			requestTimeoutMs: 420_000,
+		});
 
 		rmSync(failUnset);
 		const retriedRemoval = convergeRuntimeManifest(load(6, {}), getRuntimePaths());

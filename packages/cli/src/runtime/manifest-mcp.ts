@@ -130,7 +130,7 @@ function buildHostedMcpReconciliationPlan(
 		for (const [serverName, desired] of Object.entries(desiredServers).sort(([a], [b]) =>
 			a.localeCompare(b),
 		)) {
-			const server = hostedMcpNativeServerConfig(serverName, desired);
+			const server = hostedMcpNativeServerConfig(name, serverName, desired);
 			if (!canonicalJsonEqual(native.servers[serverName], server)) {
 				mutations.push({ kind: "set", serverName, server });
 			}
@@ -195,10 +195,14 @@ function readHostedMcpNativeState(
 	return { servers };
 }
 function hostedMcpNativeServerConfig(
+	runtime: HostedMcpTarget,
 	serverName: string,
 	desired: HostedMcpServerDesiredState,
-): { url: string; transport: "streamable-http" | "sse"; headers: Record<string, string> } {
+) {
 	return {
+		// OpenClaw shares the explicit request budget with catalog discovery;
+		// without it, tools/list has a separate 1.5-second default.
+		...(runtime === "openclaw" ? { connectionTimeoutMs: 30_000, requestTimeoutMs: 420_000 } : {}),
 		url: desired.url,
 		transport: desired.transport,
 		headers: Object.fromEntries(
