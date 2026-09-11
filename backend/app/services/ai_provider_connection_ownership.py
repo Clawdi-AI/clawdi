@@ -190,8 +190,8 @@ async def require_custom_provider_cli(
             )
             # Applied provider ownership survives a failed desired-state change.
             # This is not a readiness claim: only the exact previous incarnation's
-            # already-applied providers may use historical evidence. An unscoped
-            # read deliberately refuses multiple boots, including expired ones.
+            # already-applied providers may use historical evidence. Ignore other
+            # generations, but refuse competing boots even when all have expired.
             historical = await read_runtime_drift_summaries(
                 db,
                 RuntimeDriftSummaryReadRequest(
@@ -202,6 +202,11 @@ async def require_custom_provider_cli(
                         )
                     ]
                 ),
+                expected_generations={
+                    previous_state.environment_id: previous_state.apply_generation
+                    or previous_state.generation
+                },
+                require_unique_active_head=True,
             )
             owned_environment = await db.scalar(
                 select(AgentEnvironment.id).where(
