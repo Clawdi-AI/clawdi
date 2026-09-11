@@ -1571,7 +1571,6 @@ function ConsoleTab({
 		nativeHandoffLoaded: openClawNativeHandoffLoaded,
 	} = credentialState;
 	const isCredentialLoading = credentialLoadState === "loading";
-	const [preparedSession, setPreparedSession] = useState<RuntimeUiCredentialSession | null>(null);
 	const [loadedFrame, setLoadedFrame] = useState<{
 		session: RuntimeUiCredentialSession;
 		attempt: number;
@@ -1581,17 +1580,6 @@ function ConsoleTab({
 	const loadCredentials = credentialSession.load;
 	const clearCredentials = credentialSession.clear;
 	const reconnectOpenClaw = credentialSession.reconnect;
-
-	useEffect(() => {
-		if (runtime !== "openclaw" || !ready || !url) return;
-		let active = true;
-		void credentialSession.open().then(() => {
-			if (active) setPreparedSession(credentialSession);
-		});
-		return () => {
-			active = false;
-		};
-	}, [credentialSession, runtime, ready, url]);
 
 	if (status.kind === "stopped") {
 		return <StoppedAgentState deployment={deployment} />;
@@ -1693,7 +1681,7 @@ function ConsoleTab({
 	const openClawCredentials =
 		currentCredentials?.runtime === "openclaw" ? currentCredentials : null;
 	const openClawFrameCanLoad =
-		preparedSession === credentialSession &&
+		credentialState.consoleActive &&
 		credentialLoadState === "ready" &&
 		(openClawCredentials !== null || openClawNativeHandoffLoaded);
 	const iframeUrl =

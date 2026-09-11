@@ -853,12 +853,25 @@ test("runtime readiness keeps launch closed across generation and credential rac
 		expect(credentialRequests).toHaveLength(0);
 	}
 	deployment.resource.metadata.generation = 1;
-	deployment.resource.status = readyStatus;
+	deployment.resource.status = { ...readyStatus, summary_state: "creating" };
 	deployment.runtime_ui_endpoint = null;
 	await page.goto(`/agents/${railHostedEnvironmentId}`);
 	try {
+		await expect(page.getByTestId("hosted-initial-deployment-panel")).toBeVisible();
+		expect(credentialRequests).toHaveLength(0);
+		// Stay on the first deployment's overview while inventory polling observes
+		// running first, then the published endpoint. Neither step needs navigation.
+		deployment.resource.status = readyStatus;
+		await expect(
+			page.locator('[data-overview-module="dashboard"]').getByRole("button", {
+				name: "Chat on the web",
+			}),
+		).toBeDisabled({ timeout: 15_000 });
+		expect(credentialRequests).toHaveLength(0);
 		deployment.runtime_ui_endpoint = endpoint;
 		await expect.poll(() => credentialRequests.length, { timeout: 15_000 }).toBe(1);
+		await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}`);
+		await expect(page.locator("main iframe")).toHaveCount(0);
 		await page.getByRole("link", { name: "Chat on the web" }).click();
 		await expect.poll(() => credentialRequests.length).toBe(1);
 		await expect(page.getByText("Requesting secure access from your agent.")).toBeVisible();
@@ -3555,10 +3568,13 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 			await expect(compute.locator("a a, a button, button a")).toHaveCount(0);
 			const sessionGrid = page.getByTestId("overview-session-grid");
 			await expect(sessionGrid.getByRole("article")).toHaveCount(sessionCount);
+			const placeholders = sessionGrid.getByTestId("overview-session-placeholder");
+			await expect(placeholders).toHaveCount(3 - sessionCount);
+			await expect(placeholders.locator("a, button, [tabindex]")).toHaveCount(0);
 			if (sessionCount === 0) {
-				await expect(sessionGrid.getByTestId("overview-session-placeholder").first()).toHaveText(
-					"No sessions from this agent yet.",
-				);
+				await expect(placeholders.first()).toHaveText("No sessions from this agent yet.");
+			} else {
+				await expect(sessionGrid).not.toContainText("No sessions from this agent yet.");
 			}
 			await expectNoHorizontalOverflow(page.locator("main"), "Overview");
 		}
@@ -5131,6 +5147,8 @@ for (const initialSection of ["", "/sessions"]) {
 			).toBeEnabled();
 			await expect(iframe).toHaveAttribute("src", nativeHandoff);
 			await overviewLink().click();
+			await expect(page).toHaveURL(`/agents/${runtime.agentId}`);
+			await expect(iframe).toHaveCount(0);
 			await consoleLink().click();
 			await expect(iframe).toHaveAttribute("src", openClawRuntimeEndpoint);
 			expect(runtime.credentialRequests).toHaveLength(1);

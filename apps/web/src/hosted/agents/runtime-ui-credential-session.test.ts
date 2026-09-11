@@ -40,13 +40,16 @@ describe("agent-owned runtime UI credential session", () => {
 		const unsubscribe = session.subscribe(() => {
 			if (session.getSnapshot().status === "loading") reentrant = session.load();
 		});
-		const prefetch = session.load();
+		const prefetch = session.preload();
 		expect(reentrant).toBe(prefetch);
 		unsubscribe();
-		expect(session.load()).toBe(prefetch);
+		expect(session.open()).toBe(prefetch);
 		gate.resolve(credentials());
 		await prefetch;
-		await session.load();
+		session.leave();
+		expect(session.getSnapshot().consoleActive).toBe(false);
+		await session.open();
+		expect(session.getSnapshot().consoleActive).toBe(true);
 		expect(request).toHaveBeenCalledTimes(1);
 		expect(session.getSnapshot().nativeHandoffLoaded).toBe(false);
 		session.dispose();
@@ -122,8 +125,17 @@ describe("agent-owned runtime UI credential session", () => {
 		const oldIdentity = session.load();
 		await Promise.resolve();
 		session.dispose();
+		expect(session.getSnapshot().consoleActive).toBe(false);
+		// StrictMode can reactivate the owner before its retired request resolves.
+		session.activate();
+		const replacement = credentials();
+		request.mockImplementation(async () => replacement);
+		const newEntry = session.open();
 		retired.resolve(credentials());
 		expect(await oldIdentity).toBeNull();
+		await newEntry;
+		expect(session.getSnapshot().credentials).toBe(replacement);
+		session.dispose();
 		expect(session.getSnapshot().credentials).toBeNull();
 	});
 

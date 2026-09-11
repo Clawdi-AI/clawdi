@@ -6,6 +6,7 @@ export interface RuntimeUiCredentialState {
 	error: Error | null;
 	status: "idle" | "loading" | "ready" | "error";
 	nativeHandoffLoaded: boolean;
+	consoleActive: boolean;
 	attempt: number;
 }
 
@@ -35,21 +36,18 @@ export function createRuntimeUiCredentialSession({
 		error: null,
 		status: "idle",
 		nativeHandoffLoaded: false,
+		consoleActive: false,
 		attempt: 0,
 	};
 	let pending: Promise<RuntimeUiCredentials | null> | null = null;
 	let disposed = false;
-	let consoleOpen = false;
 	const listeners = new Set<() => void>();
 	const publish = (next: RuntimeUiCredentialState) => {
 		state = next;
 		for (const listener of listeners) listener();
 	};
 
-	const load = (
-		force = false,
-		reuseUnknownExpiry = false,
-	): Promise<RuntimeUiCredentials | null> => {
+	const load = (force = false): Promise<RuntimeUiCredentials | null> => {
 		if (disposed) return Promise.resolve(null);
 		if (pending) return pending;
 		if (!force) {
@@ -63,13 +61,7 @@ export function createRuntimeUiCredentialSession({
 				});
 				return Promise.resolve(null);
 			}
-			if (
-				state.credentials &&
-				(canReuseRuntimeUiCredentials(state.credentials) ||
-					(reuseUnknownExpiry &&
-						state.credentials.runtime === "openclaw" &&
-						state.credentials.browser_bootstrap_expires_at_ms == null))
-			) {
+			if (state.credentials && canReuseRuntimeUiCredentials(state.credentials)) {
 				return Promise.resolve(state.credentials);
 			}
 		} else {
@@ -107,6 +99,7 @@ export function createRuntimeUiCredentialSession({
 				if (state.attempt === attempt) pending = null;
 			});
 		publish({
+			...state,
 			credentials: null,
 			error: null,
 			status: "loading",
@@ -131,20 +124,23 @@ export function createRuntimeUiCredentialSession({
 		preload: () =>
 			state.status === "idle" ? load() : (pending ?? Promise.resolve(state.credentials)),
 		open: () => {
-			// Older native responses have no expiry. Share them only within this
-			// console entry, including the parent's request before its child mounts.
-			const reuseUnknownExpiry = consoleOpen;
-			consoleOpen = true;
-			return load(false, reuseUnknownExpiry);
+			if (disposed) return Promise.resolve(null);
+			if (state.consoleActive) return pending ?? Promise.resolve(state.credentials);
+			// Validate cached access before admitting a frame for this route entry.
+			// Unknown native expiry is reusable only while this entry stays active.
+			const result = load();
+			publish({ ...state, consoleActive: true });
+			return result;
 		},
 		leave: () => {
-			consoleOpen = false;
+			if (state.consoleActive) publish({ ...state, consoleActive: false });
 		},
 		reconnect: () => load(true),
 		clear: () => {
 			forgetNativeHandoffLoaded();
 			pending = null;
 			publish({
+				...state,
 				credentials: null,
 				error: null,
 				status: "idle",
@@ -166,10 +162,10 @@ export function createRuntimeUiCredentialSession({
 		},
 		dispose: () => {
 			disposed = true;
-			consoleOpen = false;
 			pending = null;
 			state = {
 				...state,
+				consoleActive: false,
 				credentials: null,
 				error: null,
 				status: "idle",
