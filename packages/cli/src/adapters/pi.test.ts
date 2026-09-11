@@ -96,6 +96,22 @@ describe("Pi session adapter", () => {
 		expect(JSON.stringify(completed?.events)).toContain("new answer");
 	});
 
+	test("skips projection for unrelated earlier files without changing resolved output", async () => {
+		const { adapter, file } = fixtureSession();
+		const expected = await adapter.sessions.resolve("pi.fixture-session");
+		const unrelated = join(dirname(file), "000-unrelated.jsonl");
+		const nestedArguments = `${"[".repeat(20_000)}null${"]".repeat(20_000)}`;
+		writeFileSync(
+			unrelated,
+			`${JSON.stringify({ type: "session", version: 3, id: "unrelated", cwd: "/workspace/demo" })}\n` +
+				`{"type":"message","id":"e1","parentId":null,"message":{"role":"assistant","content":[{"type":"toolCall","id":"call-1","name":"read","arguments":${nestedArguments}}]}}\n`,
+		);
+
+		const resolved = await adapter.sessions.resolve("pi.fixture-session");
+
+		expect(resolved).toEqual(expected);
+	});
+
 	test("migrates the official v1 compaction and hook-message shape deterministically", async () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-pi-v1-"));
 		temporaryRoots.push(root);
