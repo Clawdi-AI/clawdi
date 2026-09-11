@@ -3664,13 +3664,13 @@ test("native OpenClaw windows wait for the handoff iframe load and reuse the cle
 	await page.reload({ waitUntil: "domcontentloaded" });
 	await expect.poll(remountedFrame.isStarted).toBe(true);
 	await expect(openButton).toBeDisabled();
-	await expect(iframe).toHaveAttribute("src", nativeHandoff);
-	expect(runtime.credentialRequests).toHaveLength(2);
+	await expect(iframe).toHaveAttribute("src", openClawRuntimeEndpoint);
+	expect(runtime.credentialRequests).toHaveLength(1);
 
 	remountedFrame.release();
 	await expect(openButton).toBeEnabled();
 	await expectOpenClawWindow(context, openButton, openClawRuntimeEndpoint);
-	expect(runtime.credentialRequests).toHaveLength(2);
+	expect(runtime.credentialRequests).toHaveLength(1);
 });
 
 test("legacy OpenClaw windows reuse the exact token handoff", async ({ page, context }) => {

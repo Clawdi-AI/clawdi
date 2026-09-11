@@ -1401,14 +1401,36 @@ Before credentials are established, a new resource version permits one backgroun
 attempt after any pending request settles; unchanged versions do not retry
 automatically. An established iframe survives resource-version-only changes.
 Leaving the agent, losing/changing the auth identity, losing readiness, or
-changing the generation or endpoint retires the iframe. No parent-origin load
-marker or bootstrap-expiry cache is used.
+changing the generation or endpoint retires the iframe. A versioned, non-secret
+native-handoff-loaded marker is scoped to the Clawdi auth session, deployment,
+generation, and endpoint. Later visits and browser reloads use the clean endpoint
+and let OpenClaw reuse its own persisted device credential, without requesting
+or replaying a bootstrap token. This requires a new native connection after
+the old iframe is retired; it is distinct from retaining the already-authenticated
+connection across sections. The marker does not acknowledge authentication.
+Storage failure falls back to requesting a handoff; Reconnect clears the hint.
 New-window access stays disabled until the current iframe loads; it then opens
 the clean endpoint for native access or the exact reusable legacy `#token=` URL.
 It never requests another handoff. `Reconnect` intentionally replaces the iframe
 with one fresh handoff. The load event is only a document boundary, not evidence
 of authentication success; OpenClaw owns authentication and its rendered errors.
 Hermes remains on demand, including its dashboard credentials.
+
+Verify native browser authentication in isolated Docker:
+
+```bash
+scripts/test-openclaw-native.sh
+```
+
+Done: the actual Clawdi page and official `openclaw@2026.9.4`
+(`3a9d69db306cd7f081e06254cb89c4bcc14a7107`) report a hidden-frame
+`hello-ok` with owner scopes before Console opens, retain that connection across
+sections, reuse the native device credential across agent visits and browser
+reload, and issue a fresh bootstrap only for Reconnect. The fixture stubs Hosted
+inventory/credential transport and uses a local TLS ingress that permits iframe
+embedding; it does not replace official UI code or native WebSocket auth.
+This verifies application behavior, not a deployed ingress configuration or
+authentication readiness from an iframe load event.
 
 Hermes direct exposure requires `hermes-basic-auth-v1`, a stable HTTPS public
 URL (including any path prefix), exact `0.0.0.0:9119` service args, and the
