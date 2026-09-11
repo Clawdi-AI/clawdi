@@ -128,32 +128,27 @@ If submission times out, inspect status before repeating a mutation.
 
 ### Save and refresh credentials locally
 
-For authorized credential use, confirm any user-supplied request is `supplied` with
-`vault_request_status`. Resolve exact reference(s) through cloud `vault_resolve`, then save
-with the agent's already available native file/execution tools. Choose a target from project
-conventions and purpose (for example `.env.stripe`) without routine filename approval.
-Check that it is Git-ignored and untracked, with no symlinks in the target or parent path.
-No CLI installation or dependency is needed; if available tools cannot save safely,
-report the specific missing capability.
+Hosted runtime supplies `.clawdi/vaults/` under the native workspace automatically.
+Connected macOS/Linux/WSL Agents receive the same layout only in the workspace explicitly
+confirmed by setup. Use that configured path, which may differ from the current repository;
+do not guess from HOME, daemon CWD, or scanned sessions. Existing registrations without a
+Vault workspace do not download values. Native Windows daemon/file delivery is unsupported.
 
-Preserve unrelated variables and quote dotenv values literally, without shell interpolation.
-Use restrictive `0600` permissions or equivalent where supported. Values pass through agent
-tool context; use internal file access as needed, but never print or echo secrets into chat,
-Memory, logs, or user-facing messages. Claim saved only after the file operation succeeds;
-verify file metadata and expected key names without dumping values. Report only the path,
-field names/count, and save status, then continue the task.
+Inspect only the configured `.clawdi/vaults/index.json` to select the intended Vault/section.
+Load its JSON file inside the authorized process or SDK without printing values or returning
+them to model/tool-result context merely to save them. These are generated files: do not
+edit, move or commit them. Hosted agents must not invoke/install the tenant Clawdi CLI.
+Connected operators configure delivery with `clawdi setup --agent <type> --vault-workspace <path>`;
+that changes only the Vault destination, never every repository scanned by the daemon.
 
-For reuse, retain only nonsecret Project/Vault IDs and reference-to-filename/variable mappings
-in existing project conventions or context. When refresh is requested or needed, re-read Vault
-and update only selected assignments with native tools. A mapping alone cannot distinguish
-cloud rotation from local edits: without a reliable last-written baseline, preserve differing
-existing values or obtain explicit overwrite authorization. Known local edits or source
-ambiguity require clarification or a separate file. Never keep plaintext baselines in Memory,
-force overwrite, delete assignments automatically, or imply background/bidirectional sync.
+After a credential request is supplied, wait for the expected fields in index metadata before
+claiming delivery. If delivery is unavailable, report that state and any missing workspace
+binding instead of inventing a destination. Preserve unrelated local configuration.
 
 ### Optional CLI environment files
 
-When local file materialization is requested and the CLI is available, use:
+For an explicit operator-run compatibility workflow outside Hosted, use the available CLI.
+Choose a target outside the generated `.clawdi/vaults` directory:
 
 ```bash
 clawdi vault materialize --vault <vault-uuid> --project <project-uuid> --out /absolute/project/.env

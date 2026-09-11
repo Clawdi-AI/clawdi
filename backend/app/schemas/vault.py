@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, RootModel, field_validator
@@ -228,3 +228,35 @@ class VaultCredentialProfileResponse(BaseModel):
 
 class VaultCredentialProfileResolveResponse(VaultCredentialProfileResponse):
     payload: str
+
+
+class RuntimeVaultField(BaseModel):
+    id: UUID
+    section: str
+    name: str
+    references: list[str]
+    value: str
+
+
+class RuntimeVault(BaseModel):
+    id: UUID
+    name: str
+    slug: str
+    project_ids: list[UUID]
+    revision: str
+    fields: list[RuntimeVaultField] | None = None
+
+
+class RuntimeVaultSnapshot(BaseModel):
+    schema_version: Literal[1] = 1
+    complete: Literal[True] = True
+    agent_id: UUID
+    user_id: UUID
+    vaults: list[RuntimeVault]
+
+
+class RuntimeVaultMaterialInput(BaseModel):
+    etag: str = Field(max_length=100)
+    revisions: dict[UUID, Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]] = Field(
+        default_factory=dict, max_length=10000
+    )

@@ -1,9 +1,12 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { hostname } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
+import { parse as parseYaml } from "yaml";
 import { type AgentAdapter, adapterModuleNames } from "../adapters/base";
+import { listOpenClawAgentWorkspaces } from "../adapters/openclaw-workspace";
+import { getHermesHome } from "../adapters/paths";
 import {
 	AGENT_TYPES,
 	type AgentType,
@@ -12,9 +15,14 @@ import {
 	builtinSkillTargetDir,
 } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
-import { getAuth } from "../lib/config";
+import { getAuth, getConfig } from "../lib/config";
 import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
-import { writeEnvironmentRegistration } from "../lib/environment-registration";
+import {
+	assertUniqueVaultWorkspace,
+	readEnvironmentRegistration,
+	type VaultWorkspaceBinding,
+	writeEnvironmentRegistration,
+} from "../lib/environment-registration";
 import { errMessage } from "../lib/errors";
 import { getOrCreateMachineId } from "../lib/machine-identity";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
@@ -29,6 +37,7 @@ import {
 import {
 	install as installDaemonService,
 	listInstalledAgents,
+	restart as restartDaemonService,
 	uninstall as uninstallDaemonService,
 } from "../serve/installer";
 
@@ -40,9 +49,16 @@ export interface LocalAgentSetupOpts {
 
 interface SetupOpts extends LocalAgentSetupOpts {
 	agent?: string;
+	vaultWorkspace?: string;
+	vaultNativeAgent?: string;
 }
 
 export async function setup(opts: SetupOpts) {
+	if ((opts.vaultWorkspace || opts.vaultNativeAgent) && !opts.agent) {
+		throw new Error(
+			"Vault workspace options require --agent; a target is never shared across detected agents.",
+		);
+	}
 	const auth = getAuth();
 	if (!auth) {
 		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
@@ -61,6 +77,10 @@ export async function setup(opts: SetupOpts) {
 		return;
 	}
 	const api = new ApiClient({ machineId });
+	let vaultBindingChanged = false;
+	const noteVaultBindingChange = () => {
+		vaultBindingChanged = true;
+	};
 
 	if (opts.agent) {
 		if (!AGENT_TYPES.includes(opts.agent as AgentType)) {
@@ -79,13 +99,15 @@ export async function setup(opts: SetupOpts) {
 				machineId,
 				machineName,
 				auth.userId,
+				opts,
+				noteVaultBindingChange,
 			))
 		) {
 			process.exitCode = 1;
 			return;
 		}
 		await reconcileAgentIntegrations(adapter);
-		await maybeInstallDaemons(opts);
+		await maybeInstallDaemons(opts, vaultBindingChanged);
 		return;
 	}
 
@@ -147,14 +169,25 @@ export async function setup(opts: SetupOpts) {
 	let registeredCount = 0;
 	let failedCount = 0;
 	for (const { adapter, version } of toRegister) {
-		if (!(await registerEnv(api, adapter, version, machineId, machineName, auth.userId))) {
+		if (
+			!(await registerEnv(
+				api,
+				adapter,
+				version,
+				machineId,
+				machineName,
+				auth.userId,
+				opts,
+				noteVaultBindingChange,
+			))
+		) {
 			failedCount += 1;
 			continue;
 		}
 		registeredCount += 1;
 		await reconcileAgentIntegrations(adapter);
 	}
-	if (registeredCount > 0) await maybeInstallDaemons(opts);
+	if (registeredCount > 0) await maybeInstallDaemons(opts, vaultBindingChanged);
 	if (failedCount > 0) process.exitCode = 1;
 }
 
@@ -165,9 +198,16 @@ async function registerEnv(
 	machineId: string,
 	machineName: string,
 	userId?: string,
+	opts: SetupOpts = {},
+	onVaultBindingChange?: () => void,
 ): Promise<boolean> {
 	const agentType = adapter.agentType;
 	try {
+		const vaultWorkspace = await selectVaultWorkspace(agentType, opts);
+		if (vaultWorkspace && !userId)
+			throw new Error(
+				"Vault workspace requires an account-bound CLI login. Run clawdi auth login first; environment-only credentials have no local account fence.",
+			);
 		const env = unwrap(
 			await api.POST("/v1/agents", {
 				body: {
@@ -181,15 +221,25 @@ async function registerEnv(
 			}),
 		);
 
-		writeEnvironmentRegistration({
+		const changed = writeEnvironmentRegistration({
 			id: env.id,
 			agentType,
 			machineId,
 			machineName,
 			...(userId ? { userId } : {}),
+			...(vaultWorkspace ? { vaultWorkspace } : {}),
 		});
 
+		if (changed) onVaultBindingChange?.();
 		console.log(chalk.green(`✓ ${adapterRegistry[agentType].displayName} registered`));
+		const binding = readEnvironmentRegistration(agentType)?.vaultWorkspace;
+		console.log(
+			chalk.gray(
+				binding
+					? `Vault directory: ${join(binding.path, ".clawdi", "vaults")}${process.platform === "linux" || process.platform === "darwin" ? "" : " (automatic file sync requires macOS or Linux/WSL)"}`
+					: `Vault file sync is disabled. Configure it with clawdi setup --agent ${agentType} --vault-workspace <path>.`,
+			),
+		);
 		return true;
 	} catch (e) {
 		console.log(
@@ -199,9 +249,10 @@ async function registerEnv(
 	}
 }
 
-function installDaemonForAllRegisteredAgents() {
+function installDaemonForAllRegisteredAgents(restartExisting: boolean) {
 	try {
 		const result = installDaemonService();
+		if (restartExisting && result.replaced) restartDaemonService();
 		const verb = result.replaced ? "updated" : "installed";
 		console.log(chalk.green(`✓ Singleton daemon ${verb}`));
 		console.log(chalk.gray(`  ${result.instructions}`));
@@ -257,11 +308,14 @@ export async function reconcileAgentIntegrations(adapter: AgentAdapter): Promise
 	if (adapter.skills) await installBuiltinSkill(adapter.agentType);
 }
 
-export async function maybeInstallDaemons(opts: LocalAgentSetupOpts): Promise<void> {
-	if (await shouldInstallDaemons(opts)) installDaemonsForRegisteredAgents();
+export async function maybeInstallDaemons(
+	opts: LocalAgentSetupOpts,
+	restartExisting = false,
+): Promise<void> {
+	if (await shouldInstallDaemons(opts)) installDaemonsForRegisteredAgents(restartExisting);
 }
 
-function installDaemonsForRegisteredAgents() {
+function installDaemonsForRegisteredAgents(restartExisting: boolean) {
 	const registered = listRegisteredAgentTypes();
 	if (registered.length === 0) {
 		console.log(chalk.gray("No registered agents available for daemon install."));
@@ -269,7 +323,7 @@ function installDaemonsForRegisteredAgents() {
 	}
 	console.log();
 	console.log(chalk.cyan("Installing background sync daemon..."));
-	installDaemonForAllRegisteredAgents();
+	installDaemonForAllRegisteredAgents(restartExisting);
 }
 
 async function installBuiltinSkill(agentType: AgentType) {
@@ -322,4 +376,79 @@ async function installBuiltinSkill(agentType: AgentType) {
 	} catch (error) {
 		console.log(chalk.yellow(`⚠ Could not install Clawdi skill (${errMessage(error)}).`));
 	}
+}
+
+async function selectVaultWorkspace(
+	agentType: AgentType,
+	opts: SetupOpts,
+): Promise<VaultWorkspaceBinding | undefined> {
+	if (opts.vaultNativeAgent && agentType !== "openclaw")
+		throw new Error("--vault-native-agent is only supported for OpenClaw.");
+	let path = opts.vaultWorkspace;
+	let nativeAgentId = opts.vaultNativeAgent;
+	if (nativeAgentId) {
+		const entries = listOpenClawAgentWorkspaces().filter((item) => item.id === nativeAgentId);
+		const entry = entries.length === 1 ? entries[0] : undefined;
+		if (!entry)
+			throw new Error("Selected native Agent is absent from the official OpenClaw roster.");
+		if (path && realpathSync(resolve(path)) !== realpathSync(entry.workspace))
+			throw new Error("Vault workspace differs from the selected native Agent workspace.");
+		path = entry.workspace;
+	}
+	if (
+		!path &&
+		!opts.yes &&
+		isInteractive() &&
+		!readEnvironmentRegistration(agentType)?.vaultWorkspace
+	) {
+		let candidates: { workspace: string; id?: string }[] = [];
+		try {
+			if (agentType === "openclaw") candidates = listOpenClawAgentWorkspaces();
+			if (agentType === "hermes") {
+				const config: unknown = parseYaml(
+					readFileSync(join(getHermesHome(), "config.yaml"), "utf8"),
+				);
+				if (
+					config &&
+					typeof config === "object" &&
+					"terminal" in config &&
+					config.terminal &&
+					typeof config.terminal === "object" &&
+					"cwd" in config.terminal &&
+					typeof config.terminal.cwd === "string" &&
+					isAbsolute(config.terminal.cwd)
+				)
+					candidates = [{ workspace: config.terminal.cwd }];
+			}
+		} catch {
+			/* An unavailable native configuration never becomes a guessed directory. */
+		}
+		if (candidates.length) {
+			const selected = await p.select({
+				message: "Deliver this Agent's Vault files to a native workspace?",
+				options: [
+					{ value: -1, label: "Not now" },
+					...candidates.map((candidate, index) => ({
+						value: index,
+						label: `${candidate.id ?? agentType}: ${candidate.workspace}`,
+					})),
+				],
+				initialValue: -1,
+			});
+			if (!p.isCancel(selected) && selected >= 0) {
+				path = candidates[selected].workspace;
+				nativeAgentId = candidates[selected].id;
+			}
+		}
+	}
+	if (!path) return undefined;
+	const canonical = realpathSync(resolve(path));
+	if (!statSync(canonical).isDirectory())
+		throw new Error("Vault workspace must be an existing directory.");
+	assertUniqueVaultWorkspace(agentType, canonical);
+	return {
+		path: canonical,
+		apiOrigin: getConfig().apiUrl,
+		...(nativeAgentId ? { nativeAgentId } : {}),
+	};
 }

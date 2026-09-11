@@ -214,7 +214,7 @@ export async function agentReconnect(
 		process.exitCode = 1;
 	}
 	try {
-		await maybeInstallDaemons(opts);
+		await maybeInstallDaemons(opts, true);
 	} catch (error) {
 		console.log(
 			chalk.yellow(`⚠ Agent identity recovered, but daemon setup failed: ${errMessage(error)}`),

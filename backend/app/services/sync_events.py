@@ -275,7 +275,10 @@ def _broadcast(user_id: UUID, event_payload: SyncEventPayload) -> None:
     subs = _subscribers.get(user_id)
     if not subs:
         return
-    is_runtime_event = event_payload.get("type") == "runtime_manifest_changed"
+    is_runtime_event = event_payload.get("type") in {
+        "runtime_manifest_changed",
+        "runtime_vaults_changed",
+    }
     event_environment_id = _payload_uuid(event_payload.get("environment_id"))
     raw_project_id = event_payload.get("project_id")
     event_project_id: UUID | None = None
@@ -602,6 +605,7 @@ def _on_session_before_commit(sync_session: Session) -> None:
     pending: list[_PendingEvent] | None = sync_session.info.get(_PENDING_KEY)
     if not pending:
         return
+    notifications: list[str] = []
     for user_id, payload in pending:
         notification = json.dumps(
             {
@@ -614,10 +618,15 @@ def _on_session_before_commit(sync_session: Session) -> None:
         )
         if len(notification.encode("utf-8")) > _POSTGRES_PAYLOAD_LIMIT_BYTES:
             raise ValueError("sync event exceeds PostgreSQL notification payload limit")
-        sync_session.execute(
-            text("SELECT pg_notify(:channel, :payload)"),
-            {"channel": _POSTGRES_CHANNEL, "payload": notification},
-        )
+        notifications.append(notification)
+    # One round trip for shared-resource fanout, preserving individual wire events.
+    sync_session.execute(
+        text(
+            "SELECT pg_notify(:channel, payload) "
+            "FROM json_array_elements_text(CAST(:payloads AS json)) AS notifications(payload)"
+        ),
+        {"channel": _POSTGRES_CHANNEL, "payloads": json.dumps(notifications)},
+    )
 
 
 def _on_session_commit(sync_session: Session) -> None:
@@ -806,3 +815,13 @@ async def get_skills_revision(db: AsyncSession, user_id: UUID) -> int:
         await db.execute(select(User.skills_revision).where(User.id == user_id))
     ).scalar_one_or_none()
     return result or 0
+
+
+def queue_runtime_vaults_changed(db: AsyncSession, user_id: UUID, environment_id: UUID) -> None:
+    """Commit-scoped hint; deliberately does not render native manifests."""
+    _queue_for_commit(
+        db,
+        user_id,
+        {"type": "runtime_vaults_changed", "environment_id": str(environment_id)},
+        deduplicate=True,
+    )

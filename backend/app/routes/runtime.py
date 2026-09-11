@@ -23,6 +23,7 @@ from app.core.auth import (
     bearer_scheme,
     get_auth,
     is_connected_agent_principal,
+    is_runtime_deployment_principal,
     require_auth_scopes,
     require_cli_auth,
     verify_clerk_jwt,
@@ -44,6 +45,7 @@ from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.schemas.runtime import ProjectSkillCapabilityReport
 from app.schemas.session import AgentProjectSkillDesiredItem, AgentProjectSkillDesiredResponse
+from app.schemas.vault import RuntimeVaultMaterialInput, RuntimeVaultSnapshot
 from app.services.connected_agent_fence import (
     ConnectedAgentFenceHeaders,
     connected_agent_fence_headers,
@@ -81,6 +83,7 @@ from app.services.runtime_source_revision import (
     repair_runtime_source_revision,
     runtime_source_contract_revision,
 )
+from app.services.runtime_vaults import vault_snapshot_metadata, vault_snapshot_values
 from app.services.sync_events import queue_environment_runtime_manifest_changed
 from app.services.tar_utils import reroot_skill_archive, tar_from_content
 
@@ -733,3 +736,86 @@ def _extract_project_skill_file(
     if len(result) > _MAX_PROJECT_SKILL_FILE_BYTES:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Skill file not found")
     return result
+
+
+async def _runtime_vault_agent(
+    db: AsyncSession,
+    auth: AuthContext,
+    requested_agent_id: UUID | None,
+    fence_headers: ConnectedAgentFenceHeaders,
+) -> tuple[UUID, bool]:
+    require_auth_scopes(auth, "vault:read")
+    bound = auth.api_key.environment_id if auth.api_key is not None else None
+    if bound is not None:
+        if requested_agent_id is not None and requested_agent_id != bound:
+            raise HTTPException(403, "API key bound to a different Agent")
+        return bound, is_runtime_deployment_principal(auth)
+    if not is_connected_agent_principal(auth) or requested_agent_id is None:
+        raise HTTPException(403, "Vault delivery requires an authenticated Agent identity")
+    if fence_headers.machine_id is None:
+        raise HTTPException(403, "Connected Vault delivery requires machine identity")
+    await _connected_agent(db, auth=auth, agent_id=requested_agent_id)
+    await require_connected_agent_fence(
+        db,
+        auth=auth,
+        agent_ids={requested_agent_id},
+        headers=fence_headers,
+    )
+    return requested_agent_id, True
+
+
+@router.get("/vaults", response_model=RuntimeVaultSnapshot)
+async def get_runtime_vaults(
+    request: Request,
+    requested_agent_id: UUID | None = Query(default=None, alias="agent_id"),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
+    auth: AuthContext = Depends(get_auth),
+) -> Response:
+    async with runtime_snapshot_session() as db:
+        agent_id, allow_linked_projects = await _runtime_vault_agent(
+            db, auth, requested_agent_id, fence_headers
+        )
+        inventory, etag = await vault_snapshot_metadata(
+            db,
+            auth.user_id,
+            agent_id,
+            allow_linked_projects=allow_linked_projects,
+        )
+        headers = {"ETag": etag, "Cache-Control": "no-store, no-transform"}
+        if if_none_match_contains(request.headers.get("if-none-match"), etag):
+            return Response(status_code=304, headers=headers)
+        snapshot = RuntimeVaultSnapshot(
+            user_id=auth.user_id, agent_id=agent_id, vaults=list(inventory.values())
+        )
+        return Response(
+            content=snapshot.model_dump_json(), media_type="application/json", headers=headers
+        )
+
+
+@router.post("/vaults/material", response_model=RuntimeVaultSnapshot)
+async def get_runtime_vault_material(
+    body: RuntimeVaultMaterialInput,
+    requested_agent_id: UUID | None = Query(default=None, alias="agent_id"),
+    fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
+    auth: AuthContext = Depends(get_auth),
+) -> Response:
+    async with runtime_snapshot_session() as db:
+        agent_id, allow_linked_projects = await _runtime_vault_agent(
+            db, auth, requested_agent_id, fence_headers
+        )
+        inventory, etag = await vault_snapshot_metadata(
+            db,
+            auth.user_id,
+            agent_id,
+            allow_linked_projects=allow_linked_projects,
+        )
+        if body.etag != etag:
+            raise HTTPException(409, "Vault inventory changed; retry metadata")
+        snapshot = await vault_snapshot_values(
+            db, auth.user_id, agent_id, inventory, body.revisions
+        )
+        return Response(
+            content=snapshot.model_dump_json(),
+            media_type="application/json",
+            headers={"ETag": etag, "Cache-Control": "no-store, no-transform"},
+        )

@@ -2022,3 +2022,140 @@ Primary implementation files:
 | CLI update policy | `packages/cli/src/runtime/cli-update.ts` |
 | Dashboard terminal | `apps/web/src/hosted/agents/hosted-terminal-panel.tsx` |
 | Dashboard hosted detail page | `apps/web/src/hosted/agents/hosted-agent-detail.tsx` |
+
+## Runtime Vault files
+
+The existing runtime watch delivers a complete authenticated `GET /v1/runtime/vaults`
+metadata snapshot independently of manifest convergence, including manifest 304 passes. This adds
+one conditional request per watch pass, using the same SSE connection and jittered
+7.5–22.5 second fallback. `runtime_vaults_changed` is an Agent-scoped commit notification;
+older clients ignore it. Changed inventories use one additional `POST /v1/runtime/vaults/material` batch request,
+fenced to the metadata ETag. Only Vaults whose per-Vault revision changed are read/decrypted;
+unchanged files and metadata are retained from the private receipt. A concurrent graph
+change returns 409 and retries on the next watch pass, never applying mixed inventories.
+Value writes increment only the affected Vault revision and queue
+signals without rendering consumer manifests. Commit delivery batches PostgreSQL
+notifications into one SQL round trip rather than one query per receiving Agent;
+Vault SSE bursts coalesce to at most four wakeups per second. Project binding/removal signals continue
+through existing manifest notifications. The snapshot rechecks current permissions every
+request and hashes Vault metadata/revisions; unchanged snapshots do not query/decrypt
+items or download/rewrite plaintext. Changed snapshots batch-read at most 10,000 fields
+and 8 MiB ciphertext; over-limit/error responses are never interpreted as empty inventories.
+
+Strict runtime deployment credentials may read the bound Agent's private Workspace and
+explicitly linked, readable user Projects. Legacy Agent-bound keys remain limited to their
+own Workspace, including on the batch material endpoint. Vault IDs deduplicate multiple attachments. Each Vault/section gets a
+JSON object preserving exact field names; section identity is SHA-256 of its name because
+the database has no section ID. Renaming a section replaces its file. `index.json` contains
+only IDs, names, references and filenames; invalid environment names are marked with a
+null `env_name`, not normalized into colliding names. Pending supply requests are not items.
+
+The native workspace's `.clawdi/vaults` directory is 0700 and its files 0600, owned by the runtime
+user. Hosted runtime pins directory ancestors without following symlinks and performs IO
+with tenant filesystem credentials. Connected native-user IO is described below. A private
+receipt binds generated directory identity and filenames; existing unrelated directories, symlinks, hardlinks, tracked targets,
+and unsafe permissions fail closed. Hosted workspaces must be beneath the tenant home;
+connected targets remain explicitly configured. Changing the recorded directory identity
+requires operator reconciliation. Writes are atomic per file, not a multi-file transaction.
+An existing legitimate `.clawdi` directory and unrelated children are preserved without
+chmod or adoption; only `vaults` is managed. Symlink or unsafe writable ancestors are refused.
+The receipt records the fixed `.clawdi/vaults` target and private expected content digests.
+Each pass hashes the bounded generated files before accepting a 304; local edits force a
+fresh value fetch and restoration, while unchanged bytes keep their original mtimes.
+The receipt reserves filenames before writes so interrupted delivery can catch up safely.
+A crash after creating `vaults` but before the first receipt requires operator repair:
+without that private proof the runtime refuses even an empty existing directory. This
+bootstrap window does not self-heal by adopting user content.
+No values enter manifest caches, receipts, index metadata, logs or synchronization tool results.
+Authorized tenant programs can still read the files; they must reload already-loaded keys.
+
+Offline/timeouts/5xx preserve last good files. A complete authenticated metadata inventory
+removes revoked/detached Vault files even if subsequent changed-value delivery fails. An
+explicit API 401/403 removes only receipt-owned files
+(fail closed, including expired credentials); 404 during a server-first rollout preserves
+last good files and retries. Filesystem conflicts defer cleanup and are reported without
+secret values. Sync failures back off from one to five minutes independently of native
+agent installation/restarts. Deploy the additive backend/migration before the updated CLI.
+
+Done: `bash scripts/test.sh runtime-vaults` passes in the bounded Docker runner.
+Its real HTTP/PostgreSQL fixture exercises runtime watch with manifest 304 responses,
+real SSE and disabled-SSE fallback; native installations/systemd are fixtures.
+Timing and SQL counts are printed for those isolated parameters, not a production SLA.
+On 2026-09-11, one Agent/one Vault/one field in the 3-CPU runner measured 260 ms with SSE
+(15-second fallback configured), and 344 ms with SSE disabled and a 200 ms test fallback.
+Five metadata requests executed 20 SQL statements; three material requests executed 15;
+two saves executed 21. Counts include authentication and permission checks. Native service
+operations were fixtures; no production change latency or high-fanout throughput was measured.
+
+### Connected Agent delivery
+
+Connected macOS/Linux Agents reuse their existing daemon, SSE connection and heartbeat fallback
+(45–75 seconds). Session-only adapters open that same engine-owned event connection only
+when Vault delivery is configured. If that Vault-only stream lacks SSE permission, the
+snapshot rechecks Vault access and heartbeat fallback continues without stopping Sessions.
+Hosted daemon workers never start a second Vault writer.
+Vault-only notifications do not trigger Skill installs or native Agent restarts. Transient
+failures retain last good files and back off independently; confirmed access removal clears
+only receipt-owned files. Authentication, machine, API-origin and registration changes fence
+in-flight responses and remove the old binding's generated files. An obsolete worker cannot
+clear a replacement worker's files.
+
+Configure an existing directory explicitly; no default is inferred from CWD, HOME or sessions:
+
+```bash
+clawdi setup --agent codex --vault-workspace /absolute/project
+```
+
+`--vault-workspace` requires `--agent` and a normal CLI login with a stored account identity.
+Environment-only tokens without that local account fence do not enable connected delivery. An explicit path needs no second approval; `--yes`
+alone never selects one. Interactive setup can offer official OpenClaw roster workspaces or
+an absolute, unambiguous Hermes `terminal.cwd`. `--vault-native-agent <id>` selects an
+OpenClaw roster entry; if a path is also provided they must agree. The binding captures that
+path and never follows later native-directory changes automatically. Rerun setup to rebind.
+The configured directory may be outside HOME; it must satisfy the same safe-ancestor checks.
+
+The existing per-adapter registration stores optional `vaultWorkspace` path, API origin and
+native-agent ID alongside its cloud Agent/user/machine identity. No separate registry exists.
+The registration lock rejects another registered Agent using the same real workspace,
+including symlink aliases. Repeated setup preserves a binding only for the same identity;
+reconnect/account/API/machine changes clear it unless deliberately configured again. A binding
+change restarts an existing sync daemon after normal setup installation; `--no-daemon`
+requires the operator to restart it later. Native Agent services are unaffected.
+
+The snapshot API requires an explicit owned, registered non-Hosted `agent_id` and matching
+`X-Clawdi-Machine-Id` for unbound CLI/OAuth credentials; missing/stale identity is rejected on
+both metadata and material reads. No target only disables Vault delivery with setup guidance;
+ordinary session/skill synchronization continues.
+
+Connected macOS and Linux/WSL use the native user's filesystem APIs. Native Windows daemon
+supervision remains unsupported; WSL filesystems must enforce Unix permissions. Shared
+network, permission, revision and JSON rendering logic stays the same on both platforms.
+
+Hosted Linux retains descriptor-anchored access under the tenant UID. Connected writes use
+the existing private-file/trusted-directory helpers and a cooperating per-receipt lock in a
+verified 0700 state subdirectory. The lock covers snapshot reconciliation and receipt/file
+updates; revocation waits for an active reconciliation to settle rather than blocking its
+event loop. Existing `.clawdi` parents and unrelated state directories are never chmodded.
+Existing symlinks, hardlinks, unsafe modes, wrong owners and replaced directory identities
+fail closed. This protects the normal private-directory/cooperating-writer boundary. It is
+not absolute race isolation against hostile code with the same UID: that code can read the
+files and can change paths between checks. Path-based APIs are not used for Hosted's
+root-to-tenant writes. No `/dev/fd` substitution, native addon, helper process or package is
+introduced.
+
+The existing Desktop Platform Packages macOS runner executes the actual connected file,
+restart, edit restoration, permission, replacement and identity tests in temporary HOME,
+state and workspace directories. These GitHub runners are disposable native test isolation;
+they do not fake `process.platform`. Linux Docker tests exercise both implementations.
+The macOS CI gate must pass on the reviewed commit before claiming native qualification.
+
+Done: `bash scripts/test.sh runtime-vaults` includes the connected daemon over real isolated
+HTTP/PostgreSQL, using a 15-second test heartbeat to isolate SSE wakeups and a 200 ms
+heartbeat for deliberately missed events,
+offline retention and confirmed detach. The fixture is not a production latency promise.
+
+In the 2026-09-11 connected fixture (one Agent/Vault/field, 3-CPU Docker runner), SSE
+save-to-file measured 249 ms with a 15-second test heartbeat; denied/missed SSE recovery
+measured 460 ms with a 200 ms test heartbeat. Ten metadata requests executed 60 SQL
+statements and four material requests executed 22, including account/machine fences.
+These isolated timings do not describe the normal 45–75 second fallback or production latency.

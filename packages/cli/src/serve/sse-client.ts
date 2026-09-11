@@ -74,7 +74,10 @@ export type RuntimeManifestChangedEvent = {
 	environment_id: string;
 };
 
-export type ServerEvent = SkillServerEvent | RuntimeManifestChangedEvent;
+export type ServerEvent =
+	| SkillServerEvent
+	| RuntimeManifestChangedEvent
+	| { type: "runtime_vaults_changed"; environment_id: string };
 
 const STALE_MS = 60_000;
 const HEARTBEAT_HINT_MS = 25_000;
@@ -386,7 +389,7 @@ function parseEventMessage(message: EventSourceMessage | undefined): ServerEvent
 function parseServerEvent(value: unknown): ServerEvent | null {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 	const event = value as Record<string, unknown>;
-	if (event.type === "runtime_manifest_changed") {
+	if (event.type === "runtime_manifest_changed" || event.type === "runtime_vaults_changed") {
 		return typeof event.environment_id === "string" && event.environment_id.length > 0
 			? { type: event.type, environment_id: event.environment_id }
 			: null;

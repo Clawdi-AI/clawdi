@@ -287,6 +287,9 @@ async def delete_vault(
         project_id=project_id,
         vault_id=vault_id,
     )
+    from app.services.runtime_vaults import notify_vault_changed
+
+    await notify_vault_changed(db, vault.id)
     if project_id is not None:
         await db.execute(
             delete(VaultProjectAttachment).where(
@@ -411,6 +414,10 @@ async def copy_vault_items(
             target_by_name[target_name] = created
         copied += 1
 
+    if copied:
+        from app.services.runtime_vaults import notify_vault_changed
+
+        await notify_vault_changed(db, target.id, values_changed=True)
     await db.commit()
     return VaultItemsCopyResponse(status="ok", copied=copied)
 

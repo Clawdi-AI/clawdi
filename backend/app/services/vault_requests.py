@@ -229,6 +229,9 @@ async def supply(db: AsyncSession, body: VaultSecretRequestSupply) -> VaultSecre
             # A regular Vault write may have won the unique field constraint.
             await db.rollback()
             raise HTTPException(409, "Requested field already supplied") from None
+    from app.services.runtime_vaults import notify_vault_changed
+
+    await notify_vault_changed(db, row.vault_id, values_changed=True)
     row.supplied_at = datetime.now(UTC)
     result = await describe(db, row)
     await db.commit()

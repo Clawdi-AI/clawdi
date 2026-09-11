@@ -1973,6 +1973,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runtime/vaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Runtime Vaults */
+        get: operations["get_runtime_vaults_v1_runtime_vaults_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runtime/vaults/material": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Get Runtime Vault Material */
+        post: operations["get_runtime_vault_material_v1_runtime_vaults_material_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/skills": {
         parameters: {
             query?: never;
@@ -8529,6 +8563,76 @@ export interface components {
             /** Cleanupid */
             cleanupId: string;
         };
+        /** RuntimeVault */
+        RuntimeVault: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Slug */
+            slug: string;
+            /** Project Ids */
+            project_ids: string[];
+            /** Revision */
+            revision: string;
+            /** Fields */
+            fields?: components["schemas"]["RuntimeVaultField"][] | null;
+        };
+        /** RuntimeVaultField */
+        RuntimeVaultField: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Section */
+            section: string;
+            /** Name */
+            name: string;
+            /** References */
+            references: string[];
+            /** Value */
+            value: string;
+        };
+        /** RuntimeVaultMaterialInput */
+        RuntimeVaultMaterialInput: {
+            /** Etag */
+            etag: string;
+            /** Revisions */
+            revisions?: {
+                [key: string]: string;
+            };
+        };
+        /** RuntimeVaultSnapshot */
+        RuntimeVaultSnapshot: {
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: 1;
+            /**
+             * Complete
+             * @default true
+             * @constant
+             */
+            complete: true;
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /** Vaults */
+            vaults: components["schemas"]["RuntimeVault"][];
+        };
         /** SearchHit */
         SearchHit: {
             /**
@@ -14235,6 +14339,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentProjectSkillDesiredResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_runtime_vaults_v1_runtime_vaults_get: {
+        parameters: {
+            query?: {
+                agent_id?: string | null;
+            };
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeVaultSnapshot"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_runtime_vault_material_v1_runtime_vaults_material_post: {
+        parameters: {
+            query?: {
+                agent_id?: string | null;
+            };
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RuntimeVaultMaterialInput"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeVaultSnapshot"];
                 };
             };
             /** @description Validation Error */

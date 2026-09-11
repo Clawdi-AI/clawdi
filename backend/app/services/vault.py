@@ -198,6 +198,9 @@ async def upsert_owned_vault_items(
                 )
             )
 
+    from app.services.runtime_vaults import notify_vault_changed
+
+    await notify_vault_changed(db, vault.id, values_changed=True)
     await db.commit()
     return len(body.fields)
 
@@ -234,6 +237,10 @@ async def delete_owned_vault_items(
     for item in items_to_delete:
         await db.delete(item)
 
+    if items_to_delete:
+        from app.services.runtime_vaults import notify_vault_changed
+
+        await notify_vault_changed(db, vault.id, values_changed=True)
     await db.commit()
     return len(items_to_delete)
 
@@ -253,6 +260,10 @@ async def _ensure_vault_attached(
     ).scalar_one_or_none()
     if existing is None:
         db.add(VaultProjectAttachment(vault_id=vault_id, project_id=project_id))
+        await db.flush()
+        from app.services.runtime_vaults import notify_vault_changed
+
+        await notify_vault_changed(db, vault_id)
 
 
 async def _vault_project_count(db: AsyncSession, vault_id: UUID) -> int:

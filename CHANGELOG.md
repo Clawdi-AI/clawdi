@@ -14,6 +14,12 @@ database migration, CI, and implementation details.
 
 ### Added
 
+- CLI 0.14.73 keeps readable Vault credentials synchronized as JSON files under
+  the native workspace’s `.clawdi/vaults`, with a metadata index. Hosted runtimes
+  use their managed workspace; connected agents on macOS and Linux use the
+  workspace selected during setup. Updates and confirmed access removals sync
+  automatically.
+
 - Collect related missing credentials through one expiring, no-login Vault link.
   After saving, copy a message to the agent to verify the request and continue the task.
 - Optionally materialize Vault credentials into a local env file with the CLI and
