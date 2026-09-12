@@ -2671,95 +2671,107 @@ fi
 		expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual(restored);
 	});
 
-	test("repairs legacy managed memory config and keeps the provider key out of agent env", () => {
-		const paths = tempRuntimePaths();
-		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, {
-			initialConfig: {
-				agents: {
-					defaults: {
-						memorySearch: { provider: "clawdi", model: "legacy-embedding-model" },
+	test.each(["legacy", "current"])(
+		"preserves user memory selection in the %s layout and keeps the provider key out of agent env",
+		(layout) => {
+			const paths = tempRuntimePaths();
+			const search = {
+				provider: "local",
+				model: "user-embedding-model",
+				cache: { enabled: false },
+			};
+			const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, {
+				initialConfig:
+					layout === "legacy"
+						? {
+								agents: {
+									defaults: {
+										memorySearch: search,
+									},
+								},
+							}
+						: { memory: { search } },
+			});
+			writeFakeGatewayCli({
+				path: join(paths.userHome, ".local", "bin", "openclaw"),
+				runtime: "openclaw",
+				unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+			});
+			const hosted = hostedRuntimeBundleV2ManifestSchema.parse(
+				hostedManifestFixture({
+					providers: {
+						default: {
+							kind: "openai-compatible",
+							type: "custom_openai_compatible",
+							managed_by: "clawdi",
+							baseUrl: "https://api.example.test/v1",
+							models: [
+								{ id: "gpt-test" },
+								{
+									id: "test-embedding-model",
+									capabilities: { embeddings: true, chat: false },
+								},
+							],
+							apiMode: "openai_responses",
+							runtimeEnvName: "CLAWDI_AI_API_KEY",
+							apiKeySecretRef: "secret://providers/default/api-key",
+						},
+					},
+				}),
+			);
+			const manifest = {
+				...hosted,
+				egressEngine: installCachedTestEgressEngine(paths, "12.2.3-test-provider-model"),
+			};
+			const provider = hostedAiProviderCatalog(manifest, "openclaw")?.catalog.providers[0];
+			expect(provider?.runtime_env_name).toBe("CLAWDI_AI_API_KEY");
+
+			const result = convergeRuntimeManifest(
+				manifestLoad(manifest, "inline-managed-provider", {
+					...TEST_HOSTED_SECRET_VALUES,
+					"secret://providers/default/api-key": "sk-managed",
+				}),
+				paths,
+			);
+
+			expect(result.installErrors).toEqual([]);
+			expect(result.projectedProviderIds.openclaw).toEqual(["clawdi-managed"]);
+			const config = JSON.parse(readFileSync(configPath, "utf8"));
+			expect(config.agents.defaults).not.toHaveProperty("memorySearch");
+			expect(config).toMatchObject({
+				memory: {
+					search: {
+						...search,
 					},
 				},
-			},
-		});
-		writeFakeGatewayCli({
-			path: join(paths.userHome, ".local", "bin", "openclaw"),
-			runtime: "openclaw",
-			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
-		});
-		const hosted = hostedRuntimeBundleV2ManifestSchema.parse(
-			hostedManifestFixture({
-				providers: {
-					default: {
-						kind: "openai-compatible",
-						type: "custom_openai_compatible",
-						managed_by: "clawdi",
-						baseUrl: "https://api.example.test/v1",
-						models: [
-							{ id: "gpt-test" },
-							{
-								id: "test-embedding-model",
-								capabilities: { embeddings: true, chat: false },
+				models: {
+					providers: {
+						"clawdi-managed": {
+							apiKey: {
+								source: "env",
+								provider: "default",
+								id: "CLAWDI_AI_API_KEY",
 							},
-						],
-						apiMode: "openai_responses",
-						runtimeEnvName: "CLAWDI_AI_API_KEY",
-						apiKeySecretRef: "secret://providers/default/api-key",
-					},
-				},
-			}),
-		);
-		const manifest = {
-			...hosted,
-			egressEngine: installCachedTestEgressEngine(paths, "12.2.3-test-provider-model"),
-		};
-		const provider = hostedAiProviderCatalog(manifest, "openclaw")?.catalog.providers[0];
-		expect(provider?.runtime_env_name).toBe("CLAWDI_AI_API_KEY");
-
-		const result = convergeRuntimeManifest(
-			manifestLoad(manifest, "inline-managed-provider", {
-				...TEST_HOSTED_SECRET_VALUES,
-				"secret://providers/default/api-key": "sk-managed",
-			}),
-			paths,
-		);
-
-		expect(result.installErrors).toEqual([]);
-		expect(result.projectedProviderIds.openclaw).toEqual(["clawdi-managed"]);
-		const config = JSON.parse(readFileSync(configPath, "utf8"));
-		expect(config.agents.defaults).not.toHaveProperty("memorySearch");
-		expect(config).toMatchObject({
-			memory: {
-				search: {
-					provider: "clawdi-managed",
-					model: "test-embedding-model",
-				},
-			},
-			models: {
-				providers: {
-					"clawdi-managed": {
-						apiKey: {
-							source: "env",
-							provider: "default",
-							id: "CLAWDI_AI_API_KEY",
 						},
 					},
 				},
-			},
-		});
-		const runConfig = JSON.parse(readFileSync(runtimeRunConfigPath("openclaw", paths), "utf8")) as {
-			env?: Record<string, string>;
-		};
-		expect(runConfig.env?.CLAWDI_AI_API_KEY).toBe("clawdi-egress-placeholder");
-		expect(runConfig.env?.OPENAI_API_KEY).toBeUndefined();
-		const envFile = readFileSync(
-			join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
-			"utf8",
-		);
-		expect(envFile).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
-		expect(envFile).not.toMatch(/^OPENAI_API_KEY=/m);
-		expect(envFile).not.toContain("sk-managed");
-	});
+			});
+			const runConfig = JSON.parse(
+				readFileSync(runtimeRunConfigPath("openclaw", paths), "utf8"),
+			) as {
+				env?: Record<string, string>;
+			};
+			expect(runConfig.env?.CLAWDI_AI_API_KEY).toBe("clawdi-egress-placeholder");
+			expect(runConfig.env?.OPENAI_API_KEY).toBeUndefined();
+			const envFile = readFileSync(
+				join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
+				"utf8",
+			);
+			expect(envFile).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
+			expect(envFile).not.toMatch(/^OPENAI_API_KEY=/m);
+			expect(envFile).not.toContain("sk-managed");
+		},
+	);
 
 	test("reuses OpenClaw probes until the provider revision changes", () => {
 		const paths = tempRuntimePaths();

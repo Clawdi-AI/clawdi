@@ -47,6 +47,28 @@ const codexOAuthCatalog: AiProviderCatalog = {
 };
 
 describe("AI provider projection", () => {
+	test("managed chat apply and removal do not mutate native memory selection", () => {
+		const catalog: AiProviderCatalog = {
+			...byokOpenAiCatalog,
+			defaults: {},
+			providers: byokOpenAiCatalog.providers.map((provider) => ({
+				...provider,
+				id: CLAWDI_MANAGED_PROVIDER_ID,
+				type: "custom_openai_compatible",
+				runtime_env_name: "CLAWDI_AI_API_KEY",
+				managed_by: "clawdi",
+			})),
+		};
+		const primaryModel = { provider_id: CLAWDI_MANAGED_PROVIDER_ID, model: "gpt-5.6-sol" };
+		for (const input of [{ catalog, primaryModel }, null]) {
+			const patch = JSON.parse(
+				buildOpenClawHostedProviderPatch(input, [CLAWDI_MANAGED_PROVIDER_ID]).content,
+			);
+			expect(patch).not.toHaveProperty("memory");
+			expect(patch).not.toHaveProperty("agents.defaults.memorySearch");
+		}
+	});
+
 	test("projects complete keyed Hermes providers", () => {
 		const catalog: AiProviderCatalog = {
 			schema_version: 1,
@@ -350,11 +372,8 @@ describe("AI provider projection", () => {
 			memory?: { search?: { model?: null; provider?: null } };
 			models?: { providers?: Record<string, unknown> };
 		};
-		expect(managedToByokPatch.agents?.defaults?.memorySearch).toBeNull();
-		expect(managedToByokPatch.memory?.search).toEqual({
-			provider: null,
-			model: null,
-		});
+		expect(managedToByokPatch.agents?.defaults?.memorySearch).toBeUndefined();
+		expect(managedToByokPatch.memory).toBeUndefined();
 		expect(managedToByokPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID]).toBeNull();
 
 		const hermes = buildAgentTargetProjection("hermes", byokOpenAiCatalog, primaryModel);

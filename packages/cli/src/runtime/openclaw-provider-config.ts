@@ -86,8 +86,25 @@ if (
 ) {
   throw new Error("OpenClaw config snapshot is unavailable for provider projection");
 }
+const applyProviderPatch = (draft) => {
+  const desired = structuredClone(patch);
+  const defaults = isRecord(draft.agents) ? draft.agents.defaults : undefined;
+  const legacy = isRecord(defaults) ? defaults.memorySearch : undefined;
+  const current = isRecord(draft.memory) ? draft.memory.search : undefined;
+  const authored = { ...(isRecord(legacy) ? legacy : {}), ...(isRecord(current) ? current : {}) };
+  const desiredDefaults = isRecord(desired.agents) ? desired.agents.defaults : undefined;
+  const searchContainer = isRecord(desired.memory?.search) ? desired.memory : desiredDefaults;
+  const searchKey = isRecord(desired.memory?.search) ? "search" : "memorySearch";
+  // A hosted embedding default does not own native selection. Read inside the native mutation
+  // as well as the preview, so a concurrent user edit is not restored from an earlier snapshot.
+  if (isRecord(searchContainer?.[searchKey])) {
+    searchContainer[searchKey] = Object.hasOwn(authored, "provider") || Object.hasOwn(authored, "model")
+      ? authored : { ...authored, ...searchContainer[searchKey] };
+  }
+  applyMergePatch(draft, desired);
+};
 const projected = structuredClone(sourceConfig);
-applyMergePatch(projected, patch);
+applyProviderPatch(projected);
 if (isDeepStrictEqual(projected, sourceConfig)) process.exit(0);
 explicitSetPaths.length = 0;
 unsetPaths.length = 0;
@@ -95,7 +112,7 @@ await sdk.mutateConfigFile({
   base: "source",
   afterWrite: { mode: "none", reason: "Clawdi runtime convergence owns service reconciliation" },
   writeOptions: { allowConfigSizeDrop: true, explicitSetPaths, unsetPaths },
-  mutate: (draft) => applyMergePatch(draft, patch),
+  mutate: applyProviderPatch,
 });
 `;
 export function applyOpenClawHostedProviderPatch(

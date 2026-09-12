@@ -13,15 +13,94 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { buildHermesManagedChannelsPatch } from "./managed-channel-reconciliation";
 import {
 	materializeHostedChannelCredentials,
 	normalizeOpenClawRuntimeVersion,
+	openClawManagedChannelsPatch,
 } from "./manifest-channels";
 import type { RuntimeManifest } from "./manifest-contract";
 import { withRuntimeUserFileAccess } from "./runtime-user-command";
 
 const ACCOUNT_KEY = "clawdi_whatsapp_test";
 const SECRET_REF = `secret://channels/whatsapp/${ACCOUNT_KEY}/credentials/credential-test/creds-json`;
+
+describe("native channel ownership", () => {
+	const managed = {
+		enabled: true,
+		botToken: { source: "env", provider: "default", id: "MANAGED_TOKEN" },
+	};
+	const previous = {
+		telegram: { enabled: true, defaultAccount: "managed", accounts: { managed } },
+	};
+
+	test("patches only the selected account fields and retains native preferences", () => {
+		const current = {
+			channels: {
+				telegram: {
+					defaultAccount: "personal",
+					accounts: {
+						personal: { botToken: "user-token" },
+						managed: { ...managed, dmPolicy: "pairing", allowFrom: ["owner"] },
+					},
+				},
+			},
+		};
+		const patch = openClawManagedChannelsPatch(previous, current, previous);
+		expect(patch).toMatchObject({
+			channels: { telegram: { accounts: { managed } } },
+			session: { dmScope: "per-account-channel-peer" },
+		});
+		expect(patch).not.toHaveProperty("channels.telegram.accounts.personal");
+		expect(patch).not.toHaveProperty("channels.telegram.accounts.managed.dmPolicy");
+		expect(patch).not.toHaveProperty("channels.telegram.defaultAccount");
+	});
+
+	test("unlinks only a committed account whose credential still matches", () => {
+		const current = {
+			channels: {
+				telegram: {
+					...previous.telegram,
+					accounts: {
+						managed,
+						personal: { botToken: "user-token" },
+					},
+				},
+			},
+		};
+		expect(openClawManagedChannelsPatch({}, current, previous)).toMatchObject({
+			channels: { telegram: { accounts: { managed: null }, defaultAccount: null } },
+		});
+		expect(openClawManagedChannelsPatch({}, current)).not.toHaveProperty("channels.telegram");
+		current.channels.telegram.accounts.managed = {
+			...managed,
+			botToken: { ...managed.botToken, id: "USER_TOKEN" },
+		};
+		expect(openClawManagedChannelsPatch({}, current, previous)).not.toHaveProperty(
+			"channels.telegram",
+		);
+		expect(() => openClawManagedChannelsPatch(previous, current, previous)).toThrow(
+			"unmanaged telegram account",
+		);
+	});
+
+	test("does not delete independent channels or reset DM isolation on unlink", () => {
+		const patch = openClawManagedChannelsPatch(
+			{},
+			{
+				channels: { telegram: { accounts: { personal: { botToken: "user-token" } } } },
+				session: { dmScope: "per-channel-peer" },
+			},
+		);
+		expect(patch).not.toHaveProperty("channels.telegram");
+		expect(patch).not.toHaveProperty("plugins.entries.telegram");
+		expect(patch).not.toHaveProperty("session.dmScope");
+	});
+
+	test("does not disable independently configured Hermes platforms on unlink", () => {
+		expect(buildHermesManagedChannelsPatch({}, null)).toEqual({});
+	});
+});
 
 let root: string;
 let home: string;

@@ -99,7 +99,7 @@ import {
 } from "./manifest-secrets";
 import type { RuntimeConvergenceResult } from "./manifest-shared";
 import { reconcileHostedSkillProjection } from "./manifest-skills-apply";
-import type { RuntimeManifestLoad } from "./manifest-source";
+import { loadCommittedRuntimeManifest, type RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
 import { removeLegacyManagedOpenClawProviderPlugin } from "./openclaw-legacy-provider-plugin";
 import type { RuntimePaths } from "./paths";
@@ -152,6 +152,7 @@ interface RuntimeConvergenceContext {
 	egressProfileBundle: ReturnType<typeof buildEgressProfileBundle>;
 	plannedEgressProfileBundlePath: string | null;
 	appliedState: ReturnType<typeof readRuntimeAppliedState>;
+	previousChannelManifest: RuntimeManifest | null;
 	previousProjectedProviderIds: Record<string, string[]>;
 	providerOwnership: ProviderOwnership;
 	connectionPlans: Record<string, PreparedConnectionProviderTransfers>;
@@ -280,6 +281,15 @@ function initializeRuntimeConvergence(
 		? paths.egressProfileBundle
 		: null;
 	const appliedState = readRuntimeAppliedState(paths);
+	// Reuse committed content authority, never provider names, to authorize channel removal.
+	const committed = appliedState ? loadCommittedRuntimeManifest(paths, applyContext) : null;
+	const previousChannelManifest =
+		committed &&
+		"manifest" in committed &&
+		committed.manifest.instanceId === manifest.instanceId &&
+		committed.manifest.deploymentId === manifest.deploymentId
+			? committed.manifest
+			: null;
 	const providerOwnership = readProviderOwnership(
 		paths,
 		manifest.instanceId,
@@ -344,6 +354,7 @@ function initializeRuntimeConvergence(
 			egressProfileBundle,
 			plannedEgressProfileBundlePath,
 			appliedState,
+			previousChannelManifest,
 			previousProjectedProviderIds,
 			providerOwnership,
 			connectionPlans: {},
@@ -1057,6 +1068,7 @@ function applyRuntimeEntryProjections(
 					workspaceRoot,
 					hermesWhatsAppAuthDir,
 					hermesConfig,
+					context.previousChannelManifest,
 				);
 			} catch (error) {
 				state.installErrors.push(

@@ -1,5 +1,4 @@
 import { join } from "node:path";
-import { isClawdiManagedProviderId } from "@clawdi/shared";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import {
@@ -300,19 +299,6 @@ function mergeProviderDeletes(
 	container.providers = providers;
 	if (runtime === "openclaw") {
 		patch.models = container;
-		if (deletedProviderIds.some(isClawdiManagedProviderId)) {
-			const agents = { ...(recordValue(patch.agents) ?? {}) };
-			const defaults = { ...(recordValue(agents.defaults) ?? {}) };
-			defaults.memorySearch = null;
-			agents.defaults = defaults;
-			patch.agents = agents;
-			const memory = { ...(recordValue(patch.memory) ?? {}) };
-			const search = { ...(recordValue(memory.search) ?? {}) };
-			if (!Object.hasOwn(search, "provider")) search.provider = null;
-			if (!Object.hasOwn(search, "model")) search.model = null;
-			memory.search = search;
-			patch.memory = memory;
-		}
 	}
 	return runtime === "openclaw"
 		? `${JSON.stringify(patch, null, 2)}\n`
