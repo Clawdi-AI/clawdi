@@ -658,7 +658,9 @@ before requesting again; never delete a key to request an update.
 
 The request migration expires every pre-cutover pending link, preserving saved values and
 history. Request snapshots are mandatory on new inserts. Deploy the current backend and
-page together; users with expired links need a fresh request.
+page together; users with expired links need a fresh request. Downgrade also expires
+all unsupplied links and folds saved extras into historical `fields`, retaining their
+references and creation baselines for old readers and a subsequent upgrade.
 
 After supply in a managed runtime or configured connected macOS/Linux Agent, verify `vault_request_status` and inspect only
 `.clawdi/vaults/index.json` under the native workspace. Match the Vault ID, section and field

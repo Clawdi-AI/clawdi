@@ -29,6 +29,8 @@ export function VaultRequestPage() {
 	const [importText, setImportText] = useState("");
 	const [preview, setPreview] = useState<{ entries: ParsedKey[]; updateFields: string[] }>();
 	const [selectionError, setSelectionError] = useState("");
+	const [selectionRetryable, setSelectionRetryable] = useState(false);
+	const selectionGeneration = useRef(0);
 	const [importBusy, setImportBusy] = useState(false);
 	const [updates, setUpdates] = useState<string[]>([]);
 	const [selectionAttempt, setSelectionAttempt] = useState(0);
@@ -102,10 +104,21 @@ export function VaultRequestPage() {
 		return () => controller.abort();
 	}, [attempt]);
 
+	function invalidateSelection() {
+		selectionGeneration.current++;
+		setSelectionReady(false);
+		setUpdates([]);
+		setSelectionError("");
+		setSelectionRetryable(false);
+	}
+
 	useEffect(() => {
 		if (phase !== "ready") return;
 		const fields: string[] = JSON.parse(names);
 		setSelectionReady(false);
+		setUpdates([]);
+		setSelectionError("");
+		setSelectionRetryable(false);
 		if (
 			!fields.length ||
 			fields.some((name) => !REQUEST_FIELD_NAME_RE.test(name)) ||
@@ -117,30 +130,51 @@ export function VaultRequestPage() {
 			return;
 		}
 		const controller = new AbortController();
-		void client
-			.POST("/v1/vault/requests/inspect", {
-				body: { token: token.current, fields },
-				cache: "no-store",
-				referrerPolicy: "no-referrer",
-				signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
-			})
-			.then(({ data }) => {
-				if (controller.signal.aborted) return;
-				if (!data) {
-					setSelectionError(
-						"Selected fields changed or are reserved. Remove added fields or ask your agent for a new link.",
-					);
-					return;
-				}
-				setUpdates(data.update_fields);
-				setSelectionReady(true);
-				setSelectionError("");
-			})
-			.catch(() => {
-				if (!controller.signal.aborted)
-					setSelectionError("Could not check selected fields. Try again.");
-			});
-		return () => controller.abort();
+		const generation = selectionGeneration.current;
+		const timer = window.setTimeout(() => {
+			void client
+				.POST("/v1/vault/requests/inspect", {
+					body: { token: token.current, fields },
+					cache: "no-store",
+					referrerPolicy: "no-referrer",
+					signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
+				})
+				.then(({ data, response }) => {
+					if (controller.signal.aborted || generation !== selectionGeneration.current) return;
+					if (data) {
+						setUpdates(data.update_fields);
+						setSelectionReady(true);
+					} else if (response.status === 410) {
+						setRows([]);
+						setImportText("");
+						setPreview(undefined);
+						token.current = "";
+						setPhase("unavailable");
+					} else if (response.status === 409) {
+						setSelectionError(
+							"Selected fields changed or are reserved. Remove added fields or ask your agent for a new link.",
+						);
+					} else if (response.status === 422) {
+						setSelectionError(
+							"Selected field names are invalid. Use distinct names and at most 32 fields.",
+						);
+					} else {
+						setSelectionError(
+							"Could not check selected fields. The server is unavailable. Try again.",
+						);
+						setSelectionRetryable(true);
+					}
+				})
+				.catch(() => {
+					if (controller.signal.aborted || generation !== selectionGeneration.current) return;
+					setSelectionError("Could not connect to check selected fields. Try again.");
+					setSelectionRetryable(true);
+				});
+		}, 300);
+		return () => {
+			window.clearTimeout(timer);
+			controller.abort();
+		};
 	}, [names, phase, selectionAttempt]);
 
 	async function previewImport() {
@@ -163,14 +197,26 @@ export function VaultRequestPage() {
 		}
 		setImportBusy(true);
 		try {
-			const { data } = await client.POST("/v1/vault/requests/inspect", {
+			const { data, response } = await client.POST("/v1/vault/requests/inspect", {
 				body: { token: token.current, fields },
 				cache: "no-store",
 				referrerPolicy: "no-referrer",
 				signal: AbortSignal.timeout(20000),
 			});
 			if (!data) {
-				setError("Could not preview these fields. A selected field changed or is reserved.");
+				if (response.status === 410) {
+					setRows([]);
+					setImportText("");
+					setPreview(undefined);
+					token.current = "";
+					setPhase("unavailable");
+				} else if (response.status === 409) {
+					setError("Could not preview these fields. A selected field changed or is reserved.");
+				} else if (response.status === 422) {
+					setError("Selected field names are invalid. Use distinct names and at most 32 fields.");
+				} else {
+					setError("Could not preview these fields. The server is unavailable. Try again.");
+				}
 				return;
 			}
 			setPreview({ entries: parsed.entries, updateFields: data.update_fields });
@@ -197,7 +243,7 @@ export function VaultRequestPage() {
 					})),
 			];
 		});
-		setSelectionReady(false);
+		invalidateSelection();
 		setSelectionAttempt((value) => value + 1);
 		setPreview(undefined);
 		setImportText("");
@@ -227,7 +273,7 @@ export function VaultRequestPage() {
 				setPhase("done");
 			} else if (response.status === 409) {
 				setPhase("ready");
-				setSelectionReady(false);
+				invalidateSelection();
 			} else if (response.status === 410) {
 				setRows([]);
 				setImportText("");
@@ -351,7 +397,7 @@ export function VaultRequestPage() {
 													pattern="[A-Za-z0-9_.\-]+"
 													className="font-mono"
 													onChange={(event) => {
-														setSelectionReady(false);
+														invalidateSelection();
 														setRows((current) =>
 															current.map((row) =>
 																row.id === id ? { ...row, name: event.target.value } : row,
@@ -366,7 +412,7 @@ export function VaultRequestPage() {
 													variant="ghost"
 													aria-label={`Remove ${name || "field"}`}
 													onClick={() => {
-														setSelectionReady(false);
+														invalidateSelection();
 														setRows((current) => current.filter((row) => row.id !== id));
 													}}
 												>
@@ -405,7 +451,7 @@ export function VaultRequestPage() {
 										variant="outline"
 										disabled={rows.length >= 32 || importOpen}
 										onClick={() => {
-											setSelectionReady(false);
+											invalidateSelection();
 											setRows((current) => [
 												...current,
 												{ id: crypto.randomUUID(), name: "", value: "", required: false },
@@ -517,13 +563,18 @@ export function VaultRequestPage() {
 							{(error || selectionError) && (
 								<p role="alert" className="text-sm text-destructive">
 									{error || selectionError}
-									<Button
-										type="button"
-										variant="ghost"
-										onClick={() => setSelectionAttempt((value) => value + 1)}
-									>
-										Retry check
-									</Button>
+									{!error && selectionRetryable && (
+										<Button
+											type="button"
+											variant="ghost"
+											onClick={() => {
+												invalidateSelection();
+												setSelectionAttempt((value) => value + 1);
+											}}
+										>
+											Retry check
+										</Button>
+									)}
 								</p>
 							)}
 							<div className="flex justify-end">

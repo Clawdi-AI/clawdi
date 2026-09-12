@@ -710,6 +710,7 @@ async def test_request_migration_expires_pending_and_requires_explicit_snapshots
         connection.execute(
             text(
                 "CREATE TEMP TABLE vault_secret_requests (id integer, "
+                "fields jsonb NOT NULL DEFAULT '[\"NEW\"]'::jsonb, "
                 "expires_at timestamptz DEFAULT now() + interval '1 hour', "
                 "supplied_at timestamptz) ON COMMIT DROP"
             )
@@ -757,11 +758,76 @@ async def test_request_migration_expires_pending_and_requires_explicit_snapshots
         assert connection.execute(
             text("SELECT field_baselines FROM vault_secret_requests WHERE id = 3")
         ).scalar_one() == {"NEW": None}
+        # Model requests actually created and supplied after the new upgrade.
+        connection.execute(
+            text(
+                "INSERT INTO vault_secret_requests "
+                "(id, supplied_at, field_baselines, extra_fields) "
+                "VALUES (:id, CASE WHEN :supplied THEN now() END, "
+                "CAST(:baseline AS jsonb), CAST(:extras AS jsonb))"
+            ),
+            [
+                {
+                    "id": 4,
+                    "supplied": True,
+                    "baseline": '{"NEW":null,"existing.extra":"fingerprint","UNSELECTED":"opaque"}',
+                    "extras": '["existing.extra","new-key"]',
+                },
+                {
+                    "id": 5,
+                    "supplied": False,
+                    "baseline": '{"NEW":null,"UNSELECTED":"opaque"}',
+                    "extras": "[]",
+                },
+                {"id": 6, "supplied": False, "baseline": '{"NEW":null}', "extras": "[]"},
+            ],
+        )
+        supplied_times = connection.execute(
+            text("SELECT expires_at, supplied_at FROM vault_secret_requests WHERE id = 4")
+        ).one()
+        extras_migration.downgrade()
+        history = connection.execute(
+            text(
+                "SELECT fields, field_baselines, expires_at, supplied_at "
+                "FROM vault_secret_requests WHERE id = 4"
+            )
+        ).one()
+        # The old service builds supplied references from fields and update badges
+        # from baselines. Both retain the exact saved set, without unselected names.
+        assert history.fields == ["NEW", "existing.extra", "new-key"]
+        assert history.field_baselines == {
+            "NEW": None,
+            "existing.extra": "fingerprint",
+            "new-key": None,
+        }
+        assert (history.expires_at, history.supplied_at) == supplied_times
+        assert connection.execute(
+            text(
+                "SELECT id, expires_at > now(), conflicted_at IS NOT NULL "
+                "FROM vault_secret_requests WHERE supplied_at IS NULL ORDER BY id"
+            )
+        ).all() == [(1, False, True), (3, False, True), (5, False, True), (6, False, True)]
+        extras_migration.upgrade()
+        assert (
+            connection.execute(
+                text(
+                    "SELECT fields, field_baselines, expires_at, supplied_at "
+                    "FROM vault_secret_requests WHERE id = 4"
+                )
+            ).one()
+            == history
+        )
+        assert (
+            connection.execute(
+                text("SELECT extra_fields FROM vault_secret_requests WHERE id = 4")
+            ).scalar_one()
+            == []
+        )
         extras_migration.downgrade()
         migration.downgrade()
         assert connection.execute(
             text("SELECT id, expires_at > now() FROM vault_secret_requests ORDER BY id")
-        ).all() == [(1, False), (2, True), (3, False)]
+        ).all() == [(1, False), (2, True), (3, False), (4, True), (5, False), (6, False)]
         assert (
             connection.execute(
                 text("SELECT expires_at, supplied_at FROM vault_secret_requests WHERE id = 2")
