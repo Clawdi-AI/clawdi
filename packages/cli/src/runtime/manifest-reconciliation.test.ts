@@ -74,7 +74,12 @@ import {
 import { parseHostedRuntimeBundleV2, type RuntimeManifestLoad } from "./manifest-source";
 import { applyOpenClawHostedChannelPatch } from "./openclaw-provider-config";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
-import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
+import {
+	buildRuntimeRunConfig,
+	type RuntimeRunSettings,
+	runtimeRunConfigPath,
+	writeRuntimeRunConfig,
+} from "./run-config";
 import {
 	canonicalSecretRefSchema,
 	normalizeSecretValues,
@@ -5264,4 +5269,55 @@ test("component proof requires committed configuration and a stable live invocat
 			async () => true,
 		),
 	).toBeUndefined();
+});
+
+test("Hermes component proof accepts inline credentials and detects their mutation", async () => {
+	const paths = tempRuntimePaths();
+	const load = normalizeHostedBundleFixture(hostedHermesManifestFixture({ generation: 1 }), {
+		...TEST_HOSTED_SECRET_VALUES,
+		"secret://runtime/hermes/dashboard-password": "inline-password",
+		"secret://runtime/hermes/dashboard-session-secret": "inline-session",
+	});
+	const manifest = load.manifest;
+	mkdirSync(paths.systemdUserRoot, { recursive: true });
+	writeFileSync(
+		join(paths.systemdUserRoot, "clawdi-hermes-dashboard.service"),
+		`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Unit]\nDescription=Hermes dashboard\n[Service]\nExecStart=/home/clawdi/.local/bin/hermes dashboard\nEnvironment=HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=inline-password\nEnvironment=HERMES_DASHBOARD_BASIC_AUTH_SECRET=inline-session\n`,
+	);
+	const runConfig = buildRuntimeRunConfig({
+		runtime: "hermes",
+		service: "dashboard",
+		enabled: true,
+		generatedAt: "2026-08-05T00:00:00.000Z",
+		generation: 1,
+		instanceId: manifest.instanceId,
+		commandPath: "/home/clawdi/.local/bin/hermes",
+		appRoot: null,
+		workspaceRoot: paths.userHome,
+		secretEnv: {
+			HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "secret://runtime/hermes/dashboard-password",
+			HERMES_DASHBOARD_BASIC_AUTH_SECRET: "secret://runtime/hermes/dashboard-session-secret",
+		},
+	});
+	expect(runConfig.secretFilePath).toBeNull();
+	ensureRuntimeStateDirs(paths);
+	writeRuntimeRunConfig(runConfig, paths);
+	const activated = Object.fromEntries(readSystemdUnitSnapshot(paths).user);
+	const serviceState = { invocationId: "a".repeat(32), configurationRevision: "1".repeat(64) };
+	const readServiceState = (_scope: "system" | "user", _unit: string) => serviceState;
+	const activation = captureComponentActivations(load, paths, activated, readServiceState);
+	expect(activation).toHaveLength(1);
+	const applied = {
+		schemaVersion: "clawdi.runtimeAppliedState.v2" as const,
+		appliedAt: new Date().toISOString(), instanceId: manifest.instanceId,
+		sourceRevision: "b".repeat(64), etag: `"sha256:${"b".repeat(64)}"`, generation: 1,
+		manifestETag: '"fixture-manifest"', applyReceiptId: "fixture-apply-receipt", bootNonce: "fixture-boot-nonce",
+		contentIdentity: { sourcePath: "fixture", sha256: "c".repeat(64) }, activated,
+		providerIds: [], projectedProviderIds: {},
+	};
+	writeRuntimeAppliedState(applied, paths);
+	persistComponentActivations(load, paths, readServiceState);
+	expect((await observeComponents(paths, applied, readServiceState, async () => true))?.entries[0]?.status).toBe("ok");
+	writeFileSync(join(paths.systemdUserRoot, "clawdi-hermes-dashboard.service"), "mutated-inline-credential");
+	expect((await observeComponents(paths, applied, readServiceState, async () => true))?.entries[0]?.status).toBe("unknown");
 });
