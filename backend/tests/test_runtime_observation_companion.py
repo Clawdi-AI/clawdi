@@ -3021,6 +3021,7 @@ def _legacy_runtime_observed(value: RuntimeObservationEventV2) -> dict:
         "agentPlugins",
         "skills",
         "userActivity",
+        "components",
     ):
         payload.pop(field)
     return payload
@@ -3093,9 +3094,19 @@ async def test_v1_heartbeat_is_byte_frozen_and_has_no_companion_side_effects(
                     "runtime_observed": _payload().model_dump(mode="json", by_alias=True),
                 },
             )
+            components_on_legacy = await client.post(
+                f"/v1/agents/{environment.id}/sync-heartbeat",
+                json={
+                    "runtime_observed": {
+                        **_legacy_runtime_observed(_payload()),
+                        "components": {"schemaVersion": 1, "entries": []},
+                    }
+                },
+            )
     finally:
         app.dependency_overrides.clear()
 
+    assert components_on_legacy.status_code == 422
     assert legacy.status_code == 204
     assert legacy.content == b""
     assert strict_v2_on_v1.status_code == 422

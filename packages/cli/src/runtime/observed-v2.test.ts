@@ -8,6 +8,7 @@ import {
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
 } from "./applied-state";
+import { HostedRuntimeHeartbeatSession } from "./heartbeat-observation";
 import { readHostedRuntimeObserved, runtimeComponentIsReady } from "./observed";
 import { getRuntimePaths } from "./paths";
 import { buildRuntimeBootStatus, writeRuntimeBootStatus, writeRuntimeWatchStatus } from "./state";
@@ -597,6 +598,8 @@ test("unknown component evidence downgrades healthy aggregate without replacing 
 	const paths = healthyAppliedRuntimePaths();
 	const applied = readRuntimeAppliedState(paths);
 	if (!applied) throw new Error("Expected applied fixture");
+	applied.etag = `"sha256:${applied.sourceRevision}"`;
+	writeRuntimeAppliedState(applied, paths);
 	writeFileSync(
 		join(dirname(paths.appliedState), "component-activations.json"),
 		JSON.stringify({
@@ -612,12 +615,20 @@ test("unknown component evidence downgrades healthy aggregate without replacing 
 			],
 		}),
 	);
-	const unavailable = await readHostedRuntimeObserved(paths);
+	expect(await readHostedRuntimeObserved(paths)).not.toHaveProperty("components");
+	const unavailable = await readHostedRuntimeObserved(paths, { includeComponents: true });
 	expect(unavailable?.components?.entries[0]?.status).toBe("unknown");
 	expect(unavailable?.status).toBe("unknown");
+	const companion = new HostedRuntimeHeartbeatSession({
+		environmentId: "fixture-component",
+		paths,
+	});
+	expect((await companion.nextEvent())?.event.components?.entries[0]?.status).toBe("unknown");
 	writeFileSync(
 		paths.runtimeWatchStatus,
 		JSON.stringify({ event: { status: "error", error: "required apply failed" } }),
 	);
-	expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+	expect((await readHostedRuntimeObserved(paths, { includeComponents: true }))?.status).toBe(
+		"error",
+	);
 });

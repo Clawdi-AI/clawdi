@@ -6910,7 +6910,6 @@ export interface components {
             applied: components["schemas"]["HostedRuntimeObservedAppliedV2"] | null;
             boot: components["schemas"]["HostedRuntimeObservedBootV1"] | null;
             cli: components["schemas"]["HostedRuntimeObservedCliV1"] | null;
-            components?: components["schemas"]["HostedRuntimeObservedComponentsV1"] | null;
             systemd?: components["schemas"]["HostedRuntimeObservedSystemdV1"] | null;
             supervisor?: components["schemas"]["HostedRuntimeObservedSupervisorV1"] | null;
             /** Providers */

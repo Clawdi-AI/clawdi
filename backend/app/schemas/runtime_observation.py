@@ -11,7 +11,6 @@ from app.schemas.runtime_observed import (
     HostedRuntimeObservedAppliedV2,
     HostedRuntimeObservedBootV1,
     HostedRuntimeObservedCliV1,
-    HostedRuntimeObservedComponentsV1,
     HostedRuntimeObservedProviderPayload,
     HostedRuntimeObservedSupervisorV1,
     HostedRuntimeObservedSystemdV1,
@@ -30,6 +29,30 @@ RuntimeObservationIngestOutcome = Literal[
 
 class RuntimeObservationRequestModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class HostedRuntimeObservedComponentV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    component: Literal["files", "hermes-ui", "openclaw-ui"]
+    status: Literal["ok", "unknown"]
+    config_revision: str = Field(alias="configRevision", pattern=r"^[0-9a-f]{64}$")
+    access_revision: str = Field(alias="accessRevision", pattern=r"^[0-9a-f]{64}$")
+    invocation_id: str = Field(alias="invocationId", pattern=r"^[0-9a-f]{32}$")
+
+
+class HostedRuntimeObservedComponentsV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    schema_version: Literal[1] = Field(alias="schemaVersion")
+    entries: list[HostedRuntimeObservedComponentV1] = Field(max_length=3)
+
+    @model_validator(mode="after")
+    def validate_unique_components(self) -> HostedRuntimeObservedComponentsV1:
+        names = [entry.component for entry in self.entries]
+        if len(set(names)) != len(names):
+            raise ValueError("component proofs must have unique names")
+        return self
 
 
 AgentPluginObservedStatus = Literal["installed", "failed", "unknown"]

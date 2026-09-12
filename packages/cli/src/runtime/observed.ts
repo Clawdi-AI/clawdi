@@ -33,7 +33,7 @@ type ObservedStatus = "ok" | "error" | "unknown";
 export type HostedRuntimeObserved = components["schemas"]["HostedRuntimeObservedV2"] &
 	Pick<
 		components["schemas"]["RuntimeObservationEventV2"],
-		"agentPlugins" | "userActivity" | "skills"
+		"agentPlugins" | "userActivity" | "skills" | "components"
 	>;
 type HostedRuntimeObservedBoot = components["schemas"]["HostedRuntimeObservedBootV1"];
 type HostedRuntimeObservedCli = components["schemas"]["HostedRuntimeObservedCliV1"];
@@ -59,6 +59,7 @@ export async function readHostedRuntimeObserved(
 		includeAgentPlugins?: boolean;
 		includeSkills?: boolean;
 		includeUserActivity?: boolean;
+		includeComponents?: boolean;
 	} = {},
 ): Promise<HostedRuntimeObserved | null> {
 	if (paths.mode !== "hosted") return null;
@@ -124,7 +125,7 @@ export async function readHostedRuntimeObserved(
 		const userActivity = observedUserActivity(boot.status, observed.reportedAt);
 		if (userActivity) observed.userActivity = userActivity;
 	}
-	if (appliedState) {
+	if (appliedState && options.includeComponents) {
 		const proof = await observeComponents(
 			paths,
 			appliedState,
