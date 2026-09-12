@@ -5284,7 +5284,7 @@ test("Hermes component proof accepts inline credentials and detects their mutati
 		join(paths.systemdUserRoot, "clawdi-hermes-dashboard.service"),
 		`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Unit]\nDescription=Hermes dashboard\n[Service]\nExecStart=/home/clawdi/.local/bin/hermes dashboard\nEnvironment=HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=inline-password\nEnvironment=HERMES_DASHBOARD_BASIC_AUTH_SECRET=inline-session\n`,
 	);
-	const runConfig = buildRuntimeRunConfig({
+	const generatedRunConfig = buildRuntimeRunConfig({
 		runtime: "hermes",
 		service: "dashboard",
 		enabled: true,
@@ -5299,9 +5299,9 @@ test("Hermes component proof accepts inline credentials and detects their mutati
 			HERMES_DASHBOARD_BASIC_AUTH_SECRET: "secret://runtime/hermes/dashboard-session-secret",
 		},
 	});
-	expect(runConfig.secretFilePath).toBeNull();
+	expect(generatedRunConfig.secretFilePath).toBeNull();
 	ensureRuntimeStateDirs(paths);
-	writeRuntimeRunConfig(runConfig, paths);
+	writeRuntimeRunConfig(generatedRunConfig, paths);
 	const activated = Object.fromEntries(readSystemdUnitSnapshot(paths).user);
 	const serviceState = { invocationId: "a".repeat(32), configurationRevision: "1".repeat(64) };
 	const readServiceState = (_scope: "system" | "user", _unit: string) => serviceState;
@@ -5318,6 +5318,14 @@ test("Hermes component proof accepts inline credentials and detects their mutati
 	writeRuntimeAppliedState(applied, paths);
 	persistComponentActivations(load, paths, readServiceState);
 	expect((await observeComponents(paths, applied, readServiceState, async () => true))?.entries[0]?.status).toBe("ok");
-	writeFileSync(join(paths.systemdUserRoot, "clawdi-hermes-dashboard.service"), "mutated-inline-credential");
+	const unitPath = join(paths.systemdUserRoot, "clawdi-hermes-dashboard.service");
+	const unit = readFileSync(unitPath, "utf8");
+	writeFileSync(unitPath, unit.replace("inline-password", "mutated-password"));
+	expect((await observeComponents(paths, applied, readServiceState, async () => true))?.entries[0]?.status).toBe("unknown");
+	writeFileSync(unitPath, unit);
+	expect((await observeComponents(paths, applied, readServiceState, async () => true))?.entries[0]?.status).toBe("ok");
+	const runConfigPath = runtimeRunConfigPath("hermes", paths, "dashboard");
+	const runConfigBytes = readFileSync(runConfigPath, "utf8");
+	writeFileSync(runConfigPath, runConfigBytes.replace('"generation": 1', '"generation": 2'));
 	expect((await observeComponents(paths, applied, readServiceState, async () => true))?.entries[0]?.status).toBe("unknown");
 });
