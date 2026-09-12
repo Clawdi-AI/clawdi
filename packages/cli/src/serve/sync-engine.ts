@@ -105,6 +105,7 @@ import {
 	type SkillServerEvent,
 	type SseReconnectInfo,
 } from "./sse-client";
+import { SyncModule, type SyncScope } from "./sync-module";
 import { watchSkills } from "./watcher";
 
 export function isSkillSyncServerEvent(event: ServerEvent): event is SkillServerEvent {
@@ -423,13 +424,14 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	};
 
 	let authFailureFired = false;
+	let shutdownHeartbeat: Promise<unknown> | undefined;
 	const triggerAuthFailureAbort = (origin: string): void => {
 		if (authFailureFired) return;
 		authFailureFired = true;
 		vaultSync?.revoke();
 		log.error("engine.auth_failed", { origin });
 		health.set("transport", "auth", "auth_revoked: api key rejected by server");
-		void shutdownApi
+		shutdownHeartbeat = shutdownApi
 			.POST("/v1/agents/{agent_id}/sync-heartbeat", {
 				params: { path: { agent_id: opts.environmentId } },
 				body: {
@@ -474,81 +476,102 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			} else log.info("engine.vault_sync", { message });
 		},
 	});
-	const reconcileVaultFiles = async (force = false): Promise<void> => {
-		try {
-			await vaultSync?.reconcile(force);
-		} catch {
-			health.set(
-				"projection",
-				"vault_files",
-				"Vault reconciliation failed; retrying on the next heartbeat.",
-			);
-		}
-	};
-	const registration = readEnvironmentRegistration(opts.adapter.agentType);
-	let agentIdentity: components["schemas"]["AgentResponse"];
 	try {
-		agentIdentity = unwrap(
-			await api.GET("/v1/agents/{agent_id}", {
-				params: { path: { agent_id: opts.environmentId } },
-			}),
-		);
-	} catch (error) {
-		if (handleStartupFailure(error, "boot_agent_fetch")) return;
-		throw error;
-	}
-	if (registration && registration.id !== opts.environmentId) {
-		stopDisconnectedAgent(
-			"The local Agent registration changed while background sync was starting. Restart Clawdi after the current setup finishes.",
-		);
-		return;
-	}
-	const userId = getAuth()?.userId;
-	if (registration?.id === opts.environmentId && !registration.userId && userId) {
-		const bound = bindEnvironmentRegistrationUser(
-			opts.adapter.agentType,
-			opts.environmentId,
-			userId,
-		);
-		if (!bound) {
+		const reconcileVaultFiles = async (force = false): Promise<void> => {
+			try {
+				await vaultSync?.reconcile(force);
+			} catch {
+				health.set(
+					"projection",
+					"vault_files",
+					"Vault reconciliation failed; retrying on the next heartbeat.",
+				);
+			}
+		};
+		const registration = readEnvironmentRegistration(opts.adapter.agentType);
+		try {
+			unwrap(
+				await api.GET("/v1/agents/{agent_id}", {
+					params: { path: { agent_id: opts.environmentId } },
+				}),
+			);
+		} catch (error) {
+			if (handleStartupFailure(error, "boot_agent_fetch")) return;
+			throw error;
+		}
+		if (registration && registration.id !== opts.environmentId) {
 			stopDisconnectedAgent(
 				"The local Agent registration changed while background sync was starting. Restart Clawdi after the current setup finishes.",
 			);
 			return;
 		}
-	}
-	if (opts.abort.aborted) return;
+		const userId = getAuth()?.userId;
+		if (registration?.id === opts.environmentId && !registration.userId && userId) {
+			const bound = bindEnvironmentRegistrationUser(
+				opts.adapter.agentType,
+				opts.environmentId,
+				userId,
+			);
+			if (!bound) {
+				stopDisconnectedAgent(
+					"The local Agent registration changed while background sync was starting. Restart Clawdi after the current setup finishes.",
+				);
+				return;
+			}
+		}
+		if (opts.abort.aborted) return;
 
-	const common: CommonSyncRuntime = {
-		api,
-		queue,
-		health,
-		inFlightSessionHash,
-		stopForDisconnectedAgent: stopDisconnectedAgent,
-		triggerAuthFailureAbort,
-		initialDefaultProjectId: agentIdentity.default_project_id,
-		setLastSeenRevision: (revision) => {
-			lastSeenRevision = revision;
-		},
-	};
-	let sessionSync: PreparedSessionSync | null;
-	let skillSync: PreparedSkillSync | null;
-	try {
-		sessionSync = sessions ? await prepareSessionSync(opts, sessions, common) : null;
-		skillSync = skills ? await prepareSkillSync(opts, skills, common) : null;
-	} catch (error) {
-		if (handleStartupFailure(error, "boot_sync_prepare")) return;
-		throw error;
-	}
-	if (opts.abort.aborted) return;
-	const moduleTasks: Promise<void>[] = [];
-	if (sessions && sessionSync) moduleTasks.push(runSessionSync(opts, sessions, sessionSync));
-	if (skills && skillSync) moduleTasks.push(runSkillSync(opts, skills, skillSync));
+		const common: Omit<CommonSyncRuntime, "scope"> = {
+			api,
+			queue,
+			health,
+			inFlightSessionHash,
+			stopForDisconnectedAgent: stopDisconnectedAgent,
+			triggerAuthFailureAbort,
+			setLastSeenRevision: (revision) => {
+				lastSeenRevision = revision;
+			},
+		};
+		const moduleOptions = (name: string) => ({
+			signal: opts.abort,
+			changed: (state: import("./sync-module").ModuleState, error?: unknown) => {
+				queue.notifyItemWaiters();
+				if (state === "ready") health.clear("projection", `module:${name}`);
+				else if (state !== "unsupported" && state !== "stopped")
+					health.set(
+						"projection",
+						`module:${name}`,
+						`${name} ${state}${error ? `: ${toErrorMessage(error)}` : ""}`,
+					);
+			},
+			failed: (error: unknown) => {
+				if (isAuthFailure(error)) triggerAuthFailureAbort(`${name}_sync`);
+			},
+		});
+		const attemptCommon = (scope: SyncScope): CommonSyncRuntime => ({
+			...common,
+			api: new ApiClient({ abortSignal: scope.signal }),
+			scope,
+		});
+		const sessionSlot = new SyncModule<PreparedSessionSync>({
+			...moduleOptions("sessions"),
+			prepare: sessions
+				? (scope) =>
+						prepareSessionSync({ ...opts, abort: scope.signal }, sessions, attemptCommon(scope))
+				: null,
+		});
+		const skillSlot = new SyncModule<PreparedSkillSync>({
+			...moduleOptions("skills"),
+			prepare: skills
+				? (scope) =>
+						prepareSkillSync({ ...opts, abort: scope.signal }, skills, attemptCommon(scope))
+				: null,
+		});
+		const moduleTasks = [sessionSlot.run(), skillSlot.run()];
 
-	try {
-		await Promise.all([
+		const tasks = [
 			...moduleTasks,
-			...(skillSync || vaultSync.enabled
+			...(skills || vaultSync.enabled
 				? [
 						consumeSse({
 							apiUrl: api.baseUrl,
@@ -562,7 +585,12 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 									event.environment_id === opts.environmentId
 								)
 									void reconcileVaultFiles();
-								await skillSync?.onEvent(event);
+								const lease = skillSlot.acquire();
+								try {
+									await lease?.binding.onEvent(event);
+								} finally {
+									lease?.release();
+								}
 							},
 							onConnect: () => {
 								health.clear("transport", "sse");
@@ -573,7 +601,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 								if (error !== null) health.set("transport", "sse", error);
 							},
 							onAuthFailure: () => {
-								if (skillSync) triggerAuthFailureAbort("sse_channel");
+								if (skills) triggerAuthFailureAbort("sse_channel");
 								else {
 									// A Vault-only stream may lack skills:read while session/Vault grants remain valid.
 									health.set(
@@ -591,12 +619,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 				opts,
 				api,
 				queue,
-				{
-					sessions: sessionSync?.queueModule ?? null,
-					skills: skillSync?.queueModule ?? null,
-				},
-				skillSync?.lastPushedHash ?? new Map(),
-				sessionSync?.lastPushedHash ?? new Map(),
+				{ sessions: sessionSlot, skills: skillSlot },
 				inFlightSessionHash,
 				health,
 				triggerAuthFailureAbort,
@@ -612,22 +635,31 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 				}),
 				stopDisconnectedAgent,
 				reconcileVaultFiles,
+				triggerAuthFailureAbort,
 			),
-		]);
+		];
+		try {
+			await Promise.all(tasks);
+		} finally {
+			opts.abortController.abort();
+			await Promise.allSettled(tasks);
+		}
+		log.info("engine.stop", {});
 	} finally {
+		await queue.flushPersist();
 		await vaultSync.finish();
+		await shutdownHeartbeat;
 	}
-	log.info("engine.stop", {});
 }
 
 interface CommonSyncRuntime {
+	scope: SyncScope;
 	api: ApiClient;
 	queue: RetryQueue;
 	health: SyncHealth;
 	inFlightSessionHash: Map<string, string>;
 	stopForDisconnectedAgent(hint: string): void;
 	triggerAuthFailureAbort(origin: string): void;
-	initialDefaultProjectId: string;
 	setLastSeenRevision(revision: number | null): void;
 }
 
@@ -672,18 +704,26 @@ async function prepareSkillSync(
 	// supervisor restarts — without a project_id we can't tell which
 	// SSE events belong to us.
 	const fetchDefaultProjectId = async (): Promise<string> => {
-		const envInfo = unwrap(
-			await api.GET("/v1/agents/{agent_id}", {
-				params: { path: { agent_id: opts.environmentId } },
-			}),
-		);
-		const projectId = envInfo.default_project_id;
-		if (!projectId) {
-			throw new Error(`environment ${opts.environmentId} has no default_project_id; cannot upload`);
+		try {
+			const envInfo = unwrap(
+				await api.GET("/v1/agents/{agent_id}", {
+					params: { path: { agent_id: opts.environmentId } },
+				}),
+			);
+			const projectId = envInfo.default_project_id;
+			if (!projectId) {
+				throw new Error(
+					`environment ${opts.environmentId} has no default_project_id; cannot upload`,
+				);
+			}
+			return projectId;
+		} catch (error) {
+			const hint = agentLookupStopHint(error);
+			if (hint) stopDisconnectedAgent(hint);
+			throw error;
 		}
-		return projectId;
 	};
-	let defaultProjectId = common.initialDefaultProjectId;
+	const defaultProjectId = await fetchDefaultProjectId();
 	log.info("engine.project_resolved", { default_project_id: defaultProjectId });
 	for (const [skillKey, hash] of readSkillProjectionState(
 		opts.adapter.agentType,
@@ -720,6 +760,10 @@ async function prepareSkillSync(
 			await reconcileProjectSkills();
 			syncHealth.clear("projection", "project_skills");
 		} catch (error) {
+			if (isAuthFailure(error)) {
+				triggerAuthFailureAbort("skill_sync");
+				throw error;
+			}
 			syncHealth.set("projection", "project_skills", `Project Skills: ${toErrorMessage(error)}`);
 			log.warn("engine.project_skills_reconcile_failed", {
 				origin: "startup",
@@ -748,49 +792,11 @@ async function prepareSkillSync(
 				syncHealth.clear("transport", "project_refresh");
 				if (fresh !== defaultProjectId) {
 					log.info("engine.project_changed", { from: defaultProjectId, to: fresh });
-					defaultProjectId = fresh;
-					lastReconciledListingEtag = null;
-					lastPushedHash.clear();
-					for (const [skillKey, hash] of readSkillProjectionState(
-						opts.adapter.agentType,
-						opts.environmentId,
-						fresh,
-					).claims) {
-						lastPushedHash.set(skillKey, hash);
-					}
-					// Re-scan under the new identity fence. A current push
-					// first removes exact old-Project claims, then projects
-					// the latest local bytes; it never redirects a stale item.
-					await reconcileAgentSkillProjection({
-						opts,
-						skills,
-						queue,
-						claims: lastPushedHash,
-						projectId: fresh,
-					}).catch((e) => {
-						log.warn("engine.project_change_rescan_failed", {
-							error: toErrorMessage(e),
-						});
-					});
-					try {
-						const catchUp = await reconcileAgentSkillProjectionListing({
-							api,
-							opts,
-							skills,
-							queue,
-							claims: lastPushedHash,
-							projectId: fresh,
-							previousEtag: null,
-						});
-						if (catchUp.complete) {
-							lastReconciledListingEtag = catchUp.etag;
-							updateLastSeenRevision(catchUp.revision);
-						}
-					} catch (error) {
-						log.warn("engine.project_change_listing_failed", {
-							error: toErrorMessage(error),
-						});
-					}
+					// Retire the captured Project binding before loading another set of claims.
+					common.scope.controller.abort(
+						new Error("Agent Project changed; refreshing sync binding"),
+					);
+					return;
 				}
 				consecutiveFailures = 0;
 			} catch (e) {
@@ -860,7 +866,7 @@ async function prepareSkillSync(
 	// Push side: wire watcher → enqueue.
 	const onLocalChange = (skillKey: string) => {
 		const scanResource = `skill_scan:${skillKey}`;
-		void enqueueIfChanged(opts, skills, queue, lastPushedHash, skillKey, () => defaultProjectId)
+		return enqueueIfChanged(opts, skills, queue, lastPushedHash, skillKey, () => defaultProjectId)
 			.then(() => {
 				syncHealth.clear("push", scanResource);
 			})
@@ -875,7 +881,7 @@ async function prepareSkillSync(
 		inventoryScanRequested = true;
 		if (inventoryScanRunning) return;
 		inventoryScanRunning = true;
-		void (async () => {
+		return (async () => {
 			try {
 				while (inventoryScanRequested && !opts.abort.aborted) {
 					inventoryScanRequested = false;
@@ -889,6 +895,10 @@ async function prepareSkillSync(
 				}
 				syncHealth.clear("push", "skills_scan");
 			} catch (error) {
+				if (isAuthFailure(error)) {
+					triggerAuthFailureAbort("skill_sync");
+					throw error;
+				}
 				syncHealth.set("push", "skills_scan", `skills scan: ${toErrorMessage(error)}`);
 				log.warn("engine.skills_rescan_failed", { error: toErrorMessage(error) });
 			} finally {
@@ -908,6 +918,10 @@ async function prepareSkillSync(
 				await reconcileProjectSkills();
 				syncHealth.clear("projection", "project_skills");
 			} catch (error) {
+				if (isAuthFailure(error)) {
+					triggerAuthFailureAbort("skill_sync");
+					throw error;
+				}
 				syncHealth.set("projection", "project_skills", `Project Skills: ${toErrorMessage(error)}`);
 				log.warn("engine.project_skills_reconcile_failed", { error: toErrorMessage(error) });
 			}
@@ -944,6 +958,10 @@ async function prepareSkillSync(
 			});
 			syncHealth.clear("push", scanResource);
 		} catch (error) {
+			if (isAuthFailure(error)) {
+				triggerAuthFailureAbort("skill_sync");
+				throw error;
+			}
 			syncHealth.set(
 				"push",
 				scanResource,
@@ -961,7 +979,7 @@ async function prepareSkillSync(
 		queueModule: { module: skills, getProjectId: () => defaultProjectId },
 		lastPushedHash,
 		run: async () => {
-			await Promise.all([
+			await common.scope.run([
 				watchSkills({
 					rootDir,
 					abort: opts.abort,
@@ -988,7 +1006,7 @@ async function prepareSkillSync(
 					// without its own SKILL.md) and any nested edit
 					// either reports the wrong key OR is missed entirely
 					// because the dir's own mtime didn't change.
-					listSkillKeys: () => skills.listKeys(),
+					listSkillKeys: () => skills.listKeys({ signal: opts.abort }),
 					onInventoryChanged: onSkillInventoryChanged,
 				}),
 
@@ -1046,16 +1064,6 @@ async function prepareSkillSync(
 	};
 }
 
-async function runSkillSync(
-	_opts: EngineOpts,
-	skills: SkillModule,
-	prepared: PreparedSkillSync,
-): Promise<void> {
-	if (prepared.queueModule.module !== skills)
-		throw new Error("Skills module changed during startup");
-	await prepared.run();
-}
-
 interface PreparedSessionSync {
 	queueModule: { module: SessionModule; protocol: SelectedSessionProtocol };
 	lastPushedHash: Map<string, string>;
@@ -1068,7 +1076,7 @@ async function prepareSessionSync(
 	common: CommonSyncRuntime,
 ): Promise<PreparedSessionSync> {
 	const { api, queue, health, inFlightSessionHash } = common;
-	const protocol = await negotiateSessionProtocol(api, sessions);
+	const protocol = await negotiateSessionProtocol(api, sessions, { signal: opts.abort });
 	const lastPushedSessionHash = loadFencedSessionHashes(api, opts);
 	for (const entry of currentFencedSessionEntries(api, opts)) {
 		if (entry.blocked) {
@@ -1092,6 +1100,7 @@ async function prepareSessionSync(
 				sessions,
 				request,
 				materializeActivity ? new Map() : loadFencedSessionSourceRevisions(api, opts, protocol),
+				{ signal: opts.abort },
 			);
 			const observedResources = new Set<string>();
 			const confirmedSourceRevisions: FencedSessionSourceRevisionUpdate[] = [];
@@ -1125,6 +1134,7 @@ async function prepareSessionSync(
 				confirmedSourceRevisions.push(...result.confirmedSourceRevisions);
 				if (opts.abort.aborted) return;
 			}
+			opts.abort.throwIfAborted();
 			recordRuntimeUserActivityScan({
 				agentType: opts.adapter.agentType,
 				userActivity: scan.userActivity ?? { lastUserInputAt: null, complete: false },
@@ -1174,13 +1184,13 @@ async function prepareSessionSync(
 		queueModule: { module: sessions, protocol },
 		lastPushedHash: lastPushedSessionHash,
 		run: async () => {
-			await Promise.all([
+			await common.scope.run([
 				requestScan(),
 				watchSessions({
 					paths: sessions.watchPaths(),
 					abort: opts.abort,
 					onPathStable: (change) => {
-						if (!opts.abort.aborted) void requestScan(change);
+						if (!opts.abort.aborted) return requestScan(change);
 					},
 					forcePoll: opts.forcePollWatcher,
 				}),
@@ -1193,16 +1203,6 @@ async function prepareSessionSync(
 			]);
 		},
 	};
-}
-
-async function runSessionSync(
-	_opts: EngineOpts,
-	sessions: SessionModule,
-	prepared: PreparedSessionSync,
-): Promise<void> {
-	if (prepared.queueModule.module !== sessions)
-		throw new Error("Sessions module changed during startup");
-	await prepared.run();
 }
 
 function loadFencedSessionHashes(api: ApiClient, opts: EngineOpts): Map<string, string> {
@@ -1454,14 +1454,9 @@ export function isOversizedUploadError(e: unknown): boolean {
 
 async function drainQueueLoop(
 	opts: EngineOpts,
-	api: ApiClient,
+	_api: ApiClient,
 	queue: RetryQueue,
-	modules: {
-		sessions: { module: SessionModule; protocol: SelectedSessionProtocol } | null;
-		skills: { module: SkillModule; getProjectId: () => string } | null;
-	},
-	lastPushedHash: Map<string, string>,
-	lastPushedSessionHash: Map<string, string>,
+	slots: { sessions: SyncModule<PreparedSessionSync>; skills: SyncModule<PreparedSkillSync> },
 	inFlightSessionHash: Map<string, string>,
 	health: SyncHealth,
 	onAuthFailure: (origin: string) => void,
@@ -1494,20 +1489,29 @@ async function drainQueueLoop(
 		queue.markDoneIfVersion(item);
 	};
 	while (!opts.abort.aborted) {
-		const item = queue.peek();
+		const item = queue.peek((item) => {
+			const slot = item.kind === "session_push" ? slots.sessions : slots.skills;
+			return slot.available || slot.state === "unsupported";
+		});
 		if (!item) {
-			await queue.waitForItem(opts.abort, QUEUE_IDLE_WAKEUP_MS);
+			await queue.waitForChange(opts.abort, QUEUE_IDLE_WAKEUP_MS);
 			continue;
 		}
+		const sessionLease = item.kind === "session_push" ? slots.sessions.acquire() : null;
+		const skillLease = item.kind !== "session_push" ? slots.skills.acquire() : null;
+		const signal = sessionLease?.signal ?? skillLease?.signal ?? opts.abort;
 		try {
 			const outcome = await processQueueItem(
-				opts,
-				api,
+				{ ...opts, abort: signal },
+				new ApiClient({ abortSignal: signal }),
 				queue,
 				item,
-				modules,
-				lastPushedHash,
-				lastPushedSessionHash,
+				{
+					sessions: sessionLease?.binding.queueModule ?? null,
+					skills: skillLease?.binding.queueModule ?? null,
+				},
+				skillLease?.binding.lastPushedHash ?? new Map(),
+				sessionLease?.binding.lastPushedHash ?? new Map(),
 				inFlightSessionHash,
 			);
 			if (outcome === "applied" || outcome === "absent") {
@@ -1527,6 +1531,7 @@ async function drainQueueLoop(
 				);
 			}
 		} catch (e) {
+			if (signal.aborted) continue;
 			const msg = toErrorMessage(e);
 			const resource = healthResource(item);
 			// Auth dead → daemon abort, not queue drop. Every
@@ -1645,6 +1650,9 @@ async function drainQueueLoop(
 				health.set("push", resource, msg, true);
 				await sleep(QUEUE_RETRY_INTERVAL_MS, opts.abort);
 			}
+		} finally {
+			sessionLease?.release();
+			skillLease?.release();
 		}
 	}
 }
@@ -1718,6 +1726,7 @@ export async function processQueueItem(
 			).filter((claim) => claim.skill_key === item.skill_key);
 			for (const claim of claims) {
 				await api.deleteAgentSkill(opts.environmentId, item.skill_key, claim.project_id);
+				opts.abort.throwIfAborted();
 				removeSkillProjectionClaim({
 					agentType: opts.adapter.agentType,
 					agentId: opts.environmentId,
@@ -1740,6 +1749,7 @@ export async function processQueueItem(
 			projectId,
 		)) {
 			await api.deleteAgentSkill(opts.environmentId, item.skill_key, staleProjectId);
+			opts.abort.throwIfAborted();
 			removeSkillProjectionClaim({
 				agentType: opts.adapter.agentType,
 				agentId: opts.environmentId,
@@ -1752,6 +1762,7 @@ export async function processQueueItem(
 			// fenced to the stamped old Project, then re-scan so the latest local
 			// state is enqueued for the current Project. Never redirect old bytes.
 			await api.deleteAgentSkill(opts.environmentId, item.skill_key, item.project_id);
+			opts.abort.throwIfAborted();
 			removeSkillProjectionClaim({
 				agentType: opts.adapter.agentType,
 				agentId: opts.environmentId,
@@ -1771,6 +1782,7 @@ export async function processQueueItem(
 		}
 		if (item.kind === "skill_delete") {
 			await api.deleteAgentSkill(opts.environmentId, item.skill_key, item.project_id);
+			opts.abort.throwIfAborted();
 			removeSkillProjectionClaim({
 				agentType: opts.adapter.agentType,
 				agentId: opts.environmentId,
@@ -1801,6 +1813,7 @@ export async function processQueueItem(
 		const skillDir = join(modules.skills.module.rootDir(), item.skill_key);
 		if (shouldIgnoreUserSkill(skillDir, item.skill_key)) {
 			await api.deleteAgentSkill(opts.environmentId, item.skill_key, item.project_id);
+			opts.abort.throwIfAborted();
 			removeSkillProjectionClaim({
 				agentType: opts.adapter.agentType,
 				agentId: opts.environmentId,
@@ -1819,6 +1832,7 @@ export async function processQueueItem(
 		// it in the queue so the next drain picks it up. The
 		// upload we just finished was the OLD version; the new
 		// one still needs to ship.
+		opts.abort.throwIfAborted();
 		const removed = queue.markDoneIfVersion(item);
 		if (!removed) {
 			log.info("engine.queue_superseded", {
@@ -1879,6 +1893,7 @@ export async function processQueueItem(
 		// independently decides whether resource health is resolved.
 		// Leave the in-memory state untouched so the next watcher
 		// tick can decide.
+		opts.abort.throwIfAborted();
 		if (result.outcome === "applied" || result.outcome === "blocked") {
 			lastPushedSessionHash.set(item.local_session_id, result.actualHash);
 		}
@@ -1886,6 +1901,7 @@ export async function processQueueItem(
 		if (cur === item.content_hash) {
 			inFlightSessionHash.delete(item.local_session_id);
 		}
+		opts.abort.throwIfAborted();
 		const removed = queue.markDoneIfVersion(item);
 		if (!removed) {
 			log.info("engine.queue_superseded", {
@@ -1924,7 +1940,8 @@ async function uploadSessionFromQueue(
 	| { outcome: "not_applied" }
 > {
 	if (!hasSessionFence(item)) return { outcome: "not_applied" };
-	const session = await sessions.resolve(item.source_session_key);
+	const session = await sessions.resolve(item.source_session_key, { signal: opts.abort });
+	opts.abort.throwIfAborted();
 	if (!session) {
 		log.info("engine.session_gone", { local_session_id: item.local_session_id });
 		return { outcome: "absent" };
@@ -2063,6 +2080,7 @@ async function uploadSkillFromQueue(
 		actualHash,
 	);
 	lastPushedHash.set(item.skill_key, actualHash);
+	opts.abort.throwIfAborted();
 	recordSkillProjectionClaim({
 		agentType: opts.adapter.agentType,
 		agentId: opts.environmentId,
@@ -2227,6 +2245,7 @@ export async function reconcileAgentSkillProjectionListing(input: {
 	opts: {
 		environmentId: string;
 		adapter: Pick<AgentAdapter, "agentType">;
+		abort?: AbortSignal;
 	};
 	skills: SkillModule;
 	queue: RetryQueue;
@@ -2278,6 +2297,7 @@ export async function reconcileAgentSkillProjection(input: {
 	opts: {
 		environmentId: string;
 		adapter: Pick<AgentAdapter, "agentType">;
+		abort?: AbortSignal;
 	};
 	skills: SkillModule;
 	queue: RetryQueue;
@@ -2289,7 +2309,12 @@ export async function reconcileAgentSkillProjection(input: {
 }): Promise<void> {
 	const { opts, skills, queue, claims, projectId } = input;
 	const rootDir = skills.rootDir();
-	const localKeys = new Set(filterValidSkillKeysForSync(await skills.listKeys()));
+	const localKeys = new Set(
+		filterValidSkillKeysForSync(
+			await skills.listKeys(opts.abort ? { signal: opts.abort } : undefined),
+		),
+	);
+	opts.abort?.throwIfAborted();
 	const exactAgentClaims = readSkillProjectionClaimsForAgent(
 		opts.adapter.agentType,
 		opts.environmentId,
@@ -2308,6 +2333,7 @@ export async function reconcileAgentSkillProjection(input: {
 	]);
 
 	for (const skillKey of [...allKeys].sort()) {
+		opts.abort?.throwIfAborted();
 		if (
 			readProjectSkillMaterialization({
 				agentType: opts.adapter.agentType,
@@ -2501,6 +2527,7 @@ export async function heartbeatLoop(
 	snapshot: () => { last_revision_seen: number | null; last_sync_error: string | null },
 	stopForDisconnectedAgent: (hint: string) => void,
 	vaultTick?: () => Promise<void>,
+	onAuthFailure?: (origin: string) => void,
 ): Promise<void> {
 	let heartbeatFailureStreak = 0;
 	const send = async () => {
@@ -2535,6 +2562,10 @@ export async function heartbeatLoop(
 			// count is permanently lost on every flaky-network
 			// cycle, which is precisely when drops are most likely.
 			queue.restoreDroppedDelta(dropped);
+			if (isAuthFailure(e) && onAuthFailure) {
+				onAuthFailure("heartbeat");
+				return;
+			}
 			const stopHint = agentLookupStopHint(e);
 			if (stopHint !== null) {
 				stopForDisconnectedAgent(stopHint);

@@ -1513,6 +1513,157 @@ describe("daemon startup Agent lookup", () => {
 		}
 	}
 
+	it("retains a preparing session while Skills and heartbeats progress, then recovers without restart", async () => {
+		let heartbeats = 0;
+		let skillDeleted = false;
+		let attempts = 0;
+		let resolved = false;
+		await withStartupCase(
+			async (request) => {
+				const path = new URL(request.url).pathname;
+				if (path.endsWith("sync-heartbeat")) {
+					heartbeats++;
+					return Response.json({ status: "ok" });
+				}
+				if (request.method === "DELETE") {
+					skillDeleted = true;
+					return Response.json({ status: "deleted" });
+				}
+				if (path === "/v1/agents/agent-isolated")
+					return Response.json({ id: "agent-isolated", default_project_id: "project-1" });
+				if (path.includes("/skills"))
+					return Response.json({ skills: [], revision: 1 }, { headers: { ETag: '"skills-1"' } });
+				return new Response("", { status: 404 });
+			},
+			async ({ abortController, root }) => {
+				const adapter: AgentAdapter = {
+					agentType: "codex",
+					detect: async () => true,
+					getVersion: async () => null,
+					sessions: {
+						contentProtocol: async () => {
+							attempts++;
+							if (!skillDeleted || !heartbeats) throw new Error("protocol temporarily unavailable");
+							return "snapshot-v1";
+						},
+						collect: async () => ({ sessions: [], coverage: "complete", dedupedCount: 0 }),
+						resolve: async () => {
+							resolved = true;
+							abortController.abort();
+							return null;
+						},
+						watchPaths: () => [],
+					},
+					skills: {
+						rootDir: () => root,
+						path: (key) => join(root, key),
+						sharedPath: (key) => join(root, key),
+						collect: async () => [],
+						listKeys: async () => [],
+						writeArchive: async () => {},
+						writeSharedArchive: async () => {},
+						remove: async () => {},
+					},
+				};
+				const queue = new RetryQueue({ agentType: "codex" });
+				queue.enqueue({
+					kind: "session_push",
+					local_session_id: "retained",
+					content_hash: "hash",
+					...sessionQueueFence(new ApiClient(), adapter, "retained", "agent-isolated"),
+					enqueued_at: new Date().toISOString(),
+					attempts: 0,
+				});
+				queue.enqueue({
+					kind: "skill_delete",
+					skill_key: "old",
+					agent_id: "agent-isolated",
+					project_id: "project-1",
+					enqueued_at: new Date().toISOString(),
+					attempts: 0,
+				});
+				await queue.flushPersist();
+				const deadline = setTimeout(() => abortController.abort(), 5000);
+				try {
+					await runSyncEngine({
+						environmentId: "agent-isolated",
+						adapter,
+						abort: abortController.signal,
+						abortController,
+						forcePollWatcher: true,
+					});
+					expect(skillDeleted).toBe(true);
+					expect(heartbeats).toBeGreaterThan(0);
+					expect(attempts).toBeGreaterThan(1);
+					expect(resolved).toBe(true);
+					const retained = new RetryQueue({ agentType: "codex" });
+					retained.load();
+					expect(retained.all()).toMatchObject([{ kind: "session_push", attempts: 0 }]);
+				} finally {
+					clearTimeout(deadline);
+					abortController.abort();
+				}
+			},
+		);
+	});
+
+	it("globally revokes auth during local preparation retry without consuming queued work", async () => {
+		let beats = 0;
+		await withStartupCase(
+			async (request) => {
+				if (new URL(request.url).pathname.endsWith("sync-heartbeat")) {
+					beats++;
+					return beats > 1
+						? new Response("revoked", { status: 401 })
+						: Response.json({ status: "ok" });
+				}
+				return Response.json({ id: "agent-retry", default_project_id: "project-1" });
+			},
+			async ({ abortController }) => {
+				const adapter: AgentAdapter = {
+					agentType: "pi",
+					detect: async () => true,
+					getVersion: async () => null,
+					sessions: {
+						contentProtocol: async () => {
+							throw new Error("retry protocol");
+						},
+						collect: async () => ({ sessions: [], coverage: "complete", dedupedCount: 0 }),
+						resolve: async () => null,
+						watchPaths: () => [],
+					},
+				};
+				const queue = new RetryQueue({ agentType: "pi" });
+				queue.enqueue({
+					kind: "session_push",
+					local_session_id: "retained",
+					content_hash: "hash",
+					...sessionQueueFence(new ApiClient(), adapter, "retained", "agent-retry"),
+					enqueued_at: new Date().toISOString(),
+					attempts: 0,
+				});
+				await queue.flushPersist();
+				const deadline = setTimeout(() => abortController.abort(), 2000);
+				try {
+					await runSyncEngine({
+						environmentId: "agent-retry",
+						adapter,
+						abort: abortController.signal,
+						abortController,
+						heartbeatIntervalMs: 10,
+					});
+					expect(process.exitCode).toBe(2);
+					const retained = new RetryQueue({ agentType: "pi" });
+					retained.load();
+					expect(retained.all()).toMatchObject([{ kind: "session_push", attempts: 0 }]);
+				} finally {
+					clearTimeout(deadline);
+					abortController.abort();
+				}
+			},
+		);
+	});
+
 	it("backfills a legacy registration only after the owning Agent lookup succeeds", async () => {
 		await withStartupCase(
 			async () => Response.json({ id: "agent-owned", default_project_id: "project-1" }),

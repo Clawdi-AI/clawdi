@@ -390,7 +390,9 @@ test("debounces rapid fs events into one concrete changed-path batch", async () 
 			{
 				paths: [root],
 				abort: abort.signal,
-				onPathStable: (change) => changes.push(change),
+				onPathStable: (change) => {
+					changes.push(change);
+				},
 			},
 			{
 				createWatcher: (_path, _options, callback) => {

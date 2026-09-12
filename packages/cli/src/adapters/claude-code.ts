@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import {
@@ -20,6 +21,7 @@ import type {
 	RawSkill,
 	SessionScanRequest,
 	SessionScanResult,
+	SyncReadContext,
 } from "./base";
 import { getClaudeHome, isPathWithinRoots, SKIP_DIRS } from "./paths";
 import {
@@ -150,14 +152,19 @@ type ParsedSession = Omit<RawSession, "localSessionId" | "rawFilePath"> & {
 export class ClaudeCodeAdapter implements AgentAdapterCore {
 	readonly agentType = "claude_code" as const;
 	readonly sessions = {
-		contentProtocol: async () => "events-v1" as const,
-		collect: (request: SessionScanRequest) => this.collectSessions(request),
-		resolve: (localSessionId: string) => this.resolveSession(localSessionId),
+		contentProtocol: async (context?: SyncReadContext) => {
+			context?.signal.throwIfAborted();
+			return "events-v1" as const;
+		},
+		collect: (request: SessionScanRequest, context?: SyncReadContext) =>
+			this.collectSessions(request, context),
+		resolve: (localSessionId: string, context?: SyncReadContext) =>
+			this.resolveSession(localSessionId, context),
 		watchPaths: () => this.getSessionsWatchPaths(),
 	};
 	readonly skills = {
-		collect: () => this.collectSkills(),
-		listKeys: () => this.listSkillKeys(),
+		collect: (context?: SyncReadContext) => this.collectSkills(context),
+		listKeys: (context?: SyncReadContext) => this.listSkillKeys(context),
 		path: (key: string) => this.getSkillPath(key),
 		rootDir: () => this.getSkillsRootDir(),
 		sharedPath: (skillKey: string, ownerHandle: string) =>
@@ -199,7 +206,11 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		return absPath.replace(/\//g, "-");
 	}
 
-	private async collectSessions(request: SessionScanRequest): Promise<SessionScanResult> {
+	private async collectSessions(
+		request: SessionScanRequest,
+		context?: SyncReadContext,
+	): Promise<SessionScanResult> {
+		context?.signal.throwIfAborted();
 		if (!existsSync(projectsDir())) {
 			return { sessions: [], dedupedCount: 0, coverage: "complete" };
 		}
@@ -217,12 +228,12 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 					parts.length !== 2 ||
 					!parts[1].endsWith(".jsonl")
 				) {
-					return this.collectSessions({ kind: "complete", projectFilter });
+					return this.collectSessions({ kind: "complete", projectFilter }, context);
 				}
 				projectDirNames.add(parts[0]);
 			}
 			if (projectDirNames.size > 0) {
-				return this.collectProjectSessions([...projectDirNames], absFilter, "partial");
+				return this.collectProjectSessions([...projectDirNames], absFilter, "partial", context);
 			}
 		}
 
@@ -246,10 +257,15 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			projectDirs.map((projectDir) => projectDir.name),
 			absFilter,
 			"complete",
+			context,
 		);
 	}
 
-	private async resolveSession(localSessionId: string): Promise<RawSession | null> {
+	private async resolveSession(
+		localSessionId: string,
+		context?: SyncReadContext,
+	): Promise<RawSession | null> {
+		context?.signal.throwIfAborted();
 		if (!existsSync(projectsDir()) || basename(localSessionId) !== localSessionId) return null;
 		const matches: Array<{ filePath: string; projectDirName: string }> = [];
 		for (const projectDir of readdirSync(projectsDir(), { withFileTypes: true })) {
@@ -260,29 +276,31 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		if (matches.length !== 1) {
 			if (matches.length === 0) return null;
 			return (
-				(await this.collectSessions({ kind: "complete" })).sessions.find(
+				(await this.collectSessions({ kind: "complete" }, context)).sessions.find(
 					(session) => session.localSessionId === localSessionId,
 				) ?? null
 			);
 		}
 		return (
-			this.collectProjectSessions([matches[0].projectDirName], null, "partial").sessions.find(
-				(session) => session.localSessionId === localSessionId,
-			) ?? null
+			(
+				await this.collectProjectSessions([matches[0].projectDirName], null, "partial", context)
+			).sessions.find((session) => session.localSessionId === localSessionId) ?? null
 		);
 	}
 
-	private collectProjectSessions(
+	private async collectProjectSessions(
 		projectDirNames: readonly string[],
 		absFilter: string | null,
 		coverage: SessionScanResult["coverage"],
-	): SessionScanResult {
+		context?: SyncReadContext,
+	): Promise<SessionScanResult> {
 		const sessions: RawSession[] = [];
 		const uuidsBySession = new Map<RawSession, Set<string>>();
 		for (const projectDirName of projectDirNames) {
 			const projectPath = join(projectsDir(), projectDirName);
 			if (!existsSync(projectPath)) continue;
 			for (const file of readdirSync(projectPath).filter((name) => name.endsWith(".jsonl"))) {
+				if (context) await setImmediate(undefined, { signal: context.signal });
 				try {
 					const parsed = this.parseRawSession(join(projectPath, file), projectDirName);
 					if (!parsed) continue;
@@ -409,7 +427,8 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		};
 	}
 
-	private async collectSkills(): Promise<RawSkill[]> {
+	private async collectSkills(context?: SyncReadContext): Promise<RawSkill[]> {
+		context?.signal.throwIfAborted();
 		const skillsDir = join(claudeDir(), "skills");
 		migrateLegacyLocalSetupSkill({
 			targetDir: join(skillsDir, "clawdi"),
@@ -459,7 +478,8 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		return join(claudeDir(), "skills", `${skillKey}__${ownerHandle}`);
 	}
 
-	private async listSkillKeys(): Promise<string[]> {
+	private async listSkillKeys(context?: SyncReadContext): Promise<string[]> {
+		context?.signal.throwIfAborted();
 		// Flat layout: top-level dirs under skills/. Mirrors the
 		// filtering of `collectSkills` so the daemon's hot-path
 		// rescan returns the same set the bulk push would consider

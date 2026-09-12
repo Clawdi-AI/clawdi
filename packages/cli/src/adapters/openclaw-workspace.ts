@@ -45,14 +45,17 @@ export function resolveOpenClawAgentWorkspace(agentId = openClawAgentId()): stri
 
 export async function resolveOpenClawAgentWorkspaceAsync(
 	agentId = openClawAgentId(),
+	signal?: AbortSignal,
 ): Promise<string> {
 	let stdout: string;
 	try {
 		stdout = await runOpenClawCommand(["agents", "list", "--json"], {
+			signal,
 			maxBuffer: 1024 * 1024,
 			timeout: 15_000,
 		});
 	} catch {
+		signal?.throwIfAborted();
 		throw new Error(WORKSPACE_RESOLUTION_ERROR);
 	}
 	return workspaceForAgent(requireOpenClawAgentWorkspaces(stdout), agentId);
