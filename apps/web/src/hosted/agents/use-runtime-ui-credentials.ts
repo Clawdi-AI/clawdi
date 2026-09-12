@@ -1,5 +1,6 @@
 import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { primeOpenClawBrowserSession } from "@/hosted/agents/openclaw-browser-session";
 import {
 	forgetOpenClawNativeHandoffLoaded,
 	hasOpenClawNativeHandoffLoaded,
@@ -9,13 +10,18 @@ import {
 } from "@/hosted/agents/runtime-ui-credentials";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
-import { useSessionIdentity } from "@/lib/auth-client";
+import { useAuthToken, useSessionIdentity } from "@/lib/auth-client";
 
 /** Credentials belong to the mounted console, never to a cross-route cache. */
 export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: string | null) {
 	const client = useBillingClient();
 	const { id, metadata, spec } = deployment.resource;
 	const identity = useSessionIdentity();
+	const { getToken } = useAuthToken();
+	const browserSessionUrl =
+		deployment.runtime_ui_endpoint?.runtime === "openclaw"
+			? deployment.runtime_ui_endpoint.browser_session_url
+			: null;
 	const storageScope = JSON.stringify([identity, id]);
 	const [nativeHandoffLoaded, setNativeHandoffLoaded] = useState(false);
 	const [credentials, setCredentials] = useState<RuntimeUiCredentials | null>(null);
@@ -26,15 +32,18 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 	const active = useRef(false);
 	const revision = useRef(0);
 	const requestedVersion = useRef<string | null>(null);
+	const requestAbort = useRef<AbortController | null>(null);
 
 	useLayoutEffect(() => {
 		active.current = true;
 		return () => {
 			active.current = false;
+			requestAbort.current?.abort();
 		};
 	}, []);
 
 	const clear = useCallback(() => {
+		requestAbort.current?.abort();
 		forgetOpenClawNativeHandoffLoaded(runtimeUiLocalStorage(), storageScope);
 		setNativeHandoffLoaded(false);
 		revision.current += 1;
@@ -62,6 +71,34 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 			pending.current = Promise.resolve()
 				.then(async () => {
 					if (!current()) return null;
+					const abort = new AbortController();
+					requestAbort.current?.abort();
+					requestAbort.current = abort;
+					if (browserSessionUrl) {
+						const token = await getToken();
+						if (!current()) return null;
+						await primeOpenClawBrowserSession(
+							browserSessionUrl,
+							endpoint,
+							token,
+							metadata.resourceVersion,
+							abort.signal,
+						);
+						if (!current()) return null;
+					}
+					if (
+						!fresh &&
+						spec.runtime === "openclaw" &&
+						hasOpenClawNativeHandoffLoaded(
+							runtimeUiLocalStorage(),
+							storageScope,
+							endpoint,
+							metadata.generation,
+						)
+					) {
+						setNativeHandoffLoaded(true);
+						return null;
+					}
 					const result = await client.getRuntimeUiCredentials(id, metadata.resourceVersion);
 					if (!current()) return null;
 					const resolved = resolveRuntimeUiCredentials(result, endpoint, metadata.resourceVersion);
@@ -82,7 +119,18 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 				});
 			return pending.current;
 		},
-		[client, id, metadata.resourceVersion, spec.runtime, endpoint, credentials, storageScope],
+		[
+			client,
+			id,
+			metadata.resourceVersion,
+			metadata.generation,
+			spec.runtime,
+			endpoint,
+			credentials,
+			storageScope,
+			browserSessionUrl,
+			getToken,
+		],
 	);
 
 	useEffect(() => {
@@ -96,17 +144,6 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 			!isLoading &&
 			requestedVersion.current !== metadata.resourceVersion
 		) {
-			if (
-				hasOpenClawNativeHandoffLoaded(
-					runtimeUiLocalStorage(),
-					storageScope,
-					endpoint,
-					metadata.generation,
-				)
-			) {
-				setNativeHandoffLoaded(true);
-				return;
-			}
 			void load();
 		}
 	}, [

@@ -54,7 +54,11 @@ export function isRuntimeUiEndpointInfo(value: unknown): value is RuntimeUiEndpo
 		(value.runtime === "openclaw"
 			? value.auth_mode === "openclaw_token"
 			: value.auth_mode === "password") &&
-		isCleanRuntimeUiUrl(value.url)
+		isCleanRuntimeUiUrl(value.url) &&
+		(value.runtime !== "openclaw" ||
+			value.browser_session_url == null ||
+			value.browser_session_url ===
+				new URL("/.well-known/openclaw/browser-session", value.url).href)
 	);
 }
 

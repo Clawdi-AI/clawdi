@@ -1429,6 +1429,17 @@ and let OpenClaw reuse its own persisted device credential, without requesting
 or replaying a bootstrap token. This requires a new native connection after
 the old iframe is retired; it is distinct from retaining the already-authenticated
 connection across sections. The marker does not acknowledge authentication.
+When Hosted advertises an applied `browser_session_url`, Clawdi first establishes
+its independent runtime-origin owner grant and verifies cookie delivery with a
+HEAD request. The first launch still uses the official handoff fragment. On a
+later clean-URL visit, a supporting official UI can recover a missing device
+credential through its same-origin browser-bootstrap endpoint. The official UI
+performs the real owner handshake in that same document; the parent does not
+create a parallel device or infer authentication from load. Endpoints without
+the advertised route retain the existing handoff and Reconnect behavior.
+The tested official UI does not automatically recover an expired/consumed
+initial bootstrap or a revoked device token in the current document; those
+errors still require Reconnect.
 Storage failure falls back to requesting a handoff; Reconnect clears the hint.
 New-window access stays disabled until the current iframe loads; it then opens
 the clean endpoint for native access or the exact reusable legacy `#token=` URL.
@@ -1452,6 +1463,18 @@ inventory/credential transport and uses a local TLS ingress that permits iframe
 embedding; it does not replace official UI code or native WebSocket auth.
 This verifies application behavior, not a deployed ingress configuration or
 authentication readiness from an iframe load event.
+
+For the paired protected issuer and same-site browser cookie path, point the
+same harness at the matching Hosted source checkout:
+
+```bash
+CLAWDI_OPENCLAW_HOSTED_SOURCE=/path/to/clawdi-hosted scripts/test-openclaw-native.sh
+```
+
+Done: real Traefik, the Hosted grant handler, Chromium, and official OpenClaw
+recover a missing native credential before Console reveal, retain the recovered
+connection across the reveal, and reuse the device credential on reload. Clerk
+identity and persistence seams are synthetic; no live tenant is involved.
 
 Hermes direct exposure requires `hermes-basic-auth-v1`, a stable HTTPS public
 URL (including any path prefix), exact `0.0.0.0:9119` service args, and the

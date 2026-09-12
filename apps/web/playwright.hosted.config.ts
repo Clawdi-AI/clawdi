@@ -33,7 +33,7 @@ export default defineConfig({
 			timeout: 120_000,
 			env: {
 				...process.env,
-				VITE_CLAWDI_API_URL: "http://127.0.0.1:8000",
+				VITE_CLAWDI_API_URL: process.env.E2E_HOSTED_CLOUD_API_URL ?? "http://127.0.0.1:8000",
 				VITE_CLAWDI_HOSTED: "true",
 				VITE_CLAWDI_DEPLOY_API_URL: deployApiURL,
 				VITE_CLAWDI_LEGACY_DASHBOARD_URL: "https://legacy.example/dashboard",

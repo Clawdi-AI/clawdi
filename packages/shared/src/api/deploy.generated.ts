@@ -2744,6 +2744,8 @@ export interface components {
              * @constant
              */
             browser_mode: "embedded_and_top_level";
+            /** Browser Session Url */
+            browser_session_url?: string | null;
         };
         /** V2PlanResponse */
         V2PlanResponse: {
