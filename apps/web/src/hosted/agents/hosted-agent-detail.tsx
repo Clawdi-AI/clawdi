@@ -621,10 +621,10 @@ export function HostedAgentDetail({
 		shouldShowInitialDeploymentProgress(deploymentStatus, deploymentFailure);
 	const isLiveToolTab =
 		activeTab === "console" || activeTab === "files" || activeTab === "terminal";
-	// The persistent agent layout owns the ready OpenClaw surface. Keep this
+	// The persistent agent layout owns the ready OpenClaw surface and heading. Keep this
 	// route mounted for its breadcrumb and canonical Outlet lifecycle.
 	if (activeTab === "console" && runtime === "openclaw" && deploymentRuntimeUiIsReady(deployment))
-		return <h1 className="sr-only">{availableAgentTitle}</h1>;
+		return null;
 	return (
 		<div
 			data-hosted="true"
