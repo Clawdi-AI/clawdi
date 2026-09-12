@@ -94,7 +94,11 @@ export class SyncModule<T extends { run(): Promise<void> }> {
 		let delay = 1000;
 		while (!this.options.signal.aborted) {
 			const scope = new SyncScope(this.options.signal);
-			const draining = () => this.publish("draining", scope.signal.reason);
+			let healthyEndedAt: number | null = null;
+			const draining = () => {
+				healthyEndedAt ??= Date.now();
+				this.publish("draining", scope.signal.reason);
+			};
 			scope.signal.addEventListener("abort", draining, { once: true });
 			let readyAt: number | null = null;
 			let failure: unknown;
@@ -113,7 +117,7 @@ export class SyncModule<T extends { run(): Promise<void> }> {
 				failure = error;
 				if (!this.options.signal.aborted) this.options.failed(error);
 			} finally {
-				healthyDuration = readyAt === null ? 0 : Date.now() - readyAt;
+				healthyDuration = readyAt === null ? 0 : (healthyEndedAt ?? Date.now()) - readyAt;
 				this.publish("draining", failure);
 				await scope.join();
 				scope.signal.removeEventListener("abort", draining);
