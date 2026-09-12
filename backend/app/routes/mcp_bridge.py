@@ -692,9 +692,11 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     ),
     "vault_request_create": _NativeToolSpec(
         description=(
-            "Request a batch of missing environment fields in one exact owned Vault. "
+            "Request a batch of new or updated Vault fields in one exact owned Vault. "
             "Returns a one-time write-only URL to show the user; never ask for secrets in chat. "
-            "Existing fields are rejected. Runtime requests must target their own Workspace, not "
+            "Existing Vault values are kept until submission and are never shown by the link. "
+            "Changes to requested fields conflict; overlapping pending requests are rejected. "
+            "Runtime requests must target their own Workspace, not "
             "other readable linked Projects. The URL expires and is consumed only after saving."
         ),
         input_schema=_VaultRequestCreateArguments.model_json_schema(),
@@ -705,7 +707,10 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         description=(
             "Check a Vault request: pending, supplied, expired, or conflict. Returns references, "
             "never values. After supply, continue the task using existing authorized capabilities; "
-            "this remote MCP does not save credentials to local files."
+            "verify local index Vault/section/fields and content_version >= "
+            "this status content_version "
+            "before claiming local delivery. "
+            "This remote MCP does not save credentials to local files."
         ),
         input_schema=_VaultRequestStatusArguments.model_json_schema(),
         scopes=("vault:read",),
@@ -1528,9 +1533,7 @@ async def _tool_vault_get(
                 "slug": vault_slug,
             },
             "keys": keys,
-            "requests": [
-                row.model_dump(mode="json", exclude={"local_command"}) for row in requests
-            ],
+            "requests": [row.model_dump(mode="json") for row in requests],
         }
     )
 
@@ -1699,7 +1702,7 @@ async def _tool_vault_request_create(
 ) -> JsonObject:
     parsed = _validate_arguments(_VaultRequestCreateArguments, arguments)
     result = await vault_requests.create_request(db, auth, parsed)
-    return _tool_json(result.model_dump(mode="json", exclude={"local_command"}))
+    return _tool_json(result.model_dump(mode="json"))
 
 
 async def _tool_vault_request_status(
@@ -1707,6 +1710,4 @@ async def _tool_vault_request_status(
 ) -> JsonObject:
     parsed = _validate_arguments(_VaultRequestStatusArguments, arguments)
     row = await vault_requests.owned_request(db, auth, parsed.request_id)
-    return _tool_json(
-        (await vault_requests.describe(db, row)).model_dump(mode="json", exclude={"local_command"})
-    )
+    return _tool_json((await vault_requests.describe(db, row)).model_dump(mode="json"))

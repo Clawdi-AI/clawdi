@@ -10,7 +10,7 @@ import { env } from "@/lib/env";
 type RequestContext = components["schemas"]["VaultSecretRequestStatus"];
 const client = createClient<paths>({ baseUrl: env.VITE_CLAWDI_API_URL });
 const UNAVAILABLE =
-	"This link has expired or is no longer available. Ask your agent for a new link.";
+	"This request has changed or its link has expired. Ask your agent for a new link.";
 
 export function VaultRequestPage() {
 	const token = useRef("");
@@ -42,7 +42,7 @@ export function VaultRequestPage() {
 		// Remove the capability from browser history before making any request.
 		if (!token.current) token.current = window.location.hash.slice(1);
 		window.history.replaceState(null, "", window.location.pathname);
-		if (!/^[A-Za-z0-9_-]{43}$/.test(token.current)) {
+		if (!/^v2_[A-Za-z0-9_-]{43}$/.test(token.current)) {
 			setPhase("unavailable");
 			return;
 		}
@@ -187,11 +187,21 @@ export function VaultRequestPage() {
 								</p>
 							</div>
 							<p className="text-sm text-muted-foreground">
-								Only these fields will be added. Anyone with Vault access can use them.
+								Only these fields will be saved. Anyone with Vault access can use them.
 							</p>
+							{!!context.update_fields.length && (
+								<p className="text-sm text-muted-foreground">
+									Fields marked Update replace existing values when you save.
+								</p>
+							)}
 							{context.fields.map((name) => (
 								<div className="space-y-2" key={name}>
-									<Label htmlFor={`secret-${name}`}>{name}</Label>
+									<div className="flex items-center justify-between gap-2">
+										<Label htmlFor={`secret-${name}`}>{name}</Label>
+										{context.update_fields.includes(name) && (
+											<span className="text-xs font-medium text-muted-foreground">Update</span>
+										)}
+									</div>
 									<Textarea
 										id={`secret-${name}`}
 										value={values[name] ?? ""}

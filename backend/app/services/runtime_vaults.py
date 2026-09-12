@@ -113,14 +113,23 @@ async def vault_snapshot_metadata(
     for vault, project_id in rows:
         if vault.id not in inventory:
             inventory[vault.id] = RuntimeVault(
-                id=vault.id, name=vault.name, slug=vault.slug, project_ids=[], revision=""
+                id=vault.id,
+                name=vault.name,
+                slug=vault.slug,
+                project_ids=[],
+                revision="",
+                content_version=vault.runtime_revision,
             )
             revisions[str(vault.id)] = vault.runtime_revision
         inventory[vault.id].project_ids.append(project_id)
     for entry in inventory.values():
         entry.revision = hashlib.sha256(
             json.dumps(
-                [entry.model_dump(mode="json"), revisions[str(entry.id)]], sort_keys=True
+                [
+                    entry.model_dump(mode="json", exclude={"content_version"}),
+                    revisions[str(entry.id)],
+                ],
+                sort_keys=True,
             ).encode()
         ).hexdigest()
     metadata = [entry.model_dump(mode="json") for entry in inventory.values()]

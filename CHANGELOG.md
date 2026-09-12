@@ -12,8 +12,18 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### Fixed
+
+- CLI 0.14.76 gives managed OpenClaw MCP discovery and slow tool calls an
+  explicit timeout budget so tools remain available when discovery takes longer
+  than OpenClaw’s default 1.5 seconds.
+
 ### Changed
 
+- Request new credentials and updates to existing keys through the same Vault link.
+  Existing Vault values are kept until saving; intervening changes reject the whole batch.
+  Local delivery checks the content version so existing key names cannot mask stale values.
+  This update expires existing pending request links; saved credentials are preserved.
 - CLI 0.14.75 teaches Connected and Hosted agents to create, list, and revoke
   Session shares through MCP. Connected agents retain the CLI fallback; Hosted
   agents use MCP only.

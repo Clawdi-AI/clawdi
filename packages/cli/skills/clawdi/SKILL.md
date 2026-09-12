@@ -128,18 +128,22 @@ their bound Project, and field deletion is rejected when a Vault is attached to 
 Projects. Whole-Vault deletion, attach/detach, and credential profiles remain
 foreground operator workflows; never bypass that boundary through raw HTTP or daemon RPC.
 
-### Request missing credentials
+### Request new or updated credentials
 
 Use `vault_request_create` with exact `project_id`, `vault_id`, canonical `slug`, optional
-`section`, and a batch of environment field names in `fields`. A Vault is a key bundle:
-request related keys together under one link. Supplied or already-pending fields are rejected.
+`section`, and a batch of Vault field names in `fields`. A Vault is a key bundle:
+request related new and existing keys together under one link. Include existing keys only
+when the user authorized updating them; do not delete them first. Existing Vault values
+remain unchanged until successful submission and are never shown or prefilled. Overlapping pending requests
+are rejected; a change to any requested field conflicts with the entire batch.
 Show the returned `url` unchanged to the user; do not ask them to paste secrets into chat.
 Opening the link does not consume it. Saving all requested fields consumes it once.
 
 Check `vault_request_status` with its `request_id` after the user finishes. `pending` is not
 a secret value; `supplied` means the exact references are ready. On `expired` or `conflict`,
-inspect the Vault and request only still-missing fields; never replace an existing value to
-retry. If creation times out, use `vault_get` to find recent request IDs before retrying.
+inspect current Vault metadata and reassess the authorized fields before creating a fresh
+request; do not blindly retry an overwrite. If creation times out, use `vault_get` to find
+recent request IDs before retrying.
 If submission times out, inspect status before repeating a mutation.
 
 ### Save and refresh credentials locally
@@ -157,9 +161,12 @@ edit, move or commit them. Hosted agents must not invoke/install the tenant Claw
 Connected operators configure delivery with `clawdi setup --agent <type> --vault-workspace <path>`;
 that changes only the Vault destination, never every repository scanned by the daemon.
 
-After a credential request is supplied, wait for the expected fields in index metadata before
-claiming delivery. If delivery is unavailable, report that state and any missing workspace
-binding instead of inventing a destination. Preserve unrelated local configuration.
+After `vault_request_status` reports `supplied`, match its Vault ID, section and field names
+in the index and require the local Vault `content_version` to be at least the status
+`content_version`. The API requires this counter; existing names alone do not prove delivery.
+If the owned index is incomplete or behind, wait for runtime reconciliation and report
+unverified delivery. Do not read secret values to check freshness. Report missing workspace bindings instead of inventing a
+destination. Preserve unrelated local configuration.
 
 ### Optional CLI environment files
 

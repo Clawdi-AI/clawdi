@@ -88,6 +88,7 @@ test("connected delivery fences identity, retains offline files, coalesces chang
 							slug: "test",
 							project_ids: [projectId],
 							revision: String(version),
+							content_version: version,
 							fields: material
 								? [
 										{
@@ -269,6 +270,7 @@ test("cold account switch clears only matching old provenance, never a replaceme
 				slug: "fixture",
 				project_ids: [randomUUID()],
 				revision: "one",
+				content_version: 1,
 				fields: [
 					{
 						id: randomUUID(),

@@ -49,7 +49,8 @@ creation deadline discards late results from the synchronous SDK worker, which
 cannot be forcibly cancelled. Authentication precedes forwarding and retains its
 existing short network budgets.
 
-Discovery and other MCP methods retain a 30-second forwarding deadline. Backend
+The stdio proxy gives discovery and other MCP methods a 30-second forwarding
+deadline; this is not a server-side cap for every remote MCP endpoint. Backend
 Composio discovery has a 25-second total deadline, including cold session creation
 and any reload after invalidation. Listing drains all cursor pages in a single
 initialized client within 15 seconds and at most 100 pages, leaving 5 seconds
@@ -60,9 +61,28 @@ result metadata, since page metadata has no standardized merge semantics.
 
 The locked JavaScript MCP SDK 1.30 defaults **outgoing client requests** to 60
 seconds; this does not impose a timer on incoming stdio server handlers. MCP
-clients invoking slow tools must set their own request timeout to at least
-420 seconds (for SDK clients, pass `{ timeout: 420_000 }` as the `callTool`
-request options). Clawdi cannot override another client's deadline.
+clients invoking slow tools through the forwarding path described above must
+set their own request timeout to at least 420 seconds (for SDK clients, pass
+`{ timeout: 420_000 }` as the `callTool` request options). Clawdi cannot override
+another client's deadline.
+
+Managed OpenClaw MCP entries explicitly set only `requestTimeoutMs: 420000`,
+using that slow-tool caller budget. OpenClaw 2026.9.3 uses the explicit request
+budget for both the complete paginated tool catalog and subsequent requests;
+without it, catalog discovery defaults to 1500 ms even though requests default to 60
+seconds. There is no independent catalog timeout setting, so an unresponsive
+catalog can wait up to 420 seconds. Initialization retains the native default
+(30 seconds in OpenClaw 2026.9.3); no connection timeout override is written.
+Hermes keeps its existing native settings.
+
+The official contracts are [catalog timeout selection](https://github.com/openclaw/openclaw/blob/1391f7cd2d40ab5bbcf2f5f831d3a64f520e72d7/src/agents/agent-bundle-mcp-runtime.ts#L156-L177),
+[transport defaults](https://github.com/openclaw/openclaw/blob/1391f7cd2d40ab5bbcf2f5f831d3a64f520e72d7/src/agents/mcp-transport-config.ts#L62-L104),
+and [CLI seconds-to-milliseconds configuration](https://github.com/openclaw/openclaw/blob/1391f7cd2d40ab5bbcf2f5f831d3a64f520e72d7/src/cli/mcp-cli.ts#L1275-L1293).
+The request timeout field is also supported by the audited July 1
+[schema](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/config/zod-schema.ts#L386-L409)
+and [catalog override](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/agents/agent-bundle-mcp-runtime.ts#L285-L305).
+That older runtime applies the catalog timeout per page; 2026.9.3 bounds the
+complete pagination operation.
 
 Timeout or transport loss does not confirm cancellation or failure of an external
 side effect. The proxy never automatically retries tool calls. Check the provider
@@ -595,19 +615,31 @@ task authorizes creation. Ask for the exact target when ambiguity affects purpos
 access. Linked Vaults may be synced read-only; never request/upsert outside the write
 boundary or create duplicates to sidestep access.
 
-Use MCP `vault_request_create` to reserve up to 32 missing environment fields in one
-owned Vault/Project attachment. It returns a URL with a 256-bit capability in its
-fragment. Show that exact URL to the user. The public form supplies only the requested
-names, in one transaction; viewing it does not redeem it. Tokens are hashed at rest,
-expire after one hour by default (five minutes to one day configurable), and cannot
-read or replace supplied secrets. `vault_request_status` returns metadata and exact
-references. MCP request metadata omits legacy CLI commands, including `vault_get` recent
-requests; REST retains them for compatibility. Pending requests appear separately on the
-Vault detail page and are never returned as empty secret values. Use a fresh request for remaining missing fields after
-expiry; existing pending requests and supplied fields are rejected.
+Use MCP `vault_request_create` to request up to 32 new or updated Vault fields in one
+owned Vault/Project attachment. Names follow ordinary Vault validation, including dots
+and hyphens; duplicates after trimming are rejected. Show the returned URL unchanged.
+Its fragment contains a `v2_` capability with 256 random bits, hashed at rest and valid
+for one hour by default (five minutes to one day configurable). Viewing does not consume
+it; saving exactly the requested fields in one successful transaction does. The page
+marks updates without showing existing values.
+
+Changes to any requested field conflict with the entire batch; unrelated edits do not.
+A conflicted request can be replaced immediately, while true pending overlap is rejected.
+`vault_request_status` and recent requests return metadata and exact references, never
+secret values or local commands. After expiry or conflict, reassess the authorized fields
+before requesting again; never delete a key to request an update.
+
+The request migration expires every pre-cutover pending link, preserving saved values and
+history. Request snapshots are mandatory on new inserts. Deploy the current backend and
+page together; users with expired links need a fresh request.
 
 After supply in a managed runtime or configured connected macOS/Linux Agent, verify `vault_request_status` and inspect only
-`.clawdi/vaults/index.json` under the native workspace. Existing runtime watch delivers readable
+`.clawdi/vaults/index.json` under the native workspace. Match the Vault ID, section and field
+names, and require local `content_version >= status.content_version` before claiming delivery.
+The API requires `content_version`. Incomplete owned cache metadata must refresh before
+delivery can be confirmed, even when the field names already exist.
+This is the existing Vault content counter; opaque `revision` remains a cache/visibility
+identity and must not be compared across Agents. Existing runtime watch delivers readable
 Workspace/linked-Project Vaults into separate generated section JSON files. Load the
 selected file inside the authorized process/SDK without exposing values to model context
 just to save them. Do not invoke the tenant CLI or edit generated files. See
@@ -616,7 +648,7 @@ fallback and isolated verification. Connected setup uses `--agent <type> --vault
 the existing Agent registration; `--yes` alone never guesses a target. See the
 [skill workflow](../packages/cli/skills/clawdi/SKILL.md#save-and-refresh-credentials-locally).
 
-The CLI remains an optional compatible adapter for an explicit absolute local file:
+The standalone CLI also supports explicit absolute local dotenv files:
 
 ```bash
 clawdi vault materialize --vault <vault-uuid> --project <project-uuid> --out /absolute/project/.env

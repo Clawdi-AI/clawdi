@@ -1,8 +1,7 @@
-"""Write-only capabilities for exact, initially absent Vault fields."""
+"""Write-only capabilities for exact Vault fields at their requested state."""
 
 import hashlib
 import secrets
-import shlex
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from urllib.parse import quote
@@ -10,7 +9,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select, true
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext
@@ -44,6 +43,23 @@ def unavailable() -> HTTPException:
     return HTTPException(410, "Secret request unavailable")
 
 
+def field_baseline(item: VaultItem | None) -> str | None:
+    if item is None:
+        return None
+    return hashlib.sha256(item.id.bytes + item.nonce + item.encrypted_value).hexdigest()
+
+
+def fields_conflict(row: VaultSecretRequest, existing: dict[str, VaultItem]) -> bool:
+    return (
+        row.conflicted_at is not None
+        or set(row.field_baselines) != set(row.fields)
+        or any(
+            field_baseline(existing.get(field)) != row.field_baselines[field]
+            for field in row.fields
+        )
+    )
+
+
 async def request_context(db: AsyncSession, row: VaultSecretRequest) -> tuple[Vault, Project]:
     context = (
         await db.execute(
@@ -57,6 +73,7 @@ async def request_context(db: AsyncSession, row: VaultSecretRequest) -> tuple[Va
                 Project.archived_at.is_(None),
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).one_or_none()
     if context is None:
@@ -66,14 +83,23 @@ async def request_context(db: AsyncSession, row: VaultSecretRequest) -> tuple[Va
 
 async def describe(db: AsyncSession, row: VaultSecretRequest) -> VaultSecretRequestStatus:
     vault, project = await request_context(db, row)
+    # Owner reads can load the request before waiting on a concurrent Vault writer.
+    # Autoflush preserves this transaction's own successful submission first.
+    await db.execute(
+        select(VaultSecretRequest)
+        .where(VaultSecretRequest.id == row.id)
+        .execution_options(populate_existing=True)
+    )
     existing = await load_vault_items_by_name(db, row.vault_id, row.section)
     state: Literal["pending", "supplied", "expired", "conflict"] = (
         "supplied" if row.supplied_at else "pending"
     )
     if not row.supplied_at:
-        if row.expires_at <= datetime.now(UTC):
+        if row.conflicted_at is not None:
+            state = "conflict"
+        elif row.expires_at <= datetime.now(UTC):
             state = "expired"
-        elif any(field in existing for field in row.fields):
+        elif fields_conflict(row, existing):
             state = "conflict"
     references = {
         field: exact_vault_reference(row.project_id, vault.slug, row.section, field)
@@ -88,16 +114,12 @@ async def describe(db: AsyncSession, row: VaultSecretRequest) -> VaultSecretRequ
         slug=vault.slug,
         section=row.section,
         fields=row.fields,
+        update_fields=[field for field in row.fields if row.field_baselines.get(field) is not None],
+        content_version=vault.runtime_revision,
         status=state,
         expires_at=row.expires_at,
         supplied_at=row.supplied_at,
         references=references,
-        local_command=(
-            f"clawdi vault materialize --vault {row.vault_id} "
-            f"--project {row.project_id}"
-            + (f" --section={shlex.quote(row.section)}" if row.section else "")
-            + " --out <absolute-env-path>"
-        ),
     )
 
 
@@ -140,20 +162,27 @@ async def create_request(
                 VaultSecretRequest.vault_id == vault.id,
                 VaultSecretRequest.section == body.section,
                 VaultSecretRequest.supplied_at.is_(None),
+                VaultSecretRequest.conflicted_at.is_(None),
                 VaultSecretRequest.expires_at > datetime.now(UTC),
             )
         )
     ).all()
-    if any(field in existing for field in body.fields) or any(
-        set(body.fields).intersection(row.fields) for row in pending
-    ):
-        raise HTTPException(409, "Fields already supplied or requested")
-    token = secrets.token_urlsafe(32)
+    for row in pending:
+        if not set(body.fields).intersection(row.fields):
+            continue
+        if not fields_conflict(row, existing):
+            raise HTTPException(409, "Fields already requested")
+        # Retire the conflicted reservation in the successor's transaction.
+        now = datetime.now(UTC)
+        row.conflicted_at = now
+        row.expires_at = min(row.expires_at, now)
+    token = "v2_" + secrets.token_urlsafe(32)
     row = VaultSecretRequest(
         vault_id=vault.id,
         project_id=body.project_id,
         section=body.section,
         fields=body.fields,
+        field_baselines={field: field_baseline(existing.get(field)) for field in body.fields},
         token_hash=hashlib.sha256(token.encode()).hexdigest(),
         expires_at=datetime.now(UTC) + timedelta(seconds=body.expires_in_seconds),
     )
@@ -184,7 +213,7 @@ async def owned_request(
 async def token_request(db: AsyncSession, token: str) -> VaultSecretRequest:
     identity = (
         await db.execute(
-            select(VaultSecretRequest.id, Vault.user_id)
+            select(VaultSecretRequest.id, VaultSecretRequest.vault_id, Vault.user_id)
             .join(Vault, Vault.id == VaultSecretRequest.vault_id)
             .where(VaultSecretRequest.token_hash == hashlib.sha256(token.encode()).hexdigest())
         )
@@ -195,44 +224,69 @@ async def token_request(db: AsyncSession, token: str) -> VaultSecretRequest:
         await assert_user_authority_active(db, identity.user_id)
     except (PrincipalSuspendedError, PrincipalTerminatedError):
         raise unavailable() from None
+    # Every mutation locks Vault before request rows, including durable conflict fences.
+    await db.execute(select(Vault.id).where(Vault.id == identity.vault_id).with_for_update())
     row = await db.scalar(
         select(VaultSecretRequest)
         .where(VaultSecretRequest.id == identity.id)
         .with_for_update()
         .execution_options(populate_existing=True)
     )
-    if row is None or row.supplied_at is not None or row.expires_at <= datetime.now(UTC):
+    if (
+        row is None
+        or row.supplied_at is not None
+        or row.conflicted_at is not None
+        or row.expires_at <= datetime.now(UTC)
+    ):
         raise unavailable()
     return row
 
 
 async def supply(db: AsyncSession, body: VaultSecretRequestSupply) -> VaultSecretRequestStatus:
-    row = await token_request(db, body.token)
-    context = await describe(db, row)
-    if context.status != "pending":
-        raise unavailable()
-    if set(body.fields) != set(row.fields):
-        raise HTTPException(422, "Supply exactly the requested fields")
-    for field in row.fields:
-        ciphertext, nonce = encrypt(body.fields[field])
-        item = VaultItem(
-            vault_id=row.vault_id,
-            section=row.section,
-            item_name=field,
-            encrypted_value=ciphertext,
-            nonce=nonce,
+    try:
+        row = await token_request(db, body.token)
+        context = await describe(db, row)
+        if context.status != "pending":
+            raise unavailable()
+        if set(body.fields) != set(row.fields):
+            raise HTTPException(422, "Supply exactly the requested fields")
+        # Lock only requested rows and recheck their state before changing any value.
+        existing = await load_vault_items_by_name(
+            db, row.vault_id, row.section, lock_fields=row.fields
         )
-        db.add(item)
-        try:
+        if fields_conflict(row, existing):
+            raise unavailable()
+        for field in row.fields:
+            ciphertext, nonce = encrypt(body.fields[field])
+            item = existing.get(field)
+            if item is None:
+                db.add(
+                    VaultItem(
+                        vault_id=row.vault_id,
+                        section=row.section,
+                        item_name=field,
+                        encrypted_value=ciphertext,
+                        nonce=nonce,
+                    )
+                )
+            else:
+                item.encrypted_value = ciphertext
+                item.nonce = nonce
             await db.flush()
-        except IntegrityError:
-            # A regular Vault write may have won the unique field constraint.
-            await db.rollback()
-            raise HTTPException(409, "Requested field already supplied") from None
-    from app.services.runtime_vaults import notify_vault_changed
+        from app.services.runtime_vaults import notify_vault_changed
 
-    await notify_vault_changed(db, row.vault_id, values_changed=True)
-    row.supplied_at = datetime.now(UTC)
-    result = await describe(db, row)
-    await db.commit()
-    return result
+        await notify_vault_changed(db, row.vault_id, values_changed=True)
+        row.supplied_at = datetime.now(UTC)
+        result = await describe(db, row)
+        await db.commit()
+        return result
+    except DBAPIError as exc:
+        await db.rollback()
+        # Conflicting writes abort the entire batch; only a successful commit consumes it.
+        if isinstance(exc, IntegrityError) or getattr(exc.orig, "sqlstate", None) in {
+            "55P03",
+            "40P01",
+            "40001",
+        }:
+            raise HTTPException(409, "Requested fields changed") from None
+        raise

@@ -382,9 +382,11 @@ async def copy_vault_items(
     if target.id == source.id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Source and target are the same vault")
 
+    await db.execute(select(Vault.id).where(Vault.id == target.id).with_for_update())
     source_by_name = await vault_service.load_vault_items_by_name(db, source.id, body.section)
     target_by_name = await vault_service.load_vault_items_by_name(db, target.id, body.section)
     copied = 0
+    copied_fields: set[str] = set()
     for field_name in body.fields:
         item = source_by_name.get(field_name)
         if item is None:
@@ -413,10 +415,12 @@ async def copy_vault_items(
             # duplicate row.
             target_by_name[target_name] = created
         copied += 1
+        copied_fields.add(target_name)
 
     if copied:
         from app.services.runtime_vaults import notify_vault_changed
 
+        await vault_service.conflict_vault_requests(db, target.id, body.section, copied_fields)
         await notify_vault_changed(db, target.id, values_changed=True)
     await db.commit()
     return VaultItemsCopyResponse(status="ok", copied=copied)

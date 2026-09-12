@@ -113,18 +113,22 @@ own Workspace (the runtime-bound Project). Field deletion is rejected when a Vau
 attached to multiple Projects. Whole-Vault deletion, attach/detach, and credential profiles remain
 unavailable through Agent MCP; do not bypass that boundary through raw HTTP.
 
-### Request missing credentials
+### Request new or updated credentials
 
 Use `vault_request_create` with exact `project_id`, `vault_id`, canonical `slug`, optional
-`section`, and a batch of environment field names in `fields`. A Vault is a key bundle:
-request related keys together under one link. Supplied or already-pending fields are rejected.
+`section`, and a batch of Vault field names in `fields`. A Vault is a key bundle:
+request related new and existing keys together under one link. Include existing keys only
+when the user authorized updating them; do not delete them first. Existing Vault values
+remain unchanged until successful submission and are never shown or prefilled. Overlapping pending requests
+are rejected; a change to any requested field conflicts with the entire batch.
 Show the returned `url` unchanged to the user; do not ask them to paste secrets into chat.
 Opening the link does not consume it. Saving all requested fields consumes it once.
 
 Check `vault_request_status` with its `request_id` after the user finishes. `pending` is not
 a secret value; `supplied` means the exact references are ready. On `expired` or `conflict`,
-inspect the Vault and request only still-missing fields; never replace an existing value to
-retry. If creation times out, use `vault_get` to find recent request IDs before retrying.
+inspect current Vault metadata and reassess the authorized fields before creating a fresh
+request; do not blindly retry an overwrite. If creation times out, use `vault_get` to find
+recent request IDs before retrying.
 If submission times out, inspect status before repeating a mutation.
 
 ### Use runtime-supplied credentials
@@ -144,10 +148,12 @@ unrelated configuration in its `.clawdi` parent. Connected installations use thi
 layout on macOS/Linux only after an explicit workspace binding; do not assume an arbitrary
 repo is bound. Files remain readable by authorized programs running as the same user.
 
-After a credential request is supplied, inspect index metadata for the requested fields.
-Pending requests are metadata only, never empty pseudo-secrets. If delivery is delayed,
-report that state without claiming the credentials are saved. Runtime refreshes files;
-already-running processes must explicitly reload them. Offline delivery retains last good
+After `vault_request_status` reports `supplied`, match its Vault ID, section and field names
+in the index and require the local Vault `content_version` to be at least the status
+`content_version`. The API requires this counter; existing names alone do not prove delivery.
+If the owned index is incomplete or behind, wait for runtime reconciliation and report
+unverified delivery. Do not read secret values to check freshness. Pending requests are metadata only, never empty pseudo-secrets.
+Runtime refreshes files; already-running processes must explicitly reload them. Offline delivery retains last good
 files; confirmed access removal removes generated files. Authorized code can read these
 files, so do not claim that subsequent plaintext exposure is impossible.
 

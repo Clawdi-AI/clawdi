@@ -8578,6 +8578,8 @@ export interface components {
             project_ids: string[];
             /** Revision */
             revision: string;
+            /** Content Version */
+            content_version: number;
             /** Fields */
             fields?: components["schemas"]["RuntimeVaultField"][] | null;
         };
@@ -10279,6 +10281,10 @@ export interface components {
             section: string;
             /** Fields */
             fields: string[];
+            /** Update Fields */
+            update_fields: string[];
+            /** Content Version */
+            content_version: number;
             /**
              * Status
              * @enum {string}
@@ -10295,8 +10301,6 @@ export interface components {
             references: {
                 [key: string]: string;
             };
-            /** Local Command */
-            local_command: string;
             /** Url */
             url: string;
         };
@@ -10327,6 +10331,10 @@ export interface components {
             section: string;
             /** Fields */
             fields: string[];
+            /** Update Fields */
+            update_fields: string[];
+            /** Content Version */
+            content_version: number;
             /**
              * Status
              * @enum {string}
@@ -10343,8 +10351,6 @@ export interface components {
             references: {
                 [key: string]: string;
             };
-            /** Local Command */
-            local_command: string;
         };
         /** VaultSecretRequestSupply */
         VaultSecretRequestSupply: {

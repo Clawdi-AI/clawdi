@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
 	chmodSync,
 	linkSync,
@@ -52,6 +52,7 @@ function fixture(connected: boolean) {
 				name: "Vault",
 				slug: "vault",
 				revision: "1",
+				content_version: 1,
 				project_ids: [randomUUID()],
 				fields: [
 					{
@@ -102,6 +103,94 @@ for (const connected of [true, false]) {
 	describe.skipIf(!connected && process.platform !== "linux")(
 		connected ? "connected native filesystem" : "Hosted Linux filesystem",
 		() => {
+			test("incomplete owned metadata refreshes without rewriting secrets; delivery requires current material", async () => {
+				const { config, home, data } = fixture(connected);
+				let invalidCounter: "missing" | "null" | undefined;
+				let materialStatus = 200;
+				const server = Bun.serve({
+					hostname: "127.0.0.1",
+					port: 0,
+					async fetch(request) {
+						const vault = data.vaults[0];
+						const material = request.method === "POST";
+						if (material && materialStatus !== 200)
+							return new Response(null, { status: materialStatus });
+						if (!invalidCounter && request.headers.get("if-none-match") === vault.revision)
+							return new Response(null, { status: 304 });
+						const body = material ? await request.json() : undefined;
+						return Response.json(
+							{
+								...data,
+								vaults: [
+									{
+										...vault,
+										content_version:
+											invalidCounter === "missing"
+												? undefined
+												: invalidCounter === "null"
+													? null
+													: vault.content_version,
+										fields:
+											material && body?.revisions[vault.id] !== vault.revision
+												? vault.fields
+												: null,
+									},
+								],
+							},
+							{ headers: { etag: vault.revision } },
+						);
+					},
+				});
+				config.apiUrl = server.url.origin;
+				const dir = join(home, ".clawdi/vaults");
+				const index = () => JSON.parse(readFileSync(join(dir, "index.json"), "utf8")).vaults[0];
+				try {
+					await syncRuntimeVaultFiles(config);
+					const cached = JSON.parse(readFileSync(config.receiptPath, "utf8"));
+					const cachedIndex = JSON.parse(readFileSync(join(dir, "index.json"), "utf8"));
+					delete cached.inventory[0].content_version;
+					delete cachedIndex.vaults[0].content_version;
+					const cachedBytes = JSON.stringify(cachedIndex);
+					writeFileSync(join(dir, "index.json"), cachedBytes);
+					cached.digests["index.json"] = createHash("sha256").update(cachedBytes).digest("hex");
+					writeFileSync(config.receiptPath, JSON.stringify(cached));
+					const names = index().sections.map((section: { file: string }) => section.file);
+					const mtimes = names.map(
+						(file: string) => lstatSync(join(dir, file), { bigint: true }).mtimeNs,
+					);
+					// Refresh owned cache metadata using fields=null; secret section files stay intact.
+					expect(await syncRuntimeVaultFiles(config)).toBe("synced");
+					expect(index().content_version).toBe(1);
+					expect(
+						names.map((file: string) => lstatSync(join(dir, file), { bigint: true }).mtimeNs),
+					).toEqual(mtimes);
+					expect(await syncRuntimeVaultFiles(config)).toBe("unchanged");
+					const requestedContentVersion = 2;
+					data.vaults[0].content_version = requestedContentVersion;
+					data.vaults[0].revision = "2";
+					data.vaults[0].fields[0].value = "replacement";
+					materialStatus = 503;
+					await expect(syncRuntimeVaultFiles(config)).rejects.toThrow("Runtime Vault files");
+					// Matching names already exist, but metadata alone cannot publish delivery.
+					expect(index().sections[0].fields[0].name).toBe("TOKEN");
+					expect(index().content_version).toBeLessThan(requestedContentVersion);
+					materialStatus = 200;
+					await syncRuntimeVaultFiles(config);
+					expect(index().content_version).toBe(requestedContentVersion);
+					expect(
+						JSON.parse(readFileSync(config.receiptPath, "utf8")).inventory[0].content_version,
+					).toBe(requestedContentVersion);
+					for (const malformed of ["missing", "null"] as const) {
+						invalidCounter = malformed;
+						await expect(syncRuntimeVaultFiles(config)).rejects.toThrow("Runtime Vault files");
+						expect(index().content_version).toBe(requestedContentVersion);
+						expect(names.every((file: string) => lstatSync(join(dir, file)).isFile())).toBe(true);
+					}
+				} finally {
+					server.stop(true);
+				}
+			});
+
 			test("HTTP snapshots: stable sections, 304 no IO rewrite, rotation, additions/removal, offline and revocation", async () => {
 				const { config, home, data } = fixture(connected);
 				let revision = "1",

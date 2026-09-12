@@ -1,11 +1,10 @@
-import re
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.schemas.vault import VaultCreate, VaultItemUpsert
+from app.schemas.vault import VaultCreate, VaultItemUpsert, clean_vault_segment
 
 
 class VaultSecretRequestCreate(BaseModel):
@@ -31,11 +30,10 @@ class VaultSecretRequestCreate(BaseModel):
     @field_validator("fields")
     @classmethod
     def validate_fields(cls, fields: list[str]) -> list[str]:
-        if len(set(fields)) != len(fields) or any(
-            not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,199}", field) for field in fields
-        ):
-            raise ValueError("Fields must be distinct environment variable names")
-        return fields
+        cleaned = [clean_vault_segment(field, field_name="field name") for field in fields]
+        if len(set(cleaned)) != len(cleaned):
+            raise ValueError("Fields must be distinct after normalization")
+        return cleaned
 
 
 class VaultSecretRequestStatus(BaseModel):
@@ -47,11 +45,12 @@ class VaultSecretRequestStatus(BaseModel):
     slug: str
     section: str
     fields: list[str]
+    update_fields: list[str]
+    content_version: int = Field(ge=0)
     status: Literal["pending", "supplied", "expired", "conflict"]
     expires_at: datetime
     supplied_at: datetime | None
     references: dict[str, str]
-    local_command: str
 
 
 class VaultSecretRequestCreated(VaultSecretRequestStatus):
@@ -60,7 +59,7 @@ class VaultSecretRequestCreated(VaultSecretRequestStatus):
 
 class VaultSecretRequestToken(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    token: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    token: str = Field(pattern=r"^v2_[A-Za-z0-9_-]{43}$")
 
 
 class VaultSecretRequestSupply(VaultSecretRequestToken):

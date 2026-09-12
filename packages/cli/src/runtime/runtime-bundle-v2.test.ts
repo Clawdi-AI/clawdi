@@ -833,6 +833,7 @@ describe("hosted runtime bundle v2", () => {
 			mcp: { servers: Record<string, unknown> };
 		};
 		expect(nativeMcpConfig.mcp.servers.clawdi).toEqual({
+			requestTimeoutMs: 420_000,
 			url: "https://cloud-api.test/v1/mcp/clawdi",
 			transport: "streamable-http",
 			headers: {

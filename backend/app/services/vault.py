@@ -1,7 +1,10 @@
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_, select, true
+from sqlalchemy import func, or_, select, true, update
+from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -16,6 +19,7 @@ from app.models.vault import (
     VaultItem,
     VaultProjectAttachment,
     VaultProjectSlugAlias,
+    VaultSecretRequest,
 )
 from app.schemas.vault import VaultCreate, VaultItemDelete, VaultItemUpsert
 from app.services.vault_crypto import encrypt
@@ -152,15 +156,38 @@ async def get_vault_for_write(
 
 
 async def load_vault_items_by_name(
-    db: AsyncSession, vault_id: UUID, section: str
+    db: AsyncSession, vault_id: UUID, section: str, *, lock_fields: list[str] | None = None
 ) -> dict[str, VaultItem]:
-    result = await db.execute(
-        select(VaultItem).where(
-            VaultItem.vault_id == vault_id,
-            VaultItem.section == section,
+    query = select(VaultItem).where(VaultItem.vault_id == vault_id, VaultItem.section == section)
+    if lock_fields is not None:
+        query = (
+            query.where(VaultItem.item_name.in_(lock_fields))
+            .order_by(VaultItem.id)
+            .with_for_update(nowait=True)
         )
-    )
+    result = await db.execute(query.execution_options(populate_existing=True))
     return {item.item_name: item for item in result.scalars().all()}
+
+
+async def conflict_vault_requests(
+    db: AsyncSession, vault_id: UUID, section: str, fields: Iterable[str]
+) -> None:
+    """Fence affected capabilities in the same transaction, under the Vault lock."""
+    await db.execute(
+        update(VaultSecretRequest)
+        .where(
+            VaultSecretRequest.vault_id == vault_id,
+            VaultSecretRequest.section == section,
+            VaultSecretRequest.supplied_at.is_(None),
+            VaultSecretRequest.conflicted_at.is_(None),
+            VaultSecretRequest.fields.has_any(array(list(fields))),
+        )
+        .values(
+            conflicted_at=datetime.now(UTC),
+            expires_at=func.least(VaultSecretRequest.expires_at, datetime.now(UTC)),
+        )
+        .execution_options(synchronize_session="fetch")
+    )
 
 
 async def upsert_owned_vault_items(
@@ -179,6 +206,7 @@ async def upsert_owned_vault_items(
         project_id=project_id,
         vault_id=vault_id,
     )
+    await db.execute(select(Vault.id).where(Vault.id == vault.id).with_for_update())
     existing_by_name = await load_vault_items_by_name(db, vault.id, body.section)
 
     for field_name, plaintext in body.fields.items():
@@ -200,6 +228,7 @@ async def upsert_owned_vault_items(
 
     from app.services.runtime_vaults import notify_vault_changed
 
+    await conflict_vault_requests(db, vault.id, body.section, body.fields)
     await notify_vault_changed(db, vault.id, values_changed=True)
     await db.commit()
     return len(body.fields)
@@ -222,6 +251,7 @@ async def delete_owned_vault_items(
         project_id=project_id,
         vault_id=vault_id,
     )
+    await db.execute(select(Vault.id).where(Vault.id == vault.id).with_for_update())
     existing_by_name = await load_vault_items_by_name(db, vault.id, body.section)
     items_to_delete = [
         existing_by_name[field_name]
@@ -240,6 +270,9 @@ async def delete_owned_vault_items(
     if items_to_delete:
         from app.services.runtime_vaults import notify_vault_changed
 
+        await conflict_vault_requests(
+            db, vault.id, body.section, (item.item_name for item in items_to_delete)
+        )
         await notify_vault_changed(db, vault.id, values_changed=True)
     await db.commit()
     return len(items_to_delete)
