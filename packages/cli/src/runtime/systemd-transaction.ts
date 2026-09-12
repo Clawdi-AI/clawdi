@@ -651,6 +651,9 @@ export function runCommandResult(
 	env?: Record<string, string>,
 	timeoutMs = SYSTEMD_COMMAND_TIMEOUT_MS,
 ): CommandResult {
+	if (process.platform !== "linux") {
+		throw new Error("systemd runtime commands require Linux");
+	}
 	if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
 		throw new Error("systemd command timeout must be a positive integer");
 	}
