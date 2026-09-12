@@ -137,6 +137,17 @@ export async function readHostedRuntimeObserved(
 		}
 	}
 
+	// Reject the whole snapshot when its parent authority or health changed while
+	// any asynchronous probe ran. Dropping only component proof leaves a stale
+	// aggregate success available to legacy admission readers.
+	if (
+		runtimeContentSha256(readRuntimeAppliedState(paths)) !== runtimeContentSha256(appliedState) ||
+		runtimeContentSha256(readRuntimeBootStatus(paths)) !== runtimeContentSha256(boot) ||
+		runtimeContentSha256(readJsonRecord(paths.runtimeWatchStatus)) !==
+			runtimeContentSha256(watchStatus)
+	)
+		return null;
+
 	if (boot.error) observed.error = boot.error;
 	const convergeError = runtimeConvergeError(watchStatus);
 	if (convergeError) observed.convergeError = convergeError;

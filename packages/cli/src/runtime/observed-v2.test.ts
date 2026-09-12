@@ -281,6 +281,7 @@ describe("hosted runtime observed v2", () => {
 			});
 			process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
 			let body: unknown = ready;
+			let mutateParent: (() => void) | undefined;
 			let uiStatus = 200;
 			let probeStatus = 200;
 			let nativeStatus: unknown;
@@ -291,6 +292,9 @@ describe("hosted runtime observed v2", () => {
 				port: unit === "openclaw-gateway.service" ? 0 : 9119,
 				async fetch(request) {
 					if (probeWait) await probeWait;
+					const mutate = mutateParent;
+					mutateParent = undefined;
+					mutate?.();
 					const path = new URL(request.url).pathname;
 					if (path === "/native-status")
 						return new Response(
@@ -325,6 +329,19 @@ describe("hosted runtime observed v2", () => {
 					expect(observed?.status).toBe(response === ready ? "ok" : "unknown");
 				}
 				body = ready;
+				const parent = readRuntimeAppliedState(paths);
+				if (!parent) throw new Error("Expected applied fixture");
+				mutateParent = () =>
+					writeRuntimeAppliedState({ ...parent, appliedAt: "2026-09-12T12:00:00.000Z" }, paths);
+				expect(await readHostedRuntimeObserved(paths)).toBeNull();
+				writeRuntimeAppliedState(parent, paths);
+				mutateParent = () =>
+					writeFileSync(
+						paths.runtimeWatchStatus,
+						JSON.stringify({ event: { status: "error", error: "apply failed during probe" } }),
+					);
+				expect(await readHostedRuntimeObserved(paths)).toBeNull();
+				rmSync(paths.runtimeWatchStatus);
 				probeStatus = 503;
 				expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
 				probeStatus = 200;

@@ -19,6 +19,12 @@ the probe. Automatic service restart can qualify a new invocation under the
 unchanged committed configuration. Missing configuration, unknown invocation,
 probe failure or mutation during observation produces unavailable proof.
 
+The complete observation rechecks the applied receipt and boot/watch health
+after asynchronous probes. Any parent change invalidates the entire snapshot,
+including its aggregate health; it cannot fall back to a stale healthy result.
+Buffered event retries retain their original capture timestamp, from which
+Cloud computes freshness.
+
 The additive `components` v1 observation envelope inherits the existing exact
 apply receipt, boot nonce/session, runtime identity and source revision from its
 parent event. Its point-in-time freshness is bounded by the existing observation

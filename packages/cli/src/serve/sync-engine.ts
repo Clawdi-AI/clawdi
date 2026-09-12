@@ -1531,7 +1531,7 @@ async function drainQueueLoop(
 				);
 			}
 		} catch (e) {
-			if (signal.aborted) continue;
+			if (signal.aborted && !isAuthFailure(e)) continue;
 			const msg = toErrorMessage(e);
 			const resource = healthResource(item);
 			// Auth dead → daemon abort, not queue drop. Every
@@ -2079,8 +2079,8 @@ async function uploadSkillFromQueue(
 		`${item.skill_key}.tar.gz`,
 		actualHash,
 	);
-	lastPushedHash.set(item.skill_key, actualHash);
 	opts.abort.throwIfAborted();
+	lastPushedHash.set(item.skill_key, actualHash);
 	recordSkillProjectionClaim({
 		agentType: opts.adapter.agentType,
 		agentId: opts.environmentId,

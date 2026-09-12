@@ -459,6 +459,7 @@ describe("Agent filesystem projection reconcile", () => {
 		const originalHome = process.env.HOME;
 		const originalState = process.env.CLAWDI_STATE_DIR;
 		const originalHermesHome = process.env.HERMES_HOME;
+		let queue: RetryQueue | undefined;
 		try {
 			process.env.HOME = root;
 			process.env.CLAWDI_STATE_DIR = join(root, "serve");
@@ -468,10 +469,11 @@ describe("Agent filesystem projection reconcile", () => {
 			const keys = new Set<string>();
 			const skills = adapterRegistry.hermes.create().skills;
 			if (!skills) throw new Error("Hermes fixture requires Skills");
-			const queue = new RetryQueue({ agentType: "hermes" });
+			const activeQueue = new RetryQueue({ agentType: "hermes" });
+			queue = activeQueue;
 			await run({
 				root: skillsRoot,
-				queue,
+				queue: activeQueue,
 				keys,
 				skills,
 				reconcile: (claims, trustedLegacyRemoteKeys) =>
@@ -481,14 +483,14 @@ describe("Agent filesystem projection reconcile", () => {
 							adapter: { agentType: "hermes" },
 						},
 						skills,
-						queue,
+						queue: activeQueue,
 						claims,
 						projectId: "project-1",
 						trustedLegacyRemoteKeys,
 					}),
 			});
-			await queue.flushPersist();
 		} finally {
+			await queue?.flushPersist();
 			if (originalHome === undefined) delete process.env.HOME;
 			else process.env.HOME = originalHome;
 			if (originalState === undefined) delete process.env.CLAWDI_STATE_DIR;
@@ -939,73 +941,87 @@ describe("Agent filesystem projection reconcile", () => {
 		});
 	});
 
-	it("uploads a symlink projection with the hash of the exact dereferenced archive", async () => {
-		await withProjectionCase(async ({ root, queue, keys, skills, reconcile }) => {
-			const originalHermesHome = process.env.HERMES_HOME;
-			const originalFetch = globalThis.fetch;
-			const rootDir = spyOn(skills, "rootDir");
-			try {
-				process.env.HERMES_HOME = dirname(root);
-				const shared = join(root, "shared");
-				mkdirSync(shared, { recursive: true });
-				writeFileSync(join(shared, "body.md"), "shared body\n");
-				const local = join(root, "demo");
-				mkdirSync(local, { recursive: true });
-				writeFileSync(join(local, "SKILL.md"), "# Demo\n");
-				symlinkSync(join(shared, "body.md"), join(local, "body.md"));
-				keys.add("demo");
-				await reconcile(new Map());
-				rootDir.mockClear();
-				const item = queue.peek();
-				if (!item) throw new Error("expected queued projection");
+	it.each([false, true])(
+		"uploads exact symlink bytes and retains cancelled work (cancel=%s)",
+		async (cancel) => {
+			await withProjectionCase(async ({ root, queue, keys, skills, reconcile }) => {
+				const originalHermesHome = process.env.HERMES_HOME;
+				const originalFetch = globalThis.fetch;
+				const rootDir = spyOn(skills, "rootDir");
+				try {
+					process.env.HERMES_HOME = dirname(root);
+					const shared = join(root, "shared");
+					mkdirSync(shared, { recursive: true });
+					writeFileSync(join(shared, "body.md"), "shared body\n");
+					const local = join(root, "demo");
+					mkdirSync(local, { recursive: true });
+					writeFileSync(join(local, "SKILL.md"), "# Demo\n");
+					symlinkSync(join(shared, "body.md"), join(local, "body.md"));
+					keys.add("demo");
+					await reconcile(new Map());
+					rootDir.mockClear();
+					const item = queue.peek();
+					if (!item) throw new Error("expected queued projection");
 
-				let verifiedHash: string | null = null;
-				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-					const request = input instanceof Request ? input : new Request(input, init);
-					const form = await request.formData();
-					const archive = form.get("file");
-					const suppliedHash = form.get("content_hash");
-					if (!(archive instanceof Blob) || typeof suppliedHash !== "string") {
-						return new Response("invalid multipart", { status: 400 });
-					}
-					verifiedHash = await computeSkillArchiveHash(
-						Buffer.from(await archive.arrayBuffer()),
-						"demo",
+					const abortController = new AbortController();
+					const pushed = new Map<string, string>();
+					let verifiedHash: string | null = null;
+					globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+						const request = input instanceof Request ? input : new Request(input, init);
+						const form = await request.formData();
+						const archive = form.get("file");
+						const suppliedHash = form.get("content_hash");
+						if (!(archive instanceof Blob) || typeof suppliedHash !== "string") {
+							return new Response("invalid multipart", { status: 400 });
+						}
+						verifiedHash = await computeSkillArchiveHash(
+							Buffer.from(await archive.arrayBuffer()),
+							"demo",
+						);
+						expect(suppliedHash).toBe(verifiedHash);
+						if (cancel) abortController.abort();
+						return new Response(JSON.stringify({ version: 1 }), {
+							headers: { "content-type": "application/json" },
+						});
+					}) as typeof fetch;
+
+					const adapter = adapterRegistry.hermes.create();
+					adapter.skills = skills;
+					const processing = processQueueItem(
+						{
+							environmentId: "agent-1",
+							adapter,
+							abort: abortController.signal,
+							abortController,
+						},
+						new ApiClient({ requireAuth: false }),
+						queue,
+						item,
+						queueModules(adapter),
+						pushed,
+						new Map(),
+						new Map(),
 					);
-					expect(suppliedHash).toBe(verifiedHash);
-					return new Response(JSON.stringify({ version: 1 }), {
-						headers: { "content-type": "application/json" },
-					});
-				}) as typeof fetch;
-
-				const adapter = adapterRegistry.hermes.create();
-				adapter.skills = skills;
-				const abortController = new AbortController();
-				await processQueueItem(
-					{
-						environmentId: "agent-1",
-						adapter,
-						abort: abortController.signal,
-						abortController,
-					},
-					new ApiClient({ requireAuth: false }),
-					queue,
-					item,
-					queueModules(adapter),
-					new Map(),
-					new Map(),
-					new Map(),
-				);
-				expect(verifiedHash).not.toBeNull();
-				expect(rootDir).toHaveBeenCalledTimes(1);
-			} finally {
-				rootDir.mockRestore();
-				globalThis.fetch = originalFetch;
-				if (originalHermesHome === undefined) delete process.env.HERMES_HOME;
-				else process.env.HERMES_HOME = originalHermesHome;
-			}
-		});
-	});
+					if (cancel) {
+						await expect(processing).rejects.toThrow();
+						expect(queue.peek()).toEqual(item);
+						expect(pushed.size).toBe(0);
+						expect(readSkillProjectionClaimsForAgent("hermes", "agent-1")).toEqual([]);
+					} else {
+						await processing;
+						expect(queue.depth).toBe(0);
+					}
+					expect(verifiedHash).not.toBeNull();
+					expect(rootDir).toHaveBeenCalledTimes(1);
+				} finally {
+					rootDir.mockRestore();
+					globalThis.fetch = originalFetch;
+					if (originalHermesHome === undefined) delete process.env.HERMES_HOME;
+					else process.env.HERMES_HOME = originalHermesHome;
+				}
+			});
+		},
+	);
 
 	it("re-derives missed alias absence after eviction and restart at the same revision", async () => {
 		await withProjectionCase(async ({ root, keys, skills }) => {
