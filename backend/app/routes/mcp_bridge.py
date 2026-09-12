@@ -692,9 +692,9 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     ),
     "vault_request_create": _NativeToolSpec(
         description=(
-            "Request a batch of new or updated environment fields in one exact owned Vault. "
+            "Request a batch of new or updated Vault fields in one exact owned Vault. "
             "Returns a one-time write-only URL to show the user; never ask for secrets in chat. "
-            "Existing values stay active until submission and are never shown by the link. "
+            "Existing Vault values are kept until submission and are never shown by the link. "
             "Changes to requested fields conflict; overlapping pending requests are rejected. "
             "Runtime requests must target their own Workspace, not "
             "other readable linked Projects. The URL expires and is consumed only after saving."

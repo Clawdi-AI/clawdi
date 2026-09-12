@@ -120,9 +120,9 @@ foreground operator workflows; never bypass that boundary through raw HTTP or da
 ### Request new or updated credentials
 
 Use `vault_request_create` with exact `project_id`, `vault_id`, canonical `slug`, optional
-`section`, and a batch of environment field names in `fields`. A Vault is a key bundle:
+`section`, and a batch of Vault field names in `fields`. A Vault is a key bundle:
 request related new and existing keys together under one link. Include existing keys only
-when the user authorized updating them; do not delete them first. Old values remain active
+when the user authorized updating them; do not delete them first. Existing Vault values remain unchanged
 until successful submission and are never shown or prefilled. Overlapping pending requests
 are rejected; a change to any requested field conflicts with the entire batch.
 Show the returned `url` unchanged to the user; do not ask them to paste secrets into chat.

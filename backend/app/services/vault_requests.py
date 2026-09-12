@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select, true
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext
@@ -92,7 +92,9 @@ async def describe(db: AsyncSession, row: VaultSecretRequest) -> VaultSecretRequ
         "supplied" if row.supplied_at else "pending"
     )
     if not row.supplied_at:
-        if row.expires_at <= datetime.now(UTC):
+        if row.conflicted_at is not None:
+            state = "conflict"
+        elif row.expires_at <= datetime.now(UTC):
             state = "expired"
         elif fields_conflict(row, existing):
             state = "conflict"
@@ -176,7 +178,9 @@ async def create_request(
         # Persist the predecessor's terminal state with its successor, including
         # conflicts caused before this backend version began fencing mutations.
         row.conflicted_at = datetime.now(UTC)
-    token = secrets.token_urlsafe(32)
+        row.expires_at = min(row.expires_at, row.conflicted_at)
+    # Old public schemas accept exactly 43 characters and must reject new semantics.
+    token = "v2_" + secrets.token_urlsafe(32)
     row = VaultSecretRequest(
         vault_id=vault.id,
         project_id=body.project_id,
@@ -247,41 +251,52 @@ async def token_request(db: AsyncSession, token: str) -> VaultSecretRequest:
 
 
 async def supply(db: AsyncSession, body: VaultSecretRequestSupply) -> VaultSecretRequestStatus:
-    row = await token_request(db, body.token)
-    context = await describe(db, row)
-    if context.status != "pending":
-        raise unavailable()
-    if set(body.fields) != set(row.fields):
-        raise HTTPException(422, "Supply exactly the requested fields")
-    # describe holds the Vault lock shared by create, upsert, copy and delete.
-    # Validate the entire batch before changing any field, retaining old values on conflict.
-    existing = await load_vault_items_by_name(db, row.vault_id, row.section)
-    for field in row.fields:
-        ciphertext, nonce = encrypt(body.fields[field])
-        item = existing.get(field)
-        if item is None:
-            db.add(
-                VaultItem(
-                    vault_id=row.vault_id,
-                    section=row.section,
-                    item_name=field,
-                    encrypted_value=ciphertext,
-                    nonce=nonce,
+    try:
+        row = await token_request(db, body.token)
+        context = await describe(db, row)
+        if context.status != "pending":
+            raise unavailable()
+        if set(body.fields) != set(row.fields):
+            raise HTTPException(422, "Supply exactly the requested fields")
+        # Older writers do not take the Vault lock first. Lock only requested rows,
+        # without waiting behind an old writer that may itself be waiting on our Vault.
+        existing = await load_vault_items_by_name(
+            db, row.vault_id, row.section, lock_fields=row.fields
+        )
+        if fields_conflict(row, existing):
+            raise unavailable()
+        for field in row.fields:
+            ciphertext, nonce = encrypt(body.fields[field])
+            item = existing.get(field)
+            if item is None:
+                db.add(
+                    VaultItem(
+                        vault_id=row.vault_id,
+                        section=row.section,
+                        item_name=field,
+                        encrypted_value=ciphertext,
+                        nonce=nonce,
+                    )
                 )
-            )
-        else:
-            item.encrypted_value = ciphertext
-            item.nonce = nonce
-        try:
+            else:
+                item.encrypted_value = ciphertext
+                item.nonce = nonce
             await db.flush()
-        except IntegrityError:
-            # A regular Vault write may have won the unique field constraint.
-            await db.rollback()
-            raise HTTPException(409, "Requested field already supplied") from None
-    from app.services.runtime_vaults import notify_vault_changed
+        from app.services.runtime_vaults import notify_vault_changed
 
-    await notify_vault_changed(db, row.vault_id, values_changed=True)
-    row.supplied_at = datetime.now(UTC)
-    result = await describe(db, row)
-    await db.commit()
-    return result
+        await notify_vault_changed(db, row.vault_id, values_changed=True)
+        row.supplied_at = datetime.now(UTC)
+        result = await describe(db, row)
+        await db.commit()
+        return result
+    except DBAPIError as exc:
+        await db.rollback()
+        # Unique-field races and row/deadlock contention with pre-lock-protocol writers
+        # abort the entire batch. The capability is consumed only by a successful commit.
+        if isinstance(exc, IntegrityError) or getattr(exc.orig, "sqlstate", None) in {
+            "55P03",
+            "40P01",
+            "40001",
+        }:
+            raise HTTPException(409, "Requested fields changed") from None
+        raise

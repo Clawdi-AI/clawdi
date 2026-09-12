@@ -473,6 +473,50 @@ async def test_mixed_request_conflicts_atomically(cli_client, db_session, change
     assert row.supplied_at is None
 
 
+@pytest.mark.asyncio
+async def test_request_uses_normalized_vault_names_for_existing_and_new_keys(cli_client):
+    body, created = await make_request(
+        cli_client,
+        fields=[" api-key ", "api.token", "new.key"],
+        existing={"api-key": "old-key", "api.token": "old-token"},
+    )
+    assert created["fields"] == ["api-key", "api.token", "new.key"]
+    assert created["update_fields"] == ["api-key", "api.token"]
+    assert (await cli_client.post("/v1/vault/requests", json=body)).status_code == 409
+    for fields in (
+        ["api-key", " api-key "],
+        ["legacy/key"],
+        [" "],
+        ["x" * 201],
+        [f"key-{index}" for index in range(33)],
+    ):
+        invalid = await cli_client.post("/v1/vault/requests", json={**body, "fields": fields})
+        assert invalid.status_code == 422, invalid.text
+
+    async def resolve_fields(expected):
+        for field, value in expected.items():
+            resolved = await cli_client.post(
+                "/v1/vault/resolve",
+                params={
+                    "vault_slug": body["slug"],
+                    "project_id": body["project_id"],
+                    "field": field,
+                },
+            )
+            assert resolved.status_code == 200, resolved.text
+            assert resolved.json()["value"] == value
+
+    await resolve_fields({"api-key": "old-key", "api.token": "old-token"})
+    values = {"api-key": "new-key", "api.token": "new-token", "new.key": "new-value"}
+    response = await cli_client.post(
+        "/v1/vault/requests/supply",
+        json={"token": created["url"].split("#")[1], "fields": values},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "supplied"
+    await resolve_fields(values)
+
+
 async def wait_for_database_lock(engine, pid):
     async with engine.connect() as observer:
         async with asyncio.timeout(5):
@@ -764,6 +808,358 @@ async def test_status_refreshes_terminal_state_after_concurrent_write(
             )
             assert (await describe(reader, row)).status == "conflict"
     finally:
+        await db_session.rollback()
+        await db_session.execute(delete(Vault).where(Vault.id == vault_id))
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_old_public_schema_rejects_new_update_link_after_old_writer_deletes_field(
+    cli_client, db_session, seed_user
+):
+    from pydantic import ValidationError
+
+    from app.schemas.vault import VaultItemDelete
+    from tests.fixtures import vault_requests_legacy as legacy
+
+    body, created = await make_request(cli_client, fields=["TOKEN"], existing={"TOKEN": "old"})
+    token = created["url"].split("#")[1]
+    assert token.startswith("v2_") and len(token) == 46
+    await legacy.delete_owned_vault_items(
+        db_session,
+        AuthContext(user=seed_user),
+        body["slug"],
+        VaultItemDelete(fields=["TOKEN"]),
+        project_id=uuid.UUID(body["project_id"]),
+        vault_id=uuid.UUID(body["vault_id"]),
+        global_delete=False,
+    )
+    row = await db_session.get(VaultSecretRequest, uuid.UUID(created["id"]), populate_existing=True)
+    assert row.expires_at > datetime.now(UTC) and row.conflicted_at is None
+    # Actual previous public request schema fails before its unchanged SHA256 lookup.
+    with pytest.raises(ValidationError):
+        legacy.VaultSecretRequestSupply(token=token, fields={"TOKEN": "must-not-create"})
+    with pytest.raises(HTTPException) as exc:
+        await legacy.supply(
+            db_session,
+            legacy.VaultSecretRequestSupply(token=token[3:], fields={"TOKEN": "must-not-create"}),
+        )
+    assert exc.value.status_code == 410
+    assert (await cli_client.get(f"/v1/vault/requests/{created['id']}")).json()[
+        "status"
+    ] == "conflict"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reader", ["old", "new"])
+async def test_live_legacy_capability_keeps_absent_only_authority(cli_client, db_session, reader):
+    from tests.fixtures import vault_requests_legacy as legacy
+
+    _, created = await make_request(cli_client, fields=["TOKEN"])
+    token = "l" * 43
+    row = await db_session.get(VaultSecretRequest, uuid.UUID(created["id"]))
+    row.token_hash = hashlib.sha256(token.encode()).hexdigest()
+    await db_session.commit()
+    body = {"token": token, "fields": {"TOKEN": "legacy-value"}}
+    if reader == "old":
+        assert (
+            await legacy.supply(db_session, legacy.VaultSecretRequestSupply(**body))
+        ).status == "supplied"
+    else:
+        result = await cli_client.post("/v1/vault/requests/supply", json=body)
+        assert result.status_code == 200, result.text
+        assert result.json()["status"] == "supplied"
+
+
+@pytest.mark.asyncio
+async def test_retired_legacy_link_stays_revoked_under_old_supply_and_delete(
+    cli_client, db_session, seed_user
+):
+    from app.schemas.vault import VaultItemDelete
+    from tests.fixtures import vault_requests_legacy as legacy
+
+    body, created = await make_request(cli_client, fields=["TOKEN"])
+    token = "l" * 43
+    row = await db_session.get(VaultSecretRequest, uuid.UUID(created["id"]))
+    row.token_hash = hashlib.sha256(token.encode()).hexdigest()
+    await db_session.commit()
+    await cli_client.put("/v1/vault/requested/items", json={"fields": {"TOKEN": "operator"}})
+    await legacy.delete_owned_vault_items(
+        db_session,
+        AuthContext(user=seed_user),
+        body["slug"],
+        VaultItemDelete(fields=["TOKEN"]),
+        project_id=uuid.UUID(body["project_id"]),
+        vault_id=uuid.UUID(body["vault_id"]),
+        global_delete=False,
+    )
+    assert (await cli_client.get(f"/v1/vault/requests/{created['id']}")).json()[
+        "status"
+    ] == "conflict"
+    with pytest.raises(HTTPException) as exc:
+        await legacy.supply(
+            db_session, legacy.VaultSecretRequestSupply(token=token, fields={"TOKEN": "wrong"})
+        )
+    assert exc.value.status_code == 410
+    await db_session.refresh(row)
+    assert row.supplied_at is None and row.expires_at <= datetime.now(UTC)
+    assert (await cli_client.post("/v1/vault/requests", json=body)).status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_legacy_lookup_waiting_on_request_row_observes_revocation(
+    cli_client, db_session, engine
+):
+    from app.services.vault import conflict_vault_requests
+    from tests.fixtures import vault_requests_legacy as legacy
+
+    _, created = await make_request(cli_client, fields=["TOKEN"])
+    vault_id, request_id = uuid.UUID(created["vault_id"]), uuid.UUID(created["id"])
+    token = "l" * 43
+    row = await db_session.get(VaultSecretRequest, request_id)
+    row.token_hash = hashlib.sha256(token.encode()).hexdigest()
+    await db_session.commit()
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    task = None
+    try:
+        async with sessions() as revoker, sessions() as old:
+            await revoker.execute(select(Vault.id).where(Vault.id == vault_id).with_for_update())
+            await revoker.execute(
+                select(VaultSecretRequest.id)
+                .where(VaultSecretRequest.id == request_id)
+                .with_for_update()
+            )
+            pid = await old.scalar(text("SELECT pg_backend_pid()"))
+            task = asyncio.create_task(
+                legacy.supply(
+                    old, legacy.VaultSecretRequestSupply(token=token, fields={"TOKEN": "wrong"})
+                )
+            )
+            await wait_for_database_lock(engine, pid)
+            await conflict_vault_requests(revoker, vault_id, "", ["TOKEN"])
+            await revoker.commit()
+            with pytest.raises(HTTPException) as exc:
+                await asyncio.wait_for(task, 5)
+            assert exc.value.status_code == 410
+    finally:
+        if task is not None:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await db_session.rollback()
+        await db_session.execute(delete(Vault).where(Vault.id == vault_id))
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+@pytest.mark.parametrize("operation", ["upsert", "delete"])
+@pytest.mark.parametrize("supply_first", [False, True])
+async def test_supply_serializes_against_previous_unlocked_writers(
+    cli_client, db_session, engine, seed_user, monkeypatch, operation, supply_first
+):
+    from app.schemas.vault import VaultItemDelete, VaultItemUpsert
+    from app.services import runtime_vaults, vault_requests
+    from app.services.vault_crypto import decrypt
+    from tests.fixtures import vault_requests_legacy as legacy
+
+    body, created = await make_request(
+        cli_client, fields=["NEW", "TOKEN"], existing={"TOKEN": "old"}
+    )
+    vault_id = uuid.UUID(body["vault_id"])
+    auth = AuthContext(user=seed_user)
+    await db_session.commit()
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    held, release = asyncio.Event(), asyncio.Event()
+    tasks = []
+    try:
+        async with sessions() as current, sessions() as old:
+            original_notify = runtime_vaults.notify_vault_changed
+            original_load = vault_requests.load_vault_items_by_name
+
+            async def hold_old_write(session, *args, **kwargs):
+                if session is old and not supply_first:
+                    # The previous notifier's first SQL execution autoflushes these same rows.
+                    await session.flush()
+                    held.set()
+                    await release.wait()
+                await original_notify(session, *args, **kwargs)
+
+            async def hold_current_rows(session, *args, **kwargs):
+                result = await original_load(session, *args, **kwargs)
+                if session is current and supply_first and kwargs.get("lock_fields"):
+                    held.set()
+                    await release.wait()
+                return result
+
+            monkeypatch.setattr(runtime_vaults, "notify_vault_changed", hold_old_write)
+            monkeypatch.setattr(vault_requests, "load_vault_items_by_name", hold_current_rows)
+
+            async def write_old():
+                args = {"project_id": uuid.UUID(body["project_id"]), "vault_id": vault_id}
+                if operation == "upsert":
+                    await legacy.upsert_owned_vault_items(
+                        old,
+                        auth,
+                        "requested",
+                        VaultItemUpsert(fields={"TOKEN": "operator"}),
+                        **args,
+                    )
+                else:
+                    await legacy.delete_owned_vault_items(
+                        old,
+                        auth,
+                        "requested",
+                        VaultItemDelete(fields=["TOKEN"]),
+                        global_delete=False,
+                        **args,
+                    )
+
+            async def redeem():
+                return await supply(
+                    current,
+                    VaultSecretRequestSupply(
+                        token=created["url"].split("#")[1],
+                        fields={"TOKEN": "supplied", "NEW": "supplied"},
+                    ),
+                )
+
+            if supply_first:
+                pid = await old.scalar(text("SELECT pg_backend_pid()"))
+                current_task = asyncio.create_task(redeem())
+                tasks.append(current_task)
+                await asyncio.wait_for(held.wait(), 5)
+                old_task = asyncio.create_task(write_old())
+                tasks.append(old_task)
+                await wait_for_database_lock(engine, pid)
+                release.set()
+                assert (await asyncio.wait_for(current_task, 5)).status == "supplied"
+                await asyncio.wait_for(old_task, 5)
+            else:
+                old_task = asyncio.create_task(write_old())
+                tasks.append(old_task)
+                await asyncio.wait_for(held.wait(), 5)
+                with pytest.raises(HTTPException) as exc:
+                    await asyncio.wait_for(redeem(), 5)
+                assert exc.value.status_code == 409
+                release.set()
+                await asyncio.wait_for(old_task, 5)
+        async with sessions() as check:
+            row = await check.get(VaultSecretRequest, uuid.UUID(created["id"]))
+            assert (row.supplied_at is not None) == supply_first
+            items = (
+                await check.scalars(select(VaultItem).where(VaultItem.vault_id == vault_id))
+            ).all()
+            assert {
+                item.item_name: decrypt(item.encrypted_value, item.nonce) for item in items
+            } == {
+                **({"TOKEN": "operator"} if operation == "upsert" else {}),
+                **({"NEW": "supplied"} if supply_first else {}),
+            }
+    finally:
+        release.set()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await db_session.rollback()
+        await db_session.execute(delete(Vault).where(Vault.id == vault_id))
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_old_insert_race_cannot_partially_apply_a_mixed_supply(
+    cli_client, db_session, engine, seed_user, monkeypatch
+):
+    from sqlalchemy.exc import DBAPIError
+
+    from app.schemas.vault import VaultItemUpsert
+    from app.services import vault_requests
+    from app.services.vault_crypto import decrypt
+    from tests.fixtures import vault_requests_legacy as legacy
+
+    body, created = await make_request(
+        cli_client, fields=["TOKEN", "NEW"], existing={"TOKEN": "old"}
+    )
+    vault_id = uuid.UUID(body["vault_id"])
+    auth = AuthContext(user=seed_user)
+    await db_session.commit()
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    held, release = asyncio.Event(), asyncio.Event()
+    tasks = []
+    try:
+        async with sessions() as current, sessions() as old:
+            original_load = vault_requests.load_vault_items_by_name
+
+            async def hold_rows(session, *args, **kwargs):
+                result = await original_load(session, *args, **kwargs)
+                if kwargs.get("lock_fields"):
+                    held.set()
+                    await release.wait()
+                return result
+
+            monkeypatch.setattr(vault_requests, "load_vault_items_by_name", hold_rows)
+            pid = await old.scalar(text("SELECT pg_backend_pid()"))
+            tasks.append(
+                asyncio.create_task(
+                    supply(
+                        current,
+                        VaultSecretRequestSupply(
+                            token=created["url"].split("#")[1],
+                            fields={"TOKEN": "supplied", "NEW": "supplied"},
+                        ),
+                    )
+                )
+            )
+            await asyncio.wait_for(held.wait(), 5)
+            tasks.append(
+                asyncio.create_task(
+                    legacy.upsert_owned_vault_items(
+                        old,
+                        auth,
+                        "requested",
+                        VaultItemUpsert(fields={"NEW": "operator"}),
+                        project_id=uuid.UUID(body["project_id"]),
+                        vault_id=vault_id,
+                    )
+                )
+            )
+            # The old insert owns an uncommitted unique-index entry while its FK
+            # waits on our Vault lock. Only one whole transaction may commit.
+            await wait_for_database_lock(engine, pid)
+            release.set()
+            current_result, old_result = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True), 10
+            )
+            if isinstance(current_result, HTTPException):
+                assert current_result.status_code == 409 and old_result == 1
+                supplied = False
+            else:
+                assert current_result.status == "supplied"
+                assert isinstance(old_result, DBAPIError)
+                assert getattr(old_result.orig, "sqlstate", None) == "40P01"
+                supplied = True
+        async with sessions() as check:
+            row = await check.get(VaultSecretRequest, uuid.UUID(created["id"]))
+            assert (row.supplied_at is not None) == supplied
+            items = (
+                await check.scalars(select(VaultItem).where(VaultItem.vault_id == vault_id))
+            ).all()
+            assert {
+                item.item_name: decrypt(item.encrypted_value, item.nonce) for item in items
+            } == (
+                {"TOKEN": "supplied", "NEW": "supplied"}
+                if supplied
+                else {"TOKEN": "old", "NEW": "operator"}
+            )
+    finally:
+        release.set()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await db_session.rollback()
         await db_session.execute(delete(Vault).where(Vault.id == vault_id))
         await db_session.commit()

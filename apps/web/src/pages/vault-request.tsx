@@ -42,7 +42,7 @@ export function VaultRequestPage() {
 		// Remove the capability from browser history before making any request.
 		if (!token.current) token.current = window.location.hash.slice(1);
 		window.history.replaceState(null, "", window.location.pathname);
-		if (!/^[A-Za-z0-9_-]{43}$/.test(token.current)) {
+		if (!/^(?:v2_)?[A-Za-z0-9_-]{43}$/.test(token.current)) {
 			setPhase("unavailable");
 			return;
 		}
@@ -191,7 +191,7 @@ export function VaultRequestPage() {
 							</p>
 							{!!context.update_fields?.length && (
 								<p className="text-sm text-muted-foreground">
-									Existing values stay active until you save. They are never shown here.
+									Fields marked Update replace existing values when you save.
 								</p>
 							)}
 							{context.fields.map((name) => (

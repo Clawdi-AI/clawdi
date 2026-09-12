@@ -156,16 +156,16 @@ async def get_vault_for_write(
 
 
 async def load_vault_items_by_name(
-    db: AsyncSession, vault_id: UUID, section: str
+    db: AsyncSession, vault_id: UUID, section: str, *, lock_fields: list[str] | None = None
 ) -> dict[str, VaultItem]:
-    result = await db.execute(
-        select(VaultItem)
-        .where(
-            VaultItem.vault_id == vault_id,
-            VaultItem.section == section,
+    query = select(VaultItem).where(VaultItem.vault_id == vault_id, VaultItem.section == section)
+    if lock_fields is not None:
+        query = (
+            query.where(VaultItem.item_name.in_(lock_fields))
+            .order_by(VaultItem.id)
+            .with_for_update(nowait=True)
         )
-        .execution_options(populate_existing=True)
-    )
+    result = await db.execute(query.execution_options(populate_existing=True))
     return {item.item_name: item for item in result.scalars().all()}
 
 
@@ -182,7 +182,10 @@ async def conflict_vault_requests(
             VaultSecretRequest.conflicted_at.is_(None),
             VaultSecretRequest.fields.has_any(array(list(fields))),
         )
-        .values(conflicted_at=datetime.now(UTC))
+        .values(
+            conflicted_at=datetime.now(UTC),
+            expires_at=func.least(VaultSecretRequest.expires_at, datetime.now(UTC)),
+        )
         .execution_options(synchronize_session="fetch")
     )
 

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const token = "a".repeat(43);
+const token = `v2_${"a".repeat(43)}`;
 const context = {
 	id: "11111111-1111-4111-8111-111111111111",
 	vault_id: "22222222-2222-4222-8222-222222222222",
@@ -141,4 +141,15 @@ test("an intervening change clears the mixed form without claiming success", asy
 	await expect(page.getByRole("alert")).toContainText("new link");
 	await expect(page.getByRole("textbox")).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Copy message for agent" })).toHaveCount(0);
+});
+
+test("live legacy capability still opens the same form", async ({ page }) => {
+	const legacyToken = "a".repeat(43);
+	await page.route("**/v1/vault/requests/inspect", (route) => {
+		expect(route.request().postDataJSON().token).toBe(legacyToken);
+		return route.fulfill({ json: context });
+	});
+	await page.goto(`/vault-request#${legacyToken}`);
+	await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("");
+	await expect(page.getByRole("button", { name: "Save secrets" })).toBeVisible();
 });

@@ -9,7 +9,7 @@ VAULT_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,198}[a-z0-9])?$")
 VAULT_ITEM_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
-def _clean_segment(value: str, *, field_name: str, allow_empty: bool = False) -> str:
+def clean_vault_segment(value: str, *, field_name: str, allow_empty: bool = False) -> str:
     cleaned = value.strip()
     if not cleaned:
         if allow_empty:
@@ -55,13 +55,13 @@ class VaultItemUpsert(BaseModel):
     @field_validator("section", mode="after")
     @classmethod
     def validate_section(cls, value: str) -> str:
-        return _clean_segment(value, field_name="section", allow_empty=True)
+        return clean_vault_segment(value, field_name="section", allow_empty=True)
 
     @field_validator("fields", mode="after")
     @classmethod
     def validate_field_names(cls, value: dict[str, str]) -> dict[str, str]:
         return {
-            _clean_segment(field_name, field_name="field name"): field_value
+            clean_vault_segment(field_name, field_name="field name"): field_value
             for field_name, field_value in value.items()
         }
 
@@ -78,7 +78,7 @@ class VaultItemDelete(BaseModel):
     @field_validator("section", mode="after")
     @classmethod
     def validate_section(cls, value: str) -> str:
-        return _clean_segment(value, field_name="section", allow_empty=True)
+        return clean_vault_segment(value, field_name="section", allow_empty=True)
 
     @field_validator("fields", mode="after")
     @classmethod
@@ -154,7 +154,7 @@ class VaultItemsCopy(BaseModel):
     @field_validator("section", mode="after")
     @classmethod
     def validate_section(cls, value: str) -> str:
-        return _clean_segment(value, field_name="section", allow_empty=True)
+        return clean_vault_segment(value, field_name="section", allow_empty=True)
 
 
 class VaultItemsCopyResponse(BaseModel):
