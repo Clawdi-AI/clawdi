@@ -94,9 +94,10 @@ function systemdUnitFingerprint(
 function readManagedSystemdUnits(
 	paths: ReturnType<typeof getRuntimePaths>,
 	root: string,
+	selectedUnits?: ReadonlySet<string>,
 ): Map<string, string> {
 	const units = new Map<string, string>();
-	for (const entry of managedRuntimeSystemdUnitEntries(root, readFileIfExists)) {
+	for (const entry of managedRuntimeSystemdUnitEntries(root, readFileIfExists, selectedUnits)) {
 		if (entry.kind === "base-unit") {
 			const contents = entry.generatedContents ?? readFileIfExists(entry.path);
 			if (contents !== null) {
@@ -111,6 +112,20 @@ function readManagedSystemdUnits(
 		);
 	}
 	return units;
+}
+
+export function readSystemdComponentFingerprint(
+	paths: ReturnType<typeof getRuntimePaths>,
+	scope: "system" | "user",
+	unit: string,
+): string | null {
+	return (
+		readManagedSystemdUnits(
+			paths,
+			scope === "system" ? paths.systemdSystemRoot : paths.systemdUserRoot,
+			new Set([unit]),
+		).get(unit) ?? null
+	);
 }
 
 function changedSystemdUnits(

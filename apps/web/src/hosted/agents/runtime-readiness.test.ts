@@ -68,3 +68,23 @@ test("running without UI publication retains bounded fast polling until ready", 
 		DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS,
 	);
 });
+
+test("versioned component admission permits one healthy UI while aggregate Ready remains false", () => {
+	const deployment = readyDeployment();
+	const status = deployment.resource.status;
+	const endpoint = deployment.runtime_ui_endpoint;
+	if (!status || !endpoint) throw new Error("Expected fixture evidence");
+	status.summary_state = "failed";
+	status.conditions = status.conditions.map((condition) =>
+		condition.type === "Ready" ? { ...condition, status: "False" } : condition,
+	);
+	expect(deploymentRuntimeUiIsReady(deployment)).toBe(false);
+	deployment.runtime_ui_endpoint = { ...endpoint, component_readiness: 1 };
+	expect(deploymentRuntimeUiIsReady(deployment)).toBe(true);
+	expect(status.conditions.find((condition) => condition.type === "Ready")?.status).toBe("False");
+	status.observedGeneration = 0;
+	expect(deploymentRuntimeUiIsReady(deployment)).toBe(false);
+	status.observedGeneration = deployment.resource.metadata.generation;
+	deployment.resource.spec.desired_lifecycle = "stopped";
+	expect(deploymentRuntimeUiIsReady(deployment)).toBe(false);
+});

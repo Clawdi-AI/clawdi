@@ -4,7 +4,7 @@ import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { getCliVersion } from "../lib/version";
 import { readRuntimeAppliedState, writeRuntimeAppliedState } from "./applied-state";
-import { readHostedRuntimeObserved } from "./observed";
+import { readHostedRuntimeObserved, runtimeComponentIsReady } from "./observed";
 import { getRuntimePaths } from "./paths";
 import { buildRuntimeBootStatus, writeRuntimeBootStatus, writeRuntimeWatchStatus } from "./state";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
@@ -296,7 +296,12 @@ describe("hosted runtime observed v2", () => {
 						return new Response(
 							typeof nativeStatus === "string" ? nativeStatus : JSON.stringify(nativeStatus),
 						);
-					if (path === "/control/") return new Response(null, { status: uiStatus });
+					if (path === "/" && request.method === "HEAD") return new Response(null, { status: 405 });
+					if (path === "/" || path === "/control/")
+						return new Response("<!doctype html><html></html>", {
+							status: uiStatus,
+							headers: { "Content-Type": "text/html" },
+						});
 					if (path !== "/readyz" && path !== "/api/status")
 						return new Response(null, { status: 404 });
 					return new Response(typeof body === "string" ? body : JSON.stringify(body), {
@@ -432,6 +437,18 @@ printf '%s' '{"port":${server.port},"controlUi":{"basePath":"/control"}}'
 					});
 					expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
 				} else {
+					body = {
+						gateway_running: false,
+						gateway_state: "stopped",
+						auth_required: true,
+						auth_providers: ["basic"],
+					};
+					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(true);
+					expect((await readHostedRuntimeObserved(paths))?.status).not.toBe("ok");
+					uiStatus = 503;
+					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(false);
+					uiStatus = 200;
+					body = ready;
 					writeFileSync(
 						systemctl,
 						`#!/bin/sh

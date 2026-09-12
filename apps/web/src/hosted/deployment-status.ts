@@ -205,23 +205,26 @@ export function deploymentTerminalIsAvailable(deployment: HostedDeployment): boo
 	);
 }
 
-/** Aggregate readiness is required for Runtime UI credentials, including during repair. */
+/** Versioned component admission or aggregate readiness permits a credential attempt. */
 export function deploymentRuntimeUiIsReady(deployment: HostedDeployment): boolean {
 	const { metadata, spec, status } = deployment.resource;
 	const generation = metadata.generation;
 	const ready = status?.conditions.find((condition) => condition.type === "Ready");
+	const componentReady = deployment.runtime_ui_endpoint?.component_readiness === 1;
 	return Boolean(
 		generation >= 1 &&
 			spec.desired_lifecycle === "running" &&
-			status?.summary_state === "running" &&
+			(status?.summary_state === "running" ||
+				(componentReady && status?.summary_state === "failed")) &&
 			!status.deleted_at &&
 			status.observed_at &&
 			status.observedGeneration === generation &&
 			status.driver_acknowledged_generation === generation &&
 			status.driver_applied_generation === generation &&
-			ready?.status === "True" &&
-			ready.observedGeneration === generation &&
-			!hasCurrentRuntimeHealthDegradation(status) &&
+			(componentReady ||
+				(ready?.status === "True" &&
+					ready.observedGeneration === generation &&
+					!hasCurrentRuntimeHealthDegradation(status))) &&
 			deployment.runtime_ui_endpoint?.runtime === spec.runtime &&
 			deployment.runtime_ui_endpoint.role === "control_ui" &&
 			deployment.runtime_ui_endpoint.url,

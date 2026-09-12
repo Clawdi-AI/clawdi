@@ -15,10 +15,16 @@ export type ManagedRuntimeSystemdUnitEntry = {
 export function managedRuntimeSystemdUnitEntries(
 	root: string,
 	readContents: (path: string) => string | null = readRuntimeSystemdContents,
+	selectedUnits?: ReadonlySet<string>,
 ): ManagedRuntimeSystemdUnitEntry[] {
 	if (!existsSync(root)) return [];
 	const managed: ManagedRuntimeSystemdUnitEntry[] = [];
 	for (const entry of readdirSync(root)) {
+		if (
+			selectedUnits &&
+			!selectedUnits.has(entry.endsWith(".service.d") ? entry.slice(0, -2) : entry)
+		)
+			continue;
 		if (entry.endsWith(".service")) {
 			const path = join(root, entry);
 			if (entry.startsWith("clawdi-")) {

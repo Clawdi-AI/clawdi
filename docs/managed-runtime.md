@@ -1930,6 +1930,11 @@ comparing the selected product version to a semver floor.
 
 ## Runtime UI And Terminal
 
+Versioned [component activation proof](plans/component-activation-proof.md) lets
+readers admit a healthy Files or Runtime UI component while aggregate Ready is
+false. It retains the exact apply/boot/configuration and credential authority;
+legacy or unavailable proof retains the complete-runtime admission gate.
+
 Hosted deployment pages expose two live surfaces:
 
 - **Control UI** opens runtime-native authentication in a top-level window. The
