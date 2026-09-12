@@ -14,6 +14,9 @@ database migration, CI, and implementation details.
 
 ### Changed
 
+- CLI 0.14.75 teaches Connected and Hosted agents to create, list, and revoke
+  Session shares through MCP. Connected agents retain the CLI fallback; Hosted
+  agents use MCP only.
 - CLI 0.14.74 recognizes credential tasks in the Clawdi skill and reuses ready,
   authorized integrations, including connected Composio services, without
   requiring duplicate credentials or account migration.
