@@ -10,6 +10,7 @@ import { useDeploymentEventStream } from "@/hosted/use-deployment-event-stream";
 import { agentSectionHref, parseAgentPathname } from "@/lib/agent-routes";
 import { useSessionIdentity } from "@/lib/auth-client";
 import { DeploymentEventStreamActiveProvider } from "@/lib/deployment-event-stream-context";
+import { runtimeBrowserUiLabel } from "@/lib/navigation-model";
 
 const route = getRouteApi("/_protected/_dashboard/agents/$id");
 
@@ -62,6 +63,7 @@ export function HostedAgentEventStreamLayout() {
 							consoleActive ? "flex min-h-0 w-full flex-1 flex-col overflow-hidden" : "hidden"
 						}
 					>
+						<h1 className="sr-only">{runtimeBrowserUiLabel("openclaw")}</h1>
 						<ConsoleTab
 							deployment={persistentConsole}
 							runtime="openclaw"

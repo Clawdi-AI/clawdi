@@ -5230,6 +5230,12 @@ for (const viewport of [
 		await expect(iframe).toHaveAttribute("src", nativeHandoff);
 		await expect.poll(runtime.documentLoads).toBe(1);
 		await expect(iframe).toBeHidden();
+		const consoleHeading = page.getByRole("heading", {
+			level: 1,
+			name: "OpenClaw Control UI",
+			exact: true,
+		});
+		await expect(consoleHeading).toHaveCount(0);
 		expect(await iframe.evaluate((element) => Boolean(element.closest("[inert]")))).toBe(true);
 		const original = await iframe.elementHandle();
 		if (!original) throw new Error("Background iframe must already exist.");
@@ -5264,6 +5270,8 @@ for (const viewport of [
 			expect(runtime.documentLoads()).toBe(1);
 			expect(runtime.credentialRequests).toHaveLength(1);
 			if (section === "/console") {
+				await expect(consoleHeading).toHaveCount(1);
+				await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
 				await expect(iframe).toBeVisible();
 				await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toHaveCount(1);
 				const box = await iframe.boundingBox();
@@ -5273,7 +5281,10 @@ for (const viewport of [
 				expect(box.x).toBeGreaterThanOrEqual(0);
 				expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + 1);
 				expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 1);
-			} else await expect(iframe).toBeHidden();
+			} else {
+				await expect(iframe).toBeHidden();
+				await expect(consoleHeading).toHaveCount(0);
+			}
 		}
 		await page.screenshot({ path: `test-results/persistent-control-ui-${viewport.width}.png` });
 		await page.getByRole("button", { name: "Reconnect", exact: true }).click();
@@ -5452,6 +5463,13 @@ for (const viewport of [
 					if (viewport.width < 768) await expect(sidebar).toBeHidden();
 				}
 				const surface = page.getByTestId("hosted-agent-live-surface");
+				await expect(
+					page.getByRole("heading", {
+						level: 1,
+						name: "OpenClaw Control UI",
+						exact: true,
+					}),
+				).toHaveCount(1);
 				await expect(
 					surface.getByText("Opening OpenClaw Control UI…", { exact: true }),
 				).toBeVisible();
