@@ -25,8 +25,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Older code cannot honor update baselines or terminal conflicts. Revoke these
-    # capabilities before dropping their authority state; never resurrect old links.
+    # Every new-format request records a baseline for each field, including null
+    # for absence. Expire these and terminal legacy conflicts before dropping the
+    # state, so old code cannot block fresh requests behind unusable v2 links.
     op.execute(
         "UPDATE vault_secret_requests SET expires_at = LEAST(expires_at, now()) "
         "WHERE supplied_at IS NULL AND "

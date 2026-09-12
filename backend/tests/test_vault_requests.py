@@ -391,6 +391,8 @@ async def test_mixed_request_preserves_old_values_and_exposes_only_update_names(
     token = created["url"].split("#")[1]
     row = await db_session.get(VaultSecretRequest, uuid.UUID(created["id"]))
     baseline = row.field_baselines["TOKEN"]
+    assert isinstance(baseline, str)
+    assert row.field_baselines["NEW"] is None
     assert created["content_version"] == 1
     target = {"vault_id": body["vault_id"], "project_id": body["project_id"], "section": "live"}
     assert (await cli_client.post("/v1/vault/material", json=target)).json()["values"] == {
@@ -777,10 +779,17 @@ async def test_request_migration_preserves_absent_only_rows(engine):
         connection.execute(
             text("INSERT INTO vault_secret_requests (id, conflicted_at) VALUES (4, now())")
         )
+        connection.execute(
+            text(
+                "INSERT INTO vault_secret_requests (id, field_baselines) "
+                "VALUES (5, CAST(:baseline AS jsonb))"
+            ),
+            {"baseline": '{"NEW":null}'},
+        )
         migration.downgrade()
         assert connection.execute(
             text("SELECT id, expires_at > now() FROM vault_secret_requests ORDER BY id")
-        ).all() == [(1, True), (2, True), (3, False), (4, False)]
+        ).all() == [(1, True), (2, True), (3, False), (4, False), (5, False)]
 
     async with engine.begin() as connection:
         await connection.run_sync(verify)

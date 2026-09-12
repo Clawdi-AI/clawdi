@@ -111,7 +111,7 @@ async def describe(db: AsyncSession, row: VaultSecretRequest) -> VaultSecretRequ
         slug=vault.slug,
         section=row.section,
         fields=row.fields,
-        update_fields=[field for field in row.fields if field in row.field_baselines],
+        update_fields=[field for field in row.fields if row.field_baselines.get(field) is not None],
         content_version=vault.runtime_revision,
         status=state,
         expires_at=row.expires_at,
@@ -186,11 +186,7 @@ async def create_request(
         project_id=body.project_id,
         section=body.section,
         fields=body.fields,
-        field_baselines={
-            field: baseline
-            for field in body.fields
-            if (baseline := field_baseline(existing.get(field))) is not None
-        },
+        field_baselines={field: field_baseline(existing.get(field)) for field in body.fields},
         token_hash=hashlib.sha256(token.encode()).hexdigest(),
         expires_at=datetime.now(UTC) + timedelta(seconds=body.expires_in_seconds),
     )
