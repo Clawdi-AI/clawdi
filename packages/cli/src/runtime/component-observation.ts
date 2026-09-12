@@ -120,8 +120,9 @@ function configRevision(
 			files = [join(paths.userHome, ".openclaw", "openclaw.json")];
 		else {
 			const run = readRuntimeServiceRunConfig("hermes", "dashboard", paths);
-			if (run.status !== "ok" || !run.config.secretFilePath) return null;
-			files = [runtimeRunConfigPath("hermes", paths, "dashboard"), run.config.secretFilePath];
+			if (run.status !== "ok") return null;
+			files = [runtimeRunConfigPath("hermes", paths, "dashboard")];
+			if (run.config.secretFilePath) files.push(run.config.secretFilePath);
 		}
 		const contents = files.map((path) => {
 			const stat = lstatSync(path);

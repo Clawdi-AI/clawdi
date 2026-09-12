@@ -12,6 +12,11 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.80
+
+- Hermes dashboard readiness proves both inline and file-backed credentials and
+  invalidates stale proof when either configuration changes.
+
 ### CLI 0.14.79
 
 - Managed channel changes preserve native accounts, access policies, and independent
