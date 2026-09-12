@@ -19,6 +19,8 @@ import {
 import { activateHostedOpenClawSkill } from "./hosted-openclaw-skill";
 import type { HostedSkillSource } from "./manifest-resources";
 
+const isolatedMaintenance = (repair: () => void) => repair();
+
 let root = "";
 const originalSystemctlPath = process.env.CLAWDI_SYSTEMCTL_PATH;
 afterEach(() => {
@@ -196,6 +198,7 @@ case "$*" in
     exit 1
     ;;
   "doctor --fix --non-interactive")
+    test "$OPENCLAW_SERVICE_REPAIR_POLICY" = external || exit 65
     cp '${repairedConfigPath}' '${configPath}'
     ;;
   *) exit 64 ;;
@@ -207,7 +210,7 @@ esac
 	expect(() => resolveHostedOpenClawWorkspace(home)).toThrow(
 		"official agent workspace roster is unavailable",
 	);
-	expect(repairHostedOpenClawConfig(home)).toBe(true);
+	expect(repairHostedOpenClawConfig(home, isolatedMaintenance)).toBe(true);
 	expect(resolveHostedOpenClawWorkspace(home)).toBe(workspaceRoot);
 	expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toEqual([
 		"agents list --json",
@@ -238,7 +241,9 @@ case "$*" in
     fi
     printf '%s\n' '[{"id":"main","workspace":"${workspaceRoot}"}]'
     ;;
-  "doctor --fix --non-interactive") touch '${repaired}' ;;
+  "doctor --fix --non-interactive")
+    test "$OPENCLAW_SERVICE_REPAIR_POLICY" = external || exit 65
+    touch '${repaired}' ;;
   *) exit 64 ;;
 esac
 `,
@@ -251,7 +256,7 @@ esac
 	} catch (error) {
 		rosterError = error;
 	}
-	expect(repairHostedOpenClawWorkspace(home, rosterError)).toBe(true);
+	expect(repairHostedOpenClawWorkspace(home, rosterError, isolatedMaintenance)).toBe(true);
 	expect(resolveHostedOpenClawWorkspace(home)).toBe(workspaceRoot);
 	expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toEqual([
 		"agents list --json",
@@ -301,6 +306,7 @@ printf '%s\n' "$*" >> '${commandLog}'
 case "$*" in
   "agents list --json") printf '%s\n' '[{"id":"main","workspace":"${workspaceRoot}"}]' ;;
   "doctor --fix --non-interactive")
+    test "$OPENCLAW_SERVICE_REPAIR_POLICY" = external || exit 65
     if test -f '${legacyIdentity}'; then
       printf '%s\n' 'Failed migrating legacy device identity: Error: canonical SQLite device identity differs from the legacy identity' >&2
     fi
@@ -311,7 +317,7 @@ esac
 	);
 	chmodSync(command, 0o755);
 
-	expect(repairHostedOpenClawStartupMigrations(home)).toBe(true);
+	expect(repairHostedOpenClawStartupMigrations(home, isolatedMaintenance)).toBe(true);
 	expect(existsSync(legacyIdentity)).toBe(false);
 	expect(existsSync(`${legacyIdentity}.migrated`)).toBe(true);
 	expect(resolveHostedOpenClawWorkspace(home)).toBe(workspaceRoot);
@@ -344,7 +350,7 @@ exit 1
 		{ mode: 0o755 },
 	);
 
-	expect(() => repairHostedOpenClawStartupMigrations(home)).toThrow(
+	expect(() => repairHostedOpenClawStartupMigrations(home, isolatedMaintenance)).toThrow(
 		"OpenClaw official repair failed",
 	);
 	expect(existsSync(legacyIdentity)).toBe(true);
@@ -405,7 +411,8 @@ exit 2
 		expect(() => resolveHostedOpenClawWorkspace(home)).toThrow(
 			"official agent workspace roster is unavailable",
 		);
-		if (scenario.repairInvalidConfig) expect(repairHostedOpenClawConfig(home)).toBe(false);
+		if (scenario.repairInvalidConfig)
+			expect(repairHostedOpenClawConfig(home, isolatedMaintenance)).toBe(false);
 		expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toEqual([
 			...scenario.expectedCommands,
 		]);

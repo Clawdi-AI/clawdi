@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readRuntimeAppliedState } from "./applied-state";
 import type { getRuntimePaths } from "./paths";
+import { officialRuntimeServiceRevisionForUnit } from "./runtime-systemd-reconciliation";
 import { buildRuntimeUserCommand, runtimeUserUid } from "./runtime-user-command";
 import { managedRuntimeSystemdUnitEntries, parseSystemctlShow, systemctlPath } from "./systemd";
 import { runtimeUserName, runtimeUserSystemdEnvironment } from "./systemd-user";
@@ -25,6 +26,7 @@ interface SystemdUnitManagerState {
 	activeState: string;
 	needDaemonReload: boolean;
 	enabled?: boolean;
+	fragmentPath?: string;
 }
 
 interface CommandResult {
@@ -80,6 +82,84 @@ export function assertSystemdRuntimeIdle(
 	}
 	readSystemdRuntimeUnits(paths, "system", [...snapshot.system.keys()]);
 	readSystemdRuntimeUnits(paths, "user", [...snapshot.user.keys()]);
+}
+
+export function withRuntimeUserServiceStopped(
+	paths: ReturnType<typeof getRuntimePaths>,
+	unit: string,
+	operation: () => void,
+): void {
+	if (!shouldApplySystemdRuntimeUpdate(paths)) {
+		throw new Error("runtime service maintenance requires systemd apply");
+	}
+	// Retained HOME may have a native unit before the first Hosted drop-in.
+	// Reuse official-service adoption rather than requiring a prior root watch.
+	const serviceRevision = () =>
+		readSystemdUnitSnapshot(paths).user.get(unit) ??
+		officialRuntimeServiceRevisionForUnit(unit, paths);
+	const revision = serviceRevision();
+	const before = systemdUnitManagerState(paths, "user", unit);
+	if (before.loadState === "not-found") {
+		operation();
+		if (systemdUnitManagerState(paths, "user", unit).loadState !== "not-found") {
+			throw new SystemdReobservationRequiredError(
+				`runtime service ${unit} appeared during maintenance`,
+			);
+		}
+		return;
+	}
+	if (
+		!revision ||
+		before.loadState !== "loaded" ||
+		before.needDaemonReload ||
+		before.fragmentPath !== join(paths.systemdUserRoot, unit)
+	) {
+		throw new Error(`runtime service maintenance could not verify managed unit ${unit}`);
+	}
+	const resume = before.activeState === "active" || before.activeState === "activating";
+	const assertOwnership = () => {
+		const selected = parseSystemctlShow(
+			runtimeUserSystemctl(paths, [
+				"show",
+				unit,
+				"--property=FragmentPath",
+				"--property=NeedDaemonReload",
+			]),
+		);
+		if (
+			serviceRevision() !== revision ||
+			selected.FragmentPath !== before.fragmentPath ||
+			selected.NeedDaemonReload !== "no"
+		) {
+			throw new SystemdReobservationRequiredError(
+				`runtime service ${unit} changed during maintenance; fresh observation is required`,
+			);
+		}
+	};
+	try {
+		if (resume) runtimeUserSystemctl(paths, ["stop", unit]);
+		assertOwnership();
+		const stopped = systemdUnitManagerState(paths, "user", unit);
+		if (
+			stopped.loadState !== "loaded" ||
+			stopped.fragmentPath !== before.fragmentPath ||
+			stopped.needDaemonReload ||
+			(stopped.activeState !== "inactive" && stopped.activeState !== "failed")
+		) {
+			throw new SystemdReobservationRequiredError(
+				`runtime service ${unit} did not stop for maintenance`,
+			);
+		}
+		operation();
+	} finally {
+		// Preserve the entry intent even when stop/repair times out. A bounded
+		// start request lets systemd serialize any outstanding stop job; a retry
+		// must not mistake our temporary stop for the owner's original intent.
+		if (resume) {
+			assertOwnership();
+			runtimeUserSystemctl(paths, ["start", unit]);
+		}
+	}
 }
 
 function systemdUnitFingerprint(
@@ -447,6 +527,7 @@ function readSystemdRuntimeUnits(
 		"--property=ActiveState",
 		"--property=NeedDaemonReload",
 		"--property=Job",
+		"--property=FragmentPath",
 	];
 	const show = systemdCommandResult(paths, scope, showArgs);
 	assertCommandSucceeded(systemdCommandName(scope), showArgs, show);
@@ -517,6 +598,7 @@ function parseSystemdUnitManagerState(
 		loadState,
 		activeState,
 		needDaemonReload: needDaemonReload === "yes",
+		fragmentPath: properties.FragmentPath,
 	};
 	return { ...managerState, enabled };
 }

@@ -14,6 +14,9 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- CLI 0.14.77 repairs obsolete managed OpenClaw configuration through native
+  Doctor while coordinating gateway shutdown and restoring its prior running state.
+
 - CLI 0.14.76 gives managed OpenClaw MCP discovery and slow tool calls an
   explicit timeout budget so tools remain available when discovery takes longer
   than OpenClaw’s default 1.5 seconds.

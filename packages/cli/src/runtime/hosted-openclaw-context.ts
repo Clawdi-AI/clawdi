@@ -19,6 +19,7 @@ import { runtimeFileCurrentRevision } from "./manifest-install";
 import { runtimeImpactRevision } from "./runtime-impact-revision";
 import { executableExists, spawnRuntimeUserCommand } from "./runtime-user-command";
 import { parseSystemctlShow, systemctlPath } from "./systemd";
+import { SystemdReobservationRequiredError } from "./systemd-transaction";
 
 const OPENCLAW_AGENT_ID = "main";
 const OPENCLAW_CONFIG_PROBE_TIMEOUT_MS = 15_000;
@@ -222,7 +223,19 @@ function invalidConfigValidation(result: ReturnType<typeof spawnRuntimeUserComma
 	});
 }
 
-export function repairHostedOpenClawConfig(home: string): boolean {
+export type OpenClawDoctorMaintenance = (repair: () => void) => void;
+
+function requireDoctorMaintenance(
+	maintenance?: OpenClawDoctorMaintenance,
+): OpenClawDoctorMaintenance {
+	if (!maintenance) throw new Error("OpenClaw repair requires supervisor maintenance coordination");
+	return maintenance;
+}
+
+export function repairHostedOpenClawConfig(
+	home: string,
+	maintenance?: OpenClawDoctorMaintenance,
+): boolean {
 	const command = commandPath(home);
 	const validation = spawnRuntimeUserCommand(
 		command,
@@ -232,15 +245,41 @@ export function repairHostedOpenClawConfig(home: string): boolean {
 		{ timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS, maxBufferBytes: 1024 * 1024 },
 	);
 	if (!invalidConfigValidation(validation)) return false;
-	runHostedOpenClawDoctor(home, command);
+	requireDoctorMaintenance(maintenance)(() => runHostedOpenClawDoctor(home, command));
 	return true;
 }
 
 function runHostedOpenClawDoctorCommand(home: string, command = commandPath(home)) {
-	return spawnRuntimeUserCommand(command, ["doctor", "--fix", "--non-interactive"], home, home, {
-		timeoutMs: OPENCLAW_CONFIG_REPAIR_TIMEOUT_MS,
-		maxBufferBytes: 4 * 1024 * 1024,
-	});
+	const result = spawnRuntimeUserCommand(
+		"/usr/bin/timeout",
+		[
+			"--signal=KILL",
+			`${OPENCLAW_CONFIG_REPAIR_TIMEOUT_MS / 1000}s`,
+			command,
+			"doctor",
+			"--fix",
+			"--non-interactive",
+		],
+		home,
+		home,
+		{
+			// Hosted owns service activation; native Doctor still holds its state/lifecycle locks.
+			environmentOverrides: { OPENCLAW_SERVICE_REPAIR_POLICY: "external" },
+			maxBufferBytes: 4 * 1024 * 1024,
+		},
+	);
+	if (
+		result.error ||
+		result.signal ||
+		result.status === null ||
+		result.status === 124 ||
+		result.status === 137
+	) {
+		throw new SystemdReobservationRequiredError(
+			"OpenClaw Doctor outcome is unknown; fresh observation is required",
+		);
+	}
+	return result;
 }
 
 function runHostedOpenClawDoctor(home: string, command = commandPath(home)): void {
@@ -275,28 +314,39 @@ function archiveHostedLegacyOpenClawIdentity(home: string, command: string): voi
 	}
 }
 
-export function repairHostedOpenClawStartupMigrations(home: string): boolean {
+export function repairHostedOpenClawStartupMigrations(
+	home: string,
+	maintenance?: OpenClawDoctorMaintenance,
+): boolean {
 	if (!existsSync(join(home, ".openclaw", "identity", "device.json"))) return false;
+	requireDoctorMaintenance(maintenance)(() => repairHostedLegacyOpenClawIdentity(home));
+	return true;
+}
+
+function repairHostedLegacyOpenClawIdentity(home: string): void {
 	const command = commandPath(home);
 	const repair = runHostedOpenClawDoctorCommand(home, command);
 	if (!openClawDeviceIdentityConflict(repair)) {
 		if (repair.status !== 0) throw new Error("OpenClaw official repair failed");
-		return true;
+		return;
 	}
 	archiveHostedLegacyOpenClawIdentity(home, command);
 	const verified = runHostedOpenClawDoctorCommand(home, command);
 	if (verified.status !== 0 || openClawDeviceIdentityConflict(verified)) {
 		throw new Error("OpenClaw legacy device identity retirement did not clear the conflict");
 	}
-	return true;
 }
 
-export function repairHostedOpenClawWorkspace(home: string, error: unknown): boolean {
+export function repairHostedOpenClawWorkspace(
+	home: string,
+	error: unknown,
+	maintenance?: OpenClawDoctorMaintenance,
+): boolean {
 	if (error instanceof OpenClawWorkspaceRosterError && error.doctorRepairRequired) {
-		runHostedOpenClawDoctor(home);
+		requireDoctorMaintenance(maintenance)(() => runHostedOpenClawDoctor(home));
 		return true;
 	}
-	return repairHostedOpenClawConfig(home);
+	return repairHostedOpenClawConfig(home, maintenance);
 }
 
 function resolveSdkExports(
