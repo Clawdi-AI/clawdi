@@ -673,7 +673,24 @@ afterEach(() => {
 });
 
 describe("runtime manifest services", () => {
-	test("enables invalid-config repair for the hosted workspace probe", () => {
+	test("leaves legacy identity handling to native startup during warm convergence", () => {
+		const harness = officialServiceHarness("openclaw");
+		const paths = getRuntimePaths({ mode: "hosted" });
+		const identity = join(paths.userHome, ".openclaw", "identity", "device.json");
+		mkdirSync(dirname(identity), { recursive: true });
+		// An inventory response does not classify identity contents or startup readiness.
+		const content = "retained native identity fixture\n";
+		writeFileSync(identity, content);
+		const unit = harness.unitContents();
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(readFileSync(identity, "utf8")).toBe(content);
+		expect(existsSync(`${identity}.migrated`)).toBe(false);
+		expect(harness.unitContents()).toBe(unit);
+		expect(harness.installCount()).toBe(1);
+	});
+
+	test("restores retained OpenClaw egress environment before the official config repair", () => {
 		const paths = tempRuntimePaths();
 		const command = join(paths.userHome, ".local", "bin", "openclaw");
 		const commandLog = join(paths.userHome, "workspace-probe.log");
@@ -689,13 +706,43 @@ case "$*" in
     printf '%s\n' '{"valid":false,"path":"/tmp/openclaw.json","issues":[{"path":"x","message":"x"}]}'
     exit 1
     ;;
-  "doctor --fix --non-interactive") exit 0 ;;
+  "doctor --fix --non-interactive")
+    test -f '${join(paths.systemdEnvRoot, "openclaw-gateway.service.env")}' || exit 42
+    exit 0 ;;
   *) exit 64 ;;
 esac
 `,
 		);
 		chmodSync(command, 0o700);
 		const manifest = installGateManifest(paths, "openclaw", command);
+		manifest.egressProfiles = {
+			profiles: [
+				{
+					id: "retained-egress",
+					enabled: true,
+					kind: "http",
+					match: { host: "provider.example.test", headers: {}, query: {} },
+					rewrite: {
+						preservePath: true,
+						setHeaders: {
+							authorization: {
+								type: "secretRef",
+								secretRef: "secret://proof/egress",
+								prefix: "Bearer ",
+							},
+						},
+					},
+					logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+					priority: 100,
+				},
+			],
+		};
+		const unit = join(paths.systemdUserRoot, "openclaw-gateway.service");
+		const dropIn = join(`${unit}.d`, RUNTIME_SYSTEMD_DROP_IN_FILE);
+		mkdirSync(`${unit}.d`, { recursive: true });
+		writeFileSync(unit, "[Service]\nExecStart=openclaw gateway\n");
+		const retained = `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\nEnvironmentFile=${join(paths.systemdEnvRoot, "openclaw-gateway.service.env")}\n`;
+		writeFileSync(dropIn, retained);
 
 		expect(() =>
 			convergeRuntimeManifest(
@@ -703,6 +750,7 @@ esac
 					manifest,
 					source: "remote-datasource",
 					sourcePath: "inline-workspace-repair-gate",
+					secretValues: { "secret://proof/egress": "sidecar-only-secret" },
 					offline: false,
 				},
 				paths,
@@ -710,6 +758,51 @@ esac
 		).toThrow("OpenClaw official agent workspace roster is unavailable");
 		const commands = readFileSync(commandLog, "utf8").trim().split("\n");
 		expect(commands).toContain("config validate --json");
+		expect(commands).toContain("doctor --fix --non-interactive");
+		const env = readSystemdEnvironment(paths, "openclaw-gateway");
+		expect(env.NODE_EXTRA_CA_CERTS).toBe(paths.egressSystemCaFile);
+		expect(env.SSL_CERT_FILE).toBe(paths.egressSystemCaFile);
+		expect(env.CLAWDI_PROVIDER_PLACEHOLDER_TOKEN).toBe("clawdi-egress-placeholder");
+		expect(env.CLAWDI_MANAGED_CONTENT_DIGEST).toBeTruthy();
+		expect(Object.values(env)).not.toContain("sidecar-only-secret");
+		expect(readFileSync(dropIn, "utf8")).toBe(retained);
+		expect(readFileSync(unit, "utf8")).toBe("[Service]\nExecStart=openclaw gateway\n");
+		const envFile = join(paths.systemdEnvRoot, "openclaw-gateway.service.env");
+		const published = readFileSync(envFile, "utf8");
+		manifest.runtimes.openclaw.run = {
+			...runSettings(command, ["gateway", "run"]),
+			env: { WARM_UPDATE: "final-phase" },
+		};
+		expect(() =>
+			convergeRuntimeManifest(
+				{
+					manifest,
+					source: "remote-datasource",
+					sourcePath: "warm-update",
+					offline: false,
+					secretValues: { "secret://proof/egress": "sidecar-only-secret" },
+				},
+				paths,
+			),
+		).toThrow("OpenClaw official agent workspace roster is unavailable");
+		expect(readFileSync(envFile, "utf8")).toBe(published);
+		// Removing the sidecar-only credential must fail before republishing or Doctor.
+		rmSync(envFile);
+		writeFileSync(commandLog, "");
+		const missing = convergeRuntimeManifest(
+			{
+				manifest,
+				source: "remote-datasource",
+				sourcePath: "missing-egress-secret",
+				offline: false,
+			},
+			paths,
+		);
+		expect(missing.installErrors.join("\n")).toContain(
+			"Runtime secret secret://proof/egress is unavailable",
+		);
+		expect(existsSync(envFile)).toBe(false);
+		expect(readFileSync(commandLog, "utf8")).not.toContain("doctor --fix");
 	});
 
 	test("repairs managed OpenClaw channel config drift", () => {

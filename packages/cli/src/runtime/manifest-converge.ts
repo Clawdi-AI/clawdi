@@ -28,7 +28,6 @@ import {
 } from "./hosted-agent-plugin-runtime";
 import {
 	createOpenClawHostedContext,
-	repairHostedOpenClawStartupMigrations,
 	repairHostedOpenClawWorkspace,
 	resolveHostedOpenClawWorkspace,
 } from "./hosted-openclaw-context";
@@ -117,6 +116,7 @@ import {
 	installOfficialRuntimeService,
 	planOfficialRuntimeServices,
 	prepareOfficialRuntimeServiceDependencies,
+	publishRetainedOpenClawEnvironment,
 	type RuntimeSystemdStaleFilePlan,
 	type RuntimeSystemdUserProgram,
 	removeStaleRuntimeSystemdFiles,
@@ -213,7 +213,6 @@ function resolveOpenClawWorkspaceForConvergence(
 	home: string,
 	repairInvalidConfig: boolean,
 ): string {
-	if (repairInvalidConfig) repairHostedOpenClawStartupMigrations(home);
 	try {
 		return resolveHostedOpenClawWorkspace(home);
 	} catch (error) {
@@ -453,9 +452,6 @@ function prepareRuntimeConvergencePlan(
 	const shouldResolveOpenClawWorkspace =
 		manifest.runtimes.openclaw?.enabled === true ||
 		Boolean(openClawCommand && executableExists(openClawCommand));
-	const openClawWorkspaceRoot = shouldResolveOpenClawWorkspace
-		? resolveOpenClawWorkspaceForConvergence(projectionHome, true)
-		: null;
 	const plannedRuntimePrograms = planRuntimeSystemdUserPrograms({
 		manifest,
 		paths,
@@ -464,8 +460,55 @@ function prepareRuntimeConvergencePlan(
 		secretValues,
 		observations: state.observations,
 		egressProfileBundlePath: plannedEgressProfileBundlePath,
-		egress: null,
+		// The environment needs the authoritative CA path, not a running sidecar.
+		egress: plannedEgressProfileBundlePath ? { systemCaBundle: paths.egressSystemCaFile } : null,
 	});
+	try {
+		validateRuntimeSystemdPlan(plannedRuntimePrograms);
+		const openClawProgram = plannedRuntimePrograms.find(
+			(program) => program.runtime === "openclaw" && !program.service,
+		);
+		const observation = state.observations.get("openclaw");
+		if (openClawProgram && observation) {
+			// Desired connections are excluded by the preview; prior transfers also
+			// remain agent-owned without moving native transfer mutations before repair.
+			const previousIds = (previousProjectedProviderIds.openclaw ?? []).filter(
+				(id) => !Object.hasOwn(context.providerOwnership.transfers.openclaw ?? {}, id),
+			);
+			publishRetainedOpenClawEnvironment({
+				program: openClawProgram,
+				paths,
+				manifest,
+				secretValues,
+				commonEnvironment: runtimeSystemdCommonEnvironment(paths),
+				providerProjectionRevisions: {
+					openclaw: previewHostedAiProviderProjectionRevision(
+						"openclaw",
+						observation,
+						manifest,
+						projectionHome,
+						previousIds,
+						context.appliedState?.nativeCredentialProviderIds?.openclaw ?? [],
+					),
+				},
+				runtimeRevision: (desired, runtime, secrets, providerRevision) =>
+					runtimeProgramRevisionForManifest(
+						desired,
+						runtime,
+						secrets,
+						providerRevision,
+						hermesWhatsAppAuthDir,
+						state.openClawOwnerBrowserBootstrapSupported,
+					),
+			});
+		}
+	} catch (error) {
+		state.installErrors.push(error instanceof Error ? error.message : String(error));
+		return { result: runtimeConvergenceFailure(context, state) };
+	}
+	const openClawWorkspaceRoot = shouldResolveOpenClawWorkspace
+		? resolveOpenClawWorkspaceForConvergence(projectionHome, true)
+		: null;
 	validateRuntimeProjectionPlan({
 		manifest,
 		paths,
@@ -477,12 +520,6 @@ function prepareRuntimeConvergencePlan(
 		hermesConfig,
 		openClawOwnerBrowserBootstrapSupported: state.openClawOwnerBrowserBootstrapSupported,
 	});
-	try {
-		validateRuntimeSystemdPlan(plannedRuntimePrograms);
-	} catch (error) {
-		state.installErrors.push(error instanceof Error ? error.message : String(error));
-		return { result: runtimeConvergenceFailure(context, state) };
-	}
 	return {
 		plan: {
 			openClawWorkspaceRoot,

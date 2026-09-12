@@ -323,6 +323,28 @@ not emulate upstream service repair: stale entrypoint or target errors that
 remain after systemd activation require the native owner workflow
 (`openclaw gateway start/restart` or an intentional `gateway install --force`).
 
+On a retained OpenClaw installation, convergence restores a missing Clawdi
+service environment file before the official workspace roster and Doctor repair.
+It uses the same current manifest, secret validation, provider digest and egress
+CA environment as final publication. Existing environment files retain normal
+final-phase updates; new units retain installer ordering. This publishes no
+service definitions and performs no service activation. Native Doctor still
+requires its user D-Bus manager to be available and owns its repair lifecycle;
+restoring the environment does not bypass native service or database checks.
+
+The official OpenClaw roster supplies workspace inventory, not proof that every
+startup migration is complete. Clawdi does not run Doctor or archive an identity
+merely because a legacy `identity/device.json` exists. Normal native startup owns
+valid identity migration and reports or refuses invalid state; final runtime
+readiness remains required. Automatic pre-start identity cleanup and conflict
+archival are no longer provided. Owners must resolve remaining native warnings
+or failures. Explicit config and reported startup-migration error repair remain.
+
+These changes do not repair native Doctor lifecycle bugs or add a user D-Bus
+readiness barrier. In OpenClaw 2026.9.4, explicit repair of a running service can
+fail during native restart verification; the [upstream fix](https://github.com/openclaw/openclaw/commit/f3f3d6b1ed680c364c1ea3b549e7e4fa8fc500b9)
+requires an OpenClaw build containing that change.
+
 When Hermes service installation is necessary, Clawdi publishes its environment
 and drop-in first and invokes native `gateway install --force --no-start-now`.
 The existing activation phase starts the service after prerequisites are ready.

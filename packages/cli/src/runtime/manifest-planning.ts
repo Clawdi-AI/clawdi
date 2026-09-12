@@ -122,7 +122,7 @@ export function planRuntimeSystemdUserPrograms(input: {
 	secretValues: Record<string, string> | undefined;
 	observations: Map<string, RuntimeInstallObservation>;
 	egressProfileBundlePath: string | null;
-	egress: RuntimeEgressSystemdProgram | null;
+	egress: Pick<RuntimeEgressSystemdProgram, "systemCaBundle"> | null;
 }): RuntimeSystemdUserProgram[] {
 	const programs: RuntimeSystemdUserProgram[] = [];
 	for (const [name, runtime] of Object.entries(input.manifest.runtimes).sort(([a], [b]) =>
