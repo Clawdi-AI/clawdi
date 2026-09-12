@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { commitRuntimeAppliedState } from "../commands/runtime";
+import { writeFakeOpenClawConfigMutationSdk } from "../test-support/openclaw-config-mutation";
 import { ensureTestOpenClawWorkspaceCli } from "../test-support/runtime-workspace";
 import {
 	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
@@ -805,15 +806,30 @@ esac
 		expect(readFileSync(commandLog, "utf8")).not.toContain("doctor --fix");
 	});
 
-	test("repairs managed OpenClaw channel config drift", () => {
+	test("repairs managed OpenClaw account drift without replacing native siblings or policies", () => {
 		const paths = tempRuntimePaths();
 		const command = join(paths.userHome, ".local", "bin", "openclaw");
-		const configPath = join(paths.userHome, ".openclaw", "openclaw.json");
+		const accountKey = "clawdi_50000000000040008000000000000005";
+		const tokenEnv = "CLAWDI_CHANNEL_TELEGRAM_CLAWDI_50000000000040008000000000000005_AGENT_TOKEN";
+		const tokenRef = `secret://channels/telegram/${accountKey}/placeholder-token`;
+		const managed = {
+			enabled: true,
+			botToken: { source: "env", provider: "default", id: tokenEnv },
+		};
+		const personal = {
+			enabled: true,
+			botToken: "native-user-token",
+			dmPolicy: "pairing",
+			allowFrom: ["42"],
+		};
+		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, {
+			initialConfig: {
+				channels: { telegram: { defaultAccount: "personal", accounts: { personal } } },
+			},
+		});
 		const patchPath = join(paths.runRoot, "openclaw-config-patch.json");
 		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
 		mkdirSync(dirname(command), { recursive: true });
-		mkdirSync(dirname(configPath), { recursive: true });
-		writeFileSync(configPath, "{}\n");
 		writeFileSync(
 			command,
 			`#!/usr/bin/env bash
@@ -850,12 +866,24 @@ esac
 		);
 		chmodSync(command, 0o700);
 		const manifest = installGateManifest(paths, "openclaw", command);
-		manifest.projection = { channels: { telegram: { enabled: true } } };
+		manifest.projection = {
+			channels: {
+				telegram: {
+					enabled: true,
+					defaultAccount: accountKey,
+					accounts: { [accountKey]: managed },
+				},
+			},
+		};
+		const run = manifest.runtimes.openclaw?.run;
+		if (!run) throw new Error("managed OpenClaw run settings are missing");
+		run.secretEnv = { ...run.secretEnv, [tokenEnv]: tokenRef };
 		const load: RuntimeManifestLoad = {
 			manifest,
 			source: "remote-datasource",
 			sourcePath: "inline-openclaw-channel-drift",
 			offline: false,
+			secretValues: { [tokenRef]: "managed-placeholder-token" },
 		};
 		const converge = () =>
 			convergeRuntimeManifest(load, paths, {
@@ -881,24 +909,28 @@ esac
 			});
 
 		expect(converge().installErrors).toEqual([]);
+		const installed = JSON.parse(readFileSync(configPath, "utf8"));
+		expect(installed.channels.telegram.accounts).toEqual({ personal, [accountKey]: managed });
+		expect(installed.channels.telegram.defaultAccount).toBe("personal");
 		expect(converge().installErrors).toEqual([]);
-		const config = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
-		delete config.channels;
-		writeFileSync(configPath, `${JSON.stringify(config)}\n`);
+		expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual(installed);
 
+		const policy = {
+			dmPolicy: "pairing",
+			allowFrom: ["owner"],
+			groups: { "*": { requireMention: true } },
+		};
+		installed.channels.telegram.accounts[accountKey] = { ...managed, ...policy, enabled: false };
+		writeFileSync(configPath, `${JSON.stringify(installed)}\n`);
 		expect(converge().installErrors).toEqual([]);
-
-		manifest.projection = { channels: {} };
-		writeFileSync(configPath, "{}\n");
-		expect(converge().installErrors).toEqual([]);
-		expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual({
-			gateway: {
-				mode: "local",
-				port: 18789,
-				bind: "lan",
-				auth: { mode: "token", token: "test-gateway-token" },
-			},
+		const repaired = JSON.parse(readFileSync(configPath, "utf8"));
+		expect(repaired.channels.telegram.accounts).toEqual({
+			personal,
+			[accountKey]: { ...managed, ...policy },
 		});
+		expect(repaired.channels.telegram.defaultAccount).toBe("personal");
+		expect(repaired.session.dmScope).toBe("per-account-channel-peer");
+		expect(repaired.gateway.auth).toEqual({ mode: "token", token: "test-gateway-token" });
 	});
 
 	test("renders systemd runtime services without creating user command shims", () => {
