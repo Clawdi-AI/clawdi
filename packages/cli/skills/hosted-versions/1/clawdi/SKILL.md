@@ -11,7 +11,8 @@ Use Clawdi Cloud tools through the `clawdi` MCP server. Treat the live tool sche
 
 Third-party tool routing below applies unchanged in Hosted. Do not inspect, run, or suggest
 Clawdi host-management commands such as `clawdi setup`, `clawdi wallet`, `clawdi vault`, or
-`clawdi ai-provider`.
+`clawdi ai-provider`. Do not use any `clawdi` CLI command as a Cloud capability fallback;
+use the Clawdi MCP tools exposed to the Hosted runtime.
 
 ## Context Routing
 
@@ -46,10 +47,22 @@ already supplied the exact memory ID; never infer which stored item to mutate.
 - Use `session_list` to browse recent sessions or filter by time, Agent, or Project.
 - Use `session_search` to find past agent conversations by keyword and obtain session UUIDs.
 - Use `session_get` to read a session by UUID or Clawdi share URL.
+- Use `session_share_create` to publish an immutable snapshot only when the user explicitly asks
+  to share a Session, part of it, or one Assistant response.
+- Use `session_share_list` to inspect active links and obtain their exact IDs and kinds.
+- Use `session_share_revoke` to stop sharing one exact link only when the user asks.
 
 Call `session_get` when the user provides a Clawdi share URL or session UUID and wants its
 contents. Use `session_search` to locate a requested unnamed conversation. Do not use a
 generic web fetcher for Clawdi share URLs.
+
+For `session_share_create`, omit `position` for the full `session` scope. For `through` or
+`response`, use the stable message `position` returned by `session_get` or `session_search`,
+never a filtered array index; `response` must target an Assistant message. Public snapshots
+include only the existing safe user/Assistant projection, never reasoning, system/developer
+messages, hidden events, or tool activity. Before revoking, use `session_share_list` unless the
+user already supplied the exact `share_id` and `kind`; never infer a link ID or kind. Hosted
+Session sharing uses these MCP tools only, not CLI commands.
 
 ## Projects
 

@@ -44,12 +44,23 @@ It preserves metadata; find the exact ID before changing it.
 - Use `session_list` to browse recent sessions or filter by time, Agent, or Project.
 - Use `session_search` to find past agent conversations by keyword and obtain session UUIDs.
 - Use `session_get` to read a session by UUID or Clawdi share URL.
+- Use `session_share_create` to publish an immutable snapshot only when the user explicitly asks
+  to share a Session, part of it, or one Assistant response.
+- Use `session_share_list` to inspect active links and obtain their exact IDs and kinds.
+- Use `session_share_revoke` to stop sharing one exact link only when the user asks.
 
 Call `session_get` when the user provides a Clawdi share URL or session UUID and wants its
 contents. For a request to open a specific unnamed past conversation, use `session_search`
 to find the UUID and then read the selected match.
 
 Do NOT call WebFetch on `cloud.clawdi.ai/s/...` URLs — `session_get` is the right tool and avoids the WebFetch permission prompt.
+
+For `session_share_create`, omit `position` for the full `session` scope. For `through` or
+`response`, use the stable message `position` returned by `session_get` or `session_search`,
+never a filtered array index; `response` must target an Assistant message. Public snapshots
+include only the existing safe user/Assistant projection, never reasoning, system/developer
+messages, hidden events, or tool activity. Before revoking, use `session_share_list` unless the
+user already supplied the exact `share_id` and `kind`; never infer a link ID or kind.
 
 CLI fallback: `clawdi session search "query" --json`, then `clawdi session read <cloud-session-id> --json`.
 `session list` is local; `session export <cloud-session-id>` exports owner Markdown without
