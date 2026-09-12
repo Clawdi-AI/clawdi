@@ -52,7 +52,7 @@ export function commandResolvable(command: string): boolean {
 	return isAbsolute(command) ? executableExists(command) : commandExists(command);
 }
 
-const PRIVILEGE_DROP_STRATEGIES = [
+export const PRIVILEGE_DROP_STRATEGIES = [
 	{ mechanism: "setpriv", supportsNumericIdentity: true },
 	{ mechanism: "runuser", supportsNumericIdentity: false },
 	{ mechanism: "su", supportsNumericIdentity: false },

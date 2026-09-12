@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getRuntimePaths } from "./paths";
-import { buildRuntimeUserCommand } from "./runtime-user-command";
+import { buildRuntimeUserCommand, PRIVILEGE_DROP_STRATEGIES } from "./runtime-user-command";
 import { managedRuntimeSystemdUnitEntries, RUNTIME_SYSTEMD_DROP_IN_FILE } from "./systemd";
 import {
 	applySystemdRuntimeUpdate,
@@ -136,7 +136,7 @@ esac
 				expect(
 					runCommandResult("systemctl", ["show", "--all", "--property=Job", unit]).stdout.trim(),
 				).toMatch(/^Job=[1-9][0-9]*$/);
-				for (const mechanism of ["setpriv", "runuser", "su"] as const) {
+				for (const { mechanism } of PRIVILEGE_DROP_STRATEGIES) {
 					const child = buildRuntimeUserCommand(
 						"clawdi",
 						"/home/clawdi",
