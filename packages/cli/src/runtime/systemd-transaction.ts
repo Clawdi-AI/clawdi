@@ -37,6 +37,15 @@ interface CommandResult {
 export const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
 export const RUNTIME_SIDECAR_SYSTEM_UNIT = "clawdi-runtime-sidecar.service";
 const NON_TRANSACTIONAL_SYSTEM_UNITS = new Set([RUNTIME_WATCH_SYSTEM_UNIT]);
+const SYSTEMD_COMMAND_TIMEOUT_MS = 120_000;
+
+export class SystemdReobservationRequiredError extends Error {
+	constructor(
+		message = "systemd command timed out; job outcome is unknown and requires fresh observation",
+	) {
+		super(message);
+	}
+}
 
 export function shouldRecoverFailedSystemdUnit(input: {
 	activeState: string;
@@ -418,10 +427,12 @@ function readSystemdRuntimeUnits(
 	if (uniqueUnits.length === 0) return states;
 	const showArgs = [
 		"show",
+		"--all",
 		...uniqueUnits,
 		"--property=LoadState",
 		"--property=ActiveState",
 		"--property=NeedDaemonReload",
+		"--property=Job",
 	];
 	const show = systemdCommandResult(paths, scope, showArgs);
 	assertCommandSucceeded(systemdCommandName(scope), showArgs, show);
@@ -469,8 +480,17 @@ function parseSystemdUnitManagerState(
 	const loadState = properties.LoadState;
 	const activeState = properties.ActiveState;
 	const needDaemonReload = properties.NeedDaemonReload;
-	if (!loadState || !activeState || !needDaemonReload) {
+	const job = properties.Job;
+	if (!loadState || !activeState || !needDaemonReload || job === undefined) {
 		throw new Error(`systemd ${scope} unit ${unit} returned incomplete manager state`);
+	}
+	if (
+		job !== "" ||
+		["activating", "deactivating", "reloading", "refreshing"].includes(activeState)
+	) {
+		throw new SystemdReobservationRequiredError(
+			`systemd ${scope} unit ${unit} has unfinished work; fresh observation is required`,
+		);
 	}
 	if (needDaemonReload !== "yes" && needDaemonReload !== "no") {
 		throw new Error(
@@ -607,15 +627,23 @@ function runCommand(command: string, args: string[], env?: Record<string, string
 	return [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
 }
 
-function runCommandResult(
+export function runCommandResult(
 	command: string,
 	args: string[],
 	env?: Record<string, string>,
+	timeoutMs = SYSTEMD_COMMAND_TIMEOUT_MS,
 ): CommandResult {
 	const result = spawnSync(command, args, {
 		encoding: "utf8",
+		timeout: timeoutMs,
+		// Terminate the client even if it ignores TERM. This does not cancel the
+		// manager's job; the caller must defer authority/rollback and re-observe.
+		killSignal: "SIGKILL",
 		...(env ? { env: { ...process.env, ...env } } : {}),
 	});
+	if (result.error && "code" in result.error && result.error.code === "ETIMEDOUT") {
+		throw new SystemdReobservationRequiredError();
+	}
 	return {
 		status: result.status,
 		stdout: result.stdout ?? "",

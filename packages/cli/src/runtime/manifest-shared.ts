@@ -19,7 +19,7 @@ export interface RuntimeConvergenceResult {
 	resourceProjectionErrors: string[];
 	projectedProviderIds: Record<string, string[]>;
 	agentPluginFailedNames: string[];
-	deferredReason?: "hermes_config_conflict";
+	deferredReason?: "hermes_config_conflict" | "systemd_reobservation_required";
 	outputs: {
 		processManager: "systemd";
 		workspaceRoot: string;

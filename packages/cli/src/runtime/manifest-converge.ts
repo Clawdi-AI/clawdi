@@ -129,6 +129,7 @@ import {
 } from "./runtime-systemd-reconciliation";
 import { executableExists, withRuntimeUserFileAccess } from "./runtime-user-command";
 import { ensureRuntimePlatformDirectory } from "./state";
+import { SystemdReobservationRequiredError } from "./systemd-transaction";
 
 type RuntimeManifest = RuntimeManifestLoad["manifest"];
 type RuntimeEntry = [string, RuntimeManifest["runtimes"][string]];
@@ -1307,6 +1308,13 @@ function runtimeApplyFailure(
 	state: RuntimeConvergenceState,
 	error: unknown,
 ): RuntimeConvergenceResult {
+	if (error instanceof SystemdReobservationRequiredError) {
+		state.installErrors.push(error.message);
+		return {
+			...runtimeConvergenceFailure(context, state),
+			deferredReason: "systemd_reobservation_required",
+		};
+	}
 	if (state.agentPluginMutationAttempted) {
 		for (const name of state.agentPluginTransaction?.mutationNames ?? []) {
 			state.agentPluginFailedNames.add(name);

@@ -461,7 +461,7 @@ case "$command" in
   show)
     first=1
     for unit in "$@"; do
-      case "$unit" in --property=*) continue ;; esac
+      case "$unit" in --all|--property=*) continue ;; esac
       if [ "$first" = "0" ]; then printf '\\n'; fi
       first=0
       load_state=loaded
@@ -473,7 +473,7 @@ case "$command" in
       [ ! -f "$(state_path "$unit" reload)" ] || need_daemon_reload=yes
       main_pid=0
       [ ! -f "$(state_path "$unit" pid)" ] || main_pid="$(cat "$(state_path "$unit" pid)")"
-      printf 'LoadState=%s\\nActiveState=%s\\nMainPID=%s\\nNeedDaemonReload=%s\\n' "$load_state" "$active_state" "$main_pid" "$need_daemon_reload"
+      printf 'LoadState=%s\\nActiveState=%s\\nMainPID=%s\\nNeedDaemonReload=%s\\nJob=\\n' "$load_state" "$active_state" "$main_pid" "$need_daemon_reload"
     done
     ;;
   is-enabled)

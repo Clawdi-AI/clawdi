@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { getRuntimePaths } from "./paths";
 import { managedRuntimeSystemdUnitEntries, RUNTIME_SYSTEMD_DROP_IN_FILE } from "./systemd";
-import { shouldRecoverFailedSystemdUnit } from "./systemd-transaction";
+import {
+	applySystemdRuntimeUpdate,
+	runCommandResult,
+	SystemdReobservationRequiredError,
+	shouldRecoverFailedSystemdUnit,
+} from "./systemd-transaction";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
 const roots: string[] = [];
@@ -48,6 +54,63 @@ describe("managed runtime systemd unit classification", () => {
 });
 
 describe("failed runtime systemd unit recovery", () => {
+	test("reobserves an existing job before issuing mutations", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-systemd-pending-"));
+		roots.push(root);
+		const command = join(root, "systemctl");
+		const log = join(root, "commands");
+		const previous = {
+			apply: process.env.CLAWDI_SYSTEMD_APPLY,
+			command: process.env.CLAWDI_SYSTEMCTL_PATH,
+		};
+		try {
+			process.env.CLAWDI_SYSTEMD_APPLY = "1";
+			process.env.CLAWDI_SYSTEMCTL_PATH = command;
+			const paths = {
+				...getRuntimePaths({ mode: "local" }),
+				appliedState: join(root, "absent.json"),
+			};
+			const snapshot = {
+				system: new Map([["clawdi-fixture.service", "revision"]]),
+				user: new Map<string, string>(),
+			};
+			const writeManager = (job: string) =>
+				writeFileSync(
+					command,
+					`#!/bin/sh
+echo "$*" >> '${log}'
+case "$1" in
+show) printf 'LoadState=loaded\\nActiveState=active\\nNeedDaemonReload=no\\nJob=${job}\\n' ;;
+is-enabled) printf 'enabled\\n' ;;
+esac
+`,
+					{ mode: 0o755 },
+				);
+			writeManager("42");
+			expect(() => applySystemdRuntimeUpdate(paths, snapshot, snapshot, {})).toThrow(
+				SystemdReobservationRequiredError,
+			);
+			expect(readFileSync(log, "utf8")).not.toMatch(/restart|start|stop|daemon-reload/);
+			writeManager("");
+			expect(applySystemdRuntimeUpdate(paths, snapshot, snapshot, {}).applied).toBe(true);
+		} finally {
+			if (previous.apply === undefined) delete process.env.CLAWDI_SYSTEMD_APPLY;
+			else process.env.CLAWDI_SYSTEMD_APPLY = previous.apply;
+			if (previous.command === undefined) delete process.env.CLAWDI_SYSTEMCTL_PATH;
+			else process.env.CLAWDI_SYSTEMCTL_PATH = previous.command;
+		}
+	});
+	test("bounds an unresponsive client without treating the manager job as cancelled", () => {
+		const start = Date.now();
+		expect(() =>
+			runCommandResult("/bin/sh", ["-c", "trap '' TERM; while :; do :; done"], undefined, 50),
+		).toThrow(SystemdReobservationRequiredError);
+		expect(Date.now() - start).toBeLessThan(5_000);
+		expect(runCommandResult("/bin/sh", ["-c", "printf active"], undefined, 1_000)).toMatchObject({
+			status: 0,
+			stdout: "active",
+		});
+	});
 	test("recovers a failed unit when the current activation changed it", () => {
 		expect(
 			shouldRecoverFailedSystemdUnit({

@@ -81,6 +81,7 @@ import {
 	assertRuntimeUserCanRead,
 	RUNTIME_SIDECAR_SYSTEM_UNIT,
 	readSystemdUnitSnapshot,
+	SystemdReobservationRequiredError,
 	withoutStaleSystemdUnits,
 } from "../runtime/systemd-transaction";
 import { syncRuntimeVaultFiles } from "../runtime/vault-files";
@@ -825,7 +826,10 @@ async function runtimeInitLocked(
 		return;
 	}
 	if (outcome.kind === "deferred") {
-		const message = "Hermes config changed during runtime convergence; retry on the next poll";
+		const message =
+			outcome.reason === "systemd_reobservation_required"
+				? "Systemd job outcome is unknown; retry with fresh observation on the next poll"
+				: "Hermes config changed during runtime convergence; retry on the next poll";
 		const applied = runtimeAppliedStatus(paths);
 		emitRuntimeInitRepair({
 			opts,
@@ -1093,7 +1097,11 @@ function runtimeWatchEventForOutcome(
 	paths: RuntimePaths,
 ): RuntimeWatchEvent | null {
 	if (outcome.kind === "idle") return null;
-	if (outcome.kind === "deferred") return null;
+	if (outcome.kind === "deferred") {
+		return outcome.reason === "systemd_reobservation_required"
+			? runtimeWatchError("final", outcome.convergence.installErrors, { etag: outcome.load.etag })
+			: null;
+	}
 	if (outcome.kind === "reconciliation_error") {
 		return runtimeWatchError("cli-update", [outcome.error], { selfReexec: false });
 	}
@@ -1359,6 +1367,7 @@ async function applyRuntimeDesiredState(
 						egressPrerequisiteApply = prerequisite;
 						return prerequisite;
 					} catch (error) {
+						if (error instanceof SystemdReobservationRequiredError) throw error;
 						throw new Error(
 							`transparent-egress prerequisite activation failed: ${toErrorMessage(error)}`,
 						);
@@ -1404,6 +1413,7 @@ async function applyRuntimeDesiredState(
 						};
 						return { ...systemdApply, activated: activation.activated };
 					} catch (error) {
+						if (error instanceof SystemdReobservationRequiredError) throw error;
 						throw new Error(`systemd apply failed: ${toErrorMessage(error)}`);
 					}
 				},
