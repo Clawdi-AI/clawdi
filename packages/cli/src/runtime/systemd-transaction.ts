@@ -37,6 +37,15 @@ interface CommandResult {
 export const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
 export const RUNTIME_SIDECAR_SYSTEM_UNIT = "clawdi-runtime-sidecar.service";
 const NON_TRANSACTIONAL_SYSTEM_UNITS = new Set([RUNTIME_WATCH_SYSTEM_UNIT]);
+const SYSTEMD_COMMAND_TIMEOUT_MS = 120_000;
+
+export class SystemdReobservationRequiredError extends Error {
+	constructor(
+		message = "systemd command timed out; job outcome is unknown and requires fresh observation",
+	) {
+		super(message);
+	}
+}
 
 export function shouldRecoverFailedSystemdUnit(input: {
 	activeState: string;
@@ -57,6 +66,20 @@ export function readSystemdUnitSnapshot(
 		system: readManagedSystemdUnits(paths, paths.systemdSystemRoot),
 		user: readManagedSystemdUnits(paths, paths.systemdUserRoot),
 	};
+}
+
+export function assertSystemdRuntimeIdle(
+	paths: ReturnType<typeof getRuntimePaths>,
+	snapshot: SystemdUnitSnapshot,
+): void {
+	if (!shouldApplySystemdRuntimeUpdate(paths)) return;
+	// First install has no unit inventory yet, but still requires the tools
+	// and manager connection before native mutations start.
+	if (snapshot.system.size === 0 && snapshot.user.size === 0) {
+		systemctl(["show", "--property=Version"]);
+	}
+	readSystemdRuntimeUnits(paths, "system", [...snapshot.system.keys()]);
+	readSystemdRuntimeUnits(paths, "user", [...snapshot.user.keys()]);
 }
 
 function systemdUnitFingerprint(
@@ -418,10 +441,12 @@ function readSystemdRuntimeUnits(
 	if (uniqueUnits.length === 0) return states;
 	const showArgs = [
 		"show",
+		"--all",
 		...uniqueUnits,
 		"--property=LoadState",
 		"--property=ActiveState",
 		"--property=NeedDaemonReload",
+		"--property=Job",
 	];
 	const show = systemdCommandResult(paths, scope, showArgs);
 	assertCommandSucceeded(systemdCommandName(scope), showArgs, show);
@@ -469,12 +494,23 @@ function parseSystemdUnitManagerState(
 	const loadState = properties.LoadState;
 	const activeState = properties.ActiveState;
 	const needDaemonReload = properties.NeedDaemonReload;
-	if (!loadState || !activeState || !needDaemonReload) {
+	const job = properties.Job;
+	if (!loadState || !activeState || !needDaemonReload || job === undefined) {
 		throw new Error(`systemd ${scope} unit ${unit} returned incomplete manager state`);
 	}
 	if (needDaemonReload !== "yes" && needDaemonReload !== "no") {
 		throw new Error(
 			`systemd ${scope} unit ${unit} returned invalid NeedDaemonReload: ${needDaemonReload}`,
+		);
+	}
+	if (job !== "" && !/^[1-9][0-9]*$/.test(job)) {
+		throw new Error(`systemd ${scope} unit ${unit} returned invalid Job: ${job}`);
+	}
+	// Restart=always can be activating/auto-restart without a Job. Admit its
+	// repair and let final readiness determine whether it recovered.
+	if (job !== "") {
+		throw new SystemdReobservationRequiredError(
+			`systemd ${scope} unit ${unit} has unfinished work; fresh observation is required`,
 		);
 	}
 	const managerState = {
@@ -588,7 +624,7 @@ function runtimeUserSystemctlResult(
 			paths.userHome,
 			systemctlPath(),
 			["--user", ...args],
-			{ environment: runtimeUserSystemdEnvironment(uid) },
+			{ environment: runtimeUserSystemdEnvironment(uid), preserveSession: true },
 		);
 		return runCommandResult(child.command, child.args, child.env);
 	}
@@ -597,7 +633,9 @@ function runtimeUserSystemctlResult(
 
 export function assertRuntimeUserCanRead(path: string, home: string): void {
 	const runtimeUser = runtimeUserName();
-	const proof = buildRuntimeUserCommand(runtimeUser, home, "test", ["-r", path]);
+	const proof = buildRuntimeUserCommand(runtimeUser, home, "test", ["-r", path], {
+		preserveSession: true,
+	});
 	runCommand(proof.command, proof.args, proof.env);
 }
 
@@ -607,15 +645,38 @@ function runCommand(command: string, args: string[], env?: Record<string, string
 	return [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
 }
 
-function runCommandResult(
+export function runCommandResult(
 	command: string,
 	args: string[],
 	env?: Record<string, string>,
+	timeoutMs = SYSTEMD_COMMAND_TIMEOUT_MS,
 ): CommandResult {
-	const result = spawnSync(command, args, {
-		encoding: "utf8",
-		...(env ? { env: { ...process.env, ...env } } : {}),
-	});
+	if (process.platform !== "linux") {
+		throw new Error("systemd runtime commands require Linux");
+	}
+	if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+		throw new Error("systemd command timeout must be a positive integer");
+	}
+	// GNU timeout supervises its own process group. A spawnSync timeout kills
+	// only the direct child, leaving descendants holding stdout/stderr open.
+	const result = spawnSync(
+		"/usr/bin/timeout",
+		["--signal=KILL", `${timeoutMs / 1000}s`, command, ...args],
+		{
+			encoding: "utf8",
+			...(env ? { env: { ...process.env, ...env } } : {}),
+		},
+	);
+	if (result.error && "code" in result.error && result.error.code === "ENOENT") {
+		throw new Error(
+			"systemd runtime commands require GNU timeout at /usr/bin/timeout; install GNU coreutils",
+		);
+	}
+	// SIGKILL also terminates timeout itself. A killed/OOM client is likewise
+	// an unknown manager outcome; neither result proves that a job was cancelled.
+	if (result.signal === "SIGKILL" || result.status === 124 || result.status === 137) {
+		throw new SystemdReobservationRequiredError();
+	}
 	return {
 		status: result.status,
 		stdout: result.stdout ?? "",

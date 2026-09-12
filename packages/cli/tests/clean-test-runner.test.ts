@@ -38,7 +38,7 @@ describe("clean runner suite contract", () => {
 		expect(runner).toContain(`if [[ "\${1:-}" == "--in-container" ]]`);
 		expect(runner).toContain('test-runner bash /repo/scripts/test.sh --in-container "$suite" "$@"');
 		expect(runner).toContain(
-			"all|backend|ci|js|cli|desktop|shared|sidecar|web|runtime-vaults|provider-recovery-fixture)",
+			"all|backend|ci|js|cli|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture)",
 		);
 		expect(runnerDockerfile).not.toContain("docker/test-runner.sh");
 		expect(runnerDockerfile).not.toContain("ENTRYPOINT");

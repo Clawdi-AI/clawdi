@@ -9,7 +9,7 @@
  * middle (PID 1 OOM-killed in a container, laptop sleep, etc.)
  * doesn't drop work either.
  *
- * Bounded — when the queue hits `maxItems`, the oldest entry is
+ * Bounded — when the queue hits `maxItems`, the first eligible entry is
  * evicted to make room for the new one and a `dropped_count`
  * counter ticks up. The dashboard surfaces that counter so a
  * stuck daemon ("queue keeps growing, nothing landing") is
@@ -383,11 +383,10 @@ export class RetryQueue {
 		// delete therefore both converge to the latest local state.
 		// Sessions remain keyed by local_session_id.
 		const idx = this.items.findIndex((existing) => sameKey(existing, stamped));
-		if (idx >= 0) {
-			this.items[idx] = stamped;
-		} else {
-			this.items.push(stamped);
-		}
+		// A frequently edited resource must not retain the head while every
+		// in-flight attempt becomes stale. Its latest state joins pending peers.
+		if (idx >= 0) this.items.splice(idx, 1);
+		this.items.push(stamped);
 		this.evictIfFull();
 		this.highWater = Math.max(this.highWater, this.items.length);
 		this.persist();
@@ -465,7 +464,7 @@ export class RetryQueue {
 	}
 
 	private evictIfFull(): void {
-		// Eviction priority: drop oldest skill operation first, only fall
+		// Eviction priority: drop the first queued skill operation, only fall
 		// back to dropping sessions when no skills remain to evict.
 		// Skills are content-deduped by skill_key — the periodic local
 		// inventory scan re-derives the latest push/delete state after
@@ -532,7 +531,8 @@ export class RetryQueue {
 		return true;
 	}
 
-	/** Bump the attempts counter on the version-matching item.
+	/** Bump the attempts counter and move the matching item behind pending peers.
+	 * A broken resource must not consume every retry before healthy work runs.
 	 * If a newer version has replaced it (rare retry race) we
 	 * leave the new item alone — its attempts counter restarts
 	 * at 0 by design, which is what the caller wants. */
@@ -540,7 +540,9 @@ export class RetryQueue {
 		const idx = this.items.findIndex((existing) => sameKey(existing, item));
 		if (idx < 0) return;
 		if (this.items[idx].version !== item.version) return;
-		this.items[idx] = { ...this.items[idx], attempts: this.items[idx].attempts + 1 };
+		const current = this.items[idx];
+		this.items.splice(idx, 1);
+		this.items.push({ ...current, attempts: current.attempts + 1 });
 		this.persist();
 	}
 

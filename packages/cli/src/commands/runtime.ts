@@ -58,7 +58,7 @@ import {
 	type RuntimeResourcePreparationFailures,
 	runtimeRecoverableSecretValues,
 } from "../runtime/manifest";
-import { runtimeWorkspaceRoot } from "../runtime/manifest-planning";
+import { runtimeConvergenceWithoutApply, runtimeWorkspaceRoot } from "../runtime/manifest-planning";
 import {
 	hostedRuntimeBundleV2Schema,
 	loadCommittedRuntimeManifest,
@@ -79,8 +79,10 @@ import {
 import {
 	applySystemdRuntimeUpdate,
 	assertRuntimeUserCanRead,
+	assertSystemdRuntimeIdle,
 	RUNTIME_SIDECAR_SYSTEM_UNIT,
 	readSystemdUnitSnapshot,
+	SystemdReobservationRequiredError,
 	withoutStaleSystemdUnits,
 } from "../runtime/systemd-transaction";
 import { syncRuntimeVaultFiles } from "../runtime/vault-files";
@@ -216,7 +218,15 @@ type ConvergeOutcome =
 			ConvergeLoadResult,
 			{ kind: "not_modified" }
 	  >)
-	| { kind: "apply_error"; error: string; load?: RuntimeManifestLoad; etag?: string }
+	| {
+			kind: "apply_error";
+			error: string;
+			errors?: string[];
+			load?: RuntimeManifestLoad;
+			etag?: string;
+			cliRollback?: RuntimeCliRollbackResult;
+			selfReexec?: boolean;
+	  }
 	| { kind: "cli_update_failed"; load: RuntimeManifestLoad; cliUpdate: RuntimeCliUpdateResult }
 	| {
 			kind: "deferred";
@@ -596,10 +606,20 @@ function emitRuntimeInitRepair(
 		active?: ReturnType<typeof runtimeAppliedStatus>;
 		rejectedGeneration?: number | null;
 		manifestLoad?: RuntimeManifestLoad;
+		jsonExtras?: Record<string, unknown>;
 	},
 ): void {
-	const { opts, paths, persist, render, active, rejectedGeneration, manifestLoad, ...repair } =
-		input;
+	const {
+		opts,
+		paths,
+		persist,
+		render,
+		active,
+		rejectedGeneration,
+		manifestLoad,
+		jsonExtras,
+		...repair
+	} = input;
 	emitRuntimeInitStatus({
 		opts,
 		paths,
@@ -626,6 +646,7 @@ function emitRuntimeInitRepair(
 		},
 		persist,
 		render,
+		jsonExtras,
 	});
 }
 
@@ -825,20 +846,28 @@ async function runtimeInitLocked(
 		return;
 	}
 	if (outcome.kind === "deferred") {
-		const message = "Hermes config changed during runtime convergence; retry on the next poll";
+		const message =
+			outcome.reason === "systemd_reobservation_required"
+				? "Systemd job outcome is unknown; retry with fresh observation on the next poll"
+				: "Hermes config changed during runtime convergence; retry on the next poll";
 		const applied = runtimeAppliedStatus(paths);
+		const errors = [
+			...outcome.convergence.installErrors,
+			...outcome.convergence.resourceProjectionErrors,
+			message,
+		];
 		emitRuntimeInitRepair({
 			opts,
 			paths,
 			stage: "final",
 			bootId,
 			runtimeMode: mode,
-			errors: [message],
+			errors,
 			exitCode: 23,
 			active: applied,
 			rejectedGeneration: outcome.load.manifest.generation,
 			manifestLoad: outcome.load,
-			render: renderRuntimeInit(paths, `repair: ${message}`, chalk.red),
+			render: renderRuntimeInit(paths, `repair: ${errors[0]}`, chalk.red),
 		});
 		return;
 	}
@@ -848,6 +877,7 @@ async function runtimeInitLocked(
 				? outcome.error
 				: (outcome.cliUpdate.error ?? "CLI update failed");
 		const load = outcome.load;
+		const selfReexec = outcome.kind === "apply_error" && outcome.selfReexec === true;
 		const applied = runtimeAppliedStatus(paths);
 		emitRuntimeInitRepair({
 			opts,
@@ -855,11 +885,17 @@ async function runtimeInitLocked(
 			stage: outcome.kind === "cli_update_failed" ? "config" : "final",
 			bootId,
 			runtimeMode: mode,
-			errors: [message],
-			exitCode: 23,
+			errors: outcome.kind === "apply_error" ? (outcome.errors ?? [message]) : [message],
+			exitCode: selfReexec ? RUNTIME_INIT_CLI_HANDOFF_EXIT_CODE : 23,
 			active: applied,
 			rejectedGeneration: load?.manifest.generation ?? null,
 			...(outcome.kind === "apply_error" && load ? { manifestLoad: load } : {}),
+			jsonExtras: {
+				...(outcome.kind === "apply_error" && outcome.cliRollback
+					? { cliRollback: outcome.cliRollback }
+					: {}),
+				...(selfReexec ? { selfReexec: true, handoff: "cli_reexec" } : {}),
+			},
 			render: renderRuntimeInit(paths, `repair: ${message}`, chalk.red),
 		});
 		return;
@@ -886,7 +922,7 @@ async function runtimeInitLocked(
 				...(outcome.resourceProjectionErrors.length > 0
 					? { resourceProjectionErrors: outcome.resourceProjectionErrors }
 					: {}),
-				exitCode: runtimeReady ? 0 : 23,
+				exitCode: outcome.selfReexec ? RUNTIME_INIT_CLI_HANDOFF_EXIT_CODE : runtimeReady ? 0 : 23,
 				datasource: "RuntimeSource",
 				hostPolicy: hostPolicySummary(hostPolicy),
 				manifestSource: {
@@ -895,6 +931,10 @@ async function runtimeInitLocked(
 					offline: outcome.convergence.offline,
 				},
 				convergence: outcome.convergence.outputs,
+			},
+			jsonExtras: {
+				...(outcome.cliRollback ? { cliRollback: outcome.cliRollback } : {}),
+				...(outcome.selfReexec ? { selfReexec: true, handoff: "cli_reexec" } : {}),
 			},
 			render: renderRuntimeInit(
 				paths,
@@ -961,11 +1001,38 @@ async function convergeOnce(
 		}
 		applyResult = await applyRuntimeManifestLoad(convergenceLoad, paths, apply);
 	} catch (error) {
+		const message = toErrorMessage(error);
+		if (error instanceof SystemdReobservationRequiredError) {
+			return {
+				kind: "deferred",
+				load: convergenceLoad,
+				reason: "systemd_reobservation_required",
+				convergence: runtimeConvergenceWithoutApply({
+					load: convergenceLoad,
+					paths,
+					workspaceRoot: runtimeWorkspaceRoot(convergenceLoad.manifest, paths),
+					enabledRuntimes: Object.entries(convergenceLoad.manifest.runtimes)
+						.filter(([, runtime]) => runtime.enabled)
+						.map(([name]) => name),
+					installErrors: [message],
+					projectedProviderIds: {},
+				}),
+			};
+		}
+		const errors = [message];
+		const cliRollback = maybeRollbackFailedCliUpgrade(paths, errors);
 		return {
 			kind: "apply_error",
-			error: toErrorMessage(error),
+			error: message,
+			errors,
 			load: convergenceLoad,
 			...(convergenceLoad.etag ? { etag: convergenceLoad.etag } : {}),
+			...(cliRollback.status !== "not_pending"
+				? {
+						cliRollback,
+						selfReexec: cliRollback.status === "rolled_back",
+					}
+				: {}),
 		};
 	}
 	if (applyResult.kind === "cli_handoff") {
@@ -1088,12 +1155,20 @@ async function loadRuntimeManifestForWatch(
 	}
 }
 
-function runtimeWatchEventForOutcome(
+export function runtimeWatchEventForOutcome(
 	outcome: ConvergeOutcome,
 	paths: RuntimePaths,
 ): RuntimeWatchEvent | null {
 	if (outcome.kind === "idle") return null;
-	if (outcome.kind === "deferred") return null;
+	if (outcome.kind === "deferred") {
+		const errors = [
+			...outcome.convergence.installErrors,
+			...outcome.convergence.resourceProjectionErrors,
+		];
+		return errors.length > 0
+			? runtimeWatchError("final", errors, { etag: outcome.load.etag })
+			: null;
+	}
 	if (outcome.kind === "reconciliation_error") {
 		return runtimeWatchError("cli-update", [outcome.error], { selfReexec: false });
 	}
@@ -1141,8 +1216,17 @@ function runtimeWatchEventForOutcome(
 		});
 	}
 	if (outcome.kind === "apply_error") {
-		return runtimeWatchError("final", [outcome.error], {
+		return runtimeWatchError("final", outcome.errors ?? [outcome.error], {
 			...(outcome.etag ? { etag: outcome.etag } : {}),
+			...(outcome.load
+				? {
+						...runtimeAppliedStatus(paths),
+						rejectedGeneration: outcome.load.manifest.generation,
+					}
+				: {}),
+			...(outcome.cliRollback
+				? { cliRollback: outcome.cliRollback, selfReexec: outcome.selfReexec }
+				: {}),
 		});
 	}
 	if (outcome.kind === "cli_update_failed") {
@@ -1336,6 +1420,7 @@ async function applyRuntimeDesiredState(
 				opts.authorityCommit?.(committedConvergence, authority);
 			},
 			systemdApply: {
+				assertIdle: () => assertSystemdRuntimeIdle(paths, previousSystemdUnits),
 				activateEgressPrerequisite: () => {
 					const candidateSystemdUnits = readSystemdUnitSnapshot(paths);
 					try {
@@ -1359,6 +1444,7 @@ async function applyRuntimeDesiredState(
 						egressPrerequisiteApply = prerequisite;
 						return prerequisite;
 					} catch (error) {
+						if (error instanceof SystemdReobservationRequiredError) throw error;
 						throw new Error(
 							`transparent-egress prerequisite activation failed: ${toErrorMessage(error)}`,
 						);
@@ -1404,12 +1490,17 @@ async function applyRuntimeDesiredState(
 						};
 						return { ...systemdApply, activated: activation.activated };
 					} catch (error) {
+						if (error instanceof SystemdReobservationRequiredError) throw error;
 						throw new Error(`systemd apply failed: ${toErrorMessage(error)}`);
 					}
 				},
 			},
 		});
 		if (convergence.deferredReason) {
+			// Native plugin mutations/receipts may already exist. Keep their
+			// archives available for the next observation and reconciliation.
+			preservePreparedAgentPluginArchives =
+				convergence.deferredReason === "systemd_reobservation_required";
 			return {
 				kind: "deferred",
 				reason: convergence.deferredReason,
@@ -1431,6 +1522,21 @@ async function applyRuntimeDesiredState(
 				delete replayOptions.preparedHostedAgentPlugins;
 				delete replayOptions.preparedHostedSourcedSkills;
 				const replay = await applyRuntimeDesiredState(committed, paths, replayOptions);
+				if (replay.kind === "deferred") {
+					preservePreparedAgentPluginArchives = true;
+					return {
+						...replay,
+						convergence: {
+							...convergence,
+							deferredReason: replay.reason,
+							installErrors: [...convergence.installErrors, ...replay.convergence.installErrors],
+							resourceProjectionErrors: [
+								...convergence.resourceProjectionErrors,
+								...replay.convergence.resourceProjectionErrors,
+							],
+						},
+					};
+				}
 				if (replay.kind !== "converged") {
 					convergence.installErrors.push(
 						`last-good replay failed: runtime ${replay.kind.replaceAll("_", " ")}`,

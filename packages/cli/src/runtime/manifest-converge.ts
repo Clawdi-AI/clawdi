@@ -129,6 +129,7 @@ import {
 } from "./runtime-systemd-reconciliation";
 import { executableExists, withRuntimeUserFileAccess } from "./runtime-user-command";
 import { ensureRuntimePlatformDirectory } from "./state";
+import { SystemdReobservationRequiredError } from "./systemd-transaction";
 
 type RuntimeManifest = RuntimeManifestLoad["manifest"];
 type RuntimeEntry = [string, RuntimeManifest["runtimes"][string]];
@@ -1307,6 +1308,13 @@ function runtimeApplyFailure(
 	state: RuntimeConvergenceState,
 	error: unknown,
 ): RuntimeConvergenceResult {
+	if (error instanceof SystemdReobservationRequiredError) {
+		state.installErrors.push(error.message);
+		return {
+			...runtimeConvergenceFailure(context, state),
+			deferredReason: "systemd_reobservation_required",
+		};
+	}
 	if (state.agentPluginMutationAttempted) {
 		for (const name of state.agentPluginTransaction?.mutationNames ?? []) {
 			state.agentPluginFailedNames.add(name);
@@ -1324,6 +1332,16 @@ export function convergeRuntimeManifest(
 	opts: RuntimeConvergenceOptions = {},
 ): RuntimeConvergenceResult {
 	const { context, state } = initializeRuntimeConvergence(load, paths, opts);
+	try {
+		// Check existing jobs before changing native installs/config/plugins, not
+		// only after publishing the candidate units at activation time.
+		opts.systemdApply?.assertIdle?.();
+	} catch (error) {
+		// No native mutations have started. Preserve setup/inspection failures
+		// as errors, without attempting a compensating apply or CLI rollback.
+		if (!(error instanceof SystemdReobservationRequiredError)) throw error;
+		return runtimeApplyFailure(context, state, error);
+	}
 	const installResult = prepareRuntimeInstallStage(context, state);
 	if (installResult) return installResult.result;
 	context.hermesConfig = beginRuntimeHermesConfig(context, state);

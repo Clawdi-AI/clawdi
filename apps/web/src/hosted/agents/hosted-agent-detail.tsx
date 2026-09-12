@@ -226,6 +226,7 @@ import {
 	deploymentRuntimeUiIsReady,
 	deploymentStatusFromResource,
 	deploymentStatusLabel,
+	deploymentTerminalIsAvailable,
 	isRunningStatus,
 } from "@/hosted/deployment-status";
 import { DeploymentStatusUnavailableState } from "@/hosted/deployment-status-unavailable";
@@ -2238,7 +2239,7 @@ function TerminalTab({
 	standalone: boolean;
 }) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
-	const isRunning = isRunningStatus(status);
+	const terminalAvailable = deploymentTerminalIsAvailable(deployment);
 	const isStarting = isStartingStatus(status);
 	const label = agentName;
 	const client = useBillingClient();
@@ -2284,7 +2285,7 @@ function TerminalTab({
 		return <StoppedAgentState deployment={deployment} />;
 	}
 
-	if (!isRunning) {
+	if (!terminalAvailable) {
 		return (
 			<EmptyState
 				icon={TerminalSquare}

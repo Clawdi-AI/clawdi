@@ -38,6 +38,7 @@ import {
 } from "./runtime-systemd-reconciliation";
 import { ensureRuntimeStateDirs } from "./state";
 import { RUNTIME_SYSTEMD_DROP_IN_FILE } from "./systemd";
+import { SystemdReobservationRequiredError } from "./systemd-transaction";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
 const originalEnv = { ...process.env };
@@ -346,6 +347,62 @@ function tempRuntimePaths(): RuntimePaths {
 	process.env.CLAWDI_AUTH_TOKEN = "test-token";
 	return getRuntimePaths({ mode: "hosted" });
 }
+
+test("defers unknown systemd jobs without committing authority and accepts a later completed observation", () => {
+	const paths = tempRuntimePaths();
+	const load: RuntimeManifestLoad = {
+		manifest: {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "hdep_systemd_pending",
+			environmentId: "env_systemd_pending",
+			instanceId: "hri_systemd_pending",
+			generation: 1,
+			issuedAt: "2026-09-11T00:00:00Z",
+			workspaceRoot: paths.userHome,
+			controlPlane: { apiUrl: "https://cloud.example.test" },
+			runtimes: {},
+			recovery: {},
+		},
+		source: "remote-datasource",
+		sourcePath: "inline-systemd-pending",
+		offline: false,
+	};
+	let pending: "preflight" | "activation" | "invalid-preflight" | null = "preflight";
+	let commits = 0;
+	let activations = 0;
+	const converge = () =>
+		convergeRuntimeManifest(load, paths, {
+			commitAuthority: () => commits++,
+			systemdApply: {
+				assertIdle: () => {
+					if (pending === "invalid-preflight") throw new Error("systemctl is missing");
+					if (pending === "preflight") throw new SystemdReobservationRequiredError();
+				},
+				activateEgressPrerequisite: () => {
+					throw new Error("unexpected egress prerequisite");
+				},
+				activate: () => {
+					activations++;
+					if (pending === "activation") throw new SystemdReobservationRequiredError();
+					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+				},
+			},
+		});
+	const deferred = converge();
+	expect(deferred.deferredReason).toBe("systemd_reobservation_required");
+	expect(commits).toBe(0);
+	expect(activations).toBe(0);
+	pending = "invalid-preflight";
+	expect(converge).toThrow("systemctl is missing");
+	expect(activations).toBe(0);
+	expect(commits).toBe(0);
+	pending = "activation";
+	expect(converge().deferredReason).toBe("systemd_reobservation_required");
+	expect(commits).toBe(0);
+	pending = null;
+	expect(converge().installErrors).toEqual([]);
+	expect(commits).toBe(1);
+});
 
 function runSettings(command: string, args: string[]): RuntimeRunSettings {
 	return { command, args, env: {}, prependPath: [] };

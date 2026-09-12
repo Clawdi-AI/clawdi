@@ -372,6 +372,18 @@ only for those test files, their containing runtime group, name-filtered runs,
 or the full suite; it never uses or changes a user's Hermes install. The
 fixture source and venv are removed when the runner exits.
 
+On a Linux Docker host, verify native systemd command deadlines and crash-loop
+readiness through the official suite:
+
+```bash
+bash scripts/test.sh runtime-systemd
+```
+
+This uses a disposable systemd container and filtered checkout inputs. It is
+also run by the privileged systemd CI workflow before the official installer
+suite. Done: the command exits 0 and reports the native no-job auto-restart
+regression passing; no operator configuration or live runtime is used.
+
 For daemon end-to-end and manual browser verification, see
 [`clawdi-daemon-test-guide.md`](clawdi-daemon-test-guide.md).
 

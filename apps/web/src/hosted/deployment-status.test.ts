@@ -18,6 +18,7 @@ import {
 	deploymentStatusFromResource,
 	deploymentStatusLabel,
 	deploymentStatusTone,
+	deploymentTerminalIsAvailable,
 	isRunningStatus,
 	isTerminalStatus,
 	isTransitionalStatus,
@@ -53,6 +54,63 @@ function acceptedOperation(verb: DeploymentOperationVerb): DeploymentOperation {
 }
 
 describe("DeploymentStatus", () => {
+	test("offers repair after post-ready health loss without admitting unproven or retired runtimes", () => {
+		const deployment = hostedDeploymentFixture({
+			status: "failed",
+			failure: {
+				type: "https://api.clawdi.ai/problems/runtime_unreachable",
+				title: "Runtime unreachable",
+				detail: "Fresh runtime health was not restored during the grace period.",
+				status: 503,
+				code: "runtime_unreachable",
+				phase: "reconcile",
+				retryable: true,
+				conditionReason: "RuntimeUnreachable",
+				conditionMessage: "Runtime unreachable",
+				observedGeneration: 1,
+			},
+		});
+		expect(deploymentTerminalIsAvailable(deployment)).toBe(true);
+		const status = deployment.resource.status;
+		if (!status?.failure) throw new Error("expected deployment failure");
+		for (const changed of [
+			{ driver_applied_generation: 0 },
+			{ observedGeneration: 0 },
+			{ failure: { ...status.failure, code: "runtime_readiness_timeout" } },
+			{ failure: { ...status.failure, observedGeneration: 0 } },
+			{ deleted_at: "2026-09-11T00:00:00Z" },
+		]) {
+			expect(
+				deploymentTerminalIsAvailable({
+					...deployment,
+					resource: {
+						...deployment.resource,
+						status: { ...status, ...changed },
+					},
+				}),
+			).toBe(false);
+		}
+		expect(
+			deploymentTerminalIsAvailable({
+				...deployment,
+				resource: {
+					...deployment.resource,
+					spec: { ...deployment.resource.spec, desired_lifecycle: "stopped" },
+				},
+			}),
+		).toBe(false);
+		expect(
+			deploymentTerminalIsAvailable({
+				...deployment,
+				compute_slot_occupancy: {
+					occupies_slot: false,
+					backing_infra: "absent",
+					reason: "authoritative_absence",
+				},
+			}),
+		).toBe(false);
+	});
+
 	test("normalizes known hosted backend statuses", () => {
 		for (const raw of KNOWN_DEPLOYMENT_STATUSES) {
 			const status = parseDeploymentStatus(raw.toUpperCase());
