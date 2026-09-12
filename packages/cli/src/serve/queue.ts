@@ -383,11 +383,10 @@ export class RetryQueue {
 		// delete therefore both converge to the latest local state.
 		// Sessions remain keyed by local_session_id.
 		const idx = this.items.findIndex((existing) => sameKey(existing, stamped));
-		if (idx >= 0) {
-			this.items[idx] = stamped;
-		} else {
-			this.items.push(stamped);
-		}
+		// A frequently edited resource must not retain the head while every
+		// in-flight attempt becomes stale. Its latest state joins pending peers.
+		if (idx >= 0) this.items.splice(idx, 1);
+		this.items.push(stamped);
 		this.evictIfFull();
 		this.highWater = Math.max(this.highWater, this.items.length);
 		this.persist();

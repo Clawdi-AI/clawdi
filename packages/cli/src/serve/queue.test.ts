@@ -396,6 +396,7 @@ describe("RetryQueue", () => {
 		q.enqueue({ ...input, skill_key: "beta" });
 		q.enqueue({ ...input, new_hash: "h2" });
 		const before = [...q.all()];
+		expect(q.peek()).toMatchObject({ skill_key: "beta", attempts: 0 });
 		q.bumpAttempts(stale);
 		expect(q.all()).toEqual(before);
 		expect(q.markDoneIfVersion(stale)).toBe(false);
