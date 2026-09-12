@@ -73,15 +73,13 @@ export function assertSystemdRuntimeIdle(
 	snapshot: SystemdUnitSnapshot,
 ): void {
 	if (!shouldApplySystemdRuntimeUpdate(paths)) return;
-	try {
-		readSystemdRuntimeUnits(paths, "system", [...snapshot.system.keys()]);
-		readSystemdRuntimeUnits(paths, "user", [...snapshot.user.keys()]);
-	} catch (error) {
-		if (error instanceof SystemdReobservationRequiredError) throw error;
-		throw new SystemdReobservationRequiredError(
-			"systemd preflight state is unavailable; fresh observation is required",
-		);
+	// First install has no unit inventory yet, but still requires the tools
+	// and manager connection before native mutations start.
+	if (snapshot.system.size === 0 && snapshot.user.size === 0) {
+		systemctl(["show", "--property=Version"]);
 	}
+	readSystemdRuntimeUnits(paths, "system", [...snapshot.system.keys()]);
+	readSystemdRuntimeUnits(paths, "user", [...snapshot.user.keys()]);
 }
 
 function systemdUnitFingerprint(
@@ -500,17 +498,19 @@ function parseSystemdUnitManagerState(
 	if (!loadState || !activeState || !needDaemonReload || job === undefined) {
 		throw new Error(`systemd ${scope} unit ${unit} returned incomplete manager state`);
 	}
-	if (
-		job !== "" ||
-		["activating", "deactivating", "reloading", "refreshing"].includes(activeState)
-	) {
-		throw new SystemdReobservationRequiredError(
-			`systemd ${scope} unit ${unit} has unfinished work; fresh observation is required`,
-		);
-	}
 	if (needDaemonReload !== "yes" && needDaemonReload !== "no") {
 		throw new Error(
 			`systemd ${scope} unit ${unit} returned invalid NeedDaemonReload: ${needDaemonReload}`,
+		);
+	}
+	if (job !== "" && !/^[1-9][0-9]*$/.test(job)) {
+		throw new Error(`systemd ${scope} unit ${unit} returned invalid Job: ${job}`);
+	}
+	// Restart=always can be activating/auto-restart without a Job. Admit its
+	// repair and let final readiness determine whether it recovered.
+	if (job !== "") {
+		throw new SystemdReobservationRequiredError(
+			`systemd ${scope} unit ${unit} has unfinished work; fresh observation is required`,
 		);
 	}
 	const managerState = {
@@ -667,6 +667,11 @@ export function runCommandResult(
 			...(env ? { env: { ...process.env, ...env } } : {}),
 		},
 	);
+	if (result.error && "code" in result.error && result.error.code === "ENOENT") {
+		throw new Error(
+			"systemd runtime commands require GNU timeout at /usr/bin/timeout; install GNU coreutils",
+		);
+	}
 	// SIGKILL also terminates timeout itself. A killed/OOM client is likewise
 	// an unknown manager outcome; neither result proves that a job was cancelled.
 	if (result.signal === "SIGKILL" || result.status === 124 || result.status === 137) {

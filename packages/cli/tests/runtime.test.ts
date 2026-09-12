@@ -26,6 +26,7 @@ import {
 	runtimeAppliedContentIdentity,
 	runtimeInit as runtimeInitWithContext,
 	runtimePublicContentRevision,
+	runtimeWatchEventForOutcome,
 	runtimeWatchPollDelayMs,
 	runtimeWatch as runtimeWatchWithContext,
 } from "../src/commands/runtime";
@@ -85,6 +86,7 @@ import {
 	officialInstallArgs,
 	validateUnmanagedProviderSecretValues,
 } from "../src/runtime/manifest-contract";
+import { runtimeConvergenceWithoutApply } from "../src/runtime/manifest-planning";
 import { recordValue } from "../src/runtime/manifest-shared";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
@@ -2553,6 +2555,33 @@ describe("runtime applied content identity", () => {
 });
 
 describe("runtime manifest datasource", () => {
+	it("keeps original failures visible when recovery is deferred by systemd or Hermes", () => {
+		const paths = getRuntimePaths({ mode: "local" });
+		const load: RuntimeManifestLoad = {
+			manifest: runtimeWatchLocaleManifest(join(root, "home"), 2),
+			source: "remote-datasource",
+			sourcePath: "inline-deferred",
+			offline: false,
+			etag: testBundleEtag("deferred-errors"),
+		};
+		const convergence = runtimeConvergenceWithoutApply({
+			load,
+			paths,
+			workspaceRoot: join(root, "home"),
+			enabledRuntimes: [],
+			installErrors: ["desired runtime install failed"],
+			projectedProviderIds: {},
+		});
+		for (const reason of ["systemd_reobservation_required", "hermes_config_conflict"] as const) {
+			expect(
+				runtimeWatchEventForOutcome({ kind: "deferred", reason, load, convergence }, paths),
+			).toMatchObject({
+				status: "error",
+				error: "desired runtime install failed",
+				errors: ["desired runtime install failed"],
+			});
+		}
+	});
 	it("rejects the legacy /api runtime manifest path", () => {
 		const parsed = runtimeManifestSourceSchema.safeParse({
 			type: "http",
@@ -7045,7 +7074,14 @@ exit 64
 			expect(readFileSync(tokenPath, "utf-8")).toBe(tokenBeforeRejection);
 			expect(statSync(tokenPath).mtimeMs).toBe(tokenMtimeBeforeRejection);
 			expect(readFileSync(paths.appliedState, "utf-8")).toBe(appliedStateBeforeRejection);
-			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
+			// Rejected credentials may trigger read-only preflight inspection, but
+			// must not change units, secrets or committed authority.
+			expect(
+				readFileSync(systemctlLog, "utf-8")
+					.trim()
+					.split("\n")
+					.filter((call) => call && !/^(?:--user )?(?:show|is-enabled)(?: |$)/.test(call)),
+			).toEqual([]);
 		} finally {
 			watchFetch.restore();
 			console.log = previousLog;

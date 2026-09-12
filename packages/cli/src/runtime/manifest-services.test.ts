@@ -367,7 +367,7 @@ test("defers unknown systemd jobs without committing authority and accepts a lat
 		sourcePath: "inline-systemd-pending",
 		offline: false,
 	};
-	let pending: "preflight" | "activation" | null = "preflight";
+	let pending: "preflight" | "activation" | "invalid-preflight" | null = "preflight";
 	let commits = 0;
 	let activations = 0;
 	const converge = () =>
@@ -375,6 +375,7 @@ test("defers unknown systemd jobs without committing authority and accepts a lat
 			commitAuthority: () => commits++,
 			systemdApply: {
 				assertIdle: () => {
+					if (pending === "invalid-preflight") throw new Error("systemctl is missing");
 					if (pending === "preflight") throw new SystemdReobservationRequiredError();
 				},
 				activateEgressPrerequisite: () => {
@@ -391,6 +392,10 @@ test("defers unknown systemd jobs without committing authority and accepts a lat
 	expect(deferred.deferredReason).toBe("systemd_reobservation_required");
 	expect(commits).toBe(0);
 	expect(activations).toBe(0);
+	pending = "invalid-preflight";
+	expect(converge).toThrow("systemctl is missing");
+	expect(activations).toBe(0);
+	expect(commits).toBe(0);
 	pending = "activation";
 	expect(converge().deferredReason).toBe("systemd_reobservation_required");
 	expect(commits).toBe(0);

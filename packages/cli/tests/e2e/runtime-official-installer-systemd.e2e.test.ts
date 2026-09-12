@@ -2222,6 +2222,16 @@ test("0.14.18 keeps tenant-owned Hermes state writable without chowning tenant h
 	const runtimeGid = 10_001;
 	const root = mkdtempSync(join(tmpdir(), "clawdi-live-hermes-ownership-"));
 	chmodSync(root, 0o755);
+	// The checkout can be private to another UID (for example a worktree).
+	// Give the tenant only a bundled fixture, not access to the source tree.
+	const hermesConfigMock = join(root, "hermes-config-cli-mock.js");
+	const buildMock = spawnSync(
+		process.execPath,
+		["build", HERMES_CONFIG_CLI_MOCK, "--target", "bun", "--outfile", hermesConfigMock],
+		{ encoding: "utf8", timeout: 30_000 },
+	);
+	expect(buildMock.status, buildMock.stderr).toBe(0);
+	chmodSync(hermesConfigMock, 0o644);
 	const hermesCommand = join(runtimeHome, ".local", "bin", "hermes");
 	const installLog = join(root, "hermes-installer.log");
 	const rootOwnedSentinel = join(runtimeHome, "root-owned-sentinel");
@@ -2258,7 +2268,7 @@ case "$*" in
     printf '%s\\n' 'Hermes Agent v0.19.1'
     ;;
   "config path"|"config get "*|"config set "*|"config unset "*)
-	exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
+	exec '${process.execPath}' '${hermesConfigMock}' "$@"
     ;;
   "gateway install --force --no-start-now")
     printf '%s\\n' install >> ${JSON.stringify(installLog)}

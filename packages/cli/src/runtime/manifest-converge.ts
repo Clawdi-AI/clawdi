@@ -1337,6 +1337,9 @@ export function convergeRuntimeManifest(
 		// only after publishing the candidate units at activation time.
 		opts.systemdApply?.assertIdle?.();
 	} catch (error) {
+		// No native mutations have started. Preserve setup/inspection failures
+		// as errors, without attempting a compensating apply or CLI rollback.
+		if (!(error instanceof SystemdReobservationRequiredError)) throw error;
 		return runtimeApplyFailure(context, state, error);
 	}
 	const installResult = prepareRuntimeInstallStage(context, state);

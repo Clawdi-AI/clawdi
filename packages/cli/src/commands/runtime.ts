@@ -832,18 +832,23 @@ async function runtimeInitLocked(
 				? "Systemd job outcome is unknown; retry with fresh observation on the next poll"
 				: "Hermes config changed during runtime convergence; retry on the next poll";
 		const applied = runtimeAppliedStatus(paths);
+		const errors = [
+			...outcome.convergence.installErrors,
+			...outcome.convergence.resourceProjectionErrors,
+			message,
+		];
 		emitRuntimeInitRepair({
 			opts,
 			paths,
 			stage: "final",
 			bootId,
 			runtimeMode: mode,
-			errors: [message],
+			errors,
 			exitCode: 23,
 			active: applied,
 			rejectedGeneration: outcome.load.manifest.generation,
 			manifestLoad: outcome.load,
-			render: renderRuntimeInit(paths, `repair: ${message}`, chalk.red),
+			render: renderRuntimeInit(paths, `repair: ${errors[0]}`, chalk.red),
 		});
 		return;
 	}
@@ -1093,14 +1098,18 @@ async function loadRuntimeManifestForWatch(
 	}
 }
 
-function runtimeWatchEventForOutcome(
+export function runtimeWatchEventForOutcome(
 	outcome: ConvergeOutcome,
 	paths: RuntimePaths,
 ): RuntimeWatchEvent | null {
 	if (outcome.kind === "idle") return null;
 	if (outcome.kind === "deferred") {
-		return outcome.reason === "systemd_reobservation_required"
-			? runtimeWatchError("final", outcome.convergence.installErrors, { etag: outcome.load.etag })
+		const errors = [
+			...outcome.convergence.installErrors,
+			...outcome.convergence.resourceProjectionErrors,
+		];
+		return errors.length > 0
+			? runtimeWatchError("final", errors, { etag: outcome.load.etag })
 			: null;
 	}
 	if (outcome.kind === "reconciliation_error") {
@@ -1448,8 +1457,19 @@ async function applyRuntimeDesiredState(
 				delete replayOptions.preparedHostedSourcedSkills;
 				const replay = await applyRuntimeDesiredState(committed, paths, replayOptions);
 				if (replay.kind === "deferred") {
-					preservePreparedAgentPluginArchives = replay.reason === "systemd_reobservation_required";
-					return replay;
+					preservePreparedAgentPluginArchives = true;
+					return {
+						...replay,
+						convergence: {
+							...convergence,
+							deferredReason: replay.reason,
+							installErrors: [...convergence.installErrors, ...replay.convergence.installErrors],
+							resourceProjectionErrors: [
+								...convergence.resourceProjectionErrors,
+								...replay.convergence.resourceProjectionErrors,
+							],
+						},
+					};
 				}
 				if (replay.kind !== "converged") {
 					convergence.installErrors.push(

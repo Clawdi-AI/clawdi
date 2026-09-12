@@ -7,6 +7,7 @@ import { buildRuntimeUserCommand, PRIVILEGE_DROP_STRATEGIES } from "./runtime-us
 import { managedRuntimeSystemdUnitEntries, RUNTIME_SYSTEMD_DROP_IN_FILE } from "./systemd";
 import {
 	applySystemdRuntimeUpdate,
+	assertSystemdRuntimeIdle,
 	runCommandResult,
 	SystemdReobservationRequiredError,
 	shouldRecoverFailedSystemdUnit,
@@ -75,13 +76,13 @@ describe("failed runtime systemd unit recovery", () => {
 				system: new Map([["clawdi-fixture.service", "revision"]]),
 				user: new Map<string, string>(),
 			};
-			const writeManager = (job: string) =>
+			const writeManager = (job: string, activeState = "active") =>
 				writeFileSync(
 					command,
 					`#!/bin/sh
 echo "$*" >> '${log}'
 case "$1" in
-show) printf 'LoadState=loaded\\nActiveState=active\\nNeedDaemonReload=no\\nJob=${job}\\n' ;;
+show) printf 'LoadState=loaded\\nActiveState=${activeState}\\nSubState=${activeState === "activating" ? "auto-restart" : "running"}\\nNeedDaemonReload=no\\nJob=${job}\\n' ;;
 is-enabled) printf 'enabled\\n' ;;
 esac
 `,
@@ -92,8 +93,18 @@ esac
 				SystemdReobservationRequiredError,
 			);
 			expect(readFileSync(log, "utf8")).not.toMatch(/restart|start|stop|daemon-reload/);
+			writeManager("", "activating");
+			expect(() => assertSystemdRuntimeIdle(paths, snapshot)).not.toThrow();
+			expect(applySystemdRuntimeUpdate(paths, snapshot, snapshot, {}).applied).toBe(false);
 			writeManager("");
 			expect(applySystemdRuntimeUpdate(paths, snapshot, snapshot, {}).applied).toBe(true);
+			writeManager("invalid");
+			expect(() => assertSystemdRuntimeIdle(paths, snapshot)).toThrow("invalid Job");
+			writeFileSync(command, "#!/bin/sh\nprintf 'bus unavailable' >&2\nexit 1\n");
+			expect(() => assertSystemdRuntimeIdle(paths, snapshot)).toThrow("bus unavailable");
+			expect(() => assertSystemdRuntimeIdle(paths, { system: new Map(), user: new Map() })).toThrow(
+				"bus unavailable",
+			);
 		} finally {
 			if (previous.apply === undefined) delete process.env.CLAWDI_SYSTEMD_APPLY;
 			else process.env.CLAWDI_SYSTEMD_APPLY = previous.apply;
@@ -162,6 +173,56 @@ esac
 				const version = runCommandResult("systemctl", ["--version"]).stdout.split("\n")[0];
 				console.log(
 					`native ${version} proof: ${idle.stdout.trim()}, ${busy.stdout.trim()}; all wrapper deadlines passed`,
+				);
+			} finally {
+				runCommandResult("systemctl", ["stop", unit]);
+				rmSync(path);
+				runCommandResult("systemctl", ["daemon-reload"]);
+			}
+		},
+	);
+	test.skipIf(process.env.CLAWDI_TEST_SYSTEMD_COMMAND !== "1")(
+		"allows no-job auto-restart to reach final proof without claiming it is healthy",
+		async () => {
+			const unit = `clawdi-restart-proof-${crypto.randomUUID()}.service`;
+			const path = `/run/systemd/system/${unit}`;
+			const definition = (command: string) =>
+				`[Service]\nExecStart=${command}\nRestart=always\nRestartSec=60\n[Install]\nWantedBy=multi-user.target\n`;
+			const paths = {
+				...getRuntimePaths({ mode: "local" }),
+				systemdSystemRoot: "/run/systemd/system",
+				appliedState: join(tmpdir(), `${unit}.absent.json`),
+			};
+			const snapshot = { system: new Map([[unit, "fixture"]]), user: new Map<string, string>() };
+			writeFileSync(path, definition("/bin/false"));
+			try {
+				runCommandResult("systemctl", ["daemon-reload"]);
+				runCommandResult("systemctl", ["start", unit]);
+				let observed = "";
+				const deadline = Date.now() + 5_000;
+				do {
+					observed = runCommandResult("systemctl", [
+						"show",
+						"--all",
+						"--property=ActiveState",
+						"--property=SubState",
+						"--property=Job",
+						unit,
+					]).stdout;
+					if (observed.includes("SubState=auto-restart")) break;
+					await Bun.sleep(25);
+				} while (Date.now() < deadline);
+				expect(observed).toContain("ActiveState=activating");
+				expect(observed).toContain("SubState=auto-restart");
+				expect(observed).toMatch(/^Job=$/m);
+				expect(() => assertSystemdRuntimeIdle(paths, snapshot)).not.toThrow();
+				expect(applySystemdRuntimeUpdate(paths, snapshot, snapshot, {}).applied).toBe(false);
+				writeFileSync(path, definition("/bin/sleep 30"));
+				runCommandResult("systemctl", ["daemon-reload"]);
+				expect(runCommandResult("systemctl", ["restart", unit]).status).toBe(0);
+				expect(applySystemdRuntimeUpdate(paths, snapshot, snapshot, {}).applied).toBe(true);
+				console.log(
+					`native crash-loop proof: ${observed.trim().replaceAll("\n", ", ")}; readiness required after repair`,
 				);
 			} finally {
 				runCommandResult("systemctl", ["stop", unit]);

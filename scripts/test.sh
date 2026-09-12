@@ -13,7 +13,7 @@ if [[ -z "${TEST_RUNNER_IMAGE:-}" ]]; then
 fi
 
 usage() {
-	echo "Usage: scripts/test.sh [all|ci|js|cli|desktop|shared|sidecar|web|backend|runtime-vaults|provider-recovery-fixture] [suite args...]"
+	echo "Usage: scripts/test.sh [all|ci|js|cli|desktop|shared|sidecar|web|backend|runtime-vaults|runtime-systemd|provider-recovery-fixture] [suite args...]"
 }
 
 compose() {
@@ -22,7 +22,7 @@ compose() {
 
 validate_suite() {
 	case "$1" in
-		all|backend|ci|js|cli|desktop|shared|sidecar|web|runtime-vaults|provider-recovery-fixture)
+		all|backend|ci|js|cli|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture)
 			;;
 		*)
 			echo "Unknown test suite: $1" >&2
@@ -50,6 +50,14 @@ run_on_host() {
 	fi
 	validate_suite "$suite"
 	python3 "$repo_root/scripts/check_postgres_image_parity.py"
+	if [[ "$suite" == runtime-systemd ]]; then
+		if [[ $# -gt 0 ]]; then
+			echo "Suite 'runtime-systemd' does not accept extra arguments" >&2
+			return 2
+		fi
+		bash "$script_dir/test-systemd-command.sh"
+		return
+	fi
 	local provider_output=""
 	if [[ "$suite" == provider-recovery-fixture ]]; then
 		provider_output="$(realpath "${1:?Provide an existing output directory inside this checkout}")"
@@ -279,6 +287,10 @@ run_in_container() {
 	copy_repo
 
 	case "$suite" in
+		runtime-systemd)
+			echo "Run runtime-systemd from the host entrypoint to create its isolated systemd container" >&2
+			exit 2
+			;;
 		all)
 			run_js
 			run_backend "$@"

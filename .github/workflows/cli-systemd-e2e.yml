@@ -8,6 +8,8 @@ on:
       - "packages/cli/tests/e2e/runtime-official-installer-systemd.e2e.test.ts"
       - "packages/cli/tests/fixtures/runtime-official-installer-systemd/**"
       - "scripts/test-runtime-official-installer-systemd.sh"
+      - "scripts/test-systemd-command.sh"
+      - "scripts/test.sh"
       - ".github/workflows/cli-systemd-e2e.yml"
 
 permissions:
@@ -23,5 +25,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      - name: Test systemd command failure boundaries
+        run: bash scripts/test.sh runtime-systemd
       - name: Test CLI against systemd as PID 1
         run: scripts/test-runtime-official-installer-systemd.sh
