@@ -5317,15 +5317,27 @@ test("Hermes component proof accepts inline credentials and detects their mutati
 	};
 	writeRuntimeAppliedState(applied, paths);
 	persistComponentActivations(load, paths, readServiceState);
-	expect((await observeComponents(paths, applied, readServiceState, async () => true))?.entries[0]?.status).toBe("ok");
+	expect(
+		(await observeComponents(paths, applied, readServiceState, async () => true))?.entries[0]
+			?.status,
+	).toBe("ok");
 	const unitPath = join(paths.systemdUserRoot, "clawdi-hermes-dashboard.service");
 	const unit = readFileSync(unitPath, "utf8");
 	writeFileSync(unitPath, unit.replace("inline-password", "mutated-password"));
-	expect((await observeComponents(paths, applied, readServiceState, async () => true))?.entries[0]?.status).toBe("unknown");
+	expect(
+		(await observeComponents(paths, applied, readServiceState, async () => true))?.entries[0]
+			?.status,
+	).toBe("unknown");
 	writeFileSync(unitPath, unit);
-	expect((await observeComponents(paths, applied, readServiceState, async () => true))?.entries[0]?.status).toBe("ok");
+	expect(
+		(await observeComponents(paths, applied, readServiceState, async () => true))?.entries[0]
+			?.status,
+	).toBe("ok");
 	const runConfigPath = runtimeRunConfigPath("hermes", paths, "dashboard");
 	const runConfigBytes = readFileSync(runConfigPath, "utf8");
 	writeFileSync(runConfigPath, runConfigBytes.replace('"generation": 1', '"generation": 2'));
-	expect((await observeComponents(paths, applied, readServiceState, async () => true))?.entries[0]?.status).toBe("unknown");
+	expect(
+		(await observeComponents(paths, applied, readServiceState, async () => true))?.entries[0]
+			?.status,
+	).toBe("unknown");
 });
