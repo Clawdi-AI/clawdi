@@ -11,6 +11,7 @@ from app.schemas.runtime_observed import (
     HostedRuntimeObservedAppliedV2,
     HostedRuntimeObservedBootV1,
     HostedRuntimeObservedCliV1,
+    HostedRuntimeObservedComponentsV1,
     HostedRuntimeObservedProviderPayload,
     HostedRuntimeObservedSupervisorV1,
     HostedRuntimeObservedSystemdV1,
@@ -281,6 +282,7 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
     applied: HostedRuntimeObservedAppliedV2
     boot: HostedRuntimeObservedBootV1 | None
     cli: HostedRuntimeObservedCliV1 | None
+    components: HostedRuntimeObservedComponentsV1 | None = None
     systemd: HostedRuntimeObservedSystemdV1 | None = None
     supervisor: HostedRuntimeObservedSupervisorV1 | None = None
     providers: dict[str, HostedRuntimeObservedProviderPayload] | None = None
@@ -321,6 +323,16 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
     sequence: int = Field(ge=1, le=9_007_199_254_740_991)
     event_id: str = Field(alias="eventId", min_length=1, max_length=128)
     captured_at: datetime = Field(alias="capturedAt")
+
+    @model_validator(mode="after")
+    def validate_component_health(self) -> RuntimeObservationEventV2:
+        if (
+            self.components
+            and self.status == "ok"
+            and any(entry.status != "ok" for entry in self.components.entries)
+        ):
+            raise ValueError("unready components cannot certify aggregate health")
+        return self
 
     @field_validator("reported_at", "captured_at", mode="before")
     @classmethod

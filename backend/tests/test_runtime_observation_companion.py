@@ -167,6 +167,26 @@ def test_runtime_observation_semantic_hash_ignores_only_transport_fields() -> No
         assert runtime_observation_service._observation_semantic_hash(changed) != baseline
 
 
+def test_component_proof_is_versioned_unique_and_cannot_certify_partial_health() -> None:
+    payload = _payload().model_dump(mode="json", by_alias=True)
+    entry = {
+        "component": "files",
+        "status": "ok",
+        "configRevision": "a" * 64,
+        "accessRevision": "b" * 64,
+        "invocationId": "c" * 32,
+    }
+    payload["components"] = {"schemaVersion": 1, "entries": [entry]}
+    assert RuntimeObservationEventV2.model_validate(payload).components is not None
+    for proof in [
+        {"schemaVersion": 2, "entries": [entry]},
+        {"schemaVersion": 1, "entries": [entry, entry]},
+        {"schemaVersion": 1, "entries": [{**entry, "status": "unknown"}]},
+    ]:
+        with pytest.raises(ValueError):
+            RuntimeObservationEventV2.model_validate({**payload, "components": proof})
+
+
 def test_runtime_observation_identity_envelope_is_additive_and_consistent() -> None:
     payload = _payload().model_dump(mode="json", by_alias=True)
     assert payload["generation"] == payload["applied"]["generation"]

@@ -6717,6 +6717,35 @@ export interface components {
             /** Version */
             version?: string | null;
         };
+        /** HostedRuntimeObservedComponentV1 */
+        HostedRuntimeObservedComponentV1: {
+            /**
+             * Component
+             * @enum {string}
+             */
+            component: "files" | "hermes-ui" | "openclaw-ui";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "unknown";
+            /** Configrevision */
+            configRevision: string;
+            /** Accessrevision */
+            accessRevision: string;
+            /** Invocationid */
+            invocationId: string;
+        };
+        /** HostedRuntimeObservedComponentsV1 */
+        HostedRuntimeObservedComponentsV1: {
+            /**
+             * Schemaversion
+             * @constant
+             */
+            schemaVersion: 1;
+            /** Entries */
+            entries: components["schemas"]["HostedRuntimeObservedComponentV1"][];
+        };
         /** HostedRuntimeObservedProviderPayload */
         HostedRuntimeObservedProviderPayload: {
             [key: string]: components["schemas"]["JsonValue"];
@@ -6881,6 +6910,7 @@ export interface components {
             applied: components["schemas"]["HostedRuntimeObservedAppliedV2"] | null;
             boot: components["schemas"]["HostedRuntimeObservedBootV1"] | null;
             cli: components["schemas"]["HostedRuntimeObservedCliV1"] | null;
+            components?: components["schemas"]["HostedRuntimeObservedComponentsV1"] | null;
             systemd?: components["schemas"]["HostedRuntimeObservedSystemdV1"] | null;
             supervisor?: components["schemas"]["HostedRuntimeObservedSupervisorV1"] | null;
             /** Providers */
@@ -8216,6 +8246,7 @@ export interface components {
             applied: components["schemas"]["HostedRuntimeObservedAppliedV2"];
             boot: components["schemas"]["HostedRuntimeObservedBootV1"] | null;
             cli: components["schemas"]["HostedRuntimeObservedCliV1"] | null;
+            components?: components["schemas"]["HostedRuntimeObservedComponentsV1"] | null;
             systemd?: components["schemas"]["HostedRuntimeObservedSystemdV1"] | null;
             supervisor?: components["schemas"]["HostedRuntimeObservedSupervisorV1"] | null;
             /** Providers */
