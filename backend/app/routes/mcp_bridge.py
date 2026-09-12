@@ -695,7 +695,9 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
             "Request a batch of new or updated Vault fields in one exact owned Vault. "
             "Returns a one-time write-only URL to show the user; never ask for secrets in chat. "
             "Existing Vault values are kept until submission and are never shown by the link. "
-            "Changes to requested fields conflict; overlapping pending requests are rejected. "
+            "Requested names are mandatory; the user can add fields or preview/apply a .env import "
+            "on the page, up to 32 total. Do not preselect extras. Selected fields must match "
+            "creation state; overlapping pending reservations are rejected. "
             "Runtime requests must target their own Workspace, not "
             "other readable linked Projects. The URL expires and is consumed only after saving."
         ),
@@ -706,7 +708,8 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     "vault_request_status": _NativeToolSpec(
         description=(
             "Check a Vault request: pending, supplied, expired, or conflict. Returns references, "
-            "never values. After supply, continue the task using existing authorized capabilities; "
+            "never values. Supplied fields and references include user-added extras. "
+            "After supply, continue the task using existing authorized capabilities; "
             "verify local index Vault/section/fields and content_version >= "
             "this status content_version "
             "before claiming local delivery. "

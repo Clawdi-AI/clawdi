@@ -122,7 +122,12 @@ when the user authorized updating them; do not delete them first. Existing Vault
 remain unchanged until successful submission and are never shown or prefilled. Overlapping pending requests
 are rejected; a change to any requested field conflicts with the entire batch.
 Show the returned `url` unchanged to the user; do not ask them to paste secrets into chat.
-Opening the link does not consume it. Saving all requested fields consumes it once.
+Opening the link does not consume it. The user can add fields or import a pasted/uploaded
+.env on the page, preview replacements, and apply them to the same form. Original requested
+names remain mandatory; only the user chooses extras after link creation (32 fields total).
+Saving the entire form consumes the link once. Selected fields must still match creation
+state, and extras cannot overlap another pending request. Status includes saved extras and
+their exact references; never assume only the originally requested names were saved.
 
 Check `vault_request_status` with its `request_id` after the user finishes. `pending` is not
 a secret value; `supplied` means the exact references are ready. On `expired` or `conflict`,

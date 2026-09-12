@@ -16,21 +16,57 @@ export interface ParsedKeyImport {
 	errors: string[];
 }
 
+export interface KeyImportOptions {
+	/** Preserve dotenv names for APIs whose field names are case-sensitive. */
+	preserveKeyCase?: boolean;
+}
+
+export const REQUEST_FIELD_NAME_RE = /^[A-Za-z0-9_.-]{1,200}$/;
+export const MAX_ENV_IMPORT_BYTES = 4 * 1024 * 1024;
+
+/** Dotenv text only: never evaluate substitutions or accept JSON. */
+export function parseVaultRequestEnv(raw: string): ParsedKeyImport {
+	if (new TextEncoder().encode(raw).length > MAX_ENV_IMPORT_BYTES) {
+		return { entries: [], errors: ["Import must be at most 4 MiB."] };
+	}
+	const parsed = parseEnvKeyImport(raw, { preserveKeyCase: true });
+	if (parsed.errors.length)
+		return {
+			entries: [],
+			errors: parsed.errors.map((error) => {
+				const line = /^Line \d+/.exec(error)?.[0];
+				return `${line ?? "Import"}: invalid assignment or duplicate field.`;
+			}),
+		};
+	if (
+		parsed.entries.length > 32 ||
+		parsed.entries.some(({ value }) => !value || [...value].length > 65536 || value.includes("\0"))
+	) {
+		return {
+			entries: [],
+			errors: [
+				"Use at most 32 fields with nonempty text values of at most 65536 characters and no NUL characters.",
+			],
+		};
+	}
+	return parsed;
+}
+
 const KEY_NAME_RE = /^[A-Z0-9_]+$/;
 const KEY_NAME_RULE =
 	"Key names can use only letters, numbers, and underscores (_). Hyphens, spaces, and other characters aren't allowed.";
 
-export function parseVaultKeyImport(raw: string): ParsedKeyImport {
+export function parseVaultKeyImport(raw: string, options: KeyImportOptions = {}): ParsedKeyImport {
 	const text = raw.trim();
 	if (!text) return { entries: [], errors: [] };
 
 	if (text.startsWith("{")) {
-		return parseJsonKeyImport(text);
+		return parseJsonKeyImport(text, options);
 	}
-	return parseEnvKeyImport(raw);
+	return parseEnvKeyImport(raw, options);
 }
 
-function parseJsonKeyImport(text: string): ParsedKeyImport {
+function parseJsonKeyImport(text: string, options: KeyImportOptions): ParsedKeyImport {
 	try {
 		const parsed = JSON.parse(text) as unknown;
 		if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
@@ -39,8 +75,8 @@ function parseJsonKeyImport(text: string): ParsedKeyImport {
 		const entries: ParsedKey[] = [];
 		const errors: string[] = [];
 		for (const [rawKey, rawValue] of Object.entries(parsed)) {
-			const key = normalizeImportKey(rawKey);
-			if (!KEY_NAME_RE.test(key)) {
+			const key = normalizeImportKey(rawKey, options.preserveKeyCase);
+			if (!(options.preserveKeyCase ? REQUEST_FIELD_NAME_RE.test(key) : KEY_NAME_RE.test(key))) {
 				errors.push(`Invalid key "${rawKey}". ${KEY_NAME_RULE}`);
 				continue;
 			}
@@ -56,7 +92,7 @@ function parseJsonKeyImport(text: string): ParsedKeyImport {
 	}
 }
 
-function parseEnvKeyImport(raw: string): ParsedKeyImport {
+function parseEnvKeyImport(raw: string, options: KeyImportOptions): ParsedKeyImport {
 	const entries: ParsedKey[] = [];
 	const errors: string[] = [];
 	raw.split(/\r?\n/).forEach((line, index) => {
@@ -70,59 +106,54 @@ function parseEnvKeyImport(raw: string): ParsedKeyImport {
 			return;
 		}
 		const rawKey = source.slice(0, equalsIndex).trim();
-		const key = normalizeImportKey(rawKey);
-		if (!KEY_NAME_RE.test(key)) {
+		const key = normalizeImportKey(rawKey, options.preserveKeyCase);
+		if (!(options.preserveKeyCase ? REQUEST_FIELD_NAME_RE.test(key) : KEY_NAME_RE.test(key))) {
 			errors.push(`Line ${lineNumber}: invalid key "${rawKey}". ${KEY_NAME_RULE}`);
+			return;
+		}
+		const valueSource = source.slice(equalsIndex + 1);
+		const value = parseEnvValue(valueSource);
+		if (value === null) {
+			errors.push(`Line ${lineNumber}: unterminated quoted value.`);
 			return;
 		}
 		entries.push({
 			key,
 			rawKey,
-			value: parseEnvValue(source.slice(equalsIndex + 1)),
+			value,
 			line: lineNumber,
 		});
 	});
 	return withDuplicateErrors(entries, errors);
 }
 
-function parseEnvValue(rawValue: string) {
-	const value = stripEnvInlineComment(rawValue).trim();
-	if (
-		(value.startsWith('"') && value.endsWith('"')) ||
-		(value.startsWith("'") && value.endsWith("'"))
-	) {
-		const unquoted = value.slice(1, -1);
-		if (value.startsWith('"')) {
-			return unquoted
-				.replace(/\\n/g, "\n")
-				.replace(/\\r/g, "\r")
-				.replace(/\\t/g, "\t")
-				.replace(/\\"/g, '"')
-				.replace(/\\\\/g, "\\");
+function parseEnvValue(rawValue: string): string | null {
+	const value = rawValue.trim();
+	const quote = value[0];
+	if (quote !== '"' && quote !== "'") return value.replace(/\s+#.*$/, "").trimEnd();
+	let result = "";
+	for (let i = 1; i < value.length; i++) {
+		const char = value[i];
+		if (char === quote) {
+			const tail = value.slice(i + 1);
+			return /^\s*(?:#.*)?$/.test(tail) ? result : null;
 		}
-		return unquoted;
+		if (char === "\\" && quote === '"') {
+			const next = value[i + 1];
+			const decoded: Record<string, string> = { n: "\n", r: "\r", t: "\t", '"': '"', "\\": "\\" };
+			if (next !== undefined && decoded[next] !== undefined) {
+				result += decoded[next];
+				i++;
+				continue;
+			}
+		}
+		result += char;
 	}
-	return value;
+	return null;
 }
 
-function stripEnvInlineComment(rawValue: string) {
-	let quote: '"' | "'" | null = null;
-	for (let i = 0; i < rawValue.length; i++) {
-		const char = rawValue[i];
-		const prev = i > 0 ? rawValue[i - 1] : "";
-		if ((char === '"' || char === "'") && prev !== "\\") {
-			quote = quote === char ? null : (quote ?? char);
-			continue;
-		}
-		if (char === "#" && quote === null && /\s/.test(prev)) {
-			return rawValue.slice(0, i).trimEnd();
-		}
-	}
-	return rawValue;
-}
-
-function normalizeImportKey(rawKey: string) {
-	return rawKey.trim().toUpperCase();
+function normalizeImportKey(rawKey: string, preserveCase = false) {
+	return preserveCase ? rawKey.trim() : rawKey.trim().toUpperCase();
 }
 
 function withDuplicateErrors(entries: ParsedKey[], errors: string[]): ParsedKeyImport {

@@ -12,6 +12,15 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.81
+
+- Vault request pages support added fields and pasted or uploaded `.env` imports,
+  with an explicit preview before one save. Requested fields stay required; up to
+  32 fields can be saved together.
+- Bundled agent guidance recognizes user-added fields and their saved Vault references.
+- The accompanying Vault update expires older pending request links. Ask your agent
+  for a new link; saved credentials and request history are preserved.
+
 ### CLI 0.14.80
 
 - Hermes dashboard readiness proves both inline and file-backed credentials and

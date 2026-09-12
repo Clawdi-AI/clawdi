@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Route, test } from "@playwright/test";
 
 const token = `v2_${"a".repeat(43)}`;
 const context = {
@@ -146,4 +146,231 @@ test("an intervening change clears the mixed form without claiming success", asy
 	await expect(page.getByRole("alert")).toContainText("new link");
 	await expect(page.getByRole("textbox")).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Copy message for agent" })).toHaveCount(0);
+});
+
+for (const viewport of [
+	{ width: 1280, height: 900 },
+	{ width: 390, height: 844 },
+]) {
+	test(`dotenv preview and user-added fields at ${viewport.width}px`, async ({
+		page,
+	}, testInfo) => {
+		await page.setViewportSize(viewport);
+		let submissions = 0;
+		await page.route("**/v1/vault/requests/**", async (route) => {
+			const body = route.request().postDataJSON();
+			if (route.request().url().endsWith("/supply")) {
+				submissions++;
+				expect(body.fields).toEqual({
+					API_KEY: "synthetic-import",
+					API_SECRET: "synthetic-secret",
+					"api.key": "${LITERAL}",
+					"api-key": "synthetic-new",
+				});
+				return route.fulfill({
+					json: {
+						...context,
+						fields: Object.keys(body.fields),
+						extra_fields: ["api.key", "api-key"],
+						status: "supplied",
+					},
+				});
+			}
+			return route.fulfill({
+				json: { ...context, update_fields: body.fields?.includes("api.key") ? ["api.key"] : [] },
+			});
+		});
+		await page.goto(`/vault-request#${token}`);
+		await page.getByLabel("API_KEY", { exact: true }).fill("synthetic-draft");
+		await page.getByLabel("API_SECRET", { exact: true }).fill("synthetic-secret");
+		await page.getByRole("button", { name: "Add field", exact: true }).click();
+		await page.getByRole("textbox", { name: "Field name", exact: true }).fill("temporary");
+		await page.getByRole("textbox", { name: "Field name", exact: true }).fill("renamed");
+		await page.getByRole("button", { name: "Remove renamed" }).click();
+		await expect(page.getByRole("textbox", { name: "Field name", exact: true })).toHaveCount(0);
+		await page.getByRole("button", { name: "Import .env", exact: true }).click();
+		const dotenv = "API_KEY=synthetic-import\napi.key=${LITERAL}\napi-key=synthetic-new";
+		if (viewport.width < 500) {
+			await page
+				.getByLabel("Choose .env file")
+				.setInputFiles({ name: ".env", mimeType: "text/plain", buffer: Buffer.from(dotenv) });
+		} else {
+			await page.getByLabel("Dotenv text").fill(dotenv);
+		}
+		await expect(page.getByLabel("Dotenv text")).toHaveValue(dotenv);
+		await expect(page.getByRole("button", { name: "Save secrets", exact: true })).toBeDisabled();
+		await page.getByRole("button", { name: "Preview import", exact: true }).click();
+		await expect(page.getByText("Replace entered value", { exact: false })).toBeVisible();
+		await expect(
+			page.getByText("Update existing Vault value on save", { exact: false }),
+		).toBeVisible();
+		await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-draft");
+		await page.screenshot({
+			path: testInfo.outputPath(`preview-${viewport.width}.png`),
+			fullPage: true,
+		});
+		expect(submissions).toBe(0);
+		await page.getByRole("button", { name: "Apply import", exact: true }).click();
+		await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-import");
+		await expect(page.getByRole("textbox", { name: "Field name", exact: true })).toHaveCount(2);
+		await expect(page.getByText("Update", { exact: true })).toHaveCount(1);
+		await page.screenshot({
+			path: testInfo.outputPath(`fields-${viewport.width}.png`),
+			fullPage: true,
+		});
+		expect(
+			await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+		).toBe(true);
+		await page.getByRole("button", { name: "Save secrets", exact: true }).click();
+		await expect(page.getByRole("status")).toContainText("Your secrets are saved");
+		expect(submissions).toBe(1);
+		await page.screenshot({
+			path: testInfo.outputPath(`saved-${viewport.width}.png`),
+			fullPage: true,
+		});
+	});
+}
+
+test("an import of only requested names requires Apply and keeps a usable Save", async ({
+	page,
+}) => {
+	await page.route("**/v1/vault/requests/inspect", (route) => route.fulfill({ json: context }));
+	await page.goto(`/vault-request#${token}`);
+	await page.getByLabel("API_KEY", { exact: true }).fill("synthetic-original");
+	await page.getByRole("button", { name: "Import .env", exact: true }).click();
+	await page.getByLabel("Dotenv text").fill("API_KEY=synthetic-new\nAPI_KEY=duplicate");
+	await page.getByRole("button", { name: "Preview import", exact: true }).click();
+	await expect(page.getByRole("alert")).toContainText("duplicate");
+	await expect(page.getByRole("button", { name: "Retry check", exact: true })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Apply import", exact: true })).toHaveCount(0);
+	await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-original");
+	await page.getByLabel("Dotenv text").fill("API_KEY=synthetic-new");
+	await page.getByRole("button", { name: "Preview import", exact: true }).click();
+	await page.getByRole("button", { name: "Cancel import", exact: true }).click();
+	await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-original");
+	await page.getByRole("button", { name: "Import .env", exact: true }).click();
+	await page.getByLabel("Dotenv text").fill("API_KEY=synthetic-new");
+	await page.getByRole("button", { name: "Preview import", exact: true }).click();
+	await page.getByRole("button", { name: "Apply import", exact: true }).click();
+	await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-new");
+	await expect(page.getByRole("button", { name: "Save secrets", exact: true })).toBeEnabled();
+});
+
+test("selection checks debounce names and ignore an obsolete response", async ({ page }) => {
+	await page.clock.install();
+	const checkedExtras: string[] = [];
+	let obsolete: Route | undefined;
+	await page.route("**/v1/vault/requests/inspect", (route) => {
+		const fields: string[] | undefined = route.request().postDataJSON().fields;
+		const extra = fields?.find((name) => !context.fields.includes(name));
+		if (extra) checkedExtras.push(extra);
+		if (extra === "OLD") {
+			obsolete = route;
+			return;
+		}
+		return route.fulfill({ json: { ...context, update_fields: extra === "API" ? [extra] : [] } });
+	});
+	await page.goto(`/vault-request#${token}`);
+	const save = page.getByRole("button", { name: "Save secrets", exact: true });
+	await expect(save).toBeEnabled();
+	await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+	await page.getByRole("button", { name: "Add field", exact: true }).click();
+	const name = page.getByRole("textbox", { name: "Field name", exact: true });
+	for (const value of ["A", "AP", "API"]) {
+		await name.fill(value);
+		await expect(save).toBeDisabled();
+		await page.clock.runFor(100);
+		expect(checkedExtras).toEqual([]);
+	}
+	await page.clock.runFor(200);
+	await expect(save).toBeEnabled();
+	expect(checkedExtras).toEqual(["API"]);
+	await expect(page.getByText("Update", { exact: true })).toHaveCount(1);
+	await name.fill("OLD");
+	await expect(save).toBeDisabled();
+	await expect(page.getByText("Update", { exact: true })).toHaveCount(0);
+	await page.clock.runFor(300);
+	await expect.poll(() => obsolete !== undefined).toBe(true);
+	await name.fill("NEW");
+	if (!obsolete) throw new Error("Expected the older selection request");
+	await obsolete.fulfill({ json: { ...context, update_fields: ["API_KEY"] } });
+	await page.clock.runFor(100);
+	await expect(save).toBeDisabled();
+	await expect(page.getByText("Update", { exact: true })).toHaveCount(0);
+	await page.clock.runFor(200);
+	await expect(save).toBeEnabled();
+	expect(checkedExtras).toEqual(["API", "OLD", "NEW"]);
+	await expect(page.getByText("Update", { exact: true })).toHaveCount(0);
+});
+
+test("selection failures distinguish retry, invalid names, conflict and terminal expiry", async ({
+	page,
+}) => {
+	let failure: number | "network" | undefined;
+	await page.route("**/v1/vault/requests/inspect", (route) => {
+		if (!route.request().postDataJSON().fields || failure === undefined)
+			return route.fulfill({ json: context });
+		if (failure === "network") return route.abort("failed");
+		return route.fulfill({
+			status: failure,
+			json: { detail: "Internal diagnostic must not be displayed" },
+		});
+	});
+	await page.goto(`/vault-request#${token}`);
+	const save = page.getByRole("button", { name: "Save secrets", exact: true });
+	const retry = page.getByRole("button", { name: "Retry check", exact: true });
+	await expect(save).toBeEnabled();
+	await page.getByLabel("API_KEY", { exact: true }).fill("synthetic-draft");
+	failure = 500;
+	await page.getByRole("button", { name: "Add field", exact: true }).click();
+	const name = page.getByRole("textbox", { name: "Field name", exact: true });
+	await name.fill("EXTRA");
+	await expect(page.getByRole("alert")).toContainText("server is unavailable");
+	await expect(save).toBeDisabled();
+	await expect(retry).toBeVisible();
+	failure = "network";
+	await retry.click();
+	await expect(page.getByRole("alert")).toContainText("Could not connect");
+	await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-draft");
+	failure = 422;
+	await retry.click();
+	await expect(page.getByRole("alert")).toContainText("field names are invalid");
+	await expect(retry).toHaveCount(0);
+	failure = 409;
+	await name.fill("RESERVED");
+	await expect(page.getByRole("alert")).toContainText("changed or are reserved");
+	await expect(retry).toHaveCount(0);
+	await expect(save).toBeDisabled();
+	await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-draft");
+	failure = 410;
+	await name.fill("EXPIRED");
+	await expect(page.getByRole("alert")).toContainText("link has expired");
+	await expect(page.getByRole("textbox")).toHaveCount(0);
+	await expect(save).toHaveCount(0);
+	await expect(retry).toHaveCount(0);
+});
+
+test("import preview retries server failure and clears the form on terminal expiry", async ({
+	page,
+}) => {
+	let failure = 500;
+	await page.route("**/v1/vault/requests/inspect", (route) => {
+		if (route.request().postDataJSON().fields?.includes("imported")) {
+			return route.fulfill({ status: failure, json: { detail: "Unavailable" } });
+		}
+		return route.fulfill({ json: context });
+	});
+	await page.goto(`/vault-request#${token}`);
+	await page.getByLabel("API_KEY", { exact: true }).fill("synthetic-draft");
+	await page.getByRole("button", { name: "Import .env", exact: true }).click();
+	await page.getByLabel("Dotenv text").fill("imported=synthetic-value");
+	await page.getByRole("button", { name: "Preview import", exact: true }).click();
+	await expect(page.getByRole("alert")).toContainText("server is unavailable");
+	await expect(page.getByRole("button", { name: "Retry check", exact: true })).toHaveCount(0);
+	await expect(page.getByLabel("Dotenv text")).toHaveValue("imported=synthetic-value");
+	failure = 410;
+	await page.getByRole("button", { name: "Preview import", exact: true }).click();
+	await expect(page.getByRole("alert")).toContainText("link has expired");
+	await expect(page.getByRole("textbox")).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Save secrets", exact: true })).toHaveCount(0);
 });

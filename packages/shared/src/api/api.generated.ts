@@ -10311,6 +10311,11 @@ export interface components {
             section: string;
             /** Fields */
             fields: string[];
+            /**
+             * Extra Fields
+             * @default []
+             */
+            extra_fields: string[];
             /** Update Fields */
             update_fields: string[];
             /** Content Version */
@@ -10333,6 +10338,13 @@ export interface components {
             };
             /** Url */
             url: string;
+        };
+        /** VaultSecretRequestInspect */
+        VaultSecretRequestInspect: {
+            /** Token */
+            token: string;
+            /** Fields */
+            fields?: string[];
         };
         /** VaultSecretRequestStatus */
         VaultSecretRequestStatus: {
@@ -10361,6 +10373,11 @@ export interface components {
             section: string;
             /** Fields */
             fields: string[];
+            /**
+             * Extra Fields
+             * @default []
+             */
+            extra_fields: string[];
             /** Update Fields */
             update_fields: string[];
             /** Content Version */
@@ -10390,11 +10407,6 @@ export interface components {
             fields: {
                 [key: string]: string;
             };
-        };
-        /** VaultSecretRequestToken */
-        VaultSecretRequestToken: {
-            /** Token */
-            token: string;
         };
         /** VaultSectionsResponse */
         VaultSectionsResponse: {
@@ -16143,7 +16155,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["VaultSecretRequestToken"];
+                "application/json": components["schemas"]["VaultSecretRequestInspect"];
             };
         };
         responses: {

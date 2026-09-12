@@ -45,6 +45,7 @@ class VaultSecretRequestStatus(BaseModel):
     slug: str
     section: str
     fields: list[str]
+    extra_fields: list[str] = []
     update_fields: list[str]
     content_version: int = Field(ge=0)
     status: Literal["pending", "supplied", "expired", "conflict"]
@@ -62,12 +63,27 @@ class VaultSecretRequestToken(BaseModel):
     token: str = Field(pattern=r"^v2_[A-Za-z0-9_-]{43}$")
 
 
+class VaultSecretRequestInspect(VaultSecretRequestToken):
+    fields: list[str] = Field(default_factory=list, max_length=32)
+
+    @field_validator("fields")
+    @classmethod
+    def validate_fields(cls, fields: list[str]) -> list[str]:
+        for name in fields:
+            if clean_vault_segment(name, field_name="field name") != name:
+                raise ValueError("Field names must not contain surrounding whitespace")
+        if len(set(fields)) != len(fields):
+            raise ValueError("Fields must be distinct")
+        return fields
+
+
 class VaultSecretRequestSupply(VaultSecretRequestToken):
     fields: dict[str, str] = Field(min_length=1, max_length=32)
 
     @field_validator("fields")
     @classmethod
     def validate_values(cls, fields: dict[str, str]) -> dict[str, str]:
+        VaultSecretRequestInspect.validate_fields(list(fields))
         if any(not value or len(value) > 65536 or "\x00" in value for value in fields.values()):
             raise ValueError("Values must be nonempty text of at most 65536 characters")
         return fields

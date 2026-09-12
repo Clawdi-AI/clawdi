@@ -9,9 +9,9 @@ from app.core.project import resolve_default_write_project
 from app.schemas.vault_requests import (
     VaultSecretRequestCreate,
     VaultSecretRequestCreated,
+    VaultSecretRequestInspect,
     VaultSecretRequestStatus,
     VaultSecretRequestSupply,
-    VaultSecretRequestToken,
 )
 from app.services import vault_requests as service
 from app.services.vault import get_vault_for_write
@@ -30,13 +30,15 @@ async def create_request(
 
 @router.post("/inspect")
 async def inspect_request(
-    body: VaultSecretRequestToken,
+    body: VaultSecretRequestInspect,
     db: AsyncSession = Depends(get_session),
 ) -> VaultSecretRequestStatus:
     row = await service.token_request(db, body.token)
     result = await service.describe(db, row)
     if result.status != "pending":
         raise service.unavailable()
+    if "fields" in body.model_fields_set:
+        result.update_fields = await service.check_selection(db, row, body.fields)
     return result
 
 
