@@ -340,6 +340,11 @@ readiness remains required. Automatic pre-start identity cleanup and conflict
 archival are no longer provided. Owners must resolve remaining native warnings
 or failures. Explicit config and reported startup-migration error repair remain.
 
+These changes do not repair native Doctor lifecycle bugs or add a user D-Bus
+readiness barrier. In OpenClaw 2026.9.4, explicit repair of a running service can
+fail during native restart verification; the [upstream fix](https://github.com/openclaw/openclaw/commit/f3f3d6b1ed680c364c1ea3b549e7e4fa8fc500b9)
+requires an OpenClaw build containing that change.
+
 When Hermes service installation is necessary, Clawdi publishes its environment
 and drop-in first and invokes native `gateway install --force --no-start-now`.
 The existing activation phase starts the service after prerequisites are ready.

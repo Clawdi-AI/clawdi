@@ -14,11 +14,20 @@ database migration, CI, and implementation details.
 
 ### Fixed
 
+- CLI 0.14.77 restores missing managed OpenClaw service environment files before
+  config repair after a restart, preserving provider and egress settings.
+
 - CLI 0.14.76 gives managed OpenClaw MCP discovery and slow tool calls an
   explicit timeout budget so tools remain available when discovery takes longer
   than OpenClaw’s default 1.5 seconds.
 
 ### Changed
+
+- CLI 0.14.77 leaves legacy OpenClaw identity migration and failure reporting to
+  normal native startup. Retained identity files no longer trigger proactive
+  Doctor runs or automatic conflict archival; remaining native warnings may
+  require owner action. Explicit config repair remains subject to native Doctor
+  limitations.
 
 - Request new credentials and updates to existing keys through the same Vault link.
   Existing Vault values are kept until saving; intervening changes reject the whole batch.
