@@ -413,7 +413,12 @@ export class RetryQueue {
 	 * Used by the daemon drain loop so an idle queue can sleep until
 	 * enqueue() provides real work. */
 	waitForItem(abort: AbortSignal, timeoutMs: number): Promise<void> {
-		if (this.items.length > 0 || abort.aborted || timeoutMs <= 0) return Promise.resolve();
+		if (this.items.length > 0) return Promise.resolve();
+		return this.waitForChange(abort, timeoutMs);
+	}
+
+	waitForChange(abort: AbortSignal, timeoutMs: number): Promise<void> {
+		if (abort.aborted || timeoutMs <= 0) return Promise.resolve();
 		return new Promise((resolve) => {
 			let settled = false;
 			let timer: ReturnType<typeof setTimeout> | null = null;
@@ -428,11 +433,11 @@ export class RetryQueue {
 			timer = setTimeout(finish, timeoutMs);
 			this.itemWaiters.add(finish);
 			abort.addEventListener("abort", finish, { once: true });
-			if (this.items.length > 0) finish();
+			if (abort.aborted) finish();
 		});
 	}
 
-	private notifyItemWaiters(): void {
+	notifyItemWaiters(): void {
 		if (this.itemWaiters.size === 0) return;
 		const waiters = [...this.itemWaiters];
 		this.itemWaiters.clear();
@@ -506,8 +511,8 @@ export class RetryQueue {
 
 	/** Peek without removing — sync-engine calls `markDone(item)` after
 	 * a successful upload, or leaves the item in place to retry. */
-	peek(): QueueItem | undefined {
-		return this.items[0];
+	peek(eligible: (item: QueueItem) => boolean = () => true): QueueItem | undefined {
+		return this.items.find(eligible);
 	}
 
 	all(): readonly QueueItem[] {

@@ -7,9 +7,14 @@ import JSON5 from "json5";
 import { safeTruncate, sanitizeMetadata } from "../lib/sanitize";
 import { getCliVersion } from "../lib/version";
 import { toErrorMessage } from "../serve/log";
-import { type RuntimeAppliedState, readRuntimeAppliedState } from "./applied-state";
+import {
+	type RuntimeAppliedState,
+	readRuntimeAppliedState,
+	runtimeContentSha256,
+} from "./applied-state";
 import { resolveRuntimeApplyGeneration } from "./apply-identity";
 import { type RuntimeCliBootstrapStatus, readRuntimeCliBootstrapStatus } from "./cli-update";
+import { type ComponentServiceState, observeComponents } from "./component-observation";
 import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import { installedOpenClawCommandPath } from "./hosted-openclaw-context";
 import { readHostedSkillsObservation } from "./hosted-skill-observation";
@@ -28,7 +33,7 @@ type ObservedStatus = "ok" | "error" | "unknown";
 export type HostedRuntimeObserved = components["schemas"]["HostedRuntimeObservedV2"] &
 	Pick<
 		components["schemas"]["RuntimeObservationEventV2"],
-		"agentPlugins" | "userActivity" | "skills"
+		"agentPlugins" | "userActivity" | "skills" | "components"
 	>;
 type HostedRuntimeObservedBoot = components["schemas"]["HostedRuntimeObservedBootV1"];
 type HostedRuntimeObservedCli = components["schemas"]["HostedRuntimeObservedCliV1"];
@@ -54,6 +59,7 @@ export async function readHostedRuntimeObserved(
 		includeAgentPlugins?: boolean;
 		includeSkills?: boolean;
 		includeUserActivity?: boolean;
+		includeComponents?: boolean;
 	} = {},
 ): Promise<HostedRuntimeObserved | null> {
 	if (paths.mode !== "hosted") return null;
@@ -119,10 +125,41 @@ export async function readHostedRuntimeObserved(
 		const userActivity = observedUserActivity(boot.status, observed.reportedAt);
 		if (userActivity) observed.userActivity = userActivity;
 	}
+	if (appliedState && options.includeComponents) {
+		const proof = await observeComponents(
+			paths,
+			appliedState,
+			(scope, unit) => readComponentServiceState(paths, scope, unit),
+			(component) => runtimeComponentIsReady(component, paths),
+		);
+		if (proof) {
+			observed.components = proof;
+			if (observed.status === "ok" && proof.entries.some((entry) => entry.status !== "ok"))
+				observed.status = "unknown";
+		}
+	}
+
+	// Reject the whole snapshot when its parent authority or health changed while
+	// any asynchronous probe ran. Dropping only component proof leaves a stale
+	// aggregate success available to legacy admission readers.
+	if (
+		runtimeContentSha256(readRuntimeAppliedState(paths)) !== runtimeContentSha256(appliedState) ||
+		runtimeContentSha256(readRuntimeBootStatus(paths)) !== runtimeContentSha256(boot) ||
+		watchStatusRevision(readJsonRecord(paths.runtimeWatchStatus)) !==
+			watchStatusRevision(watchStatus)
+	)
+		return null;
+
 	if (boot.error) observed.error = boot.error;
 	const convergeError = runtimeConvergeError(watchStatus);
 	if (convergeError) observed.convergeError = convergeError;
 	return observed;
+}
+
+function watchStatusRevision(value: JsonRecord | null): string {
+	if (value === null) return runtimeContentSha256(null);
+	const { timestamp: _timestamp, ...semantic } = value;
+	return runtimeContentSha256(semantic);
 }
 
 function observedUserActivity(
@@ -353,6 +390,55 @@ function managedSystemdUnitNames(root: string): string[] {
 	return [...new Set(managedRuntimeSystemdUnitEntries(root).map((entry) => entry.unitName))].sort();
 }
 
+export function readComponentServiceState(
+	paths: RuntimePaths,
+	scope: "system" | "user",
+	unit: string,
+): ComponentServiceState | null {
+	const invocationId = readComponentInvocation(paths, scope, unit);
+	if (!invocationId) return null;
+	const args = ["cat", "--no-pager", unit];
+	const config = scope === "system" ? runSystemctl(args) : runRuntimeUserSystemctl(paths, args);
+	if (
+		config.exitCode !== 0 ||
+		!config.output ||
+		readComponentInvocation(paths, scope, unit) !== invocationId
+	)
+		return null;
+	// systemctl owns effective fragment/drop-in precedence. Its cat output has no
+	// per-process timestamps and includes overrides outside Clawdi's unit root.
+	return { invocationId, configurationRevision: runtimeContentSha256(config.output) };
+}
+
+/** A component receipt is bound to one fully loaded, idle service invocation. */
+export function readComponentInvocation(
+	paths: RuntimePaths,
+	scope: "system" | "user",
+	unit: string,
+): string | null {
+	const args = [
+		"show",
+		"--all",
+		unit,
+		"--property=InvocationID",
+		"--property=LoadState",
+		"--property=ActiveState",
+		"--property=NeedDaemonReload",
+		"--property=Job",
+	];
+	const result = scope === "system" ? runSystemctl(args) : runRuntimeUserSystemctl(paths, args);
+	const fields = parseSystemctlShow(result.output);
+	return result.exitCode === 0 &&
+		fields.LoadState === "loaded" &&
+		fields.ActiveState === "active" &&
+		fields.NeedDaemonReload === "no" &&
+		fields.Job === "" &&
+		/^[a-f0-9]{32}$/.test(fields.InvocationID ?? "") &&
+		fields.InvocationID !== "0".repeat(32)
+		? fields.InvocationID
+		: null;
+}
+
 function systemdUnitStatus(
 	scope: "system" | "user",
 	unit: string,
@@ -393,6 +479,32 @@ function systemdUnitStatus(
 					? null
 					: (nonSensitiveFailureEvidence(result.output) ?? "systemctl show failed"),
 	};
+}
+
+export async function runtimeComponentIsReady(
+	component: components["schemas"]["HostedRuntimeObservedComponentV1"]["component"],
+	paths: RuntimePaths,
+): Promise<boolean> {
+	try {
+		if (component === "files")
+			return (await runtimeReadinessProbe("http://127.0.0.1:9120/health")).status === 200;
+		if (component === "hermes-ui") {
+			const status: unknown = JSON.parse(
+				(await runtimeReadinessProbe("http://127.0.0.1:9119/api/status")).body,
+			);
+			if (!hermesUiAuthenticationIsReady(status)) return false;
+			const page = await runtimeReadinessProbe("http://127.0.0.1:9119/login");
+			return /<!doctype html|<html[\s>]/i.test(page.body);
+		}
+		return runtimeServiceIsReady("openclaw-gateway.service", paths);
+	} catch {
+		return false;
+	}
+}
+
+function hermesUiAuthenticationIsReady(status: unknown): boolean {
+	const value = recordValue(status);
+	return value?.auth_required === true && arrayValue(value.auth_providers).includes("basic");
 }
 
 /** Native service activation precedes application startup; heartbeat health needs both. */
@@ -475,8 +587,7 @@ async function runtimeServiceIsReady(unit: string, paths: RuntimePaths): Promise
 		return (
 			status?.gateway_running === true &&
 			status.gateway_state === "running" &&
-			status.auth_required === true &&
-			arrayValue(status.auth_providers).includes("basic")
+			hermesUiAuthenticationIsReady(status)
 		);
 	} catch {
 		return false;

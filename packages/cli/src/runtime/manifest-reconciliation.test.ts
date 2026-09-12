@@ -28,6 +28,11 @@ import {
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
 } from "./applied-state";
+import {
+	captureComponentActivations,
+	observeComponents,
+	persistComponentActivations,
+} from "./component-observation";
 import { gcFileBrowserCompanionCandidates } from "./file-browser-companion";
 import type {
 	PreparedHostedAgentPlugin,
@@ -76,6 +81,7 @@ import {
 	runtimeSecretValue,
 } from "./secret-values";
 import { ensureRuntimeStateDirs } from "./state";
+import { readSystemdUnitSnapshot } from "./systemd-transaction";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
 const successfulPrerequisiteActivation = () => ({
@@ -5186,4 +5192,76 @@ esac
 			"runtime manifest convergence requires an explicit apply context",
 		);
 	});
+});
+
+test("component proof requires committed configuration and a stable live invocation", async () => {
+	const paths = tempRuntimePaths();
+	const manifest = fileBrowserManifest(paths, { generation: 1, binary: "fixture" });
+	mkdirSync(paths.systemdSystemRoot, { recursive: true });
+	mkdirSync(dirname(paths.fileBrowserConfig), { recursive: true });
+	writeFileSync(
+		join(paths.systemdSystemRoot, "clawdi-files.service"),
+		`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\nExecStart=/fixture/files\n`,
+	);
+	writeFileSync(paths.fileBrowserConfig, "fixture-config");
+	const activated = Object.fromEntries(readSystemdUnitSnapshot(paths).system);
+	let invocation = "a".repeat(32);
+	let managerConfiguration = "1".repeat(64);
+	const readInvocation = () => ({
+		invocationId: invocation,
+		configurationRevision: managerConfiguration,
+	});
+	const componentActivations = captureComponentActivations(
+		fileBrowserManifestLoad(manifest),
+		paths,
+		activated,
+		readInvocation,
+	);
+	expect(componentActivations).toHaveLength(1);
+	const applied = {
+		schemaVersion: "clawdi.runtimeAppliedState.v2" as const,
+		appliedAt: new Date().toISOString(),
+		instanceId: manifest.instanceId,
+		sourceRevision: "b".repeat(64),
+		etag: `"sha256:${"b".repeat(64)}"`,
+		generation: 1,
+		manifestETag: '"fixture-manifest"',
+		applyReceiptId: "fixture-apply-receipt",
+		bootNonce: "fixture-boot-nonce",
+		contentIdentity: { sourcePath: "fixture", sha256: "c".repeat(64) },
+		activated,
+		providerIds: [],
+		projectedProviderIds: {},
+	};
+	mkdirSync(paths.serviceStateRoot, { recursive: true });
+	writeRuntimeAppliedState(applied, paths);
+	persistComponentActivations(fileBrowserManifestLoad(manifest), paths, readInvocation);
+	const observe = () => observeComponents(paths, applied, readInvocation, async () => true);
+	mkdirSync(join(paths.systemdSystemRoot, "clawdi-broken-peer.service"));
+	expect((await observe())?.entries[0]?.status).toBe("ok");
+	const failedProbe = await observeComponents(paths, applied, readInvocation, async () => {
+		throw new Error("HTTP unavailable");
+	});
+	expect(failedProbe?.entries[0]?.status).toBe("unknown");
+	managerConfiguration = "2".repeat(64);
+	expect((await observe())?.entries[0]?.status).toBe("unknown");
+	managerConfiguration = "1".repeat(64);
+	invocation = "d".repeat(32);
+	expect((await observe())?.entries[0]).toMatchObject({ status: "ok", invocationId: invocation });
+	const changing = await observeComponents(paths, applied, readInvocation, async () => {
+		invocation = "e".repeat(32);
+		return true;
+	});
+	expect(changing?.entries[0]?.status).toBe("unknown");
+	invocation = "a".repeat(32);
+	writeFileSync(paths.fileBrowserConfig, "changed-credential-config");
+	expect((await observe())?.entries[0]?.status).toBe("unknown");
+	expect(
+		await observeComponents(
+			paths,
+			{ ...applied, appliedAt: "2000-01-01T00:00:00.000Z" },
+			readInvocation,
+			async () => true,
+		),
+	).toBeUndefined();
 });

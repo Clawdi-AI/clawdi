@@ -12,6 +12,19 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.78
+
+- Session and Skill synchronization recover independently after startup or watcher
+  failures, keeping queued changes while unaffected synchronization continues.
+- Recovery and Project changes wait for in-flight work to finish before restarting
+  synchronization, preventing cancelled work from confirming stale changes.
+- Managed runtimes report Files, Hermes UI, and OpenClaw UI readiness independently,
+  allowing healthy components to remain accessible during unrelated failures when
+  supported by the server. Existing runtimes need a successful configuration apply
+  before independent readiness is available.
+- Hermes UI readiness recognizes its native login page even when the gateway is
+  unavailable; inconclusive component checks no longer imply a definite failure.
+
 ### Fixed
 
 - CLI 0.14.77 restores missing managed OpenClaw service environment files before

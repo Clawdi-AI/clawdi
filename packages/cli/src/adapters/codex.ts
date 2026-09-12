@@ -1,5 +1,6 @@
 import { type Dirent, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import {
@@ -20,6 +21,7 @@ import type {
 	RawSkill,
 	SessionScanRequest,
 	SessionScanResult,
+	SyncReadContext,
 } from "./base";
 import { getCodexHome, isPathWithinRoots, SKIP_DIRS } from "./paths";
 import {
@@ -430,14 +432,19 @@ export class CodexAdapter implements AgentAdapterCore {
 	readonly agentType = "codex" as const;
 	private sessionPaths = new Map<string, string>();
 	readonly sessions = {
-		contentProtocol: async () => "events-v1" as const,
-		collect: (request: SessionScanRequest) => this.collectSessions(request),
-		resolve: (localSessionId: string) => this.resolveSession(localSessionId),
+		contentProtocol: async (context?: SyncReadContext) => {
+			context?.signal.throwIfAborted();
+			return "events-v1" as const;
+		},
+		collect: (request: SessionScanRequest, context?: SyncReadContext) =>
+			this.collectSessions(request, context),
+		resolve: (localSessionId: string, context?: SyncReadContext) =>
+			this.resolveSession(localSessionId, context),
 		watchPaths: () => this.getSessionsWatchPaths(),
 	};
 	readonly skills = {
-		collect: () => this.collectSkills(),
-		listKeys: () => this.listSkillKeys(),
+		collect: (context?: SyncReadContext) => this.collectSkills(context),
+		listKeys: (context?: SyncReadContext) => this.listSkillKeys(context),
 		path: (key: string) => this.getSkillPath(key),
 		rootDir: () => this.getSkillsRootDir(),
 		sharedPath: (skillKey: string, ownerHandle: string) =>
@@ -464,17 +471,27 @@ export class CodexAdapter implements AgentAdapterCore {
 		return readCommandVersion("codex", ["--version"]);
 	}
 
-	private async collectSessions(request: SessionScanRequest): Promise<SessionScanResult> {
+	private async collectSessions(
+		request: SessionScanRequest,
+		context?: SyncReadContext,
+	): Promise<SessionScanResult> {
+		context?.signal.throwIfAborted();
 		const absFilter = resolveProjectFilter(request.projectFilter);
 		if (request.kind === "paths") {
 			if (request.paths.length === 0) {
-				return this.collectSessions({ kind: "complete", projectFilter: request.projectFilter });
+				return this.collectSessions(
+					{ kind: "complete", projectFilter: request.projectFilter },
+					context,
+				);
 			}
 			const roots = sessionRoots().map((root) => resolve(root));
 			const files = new Set<string>();
 			for (const path of request.paths.map((candidate) => resolve(candidate))) {
 				if (!isPathWithinRoots(path, roots) || !path.endsWith(".jsonl")) {
-					return this.collectSessions({ kind: "complete", projectFilter: request.projectFilter });
+					return this.collectSessions(
+						{ kind: "complete", projectFilter: request.projectFilter },
+						context,
+					);
 				}
 				for (const [sessionId, knownPath] of this.sessionPaths) {
 					if (knownPath === path && !existsSync(path)) this.sessionPaths.delete(sessionId);
@@ -483,6 +500,7 @@ export class CodexAdapter implements AgentAdapterCore {
 			}
 			const sessionsById = new Map<string, RawSession>();
 			for (const filePath of files) {
+				if (context) await setImmediate(undefined, { signal: context.signal });
 				const session = parseSessionFile(filePath, absFilter);
 				if (session) {
 					sessionsById.set(session.localSessionId, session);
@@ -496,6 +514,7 @@ export class CodexAdapter implements AgentAdapterCore {
 		const pathsById = new Map<string, string>();
 		for (const root of sessionRoots()) {
 			for (const filePath of collectJsonlFiles(root)) {
+				if (context) await setImmediate(undefined, { signal: context.signal });
 				const session = parseSessionFile(filePath, absFilter);
 				if (session && !sessionsById.has(session.localSessionId)) {
 					sessionsById.set(session.localSessionId, session);
@@ -515,7 +534,11 @@ export class CodexAdapter implements AgentAdapterCore {
 		return { sessions: [...sessionsById.values()], dedupedCount: 0, coverage: "complete" };
 	}
 
-	private async resolveSession(localSessionId: string): Promise<RawSession | null> {
+	private async resolveSession(
+		localSessionId: string,
+		context?: SyncReadContext,
+	): Promise<RawSession | null> {
+		context?.signal.throwIfAborted();
 		const knownPath = this.sessionPaths.get(localSessionId);
 		if (knownPath) {
 			const current = parseSessionFile(knownPath, null);
@@ -523,13 +546,14 @@ export class CodexAdapter implements AgentAdapterCore {
 			this.sessionPaths.delete(localSessionId);
 		}
 		return (
-			(await this.collectSessions({ kind: "complete" })).sessions.find(
+			(await this.collectSessions({ kind: "complete" }, context)).sessions.find(
 				(session) => session.localSessionId === localSessionId,
 			) ?? null
 		);
 	}
 
-	private async collectSkills(): Promise<RawSkill[]> {
+	private async collectSkills(context?: SyncReadContext): Promise<RawSkill[]> {
+		context?.signal.throwIfAborted();
 		migrateLegacyLocalSetupSkill({
 			targetDir: join(skillsDir(), "clawdi"),
 			id: "clawdi",
@@ -568,7 +592,8 @@ export class CodexAdapter implements AgentAdapterCore {
 		return join(skillsDir(), key, "SKILL.md");
 	}
 
-	private async listSkillKeys(): Promise<string[]> {
+	private async listSkillKeys(context?: SyncReadContext): Promise<string[]> {
+		context?.signal.throwIfAborted();
 		// Flat layout. Mirrors `collectSkills` filtering so the
 		// daemon's rescan and the bulk push see the same set.
 		migrateLegacyLocalSetupSkill({

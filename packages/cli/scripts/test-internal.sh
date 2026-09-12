@@ -20,6 +20,13 @@ if [[ "$hermes_fixture_needed" == true && -z "${CLAWDI_TEST_HERMES_VENV:-}" ]]; 
 	source "$script_dir/prepare-hermes-native-fixture.sh"
 fi
 
+for test_arg in "$@"; do
+	if [[ "$test_arg" == *hermes-dashboard-auth.test.ts ]]; then
+		source "$script_dir/prepare-hermes-dashboard-fixture.sh"
+		break
+	fi
+done
+
 if [[ $# -gt 0 ]]; then
 	bun test "${test_args[@]}" "$@"
 	exit $?

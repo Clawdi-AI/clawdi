@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { readComponentInvocation, readComponentServiceState } from "./observed";
 import { getRuntimePaths } from "./paths";
 import { buildRuntimeUserCommand, PRIVILEGE_DROP_STRATEGIES } from "./runtime-user-command";
 import { managedRuntimeSystemdUnitEntries, RUNTIME_SYSTEMD_DROP_IN_FILE } from "./systemd";
@@ -221,6 +222,16 @@ esac
 				runCommandResult("systemctl", ["daemon-reload"]);
 				expect(runCommandResult("systemctl", ["restart", unit]).status).toBe(0);
 				expect(applySystemdRuntimeUpdate(paths, snapshot, snapshot, {}).applied).toBe(true);
+				const invocation = readComponentInvocation(paths, "system", unit);
+				const component = readComponentServiceState(paths, "system", unit);
+				if (!component || !invocation) throw new Error("Native component evidence missing");
+				expect(component.invocationId).toBe(invocation);
+				expect(invocation).toMatch(/^[a-f0-9]{32}$/);
+				expect(runCommandResult("systemctl", ["restart", unit]).status).toBe(0);
+				expect(readComponentInvocation(paths, "system", unit)).not.toBe(invocation);
+				expect(readComponentServiceState(paths, "system", unit)?.configurationRevision).toBe(
+					component?.configurationRevision,
+				);
 				console.log(
 					`native crash-loop proof: ${observed.trim().replaceAll("\n", ", ")}; readiness required after repair`,
 				);

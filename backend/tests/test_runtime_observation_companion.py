@@ -167,6 +167,33 @@ def test_runtime_observation_semantic_hash_ignores_only_transport_fields() -> No
         assert runtime_observation_service._observation_semantic_hash(changed) != baseline
 
 
+def test_component_proof_is_versioned_unique_and_cannot_certify_partial_health() -> None:
+    payload = _payload().model_dump(mode="json", by_alias=True)
+    entry = {
+        "component": "files",
+        "status": "ok",
+        "configRevision": "a" * 64,
+        "accessRevision": "b" * 64,
+        "invocationId": "c" * 32,
+    }
+    payload["components"] = {"schemaVersion": 1, "entries": [entry]}
+    assert RuntimeObservationEventV2.model_validate(payload).components is not None
+    unknown_proof = {"schemaVersion": 1, "entries": [{**entry, "status": "unknown"}]}
+    for status in ("unknown", "error"):
+        observed = RuntimeObservationEventV2.model_validate(
+            {**payload, "status": status, "components": unknown_proof}
+        )
+        assert observed.status == status
+
+    for proof in [
+        {"schemaVersion": 2, "entries": [entry]},
+        {"schemaVersion": 1, "entries": [entry, entry]},
+        {"schemaVersion": 1, "entries": [{**entry, "status": "unknown"}]},
+    ]:
+        with pytest.raises(ValueError):
+            RuntimeObservationEventV2.model_validate({**payload, "components": proof})
+
+
 def test_runtime_observation_identity_envelope_is_additive_and_consistent() -> None:
     payload = _payload().model_dump(mode="json", by_alias=True)
     assert payload["generation"] == payload["applied"]["generation"]
@@ -2994,6 +3021,7 @@ def _legacy_runtime_observed(value: RuntimeObservationEventV2) -> dict:
         "agentPlugins",
         "skills",
         "userActivity",
+        "components",
     ):
         payload.pop(field)
     return payload
@@ -3066,9 +3094,19 @@ async def test_v1_heartbeat_is_byte_frozen_and_has_no_companion_side_effects(
                     "runtime_observed": _payload().model_dump(mode="json", by_alias=True),
                 },
             )
+            components_on_legacy = await client.post(
+                f"/v1/agents/{environment.id}/sync-heartbeat",
+                json={
+                    "runtime_observed": {
+                        **_legacy_runtime_observed(_payload()),
+                        "components": {"schemaVersion": 1, "entries": []},
+                    }
+                },
+            )
     finally:
         app.dependency_overrides.clear()
 
+    assert components_on_legacy.status_code == 422
     assert legacy.status_code == 204
     assert legacy.content == b""
     assert strict_v2_on_v1.status_code == 422

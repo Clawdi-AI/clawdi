@@ -1,7 +1,16 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import {
 	listOpenClawAgentWorkspaces,
 	resolveOpenClawAgentWorkspace,
@@ -75,4 +84,43 @@ test.each([
 	const message = "OpenClaw workspace resolution requires `openclaw agents list --json`";
 	expect(() => resolveOpenClawAgentWorkspace()).toThrow(message);
 	await expect(resolveOpenClawAgentWorkspaceAsync()).rejects.toMatchObject({ message });
+});
+
+test("cancels an unresponsive roster read and joins its process before another command", async () => {
+	const roster = installRosterCommand();
+	const pidFile = join(root, "pid");
+	const command = join(root, "bin", "openclaw");
+	writeFileSync(
+		command,
+		`#!/bin/sh
+trap '' TERM
+echo $$ > "${pidFile}"
+while :; do :; done
+`,
+	);
+	const abort = new AbortController();
+	const running = resolveOpenClawAgentWorkspaceAsync("main", abort.signal);
+	const result = running.then(
+		() => null,
+		(error) => error,
+	);
+	try {
+		for (let attempt = 0; attempt < 100 && !existsSync(pidFile); attempt++) await delay(10);
+		expect(existsSync(pidFile)).toBe(true);
+		const pid = Number(readFileSync(pidFile, "utf8").trim());
+		abort.abort();
+		expect(await result).toBeInstanceOf(Error);
+		expect(() => process.kill(pid, 0)).toThrow();
+		writeFileSync(
+			command,
+			`#!/bin/sh
+cat "${roster}"
+`,
+		);
+		writeFileSync(roster, JSON.stringify([{ id: "main", workspace: root }]));
+		expect(await resolveOpenClawAgentWorkspaceAsync()).toBe(root);
+	} finally {
+		abort.abort();
+		await result;
+	}
 });
