@@ -17,6 +17,7 @@ import {
 	mutationDeploymentReadFixture,
 	readDeploymentFixture,
 } from "./hosted-stub-api";
+import { expectRecordedLiveToolGeometry, recordLiveToolGeometry } from "./live-tool-geometry";
 import { measureNavigation } from "./navigation-measurement";
 
 type PlanChangeProgress = DeployComponents["schemas"]["ComputePlanChangeProgress"];
@@ -5218,7 +5219,8 @@ for (const viewport of [
 	test(`OpenClaw retains the same background document across sections at ${viewport.width}px`, async ({
 		page,
 		context,
-	}) => {
+	}, testInfo) => {
+		await recordLiveToolGeometry(page);
 		const errors = collectBrowserErrors(page);
 		await page.setViewportSize(viewport);
 		const nativeHandoff = `${openClawRuntimeEndpoint}#bootstrapToken=one-time-token&bootstrapProfile=owner`;
@@ -5228,6 +5230,12 @@ for (const viewport of [
 		await expect(iframe).toHaveAttribute("src", nativeHandoff);
 		await expect.poll(runtime.documentLoads).toBe(1);
 		await expect(iframe).toBeHidden();
+		const consoleHeading = page.getByRole("heading", {
+			level: 1,
+			name: "OpenClaw Control UI",
+			exact: true,
+		});
+		await expect(consoleHeading).toHaveCount(0);
 		expect(await iframe.evaluate((element) => Boolean(element.closest("[inert]")))).toBe(true);
 		const original = await iframe.elementHandle();
 		if (!original) throw new Error("Background iframe must already exist.");
@@ -5262,6 +5270,8 @@ for (const viewport of [
 			expect(runtime.documentLoads()).toBe(1);
 			expect(runtime.credentialRequests).toHaveLength(1);
 			if (section === "/console") {
+				await expect(consoleHeading).toHaveCount(1);
+				await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
 				await expect(iframe).toBeVisible();
 				await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toHaveCount(1);
 				const box = await iframe.boundingBox();
@@ -5271,7 +5281,10 @@ for (const viewport of [
 				expect(box.x).toBeGreaterThanOrEqual(0);
 				expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + 1);
 				expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 1);
-			} else await expect(iframe).toBeHidden();
+			} else {
+				await expect(iframe).toBeHidden();
+				await expect(consoleHeading).toHaveCount(0);
+			}
 		}
 		await page.screenshot({ path: `test-results/persistent-control-ui-${viewport.width}.png` });
 		await page.getByRole("button", { name: "Reconnect", exact: true }).click();
@@ -5284,6 +5297,7 @@ for (const viewport of [
 		await page.getByRole("link", { name: "Console", exact: true }).click();
 		await expect(iframe).toHaveCount(0);
 		expect(await replacement?.evaluate((element) => element.isConnected)).toBe(false);
+		await expectRecordedLiveToolGeometry(page, testInfo);
 		await original.dispose();
 		await document.dispose();
 		await replacement?.dispose();
@@ -5400,3 +5414,95 @@ test("OpenClaw retries a new resource version after a pending 412 without replac
 		release();
 	}
 });
+
+for (const viewport of [
+	{ width: 1440, height: 900 },
+	{ width: 390, height: 844 },
+	{ width: 320, height: 568 },
+]) {
+	for (const direct of [true, false]) {
+		test(`OpenClaw fills the viewport with AgentHome pending (${direct ? "direct" : "overview"}, ${viewport.width}px)`, async ({
+			page,
+			context,
+		}, testInfo) => {
+			await page.setViewportSize(viewport);
+			await recordLiveToolGeometry(page);
+			const runtime = await stubOpenClawRuntime(
+				page,
+				context,
+				`${openClawRuntimeEndpoint}#bootstrapToken=one-time-token&bootstrapProfile=owner`,
+			);
+			let releaseHome = () => {};
+			const homeGate = new Promise<void>((resolve) => {
+				releaseHome = resolve;
+			});
+			let homeRequested = false;
+			await page.route("**/src/hosted/agents/agent-home.tsx*", async (route) => {
+				homeRequested = true;
+				await homeGate;
+				await route.continue();
+			});
+			let releaseCredentials = () => {};
+			const credentialsGate = new Promise<void>((resolve) => {
+				releaseCredentials = resolve;
+			});
+			await page.route("**/runtime-ui/credentials", async (route) => {
+				await credentialsGate;
+				await route.fallback();
+			});
+			try {
+				await page.goto(`/agents/${runtime.agentId}${direct ? "/console" : ""}`);
+				await expect.poll(() => homeRequested).toBe(true);
+				if (!direct) {
+					if (viewport.width < 768)
+						await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+					const sidebar =
+						viewport.width < 768 ? page.getByRole("dialog") : page.getByTestId("app-sidebar");
+					await sidebar.locator(`a[href="/agents/${runtime.agentId}/console"]`).click();
+					await expect(page).toHaveURL(`/agents/${runtime.agentId}/console`);
+					if (viewport.width < 768) await expect(sidebar).toBeHidden();
+				}
+				const surface = page.getByTestId("hosted-agent-live-surface");
+				await expect(
+					page.getByRole("heading", {
+						level: 1,
+						name: "OpenClaw Control UI",
+						exact: true,
+					}),
+				).toHaveCount(1);
+				await expect(
+					surface.getByText("Opening OpenClaw Control UI…", { exact: true }),
+				).toBeVisible();
+				await testInfo.attach("credentials-pending", {
+					body: await page.screenshot(),
+					contentType: "image/png",
+				});
+				releaseCredentials();
+				const iframe = page.locator('iframe[title="OpenClaw Control UI"]');
+				await expect(iframe).toBeVisible();
+				await expect.poll(runtime.documentLoads).toBe(1);
+				// The real lazy route remains suspended while its sibling iframe is visible.
+				await expect(page.getByTestId("agent-live-tool-loading-shell")).toHaveCount(1);
+				await testInfo.attach("agent-home-pending", {
+					body: await page.screenshot(),
+					contentType: "image/png",
+				});
+				releaseHome();
+				await expect(page.getByTestId("agent-live-tool-loading-shell")).toHaveCount(0);
+				await expectLiveToolFillsDashboard(page, surface);
+				await testInfo.attach("agent-home-ready", {
+					body: await page.screenshot(),
+					contentType: "image/png",
+				});
+				await page.setViewportSize({ width: viewport.height, height: viewport.width });
+				await expectLiveToolFillsDashboard(page, surface);
+				await page.setViewportSize(viewport);
+				await expectLiveToolFillsDashboard(page, surface);
+				await expectRecordedLiveToolGeometry(page, testInfo);
+			} finally {
+				releaseHome();
+				releaseCredentials();
+			}
+		});
+	}
+}
