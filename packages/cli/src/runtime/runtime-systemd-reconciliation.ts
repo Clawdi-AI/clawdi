@@ -418,15 +418,7 @@ function officialRuntimeServiceRevision(
 ): string | null {
 	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
 	if (!descriptor) return null;
-	return officialRuntimeServiceRevisionForUnit(systemdUnitFileName(descriptor.programName), paths);
-}
-
-export function officialRuntimeServiceRevisionForUnit(
-	unitName: string,
-	paths: RuntimePaths,
-): string | null {
-	const descriptor = officialRuntimeServiceDescriptorForUnit(unitName);
-	if (!descriptor) return null;
+	const unitName = systemdUnitFileName(descriptor.programName);
 	const unitPath = join(paths.systemdUserRoot, unitName);
 	let contents: Buffer;
 	try {

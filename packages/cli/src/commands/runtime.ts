@@ -84,7 +84,6 @@ import {
 	readSystemdUnitSnapshot,
 	SystemdReobservationRequiredError,
 	withoutStaleSystemdUnits,
-	withRuntimeUserServiceStopped,
 } from "../runtime/systemd-transaction";
 import { syncRuntimeVaultFiles } from "../runtime/vault-files";
 import { toErrorMessage } from "../serve/log";
@@ -1422,8 +1421,6 @@ async function applyRuntimeDesiredState(
 			},
 			systemdApply: {
 				assertIdle: () => assertSystemdRuntimeIdle(paths, previousSystemdUnits),
-				withOpenClawMaintenance: (repair) =>
-					withRuntimeUserServiceStopped(paths, "openclaw-gateway.service", repair),
 				activateEgressPrerequisite: () => {
 					const candidateSystemdUnits = readSystemdUnitSnapshot(paths);
 					try {

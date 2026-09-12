@@ -53,7 +53,6 @@ interface RuntimeSystemdApplySignal {
 }
 export interface RuntimeSystemdApplyHooks {
 	assertIdle?: () => void;
-	withOpenClawMaintenance?: (repair: () => void) => void;
 	activateEgressPrerequisite: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
 	activate: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
 }

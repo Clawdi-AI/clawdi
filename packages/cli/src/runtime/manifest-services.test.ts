@@ -673,7 +673,7 @@ afterEach(() => {
 });
 
 describe("runtime manifest services", () => {
-	test("requires supervisor coordination for hosted invalid-config repair", () => {
+	test("enables invalid-config repair for the hosted workspace probe", () => {
 		const paths = tempRuntimePaths();
 		const command = join(paths.userHome, ".local", "bin", "openclaw");
 		const commandLog = join(paths.userHome, "workspace-probe.log");
@@ -707,7 +707,7 @@ esac
 				},
 				paths,
 			),
-		).toThrow("OpenClaw repair requires supervisor maintenance coordination");
+		).toThrow("OpenClaw official agent workspace roster is unavailable");
 		const commands = readFileSync(commandLog, "utf8").trim().split("\n");
 		expect(commands).toContain("config validate --json");
 	});

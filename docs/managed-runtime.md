@@ -309,17 +309,6 @@ systemd activation and runtime readiness still determine whether the adopted
 service works. Service file fingerprints are bookkeeping, not proof of the
 running source version or dependency capabilities.
 
-Hosted OpenClaw Doctor repairs run inside the existing systemd transaction's
-maintenance window. It verifies the managed user unit, stops a running gateway,
-and restores only that gateway on success, failure, or timeout. An initially
-stopped gateway stays stopped. Ownership changes and unresolved manager jobs
-require reobservation. Doctor alone receives `OPENCLAW_SERVICE_REPAIR_POLICY=external`;
-Connected commands retain native behavior. GNU timeout bounds the repair process
-group. The official [2026.9.4 service policy](https://github.com/openclaw/openclaw/blob/3a9d69d/src/commands/doctor-service-repair-policy.ts)
-defers service mutations to the supervisor; its [maintenance implementation](https://github.com/openclaw/openclaw/blob/3a9d69d/src/commands/doctor-maintenance.ts#L158-L166)
-still acquires the gateway lifecycle and state database coordinators and checks
-agent database leases.
-
 OpenClaw also adopts existing regular native units without forcing installation
 on fingerprint drift. Its pinned
 [`2026.8.1` source](https://github.com/openclaw/openclaw/blob/ea806575e6450e4d1efdfc72c19f04be982a1b9b/src/entry.version-fast-path.ts)

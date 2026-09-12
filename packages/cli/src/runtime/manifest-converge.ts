@@ -211,14 +211,13 @@ interface RuntimeConvergencePlan {
 
 function resolveOpenClawWorkspaceForConvergence(
 	home: string,
-	maintenance: RuntimeConvergenceOptions["systemdApply"],
+	repairInvalidConfig: boolean,
 ): string {
-	repairHostedOpenClawStartupMigrations(home, maintenance?.withOpenClawMaintenance);
+	if (repairInvalidConfig) repairHostedOpenClawStartupMigrations(home);
 	try {
 		return resolveHostedOpenClawWorkspace(home);
 	} catch (error) {
-		if (!repairHostedOpenClawWorkspace(home, error, maintenance?.withOpenClawMaintenance))
-			throw error;
+		if (!repairInvalidConfig || !repairHostedOpenClawWorkspace(home, error)) throw error;
 		return resolveHostedOpenClawWorkspace(home);
 	}
 }
@@ -455,7 +454,7 @@ function prepareRuntimeConvergencePlan(
 		manifest.runtimes.openclaw?.enabled === true ||
 		Boolean(openClawCommand && executableExists(openClawCommand));
 	const openClawWorkspaceRoot = shouldResolveOpenClawWorkspace
-		? resolveOpenClawWorkspaceForConvergence(projectionHome, context.opts.systemdApply)
+		? resolveOpenClawWorkspaceForConvergence(projectionHome, true)
 		: null;
 	const plannedRuntimePrograms = planRuntimeSystemdUserPrograms({
 		manifest,
@@ -1346,14 +1345,7 @@ export function convergeRuntimeManifest(
 	const installResult = prepareRuntimeInstallStage(context, state);
 	if (installResult) return installResult.result;
 	context.hermesConfig = beginRuntimeHermesConfig(context, state);
-	let planResult: ReturnType<typeof prepareRuntimeConvergencePlan>;
-	try {
-		planResult = prepareRuntimeConvergencePlan(context, state);
-	} catch (error) {
-		if (error instanceof SystemdReobservationRequiredError)
-			return runtimeApplyFailure(context, state, error);
-		throw error;
-	}
+	const planResult = prepareRuntimeConvergencePlan(context, state);
 	if ("result" in planResult) return planResult.result;
 	const plan = planResult.plan;
 	try {

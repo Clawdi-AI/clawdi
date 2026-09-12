@@ -11,7 +11,6 @@ import {
 	runCommandResult,
 	SystemdReobservationRequiredError,
 	shouldRecoverFailedSystemdUnit,
-	withRuntimeUserServiceStopped,
 } from "./systemd-transaction";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
@@ -53,101 +52,6 @@ describe("managed runtime systemd unit classification", () => {
 	test("returns no units for a missing root", () => {
 		const root = join(tmpdir(), `clawdi-systemd-missing-${crypto.randomUUID()}`);
 		expect(managedRuntimeSystemdUnitEntries(root)).toEqual([]);
-	});
-});
-
-describe("managed runtime service maintenance", () => {
-	test.each([
-		{
-			state: "active",
-			managed: true,
-			job: "",
-			failure: "",
-			mutations: ["stop", "repair", "start"],
-		},
-		{
-			state: "activating",
-			managed: true,
-			job: "",
-			failure: "",
-			mutations: ["stop", "repair", "start"],
-		},
-		{ state: "inactive", managed: true, job: "", failure: "", mutations: ["repair"] },
-		{ state: "active", managed: false, job: "", failure: "", mutations: [] },
-		{ state: "active", managed: true, job: "42", failure: "", mutations: [] },
-		{
-			state: "active",
-			managed: true,
-			job: "",
-			failure: "repair failed",
-			mutations: ["stop", "repair", "start"],
-		},
-		{
-			state: "active",
-			managed: true,
-			job: "",
-			failure: "unknown",
-			mutations: ["stop", "repair", "start"],
-		},
-	])("coordinates $state service (managed=$managed, job=$job, failure=$failure)", (scenario) => {
-		const root = mkdtempSync(join(tmpdir(), "clawdi-systemd-maintenance-"));
-		roots.push(root);
-		const previous = { ...process.env };
-		try {
-			const unit = "openclaw-gateway.service";
-			const paths = {
-				...getRuntimePaths({ mode: "local" }),
-				systemdSystemRoot: join(root, "system"),
-				systemdUserRoot: join(root, "user"),
-				systemdEnvRoot: join(root, "env"),
-				userHome: root,
-			};
-			writeFixture(
-				paths.systemdUserRoot,
-				unit,
-				scenario.managed ? GENERATED_RUNTIME_SYSTEMD_FILE_HEADER : "foreign",
-			);
-			const statePath = join(root, "state");
-			const log = join(root, "mutations");
-			writeFileSync(statePath, scenario.state);
-			writeFileSync(log, "");
-			const command = join(root, "systemctl");
-			writeFileSync(
-				command,
-				`#!/bin/sh
-set -eu
-if [ "$1" = --user ]; then shift; fi
-case "$1" in
-show) printf 'LoadState=loaded\\nActiveState=%s\\nNeedDaemonReload=no\\nJob=${scenario.job}\\nFragmentPath=${join(paths.systemdUserRoot, unit)}\\n' "$(cat '${statePath}')" ;;
-is-enabled) printf 'enabled\\n' ;;
-stop) echo stop >> '${log}'; echo inactive > '${statePath}' ;;
-start) echo start >> '${log}'; echo active > '${statePath}' ;;
-*) exit 64 ;;
-esac
-`,
-				{ mode: 0o755 },
-			);
-			process.env.CLAWDI_SYSTEMD_APPLY = "1";
-			process.env.CLAWDI_SYSTEMCTL_PATH = command;
-			process.env.CLAWDI_RUNTIME_USER = "root";
-			const repair = () =>
-				withRuntimeUserServiceStopped(paths, unit, () => {
-					expect(readFileSync(statePath, "utf8").trim()).toBe("inactive");
-					writeFileSync(log, `${readFileSync(log, "utf8")}repair\n`);
-					if (scenario.failure === "unknown") throw new SystemdReobservationRequiredError();
-					if (scenario.failure) throw new Error(scenario.failure);
-				});
-			for (let attempt = 0; attempt < 2; attempt++) {
-				writeFileSync(log, "");
-				if (scenario.failure || scenario.job || !scenario.managed) expect(repair).toThrow();
-				else repair();
-				expect(readFileSync(log, "utf8").trim().split("\n").filter(Boolean)).toEqual([
-					...scenario.mutations,
-				]);
-			}
-		} finally {
-			process.env = previous;
-		}
 	});
 });
 
