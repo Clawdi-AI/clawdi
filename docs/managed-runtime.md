@@ -1286,6 +1286,17 @@ CLI self-upgrade verifies a new exact package before atomically switching the
 active link inside the root-only managed directory. There is no shared
 `/var/lib/clawdi/bin` compatibility path and no migration or dual-path read.
 
+An apply-stage exception, including a failed systemd preflight, rolls back a
+pending CLI upgrade through the existing verified previous-target mechanism.
+The original error and any rollback diagnostics remain visible. Successful
+rollback signals `selfReexec`: `runtime init` preserves error status and exits
+75 with `handoff=cli_reexec`, while a running `runtime watch` exits its current
+loop so supervision restarts the managed target. A one-shot watch still exits
+nonzero for the failed apply. With no pending upgrade, the ordinary error/retry
+path is unchanged. A pending systemd Job or uncertain command outcome remains
+deferred and never authorizes CLI rollback; manifest fetch/auth failures retain
+their existing loader recovery policy.
+
 The `clawdi.cliNpmBootstrapStatus.v1` reader supports the exact initial
 bootstrap field set written by released images (without `verification`,
 `previous`, or `bad`) as well as the complete CLI-authored receipt. It never

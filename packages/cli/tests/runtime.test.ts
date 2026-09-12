@@ -2555,6 +2555,126 @@ describe("runtime applied content identity", () => {
 });
 
 describe("runtime manifest datasource", () => {
+	it.each([
+		["watch", "rollback"],
+		["init", "rollback"],
+		["init", "readiness"],
+		["watch", "ordinary"],
+		["watch", "unknown-job"],
+		["watch", "rollback-error"],
+	] as const)(
+		"handles preflight failure and CLI handoff: %s / %s",
+		async (entrypoint, scenario) => {
+			const home = join(root, "home", "clawdi");
+			const paths = seedRuntimeWatchLocaleBaseline(home, join(root, "state"), join(root, "run"));
+			reconcilePendingRuntimeCliUpgrade(paths, TEST_RUNNING_CLI_VERSION);
+			const candidateTarget = readlinkSync(paths.cliManagedBin);
+			const previous = createVersionedCliFixture(paths, "1.0.0-test");
+			const receipt = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf8"));
+			if (scenario !== "ordinary") {
+				receipt.previous = { activeTarget: previous.activeTarget, version: previous.version };
+				writeFileSync(paths.cliBootstrapStatus, JSON.stringify(receipt));
+			}
+			if (scenario === "rollback-error") rmSync(previous.activeTarget);
+			const appliedBefore = readFileSync(paths.appliedState, "utf8");
+			const manager = join(root, "manager");
+			const wrapper = join(root, "systemctl");
+			writeFakeSystemdManager({
+				path: manager,
+				logPath: join(root, "manager.log"),
+				stateRoot: join(root, "manager-state"),
+			});
+			const transform =
+				scenario === "unknown-job" ? "s/^Job=$/Job=7/" : "s/^ActiveState=.*/ActiveState=failed/";
+			writeFileSync(
+				wrapper,
+				scenario === "unknown-job" || scenario === "readiness"
+					? `#!/bin/sh
+'${manager}' "$@" | sed '${transform}'
+`
+					: "#!/bin/sh\nprintf 'fixture systemctl show failed' >&2\nexit 1\n",
+				{ mode: 0o755 },
+			);
+			process.env.CLAWDI_SYSTEMD_APPLY = "1";
+			process.env.CLAWDI_SYSTEMCTL_PATH = wrapper;
+			setRuntimeApplyGeneration(2, CANONICAL_TEST_CONTEXT);
+			const etag = testBundleEtag("preflight-cli-rollback");
+			const { restore, captured } = mockFetch([
+				{
+					method: "GET",
+					path: "/v1/runtime/manifest",
+					response: () =>
+						hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, 2), { etag }),
+				},
+			]);
+			const logs: string[] = [];
+			const priorLog = console.log;
+			console.log = (value?: unknown) => logs.push(String(value));
+			const abort = new AbortController();
+			const deadline = setTimeout(() => abort.abort(), 5_000);
+			process.exitCode = undefined;
+			try {
+				if (entrypoint === "init") await runtimeInit({ json: true, nonInteractive: true });
+				else await runtimeWatch({ json: true, once: scenario !== "rollback", abort: abort.signal });
+				expect(abort.signal.aborted).toBe(false);
+				expect(captured.filter((request) => request.path === "/v1/runtime/manifest")).toHaveLength(
+					1,
+				);
+				const event = JSON.parse(logs.at(-1) ?? "{}");
+				expect(event.status).toBe("error");
+				expect(readFileSync(paths.appliedState, "utf8")).toBe(appliedBefore);
+				if (scenario === "unknown-job") {
+					expect(event.error).toContain("unfinished work");
+					expect(event.cliRollback).toBeUndefined();
+					expect(event.selfReexec ?? false).toBe(false);
+					expect(process.exitCode).toBe(1);
+					expect(readlinkSync(paths.cliManagedBin)).toBe(candidateTarget);
+					expect(JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf8")).previous).toEqual(
+						receipt.previous,
+					);
+					return;
+				}
+				expect(event.error).toContain(
+					scenario === "readiness"
+						? "transparent-egress system prerequisites did not reach readiness"
+						: "fixture systemctl show failed",
+				);
+				expect(event.errors[0]).toBe(event.error);
+				expect(event.rejectedGeneration).toBe(2);
+				if (entrypoint === "watch") expect(event.etag).toBe(etag);
+				if (scenario === "rollback" || scenario === "readiness") {
+					expect(event.cliRollback.status).toBe("rolled_back");
+					expect(event.selfReexec).toBe(true);
+					expect(event.errors.join("\n")).toContain("rolled back clawdi CLI");
+					expect(readlinkSync(paths.cliManagedBin)).toBe(previous.activeTarget);
+					expect(JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf8"))).toMatchObject({
+						version: previous.version,
+						previous: null,
+						bad: { version: TEST_RUNNING_CLI_VERSION },
+					});
+					if (entrypoint === "init") {
+						expect(process.exitCode).toBe(75);
+						expect(event.handoff).toBe("cli_reexec");
+					} else expect(process.exitCode ?? 0).toBe(0);
+				} else {
+					expect(process.exitCode).toBe(1);
+					expect(event.selfReexec ?? false).toBe(false);
+					expect(readlinkSync(paths.cliManagedBin)).toBe(candidateTarget);
+					if (scenario === "ordinary") expect(event.cliRollback).toBeUndefined();
+					else {
+						expect(event.cliRollback.status).toBe("error");
+						expect(event.errors.join("\n")).toContain("failed to roll back clawdi CLI");
+					}
+				}
+			} finally {
+				clearTimeout(deadline);
+				abort.abort();
+				restore();
+				console.log = priorLog;
+				process.exitCode = 0;
+			}
+		},
+	);
 	it("keeps original failures visible when recovery is deferred by systemd or Hermes", () => {
 		const paths = getRuntimePaths({ mode: "local" });
 		const load: RuntimeManifestLoad = {
