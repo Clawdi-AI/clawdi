@@ -62,11 +62,11 @@
 		"mcp"
 	],
 	"devDependencies": {
-		"@clack/prompts": "^1.7.0",
+		"@clack/prompts": "^1.8.0",
 		"@clawdi/shared": "workspace:*",
 		"@modelcontextprotocol/sdk": "^1.30.0",
-		"@types/bun": "^1.4.0",
-		"@types/node": "^24.13.3",
+		"@types/bun": "^1.4.2",
+		"@types/node": "^26.5.0",
 		"chalk": "^6.0.0",
 		"commander": "^15.0.0",
 		"eventsource-parser": "^4.1.0",
