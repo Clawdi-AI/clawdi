@@ -31,10 +31,10 @@ import {
 	runtimeCommandVersion,
 	runtimeFileCurrentRevision,
 } from "./manifest-install";
-import { openClawConfigPatchIsApplied } from "./manifest-providers";
-import { canonicalJsonEqual, isPlainRecord, recordValue } from "./manifest-shared";
+import { isPlainRecord, recordValue } from "./manifest-shared";
 import { openClawPluginCapabilityConsentArgs } from "./openclaw-plugin-cli";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
+import { applyOpenClawHostedChannelPatch } from "./openclaw-provider-config";
 import {
 	runRuntimeUserCommand,
 	spawnRuntimeUserCommand,
@@ -441,19 +441,11 @@ export function applyHostedChannelProjection(
 		}
 		return applyHermesChannelConfig(hermesConfig, patch);
 	}
-	const currentConfig = readOpenClawConfig(openClawContext.configPath);
-	const patch = openClawManagedChannelsPatch(
-		channels,
-		currentConfig,
+	applyOpenClawHostedChannelPatch(
+		openClawManagedChannelsPatch(channels),
 		previousManifest ? hostedChannelProjection(previousManifest) : null,
-	);
-	if (openClawConfigPatchIsApplied(openClawContext, patch)) return false;
-
-	runRuntimeUserCommand(
-		observation.commandPath,
-		["config", "patch", "--stdin"],
-		`${JSON.stringify(patch, null, 2)}\n`,
-		home,
+		Object.keys(manifest.runtimes.openclaw?.run?.secretEnv ?? {}),
+		openClawContext,
 		workspaceRoot,
 	);
 	return true;
@@ -485,21 +477,15 @@ function openClawManagedChannelUsesEnvSecretRefs(channels: Record<string, unknow
 }
 export function openClawManagedChannelsPatch(
 	channels: Record<string, unknown>,
-	currentConfig: Record<string, unknown> | null = null,
-	previousChannels: Record<string, unknown> | null = null,
 ): Record<string, unknown> {
 	const usesEnvSecretRefs = openClawManagedChannelUsesEnvSecretRefs(channels);
 	const isolatesManagedDms =
 		managedChannelHasAccounts(channels.telegram) ||
 		managedChannelHasAccounts(channels.discord) ||
 		managedChannelHasAccounts(channels.whatsapp);
-	const effectiveChannels = mergeOpenClawManagedAccountPreferences(
-		channels,
-		currentConfig,
-		previousChannels,
-	);
+
 	return {
-		channels: effectiveChannels,
+		channels,
 		plugins: {
 			entries: {
 				...channelPluginEntries(channels),
@@ -517,88 +503,6 @@ export function openClawManagedChannelsPatch(
 			: undefined,
 		...(isolatesManagedDms ? { session: { dmScope: "per-account-channel-peer" } } : {}),
 	};
-}
-
-function readOpenClawConfig(path: string): Record<string, unknown> | null {
-	try {
-		return recordValue(JSON.parse(readFileSync(path, "utf-8")) as unknown);
-	} catch {
-		return null;
-	}
-}
-
-function mergeOpenClawManagedAccountPreferences(
-	channels: Record<string, unknown>,
-	currentConfig: Record<string, unknown> | null,
-	previousChannels: Record<string, unknown> | null,
-): Record<string, unknown> {
-	const currentChannels = recordValue(currentConfig?.channels);
-	const patches: Record<string, unknown> = {};
-	for (const provider of OPENCLAW_MANAGED_CHANNELS) {
-		const desiredChannel = recordValue(channels[provider]);
-		const desiredAccounts = recordValue(desiredChannel?.accounts) ?? {};
-		const currentChannel = recordValue(currentChannels?.[provider]);
-		const currentAccounts = recordValue(currentChannel?.accounts) ?? {};
-		const previousChannel = recordValue(previousChannels?.[provider]);
-		const previousAccounts = recordValue(previousChannel?.accounts) ?? {};
-		const accounts: Record<string, unknown> = {};
-		const credentialField =
-			provider === "telegram" ? "botToken" : provider === "discord" ? "token" : "authDir";
-		const matchesCredential = (current: unknown, expected: unknown): boolean => {
-			const actual = recordValue(current);
-			const owned = recordValue(expected);
-			return Boolean(
-				actual &&
-					owned &&
-					Object.hasOwn(owned, credentialField) &&
-					canonicalJsonEqual(actual[credentialField], owned[credentialField]),
-			);
-		};
-		for (const [accountId, previous] of Object.entries(previousAccounts)) {
-			if (
-				!Object.hasOwn(desiredAccounts, accountId) &&
-				matchesCredential(currentAccounts[accountId], previous)
-			) {
-				accounts[accountId] = null;
-			}
-		}
-		for (const [accountId, value] of Object.entries(desiredAccounts)) {
-			const desired = recordValue(value);
-			if (!desired) throw new Error(`Invalid managed ${provider} account`);
-			if (!Object.hasOwn(currentAccounts, accountId)) {
-				accounts[accountId] = desired;
-				continue;
-			}
-			if (
-				!matchesCredential(currentAccounts[accountId], desired) &&
-				!matchesCredential(currentAccounts[accountId], previousAccounts[accountId])
-			) {
-				throw new Error(`refusing to replace unmanaged ${provider} account ${accountId}`);
-			}
-			// Patch only managed fields; native policies and concurrent sibling edits stay native.
-			accounts[accountId] = {
-				enabled: desired.enabled,
-				[credentialField]: desired[credentialField],
-			};
-		}
-		if (Object.keys(accounts).length === 0) continue;
-		const patch: Record<string, unknown> = {
-			...(desiredChannel ? { enabled: true } : {}),
-			accounts,
-		};
-		const currentDefault = currentChannel?.defaultAccount;
-		if (!currentChannel && desiredChannel?.defaultAccount !== undefined) {
-			patch.defaultAccount = desiredChannel.defaultAccount;
-		} else if (
-			typeof currentDefault === "string" &&
-			accounts[currentDefault] === null &&
-			previousChannel?.defaultAccount === currentDefault
-		) {
-			patch.defaultAccount = desiredChannel?.defaultAccount ?? null;
-		}
-		patches[provider] = patch;
-	}
-	return patches;
 }
 
 function installOpenClawChannelPlugins(input: {
@@ -767,4 +671,3 @@ export function normalizeOpenClawRuntimeVersion(output: string): string | null {
 export const OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS: Record<string, readonly string[]> = {
 	discord: ["@openclaw/discord"],
 };
-const OPENCLAW_MANAGED_CHANNELS = ["telegram", "discord", "whatsapp"] as const;

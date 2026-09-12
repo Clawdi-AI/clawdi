@@ -35,6 +35,7 @@ import type {
 import type { HostedAgentPluginCommandRunner } from "./hosted-agent-plugin-runtime";
 import { resolveHostedBundledSkill } from "./hosted-bundled-skill";
 import { hostedHermesSkillSourceMatches } from "./hosted-hermes-skill";
+import { createOpenClawHostedContext } from "./hosted-openclaw-context";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
 import {
@@ -49,6 +50,7 @@ import {
 	type RuntimeManifest,
 	type RuntimePrivateAppliedAuthority,
 } from "./manifest";
+import { openClawManagedChannelsPatch } from "./manifest-channels";
 import {
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	fileBrowserCompanionSchema,
@@ -64,6 +66,7 @@ import {
 	type HostedSkillSource,
 } from "./manifest-resources";
 import { parseHostedRuntimeBundleV2, type RuntimeManifestLoad } from "./manifest-source";
+import { applyOpenClawHostedChannelPatch } from "./openclaw-provider-config";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 import {
@@ -775,7 +778,11 @@ esac
 
 function writeFakeOpenClawConfigMutationSdk(
 	home: string,
-	options: { importLog?: string; initialConfig?: Record<string, unknown> } = {},
+	options: {
+		importLog?: string;
+		initialConfig?: Record<string, unknown>;
+		beforeMutation?: Record<string, unknown>;
+	} = {},
 ): string {
 	const { importLog, initialConfig = {} } = options;
 	const packageRoot = join(home, ".local", "lib", "node_modules", "openclaw");
@@ -814,6 +821,7 @@ export async function readConfigFileSnapshotForWrite() {
   return { snapshot: { valid: !hasLegacyMemorySearch(config), config, sourceConfig: structuredClone(config) } };
 }
 export async function mutateConfigFile(options) {
+  ${options.beforeMutation ? `writeFileSync(configPath, ${JSON.stringify(JSON.stringify(options.beforeMutation))});` : ""}
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   await options.mutate(config, { snapshot: {}, previousHash: null, attempt: 1 });
   if (hasLegacyMemorySearch(config)) throw new Error("OpenClaw config validation failed");
@@ -2671,6 +2679,120 @@ fi
 		expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual(restored);
 	});
 
+	test.each(["update", "delete"])(
+		"guards channel %s against credential replacement before native mutation",
+		(operation) => {
+			const paths = tempRuntimePaths();
+			const managed = {
+				enabled: true,
+				botToken: { source: "env", provider: "default", id: "CLAWDI_CHANNEL_TEST_AGENT_TOKEN" },
+			};
+			const previous = {
+				telegram: { enabled: true, defaultAccount: "managed", accounts: { managed } },
+			};
+			const edited = {
+				channels: {
+					telegram: {
+						defaultAccount: "personal",
+						accounts: {
+							managed: {
+								enabled: true,
+								botToken: "native-replacement",
+								dmPolicy: "pairing",
+								allowFrom: ["owner"],
+							},
+							personal: { enabled: true, botToken: "native-personal" },
+						},
+					},
+				},
+				session: { dmScope: "per-channel-peer" },
+			};
+			const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, {
+				initialConfig: { channels: previous },
+				beforeMutation: edited,
+			});
+			const context = createOpenClawHostedContext(baseManifest(paths, {}), paths.userHome);
+			const apply = () =>
+				applyOpenClawHostedChannelPatch(
+					openClawManagedChannelsPatch(operation === "update" ? previous : {}),
+					previous,
+					operation === "update" ? [managed.botToken.id] : [],
+					context,
+					paths.userHome,
+				);
+			if (operation === "update") expect(apply).toThrow("ownership changed");
+			else apply();
+			const result = JSON.parse(readFileSync(configPath, "utf8"));
+			expect(result.channels).toEqual(edited.channels);
+			expect(result.session).toEqual(edited.session);
+		},
+	);
+
+	test("native channel unlink removes only committed accounts and rejects unowned missing refs", () => {
+		const paths = tempRuntimePaths();
+		const managed = {
+			enabled: true,
+			botToken: { source: "env", provider: "default", id: "CLAWDI_CHANNEL_TEST_AGENT_TOKEN" },
+		};
+		const previous = {
+			telegram: { enabled: true, defaultAccount: "managed", accounts: { managed } },
+		};
+		const native = { enabled: true, botToken: "native-personal", dmPolicy: "pairing" };
+		const original = {
+			channels: { telegram: { ...previous.telegram, accounts: { managed, personal: native } } },
+		};
+		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, {
+			initialConfig: original,
+		});
+		const context = createOpenClawHostedContext(baseManifest(paths, {}), paths.userHome);
+		expect(() =>
+			applyOpenClawHostedChannelPatch(
+				openClawManagedChannelsPatch({}),
+				null,
+				[],
+				context,
+				paths.userHome,
+			),
+		).toThrow("withdrawn managed credential");
+		expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual(original);
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		writeFakeGatewayCli({
+			path: command,
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
+		const desired = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					services: {},
+					providerMode: "unmanaged",
+					run: runSettings(command, ["gateway", "run"]),
+				},
+			},
+			{ projection: { channels: {} } },
+		);
+		const failed = convergeRuntimeManifest(
+			manifestLoad(desired, "missing-channel-ownership"),
+			paths,
+		);
+		expect(failed.installErrors.join("\n")).toContain("withdrawn managed credential");
+		expect(failed.outputs.manifestLastGood).toBeNull();
+		expect(existsSync(paths.appliedState)).toBe(false);
+		expect(existsSync(paths.manifestLastGood)).toBe(false);
+		applyOpenClawHostedChannelPatch(
+			openClawManagedChannelsPatch({}),
+			previous,
+			[],
+			context,
+			paths.userHome,
+		);
+		const result = JSON.parse(readFileSync(configPath, "utf8"));
+		expect(result.channels.telegram.accounts).toEqual({ personal: native });
+		expect(result.channels.telegram).not.toHaveProperty("defaultAccount");
+	});
+
 	test.each(["legacy", "current"])(
 		"preserves user memory selection in the %s layout and keeps the provider key out of agent env",
 		(layout) => {
@@ -2679,6 +2801,7 @@ fi
 				provider: "local",
 				model: "user-embedding-model",
 				cache: { enabled: false },
+				query: { hybrid: { enabled: true, vectorWeight: 0.7 }, maxResults: 9 },
 			};
 			const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, {
 				initialConfig:
@@ -2686,9 +2809,10 @@ fi
 						? {
 								agents: {
 									defaults: {
-										memorySearch: search,
+										memorySearch: { ...search, query: { hybrid: search.query.hybrid } },
 									},
 								},
+								memory: { search: { query: { maxResults: 9 } } },
 							}
 						: { memory: { search } },
 			});

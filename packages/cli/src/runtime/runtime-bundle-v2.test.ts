@@ -37,6 +37,7 @@ import {
 } from "./manifest";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+	loadCommittedRuntimeManifest,
 	loadRemoteRuntimeManifest,
 	loadRuntimeManifest,
 	parseHostedRuntimeBundleV2,
@@ -688,7 +689,6 @@ describe("hosted runtime bundle v2", () => {
 		const paths = getRuntimePaths({ mode: "hosted" });
 		const openclawBin = join(paths.userHome, ".local", "bin", "openclaw");
 		const openclawConfigPath = join(paths.userHome, ".openclaw", "openclaw.json");
-		const channelPatchPath = join(root, "openclaw-channel-patch.json");
 		const mcpSecretRef = "secret://mcp/sidecar-only/token";
 		const mcpSecret = "mcp-sidecar-only-secret";
 		const egressEngine = {
@@ -718,10 +718,7 @@ describe("hosted runtime bundle v2", () => {
 				'if [[ "$1 $2 $3" == "agents list --json" ]]; then',
 				'  printf \'[{"id":"main","workspace":"%s"}]\\n\' "$HOME/.openclaw/workspace"',
 				'elif [[ "$1 $2 $3" == "config patch --stdin" ]]; then',
-				"  payload=$(cat)",
-				`  if [[ "$payload" == *'"channels"'* && "$payload" == *'"telegram"'* ]]; then`,
-				`    printf '%s\\n' "$payload" > '${channelPatchPath}'`,
-				"  fi",
+				"  cat >/dev/null",
 				'elif [[ "$1 $2" == "mcp set" ]]; then',
 				`  python3 - "$3" "$4" '${openclawConfigPath}' <<'PY'`,
 				"import json",
@@ -738,6 +735,7 @@ describe("hosted runtime bundle v2", () => {
 			].join("\n"),
 		);
 		chmodSync(openclawBin, 0o700);
+		writeOpenClawPublicAuthSdkFixture(paths.userHome);
 		writeFileSync(openclawConfigPath, '{"mcp":{"servers":{}}}\n');
 
 		const raw = JSON.parse(readFileSync(goldenPath, "utf-8")) as {
@@ -889,7 +887,7 @@ describe("hosted runtime bundle v2", () => {
 			expect(egressSecretStat.uid).toBe(10_002);
 			expect(egressSecretStat.gid).toBe(10_002);
 		}
-		expect(JSON.parse(readFileSync(channelPatchPath, "utf-8"))).toMatchObject({
+		expect(JSON.parse(readFileSync(openclawConfigPath, "utf-8"))).toMatchObject({
 			channels: {
 				telegram: {
 					accounts: {
@@ -1722,6 +1720,22 @@ exit 0
 			expect(offlineEgressSecretStat.gid).toBe(10002);
 		}
 
+		const nextContext: RuntimeApplyContext = {
+			...applyContext,
+			identity: {
+				...applyContext.identity,
+				generation: applyContext.identity.generation + 1,
+				manifestETag: '"next-candidate"',
+				applyReceiptId: "next-apply-receipt-0001",
+				bootNonce: "next-boot-nonce-000001",
+			},
+		};
+		const committedPrevious = loadCommittedRuntimeManifest(paths, nextContext);
+		if (!("manifest" in committedPrevious)) throw new Error(JSON.stringify(committedPrevious));
+		expect(committedPrevious.manifest.generation).toBe(onlineLoad.manifest.generation);
+		expect(committedPrevious.sourceRevision).toBe(onlineLoad.sourceRevision);
+		expect(committedPrevious.channelBindings).toEqual(onlineLoad.channelBindings);
+
 		rmSync(paths.appliedState);
 		const uncommittedCacheLoad = await loadRuntimeManifest(paths, { applyContext });
 		expect("errors" in uncommittedCacheLoad).toBe(true);
@@ -1755,6 +1769,7 @@ exit 0
 				},
 			})}\n`,
 		);
+		expect("errors" in loadCommittedRuntimeManifest(paths, nextContext)).toBe(true);
 		const manifestOnlyCrashLoad = await loadRuntimeManifest(paths, { applyContext });
 		expect("errors" in manifestOnlyCrashLoad).toBe(true);
 		if (!("errors" in manifestOnlyCrashLoad)) {
