@@ -118,8 +118,8 @@ unavailable through Agent MCP; do not bypass that boundary through raw HTTP.
 Use `vault_request_create` with exact `project_id`, `vault_id`, canonical `slug`, optional
 `section`, and a batch of Vault field names in `fields`. A Vault is a key bundle:
 request related new and existing keys together under one link. Include existing keys only
-when the user authorized updating them; do not delete them first. Existing Vault values remain unchanged
-until successful submission and are never shown or prefilled. Overlapping pending requests
+when the user authorized updating them; do not delete them first. Existing Vault values
+remain unchanged until successful submission and are never shown or prefilled. Overlapping pending requests
 are rejected; a change to any requested field conflicts with the entire batch.
 Show the returned `url` unchanged to the user; do not ask them to paste secrets into chat.
 Opening the link does not consume it. Saving all requested fields consumes it once.
@@ -150,9 +150,9 @@ repo is bound. Files remain readable by authorized programs running as the same 
 
 After `vault_request_status` reports `supplied`, match its Vault ID, section and field names
 in the index and require the local Vault `content_version` to be at least the status
-`content_version`. Existing field names alone do not prove replacements arrived. If either
-version is missing or local delivery is behind, report delivery as unverified; do not read
-secret values to check freshness. Pending requests are metadata only, never empty pseudo-secrets.
+`content_version`. The API requires this counter; existing names alone do not prove delivery.
+If the owned index is incomplete or behind, wait for runtime reconciliation and report
+unverified delivery. Do not read secret values to check freshness. Pending requests are metadata only, never empty pseudo-secrets.
 Runtime refreshes files; already-running processes must explicitly reload them. Offline delivery retains last good
 files; confirmed access removal removes generated files. Authorized code can read these
 files, so do not claim that subsequent plaintext exposure is impossible.

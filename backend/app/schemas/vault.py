@@ -244,7 +244,7 @@ class RuntimeVault(BaseModel):
     slug: str
     project_ids: list[UUID]
     revision: str
-    content_version: int | None = Field(default=None, ge=0)
+    content_version: int = Field(ge=0)
     fields: list[RuntimeVaultField] | None = None
 
 

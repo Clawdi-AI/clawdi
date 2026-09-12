@@ -42,7 +42,7 @@ export function VaultRequestPage() {
 		// Remove the capability from browser history before making any request.
 		if (!token.current) token.current = window.location.hash.slice(1);
 		window.history.replaceState(null, "", window.location.pathname);
-		if (!/^(?:v2_)?[A-Za-z0-9_-]{43}$/.test(token.current)) {
+		if (!/^v2_[A-Za-z0-9_-]{43}$/.test(token.current)) {
 			setPhase("unavailable");
 			return;
 		}
@@ -189,7 +189,7 @@ export function VaultRequestPage() {
 							<p className="text-sm text-muted-foreground">
 								Only these fields will be saved. Anyone with Vault access can use them.
 							</p>
-							{!!context.update_fields?.length && (
+							{!!context.update_fields.length && (
 								<p className="text-sm text-muted-foreground">
 									Fields marked Update replace existing values when you save.
 								</p>
@@ -198,7 +198,7 @@ export function VaultRequestPage() {
 								<div className="space-y-2" key={name}>
 									<div className="flex items-center justify-between gap-2">
 										<Label htmlFor={`secret-${name}`}>{name}</Label>
-										{context.update_fields?.includes(name) && (
+										{context.update_fields.includes(name) && (
 											<span className="text-xs font-medium text-muted-foreground">Update</span>
 										)}
 									</div>

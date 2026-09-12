@@ -270,6 +270,7 @@ test("cold account switch clears only matching old provenance, never a replaceme
 				slug: "fixture",
 				project_ids: [randomUUID()],
 				revision: "one",
+				content_version: 1,
 				fields: [
 					{
 						id: randomUUID(),

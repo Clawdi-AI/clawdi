@@ -45,13 +45,12 @@ class VaultSecretRequestStatus(BaseModel):
     slug: str
     section: str
     fields: list[str]
-    update_fields: list[str] = Field(default_factory=list)
-    content_version: int | None = Field(default=None, ge=0)
+    update_fields: list[str]
+    content_version: int = Field(ge=0)
     status: Literal["pending", "supplied", "expired", "conflict"]
     expires_at: datetime
     supplied_at: datetime | None
     references: dict[str, str]
-    local_command: str
 
 
 class VaultSecretRequestCreated(VaultSecretRequestStatus):
@@ -60,7 +59,7 @@ class VaultSecretRequestCreated(VaultSecretRequestStatus):
 
 class VaultSecretRequestToken(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    token: str = Field(pattern=r"^(?:v2_)?[A-Za-z0-9_-]{43}$")
+    token: str = Field(pattern=r"^v2_[A-Za-z0-9_-]{43}$")
 
 
 class VaultSecretRequestSupply(VaultSecretRequestToken):

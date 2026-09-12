@@ -10,11 +10,12 @@ const context = {
 	slug: "production-api",
 	section: "",
 	fields: ["API_KEY", "API_SECRET"],
+	update_fields: [],
 	status: "pending",
 	expires_at: "2099-01-01T00:00:00Z",
 	supplied_at: null,
 	references: {},
-	local_command: "",
+	content_version: 1,
 };
 
 for (const update_fields of [[], ["API_KEY"]]) {
@@ -116,12 +117,16 @@ test("expired capability offers no secret form", async ({ page }) => {
 	await expect(page.getByRole("textbox")).toHaveCount(0);
 });
 
-for (const status of ["missing", "error"]) {
+for (const status of ["missing", "invalid", "error"]) {
 	test(`${status} request offers no agent message`, async ({ page }) => {
 		await page.route("**/v1/vault/requests/inspect", (route) =>
 			route.fulfill({ status: 500, json: { detail: "Unavailable" } }),
 		);
-		await page.goto(status === "missing" ? "/vault-request" : `/vault-request#${token}`);
+		await page.goto(
+			status === "missing"
+				? "/vault-request"
+				: `/vault-request#${status === "invalid" ? "a".repeat(43) : token}`,
+		);
 		await expect(page.getByRole("alert")).toBeVisible();
 		await expect(page.getByRole("button", { name: "Copy message for agent" })).toHaveCount(0);
 	});
@@ -141,15 +146,4 @@ test("an intervening change clears the mixed form without claiming success", asy
 	await expect(page.getByRole("alert")).toContainText("new link");
 	await expect(page.getByRole("textbox")).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Copy message for agent" })).toHaveCount(0);
-});
-
-test("live legacy capability still opens the same form", async ({ page }) => {
-	const legacyToken = "a".repeat(43);
-	await page.route("**/v1/vault/requests/inspect", (route) => {
-		expect(route.request().postDataJSON().token).toBe(legacyToken);
-		return route.fulfill({ json: context });
-	});
-	await page.goto(`/vault-request#${legacyToken}`);
-	await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("");
-	await expect(page.getByRole("button", { name: "Save secrets" })).toBeVisible();
 });

@@ -709,7 +709,7 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
             "never values. After supply, continue the task using existing authorized capabilities; "
             "verify local index Vault/section/fields and content_version >= "
             "this status content_version "
-            "before claiming local delivery. Missing versions cannot confirm freshness. "
+            "before claiming local delivery. "
             "This remote MCP does not save credentials to local files."
         ),
         input_schema=_VaultRequestStatusArguments.model_json_schema(),
@@ -1533,9 +1533,7 @@ async def _tool_vault_get(
                 "slug": vault_slug,
             },
             "keys": keys,
-            "requests": [
-                row.model_dump(mode="json", exclude={"local_command"}) for row in requests
-            ],
+            "requests": [row.model_dump(mode="json") for row in requests],
         }
     )
 
@@ -1704,7 +1702,7 @@ async def _tool_vault_request_create(
 ) -> JsonObject:
     parsed = _validate_arguments(_VaultRequestCreateArguments, arguments)
     result = await vault_requests.create_request(db, auth, parsed)
-    return _tool_json(result.model_dump(mode="json", exclude={"local_command"}))
+    return _tool_json(result.model_dump(mode="json"))
 
 
 async def _tool_vault_request_status(
@@ -1712,6 +1710,4 @@ async def _tool_vault_request_status(
 ) -> JsonObject:
     parsed = _validate_arguments(_VaultRequestStatusArguments, arguments)
     row = await vault_requests.owned_request(db, auth, parsed.request_id)
-    return _tool_json(
-        (await vault_requests.describe(db, row)).model_dump(mode="json", exclude={"local_command"})
-    )
+    return _tool_json((await vault_requests.describe(db, row)).model_dump(mode="json"))

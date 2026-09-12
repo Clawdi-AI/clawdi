@@ -16,22 +16,25 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Empty baselines preserve absent-only authority for every old pending request.
     op.add_column(
         "vault_secret_requests",
-        sa.Column("field_baselines", postgresql.JSONB(), nullable=False, server_default="{}"),
+        sa.Column("field_baselines", postgresql.JSONB(), nullable=True),
     )
     op.add_column("vault_secret_requests", sa.Column("conflicted_at", sa.DateTime(timezone=True)))
+    # Preserve historical records, but no pre-cutover capability remains usable.
+    op.execute("UPDATE vault_secret_requests SET field_baselines = '{}'::jsonb")
+    op.execute(
+        "UPDATE vault_secret_requests SET expires_at = LEAST(expires_at, now()) "
+        "WHERE supplied_at IS NULL"
+    )
+    # No default: every new insert must explicitly supply its complete snapshot.
+    op.alter_column("vault_secret_requests", "field_baselines", nullable=False)
 
 
 def downgrade() -> None:
-    # Every new-format request records a baseline for each field, including null
-    # for absence. Expire these and terminal legacy conflicts before dropping the
-    # state, so old code cannot block fresh requests behind unusable v2 links.
     op.execute(
         "UPDATE vault_secret_requests SET expires_at = LEAST(expires_at, now()) "
-        "WHERE supplied_at IS NULL AND "
-        "(field_baselines <> '{}'::jsonb OR conflicted_at IS NOT NULL)"
+        "WHERE supplied_at IS NULL"
     )
     op.drop_column("vault_secret_requests", "conflicted_at")
     op.drop_column("vault_secret_requests", "field_baselines")

@@ -2090,11 +2090,11 @@ explicitly linked, readable user Projects. Legacy Agent-bound keys remain limite
 own Workspace, including on the batch material endpoint. Vault IDs deduplicate multiple attachments. Each Vault/section gets a
 JSON object preserving exact field names; section identity is SHA-256 of its name because
 the database has no section ID. Renaming a section replaces its file. `index.json` contains
-only metadata: IDs, names, references, filenames, opaque `revision`, and optional
+only metadata: IDs, names, references, filenames, opaque `revision`, and required
 `content_version` from the existing Vault content counter. After a supplied request, match
-Vault/section/fields and require local `content_version >= status.content_version`; old or
-missing counters cannot prove replacements arrived. Reused sections receive newly available
-counters without rewriting secret JSON. Invalid environment names have a null `env_name`,
+Vault/section/fields and require local `content_version >= status.content_version`. Network snapshots without a valid counter
+are rejected. Incomplete owned cache metadata refreshes from the current API, reusing
+intact sections without rewriting secret JSON. Invalid environment names have a null `env_name`,
 not normalized colliding names. Pending supply requests are not items.
 
 The native workspace's `.clawdi/vaults` directory is 0700 and its files 0600, owned by the runtime

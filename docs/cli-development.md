@@ -616,26 +616,28 @@ access. Linked Vaults may be synced read-only; never request/upsert outside the 
 boundary or create duplicates to sidestep access.
 
 Use MCP `vault_request_create` to request up to 32 new or updated Vault fields in one
-owned Vault/Project attachment. Names use the same validation as ordinary Vault writes,
-including dots and hyphens; names that coincide after trimming are rejected. It returns a URL with a 256-bit capability in its
-fragment. Show that exact URL to the user. The public form supplies only the requested
-names, in one transaction; viewing it does not redeem it. Tokens are hashed at rest,
-expire after one hour by default (five minutes to one day configurable), and cannot
-read secrets. Existing keys are marked as updates; existing Vault values are kept until saving.
-Changes, deletion, or recreation of any requested existing field conflict with the whole
-batch; unrelated field edits do not. Requests created before update support remain absent-only. `vault_request_status` returns metadata and exact
-references. MCP request metadata omits legacy CLI commands, including `vault_get` recent
-requests; REST retains them for compatibility. Pending requests appear separately on the
-Vault detail page and are never returned as empty secret values. After expiry or conflict, reassess the authorized fields before requesting them again.
-New links use versioned tokens that older handlers reject; current handlers also accept
-live legacy links. Conflicts explicitly revoke the capability by shortening its expiry,
-which older handlers also enforce. Conflicted requests can be replaced immediately. Genuine pending
-overlap is rejected; never delete a key to request an update.
+owned Vault/Project attachment. Names follow ordinary Vault validation, including dots
+and hyphens; duplicates after trimming are rejected. Show the returned URL unchanged.
+Its fragment contains a `v2_` capability with 256 random bits, hashed at rest and valid
+for one hour by default (five minutes to one day configurable). Viewing does not consume
+it; saving exactly the requested fields in one successful transaction does. The page
+marks updates without showing existing values.
+
+Changes to any requested field conflict with the entire batch; unrelated edits do not.
+A conflicted request can be replaced immediately, while true pending overlap is rejected.
+`vault_request_status` and recent requests return metadata and exact references, never
+secret values or local commands. After expiry or conflict, reassess the authorized fields
+before requesting again; never delete a key to request an update.
+
+The request migration expires every pre-cutover pending link, preserving saved values and
+history. Request snapshots are mandatory on new inserts. Deploy the current backend and
+page together; users with expired links need a fresh request.
 
 After supply in a managed runtime or configured connected macOS/Linux Agent, verify `vault_request_status` and inspect only
 `.clawdi/vaults/index.json` under the native workspace. Match the Vault ID, section and field
 names, and require local `content_version >= status.content_version` before claiming delivery.
-A missing or older counter cannot confirm replacements, even when the field names exist.
+The API requires `content_version`. Incomplete owned cache metadata must refresh before
+delivery can be confirmed, even when the field names already exist.
 This is the existing Vault content counter; opaque `revision` remains a cache/visibility
 identity and must not be compared across Agents. Existing runtime watch delivers readable
 Workspace/linked-Project Vaults into separate generated section JSON files. Load the
@@ -646,7 +648,7 @@ fallback and isolated verification. Connected setup uses `--agent <type> --vault
 the existing Agent registration; `--yes` alone never guesses a target. See the
 [skill workflow](../packages/cli/skills/clawdi/SKILL.md#save-and-refresh-credentials-locally).
 
-The CLI remains an optional compatible adapter for an explicit absolute local file:
+The standalone CLI also supports explicit absolute local dotenv files:
 
 ```bash
 clawdi vault materialize --vault <vault-uuid> --project <project-uuid> --out /absolute/project/.env

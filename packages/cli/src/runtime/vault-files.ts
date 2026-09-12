@@ -41,7 +41,7 @@ const snapshotSchema = z.object({
 				slug: z.string(),
 				project_ids: z.array(z.uuid()).min(1),
 				revision: z.string(),
-				content_version: z.number().int().nonnegative().nullish(),
+				content_version: z.number().int().nonnegative(),
 				fields: z
 					.array(
 						z.object({
@@ -67,7 +67,7 @@ const indexVaultSchema = z.object({
 	slug: z.string(),
 	project_ids: z.array(z.uuid()),
 	revision: z.string(),
-	content_version: z.number().int().nonnegative().optional(),
+	content_version: z.number().int().nonnegative(),
 	sections: z.array(
 		z.object({
 			id: z.string(),
@@ -98,7 +98,8 @@ const receiptSchema = z
 		device: z.number(),
 		inode: z.number(),
 		files: z.array(generatedName),
-		inventory: z.array(indexVaultSchema),
+		// Incomplete owned cache metadata is refreshed from the current API.
+		inventory: z.array(indexVaultSchema.partial({ content_version: true })),
 		etag: z.string().nullable(),
 	})
 	.strict();
@@ -521,7 +522,7 @@ function render(snapshot: Snapshot, previous: Receipt | null) {
 				(entry) => entry.id === vault.id && entry.revision === vault.revision,
 			);
 			if (!old) fail();
-			return { ...old, content_version: vault.content_version ?? old.content_version };
+			return { ...old, content_version: vault.content_version };
 		}
 		const sections = new Map<string, NonNullable<typeof vault.fields>>();
 		for (const field of vault.fields) {
@@ -535,7 +536,7 @@ function render(snapshot: Snapshot, previous: Receipt | null) {
 			slug: vault.slug,
 			project_ids: vault.project_ids,
 			revision: vault.revision,
-			content_version: vault.content_version ?? undefined,
+			content_version: vault.content_version,
 			sections: [...sections].map(([name, fields]) => {
 				const id = createHash("sha256").update(name).digest("hex");
 				const file = `${vault.id}-${id}.json`;
@@ -737,8 +738,7 @@ async function syncVaultSnapshot(
 			withDirectory(config, receipt, (fd) =>
 				receipt?.files.every((name) => fileDigest(fd, name) === receipt?.digests[name]),
 			);
-		// A receipt written by an older CLI may already have the current ETag but
-		// lack freshness metadata. Refresh metadata while still reusing intact values.
+		// Refresh incomplete cached metadata while reusing intact, owned values.
 		const etag =
 			intact && receipt?.inventory.every((vault) => vault.content_version !== undefined)
 				? receipt.etag

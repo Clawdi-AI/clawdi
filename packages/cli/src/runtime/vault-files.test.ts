@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
 	chmodSync,
 	linkSync,
@@ -103,9 +103,9 @@ for (const connected of [true, false]) {
 	describe.skipIf(!connected && process.platform !== "linux")(
 		connected ? "connected native filesystem" : "Hosted Linux filesystem",
 		() => {
-			test("legacy index gains content version on reuse; replacements stay stale until material arrives", async () => {
+			test("incomplete owned metadata refreshes without rewriting secrets; delivery requires current material", async () => {
 				const { config, home, data } = fixture(connected);
-				let versioned = false;
+				let invalidCounter: "missing" | "null" | undefined;
 				let materialStatus = 200;
 				const server = Bun.serve({
 					hostname: "127.0.0.1",
@@ -115,17 +115,21 @@ for (const connected of [true, false]) {
 						const material = request.method === "POST";
 						if (material && materialStatus !== 200)
 							return new Response(null, { status: materialStatus });
-						if (request.headers.get("if-none-match") === vault.revision)
+						if (!invalidCounter && request.headers.get("if-none-match") === vault.revision)
 							return new Response(null, { status: 304 });
 						const body = material ? await request.json() : undefined;
-						const { content_version, ...legacy } = vault;
 						return Response.json(
 							{
 								...data,
 								vaults: [
 									{
-										...legacy,
-										...(versioned ? { content_version } : {}),
+										...vault,
+										content_version:
+											invalidCounter === "missing"
+												? undefined
+												: invalidCounter === "null"
+													? null
+													: vault.content_version,
 										fields:
 											material && body?.revisions[vault.id] !== vault.revision
 												? vault.fields
@@ -142,14 +146,19 @@ for (const connected of [true, false]) {
 				const index = () => JSON.parse(readFileSync(join(dir, "index.json"), "utf8")).vaults[0];
 				try {
 					await syncRuntimeVaultFiles(config);
-					expect(index().content_version).toBeUndefined();
+					const cached = JSON.parse(readFileSync(config.receiptPath, "utf8"));
+					const cachedIndex = JSON.parse(readFileSync(join(dir, "index.json"), "utf8"));
+					delete cached.inventory[0].content_version;
+					delete cachedIndex.vaults[0].content_version;
+					const cachedBytes = JSON.stringify(cachedIndex);
+					writeFileSync(join(dir, "index.json"), cachedBytes);
+					cached.digests["index.json"] = createHash("sha256").update(cachedBytes).digest("hex");
+					writeFileSync(config.receiptPath, JSON.stringify(cached));
 					const names = index().sections.map((section: { file: string }) => section.file);
 					const mtimes = names.map(
 						(file: string) => lstatSync(join(dir, file), { bigint: true }).mtimeNs,
 					);
-					// An old CLI can already cache the new server's ETag without recording the counter.
-					// Reuse fields=null and recover metadata without rewriting any secret section JSON.
-					versioned = true;
+					// Refresh owned cache metadata using fields=null; secret section files stay intact.
 					expect(await syncRuntimeVaultFiles(config)).toBe("synced");
 					expect(index().content_version).toBe(1);
 					expect(
@@ -171,6 +180,12 @@ for (const connected of [true, false]) {
 					expect(
 						JSON.parse(readFileSync(config.receiptPath, "utf8")).inventory[0].content_version,
 					).toBe(requestedContentVersion);
+					for (const malformed of ["missing", "null"] as const) {
+						invalidCounter = malformed;
+						await expect(syncRuntimeVaultFiles(config)).rejects.toThrow("Runtime Vault files");
+						expect(index().content_version).toBe(requestedContentVersion);
+						expect(names.every((file: string) => lstatSync(join(dir, file)).isFile())).toBe(true);
+					}
 				} finally {
 					server.stop(true);
 				}

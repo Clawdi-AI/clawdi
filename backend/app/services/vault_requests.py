@@ -2,7 +2,6 @@
 
 import hashlib
 import secrets
-import shlex
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from urllib.parse import quote
@@ -51,9 +50,13 @@ def field_baseline(item: VaultItem | None) -> str | None:
 
 
 def fields_conflict(row: VaultSecretRequest, existing: dict[str, VaultItem]) -> bool:
-    return row.conflicted_at is not None or any(
-        field_baseline(existing.get(field)) != row.field_baselines.get(field)
-        for field in row.fields
+    return (
+        row.conflicted_at is not None
+        or set(row.field_baselines) != set(row.fields)
+        or any(
+            field_baseline(existing.get(field)) != row.field_baselines[field]
+            for field in row.fields
+        )
     )
 
 
@@ -117,12 +120,6 @@ async def describe(db: AsyncSession, row: VaultSecretRequest) -> VaultSecretRequ
         expires_at=row.expires_at,
         supplied_at=row.supplied_at,
         references=references,
-        local_command=(
-            f"clawdi vault materialize --vault {row.vault_id} "
-            f"--project {row.project_id}"
-            + (f" --section={shlex.quote(row.section)}" if row.section else "")
-            + " --out <absolute-env-path>"
-        ),
     )
 
 
@@ -175,11 +172,10 @@ async def create_request(
             continue
         if not fields_conflict(row, existing):
             raise HTTPException(409, "Fields already requested")
-        # Persist the predecessor's terminal state with its successor, including
-        # conflicts caused before this backend version began fencing mutations.
-        row.conflicted_at = datetime.now(UTC)
-        row.expires_at = min(row.expires_at, row.conflicted_at)
-    # Old public schemas accept exactly 43 characters and must reject new semantics.
+        # Retire the conflicted reservation in the successor's transaction.
+        now = datetime.now(UTC)
+        row.conflicted_at = now
+        row.expires_at = min(row.expires_at, now)
     token = "v2_" + secrets.token_urlsafe(32)
     row = VaultSecretRequest(
         vault_id=vault.id,
@@ -254,8 +250,7 @@ async def supply(db: AsyncSession, body: VaultSecretRequestSupply) -> VaultSecre
             raise unavailable()
         if set(body.fields) != set(row.fields):
             raise HTTPException(422, "Supply exactly the requested fields")
-        # Older writers do not take the Vault lock first. Lock only requested rows,
-        # without waiting behind an old writer that may itself be waiting on our Vault.
+        # Lock only requested rows and recheck their state before changing any value.
         existing = await load_vault_items_by_name(
             db, row.vault_id, row.section, lock_fields=row.fields
         )
@@ -287,8 +282,7 @@ async def supply(db: AsyncSession, body: VaultSecretRequestSupply) -> VaultSecre
         return result
     except DBAPIError as exc:
         await db.rollback()
-        # Unique-field races and row/deadlock contention with pre-lock-protocol writers
-        # abort the entire batch. The capability is consumed only by a successful commit.
+        # Conflicting writes abort the entire batch; only a successful commit consumes it.
         if isinstance(exc, IntegrityError) or getattr(exc.orig, "sqlstate", None) in {
             "55P03",
             "40P01",
