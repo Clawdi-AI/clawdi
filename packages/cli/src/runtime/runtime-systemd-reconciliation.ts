@@ -21,6 +21,7 @@ import {
 	runtimeFileCurrentRevision,
 	writeRuntimeInstallerLog,
 } from "./manifest-install";
+import { runtimeRecoverableSecretValues } from "./manifest-secrets";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import {
 	DEFAULT_RUN_ROOT,
@@ -165,7 +166,7 @@ export function buildRuntimeSystemdUserProgram(input: {
 	config: RuntimeRunConfig;
 	paths: RuntimePaths;
 	secretValues: Record<string, string> | undefined;
-	egress: RuntimeEgressSystemdProgram | null;
+	egress: Pick<RuntimeEgressSystemdProgram, "systemCaBundle"> | null;
 }): RuntimeSystemdUserProgram | null {
 	if (!input.config.enabled) return null;
 
@@ -1003,7 +1004,7 @@ export function runtimeSystemdCommonEnvironment(paths: RuntimePaths): Record<str
 	return environment;
 }
 
-function writeRuntimeSystemdUserProgram(input: {
+interface RuntimeSystemdUserProgramEnvironmentInput {
 	program: RuntimeSystemdUserProgram;
 	commonEnvironment: Record<string, string>;
 	manifest: RuntimeManifest;
@@ -1011,9 +1012,12 @@ function writeRuntimeSystemdUserProgram(input: {
 	secretValues: Record<string, string> | undefined;
 	providerProjectionRevisions: Partial<Record<string, string | null>>;
 	runtimeRevision: Parameters<typeof runtimeSystemdProgramRevision>[4];
-}): string {
+}
+
+function runtimeSystemdUserProgramEnvironment(
+	input: RuntimeSystemdUserProgramEnvironmentInput,
+): Record<string, string> {
 	const { program } = input;
-	const name = runtimeSystemdProgramName(program);
 	const runtimeEnv = { ...program.env };
 	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
 	const isHermesDashboard = program.runtime === "hermes" && program.service === "dashboard";
@@ -1048,6 +1052,39 @@ function writeRuntimeSystemdUserProgram(input: {
 				CLAWDI_HOME: input.paths.clawdiHome,
 				CLAWDI_MANAGED_CONTENT_DIGEST: revision,
 			};
+	return env;
+}
+
+export function publishRetainedOpenClawEnvironment(
+	input: RuntimeSystemdUserProgramEnvironmentInput,
+): void {
+	const { program, paths, manifest } = input;
+	if (
+		program.runtime !== "openclaw" ||
+		program.service ||
+		manifest.runtimes.openclaw?.enabled !== true
+	)
+		return;
+	const name = runtimeSystemdProgramName(program);
+	if (!isGeneratedRuntimeSystemdPath(systemdDropInFilePath(paths, name))) return;
+	// Warm updates keep their environment publication in the final apply phase.
+	if (existsSync(systemdEnvironmentFilePath(paths, name))) return;
+	// New/legacy installs retain the normal installer and drop-in publication order.
+	if (planOfficialRuntimeServices([program], paths, true).pending.length !== 0) return;
+	runtimeRecoverableSecretValues(manifest, input.secretValues);
+	writeSystemdProgramEnvironment({
+		paths,
+		name,
+		owner: "runtime-user",
+		env: runtimeSystemdUserProgramEnvironment(input),
+	});
+}
+
+function writeRuntimeSystemdUserProgram(input: RuntimeSystemdUserProgramEnvironmentInput): string {
+	const { program } = input;
+	const name = runtimeSystemdProgramName(program);
+	const env = runtimeSystemdUserProgramEnvironment(input);
+	const isHermesDashboard = program.runtime === "hermes" && program.service === "dashboard";
 	if (officialRuntimeServiceInstallArgs(program)) {
 		return writeSystemdUserEnvironmentDropIn({
 			paths: input.paths,

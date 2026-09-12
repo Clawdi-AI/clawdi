@@ -323,6 +323,15 @@ not emulate upstream service repair: stale entrypoint or target errors that
 remain after systemd activation require the native owner workflow
 (`openclaw gateway start/restart` or an intentional `gateway install --force`).
 
+On a retained OpenClaw installation, convergence restores a missing Clawdi
+service environment file before the official workspace roster and Doctor repair.
+It uses the same current manifest, secret validation, provider digest and egress
+CA environment as final publication. Existing environment files retain normal
+final-phase updates; new units retain installer ordering. This publishes no
+service definitions and performs no service activation. Native Doctor still
+requires its user D-Bus manager to be available and owns its repair lifecycle;
+restoring the environment does not bypass native service or database checks.
+
 When Hermes service installation is necessary, Clawdi publishes its environment
 and drop-in first and invokes native `gateway install --force --no-start-now`.
 The existing activation phase starts the service after prerequisites are ready.
