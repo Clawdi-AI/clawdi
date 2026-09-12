@@ -13,11 +13,16 @@ import { join, resolve } from "node:path";
 import type { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { isValidSemver } from "../lib/semver";
-import { type HermesConfigTransaction, reconcileHermesConfigValue } from "./hermes-config";
+import {
+	getHermesRawConfigValue,
+	type HermesConfigTransaction,
+	reconcileHermesConfigValue,
+} from "./hermes-config";
 import type { OpenClawHostedContext } from "./hosted-openclaw-context";
 import {
 	buildHermesManagedChannelsPatch,
 	managedChannelHasAccounts,
+	managedHermesWhatsAppAuthDir,
 } from "./managed-channel-reconciliation";
 import type { RuntimeManifest } from "./manifest-contract";
 import {
@@ -26,10 +31,10 @@ import {
 	runtimeCommandVersion,
 	runtimeFileCurrentRevision,
 } from "./manifest-install";
-import { openClawConfigPatchIsApplied } from "./manifest-providers";
-import { canonicalJsonEqual, isPlainRecord, recordValue } from "./manifest-shared";
+import { isPlainRecord, recordValue } from "./manifest-shared";
 import { openClawPluginCapabilityConsentArgs } from "./openclaw-plugin-cli";
 import { openClawPluginInspectSchema } from "./openclaw-plugin-observation";
+import { applyOpenClawHostedChannelPatch } from "./openclaw-provider-config";
 import {
 	runRuntimeUserCommand,
 	spawnRuntimeUserCommand,
@@ -411,6 +416,7 @@ export function applyHostedChannelProjection(
 	workspaceRoot: string,
 	hermesWhatsAppAuthDir: string | null,
 	hermesConfig: HermesConfigTransaction | null,
+	previousManifest: RuntimeManifest | null = null,
 ): boolean {
 	if (name !== "openclaw" && name !== "hermes") return false;
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
@@ -421,24 +427,25 @@ export function applyHostedChannelProjection(
 
 	if (name === "hermes") {
 		if (!hermesConfig) throw new Error("Hermes config command is unavailable");
-		return applyHermesChannelConfig(
-			hermesConfig,
-			buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir),
-		);
+		const patch = buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir);
+		const previousAuthDir = previousManifest
+			? managedHermesWhatsAppAuthDir(previousManifest, home)
+			: null;
+		if (
+			!hermesWhatsAppAuthDir &&
+			previousAuthDir &&
+			getHermesRawConfigValue(hermesConfig, "platforms.whatsapp.extra.session_path").value ===
+				previousAuthDir
+		) {
+			patch.platforms = { whatsapp: { extra: { session_path: null } } };
+		}
+		return applyHermesChannelConfig(hermesConfig, patch);
 	}
-	const currentConfig = readOpenClawConfig(openClawContext.configPath);
-	const patch = openClawManagedChannelsPatch(channels, currentConfig);
-	if (
-		openClawConfigPatchIsApplied(openClawContext, patch) &&
-		openClawManagedAccountMapsAreApplied(currentConfig, patch, channels)
-	) {
-		return false;
-	}
-	runRuntimeUserCommand(
-		observation.commandPath,
-		["config", "patch", "--stdin", ...openClawManagedAccountReplaceArgs(channels)],
-		`${JSON.stringify(patch, null, 2)}\n`,
-		home,
+	applyOpenClawHostedChannelPatch(
+		openClawManagedChannelsPatch(channels),
+		previousManifest ? hostedChannelProjection(previousManifest) : null,
+		Object.keys(manifest.runtimes.openclaw?.run?.secretEnv ?? {}),
+		openClawContext,
 		workspaceRoot,
 	);
 	return true;
@@ -470,23 +477,17 @@ function openClawManagedChannelUsesEnvSecretRefs(channels: Record<string, unknow
 }
 export function openClawManagedChannelsPatch(
 	channels: Record<string, unknown>,
-	currentConfig: Record<string, unknown> | null = null,
 ): Record<string, unknown> {
-	const deleteEntries = openClawManagedChannelDeletes();
 	const usesEnvSecretRefs = openClawManagedChannelUsesEnvSecretRefs(channels);
 	const isolatesManagedDms =
 		managedChannelHasAccounts(channels.telegram) ||
 		managedChannelHasAccounts(channels.discord) ||
 		managedChannelHasAccounts(channels.whatsapp);
-	const effectiveChannels = mergeOpenClawManagedAccountPreferences(channels, currentConfig);
+
 	return {
-		channels: {
-			...deleteEntries,
-			...effectiveChannels,
-		},
+		channels,
 		plugins: {
 			entries: {
-				...deleteEntries,
 				...channelPluginEntries(channels),
 			},
 		},
@@ -500,91 +501,10 @@ export function openClawManagedChannelsPatch(
 					},
 				}
 			: undefined,
-		session: {
-			dmScope: isolatesManagedDms ? "per-account-channel-peer" : null,
-		},
+		...(isolatesManagedDms ? { session: { dmScope: "per-account-channel-peer" } } : {}),
 	};
 }
 
-function readOpenClawConfig(path: string): Record<string, unknown> | null {
-	try {
-		return recordValue(JSON.parse(readFileSync(path, "utf-8")) as unknown);
-	} catch {
-		return null;
-	}
-}
-
-function mergeOpenClawManagedAccountPreferences(
-	channels: Record<string, unknown>,
-	currentConfig: Record<string, unknown> | null,
-): Record<string, unknown> {
-	const currentChannels = recordValue(currentConfig?.channels);
-	if (!currentChannels) return channels;
-	const mergedChannels = { ...channels };
-	for (const provider of OPENCLAW_MANAGED_CHANNELS) {
-		const desiredChannel = recordValue(channels[provider]);
-		const desiredAccounts = recordValue(desiredChannel?.accounts);
-		if (!desiredChannel || !desiredAccounts) continue;
-		const currentAccounts = recordValue(recordValue(currentChannels[provider])?.accounts);
-		const mergedAccounts: Record<string, unknown> = {};
-		for (const [accountId, desiredValue] of Object.entries(desiredAccounts)) {
-			const desiredAccount = recordValue(desiredValue);
-			if (!desiredAccount) {
-				mergedAccounts[accountId] = desiredValue;
-				continue;
-			}
-			const currentAccount = recordValue(currentAccounts?.[accountId]);
-			const mergedAccount = { ...desiredAccount, ...(currentAccount ?? {}) };
-			for (const key of openClawManagedAccountFields(provider)) {
-				if (Object.hasOwn(desiredAccount, key)) mergedAccount[key] = desiredAccount[key];
-			}
-			mergedAccounts[accountId] = mergedAccount;
-		}
-		mergedChannels[provider] = { ...desiredChannel, accounts: mergedAccounts };
-	}
-	return mergedChannels;
-}
-
-function openClawManagedAccountFields(
-	provider: (typeof OPENCLAW_MANAGED_CHANNELS)[number],
-): readonly string[] {
-	if (provider === "telegram") return ["enabled", "botToken"];
-	if (provider === "discord") return ["enabled", "token"];
-	return ["enabled", "authDir"];
-}
-
-function openClawManagedAccountMapsAreApplied(
-	currentConfig: Record<string, unknown> | null,
-	patch: Record<string, unknown>,
-	channels: Record<string, unknown>,
-): boolean {
-	const currentChannels = recordValue(currentConfig?.channels);
-	const patchedChannels = recordValue(patch.channels);
-	for (const provider of OPENCLAW_MANAGED_CHANNELS) {
-		const desiredAccounts = recordValue(recordValue(channels[provider])?.accounts);
-		if (!desiredAccounts) continue;
-		if (!currentChannels || !patchedChannels) return false;
-		const currentAccounts = recordValue(recordValue(currentChannels[provider])?.accounts);
-		const patchedAccounts = recordValue(recordValue(patchedChannels[provider])?.accounts);
-		if (!canonicalJsonEqual(currentAccounts, patchedAccounts)) return false;
-	}
-	return true;
-}
-function openClawManagedAccountReplaceArgs(channels: Record<string, unknown>): string[] {
-	const args: string[] = [];
-	for (const provider of OPENCLAW_MANAGED_CHANNELS) {
-		const channel = channels[provider];
-		if (!isPlainRecord(channel) || !isPlainRecord(channel.accounts)) continue;
-		args.push("--replace-path", `channels.${provider}.accounts`);
-	}
-	return args;
-}
-function openClawManagedChannelDeletes(): Record<string, null> {
-	return Object.fromEntries(OPENCLAW_MANAGED_CHANNELS.map((channel) => [channel, null])) as Record<
-		string,
-		null
-	>;
-}
 function installOpenClawChannelPlugins(input: {
 	commandPath: string;
 	channels: Record<string, unknown>;
@@ -751,4 +671,3 @@ export function normalizeOpenClawRuntimeVersion(output: string): string | null {
 export const OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS: Record<string, readonly string[]> = {
 	discord: ["@openclaw/discord"],
 };
-const OPENCLAW_MANAGED_CHANNELS = ["telegram", "discord", "whatsapp"] as const;

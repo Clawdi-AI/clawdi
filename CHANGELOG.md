@@ -12,6 +12,13 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.79
+
+- Managed channel changes preserve native accounts, access policies, and independent
+  Hermes platform settings. Conflicting updates fail without replacing user credentials.
+- OpenClaw managed chat-provider changes preserve existing memory search providers,
+  models, and options, including during supported configuration migrations.
+
 ### CLI 0.14.78
 
 - Session and Skill synchronization recover independently after startup or watcher

@@ -22,33 +22,17 @@ export function buildHermesManagedChannelsPatch(
 	if (whatsappEnabled && !whatsappAuthDir) {
 		throw new Error("managed Hermes WhatsApp projection is missing its exact auth directory");
 	}
-	const whatsapp = whatsappEnabled
-		? {
-				enabled: true,
-			}
-		: {
-				enabled: false,
-			};
-	const whatsappPlatform = whatsappEnabled
-		? {
-				enabled: true,
-				extra: {
-					session_path: whatsappAuthDir,
-				},
-			}
-		: {
-				enabled: false,
-				extra: {
-					session_path: null,
-				},
-			};
 	return {
-		telegram: { enabled: telegramEnabled },
-		discord: { enabled: discordEnabled },
-		whatsapp,
-		platforms: {
-			whatsapp: whatsappPlatform,
-		},
+		...(telegramEnabled ? { telegram: { enabled: true } } : {}),
+		...(discordEnabled ? { discord: { enabled: true } } : {}),
+		...(whatsappEnabled
+			? {
+					whatsapp: { enabled: true },
+					platforms: {
+						whatsapp: { enabled: true, extra: { session_path: whatsappAuthDir } },
+					},
+				}
+			: {}),
 	};
 }
 

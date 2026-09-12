@@ -306,7 +306,6 @@ function buildOpenClawProjection(
 	primaryModel: AgentPrimaryModel | null,
 	embeddingModel: AgentPrimaryModel | undefined,
 ): string {
-	const hasClawdiManagedProvider = providers.some((provider) => provider.managed_by === "clawdi");
 	const projectedProviders = Object.fromEntries(
 		providers
 			.filter((provider) => !usesNativeCodexOpenAiProvider(provider))
@@ -347,7 +346,7 @@ function buildOpenClawProjection(
 								primary: openClawDefaultModelRef(primaryProvider, primaryModel.model),
 							}
 						: undefined,
-				memorySearch: embeddingModel || hasClawdiManagedProvider ? null : undefined,
+				memorySearch: embeddingModel ? null : undefined,
 			},
 		},
 		memory: embeddingModel
@@ -357,9 +356,7 @@ function buildOpenClawProjection(
 						model: embeddingModel.model,
 					},
 				}
-			: hasClawdiManagedProvider
-				? { search: { provider: null, model: null } }
-				: undefined,
+			: undefined,
 		models:
 			Object.keys(projectedProviders).length > 0
 				? {

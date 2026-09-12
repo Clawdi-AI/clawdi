@@ -13,15 +13,30 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { buildHermesManagedChannelsPatch } from "./managed-channel-reconciliation";
 import {
 	materializeHostedChannelCredentials,
 	normalizeOpenClawRuntimeVersion,
+	openClawManagedChannelsPatch,
 } from "./manifest-channels";
 import type { RuntimeManifest } from "./manifest-contract";
 import { withRuntimeUserFileAccess } from "./runtime-user-command";
 
 const ACCOUNT_KEY = "clawdi_whatsapp_test";
 const SECRET_REF = `secret://channels/whatsapp/${ACCOUNT_KEY}/credentials/credential-test/creds-json`;
+
+describe("native channel ownership", () => {
+	test("an empty desired projection does not carry deletion intent", () => {
+		const patch = openClawManagedChannelsPatch({});
+		expect(patch).not.toHaveProperty("channels.telegram");
+		expect(patch).not.toHaveProperty("plugins.entries.telegram");
+		expect(patch).not.toHaveProperty("session.dmScope");
+	});
+
+	test("does not disable independently configured Hermes platforms on unlink", () => {
+		expect(buildHermesManagedChannelsPatch({}, null)).toEqual({});
+	});
+});
 
 let root: string;
 let home: string;

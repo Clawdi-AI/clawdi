@@ -22,6 +22,7 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { commitRuntimeAppliedState } from "../commands/runtime";
 import { installHermesNativeFixture } from "../test-support/hermes-native-fixture";
+import { writeFakeOpenClawConfigMutationSdk } from "../test-support/openclaw-config-mutation";
 import {
 	readRuntimeAppliedState,
 	runtimeContentSha256,
@@ -40,6 +41,7 @@ import type {
 import type { HostedAgentPluginCommandRunner } from "./hosted-agent-plugin-runtime";
 import { resolveHostedBundledSkill } from "./hosted-bundled-skill";
 import { hostedHermesSkillSourceMatches } from "./hosted-hermes-skill";
+import { createOpenClawHostedContext } from "./hosted-openclaw-context";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
 import {
@@ -54,6 +56,7 @@ import {
 	type RuntimeManifest,
 	type RuntimePrivateAppliedAuthority,
 } from "./manifest";
+import { openClawManagedChannelsPatch } from "./manifest-channels";
 import {
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	fileBrowserCompanionSchema,
@@ -69,6 +72,7 @@ import {
 	type HostedSkillSource,
 } from "./manifest-resources";
 import { parseHostedRuntimeBundleV2, type RuntimeManifestLoad } from "./manifest-source";
+import { applyOpenClawHostedChannelPatch } from "./openclaw-provider-config";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 import {
@@ -777,69 +781,6 @@ esac
 `,
 	);
 	chmodSync(input.path, 0o700);
-}
-
-function writeFakeOpenClawConfigMutationSdk(
-	home: string,
-	options: { importLog?: string; initialConfig?: Record<string, unknown> } = {},
-): string {
-	const { importLog, initialConfig = {} } = options;
-	const packageRoot = join(home, ".local", "lib", "node_modules", "openclaw");
-	const configPath = join(home, ".openclaw", "openclaw.json");
-	mkdirSync(packageRoot, { recursive: true });
-	mkdirSync(dirname(configPath), { recursive: true });
-	writeFileSync(configPath, `${JSON.stringify(initialConfig, null, 2)}\n`);
-	writeFileSync(
-		join(packageRoot, "package.json"),
-		JSON.stringify({
-			name: "openclaw",
-			type: "module",
-			exports: {
-				"./plugin-sdk/config-mutation": "./config-mutation.mjs",
-				"./plugin-sdk/device-bootstrap": "./device-bootstrap.mjs",
-				"./plugin-sdk/provider-auth": "./provider-auth.mjs",
-			},
-		}),
-	);
-	const logImport = (name: string) =>
-		importLog
-			? `import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(importLog)}, ${JSON.stringify(`${name}\n`)});\n`
-			: "";
-	writeFileSync(
-		join(packageRoot, "config-mutation.mjs"),
-		`${logImport("config-mutation")}import { readFileSync, writeFileSync } from "node:fs";
-const configPath = ${JSON.stringify(configPath)};
-const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-const hasLegacyMemorySearch = (config) => {
-  const agents = isRecord(config) ? config.agents : undefined;
-  const defaults = isRecord(agents) ? agents.defaults : undefined;
-  return isRecord(defaults) && Object.hasOwn(defaults, "memorySearch");
-};
-export async function readConfigFileSnapshotForWrite() {
-  const config = JSON.parse(readFileSync(configPath, "utf8"));
-  return { snapshot: { valid: !hasLegacyMemorySearch(config), config, sourceConfig: structuredClone(config) } };
-}
-export async function mutateConfigFile(options) {
-  const config = JSON.parse(readFileSync(configPath, "utf8"));
-  await options.mutate(config, { snapshot: {}, previousHash: null, attempt: 1 });
-  if (hasLegacyMemorySearch(config)) throw new Error("OpenClaw config validation failed");
-  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\\n");
-}
-`,
-	);
-	writeFileSync(
-		join(packageRoot, "device-bootstrap.mjs"),
-		`${logImport("device-bootstrap")}export const normalizeDeviceBootstrapProfile = (profile) => profile;\n`,
-	);
-	writeFileSync(
-		join(packageRoot, "provider-auth.mjs"),
-		`${logImport("provider-auth")}export const ensureAuthProfileStoreForLocalUpdate = () => ({ profiles: {} });
-export const updateAuthProfileStoreWithLock = async () => ({});
-export const listProfilesForProvider = () => [];
-export const removeProviderAuthProfilesWithLock = async () => ({});
-`,
-	);
-	return configPath;
 }
 
 type FileBrowserCompanion = NonNullable<NonNullable<RuntimeManifest["companions"]>["filebrowser"]>;
@@ -2677,95 +2618,223 @@ fi
 		expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual(restored);
 	});
 
-	test("repairs legacy managed memory config and keeps the provider key out of agent env", () => {
-		const paths = tempRuntimePaths();
-		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, {
-			initialConfig: {
-				agents: {
-					defaults: {
-						memorySearch: { provider: "clawdi", model: "legacy-embedding-model" },
-					},
-				},
-			},
-		});
-		writeFakeGatewayCli({
-			path: join(paths.userHome, ".local", "bin", "openclaw"),
-			runtime: "openclaw",
-			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
-		});
-		const hosted = hostedRuntimeBundleV2ManifestSchema.parse(
-			hostedManifestFixture({
-				providers: {
-					default: {
-						kind: "openai-compatible",
-						type: "custom_openai_compatible",
-						managed_by: "clawdi",
-						baseUrl: "https://api.example.test/v1",
-						models: [
-							{ id: "gpt-test" },
-							{
-								id: "test-embedding-model",
-								capabilities: { embeddings: true, chat: false },
+	test.each(["update", "delete"])(
+		"guards channel %s against credential replacement before native mutation",
+		(operation) => {
+			const paths = tempRuntimePaths();
+			const managed = {
+				enabled: true,
+				botToken: { source: "env", provider: "default", id: "CLAWDI_CHANNEL_TEST_AGENT_TOKEN" },
+			};
+			const previous = {
+				telegram: { enabled: true, defaultAccount: "managed", accounts: { managed } },
+			};
+			const edited = {
+				channels: {
+					telegram: {
+						defaultAccount: "personal",
+						accounts: {
+							managed: {
+								enabled: true,
+								botToken: "native-replacement",
+								dmPolicy: "pairing",
+								allowFrom: ["owner"],
 							},
-						],
-						apiMode: "openai_responses",
-						runtimeEnvName: "CLAWDI_AI_API_KEY",
-						apiKeySecretRef: "secret://providers/default/api-key",
-					},
-				},
-			}),
-		);
-		const manifest = {
-			...hosted,
-			egressEngine: installCachedTestEgressEngine(paths, "12.2.3-test-provider-model"),
-		};
-		const provider = hostedAiProviderCatalog(manifest, "openclaw")?.catalog.providers[0];
-		expect(provider?.runtime_env_name).toBe("CLAWDI_AI_API_KEY");
-
-		const result = convergeRuntimeManifest(
-			manifestLoad(manifest, "inline-managed-provider", {
-				...TEST_HOSTED_SECRET_VALUES,
-				"secret://providers/default/api-key": "sk-managed",
-			}),
-			paths,
-		);
-
-		expect(result.installErrors).toEqual([]);
-		expect(result.projectedProviderIds.openclaw).toEqual(["clawdi-managed"]);
-		const config = JSON.parse(readFileSync(configPath, "utf8"));
-		expect(config.agents.defaults).not.toHaveProperty("memorySearch");
-		expect(config).toMatchObject({
-			memory: {
-				search: {
-					provider: "clawdi-managed",
-					model: "test-embedding-model",
-				},
-			},
-			models: {
-				providers: {
-					"clawdi-managed": {
-						apiKey: {
-							source: "env",
-							provider: "default",
-							id: "CLAWDI_AI_API_KEY",
+							personal: { enabled: true, botToken: "native-personal" },
 						},
 					},
 				},
-			},
-		});
-		const runConfig = JSON.parse(readFileSync(runtimeRunConfigPath("openclaw", paths), "utf8")) as {
-			env?: Record<string, string>;
+				session: { dmScope: "per-channel-peer" },
+			};
+			const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, {
+				initialConfig: { channels: previous },
+				beforeMutation: edited,
+			});
+			const context = createOpenClawHostedContext(baseManifest(paths, {}), paths.userHome);
+			const apply = () =>
+				applyOpenClawHostedChannelPatch(
+					openClawManagedChannelsPatch(operation === "update" ? previous : {}),
+					previous,
+					operation === "update" ? [managed.botToken.id] : [],
+					context,
+					paths.userHome,
+				);
+			if (operation === "update") expect(apply).toThrow("ownership changed");
+			else apply();
+			const result = JSON.parse(readFileSync(configPath, "utf8"));
+			expect(result.channels).toEqual(edited.channels);
+			expect(result.session).toEqual(edited.session);
+		},
+	);
+
+	test("native channel unlink removes only committed accounts and rejects unowned missing refs", () => {
+		const paths = tempRuntimePaths();
+		const managed = {
+			enabled: true,
+			botToken: { source: "env", provider: "default", id: "CLAWDI_CHANNEL_TEST_AGENT_TOKEN" },
 		};
-		expect(runConfig.env?.CLAWDI_AI_API_KEY).toBe("clawdi-egress-placeholder");
-		expect(runConfig.env?.OPENAI_API_KEY).toBeUndefined();
-		const envFile = readFileSync(
-			join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
-			"utf8",
+		const previous = {
+			telegram: { enabled: true, defaultAccount: "managed", accounts: { managed } },
+		};
+		const native = { enabled: true, botToken: "native-personal", dmPolicy: "pairing" };
+		const original = {
+			channels: { telegram: { ...previous.telegram, accounts: { managed, personal: native } } },
+		};
+		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, {
+			initialConfig: original,
+		});
+		const context = createOpenClawHostedContext(baseManifest(paths, {}), paths.userHome);
+		expect(() =>
+			applyOpenClawHostedChannelPatch(
+				openClawManagedChannelsPatch({}),
+				null,
+				[],
+				context,
+				paths.userHome,
+			),
+		).toThrow("withdrawn managed credential");
+		expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual(original);
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		writeFakeGatewayCli({
+			path: command,
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
+		const desired = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					services: {},
+					providerMode: "unmanaged",
+					run: runSettings(command, ["gateway", "run"]),
+				},
+			},
+			{ projection: { channels: {} } },
 		);
-		expect(envFile).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
-		expect(envFile).not.toMatch(/^OPENAI_API_KEY=/m);
-		expect(envFile).not.toContain("sk-managed");
+		const failed = convergeRuntimeManifest(
+			manifestLoad(desired, "missing-channel-ownership"),
+			paths,
+		);
+		expect(failed.installErrors.join("\n")).toContain("withdrawn managed credential");
+		expect(failed.outputs.manifestLastGood).toBeNull();
+		expect(existsSync(paths.appliedState)).toBe(false);
+		expect(existsSync(paths.manifestLastGood)).toBe(false);
+		applyOpenClawHostedChannelPatch(
+			openClawManagedChannelsPatch({}),
+			previous,
+			[],
+			context,
+			paths.userHome,
+		);
+		const result = JSON.parse(readFileSync(configPath, "utf8"));
+		expect(result.channels.telegram.accounts).toEqual({ personal: native });
+		expect(result.channels.telegram).not.toHaveProperty("defaultAccount");
 	});
+
+	test.each(["legacy", "current"])(
+		"preserves user memory selection in the %s layout and keeps the provider key out of agent env",
+		(layout) => {
+			const paths = tempRuntimePaths();
+			const search = {
+				provider: "local",
+				model: "user-embedding-model",
+				cache: { enabled: false },
+				query: { hybrid: { enabled: true, vectorWeight: 0.7 }, maxResults: 9 },
+			};
+			const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, {
+				initialConfig:
+					layout === "legacy"
+						? {
+								agents: {
+									defaults: {
+										memorySearch: { ...search, query: { hybrid: search.query.hybrid } },
+									},
+								},
+								memory: { search: { query: { maxResults: 9 } } },
+							}
+						: { memory: { search } },
+			});
+			writeFakeGatewayCli({
+				path: join(paths.userHome, ".local", "bin", "openclaw"),
+				runtime: "openclaw",
+				unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+			});
+			const hosted = hostedRuntimeBundleV2ManifestSchema.parse(
+				hostedManifestFixture({
+					providers: {
+						default: {
+							kind: "openai-compatible",
+							type: "custom_openai_compatible",
+							managed_by: "clawdi",
+							baseUrl: "https://api.example.test/v1",
+							models: [
+								{ id: "gpt-test" },
+								{
+									id: "test-embedding-model",
+									capabilities: { embeddings: true, chat: false },
+								},
+							],
+							apiMode: "openai_responses",
+							runtimeEnvName: "CLAWDI_AI_API_KEY",
+							apiKeySecretRef: "secret://providers/default/api-key",
+						},
+					},
+				}),
+			);
+			const manifest = {
+				...hosted,
+				egressEngine: installCachedTestEgressEngine(paths, "12.2.3-test-provider-model"),
+			};
+			const provider = hostedAiProviderCatalog(manifest, "openclaw")?.catalog.providers[0];
+			expect(provider?.runtime_env_name).toBe("CLAWDI_AI_API_KEY");
+
+			const result = convergeRuntimeManifest(
+				manifestLoad(manifest, "inline-managed-provider", {
+					...TEST_HOSTED_SECRET_VALUES,
+					"secret://providers/default/api-key": "sk-managed",
+				}),
+				paths,
+			);
+
+			expect(result.installErrors).toEqual([]);
+			expect(result.projectedProviderIds.openclaw).toEqual(["clawdi-managed"]);
+			const config = JSON.parse(readFileSync(configPath, "utf8"));
+			expect(config.agents.defaults).not.toHaveProperty("memorySearch");
+			expect(config).toMatchObject({
+				memory: {
+					search: {
+						...search,
+					},
+				},
+				models: {
+					providers: {
+						"clawdi-managed": {
+							apiKey: {
+								source: "env",
+								provider: "default",
+								id: "CLAWDI_AI_API_KEY",
+							},
+						},
+					},
+				},
+			});
+			const runConfig = JSON.parse(
+				readFileSync(runtimeRunConfigPath("openclaw", paths), "utf8"),
+			) as {
+				env?: Record<string, string>;
+			};
+			expect(runConfig.env?.CLAWDI_AI_API_KEY).toBe("clawdi-egress-placeholder");
+			expect(runConfig.env?.OPENAI_API_KEY).toBeUndefined();
+			const envFile = readFileSync(
+				join(paths.systemdEnvRoot, "openclaw-gateway.service.env"),
+				"utf8",
+			);
+			expect(envFile).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
+			expect(envFile).not.toMatch(/^OPENAI_API_KEY=/m);
+			expect(envFile).not.toContain("sk-managed");
+		},
+	);
 
 	test("reuses OpenClaw probes until the provider revision changes", () => {
 		const paths = tempRuntimePaths();

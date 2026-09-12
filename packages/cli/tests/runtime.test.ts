@@ -87,7 +87,6 @@ import {
 	validateUnmanagedProviderSecretValues,
 } from "../src/runtime/manifest-contract";
 import { runtimeConvergenceWithoutApply } from "../src/runtime/manifest-planning";
-import { recordValue } from "../src/runtime/manifest-shared";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
 	loadRemoteRuntimeManifest as loadRemoteRuntimeManifestWithContext,
@@ -116,6 +115,7 @@ import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "../src/runtime/systemd-us
 import { TRANSPARENT_EGRESS_PORT } from "../src/runtime/transparent-egress";
 import { log } from "../src/serve/log";
 import { getDaemonControlTokenPath } from "../src/serve/paths";
+import { writeFakeOpenClawConfigMutationSdk } from "../src/test-support/openclaw-config-mutation";
 import { ensureTestOpenClawWorkspaceCli } from "../src/test-support/runtime-workspace";
 import { mockFetch } from "./commands/helpers";
 
@@ -978,6 +978,39 @@ function hostedRuntimeWatchLocalePayload(
 	};
 }
 
+async function hostedChannelBundleLoad(
+	home: string,
+	runtime: "hermes" | "openclaw",
+	generation: number,
+	channelBindings: RuntimeBundleChannelBinding[],
+	secretValues: Record<string, string>,
+): Promise<RuntimeManifestLoad> {
+	const payload = hostedRuntimeWatchLocalePayload(home, generation, "en", "UTC");
+	const { primary_model: _primary, ...entry } =
+		runtime === "hermes" ? hostedHermesRuntime() : hostedOpenClawRuntime();
+	const response = hostedRuntimeBundleResponse({
+		manifest: {
+			...payload.manifest,
+			runtime,
+			providers: {},
+			system: runtime === "hermes" ? hostedHermesSystemFixture(home) : hostedSystemFixture(home),
+			runtimes: {
+				[runtime]: {
+					...entry,
+					providerMode: "unmanaged",
+					provider_ids: [],
+					run: entry.run,
+				},
+			},
+		},
+		channelBindings,
+		secretValues,
+	});
+	return applyRuntimeBundleChannelsToManifestLoad(
+		parseHostedRuntimeBundleV2(await response.json(), "test://channel-bundle"),
+	);
+}
+
 function hostedEgressSecretRotationPayload(
 	home: string,
 	egressEngine: typeof TEST_EGRESS_ENGINE_PIN,
@@ -1427,10 +1460,10 @@ function installSuccessfulSystemctlFixture(
 	process.env.CLAWDI_RUNTIME_USER = TEST_PROCESS_USER;
 }
 
-function startHealthyOpenClawGateway() {
+function startHealthyOpenClawGateway(port = 0) {
 	const server = Bun.serve({
 		hostname: "127.0.0.1",
-		port: 0,
+		port,
 		fetch(request) {
 			const path = new URL(request.url).pathname;
 			if (request.method === "GET" && path === "/readyz") {
@@ -2225,6 +2258,20 @@ function writeTestRuntimeAppliedState(
 			...[...systemdUnits.system].filter(([unit]) => unit !== RUNTIME_WATCH_SYSTEM_UNIT),
 			...systemdUnits.user,
 		]);
+	if (load.sourceBundle !== undefined) {
+		// Canonical bundles need the real source-cache commit as well as the applied receipt.
+		commitRuntimeAppliedState({
+			load,
+			paths,
+			convergence,
+			sourceRevision,
+			etag: input.etag ?? load.etag ?? `"sha256:${sourceRevision}"`,
+			applyIdentity: applyContext?.identity ?? null,
+			activated,
+			officialServiceCommandRevisions: input.officialServiceCommandRevisions ?? {},
+		});
+		return;
+	}
 	writeRuntimeAppliedState(
 		{
 			schemaVersion: "clawdi.runtimeAppliedState.v2",
@@ -6535,13 +6582,12 @@ cp '${sdkSource}' '${sdkTarget}'
 		const bin = join(root, "bin");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
 		const openclawUnit = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
-		const openclawPatch = join(root, "openclaw-watch-channel-patch.jsonl");
 		const sidecarReadyPath = join(run, "egress", "systemd", "ca.pem");
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
-		writeOpenClawConfigMutationFixture(home, { gateway: startHealthyOpenClawGateway() });
+		writeOpenClawConfigMutationFixture(home, { gateway: startHealthyOpenClawGateway(18789) });
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(
 			openclawBin,
@@ -6555,11 +6601,7 @@ if [ "$*" = "agents list --json" ]; then
   printf '[{"id":"main","workspace":"${join(home, ".openclaw", "workspace")}"}]\\n'
   exit 0
 fi
-if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
-  cat >> '${openclawPatch}'
-  printf '\\n' >> '${openclawPatch}'
-  exit 0
-fi
+${fakeOpenClawConfigPatchCommand(join(home, ".openclaw", "openclaw.json"))}
 if [ "$*" = "gateway install --force --json" ]; then
   mkdir -p '${dirname(openclawUnit)}'
   printf '%s\\n' '[Unit]' '[Service]' 'ExecStart=${openclawBin} gateway run' > '${openclawUnit}'
@@ -6740,7 +6782,7 @@ exit 64
 			expect(gatewayEnv).not.toContain("OPENCLAW_GATEWAY_TOKEN");
 			expect(gatewayEnv).not.toContain("gateway-token-watch");
 			expect(watchEnv).not.toContain("file-runtime-token");
-			const patchText = readFileSync(openclawPatch, "utf-8");
+			const patchText = readFileSync(join(home, ".openclaw", "openclaw.json"), "utf-8");
 			expect(patchText).toContain('"telegram"');
 			expect(patchText).toContain('"botToken"');
 			expect(patchText).toContain(
@@ -6869,6 +6911,7 @@ exit 64
 			stateRoot: join(root, "systemctl-generation-state"),
 			sidecarReadyPath,
 		});
+		writeFakeOpenClawConfigMutationSdk(home);
 		seedOfficialOpenClawServiceInstaller(home);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -9170,8 +9213,6 @@ exit 64
 		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
 		const openclawUnit = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
-		const openclawPatch = join(root, "openclaw-channel-patch.json");
-		const openclawPatchArgs = join(root, "openclaw-channel-patch-args.txt");
 		const openclawPluginInstalls = join(root, "openclaw-plugin-installs.txt");
 		const openclawPluginSource = join(home, ".openclaw", "extensions", "discord", "index.js");
 		const previousExitCode = process.exitCode;
@@ -9181,6 +9222,7 @@ exit 64
 		mkdirSync(join(home, ".local", "bin"), { recursive: true });
 		mkdirSync(join(home, ".openclaw"), { recursive: true });
 		mkdirSync(join(root, "etc", "clawdi"), { recursive: true });
+		writeFakeOpenClawConfigMutationSdk(home);
 		writeFileSync(
 			join(home, ".openclaw", "openclaw.json"),
 			`${JSON.stringify(
@@ -9195,7 +9237,7 @@ exit 64
 									allowFrom: ["discord-user"],
 									guilds: { "discord-guild": { requireMention: true } },
 								},
-								stale: { enabled: true, token: "stale-token" },
+								personal: { enabled: true, token: "personal-token" },
 							},
 						},
 					},
@@ -9220,12 +9262,7 @@ if [ "$*" = "plugins install --help" ]; then
   printf '%s\\n' '--accept-capabilities'
   exit 0
 fi
-if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
-  printf '%s\n' "$*" >> '${openclawPatchArgs}'
-  cat >> '${openclawPatch}'
-  printf '\\n---\\n' >> '${openclawPatch}'
-  exit 0
-fi
+${fakeOpenClawConfigPatchCommand(join(home, ".openclaw", "openclaw.json"))}
 if [ "$*" = "plugins install @openclaw/discord --force --accept-capabilities" ]; then
   printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
   mkdir -p '${dirname(openclawPluginSource)}'
@@ -9329,63 +9366,55 @@ exit 64
 
 		try {
 			await runtimeInit({ nonInteractive: true, json: true });
+			expect(process.exitCode).toBe(23);
+			expect(JSON.parse(logs.at(-1) ?? "{}").errors.join("\n")).toContain("ownership changed");
+			expect(readRuntimeAppliedState(paths)).toBeNull();
+			const configPath = join(home, ".openclaw", "openclaw.json");
+			const native = JSON.parse(readFileSync(configPath, "utf8"));
+			expect(native.channels.discord.accounts.clawdi_acctdiscord1.token).toBe("user-token");
+			expect(native.channels.discord.accounts.personal).toEqual({
+				enabled: true,
+				token: "personal-token",
+			});
+			// Explicit native credential selection resolves the collision; convergence must retain policies.
+			native.channels.discord.accounts.clawdi_acctdiscord1.token = {
+				source: "env",
+				provider: "default",
+				id: "CLAWDI_CHANNEL_DISCORD_CLAWDI_ACCTDISCORD1_AGENT_TOKEN",
+			};
+			writeFileSync(configPath, JSON.stringify(native));
+			process.exitCode = undefined;
+			await runtimeInit({ nonInteractive: true, json: true });
 
 			if (process.exitCode !== undefined && process.exitCode !== 0) {
 				throw new Error(logs.join("\n"));
 			}
 			expect(process.exitCode).toBe(0);
-			expect(captured).toHaveLength(1);
+			expect(captured).toHaveLength(2);
 			expect(captured[0].path).toBe("/v1/runtime/manifest");
 			expect(readRuntimeAppliedState(paths)).toMatchObject({
 				etag: testBundleEtag("manifest-etag-init-7"),
 				generation: 7,
 			});
 			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
-			const patchText = readFileSync(openclawPatch, "utf-8");
-			expect(patchText).not.toContain('"$patch"');
-			expect(patchText).toContain('"telegram"');
-			expect(patchText).toContain('"botToken": {');
-			expect(patchText).toContain(
-				'"id": "CLAWDI_CHANNEL_TELEGRAM_CLAWDI_ACCTTELEGRAM_AGENT_TOKEN"',
-			);
-			expect(patchText).not.toContain("agent-token-init");
-			expect(patchText).toContain('"discord"');
-			expect(patchText).toContain('"token": {');
-			expect(patchText).toContain('"id": "CLAWDI_CHANNEL_DISCORD_CLAWDI_ACCTDISCORD1_AGENT_TOKEN"');
-			expect(patchText).not.toContain("discord-agent-token-init");
-			expect(patchText).toContain('"default": {');
-			expect(patchText).toContain('"source": "env"');
-			expect(patchText).toContain('"plugins"');
-			expect(patchText).toContain('"dmScope": "per-account-channel-peer"');
-			expect(patchText).not.toContain('"streaming"');
-			expect(readFileSync(openclawPatchArgs, "utf-8")).toContain(
-				"config patch --stdin --replace-path channels.telegram.accounts --replace-path channels.discord.accounts",
-			);
-			const isolationPatch = patchText
-				.split("\n---\n")
-				.filter((entry) => entry.trim().length > 0)
-				.map((entry): unknown => JSON.parse(entry))
-				.map((entry) => expectRecord(entry, "OpenClaw config patch"))
-				.find((entry) => entry.session !== undefined);
-			if (!isolationPatch) throw new Error("OpenClaw session isolation patch was not rendered");
-			const sessionPatch = expectRecord(isolationPatch.session, "OpenClaw session patch");
-			expect(sessionPatch).toEqual({ dmScope: "per-account-channel-peer" });
-			const channelPatch = patchText
-				.split("\n---\n")
-				.filter((entry) => entry.trim().length > 0)
-				.map((entry): unknown => JSON.parse(entry))
-				.map((entry) => expectRecord(entry, "OpenClaw config patch"))
-				.find((entry) => recordValue(entry.channels)?.telegram !== undefined);
-			if (!channelPatch) throw new Error("OpenClaw channel patch was not rendered");
-			const patchedChannels = expectRecord(channelPatch.channels, "OpenClaw channel patch");
-			const discordAccounts = expectRecord(
-				expectRecord(patchedChannels.discord, "OpenClaw Discord patch").accounts,
-				"OpenClaw Discord accounts",
-			);
-			const discordAccount = expectRecord(
-				discordAccounts.clawdi_acctdiscord1,
-				"OpenClaw Discord account",
-			);
+			const nativeConfigText = readFileSync(configPath, "utf8");
+			const nativeConfig = JSON.parse(nativeConfigText);
+			expect(nativeConfigText).not.toContain("agent-token-init");
+			expect(nativeConfigText).not.toContain("discord-agent-token-init");
+			expect(nativeConfig.channels.telegram.accounts.clawdi_accttelegram.botToken).toEqual({
+				source: "env",
+				provider: "default",
+				id: "CLAWDI_CHANNEL_TELEGRAM_CLAWDI_ACCTTELEGRAM_AGENT_TOKEN",
+			});
+			expect(nativeConfig.secrets.providers.default).toEqual({ source: "env" });
+			expect(nativeConfig.plugins.entries).toMatchObject({
+				telegram: { enabled: true },
+				discord: { enabled: true },
+			});
+			expect(nativeConfig.session.dmScope).toBe("per-account-channel-peer");
+			expect(nativeConfig.channels).not.toHaveProperty("streaming");
+			const discordAccounts = nativeConfig.channels.discord.accounts;
+			const discordAccount = discordAccounts.clawdi_acctdiscord1;
 			expect(discordAccount).toMatchObject({
 				enabled: true,
 				token: {
@@ -9397,13 +9426,8 @@ exit 64
 				allowFrom: ["discord-user"],
 				guilds: { "discord-guild": { requireMention: true } },
 			});
-			expect(Object.keys(discordAccounts)).toEqual(["clawdi_acctdiscord1"]);
-			for (const current of ["main", "per-peer", "per-channel-peer", "per-account-channel-peer"]) {
-				expect({ dmScope: current, resetTriggers: ["/new"], ...sessionPatch }).toEqual({
-					dmScope: "per-account-channel-peer",
-					resetTriggers: ["/new"],
-				});
-			}
+			expect(Object.keys(discordAccounts).sort()).toEqual(["clawdi_acctdiscord1", "personal"]);
+			expect(discordAccounts.personal).toEqual({ enabled: true, token: "personal-token" });
 			expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe(
 				"plugins install @openclaw/discord --force --accept-capabilities\n",
 			);
@@ -9474,7 +9498,7 @@ exit 64
 			expect(profileBundleText).not.toContain("agent-token-init");
 			expect(profileBundleText).not.toContain("replacementSecretRef");
 			expect(profileBundleText).toContain("placeholder-token");
-			const status = JSON.parse(logs[0] ?? "{}");
+			const status = JSON.parse(logs.at(-1) ?? "{}");
 			expect(status.status).toBe("ok");
 			expect(status.activeGeneration).toBe(7);
 		} finally {
@@ -9814,7 +9838,7 @@ exit 64
 		expect(discordOnlyHermesConfig.group_sessions_per_user).toBe(false);
 		expect(discordOnlyHermesConfig.thread_sessions_per_user).toBe(true);
 		expect(discordOnlyHermesConfig.telegram).toMatchObject({
-			enabled: false,
+			enabled: true,
 			dm_policy: "allowlist",
 			group_policy: "allowlist",
 			allow_from: ["telegram-user"],
@@ -9836,9 +9860,13 @@ exit 64
 			paths,
 		);
 		expect(removed.installErrors).toEqual([]);
+		expect(readSystemdEnvFile(paths, "hermes-gateway")).not.toContain("TELEGRAM_BOT_TOKEN=");
+		expect(readSystemdEnvFile(paths, "hermes-gateway")).not.toContain("DISCORD_BOT_TOKEN=");
 		const clearedHermesConfig = readHermesConfigYaml(home);
 		expect(clearedHermesConfig.streaming).toEqual({ enabled: false });
+		expect(clearedHermesConfig.telegram.enabled).toBe(true);
 		expect(clearedHermesConfig.discord).toMatchObject({
+			enabled: true,
 			dm_policy: "pairing",
 			group_policy: "allowlist",
 			allow_from: ["discord-user"],
@@ -9875,13 +9903,13 @@ exit 64
 		});
 	}, 30_000);
 
-	it("projects and removes Hermes native WhatsApp through the stock adapter config", () => {
+	it("projects and removes Hermes native WhatsApp through the stock adapter config", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "clawdi");
 		const hermesBin = join(home, ".local", "bin", "hermes");
-		const accountId = "00000000-0000-0000-0000-000000000001";
+		const accountId = "00000000-0000-4000-8000-000000000001";
 		const accountKey = "clawdi_000000000000";
 		const linkId = "60000000-0000-4000-8000-000000000006";
 		const credentialId = "80000000-0000-4000-8000-000000000011";
@@ -9951,76 +9979,34 @@ exit 64
 		mkdirSync(legacySessionDir, { recursive: true });
 		writeFileSync(legacySentinel, "preserved\n");
 
-		const load: RuntimeManifestLoad = {
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				runtime: "hermes",
-				deploymentId: "dep_hermes_whatsapp",
-				environmentId: "env_hermes_whatsapp",
-				instanceId: "iid_hermes_whatsapp",
-				generation: 14,
-				issuedAt: "2026-07-07T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.test/" },
-				clawdiCli: {
-					source: "npm:clawdi",
-					packageSpec: "clawdi@0.13.66",
-					registry: "https://registry.npmjs.org",
-				},
-				egressEngine: seedMitmproxyCache(paths),
-				runtimes: {
-					hermes: {
-						enabled: true,
-						install: {
-							authority: "official",
-							method: "official-installer",
-							url: "https://hermes-agent.nousresearch.com/install.sh",
-							home,
-							args: [],
-						},
-						run: {
-							args: ["gateway", "run"],
-							env: { HERMES_EXISTING_ENV: "kept" },
-							prependPath: [],
-						},
-						services: {},
-					},
-				},
-				projection: {
-					system: { home, workspace },
-				},
-				recovery: {},
-			},
-			source: "remote-datasource",
-			sourcePath: "test://hermes-whatsapp",
-			offline: false,
-			secretValues: {
-				[agentTokenSecretRef]: "wa-hermes-agent-token",
-				[capabilitySecretRef]: capability,
-				[credentialSecretRef]: JSON.stringify(creds),
-			},
-			channelBindings: [
-				{
-					provider: "whatsapp",
-					accountId,
-					accountKey,
-					linkId,
-					agentTokenSecretRef,
-					placeholderTokenSecretRef: capabilitySecretRef,
-					credential: {
-						id: credentialId,
-						credsSecretRef: credentialSecretRef,
-						authCert: {
-							SERIAL: 7,
-							ISSUER: "clawdi",
-							PUBLIC_KEY: {
-								type: "Buffer",
-								data: Buffer.alloc(32, 7).toString("base64"),
-							},
-						},
-					},
-				},
-			],
+		const channelSecrets = {
+			[agentTokenSecretRef]: "wa-hermes-agent-token",
+			[capabilitySecretRef]: capability,
+			[credentialSecretRef]: JSON.stringify(creds),
 		};
+		const channelBindings: RuntimeBundleChannelBinding[] = [
+			{
+				provider: "whatsapp",
+				accountId,
+				accountKey,
+				linkId,
+				agentTokenSecretRef,
+				placeholderTokenSecretRef: capabilitySecretRef,
+				credential: {
+					id: credentialId,
+					credsSecretRef: credentialSecretRef,
+					authCert: {
+						SERIAL: 7,
+						ISSUER: "clawdi",
+						PUBLIC_KEY: {
+							type: "Buffer",
+							data: Buffer.alloc(32, 7).toString("base64"),
+						},
+					},
+				},
+			},
+		];
+		const load = await hostedChannelBundleLoad(home, "hermes", 14, channelBindings, channelSecrets);
 
 		const projected = applyRuntimeBundleChannelsToManifestLoad(load, paths);
 		const credentialProjection = projected.manifest.projection?.channelCredentials as unknown[];
@@ -10050,7 +10036,6 @@ exit 64
 			},
 		});
 		expect(projected.manifest.runtimes.hermes?.run?.env).toMatchObject({
-			HERMES_EXISTING_ENV: "kept",
 			WHATSAPP_MODE: "bot",
 			WHATSAPP_ALLOWED_USERS: "*",
 			WHATSAPP_ALLOW_ALL_USERS: "true",
@@ -10119,30 +10104,18 @@ exit 64
 			initialHermesRevision,
 		);
 
-		const projectedCreds = JSON.parse(
-			projected.secretValues?.[credentialSecretRef] ?? "null",
-		) as Record<string, unknown>;
 		const beforeCredentialChange = readSystemdUnitSnapshot(paths);
 		process.env.CLAWDI_SYSTEMD_APPLY = "0";
-		const changedCheckpoint: RuntimeManifestLoad = {
-			...projected,
-			manifest: {
-				...projected.manifest,
-				clawdiCli: {
-					...projected.manifest.clawdiCli,
-					packageSpec: "clawdi@0.13.67",
-				},
-			},
-			secretValues: {
-				...projected.secretValues,
-				[credentialSecretRef]: JSON.stringify({
-					...projectedCreds,
-					advSecretKey: "wa-hermes-secret-rotated",
-				}),
-			},
-		};
+		const changedCheckpoint = await hostedChannelBundleLoad(home, "hermes", 14, channelBindings, {
+			...channelSecrets,
+			[credentialSecretRef]: JSON.stringify({
+				...creds,
+				advSecretKey: "wa-hermes-secret-rotated",
+			}),
+		});
 		const changedCredential = convergeRuntimeManifest(changedCheckpoint, paths);
 		expect(changedCredential.installErrors).toEqual([]);
+		writeTestRuntimeAppliedState(paths, changedCheckpoint, changedCredential);
 		expect(systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"))).not.toBe(
 			initialHermesRevision,
 		);
@@ -10158,10 +10131,7 @@ exit 64
 		const systemctlCalls = readFileSync(systemctlLog, "utf-8");
 		expect(systemctlCalls).toContain("--user restart hermes-gateway.service");
 
-		const removed = applyRuntimeBundleChannelsToManifestLoad(
-			{ ...load, channelBindings: [], secretValues: {} },
-			paths,
-		);
+		const removed = await hostedChannelBundleLoad(home, "hermes", 15, [], {});
 		const patchedSocket = readFileSync(baileysSocket, "utf8");
 		writeFileSync(
 			baileysSocket,
@@ -10181,20 +10151,27 @@ exit 64
 		writeFileSync(baileysSocket, patchedSocket);
 		const removedConvergence = convergeRuntimeManifest(removed, paths);
 		expect(removedConvergence.installErrors).toEqual([]);
-		expect(existsSync(paths.egressProfileBundle)).toBe(false);
+		expect(readFileSync(paths.egressProfileBundle, "utf8")).not.toContain(
+			"native-whatsapp-baileys-managed",
+		);
+		expect(readFileSync(join(run, "secrets", "egress-secrets.json"), "utf8")).not.toContain(
+			agentTokenSecretRef,
+		);
 		expect(existsSync(sessionDir)).toBe(false);
+		writeTestRuntimeAppliedState(paths, removed, removedConvergence);
 		const removedHermesConfig = readHermesConfigYaml(home);
+		expect(removedHermesConfig).not.toHaveProperty("platforms.whatsapp.extra.session_path");
 		expect(removedHermesConfig).toHaveProperty("whatsapp", {
 			user_owned: "keep-whatsapp",
 			dm_policy: "allowlist",
 			allow_from: ["15550000001"],
 			group_policy: "allowlist",
 			group_allow_from: ["120363000000000000@g.us"],
-			enabled: false,
+			enabled: true,
 		});
 		expect(removedHermesConfig).toHaveProperty("platforms.whatsapp", {
 			custom: "keep-platform",
-			enabled: false,
+			enabled: true,
 			extra: {
 				custom_extra: "keep-extra",
 				dm_policy: "allowlist",
@@ -10235,10 +10212,13 @@ exit 64
 		const driftRepair = convergeRuntimeManifest(removed, paths);
 		expect(driftRepair.installErrors).toEqual([]);
 		expect(readHermesConfigYaml(home)).toMatchObject({
-			whatsapp: { enabled: false, user_owned: "manual" },
-			platforms: { whatsapp: { enabled: false } },
+			whatsapp: { enabled: true, user_owned: "manual" },
+			platforms: { whatsapp: { enabled: true } },
 		});
-		expect(readHermesConfigYaml(home)).not.toHaveProperty("platforms.whatsapp.extra.session_path");
+		expect(readHermesConfigYaml(home)).toHaveProperty(
+			"platforms.whatsapp.extra.session_path",
+			"/user/session",
+		);
 		expect(systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"))).toBe(
 			removedHermesRevision,
 		);
@@ -10253,7 +10233,6 @@ exit 64
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "clawdi");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
-		const openclawPatch = join(root, "openclaw-channel-delete-patch.jsonl");
 		const openclawPluginInstalls = join(root, "openclaw-whatsapp-plugin-installs.txt");
 		const openclawPluginSource = join(
 			home,
@@ -10269,11 +10248,7 @@ exit 64
 			openclawBin,
 			`#!/usr/bin/env bash
 set -euo pipefail
-if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
-  cat >> '${openclawPatch}'
-  printf '\\n---\\n' >> '${openclawPatch}'
-  exit 0
-fi
+${fakeOpenClawConfigPatchCommand(join(home, ".openclaw", "openclaw.json"))}
 if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw 2026.7.1-2\\n'
   exit 0
@@ -10296,6 +10271,7 @@ exit 0
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
+		writeFakeOpenClawConfigMutationSdk(home);
 		const loaded = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 8);
 		loaded.manifest.projection = {
 			...loaded.manifest.projection,
@@ -10313,9 +10289,20 @@ exit 0
 			},
 		};
 
-		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
-		const unchangedConvergence = convergeRuntimeManifest(loaded, getRuntimePaths());
-		const removed: RuntimeManifestLoad = {
+		const paths = getRuntimePaths();
+		const convergence = convergeRuntimeManifest(loaded, paths);
+		expect(convergence.installErrors).toEqual([]);
+		const configPath = join(home, ".openclaw", "openclaw.json");
+		const configured = JSON.parse(readFileSync(configPath, "utf8"));
+		expect(configured.channels.whatsapp.accounts.clawdi_whatsapp.authDir).toBe(
+			join(home, ".openclaw", "credentials", "whatsapp"),
+		);
+		expect(configured.session.dmScope).toBe("per-account-channel-peer");
+		expect(convergeRuntimeManifest(loaded, paths).installErrors).toEqual([]);
+		expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual(configured);
+		// This synthetic source has no committed bundle: omission must not authorize native deletion.
+		expect(readRuntimeAppliedState(paths)).toBeNull();
+		const removed = {
 			...loaded,
 			manifest: {
 				...loaded.manifest,
@@ -10323,27 +10310,11 @@ exit 0
 				projection: { ...loaded.manifest.projection, channels: {} },
 			},
 		};
-		const removedConvergence = convergeRuntimeManifest(removed, getRuntimePaths());
-
-		expect(convergence.installErrors).toEqual([]);
-		expect(unchangedConvergence.installErrors).toEqual([]);
-		expect(removedConvergence.installErrors).toEqual([]);
-		expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe(
+		expect(convergeRuntimeManifest(removed, paths).installErrors).toEqual([]);
+		expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual(configured);
+		expect(readFileSync(openclawPluginInstalls, "utf8")).toBe(
 			"plugins install clawhub:@openclaw/whatsapp@2026.7.1 --force\n",
 		);
-		const patches = readFileSync(openclawPatch, "utf-8")
-			.split("\n---\n")
-			.filter((entry) => entry.trim().length > 0)
-			.map((entry) => JSON.parse(entry))
-			.filter((patch) => Object.hasOwn(patch, "channels"));
-		expect(patches).toHaveLength(3);
-		expect(patches[0].channels.whatsapp.accounts).toHaveProperty("clawdi_whatsapp");
-		expect(patches[0].channels.whatsapp.accounts.clawdi_whatsapp.authDir).toBe(
-			join(home, ".openclaw", "credentials", "whatsapp"),
-		);
-		expect(patches[0].session).toEqual({ dmScope: "per-account-channel-peer" });
-		expect(patches[2].channels.whatsapp).toBeNull();
-		expect(patches[2].session).toEqual({ dmScope: null });
 	});
 
 	it("reinstalls OpenClaw WhatsApp when the installed version differs", () => {
@@ -10374,10 +10345,7 @@ if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw 2026.7.1-2\\n'
   exit 0
 fi
-if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
-  cat >/dev/null
-  exit 0
-fi
+${fakeOpenClawConfigPatchCommand(join(home, ".openclaw", "openclaw.json"))}
 if [ "$*" = "plugins install clawhub:@openclaw/whatsapp@2026.7.1 --force" ]; then
   printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
   touch '${installedMarker}'
@@ -10400,6 +10368,7 @@ exit 0
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 
+		writeFakeOpenClawConfigMutationSdk(home);
 		const loaded = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 10);
 		loaded.manifest.projection = {
 			...loaded.manifest.projection,
@@ -10455,6 +10424,9 @@ exit 0
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_SYSTEMD_APPLY = "0";
 		const paths = getRuntimePaths();
+		const nativeConfigPath = writeFakeOpenClawConfigMutationSdk(home, {
+			initialConfig: { channels: { telegram: { botToken: "user-token" } } },
+		});
 		const liveFiles = [
 			join(paths.runConfigRoot, "openclaw.json"),
 			join(paths.runConfigRoot, "stale-runtime.json"),
@@ -10465,7 +10437,7 @@ exit 0
 			writeFileSync(path, `generation-1:${path.split("/").at(-1)}\n`);
 		}
 		const previousLiveSnapshot = Object.fromEntries(
-			liveFiles.map((path) => [path, readFileSync(path, "utf-8")]),
+			[...liveFiles, nativeConfigPath].map((path) => [path, readFileSync(path, "utf-8")]),
 		);
 		const loaded = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 2);
 		loaded.manifest.projection = {
@@ -10728,13 +10700,12 @@ exit 64
 		expect(existsSync(openclawPluginInstalls)).toBe(false);
 	});
 
-	it("removes stale native channels when a later projection omits them", () => {
+	it("removes only committed managed accounts when a later projection omits them", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "clawdi");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
-		const openclawPatch = join(root, "openclaw-channel-remove-patch.jsonl");
 		const openclawPluginInstalls = join(root, "openclaw-plugin-installs.txt");
 		const openclawPluginSource = join(home, ".openclaw", "extensions", "discord", "index.js");
 		mkdirSync(join(home, ".local", "bin"), { recursive: true });
@@ -10751,11 +10722,7 @@ if [ "$*" = "plugins install --help" ]; then
   printf '%s\\n' '--accept-capabilities'
   exit 0
 fi
-if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
-  cat >> '${openclawPatch}'
-  printf '\\n---\\n' >> '${openclawPatch}'
-  exit 0
-fi
+${fakeOpenClawConfigPatchCommand(join(home, ".openclaw", "openclaw.json"))}
 if [ "$*" = "plugins install @openclaw/discord --force --accept-capabilities" ]; then
   printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
   mkdir -p '${dirname(openclawPluginSource)}'
@@ -10775,52 +10742,73 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		const manifestWithChannels = (
-			channels: Record<string, unknown>,
-			generation: number,
-		): RuntimeManifestLoad => {
-			const loaded = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", generation);
-			loaded.manifest.projection = { ...loaded.manifest.projection, channels };
-			return loaded;
-		};
-		const telegramChannel = {
-			enabled: true,
-			defaultAccount: "default",
-			accounts: { default: { enabled: true, botToken: "telegram-token" } },
-		};
-
-		const initial = convergeRuntimeManifest(
-			manifestWithChannels(
-				{
-					telegram: telegramChannel,
-					discord: { enabled: true, token: "discord-token" },
-				},
-				1,
-			),
-			getRuntimePaths(),
+		const personal = { enabled: true, token: "native-personal-token", dmPolicy: "pairing" };
+		const configPath = writeFakeOpenClawConfigMutationSdk(home, {
+			initialConfig: {
+				channels: { discord: { defaultAccount: "personal", accounts: { personal } } },
+			},
+		});
+		const bindings = (["telegram", "discord"] as const).map((provider) => ({
+			provider,
+			accountKey: `clawdi_${provider}`,
+			agentTokenSecretRef: `secret://channels/${provider}/clawdi_${provider}/agent-token`,
+			placeholderTokenSecretRef: `secret://channels/${provider}/clawdi_${provider}/placeholder-token`,
+		}));
+		const secrets = Object.fromEntries(
+			bindings.flatMap((binding) => [
+				[binding.agentTokenSecretRef, `${binding.provider}-agent-token`],
+				[
+					binding.placeholderTokenSecretRef,
+					binding.provider === "telegram"
+						? `999999999:${"0".repeat(32)}`
+						: `clawdi_${"0".repeat(32)}`,
+				],
+			]),
 		);
-		const removed = convergeRuntimeManifest(
-			manifestWithChannels({ telegram: telegramChannel }, 2),
-			getRuntimePaths(),
-		);
-		const unlinked = convergeRuntimeManifest(manifestWithChannels({}, 3), getRuntimePaths());
-
+		const paths = getRuntimePaths();
+		const initialLoad = await hostedChannelBundleLoad(home, "openclaw", 1, bindings, secrets);
+		const initial = convergeAndCommitTestRuntimeManifest(initialLoad, paths);
 		expect(initial.installErrors).toEqual([]);
+		const configured = JSON.parse(readFileSync(configPath, "utf8"));
+		expect(configured.channels.discord.accounts).toMatchObject({
+			personal,
+			clawdi_discord: { enabled: true },
+		});
+		expect(configured.channels.telegram.accounts).toHaveProperty("clawdi_telegram");
+		expect(configured.session.dmScope).toBe("per-account-channel-peer");
+
+		const telegramOnly = bindings.filter((binding) => binding.provider === "telegram");
+		const telegramSecrets = Object.fromEntries(
+			Object.entries(secrets).filter(([ref]) => ref.includes("/telegram/")),
+		);
+		const removedLoad = await hostedChannelBundleLoad(
+			home,
+			"openclaw",
+			2,
+			telegramOnly,
+			telegramSecrets,
+		);
+		const removed = convergeAndCommitTestRuntimeManifest(removedLoad, paths);
 		expect(removed.installErrors).toEqual([]);
+		const remaining = JSON.parse(readFileSync(configPath, "utf8"));
+		expect(remaining.channels.discord.accounts).toEqual({ personal });
+		expect(remaining.channels.discord.defaultAccount).toBe("personal");
+		expect(remaining.plugins.entries.discord.enabled).toBe(true);
+		expect(remaining.channels.telegram).toEqual(configured.channels.telegram);
+		expect(readSystemdEnvFile(paths, "openclaw-gateway")).not.toContain(
+			"CLAWDI_CHANNEL_DISCORD_CLAWDI_DISCORD_AGENT_TOKEN=",
+		);
+
+		const unlinkedLoad = await hostedChannelBundleLoad(home, "openclaw", 3, [], {});
+		const unlinked = convergeAndCommitTestRuntimeManifest(unlinkedLoad, paths);
 		expect(unlinked.installErrors).toEqual([]);
-		const patches = readFileSync(openclawPatch, "utf-8")
-			.split("\n---\n")
-			.filter((entry) => entry.trim().length > 0)
-			.map((entry) => JSON.parse(entry))
-			.filter((patch) => Object.hasOwn(patch, "channels"));
-		expect(patches).toHaveLength(3);
-		expect(patches[0].channels.discord).toEqual({ enabled: true, token: "discord-token" });
-		expect(patches[0].session).toEqual({ dmScope: "per-account-channel-peer" });
-		expect(patches[1].channels.discord).toBeNull();
-		expect(patches[1].plugins.entries.discord).toBeNull();
-		expect(patches[1].channels.telegram).toEqual(telegramChannel);
-		expect(patches[2].session).toEqual({ dmScope: null });
-		expect(patches[2].channels.telegram).toBeNull();
+		const final = JSON.parse(readFileSync(configPath, "utf8"));
+		expect(final.channels.telegram.accounts).toEqual({});
+		expect(final.channels.discord).toEqual(remaining.channels.discord);
+		expect(final.session.dmScope).toBe("per-account-channel-peer");
+		expect(readSystemdEnvFile(paths, "openclaw-gateway")).not.toContain(
+			"CLAWDI_CHANNEL_TELEGRAM_CLAWDI_TELEGRAM_AGENT_TOKEN=",
+		);
 		expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe(
 			"plugins install @openclaw/discord --force --accept-capabilities\n",
 		);
@@ -10831,7 +10819,6 @@ exit 64
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
-		const openclawPatch = join(root, "openclaw-channel-patch.json");
 		const openclawPluginInstalls = join(root, "openclaw-plugin-installs.txt");
 		const openclawPluginSource = join(home, ".openclaw", "extensions", "discord", "index.js");
 		mkdirSync(dirname(openclawBin), { recursive: true });
@@ -10849,10 +10836,7 @@ if [ "$*" = "plugins install --help" ]; then
   printf '%s\\n' '--accept-capabilities'
   exit 0
 fi
-if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
-  cat > '${openclawPatch}'
-  exit 0
-fi
+${fakeOpenClawConfigPatchCommand(join(home, ".openclaw", "openclaw.json"))}
 if [ "$*" = "plugins install @openclaw/discord --force --accept-capabilities" ]; then
   printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
   printf '%s\\n' 'export const discordPlugin = true;' > '${openclawPluginSource}'
@@ -10872,11 +10856,15 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 
+		writeFakeOpenClawConfigMutationSdk(home);
 		const loaded = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 2);
 		loaded.manifest.projection = {
 			...loaded.manifest.projection,
 			channels: {
-				discord: { token: "secret://channels/discord/acct-discord-1" },
+				discord: {
+					enabled: true,
+					accounts: { managed: { enabled: true, token: "native-discord-token" } },
+				},
 			},
 		};
 
@@ -10884,9 +10872,12 @@ exit 64
 
 		expect(convergence.installErrors).toEqual([]);
 		expect(existsSync(openclawPluginInstalls)).toBe(false);
-		const patchText = readFileSync(openclawPatch, "utf-8");
-		expect(patchText).toContain('"discord"');
-		expect(patchText).toContain('"plugins"');
+		const native = JSON.parse(readFileSync(join(home, ".openclaw", "openclaw.json"), "utf8"));
+		expect(native.channels.discord.accounts.managed).toEqual({
+			enabled: true,
+			token: "native-discord-token",
+		});
+		expect(native.plugins.entries.discord.enabled).toBe(true);
 	});
 
 	it("derives hosted workspace and explicit process cwd from HOME", async () => {

@@ -34,7 +34,9 @@ if (
 ) {
   throw new Error("required public config-mutation export is missing");
 }
-const patch = JSON.parse(readFileSync(0, "utf8"));
+const input = JSON.parse(readFileSync(0, "utf8"));
+const channelMutation = process.argv[2] === "channels";
+const patch = channelMutation ? input.patch : input;
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 if (!isRecord(patch)) throw new Error("OpenClaw provider patch must be an object");
 const blockedKeys = new Set(["__proto__", "constructor", "prototype"]);
@@ -82,20 +84,98 @@ const repairsUnsupportedMemorySearch =
 if (
   !snapshot ||
   !isRecord(sourceConfig) ||
-  (snapshot.valid !== true && !repairsUnsupportedMemorySearch)
+  (snapshot.valid !== true && !repairsUnsupportedMemorySearch && !channelMutation)
 ) {
   throw new Error("OpenClaw config snapshot is unavailable for provider projection");
 }
+const applyChannelPatch = (draft) => {
+  const desired = structuredClone(patch);
+  const channels = {};
+  for (const provider of ["telegram", "discord", "whatsapp"]) {
+    const selected = desired.channels?.[provider];
+    const selectedAccounts = selected?.accounts ?? {};
+    const current = draft.channels?.[provider];
+    const currentAccounts = current?.accounts ?? {};
+    const previous = input.previousChannels?.[provider];
+    const previousAccounts = previous?.accounts ?? {};
+    const credential = provider === "telegram" ? "botToken" : provider === "discord" ? "token" : "authDir";
+    const matches = (actual, owned) => isRecord(actual) && isRecord(owned) &&
+      Object.hasOwn(owned, credential) && isDeepStrictEqual(actual[credential], owned[credential]);
+    const accounts = {};
+    for (const [id, owned] of Object.entries(previousAccounts)) {
+      if (!Object.hasOwn(selectedAccounts, id) && matches(currentAccounts[id], owned)) accounts[id] = null;
+    }
+    for (const [id, account] of Object.entries(selectedAccounts)) {
+      if (!isRecord(account)) throw new Error("Invalid managed channel account");
+      if (!Object.hasOwn(currentAccounts, id)) accounts[id] = account;
+      else {
+        if (!matches(currentAccounts[id], account) && !matches(currentAccounts[id], previousAccounts[id])) {
+          throw new Error("Native channel account ownership changed; refusing managed update");
+        }
+        accounts[id] = { enabled: account.enabled, [credential]: account[credential] };
+      }
+    }
+    if (Object.keys(accounts).length === 0) continue;
+    const channel = { ...(selected ? { enabled: true } : {}), accounts };
+    if (!current && selected?.defaultAccount !== undefined) channel.defaultAccount = selected.defaultAccount;
+    else if (typeof current?.defaultAccount === "string" && accounts[current.defaultAccount] === null &&
+        previous?.defaultAccount === current.defaultAccount) channel.defaultAccount = selected?.defaultAccount ?? null;
+    channels[provider] = channel;
+  }
+  desired.channels = channels;
+  applyMergePatch(draft, desired);
+  // A retained entry is not delete authority. Reject missing managed references instead of
+  // committing an invalid configuration after its environment has been withdrawn.
+  for (const provider of ["telegram", "discord"]) {
+    const channel = draft.channels?.[provider];
+    const credential = provider === "telegram" ? "botToken" : "token";
+    for (const account of [channel, ...Object.values(channel?.accounts ?? {})]) {
+      const ref = account?.[credential];
+      if (ref?.source === "env" && ref.provider === "default" && typeof ref.id === "string" &&
+          ref.id.startsWith("CLAWDI_CHANNEL_") && ref.id.endsWith("_AGENT_TOKEN") &&
+          !input.availableChannelEnv.includes(ref.id)) {
+        throw new Error("Retained channel references a withdrawn managed credential; ownership repair required");
+      }
+    }
+  }
+};
+const mergeNativeOptions = (legacy, current) => {
+  if (!isRecord(legacy) || !isRecord(current)) return structuredClone(current);
+  const merged = structuredClone(legacy);
+  for (const [key, value] of Object.entries(current)) {
+    if (blockedKeys.has(key)) throw new Error("Invalid native memory option");
+    merged[key] = Object.hasOwn(merged, key) ? mergeNativeOptions(merged[key], value) : structuredClone(value);
+  }
+  return merged;
+};
+const applyProviderPatch = (draft) => {
+  const desired = structuredClone(patch);
+  const defaults = isRecord(draft.agents) ? draft.agents.defaults : undefined;
+  const legacy = isRecord(defaults) ? defaults.memorySearch : undefined;
+  const current = isRecord(draft.memory) ? draft.memory.search : undefined;
+  const authored = mergeNativeOptions(isRecord(legacy) ? legacy : {}, isRecord(current) ? current : {});
+  const desiredDefaults = isRecord(desired.agents) ? desired.agents.defaults : undefined;
+  const searchContainer = isRecord(desired.memory?.search) ? desired.memory : desiredDefaults;
+  const searchKey = isRecord(desired.memory?.search) ? "search" : "memorySearch";
+  // A hosted embedding default does not own native selection. Read inside the native mutation
+  // as well as the preview, so a concurrent user edit is not restored from an earlier snapshot.
+  if (isRecord(searchContainer?.[searchKey])) {
+    searchContainer[searchKey] = Object.hasOwn(authored, "provider") || Object.hasOwn(authored, "model")
+      ? authored : { ...authored, ...searchContainer[searchKey] };
+  }
+  applyMergePatch(draft, desired);
+};
+const mutate = channelMutation ? applyChannelPatch : applyProviderPatch;
 const projected = structuredClone(sourceConfig);
-applyMergePatch(projected, patch);
-if (isDeepStrictEqual(projected, sourceConfig)) process.exit(0);
+mutate(projected);
+if (snapshot.valid === true && isDeepStrictEqual(projected, sourceConfig)) process.exit(0);
 explicitSetPaths.length = 0;
 unsetPaths.length = 0;
 await sdk.mutateConfigFile({
   base: "source",
   afterWrite: { mode: "none", reason: "Clawdi runtime convergence owns service reconciliation" },
   writeOptions: { allowConfigSizeDrop: true, explicitSetPaths, unsetPaths },
-  mutate: (draft) => applyMergePatch(draft, patch),
+  mutate,
 });
 `;
 export function applyOpenClawHostedProviderPatch(
@@ -131,6 +211,29 @@ export function applyOpenClawHostedProviderPatch(
 		workspaceRoot,
 	);
 	openClawProviderPatchRevisions.set(context.configPath, patchRevision);
+}
+
+export function applyOpenClawHostedChannelPatch(
+	patch: Record<string, unknown>,
+	previousChannels: Record<string, unknown> | null,
+	availableChannelEnv: string[],
+	context: OpenClawHostedContext,
+	workspaceRoot: string,
+): void {
+	// No custom IO: the official writer owns its cross-process lock, snapshot and commit checks.
+	runRuntimeUserCommand(
+		"node",
+		[
+			"--input-type=module",
+			"--eval",
+			OPENCLAW_CONFIG_MUTATION_HELPER,
+			context.requireSdkExport("configMutation"),
+			"channels",
+		],
+		JSON.stringify({ patch, previousChannels, availableChannelEnv }),
+		context.home,
+		workspaceRoot,
+	);
 }
 
 function adaptOpenClawMemorySearchPatch(
