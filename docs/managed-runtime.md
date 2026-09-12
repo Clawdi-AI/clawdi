@@ -332,6 +332,14 @@ service definitions and performs no service activation. Native Doctor still
 requires its user D-Bus manager to be available and owns its repair lifecycle;
 restoring the environment does not bypass native service or database checks.
 
+The official OpenClaw roster supplies workspace inventory, not proof that every
+startup migration is complete. Clawdi does not run Doctor or archive an identity
+merely because a legacy `identity/device.json` exists. Normal native startup owns
+valid identity migration and reports or refuses invalid state; final runtime
+readiness remains required. Automatic pre-start identity cleanup and conflict
+archival are no longer provided. Owners must resolve remaining native warnings
+or failures. Explicit config and reported startup-migration error repair remain.
+
 When Hermes service installation is necessary, Clawdi publishes its environment
 and drop-in first and invokes native `gateway install --force --no-start-now`.
 The existing activation phase starts the service after prerequisites are ready.

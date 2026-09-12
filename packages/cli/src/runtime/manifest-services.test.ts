@@ -673,6 +673,23 @@ afterEach(() => {
 });
 
 describe("runtime manifest services", () => {
+	test("leaves legacy identity handling to native startup during warm convergence", () => {
+		const harness = officialServiceHarness("openclaw");
+		const paths = getRuntimePaths({ mode: "hosted" });
+		const identity = join(paths.userHome, ".openclaw", "identity", "device.json");
+		mkdirSync(dirname(identity), { recursive: true });
+		// An inventory response does not classify identity contents or startup readiness.
+		const content = "retained native identity fixture\n";
+		writeFileSync(identity, content);
+		const unit = harness.unitContents();
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(readFileSync(identity, "utf8")).toBe(content);
+		expect(existsSync(`${identity}.migrated`)).toBe(false);
+		expect(harness.unitContents()).toBe(unit);
+		expect(harness.installCount()).toBe(1);
+	});
+
 	test("restores retained OpenClaw egress environment before the official config repair", () => {
 		const paths = tempRuntimePaths();
 		const command = join(paths.userHome, ".local", "bin", "openclaw");
