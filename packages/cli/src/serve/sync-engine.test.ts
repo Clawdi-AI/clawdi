@@ -1414,6 +1414,11 @@ describe("Pi sessions-only daemon", () => {
 			expect(paths).toContain("/v1/agents/agent-pi");
 			expect(paths).not.toContain("/v1/sync/events");
 			expect(paths.some((path) => path.includes("/skills"))).toBe(false);
+			const heartbeat = requests.find((request) =>
+				new URL(request.url).pathname.endsWith("/sync-heartbeat"),
+			);
+			if (!heartbeat) throw new Error("Expected startup heartbeat");
+			expect(await heartbeat.json()).toMatchObject({ last_sync_error: null });
 		} finally {
 			abortController.abort();
 			globalThis.fetch = originalFetch;

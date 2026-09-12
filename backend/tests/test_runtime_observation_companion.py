@@ -178,6 +178,13 @@ def test_component_proof_is_versioned_unique_and_cannot_certify_partial_health()
     }
     payload["components"] = {"schemaVersion": 1, "entries": [entry]}
     assert RuntimeObservationEventV2.model_validate(payload).components is not None
+    unknown_proof = {"schemaVersion": 1, "entries": [{**entry, "status": "unknown"}]}
+    for status in ("unknown", "error"):
+        observed = RuntimeObservationEventV2.model_validate(
+            {**payload, "status": status, "components": unknown_proof}
+        )
+        assert observed.status == status
+
     for proof in [
         {"schemaVersion": 2, "entries": [entry]},
         {"schemaVersion": 1, "entries": [entry, entry]},

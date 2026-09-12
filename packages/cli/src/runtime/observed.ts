@@ -133,7 +133,8 @@ export async function readHostedRuntimeObserved(
 		);
 		if (proof) {
 			observed.components = proof;
-			if (proof.entries.some((entry) => entry.status !== "ok")) observed.status = "error";
+			if (observed.status === "ok" && proof.entries.some((entry) => entry.status !== "ok"))
+				observed.status = "unknown";
 		}
 	}
 
@@ -143,8 +144,8 @@ export async function readHostedRuntimeObserved(
 	if (
 		runtimeContentSha256(readRuntimeAppliedState(paths)) !== runtimeContentSha256(appliedState) ||
 		runtimeContentSha256(readRuntimeBootStatus(paths)) !== runtimeContentSha256(boot) ||
-		runtimeContentSha256(readJsonRecord(paths.runtimeWatchStatus)) !==
-			runtimeContentSha256(watchStatus)
+		watchStatusRevision(readJsonRecord(paths.runtimeWatchStatus)) !==
+			watchStatusRevision(watchStatus)
 	)
 		return null;
 
@@ -152,6 +153,12 @@ export async function readHostedRuntimeObserved(
 	const convergeError = runtimeConvergeError(watchStatus);
 	if (convergeError) observed.convergeError = convergeError;
 	return observed;
+}
+
+function watchStatusRevision(value: JsonRecord | null): string {
+	if (value === null) return runtimeContentSha256(null);
+	const { timestamp: _timestamp, ...semantic } = value;
+	return runtimeContentSha256(semantic);
 }
 
 function observedUserActivity(
@@ -485,7 +492,7 @@ export async function runtimeComponentIsReady(
 				(await runtimeReadinessProbe("http://127.0.0.1:9119/api/status")).body,
 			);
 			if (!hermesUiAuthenticationIsReady(status)) return false;
-			const page = await runtimeReadinessProbe("http://127.0.0.1:9119/");
+			const page = await runtimeReadinessProbe("http://127.0.0.1:9119/login");
 			return /<!doctype html|<html[\s>]/i.test(page.body);
 		}
 		return runtimeServiceIsReady("openclaw-gateway.service", paths);

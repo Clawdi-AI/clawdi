@@ -20,7 +20,9 @@ unchanged committed configuration. Missing configuration, unknown invocation,
 probe failure or mutation during observation produces unavailable proof.
 
 The complete observation rechecks the applied receipt and boot/watch health
-after asynchronous probes. Any parent change invalidates the entire snapshot,
+after asynchronous probes. Only the watch wrapper's top-level `timestamp` is
+excluded from its canonical comparison; event, schema, health and identity
+changes still invalidate the entire snapshot,
 including its aggregate health; it cannot fall back to a stale healthy result.
 Buffered event retries retain their original capture timestamp, from which
 Cloud computes freshness.
@@ -28,8 +30,13 @@ Cloud computes freshness.
 The additive `components` v1 observation envelope inherits the existing exact
 apply receipt, boot nonce/session, runtime identity and source revision from its
 parent event. Its point-in-time freshness is bounded by the existing observation
-deadline. A required component's unavailable proof cannot certify aggregate
-healthy status. Aggregate Ready remains independent of component admission.
+deadline. Component entries report `ok` or `unknown`: an unavailable proof is
+not proof of a definite service failure. An unknown component downgrades an
+otherwise `ok` aggregate to `unknown`; existing `error` and `unknown` remain.
+Cloud accepts unknown/error aggregates with unknown proof and continues to reject
+contradictory `ok` plus unknown proof. Hosted partial admission still requires
+that component's positive proof and unchanged exact identity/freshness gates.
+Absent legacy proof retains the existing aggregate fallback.
 
 Access revisions use SHA-256 over compact UTF-8 JSON arrays:
 
@@ -40,10 +47,11 @@ Access revisions use SHA-256 over compact UTF-8 JSON arrays:
 These reuse the existing credential derivation and access-reset generation; they
 do not add another secret or revision authority. No secret bytes are reported.
 Component identities fix the serving ports to 9120, 9119 and 18789 respectively.
-Hermes UI checks its own basic-auth status and served SPA independently of
-gateway health; the aggregate readiness check still requires the gateway.
-The pinned native Hermes SPA is a FastAPI GET route, so this component probe
-uses GET rather than assuming HEAD support. Systemd v257 documents a new
+Hermes UI checks `/api/status` for enabled basic form authentication, then GETs
+public `/login` HTML independently of gateway health. The aggregate readiness
+check still requires the gateway. In the pinned native auth middleware,
+`_GATE_PUBLIC_PREFIXES` includes `/login`; anonymous `/` redirects there with 302.
+The probe neither assumes HTTP Basic headers nor follows redirects. Systemd v257 documents a new
 InvocationID per unit runtime cycle and formats it as 32 hexadecimal characters.
 
 Readers must deploy before the producing CLI. Absent, malformed, truncated,
@@ -71,7 +79,7 @@ paired reader changes. Root must qualify the next released CLI with a successful
 owner deployment and fresh component observations before enabling this behavior
 for that deployment; no fleet or tenant upgrade is implied.
 
-Local implementation verification (2026-09-12): component persistence and
+Earlier verification (before the Fable probe correction): component persistence and
 configuration/native-override drift scenario passed (1 test, 8 assertions);
 `runtime-systemd` passed (8 tests, 42 assertions), including real invocation
 rotation and unchanged effective configuration across restart. Observation and
@@ -82,3 +90,35 @@ production build and 9 SSR checks. CLI typecheck and Biome passed. The paired
 Hosted reader/admission milestone is `1c5ede6da`; its 134 boundary tests and 13
 PostgreSQL route tests passed. These results do not replace owner runtime/CLI
 release qualification or Fable's independent final review.
+
+
+## Fable correction evidence
+
+```bash
+bash scripts/test.sh cli src/runtime/hermes-dashboard-auth.test.ts src/runtime/observed-v2.test.ts src/runtime/heartbeat-observation.test.ts
+```
+
+The native auth fixture downloads the exact checksum/commit already pinned in
+`tests/fixtures/runtime-official-installer-systemd/Dockerfile` and imports its
+real `gated_auth_middleware` and `BasicAuthProvider`. Status, HTML and systemd
+handlers are fixtures; this does not build or run the complete native SPA or
+gateway. It proves anonymous root 302, public login 200, healthy aggregate ok,
+and usable component UI with gateway state stopped. Ordinary HTTP regressions
+also cover timestamp-only watch rewrites surviving probes, meaningful parent
+health/receipt changes rejecting snapshots, and unknown proof preserving a
+previous definite error. No CLI package/release artifact is produced.
+
+`persistComponentActivations` runs only from `commitRuntimeAppliedState`; the
+same-receipt 304 `not_modified` path returns without that commit. Existing
+receipts therefore need a successful actual apply to gain proof. No automatic
+apply or receipt migration is added. Owner qualification must check proof
+presence; this source fact is not evidence of live rollout state.
+
+Fable correction verification (2026-09-12): the command above passed 27 tests
+with CLI typecheck, including the native middleware/provider scenario.
+`bash scripts/test.sh cli src/serve/sync-engine.test.ts src/serve/sync-module.test.ts`
+passed 71 tests, including a null initial `last_sync_error` while normal startup
+prepares. The Cloud component contract passed through `scripts/test.sh backend`
+(1 selected test), accepting unknown/error with unknown proof while rejecting
+contradictory aggregate ok. Wire fields are unchanged, so no client regeneration
+is required for this correction. Biome, Ruff and shell syntax checks passed.

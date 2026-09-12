@@ -3,7 +3,11 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { getCliVersion } from "../lib/version";
-import { readRuntimeAppliedState, writeRuntimeAppliedState } from "./applied-state";
+import {
+	readRuntimeAppliedState,
+	runtimeContentSha256,
+	writeRuntimeAppliedState,
+} from "./applied-state";
 import { readHostedRuntimeObserved, runtimeComponentIsReady } from "./observed";
 import { getRuntimePaths } from "./paths";
 import { buildRuntimeBootStatus, writeRuntimeBootStatus, writeRuntimeWatchStatus } from "./state";
@@ -301,7 +305,9 @@ describe("hosted runtime observed v2", () => {
 							typeof nativeStatus === "string" ? nativeStatus : JSON.stringify(nativeStatus),
 						);
 					if (path === "/" && request.method === "HEAD") return new Response(null, { status: 405 });
-					if (path === "/" || path === "/control/")
+					if (path === "/")
+						return new Response(null, { status: 302, headers: { Location: "/login" } });
+					if (path === "/login" || path === "/control/")
 						return new Response("<!doctype html><html></html>", {
 							status: uiStatus,
 							headers: { "Content-Type": "text/html" },
@@ -329,6 +335,18 @@ describe("hosted runtime observed v2", () => {
 					expect(observed?.status).toBe(response === ready ? "ok" : "unknown");
 				}
 				body = ready;
+				const idleWatch = {
+					schemaVersion: "clawdi.runtimeWatchStatus.v1",
+					event: { status: "not_modified" },
+					timestamp: "2026-09-12T00:00:00.000Z",
+				};
+				writeFileSync(paths.runtimeWatchStatus, JSON.stringify(idleWatch));
+				mutateParent = () =>
+					writeFileSync(
+						paths.runtimeWatchStatus,
+						JSON.stringify({ ...idleWatch, timestamp: "2026-09-12T00:00:15.000Z" }),
+					);
+				expect((await readHostedRuntimeObserved(paths))?.status).toBe("ok");
 				const parent = readRuntimeAppliedState(paths);
 				if (!parent) throw new Error("Expected applied fixture");
 				mutateParent = () =>
@@ -573,4 +591,33 @@ esac
 		expect(observed?.systemd?.units.filter((unit) => unit.scope === "system")).toHaveLength(15);
 		expect(observed?.systemd?.units.filter((unit) => unit.scope === "user")).toHaveLength(15);
 	});
+});
+
+test("unknown component evidence downgrades healthy aggregate without replacing a definite error", async () => {
+	const paths = healthyAppliedRuntimePaths();
+	const applied = readRuntimeAppliedState(paths);
+	if (!applied) throw new Error("Expected applied fixture");
+	writeFileSync(
+		join(dirname(paths.appliedState), "component-activations.json"),
+		JSON.stringify({
+			schemaVersion: 1,
+			appliedStateRevision: runtimeContentSha256(applied),
+			entries: [
+				{
+					component: "files",
+					configRevision: "a".repeat(64),
+					accessRevision: "b".repeat(64),
+					invocationId: "c".repeat(32),
+				},
+			],
+		}),
+	);
+	const unavailable = await readHostedRuntimeObserved(paths);
+	expect(unavailable?.components?.entries[0]?.status).toBe("unknown");
+	expect(unavailable?.status).toBe("unknown");
+	writeFileSync(
+		paths.runtimeWatchStatus,
+		JSON.stringify({ event: { status: "error", error: "required apply failed" } }),
+	);
+	expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
 });

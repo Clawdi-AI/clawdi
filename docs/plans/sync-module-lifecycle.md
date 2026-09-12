@@ -20,7 +20,8 @@ version and Agent/Project identity fences remain in place.
 
 Preparation and worker failures retry from one second with exponential backoff
 and jitter, capped at a 60-second base delay. One healthy minute resets backoff.
-Module state/errors have independent SyncHealth keys. Cancelled uploads cannot
+Module state/errors have independent SyncHealth keys. Normal initial preparation
+is not a sync error; a prior retry failure remains reported until ready. Cancelled uploads cannot
 advance confirmed hashes or claims, and a received authoritative auth failure
 still triggers global revocation when module cancellation races it. Global authentication
 revocation and authoritative Agent disconnect still abort the daemon with exit

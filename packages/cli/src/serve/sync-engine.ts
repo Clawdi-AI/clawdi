@@ -537,7 +537,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			changed: (state: import("./sync-module").ModuleState, error?: unknown) => {
 				queue.notifyItemWaiters();
 				if (state === "ready") health.clear("projection", `module:${name}`);
-				else if (state !== "unsupported" && state !== "stopped")
+				else if (error !== undefined && !opts.abort.aborted)
 					health.set(
 						"projection",
 						`module:${name}`,
