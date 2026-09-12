@@ -632,8 +632,23 @@ owned Vault/Project attachment. Names follow ordinary Vault validation, includin
 and hyphens; duplicates after trimming are rejected. Show the returned URL unchanged.
 Its fragment contains a `v2_` capability with 256 random bits, hashed at rest and valid
 for one hour by default (five minutes to one day configurable). Viewing does not consume
-it; saving exactly the requested fields in one successful transaction does. The page
-marks updates without showing existing values.
+it; saving all requested fields and user-added extras in one successful transaction does.
+The page keeps requested names fixed and lets users add, rename, or remove extras, up to
+32 total. Import .env accepts pasted or UTF-8 file text (4 MiB maximum), preserves name
+case/dots/hyphens, and requires preview then Apply before the single Save. Preview identifies
+entered values to replace and existing Vault fields to update; existing values are never
+shown. Imports reject malformed lines, duplicates, empty/NUL values, and values over 65536
+characters. Double quotes decode `\n`, `\r`, `\t`, `\"`, and `\\`; single quotes are literal.
+Variables and commands are never expanded; JSON and multiline quoted assignments are not
+accepted on this page.
+
+Creation captures ciphertext fingerprints for the whole section, with explicit nulls for
+absent required names. `POST /v1/vault/requests/inspect` accepts optional chosen `fields`
+and returns only those names in `update_fields`, never unrelated names or fingerprints.
+Supply requires the original subset, validates every chosen field against creation state
+under the Vault lock, and rejects extras reserved by another live request. Optional fields
+are chosen by the user after creation; creation does not accept `extra_fields`. Supplied
+status persists `extra_fields`, lists all saved `fields`, and includes all exact references.
 
 Changes to any requested field conflict with the entire batch; unrelated edits do not.
 A conflicted request can be replaced immediately, while true pending overlap is rejected.

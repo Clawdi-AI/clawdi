@@ -697,6 +697,13 @@ async def test_request_migration_expires_pending_and_requires_explicit_snapshots
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
 
+    extras_spec = importlib.util.spec_from_file_location(
+        "request_extras", path.with_name("fa83d21c907b_vault_request_extras.py")
+    )
+    assert extras_spec is not None and extras_spec.loader is not None
+    extras_migration = importlib.util.module_from_spec(extras_spec)
+    extras_spec.loader.exec_module(extras_migration)
+
     def verify(connection):
         from sqlalchemy.exc import IntegrityError
 
@@ -739,6 +746,18 @@ async def test_request_migration_expires_pending_and_requires_explicit_snapshots
         assert connection.execute(
             text("SELECT expires_at > now() FROM vault_secret_requests WHERE id = 3")
         ).scalar_one()
+        extras_migration.op = migration.op
+        extras_migration.upgrade()
+        assert connection.execute(
+            text(
+                "SELECT id, extra_fields, expires_at > now(), conflicted_at IS NOT NULL "
+                "FROM vault_secret_requests ORDER BY id"
+            )
+        ).all() == [(1, [], False, True), (2, [], True, False), (3, [], False, True)]
+        assert connection.execute(
+            text("SELECT field_baselines FROM vault_secret_requests WHERE id = 3")
+        ).scalar_one() == {"NEW": None}
+        extras_migration.downgrade()
         migration.downgrade()
         assert connection.execute(
             text("SELECT id, expires_at > now() FROM vault_secret_requests ORDER BY id")
@@ -779,3 +798,200 @@ async def test_status_refreshes_terminal_state_after_concurrent_write(
         await db_session.rollback()
         await db_session.execute(delete(Vault).where(Vault.id == vault_id))
         await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_user_extras_creation_snapshot_preview_scope_and_saved_references(
+    cli_client, db_session
+):
+    body, created = await make_request(
+        cli_client,
+        fields=["REQUIRED"],
+        existing={"REQUIRED": "original", "optional.key": "old", "UNRELATED": "private"},
+    )
+    token = created["url"].split("#")[1]
+    assert (
+        await cli_client.post("/v1/vault/requests", json={**body, "extra_fields": ["x"]})
+    ).status_code == 422
+    empty_preview = await cli_client.post(
+        "/v1/vault/requests/inspect", json={"token": token, "fields": []}
+    )
+    assert empty_preview.json()["update_fields"] == []
+    for prefix in ("/v1", "/api"):
+        preview = await cli_client.post(
+            f"{prefix}/vault/requests/inspect",
+            json={"token": token, "fields": ["optional.key", "new-key"]},
+        )
+        assert preview.status_code == 200, preview.text
+        assert preview.json()["update_fields"] == ["optional.key"]
+        assert "UNRELATED" not in preview.text and "private" not in preview.text
+        assert "baseline" not in preview.text
+    await cli_client.put("/v1/vault/requested/items", json={"fields": {"UNRELATED": "changed"}})
+    values = {"REQUIRED": "required", "optional.key": "replacement", "new-key": "${LITERAL}"}
+    saved = await cli_client.post(
+        "/v1/vault/requests/supply", json={"token": token, "fields": values}
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["fields"] == list(values)
+    assert saved.json()["extra_fields"] == ["optional.key", "new-key"]
+    assert set(saved.json()["references"]) == set(values)
+    assert saved.json()["content_version"] > created["content_version"]
+    status = await cli_client.get(f"/v1/vault/requests/{created['id']}")
+    assert status.json() == saved.json()
+    row = await db_session.get(VaultSecretRequest, uuid.UUID(created["id"]))
+    assert row.fields == ["REQUIRED"]
+    assert row.extra_fields == ["optional.key", "new-key"]
+    assert (
+        await cli_client.post("/v1/vault/requests/supply", json={"token": token, "fields": values})
+    ).status_code == 410
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing", [None, {"EXTRA": "original"}])
+async def test_extra_changed_since_creation_rejects_atomic_batch(cli_client, existing):
+    body, created = await make_request(cli_client, fields=["REQUIRED"], existing=existing)
+    token = created["url"].split("#")[1]
+    await cli_client.put("/v1/vault/requested/items", json={"fields": {"EXTRA": "concurrent"}})
+    for action in ("inspect", "supply"):
+        fields = (
+            ["EXTRA"]
+            if action == "inspect"
+            else {"REQUIRED": "must-not-write", "EXTRA": "must-not-write"}
+        )
+        response = await cli_client.post(
+            f"/v1/vault/requests/{action}", json={"token": token, "fields": fields}
+        )
+        assert response.status_code == 409
+    assert (
+        await cli_client.post(
+            "/v1/vault/material",
+            json={"vault_id": body["vault_id"], "project_id": body["project_id"]},
+        )
+    ).json()["values"] == {"EXTRA": "concurrent"}
+    assert (
+        await cli_client.post(
+            "/v1/vault/requests/supply", json={"token": token, "fields": {"REQUIRED": "ok"}}
+        )
+    ).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_extra_pending_reservation_and_name_limits(cli_client):
+    body, created = await make_request(cli_client, fields=["REQUIRED"])
+    token = created["url"].split("#")[1]
+    reserved = await cli_client.post("/v1/vault/requests", json={**body, "fields": ["RESERVED"]})
+    assert reserved.status_code == 200
+    for action in ("inspect", "supply"):
+        fields = ["RESERVED"] if action == "inspect" else {"REQUIRED": "x", "RESERVED": "y"}
+        assert (
+            await cli_client.post(
+                f"/v1/vault/requests/{action}", json={"token": token, "fields": fields}
+            )
+        ).status_code == 409
+    for fields in (
+        {"REQUIRED": "x", "bad/name": "y"},
+        {"REQUIRED": "x", " spaced ": "y"},
+        {"REQUIRED": "x", **{f"K{i}": "x" for i in range(32)}},
+    ):
+        assert (
+            await cli_client.post(
+                "/v1/vault/requests/supply", json={"token": token, "fields": fields}
+            )
+        ).status_code == 422
+    assert (
+        await cli_client.post(
+            "/v1/vault/requests/inspect", json={"token": token, "fields": ["X", "X"]}
+        )
+    ).status_code == 422
+    assert (await cli_client.get("/v1/vault/requested/items")).json() == {}
+    assert (
+        await cli_client.post(
+            "/v1/vault/requests/inspect",
+            json={"token": token, "fields": [f"K{i}" for i in range(32)]},
+        )
+    ).status_code == 422
+    maximum = await cli_client.post(
+        "/v1/vault/requests/supply",
+        json={"token": token, "fields": {"REQUIRED": "x", **{f"K{i}": "x" for i in range(31)}}},
+    )
+    assert maximum.status_code == 200, maximum.text
+    assert len(maximum.json()["references"]) == 32
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_two_requests_racing_for_same_user_extra_commit_one_batch(
+    cli_client, db_session, engine
+):
+    body, first = await make_request(cli_client, fields=["FIRST"])
+    second = (
+        await cli_client.post("/v1/vault/requests", json={**body, "fields": ["SECOND"]})
+    ).json()
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def redeem(created, name):
+        async with sessions() as session:
+            try:
+                return await supply(
+                    session,
+                    VaultSecretRequestSupply(
+                        token=created["url"].split("#")[1],
+                        fields={name: name, "shared.extra": name},
+                    ),
+                )
+            except HTTPException as exc:
+                return exc.status_code
+
+    results = await asyncio.gather(redeem(first, "FIRST"), redeem(second, "SECOND"))
+    assert sum(isinstance(result, int) and result == 409 for result in results) == 1
+    items = (
+        await db_session.scalars(
+            select(VaultItem).where(VaultItem.vault_id == uuid.UUID(body["vault_id"]))
+        )
+    ).all()
+    assert len(items) == 2
+    assert "shared.extra" in {item.item_name for item in items}
+    requests = (
+        await db_session.scalars(
+            select(VaultSecretRequest).where(
+                VaultSecretRequest.vault_id == uuid.UUID(body["vault_id"])
+            )
+        )
+    ).all()
+    assert sum(row.supplied_at is not None for row in requests) == 1
+    assert sorted(len(row.extra_fields) for row in requests) == [0, 1]
+    await db_session.execute(delete(Vault).where(Vault.id == uuid.UUID(body["vault_id"])))
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_suspended_owner_cannot_preview_or_supply_user_extras(
+    cli_client, anon_client, db_session, seed_user, monkeypatch
+):
+    from app.core.config import settings
+    from app.services.principal_lifecycle import set_clerk_principal_suspension
+
+    issuer = "https://vault-request.clerk.example.test"
+    monkeypatch.setattr(settings, "clerk_jwt_issuer", issuer)
+    _, created = await make_request(cli_client, fields=["REQUIRED"])
+    await set_clerk_principal_suspension(
+        db_session,
+        issuer=issuer,
+        subject=seed_user.clerk_id,
+        suspended=True,
+        reason="vault-request-test",
+    )
+    await db_session.commit()
+    token = created["url"].split("#")[1]
+    for action in ("inspect", "supply"):
+        fields = ["EXTRA"] if action == "inspect" else {"REQUIRED": "private", "EXTRA": "private"}
+        response = await anon_client.post(
+            f"/v1/vault/requests/{action}", json={"token": token, "fields": fields}
+        )
+        assert response.status_code == 410
+        assert "private" not in response.text and "EXTRA" not in response.text
+    row = await db_session.get(VaultSecretRequest, uuid.UUID(created["id"]))
+    assert row.supplied_at is None and row.extra_fields == []
+    assert not (
+        await db_session.scalars(select(VaultItem).where(VaultItem.vault_id == row.vault_id))
+    ).all()

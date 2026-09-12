@@ -1,7 +1,28 @@
 import { describe, expect, test } from "bun:test";
-import { parseVaultKeyImport } from "./key-import-parse";
+import { parseVaultKeyImport, parseVaultRequestEnv } from "./key-import-parse";
 
 describe("parseVaultKeyImport", () => {
+	test("preserves exact request field names and rejects malformed lines", () => {
+		expect(
+			parseVaultKeyImport("api-key=one\napi.token=two\nAPI_TOKEN=three", { preserveKeyCase: true }),
+		).toEqual({
+			entries: [
+				{ key: "api-key", rawKey: "api-key", value: "one", line: 1 },
+				{ key: "api.token", rawKey: "api.token", value: "two", line: 2 },
+				{ key: "API_TOKEN", rawKey: "API_TOKEN", value: "three", line: 3 },
+			],
+			errors: [],
+		});
+	});
+
+	test("rejects unterminated quotes without lossy backslash decoding", () => {
+		expect(
+			parseVaultKeyImport('TOKEN="literal\\n"', { preserveKeyCase: true }).entries[0]?.value,
+		).toBe("literal\n");
+		expect(parseVaultKeyImport('TOKEN="unterminated', { preserveKeyCase: true }).errors).toEqual([
+			"Line 1: unterminated quoted value.",
+		]);
+	});
 	test("parses dotenv key-value lines", () => {
 		expect(
 			parseVaultKeyImport(`
@@ -83,5 +104,46 @@ describe("parseVaultKeyImport", () => {
 			entries: [],
 			errors: ['Key "API_KEY" has a nested value. Use a string, number, or boolean.'],
 		});
+	});
+});
+
+describe("request dotenv boundary", () => {
+	test("preserves exact names and literal substitutions", () => {
+		const result = parseVaultRequestEnv(
+			'export api.key="${TOKEN} $(command) `command`"\napi-key=one\nAPI-KEY=two',
+		);
+		expect(result.errors).toEqual([]);
+		expect(result.entries.map(({ key, value }) => [key, value])).toEqual([
+			["api.key", "${TOKEN} $(command) `command`"],
+			["api-key", "one"],
+			["API-KEY", "two"],
+		]);
+	});
+	test("rejects malformed, duplicate, invalid and oversized input atomically without echoing it", () => {
+		for (const text of [
+			'K="',
+			'K="one" trailing',
+			'K="one" "two"',
+			"K=secret\nK=other",
+			"bad/name=secret",
+			"K=",
+			"K=\0secret",
+			'{"K":"secret"}',
+			`K=${"s".repeat(65537)}`,
+			Array.from({ length: 33 }, (_, i) => `K${i}=secret`).join("\n"),
+		]) {
+			const result = parseVaultRequestEnv(text);
+			expect(result.entries).toEqual([]);
+			expect(result.errors.length).toBeGreaterThan(0);
+			expect(result.errors.join()).not.toContain("secret");
+		}
+	});
+	test("handles comments, CRLF, quotes and backslash parity", () => {
+		expect(
+			parseVaultRequestEnv(
+				"A=\"path\\\\\" # comment\r\nB=hash#tail\r\nC=one # comment\r\nD='literal\\n'",
+			).entries.map((entry) => entry.value),
+		).toEqual(["path\\", "hash#tail", "one", "literal\\n"]);
+		expect(parseVaultRequestEnv(`K=${"x".repeat(65536)}`).errors).toEqual([]);
 	});
 });

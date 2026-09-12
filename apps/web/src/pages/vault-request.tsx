@@ -3,8 +3,15 @@ import createClient from "openapi-fetch";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+	MAX_ENV_IMPORT_BYTES,
+	type ParsedKey,
+	parseVaultRequestEnv,
+	REQUEST_FIELD_NAME_RE,
+} from "@/components/vault/key-import-parse";
 import { env } from "@/lib/env";
 
 type RequestContext = components["schemas"]["VaultSecretRequestStatus"];
@@ -15,7 +22,18 @@ const UNAVAILABLE =
 export function VaultRequestPage() {
 	const token = useRef("");
 	const [context, setContext] = useState<RequestContext>();
-	const [values, setValues] = useState<Record<string, string>>({});
+	const [rows, setRows] = useState<
+		{ id: string; name: string; value: string; required: boolean }[]
+	>([]);
+	const [importOpen, setImportOpen] = useState(false);
+	const [importText, setImportText] = useState("");
+	const [preview, setPreview] = useState<{ entries: ParsedKey[]; updateFields: string[] }>();
+	const [selectionError, setSelectionError] = useState("");
+	const [importBusy, setImportBusy] = useState(false);
+	const [updates, setUpdates] = useState<string[]>([]);
+	const [selectionAttempt, setSelectionAttempt] = useState(0);
+	const [selectionReady, setSelectionReady] = useState(false);
+	const names = JSON.stringify(rows.map((row) => row.name));
 	const [phase, setPhase] = useState<
 		"loading" | "ready" | "saving" | "done" | "unavailable" | "error"
 	>("loading");
@@ -59,6 +77,15 @@ export function VaultRequestPage() {
 				if (controller.signal.aborted) return;
 				if (data) {
 					setContext(data);
+					setRows(
+						data.fields.map((name) => ({
+							id: crypto.randomUUID(),
+							name,
+							value: "",
+							required: true,
+						})),
+					);
+					setUpdates(data.update_fields);
 					setPhase("ready");
 				} else if (response.status === 410 || response.status === 422) setPhase("unavailable");
 				else {
@@ -75,24 +102,136 @@ export function VaultRequestPage() {
 		return () => controller.abort();
 	}, [attempt]);
 
+	useEffect(() => {
+		if (phase !== "ready") return;
+		const fields: string[] = JSON.parse(names);
+		setSelectionReady(false);
+		if (
+			!fields.length ||
+			fields.some((name) => !REQUEST_FIELD_NAME_RE.test(name)) ||
+			new Set(fields).size !== fields.length
+		) {
+			setSelectionError(
+				"Use valid, distinct field names (letters, numbers, dots, underscores, and hyphens).",
+			);
+			return;
+		}
+		const controller = new AbortController();
+		void client
+			.POST("/v1/vault/requests/inspect", {
+				body: { token: token.current, fields },
+				cache: "no-store",
+				referrerPolicy: "no-referrer",
+				signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
+			})
+			.then(({ data }) => {
+				if (controller.signal.aborted) return;
+				if (!data) {
+					setSelectionError(
+						"Selected fields changed or are reserved. Remove added fields or ask your agent for a new link.",
+					);
+					return;
+				}
+				setUpdates(data.update_fields);
+				setSelectionReady(true);
+				setSelectionError("");
+			})
+			.catch(() => {
+				if (!controller.signal.aborted)
+					setSelectionError("Could not check selected fields. Try again.");
+			});
+		return () => controller.abort();
+	}, [names, phase, selectionAttempt]);
+
+	async function previewImport() {
+		setError("");
+		const parsed = parseVaultRequestEnv(importText);
+		if (parsed.errors.length || !parsed.entries.length) {
+			setError(parsed.errors[0] ?? "Enter at least one dotenv assignment.");
+			return;
+		}
+		const fields = [
+			...new Set([...rows.map((row) => row.name), ...parsed.entries.map((entry) => entry.key)]),
+		];
+		if (
+			fields.length > 32 ||
+			new Set(rows.map((row) => row.name)).size !== rows.length ||
+			fields.some((name) => !REQUEST_FIELD_NAME_RE.test(name))
+		) {
+			setError("Use valid, distinct field names and at most 32 fields total.");
+			return;
+		}
+		setImportBusy(true);
+		try {
+			const { data } = await client.POST("/v1/vault/requests/inspect", {
+				body: { token: token.current, fields },
+				cache: "no-store",
+				referrerPolicy: "no-referrer",
+				signal: AbortSignal.timeout(20000),
+			});
+			if (!data) {
+				setError("Could not preview these fields. A selected field changed or is reserved.");
+				return;
+			}
+			setPreview({ entries: parsed.entries, updateFields: data.update_fields });
+		} catch {
+			setError("Could not connect. Try previewing again.");
+		} finally {
+			setImportBusy(false);
+		}
+	}
+
+	function applyImport() {
+		if (!preview) return;
+		setRows((current) => {
+			const imported = new Map(preview.entries.map((entry) => [entry.key, entry.value]));
+			return [
+				...current.map((row) => ({ ...row, value: imported.get(row.name) ?? row.value })),
+				...preview.entries
+					.filter((entry) => !current.some((row) => row.name === entry.key))
+					.map((entry) => ({
+						id: crypto.randomUUID(),
+						name: entry.key,
+						value: entry.value,
+						required: false,
+					})),
+			];
+		});
+		setSelectionReady(false);
+		setSelectionAttempt((value) => value + 1);
+		setPreview(undefined);
+		setImportText("");
+		setImportOpen(false);
+	}
+
 	async function save() {
-		if (!context || phase !== "ready") return;
+		if (!context || phase !== "ready" || !selectionReady || importOpen) return;
 		setPhase("saving");
 		setError("");
 		try {
 			const { data, response } = await client.POST("/v1/vault/requests/supply", {
-				body: { token: token.current, fields: values },
+				body: {
+					token: token.current,
+					fields: Object.fromEntries(rows.map((row) => [row.name, row.value])),
+				},
 				cache: "no-store",
 				referrerPolicy: "no-referrer",
 				signal: AbortSignal.timeout(20000),
 			});
 			if (data) {
 				setContext(data);
-				setValues({});
+				setRows([]);
+				setImportText("");
+				setPreview(undefined);
 				token.current = "";
 				setPhase("done");
-			} else if (response.status === 410 || response.status === 409) {
-				setValues({});
+			} else if (response.status === 409) {
+				setPhase("ready");
+				setSelectionReady(false);
+			} else if (response.status === 410) {
+				setRows([]);
+				setImportText("");
+				setPreview(undefined);
 				setPhase("unavailable");
 			} else {
 				setError("Could not save. Supply every requested field and try again.");
@@ -189,42 +328,209 @@ export function VaultRequestPage() {
 							<p className="text-sm text-muted-foreground">
 								Only these fields will be saved. Anyone with Vault access can use them.
 							</p>
-							{!!context.update_fields.length && (
+							{!!updates.length && (
 								<p className="text-sm text-muted-foreground">
 									Fields marked Update replace existing values when you save.
 								</p>
 							)}
-							{context.fields.map((name) => (
-								<div className="space-y-2" key={name}>
-									<div className="flex items-center justify-between gap-2">
-										<Label htmlFor={`secret-${name}`}>{name}</Label>
-										{context.update_fields.includes(name) && (
-											<span className="text-xs font-medium text-muted-foreground">Update</span>
-										)}
+							<fieldset
+								disabled={phase === "saving" || importBusy || !!preview}
+								className="space-y-5"
+							>
+								{rows.map(({ id, name, value, required }) => (
+									<div className="space-y-2" key={id}>
+										<div className="flex items-center justify-between gap-2">
+											{required ? (
+												<Label htmlFor={`secret-${id}`}>{name}</Label>
+											) : (
+												<Input
+													aria-label="Field name"
+													value={name}
+													maxLength={200}
+													required
+													pattern="[A-Za-z0-9_.\-]+"
+													className="font-mono"
+													onChange={(event) => {
+														setSelectionReady(false);
+														setRows((current) =>
+															current.map((row) =>
+																row.id === id ? { ...row, name: event.target.value } : row,
+															),
+														);
+													}}
+												/>
+											)}
+											{!required && (
+												<Button
+													type="button"
+													variant="ghost"
+													aria-label={`Remove ${name || "field"}`}
+													onClick={() => {
+														setSelectionReady(false);
+														setRows((current) => current.filter((row) => row.id !== id));
+													}}
+												>
+													Remove
+												</Button>
+											)}
+											{updates.includes(name) && (
+												<span className="text-xs font-medium text-muted-foreground">Update</span>
+											)}
+										</div>
+										<Textarea
+											id={`secret-${id}`}
+											aria-label={required ? undefined : `Value for ${name || "field"}`}
+											value={value}
+											required
+											maxLength={65536}
+											autoComplete="off"
+											spellCheck={false}
+											data-private="true"
+											className="font-mono"
+											disabled={phase === "saving"}
+											onChange={(event) =>
+												setRows((current) =>
+													current.map((row) =>
+														row.id === id ? { ...row, value: event.target.value } : row,
+													),
+												)
+											}
+										/>
 									</div>
-									<Textarea
-										id={`secret-${name}`}
-										value={values[name] ?? ""}
-										required
-										maxLength={65536}
-										autoComplete="off"
-										spellCheck={false}
-										data-private="true"
-										className="font-mono"
-										disabled={phase === "saving"}
-										onChange={(event) =>
-											setValues((current) => ({ ...current, [name]: event.target.value }))
-										}
-									/>
+								))}
+
+								<div className="flex gap-2">
+									<Button
+										type="button"
+										variant="outline"
+										disabled={rows.length >= 32 || importOpen}
+										onClick={() => {
+											setSelectionReady(false);
+											setRows((current) => [
+												...current,
+												{ id: crypto.randomUUID(), name: "", value: "", required: false },
+											]);
+										}}
+									>
+										Add field
+									</Button>
+									<Button
+										type="button"
+										variant="outline"
+										onClick={() => {
+											setImportOpen(true);
+											setError("");
+										}}
+									>
+										Import .env
+									</Button>
 								</div>
-							))}
-							{error && (
+							</fieldset>
+							{importOpen && (
+								<div className="space-y-3 rounded-lg border p-3">
+									<p className="text-sm text-muted-foreground">
+										Paste or choose a .env file. Values stay text; variables and commands are never
+										expanded.
+									</p>
+									{!preview && (
+										<>
+											<Label htmlFor="env-import">Dotenv text</Label>
+											<Textarea
+												id="env-import"
+												value={importText}
+												data-private="true"
+												autoComplete="off"
+												spellCheck={false}
+												disabled={importBusy}
+												onChange={(event) => setImportText(event.target.value)}
+											/>
+											<Input
+												type="file"
+												aria-label="Choose .env file"
+												disabled={importBusy}
+												onChange={async (event) => {
+													const file = event.target.files?.[0];
+													event.target.value = "";
+													if (!file) return;
+													if (file.size > MAX_ENV_IMPORT_BYTES) {
+														setError("Import must be at most 4 MiB.");
+														return;
+													}
+													setImportBusy(true);
+													try {
+														setImportText(
+															new TextDecoder("utf-8", { fatal: true }).decode(
+																await file.arrayBuffer(),
+															),
+														);
+													} catch {
+														setError("Could not read a UTF-8 text file.");
+													} finally {
+														setImportBusy(false);
+													}
+												}}
+											/>
+											<Button type="button" disabled={importBusy} onClick={previewImport}>
+												{importBusy ? "Checking…" : "Preview import"}
+											</Button>
+										</>
+									)}
+									{preview && (
+										<>
+											<p className="text-sm">
+												Apply these values to the form, then save all fields together.
+											</p>
+											<ul className="space-y-2 text-sm">
+												{preview.entries.map((entry) => (
+													<li key={entry.key} className="break-words">
+														<span className="font-mono">{entry.key}</span> —{" "}
+														{rows.some((row) => row.name === entry.key && row.value)
+															? "Replace entered value"
+															: rows.some((row) => row.name === entry.key)
+																? "Fill requested field"
+																: "Add field"}
+														{preview.updateFields.includes(entry.key)
+															? " · Update existing Vault value on save"
+															: ""}
+													</li>
+												))}
+											</ul>
+											<Button type="button" onClick={applyImport}>
+												Apply import
+											</Button>
+										</>
+									)}
+									<Button
+										type="button"
+										variant="ghost"
+										disabled={importBusy}
+										onClick={() => {
+											setImportOpen(false);
+											setImportText("");
+											setPreview(undefined);
+										}}
+									>
+										Cancel import
+									</Button>
+								</div>
+							)}
+							{(error || selectionError) && (
 								<p role="alert" className="text-sm text-destructive">
-									{error}
+									{error || selectionError}
+									<Button
+										type="button"
+										variant="ghost"
+										onClick={() => setSelectionAttempt((value) => value + 1)}
+									>
+										Retry check
+									</Button>
 								</p>
 							)}
 							<div className="flex justify-end">
-								<Button type="submit" disabled={phase === "saving"}>
+								<Button
+									type="submit"
+									disabled={phase === "saving" || !selectionReady || importOpen}
+								>
 									{phase === "saving" ? "Saving…" : "Save secrets"}
 								</Button>
 							</div>

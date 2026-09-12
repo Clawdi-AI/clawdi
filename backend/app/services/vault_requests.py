@@ -52,7 +52,7 @@ def field_baseline(item: VaultItem | None) -> str | None:
 def fields_conflict(row: VaultSecretRequest, existing: dict[str, VaultItem]) -> bool:
     return (
         row.conflicted_at is not None
-        or set(row.field_baselines) != set(row.fields)
+        or not set(row.fields).issubset(row.field_baselines)
         or any(
             field_baseline(existing.get(field)) != row.field_baselines[field]
             for field in row.fields
@@ -101,9 +101,10 @@ async def describe(db: AsyncSession, row: VaultSecretRequest) -> VaultSecretRequ
             state = "expired"
         elif fields_conflict(row, existing):
             state = "conflict"
+    all_fields = [*row.fields, *row.extra_fields]
     references = {
         field: exact_vault_reference(row.project_id, vault.slug, row.section, field)
-        for field in row.fields
+        for field in all_fields
     }
     return VaultSecretRequestStatus(
         id=row.id,
@@ -113,8 +114,9 @@ async def describe(db: AsyncSession, row: VaultSecretRequest) -> VaultSecretRequ
         project_name=project.name,
         slug=vault.slug,
         section=row.section,
-        fields=row.fields,
-        update_fields=[field for field in row.fields if row.field_baselines.get(field) is not None],
+        fields=all_fields,
+        extra_fields=list(row.extra_fields),
+        update_fields=[field for field in all_fields if row.field_baselines.get(field) is not None],
         content_version=vault.runtime_revision,
         status=state,
         expires_at=row.expires_at,
@@ -182,7 +184,11 @@ async def create_request(
         project_id=body.project_id,
         section=body.section,
         fields=body.fields,
-        field_baselines={field: field_baseline(existing.get(field)) for field in body.fields},
+        field_baselines={
+            **{field: field_baseline(item) for field, item in existing.items()},
+            **{field: field_baseline(existing.get(field)) for field in body.fields},
+        },
+        extra_fields=[],
         token_hash=hashlib.sha256(token.encode()).hexdigest(),
         expires_at=datetime.now(UTC) + timedelta(seconds=body.expires_in_seconds),
     )
@@ -242,21 +248,52 @@ async def token_request(db: AsyncSession, token: str) -> VaultSecretRequest:
     return row
 
 
+async def check_selection(
+    db: AsyncSession, row: VaultSecretRequest, fields: list[str]
+) -> list[str]:
+    """Check only selected names against creation state under the Vault lock."""
+    chosen = set(row.fields) | set(fields)
+    if len(chosen) > 32:
+        raise HTTPException(422, "Supply at most 32 fields")
+    existing = await load_vault_items_by_name(db, row.vault_id, row.section)
+    if any(field_baseline(existing.get(name)) != row.field_baselines.get(name) for name in chosen):
+        raise HTTPException(409, "Selected fields changed")
+    extras = chosen - set(row.fields)
+    if extras:
+        pending = (
+            await db.scalars(
+                select(VaultSecretRequest).where(
+                    VaultSecretRequest.vault_id == row.vault_id,
+                    VaultSecretRequest.section == row.section,
+                    VaultSecretRequest.id != row.id,
+                    VaultSecretRequest.supplied_at.is_(None),
+                    VaultSecretRequest.conflicted_at.is_(None),
+                    VaultSecretRequest.expires_at > datetime.now(UTC),
+                )
+            )
+        ).all()
+        if any(
+            extras.intersection(other.fields) and not fields_conflict(other, existing)
+            for other in pending
+        ):
+            raise HTTPException(409, "Selected fields already requested")
+    return [name for name in fields if row.field_baselines.get(name) is not None]
+
+
 async def supply(db: AsyncSession, body: VaultSecretRequestSupply) -> VaultSecretRequestStatus:
     try:
         row = await token_request(db, body.token)
         context = await describe(db, row)
         if context.status != "pending":
             raise unavailable()
-        if set(body.fields) != set(row.fields):
-            raise HTTPException(422, "Supply exactly the requested fields")
-        # Lock only requested rows and recheck their state before changing any value.
+        requested_fields = list(body.fields)
+        if not set(row.fields).issubset(requested_fields):
+            raise HTTPException(422, "Supply every requested field")
+        await check_selection(db, row, requested_fields)
         existing = await load_vault_items_by_name(
-            db, row.vault_id, row.section, lock_fields=row.fields
+            db, row.vault_id, row.section, lock_fields=requested_fields
         )
-        if fields_conflict(row, existing):
-            raise unavailable()
-        for field in row.fields:
+        for field in requested_fields:
             ciphertext, nonce = encrypt(body.fields[field])
             item = existing.get(field)
             if item is None:
@@ -276,6 +313,7 @@ async def supply(db: AsyncSession, body: VaultSecretRequestSupply) -> VaultSecre
         from app.services.runtime_vaults import notify_vault_changed
 
         await notify_vault_changed(db, row.vault_id, values_changed=True)
+        row.extra_fields = [field for field in requested_fields if field not in row.fields]
         row.supplied_at = datetime.now(UTC)
         result = await describe(db, row)
         await db.commit()

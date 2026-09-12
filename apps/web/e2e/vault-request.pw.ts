@@ -147,3 +147,110 @@ test("an intervening change clears the mixed form without claiming success", asy
 	await expect(page.getByRole("textbox")).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Copy message for agent" })).toHaveCount(0);
 });
+
+for (const viewport of [
+	{ width: 1280, height: 900 },
+	{ width: 390, height: 844 },
+]) {
+	test(`dotenv preview and user-added fields at ${viewport.width}px`, async ({
+		page,
+	}, testInfo) => {
+		await page.setViewportSize(viewport);
+		let submissions = 0;
+		await page.route("**/v1/vault/requests/**", async (route) => {
+			const body = route.request().postDataJSON();
+			if (route.request().url().endsWith("/supply")) {
+				submissions++;
+				expect(body.fields).toEqual({
+					API_KEY: "synthetic-import",
+					API_SECRET: "synthetic-secret",
+					"api.key": "${LITERAL}",
+					"api-key": "synthetic-new",
+				});
+				return route.fulfill({
+					json: {
+						...context,
+						fields: Object.keys(body.fields),
+						extra_fields: ["api.key", "api-key"],
+						status: "supplied",
+					},
+				});
+			}
+			return route.fulfill({
+				json: { ...context, update_fields: body.fields?.includes("api.key") ? ["api.key"] : [] },
+			});
+		});
+		await page.goto(`/vault-request#${token}`);
+		await page.getByLabel("API_KEY", { exact: true }).fill("synthetic-draft");
+		await page.getByLabel("API_SECRET", { exact: true }).fill("synthetic-secret");
+		await page.getByRole("button", { name: "Add field", exact: true }).click();
+		await page.getByRole("textbox", { name: "Field name", exact: true }).fill("temporary");
+		await page.getByRole("textbox", { name: "Field name", exact: true }).fill("renamed");
+		await page.getByRole("button", { name: "Remove renamed" }).click();
+		await expect(page.getByRole("textbox", { name: "Field name", exact: true })).toHaveCount(0);
+		await page.getByRole("button", { name: "Import .env", exact: true }).click();
+		const dotenv = "API_KEY=synthetic-import\napi.key=${LITERAL}\napi-key=synthetic-new";
+		if (viewport.width < 500) {
+			await page
+				.getByLabel("Choose .env file")
+				.setInputFiles({ name: ".env", mimeType: "text/plain", buffer: Buffer.from(dotenv) });
+		} else {
+			await page.getByLabel("Dotenv text").fill(dotenv);
+		}
+		await expect(page.getByLabel("Dotenv text")).toHaveValue(dotenv);
+		await expect(page.getByRole("button", { name: "Save secrets", exact: true })).toBeDisabled();
+		await page.getByRole("button", { name: "Preview import", exact: true }).click();
+		await expect(page.getByText("Replace entered value", { exact: false })).toBeVisible();
+		await expect(
+			page.getByText("Update existing Vault value on save", { exact: false }),
+		).toBeVisible();
+		await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-draft");
+		await page.screenshot({
+			path: testInfo.outputPath(`preview-${viewport.width}.png`),
+			fullPage: true,
+		});
+		expect(submissions).toBe(0);
+		await page.getByRole("button", { name: "Apply import", exact: true }).click();
+		await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-import");
+		await expect(page.getByRole("textbox", { name: "Field name", exact: true })).toHaveCount(2);
+		await expect(page.getByText("Update", { exact: true })).toHaveCount(1);
+		await page.screenshot({
+			path: testInfo.outputPath(`fields-${viewport.width}.png`),
+			fullPage: true,
+		});
+		expect(
+			await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+		).toBe(true);
+		await page.getByRole("button", { name: "Save secrets", exact: true }).click();
+		await expect(page.getByRole("status")).toContainText("Your secrets are saved");
+		expect(submissions).toBe(1);
+		await page.screenshot({
+			path: testInfo.outputPath(`saved-${viewport.width}.png`),
+			fullPage: true,
+		});
+	});
+}
+
+test("an import of only requested names requires Apply and keeps a usable Save", async ({
+	page,
+}) => {
+	await page.route("**/v1/vault/requests/inspect", (route) => route.fulfill({ json: context }));
+	await page.goto(`/vault-request#${token}`);
+	await page.getByLabel("API_KEY", { exact: true }).fill("synthetic-original");
+	await page.getByRole("button", { name: "Import .env", exact: true }).click();
+	await page.getByLabel("Dotenv text").fill("API_KEY=synthetic-new\nAPI_KEY=duplicate");
+	await page.getByRole("button", { name: "Preview import", exact: true }).click();
+	await expect(page.getByRole("alert")).toContainText("duplicate");
+	await expect(page.getByRole("button", { name: "Apply import", exact: true })).toHaveCount(0);
+	await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-original");
+	await page.getByLabel("Dotenv text").fill("API_KEY=synthetic-new");
+	await page.getByRole("button", { name: "Preview import", exact: true }).click();
+	await page.getByRole("button", { name: "Cancel import", exact: true }).click();
+	await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-original");
+	await page.getByRole("button", { name: "Import .env", exact: true }).click();
+	await page.getByLabel("Dotenv text").fill("API_KEY=synthetic-new");
+	await page.getByRole("button", { name: "Preview import", exact: true }).click();
+	await page.getByRole("button", { name: "Apply import", exact: true }).click();
+	await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-new");
+	await expect(page.getByRole("button", { name: "Save secrets", exact: true })).toBeEnabled();
+});
