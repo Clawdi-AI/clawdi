@@ -20,7 +20,7 @@ const HOSTED_BUNDLED_SKILL_CATALOG = new Map<
 					id: "clawdi",
 					version: 1,
 					assetDirectory: "hosted-versions/1/clawdi",
-					digest: "c612838e760ba65d0f305829d55410cd9521456e802cd168b6f516a9459b5b65",
+					digest: "a4c7fd7559e1dabbc28a8dc223b21d142cb076ab37e4bd5f83b2a1b2720a0aee",
 				}),
 			],
 		]),

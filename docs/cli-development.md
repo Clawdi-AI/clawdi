@@ -595,16 +595,19 @@ task authorizes creation. Ask for the exact target when ambiguity affects purpos
 access. Linked Vaults may be synced read-only; never request/upsert outside the write
 boundary or create duplicates to sidestep access.
 
-Use MCP `vault_request_create` to reserve up to 32 missing environment fields in one
+Use MCP `vault_request_create` to request up to 32 new or updated environment fields in one
 owned Vault/Project attachment. It returns a URL with a 256-bit capability in its
 fragment. Show that exact URL to the user. The public form supplies only the requested
 names, in one transaction; viewing it does not redeem it. Tokens are hashed at rest,
 expire after one hour by default (five minutes to one day configurable), and cannot
-read or replace supplied secrets. `vault_request_status` returns metadata and exact
+read secrets. Existing keys are marked as updates; old values remain active until saving.
+Changes, deletion, or recreation of any requested existing field conflict with the whole
+batch; unrelated field edits do not. Requests created before update support remain absent-only. `vault_request_status` returns metadata and exact
 references. MCP request metadata omits legacy CLI commands, including `vault_get` recent
 requests; REST retains them for compatibility. Pending requests appear separately on the
-Vault detail page and are never returned as empty secret values. Use a fresh request for remaining missing fields after
-expiry; existing pending requests and supplied fields are rejected.
+Vault detail page and are never returned as empty secret values. After expiry or conflict, reassess the authorized fields before requesting them again.
+Conflicted requests stay unavailable and can be replaced immediately. Genuine pending
+overlap is rejected; never delete a key to request an update.
 
 After supply in a managed runtime or configured connected macOS/Linux Agent, verify `vault_request_status` and inspect only
 `.clawdi/vaults/index.json` under the native workspace. Existing runtime watch delivers readable

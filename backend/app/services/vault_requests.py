@@ -1,4 +1,4 @@
-"""Write-only capabilities for exact, initially absent Vault fields."""
+"""Write-only capabilities for exact Vault fields at their requested state."""
 
 import hashlib
 import secrets
@@ -44,6 +44,19 @@ def unavailable() -> HTTPException:
     return HTTPException(410, "Secret request unavailable")
 
 
+def field_baseline(item: VaultItem | None) -> str | None:
+    if item is None:
+        return None
+    return hashlib.sha256(item.id.bytes + item.nonce + item.encrypted_value).hexdigest()
+
+
+def fields_conflict(row: VaultSecretRequest, existing: dict[str, VaultItem]) -> bool:
+    return row.conflicted_at is not None or any(
+        field_baseline(existing.get(field)) != row.field_baselines.get(field)
+        for field in row.fields
+    )
+
+
 async def request_context(db: AsyncSession, row: VaultSecretRequest) -> tuple[Vault, Project]:
     context = (
         await db.execute(
@@ -66,6 +79,13 @@ async def request_context(db: AsyncSession, row: VaultSecretRequest) -> tuple[Va
 
 async def describe(db: AsyncSession, row: VaultSecretRequest) -> VaultSecretRequestStatus:
     vault, project = await request_context(db, row)
+    # Owner reads can load the request before waiting on a concurrent Vault writer.
+    # Autoflush preserves this transaction's own successful submission first.
+    await db.execute(
+        select(VaultSecretRequest)
+        .where(VaultSecretRequest.id == row.id)
+        .execution_options(populate_existing=True)
+    )
     existing = await load_vault_items_by_name(db, row.vault_id, row.section)
     state: Literal["pending", "supplied", "expired", "conflict"] = (
         "supplied" if row.supplied_at else "pending"
@@ -73,7 +93,7 @@ async def describe(db: AsyncSession, row: VaultSecretRequest) -> VaultSecretRequ
     if not row.supplied_at:
         if row.expires_at <= datetime.now(UTC):
             state = "expired"
-        elif any(field in existing for field in row.fields):
+        elif fields_conflict(row, existing):
             state = "conflict"
     references = {
         field: exact_vault_reference(row.project_id, vault.slug, row.section, field)
@@ -88,6 +108,7 @@ async def describe(db: AsyncSession, row: VaultSecretRequest) -> VaultSecretRequ
         slug=vault.slug,
         section=row.section,
         fields=row.fields,
+        update_fields=[field for field in row.fields if field in row.field_baselines],
         status=state,
         expires_at=row.expires_at,
         supplied_at=row.supplied_at,
@@ -140,20 +161,30 @@ async def create_request(
                 VaultSecretRequest.vault_id == vault.id,
                 VaultSecretRequest.section == body.section,
                 VaultSecretRequest.supplied_at.is_(None),
+                VaultSecretRequest.conflicted_at.is_(None),
                 VaultSecretRequest.expires_at > datetime.now(UTC),
             )
         )
     ).all()
-    if any(field in existing for field in body.fields) or any(
-        set(body.fields).intersection(row.fields) for row in pending
-    ):
-        raise HTTPException(409, "Fields already supplied or requested")
+    for row in pending:
+        if not set(body.fields).intersection(row.fields):
+            continue
+        if not fields_conflict(row, existing):
+            raise HTTPException(409, "Fields already requested")
+        # Persist the predecessor's terminal state with its successor, including
+        # conflicts caused before this backend version began fencing mutations.
+        row.conflicted_at = datetime.now(UTC)
     token = secrets.token_urlsafe(32)
     row = VaultSecretRequest(
         vault_id=vault.id,
         project_id=body.project_id,
         section=body.section,
         fields=body.fields,
+        field_baselines={
+            field: baseline
+            for field in body.fields
+            if (baseline := field_baseline(existing.get(field))) is not None
+        },
         token_hash=hashlib.sha256(token.encode()).hexdigest(),
         expires_at=datetime.now(UTC) + timedelta(seconds=body.expires_in_seconds),
     )
@@ -184,7 +215,7 @@ async def owned_request(
 async def token_request(db: AsyncSession, token: str) -> VaultSecretRequest:
     identity = (
         await db.execute(
-            select(VaultSecretRequest.id, Vault.user_id)
+            select(VaultSecretRequest.id, VaultSecretRequest.vault_id, Vault.user_id)
             .join(Vault, Vault.id == VaultSecretRequest.vault_id)
             .where(VaultSecretRequest.token_hash == hashlib.sha256(token.encode()).hexdigest())
         )
@@ -195,13 +226,20 @@ async def token_request(db: AsyncSession, token: str) -> VaultSecretRequest:
         await assert_user_authority_active(db, identity.user_id)
     except (PrincipalSuspendedError, PrincipalTerminatedError):
         raise unavailable() from None
+    # Every mutation locks Vault before request rows, including durable conflict fences.
+    await db.execute(select(Vault.id).where(Vault.id == identity.vault_id).with_for_update())
     row = await db.scalar(
         select(VaultSecretRequest)
         .where(VaultSecretRequest.id == identity.id)
         .with_for_update()
         .execution_options(populate_existing=True)
     )
-    if row is None or row.supplied_at is not None or row.expires_at <= datetime.now(UTC):
+    if (
+        row is None
+        or row.supplied_at is not None
+        or row.conflicted_at is not None
+        or row.expires_at <= datetime.now(UTC)
+    ):
         raise unavailable()
     return row
 
@@ -213,16 +251,25 @@ async def supply(db: AsyncSession, body: VaultSecretRequestSupply) -> VaultSecre
         raise unavailable()
     if set(body.fields) != set(row.fields):
         raise HTTPException(422, "Supply exactly the requested fields")
+    # describe holds the Vault lock shared by create, upsert, copy and delete.
+    # Validate the entire batch before changing any field, retaining old values on conflict.
+    existing = await load_vault_items_by_name(db, row.vault_id, row.section)
     for field in row.fields:
         ciphertext, nonce = encrypt(body.fields[field])
-        item = VaultItem(
-            vault_id=row.vault_id,
-            section=row.section,
-            item_name=field,
-            encrypted_value=ciphertext,
-            nonce=nonce,
-        )
-        db.add(item)
+        item = existing.get(field)
+        if item is None:
+            db.add(
+                VaultItem(
+                    vault_id=row.vault_id,
+                    section=row.section,
+                    item_name=field,
+                    encrypted_value=ciphertext,
+                    nonce=nonce,
+                )
+            )
+        else:
+            item.encrypted_value = ciphertext
+            item.nonce = nonce
         try:
             await db.flush()
         except IntegrityError:

@@ -8,7 +8,7 @@ const labels = {
 	pending: "Awaiting input",
 	supplied: "Supplied",
 	expired: "Expired",
-	conflict: "Field already exists",
+	conflict: "Credentials changed",
 };
 
 export function VaultSecretRequests({

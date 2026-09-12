@@ -14,6 +14,9 @@ database migration, CI, and implementation details.
 
 ### Changed
 
+- Request new credentials and updates to existing keys through the same Vault link.
+  Old values stay active until saving; intervening changes reject the whole batch.
+
 - CLI 0.14.74 recognizes credential tasks in the Clawdi skill and reuses ready,
   authorized integrations, including connected Composio services, without
   requiring duplicate credentials or account migration.

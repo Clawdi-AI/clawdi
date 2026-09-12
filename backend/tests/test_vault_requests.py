@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.auth import AuthContext
@@ -16,7 +16,7 @@ from app.schemas.vault_requests import VaultSecretRequestSupply
 from app.services.vault_requests import owned_request, supply
 
 
-async def make_request(client, *, fields=None, section=""):
+async def make_request(client, *, fields=None, section="", existing=None):
     vault = (await client.post("/v1/vault", json={"slug": "requested", "name": "Requested"})).json()
     detail = (
         await client.get("/v1/vault/detail", params={"slug": "requested", "vault_id": vault["id"]})
@@ -28,6 +28,11 @@ async def make_request(client, *, fields=None, section=""):
         "fields": fields or ["API_KEY", "API_SECRET"],
         "section": section,
     }
+    if existing:
+        response = await client.put(
+            "/v1/vault/requested/items", json={"section": section, "fields": existing}
+        )
+        assert response.status_code == 200, response.text
     response = await client.post("/v1/vault/requests", json=body)
     assert response.status_code == 200, response.text
     return body, response.json()
@@ -66,7 +71,9 @@ async def test_capability_atomic_fields_replay_and_plaintext_boundary(cli_client
         assert (
             await cli_client.post(f"/v1/vault/requests/{action}", json=payload)
         ).status_code == 410
-    assert (await cli_client.post("/v1/vault/requests", json=body)).status_code == 409
+    update = await cli_client.post("/v1/vault/requests", json=body)
+    assert update.status_code == 200, update.text
+    assert update.json()["update_fields"] == body["fields"]
     material = await cli_client.post(
         "/v1/vault/material", json={"vault_id": body["vault_id"], "project_id": body["project_id"]}
     )
@@ -372,3 +379,382 @@ async def test_request_command_selects_only_its_named_section(cli_client, sectio
         )
         assert material.status_code == 200, material.text
         assert material.json()["values"] == {"TOKEN": "requested-value"}
+
+
+@pytest.mark.asyncio
+async def test_mixed_request_preserves_old_values_and_exposes_only_update_names(
+    cli_client, db_session, seed_user
+):
+    body, created = await make_request(
+        cli_client, fields=["NEW", "TOKEN"], existing={"TOKEN": "old-secret"}, section="live"
+    )
+    token = created["url"].split("#")[1]
+    row = await db_session.get(VaultSecretRequest, uuid.UUID(created["id"]))
+    baseline = row.field_baselines["TOKEN"]
+    target = {"vault_id": body["vault_id"], "project_id": body["project_id"], "section": "live"}
+    assert (await cli_client.post("/v1/vault/material", json=target)).json()["values"] == {
+        "TOKEN": "old-secret"
+    }
+    for response in (
+        await cli_client.post("/v1/vault/requests/inspect", json={"token": token}),
+        await cli_client.get(f"/v1/vault/requests/{created['id']}"),
+    ):
+        assert response.json()["update_fields"] == ["TOKEN"]
+        assert baseline not in response.text and "old-secret" not in response.text
+        assert "field_baselines" not in response.text
+    mcp = await _tool_vault_request_status(
+        {"request_id": created["id"]}, auth=AuthContext(user=seed_user), db=db_session
+    )
+    assert baseline not in str(mcp) and "old-secret" not in str(mcp)
+    # Neither other fields in this section nor the same name in another section invalidate it.
+    for section, fields in (("live", {"OTHER": "keep"}), ("other", {"TOKEN": "elsewhere"})):
+        assert (
+            await cli_client.put(
+                "/v1/vault/requested/items", json={"section": section, "fields": fields}
+            )
+        ).status_code == 200
+    response = await cli_client.post(
+        "/api/vault/requests/supply",
+        json={"token": token, "fields": {"NEW": "added", "TOKEN": "replacement"}},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "supplied"
+    assert (await cli_client.post("/v1/vault/material", json=target)).json()["values"] == {
+        "NEW": "added",
+        "TOKEN": "replacement",
+        "OTHER": "keep",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["update", "delete", "recreate", "new", "legacy"])
+async def test_mixed_request_conflicts_atomically(cli_client, db_session, change):
+    body, created = await make_request(
+        cli_client, fields=["NEW", "TOKEN"], existing={"TOKEN": "old"}
+    )
+    row = await db_session.get(VaultSecretRequest, uuid.UUID(created["id"]))
+    if change == "legacy":
+        # Migrated requests have no authority to replace a now-existing field.
+        row.field_baselines = {}
+        await db_session.commit()
+    if change in ("delete", "recreate"):
+        assert (
+            await cli_client.request(
+                "DELETE", "/v1/vault/requested/items", json={"fields": ["TOKEN"]}
+            )
+        ).status_code == 200
+    if change in ("update", "recreate", "new"):
+        field = "NEW" if change == "new" else "TOKEN"
+        # Re-encrypting even the same plaintext must invalidate the baseline.
+        assert (
+            await cli_client.put("/v1/vault/requested/items", json={"fields": {field: "old"}})
+        ).status_code == 200
+    target = {"vault_id": body["vault_id"], "project_id": body["project_id"]}
+    before = (await cli_client.post("/v1/vault/material", json=target)).json()["values"]
+    response = await cli_client.post(
+        "/v1/vault/requests/supply",
+        json={"token": created["url"].split("#")[1], "fields": {"NEW": "wrong", "TOKEN": "wrong"}},
+    )
+    assert response.status_code == 410, response.text
+    assert (await cli_client.get(f"/v1/vault/requests/{created['id']}")).json()[
+        "status"
+    ] == "conflict"
+    assert (await cli_client.post("/v1/vault/material", json=target)).json()["values"] == before
+    await db_session.refresh(row)
+    assert row.supplied_at is None
+
+
+async def wait_for_database_lock(engine, pid):
+    async with engine.connect() as observer:
+        async with asyncio.timeout(5):
+            while not await observer.scalar(
+                text("SELECT cardinality(pg_blocking_pids(:pid)) > 0"), {"pid": pid}
+            ):
+                await asyncio.sleep(0.01)
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+@pytest.mark.parametrize("operation", ["upsert", "delete", "copy"])
+@pytest.mark.parametrize("supply_first", [False, True])
+async def test_request_serializes_with_vault_mutations(
+    cli_client, db_session, engine, seed_user, monkeypatch, operation, supply_first
+):
+    from app.routes.vault import copy_vault_items
+    from app.schemas.vault import VaultItemDelete, VaultItemsCopy, VaultItemUpsert
+    from app.services import vault_requests
+    from app.services.vault import delete_owned_vault_items, upsert_owned_vault_items
+
+    body, created = await make_request(
+        cli_client, fields=["NEW", "TOKEN"], existing={"TOKEN": "old"}
+    )
+    vault_id = uuid.UUID(body["vault_id"])
+    auth = AuthContext(user=seed_user)
+    source_id = None
+    if operation == "copy":
+        source = (
+            await cli_client.post("/v1/vault", json={"slug": "source", "name": "Source"})
+        ).json()
+        source_id = uuid.UUID(source["id"])
+        await cli_client.put("/v1/vault/source/items", json={"fields": {"TOKEN": "operator"}})
+    # Release the fixture connection before independent transactions contend.
+    await db_session.commit()
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def mutate(session):
+        args = {"project_id": uuid.UUID(body["project_id"]), "vault_id": vault_id}
+        if operation == "upsert":
+            await upsert_owned_vault_items(
+                session, auth, "requested", VaultItemUpsert(fields={"TOKEN": "operator"}), **args
+            )
+        elif operation == "delete":
+            await delete_owned_vault_items(
+                session,
+                auth,
+                "requested",
+                VaultItemDelete(fields=["TOKEN"]),
+                global_delete=False,
+                **args,
+            )
+        else:
+            await copy_vault_items(
+                "source",
+                VaultItemsCopy(target_slug="requested", fields=["TOKEN"]),
+                project_id=None,
+                vault_id=source_id,
+                target_vault_id=vault_id,
+                auth=auth,
+                db=session,
+            )
+
+    async def redeem(session):
+        try:
+            await supply(
+                session,
+                VaultSecretRequestSupply(
+                    token=created["url"].split("#")[1],
+                    fields={"NEW": "supplied", "TOKEN": "supplied"},
+                ),
+            )
+            return 200
+        except HTTPException as exc:
+            await session.rollback()
+            return exc.status_code
+
+    tasks = []
+    try:
+        async with sessions() as first, sessions() as second:
+            pid = await second.scalar(text("SELECT pg_backend_pid()"))
+            if supply_first:
+                locked, release = asyncio.Event(), asyncio.Event()
+                original = vault_requests.describe
+
+                async def hold_supply(session, row):
+                    result = await original(session, row)
+                    if session is first and not row.supplied_at:
+                        locked.set()
+                        await release.wait()
+                    return result
+
+                monkeypatch.setattr(vault_requests, "describe", hold_supply)
+                winner = asyncio.create_task(redeem(first))
+                tasks.append(winner)
+                await asyncio.wait_for(locked.wait(), 5)
+                waiter = asyncio.create_task(mutate(second))
+                tasks.append(waiter)
+                await wait_for_database_lock(engine, pid)
+                release.set()
+                assert await asyncio.wait_for(winner, 5) == 200
+                await asyncio.wait_for(waiter, 5)
+            else:
+                await first.execute(select(Vault.id).where(Vault.id == vault_id).with_for_update())
+                waiter = asyncio.create_task(redeem(second))
+                tasks.append(waiter)
+                await wait_for_database_lock(engine, pid)
+                await mutate(first)
+                assert await asyncio.wait_for(waiter, 5) == 410
+        async with sessions() as check:
+            row = await check.get(VaultSecretRequest, uuid.UUID(created["id"]))
+            assert (row.supplied_at is not None) == supply_first
+            items = (
+                await check.scalars(select(VaultItem).where(VaultItem.vault_id == vault_id))
+            ).all()
+            from app.services.vault_crypto import decrypt
+
+            values = {item.item_name: decrypt(item.encrypted_value, item.nonce) for item in items}
+            assert values == {
+                **({"TOKEN": "operator"} if operation != "delete" else {}),
+                **({"NEW": "supplied"} if supply_first else {}),
+            }
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await db_session.rollback()
+        await db_session.execute(
+            delete(Vault).where(Vault.id.in_([vault_id, *([source_id] if source_id else [])]))
+        )
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_conflicted_request_can_be_replaced_without_reviving_old_capability(
+    cli_client, db_session, legacy
+):
+    body, created = await make_request(cli_client, fields=["TOKEN", "NEW"])
+    assert (await cli_client.post("/v1/vault/requests", json=body)).status_code == 409
+    if legacy:
+        # Simulate a write by the previous backend: no durable conflict fence yet.
+        from app.services.vault_crypto import encrypt
+
+        ciphertext, nonce = encrypt("operator")
+        db_session.add(
+            VaultItem(
+                vault_id=uuid.UUID(body["vault_id"]),
+                section="",
+                item_name="TOKEN",
+                encrypted_value=ciphertext,
+                nonce=nonce,
+            )
+        )
+        await db_session.commit()
+    else:
+        await cli_client.put("/v1/vault/requested/items", json={"fields": {"TOKEN": "operator"}})
+    assert (await cli_client.get(f"/v1/vault/requests/{created['id']}")).json()[
+        "status"
+    ] == "conflict"
+    successor = await cli_client.post("/v1/vault/requests", json=body)
+    assert successor.status_code == 200, successor.text
+    assert successor.json()["update_fields"] == ["TOKEN"]
+    assert (await cli_client.post("/v1/vault/requests", json=body)).status_code == 409
+    # Restore the predecessor's absent baseline. Neither old link may revive.
+    await cli_client.request("DELETE", "/v1/vault/requested/items", json={"fields": ["TOKEN"]})
+    latest = await cli_client.post("/v1/vault/requests", json=body)
+    assert latest.status_code == 200, latest.text
+    assert latest.json()["update_fields"] == []
+    for obsolete in (created, successor.json()):
+        for action in ("inspect", "supply"):
+            payload = {"token": obsolete["url"].split("#")[1]}
+            if action == "supply":
+                payload["fields"] = {"TOKEN": "obsolete", "NEW": "obsolete"}
+            assert (
+                await cli_client.post(f"/v1/vault/requests/{action}", json=payload)
+            ).status_code == 410
+        row = await db_session.get(
+            VaultSecretRequest, uuid.UUID(obsolete["id"]), populate_existing=True
+        )
+        assert row.conflicted_at is not None and row.supplied_at is None
+    supplied = await cli_client.post(
+        "/v1/vault/requests/supply",
+        json={
+            "token": latest.json()["url"].split("#")[1],
+            "fields": {"TOKEN": "current", "NEW": "current"},
+        },
+    )
+    assert supplied.status_code == 200, supplied.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recreate", [False, True])
+async def test_baseline_detects_prior_writer_ciphertext_and_identity_changes(
+    cli_client, db_session, recreate
+):
+    _, created = await make_request(cli_client, fields=["NEW", "TOKEN"], existing={"TOKEN": "old"})
+    item = await db_session.scalar(
+        select(VaultItem).where(VaultItem.vault_id == uuid.UUID(created["vault_id"]))
+    )
+    if recreate:
+        # Same ciphertext with a different row identity is still a different incarnation.
+        item.id = uuid.uuid4()
+    else:
+        from app.services.vault_crypto import encrypt
+
+        item.encrypted_value, item.nonce = encrypt("old")
+    await db_session.commit()
+    response = await cli_client.post(
+        "/v1/vault/requests/supply",
+        json={"token": created["url"].split("#")[1], "fields": {"TOKEN": "wrong", "NEW": "wrong"}},
+    )
+    assert response.status_code == 410
+    assert (await cli_client.get(f"/v1/vault/requests/{created['id']}")).json()[
+        "status"
+    ] == "conflict"
+
+
+@pytest.mark.asyncio
+async def test_request_migration_preserves_absent_only_rows(engine):
+    import importlib.util
+    from pathlib import Path
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    path = (
+        Path(__file__).parents[1] / "alembic/versions/e7b4c2a9d610_vault_request_field_baselines.py"
+    )
+    spec = importlib.util.spec_from_file_location("request_baselines", path)
+    assert spec is not None and spec.loader is not None
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    def verify(connection):
+        connection.execute(
+            text(
+                "CREATE TEMP TABLE vault_secret_requests (id integer, "
+                "expires_at timestamptz DEFAULT now() + interval '1 hour', "
+                "supplied_at timestamptz) ON COMMIT DROP"
+            )
+        )
+        connection.execute(text("INSERT INTO vault_secret_requests (id) VALUES (1)"))
+        migration.op = Operations(MigrationContext.configure(connection))
+        migration.upgrade()
+        connection.execute(text("INSERT INTO vault_secret_requests (id) VALUES (2)"))
+        assert connection.execute(
+            text("SELECT field_baselines, conflicted_at FROM vault_secret_requests ORDER BY id")
+        ).all() == [({}, None), ({}, None)]
+        connection.execute(
+            text(
+                "INSERT INTO vault_secret_requests (id, field_baselines) "
+                "VALUES (3, CAST(:baseline AS jsonb))"
+            ),
+            {"baseline": '{"TOKEN":"baseline"}'},
+        )
+        connection.execute(
+            text("INSERT INTO vault_secret_requests (id, conflicted_at) VALUES (4, now())")
+        )
+        migration.downgrade()
+        assert connection.execute(
+            text("SELECT id, expires_at > now() FROM vault_secret_requests ORDER BY id")
+        ).all() == [(1, True), (2, True), (3, False), (4, False)]
+
+    async with engine.begin() as connection:
+        await connection.run_sync(verify)
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_status_refreshes_terminal_state_after_concurrent_write(
+    cli_client, db_session, engine
+):
+    from app.services.vault_requests import describe
+
+    _, created = await make_request(cli_client, fields=["TOKEN"])
+    vault_id = uuid.UUID(created["vault_id"])
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with sessions() as reader:
+            row = await reader.get(VaultSecretRequest, uuid.UUID(created["id"]))
+            assert row.conflicted_at is None
+            await cli_client.put(
+                "/v1/vault/requested/items", json={"fields": {"TOKEN": "intervening"}}
+            )
+            await cli_client.request(
+                "DELETE", "/v1/vault/requested/items", json={"fields": ["TOKEN"]}
+            )
+            assert (await describe(reader, row)).status == "conflict"
+    finally:
+        await db_session.rollback()
+        await db_session.execute(delete(Vault).where(Vault.id == vault_id))
+        await db_session.commit()

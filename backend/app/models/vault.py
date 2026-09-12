@@ -135,5 +135,10 @@ class VaultSecretRequest(Base, TimestampMixin):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     section: Mapped[str] = mapped_column(String(200), nullable=False)
     fields: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    # Request-local encrypted state; never expose through API or runtime metadata.
+    field_baselines: Mapped[dict[str, str]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     supplied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    conflicted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -10279,6 +10279,8 @@ export interface components {
             section: string;
             /** Fields */
             fields: string[];
+            /** Update Fields */
+            update_fields?: string[];
             /**
              * Status
              * @enum {string}
@@ -10327,6 +10329,8 @@ export interface components {
             section: string;
             /** Fields */
             fields: string[];
+            /** Update Fields */
+            update_fields?: string[];
             /**
              * Status
              * @enum {string}

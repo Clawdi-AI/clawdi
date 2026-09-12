@@ -47,6 +47,7 @@ class VaultSecretRequestStatus(BaseModel):
     slug: str
     section: str
     fields: list[str]
+    update_fields: list[str] = Field(default_factory=list)
     status: Literal["pending", "supplied", "expired", "conflict"]
     expires_at: datetime
     supplied_at: datetime | None
