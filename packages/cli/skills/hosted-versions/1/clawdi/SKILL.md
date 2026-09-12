@@ -114,7 +114,8 @@ Opening the link does not consume it. Saving all requested fields consumes it on
 Check `vault_request_status` with its `request_id` after the user finishes. `pending` is not
 a secret value; `supplied` means the exact references are ready. On `expired` or `conflict`,
 inspect current Vault metadata and reassess the authorized fields before creating a fresh
-request; do not blindly retry an overwrite. If creation times out, use `vault_get` to find recent request IDs before retrying.
+request; do not blindly retry an overwrite. If creation times out, use `vault_get` to find
+recent request IDs before retrying.
 If submission times out, inspect status before repeating a mutation.
 
 ### Use runtime-supplied credentials
@@ -134,10 +135,12 @@ unrelated configuration in its `.clawdi` parent. Connected installations use thi
 layout on macOS/Linux only after an explicit workspace binding; do not assume an arbitrary
 repo is bound. Files remain readable by authorized programs running as the same user.
 
-After a credential request is supplied, inspect index metadata for the requested fields.
-Pending requests are metadata only, never empty pseudo-secrets. If delivery is delayed,
-report that state without claiming the credentials are saved. Runtime refreshes files;
-already-running processes must explicitly reload them. Offline delivery retains last good
+After `vault_request_status` reports `supplied`, match its Vault ID, section and field names
+in the index and require the local Vault `content_version` to be at least the status
+`content_version`. Existing field names alone do not prove replacements arrived. If either
+version is missing or local delivery is behind, report delivery as unverified; do not read
+secret values to check freshness. Pending requests are metadata only, never empty pseudo-secrets.
+Runtime refreshes files; already-running processes must explicitly reload them. Offline delivery retains last good
 files; confirmed access removal removes generated files. Authorized code can read these
 files, so do not claim that subsequent plaintext exposure is impossible.
 

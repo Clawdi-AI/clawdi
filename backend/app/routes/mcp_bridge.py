@@ -707,7 +707,10 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
         description=(
             "Check a Vault request: pending, supplied, expired, or conflict. Returns references, "
             "never values. After supply, continue the task using existing authorized capabilities; "
-            "this remote MCP does not save credentials to local files."
+            "verify local index Vault/section/fields and content_version >= "
+            "this status content_version "
+            "before claiming local delivery. Missing versions cannot confirm freshness. "
+            "This remote MCP does not save credentials to local files."
         ),
         input_schema=_VaultRequestStatusArguments.model_json_schema(),
         scopes=("vault:read",),

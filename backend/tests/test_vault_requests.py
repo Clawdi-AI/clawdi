@@ -391,6 +391,7 @@ async def test_mixed_request_preserves_old_values_and_exposes_only_update_names(
     token = created["url"].split("#")[1]
     row = await db_session.get(VaultSecretRequest, uuid.UUID(created["id"]))
     baseline = row.field_baselines["TOKEN"]
+    assert created["content_version"] == 1
     target = {"vault_id": body["vault_id"], "project_id": body["project_id"], "section": "live"}
     assert (await cli_client.post("/v1/vault/material", json=target)).json()["values"] == {
         "TOKEN": "old-secret"
@@ -419,11 +420,19 @@ async def test_mixed_request_preserves_old_values_and_exposes_only_update_names(
     )
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "supplied"
+    assert response.json()["content_version"] == 4
     assert (await cli_client.post("/v1/vault/material", json=target)).json()["values"] == {
         "NEW": "added",
         "TOKEN": "replacement",
         "OTHER": "keep",
     }
+    # Status reports current content, including writes after this request was supplied.
+    await cli_client.put(
+        "/v1/vault/requested/items", json={"section": "live", "fields": {"OTHER": "later"}}
+    )
+    assert (await cli_client.get(f"/v1/vault/requests/{created['id']}")).json()[
+        "content_version"
+    ] == 5
 
 
 @pytest.mark.asyncio

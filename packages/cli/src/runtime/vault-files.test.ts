@@ -52,6 +52,7 @@ function fixture(connected: boolean) {
 				name: "Vault",
 				slug: "vault",
 				revision: "1",
+				content_version: 1,
 				project_ids: [randomUUID()],
 				fields: [
 					{
@@ -102,6 +103,79 @@ for (const connected of [true, false]) {
 	describe.skipIf(!connected && process.platform !== "linux")(
 		connected ? "connected native filesystem" : "Hosted Linux filesystem",
 		() => {
+			test("legacy index gains content version on reuse; replacements stay stale until material arrives", async () => {
+				const { config, home, data } = fixture(connected);
+				let versioned = false;
+				let materialStatus = 200;
+				const server = Bun.serve({
+					hostname: "127.0.0.1",
+					port: 0,
+					async fetch(request) {
+						const vault = data.vaults[0];
+						const material = request.method === "POST";
+						if (material && materialStatus !== 200)
+							return new Response(null, { status: materialStatus });
+						if (request.headers.get("if-none-match") === vault.revision)
+							return new Response(null, { status: 304 });
+						const body = material ? await request.json() : undefined;
+						const { content_version, ...legacy } = vault;
+						return Response.json(
+							{
+								...data,
+								vaults: [
+									{
+										...legacy,
+										...(versioned ? { content_version } : {}),
+										fields:
+											material && body?.revisions[vault.id] !== vault.revision
+												? vault.fields
+												: null,
+									},
+								],
+							},
+							{ headers: { etag: vault.revision } },
+						);
+					},
+				});
+				config.apiUrl = server.url.origin;
+				const dir = join(home, ".clawdi/vaults");
+				const index = () => JSON.parse(readFileSync(join(dir, "index.json"), "utf8")).vaults[0];
+				try {
+					await syncRuntimeVaultFiles(config);
+					expect(index().content_version).toBeUndefined();
+					const names = index().sections.map((section: { file: string }) => section.file);
+					const mtimes = names.map(
+						(file: string) => lstatSync(join(dir, file), { bigint: true }).mtimeNs,
+					);
+					// An old CLI can already cache the new server's ETag without recording the counter.
+					// Reuse fields=null and recover metadata without rewriting any secret section JSON.
+					versioned = true;
+					expect(await syncRuntimeVaultFiles(config)).toBe("synced");
+					expect(index().content_version).toBe(1);
+					expect(
+						names.map((file: string) => lstatSync(join(dir, file), { bigint: true }).mtimeNs),
+					).toEqual(mtimes);
+					expect(await syncRuntimeVaultFiles(config)).toBe("unchanged");
+					const requestedContentVersion = 2;
+					data.vaults[0].content_version = requestedContentVersion;
+					data.vaults[0].revision = "2";
+					data.vaults[0].fields[0].value = "replacement";
+					materialStatus = 503;
+					await expect(syncRuntimeVaultFiles(config)).rejects.toThrow("Runtime Vault files");
+					// Matching names already exist, but metadata alone cannot publish delivery.
+					expect(index().sections[0].fields[0].name).toBe("TOKEN");
+					expect(index().content_version).toBeLessThan(requestedContentVersion);
+					materialStatus = 200;
+					await syncRuntimeVaultFiles(config);
+					expect(index().content_version).toBe(requestedContentVersion);
+					expect(
+						JSON.parse(readFileSync(config.receiptPath, "utf8")).inventory[0].content_version,
+					).toBe(requestedContentVersion);
+				} finally {
+					server.stop(true);
+				}
+			});
+
 			test("HTTP snapshots: stable sections, 304 no IO rewrite, rotation, additions/removal, offline and revocation", async () => {
 				const { config, home, data } = fixture(connected);
 				let revision = "1",

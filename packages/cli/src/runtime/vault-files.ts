@@ -41,6 +41,7 @@ const snapshotSchema = z.object({
 				slug: z.string(),
 				project_ids: z.array(z.uuid()).min(1),
 				revision: z.string(),
+				content_version: z.number().int().nonnegative().nullish(),
 				fields: z
 					.array(
 						z.object({
@@ -66,6 +67,7 @@ const indexVaultSchema = z.object({
 	slug: z.string(),
 	project_ids: z.array(z.uuid()),
 	revision: z.string(),
+	content_version: z.number().int().nonnegative().optional(),
 	sections: z.array(
 		z.object({
 			id: z.string(),
@@ -519,7 +521,7 @@ function render(snapshot: Snapshot, previous: Receipt | null) {
 				(entry) => entry.id === vault.id && entry.revision === vault.revision,
 			);
 			if (!old) fail();
-			return old;
+			return { ...old, content_version: vault.content_version ?? old.content_version };
 		}
 		const sections = new Map<string, NonNullable<typeof vault.fields>>();
 		for (const field of vault.fields) {
@@ -533,6 +535,7 @@ function render(snapshot: Snapshot, previous: Receipt | null) {
 			slug: vault.slug,
 			project_ids: vault.project_ids,
 			revision: vault.revision,
+			content_version: vault.content_version ?? undefined,
 			sections: [...sections].map(([name, fields]) => {
 				const id = createHash("sha256").update(name).digest("hex");
 				const file = `${vault.id}-${id}.json`;
@@ -734,7 +737,12 @@ async function syncVaultSnapshot(
 			withDirectory(config, receipt, (fd) =>
 				receipt?.files.every((name) => fileDigest(fd, name) === receipt?.digests[name]),
 			);
-		const etag = intact ? receipt?.etag : null;
+		// A receipt written by an older CLI may already have the current ETag but
+		// lack freshness metadata. Refresh metadata while still reusing intact values.
+		const etag =
+			intact && receipt?.inventory.every((vault) => vault.content_version !== undefined)
+				? receipt.etag
+				: null;
 		const response = await request(`${config.apiUrl}/v1/runtime/vaults${query}`, {
 			headers: {
 				...(config.connected ? {} : { Authorization: `Bearer ${config.apiKey}` }),

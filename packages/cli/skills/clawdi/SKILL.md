@@ -131,7 +131,8 @@ Opening the link does not consume it. Saving all requested fields consumes it on
 Check `vault_request_status` with its `request_id` after the user finishes. `pending` is not
 a secret value; `supplied` means the exact references are ready. On `expired` or `conflict`,
 inspect current Vault metadata and reassess the authorized fields before creating a fresh
-request; do not blindly retry an overwrite. If creation times out, use `vault_get` to find recent request IDs before retrying.
+request; do not blindly retry an overwrite. If creation times out, use `vault_get` to find
+recent request IDs before retrying.
 If submission times out, inspect status before repeating a mutation.
 
 ### Save and refresh credentials locally
@@ -149,9 +150,12 @@ edit, move or commit them. Hosted agents must not invoke/install the tenant Claw
 Connected operators configure delivery with `clawdi setup --agent <type> --vault-workspace <path>`;
 that changes only the Vault destination, never every repository scanned by the daemon.
 
-After a credential request is supplied, wait for the expected fields in index metadata before
-claiming delivery. If delivery is unavailable, report that state and any missing workspace
-binding instead of inventing a destination. Preserve unrelated local configuration.
+After `vault_request_status` reports `supplied`, match its Vault ID, section and field names
+in the index and require the local Vault `content_version` to be at least the status
+`content_version`. Existing field names alone do not prove replacements arrived. If either
+version is missing or local delivery is behind, report delivery as unverified; do not read
+secret values to check freshness. Report missing workspace bindings instead of inventing a
+destination. Preserve unrelated local configuration.
 
 ### Optional CLI environment files
 

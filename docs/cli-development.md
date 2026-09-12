@@ -610,7 +610,11 @@ Conflicted requests stay unavailable and can be replaced immediately. Genuine pe
 overlap is rejected; never delete a key to request an update.
 
 After supply in a managed runtime or configured connected macOS/Linux Agent, verify `vault_request_status` and inspect only
-`.clawdi/vaults/index.json` under the native workspace. Existing runtime watch delivers readable
+`.clawdi/vaults/index.json` under the native workspace. Match the Vault ID, section and field
+names, and require local `content_version >= status.content_version` before claiming delivery.
+A missing or older counter cannot confirm replacements, even when the field names exist.
+This is the existing Vault content counter; opaque `revision` remains a cache/visibility
+identity and must not be compared across Agents. Existing runtime watch delivers readable
 Workspace/linked-Project Vaults into separate generated section JSON files. Load the
 selected file inside the authorized process/SDK without exposing values to model context
 just to save them. Do not invoke the tenant CLI or edit generated files. See

@@ -88,6 +88,7 @@ test("connected delivery fences identity, retains offline files, coalesces chang
 							slug: "test",
 							project_ids: [projectId],
 							revision: String(version),
+							content_version: version,
 							fields: material
 								? [
 										{

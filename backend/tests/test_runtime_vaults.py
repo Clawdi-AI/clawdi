@@ -135,12 +135,16 @@ async def test_snapshot_scope_revision_mutations_and_fanout(
         payload = material.json()
         assert payload["complete"] is True and len(payload["vaults"]) == 1
         assert len(payload["vaults"][0]["project_ids"]) == 2
+        assert payload["vaults"][0]["content_version"] == 2
+        assert first.json()["vaults"][0]["content_version"] == 2
         assert {field["value"] for field in payload["vaults"][0]["fields"]} == {"first", "other"}
         # Legacy Agent-bound keys must neither read linked Projects nor reuse their material ETag.
         auth.api_key.managed = False
         legacy = await client.get("/v1/runtime/vaults")
         assert legacy.status_code == 200
         assert legacy.json()["vaults"][0]["project_ids"] == [str(agents[0].default_project_id)]
+        assert legacy.json()["vaults"][0]["content_version"] == 2
+        assert legacy.json()["vaults"][0]["revision"] != payload["vaults"][0]["revision"]
         assert (
             await client.post(
                 "/v1/runtime/vaults/material", json={"etag": first.headers["etag"], "revisions": {}}
@@ -175,6 +179,7 @@ async def test_snapshot_scope_revision_mutations_and_fanout(
                 json={"etag": etag, "revisions": {vault_id: payload["vaults"][0]["revision"]}},
             )
             assert reuse.status_code == 200 and reuse.json()["vaults"][0]["fields"] is None
+            assert reuse.json()["vaults"][0]["content_version"] == 2
             assert not any("vault_items" in statement for statement in sql)
             print(
                 f"runtime-vault fixture conditional + reuse: {len(sql)} snapshot DB statements; "
@@ -210,6 +215,7 @@ async def test_snapshot_scope_revision_mutations_and_fanout(
         )
         updated = await client.get("/v1/runtime/vaults", headers={"If-None-Match": etag})
         assert updated.status_code == 200 and updated.headers["etag"] != etag
+        assert updated.json()["vaults"][0]["content_version"] == 3
         auth.api_key = None
         assert (
             await client.request(

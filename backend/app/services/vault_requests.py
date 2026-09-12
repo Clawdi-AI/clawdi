@@ -70,6 +70,7 @@ async def request_context(db: AsyncSession, row: VaultSecretRequest) -> tuple[Va
                 Project.archived_at.is_(None),
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
     ).one_or_none()
     if context is None:
@@ -109,6 +110,7 @@ async def describe(db: AsyncSession, row: VaultSecretRequest) -> VaultSecretRequ
         section=row.section,
         fields=row.fields,
         update_fields=[field for field in row.fields if field in row.field_baselines],
+        content_version=vault.runtime_revision,
         status=state,
         expires_at=row.expires_at,
         supplied_at=row.supplied_at,

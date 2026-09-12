@@ -8578,6 +8578,8 @@ export interface components {
             project_ids: string[];
             /** Revision */
             revision: string;
+            /** Content Version */
+            content_version?: number | null;
             /** Fields */
             fields?: components["schemas"]["RuntimeVaultField"][] | null;
         };
@@ -10281,6 +10283,8 @@ export interface components {
             fields: string[];
             /** Update Fields */
             update_fields?: string[];
+            /** Content Version */
+            content_version?: number | null;
             /**
              * Status
              * @enum {string}
@@ -10331,6 +10335,8 @@ export interface components {
             fields: string[];
             /** Update Fields */
             update_fields?: string[];
+            /** Content Version */
+            content_version?: number | null;
             /**
              * Status
              * @enum {string}
