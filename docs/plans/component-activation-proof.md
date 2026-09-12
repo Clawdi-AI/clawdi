@@ -96,13 +96,14 @@ release qualification or Fable's independent final review.
 
 ```bash
 bash scripts/test.sh cli src/runtime/hermes-dashboard-auth.test.ts src/runtime/observed-v2.test.ts src/runtime/heartbeat-observation.test.ts
+bash scripts/test.sh runtime-systemd
 ```
 
 The native auth fixture downloads the exact checksum/commit already pinned in
 `tests/fixtures/runtime-official-installer-systemd/Dockerfile` and imports its
-real `gated_auth_middleware` and `BasicAuthProvider`. Status, HTML and systemd
-handlers are fixtures; this does not build or run the complete native SPA or
-gateway. It proves anonymous root 302, public login 200, healthy aggregate ok,
+real `gated_auth_middleware`, `BasicAuthProvider` and dashboard auth router,
+including its actual server-rendered `login_page`. Gateway status and systemd
+remain fixtures; this does not build or run the complete native SPA or gateway. It proves anonymous root 302, public login 200, healthy aggregate ok,
 and usable component UI with gateway state stopped. Ordinary HTTP regressions
 also cover timestamp-only watch rewrites surviving probes, meaningful parent
 health/receipt changes rejecting snapshots, and unknown proof preserving a
@@ -122,3 +123,14 @@ prepares. The Cloud component contract passed through `scripts/test.sh backend`
 (1 selected test), accepting unknown/error with unknown proof while rejecting
 contradictory aggregate ok. Wire fields are unchanged, so no client regeneration
 is required for this correction. Biome, Ruff and shell syntax checks passed.
+
+The existing privileged systemd CI workflow calls `runtime-systemd`, which now
+prepares the pinned dashboard fixture and executes the native auth test alongside
+systemd tests. Missing fixture setup in that suite fails instead of silently
+skipping. The native check verifies root 302, actual login 200/no-store/password
+form, native provider metadata and the unchanged CLI probe. It does not require
+an added workflow or a CLI release artifact.
+
+CI wiring follow-up: `bash scripts/test.sh runtime-systemd` passed 9 tests / 53
+assertions with the actual native login router and provider. No new workflow was
+created; the existing privileged systemd workflow now covers this scenario.
