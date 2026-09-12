@@ -12,6 +12,12 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### Fixed
+
+- CLI 0.14.75 gives managed OpenClaw MCP discovery and slow tool calls an
+  explicit timeout budget so tools remain available when discovery takes longer
+  than OpenClaw’s default 1.5 seconds.
+
 ### Changed
 
 - Request new credentials and updates to existing keys through the same Vault link.
