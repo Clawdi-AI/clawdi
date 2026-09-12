@@ -5309,11 +5309,18 @@ test("Hermes component proof accepts inline credentials and detects their mutati
 	expect(activation).toHaveLength(1);
 	const applied = {
 		schemaVersion: "clawdi.runtimeAppliedState.v2" as const,
-		appliedAt: new Date().toISOString(), instanceId: manifest.instanceId,
-		sourceRevision: "b".repeat(64), etag: `"sha256:${"b".repeat(64)}"`, generation: 1,
-		manifestETag: '"fixture-manifest"', applyReceiptId: "fixture-apply-receipt", bootNonce: "fixture-boot-nonce",
-		contentIdentity: { sourcePath: "fixture", sha256: "c".repeat(64) }, activated,
-		providerIds: [], projectedProviderIds: {},
+		appliedAt: new Date().toISOString(),
+		instanceId: manifest.instanceId,
+		sourceRevision: "b".repeat(64),
+		etag: `"sha256:${"b".repeat(64)}"`,
+		generation: 1,
+		manifestETag: '"fixture-manifest"',
+		applyReceiptId: "fixture-apply-receipt",
+		bootNonce: "fixture-boot-nonce",
+		contentIdentity: { sourcePath: "fixture", sha256: "c".repeat(64) },
+		activated,
+		providerIds: [],
+		projectedProviderIds: {},
 	};
 	writeRuntimeAppliedState(applied, paths);
 	persistComponentActivations(load, paths, readServiceState);
