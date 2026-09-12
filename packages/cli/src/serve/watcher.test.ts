@@ -64,7 +64,9 @@ describe("skill inventory polling", () => {
 							if (!sample) throw new Error("unexpected extra poll");
 							return sample;
 						},
-						onSkillChanged: (key) => changed.push(key),
+						onSkillChanged: (key) => {
+							changed.push(key);
+						},
 						onInventoryChanged: () => {
 							inventoryChanges++;
 							abort.abort();

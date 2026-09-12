@@ -28,6 +28,7 @@ import {
 	reconcilePendingRuntimeCliUpgrade,
 	rollbackPendingRuntimeCliUpgrade,
 } from "../runtime/cli-update";
+import { persistComponentActivations } from "../runtime/component-observation";
 import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
 import { readHostPolicy } from "../runtime/host-policy";
 import { failedHostedAgentPluginsObservation } from "../runtime/hosted-agent-plugin-observation";
@@ -66,6 +67,7 @@ import {
 	type RuntimeManifestFailure,
 	type RuntimeManifestLoad,
 } from "../runtime/manifest-source";
+import { readComponentServiceState } from "../runtime/observed";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
 import {
 	buildRuntimeBootStatus,
@@ -352,6 +354,9 @@ export function commitRuntimeAppliedState(input: {
 			nativeCredentialProviderIds: input.convergence.nativeCredentialProviderIds,
 		},
 		input.paths,
+	);
+	persistComponentActivations(input.load, input.paths, (scope, unit) =>
+		readComponentServiceState(input.paths, scope, unit),
 	);
 }
 

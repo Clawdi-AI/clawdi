@@ -2258,6 +2258,8 @@ export interface components {
         };
         /** V2HermesRuntimeUiEndpointInfo */
         V2HermesRuntimeUiEndpointInfo: {
+            /** Component Readiness */
+            component_readiness?: 1 | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -2564,6 +2566,8 @@ export interface components {
         };
         /** V2HostedFilesEndpointInfo */
         V2HostedFilesEndpointInfo: {
+            /** Component Readiness */
+            component_readiness?: 1 | null;
             /** Url */
             url: string;
         };
@@ -2719,6 +2723,8 @@ export interface components {
         };
         /** V2OpenClawRuntimeUiEndpointInfo */
         V2OpenClawRuntimeUiEndpointInfo: {
+            /** Component Readiness */
+            component_readiness?: 1 | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}

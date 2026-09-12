@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import {
@@ -10,7 +11,13 @@ import {
 	type SessionEventDraft,
 	sequenceSessionEvents,
 } from "../lib/session-events";
-import type { AgentAdapterCore, RawSession, SessionScanRequest, SessionScanResult } from "./base";
+import type {
+	AgentAdapterCore,
+	RawSession,
+	SessionScanRequest,
+	SessionScanResult,
+	SyncReadContext,
+} from "./base";
 import { getPiHome, getPiSessionsDir, isPathWithinRoots } from "./paths";
 import {
 	completeJsonlRecords,
@@ -513,9 +520,14 @@ function parseSession(filePath: string, projectFilter?: string): RawSession | nu
 export class PiAdapter implements AgentAdapterCore {
 	readonly agentType = "pi" as const;
 	readonly sessions = {
-		contentProtocol: async () => "events-v1" as const,
-		collect: (request: SessionScanRequest) => this.collectSessions(request),
-		resolve: (localSessionId: string) => this.resolveSession(localSessionId),
+		contentProtocol: async (context?: SyncReadContext) => {
+			context?.signal.throwIfAborted();
+			return "events-v1" as const;
+		},
+		collect: (request: SessionScanRequest, context?: SyncReadContext) =>
+			this.collectSessions(request, context),
+		resolve: (localSessionId: string, context?: SyncReadContext) =>
+			this.resolveSession(localSessionId, context),
 		watchPaths: () => [getPiSessionsDir()],
 	};
 
@@ -527,15 +539,25 @@ export class PiAdapter implements AgentAdapterCore {
 		return readCommandVersion("pi", ["--version"]);
 	}
 
-	private async collectSessions(request: SessionScanRequest): Promise<SessionScanResult> {
+	private async collectSessions(
+		request: SessionScanRequest,
+		context?: SyncReadContext,
+	): Promise<SessionScanResult> {
+		context?.signal.throwIfAborted();
 		const root = resolve(getPiSessionsDir());
 		if (request.kind === "paths") {
 			if (request.paths.length === 0) {
-				return this.collectSessions({ kind: "complete", projectFilter: request.projectFilter });
+				return this.collectSessions(
+					{ kind: "complete", projectFilter: request.projectFilter },
+					context,
+				);
 			}
 			const paths = request.paths.map((path) => resolve(path));
 			if (paths.some((path) => !isPathWithinRoots(path, [root]) || !path.endsWith(".jsonl"))) {
-				return this.collectSessions({ kind: "complete", projectFilter: request.projectFilter });
+				return this.collectSessions(
+					{ kind: "complete", projectFilter: request.projectFilter },
+					context,
+				);
 			}
 			const sessions = paths
 				.filter((path) => existsSync(path))
@@ -543,15 +565,23 @@ export class PiAdapter implements AgentAdapterCore {
 				.filter((session): session is RawSession => session !== null);
 			return { sessions, dedupedCount: 0, coverage: "partial" };
 		}
-		const sessions = listJsonlFiles(root)
-			.map((path) => parseSession(path, request.projectFilter))
-			.filter((session): session is RawSession => session !== null);
+		const sessions: RawSession[] = [];
+		for (const path of listJsonlFiles(root)) {
+			if (context) await setImmediate(undefined, { signal: context.signal });
+			const session = parseSession(path, request.projectFilter);
+			if (session) sessions.push(session);
+		}
 		return { sessions, dedupedCount: 0, coverage: "complete" };
 	}
 
-	private async resolveSession(localSessionId: string): Promise<RawSession | null> {
+	private async resolveSession(
+		localSessionId: string,
+		context?: SyncReadContext,
+	): Promise<RawSession | null> {
+		context?.signal.throwIfAborted();
 		const sourceId = localSessionId.startsWith("pi.") ? localSessionId.slice(3) : localSessionId;
 		for (const path of listJsonlFiles(getPiSessionsDir())) {
+			if (context) await setImmediate(undefined, { signal: context.signal });
 			const session = parseSession(path);
 			if (session?.localSessionId === `pi.${sourceId}`) return session;
 		}

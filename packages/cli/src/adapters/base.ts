@@ -166,9 +166,13 @@ export interface SessionBatchScan {
 	batches: AsyncIterable<SessionScanBatch>;
 }
 
+export interface SyncReadContext {
+	signal: AbortSignal;
+}
+
 export interface SessionModule {
-	contentProtocol(): Promise<"events-v1" | "snapshot-v1">;
-	collect(request: SessionScanRequest): Promise<SessionScanResult>;
+	contentProtocol(context?: SyncReadContext): Promise<"events-v1" | "snapshot-v1">;
+	collect(request: SessionScanRequest, context?: SyncReadContext): Promise<SessionScanResult>;
 	/**
 	 * Bounded scan for large or monolithic stores. Implementations may omit it;
 	 * callers then treat `collect` as one batch.
@@ -176,8 +180,9 @@ export interface SessionModule {
 	scan?(
 		request: SessionScanRequest,
 		knownSourceRevisions: ReadonlyMap<string, string>,
+		context?: SyncReadContext,
 	): Promise<SessionBatchScan>;
-	resolve(localSessionId: string): Promise<RawSession | null>;
+	resolve(localSessionId: string, context?: SyncReadContext): Promise<RawSession | null>;
 	/** Paths watched as one backing-store stability group. */
 	watchPaths(): string[];
 }
@@ -186,9 +191,12 @@ export async function scanSessionModule(
 	module: SessionModule,
 	request: SessionScanRequest,
 	knownSourceRevisions: ReadonlyMap<string, string> = new Map(),
+	context?: SyncReadContext,
 ): Promise<SessionBatchScan> {
-	if (module.scan) return module.scan(request, knownSourceRevisions);
-	const result = await module.collect(request);
+	context?.signal.throwIfAborted();
+	if (module.scan) return module.scan(request, knownSourceRevisions, context);
+	const result = await module.collect(request, context);
+	context?.signal.throwIfAborted();
 	return {
 		coverage: result.coverage,
 		batches: (async function* () {
@@ -214,8 +222,8 @@ export interface RawSkill {
 }
 
 export interface SkillModule {
-	collect(): Promise<RawSkill[]>;
-	listKeys(): Promise<string[]>;
+	collect(context?: SyncReadContext): Promise<RawSkill[]>;
+	listKeys(context?: SyncReadContext): Promise<string[]>;
 	path(key: string): string;
 	rootDir(): string;
 	sharedPath(skillKey: string, ownerHandle: string): string;

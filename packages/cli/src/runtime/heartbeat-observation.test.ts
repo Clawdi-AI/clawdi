@@ -143,7 +143,7 @@ describe("hosted runtime heartbeat observation", () => {
 		});
 	});
 
-	test("captures one immutable apply identity for the entire boot session", async () => {
+	test("does not issue fresh evidence for an apply identity replaced on disk", async () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(companionAppliedState(7), paths);
 		const session = new HostedRuntimeHeartbeatSession({
@@ -189,20 +189,11 @@ describe("hosted runtime heartbeat observation", () => {
 		expect(session.acknowledge(first.event.eventId)).toBe(true);
 
 		writeRuntimeAppliedState(companionAppliedState(8), paths);
-		const second = await session.nextEvent();
-		if (!second) throw new Error("expected second companion event");
-		expect(second.event).toMatchObject({
-			generation: 7,
-			manifestETag: '"frozen-manifest-7"',
-			applyReceiptId: "apply-receipt-0007",
-			bootNonce: "boot-nonce-000007",
-			bootSessionId: "boot-session-0001",
-			sequence: 2,
-			eventId: "event-0000000002",
-			applied: {
-				generation: 7,
-				etag: `"sha256:${"c".repeat(64)}"`,
-			},
+		expect(await session.nextEvent()).toBeNull();
+		expect(JSON.parse(readFileSync(statePath, "utf-8"))).toMatchObject({
+			bootIdentity: { generation: 7, bootSessionId: "boot-session-0001" },
+			nextSequence: 2,
+			pending: null,
 		});
 	});
 

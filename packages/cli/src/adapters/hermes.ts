@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import {
@@ -28,6 +29,7 @@ import type {
 	SessionScanRequest,
 	SessionScanResult,
 	SessionUserActivity,
+	SyncReadContext,
 } from "./base";
 import { getHermesHome, SKIP_DIRS } from "./paths";
 import {
@@ -510,16 +512,21 @@ function parseModelField(raw: string | null): string | null {
 export class HermesAdapter implements AgentAdapterCore {
 	readonly agentType = "hermes" as const;
 	readonly sessions = {
-		contentProtocol: () => this.getContentProtocol(),
-		collect: (request: SessionScanRequest) => this.collectSessions(request),
-		scan: (request: SessionScanRequest, knownSourceRevisions: ReadonlyMap<string, string>) =>
-			this.scanSessions(request, knownSourceRevisions),
-		resolve: (localSessionId: string) => this.resolveSession(localSessionId),
+		contentProtocol: (context?: SyncReadContext) => this.getContentProtocol(context),
+		collect: (request: SessionScanRequest, context?: SyncReadContext) =>
+			this.collectSessions(request, context),
+		scan: (
+			request: SessionScanRequest,
+			knownSourceRevisions: ReadonlyMap<string, string>,
+			context?: SyncReadContext,
+		) => this.scanSessions(request, knownSourceRevisions, context),
+		resolve: (localSessionId: string, context?: SyncReadContext) =>
+			this.resolveSession(localSessionId, context),
 		watchPaths: () => this.getSessionsWatchPaths(),
 	};
 	readonly skills = {
-		collect: () => this.collectSkills(),
-		listKeys: () => this.listSkillKeys(),
+		collect: (context?: SyncReadContext) => this.collectSkills(context),
+		listKeys: (context?: SyncReadContext) => this.listSkillKeys(context),
 		path: (key: string) => this.getSkillPath(key),
 		rootDir: () => this.getSkillsRootDir(),
 		sharedPath: (skillKey: string, ownerHandle: string) =>
@@ -540,18 +547,26 @@ export class HermesAdapter implements AgentAdapterCore {
 		return readCommandVersion("hermes", ["--version"]);
 	}
 
-	private async getContentProtocol(): Promise<"events-v1" | "snapshot-v1"> {
+	private async getContentProtocol(
+		context?: SyncReadContext,
+	): Promise<"events-v1" | "snapshot-v1"> {
+		context?.signal.throwIfAborted();
 		if (!existsSync(stateDbPath())) return "snapshot-v1";
 		const db = await openReadonlySqlite(stateDbPath());
 		try {
+			context?.signal.throwIfAborted();
 			return hasStableModernMessageIds(messageTableInfo(db)) ? "events-v1" : "snapshot-v1";
 		} finally {
 			db.close();
 		}
 	}
 
-	private async collectSessions(request: SessionScanRequest): Promise<SessionScanResult> {
-		const scan = await this.scanSessions(request, new Map());
+	private async collectSessions(
+		request: SessionScanRequest,
+		context?: SyncReadContext,
+	): Promise<SessionScanResult> {
+		context?.signal.throwIfAborted();
+		const scan = await this.scanSessions(request, new Map(), context);
 		const sessions: RawSession[] = [];
 		let dedupedCount = 0;
 		for await (const batch of scan.batches) {
@@ -564,6 +579,7 @@ export class HermesAdapter implements AgentAdapterCore {
 	private async scanSessions(
 		_request: SessionScanRequest,
 		knownSourceRevisions: ReadonlyMap<string, string>,
+		context?: SyncReadContext,
 	): Promise<SessionBatchScan> {
 		if (!existsSync(stateDbPath())) {
 			return {
@@ -573,17 +589,24 @@ export class HermesAdapter implements AgentAdapterCore {
 			};
 		}
 		const db = await openReadonlySqlite(stateDbPath());
-		const activity = hermesUserActivity(db);
-		return {
-			coverage: "complete",
-			userActivity: activity,
-			batches: this.readSessionBatches(db, knownSourceRevisions),
-		};
+		try {
+			context?.signal.throwIfAborted();
+			const activity = hermesUserActivity(db);
+			return {
+				coverage: "complete",
+				userActivity: activity,
+				batches: this.readSessionBatches(db, knownSourceRevisions, context),
+			};
+		} catch (error) {
+			db.close();
+			throw error;
+		}
 	}
 
 	private async *readSessionBatches(
 		db: ReadonlySqliteDatabase,
 		knownSourceRevisions: ReadonlyMap<string, string>,
+		context?: SyncReadContext,
 	): AsyncGenerator<{
 		sessions: RawSession[];
 		observedLocalSessionIds: readonly string[];
@@ -593,6 +616,8 @@ export class HermesAdapter implements AgentAdapterCore {
 			const readers = this.sessionReaders(db);
 			let cursor: Pick<SessionRow, "started_at" | "id"> | null = null;
 			while (true) {
+				if (context) await setImmediate(undefined, { signal: context.signal });
+				context?.signal.throwIfAborted();
 				const rows = db
 					.prepare(`
 						SELECT id, source, model, title, started_at, ended_at,
@@ -633,10 +658,15 @@ export class HermesAdapter implements AgentAdapterCore {
 		}
 	}
 
-	private async resolveSession(localSessionId: string): Promise<RawSession | null> {
+	private async resolveSession(
+		localSessionId: string,
+		context?: SyncReadContext,
+	): Promise<RawSession | null> {
+		context?.signal.throwIfAborted();
 		if (!existsSync(stateDbPath())) return null;
 		const db = await openReadonlySqlite(stateDbPath());
 		try {
+			context?.signal.throwIfAborted();
 			const row = db
 				.prepare(`
 					SELECT id, source, model, title, started_at, ended_at,
@@ -739,7 +769,8 @@ export class HermesAdapter implements AgentAdapterCore {
 		};
 	}
 
-	private async collectSkills(): Promise<RawSkill[]> {
+	private async collectSkills(context?: SyncReadContext): Promise<RawSkill[]> {
+		context?.signal.throwIfAborted();
 		migrateLegacyLocalSetupSkill({
 			targetDir: join(skillsDir(), "clawdi"),
 			id: "clawdi",
@@ -801,7 +832,8 @@ export class HermesAdapter implements AgentAdapterCore {
 		return join(skillsDir(), "shared", `${skillKey}__${ownerHandle}`);
 	}
 
-	private async listSkillKeys(): Promise<string[]> {
+	private async listSkillKeys(context?: SyncReadContext): Promise<string[]> {
+		context?.signal.throwIfAborted();
 		// Hermes nests skills under category dirs:
 		//   `~/.hermes/skills/category/foo/SKILL.md`
 		// Recurse — same logic `_scanSkillsDir` uses for the

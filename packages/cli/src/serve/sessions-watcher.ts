@@ -1,3 +1,4 @@
+import { SyncScope } from "./sync-module";
 /**
  * Session-directory watcher with file-stable debounce.
  *
@@ -29,7 +30,7 @@ import { log, toErrorMessage } from "./log";
 export interface SessionWatcherOptions {
 	paths: string[];
 	abort: AbortSignal;
-	onPathStable: (event: SessionWatchEvent) => void;
+	onPathStable: (event: SessionWatchEvent) => void | Promise<void>;
 	forcePoll?: boolean;
 }
 
@@ -85,6 +86,27 @@ export const SESSION_IDLE_POLL_INTERVAL_MS = 60_000;
 export async function watchSessions(
 	opts: SessionWatcherOptions,
 	dependencies: SessionWatcherDependencies = defaultSessionWatcherDependencies,
+): Promise<void> {
+	const scope = new SyncScope(opts.abort);
+	const original = opts;
+	opts = {
+		...opts,
+		abort: scope.signal,
+		onPathStable: (event) => {
+			scope.invoke(() => original.onPathStable(event));
+		},
+	};
+	try {
+		await runSessionWatcher(opts, dependencies);
+	} finally {
+		await scope.join();
+	}
+	if (scope.failure !== undefined && !original.abort.aborted) throw scope.failure;
+}
+
+async function runSessionWatcher(
+	opts: SessionWatcherOptions,
+	dependencies: SessionWatcherDependencies,
 ): Promise<void> {
 	if (opts.forcePoll) {
 		log.info("sessions_watcher.mode", { mode: "poll", reason: "forced" });

@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import {
@@ -15,6 +16,7 @@ import type {
 	SessionEventSemantics,
 	SessionScanRequest,
 	SessionScanResult,
+	SyncReadContext,
 } from "./base";
 import { getOpenCodeDataDir, getOpenCodeDbPath } from "./paths";
 import {
@@ -528,9 +530,14 @@ function parseSession(db: ReadonlySqliteDatabase, row: OpenCodeSessionRow): RawS
 export class OpenCodeAdapter implements AgentAdapterCore {
 	readonly agentType = "opencode" as const;
 	readonly sessions = {
-		contentProtocol: async () => "events-v1" as const,
-		collect: (request: SessionScanRequest) => this.collectSessions(request),
-		resolve: (localSessionId: string) => this.resolveSession(localSessionId),
+		contentProtocol: async (context?: SyncReadContext) => {
+			context?.signal.throwIfAborted();
+			return "events-v1" as const;
+		},
+		collect: (request: SessionScanRequest, context?: SyncReadContext) =>
+			this.collectSessions(request, context),
+		resolve: (localSessionId: string, context?: SyncReadContext) =>
+			this.resolveSession(localSessionId, context),
 		watchPaths: () => this.getSessionsWatchPaths(),
 	};
 
@@ -542,26 +549,36 @@ export class OpenCodeAdapter implements AgentAdapterCore {
 		return readCommandVersion("opencode", ["--version"]);
 	}
 
-	private async collectSessions(request: SessionScanRequest): Promise<SessionScanResult> {
-		const sessions = await this.collectCurrentSessions(undefined, request.projectFilter);
+	private async collectSessions(
+		request: SessionScanRequest,
+		context?: SyncReadContext,
+	): Promise<SessionScanResult> {
+		context?.signal.throwIfAborted();
+		const sessions = await this.collectCurrentSessions(undefined, request.projectFilter, context);
 		return { sessions, dedupedCount: 0, coverage: "complete" };
 	}
 
-	private async resolveSession(localSessionId: string): Promise<RawSession | null> {
+	private async resolveSession(
+		localSessionId: string,
+		context?: SyncReadContext,
+	): Promise<RawSession | null> {
+		context?.signal.throwIfAborted();
 		const sourceId = localSessionId.startsWith("opencode.")
 			? localSessionId.slice("opencode.".length)
 			: localSessionId;
-		return (await this.collectCurrentSessions(sourceId))[0] ?? null;
+		return (await this.collectCurrentSessions(sourceId, undefined, context))[0] ?? null;
 	}
 
 	private async collectCurrentSessions(
 		sourceId?: string,
 		projectFilter?: string,
+		context?: SyncReadContext,
 	): Promise<RawSession[]> {
 		const databasePath = getOpenCodeDbPath();
 		if (!existsSync(databasePath)) return [];
 		const db = await openReadonlySqlite(databasePath);
 		try {
+			context?.signal.throwIfAborted();
 			assertSupportedSchema(db);
 			const rows = db
 				.prepare(
@@ -575,10 +592,14 @@ export class OpenCodeAdapter implements AgentAdapterCore {
 				)
 				.all(...(sourceId === undefined ? [] : [sourceId])) as OpenCodeSessionRow[];
 			const normalizedFilter = projectFilter ? resolve(projectFilter) : null;
-			return rows
-				.filter((row) => normalizedFilter === null || resolve(row.directory) === normalizedFilter)
-				.map((row) => parseSession(db, row))
-				.filter((session): session is RawSession => session !== null);
+			const sessions: RawSession[] = [];
+			for (const row of rows) {
+				if (context) await setImmediate(undefined, { signal: context.signal });
+				if (normalizedFilter !== null && resolve(row.directory) !== normalizedFilter) continue;
+				const session = parseSession(db, row);
+				if (session) sessions.push(session);
+			}
+			return sessions;
 		} finally {
 			db.close();
 		}

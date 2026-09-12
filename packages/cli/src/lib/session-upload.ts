@@ -55,8 +55,9 @@ const capabilityRequests = new WeakMap<
 export async function negotiateSessionProtocol(
 	api: ApiClient,
 	module: SessionModule,
+	context?: import("../adapters/base").SyncReadContext,
 ): Promise<SelectedSessionProtocol> {
-	if ((await module.contentProtocol()) === "snapshot-v1") return "snapshot-v1";
+	if ((await module.contentProtocol(context)) === "snapshot-v1") return "snapshot-v1";
 	const capabilities = await eventUploadCapabilities(api);
 	return capabilities === null ? "snapshot-v1" : "events-v1";
 }

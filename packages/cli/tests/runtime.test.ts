@@ -7768,10 +7768,12 @@ fi
 				sourcePath: "https://runtime.test/v1/runtime/manifest",
 				sha256: "b".repeat(64),
 			},
+			activated: {},
 			providerIds: [],
 			projectedProviderIds: {},
 		};
 
+		writeRuntimeAppliedState(appliedState, paths);
 		const restarting = await readHostedRuntimeObserved(paths, { appliedState });
 
 		expect(restarting?.status).toBe("ok");

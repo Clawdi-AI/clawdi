@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { RuntimeAppliedState } from "./applied-state";
+import { writeRuntimeAppliedState } from "./applied-state";
 import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import {
 	hostedAgentPluginOwnershipIdentity,
@@ -147,6 +148,7 @@ describe("hosted Agent Plugin heartbeat observation", () => {
 		const paths = tempPaths();
 		const desired = installation("1.0.0", "d");
 		const applied = appliedState();
+		writeRuntimeAppliedState(applied, paths);
 		writeAppliedManifest(paths, desired);
 		writeReceipt(paths, desired);
 

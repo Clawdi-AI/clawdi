@@ -1,3 +1,4 @@
+import { SyncScope } from "./sync-module";
 /**
  * Local skill-directory watcher.
  *
@@ -49,7 +50,7 @@ interface Opts {
 	 * Hermes-style category dir that holds nested skills). */
 	rootDir: string;
 	abort: AbortSignal;
-	onSkillChanged: (skillKey: string) => void;
+	onSkillChanged: (skillKey: string) => void | Promise<void>;
 	/** Force poll mode even if fs.watch is available. The serve
 	 * command sets this from CLAWDI_SERVE_MODE=container. */
 	forcePoll?: boolean;
@@ -78,10 +79,31 @@ interface Opts {
 	 * Hermes keys may be nested), so the sync engine uses this callback to
 	 * diff the adapter inventory against its durable projection claims.
 	 */
-	onInventoryChanged?: () => void;
+	onInventoryChanged?: () => void | Promise<void>;
 }
 
 export async function watchSkills(opts: Opts, delay: typeof sleep = sleep): Promise<void> {
+	const scope = new SyncScope(opts.abort);
+	const original = opts;
+	opts = {
+		...opts,
+		abort: scope.signal,
+		onSkillChanged: (key) => {
+			scope.invoke(() => original.onSkillChanged(key));
+		},
+		onInventoryChanged: () => {
+			scope.invoke(() => original.onInventoryChanged?.());
+		},
+	};
+	try {
+		await runSkillWatcher(opts, delay);
+	} finally {
+		await scope.join();
+	}
+	if (scope.failure !== undefined && !original.abort.aborted) throw scope.failure;
+}
+
+async function runSkillWatcher(opts: Opts, delay: typeof sleep): Promise<void> {
 	if (opts.forcePoll) {
 		log.info("watcher.mode", { mode: "poll", reason: "forced" });
 		await pollLoop(opts, delay);
