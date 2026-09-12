@@ -112,6 +112,8 @@ export function createPrivilegeDropResolver(
 const privilegeDropResolver = createPrivilegeDropResolver();
 
 interface BuildRuntimeUserCommandOptions {
+	/** Keep noninteractive command descendants in the caller's supervised group. */
+	preserveSession?: boolean;
 	currentUid?: number;
 	runtimeUid?: number;
 	runtimeGid?: number;
@@ -180,7 +182,7 @@ export function buildRuntimeUserCommand(
 			"--preserve-environment",
 			"--shell",
 			"/bin/sh",
-			"--command",
+			options.preserveSession ? "--session-command" : "--command",
 			'exec "$0" "$@"',
 			runtimeUser,
 			childCommand,

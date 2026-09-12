@@ -4,7 +4,7 @@ ARG UV_VERSION=0.12.5
 
 FROM oven/bun:${BUN_VERSION} AS bun
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
-FROM node:${NODE_VERSION}-trixie
+FROM node:${NODE_VERSION}-trixie AS systemd
 
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=bun /usr/local/bin/bunx /usr/local/bin/bunx
@@ -25,6 +25,12 @@ RUN systemctl mask systemd-sysctl.service systemd-modules-load.service
 
 RUN groupadd --gid 10001 clawdi \
 	&& useradd --uid 10001 --gid 10001 --create-home --home-dir /home/clawdi --shell /bin/bash clawdi
+
+ENV container=docker
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
+
+FROM systemd AS runtimes
 
 # `openclaw --version` identifies this published package as official source
 # commit ea806575e6450e4d1efdfc72c19f04be982a1b9b. npm omits gitHead, so the

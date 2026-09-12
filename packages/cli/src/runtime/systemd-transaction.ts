@@ -68,6 +68,22 @@ export function readSystemdUnitSnapshot(
 	};
 }
 
+export function assertSystemdRuntimeIdle(
+	paths: ReturnType<typeof getRuntimePaths>,
+	snapshot: SystemdUnitSnapshot,
+): void {
+	if (!shouldApplySystemdRuntimeUpdate(paths)) return;
+	try {
+		readSystemdRuntimeUnits(paths, "system", [...snapshot.system.keys()]);
+		readSystemdRuntimeUnits(paths, "user", [...snapshot.user.keys()]);
+	} catch (error) {
+		if (error instanceof SystemdReobservationRequiredError) throw error;
+		throw new SystemdReobservationRequiredError(
+			"systemd preflight state is unavailable; fresh observation is required",
+		);
+	}
+}
+
 function systemdUnitFingerprint(
 	paths: ReturnType<typeof getRuntimePaths>,
 	unit: string,
@@ -608,7 +624,7 @@ function runtimeUserSystemctlResult(
 			paths.userHome,
 			systemctlPath(),
 			["--user", ...args],
-			{ environment: runtimeUserSystemdEnvironment(uid) },
+			{ environment: runtimeUserSystemdEnvironment(uid), preserveSession: true },
 		);
 		return runCommandResult(child.command, child.args, child.env);
 	}
@@ -617,7 +633,9 @@ function runtimeUserSystemctlResult(
 
 export function assertRuntimeUserCanRead(path: string, home: string): void {
 	const runtimeUser = runtimeUserName();
-	const proof = buildRuntimeUserCommand(runtimeUser, home, "test", ["-r", path]);
+	const proof = buildRuntimeUserCommand(runtimeUser, home, "test", ["-r", path], {
+		preserveSession: true,
+	});
 	runCommand(proof.command, proof.args, proof.env);
 }
 
@@ -633,15 +651,22 @@ export function runCommandResult(
 	env?: Record<string, string>,
 	timeoutMs = SYSTEMD_COMMAND_TIMEOUT_MS,
 ): CommandResult {
-	const result = spawnSync(command, args, {
-		encoding: "utf8",
-		timeout: timeoutMs,
-		// Terminate the client even if it ignores TERM. This does not cancel the
-		// manager's job; the caller must defer authority/rollback and re-observe.
-		killSignal: "SIGKILL",
-		...(env ? { env: { ...process.env, ...env } } : {}),
-	});
-	if (result.error && "code" in result.error && result.error.code === "ETIMEDOUT") {
+	if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+		throw new Error("systemd command timeout must be a positive integer");
+	}
+	// GNU timeout supervises its own process group. A spawnSync timeout kills
+	// only the direct child, leaving descendants holding stdout/stderr open.
+	const result = spawnSync(
+		"/usr/bin/timeout",
+		["--signal=KILL", `${timeoutMs / 1000}s`, command, ...args],
+		{
+			encoding: "utf8",
+			...(env ? { env: { ...process.env, ...env } } : {}),
+		},
+	);
+	// SIGKILL also terminates timeout itself. A killed/OOM client is likewise
+	// an unknown manager outcome; neither result proves that a job was cancelled.
+	if (result.signal === "SIGKILL" || result.status === 124 || result.status === 137) {
 		throw new SystemdReobservationRequiredError();
 	}
 	return {

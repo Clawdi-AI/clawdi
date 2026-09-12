@@ -52,6 +52,7 @@ interface RuntimeSystemdApplySignal {
 	invalidatedUserUnits: string[];
 }
 export interface RuntimeSystemdApplyHooks {
+	assertIdle?: () => void;
 	activateEgressPrerequisite: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
 	activate: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
 }

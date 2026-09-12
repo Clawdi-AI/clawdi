@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getRuntimePaths } from "./paths";
+import { buildRuntimeUserCommand } from "./runtime-user-command";
 import { managedRuntimeSystemdUnitEntries, RUNTIME_SYSTEMD_DROP_IN_FILE } from "./systemd";
 import {
 	applySystemdRuntimeUpdate,
@@ -103,7 +104,12 @@ esac
 	test("bounds an unresponsive client without treating the manager job as cancelled", () => {
 		const start = Date.now();
 		expect(() =>
-			runCommandResult("/bin/sh", ["-c", "trap '' TERM; while :; do :; done"], undefined, 50),
+			runCommandResult(
+				"/bin/sh",
+				["-c", "trap '' TERM; sh -c 'trap \"\" TERM; while :; do :; done' & wait"],
+				undefined,
+				50,
+			),
 		).toThrow(SystemdReobservationRequiredError);
 		expect(Date.now() - start).toBeLessThan(5_000);
 		expect(runCommandResult("/bin/sh", ["-c", "printf active"], undefined, 1_000)).toMatchObject({
@@ -111,6 +117,59 @@ esac
 			stdout: "active",
 		});
 	});
+	test.skipIf(process.env.CLAWDI_TEST_SYSTEMD_COMMAND !== "1")(
+		"verifies native Job rendering and privilege-wrapper descendant deadlines",
+		() => {
+			const unit = `clawdi-command-proof-${crypto.randomUUID()}.service`;
+			const path = `/run/systemd/system/${unit}`;
+			writeFileSync(path, "[Service]\nType=oneshot\nExecStart=/bin/sleep 30\n");
+			try {
+				expect(runCommandResult("systemctl", ["daemon-reload"]).status).toBe(0);
+				const idle = runCommandResult("systemctl", ["show", "--all", "--property=Job", unit]);
+				expect(idle.stdout.trim()).toBe("Job=");
+				expect(runCommandResult("systemctl", ["start", "--no-block", unit]).status).toBe(0);
+				const busy = runCommandResult("systemctl", ["show", "--all", "--property=Job", unit]);
+				expect(busy.stdout.trim()).toMatch(/^Job=[1-9][0-9]*$/);
+				expect(() => runCommandResult("systemctl", ["start", unit], undefined, 100)).toThrow(
+					SystemdReobservationRequiredError,
+				);
+				expect(
+					runCommandResult("systemctl", ["show", "--all", "--property=Job", unit]).stdout.trim(),
+				).toMatch(/^Job=[1-9][0-9]*$/);
+				for (const mechanism of ["setpriv", "runuser", "su"] as const) {
+					const child = buildRuntimeUserCommand(
+						"clawdi",
+						"/home/clawdi",
+						"/bin/sh",
+						["-c", "trap '' TERM; sh -c 'trap \"\" TERM; while :; do :; done' & wait"],
+						{
+							runtimeUid: 10001,
+							runtimeGid: 10001,
+							preserveSession: true,
+							resolver: { resolve: () => mechanism },
+						},
+					);
+					const started = Date.now();
+					expect(() => runCommandResult(child.command, child.args, child.env, 100)).toThrow(
+						SystemdReobservationRequiredError,
+					);
+					expect(Date.now() - started).toBeLessThan(3_000);
+				}
+				expect(runCommandResult("systemctl", ["stop", unit]).status).toBe(0);
+				expect(
+					runCommandResult("systemctl", ["show", "--all", "--property=Job", unit]).stdout.trim(),
+				).toBe("Job=");
+				const version = runCommandResult("systemctl", ["--version"]).stdout.split("\n")[0];
+				console.log(
+					`native ${version} proof: ${idle.stdout.trim()}, ${busy.stdout.trim()}; all wrapper deadlines passed`,
+				);
+			} finally {
+				runCommandResult("systemctl", ["stop", unit]);
+				rmSync(path);
+				runCommandResult("systemctl", ["daemon-reload"]);
+			}
+		},
+	);
 	test("recovers a failed unit when the current activation changed it", () => {
 		expect(
 			shouldRecoverFailedSystemdUnit({

@@ -1332,6 +1332,13 @@ export function convergeRuntimeManifest(
 	opts: RuntimeConvergenceOptions = {},
 ): RuntimeConvergenceResult {
 	const { context, state } = initializeRuntimeConvergence(load, paths, opts);
+	try {
+		// Check existing jobs before changing native installs/config/plugins, not
+		// only after publishing the candidate units at activation time.
+		opts.systemdApply?.assertIdle?.();
+	} catch (error) {
+		return runtimeApplyFailure(context, state, error);
+	}
 	const installResult = prepareRuntimeInstallStage(context, state);
 	if (installResult) return installResult.result;
 	context.hermesConfig = beginRuntimeHermesConfig(context, state);

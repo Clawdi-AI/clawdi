@@ -79,6 +79,7 @@ import {
 import {
 	applySystemdRuntimeUpdate,
 	assertRuntimeUserCanRead,
+	assertSystemdRuntimeIdle,
 	RUNTIME_SIDECAR_SYSTEM_UNIT,
 	readSystemdUnitSnapshot,
 	SystemdReobservationRequiredError,
@@ -1344,6 +1345,7 @@ async function applyRuntimeDesiredState(
 				opts.authorityCommit?.(committedConvergence, authority);
 			},
 			systemdApply: {
+				assertIdle: () => assertSystemdRuntimeIdle(paths, previousSystemdUnits),
 				activateEgressPrerequisite: () => {
 					const candidateSystemdUnits = readSystemdUnitSnapshot(paths);
 					try {
@@ -1420,6 +1422,10 @@ async function applyRuntimeDesiredState(
 			},
 		});
 		if (convergence.deferredReason) {
+			// Native plugin mutations/receipts may already exist. Keep their
+			// archives available for the next observation and reconciliation.
+			preservePreparedAgentPluginArchives =
+				convergence.deferredReason === "systemd_reobservation_required";
 			return {
 				kind: "deferred",
 				reason: convergence.deferredReason,
@@ -1441,6 +1447,10 @@ async function applyRuntimeDesiredState(
 				delete replayOptions.preparedHostedAgentPlugins;
 				delete replayOptions.preparedHostedSourcedSkills;
 				const replay = await applyRuntimeDesiredState(committed, paths, replayOptions);
+				if (replay.kind === "deferred") {
+					preservePreparedAgentPluginArchives = replay.reason === "systemd_reobservation_required";
+					return replay;
+				}
 				if (replay.kind !== "converged") {
 					convergence.installErrors.push(
 						`last-good replay failed: runtime ${replay.kind.replaceAll("_", " ")}`,

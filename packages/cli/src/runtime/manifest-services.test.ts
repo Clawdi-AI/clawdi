@@ -367,17 +367,22 @@ test("defers unknown systemd jobs without committing authority and accepts a lat
 		sourcePath: "inline-systemd-pending",
 		offline: false,
 	};
-	let pending = true;
+	let pending: "preflight" | "activation" | null = "preflight";
 	let commits = 0;
+	let activations = 0;
 	const converge = () =>
 		convergeRuntimeManifest(load, paths, {
 			commitAuthority: () => commits++,
 			systemdApply: {
+				assertIdle: () => {
+					if (pending === "preflight") throw new SystemdReobservationRequiredError();
+				},
 				activateEgressPrerequisite: () => {
 					throw new Error("unexpected egress prerequisite");
 				},
 				activate: () => {
-					if (pending) throw new SystemdReobservationRequiredError();
+					activations++;
+					if (pending === "activation") throw new SystemdReobservationRequiredError();
 					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 				},
 			},
@@ -385,7 +390,11 @@ test("defers unknown systemd jobs without committing authority and accepts a lat
 	const deferred = converge();
 	expect(deferred.deferredReason).toBe("systemd_reobservation_required");
 	expect(commits).toBe(0);
-	pending = false;
+	expect(activations).toBe(0);
+	pending = "activation";
+	expect(converge().deferredReason).toBe("systemd_reobservation_required");
+	expect(commits).toBe(0);
+	pending = null;
 	expect(converge().installErrors).toEqual([]);
 	expect(commits).toBe(1);
 });
