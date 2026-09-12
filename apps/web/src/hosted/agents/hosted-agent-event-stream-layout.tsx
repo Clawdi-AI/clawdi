@@ -32,6 +32,7 @@ export function HostedAgentEventStreamLayout() {
 		deploymentRuntimeUiIsReady(deployment)
 			? deployment
 			: null;
+	const outletHidden = Boolean(persistentConsole && consoleActive);
 	const deploymentEvents = useDeploymentEventStream({
 		deploymentId: deployment?.resource.id ?? null,
 		agentId,
@@ -72,7 +73,15 @@ export function HostedAgentEventStreamLayout() {
 						/>
 					</div>
 				) : null}
-				<Outlet />
+				{/* Keep route effects mounted without letting retained content or Suspense
+				    fallbacks share the persistent console's available height. */}
+				<div
+					hidden={outletHidden}
+					inert={outletHidden}
+					className={outletHidden ? "hidden" : "contents"}
+				>
+					<Outlet />
+				</div>
 			</div>
 		</DeploymentEventStreamActiveProvider>
 	);
