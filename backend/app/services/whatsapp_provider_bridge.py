@@ -296,6 +296,11 @@ class WhatsAppProviderBridge:
 
             transport = self._transport()
             if transport is None:
+                # Ingress registration is process-local and may not yet exist here.
+                # Resolve the same revision-fenced durable session binding used
+                # by ordinary outbound delivery without taking ingress ownership.
+                transport = whatsapp_delivery_transport.resolve_whatsapp_delivery_transport(account)
+            if transport is None:
                 await record_channel_debug_event(
                     db,
                     account=account,

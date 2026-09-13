@@ -1618,3 +1618,86 @@ async def test_whatsapp_concurrent_replayed_pair_mutates_and_replies_once(
     )
     assert len(pair_messages) == 1
     assert pair_messages[0].delivered_at is not None
+
+
+@pytest.mark.asyncio
+async def test_raw_relay_uses_durable_custom_session_without_local_registry(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    account, link, binding = await _seed_whatsapp_link_and_binding(
+        client, db_session, channel_agent, name="wa-cross-process-raw-relay"
+    )
+    session_id = uuid4()
+    sidecar_url = "http://127.0.0.1:43191"
+    config = WhatsAppBaileysSidecarConfig(
+        api_token="sidecar-secret", base_url=sidecar_url, account_id=session_id
+    )
+    valid_config = {
+        "connection_mode": "baileys_custom",
+        "sidecar_account_id": str(session_id),
+        "sidecar_config_revision": config.binding_revision,
+    }
+    account.config = valid_config
+    await db_session.commit()
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.headers["authorization"] == "Bearer sidecar-secret"
+        assert request.url.path == f"/v1/sessions/{session_id}/raw-node"
+        assert request.method == "POST"
+        assert json.loads(request.content)["node"]["attrs"]["to"] == binding.external_chat_id
+        return httpx.Response(200, json={"ok": True})
+
+    async with httpx.AsyncClient(
+        base_url=sidecar_url, transport=httpx.MockTransport(handler)
+    ) as http_client:
+        service = WhatsAppBaileysSidecarService(
+            WhatsAppBaileysSidecarConfig(api_token="sidecar-secret", base_url=sidecar_url),
+            http_client=http_client,
+        )
+        monkeypatch.setattr(
+            settings, "channel_whatsapp_baileys_sidecar_token", SecretStr("sidecar-secret")
+        )
+        monkeypatch.setattr(settings, "channel_whatsapp_baileys_sidecar_url", sidecar_url)
+        monkeypatch.setattr(delivery_transport_module, "_delivery_sidecar_service", service)
+        bridge = WhatsAppProviderBridge(
+            async_sessionmaker(db_session.bind, expire_on_commit=False), account_id=account.id
+        )
+        node = {
+            "tag": "chatstate",
+            "attrs": {"to": binding.external_chat_id},
+            "content": [{"tag": "composing", "attrs": {}}],
+        }
+        assert get_whatsapp_provider_transport(account.id) is None
+        result = await bridge.relay_raw_node(node, lambda _id: None, bot_agent_link_id=link.id)
+        assert result.outcome == "relayed"
+        assert len(requests) == 1
+        assert get_whatsapp_provider_transport(account.id) is None
+
+        unsafe = await bridge.relay_raw_node(
+            {"tag": "presence", "attrs": {"to": "15559999999@s.whatsapp.net"}},
+            lambda _id: None,
+            bot_agent_link_id=link.id,
+        )
+        assert unsafe.outcome == "dropped"
+        assert len(requests) == 1
+
+        account.config = {**valid_config, "sidecar_config_revision": "stale-revision"}
+        await db_session.commit()
+        stale = await bridge.relay_raw_node(node, lambda _id: None, bot_agent_link_id=link.id)
+        assert stale.outcome == "unsupported"
+        assert stale.reason == "provider-transport-unavailable"
+        assert len(requests) == 1
+
+        account.config = valid_config
+        link.status = "archived"
+        link.archived_at = datetime.now(UTC)
+        await db_session.commit()
+        retired = await bridge.relay_raw_node(node, lambda _id: None, bot_agent_link_id=link.id)
+        assert retired.outcome == "dropped"
+        assert retired.reason == "link-authority-missing"
+        assert len(requests) == 1
