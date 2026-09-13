@@ -296,6 +296,11 @@ class WhatsAppProviderBridge:
 
             transport = self._transport()
             if transport is None:
+                # The in-process registry is populated by the sidecar ingress
+                # worker and is absent in API workers. Resolve the same durable
+                # account/session binding used by ordinary outbound delivery.
+                transport = whatsapp_delivery_transport.resolve_whatsapp_delivery_transport(account)
+            if transport is None:
                 await record_channel_debug_event(
                     db,
                     account=account,
