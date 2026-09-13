@@ -705,11 +705,18 @@ def test_whatsapp_noise_emulator_session_acks_agent_message_stanzas():
     cert = _auth_cert()
     events: list[WhatsAppNoiseRuntimeEvent] = []
     outbound_messages: list[WhatsAppOutboundMessage] = []
+    reject_outbound = False
+
+    async def store_outbound(message: WhatsAppOutboundMessage) -> None:
+        if reject_outbound:
+            raise RuntimeError("durable outbox unavailable")
+        outbound_messages.append(message)
+
     session = WhatsAppNoiseEmulatorSession(
         auth_cert=cert,
         lid="16693773518:2@s.whatsapp.net",
         on_event=events.append,
-        on_outbound_message=outbound_messages.append,
+        on_outbound_message=store_outbound,
         resolve_recipient_lid=lambda jid: (
             "184207372460253@lid" if jid == "15551112222@s.whatsapp.net" else None
         ),
@@ -856,6 +863,24 @@ def test_whatsapp_noise_emulator_session_acks_agent_message_stanzas():
         "children": ["enc"],
         "errorType": "ValueError",
     }
+
+    reject_outbound = True
+    rejected = sender.encrypt_from_established_session(
+        "184207372460253", 0, _pad_message(reply_proto, 4)
+    )
+    rejected_node = encode_binary_node_minimal(
+        {
+            "tag": "message",
+            "attrs": {"id": "outbox-rejected", "to": "15551112222@s.whatsapp.net"},
+            "content": [
+                {"tag": "enc", "attrs": {"type": rejected.type}, "content": rejected.ciphertext}
+            ],
+        }
+    )
+    with pytest.raises(RuntimeError, match="durable outbox unavailable"):
+        _run(session.handle_inbound(pack_frame(client.transport.encrypt(rejected_node))))
+    assert len(outbound_messages) == 5
+    assert events[-1].outcome == "hook_error"
 
 
 def test_whatsapp_noise_emulator_session_decodes_agent_group_message_stanzas():

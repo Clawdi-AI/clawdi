@@ -998,7 +998,7 @@ class WhatsAppNoiseEmulatorSession:
             maybe_result = self._on_outbound_message(outbound)
             if inspect.isawaitable(maybe_result):
                 await maybe_result
-        except Exception as exc:  # noqa: BLE001 - outbound hook failures should not corrupt WA state.
+        except Exception as exc:  # noqa: BLE001 - record failure before closing without a success ACK.
             await self._emit_event(
                 "outbound_message",
                 "hook_error",
@@ -1006,6 +1006,7 @@ class WhatsAppNoiseEmulatorSession:
                 tenant_id=self.tenant.tenant_id if self.tenant else None,
                 external_chat_id=outbound.to_jid,
             )
+            raise
 
     async def _emit_outbound_relay(self, node: BinaryNode) -> None:
         if self._on_outbound_relay is None:
