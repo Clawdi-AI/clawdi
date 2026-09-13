@@ -74,6 +74,7 @@ import {
 	reserveManagedSkill,
 } from "../src/runtime/managed-skill-reservation";
 import {
+	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
 	loadRuntimeManifest as loadRuntimeManifestFromContext,
 	materializeHostedChannelCredentials,
@@ -96,7 +97,12 @@ import {
 	type RuntimeManifestLoad,
 } from "../src/runtime/manifest-source";
 import { readHostedRuntimeObserved } from "../src/runtime/observed";
-import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../src/runtime/paths";
+import {
+	detectRuntimeMode,
+	getRuntimePaths,
+	legacyRuntimeManifestPaths,
+	type RuntimePaths,
+} from "../src/runtime/paths";
 import { buildRuntimeRunConfig } from "../src/runtime/run-config";
 import { runtimeSystemdCommonEnvironment } from "../src/runtime/runtime-systemd-reconciliation";
 import { canonicalSecretRefSchema, normalizeSecretValues } from "../src/runtime/secret-values";
@@ -7391,9 +7397,13 @@ exit 64
 			if (!("manifest" in manifestLoad) || "notModified" in manifestLoad) {
 				throw new Error("expected initial manifest load success");
 			}
-			const initialConvergence = convergeRuntimeManifest(
-				applyRuntimeBundleChannelsToManifestLoad(manifestLoad as RuntimeManifestLoad),
+			const projected = applyRuntimeBundleChannelsToManifestLoad(manifestLoad);
+			const initialConvergence = convergeRuntimeManifest(projected, paths);
+			cacheRuntimeLastGoodManifest(
+				projected.sourceBundle,
 				paths,
+				projected.secretValues,
+				projected.manifest,
 			);
 			expect(initialConvergence.installErrors).toEqual([]);
 			expectEgressProfileBundleUsesSecretRef(
@@ -7417,7 +7427,7 @@ exit 64
 					bootNonce: "test-boot-nonce-000022",
 					contentIdentity: {
 						sourcePath: "https://runtime.test/v1/runtime/manifest",
-						sha256: "a".repeat(64),
+						sha256: runtimeAppliedContentIdentity(projected).sha256,
 					},
 					activated: {},
 					providerIds: ["clawdi-managed-v2"],
@@ -7427,6 +7437,17 @@ exit 64
 		} finally {
 			initial.restore();
 		}
+		// Emulate an upgrade from 0.14.82: only its exact legacy pair survives.
+		const legacy = legacyRuntimeManifestPaths(paths);
+		for (const [current, old] of [
+			[paths.manifestLastGood, legacy.manifestLastGood],
+			[paths.managedSecretCacheFile, legacy.managedSecretCacheFile],
+		]) {
+			copyFileSync(current, old);
+			rmSync(current);
+		}
+		rmSync(dirname(paths.manifestLastGood), { recursive: true, force: true });
+		const baselineAuthority = readFileSync(paths.appliedState, "utf8");
 		const baselineRevision = systemdEnvDigest(readSystemdEnvFile(paths, "openclaw-gateway"));
 		const baselineMitmSecrets = JSON.parse(
 			readFileSync(join(run, "secrets", "egress-secrets.json"), "utf-8"),
@@ -7461,6 +7482,13 @@ exit 64
 			expect(watchFetch.captured[0].headers["if-none-match"]).toBe(stableBundleEtag);
 			const event = JSON.parse(logs[0]);
 			expect(event.status).toBe("not_modified");
+			expect(readFileSync(paths.manifestLastGood, "utf8")).toBe(
+				readFileSync(legacy.manifestLastGood, "utf8"),
+			);
+			expect(readFileSync(paths.managedSecretCacheFile, "utf8")).toBe(
+				readFileSync(legacy.managedSecretCacheFile, "utf8"),
+			);
+			expect(readFileSync(paths.appliedState, "utf8")).toBe(baselineAuthority);
 			expect(event.generation).toBe(22);
 			expect(event.etag).toBe(stableBundleEtag);
 			expect(readRuntimeAppliedState(paths)).toMatchObject({
@@ -7480,6 +7508,17 @@ exit 64
 			expect(systemdEnvDigest(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
 				baselineRevision,
 			);
+			// Re-run the same 304 with exact legacy history but a blocked durable destination.
+			rmSync(dirname(paths.manifestLastGood), { recursive: true, force: true });
+			writeFileSync(dirname(paths.manifestLastGood), "blocked", { mode: 0o600 });
+			logs.length = 0;
+			await runtimeWatch({ once: true, json: true });
+			const failed = JSON.parse(logs[0]);
+			expect(failed.status).toBe("error");
+			expect(JSON.stringify(failed)).toContain(
+				"could not persist verified committed runtime snapshot",
+			);
+			expect(readFileSync(paths.appliedState, "utf8")).toBe(baselineAuthority);
 		} finally {
 			watchFetch.restore();
 			console.log = previousLog;
@@ -8021,7 +8060,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		writeOpenClawConfigMutationFixture(home, { gateway: startHealthyOpenClawGateway() });
 		const paths = getRuntimePaths();
 		mkdirSync(paths.serviceStateRoot, { recursive: true });
-		mkdirSync(paths.cacheRoot, { recursive: true });
+		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
 		const cached = hostedCliManifestResponse(home, TEST_RUNNING_CLI_SPEC);
 		Object.assign(cached.manifest, {
 			deploymentId: "dep-provider-observed",
@@ -8129,7 +8168,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		process.env.CLAWDI_RUN_DIR = run;
 		const paths = getRuntimePaths();
 		mkdirSync(paths.serviceStateRoot, { recursive: true });
-		mkdirSync(paths.cacheRoot, { recursive: true });
+		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
 		const cached = hostedCliManifestResponse(home, TEST_RUNNING_CLI_SPEC);
 		Object.assign(cached.manifest, {
 			deploymentId: "dep-provider-missing-secret",
@@ -11998,7 +12037,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		process.env.CLAWDI_RUN_DIR = run;
 		const paths = getRuntimePaths();
 		mkdirSync(paths.serviceStateRoot, { recursive: true });
-		mkdirSync(paths.cacheRoot, { recursive: true });
+		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
 		const desiredPayload = hostedRuntimeWatchLocalePayload(home, 1);
 		writeRuntimeAppliedState(
 			{

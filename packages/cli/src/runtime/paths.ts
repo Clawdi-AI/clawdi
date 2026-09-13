@@ -148,6 +148,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		"config",
 	);
 	const cacheRoot = derivedPlatformRoot(serviceStateRoot, DEFAULT_CACHE_ROOT, "cache");
+	const snapshotRoot = mode === "hosted" ? join(serviceStateRoot, "committed-runtime") : cacheRoot;
 	const runRoot = envPath("CLAWDI_RUN_DIR") ?? DEFAULT_RUN_ROOT;
 	const fileBrowserConfigRoot = join(runRoot, "files");
 	const statusRoot = join(serviceStateRoot, "status");
@@ -186,9 +187,9 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		fileBrowserConfig: join(fileBrowserConfigRoot, "filebrowser.yaml"),
 		cacheRoot,
 		hostedSkillArchiveRoot: join(cacheRoot, "workspace-skills"),
-		manifestLastGood: join(cacheRoot, "manifest.last-good.json"),
+		manifestLastGood: join(snapshotRoot, "manifest.last-good.json"),
 		appliedState: join(statusRoot, "runtime-applied.json"),
-		managedSecretCacheFile: join(cacheRoot, "runtime-secrets.last-good.json"),
+		managedSecretCacheFile: join(snapshotRoot, "runtime-secrets.last-good.json"),
 		runConfigRoot: join(configurationRoot, "run"),
 		egressProfileRoot: join(runRoot, "egress"),
 		egressProfileBundle: join(runRoot, "egress", "profiles.json"),
@@ -214,5 +215,14 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		egressServiceBinary: join(runRoot, "egress", "systemd", "mitmdump"),
 		daemonAuthToken: join(runRoot, "secrets", "auth-token"),
 		workspaceRoot: mode === "hosted" ? userHome : join(userHome, "clawdi"),
+	};
+}
+
+// Released Hosted CLIs through 0.14.82 stored committed bytes on the rootfs.
+export function legacyRuntimeManifestPaths(paths: RuntimePaths): RuntimePaths {
+	return {
+		...paths,
+		manifestLastGood: join(paths.cacheRoot, "manifest.last-good.json"),
+		managedSecretCacheFile: join(paths.cacheRoot, "runtime-secrets.last-good.json"),
 	};
 }

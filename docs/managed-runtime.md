@@ -1736,8 +1736,9 @@ and ephemeral runtime handoffs. Important outputs include:
 | `/var/lib/clawdi/maintained/clawdi/` | Root-only managed CLI activation and versioned package prefixes |
 | `/var/lib/clawdi-user/` | Tenant-owned `0750` hosted CLI state selected by `CLAWDI_HOME` |
 | `/var/lib/clawdi-files/` | Tenant-owned `0700` Files DB and component cache state |
-| `/var/cache/clawdi/manifest.last-good.json` | Refetchable last-good manifest fallback |
-| `/var/cache/clawdi/runtime-secrets.last-good.json` | Root-only refetchable secret fallback for offline recovery |
+| `/var/lib/clawdi/committed-runtime/<content-sha256>.json` | Atomic manifest + secret snapshot selected by runtime-applied |
+| `/var/lib/clawdi/committed-runtime/manifest.last-good.json` | Manifest compatibility mirror |
+| `/var/lib/clawdi/committed-runtime/runtime-secrets.last-good.json` | Root-only secret compatibility mirror |
 | `/var/cache/clawdi/npm/` | Managed CLI npm download cache |
 | `/run/clawdi/secrets/*` | Short-lived root/egress service secret files |
 | `/run/clawdi/systemd/env/*.service.env` | Root-owned system-service env files or tenant-owned `0600` user-service env handoffs |
@@ -1745,6 +1746,45 @@ and ephemeral runtime handoffs. Important outputs include:
 | `$CLAWDI_RUN_DIR/systemd/system/*.service` or `/run/systemd/system/*.service` | Generated system units for root-owned Clawdi support programs |
 | `$HOME/.config/systemd/user/*.service` | Tenant-owned official runtime gateway base units and direct runtime-user programs |
 | `$HOME/.config/systemd/user/*.service.d/10-clawdi-hosted.conf` | Tenant-owned hosted drop-ins for official runtime units; foreign drop-ins are preserved |
+
+The Hosted committed snapshot directory is root-owned `0700`; its files are
+`0600`. Download, npm, and archive caches remain disposable. Local mode keeps
+its existing cache paths and pair format. Strict `runtimeAppliedState.v2` is
+unchanged. Its content SHA selects one atomic file containing the exact source
+bundle and recoverable secrets. The previous committed content is retained
+while the next content and compatibility mirrors are written and synced;
+only the subsequent applied-record commit promotes the next content. Successful
+commits remove obsolete content files. An interrupted write cannot promote a
+mixed pair or uncommitted snapshot.
+
+CLIs through 0.14.82 wrote the pair below `/var/cache/clawdi`. Pure readers try
+the SHA-selected snapshot, the durable compatibility pair, then the legacy
+pair, checking the same applied content hash, generation, apply generation and
+instance. Only a private, platform-owned exact legacy pair can be recovered.
+Convergence migrates it under its existing lock, including conditional watch
+304 responses; migration write failures are errors. Without exact history,
+watch fetches the full desired bundle to resolve cache policy and converge;
+it never claims to have migrated missing history.
+
+Deploy the new reader and verify its durable snapshot **before** discarding a
+rootfs/cache. A recorded next-start CLI target alone does not migrate files.
+Missing old bytes (including already-stopped instances) cannot be recovered
+from native configuration or reconstructed from the current desired manifest.
+A successful new commit does not update the old disposable paths: an older CLI
+cannot read the durable location after cache loss, and may use surviving legacy
+files only when they still match its applied record. Keep the new reader for
+replacement/recovery; do not downgrade and assume channel ownership survived.
+
+`recovery.cacheManifest: false` commits the new authority before removing all
+snapshots and both pair locations. Deletion failure is reported and retried by
+subsequent convergence; retained old bytes no longer match the applied hash.
+`allowOfflineBoot` and exact current boot/apply identity still gate
+offline startup. Internal committed replay can recover previous channel
+ownership across generations without granting offline startup permission.
+
+Done: `bash scripts/test.sh cli src/runtime/committed-runtime-snapshot.test.ts
+src/runtime/manifest-reconciliation.test.ts` passes, including cache-loss
+withdrawal and native pairing/override preservation.
 
 Hosted convergence never writes `~/.clawdi`. Before launch it removes legacy
 `~/.clawdi/environments/*.json` files only when their `managedBy` value is

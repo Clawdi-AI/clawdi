@@ -42,6 +42,7 @@ import {
 	loadRuntimeManifest,
 	parseHostedRuntimeBundleV2,
 	type RuntimeManifestLoad,
+	runtimeSnapshotPath,
 } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { ensureRuntimeStateDirs } from "./state";
@@ -382,7 +383,7 @@ describe("hosted runtime bundle v2", () => {
 		expect(JSON.stringify(projected.manifest.runtimes.openclaw?.run?.secretEnv)).not.toContain(
 			capabilityRef,
 		);
-		mkdirSync(paths.cacheRoot, { recursive: true });
+		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		cacheRuntimeLastGoodManifest(
 			projected.sourceBundle,
 			paths,
@@ -1460,7 +1461,7 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 		const paths = getRuntimePaths({ mode: "hosted" });
-		mkdirSync(paths.cacheRoot, { recursive: true });
+		ensureRuntimeStateDirs(paths);
 		const raw = JSON.parse(readFileSync(goldenPath, "utf-8")) as unknown;
 		const projected = applyRuntimeBundleChannelsToManifestLoad(parseHostedBundle(raw));
 
@@ -1509,7 +1510,7 @@ describe("hosted runtime bundle v2", () => {
 
 		const loaded = await loadRuntimeManifest(paths, { applyContext });
 		expect("errors" in loaded ? loaded.errors.join("\n") : "").toContain(
-			"OpenClaw v2 native Control UI requires an explicit public allowed origin",
+			"could not read committed runtime snapshot",
 		);
 	});
 
@@ -1769,6 +1770,9 @@ exit 0
 				},
 			})}\n`,
 		);
+		expect("manifest" in loadCommittedRuntimeManifest(paths, nextContext)).toBe(true);
+		// Without the atomic snapshot, a mixed compatibility pair still fails closed.
+		rmSync(runtimeSnapshotPath(paths, JSON.parse(appliedStateText).contentIdentity.sha256));
 		expect("errors" in loadCommittedRuntimeManifest(paths, nextContext)).toBe(true);
 		const manifestOnlyCrashLoad = await loadRuntimeManifest(paths, { applyContext });
 		expect("errors" in manifestOnlyCrashLoad).toBe(true);
@@ -1817,7 +1821,7 @@ exit 0
 		const missingLoad = await loadRuntimeManifest(paths, { applyContext });
 		expect("errors" in missingLoad).toBe(true);
 		if (!("errors" in missingLoad)) throw new Error("expected missing cache failure");
-		expect(missingLoad.errors.join("\n")).toContain(`runtime bundle is missing ${agentRef}`);
+		expect(missingLoad.errors.join("\n")).toContain("could not read committed runtime snapshot");
 
 		const staleSecrets = {
 			...cachedSecrets,

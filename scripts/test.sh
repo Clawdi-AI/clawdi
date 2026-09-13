@@ -13,7 +13,7 @@ if [[ -z "${TEST_RUNNER_IMAGE:-}" ]]; then
 fi
 
 usage() {
-	echo "Usage: scripts/test.sh [all|ci|js|cli|desktop|shared|sidecar|web|backend|runtime-vaults|runtime-systemd|provider-recovery-fixture] [suite args...]"
+	echo "Usage: scripts/test.sh [all|ci|js|cli|cli-native|desktop|shared|sidecar|web|backend|runtime-vaults|runtime-systemd|provider-recovery-fixture] [suite args...]"
 }
 
 compose() {
@@ -22,7 +22,7 @@ compose() {
 
 validate_suite() {
 	case "$1" in
-		all|backend|ci|js|cli|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture)
+		all|backend|ci|js|cli|cli-native|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture)
 			;;
 		*)
 			echo "Unknown test suite: $1" >&2
@@ -304,6 +304,12 @@ run_in_container() {
 			;;
 		cli)
 			run_cli "$@"
+			;;
+		cli-native)
+			install_js
+			cli_typecheck
+			bun run --cwd packages/cli build:native
+			CLAWDI_NATIVE_BINARY="$work_dir/packages/cli/dist-native/linux-x64/clawdi" cli_tests tests/e2e/native-installer.e2e.test.ts tests/e2e/native-daemon.e2e.test.ts
 			;;
 		provider-recovery-fixture)
 			install_js

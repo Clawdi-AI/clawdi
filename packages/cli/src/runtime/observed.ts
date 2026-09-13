@@ -19,7 +19,7 @@ import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observa
 import { installedOpenClawCommandPath } from "./hosted-openclaw-context";
 import { readHostedSkillsObservation } from "./hosted-skill-observation";
 import { providerHealthReasons } from "./manifest-providers";
-import { hostedRuntimeBundleV2Schema } from "./manifest-source";
+import { hostedRuntimeBundleV2Schema, loadCommittedRuntimeManifest } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { execRuntimeUserCommand, spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
@@ -296,12 +296,22 @@ function observedCli(value: RuntimeCliBootstrapStatus | null): HostedRuntimeObse
 }
 
 function readProviderObserved(paths: RuntimePaths): HostedRuntimeObservedProviders | null {
-	const cached = hostedRuntimeBundleV2Schema.safeParse(readJsonRecord(paths.manifestLastGood));
-	const providers = recordValue(cached.success ? cached.data.manifest.projection?.providers : null);
+	const committed = loadCommittedRuntimeManifest(paths);
+	// Provider diagnostics also describe an incomplete candidate; only `applied`
+	// carries authority. Prefer the exact committed snapshot when it is available.
+	const candidate = hostedRuntimeBundleV2Schema.safeParse(readJsonRecord(paths.manifestLastGood));
+	const providers = recordValue(
+		"manifest" in committed
+			? committed.manifest.projection?.providers
+			: candidate.success
+				? candidate.data.manifest.projection?.providers
+				: null,
+	);
 	if (!providers || Object.keys(providers).length === 0) return null;
-
 	const secrets = {
-		...(readJsonRecord(paths.managedSecretCacheFile) ?? {}),
+		...("manifest" in committed
+			? committed.secretValues
+			: (readJsonRecord(paths.managedSecretCacheFile) ?? {})),
 		...(readJsonRecord(join(paths.managedSecretRoot, "egress-secrets.json")) ?? {}),
 	};
 	const observed: HostedRuntimeObservedProviders = {};

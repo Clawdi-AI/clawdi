@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import type { components } from "@clawdi/shared/api";
 import { z } from "zod";
 import type { RuntimeAppliedState } from "./applied-state";
@@ -13,7 +12,7 @@ import {
 	type HostedAgentPluginInstallation,
 	hostedAgentPluginInstallationSchema,
 } from "./manifest-resources";
-import { hostedRuntimeBundleV2Schema } from "./manifest-source";
+import { loadCommittedRuntimeManifest } from "./manifest-source";
 import type { RuntimePaths } from "./paths";
 
 type AgentPluginObservation = components["schemas"]["HostedRuntimeObservedAgentPluginV1"];
@@ -89,9 +88,9 @@ function readAppliedManifest(
 	applied: RuntimeAppliedState,
 ): RuntimeManifest | null {
 	try {
-		const manifest = hostedRuntimeBundleV2Schema.parse(
-			JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")),
-		).manifest;
+		const committed = loadCommittedRuntimeManifest(paths);
+		if (!("manifest" in committed)) return null;
+		const manifest = committed.manifest;
 		return manifest.instanceId === applied.instanceId &&
 			resolveRuntimeApplyGeneration(manifest) === resolveRuntimeApplyGeneration(applied)
 			? manifest

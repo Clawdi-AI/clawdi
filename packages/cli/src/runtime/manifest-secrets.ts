@@ -1,17 +1,18 @@
 import { chmodSync, chownSync, existsSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { runtimeContentSha256 } from "./applied-state";
 import type { RuntimeApplyContext } from "./apply-identity";
 import { egressProfileSecretRefs } from "./egress-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
+import { recordValue, stringValue, writeRuntimePrivateFileAtomic } from "./manifest-shared";
 import {
-	recordValue,
-	stringValue,
-	writeJsonFile,
-	writeRuntimePrivateFileAtomic,
-} from "./manifest-shared";
-import { loadCommittedRuntimeManifest, manifestSecretRefs } from "./manifest-source";
-import type { RuntimePaths } from "./paths";
+	loadCommittedRuntimeManifest,
+	manifestSecretRefs,
+	pruneRuntimeSnapshots,
+	syncRuntimeSnapshotDirectory,
+	writeRuntimeManifestSnapshot,
+} from "./manifest-source";
+import { legacyRuntimeManifestPaths, type RuntimePaths } from "./paths";
 import { runningAsRoot, runtimeEgressGid, runtimeEgressUid } from "./runtime-user-command";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
 
@@ -23,12 +24,21 @@ export function writeLastGoodManifest(
 	excludedSecretRefs: readonly string[] = egressSidecarOnlySecretRefs(secretScopeManifest),
 ): string | null {
 	if (secretScopeManifest.recovery.cacheManifest === false) {
-		rmSync(paths.manifestLastGood, { force: true });
-		rmSync(paths.managedSecretCacheFile, { force: true });
+		for (const candidate of paths.mode === "hosted"
+			? [paths, legacyRuntimeManifestPaths(paths)]
+			: [paths]) {
+			rmSync(candidate.manifestLastGood, { force: true });
+			rmSync(candidate.managedSecretCacheFile, { force: true });
+			syncRuntimeSnapshotDirectory(paths, dirname(candidate.manifestLastGood));
+		}
+		pruneRuntimeSnapshots(paths);
 		return null;
 	}
-	writeJsonFile(paths.manifestLastGood, manifest, paths);
-	writeLastGoodSecretValues(secretScopeManifest, secretValues, paths, excludedSecretRefs);
+	const recoverable = omitSecretRefs(
+		runtimeRecoverableSecretValues(secretScopeManifest, secretValues),
+		excludedSecretRefs,
+	);
+	writeRuntimeManifestSnapshot(paths, manifest, recoverable);
 	return paths.manifestLastGood;
 }
 export function cacheRuntimeLastGoodManifest(
@@ -37,34 +47,9 @@ export function cacheRuntimeLastGoodManifest(
 	secretValues: Record<string, string> | undefined,
 	secretScopeManifest: RuntimeManifest,
 ): string | null {
-	// This runs only with successfully committed authority, so persist the full
-	// active consumer union needed for exact offline reconstruction.
+	// The authority commit path needs the full active consumer union for exact
+	// offline reconstruction.
 	return writeLastGoodManifest(manifest, paths, secretValues, secretScopeManifest, []);
-}
-function writeLastGoodSecretValues(
-	manifest: RuntimeManifest,
-	secretValues: Record<string, string> | undefined,
-	paths: RuntimePaths,
-	excludedRefs: readonly string[] = [],
-): void {
-	const recoverable = omitSecretRefs(
-		runtimeRecoverableSecretValues(manifest, secretValues),
-		excludedRefs,
-	);
-	if (Object.keys(recoverable).length === 0) {
-		rmSync(paths.managedSecretCacheFile, { force: true });
-		return;
-	}
-	writeRuntimePrivateFileAtomic(
-		paths,
-		paths.managedSecretCacheFile,
-		`${JSON.stringify(recoverable, null, 2)}\n`,
-		{
-			mode: 0o600,
-			// The parent is the cache platform root; its mode is owned by the
-			// systemd CacheDirectory directive, never by this writer.
-		},
-	);
 }
 export function makeManagedSecretRoot(path: string): void {
 	chmodSync(path, 0o711);

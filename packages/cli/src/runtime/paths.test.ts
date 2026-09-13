@@ -24,6 +24,17 @@ describe("runtime paths", () => {
 		expect(paths.serviceStateRoot).toBe("/var/lib/clawdi");
 		expect(paths.clawdiHome).toBe("/var/lib/clawdi-user");
 		expect(paths.cacheRoot).toBe("/var/cache/clawdi");
+		expect(paths.manifestLastGood).toBe(
+			"/var/lib/clawdi/committed-runtime/manifest.last-good.json",
+		);
+		expect(paths.managedSecretCacheFile).toBe(
+			"/var/lib/clawdi/committed-runtime/runtime-secrets.last-good.json",
+		);
+		const local = getRuntimePaths({ mode: "local" });
+		expect(local.manifestLastGood).toBe(join(local.cacheRoot, "manifest.last-good.json"));
+		expect(local.managedSecretCacheFile).toBe(
+			join(local.cacheRoot, "runtime-secrets.last-good.json"),
+		);
 		expect(paths.runRoot).toBe("/run/clawdi");
 		expect(paths.bootStatus).toBe("/var/lib/clawdi/status/boot-status.json");
 		expect(paths.cliManagedBin).toBe("/var/lib/clawdi/maintained/clawdi/bin/clawdi");

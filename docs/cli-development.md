@@ -364,8 +364,10 @@ bun run --cwd packages/cli build       # produces dist/
 
 The public package `test` command runs through the clean Docker runner with a
 fake `HOME`; pass a test path or Bun test filter after the command for a focused
-run. `test:internal` is reserved for the Docker runner and CI and must not be
-used as a normal host-local entrypoint. Most tests use synthetic agent homes.
+run. `bash scripts/test.sh cli-native` builds the Linux x64 native CLI and runs
+the installer/daemon lifecycle cases inside the same isolated runner.
+`test:internal` is reserved for the Docker runner and CI and must not be used as
+a normal host-local entrypoint. Most tests use synthetic agent homes.
 Hosted Hermes Skill tests use unmodified native modules from a fixed upstream
 fork commit in a disposable Python fixture. The Docker runner provisions it
 only for those test files, their containing runtime group, name-filtered runs,
