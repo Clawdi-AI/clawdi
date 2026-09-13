@@ -2941,6 +2941,8 @@ export interface components {
         };
         /** V2WalletAutoReloadSetupResponse */
         V2WalletAutoReloadSetupResponse: {
+            /** Customer Session Client Secret */
+            customer_session_client_secret?: string | null;
             /** Setup Identity */
             setup_identity: string;
             /** Setup Intent Id */

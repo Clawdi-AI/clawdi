@@ -14,9 +14,11 @@ import { env } from "@/lib/env";
 
 export function StripeElementsProvider({
 	clientSecret,
+	customerSessionClientSecret,
 	children,
 }: {
 	clientSecret: string;
+	customerSessionClientSecret?: string;
 	children: ReactNode;
 }) {
 	const key = env.VITE_STRIPE_PUBLISHABLE_KEY;
@@ -90,7 +92,11 @@ export function StripeElementsProvider({
 
 	return (
 		<div data-hosted="true">
-			<Elements key={clientSecret} stripe={stripe} options={{ clientSecret, appearance }}>
+			<Elements
+				key={clientSecret}
+				stripe={stripe}
+				options={{ clientSecret, customerSessionClientSecret, appearance }}
+			>
 				{children}
 			</Elements>
 		</div>

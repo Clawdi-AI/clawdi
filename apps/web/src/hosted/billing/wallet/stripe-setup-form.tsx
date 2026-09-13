@@ -145,6 +145,7 @@ function SetupForm({
 
 export function StripeSetupForm({
 	clientSecret,
+	customerSessionClientSecret,
 	setupIdentity,
 	expectedSetupIntentId,
 	confirmed,
@@ -153,6 +154,7 @@ export function StripeSetupForm({
 	onSubmittingChange,
 }: {
 	clientSecret: string;
+	customerSessionClientSecret?: string;
 	setupIdentity: string;
 	expectedSetupIntentId: string;
 	confirmed: WalletSetupConfirmed | null;
@@ -161,7 +163,10 @@ export function StripeSetupForm({
 	onSubmittingChange?: (submitting: boolean) => void;
 }) {
 	return (
-		<StripeElementsProvider clientSecret={clientSecret}>
+		<StripeElementsProvider
+			clientSecret={clientSecret}
+			customerSessionClientSecret={customerSessionClientSecret}
+		>
 			<SetupForm
 				clientSecret={clientSecret}
 				setupIdentity={setupIdentity}

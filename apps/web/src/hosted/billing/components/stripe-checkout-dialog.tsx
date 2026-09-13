@@ -346,10 +346,6 @@ export function StripeCheckoutDialog({
 			elementsOptions: {
 				appearance,
 				loader: "auto",
-				savedPaymentMethod: {
-					enableRedisplay: "never",
-					enableSave: "never",
-				},
 			},
 		};
 	}, [appearance, renderedClientSecret]);

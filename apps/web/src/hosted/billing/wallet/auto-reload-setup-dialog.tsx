@@ -275,6 +275,9 @@ export function AutoReloadSetupDialog({
 					) : visibleAttempt ? (
 						<StripeSetupForm
 							clientSecret={visibleAttempt.client_secret}
+							customerSessionClientSecret={
+								visibleAttempt.customer_session_client_secret ?? undefined
+							}
 							setupIdentity={visibleAttempt.setup_identity}
 							expectedSetupIntentId={visibleAttempt.setup_intent_id}
 							confirmed={confirmed}
