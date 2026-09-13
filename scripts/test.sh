@@ -13,7 +13,7 @@ if [[ -z "${TEST_RUNNER_IMAGE:-}" ]]; then
 fi
 
 usage() {
-	echo "Usage: scripts/test.sh [all|ci|js|cli|desktop|shared|sidecar|web|backend|runtime-vaults|runtime-systemd|provider-recovery-fixture] [suite args...]"
+	echo "Usage: scripts/test.sh [all|ci|js|cli|desktop|shared|sidecar|web|web-wallet-checkout|backend|runtime-vaults|runtime-systemd|provider-recovery-fixture] [suite args...]"
 }
 
 compose() {
@@ -22,7 +22,7 @@ compose() {
 
 validate_suite() {
 	case "$1" in
-		all|backend|ci|js|cli|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture)
+		all|backend|ci|js|cli|desktop|shared|sidecar|web|web-wallet-checkout|runtime-vaults|runtime-systemd|provider-recovery-fixture)
 			;;
 		*)
 			echo "Unknown test suite: $1" >&2
@@ -79,6 +79,10 @@ run_on_host() {
 		git -C "$repo_root" show "$baseline_revision:packages/cli/src/runtime/connection-provider-config.ts" > "$provider_baseline_dir/connection-provider-config.ts"
 	fi
 
+	if [[ "$suite" == web-wallet-checkout ]]; then
+		export CLAWDI_TEST_CHROMIUM_DEPS=true
+		export CLAWDI_TEST_RUNNER_MEMORY_LIMIT="${CLAWDI_TEST_RUNNER_MEMORY_LIMIT:-6g}"
+	fi
 	if [[ "${CLAWDI_TEST_RUNNER_SKIP_BUILD:-0}" != "1" ]]; then
 		compose build test-runner
 	fi
@@ -339,6 +343,12 @@ run_in_container() {
 				exit 2
 			fi
 			run_sidecar
+			;;
+		web-wallet-checkout)
+			install_js
+			web_typecheck
+			web_tests src/hosted/billing/stripe-client-secret.test.ts src/hosted/billing/wallet/top-up-dialog.logic.test.ts src/hosted/billing/components/stripe-checkout.logic.test.ts src/hosted/billing/billing-client.test.ts
+			(cd apps/web && bunx --no-install playwright install chromium --only-shell && bunx --no-install playwright test --config=playwright.wallet.config.ts "$@")
 			;;
 		web)
 			run_web "$@"

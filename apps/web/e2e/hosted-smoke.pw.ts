@@ -1402,6 +1402,13 @@ async function stubCompletedStripeCheckout(page: Page) {
 						on: () => undefined,
 						changeAppearance: () => undefined,
 						loadFonts: () => undefined,
+						createExpressCheckoutElement: () => ({
+							mount: () => undefined,
+							on: () => undefined,
+							off: () => undefined,
+							update: () => undefined,
+							destroy: () => undefined,
+						}),
 						createPaymentElement: () => ({
 							mount: (node: HTMLElement) => {
 								node.textContent = "Mock secure payment form";

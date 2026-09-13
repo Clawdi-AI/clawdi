@@ -4,6 +4,8 @@ services:
     build:
       context: .
       dockerfile: docker/test-runner.Dockerfile
+      args:
+        INSTALL_CHROMIUM_DEPS: ${CLAWDI_TEST_CHROMIUM_DEPS:-false}
     user: "1000:1000"
     cpus: ${CLAWDI_TEST_RUNNER_CPUS:-8}
     mem_limit: ${CLAWDI_TEST_RUNNER_MEMORY_LIMIT:-4g}
