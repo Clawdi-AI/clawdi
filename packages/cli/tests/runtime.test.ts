@@ -91,6 +91,7 @@ import {
 import { runtimeConvergenceWithoutApply } from "../src/runtime/manifest-planning";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+	loadCommittedRuntimeManifest,
 	loadRemoteRuntimeManifest as loadRemoteRuntimeManifestWithContext,
 	manifestSecretRefs,
 	parseHostedRuntimeBundleV2,
@@ -1404,7 +1405,12 @@ function writeHostedCodexNpmInstaller(
 	chmodSync(join(binDir, "npm"), 0o755);
 }
 
-function seedRuntimeWatchLocaleBaseline(home: string, state: string, run: string): RuntimePaths {
+function seedRuntimeWatchLocaleBaseline(
+	home: string,
+	state: string,
+	run: string,
+	connection?: { apiUrl: string; agentId: string },
+): RuntimePaths {
 	mkdirSync(join(run, "secrets"), { recursive: true });
 	seedOpenClawBinary(home);
 	process.env.HOME = home;
@@ -1419,9 +1425,16 @@ function seedRuntimeWatchLocaleBaseline(home: string, state: string, run: string
 	const paths = getRuntimePaths();
 	seedMitmproxyCache(paths);
 	const payload = hostedRuntimeWatchLocalePayload(home, 1, "en", "UTC");
+	if (connection) {
+		payload.manifest.environmentId = connection.agentId;
+		payload.manifest.controlPlane = { cloudApiUrl: connection.apiUrl };
+	}
 	const sourceRevision = testBundleEtag("manifest-locale-1").slice(8, -1);
 	const load: RuntimeManifestLoad = {
-		manifest: runtimeWatchLocaleManifest(home, 1),
+		manifest: normalizeHostedManifestFixture({
+			manifest: payload.manifest,
+			secretValues: { ...TEST_HOSTED_CODEX_SECRET_VALUES, ...TEST_RUNTIME_SERVICE_SECRET_VALUES },
+		}).manifest,
 		sourceBundle: {
 			schemaVersion: "clawdi.hosted-runtime.bundle.v2",
 			sourceRevision,
@@ -12522,11 +12535,18 @@ it.skipIf(!process.env.CLAWDI_VAULT_FIXTURE_URL)(
 			throw new Error("Missing isolated Vault fixture");
 		installSuccessfulSystemctlFixture();
 		const home = join(root, "home", "clawdi");
-		const paths = seedRuntimeWatchLocaleBaseline(home, join(root, "platform"), join(root, "run"));
-		const cached = JSON.parse(readFileSync(paths.manifestLastGood, "utf8"));
-		cached.manifest.environmentId = agentId;
-		cached.manifest.controlPlane.cloudApiUrl = apiUrl;
-		writeFileSync(paths.manifestLastGood, JSON.stringify(cached));
+		// Bind the real fixture endpoint before committing both snapshot and applied SHA.
+		const paths = seedRuntimeWatchLocaleBaseline(home, join(root, "platform"), join(root, "run"), {
+			apiUrl,
+			agentId,
+		});
+		const committed = loadCommittedRuntimeManifest(paths);
+		if (!("manifest" in committed))
+			throw new Error("Vault fixture has no committed runtime snapshot");
+		expect(committed.manifest).toMatchObject({ environmentId: agentId, controlPlane: { apiUrl } });
+		expect(readRuntimeAppliedState(paths)?.contentIdentity.sha256).toBe(
+			runtimeAppliedContentIdentity(committed).sha256,
+		);
 		writeFileSync(join(root, "run", "secrets", "auth-token"), runtimeToken);
 		process.env.CLAWDI_AUTH_TOKEN = runtimeToken;
 		const workspace = resolveHostedOpenClawWorkspace(home);

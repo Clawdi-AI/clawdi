@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -28,24 +28,41 @@ test.skipIf(
 		CLAWDI_RUNTIME_UID: String(identity.uid),
 		CLAWDI_RUNTIME_GID: String(identity.gid),
 	});
+	const stderrPath = join(root, "dashboard.stderr.log");
+	const startedAt = performance.now();
 	const child = Bun.spawn(
 		[
 			`${saved.CLAWDI_TEST_HERMES_DASHBOARD_VENV}/bin/python`,
 			fileURLToPath(new URL("../../tests/fixtures/hermes-dashboard-auth.py", import.meta.url)),
 			state,
 		],
-		{ stdout: "ignore", stderr: "inherit" },
+		{ stdout: "ignore", stderr: Bun.file(stderrPath) },
 	);
 	try {
 		let ready = false;
+		let lastProbe = "not attempted";
 		for (let i = 0; i < 100 && !ready; i++) {
 			try {
-				ready = (
-					await fetch("http://127.0.0.1:9119/api/status", { signal: AbortSignal.timeout(100) })
-				).ok;
-			} catch {}
+				const response = await fetch("http://127.0.0.1:9119/api/status", {
+					signal: AbortSignal.timeout(100),
+				});
+				lastProbe = `HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`;
+				ready = response.ok;
+			} catch (error) {
+				lastProbe = String(error);
+			}
 			if (!ready) await delay(25);
 		}
+		console.error(
+			JSON.stringify({
+				fixture: "Hermes dashboard startup",
+				ready,
+				elapsedMs: Math.round(performance.now() - startedAt),
+				exitCode: child.exitCode,
+				lastProbe,
+				stderr: readFileSync(stderrPath, "utf8").slice(-8000),
+			}),
+		);
 		expect(ready).toBe(true);
 		const redirect = await fetch("http://127.0.0.1:9119/", { redirect: "manual" });
 		expect(redirect.status).toBe(302);
