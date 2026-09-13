@@ -79,6 +79,7 @@ for runtime in "${RUNTIMES[@]}"; do
 	docker run --rm \
 		--cidfile "${cidfile}" \
 		--network none \
+		--cpus 2 --memory 3g --memory-swap 3g --pids-limit 1024 \
 		--cap-add NET_ADMIN \
 		--add-host web.whatsapp.com:127.0.0.1 \
 		--tmpfs /tmp:rw,exec,size=1073741824 \

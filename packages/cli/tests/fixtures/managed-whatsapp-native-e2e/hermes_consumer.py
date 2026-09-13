@@ -178,6 +178,8 @@ def summarize_status(status: dict[str, Any]) -> dict[str, Any]:
         status.get("outboundNodes") if isinstance(status.get("outboundNodes"), list) else []
     )
     return {
+        "privacyQueries": status.get("privacyQueries"),
+        "receipts": [node for node in outbound_nodes if node.get("tag") == "receipt"],
         "connections": status.get("connections"),
         "authorizedConnections": status.get("authorizedConnections"),
         "active": status.get("active"),
@@ -240,7 +242,10 @@ async def hermes_protocol_envelopes_ready() -> bool:
             for message in status["outboundMessages"]
         )
         and any(node.get("tag") == "chatstate" for node in status["outboundNodes"])
-        and any(node.get("tag") == "receipt" for node in status["outboundNodes"])
+        and any(
+            node.get("tag") == "receipt" and node.get("attrs", {}).get("type") == "read"
+            for node in status["outboundNodes"]
+        )
     )
 
 

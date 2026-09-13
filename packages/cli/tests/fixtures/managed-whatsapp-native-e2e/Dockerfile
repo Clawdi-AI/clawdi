@@ -155,6 +155,8 @@ COPY packages/cli/egress-addon packages/cli/egress-addon
 COPY packages/cli/tests/fixtures/managed-whatsapp-native-e2e packages/cli/tests/fixtures/managed-whatsapp-native-e2e
 COPY backend/app backend/app
 COPY --from=mitmproxy /opt/mitmproxy /opt/mitmproxy
+# Private worktrees may use 0700/0600; both fixture users must read this root-owned source.
+RUN chmod -R a+rX /workspace
 
 ENV CLAWDI_RUNTIME_USER=clawdi \
 	CLAWDI_RUNTIME_UID=10001 \

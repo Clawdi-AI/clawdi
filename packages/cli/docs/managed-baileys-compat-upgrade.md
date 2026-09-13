@@ -37,11 +37,14 @@ The patch targets are:
 
 ## Known Technical Debt
 
-Hermes compatibility still installs missing bridge dependencies with an isolated
-`npm ci` and writes `.hermes-pkg-hash` in the format expected by the current
-fixture. That upstream marker contract has not been independently verified. Keep
-both behaviors scoped to this compatibility patch until Hermes exposes a
-supported dependency-install contract.
+Hermes compatibility installs missing bridge dependencies with an isolated
+`npm ci` and writes `.hermes-pkg-hash`. The 2026-09-13 review verified the
+fixture's pinned [upstream adapter](https://github.com/NousResearch/hermes-agent/blob/cc4cab2f592e60a197e796506de9168f74baf3ea/plugins/platforms/whatsapp/adapter.py#L320-L334)
+and [dependency check](https://github.com/NousResearch/hermes-agent/blob/cc4cab2f592e60a197e796506de9168f74baf3ea/plugins/platforms/whatsapp/adapter.py#L529-L542):
+the stamp is the first 16 lowercase SHA-256 hex characters of `package.json`,
+read with whitespace stripped. This verifies that exact pin, not future
+versions or a stable public dependency-install API. Keep both behaviors scoped
+to this compatibility patch and recheck them during each runtime upgrade.
 
 ## Verify
 
