@@ -2,6 +2,7 @@
 
 import {
 	CheckoutElementsProvider,
+	ExpressCheckoutElement,
 	PaymentElement,
 	useCheckoutElements,
 } from "@stripe/react-stripe-js/checkout";
@@ -9,6 +10,7 @@ import type {
 	Stripe,
 	StripeCheckoutElementsSdkOptions,
 	StripeCheckoutStatus,
+	StripeExpressCheckoutElementConfirmEvent,
 } from "@stripe/stripe-js";
 import { AlertCircle, CreditCard, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -51,6 +53,8 @@ type StripeCheckoutDialogProps = {
 	open: boolean;
 	summary: StripeCheckoutSummary | null;
 	title: string;
+	submitLabel?: string;
+	onSubmittingChange?: (submitting: boolean) => void;
 };
 
 type DialogState = "loading" | "ready" | "error";
@@ -90,11 +94,13 @@ function CheckoutSummaryPanel({ summary }: { summary: StripeCheckoutSummary | nu
 }
 
 function CheckoutElementForm({
+	submitLabel,
 	onComplete,
 	onExpired,
 	onLoadError,
 	onSubmittingChange,
 }: {
+	submitLabel: string;
 	onComplete: (paymentStatus: StripeCheckoutPaymentStatus) => void;
 	onExpired: () => void;
 	onLoadError: (message: string) => void;
@@ -167,14 +173,20 @@ function CheckoutElementForm({
 
 	const { checkout: readyCheckout } = checkoutState;
 
-	async function confirmCheckout() {
-		if (submittingRef.current || !readyCheckout.canConfirm) return;
+	async function confirmCheckout(
+		expressCheckoutConfirmEvent?: StripeExpressCheckoutElementConfirmEvent,
+	) {
+		if (submittingRef.current || (!expressCheckoutConfirmEvent && !readyCheckout.canConfirm))
+			return;
 		submittingRef.current = true;
 		setSubmitting(true);
 		onSubmittingChange(true);
 		setError(null);
 		try {
-			const result = await readyCheckout.confirm({ redirect: "if_required" });
+			const result = await readyCheckout.confirm({
+				redirect: "if_required",
+				expressCheckoutConfirmEvent,
+			});
 			if (result.type === "error") {
 				setError(result.error.message || "We could not confirm this payment. Please try again.");
 				finishSubmitting();
@@ -191,10 +203,27 @@ function CheckoutElementForm({
 
 	return (
 		<div data-hosted="true" className="flex flex-col gap-4">
+			<ExpressCheckoutElement
+				options={{
+					buttonHeight: 44,
+					buttonTheme: {},
+					buttonType: {},
+					layout: { maxColumns: 2, maxRows: 1 },
+					paymentMethodOrder: ["apple_pay", "google_pay", "link"],
+					paymentMethods: {
+						applePay: "auto",
+						googlePay: "auto",
+						link: "auto",
+						amazonPay: "never",
+						klarna: "never",
+						paypal: "never",
+					},
+				}}
+				onConfirm={confirmCheckout}
+			/>
 			<PaymentElement
 				options={{
 					layout: { type: "tabs", defaultCollapsed: false },
-					wallets: { applePay: "never", googlePay: "never", link: "never" },
 				}}
 			/>
 			{error ? (
@@ -212,7 +241,7 @@ function CheckoutElementForm({
 			<div className="flex justify-end">
 				<Button
 					type="button"
-					onClick={confirmCheckout}
+					onClick={() => void confirmCheckout()}
 					disabled={submitting || !readyCheckout.canConfirm}
 				>
 					{submitting ? (
@@ -220,7 +249,7 @@ function CheckoutElementForm({
 							<Spinner data-icon="inline-start" /> Confirming payment…
 						</>
 					) : (
-						"Subscribe"
+						submitLabel
 					)}
 				</Button>
 			</div>
@@ -229,6 +258,8 @@ function CheckoutElementForm({
 }
 
 export function StripeCheckoutDialog({
+	submitLabel = "Subscribe",
+	onSubmittingChange,
 	clientSecret,
 	description,
 	onComplete,
@@ -362,10 +393,14 @@ export function StripeCheckoutDialog({
 						options={providerOptions}
 					>
 						<CheckoutElementForm
+							submitLabel={submitLabel}
 							onComplete={completeCheckout}
 							onExpired={expireCheckout}
 							onLoadError={handleProviderLoadError}
-							onSubmittingChange={setCheckoutSubmitting}
+							onSubmittingChange={(submitting) => {
+								setCheckoutSubmitting(submitting);
+								onSubmittingChange?.(submitting);
+							}}
 						/>
 					</CheckoutElementsProvider>
 				) : state === "error" ? (

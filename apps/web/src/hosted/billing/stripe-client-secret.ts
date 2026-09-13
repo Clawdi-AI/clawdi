@@ -62,3 +62,12 @@ export function stripeReturnPaymentIntentClientSecret(
 ): PaymentIntentClientSecret | null {
 	return isPaymentIntentClientSecret(value) ? value : null;
 }
+
+export function walletTopupCheckoutClientSecret(
+	result: WalletTopupResult,
+): CheckoutSessionClientSecret | null {
+	return result.flow_type === "checkout_session" &&
+		isCheckoutSessionClientSecret(result.client_secret)
+		? result.client_secret
+		: null;
+}

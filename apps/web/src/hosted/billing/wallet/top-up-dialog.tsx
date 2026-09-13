@@ -15,11 +15,17 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { useBillingClient } from "@/hosted/billing/billing-client";
+import { StripeCheckoutDialog } from "@/hosted/billing/components/stripe-checkout-dialog";
 import { isIdempotencyKeyReusedError, normalizeBillingError } from "@/hosted/billing/errors";
 import { formatCents, usdInputToCents } from "@/hosted/billing/format";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import { useSensitiveTopUp } from "@/hosted/billing/sensitive-actions";
 import type { PaymentIntentClientSecret } from "@/hosted/billing/stripe-client-secret";
+import {
+	type CheckoutSessionClientSecret,
+	walletTopupCheckoutClientSecret,
+} from "@/hosted/billing/stripe-client-secret";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
 	type PaymentOutcome,
@@ -28,6 +34,7 @@ import {
 import {
 	completeTopup,
 	handleTopupStartResult,
+	invalidateWalletData,
 	validTopUpAmountCents,
 	waitForWalletTopupCredit,
 } from "@/hosted/billing/wallet/top-up-dialog.logic";
@@ -81,6 +88,9 @@ export function TopUpDialog({
 	initialAmountCents?: number | null;
 }) {
 	const topUp = useSensitiveTopUp();
+	const billing = useBillingClient();
+	const [checkoutSecret, setCheckoutSecret] = useState<CheckoutSessionClientSecret | null>(null);
+	const checkoutIdRef = useRef<string | null>(null);
 	const qc = useQueryClient();
 	const runAction = useActionLock();
 	const [step, setStep] = useState<Step>("amount");
@@ -114,6 +124,8 @@ export function TopUpDialog({
 	function reset() {
 		setStep("amount");
 		setClientSecret(null);
+		setCheckoutSecret(null);
+		checkoutIdRef.current = null;
 		setAmountTouched(false);
 		setPaymentSubmitting(false);
 		topupKeyRef.current = null;
@@ -139,10 +151,16 @@ export function TopUpDialog({
 		topupKeyRef.current ??= newIdempotencyKey("topup");
 		try {
 			const result = await topUp.execute({
-				body: { amount_cents: amountCents },
+				body: { amount_cents: amountCents, flow_type: "checkout_session" },
 				idempotencyKey: topupKeyRef.current,
 			});
 			paymentReferenceRef.current = result.payment_intent_id ?? null;
+			const nextCheckoutSecret = walletTopupCheckoutClientSecret(result);
+			if (nextCheckoutSecret && result.checkout_session_id) {
+				checkoutIdRef.current = result.checkout_session_id;
+				setCheckoutSecret(nextCheckoutSecret);
+				return;
+			}
 			handleTopupStartResult(result, {
 				queryClient: qc,
 				resetAttempt: () => {
@@ -185,6 +203,47 @@ export function TopUpDialog({
 			onComplete: finishTopup,
 		});
 	}
+
+	async function onCheckoutPaid() {
+		const checkoutId = checkoutIdRef.current;
+		if (!checkoutId) return;
+		try {
+			const result = await billing.getWalletTopupCheckout(checkoutId);
+			paymentReferenceRef.current = result.payment_intent_id ?? null;
+			if (result.status !== "succeeded" && result.status !== "processing") {
+				setPaymentSubmitting(false);
+				invalidateWalletData(qc);
+				toast.error("Top-up payment didn't finish", {
+					description: "Review your payment method and try again.",
+				});
+				onOpenChange(false);
+				return;
+			}
+			onPaid(result.status === "succeeded" ? "succeeded" : "processing");
+		} catch {
+			// Confirmation already succeeded; a refresh failure must never invite a second charge.
+			onPaid("processing");
+		}
+	}
+
+	if (checkoutSecret)
+		return (
+			<StripeCheckoutDialog
+				open={open}
+				clientSecret={checkoutSecret}
+				title="Top up Wallet"
+				description={`Choose a payment method to pay ${formatCents(amountCents)}.`}
+				summary={null}
+				submitLabel={`Pay ${formatCents(amountCents)}`}
+				onSubmittingChange={setPaymentSubmitting}
+				onOpenChange={close}
+				onExpired={() => {
+					reset();
+					toast.error("This checkout expired. Start a fresh top-up.");
+				}}
+				onComplete={() => void onCheckoutPaid()}
+			/>
+		);
 
 	const description =
 		step === "amount"

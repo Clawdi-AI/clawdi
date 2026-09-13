@@ -4,6 +4,7 @@ import type { WalletTopupResult } from "@/hosted/billing/contracts";
 import {
 	checkoutSessionClientSecret,
 	stripeReturnPaymentIntentClientSecret,
+	walletTopupCheckoutClientSecret,
 	walletTopupPaymentIntentClientSecret,
 } from "@/hosted/billing/stripe-client-secret";
 
@@ -69,4 +70,13 @@ describe("Stripe client secret semantic refinement", () => {
 		).toBeNull();
 		expect(stripeReturnPaymentIntentClientSecret("   ")).toBeNull();
 	});
+});
+
+test("keeps Checkout top-up secrets out of PaymentIntent Elements", () => {
+	const result = walletTopupResult("checkout_session", "opaque checkout value");
+	expect<string | null>(walletTopupCheckoutClientSecret(result)).toBe("opaque checkout value");
+	expect(walletTopupPaymentIntentClientSecret(result)).toBeNull();
+	expect(
+		walletTopupCheckoutClientSecret(walletTopupResult("payment_intent", "pi value")),
+	).toBeNull();
 });

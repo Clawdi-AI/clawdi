@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
+import { useBillingClient } from "@/hosted/billing/billing-client";
 import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner";
 import { WalletSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
@@ -114,6 +115,35 @@ export function WalletPage() {
 			toast.error("Couldn’t open billing", { description: normalizeBillingError(error) });
 		}
 	}
+
+	const billing = useBillingClient();
+	useEffect(() => {
+		const url = new URL(window.location.href);
+		const checkoutId = url.searchParams.get("wallet_checkout_session_id");
+		if (!checkoutId) return;
+		let cancelled = false;
+		void billing
+			.getWalletTopupCheckout(checkoutId)
+			.then((result) => {
+				if (cancelled) return;
+				url.searchParams.delete("wallet_checkout_session_id");
+				window.history.replaceState(window.history.state, "", url);
+				invalidateWalletData(queryClient);
+				showWalletTopupReturnToast(walletTopupReturnToast(result.status));
+				if (result.status === "succeeded" || result.status === "processing") {
+					void confirmWalletTopup(queryClient, result.payment_intent_id ?? null);
+				}
+			})
+			.catch(() => {
+				if (!cancelled)
+					toast.error("Couldn't refresh top-up", {
+						description: "Reload Wallet to check your payment. Do not pay again.",
+					});
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [billing, queryClient]);
 
 	useEffect(() => {
 		let cancelled = false;

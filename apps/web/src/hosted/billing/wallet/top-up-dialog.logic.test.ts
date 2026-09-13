@@ -54,6 +54,16 @@ function setupControls(queryClient: QueryClient) {
 }
 
 describe("handleTopupStartResult", () => {
+	test("expires the attempt without claiming credit or reopening its old secret", () => {
+		const setup = setupControls(queryClientWithWalletData());
+		handleTopupStartResult(
+			result({ flow_type: "checkout_session", status: "expired", client_secret: "cs_old" }),
+			setup,
+		);
+		expect(setup.resetAttempt).toHaveBeenCalledTimes(1);
+		expect(setup.startPayment).not.toHaveBeenCalled();
+		expect(setup.onComplete).not.toHaveBeenCalled();
+	});
 	test("treats synchronous success as terminal success and refreshes wallet activity", () => {
 		const qc = queryClientWithWalletData();
 		const setup = setupControls(qc);

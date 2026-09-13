@@ -135,7 +135,12 @@ export function handleTopupStartResult(
 	result: WalletTopupResult,
 	controls: TopupStartResultControls,
 ): void {
-	// Only the PaymentIntent status decides success. A quoted amount can also
+	if (result.flow_type === "checkout_session" && result.status === "expired") {
+		controls.resetAttempt();
+		controls.toastError("This checkout expired", { description: "Start a fresh top-up." });
+		return;
+	}
+	// Only the provider payment status decides success. A quoted amount can also
 	// appear on an incomplete response, so it must not close the payment step.
 	if (result.status === "succeeded") {
 		completeTopup("succeeded", controls);
