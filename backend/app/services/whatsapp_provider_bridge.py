@@ -296,9 +296,9 @@ class WhatsAppProviderBridge:
 
             transport = self._transport()
             if transport is None:
-                # The in-process registry is populated by the sidecar ingress
-                # worker and is absent in API workers. Resolve the same durable
-                # account/session binding used by ordinary outbound delivery.
+                # Ingress registration is process-local and may not yet exist here.
+                # Resolve the same revision-fenced durable session binding used
+                # by ordinary outbound delivery without taking ingress ownership.
                 transport = whatsapp_delivery_transport.resolve_whatsapp_delivery_transport(account)
             if transport is None:
                 await record_channel_debug_event(
