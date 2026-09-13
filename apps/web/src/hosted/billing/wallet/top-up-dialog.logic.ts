@@ -1,11 +1,7 @@
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
-import type { WalletTopupResult, WalletTransaction } from "@/hosted/billing/contracts";
+import type { WalletTransaction } from "@/hosted/billing/contracts";
 import { wholeDollarTopUpCents } from "@/hosted/billing/format";
 import { billingKeys } from "@/hosted/billing/query-keys";
-import {
-	type PaymentIntentClientSecret,
-	walletTopupPaymentIntentClientSecret,
-} from "@/hosted/billing/stripe-client-secret";
 import { WALLET_TOPUP_ACCEPTED_TOAST } from "@/hosted/billing/wallet/top-up-return.logic";
 import {
 	TOPUP_INCREMENT_CENTS,
@@ -25,11 +21,6 @@ export interface TopupCompletionControls {
 	closeDialog: () => void;
 	toastInfo: TopupToast;
 	onComplete?: (status: TopupCompletionStatus) => void;
-}
-
-export interface TopupStartResultControls extends TopupCompletionControls {
-	startPayment: (clientSecret: PaymentIntentClientSecret) => void;
-	toastError: TopupToast;
 }
 
 export function validTopUpAmountCents(amountCents: number): boolean {
@@ -129,38 +120,4 @@ export async function waitForWalletTopupCredit(
 		}
 	}
 	return false;
-}
-
-export function handleTopupStartResult(
-	result: WalletTopupResult,
-	controls: TopupStartResultControls,
-): void {
-	// Only the PaymentIntent status decides success. A quoted amount can also
-	// appear on an incomplete response, so it must not close the payment step.
-	if (result.status === "succeeded") {
-		completeTopup("succeeded", controls);
-		return;
-	}
-	const clientSecret = walletTopupPaymentIntentClientSecret(result);
-	if (clientSecret) {
-		// A pending transaction matters only on a mounted Wallet surface. Keep
-		// balance and the rest of Wallet data untouched until payment settles.
-		void controls.queryClient.refetchQueries({
-			queryKey: billingKeys.transactions,
-			type: "active",
-		});
-		controls.startPayment(clientSecret);
-		return;
-	}
-	if (isProcessingTopupStatus(result.status)) {
-		completeTopup("processing", controls);
-		return;
-	}
-	controls.toastError("Couldn't start top-up", {
-		description: "No payment was returned. Please try again.",
-	});
-}
-
-function isProcessingTopupStatus(status: string): boolean {
-	return status === "processing" || status === "pending" || status === "requires_capture";
 }

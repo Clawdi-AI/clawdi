@@ -741,6 +741,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/wallet/topup/checkout/{checkout_session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Wallet Topup Checkout */
+        get: operations["get_wallet_topup_checkout_v2_wallet_topup_checkout__checkout_session_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/wallet-binding": {
         parameters: {
             query?: never;
@@ -2924,6 +2941,8 @@ export interface components {
         };
         /** V2WalletAutoReloadSetupResponse */
         V2WalletAutoReloadSetupResponse: {
+            /** Customer Session Client Secret */
+            customer_session_client_secret?: string | null;
             /** Setup Identity */
             setup_identity: string;
             /** Setup Intent Id */
@@ -3066,10 +3085,15 @@ export interface components {
         };
         /** V2WalletTopupResponse */
         V2WalletTopupResponse: {
+            /** Checkout Session Id */
+            checkout_session_id: string;
             /** Status */
             status: string;
-            /** Flow Type */
-            flow_type?: string | null;
+            /**
+             * Flow Type
+             * @constant
+             */
+            flow_type: "checkout_session";
             /** Payment Intent Id */
             payment_intent_id?: string | null;
             /** Client Secret */
@@ -5180,6 +5204,37 @@ export interface operations {
                 "application/json": components["schemas"]["V2WalletTopupRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletTopupResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_wallet_topup_checkout_v2_wallet_topup_checkout__checkout_session_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                checkout_session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

@@ -93,6 +93,7 @@ KEEP_OPERATIONS_BY_PATH: dict[str, set[str]] = {
     "/v2/wallet/auto-reload/setup-intent/finalize": {"post"},
     "/v2/wallet/transactions": {"get"},
     "/v2/wallet/topup": {"post"},
+    "/v2/wallet/topup/checkout/{checkout_session_id}": {"get"},
     "/v2/wallet-binding": {"get", "post", "delete"},
     "/v2/wallet-binding/challenge": {"post"},
     "/v2/x402/attempts": {"post"},

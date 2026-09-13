@@ -49,7 +49,9 @@ test("wallet top-up completion refreshes an automatically paid open invoice", as
 	await expect(pastDueAlert).toHaveCount(0);
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(page.getByText("Wallet", { exact: true })).toBeVisible();
-	expect(JSON.parse(topUpRequests[0] ?? "{}")).toEqual({ amount_cents: 2_500 });
+	expect(JSON.parse(topUpRequests[0] ?? "{}")).toEqual({
+		amount_cents: 2_500,
+	});
 	expect(errors, `wallet open-invoice top-up: ${errors.join(" | ")}`).toEqual([]);
 });
 
