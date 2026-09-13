@@ -10,10 +10,7 @@ export type CheckoutSessionClientSecret = NonNullable<CheckoutSessionResult["cli
 	readonly [checkoutSessionClientSecretBrand]: "CheckoutSessionClientSecret";
 };
 
-export type PaymentIntentClientSecret = (
-	| NonNullable<WalletTopupResult["client_secret"]>
-	| WalletAutoReloadAction["client_secret"]
-) & {
+export type PaymentIntentClientSecret = NonNullable<WalletAutoReloadAction["client_secret"]> & {
 	readonly [paymentIntentClientSecretBrand]: "PaymentIntentClientSecret";
 };
 
@@ -41,15 +38,6 @@ export function checkoutSessionClientSecret(
 	return result.client_secret;
 }
 
-export function walletTopupPaymentIntentClientSecret(
-	result: WalletTopupResult,
-): PaymentIntentClientSecret | null {
-	if (result.flow_type !== "payment_intent" || !isPaymentIntentClientSecret(result.client_secret)) {
-		return null;
-	}
-	return result.client_secret;
-}
-
 export function walletAutoReloadPaymentIntentClientSecret(
 	action: WalletAutoReloadAction | null | undefined,
 ): PaymentIntentClientSecret | null {
@@ -66,8 +54,7 @@ export function stripeReturnPaymentIntentClientSecret(
 export function walletTopupCheckoutClientSecret(
 	result: WalletTopupResult,
 ): CheckoutSessionClientSecret | null {
-	return result.flow_type === "checkout_session" &&
-		isCheckoutSessionClientSecret(result.client_secret)
+	return result.status === "open" && isCheckoutSessionClientSecret(result.client_secret)
 		? result.client_secret
 		: null;
 }

@@ -1,11 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { CheckoutOperationResult } from "@/hosted/billing/billing-client";
-import type { WalletTopupResult } from "@/hosted/billing/contracts";
-import {
-	checkoutSessionClientSecret,
-	stripeReturnPaymentIntentClientSecret,
-	walletTopupPaymentIntentClientSecret,
-} from "@/hosted/billing/stripe-client-secret";
+import { checkoutSessionClientSecret } from "@/hosted/billing/stripe-client-secret";
 
 function checkoutResult(clientSecret: string | null): CheckoutOperationResult {
 	return {
@@ -14,19 +9,6 @@ function checkoutResult(clientSecret: string | null): CheckoutOperationResult {
 		action_url: null,
 		checkout_url: "",
 		client_secret: clientSecret,
-	};
-}
-
-function walletTopupResult(
-	flowType: string | null,
-	clientSecret: string | null,
-): WalletTopupResult {
-	return {
-		status: "requires_payment_method",
-		flow_type: flowType,
-		payment_intent_id: null,
-		client_secret: clientSecret,
-		amount_usd: null,
 	};
 }
 
@@ -54,19 +36,5 @@ describe("Stripe client secret semantic refinement", () => {
 				entitled_until: null,
 			}),
 		).toBeNull();
-	});
-
-	test("accepts opaque payment values only from PaymentIntent provenance", () => {
-		expect(
-			walletTopupPaymentIntentClientSecret(
-				walletTopupResult("payment_intent", "opaque payment value"),
-			) === "opaque payment value",
-		).toBe(true);
-		expect(
-			walletTopupPaymentIntentClientSecret(
-				walletTopupResult("checkout_session", "opaque but wrong flow"),
-			),
-		).toBeNull();
-		expect(stripeReturnPaymentIntentClientSecret("   ")).toBeNull();
 	});
 });

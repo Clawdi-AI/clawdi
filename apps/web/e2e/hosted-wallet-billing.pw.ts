@@ -51,7 +51,6 @@ test("wallet top-up completion refreshes an automatically paid open invoice", as
 	await expect(page.getByText("Wallet", { exact: true })).toBeVisible();
 	expect(JSON.parse(topUpRequests[0] ?? "{}")).toEqual({
 		amount_cents: 2_500,
-		flow_type: "checkout_session",
 	});
 	expect(errors, `wallet open-invoice top-up: ${errors.join(" | ")}`).toEqual([]);
 });

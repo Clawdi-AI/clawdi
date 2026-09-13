@@ -2,7 +2,6 @@ import {
 	buildWalletStripeReturnUrl,
 	WALLET_PAYMENT_FLOW_PARAM,
 	WALLET_PAYMENT_RETURN_PARAM,
-	type WalletPaymentReturnFlow,
 } from "@/hosted/billing/wallet/stripe-return";
 import { SETTINGS_QUERY_KEY } from "@/lib/settings-routes";
 
@@ -19,23 +18,12 @@ export const WALLET_TOPUP_ACCEPTED_TOAST = {
 	description: "We're confirming your Wallet credit now.",
 } as const;
 
-export function buildWalletPaymentReturnUrl(
-	currentHref: string,
-	flow: WalletPaymentReturnFlow,
-): string {
+export function buildWalletAutoReloadReturnUrl(currentHref: string): string {
 	return buildWalletStripeReturnUrl(currentHref, [
 		[SETTINGS_QUERY_KEY, "billing-wallet"],
 		[WALLET_PAYMENT_RETURN_PARAM, "1"],
-		[WALLET_PAYMENT_FLOW_PARAM, flow],
+		[WALLET_PAYMENT_FLOW_PARAM, "auto_reload"],
 	]);
-}
-
-export function buildWalletTopupReturnUrl(currentHref: string): string {
-	return buildWalletPaymentReturnUrl(currentHref, "manual_topup");
-}
-
-export function buildWalletAutoReloadReturnUrl(currentHref: string): string {
-	return buildWalletPaymentReturnUrl(currentHref, "auto_reload");
 }
 
 export function walletTopupReturnToast(status: string | null | undefined): WalletTopupReturnToast {

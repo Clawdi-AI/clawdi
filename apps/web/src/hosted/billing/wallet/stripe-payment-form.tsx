@@ -12,7 +12,6 @@ import {
 	type PaymentOutcome,
 	paymentOutcomeForStatus,
 } from "@/hosted/billing/wallet/stripe-payment-form.logic";
-import { buildWalletTopupReturnUrl } from "@/hosted/billing/wallet/top-up-return.logic";
 
 export type { PaymentOutcome } from "@/hosted/billing/wallet/stripe-payment-form.logic";
 
@@ -114,7 +113,7 @@ export function StripePaymentForm({
 	clientSecret,
 	onComplete,
 	onCancel,
-	returnUrl = buildWalletTopupReturnUrl,
+	returnUrl,
 	submitLabel = "Confirm payment",
 	summary,
 	onSubmittingChange,
@@ -122,7 +121,7 @@ export function StripePaymentForm({
 	clientSecret: PaymentIntentClientSecret;
 	onComplete: (status: PaymentOutcome) => void;
 	onCancel: () => void;
-	returnUrl?: PaymentReturnUrl;
+	returnUrl: PaymentReturnUrl;
 	submitLabel?: string;
 	summary?: string;
 	onSubmittingChange?: (submitting: boolean) => void;

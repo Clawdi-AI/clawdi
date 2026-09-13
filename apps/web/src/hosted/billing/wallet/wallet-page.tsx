@@ -188,37 +188,25 @@ export function WalletPage() {
 			}
 		});
 		if (!resolution) return;
-		void resolution.then(({ flow, status, paymentIntentId, errorMessage }) => {
+		void resolution.then(({ status, errorMessage }) => {
 			if (cancelled) return;
 			if (errorMessage) {
-				toast.error(
-					flow === "manual_topup"
-						? "Couldn't refresh top-up"
-						: "Couldn't refresh auto-reload payment",
-					{ description: errorMessage },
-				);
+				toast.error("Couldn't refresh auto-reload payment", { description: errorMessage });
 				return;
 			}
 			invalidateWalletData(queryClient);
-			if (flow === "auto_reload") {
-				if (status === "succeeded") {
-					toast.success("Auto-reload payment confirmed", {
-						description: "Wallet is refreshing your balance and auto-reload status.",
-					});
-				} else if (status === "processing" || status === "requires_capture") {
-					toast.info("Auto-reload payment processing", {
-						description: "Wallet will update after the payment settles.",
-					});
-				} else {
-					toast.error("Auto-reload payment didn't finish", {
-						description: "Review the pending payment in Wallet and try again.",
-					});
-				}
-				return;
-			}
-			showWalletTopupReturnToast(walletTopupReturnToast(status));
-			if (status === "succeeded" || status === "processing" || status === "requires_capture") {
-				void confirmWalletTopup(queryClient, paymentIntentId);
+			if (status === "succeeded") {
+				toast.success("Auto-reload payment confirmed", {
+					description: "Wallet is refreshing your balance and auto-reload status.",
+				});
+			} else if (status === "processing" || status === "requires_capture") {
+				toast.info("Auto-reload payment processing", {
+					description: "Wallet will update after the payment settles.",
+				});
+			} else {
+				toast.error("Auto-reload payment didn't finish", {
+					description: "Review the pending payment in Wallet and try again.",
+				});
 			}
 		});
 		return () => {

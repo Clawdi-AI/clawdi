@@ -3078,12 +3078,6 @@ export interface components {
         };
         /** V2WalletTopupRequest */
         V2WalletTopupRequest: {
-            /**
-             * Flow Type
-             * @default payment_intent
-             * @enum {string}
-             */
-            flow_type: "payment_intent" | "checkout_session";
             /** Amount Cents */
             amount_cents: number;
             /** Locale */
@@ -3092,11 +3086,14 @@ export interface components {
         /** V2WalletTopupResponse */
         V2WalletTopupResponse: {
             /** Checkout Session Id */
-            checkout_session_id?: string | null;
+            checkout_session_id: string;
             /** Status */
             status: string;
-            /** Flow Type */
-            flow_type?: string | null;
+            /**
+             * Flow Type
+             * @constant
+             */
+            flow_type: "checkout_session";
             /** Payment Intent Id */
             payment_intent_id?: string | null;
             /** Client Secret */

@@ -22,19 +22,12 @@ import { isIdempotencyKeyReusedError, normalizeBillingError } from "@/hosted/bil
 import { formatCents, usdInputToCents } from "@/hosted/billing/format";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import { useSensitiveTopUp } from "@/hosted/billing/sensitive-actions";
-import {
-	type PaymentIntentClientSecret,
-	walletTopupCheckoutClientSecret,
-} from "@/hosted/billing/stripe-client-secret";
+import { walletTopupCheckoutClientSecret } from "@/hosted/billing/stripe-client-secret";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
-	type PaymentOutcome,
-	StripePaymentForm,
-} from "@/hosted/billing/wallet/stripe-payment-form";
-import {
 	completeTopup,
-	handleTopupStartResult,
 	invalidateWalletData,
+	type TopupCompletionStatus,
 	validTopUpAmountCents,
 	waitForWalletTopupCredit,
 } from "@/hosted/billing/wallet/top-up-dialog.logic";
@@ -46,8 +39,6 @@ import {
 	TOPUP_MIN_CENTS,
 	TOPUP_PRESETS_CENTS,
 } from "@/hosted/billing/wallet/wallet-constants";
-
-type Step = "amount" | "pay";
 
 export async function confirmWalletTopup(
 	queryClient: QueryClient,
@@ -84,7 +75,7 @@ export function TopUpDialog({
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	onComplete?: (status: "succeeded" | "processing", paymentReference: string | null) => void;
+	onComplete?: (status: TopupCompletionStatus, paymentReference: string | null) => void;
 	initialAmountCents?: number | null;
 }) {
 	const topUp = useSensitiveTopUp();
@@ -93,14 +84,12 @@ export function TopUpDialog({
 	const checkoutSecret = checkout ? walletTopupCheckoutClientSecret(checkout) : null;
 	const qc = useQueryClient();
 	const runAction = useActionLock();
-	const [step, setStep] = useState<Step>("amount");
 	const [dollars, setDollars] = useState(String(TOPUP_DEFAULT_CENTS / 100));
-	const [clientSecret, setClientSecret] = useState<PaymentIntentClientSecret | null>(null);
 	const [amountTouched, setAmountTouched] = useState(false);
 	const [paymentSubmitting, setPaymentSubmitting] = useState(false);
 	useSettingsEditState({ dirty: false, busy: open && (topUp.isPending || paymentSubmitting) });
 	// One idempotency key per top-up ATTEMPT, reused across a retry of the same
-	// amount so a timeout-resubmit / double-tab can't create two PaymentIntents.
+	// amount so retries cannot create two Checkout Sessions.
 	// Reset whenever the amount changes (a genuinely new attempt) or the flow
 	// closes.
 	const topupKeyRef = useRef<string | null>(null);
@@ -109,7 +98,7 @@ export function TopUpDialog({
 	const amountCents = usdInputToCents(dollars) ?? Number.NaN;
 	const valid = validTopUpAmountCents(amountCents);
 	const amountInvalid = amountTouched && !valid;
-	function finishTopup(status: PaymentOutcome) {
+	function finishTopup(status: TopupCompletionStatus) {
 		onComplete?.(status, paymentReferenceRef.current);
 	}
 
@@ -122,8 +111,6 @@ export function TopUpDialog({
 	}
 
 	function reset() {
-		setStep("amount");
-		setClientSecret(null);
 		setCheckout(null);
 		setAmountTouched(false);
 		setPaymentSubmitting(false);
@@ -150,7 +137,7 @@ export function TopUpDialog({
 		topupKeyRef.current ??= newIdempotencyKey("topup");
 		try {
 			const result = await topUp.execute({
-				body: { amount_cents: amountCents, flow_type: "checkout_session" },
+				body: { amount_cents: amountCents },
 				idempotencyKey: topupKeyRef.current,
 			});
 			paymentReferenceRef.current = result.payment_intent_id ?? null;
@@ -158,23 +145,17 @@ export function TopUpDialog({
 				setCheckout(result);
 				return;
 			}
-			handleTopupStartResult(result, {
-				queryClient: qc,
-				resetAttempt: () => {
-					topupKeyRef.current = null;
-				},
-				// Successful completion is not a dismiss attempt. Close directly so the
-				// in-flight guard cannot leave a completed payment flow stranded open.
-				closeDialog: () => {
-					onOpenChange(false);
-				},
-				toastInfo: toast.info,
-				toastError: toast.error,
-				onComplete: finishTopup,
-				startPayment: (nextClientSecret) => {
-					setClientSecret(nextClientSecret);
-					setStep("pay");
-				},
+			if (result.status === "succeeded" || result.status === "processing") {
+				onPaid(result.status);
+				return;
+			}
+			if (result.status === "expired") {
+				topupKeyRef.current = null;
+				toast.error("This checkout expired. Start a fresh top-up.");
+				return;
+			}
+			toast.error("Couldn't start top-up", {
+				description: "Refresh Wallet to check this payment before starting another top-up.",
 			});
 		} catch (e) {
 			const reused = isIdempotencyKeyReusedError(e);
@@ -185,10 +166,7 @@ export function TopUpDialog({
 		}
 	}
 
-	// Only terminal outcomes reach here — `requires_action` (3DS) is completed
-	// inline by StripePaymentForm, which keeps the payment flow open until it settles
-	// rather than closing on an unconfirmed payment.
-	function onPaid(status: PaymentOutcome) {
+	function onPaid(status: TopupCompletionStatus) {
 		setPaymentSubmitting(false);
 		completeTopup(status, {
 			queryClient: qc,
@@ -242,86 +220,6 @@ export function TopUpDialog({
 			/>
 		);
 
-	const description =
-		step === "amount"
-			? `Add a whole-dollar amount from ${TOPUP_AMOUNT_RANGE_LABEL} to your Wallet.`
-			: `Choose a payment method to pay ${formatCents(amountCents)}.`;
-	const content =
-		step === "amount" ? (
-			<div className="space-y-4">
-				<div className="flex flex-wrap gap-2">
-					{TOPUP_PRESETS_CENTS.map((preset) => (
-						<Button
-							key={preset}
-							type="button"
-							size="sm"
-							variant={amountCents === preset ? "default" : "outline"}
-							aria-pressed={amountCents === preset}
-							onClick={() => setAmount(String(preset / 100))}
-						>
-							{formatCents(preset)}
-						</Button>
-					))}
-				</div>
-				<div className="space-y-1.5">
-					<Label htmlFor="topup-amount">Amount (USD)</Label>
-					<div className="relative">
-						<span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-							$
-						</span>
-						<Input
-							id="topup-amount"
-							name="topup-amount"
-							type="number"
-							inputMode="decimal"
-							autoComplete="off"
-							min={TOPUP_MIN_CENTS / 100}
-							max={TOPUP_MAX_CENTS / 100}
-							step={TOPUP_INCREMENT_CENTS / 100}
-							className="pl-6"
-							value={dollars}
-							onChange={(e) => setAmount(e.target.value)}
-							onBlur={() => setAmountTouched(true)}
-							aria-invalid={amountInvalid}
-							aria-describedby="topup-amount-help"
-						/>
-					</div>
-					<p
-						id="topup-amount-help"
-						className={amountInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
-						aria-live="polite"
-					>
-						{valid
-							? `You’ll add ${formatCents(amountCents)} to your Wallet. Whole-dollar amounts only.`
-							: `Enter a whole-dollar amount from ${TOPUP_AMOUNT_RANGE_LABEL}.`}
-					</p>
-				</div>
-				<div className="flex justify-end">
-					<Button onClick={() => runAction(onContinue)} disabled={!valid || topUp.isPending}>
-						{topUp.isPending ? (
-							<>
-								<Spinner /> Starting…
-							</>
-						) : (
-							`Continue with ${formatCents(amountCents)}`
-						)}
-					</Button>
-				</div>
-			</div>
-		) : clientSecret ? (
-			<StripePaymentForm
-				clientSecret={clientSecret}
-				onComplete={onPaid}
-				onCancel={() => {
-					setClientSecret(null);
-					setStep("amount");
-				}}
-				summary={`Top-up charge: ${formatCents(amountCents)}`}
-				submitLabel={`Pay ${formatCents(amountCents)}`}
-				onSubmittingChange={setPaymentSubmitting}
-			/>
-		) : null;
-
 	return (
 		<Dialog
 			open={open}
@@ -337,9 +235,72 @@ export function TopUpDialog({
 			>
 				<DialogHeader>
 					<DialogTitle>Top up Wallet</DialogTitle>
-					<DialogDescription>{description}</DialogDescription>
+					<DialogDescription>
+						Add a whole-dollar amount from {TOPUP_AMOUNT_RANGE_LABEL} to your Wallet.
+					</DialogDescription>
 				</DialogHeader>
-				{content}
+				<div className="space-y-4">
+					<div className="flex flex-wrap gap-2">
+						{TOPUP_PRESETS_CENTS.map((preset) => (
+							<Button
+								key={preset}
+								type="button"
+								size="sm"
+								variant={amountCents === preset ? "default" : "outline"}
+								aria-pressed={amountCents === preset}
+								onClick={() => setAmount(String(preset / 100))}
+							>
+								{formatCents(preset)}
+							</Button>
+						))}
+					</div>
+					<div className="space-y-1.5">
+						<Label htmlFor="topup-amount">Amount (USD)</Label>
+						<div className="relative">
+							<span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+								$
+							</span>
+							<Input
+								id="topup-amount"
+								name="topup-amount"
+								type="number"
+								inputMode="decimal"
+								autoComplete="off"
+								min={TOPUP_MIN_CENTS / 100}
+								max={TOPUP_MAX_CENTS / 100}
+								step={TOPUP_INCREMENT_CENTS / 100}
+								className="pl-6"
+								value={dollars}
+								onChange={(e) => setAmount(e.target.value)}
+								onBlur={() => setAmountTouched(true)}
+								aria-invalid={amountInvalid}
+								aria-describedby="topup-amount-help"
+							/>
+						</div>
+						<p
+							id="topup-amount-help"
+							className={
+								amountInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"
+							}
+							aria-live="polite"
+						>
+							{valid
+								? `You’ll add ${formatCents(amountCents)} to your Wallet. Whole-dollar amounts only.`
+								: `Enter a whole-dollar amount from ${TOPUP_AMOUNT_RANGE_LABEL}.`}
+						</p>
+					</div>
+					<div className="flex justify-end">
+						<Button onClick={() => runAction(onContinue)} disabled={!valid || topUp.isPending}>
+							{topUp.isPending ? (
+								<>
+									<Spinner /> Starting…
+								</>
+							) : (
+								`Continue with ${formatCents(amountCents)}`
+							)}
+						</Button>
+					</div>
+				</div>
 			</DialogContent>
 		</Dialog>
 	);
