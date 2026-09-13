@@ -1805,9 +1805,20 @@ async def _channel_health_items(
         for account_id, updated_at, delivery_status, last_error in delivery_signal_rows.all()
     }
 
+    # All rows/aggregates are loaded. Release the read/auth transaction before provider I/O.
+    if any(account.provider == CHANNEL_PROVIDER_WHATSAPP for account in accounts):
+        await db.close()
+    from app.services.whatsapp_provider_bridge import whatsapp_account_transport_statuses
+
+    transport_statuses = await whatsapp_account_transport_statuses(accounts)
     return [
-        await _channel_health_item(
+        _channel_health_item(
             account=account,
+            native_transport=(
+                transport_statuses[account.id].as_dict()
+                if account.id in transport_statuses
+                else None
+            ),
             pending_inbox_stats=pending_inbox_by_account.get(account.id, (0, None)),
             delivery_counts=delivery_counts_by_account.get(account.id, (0, 0, 0)),
             last_message_at=last_message_by_account.get(account.id),
@@ -1822,9 +1833,10 @@ async def _channel_health_items(
     ]
 
 
-async def _channel_health_item(
+def _channel_health_item(
     *,
     account: ChannelAccount,
+    native_transport: dict[str, Any] | None,
     pending_inbox_stats: tuple[int, datetime | None],
     delivery_counts: tuple[int, int, int],
     last_message_at: datetime | None,
@@ -1864,7 +1876,6 @@ async def _channel_health_item(
         last_error_stage = None
         last_error_outcome = None
 
-    native_transport = await _native_transport_health(account)
     whatsapp_transport_connected = (
         account.provider == CHANNEL_PROVIDER_WHATSAPP
         and native_transport is not None
@@ -1948,14 +1959,6 @@ async def _channel_health_item(
         last_error_outcome=last_error_outcome,
         native_transport=native_transport,
     )
-
-
-async def _native_transport_health(account: ChannelAccount) -> dict[str, Any] | None:
-    if account.provider != CHANNEL_PROVIDER_WHATSAPP:
-        return None
-    from app.services.whatsapp_provider_bridge import whatsapp_account_transport_status
-
-    return (await whatsapp_account_transport_status(account)).as_dict()
 
 
 def _telegram_bot_username(account: ChannelAccount) -> str | None:

@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import app.services.whatsapp_delivery_transport as delivery_transport_module
+import app.services.whatsapp_provider_bridge as bridge_module
 from app.models.channel import (
     BINDING_STATUS_ARCHIVED,
     CHANNEL_PROVIDER_WHATSAPP,
@@ -1787,6 +1788,7 @@ async def test_channel_health_probes_custom_session_without_ingress_owner(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     account, _link, _binding = await _seed_whatsapp_link_and_binding(
         client, db_session, channel_agent, name="wa-api-worker-health"
@@ -1802,10 +1804,15 @@ async def test_channel_health_probes_custom_session_without_ingress_owner(
     }
     await db_session.commit()
     available = True
+    now = 0.0
+    monkeypatch.setattr(bridge_module, "_transport_clock", lambda: now)
+    monkeypatch.setattr(bridge_module, "_WHATSAPP_HEALTH_PROBE_TIMEOUT_SECONDS", 0.05)
 
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == f"/v1/sessions/{session_id}/health"
         assert request.headers["authorization"] == "Bearer sidecar-secret"
+        if available is None:
+            await asyncio.Event().wait()
         if not available:
             return httpx.Response(503, text="private upstream error")
         return httpx.Response(
@@ -1828,15 +1835,171 @@ async def test_channel_health_probes_custom_session_without_ingress_owner(
         httpx.AsyncClient(
             base_url=sidecar_url, transport=httpx.MockTransport(handler)
         ) as http_client,
-        _sidecar_pool(http_client),
+        _sidecar_pool(http_client) as pool,
     ):
-        for available in (True, False):
+        for available, now, reconnecting in (
+            (True, 0.0, False),
+            (False, 1.0, True),
+            (False, 302.0, False),
+            (True, 303.0, False),
+            (None, 304.0, True),
+            (False, 305.0, True),
+        ):
             response = await client.get("/v1/channels/debug/health")
             assert response.status_code == 200
             health = next(
                 item for item in response.json()["channels"] if item["accountId"] == str(account.id)
             )
-            assert health["nativeTransport"]["available"] is available
+            assert health["nativeTransport"]["available"] is (available is True)
             assert health["nativeTransport"]["mode"] == "sidecar"
+            assert health["nativeTransport"]["reconnecting"] is reconnecting
+            session_client = pool.session_client(session_id)
+            assert session_client is not None and session_client.connected is (available is True)
             assert "private upstream error" not in response.text
             assert get_whatsapp_provider_transport(account.id) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path,items_key,id_key,transport_key",
+    [
+        ("/v1/channels/health", "items", "account_id", "native_transport"),
+        ("/v1/channels/debug/health", "channels", "accountId", "nativeTransport"),
+    ],
+)
+async def test_health_lists_isolate_slow_and_invalid_sessions_without_db_lease(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+    items_key: str,
+    id_key: str,
+    transport_key: str,
+):
+    sidecar_url = "http://127.0.0.1:43191"
+    accounts = []
+    for name in ("a-slow", "b-healthy", "c-invalid"):
+        account_id = uuid4()
+        account = build_channel_account(
+            owner_user_id=channel_agent.user_id,
+            provider=CHANNEL_PROVIDER_WHATSAPP,
+            name=name,
+            visibility=CHANNEL_VISIBILITY_PRIVATE,
+            webhook_secret_hash=hash_token(name),
+            config={
+                "connection_mode": "baileys_managed",
+                "sidecar_config_revision": WhatsAppBaileysSidecarConfig(
+                    api_token="sidecar-secret", base_url=sidecar_url, account_id=account_id
+                ).binding_revision,
+            },
+        )
+        account.id = account_id
+        db_session.add(account)
+        accounts.append(account)
+    await db_session.commit()
+    monkeypatch.setattr(bridge_module, "_WHATSAPP_HEALTH_PROBE_TIMEOUT_SECONDS", 0.1)
+    monkeypatch.setattr(bridge_module, "_WHATSAPP_HEALTH_REQUEST_TIMEOUT_SECONDS", 0.3)
+    healthy_seen = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert not db_session.in_transaction(), "provider I/O retained a DB transaction"
+        session_id = UUID(request.url.path.split("/")[3])
+        if session_id == accounts[0].id:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                assert healthy_seen.is_set(), "slow account blocked the healthy account"
+                cancelled.set()
+        healthy_seen.set()
+        return httpx.Response(
+            200,
+            json={
+                "sessionId": str(session_id),
+                "status": "connected",
+                "connected": True,
+                "registered": True if session_id == accounts[1].id else "invalid",
+                "advertisedRelease": {
+                    "packageName": "@whiskeysockets/baileys",
+                    "packageVersion": "7.0.0-rc14",
+                    "sourceCommit": "7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a",
+                    "version": [2, 3000, 1043857760],
+                },
+            },
+        )
+
+    async with (
+        httpx.AsyncClient(
+            base_url=sidecar_url, transport=httpx.MockTransport(handler)
+        ) as http_client,
+        _sidecar_pool(http_client) as pool,
+    ):
+        response = await asyncio.wait_for(client.get(path), timeout=1)
+        assert response.status_code == 200, response.text
+        by_id = {item[id_key]: item[transport_key] for item in response.json()[items_key]}
+        assert [by_id[str(account.id)]["available"] for account in accounts] == [False, True, False]
+        assert cancelled.is_set()
+        for account in (accounts[0], accounts[2]):
+            session_client = pool.session_client(account.id)
+            assert session_client is not None and session_client.connected is False
+
+
+@pytest.mark.asyncio
+async def test_health_outage_has_shared_deadline_bounded_workers_and_no_stale_green(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    sidecar_url = "http://127.0.0.1:43191"
+    accounts = []
+    for _ in range(20):
+        account_id = uuid4()
+        accounts.append(
+            ChannelAccount(
+                id=account_id,
+                provider=CHANNEL_PROVIDER_WHATSAPP,
+                config={
+                    "connection_mode": "baileys_managed",
+                    "sidecar_config_revision": WhatsAppBaileysSidecarConfig(
+                        api_token="sidecar-secret", base_url=sidecar_url, account_id=account_id
+                    ).binding_revision,
+                },
+            )
+        )
+    monkeypatch.setattr(
+        bridge_module,
+        "_PROVIDER_TRANSPORTS",
+        {account.id: _FakeProviderTransport() for account in accounts},
+    )
+    monkeypatch.setattr(bridge_module, "_WHATSAPP_HEALTH_CONCURRENCY", 2)
+    monkeypatch.setattr(bridge_module, "_WHATSAPP_HEALTH_PROBE_TIMEOUT_SECONDS", 0.1)
+    monkeypatch.setattr(bridge_module, "_WHATSAPP_HEALTH_REQUEST_TIMEOUT_SECONDS", 0.15)
+    active = 0
+    peak = 0
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal active, peak, calls
+        calls += 1
+        active += 1
+        peak = max(peak, active)
+        try:
+            await asyncio.Event().wait()
+            raise AssertionError("outage unexpectedly completed")
+        finally:
+            active -= 1
+
+    async with (
+        httpx.AsyncClient(
+            base_url=sidecar_url, transport=httpx.MockTransport(handler)
+        ) as http_client,
+        _sidecar_pool(http_client),
+    ):
+        statuses = await asyncio.wait_for(
+            bridge_module.whatsapp_account_transport_statuses(accounts), timeout=0.5
+        )
+        assert len(statuses) == len(accounts)
+        assert all(not value.available for value in statuses.values())
+        assert all(value.reason == "provider-transport-unavailable" for value in statuses.values())
+        assert active == 0
+        assert peak == 2
+        assert 2 <= calls <= 4

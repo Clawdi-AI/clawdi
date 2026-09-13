@@ -272,13 +272,17 @@ async def channel_debug_health(
             "lastEvent": _debug_event_response(last_event_by_account.get(account.id)),
             "lastError": _debug_event_response(last_error_by_account.get(account.id)),
         }
-        if account.provider == CHANNEL_PROVIDER_WHATSAPP:
-            from app.services.whatsapp_provider_bridge import (
-                whatsapp_account_transport_status,
-            )
-
-            item["nativeTransport"] = (await whatsapp_account_transport_status(account)).as_dict()
         health.append(item)
+    # Materialize the debug rows before ending the read/auth transaction.
+    if any(account.provider == CHANNEL_PROVIDER_WHATSAPP for account in accounts):
+        await db.close()
+    from app.services.whatsapp_provider_bridge import whatsapp_account_transport_statuses
+
+    transport_statuses = await whatsapp_account_transport_statuses(accounts)
+    for account, item in zip(accounts, health, strict=True):
+        if account.id in transport_statuses:
+            item["nativeTransport"] = transport_statuses[account.id].as_dict()
+
     return health
 
 

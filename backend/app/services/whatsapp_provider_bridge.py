@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import secrets
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol, TypeGuard
 from uuid import UUID
@@ -56,8 +57,6 @@ from app.services.whatsapp_baileys import (
 )
 from app.services.whatsapp_native_transport import (
     WhatsAppProviderMessageEvent,
-    WhatsAppProviderTransportAdapter,
-    WhatsAppSidecarError,
 )
 from app.services.whatsapp_runtime_types import WhatsAppOutboundMessage
 
@@ -117,6 +116,9 @@ _PROVIDER_TRANSPORTS: dict[UUID, WhatsAppProviderTransport] = {}
 _PROVIDER_TRANSPORT_UNAVAILABLE_SINCE: dict[UUID, float] = {}
 _PROVIDER_TRANSPORTS_STARTED_AT = time.monotonic()
 _PROVIDER_TRANSPORT_RECONNECT_GRACE_SECONDS = 5 * 60
+_WHATSAPP_HEALTH_PROBE_TIMEOUT_SECONDS = 0.5
+_WHATSAPP_HEALTH_REQUEST_TIMEOUT_SECONDS = 2.0
+_WHATSAPP_HEALTH_CONCURRENCY = 4
 
 
 def _transport_clock() -> float:
@@ -165,7 +167,13 @@ def whatsapp_provider_transport_status(
             reason="provider-transport-unavailable",
             supports_outbound_messages=False,
         )
-    connected = _transport_connected(transport)
+    return _connected_transport_status(account_id, connected=_transport_connected(transport))
+
+
+def _connected_transport_status(
+    account_id: UUID, *, connected: bool
+) -> WhatsAppProviderTransportStatus:
+    now = _transport_clock()
     if connected:
         _PROVIDER_TRANSPORT_UNAVAILABLE_SINCE.pop(account_id, None)
         unavailable_since = now
@@ -182,27 +190,57 @@ def whatsapp_provider_transport_status(
     )
 
 
+def _unavailable_transport_status(
+    account_id: UUID, *, mode: Literal["sidecar", "none"] = "none"
+) -> WhatsAppProviderTransportStatus:
+    now = _transport_clock()
+    unavailable_since = _PROVIDER_TRANSPORT_UNAVAILABLE_SINCE.setdefault(account_id, now)
+    return WhatsAppProviderTransportStatus(
+        available=False,
+        reconnecting=(now - unavailable_since < _PROVIDER_TRANSPORT_RECONNECT_GRACE_SECONDS),
+        mode=mode,
+        reason="provider-transport-unavailable",
+        supports_outbound_messages=mode == "sidecar",
+    )
+
+
 async def whatsapp_account_transport_status(
     account: ChannelAccount,
 ) -> WhatsAppProviderTransportStatus:
-    client = whatsapp_delivery_transport.resolve_whatsapp_sidecar_client(account)
-    if client is None:
-        return whatsapp_provider_transport_status(account.id)
+    mode: Literal["sidecar", "none"] = "none"
     try:
-        await client.health()
-    except WhatsAppSidecarError:
-        now = _transport_clock()
-        unavailable_since = _PROVIDER_TRANSPORT_UNAVAILABLE_SINCE.setdefault(account.id, now)
-        return WhatsAppProviderTransportStatus(
-            available=False,
-            reconnecting=(now - unavailable_since < _PROVIDER_TRANSPORT_RECONNECT_GRACE_SECONDS),
-            mode="sidecar",
-            reason="provider-transport-unavailable",
-            supports_outbound_messages=True,
-        )
-    return whatsapp_provider_transport_status(
-        account.id, transport=WhatsAppProviderTransportAdapter(client)
-    )
+        client = whatsapp_delivery_transport.resolve_whatsapp_sidecar_client(account)
+        if client is None:
+            return whatsapp_provider_transport_status(account.id)
+        mode = "sidecar"
+        async with asyncio.timeout(_WHATSAPP_HEALTH_PROBE_TIMEOUT_SECONDS):
+            health = await client.health()
+    except Exception:  # A bad account or provider response must not fail the health list.
+        return _unavailable_transport_status(account.id, mode=mode)
+    return _connected_transport_status(account.id, connected=health.connected)
+
+
+async def whatsapp_account_transport_statuses(
+    accounts: Sequence[ChannelAccount],
+) -> dict[UUID, WhatsAppProviderTransportStatus]:
+    """Probe a detached read snapshot with fixed workers and one shared deadline."""
+    whatsapp_accounts = [a for a in accounts if a.provider == CHANNEL_PROVIDER_WHATSAPP]
+    results = {a.id: _unavailable_transport_status(a.id) for a in whatsapp_accounts}
+    pending = iter(whatsapp_accounts)
+
+    async def probe_accounts() -> None:
+        for account in pending:
+            results[account.id] = await whatsapp_account_transport_status(account)
+
+    try:
+        async with asyncio.timeout(_WHATSAPP_HEALTH_REQUEST_TIMEOUT_SECONDS):
+            async with asyncio.TaskGroup() as group:
+                for _ in range(min(_WHATSAPP_HEALTH_CONCURRENCY, len(whatsapp_accounts))):
+                    group.create_task(probe_accounts())
+    except TimeoutError:
+        # Unstarted or cancelled probes retain unavailable/unknown, never cached green.
+        pass
+    return results
 
 
 class WhatsAppProviderBridge:

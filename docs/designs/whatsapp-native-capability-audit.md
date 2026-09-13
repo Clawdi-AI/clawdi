@@ -40,6 +40,14 @@ inferred from a passing rc14 sidecar test.
 - Public and debug health query the revision-fenced session instead of
   treating process-local ingress registration as proof of connectivity.
   Custom session IDs remain distinct from product account IDs.
+  Health lists release their read/auth database session before network I/O.
+  Four fixed workers share a two-second probe budget; each account has a
+  0.5-second deadline. Unstarted, failed and cancelled probes remain unknown/
+  unavailable, even with an older green local registration. This bounds the
+  network phase; database snapshot queries keep their existing database limits.
+  Only a fully validated health response updates the client's connected flag;
+  protocol errors/cancellation clear it and successful recovery resets the
+  existing unavailability clock. No cache TTL or new background worker is added.
 - Durable outbox failure now propagates through Noise handling, closing the
   websocket without a success message ACK. A local queue ACK still does not
   claim delivery to a physical recipient.
@@ -87,7 +95,7 @@ bash scripts/test.sh web src/hosted/v2/channels
 bash scripts/test-managed-whatsapp-native-e2e.sh
 ```
 
-Validation on 2026-09-13: backend target set 624 passed; sidecar 82 passed
+Validation on 2026-09-13: backend target set 627 passed; sidecar 82 passed
 with typecheck; CLI all 156 test files passed with typecheck; Web channel tests,
 typecheck, OSS build and 9 production SSR checks passed. Changed production
 Python passes Ruff lint/format and BasedPyright (zero errors/warnings). Hosted
