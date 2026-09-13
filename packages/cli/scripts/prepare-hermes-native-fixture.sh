@@ -15,7 +15,7 @@ fi
 export CLAWDI_TEST_HERMES_VENV="$hermes_fixture_root/venv"
 uv venv "$CLAWDI_TEST_HERMES_VENV"
 uv pip install --python "$CLAWDI_TEST_HERMES_VENV/bin/python" \
-	'httpx==0.28.1' 'PyYAML==6.0.3' 'rich==15.0.0' 'python-dotenv==1.2.3' 'prompt-toolkit==3.0.53'
+	'httpx==0.28.1' 'PyYAML==6.0.3' 'rich==15.0.0' 'python-dotenv==1.2.3' 'prompt-toolkit==3.0.53' 'uvicorn==0.52.4'
 "$CLAWDI_TEST_HERMES_VENV/bin/python" - "$hermes_fixture_source" <<'PY'
 import pathlib, sys, sysconfig
 pathlib.Path(sysconfig.get_path("purelib"), "hermes-fixture.pth").write_text(sys.argv[1] + "\n")
