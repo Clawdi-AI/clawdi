@@ -1,4 +1,14 @@
-import { existsSync, readFileSync } from "node:fs";
+import {
+	closeSync,
+	existsSync,
+	fsyncSync,
+	lstatSync,
+	openSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import { toErrorMessage } from "../serve/log";
 import {
@@ -21,7 +31,8 @@ import {
 	type RuntimeManifest,
 	validateUnmanagedProviderSecretValues,
 } from "./manifest-contract";
-import type { RuntimePaths } from "./paths";
+import { writeRuntimePrivateFileAtomic } from "./manifest-shared";
+import { legacyRuntimeManifestPaths, type RuntimePaths } from "./paths";
 import {
 	canonicalSecretRefSchema,
 	normalizeSecretValues,
@@ -172,7 +183,13 @@ class RuntimeManifestResponseError extends Error {
 }
 
 function readJsonFile(path: string): unknown {
-	return JSON.parse(readFileSync(path, "utf-8")) as unknown;
+	const content = readFileSync(path, "utf-8");
+	try {
+		return JSON.parse(content) as unknown;
+	} catch {
+		// JSON parser diagnostics can include raw runtime secret bytes.
+		throw new Error("runtime snapshot JSON is invalid");
+	}
 }
 
 function zodErrors(error: z.ZodError): string[] {
@@ -420,12 +437,194 @@ export async function loadRuntimeManifest(
 	return remote;
 }
 
+// Readers never migrate. Only the serialized convergence path may persist bytes.
 function loadLastGoodManifest(
 	paths: RuntimePaths,
 	requireOfflineBoot: boolean,
-	applyContext: RuntimeApplyContext,
+	applyContext?: RuntimeApplyContext,
 ): RuntimeManifestLoad | RuntimeManifestFailure {
-	if (!existsSync(paths.manifestLastGood)) {
+	if (paths.mode === "hosted") {
+		const applied = readRuntimeAppliedState(paths);
+		if (applied) {
+			const snapshot = runtimeSnapshotPath(paths, applied.contentIdentity.sha256);
+			if (existsSync(snapshot)) {
+				const loaded = readLastGoodManifest(paths, requireOfflineBoot, applyContext, snapshot);
+				if ("manifest" in loaded) return loaded;
+			}
+		}
+	}
+	const current = readLastGoodManifest(paths, requireOfflineBoot, applyContext);
+	if ("manifest" in current || paths.mode !== "hosted") return current;
+	const legacyPaths = legacyRuntimeManifestPaths(paths);
+	if (
+		legacyPaths.manifestLastGood === paths.manifestLastGood ||
+		!existsSync(legacyPaths.manifestLastGood)
+	)
+		return current;
+	const legacy = readLastGoodManifest(legacyPaths, requireOfflineBoot, applyContext);
+	return "manifest" in legacy
+		? legacy
+		: { ...current, errors: [...current.errors, ...legacy.errors] };
+}
+
+export function runtimeSnapshotPath(paths: RuntimePaths, sha256: string): string {
+	if (!/^[0-9a-f]{64}$/.test(sha256)) throw new Error("invalid runtime snapshot identity");
+	return join(dirname(paths.manifestLastGood), `${sha256}.json`);
+}
+
+export function runtimeSnapshotExists(paths: RuntimePaths): boolean {
+	if (existsSync(paths.manifestLastGood)) return true;
+	if (paths.mode !== "hosted") return false;
+	if (existsSync(legacyRuntimeManifestPaths(paths).manifestLastGood)) return true;
+	const applied = readRuntimeAppliedState(paths);
+	return applied !== null && existsSync(runtimeSnapshotPath(paths, applied.contentIdentity.sha256));
+}
+
+function writeContentSnapshot(
+	paths: RuntimePaths,
+	manifest: unknown,
+	secretValues: Record<string, string>,
+): void {
+	const directory = dirname(paths.manifestLastGood);
+	if (existsSync(directory)) assertPrivateRuntimeSnapshotPath(directory, 0o700, true);
+	const snapshot = { manifest, secretValues };
+	writeRuntimePrivateFileAtomic(
+		paths,
+		runtimeSnapshotPath(paths, runtimeContentSha256(snapshot)),
+		`${JSON.stringify(snapshot, null, 2)}\n`,
+		{ mode: 0o600, dirMode: 0o700, durable: true },
+	);
+	syncRuntimeSnapshotDirectory(paths, dirname(dirname(paths.manifestLastGood)));
+}
+
+export function syncRuntimeSnapshotDirectory(paths: RuntimePaths, directory: string): void {
+	if (paths.mode !== "hosted" || !existsSync(directory)) return;
+	const descriptor = openSync(directory, "r");
+	try {
+		fsyncSync(descriptor);
+	} finally {
+		closeSync(descriptor);
+	}
+}
+
+// Called under the converge lock. A missing history is not evidence of cache
+// policy and is never fabricated; a verified legacy snapshot must migrate or fail.
+export function migrateCommittedRuntimeSnapshot(
+	paths: RuntimePaths,
+	applyContext?: RuntimeApplyContext,
+): boolean {
+	if (paths.mode !== "hosted") return true;
+	const committed = loadCommittedRuntimeManifest(paths, applyContext);
+	if (!("manifest" in committed)) return false;
+	try {
+		const applied = readRuntimeAppliedState(paths);
+		if (applied) {
+			const snapshot = runtimeSnapshotPath(paths, applied.contentIdentity.sha256);
+			if (
+				existsSync(snapshot) &&
+				"manifest" in readLastGoodManifest(paths, false, applyContext, snapshot)
+			)
+				return true;
+		}
+		writeRuntimeManifestSnapshot(paths, committed.sourceBundle, committed.secretValues ?? {});
+		return true;
+	} catch {
+		throw new Error("could not persist verified committed runtime snapshot");
+	}
+}
+
+// Keep the applied content and at most the next staged content. No new authority
+// fields: runtime-applied's existing SHA is the sole selector after a crash.
+export function pruneRuntimeSnapshots(paths: RuntimePaths, keep: readonly string[] = []): void {
+	try {
+		if (paths.mode !== "hosted" || !existsSync(dirname(paths.manifestLastGood))) return;
+		for (const name of readdirSync(dirname(paths.manifestLastGood))) {
+			if (/^[0-9a-f]{64}\.json$/.test(name) && !keep.includes(name.slice(0, -5))) {
+				rmSync(join(dirname(paths.manifestLastGood), name));
+			}
+		}
+		syncRuntimeSnapshotDirectory(paths, dirname(paths.manifestLastGood));
+	} catch {
+		throw new Error("could not remove obsolete runtime snapshots");
+	}
+}
+
+export function writeRuntimeManifestSnapshot(
+	paths: RuntimePaths,
+	manifest: unknown,
+	secretValues: Record<string, string>,
+): void {
+	try {
+		if (
+			paths.mode === "hosted" &&
+			paths.manifestLastGood !== legacyRuntimeManifestPaths(paths).manifestLastGood
+		) {
+			// Preserve an exact legacy/pair authority before replacing either mirror.
+			const previous = loadCommittedRuntimeManifest(paths);
+			if ("manifest" in previous)
+				writeContentSnapshot(paths, previous.sourceBundle, previous.secretValues ?? {});
+			const nextSha = runtimeContentSha256({ manifest, secretValues });
+			const appliedSha = readRuntimeAppliedState(paths)?.contentIdentity.sha256;
+			pruneRuntimeSnapshots(paths, [nextSha, ...(appliedSha ? [appliedSha] : [])]);
+			writeContentSnapshot(paths, manifest, secretValues);
+		}
+		const options = { mode: 0o600, dirMode: 0o700, durable: paths.mode === "hosted" };
+		writeRuntimePrivateFileAtomic(
+			paths,
+			paths.manifestLastGood,
+			`${JSON.stringify(manifest, null, 2)}\n`,
+			options,
+		);
+		if (Object.keys(secretValues).length > 0) {
+			writeRuntimePrivateFileAtomic(
+				paths,
+				paths.managedSecretCacheFile,
+				`${JSON.stringify(secretValues, null, 2)}\n`,
+				options,
+			);
+		} else {
+			rmSync(paths.managedSecretCacheFile, { force: true });
+		}
+	} catch {
+		throw new Error("could not persist runtime snapshot");
+	}
+}
+
+function assertPrivateRuntimeSnapshot(paths: RuntimePaths, snapshotPath?: string): void {
+	for (const [path, mode, directory] of [
+		[dirname(paths.manifestLastGood), 0o700, true],
+		[snapshotPath ?? paths.manifestLastGood, 0o600, false],
+		...(!snapshotPath && existsSync(paths.managedSecretCacheFile)
+			? [[paths.managedSecretCacheFile, 0o600, false] as const]
+			: []),
+	] as const) {
+		assertPrivateRuntimeSnapshotPath(path, mode, directory);
+	}
+}
+
+function assertPrivateRuntimeSnapshotPath(path: string, mode: number, directory: boolean): void {
+	const uid = process.getuid?.();
+	const gid = process.getgid?.();
+	const stat = lstatSync(path);
+	if (
+		stat.isSymbolicLink() ||
+		(directory ? !stat.isDirectory() : !stat.isFile()) ||
+		(stat.mode & 0o777) !== mode ||
+		(uid !== undefined && stat.uid !== uid) ||
+		(gid !== undefined && stat.gid !== gid)
+	) {
+		throw new Error("runtime snapshot is not private platform-owned state");
+	}
+}
+
+function readLastGoodManifest(
+	paths: RuntimePaths,
+	requireOfflineBoot: boolean,
+	applyContext: RuntimeApplyContext | undefined,
+	snapshotPath?: string,
+): RuntimeManifestLoad | RuntimeManifestFailure {
+	const sourcePath = snapshotPath ?? paths.manifestLastGood;
+	if (!existsSync(sourcePath)) {
 		return {
 			mode: "repair",
 			stage: "local",
@@ -433,27 +632,43 @@ function loadLastGoodManifest(
 		};
 	}
 	try {
-		const sourceBundle = readJsonFile(paths.manifestLastGood);
+		if (paths.mode === "hosted") assertPrivateRuntimeSnapshot(paths, snapshotPath);
+		const snapshot = snapshotPath
+			? z
+					.object({ manifest: z.unknown(), secretValues: z.record(z.string(), z.string()) })
+					.strict()
+					.parse(readJsonFile(snapshotPath))
+			: null;
+		const sourceBundle = snapshot ? snapshot.manifest : readJsonFile(paths.manifestLastGood);
 		const cachedBundle = plainRecord(sourceBundle);
 		if (!cachedBundle) throw new Error("cached runtime bundle must be an object");
-		const cached = loadCachedSecretValues(paths);
+		const cached = snapshot
+			? { secretValues: normalizeSecretValues(snapshot.secretValues) }
+			: loadCachedSecretValues(paths);
 		if ("errors" in cached) return cached;
 		const parsed = parseHostedRuntimeBundleV2(
 			{ ...cachedBundle, secretValues: cached.secretValues },
-			paths.manifestLastGood,
+			sourcePath,
 		);
 		const appliedState = readRuntimeAppliedState(paths);
 		const restored = applyRuntimeBundleChannelsToManifestLoad(
 			{
 				...parsed,
 				source: "last-good-cache",
-				sourcePath: paths.manifestLastGood,
+				sourcePath,
 				offline: true,
 				applyContext,
 			},
 			paths,
 		);
 		const manifest = restored.manifest;
+		if (manifest.recovery.cacheManifest === false) {
+			return {
+				mode: "repair",
+				stage: "local",
+				errors: ["cached manifest does not allow snapshot persistence"],
+			};
+		}
 		if (requireOfflineBoot && manifest.recovery.allowOfflineBoot !== true) {
 			return {
 				mode: "repair",
@@ -464,7 +679,7 @@ function loadLastGoodManifest(
 		const cachedApplyIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
 		if (
 			requireOfflineBoot &&
-			!runtimeApplyIdentitiesEqual(applyContext.identity, cachedApplyIdentity)
+			!runtimeApplyIdentitiesEqual(applyContext?.identity ?? null, cachedApplyIdentity)
 		) {
 			return {
 				mode: "repair",
@@ -517,14 +732,13 @@ function loadLastGoodManifest(
 		return {
 			...restored,
 			manifest,
+			sourceBundle,
 		};
-	} catch (error) {
+	} catch {
 		return {
 			mode: "repair",
 			stage: "local",
-			errors: [
-				`could not read last-good runtime manifest at ${paths.manifestLastGood}: ${toErrorMessage(error)}`,
-			],
+			errors: ["could not read committed runtime snapshot"],
 		};
 	}
 }
@@ -533,7 +747,7 @@ function loadLastGoodManifest(
 // offline-boot policy; schema and applied-content checks remain mandatory.
 export function loadCommittedRuntimeManifest(
 	paths: RuntimePaths,
-	applyContext: RuntimeApplyContext,
+	applyContext?: RuntimeApplyContext,
 ): RuntimeManifestLoad | RuntimeManifestFailure {
 	return loadLastGoodManifest(paths, false, applyContext);
 }
@@ -555,13 +769,11 @@ function loadCachedSecretValues(
 			secretValues[ref] = value;
 		}
 		return { secretValues: normalizeSecretValues(secretValues) };
-	} catch (error) {
+	} catch {
 		return {
 			mode: "repair",
 			stage: "local",
-			errors: [
-				`could not read cached runtime secret values at ${paths.managedSecretCacheFile}: ${toErrorMessage(error)}`,
-			],
+			errors: ["could not read cached runtime secret values"],
 		};
 	}
 }

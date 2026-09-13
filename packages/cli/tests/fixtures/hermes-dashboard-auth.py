@@ -6,7 +6,21 @@ This does not load the full Hermes gateway or build its SPA.
 import json
 import os
 import sys
+import time
 from pathlib import Path
+
+started_at = time.monotonic()
+
+
+def mark(stage: str) -> None:
+    print(
+        f"dashboard {stage}: {time.monotonic() - started_at:.3f}s",
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+mark("starting")
 
 sys.path.insert(0, os.environ["CLAWDI_TEST_HERMES_DASHBOARD_SOURCE"])
 
@@ -17,6 +31,8 @@ from hermes_cli.dashboard_auth.middleware import gated_auth_middleware
 from hermes_cli.dashboard_auth.routes import router as _dashboard_auth_router
 from plugins.dashboard_auth.basic import BasicAuthProvider, hash_password
 
+mark("imports ready")
+
 register_provider(
     BasicAuthProvider(
         username="fixture",
@@ -24,6 +40,7 @@ register_provider(
         secret=b"isolated-native-auth-fixture-secret",
     )
 )
+mark("auth ready")
 app = FastAPI()
 app.state.auth_required = True
 app.middleware("http")(gated_auth_middleware)
@@ -42,4 +59,5 @@ async def status():
     }
 
 
+mark("starting uvicorn")
 uvicorn.run(app, host="127.0.0.1", port=9119, log_level="error")

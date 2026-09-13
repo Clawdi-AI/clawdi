@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
 import { getCliVersion } from "../lib/version";
@@ -7,6 +6,7 @@ import {
 	type RuntimeAppliedContentIdentity,
 	readRuntimeAppliedState,
 	runtimeAppliedApplyIdentity,
+	runtimeAppliedStateSchema,
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
 } from "../runtime/applied-state";
@@ -61,11 +61,13 @@ import {
 } from "../runtime/manifest";
 import { runtimeConvergenceWithoutApply, runtimeWorkspaceRoot } from "../runtime/manifest-planning";
 import {
-	hostedRuntimeBundleV2Schema,
 	loadCommittedRuntimeManifest,
 	loadRemoteRuntimeManifest,
+	migrateCommittedRuntimeSnapshot,
+	pruneRuntimeSnapshots,
 	type RuntimeManifestFailure,
 	type RuntimeManifestLoad,
+	runtimeSnapshotPath,
 } from "../runtime/manifest-source";
 import { readComponentServiceState } from "../runtime/observed";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
@@ -293,6 +295,16 @@ export function runtimePublicContentRevision(load: RuntimeManifestLoad): string 
 	return runtimeContentSha256({ manifest: load.manifest });
 }
 
+// Public boot/watch files must not expose the secret-dependent snapshot SHA.
+// Root-only verification and applied provenance retain the actual selected path.
+export function runtimePublicSourcePath(load: RuntimeManifestLoad, paths: RuntimePaths): string {
+	return paths.mode === "hosted" &&
+		load.source === "last-good-cache" &&
+		load.sourcePath === runtimeSnapshotPath(paths, runtimeAppliedContentIdentity(load).sha256)
+		? paths.manifestLastGood
+		: load.sourcePath;
+}
+
 function runtimeAppliedStatus(paths: RuntimePaths): {
 	activeGeneration: number | null;
 	instanceId: string | null;
@@ -326,35 +338,46 @@ export function commitRuntimeAppliedState(input: {
 	// The apply identity names the Hosted control-plane snapshot; `etag` names
 	// the independently rendered runtime bundle. Persist both authorities.
 	const providerIds = runtimeSourceProviderIds(input.load.manifest);
-	input.convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(input.load, input.paths);
-	input.convergence.outputs.appliedState = writeRuntimeAppliedState(
-		{
-			schemaVersion: "clawdi.runtimeAppliedState.v2",
-			appliedAt: new Date().toISOString(),
-			instanceId: input.convergence.manifest.instanceId,
-			etag: input.etag,
-			sourceRevision: input.sourceRevision,
-			generation: input.convergence.manifest.generation,
-			...(input.convergence.manifest.applyGeneration === undefined
-				? {}
-				: { applyGeneration: input.convergence.manifest.applyGeneration }),
-			...(input.applyIdentity
-				? {
-						manifestETag: input.applyIdentity.manifestETag,
-						applyReceiptId: input.applyIdentity.applyReceiptId,
-						bootNonce: input.applyIdentity.bootNonce,
-					}
-				: {}),
-			contentIdentity: runtimeAppliedContentIdentity(input.load),
-			activated: input.activated ?? {},
-			officialServiceCommandRevisions: input.officialServiceCommandRevisions ?? {},
-			providerIds,
-			projectedProviderIds: input.convergence.projectedProviderIds,
-			...(input.skillEvidence ? { skillEvidence: input.skillEvidence } : {}),
-			nativeCredentialProviderIds: input.convergence.nativeCredentialProviderIds,
-		},
-		input.paths,
-	);
+	const applied = runtimeAppliedStateSchema.parse({
+		schemaVersion: "clawdi.runtimeAppliedState.v2",
+		appliedAt: new Date().toISOString(),
+		instanceId: input.convergence.manifest.instanceId,
+		etag: input.etag,
+		sourceRevision: input.sourceRevision,
+		generation: input.convergence.manifest.generation,
+		...(input.convergence.manifest.applyGeneration === undefined
+			? {}
+			: { applyGeneration: input.convergence.manifest.applyGeneration }),
+		...(input.applyIdentity
+			? {
+					manifestETag: input.applyIdentity.manifestETag,
+					applyReceiptId: input.applyIdentity.applyReceiptId,
+					bootNonce: input.applyIdentity.bootNonce,
+				}
+			: {}),
+		contentIdentity: runtimeAppliedContentIdentity(input.load),
+		activated: input.activated ?? {},
+		officialServiceCommandRevisions: input.officialServiceCommandRevisions ?? {},
+		providerIds,
+		projectedProviderIds: input.convergence.projectedProviderIds,
+		...(input.skillEvidence ? { skillEvidence: input.skillEvidence } : {}),
+		nativeCredentialProviderIds: input.convergence.nativeCredentialProviderIds,
+	});
+	if (input.load.manifest.recovery.cacheManifest !== false) {
+		input.convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(
+			input.load,
+			input.paths,
+		);
+	}
+	input.convergence.outputs.appliedState = writeRuntimeAppliedState(applied, input.paths);
+	if (input.load.manifest.recovery.cacheManifest === false) {
+		input.convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(
+			input.load,
+			input.paths,
+		);
+	} else {
+		pruneRuntimeSnapshots(input.paths, [runtimeAppliedContentIdentity(input.load).sha256]);
+	}
 	persistComponentActivations(input.load, input.paths, (scope, unit) =>
 		readComponentServiceState(input.paths, scope, unit),
 	);
@@ -446,16 +469,14 @@ function readRuntimeWatchNotificationConfig(
 	paths: ReturnType<typeof getRuntimePaths>,
 ): RuntimeWatchNotificationConfig | null {
 	const apiKey = readRuntimeAuthToken(paths);
-	if (!apiKey || !existsSync(paths.manifestLastGood)) return null;
+	if (!apiKey) return null;
 	try {
-		const parsed = hostedRuntimeBundleV2Schema.safeParse(
-			JSON.parse(readFileSync(paths.manifestLastGood, "utf-8")),
-		);
-		if (!parsed.success) return null;
+		const parsed = loadCommittedRuntimeManifest(paths);
+		if (!("manifest" in parsed)) return null;
 		return {
-			apiUrl: parsed.data.manifest.controlPlane.apiUrl,
+			apiUrl: parsed.manifest.controlPlane.apiUrl,
 			apiKey,
-			environmentId: parsed.data.manifest.environmentId,
+			environmentId: parsed.manifest.environmentId,
 		};
 	} catch {
 		return null;
@@ -932,7 +953,7 @@ async function runtimeInitLocked(
 				hostPolicy: hostPolicySummary(hostPolicy),
 				manifestSource: {
 					type: outcome.convergence.source,
-					path: outcome.convergence.sourcePath,
+					path: runtimePublicSourcePath(outcome.load, paths),
 					offline: outcome.convergence.offline,
 				},
 				convergence: outcome.convergence.outputs,
@@ -1132,12 +1153,26 @@ async function loadRuntimeManifestForWatch(
 			runtimeAppliedApplyIdentity(active),
 		)
 	) {
-		return {
-			kind: "not_modified",
-			sourcePath: conditional.sourcePath,
-			etag: responseEtag,
-			applied: active,
-		};
+		// Missing history requires an unconditional fetch to resolve cache policy.
+		let snapshotReady = paths.mode !== "hosted";
+		if (paths.mode === "hosted") {
+			try {
+				snapshotReady = migrateCommittedRuntimeSnapshot(paths, conditional.applyContext);
+			} catch {
+				return {
+					kind: "error",
+					error: "could not persist verified committed runtime snapshot",
+					etag: responseEtag,
+				};
+			}
+		}
+		if (snapshotReady)
+			return {
+				kind: "not_modified",
+				sourcePath: conditional.sourcePath,
+				etag: responseEtag,
+				applied: active,
+			};
 	}
 
 	try {
@@ -1289,7 +1324,7 @@ export function runtimeWatchEventForOutcome(
 	}
 	return runtimeWatchEvent({
 		status: "applied",
-		sourcePath: outcome.load.sourcePath,
+		sourcePath: runtimePublicSourcePath(outcome.load, paths),
 		etag: outcome.load.etag,
 		sourceRevision: outcome.load.sourceRevision,
 		generation: outcome.convergence.manifest.generation,
@@ -1709,9 +1744,9 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 				try {
 					const config = readRuntimeWatchNotificationConfig(paths);
 					if (config) {
-						const bundle = hostedRuntimeBundleV2Schema.parse(
-							JSON.parse(readFileSync(paths.manifestLastGood, "utf8")),
-						);
+						const bundle = loadCommittedRuntimeManifest(paths);
+						if (!("manifest" in bundle))
+							throw new Error("committed runtime snapshot is unavailable");
 						const workspace = bundle.manifest.runtimes.openclaw?.enabled
 							? resolveHostedOpenClawWorkspace(paths.userHome)
 							: runtimeWorkspaceRoot(bundle.manifest, paths);

@@ -141,6 +141,7 @@ export function writeRuntimeAppliedState(
 		{
 			mode: 0o600,
 			dirMode: 0o755,
+			durable: paths.mode === "hosted",
 		},
 	);
 	secureRuntimeAppliedStateFile(paths.appliedState);

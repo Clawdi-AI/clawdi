@@ -3,13 +3,16 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { RuntimeAppliedState } from "./applied-state";
-import { writeRuntimeAppliedState } from "./applied-state";
+import { runtimeContentSha256, writeRuntimeAppliedState } from "./applied-state";
+import { applyRuntimeBundleChannelsToManifestLoad } from "./channels";
 import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import {
 	hostedAgentPluginOwnershipIdentity,
 	hostedAgentPluginReceiptsPath,
 	writeHostedAgentPluginReceipt,
 } from "./hosted-agent-plugin-package";
+import { cacheRuntimeLastGoodManifest, runtimeRecoverableSecretValues } from "./manifest-secrets";
+import { parseHostedRuntimeBundleV2 } from "./manifest-source";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 
@@ -71,8 +74,11 @@ function appliedState(): RuntimeAppliedState {
 	};
 }
 
-function writeAppliedManifest(paths: RuntimePaths, desired: ReturnType<typeof installation>): void {
-	mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
+function writeAppliedManifest(
+	paths: RuntimePaths,
+	desired: ReturnType<typeof installation>,
+): RuntimeAppliedState {
+	mkdirSync(dirname(paths.manifestLastGood), { recursive: true, mode: 0o700 });
 	const bundle = JSON.parse(
 		readFileSync(
 			join(import.meta.dir, "../../../../test-fixtures/runtime-bundle-v2.golden.json"),
@@ -86,7 +92,6 @@ function writeAppliedManifest(paths: RuntimePaths, desired: ReturnType<typeof in
 	};
 	bundle.sourceRevision = sourceRevision;
 	bundle.applyGeneration = 7;
-	bundle.secretValues = {};
 	bundle.manifest = {
 		...bundle.manifest,
 		instanceId: "runtime-agent-plugin-observation",
@@ -96,7 +101,18 @@ function writeAppliedManifest(paths: RuntimePaths, desired: ReturnType<typeof in
 			installations: { clawdi: desired },
 		},
 	};
-	writeFileSync(paths.manifestLastGood, JSON.stringify(bundle));
+	const load = applyRuntimeBundleChannelsToManifestLoad(
+		parseHostedRuntimeBundleV2(bundle, "test://plugin-observation"),
+		paths,
+	);
+	cacheRuntimeLastGoodManifest(load.sourceBundle, paths, load.secretValues, load.manifest);
+	const applied = appliedState();
+	applied.contentIdentity.sha256 = runtimeContentSha256({
+		manifest: load.sourceBundle,
+		secretValues: runtimeRecoverableSecretValues(load.manifest, load.secretValues),
+	});
+	writeRuntimeAppliedState(applied, paths);
+	return applied;
 }
 
 function writeReceipt(paths: RuntimePaths, desired: ReturnType<typeof installation>): void {
@@ -147,9 +163,7 @@ describe("hosted Agent Plugin heartbeat observation", () => {
 	test("keeps Agent Plugin evidence on the v2 companion heartbeat", async () => {
 		const paths = tempPaths();
 		const desired = installation("1.0.0", "d");
-		const applied = appliedState();
-		writeRuntimeAppliedState(applied, paths);
-		writeAppliedManifest(paths, desired);
+		const applied = writeAppliedManifest(paths, desired);
 		writeReceipt(paths, desired);
 
 		expect(await readHostedRuntimeObserved(paths, { appliedState: applied })).not.toHaveProperty(

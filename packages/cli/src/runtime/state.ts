@@ -196,7 +196,7 @@ export function writeRuntimePlatformFileAtomic(
 	paths: RuntimePaths,
 	path: string,
 	content: string | Uint8Array,
-	options: { mode?: number; dirMode?: number } = {},
+	options: { mode?: number; dirMode?: number; durable?: boolean } = {},
 ): void {
 	const trustedRoot = runtimePlatformRootForPath(paths, path);
 	if (!trustedRoot) {

@@ -3141,6 +3141,8 @@ fi
 			writeFileSync(configPath, JSON.stringify(configured));
 			const gatewayBefore = readSystemdUnitSnapshot(paths).user.get("hermes-gateway.service");
 			expect(gatewayBefore).toBeDefined();
+			// Rootfs replacement discards download caches, not committed channel authority.
+			rmSync(paths.cacheRoot, { recursive: true, force: true });
 			const archived = loadFor(false);
 			converge(archived);
 			const gatewayAfter = readSystemdUnitSnapshot(paths).user.get("hermes-gateway.service");
