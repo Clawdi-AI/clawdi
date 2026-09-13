@@ -5,7 +5,7 @@ import { readRuntimeApplyContext } from "../runtime/apply-identity";
 import { readHostPolicy } from "../runtime/host-policy";
 import { inspectHostedRuntimeIdentity } from "../runtime/hosted-runtime-contract";
 import { loadCommittedRuntimeManifest, runtimeSnapshotExists } from "../runtime/manifest-source";
-import { getRuntimePaths } from "../runtime/paths";
+import { getRuntimePaths, legacyRuntimeManifestPaths } from "../runtime/paths";
 import { assertRuntimePlatformRoots, readRuntimeBootStatus } from "../runtime/state";
 import { toErrorMessage } from "../serve/log";
 
@@ -43,25 +43,43 @@ function readable(path: string): boolean {
 export async function runtimeVerify(opts: RuntimeVerifyOptions = {}) {
 	const paths = getRuntimePaths();
 	const committed = loadCommittedRuntimeManifest(paths);
-	const manifestCacheExists = runtimeSnapshotExists(paths);
+	const selected = "manifest" in committed ? committed : null;
+	const sourcePath = selected?.sourcePath ?? paths.manifestLastGood;
+	const manifestCacheExists = existsSync(sourcePath);
+	const storage = selected
+		? paths.mode === "local"
+			? "local"
+			: sourcePath === legacyRuntimeManifestPaths(paths).manifestLastGood
+				? "legacy"
+				: "durable"
+		: null;
 	const errors: string[] = [];
-	if (manifestCacheExists && "errors" in committed) errors.push(...committed.errors);
+	if (runtimeSnapshotExists(paths) && "errors" in committed) errors.push(...committed.errors);
 
 	const result = {
 		schemaVersion: "clawdi.runtimeVerify.v1",
 		status: errors.length === 0 ? "ok" : "error",
 		cliVersion: ACTIVE_CLI_VERSION,
 		manifestCache: {
-			path: paths.manifestLastGood,
+			path: sourcePath,
 			exists: manifestCacheExists,
-			valid: manifestCacheExists ? errors.length === 0 : null,
+			valid: selected !== null ? true : manifestCacheExists ? false : null,
+			storage,
 		},
 		errors,
 	};
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(result, null, 2));
 	} else if (errors.length === 0) {
-		console.log(chalk.green("runtime verify ok"));
+		console.log(
+			storage === "legacy"
+				? chalk.yellow(
+						`runtime verify ok: legacy snapshot at ${sourcePath}; migrate before rootfs replacement`,
+					)
+				: chalk.green(
+						`runtime verify ok${selected ? `: ${storage} snapshot at ${sourcePath}` : ""}`,
+					),
+		);
 	} else {
 		console.log(chalk.red(errors[0]));
 	}

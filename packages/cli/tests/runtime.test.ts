@@ -26,6 +26,7 @@ import {
 	runtimeAppliedContentIdentity,
 	runtimeInit as runtimeInitWithContext,
 	runtimePublicContentRevision,
+	runtimePublicSourcePath,
 	runtimeWatchEventForOutcome,
 	runtimeWatchPollDelayMs,
 	runtimeWatch as runtimeWatchWithContext,
@@ -2604,6 +2605,26 @@ describe("runtime applied content identity", () => {
 		expect(runtimePublicContentRevision(load("000000"))).toBe(
 			runtimePublicContentRevision(load("000001")),
 		);
+		const paths = getRuntimePaths({ mode: "hosted" });
+		for (const secret of ["000000", "000001"]) {
+			const cached: RuntimeManifestLoad = {
+				...load(secret),
+				source: "last-good-cache",
+				offline: true,
+				sourcePath: join(
+					dirname(paths.manifestLastGood),
+					`${runtimeAppliedContentIdentity(load(secret)).sha256}.json`,
+				),
+			};
+			expect(runtimePublicSourcePath(cached, paths)).toBe(paths.manifestLastGood);
+			expect(
+				runtimePublicSourcePath(
+					{ ...cached, sourcePath: legacyRuntimeManifestPaths(paths).manifestLastGood },
+					paths,
+				),
+			).toBe(legacyRuntimeManifestPaths(paths).manifestLastGood);
+		}
+		expect(runtimePublicSourcePath(load("000000"), paths)).toBe("inline-secret-identity");
 	});
 });
 

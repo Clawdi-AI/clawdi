@@ -1766,6 +1766,14 @@ Convergence migrates it under its existing lock, including conditional watch
 watch fetches the full desired bundle to resolve cache policy and converge;
 it never claims to have migrated missing history.
 
+`clawdi runtime verify --json` reports the selected snapshot in `manifestCache.path`
+and marks its `storage` as `durable`, `legacy`, or `local` (`null` without a verified
+candidate). Verification is read-only: a valid legacy snapshot still requires
+migration before rootfs replacement. Every Hosted candidate must satisfy the
+same private ownership, mode, and non-symlink checks as well as the content SHA.
+Public boot/watch status retains the non-secret logical path; use verification
+to inspect the selected physical snapshot path.
+
 Deploy the new reader and verify its durable snapshot **before** discarding a
 rootfs/cache. A recorded next-start CLI target alone does not migrate files.
 Missing old bytes (including already-stopped instances) cannot be recovered

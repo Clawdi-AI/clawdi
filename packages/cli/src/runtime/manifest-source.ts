@@ -448,13 +448,7 @@ function loadLastGoodManifest(
 		if (applied) {
 			const snapshot = runtimeSnapshotPath(paths, applied.contentIdentity.sha256);
 			if (existsSync(snapshot)) {
-				const loaded = readLastGoodManifest(
-					paths,
-					requireOfflineBoot,
-					applyContext,
-					false,
-					snapshot,
-				);
+				const loaded = readLastGoodManifest(paths, requireOfflineBoot, applyContext, snapshot);
 				if ("manifest" in loaded) return loaded;
 			}
 		}
@@ -467,7 +461,7 @@ function loadLastGoodManifest(
 		!existsSync(legacyPaths.manifestLastGood)
 	)
 		return current;
-	const legacy = readLastGoodManifest(legacyPaths, requireOfflineBoot, applyContext, true);
+	const legacy = readLastGoodManifest(legacyPaths, requireOfflineBoot, applyContext);
 	return "manifest" in legacy
 		? legacy
 		: { ...current, errors: [...current.errors, ...legacy.errors] };
@@ -528,7 +522,7 @@ export function migrateCommittedRuntimeSnapshot(
 			const snapshot = runtimeSnapshotPath(paths, applied.contentIdentity.sha256);
 			if (
 				existsSync(snapshot) &&
-				"manifest" in readLastGoodManifest(paths, false, applyContext, false, snapshot)
+				"manifest" in readLastGoodManifest(paths, false, applyContext, snapshot)
 			)
 				return true;
 		}
@@ -596,7 +590,7 @@ export function writeRuntimeManifestSnapshot(
 	}
 }
 
-function assertPrivateLegacySnapshot(paths: RuntimePaths, snapshotPath?: string): void {
+function assertPrivateRuntimeSnapshot(paths: RuntimePaths, snapshotPath?: string): void {
 	for (const [path, mode, directory] of [
 		[dirname(paths.manifestLastGood), 0o700, true],
 		[snapshotPath ?? paths.manifestLastGood, 0o600, false],
@@ -627,10 +621,10 @@ function readLastGoodManifest(
 	paths: RuntimePaths,
 	requireOfflineBoot: boolean,
 	applyContext: RuntimeApplyContext | undefined,
-	legacy = false,
 	snapshotPath?: string,
 ): RuntimeManifestLoad | RuntimeManifestFailure {
-	if (!existsSync(snapshotPath ?? paths.manifestLastGood)) {
+	const sourcePath = snapshotPath ?? paths.manifestLastGood;
+	if (!existsSync(sourcePath)) {
 		return {
 			mode: "repair",
 			stage: "local",
@@ -638,7 +632,7 @@ function readLastGoodManifest(
 		};
 	}
 	try {
-		if (legacy || snapshotPath) assertPrivateLegacySnapshot(paths, snapshotPath);
+		if (paths.mode === "hosted") assertPrivateRuntimeSnapshot(paths, snapshotPath);
 		const snapshot = snapshotPath
 			? z
 					.object({ manifest: z.unknown(), secretValues: z.record(z.string(), z.string()) })
@@ -654,14 +648,14 @@ function readLastGoodManifest(
 		if ("errors" in cached) return cached;
 		const parsed = parseHostedRuntimeBundleV2(
 			{ ...cachedBundle, secretValues: cached.secretValues },
-			paths.manifestLastGood,
+			sourcePath,
 		);
 		const appliedState = readRuntimeAppliedState(paths);
 		const restored = applyRuntimeBundleChannelsToManifestLoad(
 			{
 				...parsed,
 				source: "last-good-cache",
-				sourcePath: paths.manifestLastGood,
+				sourcePath,
 				offline: true,
 				applyContext,
 			},

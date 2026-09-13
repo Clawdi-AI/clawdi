@@ -67,6 +67,7 @@ import {
 	pruneRuntimeSnapshots,
 	type RuntimeManifestFailure,
 	type RuntimeManifestLoad,
+	runtimeSnapshotPath,
 } from "../runtime/manifest-source";
 import { readComponentServiceState } from "../runtime/observed";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
@@ -292,6 +293,16 @@ export function runtimeAppliedContentIdentity(
 // Keep secret-dependent recoverability verification in the root-only applied state.
 export function runtimePublicContentRevision(load: RuntimeManifestLoad): string {
 	return runtimeContentSha256({ manifest: load.manifest });
+}
+
+// Public boot/watch files must not expose the secret-dependent snapshot SHA.
+// Root-only verification and applied provenance retain the actual selected path.
+export function runtimePublicSourcePath(load: RuntimeManifestLoad, paths: RuntimePaths): string {
+	return paths.mode === "hosted" &&
+		load.source === "last-good-cache" &&
+		load.sourcePath === runtimeSnapshotPath(paths, runtimeAppliedContentIdentity(load).sha256)
+		? paths.manifestLastGood
+		: load.sourcePath;
 }
 
 function runtimeAppliedStatus(paths: RuntimePaths): {
@@ -942,7 +953,7 @@ async function runtimeInitLocked(
 				hostPolicy: hostPolicySummary(hostPolicy),
 				manifestSource: {
 					type: outcome.convergence.source,
-					path: outcome.convergence.sourcePath,
+					path: runtimePublicSourcePath(outcome.load, paths),
 					offline: outcome.convergence.offline,
 				},
 				convergence: outcome.convergence.outputs,
@@ -1313,7 +1324,7 @@ export function runtimeWatchEventForOutcome(
 	}
 	return runtimeWatchEvent({
 		status: "applied",
-		sourcePath: outcome.load.sourcePath,
+		sourcePath: runtimePublicSourcePath(outcome.load, paths),
 		etag: outcome.load.etag,
 		sourceRevision: outcome.load.sourceRevision,
 		generation: outcome.convergence.manifest.generation,

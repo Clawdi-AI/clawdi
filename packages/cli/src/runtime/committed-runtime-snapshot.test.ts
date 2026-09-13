@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import {
 	chmodSync,
 	cpSync,
@@ -6,6 +6,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
+	renameSync,
 	rmSync,
 	statSync,
 	symlinkSync,
@@ -15,6 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { commitRuntimeAppliedState, runtimeAppliedContentIdentity } from "../commands/runtime";
+import { runtimeVerify } from "../commands/runtime-doctor";
 import { readRuntimeAppliedState, writeRuntimeAppliedState } from "./applied-state";
 import { type RuntimeApplyContext, resolveRuntimeApplyGeneration } from "./apply-identity";
 import { applyRuntimeBundleChannelsToManifestLoad } from "./channels";
@@ -132,7 +134,9 @@ test.each(["absent", "stale", "corrupt", "mixed"])(
 		const committed = loadCommittedRuntimeManifest(paths, nextContext);
 		expect("manifest" in committed).toBe(true);
 		if (!("manifest" in committed)) throw new Error("expected committed snapshot");
-		expect(committed.sourcePath).toBe(paths.manifestLastGood);
+		expect(committed.sourcePath).toBe(
+			runtimeSnapshotPath(paths, runtimeAppliedContentIdentity(load).sha256),
+		);
 		expect(committed.manifest.projection?.channels).toEqual(load.manifest.projection?.channels);
 		expect(readFileSync(paths.appliedState, "utf8")).toBe(authority);
 		expect(readFileSync(paths.manifestLastGood, "utf8")).toBe(
@@ -315,8 +319,6 @@ test.each(["content", "permissions", "symlink"])(
 		if (!applied) throw new Error("missing fixture authority");
 		const snapshot = runtimeSnapshotPath(paths, applied.contentIdentity.sha256);
 		rmSync(paths.cacheRoot, { recursive: true, force: true });
-		rmSync(paths.manifestLastGood);
-		rmSync(paths.managedSecretCacheFile);
 		if (fault === "content") writeFileSync(snapshot, '{"secretValues":"never-expose-this-value"}');
 		else if (fault === "permissions") chmodSync(snapshot, 0o644);
 		else {
@@ -325,9 +327,115 @@ test.each(["content", "permissions", "symlink"])(
 			rmSync(snapshot);
 			symlinkSync(target, snapshot);
 		}
+		expect(loadCommittedRuntimeManifest(paths, context)).toMatchObject({
+			sourcePath: paths.manifestLastGood,
+		});
+		rmSync(paths.manifestLastGood);
+		rmSync(paths.managedSecretCacheFile);
 		const rejected = loadCommittedRuntimeManifest(paths, context);
 		expect("errors" in rejected).toBe(true);
 		expect(JSON.stringify(rejected)).not.toContain("never-expose-this-value");
 		expect(existsSync(paths.manifestLastGood)).toBe(false);
+	},
+);
+
+// Exact content still needs the private Hosted storage contract on every candidate.
+test.each(["manifest", "secrets", "directory"])(
+	"canonical %s rejects unsafe mode and symlink while retaining valid legacy fallback",
+	(target) => {
+		const { root, paths, legacy, context, load } = fixture();
+		copyPair(legacy, paths);
+		const path =
+			target === "manifest"
+				? paths.manifestLastGood
+				: target === "secrets"
+					? paths.managedSecretCacheFile
+					: dirname(paths.manifestLastGood);
+		const expectedMode = target === "directory" ? 0o700 : 0o600;
+		const baseline = readFileSync(paths.appliedState, "utf8");
+		const selected = () => loadCommittedRuntimeManifest(paths, context);
+		expect(selected()).toMatchObject({ sourcePath: paths.manifestLastGood });
+		chmodSync(path, target === "directory" ? 0o755 : 0o644);
+		expect(selected()).toMatchObject({ sourcePath: legacy.manifestLastGood });
+		expect("manifest" in loadCommittedRuntimeManifest({ ...paths, mode: "local" }, context)).toBe(
+			true,
+		);
+		chmodSync(path, expectedMode);
+		const moved = join(root, `linked-${target}`);
+		renameSync(path, moved);
+		symlinkSync(moved, path);
+		expect(selected()).toMatchObject({ sourcePath: legacy.manifestLastGood });
+		rmSync(paths.cacheRoot, { recursive: true, force: true });
+		expect("errors" in selected()).toBe(true);
+		// Local mode retains its prior filesystem behavior, with the same SHA fence.
+		const local = loadCommittedRuntimeManifest({ ...paths, mode: "local" }, context);
+		expect("manifest" in local && local.sourceBundle).toEqual(load.sourceBundle);
+		expect(readFileSync(paths.appliedState, "utf8")).toBe(baseline);
+	},
+);
+
+test.each(["getuid", "getgid"] as const)(
+	"canonical pair rejects a different platform %s without changing content",
+	(identity) => {
+		const { paths, legacy, context } = fixture();
+		copyPair(legacy, paths);
+		rmSync(paths.cacheRoot, { recursive: true, force: true });
+		const current = process[identity]?.();
+		if (current === undefined) throw new Error("POSIX isolated lane required");
+		const mocked = spyOn(process, identity).mockReturnValue(current + 1);
+		try {
+			expect("errors" in loadCommittedRuntimeManifest(paths, context)).toBe(true);
+			expect("manifest" in loadCommittedRuntimeManifest({ ...paths, mode: "local" }, context)).toBe(
+				true,
+			);
+		} finally {
+			mocked.mockRestore();
+		}
+	},
+);
+
+test.each(["legacy", "canonical", "hashed", "legacy-fallback", "local"])(
+	"runtime verify reports the selected %s storage without migrating",
+	async (candidate) => {
+		const { paths, legacy, context, load } = fixture();
+		process.env.CLAWDI_RUNTIME_MODE = candidate === "local" ? "local" : "hosted";
+		const baseline = readFileSync(paths.appliedState, "utf8");
+		let expectedPath = legacy.manifestLastGood;
+		if (candidate === "canonical" || candidate === "legacy-fallback") {
+			copyPair(legacy, paths);
+			if (candidate === "canonical") expectedPath = paths.manifestLastGood;
+			else chmodSync(paths.manifestLastGood, 0o644);
+		} else if (candidate === "hashed") {
+			migrateCommittedRuntimeSnapshot(paths, context);
+			expectedPath = runtimeSnapshotPath(paths, runtimeAppliedContentIdentity(load).sha256);
+			rmSync(paths.manifestLastGood);
+			rmSync(paths.managedSecretCacheFile);
+		}
+		const output = spyOn(console, "log").mockImplementation(() => undefined);
+		try {
+			await runtimeVerify({ json: true });
+			const report = JSON.parse(output.mock.calls[0]?.[0]);
+			expect(report).toMatchObject({
+				status: "ok",
+				manifestCache: {
+					path: expectedPath,
+					exists: true,
+					valid: true,
+					storage:
+						candidate === "canonical" || candidate === "hashed"
+							? "durable"
+							: candidate === "local"
+								? "local"
+								: "legacy",
+				},
+			});
+			expect(existsSync(expectedPath)).toBe(true);
+			expect(existsSync(paths.manifestLastGood)).toBe(
+				candidate === "canonical" || candidate === "legacy-fallback",
+			);
+			expect(readFileSync(paths.appliedState, "utf8")).toBe(baseline);
+		} finally {
+			output.mockRestore();
+		}
 	},
 );
