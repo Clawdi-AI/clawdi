@@ -47,6 +47,13 @@ _TEST_PUBLIC_DNS_HOSTS = {
 _TEST_PUBLIC_DNS_SUFFIXES = (".example", ".test")
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--whatsapp-native-captures",
+        help="Required capture directory for the CI-wired native WhatsApp outbox E2E",
+    )
+
+
 def worker_test_identity(nodeid: str, worker: str) -> str:
     digest = sha256(nodeid.encode()).hexdigest()[:16]
     return f"{worker}-{digest}"

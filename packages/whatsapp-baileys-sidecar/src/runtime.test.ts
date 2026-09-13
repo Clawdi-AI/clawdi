@@ -11,9 +11,10 @@ import {
 } from "baileys";
 import { describe, expect, it } from "vitest";
 
-import { parseAuditedWhatsAppWebVersion } from "./audited-version.js";
+import { AUDITED_PROVIDER_RELEASE, parseAuditedWhatsAppWebVersion } from "./audited-version.js";
 import type { SidecarSessionConfig } from "./config.js";
 import { BaileysSocketRuntime, type ProviderSocketFactory } from "./runtime.js";
+import { createSidecarServer } from "./server.js";
 import type { ProviderMessageEventInput } from "./sqlite-state.js";
 
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
@@ -531,6 +532,151 @@ describe("physical Baileys runtime", () => {
 		await runtime.stop();
 	});
 
+	it("carries native message variants through HTTP, SQLite retry state and the provider socket", async () => {
+		const sessionDir = mkdtempSync(join(tmpdir(), "clawdi-wa-native-http-"));
+		const observed: Uint8Array[] = [];
+		const harness = createHarness({
+			onRelayMessage: (message) => observed.push(proto.Message.encode(message).finish()),
+		});
+		const runtime = new BaileysSocketRuntime(
+			{ ...sidecarConfig(), sessionDir },
+			{
+				socketFactory: harness.dependencies.socketFactory,
+			},
+		);
+		const server = createSidecarServer(
+			{
+				health: () => ({
+					schemaVersion: "clawdi.whatsapp.sidecar-health.v1",
+					ready: true,
+					activeSessions: 1,
+					advertisedRelease: AUDITED_PROVIDER_RELEASE,
+				}),
+				capabilities: () => runtime.capabilities(),
+				async session(id) {
+					expect(id).toBe(ACCOUNT_ID);
+					return runtime;
+				},
+			},
+			{ apiToken: "test-token" },
+		);
+		const jid = "120363000000000001@g.us";
+		const key = { remoteJid: jid, id: "quoted", fromMe: true };
+		const messages: proto.IMessage[] = [
+			{ conversation: "text" },
+			{
+				extendedTextMessage: {
+					text: "quote and mention",
+					contextInfo: {
+						stanzaId: "quoted",
+						participant: "15550002222@s.whatsapp.net",
+						quotedMessage: { conversation: "original" },
+						mentionedJid: ["15550002222@s.whatsapp.net"],
+					},
+				},
+			},
+			{ imageMessage: { caption: "image", mimetype: "image/png", mediaKey: Buffer.from([1, 2]) } },
+			{
+				audioMessage: { mimetype: "audio/ogg; codecs=opus", ptt: true, mediaKey: Buffer.from([3]) },
+			},
+			{ videoMessage: { caption: "video", mimetype: "video/mp4", mediaKey: Buffer.from([4]) } },
+			{
+				documentMessage: {
+					fileName: "report.pdf",
+					mimetype: "application/pdf",
+					mediaKey: Buffer.from([5]),
+				},
+			},
+			{ reactionMessage: { key, text: "👍" } },
+			{
+				protocolMessage: {
+					key,
+					type: proto.Message.ProtocolMessage.Type.MESSAGE_EDIT,
+					editedMessage: { conversation: "edited" },
+				},
+			},
+			{ protocolMessage: { key, type: proto.Message.ProtocolMessage.Type.REVOKE } },
+		];
+		try {
+			await runtime.startQrPairing();
+			harness.events.emit("connection.update", { connection: "open" });
+			await new Promise<void>((resolve, reject) => {
+				server.once("error", reject);
+				server.listen(0, "127.0.0.1", resolve);
+			});
+			const address = server.address();
+			if (!address || typeof address === "string") throw new Error("missing HTTP address");
+			for (const [index, message] of messages.entries()) {
+				const encoded = proto.Message.encode(message).finish();
+				const messageId = `native-${index}`;
+				const response = await fetch(
+					`http://127.0.0.1:${address.port}/v1/sessions/${ACCOUNT_ID}/relay-message`,
+					{
+						method: "POST",
+						headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+						body: JSON.stringify({
+							jid,
+							messageId,
+							messageProtoBase64: Buffer.from(encoded).toString("base64"),
+							additionalAttributes: {},
+							additionalNodes: [],
+						}),
+					},
+				);
+				expect(response.status).toBe(200);
+				expect(await response.json()).toMatchObject({ messageId });
+				expect(observed[index]).toEqual(encoded);
+				const configuration = harness.socketConfigurations[0];
+				const retry = await configuration?.getMessage?.({ remoteJid: jid, id: messageId });
+				expect(proto.Message.encode(retry ?? {}).finish()).toEqual(encoded);
+			}
+			harness.events.emit("messages.upsert", {
+				type: "notify",
+				messages: messages.map((message, index) => ({
+					key: {
+						remoteJid: jid,
+						id: `inbound-${index}`,
+						fromMe: false,
+						participant: "15550002222@s.whatsapp.net",
+					},
+					message,
+				})),
+			});
+			const inbox = await fetch(
+				`http://127.0.0.1:${address.port}/v1/sessions/${ACCOUNT_ID}/provider-events`,
+				{
+					headers: { Authorization: "Bearer test-token" },
+				},
+			);
+			expect(inbox.status).toBe(200);
+			expect(await inbox.json()).toMatchObject({
+				events: messages.map((message, index) => ({
+					sequence: index + 1,
+					messageId: `inbound-${index}`,
+					remoteJid: jid,
+					participant: "15550002222@s.whatsapp.net",
+					messageProtoBase64: Buffer.from(proto.Message.encode(message).finish()).toString(
+						"base64",
+					),
+				})),
+			});
+		} finally {
+			try {
+				if (server.listening) {
+					await new Promise<void>((resolve, reject) =>
+						server.close((error) => (error ? reject(error) : resolve())),
+					);
+				}
+			} finally {
+				try {
+					await runtime.stop();
+				} finally {
+					rmSync(sessionDir, { recursive: true, force: true });
+				}
+			}
+		}
+	});
+
 	it("fail-stops on retry persistence failure and never calls the physical relay", async () => {
 		const harness = createHarness({ failRetryWrite: true });
 		const runtime = new BaileysSocketRuntime(sidecarConfig(), harness.dependencies);
@@ -564,7 +710,7 @@ type HarnessOptions = {
 	logoutFailures?: number;
 	onAppendProviderEvents?: () => void;
 	onStoreRetryMessage?: () => void;
-	onRelayMessage?: () => void;
+	onRelayMessage?: (message: proto.IMessage) => void;
 };
 
 function createHarness(options: HarnessOptions = {}) {
@@ -678,7 +824,7 @@ function createHarness(options: HarnessOptions = {}) {
 				events.emit("creds.update", creds);
 				return "12345678";
 			},
-			async relayMessage(jid, _message, relayOptions) {
+			async relayMessage(jid, message, relayOptions) {
 				relayRequests.push({
 					jid,
 					...(relayOptions.messageId ? { messageId: relayOptions.messageId } : {}),
@@ -686,7 +832,7 @@ function createHarness(options: HarnessOptions = {}) {
 						? { additionalNodes: relayOptions.additionalNodes }
 						: {}),
 				});
-				options.onRelayMessage?.();
+				options.onRelayMessage?.(message);
 				return relayOptions.messageId ?? "generated-message-id";
 			},
 			async sendNode() {},

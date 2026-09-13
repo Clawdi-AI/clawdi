@@ -55,6 +55,7 @@ class HarnessState:
         self.events: list[dict[str, Any]] = []
         self.outbound_messages: list[dict[str, Any]] = []
         self.outbound_nodes: list[dict[str, Any]] = []
+        self.privacy_queries: list[dict[str, Any]] = []
         self.inbound_pushes: list[dict[str, Any]] = []
         self.model_requests: list[dict[str, Any]] = []
         self.bundle = None
@@ -117,7 +118,10 @@ class HarnessState:
             "bundleCaptured": self.bundle is not None,
             "events": self.events,
             "outboundMessages": self.outbound_messages,
+            "chatJid": INBOUND_JID,
+            "chatLid": INBOUND_LID,
             "outboundNodes": self.outbound_nodes,
+            "privacyQueries": self.privacy_queries,
             "inboundPushes": self.inbound_pushes,
             "modelRequests": self.model_requests,
         }
@@ -145,9 +149,36 @@ def create_app(state: HarnessState) -> FastAPI:
             normalized = strip_whatsapp_device(jid)
             return INBOUND_LID if normalized in {INBOUND_JID, INBOUND_LID} else None
 
-        async def forward_iq(
-            node: dict[str, Any], _tenant_id: str | None
-        ) -> dict[str, Any] | None:
+        async def forward_iq(node: dict[str, Any], _tenant_id: str | None) -> dict[str, Any] | None:
+            attrs = node.get("attrs", {})
+            if attrs.get("xmlns") == "privacy" and attrs.get("type") == "get":
+                state.privacy_queries.append(encode_buffer_json(node))
+            if (
+                attrs.get("xmlns") == "privacy"
+                and attrs.get("type") == "get"
+                and attrs.get("to") == "@s.whatsapp.net"
+                and node.get("content") == [{"tag": "privacy", "attrs": {}}]
+            ):
+                return {
+                    "tag": "iq",
+                    "attrs": {
+                        "id": attrs["id"],
+                        "type": "result",
+                        "from": "s.whatsapp.net",
+                    },
+                    "content": [
+                        {
+                            "tag": "privacy",
+                            "attrs": {},
+                            "content": [
+                                {
+                                    "tag": "category",
+                                    "attrs": {"name": "readreceipts", "value": "all"},
+                                }
+                            ],
+                        }
+                    ],
+                }
             targets = parse_whatsapp_usync_device_targets(node)
             if targets is None:
                 return None

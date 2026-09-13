@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import OrderedDict
 from collections.abc import Callable
 from typing import Literal, Protocol
 from uuid import UUID
@@ -157,7 +158,7 @@ class ConfiguredWhatsAppSidecarClientPool:
         self._uses_shared_service = client_factory is None and self.enabled
         self._shared_service: WhatsAppBaileysSidecarService | None = None
         self._service_client: WhatsAppSidecarClient | None = None
-        self._clients_by_session: dict[UUID, WhatsAppSidecarClient] = {}
+        self._clients_by_session: OrderedDict[UUID, WhatsAppSidecarClient] = OrderedDict()
         self._started = False
         if self.enabled:
             self._service_config()
@@ -212,6 +213,14 @@ class ConfiguredWhatsAppSidecarClientPool:
     def session_revision(self, session_id: UUID) -> str | None:
         config = self._session_config(session_id)
         return config.binding_revision if config is not None else None
+
+    def health_probe_order(self, session_ids: set[UUID]) -> list[UUID]:
+        """Reuse the existing client order; no tenant/cursor cache is retained."""
+        return [session_id for session_id in self._clients_by_session if session_id in session_ids]
+
+    def mark_health_probe_started(self, session_id: UUID) -> None:
+        if session_id in self._clients_by_session:
+            self._clients_by_session.move_to_end(session_id)
 
     def _client(self, session_id: UUID) -> WhatsAppSidecarClient | None:
         if not self._started or not self.enabled:

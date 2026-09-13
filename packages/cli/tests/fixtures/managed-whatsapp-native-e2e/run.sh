@@ -71,6 +71,9 @@ trap 'cleanup "$?"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# Exercise cross-UID access before handing captures to the clean backend runner.
+runuser -u egress -- sh -c 'test -r /native-captures && test -x /native-captures'
+
 mkdir -p "${E2E_OUTPUT}" "${EGRESS_CA_DIR}"
 chown -R egress:egress "${EGRESS_HOME}"
 
@@ -149,12 +152,19 @@ else
 fi
 
 node --input-type=module <<'EOF'
+import { writeFileSync } from 'node:fs';
 const response = await fetch("http://127.0.0.1:9000/control/status");
 if (!response.ok) throw new Error(`final harness status returned ${response.status}`);
 const value = await response.json();
 if (value.markerLeaks !== 0 || value.identityRejections !== 0) {
 	throw new Error(`invalid final harness status: ${JSON.stringify(value)}`);
 }
+writeFileSync(`/native-captures/${process.env.E2E_RUNTIME}.json`, JSON.stringify({
+	runtime: process.env.E2E_RUNTIME,
+	outboundMessages: value.outboundMessages,
+	chatJid: value.chatJid,
+	chatLid: value.chatLid,
+}), { mode: 0o644 });
 console.log(
 	JSON.stringify({
 		runtime: process.env.E2E_RUNTIME,

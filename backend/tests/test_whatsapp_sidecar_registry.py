@@ -6,7 +6,6 @@ from uuid import UUID
 import pytest
 from sqlalchemy.exc import DBAPIError
 
-import app.services.whatsapp_delivery_transport as delivery_transport_module
 import app.services.whatsapp_sidecar_registry as sidecar_registry_module
 from app.services.whatsapp_delivery_transport import resolve_whatsapp_delivery_transport
 from app.services.whatsapp_native_transport import (
@@ -16,6 +15,7 @@ from app.services.whatsapp_native_transport import (
 )
 from app.services.whatsapp_provider_bridge import (
     WhatsAppProviderAccountRetired,
+    get_whatsapp_provider_transport,
     whatsapp_provider_transport_status,
 )
 from app.services.whatsapp_sidecar_registry import (
@@ -117,53 +117,30 @@ async def test_disabled_registry_is_inert():
         await registry.stop()
 
 
-def test_delivery_transport_resolves_custom_session(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+@pytest.mark.asyncio
+async def test_delivery_transport_resolves_custom_session() -> None:
     account_id = UUID("00000000-0000-4000-8000-000000000891")
     session_id = UUID("00000000-0000-4000-8000-000000000892")
-    service_config = WhatsAppBaileysSidecarConfig(
-        api_token="secret",
-        base_url="http://127.0.0.1:43191",
-    )
-    session_config = WhatsAppBaileysSidecarConfig(
-        api_token="secret",
-        base_url="http://127.0.0.1:43191",
-        account_id=session_id,
-    )
-    clients: list[_FakeSidecarClient] = []
-
-    class FakeDeliveryService:
-        def session_client(self, resolved_session_id: UUID) -> _FakeSidecarClient:
-            assert resolved_session_id == session_id
-            client = _FakeSidecarClient(session_config)
-            clients.append(client)
-            return client
-
-    monkeypatch.setattr(
-        delivery_transport_module,
-        "_configured_delivery_service",
-        lambda: service_config,
-    )
-    monkeypatch.setattr(
-        delivery_transport_module,
-        "_delivery_sidecar_service",
-        FakeDeliveryService(),
-    )
+    pool = ConfiguredWhatsAppSidecarClientPool("secret", client_factory=_FakeSidecarClient)
     account = sidecar_registry_module.ChannelAccount(
         id=account_id,
         provider="whatsapp",
         config={
             "connection_mode": "baileys_custom",
             "sidecar_account_id": str(session_id),
-            "sidecar_config_revision": session_config.binding_revision,
+            "sidecar_config_revision": pool.session_revision(session_id),
         },
     )
-
-    transport = resolve_whatsapp_delivery_transport(account)
-
-    assert transport is not None
-    assert len(clients) == 1
+    await pool.start()
+    try:
+        assert resolve_whatsapp_delivery_transport(account) is not None
+        assert get_whatsapp_provider_transport(account_id) is None
+        client = pool.session_client(session_id)
+        assert client.config.account_id == session_id
+    finally:
+        await pool.stop()
+    assert client.closed
+    assert resolve_whatsapp_delivery_transport(account) is None
 
 
 @pytest.mark.asyncio

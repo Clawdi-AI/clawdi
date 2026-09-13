@@ -20,6 +20,16 @@ function health(overrides: Partial<ChannelHealthItem> = {}): ChannelHealthItem {
 }
 
 describe("channel health summaries", () => {
+	test("distinguishes an unprobed connection from reconnecting or unavailable", () => {
+		expect(
+			channelHealthSummary(
+				health({ health_status: "warning", reasons: ["native_transport_not_probed"] }),
+			),
+		).toEqual({
+			label: "Status unknown",
+			detail: "This channel's connection has not been checked yet.",
+		});
+	});
 	test("explains warning activity from typed counters", () => {
 		expect(
 			channelHealthSummary(

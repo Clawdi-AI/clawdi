@@ -1,61 +1,51 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import replace
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-from app.core.config import settings
 from app.models.channel import CHANNEL_PROVIDER_WHATSAPP, ChannelAccount
-from app.services.whatsapp_native_transport import (
-    WhatsAppBaileysSidecarConfig,
-    WhatsAppBaileysSidecarService,
-    WhatsAppProviderTransportAdapter,
-)
+from app.services.whatsapp_native_transport import WhatsAppProviderTransportAdapter
+
+if TYPE_CHECKING:
+    from app.services.whatsapp_sidecar_registry import WhatsAppSidecarClient
+
 
 DEFAULT_WHATSAPP_SIDECAR_SOCKET_PATH = "/run/clawdi-whatsapp/sidecar.sock"
-
-_delivery_sidecar_service: WhatsAppBaileysSidecarService | None = None
 
 
 def resolve_whatsapp_delivery_transport(
     account: ChannelAccount,
 ) -> WhatsAppProviderTransportAdapter | None:
+    client = resolve_whatsapp_sidecar_client(account)
+    return WhatsAppProviderTransportAdapter(client) if client is not None else None
+
+
+def resolve_whatsapp_sidecar_client(account: ChannelAccount) -> WhatsAppSidecarClient | None:
     if account.provider != CHANNEL_PROVIDER_WHATSAPP:
         return None
     config = account.config if isinstance(account.config, dict) else {}
-    connection_mode = config.get("connection_mode")
-    if connection_mode == "baileys_managed":
-        session_id = account.id
-    elif connection_mode == "baileys_custom":
-        session_id = configured_whatsapp_sidecar_session_id(config)
-    else:
-        return None
+    session_id = whatsapp_sidecar_session_id(account)
     if session_id is None:
         return None
 
-    service_config = _configured_delivery_service()
-    if service_config is None:
-        return None
-    session_config = replace(service_config, account_id=session_id)
-    if config.get("sidecar_config_revision") != session_config.binding_revision:
-        return None
+    # Both API and channel workers own a lifecycle-managed control pool.
+    # Resolving a session here does not claim provider ingress ownership.
+    from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_clients
 
-    global _delivery_sidecar_service
-    if _delivery_sidecar_service is None:
-        _delivery_sidecar_service = WhatsAppBaileysSidecarService(service_config)
-    return WhatsAppProviderTransportAdapter(_delivery_sidecar_service.session_client(session_id))
+    pool = get_active_whatsapp_sidecar_clients()
+    if pool is None or config.get("sidecar_config_revision") != pool.session_revision(session_id):
+        return None
+    return pool.session_client(session_id)
 
 
-def _configured_delivery_service() -> WhatsAppBaileysSidecarConfig | None:
-    api_token = settings.channel_whatsapp_baileys_sidecar_token.get_secret_value().strip()
-    if not api_token:
-        return None
-    base_url = settings.channel_whatsapp_baileys_sidecar_url.strip() or None
-    return WhatsAppBaileysSidecarConfig(
-        api_token=api_token,
-        base_url=base_url,
-        unix_socket_path=None if base_url else DEFAULT_WHATSAPP_SIDECAR_SOCKET_PATH,
-    )
+def whatsapp_sidecar_session_id(account: ChannelAccount) -> UUID | None:
+    config = account.config if isinstance(account.config, dict) else {}
+    if config.get("connection_mode") == "baileys_managed":
+        return account.id
+    if config.get("connection_mode") == "baileys_custom":
+        return configured_whatsapp_sidecar_session_id(config)
+    return None
 
 
 def configured_whatsapp_sidecar_session_id(config: Mapping[str, object]) -> UUID | None:

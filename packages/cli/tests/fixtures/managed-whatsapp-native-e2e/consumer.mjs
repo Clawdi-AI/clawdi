@@ -58,7 +58,7 @@ try {
 			status.outboundMessages.some((message) =>
 				message.conversation?.includes("openclaw agent reply"),
 			) &&
-			status.outboundNodes.some((node) => node.tag === "receipt")
+			status.outboundNodes.some((node) => node.tag === "receipt" && node.attrs?.type === "read")
 		);
 	}, "OpenClaw inbound to agent model and stock reply");
 
@@ -162,6 +162,8 @@ function summarizeStatus(status) {
 		modelRequestCount: modelRequests.length,
 		outboundMessageCount: outboundMessages.length,
 		outboundNodeCount: outboundNodes.length,
+		privacyQueries: status.privacyQueries,
+		receipts: outboundNodes.filter((node) => node.tag === "receipt"),
 		assertions: {
 			inboundModelRequest: modelRequests.some((request) =>
 				JSON.stringify(request).includes("openclaw inbound text"),
@@ -169,7 +171,9 @@ function summarizeStatus(status) {
 			inboundAgentReply: outboundMessages.some((message) =>
 				message.conversation?.includes("openclaw agent reply"),
 			),
-			receiptEnvelope: outboundNodes.some((node) => node.tag === "receipt"),
+			receiptEnvelope: outboundNodes.some(
+				(node) => node.tag === "receipt" && node.attrs?.type === "read",
+			),
 			gatewayText: outboundMessages.some(
 				(message) => message.conversation === "openclaw outbound text",
 			),

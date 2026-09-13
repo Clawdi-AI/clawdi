@@ -1,27 +1,32 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
+import json
 import secrets
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol, TypeGuard
 from uuid import UUID
 
 from fastapi import HTTPException, status
 from pydantic import JsonValue, TypeAdapter, ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.channel import (
     CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_ACTIVE,
     CHANNEL_VISIBILITY_PRIVATE,
+    MESSAGE_DIRECTION_OUTBOUND,
     PROVIDER_EVENT_SCOPE_ACCOUNT,
     ChannelAccount,
     ChannelBinding,
     ChannelBindingAlias,
+    ChannelDelivery,
+    ChannelMessage,
 )
 from app.services import whatsapp_delivery_transport
 from app.services.channel_debug_events import record_channel_debug_event
@@ -54,7 +59,9 @@ from app.services.whatsapp_baileys import (
     whatsapp_text_message_proto,
     whatsapp_usync_device_result,
 )
-from app.services.whatsapp_native_transport import WhatsAppProviderMessageEvent
+from app.services.whatsapp_native_transport import (
+    WhatsAppProviderMessageEvent,
+)
 from app.services.whatsapp_runtime_types import WhatsAppOutboundMessage
 
 WHATSAPP_PROVIDER_PAYLOAD_SCHEMA = "clawdi.whatsappBaileysProviderMessage.v1"
@@ -113,6 +120,9 @@ _PROVIDER_TRANSPORTS: dict[UUID, WhatsAppProviderTransport] = {}
 _PROVIDER_TRANSPORT_UNAVAILABLE_SINCE: dict[UUID, float] = {}
 _PROVIDER_TRANSPORTS_STARTED_AT = time.monotonic()
 _PROVIDER_TRANSPORT_RECONNECT_GRACE_SECONDS = 5 * 60
+_WHATSAPP_HEALTH_PROBE_TIMEOUT_SECONDS = 0.5
+_WHATSAPP_HEALTH_REQUEST_TIMEOUT_SECONDS = 2.0
+_WHATSAPP_HEALTH_CONCURRENCY = 4
 
 
 def _transport_clock() -> float:
@@ -145,9 +155,11 @@ def get_whatsapp_provider_transport(account_id: UUID) -> WhatsAppProviderTranspo
     return _PROVIDER_TRANSPORTS.get(account_id)
 
 
-def whatsapp_provider_transport_status(account_id: UUID) -> WhatsAppProviderTransportStatus:
+def whatsapp_provider_transport_status(
+    account_id: UUID, *, transport: WhatsAppProviderTransport | None = None
+) -> WhatsAppProviderTransportStatus:
     now = _transport_clock()
-    transport = get_whatsapp_provider_transport(account_id)
+    transport = transport or get_whatsapp_provider_transport(account_id)
     if transport is None:
         unavailable_since = _PROVIDER_TRANSPORT_UNAVAILABLE_SINCE.get(
             account_id, _PROVIDER_TRANSPORTS_STARTED_AT
@@ -159,7 +171,13 @@ def whatsapp_provider_transport_status(account_id: UUID) -> WhatsAppProviderTran
             reason="provider-transport-unavailable",
             supports_outbound_messages=False,
         )
-    connected = _transport_connected(transport)
+    return _connected_transport_status(account_id, connected=_transport_connected(transport))
+
+
+def _connected_transport_status(
+    account_id: UUID, *, connected: bool
+) -> WhatsAppProviderTransportStatus:
+    now = _transport_clock()
     if connected:
         _PROVIDER_TRANSPORT_UNAVAILABLE_SINCE.pop(account_id, None)
         unavailable_since = now
@@ -174,6 +192,101 @@ def whatsapp_provider_transport_status(account_id: UUID) -> WhatsAppProviderTran
         reason=None if connected else "provider-transport-disconnected",
         supports_outbound_messages=True,
     )
+
+
+def _unavailable_transport_status(
+    account_id: UUID, *, mode: Literal["sidecar", "none"] = "none"
+) -> WhatsAppProviderTransportStatus:
+    now = _transport_clock()
+    unavailable_since = _PROVIDER_TRANSPORT_UNAVAILABLE_SINCE.setdefault(account_id, now)
+    return WhatsAppProviderTransportStatus(
+        available=False,
+        reconnecting=(now - unavailable_since < _PROVIDER_TRANSPORT_RECONNECT_GRACE_SECONDS),
+        mode=mode,
+        reason="provider-transport-unavailable",
+        supports_outbound_messages=mode == "sidecar",
+    )
+
+
+async def whatsapp_account_transport_status(
+    account: ChannelAccount,
+) -> WhatsAppProviderTransportStatus:
+    mode: Literal["sidecar", "none"] = "none"
+    try:
+        client = whatsapp_delivery_transport.resolve_whatsapp_sidecar_client(account)
+        if client is None:
+            config = account.config
+            # Only a legacy registration with no durable sidecar binding may
+            # use local health. A broken declared binding is never legacy.
+            if config is None or (
+                _is_object_dict(config)
+                and not {
+                    "connection_mode",
+                    "sidecar_account_id",
+                    "sidecar_config_revision",
+                }.intersection(config)
+            ):
+                return whatsapp_provider_transport_status(account.id)
+            return _unavailable_transport_status(account.id)
+        mode = "sidecar"
+        async with asyncio.timeout(_WHATSAPP_HEALTH_PROBE_TIMEOUT_SECONDS):
+            health = await client.health()
+    except Exception:  # A bad account or provider response must not fail the health list.
+        return _unavailable_transport_status(account.id, mode=mode)
+    return _connected_transport_status(account.id, connected=health.connected)
+
+
+async def whatsapp_account_transport_statuses(
+    accounts: Sequence[ChannelAccount],
+) -> dict[UUID, WhatsAppProviderTransportStatus]:
+    """Probe a detached read snapshot with fixed workers and one shared deadline."""
+    from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_clients
+
+    whatsapp_accounts = [a for a in accounts if a.provider == CHANNEL_PROVIDER_WHATSAPP]
+    results = {
+        a.id: WhatsAppProviderTransportStatus(
+            available=False,
+            reconnecting=False,
+            mode="none",
+            reason="provider-transport-not-probed",
+            supports_outbound_messages=False,
+        )
+        for a in whatsapp_accounts
+    }
+    pool = get_active_whatsapp_sidecar_clients()
+    sessions: dict[UUID, list[ChannelAccount]] = {}
+    for account in whatsapp_accounts:
+        # Populate only revision-validated clients before reading the pool's
+        # round-robin order. Invalid/legacy bindings perform no provider I/O.
+        try:
+            client = whatsapp_delivery_transport.resolve_whatsapp_sidecar_client(account)
+        except Exception:
+            results[account.id] = _unavailable_transport_status(account.id)
+            continue
+        session_id = whatsapp_delivery_transport.whatsapp_sidecar_session_id(account)
+        if client is None or session_id is None or pool is None:
+            results[account.id] = await whatsapp_account_transport_status(account)
+        else:
+            sessions.setdefault(session_id, []).append(account)
+    order = pool.health_probe_order(set(sessions)) if pool is not None else []
+    pending = iter(order)
+
+    async def probe_accounts() -> None:
+        for session_id in pending:
+            if pool is not None:
+                pool.mark_health_probe_started(session_id)
+            for account in sessions[session_id]:
+                results[account.id] = await whatsapp_account_transport_status(account)
+
+    try:
+        async with asyncio.timeout(_WHATSAPP_HEALTH_REQUEST_TIMEOUT_SECONDS):
+            async with asyncio.TaskGroup() as group:
+                for _ in range(min(_WHATSAPP_HEALTH_CONCURRENCY, len(order))):
+                    group.create_task(probe_accounts())
+    except TimeoutError:
+        # Unstarted/cancelled probes retain not-probed, without changing failure clocks.
+        pass
+    return results
 
 
 class WhatsAppProviderBridge:
@@ -191,8 +304,12 @@ class WhatsAppProviderBridge:
         self._transport_override = transport
         self._forward_iq_inflight = 0
 
-    def _transport(self) -> WhatsAppProviderTransport | None:
-        return self._transport_override or get_whatsapp_provider_transport(self._account_id)
+    def _transport(self, account: ChannelAccount) -> WhatsAppProviderTransport | None:
+        return (
+            self._transport_override
+            or get_whatsapp_provider_transport(self._account_id)
+            or whatsapp_delivery_transport.resolve_whatsapp_delivery_transport(account)
+        )
 
     async def store_outbound_message(
         self,
@@ -202,16 +319,102 @@ class WhatsAppProviderBridge:
     ) -> WhatsAppProviderRelayResult:
         async with self._sessionmaker() as db:
             account = await _load_active_whatsapp_account(db, account_id=self._account_id)
-            queued, delivery = await enqueue_channel_outbound_message(
+            provider_payload = _provider_payload_from_outbound(message)
+            binding = await find_binding(
                 db,
                 account=account,
                 external_chat_id=message.to_jid,
+                bot_agent_link_id=bot_agent_link_id,
+            )
+            if (
+                binding is None
+                or await lock_active_binding_authority(
+                    db, account=account, binding=binding, bot_agent_link_id=bot_agent_link_id
+                )
+                is None
+            ):
+                raise HTTPException(
+                    status_code=403, detail="chat is not paired with this agent link"
+                )
+            semantic_payload = _canonical_outbound_payload(
+                provider_payload, binding.external_chat_id
+            )
+            # A stanza ID identifies the sending operation, not the message
+            # targeted inside an edit proto. Serialize that identity in Postgres.
+            lock_key = json.dumps(
+                [
+                    "whatsapp-outbox",
+                    str(account.id),
+                    str(bot_agent_link_id),
+                    binding.external_chat_id,
+                    message.message_id,
+                ],
+                separators=(",", ":"),
+            )
+            await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(lock_key, 0))))
+            previous = list(
+                (
+                    await db.execute(
+                        select(ChannelMessage)
+                        .where(
+                            ChannelMessage.account_id == account.id,
+                            ChannelMessage.bot_agent_link_id == bot_agent_link_id,
+                            ChannelMessage.external_chat_id == binding.external_chat_id,
+                            ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
+                            ChannelMessage.payload["providerPayload"]["messageId"].as_string()
+                            == message.message_id,
+                        )
+                        .limit(2)
+                        .with_for_update(read=True)
+                    )
+                ).scalars()
+            )
+            if previous:
+                stored = previous[0]
+                stored_payload = (stored.payload or {}).get("providerPayload")
+                stored_semantics = None
+                if isinstance(stored_payload, dict):
+                    try:
+                        stored_semantics = _canonical_outbound_payload(
+                            stored_payload, binding.external_chat_id
+                        )
+                    except HTTPException:
+                        # Invalid retained envelopes cannot authorize a successful replay.
+                        pass
+                if len(previous) != 1 or stored_semantics != semantic_payload:
+                    raise HTTPException(
+                        status_code=409, detail="whatsapp message identity conflict"
+                    )
+                delivery_id = await db.scalar(
+                    select(ChannelDelivery.id).where(
+                        ChannelDelivery.message_id == stored.id,
+                        ChannelDelivery.account_id == account.id,
+                        ChannelDelivery.bot_agent_link_id == bot_agent_link_id,
+                    )
+                )
+                if delivery_id is None:
+                    raise HTTPException(
+                        status_code=409, detail="whatsapp delivery receipt unavailable"
+                    )
+                result = WhatsAppProviderRelayResult(
+                    outcome="queued",
+                    external_chat_id=message.to_jid,
+                    provider_message_id=message.message_id,
+                    channel_message_id=stored.id,
+                    delivery_id=delivery_id,
+                )
+                await db.commit()
+                return result
+            queued, delivery = await enqueue_channel_outbound_message(
+                db,
+                account=account,
+                external_chat_id=binding.external_chat_id,
                 text=message.conversation or "",
                 bot_agent_link_id=bot_agent_link_id,
             )
             details = _outbound_debug_details(message)
             payload = dict(queued.payload or {})
-            payload["providerPayload"] = _provider_payload_from_outbound(message)
+            payload["providerPayload"] = provider_payload
             queued.payload = payload
             await record_channel_debug_event(
                 db,
@@ -294,12 +497,7 @@ class WhatsAppProviderBridge:
                     reason=decision.reason,
                 )
 
-            transport = self._transport()
-            if transport is None:
-                # Ingress registration is process-local and may not yet exist here.
-                # Resolve the same revision-fenced durable session binding used
-                # by ordinary outbound delivery without taking ingress ownership.
-                transport = whatsapp_delivery_transport.resolve_whatsapp_delivery_transport(account)
+            transport = self._transport(account)
             if transport is None:
                 await record_channel_debug_event(
                     db,
@@ -405,7 +603,7 @@ class WhatsAppProviderBridge:
                 targets = _node_target_jids(node)
                 if not targets or any(resolve_jid(target) is None for target in targets):
                     return None
-            transport = self._transport()
+            transport = self._transport(account)
             forwarded: BinaryNode | None = None
             if transport is not None and self._forward_iq_inflight < 5:
                 self._forward_iq_inflight += 1
@@ -605,6 +803,17 @@ async def _active_link_owns_account(
         await lock_active_link_authority(db, account=account, bot_agent_link_id=bot_agent_link_id)
         is not None
     )
+
+
+def _canonical_outbound_payload(payload: object, external_chat_id: str) -> dict[str, JsonValue]:
+    message = _outbound_from_provider_payload(
+        external_chat_id=external_chat_id, text="", provider_payload=payload
+    )
+    canonical = _provider_payload_from_outbound(message)
+    # Signal ciphertext/type and managed routing are rebuilt by the physical
+    # socket. Every forwarded attribute and additional node remains semantic.
+    del canonical["encType"]
+    return canonical
 
 
 def _provider_payload_from_outbound(
@@ -909,10 +1118,14 @@ def _is_authorized_provider_service_iq(node: BinaryNode) -> bool:
     target = attrs.get("to")
     if iq_type is None or xmlns is None or target is None:
         return False
+    # rc13/rc14 S_WHATSAPP_NET is the domain-only JID "@s.whatsapp.net".
+    # Keep the previously accepted literal only for these exact service IQs.
+    if target not in {"@s.whatsapp.net", "s.whatsapp.net"}:
+        return False
     expected_child = {
-        ("set", "w:m", "s.whatsapp.net"): "media_conn",
-        ("get", "privacy", "s.whatsapp.net"): "privacy",
-    }.get((iq_type, xmlns, target))
+        ("set", "w:m"): "media_conn",
+        ("get", "privacy"): "privacy",
+    }.get((iq_type, xmlns))
     content: object = node.get("content")
     if expected_child is None or not _is_object_list(content) or len(content) != 1:
         return False
