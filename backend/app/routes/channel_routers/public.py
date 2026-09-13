@@ -1806,7 +1806,7 @@ async def _channel_health_items(
     }
 
     return [
-        _channel_health_item(
+        await _channel_health_item(
             account=account,
             pending_inbox_stats=pending_inbox_by_account.get(account.id, (0, None)),
             delivery_counts=delivery_counts_by_account.get(account.id, (0, 0, 0)),
@@ -1822,7 +1822,7 @@ async def _channel_health_items(
     ]
 
 
-def _channel_health_item(
+async def _channel_health_item(
     *,
     account: ChannelAccount,
     pending_inbox_stats: tuple[int, datetime | None],
@@ -1864,7 +1864,7 @@ def _channel_health_item(
         last_error_stage = None
         last_error_outcome = None
 
-    native_transport = _native_transport_health(account)
+    native_transport = await _native_transport_health(account)
     whatsapp_transport_connected = (
         account.provider == CHANNEL_PROVIDER_WHATSAPP
         and native_transport is not None
@@ -1950,12 +1950,12 @@ def _channel_health_item(
     )
 
 
-def _native_transport_health(account: ChannelAccount) -> dict[str, Any] | None:
+async def _native_transport_health(account: ChannelAccount) -> dict[str, Any] | None:
     if account.provider != CHANNEL_PROVIDER_WHATSAPP:
         return None
-    from app.services.whatsapp_provider_bridge import whatsapp_provider_transport_status
+    from app.services.whatsapp_provider_bridge import whatsapp_account_transport_status
 
-    return whatsapp_provider_transport_status(account.id).as_dict()
+    return (await whatsapp_account_transport_status(account)).as_dict()
 
 
 def _telegram_bot_username(account: ChannelAccount) -> str | None:

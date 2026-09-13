@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -10,12 +11,10 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from fastapi import HTTPException
-from pydantic import SecretStr
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import app.services.whatsapp_delivery_transport as delivery_transport_module
-from app.core.config import settings
 from app.models.channel import (
     BINDING_STATUS_ARCHIVED,
     CHANNEL_PROVIDER_WHATSAPP,
@@ -49,8 +48,8 @@ from app.services.whatsapp_baileys import (
     whatsapp_text_message_proto,
 )
 from app.services.whatsapp_native_transport import (
+    WhatsAppBaileysSidecarClient,
     WhatsAppBaileysSidecarConfig,
-    WhatsAppBaileysSidecarService,
     WhatsAppProviderMessageEvent,
 )
 from app.services.whatsapp_noise import WhatsAppOutboundMessage
@@ -64,8 +63,23 @@ from app.services.whatsapp_provider_bridge import (
     unregister_whatsapp_provider_transport,
     whatsapp_provider_transport_status,
 )
+from app.services.whatsapp_sidecar_registry import ConfiguredWhatsAppSidecarClientPool
 
 pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
+
+
+@asynccontextmanager
+async def _sidecar_pool(http_client: httpx.AsyncClient, *, token: str = "sidecar-secret"):
+    pool = ConfiguredWhatsAppSidecarClientPool(
+        token,
+        base_url=str(http_client.base_url).rstrip("/"),
+        client_factory=lambda config: WhatsAppBaileysSidecarClient(config, http_client=http_client),
+    )
+    await pool.start()
+    try:
+        yield pool
+    finally:
+        await pool.stop()
 
 
 class _FakeProviderTransport:
@@ -286,17 +300,7 @@ async def test_whatsapp_provider_bridge_queues_exact_proto_before_physical_deliv
         base_url=sidecar_url,
         transport=httpx.MockTransport(handler),
     )
-    sidecar_service = WhatsAppBaileysSidecarService(
-        WhatsAppBaileysSidecarConfig(api_token="sidecar-secret", base_url=sidecar_url),
-        http_client=http_client,
-    )
-    original_token = settings.channel_whatsapp_baileys_sidecar_token
-    original_url = settings.channel_whatsapp_baileys_sidecar_url
-    settings.channel_whatsapp_baileys_sidecar_token = SecretStr("sidecar-secret")
-    settings.channel_whatsapp_baileys_sidecar_url = sidecar_url
-    monkeypatch.setattr(delivery_transport_module, "_delivery_sidecar_service", sidecar_service)
-
-    try:
+    async with http_client, _sidecar_pool(http_client):
         assert get_whatsapp_provider_transport(account.id) is None
         queued = await bridge.store_outbound_message(message, bot_agent_link_id=link.id)
         assert queued.outcome == "queued"
@@ -328,10 +332,6 @@ async def test_whatsapp_provider_bridge_queues_exact_proto_before_physical_deliv
             allow_provider_cardinality,
         )
         delivered_id = await ChannelDeliveryWorker(sessionmaker).run_once()
-    finally:
-        settings.channel_whatsapp_baileys_sidecar_token = original_token
-        settings.channel_whatsapp_baileys_sidecar_url = original_url
-        await http_client.aclose()
 
     assert delivered_id == queued.delivery_id
     assert len(requests) == 1
@@ -398,10 +398,6 @@ async def test_whatsapp_delivery_revision_mismatch_fails_without_sidecar_call(
     channel_agent,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service_config = WhatsAppBaileysSidecarConfig(
-        api_token="sidecar-secret",
-        base_url="http://127.0.0.1:43191",
-    )
     account = build_channel_account(
         owner_user_id=channel_agent.user_id,
         provider=CHANNEL_PROVIDER_WHATSAPP,
@@ -423,34 +419,26 @@ async def test_whatsapp_delivery_revision_mismatch_fails_without_sidecar_call(
     )
     delivery.max_attempts = 1
     await db_session.commit()
-    session_calls: list[UUID] = []
 
-    class FakeDeliveryService:
-        def session_client(self, session_id: UUID):
-            session_calls.append(session_id)
-            raise AssertionError("revision mismatch must not construct a session client")
+    def reject_session(config: WhatsAppBaileysSidecarConfig):
+        raise AssertionError("revision mismatch must not construct a session client")
 
-    monkeypatch.setattr(
-        delivery_transport_module,
-        "_configured_delivery_service",
-        lambda: service_config,
+    pool = ConfiguredWhatsAppSidecarClientPool(
+        "sidecar-secret", base_url="http://127.0.0.1:43191", client_factory=reject_session
     )
-    monkeypatch.setattr(
-        delivery_transport_module,
-        "_delivery_sidecar_service",
-        FakeDeliveryService(),
-    )
-
-    delivered_id = await ChannelDeliveryWorker(
-        async_sessionmaker(db_session.bind, expire_on_commit=False)
-    ).run_once()
+    await pool.start()
+    try:
+        delivered_id = await ChannelDeliveryWorker(
+            async_sessionmaker(db_session.bind, expire_on_commit=False)
+        ).run_once()
+    finally:
+        await pool.stop()
 
     assert delivered_id == delivery.id
     await db_session.refresh(delivery)
     assert delivery.status == "failed"
     assert delivery.attempts == 1
     assert delivery.last_error == "channel_provider_unreachable"
-    assert session_calls == []
 
 
 @pytest.mark.asyncio
@@ -1652,18 +1640,12 @@ async def test_raw_relay_uses_durable_custom_session_without_local_registry(
         assert json.loads(request.content)["node"]["attrs"]["to"] == binding.external_chat_id
         return httpx.Response(200, json={"ok": True})
 
-    async with httpx.AsyncClient(
-        base_url=sidecar_url, transport=httpx.MockTransport(handler)
-    ) as http_client:
-        service = WhatsAppBaileysSidecarService(
-            WhatsAppBaileysSidecarConfig(api_token="sidecar-secret", base_url=sidecar_url),
-            http_client=http_client,
-        )
-        monkeypatch.setattr(
-            settings, "channel_whatsapp_baileys_sidecar_token", SecretStr("sidecar-secret")
-        )
-        monkeypatch.setattr(settings, "channel_whatsapp_baileys_sidecar_url", sidecar_url)
-        monkeypatch.setattr(delivery_transport_module, "_delivery_sidecar_service", service)
+    async with (
+        httpx.AsyncClient(
+            base_url=sidecar_url, transport=httpx.MockTransport(handler)
+        ) as http_client,
+        _sidecar_pool(http_client),
+    ):
         bridge = WhatsAppProviderBridge(
             async_sessionmaker(db_session.bind, expire_on_commit=False), account_id=account.id
         )
@@ -1701,3 +1683,143 @@ async def test_raw_relay_uses_durable_custom_session_without_local_registry(
         assert retired.outcome == "dropped"
         assert retired.reason == "link-authority-missing"
         assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "xmlns,iq_type,child", [("w:m", "set", "media_conn"), ("privacy", "get", "privacy")]
+)
+async def test_provider_iq_uses_control_pool_across_restart_and_token_rotation(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    xmlns: str,
+    iq_type: str,
+    child: str,
+):
+    account, link, _binding = await _seed_whatsapp_link_and_binding(
+        client, db_session, channel_agent, name="wa-cross-process-iq"
+    )
+    session_id = uuid4()
+    sidecar_url = "http://127.0.0.1:43191"
+    revision = WhatsAppBaileysSidecarConfig(
+        api_token="first-secret", base_url=sidecar_url, account_id=session_id
+    ).binding_revision
+    valid_config = {
+        "connection_mode": "baileys_custom",
+        "sidecar_account_id": str(session_id),
+        "sidecar_config_revision": revision,
+    }
+    account.config = valid_config
+    await db_session.commit()
+    requests: list[httpx.Request] = []
+    node = {
+        "tag": "iq",
+        "attrs": {"id": "agent-iq", "type": iq_type, "xmlns": xmlns, "to": "s.whatsapp.net"},
+        "content": [{"tag": child, "attrs": {}}],
+    }
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == f"/v1/sessions/{session_id}/query-iq"
+        assert request.method == "POST"
+        body = json.loads(request.content)
+        assert body["node"]["content"] == node["content"]
+        return httpx.Response(
+            200,
+            json={
+                "node": {
+                    "tag": "iq",
+                    "attrs": {"id": "provider-iq", "type": "result"},
+                    "content": [{"tag": child, "attrs": {}}],
+                }
+            },
+        )
+
+    bridge = WhatsAppProviderBridge(
+        async_sessionmaker(db_session.bind, expire_on_commit=False), account_id=account.id
+    )
+    async with httpx.AsyncClient(
+        base_url=sidecar_url, transport=httpx.MockTransport(handler)
+    ) as http_client:
+        for token in ("first-secret", "rotated-secret"):
+            async with _sidecar_pool(http_client, token=token):
+                result = await bridge.forward_iq(node, str(link.id), bot_agent_link_id=link.id)
+                assert result is not None
+                assert result["attrs"]["id"] == "agent-iq"
+                assert requests[-1].headers["authorization"] == f"Bearer {token}"
+                assert get_whatsapp_provider_transport(account.id) is None
+                count = len(requests)
+                assert (
+                    await bridge.forward_iq(node, str(uuid4()), bot_agent_link_id=link.id) is None
+                )
+                account.config = {**valid_config, "sidecar_config_revision": "stale"}
+                await db_session.commit()
+                assert (
+                    await bridge.forward_iq(node, str(link.id), bot_agent_link_id=link.id) is None
+                )
+                assert len(requests) == count
+                account.config = valid_config
+                await db_session.commit()
+            assert await bridge.forward_iq(node, str(link.id), bot_agent_link_id=link.id) is None
+        assert len(requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_channel_health_probes_custom_session_without_ingress_owner(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+):
+    account, _link, _binding = await _seed_whatsapp_link_and_binding(
+        client, db_session, channel_agent, name="wa-api-worker-health"
+    )
+    session_id = uuid4()
+    sidecar_url = "http://127.0.0.1:43191"
+    account.config = {
+        "connection_mode": "baileys_custom",
+        "sidecar_account_id": str(session_id),
+        "sidecar_config_revision": WhatsAppBaileysSidecarConfig(
+            api_token="sidecar-secret", base_url=sidecar_url, account_id=session_id
+        ).binding_revision,
+    }
+    await db_session.commit()
+    available = True
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/v1/sessions/{session_id}/health"
+        assert request.headers["authorization"] == "Bearer sidecar-secret"
+        if not available:
+            return httpx.Response(503, text="private upstream error")
+        return httpx.Response(
+            200,
+            json={
+                "status": "connected",
+                "connected": True,
+                "registered": True,
+                "sessionId": str(session_id),
+                "advertisedRelease": {
+                    "packageName": "@whiskeysockets/baileys",
+                    "packageVersion": "7.0.0-rc14",
+                    "sourceCommit": "7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a",
+                    "version": [2, 3000, 1043857760],
+                },
+            },
+        )
+
+    async with (
+        httpx.AsyncClient(
+            base_url=sidecar_url, transport=httpx.MockTransport(handler)
+        ) as http_client,
+        _sidecar_pool(http_client),
+    ):
+        for available in (True, False):
+            response = await client.get("/v1/channels/debug/health")
+            assert response.status_code == 200
+            health = next(
+                item for item in response.json()["channels"] if item["accountId"] == str(account.id)
+            )
+            assert health["nativeTransport"]["available"] is available
+            assert health["nativeTransport"]["mode"] == "sidecar"
+            assert "private upstream error" not in response.text
+            assert get_whatsapp_provider_transport(account.id) is None

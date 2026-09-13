@@ -274,10 +274,10 @@ async def channel_debug_health(
         }
         if account.provider == CHANNEL_PROVIDER_WHATSAPP:
             from app.services.whatsapp_provider_bridge import (
-                whatsapp_provider_transport_status,
+                whatsapp_account_transport_status,
             )
 
-            item["nativeTransport"] = whatsapp_provider_transport_status(account.id).as_dict()
+            item["nativeTransport"] = (await whatsapp_account_transport_status(account)).as_dict()
         health.append(item)
     return health
 

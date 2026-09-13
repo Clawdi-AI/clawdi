@@ -54,7 +54,11 @@ from app.services.whatsapp_baileys import (
     whatsapp_text_message_proto,
     whatsapp_usync_device_result,
 )
-from app.services.whatsapp_native_transport import WhatsAppProviderMessageEvent
+from app.services.whatsapp_native_transport import (
+    WhatsAppProviderMessageEvent,
+    WhatsAppProviderTransportAdapter,
+    WhatsAppSidecarError,
+)
 from app.services.whatsapp_runtime_types import WhatsAppOutboundMessage
 
 WHATSAPP_PROVIDER_PAYLOAD_SCHEMA = "clawdi.whatsappBaileysProviderMessage.v1"
@@ -145,9 +149,11 @@ def get_whatsapp_provider_transport(account_id: UUID) -> WhatsAppProviderTranspo
     return _PROVIDER_TRANSPORTS.get(account_id)
 
 
-def whatsapp_provider_transport_status(account_id: UUID) -> WhatsAppProviderTransportStatus:
+def whatsapp_provider_transport_status(
+    account_id: UUID, *, transport: WhatsAppProviderTransport | None = None
+) -> WhatsAppProviderTransportStatus:
     now = _transport_clock()
-    transport = get_whatsapp_provider_transport(account_id)
+    transport = transport or get_whatsapp_provider_transport(account_id)
     if transport is None:
         unavailable_since = _PROVIDER_TRANSPORT_UNAVAILABLE_SINCE.get(
             account_id, _PROVIDER_TRANSPORTS_STARTED_AT
@@ -176,6 +182,29 @@ def whatsapp_provider_transport_status(account_id: UUID) -> WhatsAppProviderTran
     )
 
 
+async def whatsapp_account_transport_status(
+    account: ChannelAccount,
+) -> WhatsAppProviderTransportStatus:
+    client = whatsapp_delivery_transport.resolve_whatsapp_sidecar_client(account)
+    if client is None:
+        return whatsapp_provider_transport_status(account.id)
+    try:
+        await client.health()
+    except WhatsAppSidecarError:
+        now = _transport_clock()
+        unavailable_since = _PROVIDER_TRANSPORT_UNAVAILABLE_SINCE.setdefault(account.id, now)
+        return WhatsAppProviderTransportStatus(
+            available=False,
+            reconnecting=(now - unavailable_since < _PROVIDER_TRANSPORT_RECONNECT_GRACE_SECONDS),
+            mode="sidecar",
+            reason="provider-transport-unavailable",
+            supports_outbound_messages=True,
+        )
+    return whatsapp_provider_transport_status(
+        account.id, transport=WhatsAppProviderTransportAdapter(client)
+    )
+
+
 class WhatsAppProviderBridge:
     """Authorize synthetic Noise traffic and hand it to the physical transport."""
 
@@ -191,8 +220,12 @@ class WhatsAppProviderBridge:
         self._transport_override = transport
         self._forward_iq_inflight = 0
 
-    def _transport(self) -> WhatsAppProviderTransport | None:
-        return self._transport_override or get_whatsapp_provider_transport(self._account_id)
+    def _transport(self, account: ChannelAccount) -> WhatsAppProviderTransport | None:
+        return (
+            self._transport_override
+            or get_whatsapp_provider_transport(self._account_id)
+            or whatsapp_delivery_transport.resolve_whatsapp_delivery_transport(account)
+        )
 
     async def store_outbound_message(
         self,
@@ -294,12 +327,7 @@ class WhatsAppProviderBridge:
                     reason=decision.reason,
                 )
 
-            transport = self._transport()
-            if transport is None:
-                # Ingress registration is process-local and may not yet exist here.
-                # Resolve the same revision-fenced durable session binding used
-                # by ordinary outbound delivery without taking ingress ownership.
-                transport = whatsapp_delivery_transport.resolve_whatsapp_delivery_transport(account)
+            transport = self._transport(account)
             if transport is None:
                 await record_channel_debug_event(
                     db,
@@ -405,7 +433,7 @@ class WhatsAppProviderBridge:
                 targets = _node_target_jids(node)
                 if not targets or any(resolve_jid(target) is None for target in targets):
                     return None
-            transport = self._transport()
+            transport = self._transport(account)
             forwarded: BinaryNode | None = None
             if transport is not None and self._forward_iq_inflight < 5:
                 self._forward_iq_inflight += 1
