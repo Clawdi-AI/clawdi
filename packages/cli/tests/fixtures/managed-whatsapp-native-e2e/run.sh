@@ -71,6 +71,9 @@ trap 'cleanup "$?"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# Exercise cross-UID access before handing captures to the clean backend runner.
+runuser -u egress -- sh -c 'test -r /native-captures && test -x /native-captures'
+
 mkdir -p "${E2E_OUTPUT}" "${EGRESS_CA_DIR}"
 chown -R egress:egress "${EGRESS_HOME}"
 

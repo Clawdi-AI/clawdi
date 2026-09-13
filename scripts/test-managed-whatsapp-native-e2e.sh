@@ -79,6 +79,9 @@ fi
 
 run_log_root="$(mktemp -d)"
 capture_root="$(mktemp -d "${REPO_ROOT}/.wa-native-captures.XXXXXX")"
+# Only synthetic message envelopes are exported here. The clean runner's UID
+# may differ from the CI user that created this directory.
+chmod 0755 "${capture_root}"
 for runtime in "${RUNTIMES[@]}"; do
 	cidfile="${run_log_root}/${runtime}.cid"
 	docker run --rm \
