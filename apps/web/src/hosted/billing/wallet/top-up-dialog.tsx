@@ -87,7 +87,6 @@ export function TopUpDialog({
 	const runAction = useActionLock();
 	const [dollars, setDollars] = useState(String(TOPUP_DEFAULT_CENTS / 100));
 	const [amountTouched, setAmountTouched] = useState(false);
-	const [reuseSavedCards, setReuseSavedCards] = useState(false);
 	const [paymentSubmitting, setPaymentSubmitting] = useState(false);
 	useSettingsEditState({ dirty: false, busy: open && (topUp.isPending || paymentSubmitting) });
 	// One idempotency key per top-up ATTEMPT, reused across a retry of the same
@@ -142,7 +141,6 @@ export function TopUpDialog({
 			const result = await topUp.execute({
 				body: {
 					amount_cents: amountCents,
-					saved_payment_method_reuse: reuseSavedCards ? "wallet_purchase_v1" : undefined,
 				},
 				idempotencyKey: topupKeyRef.current,
 			});
@@ -296,15 +294,6 @@ export function TopUpDialog({
 						</p>
 					</div>
 					<div className="flex items-start gap-3 rounded-lg border p-3">
-						<Checkbox
-							id="topup-reuse-saved-cards"
-							checked={reuseSavedCards}
-							disabled={topUp.isPending}
-							onCheckedChange={(checked) => {
-								setReuseSavedCards(checked === true);
-								topupKeyRef.current = null;
-							}}
-						/>
 						<div className="space-y-1">
 							<Label htmlFor="topup-reuse-saved-cards">
 								Use cards already saved to my Clawdi account for this payment
