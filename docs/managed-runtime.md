@@ -682,6 +682,26 @@ fallback, so no separate restart or channel-specific reconcile state machine is
 required. Creating a pair code emits this signal only when that request also
 creates an AgentLink or repairs missing WhatsApp credential material.
 
+Hermes WhatsApp withdrawal removes its projected enable flags only when the
+previous committed bundle belongs to the same deployment and instance, its
+projected session path still matches native configuration, and no pairing file
+survives managed credential cleanup. Only unchanged `true` flags are removed;
+native pairing, alternate session paths, explicit local disables, and unrelated
+channel policies are preserved. An empty projection alone never authorizes
+native channel deletion.
+
+CLI 0.14.79–0.14.81 could remove the managed session path and credentials while
+retaining both enable flags. If that empty bundle has already replaced committed
+authority, an upgrade cannot reconstruct historical ownership. Recovery requires
+an authenticated pre-withdrawal application record and a compare-and-swap native
+configuration repair under operator authority; timestamps, missing credentials,
+and repeated gateway restarts are insufficient evidence. Do not restore revoked
+bindings or overwrite current applied authority to manufacture cleanup intent.
+
+Done: `scripts/test.sh cli src/runtime/manifest-reconciliation.test.ts -t 'withdraws archived Hermes'`
+verifies bundle add/update/archive, native config loading, local ownership, and
+idempotent reconciliation in the disposable Docker runner.
+
 Each WhatsApp binding carries Link-scoped agent-token and egress-capability
 secret references plus a credential descriptor containing its id, explicit
 `credsSecretRef`, and public auth-certificate material. The matching serialized

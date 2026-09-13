@@ -28,6 +28,7 @@ import {
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
 } from "./applied-state";
+import { applyRuntimeBundleChannelsToManifestLoad } from "./channels";
 import {
 	captureComponentActivations,
 	observeComponents,
@@ -44,6 +45,7 @@ import { hostedHermesSkillSourceMatches } from "./hosted-hermes-skill";
 import { createOpenClawHostedContext } from "./hosted-openclaw-context";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
+import { MANAGED_BAILEYS_STATIC_PATCH_TARGETS } from "./managed-baileys-compat";
 import {
 	managedSkillReservationLedgerPath,
 	managedSkillReservationState,
@@ -65,6 +67,7 @@ import {
 	OFFICIAL_INSTALL_URLS,
 	officialInstallArgs,
 } from "./manifest-contract";
+import { runtimeCommandCurrentRevision } from "./manifest-install";
 import { openClawGatewayHostedPatch } from "./manifest-providers";
 import {
 	AGENT_PLUGINS_SCHEMA_1_0_0,
@@ -80,6 +83,7 @@ import {
 	runtimeRunConfigPath,
 	writeRuntimeRunConfig,
 } from "./run-config";
+import { HERMES_DASHBOARD_BUILD_REVISION_FILE } from "./runtime-systemd-reconciliation";
 import {
 	canonicalSecretRefSchema,
 	normalizeSecretValues,
@@ -2965,6 +2969,220 @@ fi
 			expect(revisedSdkCalls[sdk]).toBeGreaterThan(count);
 		}
 	});
+
+	test.each(["managed", "native-path", "native-pairing", "local-disabled"])(
+		"withdraws archived Hermes WhatsApp through committed bundle reconciliation (%s)",
+		(ownership) => {
+			const paths = tempRuntimePaths();
+			const command = writeFakeHermesCli(paths);
+			const webDist = join(paths.userHome, ".hermes", "hermes-agent", "hermes_cli", "web_dist");
+			mkdirSync(webDist, { recursive: true });
+			writeFileSync(join(webDist, "index.html"), "<html>dashboard fixture</html>");
+			const revision = runtimeCommandCurrentRevision(command, paths.userHome, paths.userHome);
+			if (!revision) throw new Error("Hermes fixture command revision is missing");
+			writeFileSync(join(webDist, HERMES_DASHBOARD_BUILD_REVISION_FILE), revision);
+			const bridge = join(paths.userHome, ".hermes", "hermes-agent", "scripts", "whatsapp-bridge");
+			const baileys = join(bridge, "node_modules", "@whiskeysockets", "baileys");
+			const pristineBaileys = join(
+				import.meta.dir,
+				"../../../whatsapp-baileys-sidecar/node_modules/baileys",
+			);
+			for (const target of MANAGED_BAILEYS_STATIC_PATCH_TARGETS) {
+				const destination = join(baileys, target.relativePath);
+				mkdirSync(dirname(destination), { recursive: true });
+				cpSync(join(pristineBaileys, target.relativePath), destination);
+			}
+			cpSync(join(pristineBaileys, "package.json"), join(baileys, "package.json"));
+			writeFileSync(
+				join(bridge, "package.json"),
+				JSON.stringify({ name: "hermes-whatsapp-bridge" }),
+			);
+			const configPath = join(paths.userHome, ".hermes", "config.yaml");
+			const native = {
+				telegram: { enabled: true, allowed_users: ["owner"] },
+				discord: { enabled: true, require_mention: false },
+				whatsapp: { dm_policy: "pairing" },
+				platforms: { whatsapp: { extra: { group_policy: "disabled" } } },
+			};
+			writeFileSync(configPath, JSON.stringify(native));
+			const accountKey = "clawdi_50000000000040008000000000000005";
+			const linkId = "60000000-0000-4000-8000-000000000006";
+			const credentialId = "80000000-0000-4000-8000-000000000011";
+			const agentRef = `secret://channels/whatsapp/${accountKey}/links/${linkId}/agent-token`;
+			const credentialRef = `secret://channels/whatsapp/${accountKey}/credentials/${credentialId}/creds-json`;
+			const binding = {
+				provider: "whatsapp",
+				accountId: "50000000-0000-4000-8000-000000000005",
+				accountKey,
+				linkId,
+				agentTokenSecretRef: agentRef,
+				credential: {
+					id: credentialId,
+					credsSecretRef: credentialRef,
+					authCert: {
+						SERIAL: 7,
+						ISSUER: "clawdi",
+						PUBLIC_KEY: { type: "Buffer", data: Buffer.alloc(32, 7).toString("base64") },
+					},
+				},
+			};
+			const engine = installCachedTestEgressEngine(paths, "12.2.3-channel-archive");
+			const loadFor = (active: boolean, rotated = false) => {
+				const parsed = parseHostedRuntimeBundleV2(
+					{
+						schemaVersion: "clawdi.hosted-runtime.bundle.v2",
+						sourceRevision: (active ? (rotated ? "c" : "a") : "b").repeat(64),
+						manifest: hostedHermesManifestFixture({
+							providers: {},
+							runtimes: {
+								hermes: {
+									enabled: true,
+									install: { source: "official" },
+									providerMode: "unmanaged",
+									provider_ids: [],
+									run: { args: ["gateway", "run"] },
+									services: {
+										dashboard: {
+											args: ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"],
+										},
+									},
+								},
+							},
+						}),
+						channelBindings: active ? [binding] : [],
+						secretValues: {
+							...TEST_HOSTED_SECRET_VALUES,
+							"secret://runtime/hermes/dashboard-password": "test-dashboard-password",
+							"secret://runtime/hermes/dashboard-session-secret": "test-dashboard-session",
+							...(active
+								? {
+										[agentRef]: "test-agent-token",
+										[credentialRef]: JSON.stringify({
+											registered: true,
+											revision: rotated ? 2 : 1,
+										}),
+									}
+								: {}),
+						},
+					},
+					"test://whatsapp-archive",
+				);
+				const projected = applyRuntimeBundleChannelsToManifestLoad(parsed, paths);
+				return {
+					...projected,
+					manifest: { ...projected.manifest, egressEngine: engine },
+					applyContext: manifestLoad(projected.manifest, "unused").applyContext,
+				};
+			};
+			const converge = (load: RuntimeManifestLoad) => {
+				const result = convergeRuntimeManifest(load, paths, {
+					cacheLastGood: false,
+					commitAuthority: (convergence, authority) =>
+						commitTestRuntimeAuthority(load, paths, convergence, authority),
+					systemdApply: {
+						activateEgressPrerequisite: successfulPrerequisiteActivation,
+						activate: successfulPrerequisiteActivation,
+					},
+				});
+				expect(result.installErrors).toEqual([]);
+				return result;
+			};
+			const active = loadFor(true);
+			const nativeEnabled = () =>
+				JSON.parse(
+					execFileSync(
+						join(paths.userHome, ".hermes", "hermes-agent", "venv", "bin", "python"),
+						[
+							"-c",
+							"import json; from gateway.config import load_gateway_config; print(json.dumps({p.value: c.enabled for p, c in load_gateway_config().platforms.items()}))",
+						],
+						{
+							encoding: "utf8",
+							timeout: 15_000,
+							env: {
+								PATH: process.env.PATH,
+								HOME: paths.userHome,
+								HERMES_HOME: join(paths.userHome, ".hermes"),
+							},
+						},
+					),
+				);
+			converge(active);
+			const credsPath = join(
+				paths.userHome,
+				".hermes",
+				"platforms",
+				"whatsapp",
+				"session",
+				"creds.json",
+			);
+			expect(existsSync(credsPath)).toBe(true);
+			const configured = parseYaml(readFileSync(configPath, "utf8"));
+			expect(configured.whatsapp.enabled).toBe(true);
+			expect(configured.platforms.whatsapp.enabled).toBe(true);
+			expect(configured.platforms.whatsapp.extra.session_path).toBe(dirname(credsPath));
+			expect(nativeEnabled().whatsapp).toBe(true);
+			converge(loadFor(true, true));
+			expect(JSON.parse(readFileSync(credsPath, "utf8")).revision).toBe(2);
+			const nativePairing = JSON.stringify({ registered: true, me: { id: "native-owner" } });
+			if (ownership === "native-path") {
+				configured.platforms.whatsapp.extra.session_path = join(paths.userHome, "personal-pairing");
+				mkdirSync(configured.platforms.whatsapp.extra.session_path, { recursive: true });
+				writeFileSync(
+					join(configured.platforms.whatsapp.extra.session_path, "creds.json"),
+					nativePairing,
+				);
+			} else if (ownership === "native-pairing") {
+				writeFileSync(credsPath, nativePairing);
+			} else if (ownership === "local-disabled") {
+				configured.whatsapp.enabled = false;
+				configured.platforms.whatsapp.enabled = false;
+			}
+			writeFileSync(configPath, JSON.stringify(configured));
+			const gatewayBefore = readSystemdUnitSnapshot(paths).user.get("hermes-gateway.service");
+			expect(gatewayBefore).toBeDefined();
+			const archived = loadFor(false);
+			converge(archived);
+			const gatewayAfter = readSystemdUnitSnapshot(paths).user.get("hermes-gateway.service");
+			expect(gatewayAfter).toBeDefined();
+			expect(gatewayAfter).not.toBe(gatewayBefore);
+			expect(existsSync(credsPath)).toBe(ownership === "native-pairing");
+			const removed = parseYaml(readFileSync(configPath, "utf8"));
+			expect(nativeEnabled()).toEqual(
+				expect.objectContaining({
+					telegram: true,
+					discord: true,
+					whatsapp: ownership === "native-path" || ownership === "native-pairing",
+				}),
+			);
+			expect(removed.telegram).toEqual(native.telegram);
+			expect(removed.discord).toEqual(native.discord);
+			expect(removed.whatsapp.dm_policy).toBe("pairing");
+			expect(removed.platforms.whatsapp.extra.group_policy).toBe("disabled");
+			if (ownership === "native-path" || ownership === "native-pairing") {
+				expect(
+					readFileSync(
+						join(configured.platforms.whatsapp.extra.session_path, "creds.json"),
+						"utf8",
+					),
+				).toBe(nativePairing);
+				expect(removed.whatsapp).toEqual(configured.whatsapp);
+				expect(removed.platforms.whatsapp).toEqual(configured.platforms.whatsapp);
+			} else {
+				expect(removed.whatsapp.enabled).toBe(ownership === "local-disabled" ? false : undefined);
+				expect(removed.platforms.whatsapp.enabled).toBe(
+					ownership === "local-disabled" ? false : undefined,
+				);
+				expect(removed.platforms.whatsapp.extra).not.toHaveProperty("session_path");
+			}
+			const run = JSON.parse(readFileSync(runtimeRunConfigPath("hermes", paths), "utf8"));
+			expect(Object.keys(run.env).filter((key) => key.startsWith("WHATSAPP_"))).toEqual([]);
+			const beforeRetry = readFileSync(configPath, "utf8");
+			converge(archived);
+			expect(readFileSync(configPath, "utf8")).toBe(beforeRetry);
+			expect(readSystemdUnitSnapshot(paths).user.get("hermes-gateway.service")).toBe(gatewayAfter);
+		},
+	);
 
 	test("replaces the selected Hermes provider with secret refs and stale cleanup", () => {
 		const paths = tempRuntimePaths();

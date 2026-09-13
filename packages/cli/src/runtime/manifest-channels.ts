@@ -434,10 +434,23 @@ export function applyHostedChannelProjection(
 		if (
 			!hermesWhatsAppAuthDir &&
 			previousAuthDir &&
+			!existsSync(join(previousAuthDir, "creds.json")) &&
 			getHermesRawConfigValue(hermesConfig, "platforms.whatsapp.extra.session_path").value ===
 				previousAuthDir
 		) {
-			patch.platforms = { whatsapp: { extra: { session_path: null } } };
+			// Withdraw only unchanged fields from the committed managed projection.
+			// A different path or surviving native pairing retains native ownership.
+			if (getHermesRawConfigValue(hermesConfig, "whatsapp.enabled").value === true) {
+				patch.whatsapp = { enabled: null };
+			}
+			patch.platforms = {
+				whatsapp: {
+					...(getHermesRawConfigValue(hermesConfig, "platforms.whatsapp.enabled").value === true
+						? { enabled: null }
+						: {}),
+					extra: { session_path: null },
+				},
+			};
 		}
 		return applyHermesChannelConfig(hermesConfig, patch);
 	}
