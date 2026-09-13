@@ -344,7 +344,8 @@ def test_group_cipher_backend_persists_sender_key_state_across_instances():
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_inbox_pump_keeps_failed_delivery_unacked():
+@pytest.mark.parametrize("error_type", [RuntimeError, ValueError])
+async def test_whatsapp_inbox_pump_keeps_failed_delivery_unacked(error_type):
     events = [
         WhatsAppInboxPumpEvent(
             sequence=1,
@@ -379,7 +380,7 @@ async def test_whatsapp_inbox_pump_keeps_failed_delivery_unacked():
         acked.append(through_sequence)
 
     async def deliver(_prepared: WhatsAppPreparedInboundDelivery):
-        raise RuntimeError("synthetic signal failure")
+        raise error_type("synthetic signal failure")
 
     pump = WhatsAppInboxPump(
         tenant_id="tenant-a",
@@ -1083,7 +1084,10 @@ async def test_respond_to_iq_forwarding_policy_matches_msg_router():
         forward_iq=forward,
     )
     assert null_forward["attrs"]["id"] == "null-forward"
-    assert "content" not in null_forward
+    assert null_forward["attrs"]["type"] == "error"
+    assert null_forward["content"] == [
+        {"tag": "error", "attrs": {"code": "503", "text": "service-unavailable"}}
+    ]
 
 
 @pytest.mark.asyncio

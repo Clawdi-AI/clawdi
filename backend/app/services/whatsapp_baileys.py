@@ -327,6 +327,12 @@ class WhatsAppInboxPump:
         for event in events:
             try:
                 prepared = prepare_whatsapp_inbound_delivery(event)
+            except ValueError as exc:
+                errors += 1
+                acked_through = event.sequence
+                await self._record_error(exc, event=event, stage="inbox_delivery_prepare")
+                continue
+            try:
                 await self._record_debug(
                     stage="inbox_delivery_prepare",
                     outcome="resolved",
@@ -352,10 +358,6 @@ class WhatsAppInboxPump:
                 )
                 delivered += 1
                 acked_through = event.sequence
-            except ValueError as exc:
-                errors += 1
-                acked_through = event.sequence
-                await self._record_error(exc, event=event, stage="inbox_delivery_prepare")
             except Exception as exc:  # noqa: BLE001 - delivery failures must leave rows unacked.
                 errors += 1
                 await self._record_error(exc, event=event, stage="inbox_delivery_push")
@@ -1416,17 +1418,20 @@ async def respond_to_iq(
             resolve_recipient_lid=resolve_recipient_lid,
         )
 
-    if (
-        isinstance(xmlns, str)
-        and (
-            (iq_type == "get" and xmlns in FORWARDABLE_GET_XMLNS)
-            or (iq_type == "set" and xmlns in FORWARDABLE_SET_XMLNS)
-        )
-        and forward_iq is not None
+    if isinstance(xmlns, str) and (
+        (iq_type == "get" and xmlns in FORWARDABLE_GET_XMLNS)
+        or (iq_type == "set" and xmlns in FORWARDABLE_SET_XMLNS)
     ):
         forwarded = await _maybe_forward_iq(forward_iq, req, tenant_id)
         if forwarded is not None:
             return forwarded
+        # Baileys assertNodeErrorFree reads the error child. An empty result
+        # would report success for a provider operation that never completed.
+        result = _iq_result(
+            req, [{"tag": "error", "attrs": {"code": "503", "text": "service-unavailable"}}]
+        )
+        result["attrs"] = {**_attrs(result), "type": "error"}
+        return result
 
     return _iq_result(req)
 

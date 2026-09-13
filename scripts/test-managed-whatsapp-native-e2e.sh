@@ -19,6 +19,7 @@ esac
 artifact_root="${E2E_ARTIFACT_DIR:-}"
 remove_artifact_root=false
 run_log_root=""
+capture_root=""
 run_pids=()
 run_cidfiles=()
 cleanup() {
@@ -37,6 +38,9 @@ cleanup() {
 	done
 	if [[ -n "${run_log_root}" ]]; then
 		rm -rf "${run_log_root}"
+	fi
+	if [[ -n "${capture_root}" ]]; then
+		rm -rf "${capture_root}"
 	fi
 	if [[ "${remove_artifact_root}" == true && -n "${artifact_root}" ]]; then
 		rm -rf "${artifact_root}"
@@ -74,14 +78,20 @@ if [[ "${MODE}" == "--build-only" ]]; then
 fi
 
 run_log_root="$(mktemp -d)"
+capture_root="$(mktemp -d "${REPO_ROOT}/.wa-native-captures.XXXXXX")"
+# Only synthetic message envelopes are exported here. The clean runner's UID
+# may differ from the CI user that created this directory.
+chmod 0755 "${capture_root}"
 for runtime in "${RUNTIMES[@]}"; do
 	cidfile="${run_log_root}/${runtime}.cid"
 	docker run --rm \
 		--cidfile "${cidfile}" \
 		--network none \
+		--cpus 2 --memory 3g --memory-swap 3g --pids-limit 1024 \
 		--cap-add NET_ADMIN \
 		--add-host web.whatsapp.com:127.0.0.1 \
 		--tmpfs /tmp:rw,exec,size=1073741824 \
+		--volume "${capture_root}:/native-captures" \
 		--env "E2E_RUNTIME=${runtime}" \
 		"${IMAGE_PREFIX}:${runtime}-local" \
 		>"${run_log_root}/${runtime}.log" 2>&1 &
@@ -98,5 +108,11 @@ for index in "${!RUNTIMES[@]}"; do
 	cat "${run_log_root}/${runtime}.log"
 done
 run_pids=()
+if [[ "${status}" == 0 ]]; then
+	if ! "${REPO_ROOT}/scripts/test.sh" backend tests/whatsapp_native_outbound_e2e.py \
+		--whatsapp-native-captures "../${capture_root#"${REPO_ROOT}/"}"; then
+		status=1
+	fi
+fi
 cleanup "${status}"
 exit "${status}"

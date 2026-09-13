@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
@@ -286,29 +287,36 @@ class WhatsAppBaileysSidecarClient:
         return True
 
     async def health(self) -> WhatsAppSidecarHealth:
-        payload = await self._request_json("GET", _HEALTH_PATH)
-        expected_account_id = self._config.account_id
-        raw_session_id = payload.get("sessionId")
         try:
-            session_matches = (
-                expected_account_id is not None
-                and isinstance(raw_session_id, str)
-                and UUID(raw_session_id) == expected_account_id
+            payload = await self._request_json("GET", _HEALTH_PATH)
+            expected_account_id = self._config.account_id
+            raw_session_id = payload.get("sessionId")
+            try:
+                session_matches = (
+                    expected_account_id is not None
+                    and isinstance(raw_session_id, str)
+                    and UUID(raw_session_id) == expected_account_id
+                )
+            except ValueError:
+                session_matches = False
+            if not session_matches or payload.get("advertisedRelease") != _EXPECTED_BAILEYS_RELEASE:
+                raise WhatsAppSidecarProtocolError("unexpected Baileys sidecar identity")
+            connected = _required_bool(payload, "connected")
+            health = WhatsAppSidecarHealth(
+                status=_runtime_status(payload.get("status")),
+                connected=connected,
+                registered=_required_bool(payload, "registered"),
+                account_jid=_sidecar_account_jid(payload.get("user")),
+                account_lid=_sidecar_account_lid(payload.get("user")),
+                last_disconnect_reason=_sidecar_disconnect_reason(
+                    payload.get("lastDisconnectReason")
+                ),
             )
-        except ValueError:
-            session_matches = False
-        if not session_matches or payload.get("advertisedRelease") != _EXPECTED_BAILEYS_RELEASE:
-            raise WhatsAppSidecarProtocolError("unexpected Baileys sidecar identity")
-        connected = _required_bool(payload, "connected")
-        self._connected = connected
-        return WhatsAppSidecarHealth(
-            status=_runtime_status(payload.get("status")),
-            connected=connected,
-            registered=_required_bool(payload, "registered"),
-            account_jid=_sidecar_account_jid(payload.get("user")),
-            account_lid=_sidecar_account_lid(payload.get("user")),
-            last_disconnect_reason=_sidecar_disconnect_reason(payload.get("lastDisconnectReason")),
-        )
+            self._connected = health.connected
+            return health
+        except (WhatsAppSidecarError, asyncio.CancelledError):
+            self._connected = False
+            raise
 
     async def capabilities(self) -> WhatsAppSidecarCapabilities:
         payload = await self._request_json("GET", _CAPABILITIES_PATH, session_scoped=False)
