@@ -10161,17 +10161,17 @@ exit 64
 		writeTestRuntimeAppliedState(paths, removed, removedConvergence);
 		const removedHermesConfig = readHermesConfigYaml(home);
 		expect(removedHermesConfig).not.toHaveProperty("platforms.whatsapp.extra.session_path");
+		expect(removedHermesConfig).not.toHaveProperty("whatsapp.enabled");
+		expect(removedHermesConfig).not.toHaveProperty("platforms.whatsapp.enabled");
 		expect(removedHermesConfig).toHaveProperty("whatsapp", {
 			user_owned: "keep-whatsapp",
 			dm_policy: "allowlist",
 			allow_from: ["15550000001"],
 			group_policy: "allowlist",
 			group_allow_from: ["120363000000000000@g.us"],
-			enabled: true,
 		});
 		expect(removedHermesConfig).toHaveProperty("platforms.whatsapp", {
 			custom: "keep-platform",
-			enabled: true,
 			extra: {
 				custom_extra: "keep-extra",
 				dm_policy: "allowlist",
