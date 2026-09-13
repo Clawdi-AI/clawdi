@@ -17,13 +17,13 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import { StripeCheckoutDialog } from "@/hosted/billing/components/stripe-checkout-dialog";
+import type { WalletTopupResult } from "@/hosted/billing/contracts";
 import { isIdempotencyKeyReusedError, normalizeBillingError } from "@/hosted/billing/errors";
 import { formatCents, usdInputToCents } from "@/hosted/billing/format";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import { useSensitiveTopUp } from "@/hosted/billing/sensitive-actions";
-import type { PaymentIntentClientSecret } from "@/hosted/billing/stripe-client-secret";
 import {
-	type CheckoutSessionClientSecret,
+	type PaymentIntentClientSecret,
 	walletTopupCheckoutClientSecret,
 } from "@/hosted/billing/stripe-client-secret";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
@@ -89,8 +89,8 @@ export function TopUpDialog({
 }) {
 	const topUp = useSensitiveTopUp();
 	const billing = useBillingClient();
-	const [checkoutSecret, setCheckoutSecret] = useState<CheckoutSessionClientSecret | null>(null);
-	const checkoutIdRef = useRef<string | null>(null);
+	const [checkout, setCheckout] = useState<WalletTopupResult | null>(null);
+	const checkoutSecret = checkout ? walletTopupCheckoutClientSecret(checkout) : null;
 	const qc = useQueryClient();
 	const runAction = useActionLock();
 	const [step, setStep] = useState<Step>("amount");
@@ -124,8 +124,7 @@ export function TopUpDialog({
 	function reset() {
 		setStep("amount");
 		setClientSecret(null);
-		setCheckoutSecret(null);
-		checkoutIdRef.current = null;
+		setCheckout(null);
 		setAmountTouched(false);
 		setPaymentSubmitting(false);
 		topupKeyRef.current = null;
@@ -155,10 +154,8 @@ export function TopUpDialog({
 				idempotencyKey: topupKeyRef.current,
 			});
 			paymentReferenceRef.current = result.payment_intent_id ?? null;
-			const nextCheckoutSecret = walletTopupCheckoutClientSecret(result);
-			if (nextCheckoutSecret && result.checkout_session_id) {
-				checkoutIdRef.current = result.checkout_session_id;
-				setCheckoutSecret(nextCheckoutSecret);
+			if (walletTopupCheckoutClientSecret(result) && result.checkout_session_id) {
+				setCheckout(result);
 				return;
 			}
 			handleTopupStartResult(result, {
@@ -193,7 +190,7 @@ export function TopUpDialog({
 	// rather than closing on an unconfirmed payment.
 	function onPaid(status: PaymentOutcome) {
 		setPaymentSubmitting(false);
-		completeTopup(status === "succeeded" ? "succeeded" : "processing", {
+		completeTopup(status, {
 			queryClient: qc,
 			resetAttempt: () => {
 				topupKeyRef.current = null;
@@ -205,7 +202,7 @@ export function TopUpDialog({
 	}
 
 	async function onCheckoutPaid() {
-		const checkoutId = checkoutIdRef.current;
+		const checkoutId = checkout?.checkout_session_id;
 		if (!checkoutId) return;
 		try {
 			const result = await billing.getWalletTopupCheckout(checkoutId);
@@ -219,7 +216,7 @@ export function TopUpDialog({
 				onOpenChange(false);
 				return;
 			}
-			onPaid(result.status === "succeeded" ? "succeeded" : "processing");
+			onPaid(result.status);
 		} catch {
 			// Confirmation already succeeded; a refresh failure must never invite a second charge.
 			onPaid("processing");

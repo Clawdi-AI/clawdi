@@ -24,15 +24,6 @@ RUN apt-get update \
 		rsync \
 	&& rm -rf /var/lib/apt/lists/*
 
-ARG INSTALL_CHROMIUM_DEPS=false
-RUN if [ "$INSTALL_CHROMIUM_DEPS" = true ]; then \
-    apt-get update && apt-get install -y --no-install-recommends \
-      libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libdrm2 libdbus-1-3 \
-      libxkbcommon0 libatspi2.0-0 libx11-6 libxcomposite1 libxdamage1 libxext6 \
-      libxfixes3 libxrandr2 libgbm1 libasound2 libcups2 libpango-1.0-0 libcairo2 \
-      fonts-liberation && rm -rf /var/lib/apt/lists/*; \
-    fi
-
 RUN groupadd --gid 1000 clawdi-test \
 	&& useradd --uid 1000 --gid 1000 --home-dir /tmp/clawdi-home --no-create-home clawdi-test \
 	&& install -d -m 0755 -o clawdi-test -g clawdi-test /etc/clawdi
