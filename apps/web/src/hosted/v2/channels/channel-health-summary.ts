@@ -72,6 +72,12 @@ export function channelHealthSummary(health: ChannelHealthItem): ChannelHealthSu
 		};
 	}
 
+	if (health.reasons?.includes("native_transport_not_probed")) {
+		return {
+			label: "Status unknown",
+			detail: "This channel's connection has not been checked yet.",
+		};
+	}
 	if (health.reasons?.includes("native_transport_reconnecting")) {
 		return {
 			label: "Reconnecting",

@@ -1897,7 +1897,12 @@ def _channel_health_item(
         and last_error_at >= recent_error_cutoff
     ):
         reasons.append("recent_error")
-    if account.provider == CHANNEL_PROVIDER_WHATSAPP and not whatsapp_transport_connected:
+    if (
+        native_transport is not None
+        and native_transport.get("reason") == "provider-transport-not-probed"
+    ):
+        reasons.append("native_transport_not_probed")
+    elif account.provider == CHANNEL_PROVIDER_WHATSAPP and not whatsapp_transport_connected:
         reasons.append(
             "native_transport_reconnecting"
             if whatsapp_transport_reconnecting

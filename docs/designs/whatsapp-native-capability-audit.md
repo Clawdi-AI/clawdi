@@ -42,8 +42,16 @@ inferred from a passing rc14 sidecar test.
   Custom session IDs remain distinct from product account IDs.
   Health lists release their read/auth database session before network I/O.
   Four fixed workers share a two-second probe budget; each account has a
-  0.5-second deadline. Unstarted, failed and cancelled probes remain unknown/
-  unavailable, even with an older green local registration. This bounds the
+  0.5-second deadline. Declared managed/custom bindings must resolve against
+  the current revision and session before any health is trusted; an older green
+  registration cannot rescue an invalid binding. Only registrations with no
+  declared sidecar binding retain the legacy local-health path.
+  Started probes move to the back of the existing pool's ordered session-client
+  dictionary. Repeated requests on that pool therefore reach an eligible tail
+  behind a slow prefix, without a tenant cursor cache or timestamp rotation.
+  Fairness resets with the pool lifecycle; there is no global cross-worker cursor.
+  Unstarted/cancelled probes report `provider-transport-not-probed` (Status
+  unknown), do not advance failure clocks, and differ from a failed probe. This bounds the
   network phase; database snapshot queries keep their existing database limits.
   Only a fully validated health response updates the client's connected flag;
   protocol errors/cancellation clear it and successful recovery resets the
@@ -51,6 +59,22 @@ inferred from a passing rc14 sidecar test.
 - Durable outbox failure now propagates through Noise handling, closing the
   websocket without a success message ACK. A local queue ACK still does not
   claim delivery to a physical recipient.
+  That change alone did not prevent ACK-loss replays after a successful commit.
+  The canonical producer now holds a PostgreSQL transaction advisory lock for
+  `(account, Link, canonical chat, stanza ID)` and looks up the original ID in
+  the retained `providerPayload`, not the mutable physical `provider_message_id`.
+  An identical proto returns the existing Message/Delivery receipt; a different
+  proto or ambiguous historical duplicates fails with a conflict. A retransmission's
+  encryption/transport metadata does not overwrite the first accepted envelope.
+  This reuses existing payload rows and works across processes; it adds no process
+  cache, permanent receipt table, database uniqueness constraint or backfill.
+  Its guarantee ends when retention deletes the original row. Previously queued
+  duplicates are not automatically deleted, and physical delivery is not exactly-once.
+  Standard Baileys [sendMessage](https://github.com/WhiskeySockets/Baileys/blob/7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a/src/Socket/messages-send.ts#L1364-L1407)
+  gives each edit a new stanza ID, while its [protocol key](https://github.com/WhiskeySockets/Baileys/blob/7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a/src/Utils/messages.ts#L641-L647)
+  refers to the original target message. Successive edits to that same target
+  are distinct operations. Reusing an outer stanza ID with different proto bytes
+  is a conflict; the producer does not guess a new edit version from a changed body.
 - Only malformed inbox preparation is terminally skipped. Delivery-stage
   errors, including Signal `ValueError`, leave the failed and later rows
   unacknowledged for retry.
@@ -75,7 +99,7 @@ that a real phone accepted the operation.
 | Global presence | No chat target; account identity operation is outside the binding contract. | Intentionally dropped; no expanded account-wide authorization. |
 | Group metadata / participant permission | Existing bound `w:g2` query, synthetic group/Signal behavior and actor-owned pair/unpair. | Group Noise, IQ and ownership tests. Arbitrary group administration is not an advertised Clawdi surface; membership mutations need separate nested-target authorization review. |
 | Restart / reconnect | One sidecar socket per session; API control pools do not acquire ingress ownership; durable aliases select PN/LID. | Pool/registry, Noise restoration, SQLite and native-consumer fixtures. Multi-host failover is not demonstrated. |
-| Duplicate / cursor / outbox retry | Provider event idempotency and ordered acknowledgment; per-binding durable delivery queue; retry preserves provider message ID. | Bridge, channel inbox/delivery and registry tests. No exactly-once physical-delivery claim after an ambiguous provider timeout. |
+| Duplicate / cursor / outbox retry | Inbound provider-event uniqueness; retained outbox proto/stanza-ID deduplication under a PostgreSQL lock; per-binding durable queue. | Concurrent bridge calls, post-commit replay through actual delivery/HTTP, payload conflicts, Link/account scope and same-target edits. No guarantee after record retention or exactly-once physical delivery; historical duplicates require separate review. |
 | Archive, unlink, revocation | Account archive confirms physical logout; Link archive withdraws that Link's synthetic auth/routing; chat unpair is actor-scoped. | Onboarding, channel, Noise revocation and CLI projection tests. Do not infer why a historical user unlinked. |
 | Public/private tenant isolation | Account, Link, binding and alias authority checked before provider calls. | Existing cross-user, cross-Link, stale-revision and revoked-authority tests; Custom opaque session fixture. |
 | Calls, status, broadcast, history sync | Not exposed as the supported chat product surface. | No mobile-app parity claim; do not broaden JID/node policy from redacted event counts. |
@@ -95,7 +119,7 @@ bash scripts/test.sh web src/hosted/v2/channels
 bash scripts/test-managed-whatsapp-native-e2e.sh
 ```
 
-Validation on 2026-09-13: backend target set 627 passed; sidecar 82 passed
+Validation on 2026-09-13: backend target set 630 passed; sidecar 82 passed
 with typecheck; CLI all 156 test files passed with typecheck; Web channel tests,
 typecheck, OSS build and 9 production SSR checks passed. Changed production
 Python passes Ruff lint/format and BasedPyright (zero errors/warnings). Hosted
@@ -161,7 +185,7 @@ and Baileys supplies the wire encoding, encryption, upload, or retry behavior.
 | Read receipts | `A+B`, including group participant and self-chat policy | `A+B`, opt-in after policy acceptance, preserving participant | Exact rc13 privacy IQ plus ownership-checked receipt BinaryNodes are relayed. Physical delivery/read status is not replayed as an application event. |
 | Replies/quoted messages | `A+B` inbound and outbound | `A+B` inbound and outbound | Quote/contextInfo remains inside exact proto bytes. |
 | Groups/participants/LID/PN | `A+B`: metadata/cache, participant and LID/PN mapping | `A+B`: metadata, participant and LID/PN/self-chat handling | Binding aliases and Link ownership choose the physical chat; group proto and addressing attributes remain intact. Broad participant/device-identity nodes are never forwarded from the synthetic stanza. |
-| Reconnect/retry/getMessage/IDs | `A+B`: reconnect, send retry and a 10-minute exact-proto `getMessage` cache | `A+B`: reconnect, bounded 512-message store/dedupe; placeholder `getMessage` response | Synthetic reconnect remains stock behavior. The physical sidecar owns reconnect and durable exact-proto retry state. Backend outbox/inbox idempotency preserves message IDs and rejects duplicate provider events. |
+| Reconnect/retry/getMessage/IDs | `A+B`: reconnect, send retry and a 10-minute exact-proto `getMessage` cache | `A+B`: reconnect, bounded 512-message store/dedupe; placeholder `getMessage` response | Synthetic reconnect remains stock behavior. The physical sidecar owns reconnect and durable exact-proto retry state. Inbound provider-event uniqueness rejects duplicates. The current review above qualifies outbox deduplication by retained rows and operation identity; the original audit did not prove ACK-loss safety. |
 | Polls | `A+B` outbound | `A+B` outbound and inbound vote aggregation | Poll proto is transparent. rc13 additionally requires one exact `meta polltype=creation` node; only that bounded node is preserved. |
 | Edits/deletes | `C` edit/delete | `A+B` outbound edit; `C` delete and inbound edit/delete | Existing additional message attributes preserve Hermes edit. No unsupported consumer feature is invented. |
 | Location | `A+B` inbound/outbound | `A+B` inbound/outbound, including inbound live location | Exact proto only. |

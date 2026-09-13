@@ -25,13 +25,7 @@ def resolve_whatsapp_sidecar_client(account: ChannelAccount) -> WhatsAppSidecarC
     if account.provider != CHANNEL_PROVIDER_WHATSAPP:
         return None
     config = account.config if isinstance(account.config, dict) else {}
-    connection_mode = config.get("connection_mode")
-    if connection_mode == "baileys_managed":
-        session_id = account.id
-    elif connection_mode == "baileys_custom":
-        session_id = configured_whatsapp_sidecar_session_id(config)
-    else:
-        return None
+    session_id = whatsapp_sidecar_session_id(account)
     if session_id is None:
         return None
 
@@ -43,6 +37,15 @@ def resolve_whatsapp_sidecar_client(account: ChannelAccount) -> WhatsAppSidecarC
     if pool is None or config.get("sidecar_config_revision") != pool.session_revision(session_id):
         return None
     return pool.session_client(session_id)
+
+
+def whatsapp_sidecar_session_id(account: ChannelAccount) -> UUID | None:
+    config = account.config if isinstance(account.config, dict) else {}
+    if config.get("connection_mode") == "baileys_managed":
+        return account.id
+    if config.get("connection_mode") == "baileys_custom":
+        return configured_whatsapp_sidecar_session_id(config)
+    return None
 
 
 def configured_whatsapp_sidecar_session_id(config: Mapping[str, object]) -> UUID | None:

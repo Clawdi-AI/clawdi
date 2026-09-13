@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import secrets
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -12,17 +13,20 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from pydantic import JsonValue, TypeAdapter, ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.channel import (
     CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_ACTIVE,
     CHANNEL_VISIBILITY_PRIVATE,
+    MESSAGE_DIRECTION_OUTBOUND,
     PROVIDER_EVENT_SCOPE_ACCOUNT,
     ChannelAccount,
     ChannelBinding,
     ChannelBindingAlias,
+    ChannelDelivery,
+    ChannelMessage,
 )
 from app.services import whatsapp_delivery_transport
 from app.services.channel_debug_events import record_channel_debug_event
@@ -211,7 +215,19 @@ async def whatsapp_account_transport_status(
     try:
         client = whatsapp_delivery_transport.resolve_whatsapp_sidecar_client(account)
         if client is None:
-            return whatsapp_provider_transport_status(account.id)
+            config = account.config
+            # Only a legacy registration with no durable sidecar binding may
+            # use local health. A broken declared binding is never legacy.
+            if config is None or (
+                _is_object_dict(config)
+                and not {
+                    "connection_mode",
+                    "sidecar_account_id",
+                    "sidecar_config_revision",
+                }.intersection(config)
+            ):
+                return whatsapp_provider_transport_status(account.id)
+            return _unavailable_transport_status(account.id)
         mode = "sidecar"
         async with asyncio.timeout(_WHATSAPP_HEALTH_PROBE_TIMEOUT_SECONDS):
             health = await client.health()
@@ -224,21 +240,51 @@ async def whatsapp_account_transport_statuses(
     accounts: Sequence[ChannelAccount],
 ) -> dict[UUID, WhatsAppProviderTransportStatus]:
     """Probe a detached read snapshot with fixed workers and one shared deadline."""
+    from app.services.whatsapp_sidecar_registry import get_active_whatsapp_sidecar_clients
+
     whatsapp_accounts = [a for a in accounts if a.provider == CHANNEL_PROVIDER_WHATSAPP]
-    results = {a.id: _unavailable_transport_status(a.id) for a in whatsapp_accounts}
-    pending = iter(whatsapp_accounts)
+    results = {
+        a.id: WhatsAppProviderTransportStatus(
+            available=False,
+            reconnecting=False,
+            mode="none",
+            reason="provider-transport-not-probed",
+            supports_outbound_messages=False,
+        )
+        for a in whatsapp_accounts
+    }
+    pool = get_active_whatsapp_sidecar_clients()
+    sessions: dict[UUID, list[ChannelAccount]] = {}
+    for account in whatsapp_accounts:
+        # Populate only revision-validated clients before reading the pool's
+        # round-robin order. Invalid/legacy bindings perform no provider I/O.
+        try:
+            client = whatsapp_delivery_transport.resolve_whatsapp_sidecar_client(account)
+        except Exception:
+            results[account.id] = _unavailable_transport_status(account.id)
+            continue
+        session_id = whatsapp_delivery_transport.whatsapp_sidecar_session_id(account)
+        if client is None or session_id is None or pool is None:
+            results[account.id] = await whatsapp_account_transport_status(account)
+        else:
+            sessions.setdefault(session_id, []).append(account)
+    order = pool.health_probe_order(set(sessions)) if pool is not None else []
+    pending = iter(order)
 
     async def probe_accounts() -> None:
-        for account in pending:
-            results[account.id] = await whatsapp_account_transport_status(account)
+        for session_id in pending:
+            if pool is not None:
+                pool.mark_health_probe_started(session_id)
+            for account in sessions[session_id]:
+                results[account.id] = await whatsapp_account_transport_status(account)
 
     try:
         async with asyncio.timeout(_WHATSAPP_HEALTH_REQUEST_TIMEOUT_SECONDS):
             async with asyncio.TaskGroup() as group:
-                for _ in range(min(_WHATSAPP_HEALTH_CONCURRENCY, len(whatsapp_accounts))):
+                for _ in range(min(_WHATSAPP_HEALTH_CONCURRENCY, len(order))):
                     group.create_task(probe_accounts())
     except TimeoutError:
-        # Unstarted or cancelled probes retain unavailable/unknown, never cached green.
+        # Unstarted/cancelled probes retain not-probed, without changing failure clocks.
         pass
     return results
 
@@ -273,16 +319,96 @@ class WhatsAppProviderBridge:
     ) -> WhatsAppProviderRelayResult:
         async with self._sessionmaker() as db:
             account = await _load_active_whatsapp_account(db, account_id=self._account_id)
-            queued, delivery = await enqueue_channel_outbound_message(
+            provider_payload = _provider_payload_from_outbound(message)
+            binding = await find_binding(
                 db,
                 account=account,
                 external_chat_id=message.to_jid,
+                bot_agent_link_id=bot_agent_link_id,
+            )
+            if (
+                binding is None
+                or await lock_active_binding_authority(
+                    db, account=account, binding=binding, bot_agent_link_id=bot_agent_link_id
+                )
+                is None
+            ):
+                raise HTTPException(
+                    status_code=403, detail="chat is not paired with this agent link"
+                )
+            # A stanza ID identifies the sending operation, not the message
+            # targeted inside an edit proto. Serialize that identity in Postgres.
+            lock_key = json.dumps(
+                [
+                    "whatsapp-outbox",
+                    str(account.id),
+                    str(bot_agent_link_id),
+                    binding.external_chat_id,
+                    message.message_id,
+                ],
+                separators=(",", ":"),
+            )
+            await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(lock_key, 0))))
+            previous = list(
+                (
+                    await db.execute(
+                        select(ChannelMessage)
+                        .where(
+                            ChannelMessage.account_id == account.id,
+                            ChannelMessage.bot_agent_link_id == bot_agent_link_id,
+                            ChannelMessage.external_chat_id == binding.external_chat_id,
+                            ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
+                            ChannelMessage.payload["providerPayload"]["messageId"].as_string()
+                            == message.message_id,
+                        )
+                        .limit(2)
+                        .with_for_update(read=True)
+                    )
+                ).scalars()
+            )
+            if previous:
+                stored = previous[0]
+                stored_payload = (stored.payload or {}).get("providerPayload")
+                if (
+                    len(previous) != 1
+                    or not isinstance(stored_payload, dict)
+                    or stored_payload.get("schemaVersion") != WHATSAPP_PROVIDER_PAYLOAD_SCHEMA
+                    or stored_payload.get("messageProtoBase64")
+                    != provider_payload["messageProtoBase64"]
+                ):
+                    raise HTTPException(
+                        status_code=409, detail="whatsapp message identity conflict"
+                    )
+                delivery_id = await db.scalar(
+                    select(ChannelDelivery.id).where(
+                        ChannelDelivery.message_id == stored.id,
+                        ChannelDelivery.account_id == account.id,
+                        ChannelDelivery.bot_agent_link_id == bot_agent_link_id,
+                    )
+                )
+                if delivery_id is None:
+                    raise HTTPException(
+                        status_code=409, detail="whatsapp delivery receipt unavailable"
+                    )
+                result = WhatsAppProviderRelayResult(
+                    outcome="queued",
+                    external_chat_id=message.to_jid,
+                    provider_message_id=message.message_id,
+                    channel_message_id=stored.id,
+                    delivery_id=delivery_id,
+                )
+                await db.commit()
+                return result
+            queued, delivery = await enqueue_channel_outbound_message(
+                db,
+                account=account,
+                external_chat_id=binding.external_chat_id,
                 text=message.conversation or "",
                 bot_agent_link_id=bot_agent_link_id,
             )
             details = _outbound_debug_details(message)
             payload = dict(queued.payload or {})
-            payload["providerPayload"] = _provider_payload_from_outbound(message)
+            payload["providerPayload"] = provider_payload
             queued.payload = payload
             await record_channel_debug_event(
                 db,
