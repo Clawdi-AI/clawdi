@@ -549,6 +549,7 @@ export class RetryQueue {
 		this.items.splice(idx, 1);
 		this.items.push({ ...current, attempts: current.attempts + 1 });
 		this.persist();
+		this.notifyItemWaiters();
 	}
 
 	get depth(): number {
