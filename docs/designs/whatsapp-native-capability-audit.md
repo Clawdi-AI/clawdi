@@ -63,9 +63,19 @@ inferred from a passing rc14 sidecar test.
   The canonical producer now holds a PostgreSQL transaction advisory lock for
   `(account, Link, canonical chat, stanza ID)` and looks up the original ID in
   the retained `providerPayload`, not the mutable physical `provider_message_id`.
-  An identical proto returns the existing Message/Delivery receipt; a different
-  proto or ambiguous historical duplicates fails with a conflict. A retransmission's
-  encryption/transport metadata does not overwrite the first accepted envelope.
+  An identical canonical provider envelope returns the existing Message/Delivery
+  receipt. Proto-only comparison was insufficient: changing `edit` or the poll
+  creation node must conflict even when the proto is unchanged. Both retained and
+  incoming payloads now pass the existing delivery decoder/encoder: the comparison
+  includes exact proto, every attribute returned by `relay_outbound_extra_attrs`,
+  and validated/normalized additional nodes. Missing/empty optional nodes normalize
+  identically. Only `encType` and the already-discarded managed routing attributes
+  are excluded; all forwarded attributes (including `edit`, `addressing_mode` and
+  `device_fanout`) remain significant. No new retry-metadata allowlist is introduced.
+  rc14 [constructs edit/poll metadata](https://github.com/WhiskeySockets/Baileys/blob/7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a/src/Socket/messages-send.ts#L1374-L1407)
+  separately from the proto and [rebuilds Signal/device routing](https://github.com/WhiskeySockets/Baileys/blob/7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a/src/Socket/messages-send.ts#L963-L1021).
+  Semantic changes, malformed retained envelopes and ambiguous historical duplicates
+  fail with a conflict; replays never overwrite the first accepted envelope.
   This reuses existing payload rows and works across processes; it adds no process
   cache, permanent receipt table, database uniqueness constraint or backfill.
   Its guarantee ends when retention deletes the original row. Previously queued
@@ -73,7 +83,7 @@ inferred from a passing rc14 sidecar test.
   Standard Baileys [sendMessage](https://github.com/WhiskeySockets/Baileys/blob/7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a/src/Socket/messages-send.ts#L1364-L1407)
   gives each edit a new stanza ID, while its [protocol key](https://github.com/WhiskeySockets/Baileys/blob/7e7b0757e3f9f3c7789fb1cfd2f241d5002a199a/src/Utils/messages.ts#L641-L647)
   refers to the original target message. Successive edits to that same target
-  are distinct operations. Reusing an outer stanza ID with different proto bytes
+  are distinct operations. Reusing an outer stanza ID with different provider semantics
   is a conflict; the producer does not guess a new edit version from a changed body.
 - Only malformed inbox preparation is terminally skipped. Delivery-stage
   errors, including Signal `ValueError`, leave the failed and later rows
@@ -99,7 +109,7 @@ that a real phone accepted the operation.
 | Global presence | No chat target; account identity operation is outside the binding contract. | Intentionally dropped; no expanded account-wide authorization. |
 | Group metadata / participant permission | Existing bound `w:g2` query, synthetic group/Signal behavior and actor-owned pair/unpair. | Group Noise, IQ and ownership tests. Arbitrary group administration is not an advertised Clawdi surface; membership mutations need separate nested-target authorization review. |
 | Restart / reconnect | One sidecar socket per session; API control pools do not acquire ingress ownership; durable aliases select PN/LID. | Pool/registry, Noise restoration, SQLite and native-consumer fixtures. Multi-host failover is not demonstrated. |
-| Duplicate / cursor / outbox retry | Inbound provider-event uniqueness; retained outbox proto/stanza-ID deduplication under a PostgreSQL lock; per-binding durable queue. | Concurrent bridge calls, post-commit replay through actual delivery/HTTP, payload conflicts, Link/account scope and same-target edits. No guarantee after record retention or exactly-once physical delivery; historical duplicates require separate review. |
+| Duplicate / cursor / outbox retry | Inbound provider-event uniqueness; retained outbox semantic-envelope/stanza-ID deduplication under a PostgreSQL lock; per-binding durable queue. | Concurrent bridge calls, post-commit replay through actual delivery/HTTP, proto/edit/poll-envelope conflicts, Link/account scope and same-target edits. No guarantee after record retention or exactly-once physical delivery; historical duplicates require separate review. |
 | Archive, unlink, revocation | Account archive confirms physical logout; Link archive withdraws that Link's synthetic auth/routing; chat unpair is actor-scoped. | Onboarding, channel, Noise revocation and CLI projection tests. Do not infer why a historical user unlinked. |
 | Public/private tenant isolation | Account, Link, binding and alias authority checked before provider calls. | Existing cross-user, cross-Link, stale-revision and revoked-authority tests; Custom opaque session fixture. |
 | Calls, status, broadcast, history sync | Not exposed as the supported chat product surface. | No mobile-app parity claim; do not broaden JID/node policy from redacted event counts. |
@@ -125,17 +135,25 @@ typecheck, OSS build and 9 production SSR checks passed. Changed production
 Python passes Ruff lint/format and BasedPyright (zero errors/warnings). Hosted
 component and bootstrap suites pass, including 51 PostgreSQL checks.
 
-The fixed-artifact OpenClaw and Hermes E2Es also pass with the strict read
-receipt assertion: each delivered two synthetic inbound messages and captured
-four outbound messages; OpenClaw had two connections and Hermes had three
-across the controlled restarts. The prior read-receipt HTTP 500 is absent.
+The fixed-artifact OpenClaw and Hermes E2Es pass with the strict read-receipt
+assertion and controlled restart checks. The latest run also covers a native
+Hermes edit and passes two required PostgreSQL capture-to-outbox tests, one per
+consumer. The prior read-receipt HTTP 500 is absent.
 Hermes' fixture interpreter reports an upstream SQLite safety fallback to DELETE
 journal mode; this is not physical-sidecar or production durability evidence.
 
 The normal sidecar suite includes the native HTTP/proto fixture; it is not an
-optional test. The stock-consumer E2E uses an isolated Noise harness and proves
-consumer compatibility, not the durable provider bridge. PostgreSQL/HTTP bridge
-and SQLite/native socket checks cover those separate boundaries. The native
+optional test. The stock-consumer E2E uses an isolated Noise harness. Its required final stage
+captures fresh decoded OpenClaw/Hermes envelopes, including native polls and a
+Hermes edit, and passes them through the real bridge/outbox in the official
+PostgreSQL runner. This is an artifact handoff, not a shared live WebSocket/DB
+identity session or a physical-provider delivery drill. Identical-semantic replays
+retain the original receipt; changed edit/poll metadata must return conflicts
+without additional Message/Delivery rows. The explicit E2E module requires capture
+input and never skips when it is missing; `client-ci.yml` gates this stage through
+`scripts/test-managed-whatsapp-native-e2e.sh`. Ordinary backend tests remain a
+separate regression gate; SQLite/native socket checks cover the physical adapter
+boundary. The native
 fixture now requires actual `receipt type=read`, not any receipt: delivery
 receipts previously let the read-receipt assertion pass despite a missing
 privacy response. Its explicit privacy fixture follows the pinned SDK query.

@@ -118,6 +118,8 @@ class HarnessState:
             "bundleCaptured": self.bundle is not None,
             "events": self.events,
             "outboundMessages": self.outbound_messages,
+            "chatJid": INBOUND_JID,
+            "chatLid": INBOUND_LID,
             "outboundNodes": self.outbound_nodes,
             "privacyQueries": self.privacy_queries,
             "inboundPushes": self.inbound_pushes,

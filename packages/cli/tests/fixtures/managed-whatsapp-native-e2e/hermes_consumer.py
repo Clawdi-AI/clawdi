@@ -73,6 +73,11 @@ async def main() -> None:
         sent = await adapter.send(CHAT_JID, "hermes outbound text")
         if not sent.success:
             raise RuntimeError(f"Hermes adapter send failed: {sent.error}")
+        if not sent.message_id:
+            raise RuntimeError("Hermes native send returned no message ID")
+        edited = await adapter.edit_message(CHAT_JID, sent.message_id, "hermes edited text")
+        if not edited.success:
+            raise RuntimeError(f"Hermes adapter edit failed: {edited.error}")
         poll = await adapter.send_poll(
             CHAT_JID,
             "Hermes poll",
@@ -242,6 +247,9 @@ async def hermes_protocol_envelopes_ready() -> bool:
             for message in status["outboundMessages"]
         )
         and any(node.get("tag") == "chatstate" for node in status["outboundNodes"])
+        and any(
+            message.get("attrs", {}).get("edit") == "1" for message in status["outboundMessages"]
+        )
         and any(
             node.get("tag") == "receipt" and node.get("attrs", {}).get("type") == "read"
             for node in status["outboundNodes"]
