@@ -336,6 +336,9 @@ class WhatsAppProviderBridge:
                 raise HTTPException(
                     status_code=403, detail="chat is not paired with this agent link"
                 )
+            semantic_payload = _canonical_outbound_payload(
+                provider_payload, binding.external_chat_id
+            )
             # A stanza ID identifies the sending operation, not the message
             # targeted inside an edit proto. Serialize that identity in Postgres.
             lock_key = json.dumps(
@@ -369,13 +372,16 @@ class WhatsAppProviderBridge:
             if previous:
                 stored = previous[0]
                 stored_payload = (stored.payload or {}).get("providerPayload")
-                if (
-                    len(previous) != 1
-                    or not isinstance(stored_payload, dict)
-                    or stored_payload.get("schemaVersion") != WHATSAPP_PROVIDER_PAYLOAD_SCHEMA
-                    or stored_payload.get("messageProtoBase64")
-                    != provider_payload["messageProtoBase64"]
-                ):
+                stored_semantics = None
+                if isinstance(stored_payload, dict):
+                    try:
+                        stored_semantics = _canonical_outbound_payload(
+                            stored_payload, binding.external_chat_id
+                        )
+                    except HTTPException:
+                        # Invalid retained envelopes cannot authorize a successful replay.
+                        pass
+                if len(previous) != 1 or stored_semantics != semantic_payload:
                     raise HTTPException(
                         status_code=409, detail="whatsapp message identity conflict"
                     )
@@ -797,6 +803,17 @@ async def _active_link_owns_account(
         await lock_active_link_authority(db, account=account, bot_agent_link_id=bot_agent_link_id)
         is not None
     )
+
+
+def _canonical_outbound_payload(payload: object, external_chat_id: str) -> dict[str, JsonValue]:
+    message = _outbound_from_provider_payload(
+        external_chat_id=external_chat_id, text="", provider_payload=payload
+    )
+    canonical = _provider_payload_from_outbound(message)
+    # Signal ciphertext/type and managed routing are rebuilt by the physical
+    # socket. Every forwarded attribute and additional node remains semantic.
+    del canonical["encType"]
+    return canonical
 
 
 def _provider_payload_from_outbound(

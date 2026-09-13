@@ -338,12 +338,48 @@ async def test_whatsapp_provider_bridge_queues_exact_proto_before_physical_deliv
         replayed = await WhatsAppProviderBridge(
             sessionmaker, account_id=account.id
         ).store_outbound_message(
-            replace(message, to_jid=binding.external_chat_id, enc_type="pkmsg"),
+            replace(
+                message,
+                to_jid=binding.external_chat_id,
+                enc_type="pkmsg",
+                attrs={
+                    **message.attrs,
+                    "to": binding.external_chat_id,
+                    "from": "900000000000001:2@lid",
+                    "participant": "184207372460253:2@lid",
+                    "recipient": binding.external_chat_id,
+                },
+            ),
             bot_agent_link_id=link.id,
         )
         assert replayed.channel_message_id == queued.channel_message_id
         assert replayed.delivery_id == queued.delivery_id
+        for changed in (
+            replace(message, attrs={**message.attrs, "edit": "7"}),
+            replace(message, additional_nodes=()),
+            replace(message, attrs={**message.attrs, "addressing_mode": "pn"}),
+        ):
+            with pytest.raises(HTTPException) as conflict:
+                await bridge.store_outbound_message(changed, bot_agent_link_id=link.id)
+            assert conflict.value.status_code == 409
         assert await ChannelDeliveryWorker(sessionmaker).run_once() is None
+        assert (
+            await db_session.scalar(
+                select(func.count(ChannelMessage.id)).where(
+                    ChannelMessage.account_id == account.id,
+                    ChannelMessage.direction == MESSAGE_DIRECTION_OUTBOUND,
+                )
+            )
+            == 1
+        )
+        assert (
+            await db_session.scalar(
+                select(func.count(ChannelDelivery.id)).where(
+                    ChannelDelivery.account_id == account.id,
+                )
+            )
+            == 1
+        )
 
     assert delivered_id == queued.delivery_id
     assert len(requests) == 1
@@ -356,13 +392,14 @@ async def test_whatsapp_provider_bridge_queues_exact_proto_before_physical_deliv
         "additionalNodes": [{"tag": "meta", "attrs": {"polltype": "creation"}}],
     }
 
+    canonical_chat_id = binding.external_chat_id
     await db_session.rollback()
     stored = await db_session.get(ChannelMessage, queued.channel_message_id)
     delivery = await db_session.get(ChannelDelivery, queued.delivery_id)
     assert stored is not None
     assert delivery is not None
     assert stored.direction == MESSAGE_DIRECTION_OUTBOUND
-    assert stored.external_chat_id == binding.external_chat_id
+    assert stored.external_chat_id == canonical_chat_id
     assert stored.payload["providerPayload"] == {
         "schemaVersion": WHATSAPP_PROVIDER_PAYLOAD_SCHEMA,
         "messageId": "agent-exact-1",
