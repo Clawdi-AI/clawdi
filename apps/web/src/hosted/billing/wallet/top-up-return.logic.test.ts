@@ -12,7 +12,6 @@ import {
 } from "@/hosted/billing/wallet/stripe-return";
 import {
 	buildWalletAutoReloadReturnUrl,
-	buildWalletTopupReturnUrl,
 	walletTopupReturnToast,
 } from "@/hosted/billing/wallet/top-up-return.logic";
 import {
@@ -31,12 +30,12 @@ describe("Wallet Stripe returns", () => {
 		expect(walletSetupIntentMatchesClientSecret("seti_1_secret_test", "seti_other")).toBe(false);
 		const cases = [
 			{
-				query: `wallet_payment_return=1&wallet_payment_flow=manual_topup&payment_intent=${encodeURIComponent(opaquePaymentIntentId)}&payment_intent_client_secret=${encodeURIComponent(opaquePaymentSecret)}`,
+				query: `wallet_payment_return=1&wallet_payment_flow=auto_reload&payment_intent=${encodeURIComponent(opaquePaymentIntentId)}&payment_intent_client_secret=${encodeURIComponent(opaquePaymentSecret)}`,
 				result: {
 					kind: "payment_intent",
 					clientSecret: opaquePaymentSecret,
 					expectedIntentId: opaquePaymentIntentId,
-					flow: "manual_topup",
+					flow: "auto_reload",
 				},
 			},
 			{
@@ -54,12 +53,12 @@ describe("Wallet Stripe returns", () => {
 			},
 			{
 				query:
-					"wallet_payment_return=1&wallet_payment_flow=manual_topup&payment_intent_client_secret=pi_1_secret_test",
+					"wallet_payment_return=1&wallet_payment_flow=auto_reload&payment_intent_client_secret=pi_1_secret_test",
 				result: null,
 			},
 			{
 				query:
-					"wallet_payment_return=1&wallet_payment_flow=manual_topup&wallet_setup_return=1&payment_intent_client_secret=pi_1_secret_test&setup_intent_client_secret=seti_1_secret_test",
+					"wallet_payment_return=1&wallet_payment_flow=auto_reload&wallet_setup_return=1&payment_intent_client_secret=pi_1_secret_test&setup_intent_client_secret=seti_1_secret_test",
 				result: null,
 			},
 			{
@@ -81,11 +80,11 @@ describe("Wallet Stripe returns", () => {
 			},
 			{
 				query:
-					"wallet_payment_return=1&wallet_payment_flow=manual_topup&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_test&redirect%5Fstatus=",
+					"wallet_payment_return=1&wallet_payment_flow=auto_reload&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_test&redirect%5Fstatus=",
 				result: null,
 			},
 			{
-				query: `wallet_payment_return=1&wallet_payment_flow=manual_topup&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_test&wallet_setup_id=${setupIdentity}`,
+				query: `wallet_payment_return=1&wallet_payment_flow=auto_reload&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_test&wallet_setup_id=${setupIdentity}`,
 				result: null,
 			},
 		] as const;
@@ -104,8 +103,8 @@ describe("Wallet Stripe returns", () => {
 		}
 
 		for (const invalidReturn of [
-			"wallet_payment_return=1&wallet_payment_flow=manual_topup&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_test&payment%5Fintent=",
-			`wallet_payment_return=1&wallet_payment_flow=manual_topup&payment_intent=${encodeURIComponent(opaquePaymentIntentId)}&payment_intent_client_secret=${encodeURIComponent(`${opaquePaymentSecret} `)}`,
+			"wallet_payment_return=1&wallet_payment_flow=auto_reload&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_test&payment%5Fintent=",
+			`wallet_payment_return=1&wallet_payment_flow=auto_reload&payment_intent=${encodeURIComponent(opaquePaymentIntentId)}&payment_intent_client_secret=${encodeURIComponent(`${opaquePaymentSecret} `)}`,
 			"payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_test",
 			"topup_return=1&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_test",
 		]) {
@@ -191,7 +190,7 @@ describe("Wallet Stripe returns", () => {
 
 	test("deduplicates an in-flight return, stops replay after settlement, and accepts a new identity", async () => {
 		bootstrapWalletStripeReturn(
-			"https://cloud.clawdi.ai/?wallet_payment_return=1&wallet_payment_flow=manual_topup&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_test",
+			"https://cloud.clawdi.ai/?wallet_payment_return=1&wallet_payment_flow=auto_reload&payment_intent=pi_1&payment_intent_client_secret=pi_1_secret_test",
 			null,
 			() => undefined,
 		);
@@ -213,7 +212,7 @@ describe("Wallet Stripe returns", () => {
 		const secondRetrieval = Promise.withResolvers<Omit<WalletPaymentReturnResolution, "flow">>();
 		const secondPayment = coordinateWalletPaymentReturn(() => secondRetrieval.promise);
 		firstRetrieval.resolve({ status: "succeeded", paymentIntentId: "pi_1", errorMessage: null });
-		expect(await payment).toMatchObject({ flow: "manual_topup", paymentIntentId: "pi_1" });
+		expect(await payment).toMatchObject({ flow: "auto_reload", paymentIntentId: "pi_1" });
 		expect(coordinateWalletPaymentReturn(retrievePayment)).toBe(secondPayment);
 		secondRetrieval.resolve({
 			status: "succeeded",
@@ -227,7 +226,7 @@ describe("Wallet Stripe returns", () => {
 		expect(coordinateWalletPaymentReturn(retrievePayment)).toBeNull();
 
 		bootstrapWalletStripeReturn(
-			"https://cloud.clawdi.ai/?wallet_payment_return=1&wallet_payment_flow=manual_topup&payment_intent=pi_mismatch&payment_intent_client_secret=pi_mismatch_secret_test",
+			"https://cloud.clawdi.ai/?wallet_payment_return=1&wallet_payment_flow=auto_reload&payment_intent=pi_mismatch&payment_intent_client_secret=pi_mismatch_secret_test",
 			null,
 			() => undefined,
 		);
@@ -300,8 +299,6 @@ describe("Wallet Stripe returns", () => {
 			{
 				current: `https://cloud.clawdi.ai/?${sensitiveQuery}#billing`,
 				clean: "https://cloud.clawdi.ai/?settings=general&keep=1#billing",
-				topup:
-					"https://cloud.clawdi.ai/?settings=billing-wallet&keep=1&wallet_payment_return=1&wallet_payment_flow=manual_topup#billing",
 				autoReload:
 					"https://cloud.clawdi.ai/?settings=billing-wallet&keep=1&wallet_payment_return=1&wallet_payment_flow=auto_reload#billing",
 				setup: `https://cloud.clawdi.ai/?settings=billing-wallet&keep=1&wallet_setup_return=1&wallet_setup_id=${setupIdentity}#billing`,
@@ -309,8 +306,6 @@ describe("Wallet Stripe returns", () => {
 			{
 				current: `/wallet?${sensitiveQuery}#billing`,
 				clean: "/wallet?settings=general&keep=1#billing",
-				topup:
-					"/wallet?settings=billing-wallet&keep=1&wallet_payment_return=1&wallet_payment_flow=manual_topup#billing",
 				autoReload:
 					"/wallet?settings=billing-wallet&keep=1&wallet_payment_return=1&wallet_payment_flow=auto_reload#billing",
 				setup: `/wallet?settings=billing-wallet&keep=1&wallet_setup_return=1&wallet_setup_id=${setupIdentity}#billing`,
@@ -319,7 +314,6 @@ describe("Wallet Stripe returns", () => {
 
 		for (const testCase of cases) {
 			expect(cleanWalletStripeReturnUrl(testCase.current)).toBe(testCase.clean);
-			expect(buildWalletTopupReturnUrl(testCase.current)).toBe(testCase.topup);
 			expect(buildWalletAutoReloadReturnUrl(testCase.current)).toBe(testCase.autoReload);
 			expect(buildWalletSetupReturnUrl(testCase.current, setupIdentity)).toBe(testCase.setup);
 		}

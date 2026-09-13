@@ -1,26 +1,15 @@
 import { describe, expect, mock, test } from "bun:test";
-import { QueryClient, QueryObserver } from "@tanstack/react-query";
-import type { WalletTopupResult, WalletTransaction } from "@/hosted/billing/contracts";
+import { QueryClient } from "@tanstack/react-query";
+import type { WalletTransaction } from "@/hosted/billing/contracts";
 import { usdInputToCents } from "@/hosted/billing/format";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import {
-	handleTopupStartResult,
+	completeTopup,
 	topUpAmountCentsForUsdShortfall,
 	validTopUpAmountCents,
 	waitForWalletTopupCredit,
 	walletTopupCreditIsApplied,
 } from "@/hosted/billing/wallet/top-up-dialog.logic";
-
-function result(overrides: Partial<WalletTopupResult>): WalletTopupResult {
-	return {
-		status: "requires_payment_method",
-		flow_type: null,
-		payment_intent_id: null,
-		client_secret: null,
-		amount_usd: null,
-		...overrides,
-	};
-}
 
 function queryClientWithWalletData(): QueryClient {
 	const qc = new QueryClient();
@@ -38,36 +27,23 @@ function queryClientWithWalletData(): QueryClient {
 function setupControls(queryClient: QueryClient) {
 	const resetAttempt = mock(() => {});
 	const closeDialog = mock(() => {});
-	const startPayment = mock((_clientSecret: string) => {});
 	const toastInfo = mock((_message: string, _options: { description: string }) => {});
-	const toastError = mock((_message: string, _options: { description: string }) => {});
 	const onComplete = mock((_status: "succeeded" | "processing") => {});
 	return {
 		queryClient,
 		resetAttempt,
 		closeDialog,
-		startPayment,
 		toastInfo,
-		toastError,
 		onComplete,
 	};
 }
 
-describe("handleTopupStartResult", () => {
+describe("completeTopup", () => {
 	test("treats synchronous success as terminal success and refreshes wallet activity", () => {
 		const qc = queryClientWithWalletData();
 		const setup = setupControls(qc);
 
-		handleTopupStartResult(
-			result({
-				status: "succeeded",
-				flow_type: "mock",
-				payment_intent_id: "pi_sync_success",
-				client_secret: null,
-				amount_usd: "2.50",
-			}),
-			setup,
-		);
+		completeTopup("succeeded", setup);
 
 		expect(qc.getQueryState(billingKeys.wallet)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(billingKeys.transactions)?.isInvalidated).toBe(true);
@@ -83,53 +59,7 @@ describe("handleTopupStartResult", () => {
 		expect(setup.toastInfo).toHaveBeenCalledWith("Payment accepted", {
 			description: "We're confirming your Wallet credit now.",
 		});
-		expect(setup.toastError).not.toHaveBeenCalled();
-		expect(setup.startPayment).not.toHaveBeenCalled();
 		expect(setup.onComplete).toHaveBeenCalledWith("succeeded");
-	});
-
-	test("keeps payment intents on the card step and refreshes only visible transactions", async () => {
-		const qc = queryClientWithWalletData();
-		const setup = setupControls(qc);
-		let transactionCalls = 0;
-		const transactionsObserver = new QueryObserver(qc, {
-			queryKey: billingKeys.transactions,
-			queryFn: async () => {
-				transactionCalls += 1;
-				return { pages: [{ items: [] }], pageParams: [null] };
-			},
-			staleTime: Number.POSITIVE_INFINITY,
-		});
-		const unsubscribe = transactionsObserver.subscribe(() => {});
-
-		handleTopupStartResult(
-			result({
-				status: "requires_payment_method",
-				flow_type: "payment_intent",
-				payment_intent_id: "pi_123",
-				client_secret: "pi_123_secret_456",
-				// The quoted USD amount does not mean the PaymentIntent settled.
-				amount_usd: "25",
-			}),
-			setup,
-		);
-		await Promise.resolve();
-
-		expect(setup.startPayment).toHaveBeenCalledWith("pi_123_secret_456");
-		expect(transactionCalls).toBe(1);
-		expect(qc.getQueryState(billingKeys.wallet)?.isInvalidated).toBe(false);
-		expect(qc.getQueryState(billingKeys.transactions)?.isInvalidated).toBe(false);
-		expect(
-			qc.getQueryState(billingKeys.subscriptionCreateQuote("compute_basic", 1, "wallet"))
-				?.isInvalidated,
-		).toBe(false);
-		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(false);
-		expect(qc.getQueryState(billingKeys.subscriptions)?.isInvalidated).toBe(false);
-		expect(setup.closeDialog).not.toHaveBeenCalled();
-		expect(setup.resetAttempt).not.toHaveBeenCalled();
-		expect(setup.toastInfo).not.toHaveBeenCalled();
-		expect(setup.toastError).not.toHaveBeenCalled();
-		unsubscribe();
 	});
 });
 

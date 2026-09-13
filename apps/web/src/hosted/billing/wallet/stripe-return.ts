@@ -22,7 +22,7 @@ export const STRIPE_SETUP_INTENT_CLIENT_SECRET_PARAM =
 const WALLET_STRIPE_RETURN_PARAMS = Object.values(WALLET_STRIPE_RETURN_SECURITY_PARAMS);
 
 type WalletStripeReturnKind = "payment_intent" | "setup_intent";
-export type WalletPaymentReturnFlow = "manual_topup" | "auto_reload";
+export type WalletPaymentReturnFlow = "auto_reload";
 
 export type WalletStripeReturnState =
 	| {
@@ -137,7 +137,7 @@ function returnFingerprint(state: WalletStripeReturnState): string {
 }
 
 function walletPaymentFlow(value: string | null): WalletPaymentReturnFlow | null {
-	return value === "manual_topup" || value === "auto_reload" ? value : null;
+	return value === "auto_reload" ? value : null;
 }
 
 function hasExactWalletStripeReturnCardinality(params: URLSearchParams): boolean {

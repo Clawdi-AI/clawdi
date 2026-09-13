@@ -1095,7 +1095,8 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 				status: 200,
 				body: {
 					status: "succeeded",
-					flow_type: "mock",
+					flow_type: "checkout_session",
+					checkout_session_id: "cs_topup_fixture",
 					payment_intent_id: null,
 					client_secret: null,
 					credits_added: 25_000,
