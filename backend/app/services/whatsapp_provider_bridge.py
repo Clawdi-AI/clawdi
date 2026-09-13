@@ -937,10 +937,14 @@ def _is_authorized_provider_service_iq(node: BinaryNode) -> bool:
     target = attrs.get("to")
     if iq_type is None or xmlns is None or target is None:
         return False
+    # rc13/rc14 S_WHATSAPP_NET is the domain-only JID "@s.whatsapp.net".
+    # Keep the previously accepted literal only for these exact service IQs.
+    if target not in {"@s.whatsapp.net", "s.whatsapp.net"}:
+        return False
     expected_child = {
-        ("set", "w:m", "s.whatsapp.net"): "media_conn",
-        ("get", "privacy", "s.whatsapp.net"): "privacy",
-    }.get((iq_type, xmlns, target))
+        ("set", "w:m"): "media_conn",
+        ("get", "privacy"): "privacy",
+    }.get((iq_type, xmlns))
     content: object = node.get("content")
     if expected_child is None or not _is_object_list(content) or len(content) != 1:
         return False

@@ -1689,10 +1689,12 @@ async def test_raw_relay_uses_durable_custom_session_without_local_registry(
 @pytest.mark.parametrize(
     "xmlns,iq_type,child", [("w:m", "set", "media_conn"), ("privacy", "get", "privacy")]
 )
+@pytest.mark.parametrize("service_jid", ["@s.whatsapp.net", "s.whatsapp.net"])
 async def test_provider_iq_uses_control_pool_across_restart_and_token_rotation(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     channel_agent,
+    service_jid: str,
     xmlns: str,
     iq_type: str,
     child: str,
@@ -1715,7 +1717,7 @@ async def test_provider_iq_uses_control_pool_across_restart_and_token_rotation(
     requests: list[httpx.Request] = []
     node = {
         "tag": "iq",
-        "attrs": {"id": "agent-iq", "type": iq_type, "xmlns": xmlns, "to": "s.whatsapp.net"},
+        "attrs": {"id": "agent-iq", "type": iq_type, "xmlns": xmlns, "to": service_jid},
         "content": [{"tag": child, "attrs": {}}],
     }
 
@@ -1725,6 +1727,7 @@ async def test_provider_iq_uses_control_pool_across_restart_and_token_rotation(
         assert request.method == "POST"
         body = json.loads(request.content)
         assert body["node"]["content"] == node["content"]
+        assert body["node"]["attrs"]["to"] == service_jid
         return httpx.Response(
             200,
             json={
@@ -1750,6 +1753,20 @@ async def test_provider_iq_uses_control_pool_across_restart_and_token_rotation(
                 assert requests[-1].headers["authorization"] == f"Bearer {token}"
                 assert get_whatsapp_provider_transport(account.id) is None
                 count = len(requests)
+                for target in (
+                    "@s.whatsapp.net.evil",
+                    "s.whatsapp.net@evil.test",
+                    "0@s.whatsapp.net",
+                    "@broadcast",
+                ):
+                    denied_node = {**node, "attrs": {**node["attrs"], "to": target}}
+                    assert (
+                        await bridge.forward_iq(
+                            denied_node, str(link.id), bot_agent_link_id=link.id
+                        )
+                        is None
+                    )
+                assert len(requests) == count
                 assert (
                     await bridge.forward_iq(node, str(uuid4()), bot_agent_link_id=link.id) is None
                 )
