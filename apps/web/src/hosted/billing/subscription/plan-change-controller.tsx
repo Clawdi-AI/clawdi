@@ -165,7 +165,7 @@ function PlanChangeControllerState({
 		setPaymentMethodRequired(false);
 		setAcceptedOperationName(null);
 		try {
-			const result = await billingPortal.execute({});
+			const result = await billingPortal.execute({ return_context: "compute" });
 			const url = result.url || result.portal_url;
 			if (url) {
 				window.location.href = url;
