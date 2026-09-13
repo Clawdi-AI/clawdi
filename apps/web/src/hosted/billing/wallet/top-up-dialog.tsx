@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSettingsEditState } from "@/components/settings-edit-state";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Dialog,
 	DialogContent,
@@ -86,6 +87,7 @@ export function TopUpDialog({
 	const runAction = useActionLock();
 	const [dollars, setDollars] = useState(String(TOPUP_DEFAULT_CENTS / 100));
 	const [amountTouched, setAmountTouched] = useState(false);
+	const [reuseSavedCards, setReuseSavedCards] = useState(false);
 	const [paymentSubmitting, setPaymentSubmitting] = useState(false);
 	useSettingsEditState({ dirty: false, busy: open && (topUp.isPending || paymentSubmitting) });
 	// One idempotency key per top-up ATTEMPT, reused across a retry of the same
@@ -111,6 +113,7 @@ export function TopUpDialog({
 	}
 
 	function reset() {
+		setReuseSavedCards(false);
 		setCheckout(null);
 		setAmountTouched(false);
 		setPaymentSubmitting(false);
@@ -137,7 +140,10 @@ export function TopUpDialog({
 		topupKeyRef.current ??= newIdempotencyKey("topup");
 		try {
 			const result = await topUp.execute({
-				body: { amount_cents: amountCents },
+				body: {
+					amount_cents: amountCents,
+					saved_payment_method_reuse: reuseSavedCards ? "wallet_purchase_v1" : undefined,
+				},
 				idempotencyKey: topupKeyRef.current,
 			});
 			paymentReferenceRef.current = result.payment_intent_id ?? null;
@@ -288,6 +294,26 @@ export function TopUpDialog({
 								? `You’ll add ${formatCents(amountCents)} to your Wallet. Whole-dollar amounts only.`
 								: `Enter a whole-dollar amount from ${TOPUP_AMOUNT_RANGE_LABEL}.`}
 						</p>
+					</div>
+					<div className="flex items-start gap-3 rounded-lg border p-3">
+						<Checkbox
+							id="topup-reuse-saved-cards"
+							checked={reuseSavedCards}
+							disabled={topUp.isPending}
+							onCheckedChange={(checked) => {
+								setReuseSavedCards(checked === true);
+								topupKeyRef.current = null;
+							}}
+						/>
+						<div className="space-y-1">
+							<Label htmlFor="topup-reuse-saved-cards">
+								Use cards already saved to my Clawdi account for this payment
+							</Label>
+							<p className="text-xs text-muted-foreground">
+								Includes cards saved for subscriptions. You’ll choose and confirm the card with
+								Stripe.
+							</p>
+						</div>
 					</div>
 					<div className="flex justify-end">
 						<Button onClick={() => runAction(onContinue)} disabled={!valid || topUp.isPending}>

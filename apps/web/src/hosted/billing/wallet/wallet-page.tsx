@@ -10,6 +10,7 @@ import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner
 import { WalletSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import { useHostedDeployments } from "@/hosted/billing/hooks";
+import { billingKeys } from "@/hosted/billing/query-keys";
 import {
 	useSensitiveBillingPortal,
 	useSensitiveFinalizeWalletAutoReloadSetup,
@@ -18,6 +19,7 @@ import { getStripe } from "@/hosted/billing/stripe";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { AutoReloadCard } from "@/hosted/billing/wallet/auto-reload-card";
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
+import { PaymentMethodsSection } from "@/hosted/billing/wallet/payment-methods-section";
 import {
 	coordinateWalletPaymentReturn,
 	coordinateWalletSetupReturn,
@@ -103,8 +105,12 @@ export function WalletPage() {
 
 	async function openBillingPortal() {
 		try {
-			const res = await portal.execute({});
+			const res = await portal.execute({ return_context: "wallet" });
 			if (res.url || res.portal_url) {
+				void queryClient.invalidateQueries({
+					queryKey: billingKeys.paymentMethods,
+					refetchType: "none",
+				});
 				window.location.href = res.url || res.portal_url;
 				return;
 			}
@@ -341,6 +347,11 @@ export function WalletPage() {
 					onTopUp={() => setTopUpOpen(true)}
 					onManagePaymentMethods={() => void runAction(openBillingPortal)}
 					isManagePaymentMethodsPending={portal.isPending}
+				/>
+
+				<PaymentMethodsSection
+					onManage={() => void runAction(openBillingPortal)}
+					managing={portal.isPending}
 				/>
 
 				<div id="auto-reload" data-testid="auto-reload-section">

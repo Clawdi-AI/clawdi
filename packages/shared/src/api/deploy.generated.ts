@@ -741,6 +741,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/wallet/payment-methods": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Wallet Saved Cards */
+        get: operations["get_wallet_saved_cards_v2_wallet_payment_methods_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/wallet/topup/checkout/{checkout_session_id}": {
         parameters: {
             query?: never;
@@ -1937,6 +1954,12 @@ export interface components {
         V2ComputePortalRequest: {
             /** Locale */
             locale?: string | null;
+            /**
+             * Return Context
+             * @default compute
+             * @enum {string}
+             */
+            return_context: "compute" | "wallet";
         };
         /** V2ComputeReusableSubscriptionItem */
         V2ComputeReusableSubscriptionItem: {
@@ -3076,8 +3099,29 @@ export interface components {
             auto_reload_status: "off" | "active" | "paused_monthly_limit" | "payment_action_required" | "payment_failed" | "blocked_refund";
             auto_reload_action?: components["schemas"]["V2WalletAutoReloadActionResponse"] | null;
         };
+        /** V2WalletSavedCardResponse */
+        V2WalletSavedCardResponse: {
+            /** Id */
+            id: string;
+            card: components["schemas"]["V2WalletAutoReloadCardSummary"];
+            /** Is Default */
+            is_default: boolean;
+            /** Is Auto Reload */
+            is_auto_reload: boolean;
+            /** Reuse Consent Required */
+            reuse_consent_required: boolean;
+        };
+        /** V2WalletSavedCardsResponse */
+        V2WalletSavedCardsResponse: {
+            /** Items */
+            items: components["schemas"]["V2WalletSavedCardResponse"][];
+            /** Has More */
+            has_more: boolean;
+        };
         /** V2WalletTopupRequest */
         V2WalletTopupRequest: {
+            /** Saved Payment Method Reuse */
+            saved_payment_method_reuse?: "wallet_purchase_v1" | null;
             /** Amount Cents */
             amount_cents: number;
             /** Locale */
@@ -5221,6 +5265,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_wallet_saved_cards_v2_wallet_payment_methods_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletSavedCardsResponse"];
                 };
             };
         };

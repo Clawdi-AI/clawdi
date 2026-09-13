@@ -166,6 +166,15 @@ export function useManagedModelCatalog({ enabled = true }: { enabled?: boolean }
 
 // ── Wallet ───────────────────────────────────────────────────────────────────
 
+export function useWalletPaymentMethods() {
+	const client = useBillingClient();
+	return useBillingQuery({
+		queryKey: billingKeys.paymentMethods,
+		queryFn: () => client.getWalletPaymentMethods(),
+		staleTime: 30_000,
+	});
+}
+
 export function useWalletTransactions() {
 	const client = useBillingClient();
 	return useInfiniteQuery({
