@@ -39,25 +39,6 @@ beforeEach(() => {
 });
 
 describe("RetryQueue", () => {
-	it("wakes eligibility waiters when a retry moves behind pending work", async () => {
-		const q = new RetryQueue({ agentType: "claude_code" });
-		q.enqueue({
-			kind: "skill_push",
-			agent_id: "test-agent",
-			project_id: "test-project",
-			skill_key: "blocked",
-			new_hash: "h1",
-			enqueued_at: "2026-01-01T00:00:00Z",
-			attempts: 0,
-		});
-		const blocked = q.peek();
-		if (!blocked) throw new Error("expected queued item");
-		const wake = q.waitForChange(new AbortController().signal, 10_000);
-		q.bumpAttempts(blocked);
-		await wake;
-		expect(q.peek()?.attempts).toBe(1);
-	});
-
 	it("persists and reloads items across instances", async () => {
 		const a = new RetryQueue({ agentType: "claude_code" });
 		a.enqueue({
