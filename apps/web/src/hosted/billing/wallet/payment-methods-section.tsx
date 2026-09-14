@@ -1,6 +1,6 @@
 "use client";
 
-import { CreditCard, ExternalLink } from "lucide-react";
+import { CreditCard, Pencil } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +25,18 @@ export function PaymentMethodsSection({
 			headingLevel={3}
 			title="Payment methods"
 			description="Cards saved to your billing account."
+			actions={
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={onManage}
+					disabled={managing}
+					aria-busy={managing}
+					aria-label="Edit payment methods"
+				>
+					{managing ? <Spinner /> : <Pencil aria-hidden />} Edit
+				</Button>
+			}
 		>
 			<div className="space-y-3">
 				{methods.isLoading ? (
@@ -65,9 +77,6 @@ export function PaymentMethodsSection({
 				<p className="text-xs text-muted-foreground">
 					Auto-reload uses the card selected in Auto-reload below.
 				</p>
-				<Button variant="outline" size="sm" onClick={onManage} disabled={managing}>
-					{managing ? <Spinner /> : <ExternalLink />} Add or update billing card
-				</Button>
 			</div>
 		</SettingsSection>
 	);

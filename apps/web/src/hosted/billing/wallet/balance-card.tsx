@@ -3,7 +3,6 @@
 import { Coins, CreditCard, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Spinner } from "@/components/ui/spinner";
 import { formatUsdExact } from "@/hosted/billing/format";
 import type { WalletCacheSnapshot } from "@/hosted/billing/wallet/wallet-cache";
 import { isLowBalance } from "@/hosted/billing/wallet/wallet-constants";
@@ -17,14 +16,10 @@ export function BalanceCard({
 	wallet,
 	hasWalletCompute = false,
 	onTopUp,
-	onManagePaymentMethods,
-	isManagePaymentMethodsPending = false,
 }: {
 	wallet: WalletCacheSnapshot;
 	hasWalletCompute?: boolean;
 	onTopUp: () => void;
-	onManagePaymentMethods: () => void;
-	isManagePaymentMethodsPending?: boolean;
 }) {
 	const low = isLowBalance(wallet.balance_usd);
 	return (
@@ -62,15 +57,6 @@ export function BalanceCard({
 				<div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto lg:shrink-0">
 					<Button onClick={onTopUp} className="w-full sm:w-auto">
 						<CreditCard /> Top up
-					</Button>
-					<Button
-						variant="outline"
-						className="w-full sm:w-auto"
-						onClick={onManagePaymentMethods}
-						disabled={isManagePaymentMethodsPending}
-						aria-busy={isManagePaymentMethodsPending}
-					>
-						{isManagePaymentMethodsPending ? <Spinner /> : <CreditCard />} Manage payment methods
 					</Button>
 				</div>
 			</CardContent>
