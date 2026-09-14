@@ -53,7 +53,7 @@ export function PaymentMethodsSection({
 						{methods.data.items.map((method) => (
 							<li key={method.id} className="flex flex-wrap items-center gap-3 p-3">
 								<CreditCard aria-hidden className="size-4 text-muted-foreground" />
-								<div className="min-w-0 flex-1">
+								<div className="min-w-40 flex-1">
 									<p className="text-sm font-medium capitalize">
 										{method.card.brand} ending in {method.card.last4}
 									</p>
