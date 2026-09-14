@@ -18,6 +18,81 @@ const context = {
 	content_version: 1,
 };
 
+test("initial SSR and delayed inspect show a compact loading status without a form card", async ({
+	page,
+	browser,
+}) => {
+	const ssrContext = await browser.newContext({ javaScriptEnabled: false });
+	try {
+		const ssrPage = await ssrContext.newPage();
+		await ssrPage.goto(new URL(`/vault-request#${token}`, test.info().project.use.baseURL).href);
+		await expect(ssrPage.getByRole("status")).toHaveText("Loading request…");
+		await expect(ssrPage.locator('[data-slot="card"], form')).toHaveCount(0);
+	} finally {
+		await ssrContext.close();
+	}
+
+	let pending: Route | undefined;
+	await page.route("**/v1/vault/requests/inspect", (route) => {
+		if (route.request().postDataJSON().fields) return route.fulfill({ json: context });
+		pending = route;
+	});
+	await page.goto(`/vault-request#${token}`);
+	await expect.poll(() => pending !== undefined).toBe(true);
+	const loading = page.getByRole("status");
+	await expect(loading).toHaveText("Loading request…");
+	await expect(page.locator('[data-slot="card"], form')).toHaveCount(0);
+	await expect(page).toHaveURL(/\/vault-request$/);
+	const loadingBox = await loading.boundingBox();
+	if (!loadingBox || !pending) throw new Error("Expected the pending request loading status");
+	expect(loadingBox.height).toBeLessThan(80);
+	await pending.fulfill({ json: context });
+	await expect(page.getByText("Production API · Agent workspace")).toBeVisible();
+	await expect(page.getByLabel("API_KEY", { exact: true })).toBeVisible();
+	await expect(loading).toHaveCount(0);
+	const cardBox = await page.locator('[data-slot="card"]').boundingBox();
+	expect(cardBox?.y).toBe(loadingBox.y);
+});
+
+for (const width of [390, 1280]) {
+	test(`long unbroken secrets wrap without clipping at ${width}px`, async ({ page }) => {
+		await page.setViewportSize({ width, height: 900 });
+		await page.route("**/v1/vault/requests/inspect", (route) => route.fulfill({ json: context }));
+		await page.goto(`/vault-request#${token}`);
+		const value = "synthetic".repeat(1024);
+		await page.getByLabel("API_KEY", { exact: true }).fill(value);
+		await page.getByRole("button", { name: "Add field", exact: true }).click();
+		await page.getByRole("textbox", { name: "Field name", exact: true }).fill("EXTRA");
+		await page.getByLabel("Value for EXTRA", { exact: true }).fill(value);
+		await page.getByRole("button", { name: "Import .env", exact: true }).click();
+		await page.getByLabel("Dotenv text").fill(`API_KEY=${value}`);
+		for (const [label, expected] of [
+			["API_KEY", value],
+			["Value for EXTRA", value],
+			["Dotenv text", `API_KEY=${value}`],
+		]) {
+			const textarea = page.getByLabel(label, { exact: true });
+			await expect(textarea).toHaveValue(expected);
+			// Check the control and every ancestor: the Card hides overflow, which can
+			// otherwise make document width alone pass even when the form is clipped.
+			expect(
+				await textarea.evaluate((element) => {
+					for (let node: Element | null = element; node; node = node.parentElement) {
+						const box = node.getBoundingClientRect();
+						if (node.scrollWidth > node.clientWidth || box.left < 0 || box.right > innerWidth) {
+							return false;
+						}
+					}
+					return true;
+				}),
+			).toBe(true);
+		}
+		expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+			width,
+		);
+	});
+}
+
 for (const update_fields of [[], ["API_KEY"]]) {
 	test(`public ${update_fields.length ? "mixed" : "new"} batch keeps capability private and saves once`, async ({
 		page,

@@ -291,9 +291,19 @@ export function VaultRequestPage() {
 		}
 	}
 
+	if (phase === "loading") {
+		return (
+			<main className="mx-auto min-h-dvh w-full max-w-lg px-4 py-10">
+				<p role="status" className="text-sm text-muted-foreground">
+					Loading request…
+				</p>
+			</main>
+		);
+	}
+
 	return (
-		<main className="mx-auto flex min-h-dvh max-w-lg items-center px-4 py-10">
-			<Card className="w-full">
+		<main className="mx-auto min-h-dvh w-full max-w-lg px-4 py-10">
+			<Card className="min-w-0 w-full">
 				<CardHeader className="gap-5">
 					<div className="flex items-center gap-2">
 						<img
@@ -316,7 +326,6 @@ export function VaultRequestPage() {
 					</CardTitle>
 				</CardHeader>
 				<CardContent>
-					{phase === "loading" && <p role="status">Loading request…</p>}
 					{phase === "unavailable" && (
 						<p role="alert" className="text-muted-foreground">
 							{UNAVAILABLE}
@@ -381,7 +390,7 @@ export function VaultRequestPage() {
 							)}
 							<fieldset
 								disabled={phase === "saving" || importBusy || !!preview}
-								className="space-y-5"
+								className="min-w-0 space-y-5"
 							>
 								{rows.map(({ id, name, value, required }) => (
 									<div className="space-y-2" key={id}>
@@ -432,7 +441,8 @@ export function VaultRequestPage() {
 											autoComplete="off"
 											spellCheck={false}
 											data-private="true"
-											className="font-mono"
+											wrap="soft"
+											className="min-w-0 font-mono wrap-anywhere"
 											disabled={phase === "saving"}
 											onChange={(event) =>
 												setRows((current) =>
@@ -483,6 +493,8 @@ export function VaultRequestPage() {
 											<Label htmlFor="env-import">Dotenv text</Label>
 											<Textarea
 												id="env-import"
+												wrap="soft"
+												className="min-w-0 wrap-anywhere"
 												value={importText}
 												data-private="true"
 												autoComplete="off"
