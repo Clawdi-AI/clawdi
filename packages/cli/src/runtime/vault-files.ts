@@ -95,7 +95,6 @@ const receiptSchema = z
 		apiUrl: z.string(),
 		agentId: z.uuid(),
 		workspace: z.string(),
-		device: z.number(),
 		inode: z.number(),
 		files: z.array(generatedName),
 		// Incomplete owned cache metadata is refreshed from the current API.
@@ -103,6 +102,7 @@ const receiptSchema = z
 		etag: z.string().nullable(),
 	})
 	.strict();
+const storedReceiptSchema = receiptSchema.extend({ device: z.number().optional() }).strict();
 type Receipt = z.infer<typeof receiptSchema>;
 
 export type RuntimeVaultFilesConfig = {
@@ -309,9 +309,10 @@ function readReceiptFile(path: string): Receipt | null {
 			stat.size > 16 * 1024 * 1024
 		)
 			fail();
-		const parsed = receiptSchema.safeParse(JSON.parse(readFileSync(fd, "utf8")));
+		const parsed = storedReceiptSchema.safeParse(JSON.parse(readFileSync(fd, "utf8")));
 		if (!parsed.success) fail();
-		return parsed.data;
+		const { device: _legacyDevice, ...receipt } = parsed.data;
+		return receipt;
 	} finally {
 		closeSync(fd);
 	}
@@ -351,7 +352,6 @@ function withDirectory<T>(
 		try {
 			const stat = fstatSync(fd);
 			if (
-				stat.dev !== receipt.device ||
 				stat.ino !== receipt.inode ||
 				stat.uid !== process.geteuid?.() ||
 				(stat.mode & 0o777) !== 0o700
@@ -363,6 +363,7 @@ function withDirectory<T>(
 		}
 	});
 }
+
 function checkTracked(config: VaultFileContext): void {
 	// Even absent working-tree files may be tracked. Git failure is not proof of absence.
 	const runGit = (args: string[]) =>
@@ -402,7 +403,7 @@ function initialize(config: VaultFileContext): Receipt {
 			const fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
 			try {
 				const stat = fstatSync(fd);
-				return { device: stat.dev, inode: stat.ino };
+				return { inode: stat.ino };
 			} finally {
 				closeSync(fd);
 			}
@@ -435,7 +436,7 @@ function initialize(config: VaultFileContext): Receipt {
 				);
 				try {
 					const stat = fstatSync(fd);
-					return { device: stat.dev, inode: stat.ino };
+					return { inode: stat.ino };
 				} finally {
 					closeSync(fd);
 				}

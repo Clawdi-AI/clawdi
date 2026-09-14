@@ -226,6 +226,9 @@ for (const connected of [true, false]) {
 					for (const file of readdirSync(dir))
 						expect(lstatSync(join(dir, file)).mode & 0o777).toBe(0o600);
 					const mtimes = files.map((file) => lstatSync(join(dir, file), { bigint: true }).mtimeNs);
+					const receipt = JSON.parse(readFileSync(config.receiptPath, "utf8"));
+					receipt.device = 1;
+					writeFileSync(config.receiptPath, JSON.stringify(receipt));
 					expect(await syncRuntimeVaultFiles(config)).toBe("unchanged");
 					expect(files.map((file) => lstatSync(join(dir, file), { bigint: true }).mtimeNs)).toEqual(
 						mtimes,
