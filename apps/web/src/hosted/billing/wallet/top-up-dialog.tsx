@@ -5,7 +5,6 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSettingsEditState } from "@/components/settings-edit-state";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Dialog,
 	DialogContent,
