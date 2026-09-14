@@ -51,9 +51,6 @@ export function PaymentMethodsSection({
 								</div>
 								{method.is_default ? <Badge variant="outline">Billing default</Badge> : null}
 								{method.is_auto_reload ? <Badge variant="outline">Auto-reload</Badge> : null}
-								{method.reuse_consent_required ? (
-									<Badge variant="outline">Confirm reuse when topping up</Badge>
-								) : null}
 							</li>
 						))}
 					</ul>

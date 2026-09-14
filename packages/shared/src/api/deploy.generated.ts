@@ -3108,8 +3108,6 @@ export interface components {
             is_default: boolean;
             /** Is Auto Reload */
             is_auto_reload: boolean;
-            /** Reuse Consent Required */
-            reuse_consent_required: boolean;
         };
         /** V2WalletSavedCardsResponse */
         V2WalletSavedCardsResponse: {
@@ -3120,8 +3118,6 @@ export interface components {
         };
         /** V2WalletTopupRequest */
         V2WalletTopupRequest: {
-            /** Saved Payment Method Reuse */
-            saved_payment_method_reuse?: "wallet_purchase_v1" | null;
             /** Amount Cents */
             amount_cents: number;
             /** Locale */

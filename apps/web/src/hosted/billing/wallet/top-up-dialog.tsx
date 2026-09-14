@@ -112,7 +112,6 @@ export function TopUpDialog({
 	}
 
 	function reset() {
-		setReuseSavedCards(false);
 		setCheckout(null);
 		setAmountTouched(false);
 		setPaymentSubmitting(false);
@@ -292,17 +291,6 @@ export function TopUpDialog({
 								? `You’ll add ${formatCents(amountCents)} to your Wallet. Whole-dollar amounts only.`
 								: `Enter a whole-dollar amount from ${TOPUP_AMOUNT_RANGE_LABEL}.`}
 						</p>
-					</div>
-					<div className="flex items-start gap-3 rounded-lg border p-3">
-						<div className="space-y-1">
-							<Label htmlFor="topup-reuse-saved-cards">
-								Use cards already saved to my Clawdi account for this payment
-							</Label>
-							<p className="text-xs text-muted-foreground">
-								Includes cards saved for subscriptions. You’ll choose and confirm the card with
-								Stripe.
-							</p>
-						</div>
 					</div>
 					<div className="flex justify-end">
 						<Button onClick={() => runAction(onContinue)} disabled={!valid || topUp.isPending}>
