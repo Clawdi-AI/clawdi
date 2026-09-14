@@ -345,8 +345,6 @@ export function WalletPage() {
 					wallet={w}
 					hasWalletCompute={walletComputeCount > 0}
 					onTopUp={() => setTopUpOpen(true)}
-					onManagePaymentMethods={() => void runAction(openBillingPortal)}
-					isManagePaymentMethodsPending={portal.isPending}
 				/>
 
 				<PaymentMethodsSection
