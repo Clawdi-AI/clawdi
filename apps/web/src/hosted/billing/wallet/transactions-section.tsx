@@ -23,6 +23,7 @@ import { useWalletTransactions } from "@/hosted/billing/hooks";
 import {
 	transactionComputeDetails,
 	transactionKindLabel,
+	transactionPaymentSourceLabel,
 	transactionSignedAmount,
 } from "@/hosted/billing/wallet/transactions-section.logic";
 import { formatShortDate } from "@/lib/format";
@@ -133,7 +134,7 @@ export function TransactionsSection() {
 			data-hosted="true"
 			headingLevel={3}
 			title="Transactions"
-			description="Every movement of money, including card-paid subscriptions."
+			description="Top-ups, compute payments, credits, and adjustments."
 		>
 			<div className="flex flex-col gap-4">
 				{transactions.isLoading ? (
@@ -168,7 +169,7 @@ export function TransactionsSection() {
 										<TransactionDescription transaction={transaction} />
 										<div className="flex flex-wrap items-center gap-2">
 											<Badge variant="outline">
-												{transaction.funding === "wallet" ? "Wallet" : "Card"}
+												{transactionPaymentSourceLabel(transaction.funding)}
 											</Badge>
 											<StatusBadge status={statusTone(transaction.status)}>
 												{statusLabel(transaction.status)}
@@ -189,7 +190,7 @@ export function TransactionsSection() {
 								<TableHeader>
 									<TableRow>
 										<TableHead>Type</TableHead>
-										<TableHead>Funding</TableHead>
+										<TableHead>Payment source</TableHead>
 										<TableHead>Status</TableHead>
 										<TableHead className="text-right">Amount</TableHead>
 										<TableHead className="text-right">Date</TableHead>
@@ -204,7 +205,7 @@ export function TransactionsSection() {
 											</TableCell>
 											<TableCell>
 												<Badge variant="outline">
-													{transaction.funding === "wallet" ? "Wallet" : "Card"}
+													{transactionPaymentSourceLabel(transaction.funding)}
 												</Badge>
 											</TableCell>
 											<TableCell>

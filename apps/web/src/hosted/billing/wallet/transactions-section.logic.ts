@@ -14,6 +14,33 @@ const KIND_LABELS: Record<string, string> = {
 	compute_credit: "Compute credit",
 };
 
+const PAYMENT_SOURCE_LABELS: Record<string, string> = {
+	wallet: "Wallet",
+	card: "Card",
+	usdc: "USDC",
+	unknown: "Unknown",
+	multiple: "Multiple methods",
+	us_bank_account: "US bank account",
+	sepa_debit: "SEPA Direct Debit",
+	bacs_debit: "Bacs Direct Debit",
+	acss_debit: "ACSS Direct Debit",
+	au_becs_debit: "BECS Direct Debit",
+	customer_balance: "Bank transfer",
+	paypal: "PayPal",
+	cashapp: "Cash App",
+	ideal: "iDEAL",
+	alipay: "Alipay",
+	wechat_pay: "WeChat Pay",
+};
+
+export function transactionPaymentSourceLabel(source: WalletTransaction["funding"]): string {
+	if (source === null) return "—";
+	return (
+		PAYMENT_SOURCE_LABELS[source] ??
+		source.replaceAll("_", " ").replace(/\b[a-z]/g, (letter) => letter.toUpperCase())
+	);
+}
+
 export function transactionKindLabel(kind: string): string {
 	return KIND_LABELS[kind] ?? "Other transaction";
 }

@@ -72,7 +72,7 @@ describe("walletTopupCreditIsApplied", () => {
 		currency: "usd",
 		direction: "credit",
 		status: "applied",
-		funding: "wallet",
+		funding: "card",
 		payment_reference: "pi_previous",
 		receipt_url: null,
 	};

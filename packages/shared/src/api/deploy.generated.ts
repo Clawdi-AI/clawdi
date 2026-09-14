@@ -3182,9 +3182,9 @@ export interface components {
             status: string;
             /**
              * Funding
-             * @enum {string}
+             * @description Actual payment source: wallet, usdc, a Stripe payment method type, multiple, or unknown when evidence is missing. Null means no user payment.
              */
-            funding: "wallet" | "card";
+            funding: string | null;
             /** Payment Reference */
             payment_reference?: string | null;
             /** Receipt Url */
