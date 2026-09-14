@@ -2507,9 +2507,6 @@ async def _admin_upsert_runtime_state(
             for provider_id in runtime.provider_ids
         ],
         cli_package_spec=body.cli_package_spec,
-        previous_state=state
-        if state is not None and state.instance_id == body.instance_id
-        else None,
     )
     secret_rows = await load_hosted_runtime_secrets_for_update(
         db,

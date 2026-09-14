@@ -63,8 +63,15 @@ with conflicting or missing native state still refuses unsafe handoff.
 `supported_custom_provider_cli_versions` is an exact stable-release allowlist in
 Core and the first-party control plane. It defaults closed. First-party admission
 and provisioning require the server-selected exact CLI; Core also rejects runtime
-state that would send Custom to an unsupported reader, and requires fresh consumed
-evidence when adding a Custom binding to an existing instance. Enable only after
+state that would send Custom to an unsupported target reader. Binding admission
+checks the exact desired CLI version for the owner's active Custom providers;
+it does not require an old healthy observation. This applies to first binding,
+online reconfiguration, offline edits, restart and recovery. Bootstrap must accept
+configuration before the CLI can start and produce evidence. The qualified CLI
+switches versions before convergence and enforces native credential ownership in
+its durable configuration transaction. Admission neither proves readiness nor
+changes observations. Mode-only ownership migration and credential restoration
+still require their separate runtime evidence. Enable only after
 publishing and qualifying the supporting CLI. This is capability admission, not a
 second desired-version selector. `supported_connection_cli_versions` continues to
 protect the earlier migration-only contract. No allowlist is enabled by code.
