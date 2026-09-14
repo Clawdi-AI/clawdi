@@ -1088,6 +1088,9 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 			}
 			return fulfillJson(r, response.body, response.status);
 		}
+		if (p === "/v2/wallet/payment-methods") {
+			return fulfillJson(r, { items: [], has_more: false });
+		}
 		if (p === "/v2/wallet/topup" && r.request().method() === "POST") {
 			options.topUpRequests?.push(r.request().postData() ?? "");
 			options.topUpIdempotencyKeys?.push(r.request().headers()["idempotency-key"] ?? "");

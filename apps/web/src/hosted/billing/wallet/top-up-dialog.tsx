@@ -137,7 +137,9 @@ export function TopUpDialog({
 		topupKeyRef.current ??= newIdempotencyKey("topup");
 		try {
 			const result = await topUp.execute({
-				body: { amount_cents: amountCents },
+				body: {
+					amount_cents: amountCents,
+				},
 				idempotencyKey: topupKeyRef.current,
 			});
 			paymentReferenceRef.current = result.payment_intent_id ?? null;

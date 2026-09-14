@@ -106,13 +106,15 @@ export function TransactionsSection() {
 	const transactions = useWalletTransactions();
 	const rows = transactions.data?.pages.flatMap((page) => page.items) ?? [];
 	const loadMore =
-		transactions.hasNextPage && !transactions.isFetchNextPageError ? (
+		transactions.hasNextPage && !transactions.isError ? (
 			<div className="flex justify-center">
 				<Button
 					size="sm"
 					variant="outline"
-					onClick={() => void transactions.fetchNextPage()}
-					disabled={transactions.isFetchingNextPage}
+					onClick={() => {
+						if (!transactions.isFetching) void transactions.fetchNextPage({ cancelRefetch: false });
+					}}
+					disabled={transactions.isFetching}
 				>
 					{transactions.isFetchingNextPage ? (
 						<>
@@ -224,15 +226,22 @@ export function TransactionsSection() {
 								</TableBody>
 							</Table>
 						</div>
+						<p className="text-xs text-muted-foreground">Showing {rows.length} transactions</p>
 						{loadMore}
 					</>
 				)}
-				{transactions.isFetchNextPageError ? (
+				{transactions.isFetchNextPageError || transactions.isRefetchError ? (
 					<ApiErrorPanel
 						normalizer={billingErrorNormalizer}
 						error={transactions.error}
-						onRetry={() => void transactions.fetchNextPage()}
-						title="Couldn’t load more transactions"
+						onRetry={() => {
+							if (!transactions.isFetching) void transactions.refetch({ cancelRefetch: false });
+						}}
+						title={
+							transactions.isFetchNextPageError
+								? "Couldn’t load more transactions"
+								: "Couldn’t refresh transactions"
+						}
 					/>
 				) : null}
 			</div>

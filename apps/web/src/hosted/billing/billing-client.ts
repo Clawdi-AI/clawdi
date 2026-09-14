@@ -862,6 +862,7 @@ export function createBillingClient(
 					params: { query: { limit, cursor } },
 				}),
 			),
+		getWalletPaymentMethods: async () => unwrapDeploy(await api.GET("/v2/wallet/payment-methods")),
 		getWalletTopupCheckout: async (checkoutSessionId: string) =>
 			unwrapDeploy(
 				await api.GET("/v2/wallet/topup/checkout/{checkout_session_id}", {
