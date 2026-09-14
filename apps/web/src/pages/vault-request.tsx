@@ -1,11 +1,18 @@
 import type { components, paths } from "@clawdi/shared/api";
+import { Eye, EyeOff } from "lucide-react";
 import createClient from "openapi-fetch";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+	InputGroup,
+	InputGroupAddon,
+	InputGroupButton,
+	InputGroupInput,
+	InputGroupTextarea,
+} from "@/components/ui/input-group";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
 	MAX_ENV_IMPORT_BYTES,
 	type ParsedKey,
@@ -18,6 +25,87 @@ type RequestContext = components["schemas"]["VaultSecretRequestStatus"];
 const client = createClient<paths>({ baseUrl: env.VITE_CLAWDI_API_URL });
 const UNAVAILABLE =
 	"This request has changed or its link has expired. Ask your agent for a new link.";
+
+function SecretInput({
+	id,
+	label,
+	value,
+	onChange,
+	disabled,
+	required,
+	maxLength,
+}: {
+	id: string;
+	label: string;
+	value: string;
+	onChange: (value: string) => void;
+	disabled?: boolean;
+	required?: boolean;
+	maxLength?: number;
+}) {
+	const [visible, setVisible] = useState(false);
+	const multiline = /[\r\n]/.test(value);
+	const props = {
+		id,
+		"aria-label": label,
+		autoComplete: "off",
+		autoCapitalize: "none",
+		autoCorrect: "off",
+		spellCheck: false,
+		"data-private": "true",
+		disabled,
+		maxLength,
+		className: "min-w-0 font-mono wrap-anywhere",
+	};
+	return (
+		<InputGroup>
+			{visible ? (
+				<InputGroupTextarea
+					{...props}
+					wrap="soft"
+					value={value}
+					required={required}
+					onChange={(event) => onChange(event.target.value)}
+				/>
+			) : (
+				<InputGroupInput
+					{...props}
+					type="password"
+					value={multiline ? "" : value}
+					readOnly={multiline}
+					required={required && !multiline}
+					placeholder={multiline ? "Multiline value hidden" : undefined}
+					onChange={(event) => onChange(event.target.value)}
+					onPaste={(event) => {
+						const pasted = event.clipboardData.getData("text");
+						if (multiline || /[\r\n]/.test(pasted)) {
+							event.preventDefault();
+							const input = event.currentTarget;
+							const next = multiline
+								? pasted
+								: value.slice(0, input.selectionStart ?? 0) +
+									pasted +
+									value.slice(input.selectionEnd ?? value.length);
+							if (maxLength === undefined || next.length <= maxLength) onChange(next);
+						}
+					}}
+				/>
+			)}
+			<InputGroupAddon align="inline-end">
+				<InputGroupButton
+					size="icon-xs"
+					disabled={disabled}
+					onClick={() => setVisible((current) => !current)}
+					aria-label={`${visible ? "Hide" : "Show"} ${label}`}
+					aria-pressed={visible}
+					aria-controls={id}
+				>
+					{visible ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+				</InputGroupButton>
+			</InputGroupAddon>
+		</InputGroup>
+	);
+}
 
 export function VaultRequestPage() {
 	const token = useRef("");
@@ -291,9 +379,19 @@ export function VaultRequestPage() {
 		}
 	}
 
+	if (phase === "loading") {
+		return (
+			<main className="mx-auto min-h-dvh w-full max-w-lg px-4 py-10">
+				<p role="status" className="text-sm text-muted-foreground">
+					Loading request…
+				</p>
+			</main>
+		);
+	}
+
 	return (
-		<main className="mx-auto flex min-h-dvh max-w-lg items-center px-4 py-10">
-			<Card className="w-full">
+		<main className="mx-auto min-h-dvh w-full max-w-lg px-4 py-10">
+			<Card className="min-w-0 w-full">
 				<CardHeader className="gap-5">
 					<div className="flex items-center gap-2">
 						<img
@@ -316,7 +414,6 @@ export function VaultRequestPage() {
 					</CardTitle>
 				</CardHeader>
 				<CardContent>
-					{phase === "loading" && <p role="status">Loading request…</p>}
 					{phase === "unavailable" && (
 						<p role="alert" className="text-muted-foreground">
 							{UNAVAILABLE}
@@ -381,7 +478,7 @@ export function VaultRequestPage() {
 							)}
 							<fieldset
 								disabled={phase === "saving" || importBusy || !!preview}
-								className="space-y-5"
+								className="min-w-0 space-y-5"
 							>
 								{rows.map(({ id, name, value, required }) => (
 									<div className="space-y-2" key={id}>
@@ -423,22 +520,16 @@ export function VaultRequestPage() {
 												<span className="text-xs font-medium text-muted-foreground">Update</span>
 											)}
 										</div>
-										<Textarea
+										<SecretInput
 											id={`secret-${id}`}
-											aria-label={required ? undefined : `Value for ${name || "field"}`}
+											label={required ? name : `Value for ${name || "field"}`}
 											value={value}
 											required
 											maxLength={65536}
-											autoComplete="off"
-											spellCheck={false}
-											data-private="true"
-											className="font-mono"
 											disabled={phase === "saving"}
-											onChange={(event) =>
+											onChange={(value) =>
 												setRows((current) =>
-													current.map((row) =>
-														row.id === id ? { ...row, value: event.target.value } : row,
-													),
+													current.map((row) => (row.id === id ? { ...row, value } : row)),
 												)
 											}
 										/>
@@ -481,14 +572,12 @@ export function VaultRequestPage() {
 									{!preview && (
 										<>
 											<Label htmlFor="env-import">Dotenv text</Label>
-											<Textarea
+											<SecretInput
 												id="env-import"
+												label="Dotenv text"
 												value={importText}
-												data-private="true"
-												autoComplete="off"
-												spellCheck={false}
 												disabled={importBusy}
-												onChange={(event) => setImportText(event.target.value)}
+												onChange={setImportText}
 											/>
 											<Input
 												type="file"

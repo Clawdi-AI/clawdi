@@ -18,6 +18,38 @@ const context = {
 	content_version: 1,
 };
 
+test("shows loading without an empty card", async ({ page }) => {
+	let pending: Route | undefined;
+	await page.route("**/v1/vault/requests/inspect", (route) => {
+		if (route.request().postDataJSON().fields) return route.fulfill({ json: context });
+		pending = route;
+	});
+	await page.goto(`/vault-request#${token}`);
+	await expect.poll(() => pending !== undefined).toBe(true);
+	const loading = page.getByRole("status");
+	await expect(loading).toHaveText("Loading request…");
+	await expect(page.locator('[data-slot="card"], form')).toHaveCount(0);
+	await expect(page).toHaveURL(/\/vault-request$/);
+	if (!pending) throw new Error("Expected the pending request loading status");
+	await pending.fulfill({ json: context });
+	await expect(page.getByText("Production API · Agent workspace")).toBeVisible();
+	await expect(page.getByLabel("API_KEY", { exact: true })).toBeVisible();
+	await expect(loading).toHaveCount(0);
+});
+
+test("masks a long token without overflowing mobile layout", async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 900 });
+	await page.route("**/v1/vault/requests/inspect", (route) => route.fulfill({ json: context }));
+	await page.goto(`/vault-request#${token}`);
+	const input = page.getByLabel("API_KEY", { exact: true });
+	const value = "synthetic".repeat(1024);
+	await input.fill(value);
+	await expect(input).toHaveAttribute("type", "password");
+	expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+	await page.getByRole("button", { name: "Show API_KEY", exact: true }).click();
+	await expect(input).toHaveValue(value);
+});
+
 for (const update_fields of [[], ["API_KEY"]]) {
 	test(`public ${update_fields.length ? "mixed" : "new"} batch keeps capability private and saves once`, async ({
 		page,
@@ -63,7 +95,9 @@ for (const update_fields of [[], ["API_KEY"]]) {
 		await page.screenshot({ path: screenshot });
 		await testInfo.attach("request-form", { path: screenshot, contentType: "image/png" });
 		await page.getByLabel("API_KEY", { exact: true }).fill("fake-key");
+		await page.getByRole("button", { name: "Show API_SECRET", exact: true }).click();
 		await page.getByLabel("API_SECRET", { exact: true }).fill("line1\nline2");
+		await page.getByRole("button", { name: "Hide API_SECRET", exact: true }).click();
 		await page.getByRole("button", { name: "Save secrets" }).click();
 		await expect(page.getByRole("status")).toContainText("Your secrets are saved");
 		expect(submissions).toBe(1);
@@ -194,10 +228,12 @@ for (const viewport of [
 			await page
 				.getByLabel("Choose .env file")
 				.setInputFiles({ name: ".env", mimeType: "text/plain", buffer: Buffer.from(dotenv) });
+			await page.getByRole("button", { name: "Show Dotenv text", exact: true }).click();
 		} else {
-			await page.getByLabel("Dotenv text").fill(dotenv);
+			await page.getByRole("button", { name: "Show Dotenv text", exact: true }).click();
+			await page.getByLabel("Dotenv text", { exact: true }).fill(dotenv);
 		}
-		await expect(page.getByLabel("Dotenv text")).toHaveValue(dotenv);
+		await expect(page.getByLabel("Dotenv text", { exact: true })).toHaveValue(dotenv);
 		await expect(page.getByRole("button", { name: "Save secrets", exact: true })).toBeDisabled();
 		await page.getByRole("button", { name: "Preview import", exact: true }).click();
 		await expect(page.getByText("Replace entered value", { exact: false })).toBeVisible();
@@ -238,18 +274,21 @@ test("an import of only requested names requires Apply and keeps a usable Save",
 	await page.goto(`/vault-request#${token}`);
 	await page.getByLabel("API_KEY", { exact: true }).fill("synthetic-original");
 	await page.getByRole("button", { name: "Import .env", exact: true }).click();
-	await page.getByLabel("Dotenv text").fill("API_KEY=synthetic-new\nAPI_KEY=duplicate");
+	await page.getByRole("button", { name: "Show Dotenv text", exact: true }).click();
+	await page
+		.getByLabel("Dotenv text", { exact: true })
+		.fill("API_KEY=synthetic-new\nAPI_KEY=duplicate");
 	await page.getByRole("button", { name: "Preview import", exact: true }).click();
 	await expect(page.getByRole("alert")).toContainText("duplicate");
 	await expect(page.getByRole("button", { name: "Retry check", exact: true })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Apply import", exact: true })).toHaveCount(0);
 	await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-original");
-	await page.getByLabel("Dotenv text").fill("API_KEY=synthetic-new");
+	await page.getByLabel("Dotenv text", { exact: true }).fill("API_KEY=synthetic-new");
 	await page.getByRole("button", { name: "Preview import", exact: true }).click();
 	await page.getByRole("button", { name: "Cancel import", exact: true }).click();
 	await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-original");
 	await page.getByRole("button", { name: "Import .env", exact: true }).click();
-	await page.getByLabel("Dotenv text").fill("API_KEY=synthetic-new");
+	await page.getByLabel("Dotenv text", { exact: true }).fill("API_KEY=synthetic-new");
 	await page.getByRole("button", { name: "Preview import", exact: true }).click();
 	await page.getByRole("button", { name: "Apply import", exact: true }).click();
 	await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-new");
@@ -363,11 +402,13 @@ test("import preview retries server failure and clears the form on terminal expi
 	await page.goto(`/vault-request#${token}`);
 	await page.getByLabel("API_KEY", { exact: true }).fill("synthetic-draft");
 	await page.getByRole("button", { name: "Import .env", exact: true }).click();
-	await page.getByLabel("Dotenv text").fill("imported=synthetic-value");
+	await page.getByLabel("Dotenv text", { exact: true }).fill("imported=synthetic-value");
 	await page.getByRole("button", { name: "Preview import", exact: true }).click();
 	await expect(page.getByRole("alert")).toContainText("server is unavailable");
 	await expect(page.getByRole("button", { name: "Retry check", exact: true })).toHaveCount(0);
-	await expect(page.getByLabel("Dotenv text")).toHaveValue("imported=synthetic-value");
+	await expect(page.getByLabel("Dotenv text", { exact: true })).toHaveValue(
+		"imported=synthetic-value",
+	);
 	failure = 410;
 	await page.getByRole("button", { name: "Preview import", exact: true }).click();
 	await expect(page.getByRole("alert")).toContainText("link has expired");
