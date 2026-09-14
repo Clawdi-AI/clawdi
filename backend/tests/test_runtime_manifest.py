@@ -3618,10 +3618,12 @@ async def test_runtime_manifest_does_not_select_secret_without_managed_source(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_marks_explicit_archived_provider_binding_unhealthy(
+@pytest.mark.parametrize("foreign", [False, True], ids=["archived", "foreign-custom"])
+async def test_runtime_manifest_rejects_unavailable_provider_credentials(
     admin_client,
     db_session,
     seed_user,
+    foreign,
 ):
     env = await create_env_with_project(
         db_session,
@@ -3630,12 +3632,19 @@ async def test_runtime_manifest_marks_explicit_archived_provider_binding_unhealt
         machine_name="Runtime archived provider",
         agent_type="openclaw",
     )
+    provider_owner = seed_user
+    if foreign:
+        provider_owner = User(clerk_id=f"foreign-{uuid4()}", name="Foreign provider owner")
+        db_session.add(provider_owner)
+        await db_session.flush()
     ciphertext, nonce = encrypt("sk-managed-provider")
+    private_ciphertext, private_nonce = encrypt("private-custom-key")
     db_session.add_all(
         [
             AiProvider(
-                owner_user_id=seed_user.id,
+                owner_user_id=provider_owner.id,
                 provider_id="deleted-custom-provider",
+                configuration_mode="custom",
                 type="custom_openai_compatible",
                 base_url="https://deleted-provider.test/v1",
                 models=[{"id": "deleted-model"}],
@@ -3644,7 +3653,16 @@ async def test_runtime_manifest_marks_explicit_archived_provider_binding_unhealt
                 auth_metadata={"source": "managed"},
                 managed_by="user",
                 runtime_env_name="DELETED_PROVIDER_API_KEY",
-                archived_at=datetime.now(UTC),
+                archived_at=None if foreign else datetime.now(UTC),
+            ),
+            AiProviderAuthPayload(
+                owner_user_id=provider_owner.id,
+                provider_id="deleted-custom-provider",
+                auth_profile="default",
+                kind="api_key",
+                source="managed",
+                encrypted_payload=private_ciphertext,
+                nonce=private_nonce,
             ),
             AiProvider(
                 owner_user_id=seed_user.id,
