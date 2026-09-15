@@ -176,10 +176,23 @@ function hermesModelRoutingSource(model: Record<string, unknown> | null): string
 	});
 }
 
+export function validateConnectionProviderEnvironments(
+	manifest: RuntimeManifest,
+	runtime: string,
+	providers: ConnectionProviderOwnership["providers"],
+): void {
+	for (const { id, envName } of customProviderConnections(manifest, runtime)) {
+		const previous = providers[id];
+		if (previous && previous.envName !== envName)
+			throw new Error("Connection credential environment is immutable");
+	}
+}
+
 /** Read-only preflight. The root coordinator must durably persist providers before apply. */
 export function prepareConnectionProviderTransfers(
 	input: ConnectionContext,
 ): PreparedConnectionProviderTransfers {
+	validateConnectionProviderEnvironments(input.manifest, input.runtime, input.ownership.providers);
 	const connections = customProviderConnections(input.manifest, input.runtime);
 	for (const connection of connections) {
 		if (!runtimeSecretValue(input.secretValues ?? {}, connection.secretRef))
@@ -197,8 +210,6 @@ export function prepareConnectionProviderTransfers(
 		if (!existing && !creating) throw new Error(`Connection provider ${id} must already exist`);
 		if (current[id] !== undefined && !existing)
 			throw new Error("Custom provider config must be an object");
-		if (previous && previous.envName !== envName)
-			throw new Error("Connection credential environment is immutable");
 		if (creating) {
 			const protocol = input.runtime === "openclaw" ? OPENCLAW_API[apiMode] : HERMES_API[apiMode];
 			if (!protocol) throw new Error("Connection protocol is unsupported by this runtime");

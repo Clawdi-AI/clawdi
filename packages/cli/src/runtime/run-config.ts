@@ -3,6 +3,7 @@ import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 import { toErrorMessage } from "../serve/log";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
+import { canonicalJsonEqual } from "./manifest-shared";
 import type { RuntimePaths } from "./paths";
 import { getRuntimePaths } from "./paths";
 import { canonicalSecretRefSchema, runtimeSecretValue } from "./secret-values";
@@ -148,7 +149,28 @@ export function buildRuntimeRunConfig(input: {
 
 export function writeRuntimeRunConfig(config: RuntimeRunConfig, paths: RuntimePaths): string {
 	const path = runtimeRunConfigPath(config.runtime, paths, config.service);
-	writeRuntimePlatformFileAtomic(paths, path, `${JSON.stringify(config, null, 2)}\n`, {
+	let content = `${JSON.stringify(config, null, 2)}\n`;
+	if (existsSync(path)) {
+		const previousContent = readFileSync(path, "utf8");
+		let previous: unknown;
+		try {
+			previous = JSON.parse(previousContent);
+		} catch (error) {
+			if (!(error instanceof SyntaxError)) throw error;
+		}
+		const parsed = runtimeRunConfigSchema.safeParse(previous);
+		// A replay or refresh must preserve the bytes covered by activation proof
+		// when the same generation still describes exactly the same invocation.
+		if (
+			parsed.success &&
+			canonicalJsonEqual(previous, {
+				...config,
+				generatedAt: parsed.data.generatedAt,
+			})
+		)
+			content = previousContent;
+	}
+	writeRuntimePlatformFileAtomic(paths, path, content, {
 		mode: 0o644,
 		dirMode: 0o755,
 	});

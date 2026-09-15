@@ -9,6 +9,7 @@ import { removeHostedCliPathExposure } from "./cli-update";
 import {
 	type PreparedConnectionProviderTransfers,
 	prepareConnectionProviderTransfers,
+	validateConnectionProviderEnvironments,
 } from "./connection-provider-config";
 import { buildEgressProfileBundle, hasEnabledEgressProfiles } from "./egress-profiles";
 import {
@@ -1381,6 +1382,20 @@ export function convergeRuntimeManifest(
 	opts: RuntimeConvergenceOptions = {},
 ): RuntimeConvergenceResult {
 	const { context, state } = initializeRuntimeConvergence(load, paths, opts);
+	try {
+		// Durable connection identity is independent of native capability repair.
+		// Reject rebinding before installers or candidate environment files can change.
+		for (const runtime of ["openclaw", "hermes"]) {
+			if (!context.manifest.runtimes[runtime]?.enabled) continue;
+			validateConnectionProviderEnvironments(
+				context.manifest,
+				runtime,
+				context.providerOwnership.transfers[runtime] ?? {},
+			);
+		}
+	} catch (error) {
+		return runtimeApplyFailure(context, state, error);
+	}
 	try {
 		// Check existing jobs before changing native installs/config/plugins, not
 		// only after publishing the candidate units at activation time.

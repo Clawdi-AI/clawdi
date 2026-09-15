@@ -259,6 +259,13 @@ for (const runtime of ["openclaw", "hermes"] as const) {
 			expect(recordValue(f.read())?.models).toEqual(edited.models);
 			expect(recordValue(f.read())?.apiKey ?? recordValue(f.read())?.key_env).toBeUndefined();
 			f.manifest.runtimes[runtime].provider_ids = [id];
+			const desired = f.manifest.projection?.providers?.[id];
+			if (!desired) throw new Error("Missing provider fixture");
+			const unbound = f.read();
+			desired.runtimeEnvName = "RECREATED_PROVIDER_API_KEY";
+			expect(() => f.prepare()).toThrow("Connection credential environment is immutable");
+			expect(f.read()).toEqual(unbound);
+			desired.runtimeEnvName = envName;
 			f.prepare();
 			applyConnectionProviderTransfers(f.input());
 			expect(f.read()).toEqual(edited);
