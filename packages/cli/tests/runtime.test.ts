@@ -6115,6 +6115,61 @@ cp '${sdkSource}' '${sdkTarget}'
 		]);
 	});
 
+	it("watch self-heal requests a fresh manifest after unchanged committed metadata", async () => {
+		seedRuntimeWatchLocaleBaseline(
+			join(root, "home", "clawdi"),
+			join(root, "var", "lib", "clawdi"),
+			join(root, "run", "clawdi"),
+		);
+		const abort = new AbortController();
+		const previousLog = console.log;
+		let now = Date.now();
+		const clock = spyOn(Date, "now").mockImplementation(() => now);
+		const events: string[] = [];
+		console.log = (value?: unknown) => {
+			const event = JSON.parse(String(value));
+			events.push(event.status);
+			if (event.status === "not_modified") now += 300_001;
+		};
+		let requests = 0;
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/runtime/manifest",
+				response: () => {
+					requests += 1;
+					if (requests === 1)
+						return new Response(null, {
+							status: 304,
+							headers: { etag: testBundleEtag("manifest-locale-1") },
+						});
+					abort.abort();
+					return new Response("temporary fixture outage", { status: 503 });
+				},
+			},
+		]);
+		const deadline = setTimeout(() => abort.abort(), 3000);
+		try {
+			await runtimeWatch({
+				intervalMs: 10,
+				selfHealMs: 300_000,
+				notifications: false,
+				json: true,
+				abort: abort.signal,
+			});
+			const reads = captured.filter((request) => request.path === "/v1/runtime/manifest");
+			expect(events[0]).toBe("not_modified");
+			expect(reads).toHaveLength(2);
+			expect(reads[0].headers["if-none-match"]).toBe(testBundleEtag("manifest-locale-1"));
+			expect(reads[1].headers["if-none-match"]).toBeUndefined();
+		} finally {
+			clearTimeout(deadline);
+			restore();
+			clock.mockRestore();
+			console.log = previousLog;
+		}
+	});
+
 	it("runtime watch reconciles changed runtime and egress units without restarting itself", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -8955,6 +9010,8 @@ chmod +x "$prefix/bin/clawdi"
 	it.each([
 		["upgrades", "1.2.3-test.1", "1.2.3-test.2"],
 		["downgrades", "2.0.0-test.1", "1.2.3-test.2"],
+		["retry-expired", "0.14.84", "0.14.85"],
+		["new-after-rollback", "0.14.84", "0.14.86"],
 	])(
 		"hosted exact CLI desired state %s without npm view",
 		(action, currentVersion, desiredVersion) => {
@@ -9017,6 +9074,20 @@ chmod +x "$prefix/bin/clawdi"
 					hostedCliManifestResponse(home, desiredSpec),
 				);
 				const paths = getRuntimePaths();
+				if (action === "retry-expired" || action === "new-after-rollback") {
+					reconcilePendingRuntimeCliUpgrade(paths, currentVersion);
+					const receipt = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf8"));
+					receipt.bad = {
+						version: "0.14.85",
+						attempts: 1,
+						reason: "first converge failed",
+						failedAt: new Date(Date.now() - 120_000).toISOString(),
+						retryAt: new Date(
+							Date.now() + (action === "retry-expired" ? -1_000 : 3_600_000),
+						).toISOString(),
+					};
+					writeFileSync(paths.cliBootstrapStatus, JSON.stringify(receipt), { mode: 0o600 });
+				}
 				const result = applyRuntimeCliDesiredState(desired.manifest, paths);
 				expect(process.umask()).toBe(0o002);
 
@@ -9041,14 +9112,17 @@ chmod +x "$prefix/bin/clawdi"
 					activeTarget: result.activeTarget,
 					version: desiredVersion,
 					previous: { version: currentVersion },
-					bad: null,
+					bad:
+						action === "retry-expired"
+							? expect.objectContaining({ version: desiredVersion })
+							: null,
 				});
 				expect(pending.verification).toBeDefined();
 				const npmCalls = readFileSync(npmLog, "utf-8").trim().split("\n");
 				expect(npmCalls.some((call) => call.startsWith("view "))).toBe(false);
 				expect(npmCalls.some((call) => call.includes(desiredSpec))).toBe(true);
 
-				if (action === "upgrades") {
+				if (action !== "downgrades") {
 					expect(completePendingRuntimeCliUpgrade(paths, desiredVersion)).toEqual({
 						status: "unchanged",
 						selfReexec: false,
