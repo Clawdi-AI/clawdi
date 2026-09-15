@@ -9,6 +9,7 @@ import { removeHostedCliPathExposure } from "./cli-update";
 import {
 	type PreparedConnectionProviderTransfers,
 	prepareConnectionProviderTransfers,
+	validateConnectionProviderEnvironments,
 } from "./connection-provider-config";
 import { buildEgressProfileBundle, hasEnabledEgressProfiles } from "./egress-profiles";
 import {
@@ -246,20 +247,8 @@ function initializeRuntimeConvergence(
 		opts.hostedRuntimeContract,
 	);
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
-	if (manifest.runtimes.openclaw?.enabled === true) {
-		withRuntimeUserFileAccess(() => {
-			for (const path of [
-				join(projectionHome, ".openclaw"),
-				join(projectionHome, ".openclaw", "tmp"),
-			]) {
-				mkdirSync(path, { recursive: true });
-				chmodSync(path, 0o700);
-			}
-		}, hostedRuntimeContract.identity);
-	}
 	const openClawContext = createOpenClawHostedContext(manifest, projectionHome);
 	const hermesWhatsAppAuthDir = managedHermesWhatsAppAuthDir(manifest, projectionHome);
-	removeHostedCliPathExposure(paths);
 	if (manifest.companions?.filebrowser) {
 		if (!opts.systemdApply) {
 			throw new Error("Files companion requires systemd apply and readiness hooks");
@@ -1090,11 +1079,21 @@ function applyRuntimeEntryProjections(
 				egressProfileBundlePath: egressProjection.egressProfileBundlePath,
 			});
 		}, context.hostedRuntimeContract.identity);
-		const runConfigPath = writeRuntimeRunConfig(resolved.runtime, paths);
+		const runConfigPath = writeRuntimeRunConfig(
+			resolved.runtime,
+			paths,
+			context.opts.retainedRunConfigs?.get(runtimeRunConfigId(resolved.runtime.runtime)),
+		);
 		state.runConfigs.push(runConfigPath);
 		egressProjection.writtenRunConfigIds.add(runtimeRunConfigId(resolved.runtime.runtime));
 		for (const serviceRunConfig of resolved.services) {
-			const serviceRunConfigPath = writeRuntimeRunConfig(serviceRunConfig, paths);
+			const serviceRunConfigPath = writeRuntimeRunConfig(
+				serviceRunConfig,
+				paths,
+				context.opts.retainedRunConfigs?.get(
+					runtimeRunConfigId(serviceRunConfig.runtime, serviceRunConfig.service),
+				),
+			);
 			state.runConfigs.push(serviceRunConfigPath);
 			egressProjection.writtenRunConfigIds.add(
 				runtimeRunConfigId(serviceRunConfig.runtime, serviceRunConfig.service),
@@ -1382,6 +1381,20 @@ export function convergeRuntimeManifest(
 ): RuntimeConvergenceResult {
 	const { context, state } = initializeRuntimeConvergence(load, paths, opts);
 	try {
+		// Durable connection identity is independent of native capability repair.
+		// Reject rebinding before installers or candidate environment files can change.
+		for (const runtime of ["openclaw", "hermes"]) {
+			if (!context.manifest.runtimes[runtime]?.enabled) continue;
+			validateConnectionProviderEnvironments(
+				context.manifest,
+				runtime,
+				context.providerOwnership.transfers[runtime] ?? {},
+			);
+		}
+	} catch (error) {
+		return runtimeApplyFailure(context, state, error);
+	}
+	try {
 		// Check existing jobs before changing native installs/config/plugins, not
 		// only after publishing the candidate units at activation time.
 		opts.systemdApply?.assertIdle?.();
@@ -1391,6 +1404,18 @@ export function convergeRuntimeManifest(
 		if (!(error instanceof SystemdReobservationRequiredError)) throw error;
 		return runtimeApplyFailure(context, state, error);
 	}
+	if (context.manifest.runtimes.openclaw?.enabled === true) {
+		withRuntimeUserFileAccess(() => {
+			for (const path of [
+				join(context.projectionHome, ".openclaw"),
+				join(context.projectionHome, ".openclaw", "tmp"),
+			]) {
+				mkdirSync(path, { recursive: true });
+				chmodSync(path, 0o700);
+			}
+		}, context.hostedRuntimeContract.identity);
+	}
+	removeHostedCliPathExposure(paths);
 	const installResult = prepareRuntimeInstallStage(context, state);
 	if (installResult) return installResult.result;
 	context.hermesConfig = beginRuntimeHermesConfig(context, state);

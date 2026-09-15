@@ -77,6 +77,7 @@ import {
 import { parseHostedRuntimeBundleV2, type RuntimeManifestLoad } from "./manifest-source";
 import { applyOpenClawHostedChannelPatch } from "./openclaw-provider-config";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
+import { writeProviderOwnership } from "./provider-ownership";
 import {
 	buildRuntimeRunConfig,
 	type RuntimeRunSettings,
@@ -5562,6 +5563,55 @@ test("Hermes component proof accepts inline credentials and detects their mutati
 	).toBe("ok");
 	const runConfigPath = runtimeRunConfigPath("hermes", paths, "dashboard");
 	const runConfigBytes = readFileSync(runConfigPath, "utf8");
+	const proofPath = join(dirname(paths.appliedState), "component-activations.json");
+	const proofBytes = readFileSync(proofPath, "utf8");
+	writeProviderOwnership(paths, manifest.instanceId, paths.userHome, {
+		providers: {},
+		transfers: {
+			openclaw: {},
+			hermes: {
+				"saved-provider": {
+					envName: "SAVED_PROVIDER_API_KEY",
+					baseUrl: "https://provider.example/v1",
+					apiMode: "openai_chat",
+				},
+			},
+		},
+	});
+	const rejected = structuredClone(load);
+	rejected.manifest.generation = 2;
+	rejected.manifest.runtimes.hermes.provider_ids = ["saved-provider"];
+	rejected.manifest.projection = {
+		providers: {
+			"saved-provider": {
+				kind: "openai-compatible",
+				type: "custom_openai_compatible",
+				configurationMode: "custom",
+				managed_by: "user",
+				baseUrl: "https://provider.example/v1",
+				apiMode: "openai_chat",
+				runtimeEnvName: "CLAWDI_SAVED_PROVIDER_API_KEY",
+				apiKeySecretRef: "secret://provider.saved-provider.apiKey",
+			},
+		},
+	};
+	const failed = convergeRuntimeManifest(
+		manifestLoad(rejected.manifest, "rejected-provider-rebind", rejected.secretValues),
+		paths,
+	);
+	expect(failed.installErrors).toEqual([
+		"runtime apply failed: Connection credential environment is immutable",
+	]);
+	expect(readFileSync(runConfigPath, "utf8")).toBe(runConfigBytes);
+	expect(readFileSync(proofPath, "utf8")).toBe(proofBytes);
+	expect(readRuntimeAppliedState(paths)).toEqual(applied);
+	writeRuntimeRunConfig({ ...generatedRunConfig, generatedAt: "2026-09-15T07:23:33.000Z" }, paths);
+	expect(readFileSync(runConfigPath, "utf8")).toBe(runConfigBytes);
+	expect(readFileSync(proofPath, "utf8")).toBe(proofBytes);
+	expect(
+		(await observeComponents(paths, applied, readServiceState, async () => true))?.entries[0]
+			?.status,
+	).toBe("ok");
 	writeFileSync(runConfigPath, runConfigBytes.replace('"generation": 1', '"generation": 2'));
 	expect(
 		(await observeComponents(paths, applied, readServiceState, async () => true))?.entries[0]

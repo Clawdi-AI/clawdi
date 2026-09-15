@@ -71,6 +71,7 @@ import {
 } from "../runtime/manifest-source";
 import { readComponentServiceState } from "../runtime/observed";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
+import { captureRuntimeRunConfigs } from "../runtime/run-config";
 import {
 	buildRuntimeBootStatus,
 	ensureRuntimeStateDirs,
@@ -161,6 +162,7 @@ interface RuntimeApplyCliUpdateFailedResult {
 }
 
 interface RuntimeApplyOptions {
+	retainedRunConfigs?: ReadonlyMap<string, string>;
 	authorityCommit?: (
 		convergence: ReturnType<typeof convergeRuntimeManifest>,
 		authority: RuntimePrivateAppliedAuthority,
@@ -178,7 +180,7 @@ interface RuntimeApplyOptions {
 
 export type RuntimeManifestApplyOptions = Omit<
 	RuntimeApplyOptions,
-	"authorityCommit" | "preparedCliUpdate" | "requireSystemdApplied"
+	"authorityCommit" | "preparedCliUpdate" | "requireSystemdApplied" | "retainedRunConfigs"
 >;
 
 interface RuntimeWatchFailureBackoff {
@@ -1441,8 +1443,16 @@ async function applyRuntimeDesiredState(
 		};
 		let egressPrerequisiteApply: typeof systemdApply | null = null;
 		let egressPrerequisiteActivated = false;
+		const previousCommitted = load.applyContext
+			? loadCommittedRuntimeManifest(paths, load.applyContext)
+			: null;
+		const previousRunConfigs =
+			previousCommitted && "manifest" in previousCommitted
+				? captureRuntimeRunConfigs(previousCommitted.manifest, paths)
+				: undefined;
 		const convergence = convergeRuntimeManifest(load, paths, {
 			cacheLastGood: false,
+			retainedRunConfigs: opts.retainedRunConfigs,
 			hostedRuntimeContract: opts.hostedRuntimeContract,
 			refreshCachedRuntimeProbes: opts.refreshCachedRuntimeProbes,
 			preparedHostedSourcedSkills,
@@ -1557,7 +1567,11 @@ async function applyRuntimeDesiredState(
 			if ("errors" in committed) {
 				convergence.installErrors.push(`last-good replay failed: ${committed.errors.join("; ")}`);
 			} else {
-				const replayOptions = { ...opts, preparedCliUpdate: cliUpdate };
+				const replayOptions = {
+					...opts,
+					preparedCliUpdate: cliUpdate,
+					retainedRunConfigs: previousRunConfigs,
+				};
 				delete replayOptions.authorityCommit;
 				delete replayOptions.preparedHostedAgentPlugins;
 				delete replayOptions.preparedHostedSourcedSkills;
@@ -1590,6 +1604,18 @@ async function applyRuntimeDesiredState(
 						convergence.installErrors.push(`last-good replay failed: ${replayErrors.join("; ")}`);
 					} else {
 						systemdApply = replay.systemdApply;
+						// Replay has validated the committed services again. Its run files
+						// may have been restored after a late failure or an interrupted apply.
+						// Record that real activation without advancing the applied receipt.
+						const applied = readRuntimeAppliedState(paths);
+						if (
+							systemdApply.applied &&
+							applied?.contentIdentity.sha256 === runtimeAppliedContentIdentity(committed).sha256
+						) {
+							persistComponentActivations(committed, paths, (scope, unit) =>
+								readComponentServiceState(paths, scope, unit),
+							);
+						}
 					}
 				}
 			}
