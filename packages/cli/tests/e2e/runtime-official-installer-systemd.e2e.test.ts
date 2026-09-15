@@ -31,6 +31,7 @@ import { getCliVersion } from "../../src/lib/version";
 import { readRuntimeAppliedState } from "../../src/runtime/applied-state";
 import { applyRuntimeBundleChannelsToManifestLoad } from "../../src/runtime/channels";
 import { reconcilePendingRuntimeCliUpgrade } from "../../src/runtime/cli-update";
+import { observeComponents } from "../../src/runtime/component-observation";
 import { hostedAiProviderCatalog } from "../../src/runtime/hosted-provider-resolution";
 import { prepareHostedSkillArchives } from "../../src/runtime/hosted-sourced-skill-archive";
 import {
@@ -45,6 +46,7 @@ import {
 	hostedRuntimeBundleV2Schema,
 	type RuntimeManifestLoad,
 } from "../../src/runtime/manifest-source";
+import { readComponentServiceState, runtimeComponentIsReady } from "../../src/runtime/observed";
 import { LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID } from "../../src/runtime/openclaw-legacy-provider-plugin";
 import { openClawPluginCapabilityConsentArgs } from "../../src/runtime/openclaw-plugin-cli";
 import { getRuntimePaths } from "../../src/runtime/paths";
@@ -2965,6 +2967,21 @@ exec /usr/bin/systemctl "$@"
 		expect(behavioralGuardUnitState("clawdi-hermes-dashboard.service").ActiveState).toBe("active");
 		expect(readRuntimeAppliedState(paths)?.generation).toBe(1);
 		const initialState = behavioralGuardObservableState(paths, skillRoot);
+		const initialRunConfigs = directoryFileDigests(paths.runConfigRoot);
+		const initialAppliedBytes = readFileSync(paths.appliedState, "utf8");
+		const componentStatus = async () => {
+			await waitForTcpPort(9119, VIRGIN_RUNTIME_PORT_TIMEOUT_MS);
+			const applied = readRuntimeAppliedState(paths);
+			if (!applied) throw new Error("Missing applied state");
+			const components = await observeComponents(
+				paths,
+				applied,
+				(scope, unit) => readComponentServiceState(paths, scope, unit),
+				(component) => runtimeComponentIsReady(component, paths),
+			);
+			return components?.entries.find((entry) => entry.component === "hermes-ui")?.status;
+		};
+		expect(await componentStatus()).toBe("ok");
 		const initialGatewayEnvironment = readFileSync(
 			join(paths.systemdEnvRoot, "hermes-gateway.service.env"),
 			"utf8",
@@ -2979,6 +2996,9 @@ exec /usr/bin/systemctl "$@"
 		expect(failed.installErrors.length).toBeGreaterThan(0);
 		expect(readFileSync(failureMarker, "utf8").trim()).toBe("consumed");
 		const failedFinalState = behavioralGuardObservableState(paths, skillRoot);
+		expect(directoryFileDigests(paths.runConfigRoot)).toEqual(initialRunConfigs);
+		expect(readFileSync(paths.appliedState, "utf8")).toBe(initialAppliedBytes);
+		expect(await componentStatus()).toBe("ok");
 		expect(failedFinalState.appliedState.generation).toBe(1);
 		expect(failedFinalState.lastGood.generation).toBe(1);
 		expect(failedFinalState.skillTree["SKILL.md"]).toContain(
@@ -2999,6 +3019,22 @@ exec /usr/bin/systemctl "$@"
 		const replayed = await convergeBehavioralGuard(generationOne, paths, generationOneSkill);
 		expect([...replayed.installErrors, ...replayed.resourceProjectionErrors]).toEqual([]);
 		expect(failedFinalState).toEqual(behavioralGuardObservableState(paths, skillRoot));
+		// A prior interrupted refresh can already have invalidated the receipt's
+		// config hash. Only a verified replay may establish fresh activation proof.
+		const dashboardConfigPath = join(paths.runConfigRoot, "hermes+dashboard.json");
+		const drifted = JSON.parse(readFileSync(dashboardConfigPath, "utf8"));
+		drifted.generatedAt = "2026-09-15T07:23:33.000Z";
+		writeFileSync(dashboardConfigPath, `${JSON.stringify(drifted)}\n`);
+		expect(await componentStatus()).toBe("unknown");
+		const retainedBytes = readFileSync(dashboardConfigPath, "utf8");
+		const retainedApplied = readFileSync(paths.appliedState, "utf8");
+		writeFileSync(failureMarker, "armed\n");
+		const retried = await convergeBehavioralGuard(generationTwo, paths, generationTwoSkill);
+		expect(retried.installErrors.length).toBeGreaterThan(0);
+		expect(readFileSync(failureMarker, "utf8").trim()).toBe("consumed");
+		expect(readFileSync(dashboardConfigPath, "utf8")).toBe(retainedBytes);
+		expect(readFileSync(paths.appliedState, "utf8")).toBe(retainedApplied);
+		expect(await componentStatus()).toBe("ok");
 
 		const repaired = await convergeBehavioralGuard(generationThree, paths, generationThreeSkill);
 		expect([...repaired.installErrors, ...repaired.resourceProjectionErrors]).toEqual([]);

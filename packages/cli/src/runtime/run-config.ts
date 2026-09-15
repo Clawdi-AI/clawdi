@@ -1,13 +1,23 @@
-import { existsSync, readFileSync } from "node:fs";
+import {
+	closeSync,
+	constants,
+	existsSync,
+	fstatSync,
+	openSync,
+	readFileSync,
+	readSync,
+} from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
+import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
 import { toErrorMessage } from "../serve/log";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
+import type { RuntimeManifest } from "./manifest-contract";
 import { canonicalJsonEqual } from "./manifest-shared";
 import type { RuntimePaths } from "./paths";
 import { getRuntimePaths } from "./paths";
 import { canonicalSecretRefSchema, runtimeSecretValue } from "./secret-values";
-import { writeRuntimePlatformFileAtomic } from "./state";
+import { runtimePlatformRootForPath, writeRuntimePlatformFileAtomic } from "./state";
 
 export const runtimeNameSchema = z
 	.string()
@@ -147,11 +157,57 @@ export function buildRuntimeRunConfig(input: {
 	};
 }
 
-export function writeRuntimeRunConfig(config: RuntimeRunConfig, paths: RuntimePaths): string {
+function readRunConfigContent(path: string, paths: RuntimePaths): string | undefined {
+	const root = runtimePlatformRootForPath(paths, path);
+	if (!root) throw new Error("Runtime run config is outside platform roots");
+	ensureDirectoryWithinTrustedRoot(root, dirname(path), { mode: 0o755 });
+	let fd: number;
+	try {
+		fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+	} catch (error) {
+		if (
+			error instanceof Error &&
+			"code" in error &&
+			["ENOENT", "ELOOP", "EACCES"].includes(String(error.code))
+		)
+			return undefined;
+		throw error;
+	}
+	try {
+		const stat = fstatSync(fd);
+		if (!stat.isFile() || stat.size > 1024 * 1024) return undefined;
+		const bytes = Buffer.alloc(stat.size + 1);
+		const count = readSync(fd, bytes, 0, bytes.length, 0);
+		return count === stat.size ? bytes.subarray(0, count).toString("utf8") : undefined;
+	} finally {
+		closeSync(fd);
+	}
+}
+
+export function captureRuntimeRunConfigs(
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+): ReadonlyMap<string, string> {
+	const contents = new Map<string, string>();
+	for (const [runtime, settings] of Object.entries(manifest.runtimes)) {
+		for (const service of [null, ...Object.keys(settings.services ?? {})]) {
+			const path = runtimeRunConfigPath(runtime, paths, service);
+			const content = readRunConfigContent(path, paths);
+			if (content !== undefined) contents.set(runtimeRunConfigId(runtime, service), content);
+		}
+	}
+	return contents;
+}
+
+export function writeRuntimeRunConfig(
+	config: RuntimeRunConfig,
+	paths: RuntimePaths,
+	retainedContent?: string,
+): string {
 	const path = runtimeRunConfigPath(config.runtime, paths, config.service);
 	let content = `${JSON.stringify(config, null, 2)}\n`;
-	if (existsSync(path)) {
-		const previousContent = readFileSync(path, "utf8");
+	const previousContent = retainedContent ?? readRunConfigContent(path, paths);
+	if (previousContent !== undefined) {
 		let previous: unknown;
 		try {
 			previous = JSON.parse(previousContent);

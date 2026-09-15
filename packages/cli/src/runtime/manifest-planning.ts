@@ -62,6 +62,7 @@ import {
 } from "./runtime-systemd-reconciliation";
 
 export interface RuntimeConvergenceOptions {
+	retainedRunConfigs?: ReadonlyMap<string, string>;
 	cacheLastGood?: boolean;
 	commitAuthority?: (
 		convergence: RuntimeConvergenceResult,

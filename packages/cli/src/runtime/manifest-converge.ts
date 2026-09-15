@@ -247,20 +247,8 @@ function initializeRuntimeConvergence(
 		opts.hostedRuntimeContract,
 	);
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
-	if (manifest.runtimes.openclaw?.enabled === true) {
-		withRuntimeUserFileAccess(() => {
-			for (const path of [
-				join(projectionHome, ".openclaw"),
-				join(projectionHome, ".openclaw", "tmp"),
-			]) {
-				mkdirSync(path, { recursive: true });
-				chmodSync(path, 0o700);
-			}
-		}, hostedRuntimeContract.identity);
-	}
 	const openClawContext = createOpenClawHostedContext(manifest, projectionHome);
 	const hermesWhatsAppAuthDir = managedHermesWhatsAppAuthDir(manifest, projectionHome);
-	removeHostedCliPathExposure(paths);
 	if (manifest.companions?.filebrowser) {
 		if (!opts.systemdApply) {
 			throw new Error("Files companion requires systemd apply and readiness hooks");
@@ -1091,11 +1079,21 @@ function applyRuntimeEntryProjections(
 				egressProfileBundlePath: egressProjection.egressProfileBundlePath,
 			});
 		}, context.hostedRuntimeContract.identity);
-		const runConfigPath = writeRuntimeRunConfig(resolved.runtime, paths);
+		const runConfigPath = writeRuntimeRunConfig(
+			resolved.runtime,
+			paths,
+			context.opts.retainedRunConfigs?.get(runtimeRunConfigId(resolved.runtime.runtime)),
+		);
 		state.runConfigs.push(runConfigPath);
 		egressProjection.writtenRunConfigIds.add(runtimeRunConfigId(resolved.runtime.runtime));
 		for (const serviceRunConfig of resolved.services) {
-			const serviceRunConfigPath = writeRuntimeRunConfig(serviceRunConfig, paths);
+			const serviceRunConfigPath = writeRuntimeRunConfig(
+				serviceRunConfig,
+				paths,
+				context.opts.retainedRunConfigs?.get(
+					runtimeRunConfigId(serviceRunConfig.runtime, serviceRunConfig.service),
+				),
+			);
 			state.runConfigs.push(serviceRunConfigPath);
 			egressProjection.writtenRunConfigIds.add(
 				runtimeRunConfigId(serviceRunConfig.runtime, serviceRunConfig.service),
@@ -1406,6 +1404,18 @@ export function convergeRuntimeManifest(
 		if (!(error instanceof SystemdReobservationRequiredError)) throw error;
 		return runtimeApplyFailure(context, state, error);
 	}
+	if (context.manifest.runtimes.openclaw?.enabled === true) {
+		withRuntimeUserFileAccess(() => {
+			for (const path of [
+				join(context.projectionHome, ".openclaw"),
+				join(context.projectionHome, ".openclaw", "tmp"),
+			]) {
+				mkdirSync(path, { recursive: true });
+				chmodSync(path, 0o700);
+			}
+		}, context.hostedRuntimeContract.identity);
+	}
+	removeHostedCliPathExposure(paths);
 	const installResult = prepareRuntimeInstallStage(context, state);
 	if (installResult) return installResult.result;
 	context.hermesConfig = beginRuntimeHermesConfig(context, state);

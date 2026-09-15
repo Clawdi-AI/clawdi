@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import {
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
@@ -37,6 +45,37 @@ afterEach(() => {
 });
 
 describe("runtime run config services", () => {
+	test("retention never reads through a symlink and enforces trusted parent directories", () => {
+		const paths = tempRuntimePaths();
+		const config = buildRuntimeRunConfig({
+			runtime: "hermes",
+			enabled: true,
+			generation: 1,
+			instanceId: "test",
+			generatedAt: "2026-09-15T00:00:00Z",
+			commandPath: null,
+			appRoot: null,
+			workspaceRoot: paths.userHome,
+		});
+		const path = writeRuntimeRunConfig(config, paths);
+		const target = join(paths.userHome, "external");
+		mkdirSync(target, { recursive: true });
+		rmSync(path);
+		symlinkSync(target, path);
+		writeRuntimeRunConfig(config, paths);
+		expect(lstatSync(path).isFile()).toBe(true);
+		expect(lstatSync(target).isDirectory()).toBe(true);
+		const oversized = `${JSON.stringify({ ...config, generatedAt: "old" })}${" ".repeat(1024 * 1024)}`;
+		writeFileSync(path, oversized);
+		writeRuntimeRunConfig(config, paths);
+		expect(readFileSync(path, "utf8")).toBe(`${JSON.stringify(config, null, 2)}\n`);
+		const previousBytes = readFileSync(path, "utf8");
+		rmSync(paths.runConfigRoot, { recursive: true });
+		symlinkSync(target, paths.runConfigRoot);
+		writeFileSync(join(target, "hermes.json"), previousBytes);
+		expect(() => writeRuntimeRunConfig(config, paths)).toThrow("non-directory");
+		expect(readFileSync(join(target, "hermes.json"), "utf8")).toBe(previousBytes);
+	});
 	test("keeps runtime services out of ordinary runtime command lookup", () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeRunConfig(
