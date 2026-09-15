@@ -17,9 +17,9 @@ from app.schemas.provider_environment_repair import (
 from app.services.ai_provider_capabilities import effective_provider_api_mode
 from app.services.platform_contract import platform_request_hash
 from app.services.provider_environment_repair import (
-    _provider,
-    _revision,
     environment_repair_inventory,
+    load_provider_for_environment_repair,
+    provider_environment_revision,
 )
 from app.services.sync_events import queue_runtime_manifests_changed
 
@@ -45,7 +45,7 @@ def require_fresh(observed_at: datetime) -> None:
 async def prepare_identity_handoff(
     db: AsyncSession, *, owner_id: UUID, body: ProviderIdentityHandoffRequest
 ) -> ProviderIdentityHandoffReceipt:
-    provider, _ = await _provider(db, owner_id, body.provider_id)
+    provider, _ = await load_provider_for_environment_repair(db, owner_id, body.provider_id)
     if provider.identity_handoff_pending:
         pending = ProviderIdentityHandoffReceipt.model_validate(provider.identity_handoff)
         if (
@@ -121,7 +121,7 @@ async def prepare_identity_handoff(
     provider.identity_handoff = receipt.model_dump(mode="json")
     await db.flush()
     await db.refresh(provider, attribute_names=["updated_at"])
-    receipt.prepared_revision = await _revision(db, provider)
+    receipt.prepared_revision = await provider_environment_revision(db, provider)
     provider.identity_handoff = receipt.model_dump(mode="json")
     await queue_runtime_manifests_changed(
         db, [(owner_id, proof.binding.environment_id) for proof in receipt.intent.proofs]
@@ -132,7 +132,7 @@ async def prepare_identity_handoff(
 async def complete_identity_handoff(
     db: AsyncSession, *, owner_id: UUID, provider_id: str, body: ProviderIdentityHandoffComplete
 ) -> ProviderIdentityHandoffReceipt:
-    provider, _ = await _provider(db, owner_id, provider_id)
+    provider, _ = await load_provider_for_environment_repair(db, owner_id, provider_id)
     if not provider.identity_handoff_pending:
         raise HTTPException(409, "No pending provider identity handoff")
     receipt = ProviderIdentityHandoffReceipt.model_validate(provider.identity_handoff)

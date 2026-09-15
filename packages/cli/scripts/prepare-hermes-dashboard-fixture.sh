@@ -7,6 +7,7 @@ hermes_dashboard_commit=$(sed -n 's/^ARG HERMES_COMMIT=//p' "$hermes_dashboard_d
 hermes_dashboard_digest=$(sed -n 's/^ADD --checksum=sha256:\([0-9a-f]*\).*/\1/p' "$hermes_dashboard_dockerfile" | tail -1)
 mkdir -p "$hermes_dashboard_fixture_root/source"
 curl --fail --silent --show-error --location --max-time 120 --max-filesize 104857600 \
+ --retry 3 --retry-max-time 180 \
  "https://github.com/NousResearch/hermes-agent/archive/$hermes_dashboard_commit.tar.gz" -o "$hermes_dashboard_fixture_root/source.tar.gz"
 printf '%s  %s\n' "$hermes_dashboard_digest" "$hermes_dashboard_fixture_root/source.tar.gz" | sha256sum --check
 tar -xzf "$hermes_dashboard_fixture_root/source.tar.gz" --strip-components=1 -C "$hermes_dashboard_fixture_root/source"

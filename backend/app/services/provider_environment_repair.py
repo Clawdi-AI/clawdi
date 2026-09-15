@@ -48,7 +48,9 @@ def _conflict(detail: str) -> NoReturn:
     raise HTTPException(409, detail)
 
 
-async def _provider(db: AsyncSession, owner_id: UUID, provider_id: str) -> tuple[AiProvider, str]:
+async def load_provider_for_environment_repair(
+    db: AsyncSession, owner_id: UUID, provider_id: str
+) -> tuple[AiProvider, str]:
     provider = await db.scalar(
         select(AiProvider)
         .where(
@@ -71,7 +73,7 @@ async def _provider(db: AsyncSession, owner_id: UUID, provider_id: str) -> tuple
     return provider, environment
 
 
-async def _revision(db: AsyncSession, provider: AiProvider) -> str:
+async def provider_environment_revision(db: AsyncSession, provider: AiProvider) -> str:
     credentials = (
         await db.scalars(
             select(AiProviderAuthPayload)
@@ -137,7 +139,7 @@ async def environment_repair_inventory(
     owner_id: UUID,
     provider_id: str,
 ) -> ProviderEnvironmentInventory:
-    provider, environment = await _provider(db, owner_id, provider_id)
+    provider, environment = await load_provider_for_environment_repair(db, owner_id, provider_id)
     owned_states = (
         select(HostedRuntimeState)
         .join(AgentEnvironment, AgentEnvironment.id == HostedRuntimeState.environment_id)
@@ -253,7 +255,7 @@ async def environment_repair_inventory(
         provider_id=provider_id,
         provider_uuid=provider.id,
         incarnation_id=provider.incarnation_id,
-        revision=await _revision(db, provider),
+        revision=await provider_environment_revision(db, provider),
         runtime_env_name=environment,
         bindings=bindings,
     )
@@ -277,7 +279,7 @@ async def restore_provider_environment(
     owner_id: UUID,
     body: ProviderEnvironmentRestore,
 ) -> ProviderEnvironmentRepairReceipt:
-    provider, _ = await _provider(db, owner_id, body.provider_id)
+    provider, _ = await load_provider_for_environment_repair(db, owner_id, body.provider_id)
     if provider.identity_handoff_pending:
         _conflict("Complete the pending provider identity handoff first")
     inventory = await environment_repair_inventory(
@@ -334,7 +336,9 @@ async def restore_provider_environment(
     )
     if conflict is not None:
         _conflict("Native credential environment belongs to another provider")
-    provider, environment = await _provider(db, owner_id, body.provider_id)
+    provider, environment = await load_provider_for_environment_repair(
+        db, owner_id, body.provider_id
+    )
     changed = environment != body.native_env_name
     if changed:
         environment = body.native_env_name
@@ -350,6 +354,6 @@ async def restore_provider_environment(
         previous_env_name=inventory.runtime_env_name,
         runtime_env_name=environment,
         before_revision=inventory.revision,
-        after_revision=await _revision(db, provider),
+        after_revision=await provider_environment_revision(db, provider),
         boundary=body.expected_boundary,
     )
