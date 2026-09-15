@@ -42,6 +42,25 @@ from app.schemas.runtime import (
     validate_hosted_runtime_secret_values,
 )
 
+
+class AdminWorkloadClientBootstrap(BaseModel):
+    """Register a public assertion key with runtime projection authority only."""
+
+    model_config = ConfigDict(extra="forbid")
+    client_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
+    assertion_kid: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
+    assertion_algorithm: Literal["RS256", "ES256"]
+    public_jwk: dict[str, JsonValue] = Field(max_length=10)
+    reason: str = Field(min_length=1, max_length=200)
+
+    @field_validator("reason")
+    @classmethod
+    def nonempty_reason(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("reason must not be blank")
+        return value.strip()
+
+
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp"]
 AdminChannelVisibility = Literal["private", "public"]
 AdminChannelStatus = Literal["active", "disabled"]

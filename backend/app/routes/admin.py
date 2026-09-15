@@ -100,6 +100,7 @@ from app.schemas.admin import (
     AdminPrincipalSuspensionUpdate,
     AdminRuntimeStateResponse,
     AdminRuntimeStateUpsert,
+    AdminWorkloadClientBootstrap,
 )
 from app.schemas.ai_provider import (
     AiProviderDeleteResponse,
@@ -220,6 +221,7 @@ from app.services.project_runtime_skills import (
     assert_agent_workspace_skill_write_compatible,
 )
 from app.services.provider_environment_verifier_access import (
+    bootstrap_workload_client,
     inspect_verifier_access,
     update_verifier_access,
 )
@@ -2939,6 +2941,26 @@ def _admin_channel_update_audit_details(
     if "secrets" in updates:
         details["secret_names"] = sorted((body.secrets or {}).keys())
     return details
+
+
+@router.post(
+    "/platform/workload-clients",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ProviderEnvironmentVerifierAccess,
+)
+async def register_workload_client(
+    body: AdminWorkloadClientBootstrap,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_control_session),
+) -> ProviderEnvironmentVerifierAccess:
+    return await bootstrap_workload_client(
+        db,
+        body=body,
+        idempotency_key=idempotency_key,
+        request_id=str(request.state.request_id),
+    )
 
 
 @router.get(

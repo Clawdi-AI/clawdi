@@ -586,5 +586,39 @@ projection client. This changes neither its keys nor its other scopes, and does 
 invalidate unrelated tokens. Configure only the reviewed hosting verifier; a worker
 that accepts caller-supplied native proof must never hold this scope.
 
+`POST /v1/admin/platform/workload-clients` registers a public assertion JWK with
+only `platform:runtime-state:write`. It requires admin authentication,
+`Idempotency-Key`, and a body containing `client_id`, `assertion_kid`,
+`assertion_algorithm`, `public_jwk`, and a nonblank `reason`. RS256 requires an
+RSA key of at least 2048 bits; ES256 requires P-256. Private key fields, mismatched
+key identity, and signing-only usage are rejected. Registration and its audit and
+replay receipt commit together. An existing client cannot be replaced or revived
+through this endpoint, even with the same public key. Retry with the original
+idempotency key; inspect current verifier access before its separate CAS grant.
+
+Registration does not bootstrap token issuance. The deployment must supply an
+implementation of `PlatformWorkloadKeyResolver` and an active
+`PlatformWorkloadSigningKey` whose reference resolves to its signing authority.
+The OSS resolver remains unconfigured and fails closed. The assertion private key
+belongs to the client; the access-token signing private key belongs to Cloud.
+Neither belongs in a registration request or database payload. There is currently
+no signer-registration admin endpoint; adding one and wiring a deployment resolver
+requires a separately reviewed initialization path, not direct database insertion.
+
+Archived custom/connection rows retain their credential environment and authority.
+Reactivation keeps the provider UUID but creates a new Cloud incarnation. The
+current native journal does not identify that Cloud incarnation, so a matching
+provider name alone cannot prove it owns the reactivated row. This restoration API
+also requires the native reference to agree with the journal: it does not authorize
+adopting a different native environment or rewriting a journal/receipt. Those
+divergences require an explicit handoff protocol before attempting restoration.
+
 Done: isolated PostgreSQL repair/grant tests verify stale CAS, replay, unchanged
 credential bytes, other-consumer conflicts and rejection of untrusted credentials.
+
+```bash
+scripts/test.sh backend tests/test_workload_client_bootstrap.py tests/test_ai_provider_connection_ownership.py tests/test_provider_environment_repair.py
+```
+
+Done: registration, separate grant, authority-preserving reactivation, and repair
+boundary tests pass without live credentials or infrastructure.

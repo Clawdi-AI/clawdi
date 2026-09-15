@@ -1,11 +1,13 @@
-"""One explicitly delegated verifier capability; no key management or implicit grants."""
+"""Public client bootstrap and separately delegated native verifier capability."""
 
 from fastapi import HTTPException
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.platform_workload_auth import PlatformWorkloadClient
+from app.schemas.admin import AdminWorkloadClientBootstrap
 from app.schemas.provider_environment_repair import (
     PROVIDER_ENVIRONMENT_REPAIR_SCOPE,
     ProviderEnvironmentVerifierAccess,
@@ -18,6 +20,79 @@ from app.services.platform_contract import (
     read_platform_replay,
     store_platform_response,
 )
+from app.services.platform_workload_auth import (
+    PlatformOAuthProtocolError,
+    validate_workload_public_key,
+)
+
+
+async def bootstrap_workload_client(
+    db: AsyncSession,
+    *,
+    body: AdminWorkloadClientBootstrap,
+    idempotency_key: str,
+    request_id: str,
+) -> ProviderEnvironmentVerifierAccess:
+    """Create once; retries cannot rotate keys, resurrect clients, or grant repair."""
+    try:
+        validate_workload_public_key(
+            body.public_jwk, kid=body.assertion_kid, algorithm=body.assertion_algorithm
+        )
+    except PlatformOAuthProtocolError:
+        raise HTTPException(422, "Invalid public assertion JWK") from None
+    operation = "platform.workload_client.bootstrap"
+    request_hash = platform_request_hash(body.model_dump(mode="json"))
+    previous = await lock_platform_idempotency(
+        db, operation=operation, idempotency_key=idempotency_key
+    )
+    if previous is not None:
+        if previous.request_hash != request_hash or previous.owner_user_id is not None:
+            raise HTTPException(409, "Idempotency-Key belongs to a different client bootstrap")
+        return ProviderEnvironmentVerifierAccess.model_validate(read_platform_replay(previous).body)
+    client = await db.scalar(
+        insert(PlatformWorkloadClient)
+        .values(
+            client_id=body.client_id,
+            assertion_kid=body.assertion_kid,
+            assertion_algorithm=body.assertion_algorithm,
+            public_jwk=body.public_jwk,
+            allowed_scopes=["platform:runtime-state:write"],
+        )
+        .on_conflict_do_nothing(index_elements=[PlatformWorkloadClient.client_id])
+        .returning(PlatformWorkloadClient)
+    )
+    if client is None:
+        raise HTTPException(409, "Workload client already exists; bootstrap cannot replace it")
+    response = _access(client)
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action=operation,
+        resource_type="platform_workload_client",
+        resource_id=str(client.id),
+        source="api.admin",
+        details={
+            "request_id": request_id,
+            "idempotency_key": idempotency_key,
+            "reason": body.reason,
+            "client_id": client.client_id,
+            "public_key_fingerprint": response.public_key_fingerprint,
+            "scopes": client.allowed_scopes,
+        },
+    )
+    store_platform_response(
+        db,
+        operation=operation,
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
+        owner_user_id=None,
+        resource_type="platform_workload_client",
+        resource_id=str(client.id),
+        response_status=201,
+        response_body=response.model_dump(mode="json"),
+    )
+    await db.commit()
+    return response
 
 
 def _access(client: PlatformWorkloadClient) -> ProviderEnvironmentVerifierAccess:
