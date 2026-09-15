@@ -777,6 +777,15 @@ runtimeCmd
 	);
 
 runtimeCmd
+	.command("provider-handoff", { hidden: true })
+	.description("Apply an explicitly authorized provider identity journal CAS")
+	.requiredOption("--handoff-id <id>", "Current Cloud handoff receipt ID")
+	.action(async (opts: { handoffId: string }) => {
+		const { providerIdentityHandoff } = await import("./runtime/provider-handoff.js");
+		await providerIdentityHandoff(opts.handoffId);
+	});
+
+runtimeCmd
 	.command("verify", { hidden: true })
 	.description("Validate hosted runtime CLI modules and cached manifest")
 	.option("--json", "Emit machine-readable JSON")

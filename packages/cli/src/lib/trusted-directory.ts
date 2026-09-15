@@ -1,4 +1,13 @@
-import { chmodSync, lstatSync, mkdirSync } from "node:fs";
+import {
+	chmodSync,
+	closeSync,
+	constants,
+	fstatSync,
+	lstatSync,
+	mkdirSync,
+	openSync,
+	type Stats,
+} from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 function isMissing(error: unknown): boolean {
@@ -45,5 +54,61 @@ export function ensureDirectoryWithinTrustedRoot(
 			mkdirSync(current, options.mode === undefined ? undefined : { mode: options.mode });
 			if (options.mode !== undefined) chmodSync(current, options.mode);
 		}
+	}
+}
+
+/** Pin a directory through no-follow ancestor traversal, using the current filesystem identity. */
+export function openTrustedDirectory(path: string): number {
+	if (!isAbsolute(path) || resolve(path) !== path)
+		throw new Error("Directory path must be canonical and absolute");
+	let fd = openSync("/", constants.O_RDONLY | constants.O_DIRECTORY);
+	try {
+		for (const part of path.split("/").filter(Boolean)) {
+			const next = openSync(
+				`/proc/self/fd/${fd}/${part}`,
+				constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+			);
+			closeSync(fd);
+			fd = next;
+			const stat = fstatSync(fd);
+			if (
+				(stat.uid !== 0 && stat.uid !== process.geteuid?.()) ||
+				((stat.mode & 0o022) !== 0 && (stat.mode & 0o1000) === 0)
+			) {
+				throw new Error("Directory has untrusted ownership or permissions");
+			}
+		}
+		return fd;
+	} catch (error) {
+		closeSync(fd);
+		throw error;
+	}
+}
+
+export function sameFileIdentity(left: Stats, right: Stats): boolean {
+	return (
+		left.dev === right.dev &&
+		left.ino === right.ino &&
+		left.uid === right.uid &&
+		left.gid === right.gid &&
+		left.mode === right.mode
+	);
+}
+
+/** Rewalk the named path so replacing an ancestor or parent cannot redirect a pinned operation. */
+export function assertDirectoryIdentity(
+	path: string,
+	fd: number,
+	expected: Stats = fstatSync(fd),
+): void {
+	const current = openTrustedDirectory(path);
+	try {
+		if (
+			!sameFileIdentity(expected, fstatSync(fd)) ||
+			!sameFileIdentity(expected, fstatSync(current))
+		)
+			throw new Error("Directory identity changed");
+	} finally {
+		closeSync(current);
 	}
 }

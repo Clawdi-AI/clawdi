@@ -16,6 +16,8 @@ import { spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
 
 export interface ConnectionProviderTransfer {
+	cloudIdentity?: { providerUuid: string; incarnationId: string };
+	handoffId?: string;
 	pendingCreation?: boolean;
 	envName: string;
 	baseUrl: string;
@@ -181,8 +183,22 @@ export function validateConnectionProviderEnvironments(
 	runtime: string,
 	providers: ConnectionProviderOwnership["providers"],
 ): void {
-	for (const { id, envName } of customProviderConnections(manifest, runtime)) {
+	for (const { id, envName, cloudIdentity, credentialAuthority } of customProviderConnections(
+		manifest,
+		runtime,
+	)) {
 		const previous = providers[id];
+		if (credentialAuthority === "native") {
+			const binding = manifest.runtimes[runtime];
+			for (const settings of [binding?.run, ...Object.values(binding?.services ?? {})]) {
+				if (settings?.env?.[envName] !== undefined || settings?.secretEnv?.[envName] !== undefined)
+					throw new Error("Runtime environment overrides native credential ownership");
+			}
+		}
+		if (credentialAuthority === "native" && (!previous?.handoffId || !cloudIdentity))
+			throw new Error("Native credentials require an acknowledged identity handoff");
+		if (previous && !canonicalJsonEqual(previous.cloudIdentity ?? null, cloudIdentity ?? null))
+			throw new Error("Provider Cloud identity requires explicit operator handoff");
 		if (previous && previous.envName !== envName)
 			throw new Error("Connection credential environment is immutable");
 	}
@@ -195,7 +211,10 @@ export function prepareConnectionProviderTransfers(
 	validateConnectionProviderEnvironments(input.manifest, input.runtime, input.ownership.providers);
 	const connections = customProviderConnections(input.manifest, input.runtime);
 	for (const connection of connections) {
-		if (!runtimeSecretValue(input.secretValues ?? {}, connection.secretRef))
+		if (
+			connection.credentialAuthority !== "native" &&
+			!runtimeSecretValue(input.secretValues ?? {}, connection.secretRef)
+		)
 			throw new Error("Connection provider credential is unavailable");
 	}
 	const current = readProviders(input);
@@ -205,6 +224,8 @@ export function prepareConnectionProviderTransfers(
 		const { id, baseUrl, apiMode, envName } = connection;
 		const previous = providers[id];
 		const existing = recordValue(current[id]);
+		if (connection.cloudIdentity && connection.initialize && !previous && existing)
+			throw new Error("Existing native provider requires explicit operator handoff");
 		const creating =
 			!existing && connection.initialize && (!previous || previous.pendingCreation === true);
 		if (!existing && !creating) throw new Error(`Connection provider ${id} must already exist`);
@@ -213,7 +234,13 @@ export function prepareConnectionProviderTransfers(
 		if (creating) {
 			const protocol = input.runtime === "openclaw" ? OPENCLAW_API[apiMode] : HERMES_API[apiMode];
 			if (!protocol) throw new Error("Connection protocol is unsupported by this runtime");
-			providers[id] = { envName, baseUrl, apiMode, pendingCreation: true };
+			providers[id] = {
+				envName,
+				baseUrl,
+				apiMode,
+				cloudIdentity: connection.cloudIdentity,
+				pendingCreation: true,
+			};
 			patch[id] =
 				input.runtime === "openclaw"
 					? {
@@ -285,7 +312,13 @@ export function prepareConnectionProviderTransfers(
 			if (previous && protocol !== expectedApi)
 				fields[Object.hasOwn(existing, "api_mode") ? "api_mode" : "transport"] = expectedApi;
 		}
-		providers[id] = { ...previous, envName, baseUrl, apiMode };
+		providers[id] = {
+			...previous,
+			envName,
+			baseUrl,
+			apiMode,
+			cloudIdentity: connection.cloudIdentity,
+		};
 		patch[id] = fields;
 	}
 	const active = new Set(connections.map((connection) => connection.id));
@@ -293,6 +326,8 @@ export function prepareConnectionProviderTransfers(
 		if (active.has(id)) continue;
 		const { pendingCreation: _pending, ...transferred } = previous;
 		providers[id] = transferred;
+		// An explicit native credential handoff survives unbinding and Cloud archival.
+		if (previous.handoffId) continue;
 		const existing = recordValue(current[id]);
 		if (!existing) continue;
 		if (input.runtime === "openclaw" && ownedOpenClawRef(existing.apiKey, previous.envName))

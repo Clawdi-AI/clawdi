@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -226,6 +227,34 @@ function applyProjector(f: ReturnType<typeof fixture>, previousProviderIds: stri
 }
 
 for (const runtime of ["openclaw", "hermes"] as const) {
+	test(`${runtime}: upgrading an unmarked legacy binding converges without inventing a Cloud tuple`, () => {
+		const f = fixture(runtime, "custom");
+		try {
+			const plan = f.prepare();
+			applyConnectionProviderTransfers(f.input());
+			const paths = { ...getRuntimePaths(), serviceStateRoot: join(f.home, "legacy-journal") };
+			mkdirSync(paths.serviceStateRoot);
+			writeProviderOwnership(paths, "test", f.home, {
+				providers: { [runtime]: [] },
+				transfers: { openclaw: {}, hermes: {}, [runtime]: plan.providers },
+			});
+			const loaded = readProviderOwnership(paths, "test", f.home, { [runtime]: [id] });
+			f.restoreOwnership(loaded.transfers[runtime] ?? {});
+			const before = f.read();
+			f.prepare();
+			applyProjector(f);
+			expect(f.read()).toEqual(before);
+			expect(f.input().ownership.providers[id]?.cloudIdentity).toBeUndefined();
+			const provider = f.manifest.projection?.providers?.[id];
+			if (!provider) throw new Error("Missing fixture provider");
+			provider.cloudIdentity = { providerUuid: randomUUID(), incarnationId: randomUUID() };
+			expect(() => f.prepare()).toThrow("explicit operator handoff");
+			expect(f.read()).toEqual(before);
+		} finally {
+			f.cleanup();
+		}
+	});
+
 	test(`${runtime}: custom creation, retry, rotation and rebind preserve agent-owned models`, () => {
 		const f = fixture(runtime, "custom");
 		try {
@@ -359,6 +388,31 @@ export async function mutateConfigFile(options) {
 				expect(config.agents.defaults.model.primary).toBe(`${nextId}/next-model`);
 				expect(config.models.mode).toBe("replace");
 			}
+		} finally {
+			f.cleanup();
+		}
+	});
+
+	test(`${runtime}: native credential handoff survives unbinding without clearing its reference`, () => {
+		const f = fixture(runtime);
+		try {
+			const plan = f.prepare();
+			applyConnectionProviderTransfers(f.input());
+			const before = f.read();
+			const transfer = plan.providers[id];
+			if (!transfer) throw new Error("Missing test transfer");
+			f.restoreOwnership({
+				[id]: {
+					...transfer,
+					handoffId: randomUUID(),
+					cloudIdentity: { providerUuid: randomUUID(), incarnationId: randomUUID() },
+				},
+			});
+			f.manifest.runtimes[runtime].provider_ids = [];
+			f.manifest.runtimes[runtime].providerMode = "unmanaged";
+			f.prepare();
+			applyConnectionProviderTransfers(f.input());
+			expect(f.read()).toEqual(before);
 		} finally {
 			f.cleanup();
 		}
@@ -577,3 +631,56 @@ test("Hermes refuses unknown public pool APIs", () => {
 		f.cleanup();
 	}
 });
+
+for (const legacyAlias of [false, true]) {
+	test(`Unset legacy Hermes preserves divergent native key and selected-model auth (legacy alias ${legacyAlias})`, () => {
+		const f = fixture("hermes", "custom");
+		try {
+			const config = f.input().hermesConfig;
+			if (!config) throw new Error("Missing Hermes fixture");
+			const provider = {
+				api: baseUrl,
+				transport: "chat_completions",
+				key_env: "HERMES_CUSTOM_X_API_API_KEY",
+				...(legacyAlias ? { api_key_env: "X_API_KEY" } : {}),
+				models: { saved: { context_length: 8192 } },
+			};
+			config.document.set("providers", { "x-api": provider });
+			const model = {
+				provider: "custom:x-api",
+				default: "saved",
+				key_env: "HERMES_CUSTOM_X_API_API_KEY",
+				api_key: "synthetic-selected-model-key",
+				api: "https://model.example",
+				auth_mode: "api_key",
+				api_mode: "openai_chat",
+				base_url: baseUrl,
+			};
+			config.document.set("model", model);
+			const envPath = join(f.home, ".hermes", ".env");
+			writeFileSync(envPath, "HERMES_CUSTOM_X_API_API_KEY=preserved-native-key\n", { mode: 0o600 });
+			f.restoreOwnership({ "x-api": { envName: "X_API_KEY", baseUrl, apiMode: "openai_chat" } });
+			f.manifest.runtimes.hermes.provider_ids = [];
+			f.manifest.runtimes.hermes.providerMode = "unmanaged";
+			const before = config.document.toString();
+			const plan = f.prepare();
+			expect(plan.patch).toEqual(legacyAlias ? { "x-api": { api_key_env: null } } : {});
+			applyProjector(f, ["x-api"]);
+			expect(getHermesRawConfigValue(config, "model").value).toEqual(model);
+			expect(getHermesRawConfigValue(config, "providers").value).toEqual({
+				"x-api": {
+					api: baseUrl,
+					transport: "chat_completions",
+					key_env: "HERMES_CUSTOM_X_API_API_KEY",
+					models: provider.models,
+				},
+			});
+			if (!legacyAlias) expect(config.document.toString()).toBe(before);
+			expect(readFileSync(envPath, "utf8")).toBe(
+				"HERMES_CUSTOM_X_API_API_KEY=preserved-native-key\n",
+			);
+		} finally {
+			f.cleanup();
+		}
+	});
+}

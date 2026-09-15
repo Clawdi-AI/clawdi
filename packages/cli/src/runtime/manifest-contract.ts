@@ -490,10 +490,48 @@ const hostedProviderAuthSchema = z
 		}
 	});
 
+export const providerCloudIdentitySchema = z
+	.object({
+		providerUuid: z.uuid(),
+		incarnationId: z.uuid(),
+	})
+	.strict();
+
+export const providerHandoffSchema = z
+	.object({
+		handoffId: z.uuid(),
+		baseUrl: z.string().url(),
+		apiMode: z.enum(AI_PROVIDER_API_MODES),
+		providerId: z.string().regex(/^[a-z][a-z0-9._-]{1,62}$/),
+		cloudIdentity: providerCloudIdentitySchema,
+		runtime: z.enum(["hermes", "openclaw"]),
+		envName: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/),
+		owned: z.boolean(),
+		expectedJournalSha256: z
+			.string()
+			.regex(/^[a-f0-9]{64}$/)
+			.nullable(),
+		expectedConfigSha256: z
+			.string()
+			.regex(/^[a-f0-9]{64}$/)
+			.nullable(),
+		expectedEnvSha256: z
+			.string()
+			.regex(/^[a-f0-9]{64}$/)
+			.nullable(),
+		journalEnvName: z
+			.string()
+			.regex(/^[A-Z][A-Z0-9_]{0,127}$/)
+			.nullable(),
+	})
+	.strict();
+
 const hostedProviderBaseSchema = z
 	.object({
 		kind: z.literal("openai-compatible"),
 		configurationMode: z.enum(["native", "custom", "catalog", "connection"]).optional(),
+		cloudIdentity: providerCloudIdentitySchema.optional(),
+		credentialAuthority: z.literal("native").optional(),
 		nativeProvider: z.string().min(1).max(120).optional(),
 		type: z.enum(AI_PROVIDER_TYPES).optional(),
 		baseUrl: z.string().url().optional(),
@@ -519,6 +557,16 @@ function validateHostedProvider(
 	provider: z.infer<typeof hostedProviderBaseSchema>,
 	ctx: z.RefinementCtx,
 ): void {
+	if (
+		provider.credentialAuthority === "native" &&
+		(!provider.cloudIdentity ||
+			!["custom", "connection"].includes(provider.configurationMode ?? ""))
+	)
+		ctx.addIssue({
+			code: "custom",
+			message: "Native credentials require a custom Cloud identity",
+			path: ["credentialAuthority"],
+		});
 	if (provider.configurationMode === "custom" && provider.models?.length) {
 		ctx.addIssue({
 			code: "custom",
@@ -693,6 +741,7 @@ interface RuntimeEntry {
 }
 
 export interface RuntimeManifest {
+	providerHandoffs?: z.infer<typeof providerHandoffSchema>[];
 	schemaVersion: typeof RUNTIME_DESIRED_STATE_SCHEMA_VERSION;
 	deploymentId: string;
 	environmentId: string;
@@ -736,6 +785,7 @@ export interface RuntimeManifest {
 
 const hostedRuntimeManifestBaseSchema = z
 	.object({
+		providerHandoffs: z.array(providerHandoffSchema).max(100).optional(),
 		runtime: hostedRuntimeChoiceSchema,
 		deploymentId: z.string().min(1),
 		environmentId: z.string().min(1),
@@ -1023,6 +1073,7 @@ export const hostedRuntimeBundleV2ManifestSchema =
 		if (!runtime) throw new Error(`missing selected runtime ${selectedRuntime}`);
 		return {
 			schemaVersion: RUNTIME_DESIRED_STATE_SCHEMA_VERSION,
+			providerHandoffs: hosted.providerHandoffs,
 			deploymentId: hosted.deploymentId,
 			environmentId: hosted.environmentId,
 			instanceId: hosted.instanceId,

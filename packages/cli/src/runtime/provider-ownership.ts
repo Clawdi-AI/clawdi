@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { writePrivateFileAtomic } from "../lib/private-file";
+import { type PrivateFileWriteOptions, writePrivateFileAtomic } from "../lib/private-file";
 import type { ConnectionProviderTransfer } from "./connection-provider-config";
+import { providerCloudIdentitySchema } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 
 const PROVIDER_RUNTIMES = ["openclaw", "hermes"] as const;
@@ -10,6 +11,8 @@ const PROVIDER_RUNTIMES = ["openclaw", "hermes"] as const;
 const transferSchema = z
 	.object({
 		pendingCreation: z.boolean().optional(),
+		cloudIdentity: providerCloudIdentitySchema.optional(),
+		handoffId: z.uuid().optional(),
 		envName: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/),
 		baseUrl: z.string().url(),
 		apiMode: z.enum([
@@ -77,6 +80,7 @@ export function writeProviderOwnership(
 	instanceId: string,
 	home: string,
 	ownership: ProviderOwnership,
+	writeOptions: Pick<PrivateFileWriteOptions, "directoryFd" | "beforeRename"> = {},
 ): void {
 	const journal = providerOwnershipJournalSchema.parse({
 		schemaVersion: 1,
@@ -95,7 +99,7 @@ export function writeProviderOwnership(
 	writePrivateFileAtomic(
 		join(paths.serviceStateRoot, "provider-ownership.json"),
 		`${JSON.stringify(journal)}\n`,
-		{ trustedRoot: paths.serviceStateRoot, durable: true },
+		{ trustedRoot: paths.serviceStateRoot, durable: true, ...writeOptions },
 	);
 }
 
