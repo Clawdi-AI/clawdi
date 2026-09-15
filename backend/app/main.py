@@ -307,6 +307,11 @@ async def request_validation_exception_handler(
     exc: RequestValidationError,
 ) -> Response:
     path = request.url.path
+    if path.endswith(("/admin/platform/workload-clients", "/admin/platform/signing-keys")):
+        # Never echo accidentally submitted private JWK material on schema failures.
+        return JSONResponse(
+            status_code=422, content={"detail": "Invalid public workload key registration"}
+        )
     if path.startswith(("/v1/vault/requests", "/api/vault/requests")):
         return JSONResponse(
             status_code=422,

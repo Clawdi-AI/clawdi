@@ -94,7 +94,7 @@ RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
 # Renderer contract: bump this value whenever emitted desired-state material changes.
 # A bump makes each Agent render and backfill once on its next manifest poll, spreading
 # the fleet work naturally. Forgetting it can make an old ETag return 304 indefinitely.
-RUNTIME_SOURCE_RENDERER_REVISION = "runtime-source.v3"
+RUNTIME_SOURCE_RENDERER_REVISION = "runtime-source.v5"
 RUNTIME_CAPABILITIES_HEADER = "X-Clawdi-Runtime-Capabilities"
 RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1"
 RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY = "agent-plugin-github-release-source-v1"
@@ -109,6 +109,10 @@ _AI_PROVIDER_MODELS_ADAPTER: TypeAdapter[list[AiProviderModel]] = TypeAdapter(li
 
 class RuntimeSourceError(ValueError):
     pass
+
+
+class RuntimeSourceCapabilityError(RuntimeSourceError):
+    """A valid canonical source requires a newer reader capability."""
 
 
 class RuntimeSourceNotFoundError(RuntimeSourceError):
@@ -518,6 +522,7 @@ def render_runtime_source(
     public_api_url: str,
     vault_key_identity: str,
     decrypt_secrets: bool,
+    project_provider_identity: bool = True,
     project_agent_plugins: bool = True,
     project_agent_plugin_github_release_sources: bool = True,
 ) -> RenderedRuntimeSource:
@@ -865,6 +870,47 @@ def render_runtime_source(
         "liveSync": live_sync.model_dump(mode="json"),
         "recovery": recovery.model_dump(mode="json"),
     }
+    handoffs: list[dict[str, Any]] = []
+    for (provider_owner, provider_id), provider in batch.providers.items():
+        if provider_owner != user_id or not provider.identity_handoff_pending:
+            continue
+        from app.schemas.provider_environment_repair import ProviderIdentityHandoffReceipt
+
+        pending = ProviderIdentityHandoffReceipt.model_validate(provider.identity_handoff)
+        for proof in pending.intent.proofs:
+            if proof.binding.environment_id != environment_id:
+                continue
+            handoffs.append(
+                {
+                    "handoffId": str(pending.handoff_id),
+                    "providerId": provider_id,
+                    "cloudIdentity": {
+                        "providerUuid": str(pending.provider_uuid),
+                        "incarnationId": str(pending.incarnation_id),
+                    },
+                    "runtime": proof.binding.runtime,
+                    "envName": pending.native_env_name,
+                    "baseUrl": provider.base_url,
+                    "apiMode": effective_provider_api_mode(provider.type, provider.api_mode),
+                    "expectedJournalSha256": proof.journal_sha256,
+                    "expectedConfigSha256": proof.config_sha256,
+                    "expectedEnvSha256": proof.native_env_sha256,
+                    "journalEnvName": proof.journal_env_name,
+                    "owned": proof.native_env_name is not None,
+                }
+            )
+    if handoffs:
+        if not project_provider_identity:
+            raise RuntimeSourceCapabilityError(
+                "Pending provider handoff requires an identity-capable CLI"
+            )
+        manifest["providerHandoffs"] = sorted(handoffs, key=lambda item: item["providerId"])
+    if not project_provider_identity:
+        for entry in providers.values():
+            if entry.get("cloudIdentity") is not None:
+                raise RuntimeSourceCapabilityError(
+                    "Provider identity requires an identity-capable CLI"
+                )
     if dashboard_auth is not None:
         manifest["system"]["hermesDashboardAuth"] = dashboard_auth.model_dump(
             exclude_none=True, mode="json"
@@ -1210,7 +1256,14 @@ def _provider_entry(
             or provider.native_variant
         ):
             raise RuntimeSourceError("Connection management requires user API-key routing")
+        if provider.native_credential_authority:
+            result["credentialAuthority"] = "native"
         result["configurationMode"] = provider.configuration_mode
+        if provider.projects_cloud_identity:
+            result["cloudIdentity"] = {
+                "providerUuid": str(provider.id),
+                "incarnationId": str(provider.incarnation_id),
+            }
         result["managed_by"] = "user"
     if api_mode:
         result["apiMode"] = api_mode

@@ -100,6 +100,9 @@ from app.schemas.admin import (
     AdminPrincipalSuspensionUpdate,
     AdminRuntimeStateResponse,
     AdminRuntimeStateUpsert,
+    AdminWorkloadClientBootstrap,
+    AdminWorkloadSignerBootstrap,
+    AdminWorkloadSignerReceipt,
 )
 from app.schemas.ai_provider import (
     AiProviderDeleteResponse,
@@ -206,6 +209,10 @@ from app.services.platform_contract import (
     read_platform_replay,
     store_platform_response,
 )
+from app.services.platform_workload_auth import (
+    PlatformWorkloadKeyResolver,
+    get_platform_workload_key_resolver,
+)
 from app.services.principal_lifecycle import (
     PrincipalIdentityConflictError,
     PrincipalLifecycleConfigurationError,
@@ -220,7 +227,9 @@ from app.services.project_runtime_skills import (
     assert_agent_workspace_skill_write_compatible,
 )
 from app.services.provider_environment_verifier_access import (
+    bootstrap_workload_client,
     inspect_verifier_access,
+    register_workload_signer,
     update_verifier_access,
 )
 from app.services.runtime_generation import (
@@ -2941,6 +2950,26 @@ def _admin_channel_update_audit_details(
     return details
 
 
+@router.post(
+    "/platform/workload-clients",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ProviderEnvironmentVerifierAccess,
+)
+async def register_workload_client(
+    body: AdminWorkloadClientBootstrap,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_control_session),
+) -> ProviderEnvironmentVerifierAccess:
+    return await bootstrap_workload_client(
+        db,
+        body=body,
+        idempotency_key=idempotency_key,
+        request_id=str(request.state.request_id),
+    )
+
+
 @router.get(
     "/platform/workload-clients/{client_id}/provider-environment-verifier",
     response_model=ProviderEnvironmentVerifierAccess,
@@ -2971,4 +3000,22 @@ async def configure_native_environment_verifier(
         body=body,
         idempotency_key=idempotency_key,
         request_id=str(request.state.request_id),
+    )
+
+
+@router.post("/platform/signing-keys", status_code=201, response_model=AdminWorkloadSignerReceipt)
+async def bootstrap_signing_key(
+    body: AdminWorkloadSignerBootstrap,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_control_session),
+    resolver: PlatformWorkloadKeyResolver = Depends(get_platform_workload_key_resolver),
+) -> AdminWorkloadSignerReceipt:
+    return await register_workload_signer(
+        db,
+        body=body,
+        idempotency_key=idempotency_key,
+        request_id=str(request.state.request_id),
+        resolver=resolver,
     )

@@ -149,8 +149,10 @@ _unconfigured_key_resolver = UnconfiguredPlatformWorkloadKeyResolver()
 
 
 def get_platform_workload_key_resolver() -> PlatformWorkloadKeyResolver:
-    # TODO(A0.7d0): Real KMS/secret-manager signing and public-key resolution is
-    # an M3 launch prerequisite. The OSS default must remain fail-closed until it is wired.
+    from app.services.platform_workload_signer import SecretReferenceWorkloadKeyResolver
+
+    if settings.platform_workload_signing_key_refs:
+        return SecretReferenceWorkloadKeyResolver()
     return _unconfigured_key_resolver
 
 
@@ -307,13 +309,22 @@ def _assertion_verification_key(
     if header.get("crit"):
         raise _invalid_client()
 
+    return validate_workload_public_key(
+        client.public_jwk, kid=client.assertion_kid, algorithm=client.assertion_algorithm
+    )
+
+
+def validate_workload_public_key(public_jwk: _JwtObject, *, kid: str, algorithm: str) -> jwt.PyJWK:
+    """Validate the same public assertion contract at registration and token exchange."""
+    if algorithm not in PLATFORM_WORKLOAD_ALLOWED_ALGORITHMS:
+        raise _invalid_client()
     try:
-        jwk = _JWT_OBJECT_ADAPTER.validate_python(client.public_jwk)
+        jwk = _JWT_OBJECT_ADAPTER.validate_python(public_jwk)
     except ValidationError as exc:
         raise _invalid_client() from exc
     if _PRIVATE_JWK_FIELDS.intersection(jwk):
         raise _invalid_client()
-    if jwk.get("kid") != client.assertion_kid or jwk.get("alg") != algorithm:
+    if jwk.get("kid") != kid or jwk.get("alg") != algorithm:
         raise _invalid_client()
     if jwk.get("use") not in (None, "sig"):
         raise _invalid_client()
@@ -323,9 +334,15 @@ def _assertion_verification_key(
     ):
         raise _invalid_client()
     try:
-        return jwt.PyJWK.from_dict(jwk, algorithm=algorithm)
-    except jwt.PyJWTError as exc:
+        key = jwt.PyJWK.from_dict(jwk, algorithm=algorithm)
+    except (jwt.PyJWTError, ValueError, TypeError) as exc:
         raise _invalid_client() from exc
+    if algorithm == "RS256":
+        if not isinstance(key.key, RSAPublicKey) or key.key.key_size < 2048:
+            raise _invalid_client()
+    elif not isinstance(key.key, EllipticCurvePublicKey) or key.key.curve.name != "secp256r1":
+        raise _invalid_client()
+    return key
 
 
 async def load_platform_workload_client(

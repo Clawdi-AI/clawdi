@@ -133,5 +133,5 @@
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/agent-token": "123456789:telegram-agent-golden",
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/placeholder-token": "999999999:9ded1453047ec0a48ec3b735075f7448"
 	},
-	"sourceRevision": "6e3c924e4ef6f11fc1206d52d9608b120b96f0d05e46dbc909df7fd97da048fb"
+	"sourceRevision": "a477a6cf87a5632571f9127123288031e366c291fb7b87df29732544e5a885d1"
 }

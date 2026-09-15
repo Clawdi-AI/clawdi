@@ -468,6 +468,10 @@ class AiProviderConsumer(BaseModel):
 
 
 class AiProviderResponse(AiProviderBase):
+    credential_authority: Literal["native"] | None = Field(
+        default=None,
+        description="Native credential ownership established by an explicit operator handoff.",
+    )
     id: str
     provider_id: str
     scope: str

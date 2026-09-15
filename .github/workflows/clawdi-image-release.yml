@@ -286,6 +286,9 @@ jobs:
     if: needs.build.outputs.release_required == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 15
+    env:
+      PLATFORM_WORKLOAD_SIGNING_KEY_REFS: ${{ secrets.PLATFORM_WORKLOAD_SIGNING_KEY_REFS || '{}' }}
+      CLAWDI_CLOUD_WORKLOAD_SIGNING_PRIVATE_KEY: ${{ secrets.CLAWDI_CLOUD_WORKLOAD_SIGNING_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -301,6 +304,29 @@ jobs:
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Validate workload deployment configuration
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          import os
+          import re
+          import sys
+
+          try:
+              refs = json.loads(os.environ.get("PLATFORM_WORKLOAD_SIGNING_KEY_REFS") or "{}")
+              key_present = bool(os.environ.get("CLAWDI_CLOUD_WORKLOAD_SIGNING_PRIVATE_KEY", "").strip())
+              valid = refs == {} and not key_present
+              if isinstance(refs, dict) and len(refs) == 1 and key_present:
+                  fingerprint, source = next(iter(refs.items()))
+                  valid = bool(re.fullmatch(r"sha256:[0-9a-f]{64}", fingerprint)) and source == "env://CLAWDI_CLOUD_WORKLOAD_SIGNING_PRIVATE_KEY"
+              if "\n" in os.environ.get("PLATFORM_WORKLOAD_SIGNING_KEY_REFS", ""):
+                  valid = False
+              if not valid:
+                  raise ValueError
+          except (ValueError, TypeError):
+              sys.exit("Incomplete or invalid Cloud workload signing configuration")
+          PYTHON
 
       - name: Write Kamal secrets
         env:
@@ -349,6 +375,12 @@ jobs:
             fi
             printf 'TS_AUTHKEY=%s\n' "$TS_AUTHKEY" >> .kamal/secrets
           fi
+          sed -i -e '/^PLATFORM_WORKLOAD_SIGNING_KEY_REFS=/d' \
+            -e '/^CLAWDI_CLOUD_WORKLOAD_SIGNING_PRIVATE_KEY=/d' .kamal/secrets
+          printf '%s\n' \
+            'PLATFORM_WORKLOAD_SIGNING_KEY_REFS=$PLATFORM_WORKLOAD_SIGNING_KEY_REFS' \
+            'CLAWDI_CLOUD_WORKLOAD_SIGNING_PRIVATE_KEY=$CLAWDI_CLOUD_WORKLOAD_SIGNING_PRIVATE_KEY' \
+            >> .kamal/secrets
           chmod 600 .kamal/secrets
 
       - uses: ./.github/actions/setup-bun-ci

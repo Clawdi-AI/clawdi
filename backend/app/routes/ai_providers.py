@@ -477,6 +477,10 @@ async def test_saved_ai_provider(
 
     async with async_session_factory() as db:
         provider = await _get_provider_or_404(db, auth, provider_id)
+        if provider.native_credential_authority:
+            raise HTTPException(
+                409, "Test this provider in the native runtime that owns its credentials"
+            )
         active_profile = _active_auth_profile(provider)
         payload = (
             await _find_auth_payload(db, auth, provider.provider_id, active_profile)
@@ -1645,6 +1649,7 @@ async def _validate_runtime_env_name_unique(
             (
                 (AiProvider.runtime_env_name == runtime_env_name)
                 | (AiProvider.auth_ref == f"env:{runtime_env_name}")
+                | (AiProvider.identity_handoff["native_env_name"].astext == runtime_env_name)
             ),
         )
         .limit(1)
@@ -1696,12 +1701,22 @@ def _raise_if_deployment_managed_provider_id(provider_id: str) -> None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "AI Provider not found")
 
 
+def _same_credential_authority(left: AiProviderAuth, right: AiProviderAuth) -> bool:
+    # API-key writes persist an explicit default profile; omitted means the same slot.
+    if left.type == "api_key" and right.type == "api_key":
+        left = left.model_copy(update={"profile": left.profile or "default"})
+        right = right.model_copy(update={"profile": right.profile or "default"})
+    return left == right
+
+
 def _apply_provider_body(
     provider: AiProvider,
     body: AiProviderUpsert | AiProviderResponse,
     *,
     apply_auth: bool = True,
 ) -> None:
+    if provider.identity_handoff_pending:
+        raise HTTPException(409, "Complete the pending provider identity handoff first")
     if (
         provider.configuration_mode in {"connection", "custom"}
         and body.configuration_mode != provider.configuration_mode
@@ -1714,6 +1729,10 @@ def _apply_provider_body(
         and body.runtime_env_name != provider.runtime_env_name
     ):
         raise HTTPException(409, "Connection credential environment is immutable")
+    if provider.configuration_mode in {"connection", "custom"} and not _same_credential_authority(
+        body.auth, _to_auth(provider)
+    ):
+        raise HTTPException(409, "Connection credential authority is immutable")
     if apply_auth and provider.configuration_mode == "custom":
         if body.models or body.auth.type != "api_key" or body.auth.source != "managed":
             raise HTTPException(409, "Custom credential identity is immutable; use PATCH to edit")
@@ -1868,6 +1887,7 @@ def _build_response(
             "base_url": provider.base_url,
             "api_mode": api_mode,
             "auth": _to_auth(provider),
+            "credential_authority": "native" if provider.native_credential_authority else None,
             "usable": credential_material != "missing",
             "readiness": readiness,
             "consumer": consumer,

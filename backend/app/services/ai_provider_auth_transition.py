@@ -8,6 +8,7 @@ from typing import Literal
 from uuid import UUID
 
 from cryptography.exceptions import InvalidTag
+from fastapi import HTTPException
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import case, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -344,6 +345,12 @@ async def transition_ai_provider_auth(
     """Apply one auth identity/material transition inside the caller's transaction."""
 
     await lock_ai_provider_owner(db, owner_user_id)
+    if provider.native_credential_authority and credential is not None and not archive_provider:
+        raise HTTPException(
+            409, "This provider uses native credentials; rotate them in the native runtime"
+        )
+    if provider.identity_handoff_pending:
+        raise HTTPException(409, "Complete the pending provider identity handoff first")
     if (
         provider.configuration_mode in {"connection", "custom"}
         and not archive_provider

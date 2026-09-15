@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
-from app.models.ai_provider import AiProviderAuthPayload
+from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.app_setting import AppSetting
 from app.models.hosted_runtime import HostedRuntimeState
 from app.schemas.runtime_observation import (
@@ -631,3 +631,72 @@ async def test_custom_binding_lifecycle_does_not_require_previous_readiness(
         assert rejected.status_code == expected, rejected.text
         await db_session.refresh(state)
         assert state.generation == 6
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("archived", [False, True])
+async def test_custom_upsert_preserves_credential_authority_and_incarnation(
+    client, db_session, seed_user, archived
+):
+    body = await create_provider(client)
+    provider = await db_session.scalar(
+        select(AiProvider).where(
+            AiProvider.owner_user_id == seed_user.id, AiProvider.provider_id == PROVIDER
+        )
+    )
+    # Model the completed handoff; no consumer is needed for this account-level boundary.
+    provider.configuration_mode = "custom"
+    provider.models = None
+    await db_session.commit()
+    body = {**body, "configuration_mode": "custom", "models": None}
+    identity = (provider.id, provider.incarnation_id)
+    if archived:
+        deleted = await client.delete(f"/v1/ai-providers/{PROVIDER}")
+        assert deleted.status_code == 200, deleted.text
+    await db_session.refresh(provider)
+    before = (provider.auth_type, provider.auth_ref, provider.auth_metadata, provider.archived_at)
+    payload = await db_session.scalar(
+        select(AiProviderAuthPayload).where(
+            AiProviderAuthPayload.owner_user_id == seed_user.id,
+            AiProviderAuthPayload.provider_id == PROVIDER,
+        )
+    )
+    secret = (
+        payload.encrypted_payload,
+        payload.nonce,
+        payload.credential_revision,
+        payload.archived_at,
+    )
+    rejected = await client.post(
+        "/v1/ai-providers?replace=true",
+        json={**body, "auth": {"type": "api_key", "source": "env", "ref": f"env:{ENV_NAME}"}},
+    )
+    assert rejected.status_code == 409, rejected.text
+    await db_session.refresh(provider)
+    await db_session.refresh(payload)
+    assert (provider.id, provider.incarnation_id) == identity
+    assert (
+        provider.auth_type,
+        provider.auth_ref,
+        provider.auth_metadata,
+        provider.archived_at,
+    ) == before
+    assert (
+        payload.encrypted_payload,
+        payload.nonce,
+        payload.credential_revision,
+        payload.archived_at,
+    ) == secret
+    if archived:
+        accepted = await client.post(
+            "/v1/ai-providers/accept",
+            headers={"Idempotency-Key": str(uuid4())},
+            json={
+                "provider": body,
+                "credential": {"type": "api_key", "value": "new-authorized-key"},
+            },
+        )
+        assert accepted.status_code == 201, accepted.text
+        await db_session.refresh(provider)
+        assert provider.id == identity[0] and provider.incarnation_id != identity[1]
+        assert provider.runtime_env_name == ENV_NAME and provider.archived_at is None

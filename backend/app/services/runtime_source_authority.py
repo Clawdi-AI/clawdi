@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import control_snapshot_session_factory, runtime_snapshot_session
 from app.models.agent_plugin import AgentPluginInstallation
+from app.models.ai_provider import AiProvider
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.schemas.plugin_catalog import RESERVED_AGENT_PLUGIN_NAMES
@@ -39,6 +40,7 @@ class PersistedRuntimeSourceAuthority:
     source_revision: str | None
     has_agent_plugins: bool
     has_github_release_agent_plugins: bool
+    has_provider_identity: bool = False
 
     @property
     def etag(self) -> str | None:
@@ -49,9 +51,12 @@ class PersistedRuntimeSourceAuthority:
     def matches_projection(
         self,
         *,
+        project_provider_identity: bool = True,
         project_agent_plugins: bool,
         project_agent_plugin_github_release_sources: bool,
     ) -> bool:
+        if not project_provider_identity and self.has_provider_identity:
+            return False
         if not self.has_agent_plugins:
             return True
         if not project_agent_plugins:
@@ -84,6 +89,16 @@ async def load_persisted_runtime_source_authority(
         )
         .exists()
     )
+    has_provider_identity = (
+        select(AiProvider.id)
+        .where(
+            AiProvider.owner_user_id == AgentEnvironment.user_id,
+            AiProvider.archived_at.is_(None),
+            AiProvider.configuration_mode.in_(["custom", "connection"]),
+            AiProvider.identity_enabled.is_(True) | AiProvider.identity_handoff.is_not(None),
+        )
+        .exists()
+    )
     row = (
         await db.execute(
             select(
@@ -95,6 +110,7 @@ async def load_persisted_runtime_source_authority(
                 HostedRuntimeState.source_revision_contract,
                 has_agent_plugins,
                 has_github_release_agent_plugins,
+                has_provider_identity,
             )
             .outerjoin(
                 HostedRuntimeState,
@@ -118,6 +134,7 @@ async def load_persisted_runtime_source_authority(
         source_revision_contract,
         has_agent_plugins,
         has_github_release_agent_plugins,
+        has_provider_identity,
     ) = row
     if state_environment_id is None:
         raise RuntimeSourceNotFoundError("Hosted runtime state not found")
@@ -132,6 +149,7 @@ async def load_persisted_runtime_source_authority(
         ),
         has_agent_plugins=has_agent_plugins,
         has_github_release_agent_plugins=has_github_release_agent_plugins,
+        has_provider_identity=has_provider_identity,
     )
 
 

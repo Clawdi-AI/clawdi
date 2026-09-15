@@ -1,11 +1,21 @@
-"""One explicitly delegated verifier capability; no key management or implicit grants."""
+"""Public client bootstrap and separately delegated native verifier capability."""
 
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
+import jwt
 from fastapi import HTTPException
 from pydantic import JsonValue, TypeAdapter
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.platform_workload_auth import PlatformWorkloadClient
+from app.models.platform_workload_auth import PlatformWorkloadClient, PlatformWorkloadSigningKey
+from app.schemas.admin import (
+    AdminWorkloadClientBootstrap,
+    AdminWorkloadSignerBootstrap,
+    AdminWorkloadSignerReceipt,
+)
 from app.schemas.provider_environment_repair import (
     PROVIDER_ENVIRONMENT_REPAIR_SCOPE,
     ProviderEnvironmentVerifierAccess,
@@ -18,6 +28,89 @@ from app.services.platform_contract import (
     read_platform_replay,
     store_platform_response,
 )
+from app.services.platform_workload_auth import (
+    PlatformOAuthProtocolError,
+    PlatformWorkloadKeyResolver,
+    PlatformWorkloadKeyUnavailable,
+    validate_workload_public_key,
+)
+from app.services.platform_workload_signer import public_key_material, signing_key_reference
+
+
+async def bootstrap_workload_client(
+    db: AsyncSession,
+    *,
+    body: AdminWorkloadClientBootstrap,
+    idempotency_key: str,
+    request_id: str,
+) -> ProviderEnvironmentVerifierAccess:
+    """Create once; retries cannot rotate keys, resurrect clients, or grant repair."""
+    try:
+        validate_workload_public_key(
+            body.public_jwk, kid=body.assertion_kid, algorithm=body.assertion_algorithm
+        )
+    except PlatformOAuthProtocolError:
+        raise HTTPException(422, "Invalid public assertion JWK") from None
+    operation = "platform.workload_client.bootstrap"
+    request_hash = platform_request_hash(body.model_dump(mode="json"))
+    previous = await lock_platform_idempotency(
+        db, operation=operation, idempotency_key=idempotency_key
+    )
+    if previous is not None:
+        if previous.request_hash != request_hash or previous.owner_user_id is not None:
+            raise HTTPException(409, "Idempotency-Key belongs to a different client bootstrap")
+        return ProviderEnvironmentVerifierAccess.model_validate(read_platform_replay(previous).body)
+    await lock_workload_registration(db)
+    if await db.scalar(
+        select(PlatformWorkloadSigningKey.id)
+        .where(PlatformWorkloadSigningKey.private_key_ref == signing_key_reference(body.public_jwk))
+        .limit(1)
+    ):
+        raise HTTPException(409, "Client assertion and Cloud signing keys must be separate")
+    client = await db.scalar(
+        insert(PlatformWorkloadClient)
+        .values(
+            client_id=body.client_id,
+            assertion_kid=body.assertion_kid,
+            assertion_algorithm=body.assertion_algorithm,
+            public_jwk={**body.public_jwk, **public_key_material(body.public_jwk)},
+            allowed_scopes=["platform:runtime-state:write"],
+        )
+        .on_conflict_do_nothing(index_elements=[PlatformWorkloadClient.client_id])
+        .returning(PlatformWorkloadClient)
+    )
+    if client is None:
+        raise HTTPException(409, "Workload client already exists; bootstrap cannot replace it")
+    response = _access(client)
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action=operation,
+        resource_type="platform_workload_client",
+        resource_id=str(client.id),
+        source="api.admin",
+        details={
+            "request_id": request_id,
+            "idempotency_key": idempotency_key,
+            "reason": body.reason,
+            "client_id": client.client_id,
+            "public_key_fingerprint": response.public_key_fingerprint,
+            "scopes": client.allowed_scopes,
+        },
+    )
+    store_platform_response(
+        db,
+        operation=operation,
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
+        owner_user_id=None,
+        resource_type="platform_workload_client",
+        resource_id=str(client.id),
+        response_status=201,
+        response_body=response.model_dump(mode="json"),
+    )
+    await db.commit()
+    return response
 
 
 def _access(client: PlatformWorkloadClient) -> ProviderEnvironmentVerifierAccess:
@@ -131,3 +224,108 @@ async def update_verifier_access(
     )
     await db.commit()
     return response
+
+
+async def register_workload_signer(
+    db: AsyncSession,
+    *,
+    body: AdminWorkloadSignerBootstrap,
+    idempotency_key: str,
+    request_id: str,
+    resolver: PlatformWorkloadKeyResolver,
+) -> AdminWorkloadSignerReceipt:
+    try:
+        key = validate_workload_public_key(body.public_jwk, kid=body.kid, algorithm=body.algorithm)
+    except PlatformOAuthProtocolError:
+        raise HTTPException(422, "Invalid public signing JWK") from None
+    operation = "platform.workload_signer.bootstrap"
+    request_hash = platform_request_hash(body.model_dump(mode="json"))
+    previous = await lock_platform_idempotency(
+        db, operation=operation, idempotency_key=idempotency_key
+    )
+    if previous is not None:
+        if previous.request_hash != request_hash or previous.owner_user_id is not None:
+            raise HTTPException(409, "Idempotency-Key belongs to a different signer bootstrap")
+        return AdminWorkloadSignerReceipt.model_validate(read_platform_replay(previous).body)
+    await lock_workload_registration(db)
+    reference = signing_key_reference(body.public_jwk)
+    if body.expires_at < datetime.now(UTC) + timedelta(minutes=5):
+        raise HTTPException(422, "Signing key expires before an access token can complete")
+    if await db.scalar(
+        select(PlatformWorkloadClient.id)
+        .where(PlatformWorkloadClient.public_jwk.contains(public_key_material(body.public_jwk)))
+        .limit(1)
+    ):
+        raise HTTPException(409, "Client assertion and Cloud signing keys must be separate")
+    try:
+        challenge = str(uuid4())
+        signed = await resolver.sign_jwt(
+            private_key_ref=reference,
+            algorithm=body.algorithm,
+            payload={"challenge": challenge},
+            headers={"kid": body.kid, "typ": "JWT"},
+        )
+        if jwt.get_unverified_header(signed).get("kid") != body.kid or jwt.decode(
+            signed, key, algorithms=[body.algorithm]
+        ) != {"challenge": challenge}:
+            raise ValueError("signer mismatch")
+    except (PlatformWorkloadKeyUnavailable, jwt.PyJWTError, ValueError, TypeError):
+        raise HTTPException(
+            503, "Configured signing authority does not match the public key"
+        ) from None
+    row = await db.scalar(
+        insert(PlatformWorkloadSigningKey)
+        .values(
+            kid=body.kid,
+            algorithm=body.algorithm,
+            private_key_ref=reference,
+            not_before=body.not_before,
+            expires_at=body.expires_at,
+        )
+        .on_conflict_do_nothing()
+        .returning(PlatformWorkloadSigningKey)
+    )
+    if row is None:
+        raise HTTPException(409, "Signing key already registered; bootstrap cannot replace it")
+    receipt = AdminWorkloadSignerReceipt(
+        kid=body.kid,
+        algorithm=body.algorithm,
+        public_key_ref=reference,
+        not_before=body.not_before,
+        expires_at=body.expires_at,
+    )
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action=operation,
+        resource_type="platform_workload_signing_key",
+        resource_id=str(row.id),
+        source="api.admin",
+        details={
+            "request_id": request_id,
+            "idempotency_key": idempotency_key,
+            "reason": body.reason,
+            "public_key_fingerprint": reference,
+            "kid": body.kid,
+        },
+    )
+    store_platform_response(
+        db,
+        operation=operation,
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
+        owner_user_id=None,
+        resource_type="platform_workload_signing_key",
+        resource_id=str(row.id),
+        response_status=201,
+        response_body=receipt.model_dump(mode="json"),
+    )
+    await db.commit()
+    return receipt
+
+
+async def lock_workload_registration(db: AsyncSession) -> None:
+    # Serialize both registration surfaces so a public key cannot race into both roles.
+    await db.execute(
+        select(func.pg_advisory_xact_lock(func.hashtextextended("workload-registration", 0)))
+    )

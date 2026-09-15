@@ -9,10 +9,16 @@ from app.schemas.provider_environment_repair import (
     ProviderEnvironmentRepairIntent,
     ProviderEnvironmentRepairReceipt,
     ProviderEnvironmentRestore,
+    ProviderIdentityHandoffComplete,
+    ProviderIdentityHandoffReceipt,
+    ProviderIdentityHandoffRequest,
 )
 
 
 class ProviderEnvironmentContract(BaseModel):
+    handoff_request: ProviderIdentityHandoffRequest
+    handoff_receipt: ProviderIdentityHandoffReceipt
+    handoff_complete: ProviderIdentityHandoffComplete
     inventory: ProviderEnvironmentInventory
     intent: ProviderEnvironmentRepairIntent
     restore: ProviderEnvironmentRestore

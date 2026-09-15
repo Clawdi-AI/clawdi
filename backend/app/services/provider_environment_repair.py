@@ -90,7 +90,14 @@ async def _revision(db: AsyncSession, provider: AiProvider) -> str:
             {
                 "provider": {
                     "id": str(provider.id),
+                    "handoff_id": provider.identity_handoff.get("handoff_id")
+                    if provider.identity_handoff
+                    else None,
+                    "handoff_state": provider.identity_handoff.get("state")
+                    if provider.identity_handoff
+                    else None,
                     "incarnation": str(provider.incarnation_id),
+                    "identity_enabled": provider.identity_enabled,
                     "owner": str(provider.owner_user_id),
                     "provider_id": provider.provider_id,
                     "updated_at": provider.updated_at.isoformat(),
@@ -270,6 +277,9 @@ async def restore_provider_environment(
     owner_id: UUID,
     body: ProviderEnvironmentRestore,
 ) -> ProviderEnvironmentRepairReceipt:
+    provider, _ = await _provider(db, owner_id, body.provider_id)
+    if provider.identity_handoff_pending:
+        _conflict("Complete the pending provider identity handoff first")
     inventory = await environment_repair_inventory(
         db, owner_id=owner_id, provider_id=body.provider_id
     )
@@ -317,7 +327,8 @@ async def restore_provider_environment(
             AiProvider.archived_at.is_(None),
             AiProvider.configuration_mode != "native",
             (AiProvider.runtime_env_name == body.native_env_name)
-            | (AiProvider.auth_ref == f"env:{body.native_env_name}"),
+            | (AiProvider.auth_ref == f"env:{body.native_env_name}")
+            | (AiProvider.identity_handoff["native_env_name"].astext == body.native_env_name),
         )
         .limit(1)
     )
