@@ -33,6 +33,8 @@ export interface NativeProviderConnection {
 }
 
 export interface CustomProviderConnection {
+	credentialAuthority?: "native";
+	cloudIdentity?: { providerUuid: string; incarnationId: string };
 	initialize: boolean;
 	id: string;
 	baseUrl: string;
@@ -67,6 +69,8 @@ export function customProviderConnections(
 		return {
 			id,
 			initialize: input.configurationMode === "custom",
+			cloudIdentity: input.cloudIdentity,
+			credentialAuthority: input.credentialAuthority,
 			baseUrl: input.baseUrl,
 			apiMode: input.apiMode,
 			envName: hostedProviderRuntimeEnvName(id, input, runtimeName),
@@ -411,6 +415,7 @@ export function hostedProviderEnvironment(
 				`runtime ${runtimeName ?? "default"} credential environment ${runtimeEnvName} has multiple providers`,
 			);
 		envOwners.set(runtimeEnvName, providerId);
+		if (provider.credentialAuthority === "native") continue;
 		if (isClawdiManagedProviderProjection(provider)) {
 			placeholderEnv[runtimeEnvName] = MANAGED_EGRESS_PLACEHOLDER_VALUE;
 		} else {

@@ -23,7 +23,11 @@ import {
 	withPrivateDirectoryLockSync,
 } from "../lib/private-directory-lock";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { assertTrustedDirectory, ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
+import {
+	assertTrustedDirectory,
+	ensureDirectoryWithinTrustedRoot,
+	openTrustedDirectory,
+} from "../lib/trusted-directory";
 import type { RuntimePaths } from "./paths";
 import { spawnRuntimeUserCommand, withRuntimeUserFileAccess } from "./runtime-user-command";
 import { writeRuntimePlatformFileAtomic } from "./state";
@@ -145,30 +149,10 @@ function fail(): never {
 	);
 }
 
-/** Pin every ancestor without following links; all tenant IO runs with tenant credentials. */
 function openDirectory(path: string): number {
-	if (!isAbsolute(path) || resolve(path) !== path) fail();
-	let fd = openSync("/", constants.O_RDONLY | constants.O_DIRECTORY);
 	try {
-		for (const part of path.split("/").filter(Boolean)) {
-			const next = openSync(
-				`/proc/self/fd/${fd}/${part}`,
-				constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
-			);
-			const stat = fstatSync(next);
-			if (
-				(stat.uid !== 0 && stat.uid !== process.geteuid?.()) ||
-				((stat.mode & 0o022) !== 0 && (stat.mode & 0o1000) === 0)
-			) {
-				closeSync(next);
-				fail();
-			}
-			closeSync(fd);
-			fd = next;
-		}
-		return fd;
+		return openTrustedDirectory(path);
 	} catch {
-		closeSync(fd);
 		return fail();
 	}
 }

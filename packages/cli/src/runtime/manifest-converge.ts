@@ -1381,6 +1381,10 @@ export function convergeRuntimeManifest(
 ): RuntimeConvergenceResult {
 	const { context, state } = initializeRuntimeConvergence(load, paths, opts);
 	try {
+		if (load.manifest.providerHandoffs?.length)
+			throw new Error(
+				"Provider identity handoff is pending; complete the operator-authorized journal CAS first",
+			);
 		// Durable connection identity is independent of native capability repair.
 		// Reject rebinding before installers or candidate environment files can change.
 		for (const runtime of ["openclaw", "hermes"]) {

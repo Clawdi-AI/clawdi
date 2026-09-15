@@ -249,6 +249,7 @@ async function fetchRuntimeManifestPayload(
 				authorization: `Bearer ${token}`,
 				[HOSTED_RUNTIME_CAPABILITIES_HEADER]: [
 					HOSTED_AGENT_PLUGIN_MANIFEST_CAPABILITY,
+					"provider-identity-v1",
 					HOSTED_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY,
 				].join(", "),
 				...(opts.ifNoneMatch ? { "if-none-match": opts.ifNoneMatch } : {}),
