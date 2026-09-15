@@ -2626,6 +2626,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/platform/ai-providers/{provider_id}/identity-handoff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Provider Identity Handoff */
+        get: operations["read_provider_identity_handoff_v1_platform_ai_providers__provider_id__identity_handoff_get"];
+        put?: never;
+        /** Prepare Provider Identity Handoff */
+        post: operations["prepare_provider_identity_handoff_v1_platform_ai_providers__provider_id__identity_handoff_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform/ai-providers/{provider_id}/identity-handoff/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finish Provider Identity Handoff */
+        post: operations["finish_provider_identity_handoff_v1_platform_ai_providers__provider_id__identity_handoff_complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/plugin-catalog": {
         parameters: {
             query?: never;
@@ -4733,6 +4768,11 @@ export interface components {
             } | null;
             /** Models */
             models?: components["schemas"]["AiProviderModel"][] | null;
+            /**
+             * Credential Authority
+             * @description Native credential ownership established by an explicit operator handoff.
+             */
+            credential_authority?: "native" | null;
             /** Id */
             id: string;
             /** Provider Id */
@@ -7259,6 +7299,44 @@ export interface components {
             /** Native Env Name */
             native_env_name?: string | null;
         };
+        /** NativeIdentityProof */
+        NativeIdentityProof: {
+            binding: components["schemas"]["RepairBinding"];
+            /**
+             * Incus Instance Uuid
+             * Format: uuid
+             */
+            incus_instance_uuid: string;
+            /**
+             * Native State
+             * @enum {string}
+             */
+            native_state: "running" | "stopped";
+            /** Applied Push Generation */
+            applied_push_generation: number;
+            /** Hosted Spec Revision */
+            hosted_spec_revision: string;
+            /** Journal Sha256 */
+            journal_sha256?: string | null;
+            /** Config Sha256 */
+            config_sha256?: string | null;
+            /** Native Env Name */
+            native_env_name?: string | null;
+            /** Native Base Url */
+            native_base_url?: string | null;
+            /** Native Api Mode */
+            native_api_mode?: ("openai_chat" | "openai_responses" | "anthropic_messages" | "google_generate_content") | null;
+            /** Native Env Sha256 */
+            native_env_sha256?: string | null;
+            /** Journal Env Name */
+            journal_env_name?: string | null;
+            /** Journal Provider Uuid */
+            journal_provider_uuid?: string | null;
+            /** Journal Incarnation Id */
+            journal_incarnation_id?: string | null;
+            /** Handoff Id */
+            handoff_id?: string | null;
+        };
         /**
          * OAuthConfigResponse
          * @description Public configuration for the first-party Clerk OAuth CLI client.
@@ -7781,6 +7859,91 @@ export interface components {
             observed_at: string;
             /** Proofs */
             proofs: components["schemas"]["NativeEnvironmentProof"][];
+        };
+        /** ProviderIdentityHandoffComplete */
+        ProviderIdentityHandoffComplete: {
+            owner: components["schemas"]["PlatformOwner"];
+            /**
+             * Handoff Id
+             * Format: uuid
+             */
+            handoff_id: string;
+            /** Proofs */
+            proofs: components["schemas"]["NativeIdentityProof"][];
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+        };
+        /** ProviderIdentityHandoffReceipt */
+        ProviderIdentityHandoffReceipt: {
+            /**
+             * Handoff Id
+             * Format: uuid
+             */
+            handoff_id: string;
+            /** Provider Id */
+            provider_id: string;
+            /**
+             * Provider Uuid
+             * Format: uuid
+             */
+            provider_uuid: string;
+            /**
+             * Incarnation Id
+             * Format: uuid
+             */
+            incarnation_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "prepared" | "completed";
+            /** Native Env Name */
+            native_env_name: string;
+            /** Prepared Revision */
+            prepared_revision: string;
+            intent: components["schemas"]["ProviderIdentityHandoffRequest"];
+        };
+        /** ProviderIdentityHandoffRequest */
+        ProviderIdentityHandoffRequest: {
+            owner: components["schemas"]["PlatformOwner"];
+            /** Provider Id */
+            provider_id: string;
+            /** Expected Revision */
+            expected_revision: string;
+            /** Expected Boundary */
+            expected_boundary: string;
+            /** Expected Env Name */
+            expected_env_name: string;
+            /** Native Env Name */
+            native_env_name: string;
+            /** Operator Fingerprint */
+            operator_fingerprint: string;
+            /** Operator Ref */
+            operator_ref: string;
+            /** Reason */
+            reason: string;
+            /** Supersedes Handoff Id */
+            supersedes_handoff_id?: string | null;
+            /**
+             * Observed At
+             * Format: date-time
+             */
+            observed_at: string;
+            /** Proofs */
+            proofs: components["schemas"]["NativeIdentityProof"][];
+            /**
+             * Expected Provider Uuid
+             * Format: uuid
+             */
+            expected_provider_uuid: string;
+            /**
+             * Expected Incarnation Id
+             * Format: uuid
+             */
+            expected_incarnation_id: string;
         };
         /**
          * PublicSessionExportResponse
@@ -15755,6 +15918,122 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProviderEnvironmentRepairReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_provider_identity_handoff_v1_platform_ai_providers__provider_id__identity_handoff_get: {
+        parameters: {
+            query: {
+                kind: "clerk" | "partner_tenant";
+                ref: string;
+                handoff_id?: string | null;
+            };
+            header?: {
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderIdentityHandoffReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prepare_provider_identity_handoff_v1_platform_ai_providers__provider_id__identity_handoff_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderIdentityHandoffRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderIdentityHandoffReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finish_provider_identity_handoff_v1_platform_ai_providers__provider_id__identity_handoff_complete_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderIdentityHandoffComplete"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderIdentityHandoffReceipt"];
                 };
             };
             /** @description Validation Error */

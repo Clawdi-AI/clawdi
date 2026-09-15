@@ -1400,13 +1400,13 @@ def test_runtime_bundle_matches_shared_golden(monkeypatch) -> None:
     )
     fixture_path = Path(__file__).parents[2] / "test-fixtures/runtime-bundle-v2.golden.json"
     golden = json.loads(fixture_path.read_text())
-    expected_revision = "6e3c924e4ef6f11fc1206d52d9608b120b96f0d05e46dbc909df7fd97da048fb"
+    expected_revision = "a477a6cf87a5632571f9127123288031e366c291fb7b87df29732544e5a885d1"
     assert (
         RUNTIME_SOURCE_RENDERER_REVISION,
         source.source_revision,
         golden["sourceRevision"],
     ) == (
-        "runtime-source.v3",
+        "runtime-source.v5",
         expected_revision,
         expected_revision,
     ), (
@@ -1414,3 +1414,51 @@ def test_runtime_bundle_matches_shared_golden(monkeypatch) -> None:
         "the golden source revision"
     )
     assert render_runtime_bundle(source) == golden
+
+
+@pytest.mark.parametrize("mode", ["custom", "connection"])
+def test_provider_identity_projection_is_explicit_and_reactivation_fences_legacy(mode):
+    from datetime import UTC, datetime
+
+    from app.services.runtime_source import RuntimeSourceCapabilityError
+
+    batch = connection_source_fixture()
+    provider = batch.providers[(USER_ID, "saved-connection")]
+    provider.configuration_mode = mode
+    provider.incarnation_id = uuid4()
+    provider.identity_enabled = False
+    arguments = dict(
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+    )
+    current = render_runtime_source(batch, **arguments)
+    legacy = render_runtime_source(batch, project_provider_identity=False, **arguments)
+    assert current.manifest == legacy.manifest
+    assert current.source_revision == legacy.source_revision
+    assert "cloudIdentity" not in current.manifest["providers"][provider.provider_id]
+    identity = provider.id, provider.incarnation_id
+    provider.archived_at = datetime.now(UTC)
+    provider.activate()
+    assert provider.id == identity[0] and provider.incarnation_id != identity[1]
+    assert provider.identity_enabled is True
+    strict = render_runtime_source(batch, **arguments)
+    assert strict.manifest["providers"][provider.provider_id]["cloudIdentity"] == {
+        "providerUuid": str(provider.id),
+        "incarnationId": str(provider.incarnation_id),
+    }
+    with pytest.raises(RuntimeSourceCapabilityError):
+        render_runtime_source(batch, project_provider_identity=False, **arguments)
+    provider.identity_enabled = False
+    provider.identity_handoff = {
+        "state": "completed",
+        "provider_uuid": str(provider.id),
+        "incarnation_id": str(provider.incarnation_id),
+    }
+    assert (
+        "cloudIdentity"
+        in render_runtime_source(batch, **arguments).manifest["providers"][provider.provider_id]
+    )
+    with pytest.raises(RuntimeSourceCapabilityError):
+        render_runtime_source(batch, project_provider_identity=False, **arguments)

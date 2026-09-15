@@ -104,3 +104,42 @@ class ProviderEnvironmentVerifierAccess(BaseModel):
     status: str
     revision: str
     granted: bool
+
+
+class NativeIdentityProof(NativeEnvironmentProof):
+    native_base_url: str | None = Field(default=None, max_length=1000)
+    native_api_mode: (
+        Literal["openai_chat", "openai_responses", "anthropic_messages", "google_generate_content"]
+        | None
+    ) = None
+    native_env_sha256: str | None = Field(default=None, pattern=DIGEST_PATTERN)
+    journal_env_name: str | None = Field(default=None, pattern=ENV_PATTERN)
+    journal_provider_uuid: UUID | None = None
+    journal_incarnation_id: UUID | None = None
+    handoff_id: UUID | None = None
+
+
+class ProviderIdentityHandoffRequest(ProviderEnvironmentRepairIntent):
+    supersedes_handoff_id: UUID | None = None
+    observed_at: AwareDatetime
+    proofs: list[NativeIdentityProof] = Field(min_length=1, max_length=100)
+    expected_provider_uuid: UUID
+    expected_incarnation_id: UUID
+
+
+class ProviderIdentityHandoffReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    handoff_id: UUID
+    provider_id: str
+    provider_uuid: UUID
+    incarnation_id: UUID
+    state: Literal["prepared", "completed"]
+    native_env_name: str
+    prepared_revision: str
+    intent: ProviderIdentityHandoffRequest
+
+
+class ProviderIdentityHandoffComplete(PlatformMutationBody):
+    handoff_id: UUID
+    proofs: list[NativeIdentityProof] = Field(min_length=1, max_length=100)
+    observed_at: AwareDatetime

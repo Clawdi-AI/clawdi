@@ -4,6 +4,7 @@ from datetime import datetime
 
 from pydantic import JsonValue
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -59,11 +60,46 @@ class AiProvider(Base, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint("owner_user_id", "provider_id", name="uq_ai_providers_owner_provider_id"),
+        CheckConstraint(
+            "identity_handoff IS NULL OR (jsonb_typeof(identity_handoff) = 'object' "
+            "AND COALESCE(identity_handoff ->> 'state', '') "
+            "IN ('prepared', 'completed'))",
+            name="ck_ai_providers_identity_handoff",
+        ),
     )
+
+    # Existing installations are backfilled false; never infer journal identity by name.
+    identity_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+
+    @property
+    def projects_cloud_identity(self) -> bool:
+        return bool(self.identity_enabled or self.identity_handoff is not None)
+
+    identity_handoff: Mapped[dict[str, JsonValue] | None] = mapped_column(JSONB(none_as_null=True))
+
+    @property
+    def identity_handoff_pending(self) -> bool:
+        return (
+            self.identity_handoff is not None and self.identity_handoff.get("state") == "prepared"
+        )
+
+    @property
+    def native_credential_authority(self) -> bool:
+        receipt = self.identity_handoff
+        return bool(
+            receipt
+            and receipt.get("state") == "completed"
+            and receipt.get("provider_uuid") == str(self.id)
+            and receipt.get("incarnation_id") == str(self.incarnation_id)
+        )
 
     def activate(self) -> None:
         if self.archived_at is not None:
             self.incarnation_id = uuid.uuid4()
+            self.identity_enabled = True
+            self.identity_handoff = None
         self.archived_at = None
 
 

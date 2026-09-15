@@ -48,6 +48,9 @@ from app.schemas.provider_environment_repair import (
     ProviderEnvironmentRepairIntent,
     ProviderEnvironmentRepairReceipt,
     ProviderEnvironmentRestore,
+    ProviderIdentityHandoffComplete,
+    ProviderIdentityHandoffReceipt,
+    ProviderIdentityHandoffRequest,
 )
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.agent_environments import (
@@ -103,6 +106,10 @@ from app.services.project_runtime_skills import (
 from app.services.provider_environment_repair import (
     environment_repair_inventory,
     restore_provider_environment,
+)
+from app.services.provider_identity_handoff import (
+    complete_identity_handoff,
+    prepare_identity_handoff,
 )
 from app.services.runtime_generation import (
     RuntimeApplyGenerationUpdateError,
@@ -1630,3 +1637,171 @@ async def repair_provider_environment(
     )
     await db.commit()
     return receipt
+
+
+@router.post(
+    "/ai-providers/{provider_id}/identity-handoff",
+    response_model=ProviderIdentityHandoffReceipt,
+    response_model_exclude_none=True,
+)
+async def prepare_provider_identity_handoff(
+    provider_id: str,
+    body: ProviderIdentityHandoffRequest,
+    request: Request,
+    idempotency_key: IdempotencyKey,
+    _auth: PlatformMutationAuth = Depends(
+        require_platform_workload_auth(PROVIDER_ENVIRONMENT_REPAIR_SCOPE)
+    ),
+    db: AsyncSession = Depends(get_control_session),
+) -> ProviderIdentityHandoffReceipt | Response:
+    return await _identity_handoff_mutation(
+        db, provider_id, body, request, idempotency_key, complete=False
+    )
+
+
+@router.post(
+    "/ai-providers/{provider_id}/identity-handoff/complete",
+    response_model=ProviderIdentityHandoffReceipt,
+    response_model_exclude_none=True,
+)
+async def finish_provider_identity_handoff(
+    provider_id: str,
+    body: ProviderIdentityHandoffComplete,
+    request: Request,
+    idempotency_key: IdempotencyKey,
+    _auth: PlatformMutationAuth = Depends(
+        require_platform_workload_auth(PROVIDER_ENVIRONMENT_REPAIR_SCOPE)
+    ),
+    db: AsyncSession = Depends(get_control_session),
+) -> ProviderIdentityHandoffReceipt | Response:
+    return await _identity_handoff_mutation(
+        db, provider_id, body, request, idempotency_key, complete=True
+    )
+
+
+async def _identity_handoff_mutation(
+    db: AsyncSession,
+    provider_id: str,
+    body: ProviderIdentityHandoffRequest | ProviderIdentityHandoffComplete,
+    request: Request,
+    idempotency_key: str,
+    *,
+    complete: bool,
+) -> ProviderIdentityHandoffReceipt | Response:
+    action = "ai_provider.identity.complete" if complete else "ai_provider.identity.prepare"
+    if isinstance(body, ProviderIdentityHandoffComplete):
+        idempotency_key = f"provider-identity-complete:{body.handoff_id}"
+    if isinstance(body, ProviderIdentityHandoffRequest) and body.provider_id != provider_id:
+        raise HTTPException(422, "Provider identity is inconsistent")
+    target = await _resolve_owner(
+        db,
+        owner=body.owner,
+        resource_type="ai_provider",
+        resource_id=provider_id,
+        action=action,
+        request=request,
+        idempotency_key=idempotency_key,
+    )
+    await lock_ai_provider_owner(db, target.id)
+    intent = {
+        **body.model_dump(mode="json", exclude={"observed_at", "proofs"}),
+        "provider_id": provider_id,
+    }
+    request_hash, replay = await _begin_mutation(
+        db,
+        operation=action,
+        idempotency_key=idempotency_key,
+        request_payload=intent,
+        owner=body.owner,
+        owner_user_id=target.id,
+        resource_type="ai_provider",
+        resource_id=provider_id,
+        action=action,
+        request=request,
+    )
+    if replay is not None:
+        return _replay_response(replay)
+    if isinstance(body, ProviderIdentityHandoffComplete):
+        receipt = await complete_identity_handoff(
+            db, owner_id=target.id, provider_id=provider_id, body=body
+        )
+    else:
+        receipt = await prepare_identity_handoff(db, owner_id=target.id, body=body)
+    await _complete_mutation(
+        db,
+        operation=action,
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
+        owner=body.owner,
+        owner_user_id=target.id,
+        resource_type="ai_provider",
+        resource_id=provider_id,
+        action=action,
+        request=request,
+        response_status=200,
+        response_body=receipt.model_dump(mode="json", by_alias=True, exclude_none=True),
+        audit_details={
+            "handoff_id": str(receipt.handoff_id),
+            "state": receipt.state,
+            "operator_ref": receipt.intent.operator_ref,
+            "reason": receipt.intent.reason,
+            "boundary": receipt.intent.expected_boundary,
+        },
+    )
+    await db.commit()
+    return receipt
+
+
+@router.get(
+    "/ai-providers/{provider_id}/identity-handoff",
+    response_model=ProviderIdentityHandoffReceipt,
+    response_model_exclude_none=True,
+)
+async def read_provider_identity_handoff(
+    provider_id: str,
+    request: Request,
+    kind: Literal["clerk", "partner_tenant"],
+    ref: str = Query(min_length=1, max_length=255),
+    handoff_id: UUID | None = None,
+    _auth: PlatformMutationAuth = Depends(
+        require_platform_workload_auth(PROVIDER_ENVIRONMENT_REPAIR_SCOPE)
+    ),
+    db: AsyncSession = Depends(get_control_session),
+) -> ProviderIdentityHandoffReceipt:
+    owner = PlatformOwner.model_validate({"kind": kind, "ref": ref})
+    target = await _resolve_owner(
+        db,
+        owner=owner,
+        resource_type="ai_provider",
+        resource_id=provider_id,
+        action="ai_provider.identity.read",
+        request=request,
+        idempotency_key="inspection",
+    )
+    await lock_ai_provider_owner(db, target.id)
+    from app.models.ai_provider import AiProvider
+    from app.models.platform_idempotency import PlatformMutationIdempotency
+    from app.services.platform_contract import read_platform_replay
+
+    provider = await db.scalar(
+        select(AiProvider).where(
+            AiProvider.owner_user_id == target.id, AiProvider.provider_id == provider_id
+        )
+    )
+    if provider is not None and provider.identity_handoff is not None:
+        receipt = ProviderIdentityHandoffReceipt.model_validate(provider.identity_handoff)
+        if (handoff_id is None and receipt.state == "prepared") or receipt.handoff_id == handoff_id:
+            return receipt
+    if handoff_id is not None:
+        row = await db.scalar(
+            select(PlatformMutationIdempotency).where(
+                PlatformMutationIdempotency.owner_user_id == target.id,
+                PlatformMutationIdempotency.resource_id == provider_id,
+                PlatformMutationIdempotency.operation == "ai_provider.identity.complete",
+                PlatformMutationIdempotency.idempotency_key
+                == f"provider-identity-complete:{handoff_id}",
+            )
+        )
+        if row is not None:
+            return ProviderIdentityHandoffReceipt.model_validate(read_platform_replay(row).body)
+    raise HTTPException(404, "Provider identity handoff not found")

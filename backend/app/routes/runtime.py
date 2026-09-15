@@ -67,6 +67,7 @@ from app.services.runtime_source import (
     RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     RUNTIME_CAPABILITIES_HEADER,
     RenderedRuntimeSource,
+    RuntimeSourceCapabilityError,
     RuntimeSourceError,
     RuntimeSourceNotFoundError,
     ensure_runtime_whatsapp_credentials,
@@ -179,6 +180,7 @@ async def get_runtime_manifest(
         for capability in request.headers.get(RUNTIME_CAPABILITIES_HEADER, "").split(",")
         if capability.strip()
     }
+    project_provider_identity = "provider-identity-v1" in capabilities
     project_agent_plugins = RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY in capabilities
     project_agent_plugin_github_release_sources = (
         RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY in capabilities
@@ -191,6 +193,7 @@ async def get_runtime_manifest(
             environment_id=environment_id,
             owner_user_id=auth.user_id,
             if_none_match=if_none_match,
+            project_provider_identity=project_provider_identity,
             project_agent_plugins=project_agent_plugins,
             project_agent_plugin_github_release_sources=project_agent_plugin_github_release_sources,
         )
@@ -213,6 +216,7 @@ async def get_runtime_manifest(
                 environment_id=environment_id,
                 owner_user_id=auth.user_id,
                 if_none_match=if_none_match,
+                project_provider_identity=project_provider_identity,
                 project_agent_plugins=project_agent_plugins,
                 project_agent_plugin_github_release_sources=project_agent_plugin_github_release_sources,
             )
@@ -244,10 +248,15 @@ async def _render_runtime_source_snapshot(
     environment_id: UUID,
     owner_user_id: UUID,
     if_none_match: str | None,
+    project_provider_identity: bool,
     project_agent_plugins: bool,
     project_agent_plugin_github_release_sources: bool,
 ) -> _RuntimeManifestSnapshot:
-    canonical_projection = project_agent_plugins and project_agent_plugin_github_release_sources
+    canonical_projection = (
+        project_provider_identity
+        and project_agent_plugins
+        and project_agent_plugin_github_release_sources
+    )
     if if_none_match is not None:
         async with runtime_snapshot_session(session_factory=snapshot_sessions) as source_db:
             authority = await load_persisted_runtime_source_authority(
@@ -257,6 +266,7 @@ async def _render_runtime_source_snapshot(
             )
         if (
             authority.matches_projection(
+                project_provider_identity=project_provider_identity,
                 project_agent_plugins=project_agent_plugins,
                 project_agent_plugin_github_release_sources=(
                     project_agent_plugin_github_release_sources
@@ -312,12 +322,15 @@ async def _render_runtime_source_snapshot(
                     public_api_url=settings.public_api_url,
                     vault_key_identity=vault_key_identity(settings.vault_encryption_key),
                     decrypt_secrets=False,
+                    project_provider_identity=project_provider_identity,
                     project_agent_plugins=project_agent_plugins,
                     project_agent_plugin_github_release_sources=(
                         project_agent_plugin_github_release_sources
                     ),
                 )
             )
+        except RuntimeSourceCapabilityError:
+            raise
         except RuntimeSourceError:
             if (
                 expected_revision is not None
@@ -342,6 +355,7 @@ async def _render_runtime_source_snapshot(
                 public_api_url=settings.public_api_url,
                 vault_key_identity=vault_key_identity(settings.vault_encryption_key),
                 decrypt_secrets=True,
+                project_provider_identity=project_provider_identity,
                 project_agent_plugins=project_agent_plugins,
                 project_agent_plugin_github_release_sources=(
                     project_agent_plugin_github_release_sources

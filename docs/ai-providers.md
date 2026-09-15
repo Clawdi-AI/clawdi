@@ -586,5 +586,106 @@ projection client. This changes neither its keys nor its other scopes, and does 
 invalidate unrelated tokens. Configure only the reviewed hosting verifier; a worker
 that accepts caller-supplied native proof must never hold this scope.
 
+`POST /v1/admin/platform/workload-clients` registers a public assertion JWK with
+only `platform:runtime-state:write`. It requires admin authentication,
+`Idempotency-Key`, and a body containing `client_id`, `assertion_kid`,
+`assertion_algorithm`, `public_jwk`, and a nonblank `reason`. RS256 requires an
+RSA key of at least 2048 bits; ES256 requires P-256. Private key fields, mismatched
+key identity, and signing-only usage are rejected. Registration and its audit and
+replay receipt commit together. An existing client cannot be replaced or revived
+through this endpoint, even with the same public key. Retry with the original
+idempotency key; inspect current verifier access before its separate CAS grant.
+
+`POST /v1/admin/platform/signing-keys` registers the separate Cloud signing
+identity. Its body contains only `kid`, `algorithm`, public `public_jwk`, aware
+`not_before`/`expires_at`, and `reason`. Configure
+`PLATFORM_WORKLOAD_SIGNING_KEY_REFS` to map the public-material SHA-256 reference
+(`sha256:<digest>`) to an approved `file://` or `env://` secret reference. The
+resolver fails closed when absent, changed, non-regular, oversized, or mismatched.
+Registration verifies a real signature against the submitted public key, records
+an audit and durable replay receipt, and cannot replace an existing kid/reference.
+Client and signing identities cannot reuse the same public key. Private key
+material is never registered, stored in these tables, logged, or echoed in errors.
+
+The Kamal release workflow uses two dedicated GitHub secrets for the optional
+Cloud signer: `PLATFORM_WORKLOAD_SIGNING_KEY_REFS` contains
+`{"sha256:<64-lowercase-hex-digest>":"env://CLAWDI_CLOUD_WORKLOAD_SIGNING_PRIVATE_KEY"}`;
+`CLAWDI_CLOUD_WORKLOAD_SIGNING_PRIVATE_KEY` contains the separate private PEM
+with LF line endings; the mapping must be compact single-line JSON.
+Both unset preserves the existing deployment (the map defaults to `{}`). Partial
+configuration, malformed fingerprints, or a different environment reference stop
+the deploy preflight. The resolver and public registration verify key material;
+the deployment preflight checks configuration completeness, not cryptographic identity.
+Kamal receives literal environment references, never serialized PEM in its dotenv
+file. Operator deployments must provide the same environment and secret aliases
+(or `{}` and an empty signing value when disabled). Do not reuse a client assertion
+key as the Cloud signer. This workflow installs one signer reference; rotation with
+multiple simultaneous signing authorities requires a separately reviewed deployment.
+
+Archived custom/connection rows retain their credential environment. Reactivation
+keeps the provider UUID and creates a new Cloud incarnation. A per-provider
+`identity_enabled` marker is backfilled false for existing rows and defaults true
+for newly created rows; reactivation or explicit handoff enables it permanently.
+Healthy legacy bindings retain their old projection even with a newer reader:
+upgrading software alone never infers or writes a Cloud tuple by provider name.
+Identified new providers and explicitly handed-off providers bind
+`(providerUuid, incarnationId)` into their transfer entries. Reactivated providers
+cannot inherit an old or missing tuple merely because their name matches.
+The `provider-identity-v1` capability gates the additive manifest fields. Existing
+legacy readers remain available for unchanged legacy projections; they cannot
+process a pending handoff or native credential authority.
+
+## Explicit native identity handoff
+
+The workload-scoped `/v1/platform/ai-providers/{provider_id}/identity-handoff`
+POST prepares a specifically authorized native handoff. It validates the complete
+owner inventory, provider UUID/incarnation, opaque revision, native config/env and
+root journal hashes, routing agreement and fresh verifier evidence. Native owners
+must have current running checkpoints. The trusted hosting operator surface
+constructs these proofs itself; ordinary users and legacy admin auth cannot submit
+native attestations.
+
+A prepared receipt fences provider edits/rotation/archive and appears in every
+participating runtime manifest, including unbound consumers. Normal convergence
+stops before native changes. An explicitly invoked root CLI command fetches this
+current authorization and CAS-writes only the journal under the existing converge
+lock. It never imports or overwrites the native key, config or applied receipt.
+Reads walk every parent through no-follow directory descriptors under the runtime
+filesystem identity. Journal and env files require mode 0600; native config allows
+0600 or 0644, all with the expected uid/gid. File and directory device/inode,
+permissions, link count and content are checked again before the fd-relative atomic
+rename. Symlink ancestors, FIFOs and same-byte file replacements cannot pass CAS.
+A missing protected journal cannot establish ownership; an existing empty journal
+can admit a verified native provider through this explicit authorization.
+
+`POST .../identity-handoff/complete` rereads all consumer evidence before committing
+Cloud metadata. Its receipt and the latest provider-row handoff state are durable.
+Lost responses replay; partially acknowledged consumers continue the same intent.
+Fresh inspection plus `supersedes_handoff_id` permits the same operator to replace
+a stale pending intent explicitly, with a new idempotency key and CAS. A known
+foreign provider UUID/incarnation is always rejected. No journal is deleted and
+no old success receipt is fabricated.
+
+Completion marks native credential ownership. The provider response exposes
+`credential_authority: "native"`; runtime projection suppresses Cloud key injection,
+Cloud key rotation/saved-key testing rejects this authority, and Unset preserves
+the native credential reference. Ordinary metadata edits remain supported.
+Completion is not proof of runtime health or a successful model call: normal
+convergence and inference checks still follow. Image/lifecycle/funding operations
+remain with the existing owning control plane.
+
+One nullable JSONB column holds the latest prepared/completed receipt; historical
+responses and audit use the existing platform idempotency machinery. The separate
+per-provider activation bit preserves legacy compatibility without a global flag. The migration
+refuses downgrade while handoff state exists. Do not downgrade readers after a
+journal has adopted the new identity fields.
+
 Done: isolated PostgreSQL repair/grant tests verify stale CAS, replay, unchanged
 credential bytes, other-consumer conflicts and rejection of untrusted credentials.
+
+```bash
+scripts/test.sh backend tests/test_workload_client_bootstrap.py tests/test_ai_provider_connection_ownership.py tests/test_provider_environment_repair.py tests/test_provider_identity_handoff.py
+```
+
+Done: registration, separate grant, authority-preserving reactivation, and repair
+boundary tests pass without live credentials or infrastructure.

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse } from "yaml";
@@ -17,6 +18,7 @@ interface WorkflowStep {
 }
 
 interface WorkflowJob {
+	env?: Record<string, string>;
 	concurrency?: unknown;
 	if?: string;
 	name?: string;
@@ -524,3 +526,45 @@ function replaceOnce(source: string, current: string, replacement: string): stri
 	}
 	return `${source.slice(0, first)}${replacement}${source.slice(first + current.length)}`;
 }
+
+test("Cloud workload deploy accepts disabled or complete configuration without leaking material", () => {
+	const job = imageRelease.jobs["deploy-vps"];
+	const command = job?.steps?.find(
+		(step) => step.name === "Validate workload deployment configuration",
+	)?.run;
+	if (!command) throw new Error("Missing workload preflight");
+	const source = "env://CLAWDI_CLOUD_WORKLOAD_SIGNING_PRIVATE_KEY";
+	const refs = JSON.stringify({ [`sha256:${"a".repeat(64)}`]: source });
+	for (const [mapping, key, status] of [
+		["{}", "", 0],
+		[refs, "synthetic-not-a-key", 0],
+		[refs, "", 1],
+		["{}", "synthetic-not-a-key", 1],
+		["malformed", "synthetic-not-a-key", 1],
+		[JSON.stringify(JSON.parse(refs), null, 2), "synthetic-not-a-key", 1],
+		[JSON.stringify({ wrong: source }), "synthetic-not-a-key", 1],
+		[refs.replace(source, "env://OTHER_ROLE"), "synthetic-not-a-key", 1],
+	] as const) {
+		const result = spawnSync("bash", ["-eu", "-c", command], {
+			env: {
+				PATH: process.env.PATH,
+				PLATFORM_WORKLOAD_SIGNING_KEY_REFS: mapping,
+				CLAWDI_CLOUD_WORKLOAD_SIGNING_PRIVATE_KEY: key,
+			},
+			encoding: "utf8",
+		});
+		expect(result.status).toBe(status);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).not.toContain("synthetic-not-a-key");
+	}
+	for (const name of [
+		"PLATFORM_WORKLOAD_SIGNING_KEY_REFS",
+		"CLAWDI_CLOUD_WORKLOAD_SIGNING_PRIVATE_KEY",
+	]) {
+		expect(job?.env?.[name]).toContain(`secrets.${name}`);
+		expect(deployConfigSource).toContain(`    - ${name}`);
+		expect(job?.steps?.find((step) => step.name === "Write Kamal secrets")?.run).toContain(
+			`${name}=$${name}`,
+		);
+	}
+});

@@ -48,7 +48,9 @@ def _conflict(detail: str) -> NoReturn:
     raise HTTPException(409, detail)
 
 
-async def _provider(db: AsyncSession, owner_id: UUID, provider_id: str) -> tuple[AiProvider, str]:
+async def load_provider_for_environment_repair(
+    db: AsyncSession, owner_id: UUID, provider_id: str
+) -> tuple[AiProvider, str]:
     provider = await db.scalar(
         select(AiProvider)
         .where(
@@ -71,7 +73,7 @@ async def _provider(db: AsyncSession, owner_id: UUID, provider_id: str) -> tuple
     return provider, environment
 
 
-async def _revision(db: AsyncSession, provider: AiProvider) -> str:
+async def provider_environment_revision(db: AsyncSession, provider: AiProvider) -> str:
     credentials = (
         await db.scalars(
             select(AiProviderAuthPayload)
@@ -90,7 +92,14 @@ async def _revision(db: AsyncSession, provider: AiProvider) -> str:
             {
                 "provider": {
                     "id": str(provider.id),
+                    "handoff_id": provider.identity_handoff.get("handoff_id")
+                    if provider.identity_handoff
+                    else None,
+                    "handoff_state": provider.identity_handoff.get("state")
+                    if provider.identity_handoff
+                    else None,
                     "incarnation": str(provider.incarnation_id),
+                    "identity_enabled": provider.identity_enabled,
                     "owner": str(provider.owner_user_id),
                     "provider_id": provider.provider_id,
                     "updated_at": provider.updated_at.isoformat(),
@@ -130,7 +139,7 @@ async def environment_repair_inventory(
     owner_id: UUID,
     provider_id: str,
 ) -> ProviderEnvironmentInventory:
-    provider, environment = await _provider(db, owner_id, provider_id)
+    provider, environment = await load_provider_for_environment_repair(db, owner_id, provider_id)
     owned_states = (
         select(HostedRuntimeState)
         .join(AgentEnvironment, AgentEnvironment.id == HostedRuntimeState.environment_id)
@@ -246,7 +255,7 @@ async def environment_repair_inventory(
         provider_id=provider_id,
         provider_uuid=provider.id,
         incarnation_id=provider.incarnation_id,
-        revision=await _revision(db, provider),
+        revision=await provider_environment_revision(db, provider),
         runtime_env_name=environment,
         bindings=bindings,
     )
@@ -270,6 +279,9 @@ async def restore_provider_environment(
     owner_id: UUID,
     body: ProviderEnvironmentRestore,
 ) -> ProviderEnvironmentRepairReceipt:
+    provider, _ = await load_provider_for_environment_repair(db, owner_id, body.provider_id)
+    if provider.identity_handoff_pending:
+        _conflict("Complete the pending provider identity handoff first")
     inventory = await environment_repair_inventory(
         db, owner_id=owner_id, provider_id=body.provider_id
     )
@@ -317,13 +329,16 @@ async def restore_provider_environment(
             AiProvider.archived_at.is_(None),
             AiProvider.configuration_mode != "native",
             (AiProvider.runtime_env_name == body.native_env_name)
-            | (AiProvider.auth_ref == f"env:{body.native_env_name}"),
+            | (AiProvider.auth_ref == f"env:{body.native_env_name}")
+            | (AiProvider.identity_handoff["native_env_name"].astext == body.native_env_name),
         )
         .limit(1)
     )
     if conflict is not None:
         _conflict("Native credential environment belongs to another provider")
-    provider, environment = await _provider(db, owner_id, body.provider_id)
+    provider, environment = await load_provider_for_environment_repair(
+        db, owner_id, body.provider_id
+    )
     changed = environment != body.native_env_name
     if changed:
         environment = body.native_env_name
@@ -339,6 +354,6 @@ async def restore_provider_environment(
         previous_env_name=inventory.runtime_env_name,
         runtime_env_name=environment,
         before_revision=inventory.revision,
-        after_revision=await _revision(db, provider),
+        after_revision=await provider_environment_revision(db, provider),
         boundary=body.expected_boundary,
     )

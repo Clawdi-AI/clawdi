@@ -14,6 +14,7 @@ from uuid import UUID
 
 from pydantic import (
     AfterValidator,
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
@@ -41,6 +42,25 @@ from app.schemas.runtime import (
     validate_clawdi_cli_package_spec,
     validate_hosted_runtime_secret_values,
 )
+
+
+class AdminWorkloadClientBootstrap(BaseModel):
+    """Register a public assertion key with runtime projection authority only."""
+
+    model_config = ConfigDict(extra="forbid")
+    client_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
+    assertion_kid: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
+    assertion_algorithm: Literal["RS256", "ES256"]
+    public_jwk: dict[str, JsonValue] = Field(max_length=10)
+    reason: str = Field(min_length=1, max_length=200)
+
+    @field_validator("reason")
+    @classmethod
+    def nonempty_reason(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("reason must not be blank")
+        return value.strip()
+
 
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp"]
 AdminChannelVisibility = Literal["private", "public"]
@@ -498,3 +518,28 @@ def _clean_channel_secret_values(value: dict[str, str] | None) -> dict[str, str]
             raise ValueError("secret values cannot be blank")
         cleaned[name] = secret
     return cleaned
+
+
+class AdminWorkloadSignerBootstrap(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kid: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$")
+    algorithm: Literal["RS256", "ES256"]
+    public_jwk: dict[str, JsonValue] = Field(max_length=10)
+    not_before: AwareDatetime
+    expires_at: AwareDatetime
+    reason: str = Field(min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def valid_window(self) -> AdminWorkloadSignerBootstrap:
+        if self.expires_at <= self.not_before or not self.reason.strip():
+            raise ValueError("Invalid validity window or reason")
+        return self
+
+
+class AdminWorkloadSignerReceipt(BaseModel):
+    kid: str
+    algorithm: str
+    public_key_ref: str
+    not_before: datetime
+    expires_at: datetime
+    status: Literal["active"] = "active"

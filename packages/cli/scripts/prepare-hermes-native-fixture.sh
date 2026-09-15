@@ -8,6 +8,7 @@ if [[ -z "$hermes_fixture_source" ]]; then
 	hermes_fixture_source="$hermes_fixture_root/source"
 	mkdir -p "$hermes_fixture_source"
 	curl --fail --silent --show-error --location --max-time 120 --max-filesize 104857600 \
+		--retry 3 --retry-max-time 180 \
 		"https://codeload.github.com/Clawdi-AI/hermes-agent/tar.gz/$hermes_fixture_commit" \
 		-o "$hermes_fixture_root/source.tar.gz"
 	tar -xzf "$hermes_fixture_root/source.tar.gz" --strip-components=1 -C "$hermes_fixture_source"

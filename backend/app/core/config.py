@@ -299,6 +299,7 @@ class Settings(BaseSettings):
     # /v1/platform mutations while cohorts move to workload OAuth.
     platform_legacy_admin_auth_enabled: bool = True
     # This authorization server is independent from tenant -> Hosted OAuth.
+    platform_workload_signing_key_refs: dict[str, str] = {}
     platform_workload_issuer: str = "clawdi-cloud-platform"
     # Exact RFC 7523 assertion audience. Empty derives from PUBLIC_API_URL.
     platform_workload_token_endpoint: str = ""
