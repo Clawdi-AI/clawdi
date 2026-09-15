@@ -35,6 +35,7 @@ from tests.test_platform_workload_oauth import workload_harness as workload_harn
         "restore",
         "noop",
         "stale",
+        "new-incarnation",
         "wrong-instance",
         "wrong-env",
         "expired",
@@ -99,6 +100,11 @@ async def test_provider_environment_cas(client, db_session, seed_user, workload_
     if case == "stale":
         provider.label = "Newer user edit"
         await db_session.commit()
+    elif case == "new-incarnation":
+        provider.archived_at = datetime.now(UTC)
+        provider.activate()
+        await db_session.commit()
+        before_identity = (provider.id, provider.incarnation_id)
     elif case == "wrong-instance":
         body["proofs"][0]["binding"]["instance_id"] = "other-instance"
     elif case == "wrong-env":
@@ -123,6 +129,8 @@ async def test_provider_environment_cas(client, db_session, seed_user, workload_
         assert "ESTABLISHED_NATIVE_KEY" == target_env or case == "noop"
     else:
         assert result.status_code in {403, 404, 409, 412}, result.text
+        if case == "new-incarnation":
+            assert result.status_code == 412
     await db_session.refresh(provider)
     await db_session.refresh(payload)
     assert (provider.id, provider.incarnation_id) == before_identity

@@ -1696,6 +1696,14 @@ def _raise_if_deployment_managed_provider_id(provider_id: str) -> None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "AI Provider not found")
 
 
+def _same_credential_authority(left: AiProviderAuth, right: AiProviderAuth) -> bool:
+    # API-key writes persist an explicit default profile; omitted means the same slot.
+    if left.type == "api_key" and right.type == "api_key":
+        left = left.model_copy(update={"profile": left.profile or "default"})
+        right = right.model_copy(update={"profile": right.profile or "default"})
+    return left == right
+
+
 def _apply_provider_body(
     provider: AiProvider,
     body: AiProviderUpsert | AiProviderResponse,
@@ -1714,6 +1722,10 @@ def _apply_provider_body(
         and body.runtime_env_name != provider.runtime_env_name
     ):
         raise HTTPException(409, "Connection credential environment is immutable")
+    if provider.configuration_mode in {"connection", "custom"} and not _same_credential_authority(
+        body.auth, _to_auth(provider)
+    ):
+        raise HTTPException(409, "Connection credential authority is immutable")
     if apply_auth and provider.configuration_mode == "custom":
         if body.models or body.auth.type != "api_key" or body.auth.source != "managed":
             raise HTTPException(409, "Custom credential identity is immutable; use PATCH to edit")
