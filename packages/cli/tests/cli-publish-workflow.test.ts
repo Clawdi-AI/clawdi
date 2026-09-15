@@ -34,6 +34,7 @@ const cliPackage = JSON.parse(
 
 describe("CLI pack inventory", () => {
 	const packed = {
+		id: `${cliPackage.name}@${cliPackage.version}`,
 		name: cliPackage.name,
 		version: cliPackage.version,
 		filename: `${cliPackage.name}-${cliPackage.version}.tgz`,
@@ -50,9 +51,11 @@ describe("CLI pack inventory", () => {
 		});
 
 	test("accepts the exact source and additional intentional skill files", () => {
-		const result = check([packed]);
-		expect(result.status).toBe(0);
-		expect(result.stdout.trim()).toBe(packed.filename);
+		for (const inventory of [[packed], { [cliPackage.name]: packed }]) {
+			const result = check(inventory);
+			expect(result.status).toBe(0);
+			expect(result.stdout.trim()).toBe(packed.filename);
+		}
 	});
 
 	test("rejects Python cache directories and bytecode anywhere in the package", () => {
@@ -70,8 +73,23 @@ describe("CLI pack inventory", () => {
 
 	test("fails closed for invalid inventory, identity or missing addon source", () => {
 		for (const inventory of [
+			null,
 			[],
-			[{ ...packed, version: "unreviewed" }],
+			[packed, packed],
+			{ [cliPackage.name]: packed, other: packed },
+			{ other: packed },
+			{ [cliPackage.name]: [packed] },
+			...[[packed], { [cliPackage.name]: packed }].flatMap((shape) =>
+				[
+					{ ...packed, id: "other@1.0.0" },
+					{ ...packed, name: "other" },
+					{ ...packed, version: "unreviewed" },
+					{ ...packed, filename: `../${packed.filename}` },
+					...["../escape", "/absolute", "a/../b", "a//b", "./file", "a\\b", "C:drive", "a\n"].map(
+						(path) => ({ ...packed, files: [...packed.files, { path }] }),
+					),
+				].map((entry) => (Array.isArray(shape) ? [entry] : { [cliPackage.name]: entry })),
+			),
 			[{ ...packed, files: [{ path: 1 }] }],
 			[{ ...packed, files: [{ path: "package.json" }] }],
 		]) {

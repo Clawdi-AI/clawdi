@@ -43,14 +43,30 @@ if (!packageFiles.includes("skills")) {
 if (checkPack) {
 	try {
 		const inventory = JSON.parse(readFileSync(0, "utf8"));
-		const packed = Array.isArray(inventory) && inventory.length === 1 ? inventory[0] : null;
+		// npm 11 emits an array; npm 12 keys pack JSON by package name.
+		const entries = Array.isArray(inventory)
+			? inventory
+			: inventory &&
+					typeof inventory === "object" &&
+					Object.keys(inventory).length === 1 &&
+					Object.hasOwn(inventory, packageJson.name)
+				? [inventory[packageJson.name]]
+				: [];
+		const packed = entries.length === 1 ? entries[0] : null;
 		if (
 			!packed ||
+			packed.id !== `${packageJson.name}@${packageJson.version}` ||
 			packed.name !== packageJson.name ||
 			packed.version !== packageJson.version ||
 			packed.filename !== `${packageJson.name}-${packageJson.version}.tgz` ||
 			!Array.isArray(packed.files) ||
-			packed.files.some((file) => !file || typeof file.path !== "string" || !file.path)
+			packed.files.some(
+				(file) =>
+					!file ||
+					typeof file.path !== "string" ||
+					/[\\:\p{Cc}]/u.test(file.path) ||
+					file.path.split("/").some((part) => !part || part === "." || part === ".."),
+			)
 		) {
 			problems.push("npm pack inventory must describe one exact CLI package with file paths");
 		} else {
