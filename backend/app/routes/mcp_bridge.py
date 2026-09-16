@@ -43,6 +43,13 @@ from app.core.query_utils import (
     SearchQuery,
     search_excerpt,
 )
+from app.middleware.request_timing import (
+    McpMethod,
+    McpToolCategory,
+    record_mcp_classification,
+    record_pre_handler,
+    request_stage,
+)
 from app.models.project import Project
 from app.models.session import AgentEnvironment, Session
 from app.models.session_share import SessionShare
@@ -795,8 +802,17 @@ def _extract_legacy_mcp_user_id(request: Request) -> str:
 # new clients authenticate normally and use POST /v1/mcp/clawdi.
 @router.post("/composio", include_in_schema=False)
 async def mcp_composio_post(request: Request) -> JsonObject:
+    record_pre_handler(request.scope)
     user_id = _extract_legacy_mcp_user_id(request)
-    body = await _read_request_json(request)
+    with request_stage(request.scope, "mcp_body_read_ms"):
+        body = await _read_request_json(request)
+    method, category = _mcp_classification(body, legacy=True)
+    record_mcp_classification(request.scope, method, category)
+    with request_stage(request.scope, "mcp_dispatch_ms"):
+        return await _dispatch_composio_mcp(body, user_id)
+
+
+async def _dispatch_composio_mcp(body: JsonValue | None, user_id: str) -> JsonObject:
     if not isinstance(body, dict):
         return _mcp_error(None, -32600, "Invalid Request")
 
@@ -837,7 +853,58 @@ async def mcp_clawdi_post(
     db: AsyncSession = Depends(get_session),
 ) -> JsonObject | list[JsonObject] | Response:
     """Agent-facing stateless MCP endpoint backed directly by Clawdi Cloud."""
-    body = await _read_request_json(request)
+    record_pre_handler(request.scope)
+    with request_stage(request.scope, "mcp_body_read_ms"):
+        body = await _read_request_json(request)
+    method, category = _mcp_classification(body)
+    record_mcp_classification(request.scope, method, category)
+    with request_stage(request.scope, "mcp_dispatch_ms"):
+        return await _dispatch_clawdi_mcp(body, auth=auth, db=db)
+
+
+def _mcp_classification(
+    body: JsonValue | None, *, legacy: bool = False
+) -> tuple[McpMethod, McpToolCategory]:
+    if isinstance(body, list) and not legacy:
+        classifications: list[tuple[McpMethod, McpToolCategory]] = [
+            _mcp_classification(item) if isinstance(item, dict) else ("unknown", "unknown")
+            for item in body
+        ]
+        if not classifications:
+            return "unknown", "unknown"
+        methods: set[McpMethod] = {method for method, _ in classifications}
+        categories: set[McpToolCategory] = {category for _, category in classifications}
+        return (
+            next(iter(methods)) if len(methods) == 1 else "mixed",
+            next(iter(categories)) if len(categories) == 1 else "mixed",
+        )
+    if not isinstance(body, dict):
+        return "unknown", "unknown"
+    method = body.get("method")
+    if method == "tools/list":
+        return "tools/list", "catalog"
+    if method == "tools/call":
+        params = body.get("params")
+        if not isinstance(params, dict):
+            return "tools/call", "unknown"
+        name = params.get("name")
+        if not isinstance(name, str) or not isinstance(params.get("arguments") or {}, dict):
+            return "tools/call", "unknown"
+        return "tools/call", (
+            "native" if not legacy and name in _NATIVE_TOOL_REGISTRY else "connector"
+        )
+    if not legacy and method in ("initialize", "ping", "notifications/initialized"):
+        if method == "initialize":
+            return "initialize", "none"
+        if method == "ping":
+            return "ping", "none"
+        return "notifications/initialized", "none"
+    return "unknown", "unknown"
+
+
+async def _dispatch_clawdi_mcp(
+    body: JsonValue | None, *, auth: AuthContext, db: AsyncSession
+) -> JsonObject | list[JsonObject] | Response:
     if isinstance(body, list):
         responses = [
             response

@@ -983,6 +983,42 @@ async def test_composio_mcp_client_runs_lifecycle_and_parses_json_and_sse(monkey
         "resultType": "complete",
         "_meta": {"composio": {"request": "complete"}},
     }
+
+    # Exercise the route through the same real SDK JSON/SSE transport. Timing
+    # must not strip typed extension fields or change the complete RPC result.
+    from fastapi import FastAPI
+
+    from app.middleware.request_timing import RequestTimingMiddleware
+    from app.routes import mcp_bridge
+
+    async def session_for_user(user_id):
+        return session
+
+    async def tools_for_user(user_id):
+        return await composio.list_tool_router_mcp_tools(session)
+
+    monkeypatch.setattr(mcp_bridge, "_extract_legacy_mcp_user_id", lambda request: "test-user")
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", session_for_user)
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_tools_result", tools_for_user)
+    routed_app = FastAPI()
+    routed_app.include_router(mcp_bridge.router, prefix="/v1")
+    routed_app.add_middleware(RequestTimingMiddleware, slow_ms=0.000001)
+    async with httpx.AsyncClient(
+        transport=ASGITransport(app=routed_app), base_url="http://test"
+    ) as routed_client:
+        listed_response = await routed_client.post(
+            "/v1/mcp/composio", json={"id": 11, "method": "tools/list"}
+        )
+        called_response = await routed_client.post(
+            "/v1/mcp/composio",
+            json={"id": 12, "method": "tools/call", "params": {"name": "COMPOSIO_CONNECT"}},
+        )
+    assert listed_response.json() == {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "result": result.model_dump(by_alias=True, exclude_none=True),
+    }
+    assert called_response.json() == {"jsonrpc": "2.0", "id": 12, "result": serialized_call}
     await session.retire()
     assert clients[0].is_closed
 

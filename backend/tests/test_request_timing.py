@@ -362,3 +362,41 @@ async def test_overlapping_requests_do_not_share_lifespan_stage_timings(caplog):
     assert len(records) == 2
     assert "connector_route_fetch_ms=" in records[0] and "upload_storage_ms=" not in records[0]
     assert "upload_storage_ms=" in records[1] and "connector_route_fetch_ms=" not in records[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prefix", ["/v1", "/api"])
+@pytest.mark.parametrize(
+    "outcome", ["stream", "error", "failure", "detail", "unmatched", "invalid"]
+)
+async def test_content_events_only_suppresses_successful_matched_stream(caplog, prefix, outcome):
+    from starlette.routing import Route
+
+    template = prefix + "/sessions/{session_id}/content-events"
+    path = prefix + "/sessions/00000000-0000-0000-0000-000000000001/content-events"
+    scope = _scope(path=path)
+
+    async def inner(scope, receive, send):
+        if outcome != "unmatched":
+            scope["route"] = Route(
+                template if outcome != "detail" else prefix + "/sessions/{session_id}",
+                endpoint=inner,
+            )
+        if outcome == "failure":
+            raise RuntimeError("stream failed")
+        status = 500 if outcome == "error" else 422 if outcome == "invalid" else 200
+        await send({"type": "http.response.start", "status": status, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    caplog.set_level(logging.WARNING, logger="app.middleware.request_timing")
+    app = RequestTimingMiddleware(inner, slow_ms=0.000001)
+    if outcome == "failure":
+        with pytest.raises(RuntimeError):
+            await _collect(app, scope)
+        assert "request_failed" in caplog.text
+    else:
+        await _collect(app, scope)
+        if outcome == "stream":
+            assert caplog.text == ""
+        else:
+            assert ("request_error" if outcome == "error" else "request_slow") in caplog.text
