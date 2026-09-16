@@ -15,7 +15,6 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Literal, cast
 
-from starlette.routing import Route
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.logging_config import TELEGRAM_BOT_API_PATH_RE, redact_request_path
@@ -23,9 +22,7 @@ from app.core.logging_config import TELEGRAM_BOT_API_PATH_RE, redact_request_pat
 logger = logging.getLogger(__name__)
 _PROCESS_TIME_HEADER = b"x-process-time-ms"
 _SYNC_EVENTS_PATHS = frozenset(("/v1/sync/events", "/api/sync/events"))
-_CONTENT_EVENTS_ROUTES = frozenset(
-    ("/v1/sessions/{session_id}/content-events", "/api/sessions/{session_id}/content-events")
-)
+_CONTENT_EVENTS_STREAM_STATE = "_request_content_events_stream"
 
 
 # Wall-clock stages include event-loop waits and are not a complete request
@@ -104,6 +101,11 @@ def record_mcp_classification(scope: Scope, method: McpMethod, category: McpTool
     scope.setdefault("state", {})["_request_mcp_classification"] = (method, category)
 
 
+def record_content_events_stream(scope: Scope) -> None:
+    """Mark an authorized content-event response after successful construction."""
+    scope.setdefault("state", {})[_CONTENT_EVENTS_STREAM_STATE] = True
+
+
 def _mcp_log_fields(scope: Scope) -> str:
     value: object = scope.get("state", {}).get("_request_mcp_classification")
     match value:
@@ -163,6 +165,7 @@ class RequestTimingMiddleware:
         # ASGI lifespan state is shallow-copied; replace the nested dict per request.
         scope.setdefault("state", {})[_REQUEST_TIMING_STATE] = {}
         scope["state"].pop("_request_mcp_classification", None)
+        scope["state"].pop(_CONTENT_EVENTS_STREAM_STATE, None)
         started = time.perf_counter()
         scope["state"][_REQUEST_STARTED_STATE] = started
         raw_method: object = scope.get("method", "GET")
@@ -243,12 +246,10 @@ def _is_expected_long_request(path: str) -> bool:
 
 
 def _is_content_events_stream(scope: Scope, status_code: int) -> bool:
-    route: object = scope.get("route")
     return (
         status_code == 200
         and scope.get("method") == "GET"
-        and isinstance(route, Route)
-        and route.path in _CONTENT_EVENTS_ROUTES
+        and scope.get("state", {}).get(_CONTENT_EVENTS_STREAM_STATE) is True
     )
 
 

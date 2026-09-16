@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import delete, select
 
@@ -114,7 +114,9 @@ async def test_content_authority_and_readiness(db_session, seed_user, environmen
 
 async def test_stream_header_failure_releases_lease(db_session, seed_user):
     session, key, credentials = await make_session_key(db_session, seed_user)
-    response = await session_content_events(session.id, credentials, AuthContext(seed_user, key))
+    response = await session_content_events(
+        session.id, credentials, AuthContext(seed_user, key), request=Request({"type": "http"})
+    )
 
     async def failed_send(message):
         raise OSError("client disconnected before headers")
@@ -133,7 +135,9 @@ async def test_credential_deadline_cancels_backpressure_and_releases_lease(db_se
     session, key, credentials = await make_session_key(db_session, seed_user)
     key.expires_at = datetime.now(UTC) + timedelta(seconds=1)
     await db_session.commit()
-    response = await session_content_events(session.id, credentials, AuthContext(seed_user, key))
+    response = await session_content_events(
+        session.id, credentials, AuthContext(seed_user, key), request=Request({"type": "http"})
+    )
     sent = asyncio.Event()
 
     async def blocked_send(message):
@@ -154,7 +158,9 @@ async def test_lost_lease_interrupts_blocked_send(db_session, seed_user, monkeyp
     from app.routes import session_content_events as route
 
     session, key, credentials = await make_session_key(db_session, seed_user)
-    response = await session_content_events(session.id, credentials, AuthContext(seed_user, key))
+    response = await session_content_events(
+        session.id, credentials, AuthContext(seed_user, key), request=Request({"type": "http"})
+    )
     sending = asyncio.Event()
 
     async def lost_lease(lease_id, closed):

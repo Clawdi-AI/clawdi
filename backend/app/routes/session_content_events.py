@@ -8,7 +8,7 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -23,6 +23,7 @@ from app.core.auth import (
 )
 from app.core.config import settings
 from app.core.database import async_session_factory
+from app.middleware.request_timing import record_content_events_stream
 from app.models.session import Session
 from app.routes.sync import (
     HEARTBEAT_INTERVAL_S,
@@ -112,6 +113,8 @@ async def session_content_events(
     session_id: UUID,
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     auth: AuthContext = Depends(require_scope_short_session("sessions:read")),
+    *,
+    request: Request,
 ) -> _ContentStreamingResponse:
     key = str(session_id)
     authority_key = str(auth.user_id)
@@ -195,4 +198,5 @@ async def session_content_events(
     )
     response.lease_id = lease_id
     response.expires_at = fresh_auth.credential_expires_at
+    record_content_events_stream(request.scope)
     return response
