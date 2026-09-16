@@ -22,13 +22,19 @@ from app.core.logging_config import TELEGRAM_BOT_API_PATH_RE, redact_request_pat
 logger = logging.getLogger(__name__)
 _PROCESS_TIME_HEADER = b"x-process-time-ms"
 _SYNC_EVENTS_PATHS = frozenset(("/v1/sync/events", "/api/sync/events"))
+_CONTENT_EVENTS_STREAM_STATE = "_request_content_events_stream"
 
 
 # Wall-clock stages include event-loop waits and are not a complete request
 # breakdown. Connector route fetch includes SDK/cache waits and normalization,
 # not only vendor HTTP. Response building excludes FastAPI wire serialization.
 # Telegram provider time includes pool waits, TCP/TLS and RTT.
+# MCP body read includes JSON parsing; dispatch spans the entire sequential
+# batch, including tool work and upstream waits, not just bridge overhead.
+# Classification and FastAPI response serialization are outside dispatch.
 type RequestStage = Literal[
+    "mcp_body_read_ms",
+    "mcp_dispatch_ms",
     "channel_auth_ms",
     "channel_url_validation_ms",
     "channel_provider_ms",
@@ -44,6 +50,8 @@ type RequestStage = Literal[
     "connector_response_build_ms",
 ]
 _REQUEST_STAGES: tuple[RequestStage, ...] = (
+    "mcp_body_read_ms",
+    "mcp_dispatch_ms",
     "channel_auth_ms",
     "channel_url_validation_ms",
     "channel_provider_ms",
@@ -60,6 +68,53 @@ _REQUEST_STAGES: tuple[RequestStage, ...] = (
 )
 _REQUEST_TIMING_STATE = "_request_stage_timings"
 _REQUEST_STARTED_STATE = "_request_timing_started"
+type McpMethod = Literal[
+    "initialize",
+    "ping",
+    "tools/list",
+    "tools/call",
+    "notifications/initialized",
+    "mixed",
+    "unknown",
+]
+type McpToolCategory = Literal["native", "connector", "mixed", "none", "unknown", "catalog"]
+_MCP_METHODS: tuple[McpMethod, ...] = (
+    "initialize",
+    "ping",
+    "tools/list",
+    "tools/call",
+    "notifications/initialized",
+    "mixed",
+    "unknown",
+)
+_MCP_TOOL_CATEGORIES: tuple[McpToolCategory, ...] = (
+    "native",
+    "connector",
+    "mixed",
+    "none",
+    "unknown",
+    "catalog",
+)
+
+
+def record_mcp_classification(scope: Scope, method: McpMethod, category: McpToolCategory) -> None:
+    scope.setdefault("state", {})["_request_mcp_classification"] = (method, category)
+
+
+def record_content_events_stream(scope: Scope) -> None:
+    """Mark an authorized content-event response after successful construction."""
+    scope.setdefault("state", {})[_CONTENT_EVENTS_STREAM_STATE] = True
+
+
+def _mcp_log_fields(scope: Scope) -> str:
+    value: object = scope.get("state", {}).get("_request_mcp_classification")
+    match value:
+        case (str(method), str(category)) if (
+            method in _MCP_METHODS and category in _MCP_TOOL_CATEGORIES
+        ):
+            return f" mcp_method={method} mcp_tool_category={category}"
+        case _:
+            return ""
 
 
 @contextmanager
@@ -94,7 +149,7 @@ def _request_stage_log_fields(scope: Scope) -> str:
         value = values.get(stage)
         if isinstance(value, float) and math.isfinite(value) and value >= 0:
             fields.append(f" {stage}={value:.1f}")
-    return "".join(fields)
+    return "".join(fields) + _mcp_log_fields(scope)
 
 
 class RequestTimingMiddleware:
@@ -109,6 +164,8 @@ class RequestTimingMiddleware:
 
         # ASGI lifespan state is shallow-copied; replace the nested dict per request.
         scope.setdefault("state", {})[_REQUEST_TIMING_STATE] = {}
+        scope["state"].pop("_request_mcp_classification", None)
+        scope["state"].pop(_CONTENT_EVENTS_STREAM_STATE, None)
         started = time.perf_counter()
         scope["state"][_REQUEST_STARTED_STATE] = started
         raw_method: object = scope.get("method", "GET")
@@ -154,7 +211,9 @@ class RequestTimingMiddleware:
                 _request_id(scope),
                 _request_stage_log_fields(scope),
             )
-        elif not _is_expected_long_request(raw_path) and _is_slow(
+        elif not (
+            _is_expected_long_request(raw_path) or _is_content_events_stream(scope, status_code)
+        ) and _is_slow(
             duration_ms=duration_ms,
             slow_ms=self.slow_ms,
         ):
@@ -184,6 +243,14 @@ def _is_expected_long_request(path: str) -> bool:
     if match is None or "/file/" in match.group("prefix").lower():
         return False
     return (match.group("suffix") or "").lower() == "/getupdates"
+
+
+def _is_content_events_stream(scope: Scope, status_code: int) -> bool:
+    return (
+        status_code == 200
+        and scope.get("method") == "GET"
+        and scope.get("state", {}).get(_CONTENT_EVENTS_STREAM_STATE) is True
+    )
 
 
 def _request_id(scope: Scope) -> str:

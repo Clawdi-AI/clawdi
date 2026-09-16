@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 
 import pytest
+from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.middleware.request_timing import RequestTimingMiddleware
+from app.middleware.request_timing import RequestTimingMiddleware, record_content_events_stream
 
 
 def _scope(*, path: str = "/v1/sessions", query_string: bytes = b"secret=value") -> Scope:
@@ -362,3 +363,91 @@ async def test_overlapping_requests_do_not_share_lifespan_stage_timings(caplog):
     assert len(records) == 2
     assert "connector_route_fetch_ms=" in records[0] and "upload_storage_ms=" not in records[0]
     assert "upload_storage_ms=" in records[1] and "connector_route_fetch_ms=" not in records[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prefix", ["/v1", "/api"])
+@pytest.mark.parametrize(
+    "outcome", ["stream", "error", "failure", "detail", "unmarked", "invalid", "post"]
+)
+async def test_content_events_only_suppresses_successful_marked_stream(caplog, prefix, outcome):
+    path = prefix + "/sessions/00000000-0000-0000-0000-000000000001/content-events"
+    if outcome == "detail":
+        path = path.removesuffix("/content-events")
+    scope = _scope(path=path)
+    if outcome == "post":
+        scope["method"] = "POST"
+
+    async def inner(scope, receive, send):
+        if outcome not in {"unmarked", "detail"}:
+            record_content_events_stream(scope)
+        if outcome == "failure":
+            raise RuntimeError("stream failed")
+        status = 500 if outcome == "error" else 422 if outcome == "invalid" else 200
+        await send({"type": "http.response.start", "status": status, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    caplog.set_level(logging.WARNING, logger="app.middleware.request_timing")
+    app = RequestTimingMiddleware(inner, slow_ms=0.000001)
+    if outcome == "failure":
+        with pytest.raises(RuntimeError):
+            await _collect(app, scope)
+        assert "request_failed" in caplog.text
+    else:
+        await _collect(app, scope)
+        if outcome == "stream":
+            assert caplog.text == ""
+        else:
+            assert ("request_error" if outcome == "error" else "request_slow") in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prefix", ["/v1", "/api"])
+async def test_content_events_fastapi_included_router_stream(caplog, prefix):
+    import httpx
+    from fastapi import APIRouter, FastAPI
+    from starlette.responses import StreamingResponse
+
+    router = APIRouter()
+
+    @router.get("/sessions/{session_id}/content-events")
+    async def events(request: Request):
+        async def chunks():
+            yield b"event: ready\ndata: {}\n\n"
+
+        response = StreamingResponse(chunks(), media_type="text/event-stream")
+        record_content_events_stream(request.scope)
+        return response
+
+    app = FastAPI()
+
+    @router.get("/sessions/{session_id}")
+    async def detail():
+        return {"has_content": True}
+
+    app.include_router(router, prefix=prefix)
+    app.add_middleware(RequestTimingMiddleware, slow_ms=0.000001)
+    inherited_state = {}
+
+    async def with_inherited_state(scope, receive, send):
+        scope["state"] = dict(inherited_state)
+        await app(scope, receive, send)
+        inherited_state.update(scope["state"])
+
+    caplog.set_level(logging.WARNING, logger="app.middleware.request_timing")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=with_inherited_state), base_url="http://test"
+    ) as client:
+        response = await client.get(
+            prefix + "/sessions/00000000-0000-0000-0000-000000000001/content-events"
+        )
+        assert "request_slow" not in caplog.text
+        # A marker inherited from a previous request cannot hide detail latency.
+        detail_response = await client.get(
+            prefix + "/sessions/00000000-0000-0000-0000-000000000001"
+        )
+    assert response.status_code == 200
+    assert response.content == b"event: ready\ndata: {}\n\n"
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert detail_response.json() == {"has_content": True}
+    assert "request_slow" in caplog.text
