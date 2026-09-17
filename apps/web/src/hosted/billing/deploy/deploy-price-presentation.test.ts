@@ -12,14 +12,14 @@ const monthly: BillingOffer = {
 	price_cents: 2_000,
 	effective_monthly_price_cents: 2_000,
 	discount_percent: 0,
-	card_trial_period_days: 7,
+	card_trial_period_days: 3,
 };
 const annual: BillingOffer = {
 	billing_term_months: 12,
 	price_cents: 20_000,
 	effective_monthly_price_cents: 1_666,
 	discount_percent: 17,
-	card_trial_period_days: 7,
+	card_trial_period_days: 3,
 };
 
 describe("computePricePresentation", () => {
@@ -57,12 +57,12 @@ describe("CTA-adjacent amount presentation", () => {
 
 	test("uses term price for card checkout and authoritative debit for Wallet", () => {
 		expect(cardDeployAmountPresentation(monthly)).toEqual({
-			amount: "7-day free trial",
+			amount: "3-day free trial",
 			caption: "then $20.00/mo",
 			detail: null,
 		});
 		expect(cardDeployAmountPresentation(annual)).toEqual({
-			amount: "7-day free trial",
+			amount: "3-day free trial",
 			caption: "then $200.00/yr",
 			detail: null,
 		});
