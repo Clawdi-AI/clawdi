@@ -4143,6 +4143,9 @@ test("Wallet auto-reload authorizes and replaces its dedicated card responsively
 
 for (const entry of ["inline", "return"] as const) {
 	test(`rejected trial refreshes eligibility after ${entry} checkout`, async ({ page }) => {
+		// Arbitrary API fixture duration, independent of hosted trial policy.
+		const fixtureTrialDays = 11;
+		const trialLabel = `${fixtureTrialDays}-day free trial`;
 		let rejected = false;
 		const checkoutRequests: string[] = [];
 		await stubCompletedStripeCheckout(page);
@@ -4157,7 +4160,7 @@ for (const entry of ["inline", "return"] as const) {
 						action_url: null,
 						checkout_url: "https://checkout.stripe.test/session",
 						client_secret: "cs_test_rejected_trial",
-						trial_period_days: 3,
+						trial_period_days: fixtureTrialDays,
 					},
 				},
 			],
@@ -4170,7 +4173,7 @@ for (const entry of ["inline", "return"] as const) {
 					...basicPlan,
 					offers: basicPlan.offers.map((offer) => ({
 						...offer,
-						card_trial_period_days: rejected ? null : 3,
+						card_trial_period_days: rejected ? null : fixtureTrialDays,
 					})),
 				},
 			]),
@@ -4190,7 +4193,7 @@ for (const entry of ["inline", "return"] as const) {
 				: "/deploy",
 		);
 		if (entry === "inline") {
-			await expect(page.getByText("3-day free trial", { exact: true }).first()).toBeVisible();
+			await expect(page.getByText(trialLabel, { exact: true }).first()).toBeVisible();
 			await page.getByRole("button", { name: "Continue" }).click();
 			await page
 				.getByRole("dialog", { name: /Complete .* checkout/ })
@@ -4198,7 +4201,7 @@ for (const entry of ["inline", "return"] as const) {
 				.click();
 		}
 		await expect(page.getByText("Free trial unavailable", { exact: true })).toBeVisible();
-		await expect(page.getByText("3-day free trial", { exact: true })).toHaveCount(0);
+		await expect(page.getByText(trialLabel, { exact: true })).toHaveCount(0);
 		await expect(page.getByText("Checkout status refreshed", { exact: true })).toHaveCount(0);
 		await expect(page.getByRole("button", { name: "Continue" })).toBeEnabled();
 	});
