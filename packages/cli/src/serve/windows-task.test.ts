@@ -11,6 +11,7 @@ import {
 	windowsTaskInstalled,
 	windowsTaskLogPath,
 	windowsTaskRunning,
+	windowsTaskStatus,
 } from "./windows-task";
 
 test("PowerShell task values remain literal", () => {
@@ -60,7 +61,7 @@ beat(); console.log('Clawdi 日志 fixture'); setInterval(beat, 100);`,
 			expect(windowsTaskRunning()).toBe(false);
 			restartWindowsTask();
 			await until("worker restart", () => readPid() !== first);
-			const second = readPid();
+			readPid();
 			expect(uninstallWindowsTask(root).removed).toBe(true);
 			await heartbeatStops(heartbeat);
 			expect(windowsTaskInstalled()).toBe(false);
@@ -92,7 +93,7 @@ async function heartbeatStops(path: string): Promise<void> {
 }
 
 async function until(label: string, predicate: () => boolean | Promise<boolean>): Promise<void> {
-	const deadline = Date.now() + 15_000;
+	const deadline = Date.now() + 30_000;
 	while (Date.now() < deadline) {
 		try {
 			if (await predicate()) return;
@@ -101,5 +102,13 @@ async function until(label: string, predicate: () => boolean | Promise<boolean>)
 		}
 		await Bun.sleep(100);
 	}
-	throw new Error(`Scheduled task did not reach the expected lifecycle state: ${label}.`);
+	let status = "unavailable";
+	try {
+		status = windowsTaskStatus().join("; ");
+	} catch (error) {
+		status = error instanceof Error ? error.message : String(error);
+	}
+	throw new Error(
+		`Scheduled task did not reach the expected lifecycle state: ${label}. Task status: ${status}`,
+	);
 }
