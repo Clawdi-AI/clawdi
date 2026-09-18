@@ -149,44 +149,20 @@ describe("Desktop CLI command", () => {
 		expect(readFileSync(launcher, "utf8")).toContain(`"${nextTarget}" %*`);
 	});
 
-	test("uses a direct symlink when the macOS launcher directory is writable", async () => {
+	test("installs the macOS launcher in the user-local bin directory", async () => {
 		const fixture = createFixture();
-		const launcher = join(fixture.root, "usr-local-bin", "clawdi");
-		mkdirSync(dirname(launcher), { recursive: true });
+		const launcher = join(fixture.home, ".local", "bin", "clawdi");
 
-		await installDesktopCliCommand({
+		const result = await installDesktopCliCommand({
 			platform: "darwin",
 			target: fixture.target,
 			home: fixture.home,
 			userData: fixture.userData,
 			environmentPath: dirname(launcher),
-			launcherPath: launcher,
 		});
 
+		expect(result).toEqual({ status: "installed", path: launcher, pathReady: true });
 		expect(resolve(dirname(launcher), readlinkSync(launcher))).toBe(fixture.target);
-	});
-
-	test("uses the native macOS administrator prompt for /usr/local/bin", async () => {
-		const fixture = createFixture();
-		const launcher = join(fixture.root, "missing", "clawdi");
-		const calls: Array<{ command: string; args: readonly string[] }> = [];
-
-		await installDesktopCliCommand({
-			platform: "darwin",
-			target: fixture.target,
-			home: fixture.home,
-			userData: fixture.userData,
-			environmentPath: "",
-			launcherPath: launcher,
-			execute: async (command, args) => {
-				calls.push({ command, args });
-				return { stdout: "", stderr: "" };
-			},
-		});
-
-		expect(calls).toHaveLength(1);
-		expect(calls[0]?.command).toBe("/usr/bin/osascript");
-		expect(calls[0]?.args.join(" ")).toContain("with administrator privileges");
 	});
 });
 

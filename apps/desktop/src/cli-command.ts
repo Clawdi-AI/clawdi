@@ -13,7 +13,6 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { access } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import type { CommandOptions, CommandResult } from "./command-runner";
 import { runCommand } from "./command-runner";
@@ -66,7 +65,7 @@ export async function installDesktopCliCommand(
 		return { status: "installed", path: launcher, pathReady: true };
 	}
 
-	await installPosixLauncher(launcher, options);
+	installPosixLauncher(launcher, options);
 	return {
 		status: "installed",
 		path: launcher,
@@ -115,8 +114,7 @@ function validateOptions(options: DesktopCliCommandOptions): void {
 }
 
 function defaultLauncherPath(options: DesktopCliCommandOptions): string {
-	if (options.platform === "darwin") return "/usr/local/bin/clawdi";
-	if (options.platform === "linux") return join(options.home, ".local", "bin", "clawdi");
+	if (options.platform !== "win32") return join(options.home, ".local", "bin", "clawdi");
 	const localAppData = options.localAppData?.trim();
 	if (!localAppData || !isValidAbsolutePath(localAppData)) {
 		throw new Error("The Windows user application directory is unavailable.");
@@ -124,10 +122,7 @@ function defaultLauncherPath(options: DesktopCliCommandOptions): string {
 	return join(localAppData, "Clawdi", "bin", "clawdi.cmd");
 }
 
-async function installPosixLauncher(
-	launcher: string,
-	options: DesktopCliCommandOptions,
-): Promise<void> {
+function installPosixLauncher(launcher: string, options: DesktopCliCommandOptions): void {
 	let existingTarget: string | null = null;
 	try {
 		const entry = lstatSync(launcher);
@@ -139,20 +134,6 @@ async function installPosixLauncher(
 		}
 	} catch (error) {
 		if (!isMissing(error)) throw error;
-	}
-
-	if (options.platform === "darwin" && !(await directoryIsWritable(dirname(launcher)))) {
-		if (existingTarget) throw new DesktopCliCommandConflictError(launcher);
-		const command = [
-			`/bin/mkdir -p ${shellQuote(dirname(launcher))}`,
-			`/bin/ln -s ${shellQuote(options.target)} ${shellQuote(launcher)}`,
-		].join(" && ");
-		await (options.execute ?? runCommand)(
-			"/usr/bin/osascript",
-			["-e", `do shell script ${appleScriptString(command)} with administrator privileges`],
-			{ timeoutMs: 5 * 60_000 },
-		);
-		return;
 	}
 
 	mkdirSync(dirname(launcher), { recursive: true, mode: 0o755 });
@@ -266,23 +247,6 @@ function isAppImageRuntimeTarget(target: string, userData: string): boolean {
 	const root = normalize(resolve(realpathSync(userData), "runtimes"));
 	const normalized = normalize(existsSync(target) ? realpathSync(target) : resolve(target));
 	return dirname(dirname(normalized)) === root && basename(normalized) === "clawdi";
-}
-
-async function directoryIsWritable(path: string): Promise<boolean> {
-	try {
-		await access(path, constants.W_OK);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function shellQuote(value: string): string {
-	return `'${value.replaceAll("'", `'\\''`)}'`;
-}
-
-function appleScriptString(value: string): string {
-	return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
 function escapeCmdPath(value: string): string {

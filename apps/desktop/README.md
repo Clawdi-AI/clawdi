@@ -24,17 +24,17 @@ declared as production dependencies of the Electron shell.
 
 Packaged builds include the matching native `clawdi` CLI. Choose
 **Install CLI Command…** from the application menu to expose it in a terminal.
-Desktop installs only a lightweight launcher: macOS uses `/usr/local/bin/clawdi`,
-Linux uses `~/.local/bin/clawdi`, and Windows uses a per-user launcher directory
-added to the user PATH. An existing `clawdi` from another installation is never
-replaced. The command continues to use the Desktop-managed binary, so native CLI
-updates arrive with Desktop rather than through a second updater. AppImage builds
-refresh an existing Desktop-owned launcher after an application update.
+Desktop installs only a lightweight launcher: macOS and Linux use
+`~/.local/bin/clawdi`, while Windows uses a per-user launcher directory added to
+the user PATH. An existing `clawdi` from another installation is never replaced.
+The command continues to use the Desktop-managed binary, so native CLI updates
+arrive with Desktop rather than through a second updater. AppImage builds refresh
+an existing Desktop-owned launcher after an application update.
 
-The action is explicit because changing PATH is a user-level system mutation.
-On macOS, move Clawdi to Applications first; writing `/usr/local/bin` may require
-the standard administrator authorization prompt. Linux reports when
-`~/.local/bin` is not already on PATH instead of editing shell startup files.
+The action is explicit because exposing a terminal command changes the user's
+environment. On macOS, move Clawdi to Applications first so the launcher points
+to a stable application path. macOS and Linux report when `~/.local/bin` is not
+already on PATH instead of editing shell startup files.
 
 Desktop Platform Packages uses native macOS arm64/Intel, Ubuntu x64/arm64,
 Windows x64 and `windows-11-arm` runners. It asserts the runtime architecture,
