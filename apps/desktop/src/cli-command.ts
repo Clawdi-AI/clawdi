@@ -264,7 +264,7 @@ function stripPathQuotes(value: string): string {
 
 function isAppImageRuntimeTarget(target: string, userData: string): boolean {
 	const root = normalize(resolve(realpathSync(userData), "runtimes"));
-	const normalized = normalize(resolve(target));
+	const normalized = normalize(existsSync(target) ? realpathSync(target) : resolve(target));
 	return dirname(dirname(normalized)) === root && basename(normalized) === "clawdi";
 }
 
