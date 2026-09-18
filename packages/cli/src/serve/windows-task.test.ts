@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,16 +28,21 @@ test.skipIf(process.platform !== "win32" || process.env.CLAWDI_WINDOWS_TASK_TEST
 		expect(windowsTaskInstalled()).toBe(false);
 		const root = mkdtempSync(join(tmpdir(), "clawdi 用户's lifecycle-"));
 		const heartbeat = join(root, "heartbeat.json");
-		const script = join(root, "worker.js");
-		const node = execFileSync("where.exe", ["node.exe"], { encoding: "utf8" })
-			.split(/\r?\n/)
-			.find((line) => line.trim());
-		if (!node) throw new Error("Node.js is required for the Windows task lifecycle fixture.");
+		const script = join(root, "worker.ps1");
+		const systemRoot = process.env.SystemRoot;
+		if (!systemRoot)
+			throw new Error("SystemRoot is required for the Windows task lifecycle fixture.");
+		const powershell = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
 		writeFileSync(
 			script,
-			`const fs = require('node:fs');
-const beat = () => fs.writeFileSync(process.env.CLAWDI_TEST_HEARTBEAT, JSON.stringify({ pid: process.pid, value: process.env.CLAWDI_TEST_VALUE }));
-beat(); console.log('Clawdi 日志 fixture'); setInterval(beat, 100);`,
+			`\uFEFF$sequence = 0
+Write-Output 'Clawdi 日志 fixture'
+while ($true) {
+  $sequence++
+  $heartbeat = @{ pid = $PID; sequence = $sequence; value = $env:CLAWDI_TEST_VALUE } | ConvertTo-Json -Compress
+  [System.IO.File]::WriteAllText($env:CLAWDI_TEST_HEARTBEAT, $heartbeat, [System.Text.UTF8Encoding]::new($false))
+  Start-Sleep -Milliseconds 100
+}`,
 		);
 		const ownedPids = new Set<number>();
 		const readPid = () => {
@@ -47,10 +51,26 @@ beat(); console.log('Clawdi 日志 fixture'); setInterval(beat, 100);`,
 			return pid;
 		};
 		try {
-			installWindowsTask(root, { command: node.trim(), args: [script], entryPath: script }, [
-				{ key: "CLAWDI_TEST_HEARTBEAT", value: heartbeat },
-				{ key: "CLAWDI_TEST_VALUE", value: "quote ' and $literal" },
-			]);
+			installWindowsTask(
+				root,
+				{
+					command: powershell,
+					args: [
+						"-NoLogo",
+						"-NoProfile",
+						"-NonInteractive",
+						"-ExecutionPolicy",
+						"Bypass",
+						"-File",
+						script,
+					],
+					entryPath: script,
+				},
+				[
+					{ key: "CLAWDI_TEST_HEARTBEAT", value: heartbeat },
+					{ key: "CLAWDI_TEST_VALUE", value: "quote ' and $literal" },
+				],
+			);
 			await until("worker start", () => readPid() > 0);
 			const first = readPid();
 			const logPath = windowsTaskLogPath(root);
