@@ -64,12 +64,21 @@ export function activateAppImageRuntime(source: string, userData: string, versio
 /** Remove only complete, marker-owned runtimes after the active version has
  * successfully replaced the systemd unit. Invalid or unrelated directories
  * are left untouched. */
-export function pruneAppImageRuntimes(userData: string, activeVersion: string): void {
+export function pruneAppImageRuntimes(
+	userData: string,
+	activeVersion: string,
+	protectedVersions: ReadonlySet<string> = new Set(),
+): void {
 	if (!DESKTOP_VERSION.test(activeVersion)) return;
 	const root = join(userData, "runtimes");
 	if (!existsSync(root)) return;
 	for (const entry of readdirSync(root, { withFileTypes: true })) {
-		if (!entry.isDirectory() || entry.name === activeVersion || !DESKTOP_VERSION.test(entry.name)) {
+		if (
+			!entry.isDirectory() ||
+			entry.name === activeVersion ||
+			protectedVersions.has(entry.name) ||
+			!DESKTOP_VERSION.test(entry.name)
+		) {
 			continue;
 		}
 		const directory = join(root, entry.name);
