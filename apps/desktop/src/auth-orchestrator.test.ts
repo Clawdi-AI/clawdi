@@ -180,11 +180,15 @@ describe("Desktop startup recovery", () => {
 				calls.push("detect");
 				return verified;
 			},
+			reconcileDaemonRuntime: async () => {
+				calls.push("reconcile");
+				return false;
+			},
 			restartDaemon: async () => {
 				calls.push("restart");
 			},
 		});
-		expect(calls).toEqual(["bootstrap", "detect", "restart", "bootstrap"]);
+		expect(calls).toEqual(["bootstrap", "detect", "reconcile", "restart", "bootstrap"]);
 		expect(result).toMatchObject({ needsAttention: false });
 	});
 
@@ -196,6 +200,10 @@ describe("Desktop startup recovery", () => {
 				return state(AUTH_A, { installed: true, running: false });
 			},
 			detectAgents: async () => [],
+			reconcileDaemonRuntime: async () => {
+				calls.push("reconcile");
+				return false;
+			},
 			restartDaemon: async () => {
 				calls.push("restart");
 			},
@@ -204,22 +212,30 @@ describe("Desktop startup recovery", () => {
 		expect(result).toMatchObject({ requiresWizard: false });
 	});
 
-	test("transient Agent inspection failure does not restart or require onboarding", async () => {
-		const calls: string[] = [];
-		const result = await reconcileDesktopStartupSync({
-			bootstrapState: async () => {
-				calls.push("bootstrap");
-				return state(AUTH_A, { installed: true, running: false });
-			},
-			detectAgents: async () => {
-				calls.push("detect");
-				throw new Error("offline");
-			},
-			restartDaemon: async () => {
-				calls.push("restart");
-			},
-		});
-		expect(calls).toEqual(["bootstrap", "detect"]);
-		expect(result).toMatchObject({ needsAttention: true });
-	});
+	test.each(["offline", "unverified"])(
+		"%s Agent inspection never rebinds or restarts a daemon",
+		async (inspection) => {
+			const calls: string[] = [];
+			const result = await reconcileDesktopStartupSync({
+				bootstrapState: async () => {
+					calls.push("bootstrap");
+					return state(AUTH_A, { installed: true, running: false });
+				},
+				detectAgents: async () => {
+					calls.push("detect");
+					if (inspection === "offline") throw new Error("offline");
+					return verified.map((agent) => ({ ...agent, inspection: "failed" as const }));
+				},
+				reconcileDaemonRuntime: async () => {
+					calls.push("reconcile");
+					return true;
+				},
+				restartDaemon: async () => {
+					calls.push("restart");
+				},
+			});
+			expect(calls).toEqual(["bootstrap", "detect"]);
+			expect(result).toMatchObject({ needsAttention: true });
+		},
+	);
 });

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const platform = process.platform;
 const arch = process.arch;
-if ((platform !== "darwin" && platform !== "linux") || (arch !== "arm64" && arch !== "x64")) {
+if (!["darwin", "linux", "win32"].includes(platform) || (arch !== "arm64" && arch !== "x64")) {
 	throw new Error(`Desktop runtime is not supported on ${platform}-${arch}.`);
 }
 for (const args of [
@@ -14,7 +14,11 @@ for (const args of [
 		"run",
 		"electron-builder",
 		`--config.afterPack=${resolve(root, "scripts/after-pack.mjs")}`,
-		...(platform === "darwin" ? ["--mac", "dmg", "zip"] : ["--linux", "deb", "rpm"]),
+		...(platform === "darwin"
+			? ["--mac", "dmg", "zip"]
+			: platform === "win32"
+				? ["--win", "nsis"]
+				: ["--linux", "AppImage", "deb", "rpm"]),
 		`--${arch}`,
 		"--publish",
 		"never",

@@ -1,10 +1,12 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, test as bunTest, expect } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse } from "yaml";
 
 const roots: string[] = [];
+// The Pages publisher runs on Linux; its fixture implements gh as a POSIX script.
+const test = bunTest.skipIf(process.platform === "win32");
 afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -100,4 +102,56 @@ test("Pages refuses metadata pointing to an absent release artifact", async () =
 	const result = await prepare(fixture(true));
 	expect(result.code).not.toBe(0);
 	expect(result.error).toContain("Missing artifact");
+});
+
+test("Pages isolates Windows and Linux architectures and rejects partial matrices", async () => {
+	const root = fixture();
+	const pages = JSON.parse(readFileSync(join(root, "releases.json"), "utf8"));
+	const release = pages[1][0];
+	let id = 10;
+	for (const platform of ["win32", "linux"]) {
+		for (const arch of ["x64", "arm64"]) {
+			const artifact = `Clawdi-${platform}-${arch}.${platform === "win32" ? "exe" : "AppImage"}`;
+			release.assets.push({ name: `beta-${platform}-${arch}.yml`, id }, { name: artifact });
+			writeFileSync(
+				join(root, `asset-${id}.json`),
+				JSON.stringify({
+					version: "1.1.0-beta.10",
+					path: artifact,
+					files: [{ url: artifact, sha512: "hash", size: 1 }],
+				}),
+			);
+			id++;
+		}
+	}
+	writeFileSync(join(root, "releases.json"), JSON.stringify(pages));
+	writeFileSync(
+		join(root, "bin/gh"),
+		`#!/bin/sh
+case "$2" in
+  */assets/2) cat "$FIXTURE_ROOT/stable.json" ;;
+  */assets/1) cat "$FIXTURE_ROOT/metadata.json" ;;
+  *releases/assets/*) cat "$FIXTURE_ROOT/asset-\${2##*/}.json" ;;
+  *) cat "$FIXTURE_ROOT/releases.json" ;;
+esac
+`,
+		{ mode: 0o700 },
+	);
+	expect((await prepare(root)).code).toBe(0);
+	for (const platform of ["win32", "linux"]) {
+		for (const arch of ["x64", "arm64"]) {
+			const suffix = platform === "win32" ? "" : `-linux${arch === "arm64" ? "-arm64" : ""}`;
+			const metadata = parse(
+				readFileSync(join(root, `site/desktop/${platform}-${arch}/beta${suffix}.yml`), "utf8"),
+			);
+			expect(metadata.files[0].url).toContain(`Clawdi-${platform}-${arch}.`);
+		}
+	}
+	release.assets = release.assets.filter(
+		(asset: { name: string }) => asset.name !== "beta-win32-arm64.yml",
+	);
+	writeFileSync(join(root, "releases.json"), JSON.stringify(pages));
+	const result = await prepare(root);
+	expect(result.code).not.toBe(0);
+	expect(result.error).toContain("Incomplete Desktop release");
 });

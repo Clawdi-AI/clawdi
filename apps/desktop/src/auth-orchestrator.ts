@@ -15,6 +15,7 @@ export interface DesktopAuthCliPort {
 export interface DesktopStartupCliPort {
 	bootstrapState(): Promise<DesktopBootstrapState>;
 	detectAgents(): Promise<DesktopDetectedAgent[]>;
+	reconcileDaemonRuntime(verifiedAccountId: string): Promise<boolean>;
 	restartDaemon(): Promise<void>;
 }
 
@@ -136,12 +137,7 @@ export async function reconcileDesktopStartupSync(cli: DesktopStartupCliPort): P
 	needsAttention: boolean;
 }> {
 	let state = await cli.bootstrapState();
-	if (
-		!state.auth.authenticated ||
-		!state.auth.user ||
-		!state.daemon.installed ||
-		state.daemon.running
-	) {
+	if (!state.auth.authenticated || !state.auth.user || !state.daemon.installed) {
 		return { state, needsAttention: false };
 	}
 
@@ -159,7 +155,8 @@ export async function reconcileDesktopStartupSync(cli: DesktopStartupCliPort): P
 	}
 
 	try {
-		await cli.restartDaemon();
+		const rebound = await cli.reconcileDaemonRuntime(state.auth.user.id);
+		if (!rebound && !state.daemon.running) await cli.restartDaemon();
 		state = await cli.bootstrapState();
 		return { state, needsAttention: !state.daemon.running };
 	} catch {

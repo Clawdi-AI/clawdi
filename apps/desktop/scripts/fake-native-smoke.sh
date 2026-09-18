@@ -21,7 +21,7 @@ case "$1 ${2:-}" in
 		;;
 	"daemon doctor")
 		# An authenticated Desktop must still open Dashboard when sync is intentionally stopped.
-		printf '%s\n' '{"singleton_unit_installed":false,"agents":[]}'
+		printf '%s\n' '{"cli_version":"0.0.0-smoke","singleton_unit_installed":false,"singleton_unit_running":false,"agents":[]}'
 		;;
 	"agent detect")
 		printf '%s\n' '{"agents":[{"type":"codex","displayName":"Codex","detected":true,"registered":true,"version":"1.0.0","inspection":"complete"}]}'

@@ -10,7 +10,6 @@ const SIGNED_STABLE: DesktopUpdatePolicyInput = {
 	platform: "darwin",
 	isMacAppStore: false,
 	channel: "stable",
-	feedUrl: "https://downloads.example.test/clawdi/desktop/stable/",
 	signature: {
 		authorities: ["Developer ID Application: Clawdi, Inc. (ABC1234567)"],
 		teamIdentifier: "ABC1234567",
@@ -18,34 +17,41 @@ const SIGNED_STABLE: DesktopUpdatePolicyInput = {
 };
 
 describe("evaluateDesktopUpdatePolicy", () => {
+	test("enables only AppImage or publisher-pinned Windows release updates", () => {
+		for (const platform of ["linux", "win32"] as const) {
+			expect(
+				evaluateDesktopUpdatePolicy({
+					...SIGNED_STABLE,
+					platform,
+					signature: null,
+					isAppImage: true,
+					windowsPublisher: "CN=Clawdi Inc., O=Clawdi Inc., C=US",
+				}).enabled,
+			).toBe(true);
+		}
+	});
 	test("enables signed beta macOS releases", () => {
 		expect(evaluateDesktopUpdatePolicy({ ...SIGNED_STABLE, channel: "beta" })).toEqual({
 			enabled: true,
 			channel: "beta",
-			feedUrl: "https://downloads.example.test/clawdi/desktop/stable/",
 		});
 	});
 	test("enables signed stable macOS releases", () => {
 		expect(evaluateDesktopUpdatePolicy(SIGNED_STABLE)).toEqual({
 			enabled: true,
 			channel: "stable",
-			feedUrl: "https://downloads.example.test/clawdi/desktop/stable/",
 		});
 	});
 
 	test("skips every unsupported or unsigned environment", () => {
 		const cases = [
 			[{ ...SIGNED_STABLE, isPackaged: false }, "development"],
-			[{ ...SIGNED_STABLE, platform: "linux" }, "unsupported-platform"],
+			[{ ...SIGNED_STABLE, platform: "freebsd" }, "unsupported-platform"],
+			[{ ...SIGNED_STABLE, platform: "linux" }, "package-manager"],
+			[{ ...SIGNED_STABLE, platform: "win32" }, "unsigned"],
 			[{ ...SIGNED_STABLE, isMacAppStore: true }, "mac-app-store"],
 			[{ ...SIGNED_STABLE, channel: "disabled" }, "disabled-by-metadata"],
 			[{ ...SIGNED_STABLE, channel: "alpha" }, "invalid-metadata"],
-			[{ ...SIGNED_STABLE, feedUrl: undefined }, "invalid-metadata"],
-			[{ ...SIGNED_STABLE, feedUrl: "http://downloads.example.test" }, "invalid-metadata"],
-			[
-				{ ...SIGNED_STABLE, feedUrl: "https://downloads.example.test/clawdi/desktop/stable" },
-				"invalid-metadata",
-			],
 			[{ ...SIGNED_STABLE, signature: null }, "unsigned"],
 			[
 				{

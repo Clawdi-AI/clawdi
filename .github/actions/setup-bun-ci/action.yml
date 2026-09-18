@@ -34,5 +34,11 @@ runs:
         bun-version: ${{ inputs.bun-version }}
 
     - name: Install dependencies
+      if: runner.os != 'Windows'
       shell: bash
+      run: bun install --frozen-lockfile
+
+    - name: Install dependencies on Windows
+      if: runner.os == 'Windows'
+      shell: pwsh
       run: bun install --frozen-lockfile

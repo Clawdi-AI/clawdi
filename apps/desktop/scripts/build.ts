@@ -1,4 +1,12 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+	cpSync,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,15 +20,35 @@ const PRODUCTION_CLERK_PUBLISHABLE_KEY = "pk_live_Y2xlcmsuY2xhd2RpLmFpJA";
 
 rmSync(outputRoot, { recursive: true, force: true });
 mkdirSync(outputRoot, { recursive: true });
-cpSync(join(desktopRoot, "build", "trayTemplate.png"), join(outputRoot, "trayTemplate.png"));
-cpSync(join(desktopRoot, "build", "trayTemplate@2x.png"), join(outputRoot, "trayTemplate@2x.png"));
+for (const [name, size] of [
+	["trayTemplate.png", 18],
+	["trayTemplate@2x.png", 36],
+	["trayWindows.png", 16],
+	["trayWindows@2x.png", 32],
+	["trayLinux.png", 22],
+	["trayLinux@2x.png", 44],
+] as const) {
+	const source = join(desktopRoot, "build", name);
+	const png = readFileSync(source);
+	if (
+		png.toString("hex", 0, 8) !== "89504e470d0a1a0a" ||
+		png.readUInt32BE(16) !== size ||
+		png.readUInt32BE(20) !== size
+	)
+		throw new Error(`Invalid tray asset: ${name}`);
+	cpSync(source, join(outputRoot, name));
+}
 
-await buildWebApp();
-cpSync(webClientRoot, packagedWebRoot, { recursive: true });
-writeFileSync(
-	join(outputRoot, "web-assets.json"),
-	`${JSON.stringify(listFiles(packagedWebRoot))}\n`,
-);
+// Only the dedicated bundled-Dashboard regression package consumes a Web SPA.
+// Production and ordinary previews load the remote Dashboard without fallback.
+if (process.argv.includes("--bundled-dashboard")) {
+	await buildWebApp();
+	cpSync(webClientRoot, packagedWebRoot, { recursive: true });
+	writeFileSync(
+		join(outputRoot, "web-assets.json"),
+		`${JSON.stringify(listFiles(packagedWebRoot))}\n`,
+	);
+}
 await bundle("main.ts", "main.js", "node", "esm");
 await bundle("shell-preload.ts", "shell-preload.cjs", "node", "cjs");
 await bundle("connect-preload.ts", "connect-preload.cjs", "node", "cjs");
@@ -85,7 +113,7 @@ async function bundle(
 		naming: entry.endsWith(".tsx") ? "[name].[ext]" : name,
 		target,
 		format,
-		external: target === "node" ? ["electron", "electron-updater"] : [],
+		external: target === "node" ? ["electron", "electron-updater", "builder-util-runtime"] : [],
 		minify: true,
 		sourcemap: "none",
 	});

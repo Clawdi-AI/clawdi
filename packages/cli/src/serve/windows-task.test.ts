@@ -1,0 +1,100 @@
+import { expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+	installWindowsTask,
+	powershellLiteral,
+	restartWindowsTask,
+	stopWindowsTask,
+	uninstallWindowsTask,
+	windowsTaskInstalled,
+	windowsTaskLogPath,
+	windowsTaskRunning,
+} from "./windows-task";
+
+test("PowerShell task values remain literal", () => {
+	expect(powershellLiteral("C:\\User's files\\$(whoami) & test")).toBe(
+		"'C:\\User''s files\\$(whoami) & test'",
+	);
+	expect(() => powershellLiteral("bad\0value")).toThrow();
+});
+
+test.skipIf(process.platform !== "win32" || process.env.CLAWDI_WINDOWS_TASK_TEST !== "1")(
+	"native current-user task installs, stops its child, restarts and uninstalls",
+	async () => {
+		// Refuse to replace any pre-existing task, even with explicit test opt-in.
+		expect(windowsTaskInstalled()).toBe(false);
+		const root = mkdtempSync(join(tmpdir(), "clawdi 用户's lifecycle-"));
+		const heartbeat = join(root, "heartbeat.json");
+		const script = join(root, "worker.js");
+		writeFileSync(
+			script,
+			`const fs = require('node:fs');
+const beat = () => fs.writeFileSync(process.env.CLAWDI_TEST_HEARTBEAT, JSON.stringify({ pid: process.pid, value: process.env.CLAWDI_TEST_VALUE }));
+beat(); console.log('Clawdi 日志 fixture'); setInterval(beat, 100);`,
+		);
+		const ownedPids = new Set<number>();
+		const readPid = () => {
+			const pid = JSON.parse(readFileSync(heartbeat, "utf8")).pid as number;
+			ownedPids.add(pid);
+			return pid;
+		};
+		try {
+			installWindowsTask(root, { command: process.execPath, args: [script], entryPath: script }, [
+				{ key: "CLAWDI_TEST_HEARTBEAT", value: heartbeat },
+				{ key: "CLAWDI_TEST_VALUE", value: "quote ' and $literal" },
+			]);
+			await until(() => readPid() > 0);
+			const first = readPid();
+			const logPath = windowsTaskLogPath(root);
+			await until(() => readFileSync(logPath, "utf16le").includes("Clawdi 日志 fixture"));
+			expect(readFileSync(logPath).readUInt16LE(0)).toBe(0xfeff);
+			expect(windowsTaskRunning()).toBe(true);
+			expect(JSON.parse(readFileSync(heartbeat, "utf8")).value).toBe("quote ' and $literal");
+			stopWindowsTask();
+			await until(() => !alive(first));
+			expect(windowsTaskInstalled()).toBe(true);
+			expect(windowsTaskRunning()).toBe(false);
+			restartWindowsTask();
+			await until(() => readPid() !== first && alive(readPid()));
+			const second = readPid();
+			expect(uninstallWindowsTask(root).removed).toBe(true);
+			await until(() => !alive(second));
+			expect(windowsTaskInstalled()).toBe(false);
+			expect(uninstallWindowsTask(root).removed).toBe(false);
+		} finally {
+			try {
+				uninstallWindowsTask(root);
+			} finally {
+				for (const pid of ownedPids) {
+					if (alive(pid)) process.kill(pid);
+				}
+				rmSync(root, { recursive: true, force: true });
+			}
+		}
+	},
+	120_000,
+);
+
+function alive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function until(predicate: () => boolean): Promise<void> {
+	const deadline = Date.now() + 15_000;
+	while (Date.now() < deadline) {
+		try {
+			if (predicate()) return;
+		} catch {
+			/* Worker has not written its first heartbeat. */
+		}
+		await Bun.sleep(100);
+	}
+	throw new Error("Scheduled task did not reach the expected lifecycle state.");
+}

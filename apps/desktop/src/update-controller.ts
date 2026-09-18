@@ -34,7 +34,6 @@ export class DesktopUpdateController {
 
 	start(): void {
 		if (!this.options.policy.enabled) return;
-		this.updater.setFeedURL({ provider: "generic", url: this.options.policy.feedUrl });
 		this.updater.autoDownload = true;
 		this.updater.autoInstallOnAppQuit = false;
 		this.updater.autoRunAppAfterInstall = false;

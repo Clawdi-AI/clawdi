@@ -40,7 +40,8 @@ describe("desktop command cancellation", () => {
 		await waitForFileContent(marker, "ready");
 		controller.abort();
 		await expect(command).rejects.toBeInstanceOf(CommandCancelledError);
-		expect(readFileSync(marker, "utf8")).toBe("exited");
+		// Windows terminates the process directly; it does not deliver POSIX signals.
+		expect(readFileSync(marker, "utf8")).toBe(process.platform === "win32" ? "ready" : "exited");
 	});
 
 	test("does not retroactively cancel a completed child", async () => {

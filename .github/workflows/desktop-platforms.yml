@@ -10,6 +10,7 @@ on:
       - 'apps/web/**'
       - 'bun.lock'
       - '.github/workflows/desktop-platforms.yml'
+      - '.github/actions/setup-bun-ci/**'
 
 permissions:
   contents: read
@@ -25,6 +26,9 @@ jobs:
       max-parallel: 2
       matrix:
         include:
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
           - runner: macos-15-intel
             platform: darwin
             arch: x64
@@ -34,6 +38,12 @@ jobs:
           - runner: ubuntu-24.04-arm
             platform: linux
             arch: arm64
+          - runner: windows-2025
+            platform: win32
+            arch: x64
+          - runner: windows-11-arm
+            platform: win32
+            arch: arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
@@ -42,12 +52,34 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-bun-ci
       - name: Verify Desktop
+        if: matrix.platform != 'win32'
+        shell: bash
         run: |
+          bun -e 'if (process.arch !== "${{ matrix.arch }}" || process.platform !== "${{ matrix.platform }}") throw new Error("Runner is not native to the target")'
           bun run --cwd apps/desktop typecheck
           bun run --cwd apps/desktop test:internal
+          bun test packages/cli/src/lib/machine-identity.test.ts
+      - name: Verify Desktop on Windows
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        run: |
+          bun -e 'if (process.arch !== "${{ matrix.arch }}" || process.platform !== "win32") throw new Error("Runner is not native to target")'
+          if ($LASTEXITCODE -ne 0) { throw 'Wrong native runner' }
+          bun run --cwd apps/desktop typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'Typecheck failed' }
+          bun run --cwd apps/desktop test:internal
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop tests failed' }
+          bun test packages/cli/src/lib/machine-identity.test.ts
+      - name: Windows per-user task lifecycle
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        env:
+          CLAWDI_WINDOWS_TASK_TEST: '1'
+        run: bun test packages/cli/src/serve/windows-task.test.ts
       # Native macOS filesystem coverage; no platform stubs and no writes to runner HOME.
       - name: Connected Vault native filesystem tests
         if: matrix.platform == 'darwin'
+        shell: bash
         run: |
           vault_test_root=$(mktemp -d "$RUNNER_TEMP/clawdi-vault-tests.XXXXXX")
           trap 'rm -rf "$vault_test_root"' EXIT
@@ -59,38 +91,89 @@ jobs:
               src/serve/vault-sync.test.ts src/lib/environment-registration.test.ts
       - name: Install Linux packaging dependencies
         if: matrix.platform == 'linux'
+        shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y libarchive-tools rpm xvfb libgtk-3-0 libnss3 libasound2t64
+          sudo apt-get install -y libarchive-tools rpm xvfb libgtk-3-0 libnss3 libasound2t64 libfuse2t64
       - name: Build native package
+        if: matrix.platform != 'win32'
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          CSC_FOR_PULL_REQUEST: 'true'
+        run: bun run --cwd apps/desktop scripts/package-preview.ts
+      - name: Build Windows preview package
+        if: matrix.platform == 'win32'
+        shell: pwsh
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           CSC_FOR_PULL_REQUEST: 'true'
         run: bun run --cwd apps/desktop scripts/package-preview.ts
       - name: Verify embedded runtime
+        if: matrix.platform != 'win32'
+        shell: bash
         env:
           TARGET: ${{ matrix.platform }}-${{ matrix.arch }}
         run: |
           mkdir -p "$RUNNER_TEMP/desktop-check/home" "$RUNNER_TEMP/desktop-check/state"
+          cli=apps/desktop/resources/native/clawdi
           HOME="$RUNNER_TEMP/desktop-check/home" CLAWDI_HOME="$RUNNER_TEMP/desktop-check/state" \
-            apps/desktop/resources/native/clawdi update --native-identity | grep -F "$TARGET"
+            "$cli" update --native-identity | grep -F "$TARGET"
           HOME="$RUNNER_TEMP/desktop-check/home" CLAWDI_HOME="$RUNNER_TEMP/desktop-check/state" \
-            apps/desktop/resources/native/clawdi auth status --json
+            "$cli" auth status --json
+      - name: Verify Windows embedded runtime
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        env:
+          TARGET: win32-${{ matrix.arch }}
+        run: |
+          $env:HOME = Join-Path $env:RUNNER_TEMP 'desktop-check/home'
+          $env:CLAWDI_HOME = Join-Path $env:RUNNER_TEMP 'desktop-check/state'
+          New-Item -ItemType Directory -Force $env:HOME, $env:CLAWDI_HOME | Out-Null
+          $cli = 'apps/desktop/resources/native/clawdi.exe'
+          $identity = & $cli update --native-identity
+          if ($LASTEXITCODE -ne 0 -or !([string]$identity).Trim().EndsWith("`t$env:TARGET")) { throw 'Wrong embedded CLI architecture' }
+          & $cli auth status --json
       - name: Check Linux installed application
         if: matrix.platform == 'linux'
+        shell: bash
         run: |
+          CLAWDI_NATIVE_BINARY="$PWD/apps/desktop/resources/native/clawdi" \
+            bun test apps/desktop/src/appimage-runtime.test.ts
           sudo apt-get install -y ./apps/desktop/release/*.deb
           test -x /opt/Clawdi/resources/native/clawdi
           test -x /opt/Clawdi/clawdi-desktop
           xvfb-run -a node apps/desktop/scripts/smoke-packaged.mjs \
             /opt/Clawdi/clawdi-desktop "$RUNNER_TEMP/linux-smoke" welcome
-      - name: Check Intel Mac application
+          sudo apt-get remove -y clawdi-desktop
+          xvfb-run -a node apps/desktop/scripts/smoke-packaged.mjs \
+            "$PWD/$(echo apps/desktop/release/*.AppImage)" "$RUNNER_TEMP/appimage-smoke" welcome
+      - name: Check Mac application
         if: matrix.platform == 'darwin'
+        shell: bash
         run: |
-          codesign --verify --deep --strict apps/desktop/release/mac/Clawdi.app
+          bundle=mac
+          if [ '${{ matrix.arch }}' = arm64 ]; then bundle=mac-arm64; fi
+          codesign --verify --deep --strict "apps/desktop/release/$bundle/Clawdi.app"
           node apps/desktop/scripts/smoke-packaged.mjs \
-            "$PWD/apps/desktop/release/mac/Clawdi.app/Contents/MacOS/Clawdi" \
-            "$RUNNER_TEMP/intel-smoke" install
+            "$PWD/apps/desktop/release/$bundle/Clawdi.app/Contents/MacOS/Clawdi" \
+            "$RUNNER_TEMP/mac-smoke" install
+      - name: Check Windows install, first launch and uninstall
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem apps/desktop/release/*.exe).FullName
+          $destination = Join-Path $env:RUNNER_TEMP 'Clawdi Installed'
+          $process = Start-Process $installer -ArgumentList @('/S', "/D=$destination") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'NSIS install failed' }
+          try {
+            node apps/desktop/scripts/smoke-packaged.mjs "$destination/Clawdi.exe" "$env:RUNNER_TEMP/windows-smoke" welcome
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged smoke failed' }
+          } finally {
+            $process = Start-Process "$destination/Uninstall Clawdi.exe" -ArgumentList '/S' -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw 'NSIS uninstall failed' }
+            if (Test-Path "$destination/Clawdi.exe") { throw 'NSIS left the application installed' }
+          }
       - uses: actions/upload-artifact@v7
         with:
           name: clawdi-${{ matrix.platform }}-${{ matrix.arch }}-preview
@@ -99,5 +182,7 @@ jobs:
             apps/desktop/release/*.zip
             apps/desktop/release/*.deb
             apps/desktop/release/*.rpm
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.exe
           if-no-files-found: error
           retention-days: 7

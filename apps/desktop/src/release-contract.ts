@@ -1,7 +1,9 @@
-import { normalizeDesktopUpdateFeedUrl } from "./update-policy";
+import { isDesktopWindowsPublisherDn, normalizeDesktopUpdateFeedUrl } from "./update-policy";
 
 export interface DesktopReleaseConfiguration {
 	version: string;
+	platform: "darwin" | "linux" | "win32";
+	windowsPublisher?: string;
 	arch: "arm64" | "x64";
 	channel: "stable" | "beta";
 	updateFeedUrl: string;
@@ -11,7 +13,8 @@ export function readDesktopReleaseConfiguration(
 	env: Record<string, string | undefined>,
 	platform: NodeJS.Platform,
 ): DesktopReleaseConfiguration {
-	if (platform !== "darwin") throw new Error("Desktop release packaging must run on macOS.");
+	if (platform !== "darwin" && platform !== "linux" && platform !== "win32")
+		throw new Error("Unsupported Desktop release host.");
 	const arch = env.CLAWDI_DESKTOP_ARCH?.trim() || process.arch;
 	if (arch !== "arm64" && arch !== "x64") throw new Error("Unsupported Desktop architecture.");
 	const version = env.CLAWDI_DESKTOP_VERSION?.trim() ?? "";
@@ -30,7 +33,7 @@ export function readDesktopReleaseConfiguration(
 			env.CSC_NAME?.trim() ||
 			(env.CSC_LINK?.trim() && env.CSC_KEY_PASSWORD),
 	);
-	if (!hasSigningIdentity) {
+	if (platform === "darwin" && !hasSigningIdentity) {
 		throw new Error(
 			"A Developer ID signing identity is required through CSC_KEYCHAIN, CSC_NAME, or CSC_LINK with CSC_KEY_PASSWORD.",
 		);
@@ -42,33 +45,63 @@ export function readDesktopReleaseConfiguration(
 		);
 	}
 
-	if (!allPresent(env, ["APPLE_API_KEY", "APPLE_API_KEY_ID", "APPLE_API_ISSUER"])) {
+	if (
+		platform === "darwin" &&
+		!allPresent(env, ["APPLE_API_KEY", "APPLE_API_KEY_ID", "APPLE_API_ISSUER"])
+	) {
 		throw new Error(
 			"Apple notarization requires APPLE_API_KEY, APPLE_API_KEY_ID, and APPLE_API_ISSUER.",
 		);
 	}
-	return { version, arch, channel, updateFeedUrl };
+	const windowsPublisher = env.CLAWDI_WINDOWS_PUBLISHER?.trim();
+	if (
+		platform === "win32" &&
+		(!allPresent(env, ["WIN_CSC_LINK", "WIN_CSC_KEY_PASSWORD"]) || !windowsPublisher)
+	) {
+		throw new Error(
+			"Windows releases require WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD and CLAWDI_WINDOWS_PUBLISHER containing the certificate's full Subject DN.",
+		);
+	}
+	if (platform === "win32" && !isDesktopWindowsPublisherDn(windowsPublisher)) {
+		throw new Error(
+			"CLAWDI_WINDOWS_PUBLISHER must be the complete certificate Subject DN, not a CN-only display name.",
+		);
+	}
+	return {
+		version,
+		arch,
+		channel,
+		updateFeedUrl,
+		platform,
+		...(platform === "win32" ? { windowsPublisher } : {}),
+	};
 }
 
 export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfiguration): string[] {
 	return [
 		"run",
 		"electron-builder",
-		"--mac",
-		"dmg",
-		"zip",
+		...(configuration.platform === "darwin"
+			? ["--mac", "dmg", "zip"]
+			: configuration.platform === "win32"
+				? ["--win", "nsis"]
+				: ["--linux", "AppImage", "deb", "rpm"]),
 		`--${configuration.arch}`,
 		"--publish",
 		"never",
-		"--config.forceCodeSigning=true",
-		"--config.mac.notarize=true",
-		"--config.dmg.sign=true",
+		...(configuration.platform === "darwin"
+			? ["--config.forceCodeSigning=true", "--config.mac.notarize=true", "--config.dmg.sign=true"]
+			: configuration.platform === "win32"
+				? [
+						"--config.forceCodeSigning=true",
+						`--config.win.signtoolOptions.publisherName=${configuration.windowsPublisher}`,
+						`--config.extraMetadata.clawdiWindowsPublisher=${configuration.windowsPublisher}`,
+					]
+				: []),
 		// electron-builder expands these placeholders after selecting the target.
-		// biome-ignore lint/suspicious/noTemplateCurlyInString: electron-builder template
-		"--config.artifactName=Clawdi-${version}-${arch}.${ext}",
+		`--config.artifactName=Clawdi-\${version}-${configuration.platform}-\${arch}.\${ext}`,
 		`--config.extraMetadata.version=${configuration.version}`,
 		`--config.extraMetadata.clawdiUpdateChannel=${configuration.channel}`,
-		`--config.extraMetadata.clawdiUpdateFeedUrl=${configuration.updateFeedUrl}`,
 		"--config.publish.provider=generic",
 		"--config.generateUpdatesFilesForAllChannels=false",
 		`--config.publish.channel=${configuration.channel === "stable" ? "latest" : "beta"}`,

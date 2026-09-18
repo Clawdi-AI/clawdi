@@ -27,11 +27,12 @@ concurrency:
 
 jobs:
   macos:
+    if: github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-latest
+          - runner: macos-15
             arch: arm64
             bundle: mac-arm64
             feed_path: desktop
@@ -53,9 +54,12 @@ jobs:
         id: pages
         uses: actions/configure-pages@v5
       - name: Verify Desktop
+        shell: bash
         run: |
+          bun -e 'if (process.platform !== "darwin" || process.arch !== "${{ matrix.arch }}") throw new Error("Release runner is not native to target")'
           bun run --cwd apps/desktop typecheck
           bun run --cwd apps/desktop test:internal
+          bun test packages/cli/src/lib/machine-identity.test.ts
       - name: Package signed channel
         shell: bash apps/desktop/scripts/with-signing-keychain.sh bash {0}
         env:
@@ -96,16 +100,156 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  platforms:
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - runner: windows-2025
+            platform: win32
+            arch: x64
+          - runner: windows-11-arm
+            platform: win32
+            arch: arm64
+          - runner: ubuntu-24.04
+            platform: linux
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-bun-ci
+      - uses: actions/configure-pages@v5
+        id: pages
+      - name: Verify native target and contracts
+        if: matrix.platform != 'win32'
+        shell: bash
+        run: |
+          bun -e 'if (process.arch !== "${{ matrix.arch }}" || process.platform !== "${{ matrix.platform }}") throw new Error("Runner is not native to target")'
+          bun run --cwd apps/desktop typecheck
+          bun run --cwd apps/desktop test:internal
+          bun test packages/cli/src/lib/machine-identity.test.ts
+      - name: Verify native Windows target and contracts
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        run: |
+          bun -e 'if (process.arch !== "${{ matrix.arch }}" || process.platform !== "win32") throw new Error("Runner is not native to target")'
+          if ($LASTEXITCODE -ne 0) { throw 'Wrong native runner' }
+          bun run --cwd apps/desktop typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'Typecheck failed' }
+          bun run --cwd apps/desktop test:internal
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop tests failed' }
+          bun test packages/cli/src/lib/machine-identity.test.ts
+      - name: Verify Windows task lifecycle
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        env:
+          CLAWDI_WINDOWS_TASK_TEST: '1'
+        run: bun test packages/cli/src/serve/windows-task.test.ts
+      - name: Install Linux packaging dependencies
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools rpm xvfb libgtk-3-0 libnss3 libasound2t64 libfuse2t64
+      - name: Build Linux release (never publishes)
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          CLAWDI_DESKTOP_VERSION: ${{ inputs.version }}
+          CLAWDI_DESKTOP_ARCH: ${{ matrix.arch }}
+          CLAWDI_DESKTOP_UPDATE_CHANNEL: ${{ inputs.channel }}
+          CLAWDI_DESKTOP_UPDATE_FEED_URL: ${{ steps.pages.outputs.base_url }}/desktop/${{ matrix.platform }}-${{ matrix.arch }}/
+        run: bun run --cwd apps/desktop package:release
+      - name: Build signed Windows release (never publishes)
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        env:
+          CLAWDI_DESKTOP_VERSION: ${{ inputs.version }}
+          CLAWDI_DESKTOP_ARCH: ${{ matrix.arch }}
+          CLAWDI_DESKTOP_UPDATE_CHANNEL: ${{ inputs.channel }}
+          CLAWDI_DESKTOP_UPDATE_FEED_URL: ${{ steps.pages.outputs.base_url }}/desktop/win32-${{ matrix.arch }}/
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          CLAWDI_WINDOWS_PUBLISHER: ${{ vars.CLAWDI_WINDOWS_PUBLISHER }}
+        run: bun run --cwd apps/desktop package:release
+      - name: Smoke Linux AppImage
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          CLAWDI_NATIVE_BINARY="$PWD/apps/desktop/resources/native/clawdi" \
+            bun test apps/desktop/src/appimage-runtime.test.ts
+          xvfb-run -a node apps/desktop/scripts/smoke-packaged.mjs \
+            "$PWD/$(echo apps/desktop/release/*.AppImage)" "$RUNNER_TEMP/release-smoke" welcome
+      - name: Smoke Windows application
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        run: |
+          $bundle = 'win-unpacked'
+          if ('${{ matrix.arch }}' -eq 'arm64') { $bundle = 'win-arm64-unpacked' }
+          node apps/desktop/scripts/smoke-packaged.mjs "$PWD/apps/desktop/release/$bundle/Clawdi.exe" "$env:RUNNER_TEMP/release-smoke" welcome
+      - name: Isolate release metadata assets
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          cd apps/desktop/release
+          channel=latest
+          if [ "$CHANNEL" = beta ]; then channel=beta; fi
+          metadata="$channel.yml"
+          if [ "$PLATFORM" = linux ]; then
+            metadata="$channel-linux.yml"
+            if [ "$ARCH" = arm64 ]; then metadata="$channel-linux-arm64.yml"; fi
+          fi
+          target="$channel-$PLATFORM-$ARCH.yml"
+          if [ "$metadata" != "$target" ]; then mv "$metadata" "$target"; fi
+      - name: Isolate Windows release metadata assets
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          $channel = if ($env:CHANNEL -eq 'stable') { 'latest' } else { 'beta' }
+          Move-Item "apps/desktop/release/$channel.yml" "apps/desktop/release/$channel-win32-$env:ARCH.yml"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: clawdi-${{ matrix.platform }}-${{ matrix.arch }}-${{ inputs.channel }}
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
+            apps/desktop/release/*.rpm
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest-*.yml
+            apps/desktop/release/beta-*.yml
+          if-no-files-found: error
+          retention-days: 14
+
   publish:
-    if: inputs.publish
-    needs: macos
+    if: inputs.publish && github.ref == 'refs/heads/main'
+    needs: [macos, platforms]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v8
         with:
-          pattern: clawdi-macos-*-${{ inputs.channel }}
+          pattern: clawdi-*-${{ inputs.channel }}
           merge-multiple: true
           path: release
       - name: Publish immutable Desktop release
@@ -123,7 +267,7 @@ jobs:
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
 
   update-site:
-    if: inputs.publish
+    if: inputs.publish && github.ref == 'refs/heads/main'
     needs: publish
     uses: ./.github/workflows/desktop-update-site.yml
     permissions:

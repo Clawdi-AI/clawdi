@@ -7,18 +7,23 @@
 	"private": true,
 	"type": "module",
 	"main": "dist/main.js",
+	"desktopName": "clawdi-desktop.desktop",
 	"scripts": {
 		"dev": "bun run scripts/dev.ts",
 		"build": "bun run scripts/build.ts",
+		"build:bundled": "bun run scripts/build.ts --bundled-dashboard",
 		"typecheck": "tsc --noEmit",
 		"test": "../../scripts/test.sh desktop",
 		"test:internal": "bun test src",
 		"prepare:native": "bun run scripts/prepare-native.ts",
 		"package:mac": "bun run scripts/package-preview.ts",
 		"package:linux": "bun run scripts/package-preview.ts",
-		"package:mac:release": "bun run scripts/package-release.ts"
+		"package:mac:release": "bun run scripts/package-release.ts",
+		"package:win": "bun run scripts/package-preview.ts",
+		"package:release": "bun run scripts/package-release.ts"
 	},
 	"dependencies": {
+		"builder-util-runtime": "9.7.0",
 		"electron-updater": "6.8.9"
 	},
 	"devDependencies": {
@@ -56,12 +61,20 @@
 			"clawdiUpdateChannel": "disabled"
 		},
 		"linux": {
+			"syncDesktopName": true,
 			"maintainer": "Clawdi <hello@clawdi.ai>",
 			"artifactName": "Clawdi-${version}-${arch}.${ext}",
 			"category": "Development",
 			"executableName": "clawdi-desktop",
 			"icon": "../web/public/clawdi-logo-transparent.png",
 			"target": [
+				{
+					"target": "AppImage",
+					"arch": [
+						"x64",
+						"arm64"
+					]
+				},
 				{
 					"target": "deb",
 					"arch": [
@@ -79,10 +92,12 @@
 			]
 		},
 		"deb": {
-			"packageName": "clawdi-desktop"
+			"packageName": "clawdi-desktop",
+			"publish": null
 		},
 		"rpm": {
-			"packageName": "clawdi-desktop"
+			"packageName": "clawdi-desktop",
+			"publish": null
 		},
 		"extraResources": [
 			{
@@ -114,6 +129,28 @@
 					]
 				}
 			]
+		},
+		"win": {
+			"icon": "../web/public/clawdi-logo-transparent.png",
+			"target": [
+				{
+					"target": "nsis",
+					"arch": [
+						"x64",
+						"arm64"
+					]
+				}
+			],
+			"artifactName": "Clawdi-${version}-win32-${arch}.${ext}",
+			"verifyUpdateCodeSignature": true
+		},
+		"nsis": {
+			"oneClick": false,
+			"perMachine": false,
+			"allowElevation": false,
+			"allowToChangeInstallationDirectory": true,
+			"include": "build/installer.nsh",
+			"deleteAppDataOnUninstall": false
 		}
 	}
 }

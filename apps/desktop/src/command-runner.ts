@@ -30,6 +30,7 @@ export function runCommand(
 	return new Promise((resolvePromise, reject) => {
 		const child = spawn(command, args, {
 			env: opts.env,
+			windowsHide: true,
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		let stdout = "";
@@ -83,7 +84,7 @@ export function runCommand(
 		});
 		child.stdin.on("error", () => {});
 		child.on("error", (error) => finish(error));
-		child.on("exit", (code, signal) => {
+		child.on("close", (code, signal) => {
 			if (terminationError) {
 				finish(terminationError);
 				return;

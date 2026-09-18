@@ -1,10 +1,11 @@
 import { lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize, resolve } from "node:path";
 import {
-	isNativeTarget,
+	isNativeBuildTarget,
 	MAX_NATIVE_MANIFEST_BYTES,
 	NATIVE_RELEASE_MANIFEST_NAME,
 	NATIVE_TARGETS,
+	type NativeBuildTarget,
 	type NativeTarget,
 	parseNativeReleaseManifest,
 } from "./native-release-manifest";
@@ -26,7 +27,7 @@ export interface NativeInstallOwnership {
 
 export interface NativeCompiledIdentity {
 	version: string;
-	target: NativeTarget;
+	target: NativeBuildTarget;
 }
 
 export const NATIVE_INSTALL_IDENTITY_NAME = "clawdi-native-install.txt";
@@ -172,7 +173,7 @@ export function currentNativeCompiledIdentity(): NativeCompiledIdentity | null {
 		typeof CLAWDI_CLI_VERSION === "undefined" ||
 		!isValidSemver(CLAWDI_CLI_VERSION) ||
 		typeof CLAWDI_NATIVE_TARGET === "undefined" ||
-		!isNativeTarget(CLAWDI_NATIVE_TARGET)
+		!isNativeBuildTarget(CLAWDI_NATIVE_TARGET)
 	) {
 		return null;
 	}

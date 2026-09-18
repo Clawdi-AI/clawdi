@@ -65,7 +65,7 @@ const APP_ASSETS = new Map([
 	["/connect-renderer.css", "connect-renderer.css"],
 	["/clawdi-logo.png", "clawdi-logo.png"],
 ]);
-const cli = new DesktopCliService();
+const cli = new DesktopCliService(app);
 let mainWindow: BrowserWindow | null = null;
 let connectWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -123,6 +123,8 @@ protocol.registerSchemesAsPrivileged([
 		privileges: { standard: true, secure: true, supportFetchAPI: true },
 	},
 ]);
+
+if (process.platform === "win32") app.setAppUserModelId("ai.clawdi.desktop");
 
 if (!app.requestSingleInstanceLock()) {
 	app.quit();
@@ -281,7 +283,6 @@ function isDocumentRequest(request: Request): boolean {
 
 async function initializeUpdates(): Promise<void> {
 	const channel = readPackageMetadataField("clawdiUpdateChannel");
-	const feedUrl = readPackageMetadataField("clawdiUpdateFeedUrl");
 	const shouldInspectSignature =
 		app.isPackaged &&
 		process.platform === "darwin" &&
@@ -293,8 +294,9 @@ async function initializeUpdates(): Promise<void> {
 		platform: process.platform,
 		isMacAppStore: process.mas === true,
 		channel,
-		feedUrl,
 		signature,
+		isAppImage: Boolean(process.env.APPIMAGE),
+		windowsPublisher: readPackageMetadataField("clawdiWindowsPublisher"),
 	});
 	if (!policy.enabled) console.info(`Desktop updates disabled: ${policy.reason}`);
 	updateController = new DesktopUpdateController({
@@ -398,9 +400,21 @@ async function maybePromptForUpdate(): Promise<void> {
 }
 
 function restartToInstallUpdate(): void {
-	if (activeCriticalOperations > 0 || !updateController) return;
-	quitting = true;
-	if (!updateController.installDownloadedUpdate()) quitting = false;
+	if (activeCriticalOperations > 0 || !updateController || updateState.status !== "ready") return;
+	runAsync(
+		"prepare the update",
+		withCriticalOperation(async () => {
+			const state = await cli.bootstrapState();
+			// Release Windows executable locks and prevent the old runtime surviving
+			// an update. Keep the installed unit as durable Sync intent.
+			if (state.daemon.installed) await cli.stopDaemon();
+			quitting = true;
+			if (!updateController?.installDownloadedUpdate()) {
+				quitting = false;
+				if (state.daemon.installed) await cli.restartDaemon();
+			}
+		}),
+	);
 }
 
 function registerIpc(): void {
@@ -821,6 +835,14 @@ function createApplicationMenu(): void {
 			],
 		});
 	}
+	if (process.platform !== "darwin")
+		template.unshift({
+			label: "File",
+			submenu: [
+				...updateActionMenuItems(),
+				{ role: "quit", enabled: activeCriticalOperations === 0 },
+			],
+		});
 	Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
@@ -1037,7 +1059,13 @@ function createTray(): void {
 	const trayIcon =
 		process.platform === "darwin"
 			? nativeImage.createFromPath(join(app.getAppPath(), "dist", "trayTemplate.png"))
-			: desktopIcon().resize({ width: 22, height: 22 });
+			: nativeImage.createFromPath(
+					join(
+						app.getAppPath(),
+						"dist",
+						process.platform === "win32" ? "trayWindows.png" : "trayLinux.png",
+					),
+				);
 	if (trayIcon.isEmpty()) throw new Error("Tray icon is missing.");
 	if (process.platform === "darwin") trayIcon.setTemplateImage(true);
 	tray = new Tray(trayIcon);

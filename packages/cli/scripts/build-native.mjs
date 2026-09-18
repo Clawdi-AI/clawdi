@@ -3,22 +3,23 @@ import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-	NATIVE_TARGET_CATALOG,
-	nativeTargetForPlatform,
+	NATIVE_BUILD_TARGET_CATALOG,
+	nativeBuildTargetForPlatform,
+	nativeExecutableName,
 } from "../src/lib/native-release-manifest.ts";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const cliRoot = resolve(scriptDir, "..");
 const packageJson = JSON.parse(readFileSync(resolve(cliRoot, "package.json"), "utf-8"));
 
-const hostNativeTarget = nativeTargetForPlatform(process.platform, process.arch);
+const hostNativeTarget = nativeBuildTargetForPlatform(process.platform, process.arch);
 const nativeTarget = process.env.CLAWDI_NATIVE_TARGET || hostNativeTarget;
 if (!nativeTarget)
 	throw new Error(`unsupported native build host: ${process.platform}-${process.arch}`);
-const targetEntry = NATIVE_TARGET_CATALOG.find((entry) => entry.target === nativeTarget);
+const targetEntry = NATIVE_BUILD_TARGET_CATALOG.find((entry) => entry.target === nativeTarget);
 if (!targetEntry) throw new Error(`unsupported native build target: ${nativeTarget}`);
 const outputDirectory = resolve(cliRoot, "dist-native", targetEntry.target);
-const outfile = resolve(outputDirectory, "clawdi");
+const outfile = resolve(outputDirectory, nativeExecutableName(targetEntry.target));
 const defaultApiUrl = process.env.CLAWDI_DEFAULT_API_URL || "https://cloud-api.clawdi.ai";
 const defaultDeployApiUrl = process.env.CLAWDI_DEFAULT_DEPLOY_API_URL || "https://api.clawdi.ai";
 

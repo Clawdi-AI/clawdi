@@ -2619,6 +2619,9 @@ async function touchHealthFile(agentType: string): Promise<void> {
 		const payload = JSON.stringify({
 			timestamp: new Date().toISOString(),
 			version: getCliVersion(),
+			// Node/Bun expose the absolute running executable here. For a compiled
+			// CLI this is the binary, not argv[1] (which would be "daemon").
+			executablePath: process.execPath,
 		});
 		await writeFile(p, `${payload}\n`);
 	} catch {
