@@ -95,20 +95,32 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libarchive-tools rpm xvfb libgtk-3-0 libnss3 libasound2t64 libfuse2t64
-      - name: Build native package
-        if: matrix.platform != 'win32'
+      - name: Build macOS preview package
+        if: matrix.platform == 'darwin'
         shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           CSC_FOR_PULL_REQUEST: 'true'
         run: bun run --cwd apps/desktop scripts/package-preview.ts
-      - name: Build Windows preview package
+      - name: Build Linux release candidate
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          CLAWDI_DESKTOP_VERSION: 0.0.0-beta.0
+          CLAWDI_DESKTOP_ARCH: ${{ matrix.arch }}
+          CLAWDI_DESKTOP_UPDATE_CHANNEL: beta
+          CLAWDI_DESKTOP_UPDATE_FEED_URL: https://example.invalid/clawdi/desktop/linux-${{ matrix.arch }}/
+        run: bun run --cwd apps/desktop package:release
+      - name: Build unsigned Windows release candidate
         if: matrix.platform == 'win32'
         shell: pwsh
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-          CSC_FOR_PULL_REQUEST: 'true'
-        run: bun run --cwd apps/desktop scripts/package-preview.ts
+          CLAWDI_DESKTOP_VERSION: 0.0.0-beta.0
+          CLAWDI_DESKTOP_ARCH: ${{ matrix.arch }}
+          CLAWDI_DESKTOP_UPDATE_CHANNEL: beta
+          CLAWDI_DESKTOP_UPDATE_FEED_URL: https://example.invalid/clawdi/desktop/win32-${{ matrix.arch }}/
+        run: bun run --cwd apps/desktop package:release
       - name: Verify embedded runtime
         if: matrix.platform != 'win32'
         shell: bash

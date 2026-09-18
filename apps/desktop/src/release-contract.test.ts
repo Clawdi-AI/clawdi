@@ -16,12 +16,12 @@ describe("Desktop release contract", () => {
 		const unsigned = readDesktopReleaseConfiguration(RELEASE_ENV, "win32");
 		const unsignedArgs = desktopReleaseBuilderArgs(unsigned);
 		expect(unsigned.windowsPublisher).toBeUndefined();
-		expect(unsignedArgs).toContain("--config.win.sign=false");
+		expect(unsignedArgs.some((arg) => arg.startsWith("--config.win.sign="))).toBeFalse();
 		expect(unsignedArgs).toContain("--config.win.verifyUpdateCodeSignature=false");
 		expect(unsignedArgs).toContain("--config.nsis.differentialPackage=false");
 		expect(unsignedArgs).toContain("--config.extraMetadata.clawdiUpdateChannel=disabled");
 		expect(unsignedArgs).toContain(
-			`--config.artifactName=Clawdi-\${version}-win32-\${arch}-unsigned.\${ext}`,
+			`--config.win.artifactName=Clawdi-\${version}-win32-\${arch}-unsigned.\${ext}`,
 		);
 		expect(unsignedArgs).not.toContain("--config.publish.provider=generic");
 		expect(() =>
@@ -71,6 +71,7 @@ describe("Desktop release contract", () => {
 	test("Linux emits AppImage updater artifacts alongside distribution packages", () => {
 		const args = desktopReleaseBuilderArgs(readDesktopReleaseConfiguration(RELEASE_ENV, "linux"));
 		for (const target of ["AppImage", "deb", "rpm"]) expect(args).toContain(target);
+		expect(args).toContain(`--config.linux.artifactName=Clawdi-\${version}-linux-\${arch}.\${ext}`);
 		expect(args).not.toContain("--config.mac.notarize=true");
 	});
 	test("builds the selected Intel target and rejects unsupported architectures", () => {
