@@ -24,41 +24,41 @@ describe("Desktop CLI command", () => {
 	test.skipIf(process.platform === "win32")(
 		"installs one Linux launcher without copying the bundled CLI",
 		async () => {
-		const fixture = createFixture();
-		const launcher = join(fixture.home, ".local", "bin", "clawdi");
-		const result = await installDesktopCliCommand({
-			platform: "linux",
-			target: fixture.target,
-			home: fixture.home,
-			userData: fixture.userData,
-			environmentPath: dirname(launcher),
-		});
+			const fixture = createFixture();
+			const launcher = join(fixture.home, ".local", "bin", "clawdi");
+			const result = await installDesktopCliCommand({
+				platform: "linux",
+				target: fixture.target,
+				home: fixture.home,
+				userData: fixture.userData,
+				environmentPath: dirname(launcher),
+			});
 
-		expect(result).toEqual({ status: "installed", path: launcher, pathReady: true });
-		expect(lstatSync(launcher).isSymbolicLink()).toBe(true);
-		expect(resolve(dirname(launcher), readlinkSync(launcher))).toBe(fixture.target);
+			expect(result).toEqual({ status: "installed", path: launcher, pathReady: true });
+			expect(lstatSync(launcher).isSymbolicLink()).toBe(true);
+			expect(resolve(dirname(launcher), readlinkSync(launcher))).toBe(fixture.target);
 		},
 	);
 
 	test.skipIf(process.platform === "win32")(
 		"does not replace an existing command owned by another installation",
 		async () => {
-		const fixture = createFixture();
-		const existingBin = join(fixture.root, "existing-bin");
-		const existing = join(existingBin, "clawdi");
-		mkdirSync(existingBin);
-		writeFileSync(existing, "#!/bin/sh\n", { mode: 0o755 });
+			const fixture = createFixture();
+			const existingBin = join(fixture.root, "existing-bin");
+			const existing = join(existingBin, "clawdi");
+			mkdirSync(existingBin);
+			writeFileSync(existing, "#!/bin/sh\n", { mode: 0o755 });
 
-		const result = await installDesktopCliCommand({
-			platform: "linux",
-			target: fixture.target,
-			home: fixture.home,
-			userData: fixture.userData,
-			environmentPath: existingBin,
-		});
+			const result = await installDesktopCliCommand({
+				platform: "linux",
+				target: fixture.target,
+				home: fixture.home,
+				userData: fixture.userData,
+				environmentPath: existingBin,
+			});
 
-		expect(result).toEqual({ status: "existing-command", path: existing });
-		expect(lstatSync(existing).isFile()).toBe(true);
+			expect(result).toEqual({ status: "existing-command", path: existing });
+			expect(lstatSync(existing).isFile()).toBe(true);
 		},
 	);
 
