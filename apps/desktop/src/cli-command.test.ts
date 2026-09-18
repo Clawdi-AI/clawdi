@@ -21,7 +21,9 @@ afterEach(() => {
 });
 
 describe("Desktop CLI command", () => {
-	test("installs one Linux launcher without copying the bundled CLI", async () => {
+	test.skipIf(process.platform === "win32")(
+		"installs one Linux launcher without copying the bundled CLI",
+		async () => {
 		const fixture = createFixture();
 		const launcher = join(fixture.home, ".local", "bin", "clawdi");
 		const result = await installDesktopCliCommand({
@@ -35,9 +37,12 @@ describe("Desktop CLI command", () => {
 		expect(result).toEqual({ status: "installed", path: launcher, pathReady: true });
 		expect(lstatSync(launcher).isSymbolicLink()).toBe(true);
 		expect(resolve(dirname(launcher), readlinkSync(launcher))).toBe(fixture.target);
-	});
+		},
+	);
 
-	test("does not replace an existing command owned by another installation", async () => {
+	test.skipIf(process.platform === "win32")(
+		"does not replace an existing command owned by another installation",
+		async () => {
 		const fixture = createFixture();
 		const existingBin = join(fixture.root, "existing-bin");
 		const existing = join(existingBin, "clawdi");
@@ -54,7 +59,8 @@ describe("Desktop CLI command", () => {
 
 		expect(result).toEqual({ status: "existing-command", path: existing });
 		expect(lstatSync(existing).isFile()).toBe(true);
-	});
+		},
+	);
 
 	test("does not replace a foreign launcher outside PATH", async () => {
 		const fixture = createFixture();
