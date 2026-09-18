@@ -19,7 +19,7 @@
  * every registered agent's sync engine. Older per-agent units are
  * still detected so setup/install can remove them during migration.
  *
- * Windows is not part of v1 — explicitly told by the user.
+ * Windows: current-user InteractiveToken Task Scheduler task.
  */
 
 import { execFileSync } from "node:child_process";
@@ -33,7 +33,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { homedir, platform } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { AGENT_TYPES, type AgentType } from "../adapters/agent-types";
 import {
 	type CurrentCliInvocation,
@@ -41,6 +41,15 @@ import {
 	resolveCurrentCliInvocation,
 	resolveCurrentCliLayout,
 } from "../lib/current-cli-invocation";
+import {
+	installWindowsTask,
+	restartWindowsTask,
+	stopWindowsTask,
+	uninstallWindowsTask,
+	windowsTaskInstalled,
+	windowsTaskRunning,
+	windowsTaskStatus,
+} from "./windows-task";
 
 interface InstallOpts {
 	/** Internal migration hook for removing pre-singleton per-agent units. */
@@ -113,6 +122,7 @@ const PERSISTED_ENV_KEYS = [
 	"CLAWDI_API_URL",
 	"CLAWDI_STATE_DIR",
 	"CLAWDI_NO_AUTO_UPDATE",
+	"CLAWDI_DESKTOP_RUNTIME",
 	"CLAWDI_DAEMON_RPC_HOST",
 	"CLAWDI_DAEMON_RPC_PORT",
 	"CLAWDI_DAEMON_RPC_ALLOW_REMOTE",
@@ -183,7 +193,12 @@ function currentDaemonInvocation(opts: InstallOpts): CurrentCliInvocation {
 				(platform() === "linux" &&
 					layout.executablePath === "/opt/Clawdi/resources/native/clawdi" &&
 					existsSync("/opt/Clawdi/resources/app.asar") &&
-					existsSync("/opt/Clawdi/clawdi-desktop")));
+					existsSync("/opt/Clawdi/clawdi-desktop")) ||
+				(platform() === "win32" && existsSync(join(dirname(layout.resourceRoot), "app.asar"))) ||
+				(platform() === "linux" &&
+					process.env.CLAWDI_DESKTOP_RUNTIME &&
+					resolve(process.env.CLAWDI_DESKTOP_RUNTIME) === layout.resourceRoot &&
+					existsSync(join(layout.resourceRoot, "desktop-runtime.json"))));
 		if (layout.kind === "native" && !layout.nativeOwnership && !applicationManagedNative) {
 			throw new Error(
 				"an unowned native executable cannot install a daemon; install the native distribution or use the CLI bundled with Clawdi Desktop",
@@ -224,6 +239,11 @@ export function install(opts: InstallOpts = {}): {
 	const p = platform();
 	if (p === "darwin") return installLaunchd(opts);
 	if (p === "linux") return installSystemd(opts);
+	if (p === "win32")
+		return installWindowsTask(clawdiRoot(), currentDaemonInvocation(opts), [
+			{ key: "HOME", value: home() },
+			...capturedEnv(opts),
+		]);
 	throw new Error(`unsupported platform for service install: ${p}`);
 }
 
@@ -231,6 +251,7 @@ export function uninstall(opts: InstallOpts = {}): { removed: boolean } {
 	const p = platform();
 	if (p === "darwin") return uninstallLaunchd(opts);
 	if (p === "linux") return uninstallSystemd(opts);
+	if (p === "win32") return uninstallWindowsTask(clawdiRoot());
 	throw new Error(`unsupported platform for service uninstall: ${p}`);
 }
 
@@ -238,6 +259,7 @@ export function statusLines(opts: InstallOpts = {}): string[] {
 	const p = platform();
 	if (p === "darwin") return statusLaunchd(opts);
 	if (p === "linux") return statusSystemd(opts);
+	if (p === "win32") return windowsTaskStatus();
 	return [`unsupported platform: ${p}`];
 }
 
@@ -250,6 +272,8 @@ export function restart(opts: InstallOpts = {}): void {
 		restartLaunchd(opts);
 	} else if (p === "linux") {
 		restartSystemd(opts);
+	} else if (p === "win32") {
+		restartWindowsTask();
 	} else {
 		throw new Error(`unsupported platform for service restart: ${p}`);
 	}
@@ -262,6 +286,8 @@ export function stop(opts: InstallOpts = {}): void {
 		stopLaunchd(opts);
 	} else if (p === "linux") {
 		stopSystemd(opts);
+	} else if (p === "win32") {
+		stopWindowsTask();
 	} else {
 		throw new Error(`unsupported platform for service stop: ${p}`);
 	}
@@ -518,7 +544,7 @@ function installSystemd(opts: InstallOpts): {
 				"Set HOME to a clean path before running install.",
 		);
 	}
-	const escapedHome = homeValue.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+	const escapedHome = homeValue.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/%/g, "%%");
 
 	// Same control-char + quote escaping for every captured env
 	// value. Reject control chars outright (would let an attacker
@@ -532,7 +558,7 @@ function installSystemd(opts: InstallOpts): {
 				`Env var ${key} contains control characters; refusing to write systemd unit.`,
 			);
 		}
-		const esc = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+		const esc = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/%/g, "%%");
 		envLines.push(`Environment="${key}=${esc}"`);
 	}
 
@@ -583,7 +609,8 @@ WantedBy=default.target
 	}
 	const activated =
 		tryRun(["systemctl", "--user", "daemon-reload"]) &&
-		tryRun(["systemctl", "--user", "enable", "--now", unitFileName(opts.agent)]);
+		tryRun(["systemctl", "--user", "enable", "--now", unitFileName(opts.agent)]) &&
+		(!replaced || tryRun(["systemctl", "--user", "restart", unitFileName(opts.agent)]));
 	if (!activated) {
 		throw new Error(
 			`Wrote daemon unit to ${path}, but systemctl activation failed. ` +
@@ -683,12 +710,12 @@ function escapeXml(s: string): string {
 }
 
 function shellEscape(s: string): string {
-	// systemd unit ExecStart accepts a quoted form for paths
-	// containing spaces. Wrap in double-quotes and escape any
-	// embedded ones — sufficient for the macOS-ish HOME paths
-	// we'd ever see in practice.
-	if (!/[\s"']/.test(s)) return s;
-	return `"${s.replace(/"/g, '\\"')}"`;
+	// ExecStart is parsed by systemd, not a shell. Quote the entire argument,
+	// including systemd's environment and specifier expansion characters.
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: reject directive injection
+	if (/[\x00-\x1F\x7F]/.test(s)) throw new Error("Daemon argument contains control characters.");
+	if (!/[\\\s"'%$]/.test(s)) return s;
+	return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/%/g, "%%").replace(/\$/g, "$$$$")}"`;
 }
 
 /** Scan the OS supervisor for every clawdi daemon unit installed
@@ -716,8 +743,25 @@ export type InstalledDaemonTarget = AgentType | "daemon";
 
 export function isSingletonDaemonInstalled(): boolean {
 	const p = platform();
+	if (p === "win32") return windowsTaskInstalled();
 	const path = p === "darwin" ? singletonPlistPath() : p === "linux" ? unitPath() : null;
 	return path ? existsSync(path) : false;
+}
+
+/** Health files survive a stop. Query the supervisor before reporting a live
+ * daemon so update/startup recovery cannot mistake a fresh old heartbeat for
+ * the new process. */
+export function isSingletonDaemonRunning(): boolean {
+	const p = platform();
+	if (p === "win32") return windowsTaskRunning();
+	if (p === "linux") {
+		return tryRunCapture(["systemctl", "--user", "is-active", unitFileName()])?.trim() === "active";
+	}
+	if (p === "darwin") {
+		const state = tryRunCapture(["launchctl", "list", unitName()]);
+		return state !== null && /"?PID"?\s*=\s*[1-9]\d*/.test(state);
+	}
+	return false;
 }
 
 export function listInstalledDaemonTargets(): InstalledDaemonTarget[] {
@@ -742,6 +786,7 @@ export function readHealth(stateDir: string): {
 	ageSeconds: number | null;
 	timestamp: string | null;
 	version: string | null;
+	executablePath?: string;
 } {
 	const p = join(stateDir, "health");
 	if (!existsSync(p)) return { exists: false, ageSeconds: null, timestamp: null, version: null };
@@ -753,12 +798,19 @@ export function readHealth(stateDir: string): {
 		// only shape: keep `timestamp = raw`, `version = null`.
 		if (raw.startsWith("{")) {
 			try {
-				const parsed = JSON.parse(raw) as { timestamp?: string; version?: string };
+				const parsed = JSON.parse(raw) as {
+					timestamp?: string;
+					version?: string;
+					executablePath?: unknown;
+				};
 				return {
 					exists: true,
 					ageSeconds: age,
 					timestamp: parsed.timestamp ?? null,
 					version: parsed.version ?? null,
+					...(typeof parsed.executablePath === "string"
+						? { executablePath: parsed.executablePath }
+						: {}),
 				};
 			} catch {
 				/* fall through to legacy interpretation */

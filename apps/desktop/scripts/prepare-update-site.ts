@@ -30,8 +30,10 @@ const releases = pages.flat().filter(record);
 const desktop = join(output, "desktop");
 mkdirSync(desktop, { recursive: true });
 let channels = 0;
-for (const { channel, arch } of (["stable", "beta"] as const).flatMap((channel) =>
-	(["arm64", "x64"] as const).map((arch) => ({ channel, arch })),
+for (const { channel, arch, platform } of (["stable", "beta"] as const).flatMap((channel) =>
+	(["darwin", "linux", "win32"] as const).flatMap((platform) =>
+		(["arm64", "x64"] as const).map((arch) => ({ channel, arch, platform })),
+	),
 )) {
 	const pattern =
 		channel === "stable"
@@ -50,11 +52,32 @@ for (const { channel, arch } of (["stable", "beta"] as const).flatMap((channel) 
 	const { release, version } = selected;
 	if (!Array.isArray(release.assets)) throw new Error("Missing release assets.");
 	const assets = release.assets;
-	const filename = channel === "stable" ? "latest-mac.yml" : "beta-mac.yml";
-	const assetName = arch === "arm64" ? filename : filename.replace(".yml", "-x64.yml");
+	const base = channel === "stable" ? "latest" : "beta";
+	const suffix =
+		platform === "darwin"
+			? "-mac"
+			: platform === "linux"
+				? `-linux${arch === "arm64" ? "-arm64" : ""}`
+				: "";
+	const filename = `${base}${suffix}.yml`;
+	const assetName =
+		platform === "darwin"
+			? arch === "arm64"
+				? filename
+				: filename.replace(".yml", "-x64.yml")
+			: `${base}-${platform}-${arch}.yml`;
 	const asset = assets.find((item: unknown) => record(item) && item.name === assetName);
+	const platformMetadataPattern = new RegExp(`-${platform}-(x64|arm64)\\.yml$`);
+	const hasPlatformMatrix =
+		platform !== "darwin" &&
+		assets.some(
+			(item: unknown) =>
+				record(item) && typeof item.name === "string" && platformMetadataPattern.test(item.name),
+		);
+	if (!asset && hasPlatformMatrix)
+		throw new Error(`Incomplete Desktop release: missing ${assetName}.`);
 	// Releases predating Intel support contain only the arm64 metadata.
-	if (!asset && arch === "x64") continue;
+	if (!asset && (arch === "x64" || platform !== "darwin")) continue;
 	if (!record(asset) || typeof asset.id !== "number") throw new Error(`Missing ${filename}.`);
 	const metadata: unknown = parse(
 		gh([
@@ -64,11 +87,22 @@ for (const { channel, arch } of (["stable", "beta"] as const).flatMap((channel) 
 			"Accept: application/octet-stream",
 		]),
 	);
-	if (!record(metadata) || metadata.version !== version || !Array.isArray(metadata.files)) {
+	if (
+		!record(metadata) ||
+		metadata.version !== version ||
+		!Array.isArray(metadata.files) ||
+		metadata.files.length === 0
+	) {
 		throw new Error(`Invalid ${filename}.`);
 	}
 	const assetUrl = (name: unknown): string => {
-		if (typeof name !== "string" || !/^[\w.+-]+\.(zip|dmg)$/.test(name))
+		const artifactPattern =
+			platform === "linux"
+				? /^[\w.+-]+\.AppImage$/
+				: platform === "win32"
+					? /^[\w.+-]+\.exe$/
+					: /^[\w.+-]+\.(zip|dmg)$/;
+		if (typeof name !== "string" || !artifactPattern.test(name))
 			throw new Error("Invalid artifact filename.");
 		const artifact = assets.find((item: unknown) => record(item) && item.name === name);
 		if (!record(artifact)) throw new Error(`Missing artifact ${name}.`);
@@ -79,7 +113,8 @@ for (const { channel, arch } of (["stable", "beta"] as const).flatMap((channel) 
 		file.url = assetUrl(file.url);
 	}
 	if (metadata.path !== undefined) metadata.path = assetUrl(metadata.path);
-	const directory = arch === "arm64" ? desktop : join(desktop, "darwin-x64");
+	const directory =
+		platform === "darwin" && arch === "arm64" ? desktop : join(desktop, `${platform}-${arch}`);
 	mkdirSync(directory, { recursive: true });
 	writeFileSync(join(directory, filename), stringify(metadata));
 	channels++;

@@ -13,18 +13,24 @@ import { readMacCodeSignature } from "../src/update-signature";
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const releaseRoot = join(desktopRoot, "release");
 const configuration = readDesktopReleaseConfiguration(process.env, process.platform);
+const signedWindows = configuration.platform === "win32" && Boolean(configuration.windowsPublisher);
 
 rmSync(releaseRoot, { recursive: true, force: true });
 await run("bun", ["run", "build"]);
 await run("bun", ["run", "prepare:native"], {
-	CLAWDI_NATIVE_TARGET: `darwin-${configuration.arch}`,
+	CLAWDI_NATIVE_TARGET: `${configuration.platform}-${configuration.arch}`,
 });
 await run("bun", [
 	...desktopReleaseBuilderArgs(configuration),
 	`--config.afterPack=${join(desktopRoot, "scripts/after-pack.mjs")}`,
 ]);
-await verifyReleaseSignature();
-await verifyReleaseArtifacts(configuration.version);
+verifyPackagedUpdateConfiguration();
+if (configuration.platform === "darwin") {
+	await verifyReleaseSignature();
+	await verifyReleaseArtifacts(configuration.version);
+} else {
+	await verifyPlatformArtifacts();
+}
 
 async function verifyReleaseSignature(): Promise<void> {
 	const appBundle = join(
@@ -45,7 +51,6 @@ async function verifyReleaseSignature(): Promise<void> {
 		platform: "darwin",
 		isMacAppStore: false,
 		channel: configuration.channel,
-		feedUrl: configuration.updateFeedUrl,
 		signature: existsSync(executable) ? signature : null,
 	});
 	if (!policy.enabled) {
@@ -140,4 +145,119 @@ async function run(
 	});
 	const exitCode = await child.exited;
 	if (exitCode !== 0) throw new Error(`${command} failed with exit ${exitCode}.`);
+}
+
+async function verifyPlatformArtifacts(): Promise<void> {
+	const files = readdirSync(releaseRoot);
+	const windows = configuration.platform === "win32";
+	if (!windows || signedWindows) {
+		const suffix = windows ? "" : `-linux${configuration.arch === "arm64" ? "-arm64" : ""}`;
+		const metadata = parse(
+			readFileSync(
+				join(releaseRoot, `${configuration.channel === "stable" ? "latest" : "beta"}${suffix}.yml`),
+				"utf8",
+			),
+		);
+		if (
+			!isRecord(metadata) ||
+			metadata.version !== configuration.version ||
+			!Array.isArray(metadata.files) ||
+			!metadata.files.length
+		)
+			throw new Error("Invalid update metadata.");
+		if (
+			!windows &&
+			(metadata.files.length !== 1 ||
+				!isRecord(metadata.files[0]) ||
+				typeof metadata.files[0].url !== "string" ||
+				!metadata.files[0].url.endsWith(".AppImage"))
+		) {
+			throw new Error("Linux update metadata must contain only the AppImage.");
+		}
+		for (const entry of metadata.files) {
+			if (!isRecord(entry) || typeof entry.url !== "string" || !files.includes(entry.url))
+				throw new Error("Missing update artifact.");
+			const bytes = readFileSync(join(releaseRoot, entry.url));
+			if (entry.sha512 !== createHash("sha512").update(bytes).digest("base64"))
+				throw new Error("Update checksum mismatch.");
+		}
+	} else if (
+		files.some(
+			(name) => name.endsWith(".blockmap") || /^(latest|beta)(?:-[\w-]+)?\.yml$/.test(name),
+		)
+	) {
+		throw new Error("Unsigned Windows releases must not contain update metadata.");
+	}
+	const extensions = windows ? [".exe"] : [".AppImage", ".deb", ".rpm"];
+	for (const extension of extensions) {
+		const matches = files.filter(
+			(name) => name.endsWith(extension) && name.includes(configuration.version),
+		);
+		if (matches.length !== 1) throw new Error(`Expected one ${extension} installer.`);
+		if (windows && !signedWindows && !matches[0]?.endsWith("-unsigned.exe"))
+			throw new Error("Unsigned Windows installer must be named explicitly.");
+		if (signedWindows) await verifyAuthenticode(join(releaseRoot, matches[0] ?? ""));
+	}
+	const unpacked = windows
+		? `win${configuration.arch === "arm64" ? "-arm64" : ""}-unpacked`
+		: `linux${configuration.arch === "arm64" ? "-arm64" : ""}-unpacked`;
+	const cli = join(releaseRoot, unpacked, "resources", "native", windows ? "clawdi.exe" : "clawdi");
+	if (signedWindows) {
+		await verifyAuthenticode(cli);
+		await verifyAuthenticode(join(releaseRoot, unpacked, "Clawdi.exe"));
+		const config = parse(
+			readFileSync(join(releaseRoot, unpacked, "resources", "app-update.yml"), "utf8"),
+		);
+		const publishers = Array.isArray(config?.publisherName)
+			? config.publisherName
+			: [config?.publisherName];
+		if (!publishers.includes(configuration.windowsPublisher))
+			throw new Error("Missing update publisher pin.");
+	}
+	if (configuration.arch === process.arch) await run(cli, ["update", "--native-identity"]);
+}
+
+async function verifyAuthenticode(path: string): Promise<void> {
+	await run(
+		"powershell.exe",
+		[
+			"-NoProfile",
+			"-NonInteractive",
+			"-Command",
+			"$s = Get-AuthenticodeSignature -LiteralPath $env.CLAWDI_VERIFY_FILE; if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -cne $env.CLAWDI_VERIFY_PUBLISHER) { throw 'Invalid Authenticode signature or full publisher Subject DN' }",
+		],
+		{ CLAWDI_VERIFY_FILE: path, CLAWDI_VERIFY_PUBLISHER: configuration.windowsPublisher ?? "" },
+	);
+}
+
+function verifyPackagedUpdateConfiguration(): void {
+	const resources =
+		configuration.platform === "darwin"
+			? join(
+					releaseRoot,
+					configuration.arch === "arm64" ? "mac-arm64" : "mac",
+					"Clawdi.app",
+					"Contents",
+					"Resources",
+				)
+			: join(
+					releaseRoot,
+					`${configuration.platform === "win32" ? "win" : "linux"}${configuration.arch === "arm64" ? "-arm64" : ""}-unpacked`,
+					"resources",
+				);
+	const configPath = join(resources, "app-update.yml");
+	if (configuration.platform === "win32" && !signedWindows) {
+		if (existsSync(configPath))
+			throw new Error("Unsigned Windows package must not contain app-update.yml.");
+		return;
+	}
+	const config: unknown = parse(readFileSync(configPath, "utf8"));
+	if (
+		!isRecord(config) ||
+		config.provider !== "generic" ||
+		config.url !== configuration.updateFeedUrl ||
+		config.channel !== (configuration.channel === "stable" ? "latest" : "beta")
+	) {
+		throw new Error("Packaged app-update.yml does not match the release feed/channel.");
+	}
 }

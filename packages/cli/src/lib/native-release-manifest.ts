@@ -17,6 +17,28 @@ export const NATIVE_TARGET_CATALOG = [
 export type NativeTarget = (typeof NATIVE_TARGET_CATALOG)[number]["target"];
 export const NATIVE_TARGETS = NATIVE_TARGET_CATALOG.map((entry) => entry.target);
 
+// Desktop can compile Windows binaries without extending the standalone v1
+// archive/manifest/update protocol. That publication catalog stays unchanged.
+export const NATIVE_BUILD_TARGET_CATALOG = [
+	...NATIVE_TARGET_CATALOG,
+	{ target: "win32-x64", bunTarget: "bun-windows-x64" },
+	{ target: "win32-arm64", bunTarget: "bun-windows-arm64" },
+] as const;
+export type NativeBuildTarget = (typeof NATIVE_BUILD_TARGET_CATALOG)[number]["target"];
+
+export function isNativeBuildTarget(value: string): value is NativeBuildTarget {
+	return NATIVE_BUILD_TARGET_CATALOG.some((entry) => entry.target === value);
+}
+
+export function nativeBuildTargetForPlatform(
+	platform: NodeJS.Platform = process.platform,
+	arch: string = process.arch,
+): NativeBuildTarget | null {
+	return platform === "win32" && (arch === "x64" || arch === "arm64")
+		? `win32-${arch}`
+		: nativeTargetForPlatform(platform, arch);
+}
+
 export interface NativeReleaseArtifact {
 	target: NativeTarget;
 	asset: string;
@@ -106,4 +128,8 @@ export function nativeReleaseBaseUrl(
 		throw new Error("invalid native release repository");
 	}
 	return `https://github.com/${repository}/releases/download/clawdi-cli-v${version}`;
+}
+
+export function nativeExecutableName(target: NativeBuildTarget): string {
+	return target.startsWith("win32-") ? "clawdi.exe" : "clawdi";
 }

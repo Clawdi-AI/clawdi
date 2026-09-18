@@ -37,7 +37,7 @@ jobs:
 
       - name: Build ad-hoc signed preview DMG
         run: |
-          bun run --cwd apps/desktop build
+          bun run --cwd apps/desktop build:bundled
           CLAWDI_NATIVE_TARGET=darwin-arm64 bun run --cwd apps/desktop prepare:native
           CSC_FOR_PULL_REQUEST=true node apps/desktop/node_modules/electron-builder/cli.js \
             --projectDir apps/desktop \

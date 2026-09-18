@@ -12,6 +12,67 @@ const RELEASE_ENV = {
 } as const;
 
 describe("Desktop release contract", () => {
+	test("builds explicit unsigned Windows installers or pins complete signing credentials", () => {
+		const unsigned = readDesktopReleaseConfiguration(RELEASE_ENV, "win32");
+		const unsignedArgs = desktopReleaseBuilderArgs(unsigned);
+		expect(unsigned.windowsPublisher).toBeUndefined();
+		expect(unsignedArgs).toContain("--config.win.sign=false");
+		expect(unsignedArgs).toContain("--config.win.verifyUpdateCodeSignature=false");
+		expect(unsignedArgs).toContain("--config.nsis.differentialPackage=false");
+		expect(unsignedArgs).toContain("--config.extraMetadata.clawdiUpdateChannel=disabled");
+		expect(unsignedArgs).toContain(
+			`--config.artifactName=Clawdi-\${version}-win32-\${arch}-unsigned.\${ext}`,
+		);
+		expect(unsignedArgs).not.toContain("--config.publish.provider=generic");
+		expect(() =>
+			readDesktopReleaseConfiguration({ ...RELEASE_ENV, WIN_CSC_LINK: "certificate.p12" }, "win32"),
+		).toThrow("together");
+		const release = readDesktopReleaseConfiguration(
+			{
+				...RELEASE_ENV,
+				WIN_CSC_LINK: "certificate.p12",
+				WIN_CSC_KEY_PASSWORD: "test-password",
+				CLAWDI_WINDOWS_PUBLISHER: "CN=Clawdi Inc., O=Clawdi Inc., C=US",
+			},
+			"win32",
+		);
+		expect(desktopReleaseBuilderArgs(release)).toContain("--win");
+		expect(desktopReleaseBuilderArgs(release)).toContain(
+			"--config.win.signtoolOptions.publisherName=CN=Clawdi Inc., O=Clawdi Inc., C=US",
+		);
+		expect(desktopReleaseBuilderArgs(release)).toContain("--config.forceCodeSigning=true");
+		for (const publisher of ["Clawdi Inc.", "CN=Clawdi Inc."]) {
+			expect(() =>
+				readDesktopReleaseConfiguration(
+					{
+						...RELEASE_ENV,
+						WIN_CSC_LINK: "certificate.p12",
+						WIN_CSC_KEY_PASSWORD: "test-password",
+						CLAWDI_WINDOWS_PUBLISHER: publisher,
+					},
+					"win32",
+				),
+			).toThrow("complete certificate Subject DN");
+		}
+		expect(
+			readDesktopReleaseConfiguration(
+				{
+					...RELEASE_ENV,
+					WIN_CSC_LINK: "certificate.p12",
+					WIN_CSC_KEY_PASSWORD: "test-password",
+					CLAWDI_WINDOWS_PUBLISHER:
+						'CN="Clawdi, Inc.", O=Clawdi Inc., L=New York, S=New York, C=US',
+				},
+				"win32",
+			).windowsPublisher,
+		).toContain('CN="Clawdi, Inc."');
+	});
+
+	test("Linux emits AppImage updater artifacts alongside distribution packages", () => {
+		const args = desktopReleaseBuilderArgs(readDesktopReleaseConfiguration(RELEASE_ENV, "linux"));
+		for (const target of ["AppImage", "deb", "rpm"]) expect(args).toContain(target);
+		expect(args).not.toContain("--config.mac.notarize=true");
+	});
 	test("builds the selected Intel target and rejects unsupported architectures", () => {
 		const intel = readDesktopReleaseConfiguration(
 			{ ...RELEASE_ENV, CLAWDI_DESKTOP_ARCH: "x64" },
@@ -67,6 +128,7 @@ describe("Desktop release contract", () => {
 
 	test("accepts API key notarization without a separate Team ID", () => {
 		expect(readDesktopReleaseConfiguration(RELEASE_ENV, "darwin")).toEqual({
+			platform: "darwin",
 			version: "1.2.3",
 			arch: "arm64",
 			channel: "stable",
@@ -85,7 +147,7 @@ describe("Desktop release contract", () => {
 		expect(args).toContain("--config.dmg.sign=true");
 		expect(args).toContain("--config.extraMetadata.clawdiUpdateChannel=stable");
 		expect(args).toContain(
-			"--config.extraMetadata.clawdiUpdateFeedUrl=https://downloads.example.test/clawdi/desktop/stable/",
+			"--config.publish.url=https://downloads.example.test/clawdi/desktop/stable/",
 		);
 		expect(args).toContain("--config.publish.provider=generic");
 	});

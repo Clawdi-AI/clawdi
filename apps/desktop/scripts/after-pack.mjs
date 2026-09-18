@@ -6,7 +6,12 @@ export default async function afterPack(context) {
 	const productName = context.packager.appInfo.productFilename;
 	const executable = mac
 		? join(context.appOutDir, `${productName}.app`, "Contents", "MacOS", productName)
-		: join(context.appOutDir, context.packager.executableName);
+		: join(
+				context.appOutDir,
+				context.electronPlatformName === "win32"
+					? `${productName}.exe`
+					: context.packager.executableName,
+			);
 	await flipFuses(executable, {
 		version: FuseVersion.V1,
 		resetAdHocDarwinSignature: mac,
@@ -15,7 +20,8 @@ export default async function afterPack(context) {
 		[FuseV1Options.EnableCookieEncryption]: true,
 		[FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
 		[FuseV1Options.EnableNodeCliInspectArguments]: false,
-		[FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: mac,
+		[FuseV1Options.EnableEmbeddedAsarIntegrityValidation]:
+			mac || context.electronPlatformName === "win32",
 		[FuseV1Options.OnlyLoadAppFromAsar]: true,
 		[FuseV1Options.LoadBrowserProcessSpecificV8Snapshot]: false,
 		[FuseV1Options.GrantFileProtocolExtraPrivileges]: false,

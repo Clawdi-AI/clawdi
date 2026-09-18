@@ -69,6 +69,7 @@ import {
 import {
 	install as installService,
 	isSingletonDaemonInstalled,
+	isSingletonDaemonRunning,
 	listInstalledAgents,
 	readHealth,
 	restart as restartService,
@@ -85,6 +86,7 @@ import {
 import { getDaemonControlTokenPath, getServeLogPath, getServeStateDir } from "../serve/paths";
 import { runSyncEngine } from "../serve/sync-engine";
 import { clearAccountMismatchedVaultFiles } from "../serve/vault-sync";
+import { powershellLiteral, windowsTaskLogPath } from "../serve/windows-task";
 import { daemonAutoUpdateOnce, startDaemonAutoUpdate } from "./update";
 
 type ServeOpts = Record<string, unknown>;
@@ -133,6 +135,7 @@ interface DaemonDoctorReport {
 	cli_version: string;
 	registered_agents: number;
 	singleton_unit_installed: boolean;
+	singleton_unit_running: boolean;
 	legacy_daemon_units: AgentType[];
 	control_rpc: {
 		token_path: string;
@@ -142,6 +145,7 @@ interface DaemonDoctorReport {
 	agents: Array<
 		DaemonStatusReport & {
 			daemon_version: string | null;
+			daemon_executable: string | null;
 			version_drift: boolean;
 			heartbeat: {
 				age_seconds: number | null;
@@ -523,11 +527,31 @@ export async function serveLogs(opts: ServeLogsOpts): Promise<void> {
 		}
 		cmd = "tail";
 		args = opts.follow ? ["-n", "200", "-F", path] : ["-n", "200", path];
+	} else if (platform === "win32") {
+		const path = windowsTaskLogPath(getClawdiDir());
+		if (!existsSync(path)) {
+			console.error("No daemon log file yet. Enable Sync first.");
+			process.exit(1);
+		}
+		cmd = "powershell.exe";
+		args = [
+			"-NoProfile",
+			"-NonInteractive",
+			"-EncodedCommand",
+			Buffer.from(
+				`Get-Content -LiteralPath ${powershellLiteral(path)} -Tail 200${opts.follow ? " -Wait" : ""}`,
+				"utf16le",
+			).toString("base64"),
+		];
 	} else {
 		console.error(`unsupported platform for daemon logs: ${platform}`);
 		process.exit(1);
 	}
-	const proc = spawn(cmd, args, { stdio: "inherit" });
+	const proc = spawn(cmd, args, { stdio: "inherit", windowsHide: true });
+	proc.on("error", () => {
+		console.error("Could not open daemon logs.");
+		process.exitCode = 1;
+	});
 	proc.on("exit", (code) => process.exit(code ?? 0));
 }
 
@@ -609,6 +633,7 @@ function buildDoctorReport(): DaemonDoctorReport {
 		return {
 			...report,
 			daemon_version: report.health.version,
+			daemon_executable: report.health.executablePath ?? null,
 			version_drift: report.health.version !== null && report.health.version !== cliVersion,
 			heartbeat: report.health.exists
 				? { age_seconds: report.health.ageSeconds, status }
@@ -621,6 +646,7 @@ function buildDoctorReport(): DaemonDoctorReport {
 		cli_version: cliVersion,
 		registered_agents: registered.length,
 		singleton_unit_installed: isSingletonDaemonInstalled(),
+		singleton_unit_running: isSingletonDaemonRunning(),
 		legacy_daemon_units: listInstalledAgents(),
 		control_rpc: {
 			token_path: getDaemonControlTokenPath(),
@@ -1181,13 +1207,18 @@ function daemonLogsRpc(params: unknown): unknown {
 			};
 		}
 	}
-	if (currentPlatform === "darwin") {
-		const stderr = getServeLogPath("daemon", "stderr");
-		const output = existsSync(stderr) ? readFileSync(stderr, "utf-8") : "";
+	if (currentPlatform === "darwin" || currentPlatform === "win32") {
+		const windows = currentPlatform === "win32";
+		const stderr = windows
+			? windowsTaskLogPath(getClawdiDir())
+			: getServeLogPath("daemon", "stderr");
+		const output = existsSync(stderr)
+			? readFileSync(stderr, windows ? "utf16le" : "utf8").replace(/^\uFEFF/, "")
+			: "";
 		return {
 			platform: currentPlatform,
 			source: "file",
-			stdout: getServeLogPath("daemon", "stdout"),
+			stdout: windows ? stderr : getServeLogPath("daemon", "stdout"),
 			stderr,
 			lines: tailLogLines(splitLogLines(output), limit),
 		};
