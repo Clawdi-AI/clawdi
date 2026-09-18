@@ -43,7 +43,12 @@ try { $task = $folder.GetTask($name) } catch {
 `;
 const stop = `
 if ($task) {
-  $task.Stop(0)
+  foreach ($instance in @($task.GetInstances(0))) {
+    $enginePid = [int]$instance.EnginePID
+    if ($enginePid -le 0) { throw 'Clawdi task reported an invalid engine PID.' }
+    & "$env:SystemRoot\\System32\\taskkill.exe" /PID $enginePid /T /F | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Unable to stop Clawdi task process tree ($enginePid)." }
+  }
   $deadline = [DateTime]::UtcNow.AddSeconds(20)
   while ($task.GetInstances(0).Count -gt 0) {
     if ([DateTime]::UtcNow -gt $deadline) { throw 'Clawdi task did not stop.' }
@@ -73,8 +78,8 @@ export function installWindowsTask(
 		throw new Error("Invalid Windows task environment key.");
 	}
 	const replaced = windowsTaskInstalled();
-	// Stop the old action before replacing its launcher. Task Scheduler owns the
-	// action's process tree; no PID files, shell 'kill', or detached children.
+	// Stop the exact Task Scheduler engine trees before replacing the launcher.
+	// This avoids stale PID files and still terminates PowerShell's CLI child.
 	powershell(connect + stop);
 	const directory = join(root, "serve", "windows-task");
 	mkdirSync(directory, { recursive: true });
