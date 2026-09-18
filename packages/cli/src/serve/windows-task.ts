@@ -87,7 +87,8 @@ $acl.SetOwner($sid)
 $acl.SetAccessRuleProtection($true, $false)
 $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
 $acl.AddAccessRule($rule)
-Set-Acl -LiteralPath ${powershellLiteral(directory)} -AclObject $acl
+$directoryInfo = New-Object System.IO.DirectoryInfo(${powershellLiteral(directory)})
+$directoryInfo.SetAccessControl($acl)
 `);
 	const launcher = join(directory, "run.ps1");
 	const log = windowsTaskLogPath(root);
