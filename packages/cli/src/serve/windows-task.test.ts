@@ -45,22 +45,24 @@ beat(); console.log('Clawdi 日志 fixture'); setInterval(beat, 100);`,
 				{ key: "CLAWDI_TEST_HEARTBEAT", value: heartbeat },
 				{ key: "CLAWDI_TEST_VALUE", value: "quote ' and $literal" },
 			]);
-			await until(() => readPid() > 0);
+			await until("worker start", () => readPid() > 0);
 			const first = readPid();
 			const logPath = windowsTaskLogPath(root);
-			await until(() => readFileSync(logPath, "utf16le").includes("Clawdi 日志 fixture"));
+			await until("daemon log", () =>
+				readFileSync(logPath, "utf16le").includes("Clawdi 日志 fixture"),
+			);
 			expect(readFileSync(logPath).readUInt16LE(0)).toBe(0xfeff);
 			expect(windowsTaskRunning()).toBe(true);
 			expect(JSON.parse(readFileSync(heartbeat, "utf8")).value).toBe("quote ' and $literal");
 			stopWindowsTask();
-			await until(() => !alive(first));
+			await heartbeatStops(heartbeat);
 			expect(windowsTaskInstalled()).toBe(true);
 			expect(windowsTaskRunning()).toBe(false);
 			restartWindowsTask();
-			await until(() => readPid() !== first && alive(readPid()));
+			await until("worker restart", () => readPid() !== first);
 			const second = readPid();
 			expect(uninstallWindowsTask(root).removed).toBe(true);
-			await until(() => !alive(second));
+			await heartbeatStops(heartbeat);
 			expect(windowsTaskInstalled()).toBe(false);
 			expect(uninstallWindowsTask(root).removed).toBe(false);
 		} finally {
@@ -68,7 +70,11 @@ beat(); console.log('Clawdi 日志 fixture'); setInterval(beat, 100);`,
 				uninstallWindowsTask(root);
 			} finally {
 				for (const pid of ownedPids) {
-					if (alive(pid)) process.kill(pid);
+					try {
+						process.kill(pid);
+					} catch {
+						/* Process has already exited. */
+					}
 				}
 				rmSync(root, { recursive: true, force: true });
 			}
@@ -77,24 +83,23 @@ beat(); console.log('Clawdi 日志 fixture'); setInterval(beat, 100);`,
 	120_000,
 );
 
-function alive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
+async function heartbeatStops(path: string): Promise<void> {
+	await until("worker stop", async () => {
+		const before = readFileSync(path, "utf8");
+		await Bun.sleep(500);
+		return readFileSync(path, "utf8") === before;
+	});
 }
 
-async function until(predicate: () => boolean): Promise<void> {
+async function until(label: string, predicate: () => boolean | Promise<boolean>): Promise<void> {
 	const deadline = Date.now() + 15_000;
 	while (Date.now() < deadline) {
 		try {
-			if (predicate()) return;
+			if (await predicate()) return;
 		} catch {
 			/* Worker has not written its first heartbeat. */
 		}
 		await Bun.sleep(100);
 	}
-	throw new Error("Scheduled task did not reach the expected lifecycle state.");
+	throw new Error(`Scheduled task did not reach the expected lifecycle state: ${label}.`);
 }
