@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,6 +30,10 @@ test.skipIf(process.platform !== "win32" || process.env.CLAWDI_WINDOWS_TASK_TEST
 		const root = mkdtempSync(join(tmpdir(), "clawdi 用户's lifecycle-"));
 		const heartbeat = join(root, "heartbeat.json");
 		const script = join(root, "worker.js");
+		const node = execFileSync("where.exe", ["node.exe"], { encoding: "utf8" })
+			.split(/\r?\n/)
+			.find((line) => line.trim());
+		if (!node) throw new Error("Node.js is required for the Windows task lifecycle fixture.");
 		writeFileSync(
 			script,
 			`const fs = require('node:fs');
@@ -42,7 +47,7 @@ beat(); console.log('Clawdi 日志 fixture'); setInterval(beat, 100);`,
 			return pid;
 		};
 		try {
-			installWindowsTask(root, { command: process.execPath, args: [script], entryPath: script }, [
+			installWindowsTask(root, { command: node.trim(), args: [script], entryPath: script }, [
 				{ key: "CLAWDI_TEST_HEARTBEAT", value: heartbeat },
 				{ key: "CLAWDI_TEST_VALUE", value: "quote ' and $literal" },
 			]);
