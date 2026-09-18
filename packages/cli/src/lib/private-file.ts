@@ -93,7 +93,9 @@ export function writePrivateFileAtomic(
 }
 
 function fsyncPath(path: string): void {
-	const descriptor = openSync(path, "r");
+	// FlushFileBuffers requires a writable Windows handle. POSIX accepts a
+	// read-only descriptor, including the parent directory flushed above.
+	const descriptor = openSync(path, process.platform === "win32" ? "r+" : "r");
 	try {
 		fsyncSync(descriptor);
 	} finally {
