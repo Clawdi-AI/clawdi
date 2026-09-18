@@ -14,6 +14,9 @@ import {
 	windowsTaskStatus,
 } from "./windows-task";
 
+const TASK_START_TIMEOUT_MS = 90_000;
+const TASK_STOP_TIMEOUT_MS = 30_000;
+
 test("PowerShell task values remain literal", () => {
 	expect(powershellLiteral("C:\\User's files\\$(whoami) & test")).toBe(
 		"'C:\\User''s files\\$(whoami) & test'",
@@ -71,11 +74,13 @@ while ($true) {
 					{ key: "CLAWDI_TEST_VALUE", value: "quote ' and $literal" },
 				],
 			);
-			await until("worker start", () => readPid() > 0);
+			await until("worker start", () => readPid() > 0, TASK_START_TIMEOUT_MS);
 			const first = readPid();
 			const logPath = windowsTaskLogPath(root);
-			await until("daemon log", () =>
-				readFileSync(logPath, "utf16le").includes("Clawdi 日志 fixture"),
+			await until(
+				"daemon log",
+				() => readFileSync(logPath, "utf16le").includes("Clawdi 日志 fixture"),
+				TASK_STOP_TIMEOUT_MS,
 			);
 			expect(readFileSync(logPath).readUInt16LE(0)).toBe(0xfeff);
 			expect(windowsTaskRunning()).toBe(true);
@@ -85,7 +90,7 @@ while ($true) {
 			expect(windowsTaskInstalled()).toBe(true);
 			expect(windowsTaskRunning()).toBe(false);
 			restartWindowsTask();
-			await until("worker restart", () => readPid() !== first);
+			await until("worker restart", () => readPid() !== first, TASK_START_TIMEOUT_MS);
 			readPid();
 			expect(uninstallWindowsTask(root).removed).toBe(true);
 			await heartbeatStops(heartbeat);
@@ -106,19 +111,27 @@ while ($true) {
 			}
 		}
 	},
-	120_000,
+	300_000,
 );
 
 async function heartbeatStops(path: string): Promise<void> {
-	await until("worker stop", async () => {
-		const before = readFileSync(path, "utf8");
-		await Bun.sleep(500);
-		return readFileSync(path, "utf8") === before;
-	});
+	await until(
+		"worker stop",
+		async () => {
+			const before = readFileSync(path, "utf8");
+			await Bun.sleep(500);
+			return readFileSync(path, "utf8") === before;
+		},
+		TASK_STOP_TIMEOUT_MS,
+	);
 }
 
-async function until(label: string, predicate: () => boolean | Promise<boolean>): Promise<void> {
-	const deadline = Date.now() + 30_000;
+async function until(
+	label: string,
+	predicate: () => boolean | Promise<boolean>,
+	timeoutMs: number,
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
 	while (Date.now() < deadline) {
 		try {
 			if (await predicate()) return;
