@@ -88,6 +88,10 @@ export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfigura
 	const signedWindows =
 		configuration.platform === "win32" && Boolean(configuration.windowsPublisher);
 	const updatesEnabled = configuration.platform !== "win32" || signedWindows;
+	const artifactNameOption =
+		configuration.platform === "darwin"
+			? "artifactName"
+			: `${configuration.platform === "win32" ? "win" : "linux"}.artifactName`;
 	return [
 		"run",
 		"electron-builder",
@@ -110,13 +114,12 @@ export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfigura
 						]
 					: [
 							"--config.forceCodeSigning=false",
-							"--config.win.sign=false",
 							"--config.win.verifyUpdateCodeSignature=false",
 							"--config.nsis.differentialPackage=false",
 						]
 				: []),
 		// electron-builder expands these placeholders after selecting the target.
-		`--config.artifactName=Clawdi-\${version}-${configuration.platform}-\${arch}${configuration.platform === "win32" && !signedWindows ? "-unsigned" : ""}.\${ext}`,
+		`--config.${artifactNameOption}=Clawdi-\${version}-${configuration.platform}-\${arch}${configuration.platform === "win32" && !signedWindows ? "-unsigned" : ""}.\${ext}`,
 		`--config.extraMetadata.version=${configuration.version}`,
 		`--config.extraMetadata.clawdiUpdateChannel=${updatesEnabled ? configuration.channel : "disabled"}`,
 		...(updatesEnabled
