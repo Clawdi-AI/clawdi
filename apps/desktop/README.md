@@ -18,7 +18,7 @@ declared as production dependencies of the Electron shell.
 | --- | --- | --- | --- |
 | macOS | arm64, x64 | signed/notarized DMG and ZIP | electron-updater, isolated architecture feeds |
 | Linux with systemd user services | x64, arm64 | AppImage, DEB and RPM | AppImage auto-update; package manager for DEB/RPM |
-| Windows | x64, arm64 | per-user signed NSIS | electron-updater with pinned Authenticode publisher |
+| Windows | x64, arm64 | per-user NSIS; signed when credentials are configured | electron-updater only for signed builds with a pinned Authenticode publisher |
 
 Desktop Platform Packages uses native macOS arm64/Intel, Ubuntu x64/arm64,
 Windows x64 and `windows-11-arm` runners. It asserts the runtime architecture,
@@ -65,7 +65,7 @@ unit. AppImage separately rebinds stopped installed units once during recovery,
 stopped units whose old ExecStart cannot be inferred from health records.
 
 `desktopName` is official Electron package metadata, read by Electron 44.0.0's
-`lib/browser/init.ts`; `linux.syncDesktopName` in electron-builder 26.15.3 derives
+`lib/browser/init.ts`; `linux.syncDesktopName` in electron-builder 26.16.0 derives
 the desktop filename from it. Windows launchers use a UTF-8 BOM for PowerShell
 5.1 script parsing, UTF-8 native process streams and explicit
 `Out-File -Encoding unicode` (UTF-16LE) for logs; `daemon logs` and the log RPC
@@ -134,20 +134,23 @@ bun run --cwd apps/desktop package:release
 
 Set `CLAWDI_DESKTOP_VERSION`, `CLAWDI_DESKTOP_ARCH`,
 `CLAWDI_DESKTOP_UPDATE_CHANNEL` and `CLAWDI_DESKTOP_UPDATE_FEED_URL` explicitly.
-Windows additionally requires `WIN_CSC_LINK`, `WIN_CSC_KEY_PASSWORD` and
-`CLAWDI_WINDOWS_PUBLISHER` (the complete certificate Subject DN, for example
+For signed Windows releases, set `WIN_CSC_LINK`, `WIN_CSC_KEY_PASSWORD` and
+`CLAWDI_WINDOWS_PUBLISHER` together (the complete certificate Subject DN, for example
 `CN=Clawdi Inc., O=Clawdi Inc., C=US`). Copy the exact Subject returned by
 `Get-AuthenticodeSignature`; do not use only the CN display name. The first two are
 standard electron-builder Windows signing variables, independent of Apple's
 `CSC_LINK`. Set the publisher as a GitHub repository variable of the same name.
-Missing credentials fail before building, even with `publish=false`. The build
-verifies Authenticode and exact Subject equality on the installer, app and CLI, and checks the publisher pin
-in `app-update.yml`. Linux requires no Apple/Windows secrets; its AppImage feed
+Partial Windows signing configuration fails before building. With all three values
+unset, the build emits a `-unsigned.exe`, disables updates, and produces no Windows
+update metadata or blockmap. With all three set, it verifies Authenticode and exact
+Subject equality on the installer, app and CLI, and checks the publisher pin in
+`app-update.yml`. Linux requires no Apple/Windows secrets; its AppImage feed
 uses SHA-512 checksums over HTTPS. DEB/RPM repository signing belongs to the
 package repository operator.
 
-Done: the command exits 0 with installers and validated metadata under `release/`.
-It never publishes. Windows/macOS verification requires real signing credentials.
+Done: the command exits 0 with installers and any applicable validated metadata
+under `release/`. It never publishes. Signed Windows and macOS verification
+requires real signing credentials.
 
 ### macOS signing
 
@@ -187,11 +190,12 @@ This repository's Pages site is reserved for Desktop update metadata; do not
 deploy an unrelated website over it. No new repository or server is required.
 
 Merge the change to `main`, then dispatch Desktop Release from `main` with a
-beta channel and version first. Every signed release job and publication job
+beta channel and version first. Every release job and publication job
 requires `refs/heads/main`, including build-only signing runs. Feature/PR builds
 use the unsigned Desktop Platform Packages workflow. The feed URL comes from the
 official configure-pages action. By default it only builds; explicitly select
-publish to create a Desktop release after signing, notarization and smoke pass.
+publish to create a Desktop release after required signing, notarization and smoke
+checks pass. Windows is signed only when its three signing settings are complete.
 Beta uses `desktop-v1.2.3-beta.1` and GitHub prerelease; stable uses
 `desktop-v1.2.3`. Neither changes the monorepo's Latest release. Existing tags
 are never overwritten: failed draft uploads require inspection before retry.
@@ -205,6 +209,9 @@ electron-updater's standard filenames: `latest.yml`/`beta.yml` on Windows,
 Linux arm64. Release metadata asset names are architecture-qualified to avoid
 upload collisions; Pages restores the standard names. Downloads point to
 immutable GitHub release assets.
+Unsigned Windows releases have no Windows metadata directories and are manual
+downloads only. The GitHub Release includes one `SHA256SUMS` covering all assets;
+the DMG remains the user installer and the ZIP remains Squirrel.Mac's update payload.
 Both channels are rebuilt from all published Desktop releases, choosing their
 highest semantic version, so CLI releases and older-version reruns cannot move
 the feed backwards. Metadata comes from electron-builder, not a custom protocol.
@@ -235,8 +242,9 @@ Done: the isolated Docker runner passes Desktop typechecking and tests. It does
 not validate Windows or macOS execution. The Windows lifecycle test is opt-in
 (`CLAWDI_WINDOWS_TASK_TEST=1`) and refuses to replace an existing task. Only run
 it in a disposable CI account. Release publication waits for all six native
-builds; missing Windows secrets block the entire release. A local cross-compile
-does not establish runtime support.
+builds. Missing Windows secrets select the explicit unsigned/no-updater path;
+partially configured secrets fail closed. A local cross-compile does not establish
+runtime support.
 
 Before general distribution, validate browser OAuth, persistent session restore,
 account switching, Agent reconnect and a signed beta-to-beta update with test
@@ -251,7 +259,7 @@ Official contracts: [Bun targets](https://bun.sh/docs/bundler/executables),
 [Task Scheduler security contexts](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks).
 The updater's `Provider` source defines metadata suffixes; NSIS `publisherName`
 enables downloaded-installer signature verification.
-The locked `app-builder-lib@26.15.3` signing manager reads `WIN_CSC_LINK`, and
+The locked `app-builder-lib@26.16.0` signing manager reads `WIN_CSC_LINK`, and
 `WinPackager.doGetCscPassword` prefers `WIN_CSC_KEY_PASSWORD`. Its
 `createTransformerForExtraFiles` signs `.exe` files while copying extraResources,
 including `resources/native/clawdi.exe`; the ordinary builder pipeline also

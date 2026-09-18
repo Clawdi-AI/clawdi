@@ -53,16 +53,23 @@ export function readDesktopReleaseConfiguration(
 			"Apple notarization requires APPLE_API_KEY, APPLE_API_KEY_ID, and APPLE_API_ISSUER.",
 		);
 	}
-	const windowsPublisher = env.CLAWDI_WINDOWS_PUBLISHER?.trim();
-	if (
-		platform === "win32" &&
-		(!allPresent(env, ["WIN_CSC_LINK", "WIN_CSC_KEY_PASSWORD"]) || !windowsPublisher)
-	) {
+	const windowsSigning = [
+		env.WIN_CSC_LINK?.trim(),
+		env.WIN_CSC_KEY_PASSWORD?.trim(),
+		env.CLAWDI_WINDOWS_PUBLISHER?.trim(),
+	];
+	const windowsSigningConfigured = windowsSigning.every(Boolean);
+	if (platform === "win32" && windowsSigning.some(Boolean) && !windowsSigningConfigured) {
 		throw new Error(
-			"Windows releases require WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD and CLAWDI_WINDOWS_PUBLISHER containing the certificate's full Subject DN.",
+			"Windows signing requires WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD and CLAWDI_WINDOWS_PUBLISHER together.",
 		);
 	}
-	if (platform === "win32" && !isDesktopWindowsPublisherDn(windowsPublisher)) {
+	const windowsPublisher = windowsSigningConfigured ? windowsSigning[2] : undefined;
+	if (
+		platform === "win32" &&
+		windowsSigningConfigured &&
+		!isDesktopWindowsPublisherDn(windowsPublisher)
+	) {
 		throw new Error(
 			"CLAWDI_WINDOWS_PUBLISHER must be the complete certificate Subject DN, not a CN-only display name.",
 		);
@@ -78,6 +85,9 @@ export function readDesktopReleaseConfiguration(
 }
 
 export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfiguration): string[] {
+	const signedWindows =
+		configuration.platform === "win32" && Boolean(configuration.windowsPublisher);
+	const updatesEnabled = configuration.platform !== "win32" || signedWindows;
 	return [
 		"run",
 		"electron-builder",
@@ -92,20 +102,31 @@ export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfigura
 		...(configuration.platform === "darwin"
 			? ["--config.forceCodeSigning=true", "--config.mac.notarize=true", "--config.dmg.sign=true"]
 			: configuration.platform === "win32"
-				? [
-						"--config.forceCodeSigning=true",
-						`--config.win.signtoolOptions.publisherName=${configuration.windowsPublisher}`,
-						`--config.extraMetadata.clawdiWindowsPublisher=${configuration.windowsPublisher}`,
-					]
+				? signedWindows
+					? [
+							"--config.forceCodeSigning=true",
+							`--config.win.signtoolOptions.publisherName=${configuration.windowsPublisher}`,
+							`--config.extraMetadata.clawdiWindowsPublisher=${configuration.windowsPublisher}`,
+						]
+					: [
+							"--config.forceCodeSigning=false",
+							"--config.win.sign=false",
+							"--config.win.verifyUpdateCodeSignature=false",
+							"--config.nsis.differentialPackage=false",
+						]
 				: []),
 		// electron-builder expands these placeholders after selecting the target.
-		`--config.artifactName=Clawdi-\${version}-${configuration.platform}-\${arch}.\${ext}`,
+		`--config.artifactName=Clawdi-\${version}-${configuration.platform}-\${arch}${configuration.platform === "win32" && !signedWindows ? "-unsigned" : ""}.\${ext}`,
 		`--config.extraMetadata.version=${configuration.version}`,
-		`--config.extraMetadata.clawdiUpdateChannel=${configuration.channel}`,
-		"--config.publish.provider=generic",
-		"--config.generateUpdatesFilesForAllChannels=false",
-		`--config.publish.channel=${configuration.channel === "stable" ? "latest" : "beta"}`,
-		`--config.publish.url=${configuration.updateFeedUrl}`,
+		`--config.extraMetadata.clawdiUpdateChannel=${updatesEnabled ? configuration.channel : "disabled"}`,
+		...(updatesEnabled
+			? [
+					"--config.publish.provider=generic",
+					"--config.generateUpdatesFilesForAllChannels=false",
+					`--config.publish.channel=${configuration.channel === "stable" ? "latest" : "beta"}`,
+					`--config.publish.url=${configuration.updateFeedUrl}`,
+				]
+			: []),
 	];
 }
 

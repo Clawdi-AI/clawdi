@@ -12,8 +12,21 @@ const RELEASE_ENV = {
 } as const;
 
 describe("Desktop release contract", () => {
-	test("requires Windows credentials separately from Apple and pins the publisher", () => {
-		expect(() => readDesktopReleaseConfiguration(RELEASE_ENV, "win32")).toThrow("WIN_CSC_LINK");
+	test("builds explicit unsigned Windows installers or pins complete signing credentials", () => {
+		const unsigned = readDesktopReleaseConfiguration(RELEASE_ENV, "win32");
+		const unsignedArgs = desktopReleaseBuilderArgs(unsigned);
+		expect(unsigned.windowsPublisher).toBeUndefined();
+		expect(unsignedArgs).toContain("--config.win.sign=false");
+		expect(unsignedArgs).toContain("--config.win.verifyUpdateCodeSignature=false");
+		expect(unsignedArgs).toContain("--config.nsis.differentialPackage=false");
+		expect(unsignedArgs).toContain("--config.extraMetadata.clawdiUpdateChannel=disabled");
+		expect(unsignedArgs).toContain(
+			`--config.artifactName=Clawdi-\${version}-win32-\${arch}-unsigned.\${ext}`,
+		);
+		expect(unsignedArgs).not.toContain("--config.publish.provider=generic");
+		expect(() =>
+			readDesktopReleaseConfiguration({ ...RELEASE_ENV, WIN_CSC_LINK: "certificate.p12" }, "win32"),
+		).toThrow("together");
 		const release = readDesktopReleaseConfiguration(
 			{
 				...RELEASE_ENV,

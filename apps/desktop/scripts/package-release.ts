@@ -13,6 +13,7 @@ import { readMacCodeSignature } from "../src/update-signature";
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const releaseRoot = join(desktopRoot, "release");
 const configuration = readDesktopReleaseConfiguration(process.env, process.platform);
+const signedWindows = configuration.platform === "win32" && Boolean(configuration.windowsPublisher);
 
 rmSync(releaseRoot, { recursive: true, force: true });
 await run("bun", ["run", "build"]);
@@ -149,35 +150,43 @@ async function run(
 async function verifyPlatformArtifacts(): Promise<void> {
 	const files = readdirSync(releaseRoot);
 	const windows = configuration.platform === "win32";
-	const suffix = windows ? "" : `-linux${configuration.arch === "arm64" ? "-arm64" : ""}`;
-	const metadata = parse(
-		readFileSync(
-			join(releaseRoot, `${configuration.channel === "stable" ? "latest" : "beta"}${suffix}.yml`),
-			"utf8",
-		),
-	);
-	if (
-		!isRecord(metadata) ||
-		metadata.version !== configuration.version ||
-		!Array.isArray(metadata.files) ||
-		!metadata.files.length
-	)
-		throw new Error("Invalid update metadata.");
-	if (
-		!windows &&
-		(metadata.files.length !== 1 ||
-			!isRecord(metadata.files[0]) ||
-			typeof metadata.files[0].url !== "string" ||
-			!metadata.files[0].url.endsWith(".AppImage"))
+	if (!windows || signedWindows) {
+		const suffix = windows ? "" : `-linux${configuration.arch === "arm64" ? "-arm64" : ""}`;
+		const metadata = parse(
+			readFileSync(
+				join(releaseRoot, `${configuration.channel === "stable" ? "latest" : "beta"}${suffix}.yml`),
+				"utf8",
+			),
+		);
+		if (
+			!isRecord(metadata) ||
+			metadata.version !== configuration.version ||
+			!Array.isArray(metadata.files) ||
+			!metadata.files.length
+		)
+			throw new Error("Invalid update metadata.");
+		if (
+			!windows &&
+			(metadata.files.length !== 1 ||
+				!isRecord(metadata.files[0]) ||
+				typeof metadata.files[0].url !== "string" ||
+				!metadata.files[0].url.endsWith(".AppImage"))
+		) {
+			throw new Error("Linux update metadata must contain only the AppImage.");
+		}
+		for (const entry of metadata.files) {
+			if (!isRecord(entry) || typeof entry.url !== "string" || !files.includes(entry.url))
+				throw new Error("Missing update artifact.");
+			const bytes = readFileSync(join(releaseRoot, entry.url));
+			if (entry.sha512 !== createHash("sha512").update(bytes).digest("base64"))
+				throw new Error("Update checksum mismatch.");
+		}
+	} else if (
+		files.some(
+			(name) => name.endsWith(".blockmap") || /^(latest|beta)(?:-[\w-]+)?\.yml$/.test(name),
+		)
 	) {
-		throw new Error("Linux update metadata must contain only the AppImage.");
-	}
-	for (const entry of metadata.files) {
-		if (!isRecord(entry) || typeof entry.url !== "string" || !files.includes(entry.url))
-			throw new Error("Missing update artifact.");
-		const bytes = readFileSync(join(releaseRoot, entry.url));
-		if (entry.sha512 !== createHash("sha512").update(bytes).digest("base64"))
-			throw new Error("Update checksum mismatch.");
+		throw new Error("Unsigned Windows releases must not contain update metadata.");
 	}
 	const extensions = windows ? [".exe"] : [".AppImage", ".deb", ".rpm"];
 	for (const extension of extensions) {
@@ -185,13 +194,15 @@ async function verifyPlatformArtifacts(): Promise<void> {
 			(name) => name.endsWith(extension) && name.includes(configuration.version),
 		);
 		if (matches.length !== 1) throw new Error(`Expected one ${extension} installer.`);
-		if (windows) await verifyAuthenticode(join(releaseRoot, matches[0] ?? ""));
+		if (windows && !signedWindows && !matches[0]?.endsWith("-unsigned.exe"))
+			throw new Error("Unsigned Windows installer must be named explicitly.");
+		if (signedWindows) await verifyAuthenticode(join(releaseRoot, matches[0] ?? ""));
 	}
 	const unpacked = windows
 		? `win${configuration.arch === "arm64" ? "-arm64" : ""}-unpacked`
 		: `linux${configuration.arch === "arm64" ? "-arm64" : ""}-unpacked`;
 	const cli = join(releaseRoot, unpacked, "resources", "native", windows ? "clawdi.exe" : "clawdi");
-	if (windows) {
+	if (signedWindows) {
 		await verifyAuthenticode(cli);
 		await verifyAuthenticode(join(releaseRoot, unpacked, "Clawdi.exe"));
 		const config = parse(
@@ -234,7 +245,13 @@ function verifyPackagedUpdateConfiguration(): void {
 					`${configuration.platform === "win32" ? "win" : "linux"}${configuration.arch === "arm64" ? "-arm64" : ""}-unpacked`,
 					"resources",
 				);
-	const config: unknown = parse(readFileSync(join(resources, "app-update.yml"), "utf8"));
+	const configPath = join(resources, "app-update.yml");
+	if (configuration.platform === "win32" && !signedWindows) {
+		if (existsSync(configPath))
+			throw new Error("Unsigned Windows package must not contain app-update.yml.");
+		return;
+	}
+	const config: unknown = parse(readFileSync(configPath, "utf8"));
 	if (
 		!isRecord(config) ||
 		config.provider !== "generic" ||

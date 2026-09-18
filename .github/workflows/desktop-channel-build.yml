@@ -85,7 +85,6 @@ jobs:
             "$PWD/apps/desktop/release/$APP_BUNDLE_DIRECTORY/Clawdi.app/Contents/MacOS/Clawdi" \
             "$RUNNER_TEMP/desktop-channel-smoke" install
           cd apps/desktop/release
-          shasum -a 256 Clawdi-*.dmg Clawdi-*.zip > "SHA256SUMS-$CLAWDI_DESKTOP_ARCH"
           if [ "$CLAWDI_DESKTOP_ARCH" = x64 ]; then
             for metadata in *-mac.yml; do mv "$metadata" "${metadata%.yml}-x64.yml"; done
           fi
@@ -96,7 +95,6 @@ jobs:
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
             apps/desktop/release/*-mac*.yml
-            apps/desktop/release/SHA256SUMS-*
           if-no-files-found: error
           retention-days: 14
 
@@ -171,10 +169,11 @@ jobs:
           CLAWDI_DESKTOP_UPDATE_CHANNEL: ${{ inputs.channel }}
           CLAWDI_DESKTOP_UPDATE_FEED_URL: ${{ steps.pages.outputs.base_url }}/desktop/${{ matrix.platform }}-${{ matrix.arch }}/
         run: bun run --cwd apps/desktop package:release
-      - name: Build signed Windows release (never publishes)
+      - name: Build Windows release (never publishes)
         if: matrix.platform == 'win32'
         shell: pwsh
         env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           CLAWDI_DESKTOP_VERSION: ${{ inputs.version }}
           CLAWDI_DESKTOP_ARCH: ${{ matrix.arch }}
           CLAWDI_DESKTOP_UPDATE_CHANNEL: ${{ inputs.channel }}
@@ -202,20 +201,15 @@ jobs:
         if: matrix.platform == 'linux'
         shell: bash
         env:
-          CHANNEL: ${{ inputs.channel }}
-          PLATFORM: ${{ matrix.platform }}
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           cd apps/desktop/release
           channel=latest
-          if [ "$CHANNEL" = beta ]; then channel=beta; fi
-          metadata="$channel.yml"
-          if [ "$PLATFORM" = linux ]; then
-            metadata="$channel-linux.yml"
-            if [ "$ARCH" = arm64 ]; then metadata="$channel-linux-arm64.yml"; fi
-          fi
-          target="$channel-$PLATFORM-$ARCH.yml"
+          if [ '${{ inputs.channel }}' = beta ]; then channel=beta; fi
+          metadata="$channel-linux.yml"
+          if [ "$ARCH" = arm64 ]; then metadata="$channel-linux-arm64.yml"; fi
+          target="$channel-linux-$ARCH.yml"
           if [ "$metadata" != "$target" ]; then mv "$metadata" "$target"; fi
       - name: Isolate Windows release metadata assets
         if: matrix.platform == 'win32'
@@ -225,7 +219,10 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           $channel = if ($env:CHANNEL -eq 'stable') { 'latest' } else { 'beta' }
-          Move-Item "apps/desktop/release/$channel.yml" "apps/desktop/release/$channel-win32-$env:ARCH.yml"
+          $metadata = "apps/desktop/release/$channel.yml"
+          if (Test-Path $metadata) {
+            Move-Item $metadata "apps/desktop/release/$channel-win32-$env:ARCH.yml"
+          }
       - uses: actions/upload-artifact@v7
         with:
           name: clawdi-${{ matrix.platform }}-${{ matrix.arch }}-${{ inputs.channel }}
@@ -260,6 +257,7 @@ jobs:
         run: |
           set -euo pipefail
           tag="desktop-v$VERSION"
+          (cd release && sha256sum -- * > SHA256SUMS)
           args=(--repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
             --title "Clawdi Desktop $VERSION" --generate-notes --draft --latest=false)
           if [ "$CHANNEL" = beta ]; then args+=(--prerelease); fi

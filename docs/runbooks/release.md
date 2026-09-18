@@ -36,10 +36,12 @@ releases.
 ## Desktop Releases
 
 The Desktop Release workflow builds macOS, Windows and Linux x64/arm64 packages.
-macOS requires Developer ID/notarization; Windows requires independent
-`WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` secrets and a `CLAWDI_WINDOWS_PUBLISHER`
-repository variable. Missing Windows credentials fail the matrix closed.
-Merge to `main` before dispatching a signed beta. All release jobs are guarded
+macOS requires Developer ID/notarization. Windows signing is optional: configure
+`WIN_CSC_LINK`, `WIN_CSC_KEY_PASSWORD` and the `CLAWDI_WINDOWS_PUBLISHER`
+repository variable together, or leave all three unset. Partial configuration
+fails closed. Without them, the workflow produces explicitly named `-unsigned`
+NSIS installers for manual installation and omits Windows update metadata.
+Merge to `main` before dispatching a beta. All release jobs are guarded
 to `refs/heads/main`; feature refs use the unsigned Desktop Platform Packages
 workflow and cannot enter this workflow's signing jobs.
 Linux produces AppImage updates plus DEB/RPM packages.
@@ -47,8 +49,10 @@ Its publish input defaults to false. Explicit publication creates an immutable
 `desktop-v<version>` GitHub Release, marks beta versions as prereleases, and never
 changes the monorepo's Latest release. Desktop Update Site then deploys standard
 electron-updater metadata to GitHub Pages, pointing to the platform's ZIP,
-NSIS or AppImage assets. DEB/RPM are manual package-manager downloads only;
+signed NSIS or AppImage assets. Unsigned Windows installers never enter the
+update feed. DEB/RPM are manual package-manager downloads only;
 their target-specific `publish: null` excludes them from updater metadata.
+The GitHub Release contains one `SHA256SUMS` file covering every published asset.
 See [Desktop packaging](../../apps/desktop/README.md) for inputs and recovery.
 
 The signed application embeds its feed URL and stable or beta channel. Stable

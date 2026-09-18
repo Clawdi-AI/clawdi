@@ -1,5 +1,5 @@
 import { afterEach, test as bunTest, expect } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse } from "yaml";
@@ -109,7 +109,7 @@ test("Pages isolates Windows and Linux architectures and rejects partial matrice
 	const pages = JSON.parse(readFileSync(join(root, "releases.json"), "utf8"));
 	const release = pages[1][0];
 	let id = 10;
-	for (const platform of ["win32", "linux"]) {
+	const addPlatform = (platform: "linux" | "win32") => {
 		for (const arch of ["x64", "arm64"]) {
 			const artifact = `Clawdi-${platform}-${arch}.${platform === "win32" ? "exe" : "AppImage"}`;
 			release.assets.push({ name: `beta-${platform}-${arch}.yml`, id }, { name: artifact });
@@ -123,8 +123,8 @@ test("Pages isolates Windows and Linux architectures and rejects partial matrice
 			);
 			id++;
 		}
-	}
-	writeFileSync(join(root, "releases.json"), JSON.stringify(pages));
+		writeFileSync(join(root, "releases.json"), JSON.stringify(pages));
+	};
 	writeFileSync(
 		join(root, "bin/gh"),
 		`#!/bin/sh
@@ -137,6 +137,11 @@ esac
 `,
 		{ mode: 0o700 },
 	);
+	addPlatform("linux");
+	expect((await prepare(root)).code).toBe(0);
+	expect(existsSync(join(root, "site/desktop/win32-x64/beta.yml"))).toBe(false);
+
+	addPlatform("win32");
 	expect((await prepare(root)).code).toBe(0);
 	for (const platform of ["win32", "linux"]) {
 		for (const arch of ["x64", "arm64"]) {

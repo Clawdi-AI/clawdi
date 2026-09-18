@@ -67,12 +67,13 @@ for (const { channel, arch, platform } of (["stable", "beta"] as const).flatMap(
 				: filename.replace(".yml", "-x64.yml")
 			: `${base}-${platform}-${arch}.yml`;
 	const asset = assets.find((item: unknown) => record(item) && item.name === assetName);
-	const hasPlatformMatrix = assets.some(
-		(item: unknown) =>
-			record(item) &&
-			typeof item.name === "string" &&
-			/-(linux|win32)-(x64|arm64)\.yml$/.test(item.name),
-	);
+	const platformMetadataPattern = new RegExp(`-${platform}-(x64|arm64)\\.yml$`);
+	const hasPlatformMatrix =
+		platform !== "darwin" &&
+		assets.some(
+			(item: unknown) =>
+				record(item) && typeof item.name === "string" && platformMetadataPattern.test(item.name),
+		);
 	if (!asset && hasPlatformMatrix)
 		throw new Error(`Incomplete Desktop release: missing ${assetName}.`);
 	// Releases predating Intel support contain only the arm64 metadata.
