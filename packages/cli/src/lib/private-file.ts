@@ -83,7 +83,9 @@ export function writePrivateFileAtomic(
 		const destination = options.directoryFd === undefined ? path : join(dir, basename(path));
 		renameSync(tmp, destination);
 		chmodBestEffort(destination, mode);
-		if (options.durable) fsyncPath(dir);
+		// Windows flushes the file above but does not permit fsync on a
+		// directory handle. POSIX needs the directory flush to persist rename.
+		if (options.durable && process.platform !== "win32") fsyncPath(dir);
 	} catch (error) {
 		rmSync(tmp, { force: true });
 		throw error;
