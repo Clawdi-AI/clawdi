@@ -1,8 +1,13 @@
+import {
+	type DesktopPlatform,
+	requireDesktopArchitecture,
+	requireDesktopPlatform,
+} from "./platform";
 import { isDesktopWindowsPublisherDn, normalizeDesktopUpdateFeedUrl } from "./update-policy";
 
 export interface DesktopReleaseConfiguration {
 	version: string;
-	platform: "darwin" | "linux" | "win32";
+	platform: DesktopPlatform;
 	windowsPublisher?: string;
 	arch: "arm64" | "x64";
 	channel: "stable" | "beta";
@@ -13,10 +18,8 @@ export function readDesktopReleaseConfiguration(
 	env: Record<string, string | undefined>,
 	platform: NodeJS.Platform,
 ): DesktopReleaseConfiguration {
-	if (platform !== "darwin" && platform !== "linux" && platform !== "win32")
-		throw new Error("Unsupported Desktop release host.");
-	const arch = env.CLAWDI_DESKTOP_ARCH?.trim() || process.arch;
-	if (arch !== "arm64" && arch !== "x64") throw new Error("Unsupported Desktop architecture.");
+	const desktopPlatform = requireDesktopPlatform(platform);
+	const arch = requireDesktopArchitecture(env.CLAWDI_DESKTOP_ARCH?.trim() || process.arch);
 	const version = env.CLAWDI_DESKTOP_VERSION?.trim() ?? "";
 	const channel = env.CLAWDI_DESKTOP_UPDATE_CHANNEL?.trim() || "stable";
 	if (channel !== "stable" && channel !== "beta") {
@@ -33,7 +36,7 @@ export function readDesktopReleaseConfiguration(
 			env.CSC_NAME?.trim() ||
 			(env.CSC_LINK?.trim() && env.CSC_KEY_PASSWORD),
 	);
-	if (platform === "darwin" && !hasSigningIdentity) {
+	if (desktopPlatform === "darwin" && !hasSigningIdentity) {
 		throw new Error(
 			"A Developer ID signing identity is required through CSC_KEYCHAIN, CSC_NAME, or CSC_LINK with CSC_KEY_PASSWORD.",
 		);
@@ -46,7 +49,7 @@ export function readDesktopReleaseConfiguration(
 	}
 
 	if (
-		platform === "darwin" &&
+		desktopPlatform === "darwin" &&
 		!allPresent(env, ["APPLE_API_KEY", "APPLE_API_KEY_ID", "APPLE_API_ISSUER"])
 	) {
 		throw new Error(
@@ -59,14 +62,14 @@ export function readDesktopReleaseConfiguration(
 		env.CLAWDI_WINDOWS_PUBLISHER?.trim(),
 	];
 	const windowsSigningConfigured = windowsSigning.every(Boolean);
-	if (platform === "win32" && windowsSigning.some(Boolean) && !windowsSigningConfigured) {
+	if (desktopPlatform === "win32" && windowsSigning.some(Boolean) && !windowsSigningConfigured) {
 		throw new Error(
 			"Windows signing requires WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD and CLAWDI_WINDOWS_PUBLISHER together.",
 		);
 	}
 	const windowsPublisher = windowsSigningConfigured ? windowsSigning[2] : undefined;
 	if (
-		platform === "win32" &&
+		desktopPlatform === "win32" &&
 		windowsSigningConfigured &&
 		!isDesktopWindowsPublisherDn(windowsPublisher)
 	) {
@@ -79,8 +82,8 @@ export function readDesktopReleaseConfiguration(
 		arch,
 		channel,
 		updateFeedUrl,
-		platform,
-		...(platform === "win32" ? { windowsPublisher } : {}),
+		platform: desktopPlatform,
+		...(desktopPlatform === "win32" ? { windowsPublisher } : {}),
 	};
 }
 

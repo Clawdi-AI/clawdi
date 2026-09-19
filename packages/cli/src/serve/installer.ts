@@ -33,11 +33,11 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { homedir, platform } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { AGENT_TYPES, type AgentType } from "../adapters/agent-types";
 import {
 	type CurrentCliInvocation,
-	isMacApplicationBundleExecutable,
+	detectDesktopManagedNativeLayout,
 	resolveCurrentCliInvocation,
 	resolveCurrentCliLayout,
 } from "../lib/current-cli-invocation";
@@ -146,7 +146,10 @@ const PERSISTED_ENV_KEYS = [
 	"OPENCLAW_AGENT_ID",
 ] as const;
 
-function capturedEnv(opts: InstallOpts = {}): { key: string; value: string }[] {
+function capturedEnv(
+	opts: InstallOpts = {},
+	desktopRuntime: { runtimeRoot?: string } | null = null,
+): { key: string; value: string }[] {
 	const out: { key: string; value: string }[] = [];
 	for (const key of PERSISTED_ENV_KEYS) {
 		const value = process.env[key];
@@ -165,6 +168,10 @@ function capturedEnv(opts: InstallOpts = {}): { key: string; value: string }[] {
 		"CLAWDI_DAEMON_RPC_ALLOW_REMOTE",
 		opts.rpcAllowRemote === true ? "1" : undefined,
 	);
+	if (desktopRuntime) {
+		upsertCapturedEnv(out, "CLAWDI_NO_AUTO_UPDATE", "1");
+		upsertCapturedEnv(out, "CLAWDI_DESKTOP_RUNTIME", desktopRuntime.runtimeRoot);
+	}
 	return out;
 }
 
@@ -182,24 +189,19 @@ function upsertCapturedEnv(
 	out.push({ key, value });
 }
 
-/** Resolve this exact CLI installation for a supervisor-owned daemon. */
-function currentDaemonInvocation(opts: InstallOpts): CurrentCliInvocation {
+interface DaemonInstallContext {
+	invocation: CurrentCliInvocation;
+	environment: { key: string; value: string }[];
+}
+
+/** Resolve this exact CLI installation and its supervisor environment. */
+function currentDaemonInstallContext(opts: InstallOpts): DaemonInstallContext {
 	let invocation: CurrentCliInvocation;
+	let desktopRuntime: ReturnType<typeof detectDesktopManagedNativeLayout> = null;
 	try {
 		const layout = resolveCurrentCliLayout();
-		const applicationManagedNative =
-			process.env.CLAWDI_NO_AUTO_UPDATE === "1" &&
-			((platform() === "darwin" && isMacApplicationBundleExecutable(layout.executablePath)) ||
-				(platform() === "linux" &&
-					layout.executablePath === "/opt/Clawdi/resources/native/clawdi" &&
-					existsSync("/opt/Clawdi/resources/app.asar") &&
-					existsSync("/opt/Clawdi/clawdi-desktop")) ||
-				(platform() === "win32" && existsSync(join(dirname(layout.resourceRoot), "app.asar"))) ||
-				(platform() === "linux" &&
-					process.env.CLAWDI_DESKTOP_RUNTIME &&
-					resolve(process.env.CLAWDI_DESKTOP_RUNTIME) === layout.resourceRoot &&
-					existsSync(join(layout.resourceRoot, "desktop-runtime.json"))));
-		if (layout.kind === "native" && !layout.nativeOwnership && !applicationManagedNative) {
+		desktopRuntime = detectDesktopManagedNativeLayout(layout, platform());
+		if (layout.kind === "native" && !layout.nativeOwnership && !desktopRuntime) {
 			throw new Error(
 				"an unowned native executable cannot install a daemon; install the native distribution or use the CLI bundled with Clawdi Desktop",
 			);
@@ -228,7 +230,7 @@ function currentDaemonInvocation(opts: InstallOpts): CurrentCliInvocation {
 				"and re-run install from the installed binary.",
 		);
 	}
-	return invocation;
+	return { invocation, environment: capturedEnv(opts, desktopRuntime) };
 }
 
 export function install(opts: InstallOpts = {}): {
@@ -239,11 +241,13 @@ export function install(opts: InstallOpts = {}): {
 	const p = platform();
 	if (p === "darwin") return installLaunchd(opts);
 	if (p === "linux") return installSystemd(opts);
-	if (p === "win32")
-		return installWindowsTask(clawdiRoot(), currentDaemonInvocation(opts), [
+	if (p === "win32") {
+		const context = currentDaemonInstallContext(opts);
+		return installWindowsTask(clawdiRoot(), context.invocation, [
 			{ key: "HOME", value: home() },
-			...capturedEnv(opts),
+			...context.environment,
 		]);
+	}
 	throw new Error(`unsupported platform for service install: ${p}`);
 }
 
@@ -359,7 +363,8 @@ function installLaunchd(opts: InstallOpts): {
 	replaced: boolean;
 } {
 	const label = opts.agent ? legacyUnitName(opts.agent) : unitName();
-	const invocation = currentDaemonInvocation(opts);
+	const context = currentDaemonInstallContext(opts);
+	const invocation = context.invocation;
 	const logDir = join(clawdiRoot(), "serve", "logs");
 	if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
 
@@ -395,7 +400,7 @@ ${programArgs}
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>
-    <string>${escapeXml(home())}</string>${capturedEnv(opts)
+    <string>${escapeXml(home())}</string>${context.environment
 			.map(
 				({ key, value }) =>
 					`\n    <key>${escapeXml(key)}</key>\n    <string>${escapeXml(value)}</string>`,
@@ -525,7 +530,8 @@ function installSystemd(opts: InstallOpts): {
 	instructions: string;
 	replaced: boolean;
 } {
-	const invocation = currentDaemonInvocation(opts);
+	const context = currentDaemonInstallContext(opts);
+	const invocation = context.invocation;
 	const path = unitPath(opts.agent);
 	const replaced = existsSync(path);
 
@@ -551,7 +557,7 @@ function installSystemd(opts: InstallOpts): {
 	// inject newlines + extra Environment= directives); escape
 	// `\` and `"` for the rest.
 	const envLines: string[] = [`Environment="HOME=${escapedHome}"`];
-	for (const { key, value } of capturedEnv(opts)) {
+	for (const { key, value } of context.environment) {
 		// biome-ignore lint/suspicious/noControlCharactersInRegex: targeting control chars on purpose
 		if (/[\x00-\x1F\x7F]/.test(value)) {
 			throw new Error(

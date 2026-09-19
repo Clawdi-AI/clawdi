@@ -19,6 +19,7 @@ import {
 	runCommand,
 } from "./command-runner";
 import { desktopDaemonReconciliationAction, needsDaemonRuntimeRefresh } from "./daemon-runtime";
+import { requireDesktopPlatform } from "./platform";
 
 const OAUTH_TIMEOUT_MS = 11 * 60_000;
 const PRODUCTION_CLOUD_API_URL = "https://cloud-api.clawdi.ai";
@@ -59,7 +60,7 @@ export class DesktopCliService {
 		const auth = await this.authState(cli);
 		const doctor = await this.doctorState(cli, identity.version);
 		return {
-			platform: desktopPlatform(),
+			platform: requireDesktopPlatform(),
 			cli: { status: "ready", version: identity.version },
 			auth,
 			daemon: { installed: doctor.installed, running: doctor.running },
@@ -192,7 +193,7 @@ export class DesktopCliService {
 			}
 		}
 
-		const cli = this.prepareDaemonCli();
+		const cli = await this.prepareDaemonCli();
 		const connected: DesktopAgentType[] = [];
 		for (const { type, reconnectAgentId, confirmTakeover } of requested) {
 			if (reconnectAgentId) {
@@ -223,7 +224,7 @@ export class DesktopCliService {
 	}
 
 	async installDaemon(): Promise<void> {
-		await this.run(this.prepareDaemonCli(), ["daemon", "install"], { timeoutMs: 60_000 });
+		await this.run(await this.prepareDaemonCli(), ["daemon", "install"], { timeoutMs: 60_000 });
 		this.runtimeReconciled = true;
 		if (this.isAppImage()) {
 			try {
@@ -235,7 +236,7 @@ export class DesktopCliService {
 				const protectedVersions = launcherTarget
 					? new Set([basename(dirname(launcherTarget))])
 					: undefined;
-				pruneAppImageRuntimes(userData, this.application.getVersion(), protectedVersions);
+				await pruneAppImageRuntimes(userData, this.application.getVersion(), protectedVersions);
 			} catch (error) {
 				console.warn("Could not remove an old Desktop runtime", error);
 			}
@@ -250,8 +251,16 @@ export class DesktopCliService {
 		await this.run(this.cli(), ["daemon", "uninstall"], { timeoutMs: 60_000 });
 	}
 
-	shellCommandTarget(): string {
-		return realpathSync(this.isAppImage() ? this.prepareDaemonCli() : this.cli());
+	async shellCommandTarget(): Promise<string> {
+		return realpathSync(this.isAppImage() ? await this.prepareDaemonCli() : this.cli());
+	}
+
+	async pruneUnusedAppImageRuntimes(): Promise<void> {
+		if (!this.isAppImage()) return;
+		await pruneAppImageRuntimes(
+			this.application.getPath("userData"),
+			this.application.getVersion(),
+		);
 	}
 
 	private async performAuthentication(
@@ -293,10 +302,10 @@ export class DesktopCliService {
 		);
 	}
 
-	private prepareDaemonCli(): string {
+	private async prepareDaemonCli(): Promise<string> {
 		if (this.isAppImage()) {
 			this.cliPath ??= this.resolveBundledCli();
-			this.runtimeRoot = activateAppImageRuntime(
+			this.runtimeRoot = await activateAppImageRuntime(
 				dirname(this.cliPath),
 				this.application.getPath("userData"),
 				this.application.getVersion(),
@@ -532,17 +541,6 @@ function displayNameFor(type: DesktopAgentType): string {
 			opencode: "OpenCode",
 		} satisfies Record<DesktopAgentType, string>
 	)[type];
-}
-
-function desktopPlatform(): DesktopBootstrapState["platform"] {
-	if (
-		process.platform === "darwin" ||
-		process.platform === "linux" ||
-		process.platform === "win32"
-	) {
-		return process.platform;
-	}
-	throw new Error(`Unsupported desktop platform: ${process.platform}`);
 }
 
 function readString(value: unknown): string | null {

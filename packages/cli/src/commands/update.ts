@@ -15,6 +15,7 @@ import { delimiter, dirname, isAbsolute, join, normalize, resolve, sep } from "n
 import chalk from "chalk";
 import { getClawdiDir, getStoredConfig } from "../lib/config";
 import {
+	isDesktopManagedCurrentCli,
 	resolveCurrentCliInvocation,
 	resolveCurrentCliLayout,
 } from "../lib/current-cli-invocation";
@@ -80,6 +81,7 @@ type AutoUpdateRuntime = {
 
 type ForegroundUpdateRuntime = {
 	detectOwnership?: () => UpdateOwnership | null;
+	isDesktopManaged?: () => boolean;
 	installRunner?: (command: string, args: string[]) => number | null;
 	platform?: NodeJS.Platform;
 	versionReader?: (command: string, args: string[]) => string | null;
@@ -159,6 +161,21 @@ export async function update(
 	runtime: ForegroundUpdateRuntime = {},
 ) {
 	const current = getCliVersion();
+	if ((runtime.isDesktopManaged ?? isDesktopManagedCurrentCli)()) {
+		if (opts.json || !process.stdout.isTTY) {
+			console.log(
+				JSON.stringify(
+					{ current, latest: null, upgradeAvailable: false, managedBy: "desktop" },
+					null,
+					2,
+				),
+			);
+		} else {
+			console.log(chalk.gray(`current:  ${current}`));
+			console.log(chalk.cyan("Clawdi Desktop manages this command and its updates."));
+		}
+		return;
+	}
 	const channel = updateChannelForVersion(current);
 	const latest = await fetchLatest(3000, channel);
 

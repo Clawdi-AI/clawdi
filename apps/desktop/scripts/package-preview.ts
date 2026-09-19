@@ -1,12 +1,10 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { requireDesktopArchitecture, requireDesktopPlatform } from "../src/platform";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const platform = process.platform;
-const arch = process.arch;
-if (!["darwin", "linux", "win32"].includes(platform) || (arch !== "arm64" && arch !== "x64")) {
-	throw new Error(`Desktop runtime is not supported on ${platform}-${arch}.`);
-}
+const platform = requireDesktopPlatform();
+const arch = requireDesktopArchitecture();
 for (const args of [
 	["run", "build"],
 	["run", "prepare:native"],

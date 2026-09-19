@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -45,6 +44,7 @@ import {
 import { type DesktopCliCommandOptions, installDesktopCliCommand } from "./cli-command";
 import { DESKTOP_IPC } from "./ipc";
 import { DesktopCliError, DesktopCliService } from "./native-cli";
+import { requireDesktopPlatform } from "./platform";
 import { DesktopUpdateController } from "./update-controller";
 import { evaluateDesktopUpdatePolicy } from "./update-policy";
 import { readMacCodeSignature } from "./update-signature";
@@ -149,9 +149,6 @@ async function startApplication(): Promise<void> {
 	dashboardSession = session.fromPartition(DASHBOARD_PARTITION);
 	registerAppProtocol(session.defaultSession);
 	registerAppProtocol(dashboardSession);
-	if (readPackageMetadataField("clawdiDashboardSource") === "bundled") {
-		registerDashboardProtocol(dashboardSession);
-	}
 	registerIpc();
 	configurePermissions(dashboardSession);
 	createApplicationMenu();
@@ -166,7 +163,6 @@ async function startApplication(): Promise<void> {
 		setTrayState(null);
 		if (!startHidden) await showConnectWindow();
 	} else {
-		runAsync("reconcile the CLI command", reconcileDesktopCliCommand());
 		const startup = await prepareDesktopStartup(cli);
 		setTrayState(startup.state);
 		if (!startHidden) {
@@ -176,6 +172,12 @@ async function startApplication(): Promise<void> {
 		if (!startup.requiresWizard) {
 			runAsync("reconcile sync after startup", reconcileBackgroundSyncAfterStartup());
 		}
+		setImmediate(() =>
+			runAsync(
+				"reconcile the CLI command",
+				reconcileDesktopCliCommand(startup.state.daemon.installed),
+			),
+		);
 	}
 	runAsync("initialize Desktop updates", initializeUpdates());
 
@@ -189,98 +191,6 @@ function registerAppProtocol(targetSession: Session): void {
 		if (request.method !== "GET" || !asset) return new Response(null, { status: 404 });
 		return net.fetch(pathToFileURL(join(app.getAppPath(), "dist", asset)).toString());
 	});
-}
-
-function registerDashboardProtocol(targetSession: Session): void {
-	const assets = readDashboardAssets();
-	const index = assets.get("/index.html");
-	if (!index) throw new Error("The packaged Dashboard is missing its SPA shell.");
-	const indexHtml = readFileSync(index, "utf8");
-
-	targetSession.protocol.handle("https", async (request) => {
-		const url = new URL(request.url);
-		if (url.origin !== DASHBOARD_ORIGIN) {
-			return targetSession.fetch(request, { bypassCustomProtocolHandlers: true });
-		}
-		if (request.method !== "GET" && request.method !== "HEAD") {
-			return new Response(null, { status: 405 });
-		}
-
-		const asset = assets.get(url.pathname);
-		if (asset === index || (!asset && isDocumentRequest(request))) {
-			return dashboardDocumentResponse(indexHtml, request.method);
-		}
-		if (asset) return localAssetResponse(asset, request.method);
-		return new Response(null, { status: 404 });
-	});
-}
-
-function readDashboardAssets(): Map<string, string> {
-	const raw: unknown = JSON.parse(
-		readFileSync(join(app.getAppPath(), "dist", "web-assets.json"), "utf8"),
-	);
-	if (!Array.isArray(raw)) throw new Error("The packaged Dashboard asset manifest is invalid.");
-	const root = join(app.getAppPath(), "dist", "web");
-	const assets = new Map<string, string>();
-	for (const entry of raw) {
-		if (
-			typeof entry !== "string" ||
-			!entry ||
-			entry.startsWith("/") ||
-			entry.includes("\\") ||
-			entry.split("/").some((part) => !part || part === "." || part === "..")
-		) {
-			throw new Error("The packaged Dashboard asset manifest is invalid.");
-		}
-		const pathname = new URL(entry, `${DASHBOARD_ORIGIN}/`).pathname;
-		if (assets.has(pathname)) throw new Error("The packaged Dashboard has duplicate assets.");
-		assets.set(pathname, join(root, ...entry.split("/")));
-	}
-	return assets;
-}
-
-async function localAssetResponse(path: string, method: string): Promise<Response> {
-	const response = await net.fetch(pathToFileURL(path).toString());
-	if (method !== "HEAD") return response;
-	return new Response(null, {
-		status: response.status,
-		statusText: response.statusText,
-		headers: response.headers,
-	});
-}
-
-function dashboardDocumentResponse(indexHtml: string, method: string): Response {
-	const nonce = randomBytes(18).toString("base64");
-	const html = indexHtml.replace(/<script\b(?![^>]*\bnonce=)/gi, `<script nonce="${nonce}"`);
-	return new Response(method === "HEAD" ? null : html, {
-		headers: {
-			"Content-Type": "text/html; charset=utf-8",
-			"Content-Security-Policy": [
-				"default-src 'self'",
-				"base-uri 'self'",
-				"object-src 'none'",
-				"frame-ancestors 'none'",
-				`script-src 'self' 'nonce-${nonce}'`,
-				"script-src-attr 'none'",
-				"style-src 'self' 'unsafe-inline'",
-				"font-src 'self' data:",
-				"img-src 'self' data: blob: https:",
-				"connect-src 'self' https: wss:",
-				"frame-src https:",
-				"worker-src 'self' blob:",
-				"form-action 'self' https:",
-			].join("; "),
-			"Referrer-Policy": "strict-origin-when-cross-origin",
-			"X-Content-Type-Options": "nosniff",
-		},
-	});
-}
-
-function isDocumentRequest(request: Request): boolean {
-	return (
-		request.destination === "document" ||
-		(request.headers.get("accept") ?? "").includes("text/html")
-	);
 }
 
 async function initializeUpdates(): Promise<void> {
@@ -848,29 +758,26 @@ function createApplicationMenu(): void {
 	Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-async function reconcileDesktopCliCommand(): Promise<void> {
+async function reconcileDesktopCliCommand(daemonInstalled: boolean): Promise<void> {
 	if (!app.isPackaged) return;
-	const result = await installDesktopCliCommand(desktopCliCommandOptions(cli.shellCommandTarget()));
+	const result = await installDesktopCliCommand(
+		desktopCliCommandOptions(await cli.shellCommandTarget()),
+	);
+	if (!daemonInstalled) await cli.pruneUnusedAppImageRuntimes();
 	if (result.status === "installed" && !result.pathReady) {
 		console.warn(`The clawdi command is installed outside PATH: ${result.path}`);
 	}
 }
 
 function desktopCliCommandOptions(target: string): DesktopCliCommandOptions {
-	if (
-		process.platform !== "darwin" &&
-		process.platform !== "linux" &&
-		process.platform !== "win32"
-	) {
-		throw new Error("CLI command installation is unsupported on this platform.");
-	}
 	return {
-		platform: process.platform,
+		platform: requireDesktopPlatform(),
 		target,
 		home: app.getPath("home"),
 		userData: app.getPath("userData"),
 		localAppData: process.env.LOCALAPPDATA,
 		environmentPath: process.env.PATH,
+		windowsPathScript: join(process.resourcesPath, "support", "windows-cli-path.ps1"),
 	};
 }
 

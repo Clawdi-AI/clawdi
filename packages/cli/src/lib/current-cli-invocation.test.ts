@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+	detectDesktopManagedNativeLayout,
 	isMacApplicationBundleExecutable,
 	resolveCurrentCliInvocation,
 	resolveCurrentCliLayout,
@@ -86,5 +87,58 @@ describe("resolveCurrentCliInvocation", () => {
 			false,
 		);
 		expect(isMacApplicationBundleExecutable("/tmp/native/clawdi")).toBe(false);
+	});
+
+	it("recognizes Desktop-owned native layouts without launcher environment variables", () => {
+		const macResources = join(root, "mac", "Clawdi.app", "Contents", "Resources");
+		const macNative = join(macResources, "native");
+		mkdirSync(macNative, { recursive: true });
+		writeFileSync(join(macResources, "app.asar"), "desktop\n");
+		expect(
+			detectDesktopManagedNativeLayout(
+				{
+					kind: "native",
+					executablePath: join(macNative, "clawdi"),
+					resourceRoot: macNative,
+					activationPath: join(macNative, "clawdi"),
+					nativeOwnership: null,
+				},
+				"darwin",
+			),
+		).toEqual({});
+
+		const windowsResources = join(root, "windows", "resources");
+		const windowsNative = join(windowsResources, "native");
+		mkdirSync(windowsNative, { recursive: true });
+		writeFileSync(join(windowsResources, "app.asar"), "desktop\n");
+		expect(
+			detectDesktopManagedNativeLayout(
+				{
+					kind: "native",
+					executablePath: join(windowsNative, "clawdi.exe"),
+					resourceRoot: windowsNative,
+					activationPath: join(windowsNative, "clawdi.exe"),
+					nativeOwnership: null,
+				},
+				"win32",
+			),
+		).toEqual({});
+
+		const appImageRuntime = join(root, "user-data", "runtimes", "1.2.3-beta.1");
+		mkdirSync(join(appImageRuntime, "skills", "clawdi"), { recursive: true });
+		writeFileSync(join(appImageRuntime, "desktop-runtime.json"), '{"version":"1.2.3-beta.1"}');
+		writeFileSync(join(appImageRuntime, "skills", "clawdi", "SKILL.md"), "skill\n");
+		expect(
+			detectDesktopManagedNativeLayout(
+				{
+					kind: "native",
+					executablePath: join(appImageRuntime, "clawdi"),
+					resourceRoot: appImageRuntime,
+					activationPath: join(appImageRuntime, "clawdi"),
+					nativeOwnership: null,
+				},
+				"linux",
+			),
+		).toEqual({ runtimeRoot: appImageRuntime });
 	});
 });

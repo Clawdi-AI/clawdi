@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { activateAppImageRuntime, pruneAppImageRuntimes } from "./appimage-runtime";
 import { runCommand } from "./command-runner";
 
-test("AppImage runtime survives unmount and activates the next immutable version", () => {
+test("AppImage runtime survives unmount and activates the next immutable version", async () => {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-appimage-"));
 	const source = join(root, "mount", "native");
 	try {
@@ -28,29 +28,29 @@ test("AppImage runtime survives unmount and activates the next immutable version
 			mkdirSync(dirname(join(source, resource)), { recursive: true });
 			writeFileSync(join(source, resource), "v1", { mode: resource === "clawdi" ? 0o755 : 0o644 });
 		}
-		const first = activateAppImageRuntime(source, join(root, "data"), "1.0.0");
+		const first = await activateAppImageRuntime(source, join(root, "data"), "1.0.0");
 		writeFileSync(join(source, "clawdi"), "v2");
-		const second = activateAppImageRuntime(source, join(root, "data"), "1.0.1");
+		const second = await activateAppImageRuntime(source, join(root, "data"), "1.0.1");
 		rmSync(join(root, "mount"), { recursive: true });
 		expect(readFileSync(join(first, "clawdi"), "utf8")).toBe("v1");
 		expect(readFileSync(join(second, "clawdi"), "utf8")).toBe("v2");
-		expect(activateAppImageRuntime(source, join(root, "data"), "1.0.1")).toBe(second);
+		expect(await activateAppImageRuntime(source, join(root, "data"), "1.0.1")).toBe(second);
 		expect(existsSync(join(second, "skills/clawdi/SKILL.md"))).toBe(true);
-		pruneAppImageRuntimes(join(root, "data"), "1.0.1", new Set(["1.0.0"]));
+		await pruneAppImageRuntimes(join(root, "data"), "1.0.1", new Set(["1.0.0"]));
 		expect(existsSync(first)).toBe(true);
-		pruneAppImageRuntimes(join(root, "data"), "1.0.1");
+		await pruneAppImageRuntimes(join(root, "data"), "1.0.1");
 		expect(existsSync(first)).toBe(false);
 		expect(existsSync(second)).toBe(true);
-		expect(() => activateAppImageRuntime(source, join(root, "data"), "..")).toThrow();
+		await expect(activateAppImageRuntime(source, join(root, "data"), "..")).rejects.toThrow();
 		if (process.platform === "linux") {
 			chmodSync(join(second, "clawdi"), 0o600);
-			expect(() => activateAppImageRuntime(source, join(root, "data"), "1.0.1")).toThrow(
+			await expect(activateAppImageRuntime(source, join(root, "data"), "1.0.1")).rejects.toThrow(
 				"not executable",
 			);
 			chmodSync(join(second, "clawdi"), 0o755);
 		}
 		rmSync(join(second, "skills/hosted-versions/1/clawdi/SKILL.md"));
-		expect(() => activateAppImageRuntime(source, join(root, "data"), "1.0.1")).toThrow(
+		await expect(activateAppImageRuntime(source, join(root, "data"), "1.0.1")).rejects.toThrow(
 			"incomplete",
 		);
 	} finally {
@@ -77,7 +77,7 @@ test.skipIf(process.platform !== "linux")(
 					{ mode: 0o755 },
 				);
 			}
-			const script = `import {activateAppImageRuntime} from ${JSON.stringify(join(import.meta.dir, "appimage-runtime.ts"))}; console.log(activateAppImageRuntime(${JSON.stringify(source)}, ${JSON.stringify(join(root, "data"))}, "1.0.0"));`;
+			const script = `import {activateAppImageRuntime} from ${JSON.stringify(join(import.meta.dir, "appimage-runtime.ts"))}; console.log(await activateAppImageRuntime(${JSON.stringify(source)}, ${JSON.stringify(join(root, "data"))}, "1.0.0"));`;
 			const results = await Promise.allSettled([
 				runCommand(process.execPath, ["-e", script]),
 				runCommand(process.execPath, ["-e", script]),
@@ -103,7 +103,7 @@ test.skipIf(process.platform !== "linux" || !nativeBinary)(
 		try {
 			const mount = join(root, "mount");
 			cpSync(dirname(nativeBinary), mount, { recursive: true });
-			const runtime = activateAppImageRuntime(mount, join(root, "data"), "1.0.0");
+			const runtime = await activateAppImageRuntime(mount, join(root, "data"), "1.0.0");
 			rmSync(mount, { recursive: true });
 			const home = join(root, "home");
 			const state = join(root, "state");
