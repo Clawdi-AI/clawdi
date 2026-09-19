@@ -149,21 +149,24 @@ describe("Desktop CLI command", () => {
 		expect(readFileSync(launcher, "utf8")).toContain(`"${nextTarget}" %*`);
 	});
 
-	test("installs the macOS launcher in the user-local bin directory", async () => {
-		const fixture = createFixture();
-		const launcher = join(fixture.home, ".local", "bin", "clawdi");
+	test.skipIf(process.platform === "win32")(
+		"installs the macOS launcher in the user-local bin directory",
+		async () => {
+			const fixture = createFixture();
+			const launcher = join(fixture.home, ".local", "bin", "clawdi");
 
-		const result = await installDesktopCliCommand({
-			platform: "darwin",
-			target: fixture.target,
-			home: fixture.home,
-			userData: fixture.userData,
-			environmentPath: dirname(launcher),
-		});
+			const result = await installDesktopCliCommand({
+				platform: "darwin",
+				target: fixture.target,
+				home: fixture.home,
+				userData: fixture.userData,
+				environmentPath: dirname(launcher),
+			});
 
-		expect(result).toEqual({ status: "installed", path: launcher, pathReady: true });
-		expect(resolve(dirname(launcher), readlinkSync(launcher))).toBe(fixture.target);
-	});
+			expect(result).toEqual({ status: "installed", path: launcher, pathReady: true });
+			expect(resolve(dirname(launcher), readlinkSync(launcher))).toBe(fixture.target);
+		},
+	);
 });
 
 function createFixture() {
