@@ -36,6 +36,8 @@ test("AppImage runtime survives unmount and activates the next immutable version
 		expect(readFileSync(join(second, "clawdi"), "utf8")).toBe("v2");
 		expect(activateAppImageRuntime(source, join(root, "data"), "1.0.1")).toBe(second);
 		expect(existsSync(join(second, "skills/clawdi/SKILL.md"))).toBe(true);
+		pruneAppImageRuntimes(join(root, "data"), "1.0.1", new Set(["1.0.0"]));
+		expect(existsSync(first)).toBe(true);
 		pruneAppImageRuntimes(join(root, "data"), "1.0.1");
 		expect(existsSync(first)).toBe(false);
 		expect(existsSync(second)).toBe(true);

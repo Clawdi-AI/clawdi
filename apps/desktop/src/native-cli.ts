@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type {
 	DesktopAgentConnection,
 	DesktopAgentType,
@@ -11,6 +11,7 @@ import type {
 import { isDesktopAgentType } from "@clawdi/shared/desktop";
 import type { App } from "electron";
 import { activateAppImageRuntime, pruneAppImageRuntimes } from "./appimage-runtime";
+import { managedAppImageCliCommandTarget } from "./cli-command";
 import {
 	CommandCancelledError,
 	type CommandOptions,
@@ -226,7 +227,15 @@ export class DesktopCliService {
 		this.runtimeReconciled = true;
 		if (this.isAppImage()) {
 			try {
-				pruneAppImageRuntimes(this.application.getPath("userData"), this.application.getVersion());
+				const userData = this.application.getPath("userData");
+				const launcherTarget = managedAppImageCliCommandTarget({
+					home: this.application.getPath("home"),
+					userData,
+				});
+				const protectedVersions = launcherTarget
+					? new Set([basename(dirname(launcherTarget))])
+					: undefined;
+				pruneAppImageRuntimes(userData, this.application.getVersion(), protectedVersions);
 			} catch (error) {
 				console.warn("Could not remove an old Desktop runtime", error);
 			}
@@ -239,6 +248,10 @@ export class DesktopCliService {
 
 	async uninstallDaemon(): Promise<void> {
 		await this.run(this.cli(), ["daemon", "uninstall"], { timeoutMs: 60_000 });
+	}
+
+	shellCommandTarget(): string {
+		return realpathSync(this.isAppImage() ? this.prepareDaemonCli() : this.cli());
 	}
 
 	private async performAuthentication(
