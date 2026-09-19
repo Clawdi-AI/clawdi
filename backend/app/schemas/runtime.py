@@ -519,7 +519,7 @@ class HostedEgressProfiles(_StrictHostedWireModel):
     profiles: list[HostedEgressProfile] | None = None
 
 
-class HostedHermesDashboardActivation(BaseModel):
+class HostedHermesDashboardPasswordActivation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: Literal[True]
@@ -536,7 +536,7 @@ class HostedHermesDashboardAuth(BaseModel):
     sessionSecretRef: Literal["secret://runtime/hermes/dashboard-session-secret"]
     sessionTtlSeconds: int = Field(default=43_200, ge=60, le=604_800)
     publicUrl: str = Field(min_length=1)
-    activation: HostedHermesDashboardActivation
+    activation: HostedHermesDashboardPasswordActivation
 
     @field_validator("publicUrl")
     @classmethod
@@ -556,6 +556,54 @@ class HostedHermesDashboardAuth(BaseModel):
         ):
             raise ValueError("must be an HTTPS URL without credentials, query, or fragment")
         return value
+
+
+class HostedHermesDashboardOidcActivation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: Literal[True]
+    capability: Literal["hermes-self-hosted-oidc-v1"]
+
+
+class HostedHermesDashboardOidcAuth(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["oidc"]
+    provider: Literal["self-hosted"]
+    issuer: str = Field(min_length=1)
+    clientId: str = Field(
+        min_length=1,
+        max_length=255,
+        pattern=r"^clawdi-hermes-[1-9][0-9]*-r[1-9][0-9]*$",
+    )
+    accessRevision: int = Field(ge=1)
+    publicUrl: str = Field(min_length=1)
+    trustedProxies: list[IPvAnyAddress] = Field(min_length=1, max_length=16)
+    activation: HostedHermesDashboardOidcActivation
+
+    @field_validator("issuer", "publicUrl")
+    @classmethod
+    def _validate_https_url(cls, value: str) -> str:
+        return HostedHermesDashboardAuth._validate_https_url(value)
+
+    @field_validator("trustedProxies")
+    @classmethod
+    def _validate_trusted_proxies(cls, value: list[IPvAnyAddress]) -> list[IPvAnyAddress]:
+        if len(set(value)) != len(value):
+            raise ValueError("must not contain duplicate IP addresses")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_client_revision(self) -> "HostedHermesDashboardOidcAuth":
+        if not self.clientId.endswith(f"-r{self.accessRevision}"):
+            raise ValueError("clientId must bind the access revision")
+        return self
+
+
+HostedHermesDashboardAuthContract = Annotated[
+    HostedHermesDashboardAuth | HostedHermesDashboardOidcAuth,
+    Field(discriminator="mode"),
+]
 
 
 class HostedOpenClawGatewayActivation(BaseModel):
@@ -585,7 +633,7 @@ class HostedRuntimeSystem(BaseModel):
     )
     openclawControlUiBasePath: str | None = None
     openclawGatewayAuth: HostedOpenClawGatewayAuth | None = None
-    hermesDashboardAuth: HostedHermesDashboardAuth | None = None
+    hermesDashboardAuth: HostedHermesDashboardAuthContract | None = None
 
     @field_validator("openclawControlUiAllowedOrigins")
     @classmethod

@@ -514,7 +514,12 @@ export async function runtimeComponentIsReady(
 
 function hermesUiAuthenticationIsReady(status: unknown): boolean {
 	const value = recordValue(status);
-	return value?.auth_required === true && arrayValue(value.auth_providers).includes("basic");
+	const providers = arrayValue(value?.auth_providers);
+	return (
+		value?.auth_required === true &&
+		providers.length === 1 &&
+		(providers[0] === "basic" || providers[0] === "self-hosted")
+	);
 }
 
 /** Native service activation precedes application startup; heartbeat health needs both. */

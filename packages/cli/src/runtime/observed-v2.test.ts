@@ -480,6 +480,26 @@ printf '%s' '{"port":${server.port},"controlUi":{"basePath":"/control"}}'
 						auth_providers: ["basic"],
 					};
 					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(true);
+					body = {
+						gateway_running: false,
+						gateway_state: "stopped",
+						auth_required: true,
+						auth_providers: ["self-hosted"],
+					};
+					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(true);
+					body = {
+						gateway_running: false,
+						gateway_state: "stopped",
+						auth_required: true,
+						auth_providers: ["self-hosted", "nous"],
+					};
+					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(false);
+					body = {
+						gateway_running: false,
+						gateway_state: "stopped",
+						auth_required: true,
+						auth_providers: ["basic"],
+					};
 					expect((await readHostedRuntimeObserved(paths))?.status).not.toBe("ok");
 					uiStatus = 503;
 					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(false);

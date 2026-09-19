@@ -619,11 +619,9 @@ def render_runtime_source(
     dashboard_auth = system.hermesDashboardAuth
     if runtime_name == "hermes":
         if dashboard_auth is None:
-            raise RuntimeSourceError(
-                "Hermes direct dashboard requires official password authentication"
-            )
+            raise RuntimeSourceError("Hermes direct dashboard requires official authentication")
         if dashboard_auth.activation.enabled is not True:
-            raise RuntimeSourceError("Hermes password authentication must be explicitly enabled")
+            raise RuntimeSourceError("Hermes dashboard authentication must be explicitly enabled")
         if runtime.get("services", {}).get("dashboard", {}).get("args") != [
             "dashboard",
             "--host",

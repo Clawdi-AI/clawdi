@@ -794,8 +794,10 @@ export function manifestSecretRefs(manifest: RuntimeManifest): string[] {
 			refs.add(manifest.openclawGatewayAuth.tokenRef);
 		}
 		if (runtimeName === "hermes" && runtime.services?.dashboard && manifest.hermesDashboardAuth) {
-			refs.add(manifest.hermesDashboardAuth.passwordSecretRef);
-			refs.add(manifest.hermesDashboardAuth.sessionSecretRef);
+			if (manifest.hermesDashboardAuth.mode === "password") {
+				refs.add(manifest.hermesDashboardAuth.passwordSecretRef);
+				refs.add(manifest.hermesDashboardAuth.sessionSecretRef);
+			}
 		}
 		for (const providerId of runtime.provider_ids ?? []) {
 			const provider = plainRecord(providers?.[providerId]);
