@@ -1,5 +1,6 @@
 import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { primeHermesOidcBrowserSession } from "@/hosted/agents/hermes-oidc-browser-session";
 import { primeOpenClawBrowserSession } from "@/hosted/agents/openclaw-browser-session";
 import {
 	forgetOpenClawNativeHandoffLoaded,
@@ -8,22 +9,35 @@ import {
 	resolveRuntimeUiCredentials,
 	runtimeUiLocalStorage,
 } from "@/hosted/agents/runtime-ui-credentials";
-import { useBillingClient } from "@/hosted/billing/billing-client";
+import { BILLING_API_ORIGIN, useBillingClient } from "@/hosted/billing/billing-client";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { useAuthToken, useSessionIdentity } from "@/lib/auth-client";
 
-/** Credentials belong to the mounted console, never to a cross-route cache. */
+/** Credentials and OIDC priming belong to the mounted console, never to a cross-route cache. */
 export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: string | null) {
 	const client = useBillingClient();
 	const { id, metadata, spec } = deployment.resource;
 	const identity = useSessionIdentity();
 	const { getToken } = useAuthToken();
-	const browserSessionUrl =
-		deployment.runtime_ui_endpoint?.runtime === "openclaw"
-			? deployment.runtime_ui_endpoint.browser_session_url
+	const runtimeEndpoint = deployment.runtime_ui_endpoint;
+	const openClawBrowserSessionUrl =
+		runtimeEndpoint?.runtime === "openclaw" ? runtimeEndpoint.browser_session_url : null;
+	const hermesOidcBrowserSessionUrl =
+		runtimeEndpoint?.runtime === "hermes" && runtimeEndpoint.auth_mode === "oidc"
+			? runtimeEndpoint.browser_session_url
 			: null;
+	const isHermesOidc = hermesOidcBrowserSessionUrl != null;
 	const storageScope = JSON.stringify([identity, id]);
+	const authorityIdentity = JSON.stringify([
+		identity,
+		id,
+		metadata.resourceVersion,
+		endpoint,
+		hermesOidcBrowserSessionUrl,
+	]);
 	const [nativeHandoffLoaded, setNativeHandoffLoaded] = useState(false);
+	const [hermesOidcPrimedAuthority, setHermesOidcPrimedAuthority] = useState<string | null>(null);
+	const hermesOidcPrimed = isHermesOidc && hermesOidcPrimedAuthority === authorityIdentity;
 	const [credentials, setCredentials] = useState<RuntimeUiCredentials | null>(null);
 	const [error, setError] = useState<Error | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
@@ -33,6 +47,7 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 	const revision = useRef(0);
 	const requestedVersion = useRef<string | null>(null);
 	const requestAbort = useRef<AbortController | null>(null);
+	const mountedAuthorityIdentity = useRef(authorityIdentity);
 
 	useLayoutEffect(() => {
 		active.current = true;
@@ -46,20 +61,31 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 		requestAbort.current?.abort();
 		forgetOpenClawNativeHandoffLoaded(runtimeUiLocalStorage(), storageScope);
 		setNativeHandoffLoaded(false);
+		setHermesOidcPrimedAuthority(null);
 		revision.current += 1;
 		pending.current = null;
+		requestedVersion.current = null;
 		setCredentials(null);
 		setError(null);
 		setIsLoading(false);
 	}, [storageScope]);
+
+	useEffect(() => {
+		if (mountedAuthorityIdentity.current === authorityIdentity) return;
+		mountedAuthorityIdentity.current = authorityIdentity;
+		clear();
+	}, [authorityIdentity, clear]);
+
 	const load = useCallback(
 		(fresh = false): Promise<RuntimeUiCredentials | null> => {
 			if (!active.current || !endpoint) return Promise.resolve(null);
 			if (pending.current) return pending.current;
+			if (isHermesOidc && !fresh && hermesOidcPrimed) return Promise.resolve(null);
 			if (!fresh && credentials) return Promise.resolve(credentials);
 			if (fresh) {
 				forgetOpenClawNativeHandoffLoaded(runtimeUiLocalStorage(), storageScope);
 				setNativeHandoffLoaded(false);
+				setHermesOidcPrimedAuthority(null);
 			}
 			requestedVersion.current = metadata.resourceVersion;
 			const requestRevision = ++revision.current;
@@ -74,11 +100,26 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 					const abort = new AbortController();
 					requestAbort.current?.abort();
 					requestAbort.current = abort;
-					if (browserSessionUrl) {
+					if (hermesOidcBrowserSessionUrl) {
+						const token = await getToken();
+						if (!current()) return null;
+						await primeHermesOidcBrowserSession(
+							hermesOidcBrowserSessionUrl,
+							id,
+							BILLING_API_ORIGIN,
+							token,
+							metadata.resourceVersion,
+							abort.signal,
+						);
+						if (!current()) return null;
+						setHermesOidcPrimedAuthority(authorityIdentity);
+						return null;
+					}
+					if (openClawBrowserSessionUrl) {
 						const token = await getToken();
 						if (!current()) return null;
 						await primeOpenClawBrowserSession(
-							browserSessionUrl,
+							openClawBrowserSessionUrl,
 							endpoint,
 							token,
 							metadata.resourceVersion,
@@ -108,7 +149,16 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 					return resolved;
 				})
 				.catch(() => {
-					if (current()) setError(new Error("Clawdi couldn't load the browser sign-in details."));
+					if (current()) {
+						setHermesOidcPrimedAuthority(null);
+						setError(
+							new Error(
+								isHermesOidc
+									? "Clawdi couldn't establish this browser session."
+									: "Clawdi couldn't load the browser sign-in details.",
+							),
+						);
+					}
 					return null;
 				})
 				.finally(() => {
@@ -128,18 +178,21 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 			endpoint,
 			credentials,
 			storageScope,
-			browserSessionUrl,
+			openClawBrowserSessionUrl,
+			hermesOidcBrowserSessionUrl,
+			hermesOidcPrimed,
+			isHermesOidc,
+			authorityIdentity,
 			getToken,
 		],
 	);
 
 	useEffect(() => {
-		// A newer snapshot can invalidate a pending request. Try that version once,
-		// after the request settles, without disturbing an established document.
+		const shouldPrimeOpenClaw = spec.runtime === "openclaw" && !nativeHandoffLoaded;
+		const shouldPrimeHermes = isHermesOidc && !hermesOidcPrimed;
 		if (
-			spec.runtime === "openclaw" &&
 			endpoint &&
-			!nativeHandoffLoaded &&
+			(shouldPrimeOpenClaw || shouldPrimeHermes) &&
 			!credentials &&
 			!isLoading &&
 			requestedVersion.current !== metadata.resourceVersion
@@ -155,7 +208,8 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 		isLoading,
 		load,
 		nativeHandoffLoaded,
-		storageScope,
+		hermesOidcPrimed,
+		isHermesOidc,
 	]);
 
 	return {
@@ -164,8 +218,8 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 		isLoading,
 		attempt,
 		nativeHandoffLoaded,
+		hermesOidcPrimed,
 		markFrameLoaded: () => {
-			// A reuse hint only. The official UI owns device auth and any recovery UI.
 			if (
 				active.current &&
 				revision.current === attempt &&

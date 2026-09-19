@@ -92,6 +92,31 @@ describe("deployment list response split", () => {
 });
 
 describe("Runtime UI access contracts", () => {
+	test("binds the Hermes browser-session URL to OIDC mode", () => {
+		const endpoint = {
+			runtime: "hermes",
+			role: "control_ui",
+			url: "https://hermes.example/",
+			browser_mode: "embedded_and_top_level",
+		} as const;
+		expect(isRuntimeUiEndpointInfo({ ...endpoint, auth_mode: "password" })).toBe(true);
+		expect(
+			isRuntimeUiEndpointInfo({
+				...endpoint,
+				auth_mode: "password",
+				browser_session_url: "https://api.example/v2/deployments/hdep_test/hermes-oidc/session",
+			}),
+		).toBe(false);
+		expect(
+			isRuntimeUiEndpointInfo({
+				...endpoint,
+				auth_mode: "oidc",
+				browser_session_url: "https://api.example/v2/deployments/hdep_test/hermes-oidc/session",
+			}),
+		).toBe(true);
+		expect(isRuntimeUiEndpointInfo({ ...endpoint, auth_mode: "oidc" })).toBe(false);
+	});
+
 	test("accepts embedded endpoints and the official OpenClaw browser handoff", () => {
 		expect(
 			isRuntimeUiEndpointInfo({

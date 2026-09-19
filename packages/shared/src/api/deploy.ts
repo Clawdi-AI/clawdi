@@ -49,16 +49,21 @@ export function isRuntimeUiEndpointInfo(value: unknown): value is RuntimeUiEndpo
 		(value.runtime === "openclaw" || value.runtime === "hermes") &&
 		value.role === "control_ui" &&
 		typeof value.url === "string" &&
-		(value.auth_mode === "openclaw_token" || value.auth_mode === "password") &&
+		(value.auth_mode === "openclaw_token" ||
+			value.auth_mode === "password" ||
+			value.auth_mode === "oidc") &&
 		value.browser_mode === "embedded_and_top_level" &&
-		(value.runtime === "openclaw"
-			? value.auth_mode === "openclaw_token"
-			: value.auth_mode === "password") &&
 		isCleanRuntimeUiUrl(value.url) &&
-		(value.runtime !== "openclaw" ||
-			value.browser_session_url == null ||
-			value.browser_session_url ===
-				new URL("/.well-known/openclaw/browser-session", value.url).href)
+		(value.runtime === "openclaw"
+			? value.auth_mode === "openclaw_token" &&
+				(value.browser_session_url == null ||
+					value.browser_session_url ===
+						new URL("/.well-known/openclaw/browser-session", value.url).href)
+			: value.auth_mode === "password"
+				? value.browser_session_url == null
+				: value.auth_mode === "oidc" &&
+					typeof value.browser_session_url === "string" &&
+					isCleanRuntimeUiUrl(value.browser_session_url))
 	);
 }
 

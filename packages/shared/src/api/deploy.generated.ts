@@ -2316,15 +2316,17 @@ export interface components {
             /**
              * Auth Mode
              * @default password
-             * @constant
+             * @enum {string}
              */
-            auth_mode: "password";
+            auth_mode: "password" | "oidc";
             /**
              * Browser Mode
              * @default embedded_and_top_level
              * @constant
              */
             browser_mode: "embedded_and_top_level";
+            /** Browser Session Url */
+            browser_session_url?: string | null;
         };
         /** V2HostedCommercialFundingFactInfo */
         V2HostedCommercialFundingFactInfo: {

@@ -6510,24 +6510,11 @@ export interface components {
             assets: components["schemas"]["HostedFileBrowserAssets"];
             auth: components["schemas"]["HostedFileBrowserAuth"];
         };
-        /** HostedHermesDashboardActivation */
-        HostedHermesDashboardActivation: {
-            /**
-             * Enabled
-             * @constant
-             */
-            enabled: true;
-            /**
-             * Capability
-             * @constant
-             */
-            capability: "hermes-basic-auth-v1";
-        };
         /** HostedHermesDashboardAuth */
         HostedHermesDashboardAuth: {
             /**
-             * Mode
-             * @constant
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
              */
             mode: "password";
             /**
@@ -6554,7 +6541,57 @@ export interface components {
             sessionTtlSeconds: number;
             /** Publicurl */
             publicUrl: string;
-            activation: components["schemas"]["HostedHermesDashboardActivation"];
+            activation: components["schemas"]["HostedHermesDashboardPasswordActivation"];
+        };
+        /** HostedHermesDashboardOidcActivation */
+        HostedHermesDashboardOidcActivation: {
+            /**
+             * Enabled
+             * @constant
+             */
+            enabled: true;
+            /**
+             * Capability
+             * @constant
+             */
+            capability: "hermes-self-hosted-oidc-v1";
+        };
+        /** HostedHermesDashboardOidcAuth */
+        HostedHermesDashboardOidcAuth: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "oidc";
+            /**
+             * Provider
+             * @constant
+             */
+            provider: "self-hosted";
+            /** Issuer */
+            issuer: string;
+            /** Clientid */
+            clientId: string;
+            /** Accessrevision */
+            accessRevision: number;
+            /** Publicurl */
+            publicUrl: string;
+            /** Trustedproxies */
+            trustedProxies: string[];
+            activation: components["schemas"]["HostedHermesDashboardOidcActivation"];
+        };
+        /** HostedHermesDashboardPasswordActivation */
+        HostedHermesDashboardPasswordActivation: {
+            /**
+             * Enabled
+             * @constant
+             */
+            enabled: true;
+            /**
+             * Capability
+             * @constant
+             */
+            capability: "hermes-basic-auth-v1";
         };
         /** HostedOpenClawGatewayActivation */
         HostedOpenClawGatewayActivation: {
@@ -7070,7 +7107,8 @@ export interface components {
             /** Openclawcontroluibasepath */
             openclawControlUiBasePath?: string | null;
             openclawGatewayAuth?: components["schemas"]["HostedOpenClawGatewayAuth"] | null;
-            hermesDashboardAuth?: components["schemas"]["HostedHermesDashboardAuth"] | null;
+            /** Hermesdashboardauth */
+            hermesDashboardAuth?: (components["schemas"]["HostedHermesDashboardAuth"] | components["schemas"]["HostedHermesDashboardOidcAuth"]) | null;
         };
         /** HostedRuntimeTools */
         HostedRuntimeTools: {
