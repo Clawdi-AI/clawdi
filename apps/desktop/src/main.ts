@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
 	DesktopAgentConnection,
@@ -42,12 +42,7 @@ import {
 	dashboardChildUrl,
 	evaluateChildNavigation,
 } from "./child-window-policy";
-import {
-	DesktopCliCommandConflictError,
-	type DesktopCliCommandOptions,
-	hasManagedAppImageCliCommand,
-	installDesktopCliCommand,
-} from "./cli-command";
+import { type DesktopCliCommandOptions, installDesktopCliCommand } from "./cli-command";
 import { DESKTOP_IPC } from "./ipc";
 import { DesktopCliError, DesktopCliService } from "./native-cli";
 import { DesktopUpdateController } from "./update-controller";
@@ -171,7 +166,7 @@ async function startApplication(): Promise<void> {
 		setTrayState(null);
 		if (!startHidden) await showConnectWindow();
 	} else {
-		await reconcileAppImageCliCommand();
+		runAsync("reconcile the CLI command", reconcileDesktopCliCommand());
 		const startup = await prepareDesktopStartup(cli);
 		setTrayState(startup.state);
 		if (!startHidden) {
@@ -831,7 +826,6 @@ function createApplicationMenu(): void {
 			submenu: [
 				{ role: "about" },
 				...updateMenuItems(),
-				cliCommandMenuItem(),
 				{ type: "separator" },
 				{ role: "services" },
 				{ type: "separator" },
@@ -848,72 +842,17 @@ function createApplicationMenu(): void {
 			label: "File",
 			submenu: [
 				...updateActionMenuItems(),
-				cliCommandMenuItem(),
-				{ type: "separator" },
 				{ role: "quit", enabled: activeCriticalOperations === 0 },
 			],
 		});
 	Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-function cliCommandMenuItem(): MenuItemConstructorOptions {
-	return {
-		label: "Install CLI Command…",
-		enabled: app.isPackaged && !installationState().requiresMove && activeCriticalOperations === 0,
-		click: () => runAsync("install the CLI command", installCliCommand()),
-	};
-}
-
-async function installCliCommand(): Promise<void> {
-	try {
-		const result = await withCriticalOperation(() =>
-			installDesktopCliCommand(desktopCliCommandOptions(cli.shellCommandTarget())),
-		);
-		if (result.status === "existing-command") {
-			await showMessageBox({
-				type: "info",
-				message: "Another clawdi command is already installed",
-				detail: `${result.path}\n\nClawdi Desktop left it unchanged.`,
-			});
-			return;
-		}
-		await showMessageBox({
-			type: "info",
-			message: "The clawdi command is installed",
-			detail: result.pathReady
-				? `Open a new terminal and run clawdi.\n\n${result.path}`
-				: `The launcher is at ${result.path}. Add ${dirname(result.path)} to PATH, then open a new terminal.`,
-		});
-	} catch (error) {
-		console.error("Could not install the CLI command", error);
-		await showMessageBox({
-			type: "warning",
-			message: "The clawdi command could not be installed",
-			detail:
-				error instanceof DesktopCliCommandConflictError
-					? `A different command already exists at ${error.path}. Clawdi Desktop left it unchanged.`
-					: "Check the destination permissions and try again.",
-		});
-	}
-}
-
-async function reconcileAppImageCliCommand(): Promise<void> {
-	if (
-		process.platform !== "linux" ||
-		!process.env.APPIMAGE ||
-		!hasManagedAppImageCliCommand({
-			home: app.getPath("home"),
-			userData: app.getPath("userData"),
-		})
-	) {
-		return;
-	}
-	try {
-		const options = desktopCliCommandOptions(cli.shellCommandTarget());
-		options.environmentPath = join(options.home, ".local", "bin");
-		await installDesktopCliCommand(options);
-	} catch (error) {
-		console.error("Could not refresh the AppImage CLI command", error);
+async function reconcileDesktopCliCommand(): Promise<void> {
+	if (!app.isPackaged) return;
+	const result = await installDesktopCliCommand(desktopCliCommandOptions(cli.shellCommandTarget()));
+	if (result.status === "installed" && !result.pathReady) {
+		console.warn(`The clawdi command is installed outside PATH: ${result.path}`);
 	}
 }
 

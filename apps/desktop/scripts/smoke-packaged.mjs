@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { chromium } from "@playwright/test";
 
 const [executablePath, runtimeRoot, surface = "install"] = process.argv.slice(2);
@@ -17,9 +17,11 @@ if (
 
 const home = join(runtimeRoot, "home");
 const clawdiHome = join(runtimeRoot, "state");
+const localAppData = join(runtimeRoot, "local-app-data");
 const cliLog = join(runtimeRoot, "native-cli.log");
 mkdirSync(home, { recursive: true });
 mkdirSync(clawdiHome, { recursive: true });
+mkdirSync(localAppData, { recursive: true });
 
 const output = [];
 const desktop = spawn(
@@ -35,6 +37,7 @@ const desktop = spawn(
 			...process.env,
 			HOME: home,
 			CLAWDI_HOME: clawdiHome,
+			LOCALAPPDATA: localAppData,
 			CLAWDI_DESKTOP_SMOKE_SURFACE: surface,
 			CLAWDI_DESKTOP_SMOKE_LOG_FILE: cliLog,
 			ELECTRON_ENABLE_LOGGING: "1",
@@ -70,6 +73,7 @@ try {
 	} else if (surface === "welcome") {
 		const window = await waitForWindow(context, null, 30_000);
 		await window.getByRole("heading", { name: "Welcome to Clawdi" }).waitFor({ timeout: 30_000 });
+		await verifyAutomaticCliCommand();
 	} else if (surface === "dashboard") await verifyPackagedDashboard(context);
 	else await verifyInstallGate(context, desktop, output, cliLog);
 } catch (error) {
@@ -77,6 +81,22 @@ try {
 } finally {
 	await browser?.close().catch(() => undefined);
 	await stopProcess(desktop);
+}
+
+async function verifyAutomaticCliCommand() {
+	const launcher =
+		process.platform === "win32"
+			? join(localAppData, "Clawdi", "bin", "clawdi.cmd")
+			: join(home, ".local", "bin", "clawdi");
+	const deadline = Date.now() + 10_000;
+	while (!existsSync(launcher) && Date.now() < deadline) await delay(100);
+	assert.ok(existsSync(launcher), `Desktop did not install its CLI command at ${launcher}.`);
+	if (process.platform === "win32") {
+		assert.match(readFileSync(launcher, "utf8"), /Clawdi Desktop CLI launcher v1/);
+		return;
+	}
+	assert.equal(lstatSync(launcher).isSymbolicLink(), true);
+	assert.equal(existsSync(resolve(dirname(launcher), readlinkSync(launcher))), true);
 }
 if (failure) {
 	throw new Error(
