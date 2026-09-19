@@ -80,14 +80,12 @@ jobs:
           trap 'rm -f "$APPLE_API_KEY"' EXIT
           printf '%s' "$APPLE_API_KEY_CONTENT" > "$APPLE_API_KEY"
           unset APPLE_API_KEY_CONTENT
-          bun run --cwd apps/desktop package:mac:release
+          bun run --cwd apps/desktop package:release
           node apps/desktop/scripts/smoke-packaged.mjs \
             "$PWD/apps/desktop/release/$APP_BUNDLE_DIRECTORY/Clawdi.app/Contents/MacOS/Clawdi" \
             "$RUNNER_TEMP/desktop-channel-smoke" install
-          cd apps/desktop/release
-          if [ "$CLAWDI_DESKTOP_ARCH" = x64 ]; then
-            for metadata in *-mac.yml; do mv "$metadata" "${metadata%.yml}-x64.yml"; done
-          fi
+          bun run apps/desktop/scripts/isolate-update-metadata.ts \
+            apps/desktop/release darwin "$CLAWDI_DESKTOP_ARCH" "${{ inputs.channel }}"
       - uses: actions/upload-artifact@v7
         with:
           name: clawdi-macos-${{ matrix.arch }}-${{ inputs.channel }}
@@ -197,32 +195,11 @@ jobs:
           $bundle = 'win-unpacked'
           if ('${{ matrix.arch }}' -eq 'arm64') { $bundle = 'win-arm64-unpacked' }
           node apps/desktop/scripts/smoke-packaged.mjs "$PWD/apps/desktop/release/$bundle/Clawdi.exe" "$env:RUNNER_TEMP/release-smoke" welcome
-      - name: Isolate release metadata assets
-        if: matrix.platform == 'linux'
+      - name: Isolate release metadata asset
         shell: bash
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-          set -euo pipefail
-          cd apps/desktop/release
-          channel=latest
-          if [ '${{ inputs.channel }}' = beta ]; then channel=beta; fi
-          metadata="$channel-linux.yml"
-          if [ "$ARCH" = arm64 ]; then metadata="$channel-linux-arm64.yml"; fi
-          target="$channel-linux-$ARCH.yml"
-          if [ "$metadata" != "$target" ]; then mv "$metadata" "$target"; fi
-      - name: Isolate Windows release metadata assets
-        if: matrix.platform == 'win32'
-        shell: pwsh
-        env:
-          CHANNEL: ${{ inputs.channel }}
-          ARCH: ${{ matrix.arch }}
-        run: |
-          $channel = if ($env:CHANNEL -eq 'stable') { 'latest' } else { 'beta' }
-          $metadata = "apps/desktop/release/$channel.yml"
-          if (Test-Path $metadata) {
-            Move-Item $metadata "apps/desktop/release/$channel-win32-$env:ARCH.yml"
-          }
+        run: >-
+          bun run apps/desktop/scripts/isolate-update-metadata.ts
+          apps/desktop/release ${{ matrix.platform }} ${{ matrix.arch }} ${{ inputs.channel }}
       - uses: actions/upload-artifact@v7
         with:
           name: clawdi-${{ matrix.platform }}-${{ matrix.arch }}-${{ inputs.channel }}

@@ -69,10 +69,6 @@ export class DesktopUpdateController {
 		this.periodicCheck.unref();
 	}
 
-	getState(): DesktopUpdateState {
-		return this.state;
-	}
-
 	async checkForUpdates(): Promise<void> {
 		if (!this.options.policy.enabled || !canCheckForDesktopUpdate(this.state)) return;
 		try {

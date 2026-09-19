@@ -5,7 +5,18 @@ on:
     paths:
       - "apps/desktop/**"
       - "apps/web/**"
-      - "packages/cli/package.json"
+      - "packages/cli/**"
+      - "packages/shared/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/actions/setup-bun-ci/**"
+      - ".github/workflows/desktop-preview.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/desktop/**"
+      - "apps/web/**"
+      - "packages/cli/**"
       - "packages/shared/**"
       - "package.json"
       - "bun.lock"
@@ -16,7 +27,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-preview-${{ github.event.pull_request.number }}
+  group: desktop-preview-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -37,15 +48,14 @@ jobs:
 
       - name: Build ad-hoc signed preview DMG
         run: |
-          bun run --cwd apps/desktop build:bundled
+          bun run --cwd apps/desktop build
           CLAWDI_NATIVE_TARGET=darwin-arm64 bun run --cwd apps/desktop prepare:native
           CSC_FOR_PULL_REQUEST=true node apps/desktop/node_modules/electron-builder/cli.js \
             --projectDir apps/desktop \
-            --mac dmg \
+            --mac dmg zip \
             --arm64 \
             --publish never \
             --config.mac.identity=- \
-            --config.extraMetadata.clawdiDashboardSource=bundled \
             --config.mac.hardenedRuntime=false
           cd apps/desktop/release
           dmg=(Clawdi-*.dmg)
@@ -119,32 +129,14 @@ jobs:
           cp apps/desktop/scripts/fake-native-smoke.sh "$native_cli"
           chmod +x "$native_cli"
           CSC_FOR_PULL_REQUEST=true node apps/desktop/node_modules/electron-builder/cli.js \
-            --projectDir apps/desktop \
-            --mac dir \
-            --arm64 \
-            --publish never \
-            --config.directories.output="$smoke_output" \
-            --config.mac.identity=- \
-            --config.extraMetadata.clawdiDashboardSource=bundled \
-            --config.mac.hardenedRuntime=false
-          dashboard_app="$runtime_home/Applications/Clawdi.app"
-          mkdir -p "$(dirname "$dashboard_app")"
-          ditto "$smoke_output/mac-arm64/Clawdi.app" "$dashboard_app"
-          codesign --verify --deep --strict --verbose=2 "$dashboard_app"
-          node apps/desktop/scripts/smoke-packaged.mjs \
-            "$dashboard_app/Contents/MacOS/Clawdi" \
-            "$runtime_home/dashboard-smoke" \
-            dashboard
-          CSC_FOR_PULL_REQUEST=true node apps/desktop/node_modules/electron-builder/cli.js \
             --projectDir apps/desktop --mac dir --arm64 --publish never \
-            --config.directories.output="$RUNNER_TEMP/clawdi-remote-smoke" \
-            --config.mac.identity=- --config.mac.hardenedRuntime=false \
-            --config.extraMetadata.clawdiDashboardSource=remote
+            --config.directories.output="$smoke_output" \
+            --config.mac.identity=- --config.mac.hardenedRuntime=false
           cp "$production_cli" "$native_cli"
           trap - EXIT
           remote_app="$runtime_home/remote/Applications/Clawdi.app"
           mkdir -p "$(dirname "$remote_app")"
-          ditto "$RUNNER_TEMP/clawdi-remote-smoke/mac-arm64/Clawdi.app" "$remote_app"
+          ditto "$smoke_output/mac-arm64/Clawdi.app" "$remote_app"
           node apps/desktop/scripts/smoke-packaged.mjs \
             "$remote_app/Contents/MacOS/Clawdi" "$runtime_home/remote-smoke" remote
           cd "$(dirname "$dmg_path")"
@@ -157,5 +149,6 @@ jobs:
           path: |
             apps/desktop/release/Clawdi-*.dmg
             apps/desktop/release/Clawdi-*.dmg.sha256
+            apps/desktop/release/Clawdi-*.zip
           if-no-files-found: error
           retention-days: 7

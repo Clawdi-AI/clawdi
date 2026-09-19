@@ -22,8 +22,8 @@ declared as production dependencies of the Electron shell.
 
 ## Terminal command
 
-Packaged builds include the matching native `clawdi` CLI. On the first stable
-application launch, Desktop automatically installs a lightweight launcher:
+Packaged builds include the matching native `clawdi` CLI. On each packaged
+application launch, Desktop reconciles a lightweight launcher after opening its first window:
 macOS and Linux use
 `~/.local/bin/clawdi`, while Windows uses a per-user launcher directory added to
 the user PATH. An existing `clawdi` from another installation is never replaced.
@@ -36,8 +36,8 @@ application path. macOS and Linux do not edit shell startup files; when
 `~/.local/bin` is absent from PATH, the launcher is still installed there and the
 user may add that standard user directory to their preferred shell configuration.
 
-Desktop Platform Packages uses native macOS arm64/Intel, Ubuntu x64/arm64,
-Windows x64 and `windows-11-arm` runners. It asserts the runtime architecture,
+The Desktop PR workflows use native macOS arm64/Intel, Ubuntu x64/arm64,
+Windows x64 and `windows-11-arm` runners. They assert the runtime architecture,
 executes the bundled CLI, and opens the packaged app. Windows additionally tests
 Task Scheduler lifecycle and NSIS install/uninstall; Linux tests DEB installation
 and AppImage first launch. Unsigned PR artifacts have updates disabled and are
@@ -107,19 +107,10 @@ with no script unsafe-inline/unsafe-eval and no shared document caching.
 The Web bridge adapter accepts the released unversioned beta.1 and version 1;
 unknown versions or missing v1 methods display a Desktop upgrade message.
 
-`clawdiDashboardSource=bundled` is retained for packaged SPA regression tests.
-Those tests explicitly run `bun run --cwd apps/desktop build:bundled`. Ordinary
-`build`, previews and releases omit `dist/web` and `web-assets.json` entirely;
-the dedicated regression workflow supplies both the build flag and bundled
-package metadata. No runtime code downloader or remote-to-bundled fallback is added.
-
-Measured in isolated Linux x64 builds with Bun 1.4.0 / Electron 44.0.0, Desktop
-`1.0.0-beta.1`: the bundled regression `dist` was 7,144,141 bytes versus 713,151
-bytes for remote mode. AppImage size was 165,767,770 versus 163,175,989 bytes
-(2,591,781 bytes smaller). Both build modes and the remote release artifact
-checks passed; the remote build contains neither the SPA nor its asset manifest.
-Production defaults to remote; failures show the local recovery UI rather than
-silently mixing cached bundled code with current remote assets.
+Desktop has one Dashboard mode: the production HTTPS application. Packaged smoke
+tests exercise that same surface, including the narrow bridge, sign-in retry and
+child-window isolation. There is no bundled SPA, runtime code downloader or
+remote-to-bundled fallback. Network failures show the local recovery UI.
 
 Dashboard uses a persistent Chromium partition for Clerk's browser session.
 Startup first restores that session; only an expired or missing session requests
@@ -132,7 +123,7 @@ upgrading an old in-memory build will still need one new browser session.
 ## Preview package
 
 ```bash
-bun run --cwd apps/desktop package:mac
+bun run --cwd apps/desktop package:preview
 ```
 
 Preview packages are unsigned or ad-hoc signed and carry
@@ -190,7 +181,7 @@ no third-party certificate-import Action receives the signing secret.
 For local packaging, run:
 
 ```bash
-bun run --cwd apps/desktop package:mac:release
+bun run --cwd apps/desktop package:release
 ```
 
 The command never publishes. It requires signing and notarization, verifies the

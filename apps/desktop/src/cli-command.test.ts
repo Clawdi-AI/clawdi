@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { hasManagedAppImageCliCommand, installDesktopCliCommand } from "./cli-command";
+import { installDesktopCliCommand } from "./cli-command";
 
 const roots: string[] = [];
 
@@ -90,10 +90,6 @@ describe("Desktop CLI command", () => {
 		}
 		mkdirSync(dirname(launcher), { recursive: true });
 		symlinkSync(oldTarget, launcher);
-		expect(hasManagedAppImageCliCommand({ home: fixture.home, userData: fixture.userData })).toBe(
-			true,
-		);
-
 		await installDesktopCliCommand({
 			platform: "linux",
 			target: nextTarget,
@@ -103,6 +99,23 @@ describe("Desktop CLI command", () => {
 		});
 
 		expect(resolve(dirname(launcher), readlinkSync(launcher))).toBe(nextTarget);
+	});
+
+	test("refreshes an obsolete launcher owned by a previous Desktop install", async () => {
+		const fixture = createFixture();
+		const launcher = join(fixture.home, ".local", "bin", "clawdi");
+		mkdirSync(dirname(launcher), { recursive: true });
+		symlinkSync("/Applications/Clawdi.app/Contents/Resources/native/clawdi", launcher);
+
+		await installDesktopCliCommand({
+			platform: "darwin",
+			target: fixture.target,
+			home: fixture.home,
+			userData: fixture.userData,
+			environmentPath: "",
+		});
+
+		expect(resolve(dirname(launcher), readlinkSync(launcher))).toBe(fixture.target);
 	});
 
 	test("writes a Windows launcher and adds only its directory to user PATH", async () => {
@@ -118,6 +131,7 @@ describe("Desktop CLI command", () => {
 			localAppData: fixture.root,
 			environmentPath: "",
 			launcherPath: launcher,
+			windowsPathScript: fixture.windowsPathScript,
 			execute: async (command, args, options) => {
 				calls.push({ command, args, env: options?.env });
 				return { stdout: "", stderr: "" };
@@ -129,7 +143,8 @@ describe("Desktop CLI command", () => {
 		expect(readFileSync(launcher, "utf8")).toContain(`"${fixture.target}" %*`);
 		expect(calls).toHaveLength(1);
 		expect(calls[0]?.command).toBe("powershell.exe");
-		expect(calls[0]?.env?.CLAWDI_DESKTOP_CLI_BIN).toBe(dirname(launcher));
+		expect(calls[0]?.args).toContain(fixture.windowsPathScript);
+		expect(calls[0]?.args).toContain(dirname(launcher));
 
 		const nextTarget = join(fixture.root, "next", "clawdi.exe");
 		mkdirSync(dirname(nextTarget), { recursive: true });
@@ -142,6 +157,7 @@ describe("Desktop CLI command", () => {
 			localAppData: fixture.root,
 			environmentPath: dirname(launcher),
 			launcherPath: launcher,
+			windowsPathScript: fixture.windowsPathScript,
 			execute: async () => {
 				throw new Error("PATH must not be changed twice");
 			},
@@ -175,10 +191,12 @@ function createFixture() {
 	const home = join(root, "home");
 	const userData = join(root, "data");
 	const target = join(root, "app", "resources", "native", "clawdi");
+	const windowsPathScript = join(root, "windows-cli-path.ps1");
 	mkdirSync(dirname(target), { recursive: true });
 	mkdirSync(home);
 	mkdirSync(userData);
 	writeFileSync(target, "binary");
+	writeFileSync(windowsPathScript, "param()\n");
 	chmodSync(target, 0o755);
-	return { root, home, userData, target };
+	return { root, home, userData, target, windowsPathScript };
 }

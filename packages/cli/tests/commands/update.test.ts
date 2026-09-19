@@ -291,6 +291,25 @@ describe("installer process lifetime", () => {
 });
 
 describe("update --json", () => {
+	it("reports Desktop ownership without consulting the standalone CLI feed", async () => {
+		const orig = console.log;
+		let captured = "";
+		console.log = (...args: unknown[]) => {
+			captured = args.map(String).join(" ");
+		};
+		try {
+			await update({ json: true }, { isDesktopManaged: () => true });
+		} finally {
+			console.log = orig;
+		}
+
+		expect(JSON.parse(captured)).toMatchObject({
+			latest: null,
+			upgradeAvailable: false,
+			managedBy: "desktop",
+		});
+	});
+
 	it("reports upgrade available when registry has a newer version", async () => {
 		const orig = console.log;
 		let captured = "";

@@ -11,15 +11,11 @@
 	"scripts": {
 		"dev": "bun run scripts/dev.ts",
 		"build": "bun run scripts/build.ts",
-		"build:bundled": "bun run scripts/build.ts --bundled-dashboard",
 		"typecheck": "tsc --noEmit",
 		"test": "../../scripts/test.sh desktop",
 		"test:internal": "bun test src",
 		"prepare:native": "bun run scripts/prepare-native.ts",
-		"package:mac": "bun run scripts/package-preview.ts",
-		"package:linux": "bun run scripts/package-preview.ts",
-		"package:mac:release": "bun run scripts/package-release.ts",
-		"package:win": "bun run scripts/package-preview.ts",
+		"package:preview": "bun run scripts/package-preview.ts",
 		"package:release": "bun run scripts/package-release.ts"
 	},
 	"dependencies": {
@@ -57,7 +53,6 @@
 			"package.json"
 		],
 		"extraMetadata": {
-			"clawdiDashboardSource": "remote",
 			"clawdiUpdateChannel": "disabled"
 		},
 		"linux": {
@@ -132,6 +127,12 @@
 		},
 		"win": {
 			"icon": "../web/public/clawdi-logo-transparent.png",
+			"extraResources": [
+				{
+					"from": "build/windows-cli-path.ps1",
+					"to": "support/windows-cli-path.ps1"
+				}
+			],
 			"target": [
 				{
 					"target": "nsis",

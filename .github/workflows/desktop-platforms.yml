@@ -11,6 +11,16 @@ on:
       - 'bun.lock'
       - '.github/workflows/desktop-platforms.yml'
       - '.github/actions/setup-bun-ci/**'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/desktop/**'
+      - 'packages/cli/**'
+      - 'packages/shared/**'
+      - 'apps/web/**'
+      - 'bun.lock'
+      - '.github/workflows/desktop-platforms.yml'
+      - '.github/actions/setup-bun-ci/**'
 
 permissions:
   contents: read
@@ -26,9 +36,6 @@ jobs:
       max-parallel: 2
       matrix:
         include:
-          - runner: macos-15
-            platform: darwin
-            arch: arm64
           - runner: macos-15-intel
             platform: darwin
             arch: x64
@@ -176,15 +183,28 @@ jobs:
         run: |
           $installer = (Get-ChildItem apps/desktop/release/*.exe).FullName
           $destination = Join-Path $env:RUNNER_TEMP 'Clawdi Installed'
+          $runtimeRoot = Join-Path $env:RUNNER_TEMP 'windows-smoke'
+          $launcherBin = Join-Path $env:LOCALAPPDATA 'Clawdi/bin'
+          $launcher = Join-Path $launcherBin 'clawdi.cmd'
+          $env:CLAWDI_DESKTOP_SMOKE_LOCAL_APP_DATA = $env:LOCALAPPDATA
           $process = Start-Process $installer -ArgumentList @('/S', "/D=$destination") -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw 'NSIS install failed' }
           try {
-            node apps/desktop/scripts/smoke-packaged.mjs "$destination/Clawdi.exe" "$env:RUNNER_TEMP/windows-smoke" welcome
+            node apps/desktop/scripts/smoke-packaged.mjs "$destination/Clawdi.exe" $runtimeRoot welcome
             if ($LASTEXITCODE -ne 0) { throw 'Packaged smoke failed' }
+            if (!(Test-Path -LiteralPath $launcher)) { throw 'Desktop did not install the CLI launcher' }
           } finally {
             $process = Start-Process "$destination/Uninstall Clawdi.exe" -ArgumentList '/S' -Wait -PassThru
             if ($process.ExitCode -ne 0) { throw 'NSIS uninstall failed' }
             if (Test-Path "$destination/Clawdi.exe") { throw 'NSIS left the application installed' }
+            if (Test-Path -LiteralPath $launcher) { throw 'NSIS left the CLI launcher installed' }
+            $environment = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
+            try {
+              $userPath = [string]$environment.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            } finally {
+              $environment.Dispose()
+            }
+            if (@($userPath -split ';') -contains $launcherBin) { throw 'NSIS left the CLI directory in PATH' }
           }
       - uses: actions/upload-artifact@v7
         with:
