@@ -251,7 +251,7 @@ async def _create_hosted_runtime_graph(
                             "mode": "oidc",
                             "provider": "self-hosted",
                             "deploymentId": DEV_V2_DEPLOYMENT_ID,
-                            "issuer": f"{settings.backend_base_url.rstrip('/')}/v2/hermes/oidc",
+                            "issuer": f"{settings.public_api_url.rstrip('/')}/v2/hermes/oidc",
                             "clientId": f"clawdi-hermes-{DEV_V2_DEPLOYMENT_ID}-r1",
                             "accessRevision": 1,
                             "publicUrl": "https://hermes.dev-preview.local",
