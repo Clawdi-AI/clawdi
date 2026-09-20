@@ -66,6 +66,24 @@ export function runtimeDashboardUrl(url: string, runtime: HostedRuntime): string
 	}
 }
 
+/** Start Hermes OIDC at its own login route so Hermes creates the PKCE/state cookies. */
+export function hermesOidcLoginUrl(url: string): string {
+	try {
+		const dashboard = new URL(runtimeDashboardUrl(url, "hermes"));
+		const dashboardPath = dashboard.pathname.replace(/\/+$/, "");
+		if (!dashboardPath.endsWith("/chat")) return url;
+		dashboard.pathname = `${dashboardPath.slice(0, -"/chat".length)}/auth/login`;
+		dashboard.search = new URLSearchParams({
+			provider: "self-hosted",
+			next: `${dashboardPath}`,
+		}).toString();
+		dashboard.hash = "";
+		return dashboard.toString();
+	} catch {
+		return url;
+	}
+}
+
 export function deploymentFilesUrl(deployment: HostedDeployment): string | null {
 	const value = deployment.files_endpoint?.url;
 	if (!value) return null;

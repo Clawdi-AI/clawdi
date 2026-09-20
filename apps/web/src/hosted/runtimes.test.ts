@@ -7,6 +7,7 @@ import {
 	runtimeAiProviderAuthKind,
 	runtimeConsoleUrl,
 	runtimeDashboardUrl,
+	hermesOidcLoginUrl,
 } from "@/hosted/runtimes";
 
 describe("deploymentFilesUrl", () => {
@@ -95,6 +96,30 @@ describe("runtimeDashboardUrl", () => {
 	])("defaults Hermes root to Chat without changing explicit targets: %s", (url, expected) => {
 		expect(runtimeDashboardUrl(url, "hermes")).toBe(expected);
 		expect(runtimeDashboardUrl(url, "openclaw")).toBe(url);
+	});
+});
+
+describe("hermesOidcLoginUrl", () => {
+	test.each([
+		[
+			"https://runtime.example",
+			"https://runtime.example/auth/login?provider=self-hosted&next=%2Fchat",
+		],
+		[
+			"https://proxy.example/app-9119/",
+			"https://proxy.example/app-9119/auth/login?provider=self-hosted&next=%2Fapp-9119%2Fchat",
+		],
+		[
+			"https://proxy.example/app-9119/chat",
+			"https://proxy.example/app-9119/auth/login?provider=self-hosted&next=%2Fapp-9119%2Fchat",
+		],
+	])("starts Hermes OIDC at the dashboard login route: %s", (url, expected) => {
+		expect(hermesOidcLoginUrl(url)).toBe(expected);
+	});
+
+	test("preserves an explicit non-chat Hermes target", () => {
+		const url = "https://runtime.example/settings?tab=model";
+		expect(hermesOidcLoginUrl(url)).toBe(url);
 	});
 });
 
