@@ -40,6 +40,10 @@ export interface DesktopManagedNativeLayout {
 	runtimeRoot?: string;
 }
 
+export interface HomebrewManagedNativeLayout {
+	activationPath: string;
+}
+
 /**
  * Resolve the current CLI process into a command that can invoke this same
  * installation again. Native executables already contain the CLI, so
@@ -140,6 +144,48 @@ export function detectDesktopManagedNativeLayout(
 export function isDesktopManagedCurrentCli(): boolean {
 	try {
 		return detectDesktopManagedNativeLayout() !== null;
+	} catch {
+		return false;
+	}
+}
+
+/** Recognize Homebrew's immutable Cellar keg and return its stable opt path.
+ * The opt symlink is suitable for supervisor units because it follows upgrades
+ * without baking a versioned Cellar directory into launchd or systemd. */
+export function detectHomebrewManagedNativeLayout(
+	layout: CurrentCliLayout = resolveCurrentCliLayout(),
+	platform: NodeJS.Platform = process.platform,
+): HomebrewManagedNativeLayout | null {
+	if (
+		(platform !== "darwin" && platform !== "linux") ||
+		layout.kind !== "native" ||
+		layout.nativeOwnership ||
+		basename(layout.executablePath) !== "clawdi" ||
+		basename(layout.resourceRoot) !== "libexec"
+	) {
+		return null;
+	}
+	const keg = dirname(layout.resourceRoot);
+	const formula = dirname(keg);
+	const cellar = dirname(formula);
+	if (basename(formula) !== "clawdi" || basename(cellar) !== "Cellar") return null;
+	try {
+		if (!existsSync(join(keg, "INSTALL_RECEIPT.json"))) return null;
+		if (!existsSync(join(layout.resourceRoot, "egress-addon", "clawdi_egress_addon.py")))
+			return null;
+		if (!existsSync(join(layout.resourceRoot, "skills", "clawdi", "SKILL.md"))) return null;
+		const activationPath = join(dirname(cellar), "opt", "clawdi", "libexec", "clawdi");
+		if (realpathSync.native(activationPath) !== realpathSync.native(layout.executablePath))
+			return null;
+		return { activationPath };
+	} catch {
+		return null;
+	}
+}
+
+export function isHomebrewManagedCurrentCli(): boolean {
+	try {
+		return detectHomebrewManagedNativeLayout() !== null;
 	} catch {
 		return false;
 	}
