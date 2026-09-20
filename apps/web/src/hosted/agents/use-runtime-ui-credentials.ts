@@ -1,6 +1,7 @@
 import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
+	HERMES_OIDC_BROWSER_SESSION_REFRESH_MS,
 	hermesOidcAuthorityIdentity,
 	primeHermesOidcBrowserSession,
 } from "@/hosted/agents/hermes-oidc-browser-session";
@@ -56,6 +57,7 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 	const revision = useRef(0);
 	const requestedVersion = useRef<string | null>(null);
 	const requestAbort = useRef<AbortController | null>(null);
+	const hermesOidcRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const mountedAuthorityIdentity = useRef(authorityIdentity);
 
 	useLayoutEffect(() => {
@@ -63,11 +65,14 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 		return () => {
 			active.current = false;
 			requestAbort.current?.abort();
+			if (hermesOidcRefreshTimer.current) clearTimeout(hermesOidcRefreshTimer.current);
 		};
 	}, []);
 
 	const clear = useCallback(() => {
 		requestAbort.current?.abort();
+		if (hermesOidcRefreshTimer.current) clearTimeout(hermesOidcRefreshTimer.current);
+		hermesOidcRefreshTimer.current = null;
 		forgetOpenClawNativeHandoffLoaded(runtimeUiLocalStorage(), storageScope);
 		setNativeHandoffLoaded(false);
 		setHermesOidcPrimedAuthority(null);
@@ -95,6 +100,8 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 				forgetOpenClawNativeHandoffLoaded(runtimeUiLocalStorage(), storageScope);
 				setNativeHandoffLoaded(false);
 				setHermesOidcPrimedAuthority(null);
+				if (hermesOidcRefreshTimer.current) clearTimeout(hermesOidcRefreshTimer.current);
+				hermesOidcRefreshTimer.current = null;
 			}
 			requestedVersion.current = metadata.resourceVersion;
 			const requestRevision = ++revision.current;
@@ -122,6 +129,12 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 						);
 						if (!current()) return null;
 						setHermesOidcPrimedAuthority(authorityIdentity);
+						hermesOidcRefreshTimer.current = setTimeout(() => {
+							if (!active.current || mountedAuthorityIdentity.current !== authorityIdentity)
+								return;
+							requestedVersion.current = null;
+							setHermesOidcPrimedAuthority(null);
+						}, HERMES_OIDC_BROWSER_SESSION_REFRESH_MS);
 						return null;
 					}
 					if (openClawBrowserSessionUrl) {

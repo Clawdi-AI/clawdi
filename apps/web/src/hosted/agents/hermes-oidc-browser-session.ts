@@ -14,6 +14,8 @@ export function hermesOidcAuthorityIdentity(
 	]);
 }
 
+export const HERMES_OIDC_BROWSER_SESSION_REFRESH_MS = 45 * 60 * 1000;
+
 function strongResourceEtag(resourceVersion: string): string {
 	const valid =
 		resourceVersion.length > 0 &&
