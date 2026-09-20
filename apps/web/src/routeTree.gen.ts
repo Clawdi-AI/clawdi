@@ -16,6 +16,7 @@ import { Route as SignUpRouteImport } from './routes/sign-up'
 import { Route as VaultRequestRouteImport } from './routes/vault-request'
 import { Route as ProtectedDashboardRouteImport } from './routes/_protected/_dashboard'
 import { Route as ProtectedCliAuthorizeRouteImport } from './routes/_protected/cli-authorize'
+import { Route as ProtectedRuntimeHandoffRouteImport } from './routes/_protected/runtime-handoff'
 import { Route as SIdRouteImport } from './routes/s/$id'
 import { Route as SChar123idChar125DotjsonRouteImport } from './routes/s/{$id}[.]json'
 import { Route as SChar123idChar125DotmdRouteImport } from './routes/s/{$id}[.]md'
@@ -91,6 +92,11 @@ const ProtectedDashboardRoute = ProtectedDashboardRouteImport.update({
 const ProtectedCliAuthorizeRoute = ProtectedCliAuthorizeRouteImport.update({
   id: '/cli-authorize',
   path: '/cli-authorize',
+  getParentRoute: () => ProtectedRoute,
+} as any)
+const ProtectedRuntimeHandoffRoute = ProtectedRuntimeHandoffRouteImport.update({
+  id: '/runtime-handoff',
+  path: '/runtime-handoff',
   getParentRoute: () => ProtectedRoute,
 } as any)
 const SIdRoute = SIdRouteImport.update({
@@ -352,6 +358,7 @@ export interface FileRoutesByFullPath {
   '/sign-up': typeof SignUpRouteWithChildren
   '/vault-request': typeof VaultRequestRoute
   '/cli-authorize': typeof ProtectedCliAuthorizeRoute
+  '/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
   '/s/{$id}.md': typeof SChar123idChar125DotmdRoute
@@ -402,6 +409,7 @@ export interface FileRoutesByTo {
   '/sign-up': typeof SignUpRouteWithChildren
   '/vault-request': typeof VaultRequestRoute
   '/cli-authorize': typeof ProtectedCliAuthorizeRoute
+  '/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
   '/s/{$id}.md': typeof SChar123idChar125DotmdRoute
@@ -452,6 +460,7 @@ export interface FileRoutesById {
   '/vault-request': typeof VaultRequestRoute
   '/_protected/_dashboard': typeof ProtectedDashboardRouteWithChildren
   '/_protected/cli-authorize': typeof ProtectedCliAuthorizeRoute
+  '/_protected/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
   '/s/{$id}.md': typeof SChar123idChar125DotmdRoute
@@ -505,6 +514,7 @@ export interface FileRouteTypes {
     | '/sign-up'
     | '/vault-request'
     | '/cli-authorize'
+    | '/runtime-handoff'
     | '/s/$id'
     | '/s/{$id}.json'
     | '/s/{$id}.md'
@@ -555,6 +565,7 @@ export interface FileRouteTypes {
     | '/sign-up'
     | '/vault-request'
     | '/cli-authorize'
+    | '/runtime-handoff'
     | '/s/$id'
     | '/s/{$id}.json'
     | '/s/{$id}.md'
@@ -604,6 +615,7 @@ export interface FileRouteTypes {
     | '/vault-request'
     | '/_protected/_dashboard'
     | '/_protected/cli-authorize'
+    | '/_protected/runtime-handoff'
     | '/s/$id'
     | '/s/{$id}.json'
     | '/s/{$id}.md'
@@ -710,6 +722,13 @@ declare module '@tanstack/react-router' {
       path: '/cli-authorize'
       fullPath: '/cli-authorize'
       preLoaderRoute: typeof ProtectedCliAuthorizeRouteImport
+      parentRoute: typeof ProtectedRoute
+    }
+    '/_protected/runtime-handoff': {
+      id: '/_protected/runtime-handoff'
+      path: '/runtime-handoff'
+      fullPath: '/runtime-handoff'
+      preLoaderRoute: typeof ProtectedRuntimeHandoffRouteImport
       parentRoute: typeof ProtectedRoute
     }
     '/s/$id': {
@@ -1135,6 +1154,7 @@ const ProtectedDashboardRouteWithChildren =
 interface ProtectedRouteChildren {
   ProtectedDashboardRoute: typeof ProtectedDashboardRouteWithChildren
   ProtectedCliAuthorizeRoute: typeof ProtectedCliAuthorizeRoute
+  ProtectedRuntimeHandoffRoute: typeof ProtectedRuntimeHandoffRoute
   ProtectedTerminalIdRoute: typeof ProtectedTerminalIdRoute
   ProtectedOauthCodexCallbackRoute: typeof ProtectedOauthCodexCallbackRoute
 }
@@ -1142,6 +1162,7 @@ interface ProtectedRouteChildren {
 const ProtectedRouteChildren: ProtectedRouteChildren = {
   ProtectedDashboardRoute: ProtectedDashboardRouteWithChildren,
   ProtectedCliAuthorizeRoute: ProtectedCliAuthorizeRoute,
+  ProtectedRuntimeHandoffRoute: ProtectedRuntimeHandoffRoute,
   ProtectedTerminalIdRoute: ProtectedTerminalIdRoute,
   ProtectedOauthCodexCallbackRoute: ProtectedOauthCodexCallbackRoute,
 }
