@@ -734,8 +734,6 @@ const TEST_HOSTED_CODEX_SECRET_VALUES = {
 const TEST_RUNTIME_SERVICE_SECRET_VALUES = {
 	"secret://clawdi/auth-token": "test-runtime-auth-token",
 	"secret://runtime/openclaw/gateway-token": "test-openclaw-gateway-token",
-	"secret://runtime/hermes/dashboard-password": "test-hermes-dashboard-password",
-	"secret://runtime/hermes/dashboard-session-secret": "test-hermes-dashboard-session-secret",
 };
 const TEST_HOSTED_CODEX_TERMINAL_TOOLING = {
 	codex: {
@@ -798,17 +796,15 @@ function hostedHermesSystemFixture(
 	void workspace;
 	return {
 		hermesDashboardAuth: {
-			mode: "password",
-			provider: "basic",
-			username: "admin",
-			passwordSecretRef: "secret://runtime/hermes/dashboard-password",
-			sessionSecretRef: "secret://runtime/hermes/dashboard-session-secret",
-			sessionTtlSeconds: 43_200,
+			mode: "oidc",
+			provider: "self-hosted",
+			deploymentId: "hdep_hermesfixture",
+			issuer: "https://api.example.test/v2/hermes/oidc",
+			clientId: "clawdi-hermes-hdep_hermesfixture-r1",
+			accessRevision: 1,
 			publicUrl: "https://agent.example.test/hermes",
-			activation: {
-				enabled: true,
-				capability: "hermes-basic-auth-v1",
-			},
+			trustedProxies: ["10.173.0.1"],
+			activation: { enabled: true, capability: "hermes-self-hosted-oidc-v1" },
 		},
 	};
 }
@@ -857,14 +853,6 @@ function hostedRuntimeBundleResponse(
 			? {
 					"secret://runtime/openclaw/gateway-token":
 						TEST_RUNTIME_SERVICE_SECRET_VALUES["secret://runtime/openclaw/gateway-token"],
-				}
-			: {}),
-		...(selectedRuntime === "hermes"
-			? {
-					"secret://runtime/hermes/dashboard-password":
-						TEST_RUNTIME_SERVICE_SECRET_VALUES["secret://runtime/hermes/dashboard-password"],
-					"secret://runtime/hermes/dashboard-session-secret":
-						TEST_RUNTIME_SERVICE_SECRET_VALUES["secret://runtime/hermes/dashboard-session-secret"],
 				}
 			: {}),
 	};
@@ -2098,19 +2086,15 @@ function hostedHermesDashboardCapabilityLoad(home: string): RuntimeManifestLoad 
 		},
 	};
 	load.manifest.hermesDashboardAuth = {
-		mode: "password",
-		provider: "basic",
-		username: "admin",
-		passwordSecretRef: "secret://runtime/hermes/dashboard-password",
-		sessionSecretRef: "secret://runtime/hermes/dashboard-session-secret",
-		sessionTtlSeconds: 43_200,
+		mode: "oidc",
+		provider: "self-hosted",
+		deploymentId: "hdep_hermesfixture",
+		issuer: "https://api.example.test/v2/hermes/oidc",
+		clientId: "clawdi-hermes-hdep_hermesfixture-r1",
+		accessRevision: 1,
 		publicUrl: "https://agent.example.test/hermes",
-		activation: { enabled: true, capability: "hermes-basic-auth-v1" },
-	};
-	load.secretValues = {
-		...load.secretValues,
-		"secret://runtime/hermes/dashboard-password": "dashboard-password",
-		"secret://runtime/hermes/dashboard-session-secret": "dashboard-session-secret",
+		trustedProxies: ["10.173.0.1"],
+		activation: { enabled: true, capability: "hermes-self-hosted-oidc-v1" },
 	};
 	return load;
 }
@@ -11170,8 +11154,6 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = "test-hermes-dashboard-password";
-		process.env.HERMES_DASHBOARD_BASIC_AUTH_SECRET = "test-hermes-dashboard-session-secret";
 		seedMitmproxyCache();
 		writeFileSync(
 			manifestPath,

@@ -752,7 +752,7 @@ Normalization maps hosted fields into the internal shape:
 | `locale.language`, `locale.timezone` | Required supported language and valid IANA timezone |
 | `system.openclawControlUiAllowedOrigins` | Strict-v2 OpenClaw public origin allowlist |
 | `system.openclawGatewayAuth` | Strict-v2 OpenClaw token and required native shared-token capability; the token itself is an environment secret reference |
-| `system.hermesDashboardAuth` | Strict-v2 Hermes Basic provider settings, public URL, session TTL, and environment secret references; plaintext credentials are never part of the manifest |
+| `system.hermesDashboardAuth` | Strict-v2 Hermes Clerk OIDC provider settings, deployment binding, public URL, issuer, and trusted proxy contract; no password or dashboard secret is part of the manifest |
 | `controlPlane.cloudApiUrl` | Required and only control-plane field; `appId`, `apiUrl`, and `manifestUrl` are not public manifest fields |
 | `clawdiCli.source` | Required literal `npm:clawdi` for Hosted managed CLI updates |
 | `clawdiCli.packageSpec` | Required exact `clawdi@<semver>` without build metadata, at most 200 characters; remote Hosted manifests never select an npm dist-tag or local path |
@@ -1529,27 +1529,20 @@ recover a missing native credential before Console reveal, retain the recovered
 connection across the reveal, and reuse the device credential on reload. Clerk
 identity and persistence seams are synthetic; no live tenant is involved.
 
-Hermes direct exposure requires `hermes-basic-auth-v1`, a stable HTTPS public
-URL (including any path prefix), exact `0.0.0.0:9119` service args, and the
-official Basic password/session environment secret references. Hosted derives
-the password and an independent session-signing secret from the gateway token
-and durable Runtime UI access revision. The CLI projects non-secret settings to
-the official `dashboard.basic_auth` and `dashboard.public_url` config keys, and
-projects only the password and session-signing secret through the official
-`HERMES_DASHBOARD_BASIC_AUTH_*` environment variables. Hosted also writes its
-workspace to the official `terminal.cwd` key; it does not replace the gateway
-unit's upstream-owned working directory. Runtime processes keep the system UTC
-timezone, while the agent's business timezone uses the official OpenClaw
-`agents.defaults.userTimezone` or Hermes `timezone` config key.
+Hermes direct exposure uses the official self-hosted OIDC provider at the fixed
+`0.0.0.0:9119` dashboard endpoint. The manifest carries the exact deployment
+binding, access revision, issuer, public URL, and trusted proxy contract. The
+CLI reconciler removes any legacy `dashboard.basic_auth` configuration,
+disables `dashboard_auth/basic` and `dashboard_auth/nous`, and enables only
+`dashboard_auth/self_hosted`. No Hermes password or dashboard session secret is
+created or injected.
 
-The dashboard consumes generated discriminated deployment metadata; it does not
-infer auth from the runtime name or fall back to legacy `native_url` fields.
-Both runtimes declare `browser_mode: embedded_and_top_level` and remain embedded
-in the Console. Public endpoint URLs contain no secret. The owner-checked
-credential response carries the Hermes username/password or the OpenClaw token
-and exact one-time `handoff_url`, never a query token. Credentials fail closed
-unless the displayed resource version is the exact converged current Ready
-rollout.
+The dashboard consumes generated discriminated deployment metadata. Hermes
+browser sessions are owner checked by Cloud and then use the Clerk OIDC
+authorization-code flow with PKCE; the runtime UI credential endpoint never
+returns a Hermes password. Both runtimes declare
+`browser_mode: embedded_and_top_level` and remain embedded in the Console.
+Public endpoint URLs contain no secret.
 
 Both runtimes use the same Runtime UI Access dialog and declarative reset. Reset
 rotates the existing encrypted gateway credential and advances the durable
@@ -1559,7 +1552,7 @@ completion path; restart and ordinary updates do not rotate it.
 The Hermes contract was verified against Hermes Agent 0.20.4 commit
 [`a72c9ca248a051b8c7e8a69ff422c7be5066cdc4`](https://github.com/NousResearch/hermes-agent/tree/a72c9ca248a051b8c7e8a69ff422c7be5066cdc4),
 specifically `hermes_cli/subcommands/dashboard.py`,
-`plugins/dashboard_auth/basic/__init__.py`,
+`plugins/dashboard_auth/self_hosted/__init__.py`,
 `hermes_cli/dashboard_auth/prefix.py`, `hermes_cli/web_server.py`, and
 `hermes_cli/gateway.py`.
 

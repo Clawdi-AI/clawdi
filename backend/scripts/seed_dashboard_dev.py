@@ -67,7 +67,7 @@ from app.services.channels import (  # noqa: E402
 )
 from app.services.vault_crypto import encrypt  # noqa: E402
 
-DEV_V2_DEPLOYMENT_ID = "hdep_dev_sidebar"
+DEV_V2_DEPLOYMENT_ID = "hdep_devsidebar"
 DEV_V2_APP_ID = "app_dev_sidebar"
 DEV_V2_HOSTED_MACHINE_ID = "dev-hosted-sidebar"
 DEV_V2_HOSTED_MACHINE_NAME = "Dev Hosted Compute"
@@ -248,16 +248,17 @@ async def _create_hosted_runtime_graph(
                 system=(
                     {
                         "hermesDashboardAuth": {
-                            "mode": "password",
-                            "provider": "basic",
-                            "username": "admin",
-                            "passwordSecretRef": "secret://runtime/hermes/dashboard-password",
-                            "sessionSecretRef": "secret://runtime/hermes/dashboard-session-secret",
-                            "sessionTtlSeconds": 43200,
+                            "mode": "oidc",
+                            "provider": "self-hosted",
+                            "deploymentId": DEV_V2_DEPLOYMENT_ID,
+                            "issuer": f"{settings.backend_base_url.rstrip('/')}/v2/hermes/oidc",
+                            "clientId": f"clawdi-hermes-{DEV_V2_DEPLOYMENT_ID}-r1",
+                            "accessRevision": 1,
                             "publicUrl": "https://hermes.dev-preview.local",
+                            "trustedProxies": ["10.0.0.1"],
                             "activation": {
                                 "enabled": True,
-                                "capability": "hermes-basic-auth-v1",
+                                "capability": "hermes-self-hosted-oidc-v1",
                             },
                         }
                     }

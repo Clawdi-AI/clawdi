@@ -72,55 +72,6 @@ describe("runtime UI credential targeting", () => {
 		expect(closed).toBeTrue();
 	});
 
-	test("keeps Hermes credentials separate from its secret-free URL", () => {
-		const credentials: RuntimeUiCredentials = {
-			runtime: "hermes",
-			auth_mode: "password",
-			url: "https://runtime.example/hermes",
-			deployment_resource_version: "rv-current",
-			username: "admin",
-			password: "deployment-password",
-		};
-		expect(
-			resolveRuntimeUiCredentials(credentials, "https://runtime.example/hermes", "rv-current"),
-		).toEqual(credentials);
-		expect(runtimeUiLaunchTarget(credentials)).toBe(credentials.url);
-		const rootCredentials = { ...credentials, url: "https://runtime.example/" };
-		expect(runtimeUiLaunchTarget(rootCredentials)).toBe("https://runtime.example/chat");
-		expect(resolveRuntimeUiCredentials(rootCredentials, rootCredentials.url, "rv-current")).toEqual(
-			rootCredentials,
-		);
-		expect(
-			resolveRuntimeUiCredentials(rootCredentials, "https://runtime.example/chat", "rv-current"),
-		).toBeNull();
-	});
-
-	test("rejects credentials targeting a different published endpoint", () => {
-		const hermes: RuntimeUiCredentials = {
-			runtime: "hermes",
-			auth_mode: "password",
-			url: "https://other.example/hermes",
-			deployment_resource_version: "rv-current",
-			username: "admin",
-			password: "deployment-password",
-		};
-		const openclaw: RuntimeUiCredentials = {
-			runtime: "openclaw",
-			auth_mode: "openclaw_token",
-			url: "https://other.example/openclaw/",
-			deployment_resource_version: "rv-current",
-			token: "deployment-token",
-			handoff_url:
-				"https://other.example/openclaw/#bootstrapToken=one-time-token&bootstrapProfile=owner",
-		};
-		expect(
-			resolveRuntimeUiCredentials(hermes, "https://runtime.example/hermes", "rv-current"),
-		).toBeNull();
-		expect(
-			resolveRuntimeUiCredentials(openclaw, "https://runtime.example/openclaw/", "rv-current"),
-		).toBeNull();
-	});
-
 	test("preserves the exact official OpenClaw browser handoff URL", () => {
 		const credentials: RuntimeUiCredentials = {
 			runtime: "openclaw",

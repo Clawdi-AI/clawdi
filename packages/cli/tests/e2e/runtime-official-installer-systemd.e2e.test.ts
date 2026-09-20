@@ -608,14 +608,15 @@ exec /usr/bin/systemctl "$@"
 							}
 						: {
 								hermesDashboardAuth: {
-									mode: "password",
-									provider: "basic",
-									username: "admin",
-									passwordSecretRef: "secret://runtime/hermes/dashboard-password",
-									sessionSecretRef: "secret://runtime/hermes/dashboard-session-secret",
-									sessionTtlSeconds: 43_200,
+									mode: "oidc",
+									provider: "self-hosted",
+									deploymentId: `hdep_virgin_${runtime}`,
+									issuer: "https://api.example.test/v2/hermes/oidc",
+									clientId: `clawdi-hermes-hdep_virgin_${runtime}-r1`,
+									accessRevision: 1,
 									publicUrl: "https://agent.example.test/hermes",
-									activation: { enabled: true, capability: "hermes-basic-auth-v1" },
+									trustedProxies: ["10.173.0.1"],
+									activation: { enabled: true, capability: "hermes-self-hosted-oidc-v1" },
 								},
 							},
 				controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
@@ -696,11 +697,7 @@ exec /usr/bin/systemctl "$@"
 					"secret://tool.codex.apiKey": `virgin-${runtime}-codex-key`,
 					...(runtime === "openclaw"
 						? { "secret://runtime/openclaw/gateway-token": gatewayToken }
-						: {
-								"secret://runtime/hermes/dashboard-password": "virgin-dashboard-password",
-								"secret://runtime/hermes/dashboard-session-secret":
-									"virgin-dashboard-session-secret",
-							}),
+						: {}),
 				},
 			};
 			let manifestFetches = 0;
@@ -2688,18 +2685,13 @@ function behavioralGuardSkill(
 function behavioralGuardLoad(input: {
 	generation: number;
 	timezone: string;
-	dashboardSecret: string;
 	skillSource?: HostedSkillSource;
 }): RuntimeManifestLoad {
 	const sourceRevision = createHash("sha256")
 		.update(`behavioral-e2e-generation-${input.generation}`)
 		.digest("hex");
-	const dashboardPasswordRef = "secret://runtime/hermes/dashboard-password";
-	const dashboardSessionRef = "secret://runtime/hermes/dashboard-session-secret";
 	const codexApiKeyRef = "secret://tool.codex.apiKey";
 	const secretValues = {
-		[dashboardPasswordRef]: `behavioral-e2e-dashboard-password-${input.dashboardSecret}`,
-		[dashboardSessionRef]: `behavioral-e2e-dashboard-session-${input.dashboardSecret}`,
 		[codexApiKeyRef]: "behavioral-e2e-codex-api-key",
 	};
 	const parsed = hostedRuntimeBundleV2Schema.parse({
@@ -2716,14 +2708,15 @@ function behavioralGuardLoad(input: {
 			locale: { language: "en", timezone: input.timezone },
 			system: {
 				hermesDashboardAuth: {
-					mode: "password",
-					provider: "basic",
-					username: "admin",
-					passwordSecretRef: dashboardPasswordRef,
-					sessionSecretRef: dashboardSessionRef,
-					sessionTtlSeconds: 43_200,
+					mode: "oidc",
+					provider: "self-hosted",
+					deploymentId: "hdep_behavioral_e2e_guards",
+					issuer: "https://api.example.test/v2/hermes/oidc",
+					clientId: "clawdi-hermes-hdep_behavioral_e2e_guards-r1",
+					accessRevision: 1,
 					publicUrl: "https://agent.example.test/hermes",
-					activation: { enabled: true, capability: "hermes-basic-auth-v1" },
+					trustedProxies: ["10.173.0.1"],
+					activation: { enabled: true, capability: "hermes-self-hosted-oidc-v1" },
 				},
 			},
 			controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
@@ -2942,19 +2935,16 @@ exec /usr/bin/systemctl "$@"
 	const generationOne = behavioralGuardLoad({
 		generation: 1,
 		timezone: "UTC",
-		dashboardSecret: "generation-one",
 		skillSource: generationOneSkill.source,
 	});
 	const generationTwo = behavioralGuardLoad({
 		generation: 2,
 		timezone: "Europe/Berlin",
-		dashboardSecret: "generation-two",
 		skillSource: generationTwoSkill.source,
 	});
 	const generationThree = behavioralGuardLoad({
 		generation: 3,
 		timezone: "Asia/Tokyo",
-		dashboardSecret: "generation-three",
 		skillSource: generationThreeSkill.source,
 	});
 
@@ -3094,12 +3084,10 @@ exec /usr/bin/systemctl "$@"
 	const generationOne = behavioralGuardLoad({
 		generation: 1,
 		timezone: "UTC",
-		dashboardSecret: "unchanged-dashboard",
 	});
 	const generationTwo = behavioralGuardLoad({
 		generation: 2,
 		timezone: "Europe/Berlin",
-		dashboardSecret: "unchanged-dashboard",
 	});
 	let child: ReturnType<typeof Bun.spawn> | null = null;
 

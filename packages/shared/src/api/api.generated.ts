@@ -6510,39 +6510,6 @@ export interface components {
             assets: components["schemas"]["HostedFileBrowserAssets"];
             auth: components["schemas"]["HostedFileBrowserAuth"];
         };
-        /** HostedHermesDashboardAuth */
-        HostedHermesDashboardAuth: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            mode: "password";
-            /**
-             * Provider
-             * @constant
-             */
-            provider: "basic";
-            /** Username */
-            username: string;
-            /**
-             * Passwordsecretref
-             * @constant
-             */
-            passwordSecretRef: "secret://runtime/hermes/dashboard-password";
-            /**
-             * Sessionsecretref
-             * @constant
-             */
-            sessionSecretRef: "secret://runtime/hermes/dashboard-session-secret";
-            /**
-             * Sessionttlseconds
-             * @default 43200
-             */
-            sessionTtlSeconds: number;
-            /** Publicurl */
-            publicUrl: string;
-            activation: components["schemas"]["HostedHermesDashboardPasswordActivation"];
-        };
         /** HostedHermesDashboardOidcActivation */
         HostedHermesDashboardOidcActivation: {
             /**
@@ -6559,8 +6526,8 @@ export interface components {
         /** HostedHermesDashboardOidcAuth */
         HostedHermesDashboardOidcAuth: {
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
+             * Mode
+             * @constant
              */
             mode: "oidc";
             /**
@@ -6581,19 +6548,6 @@ export interface components {
             /** Trustedproxies */
             trustedProxies: string[];
             activation: components["schemas"]["HostedHermesDashboardOidcActivation"];
-        };
-        /** HostedHermesDashboardPasswordActivation */
-        HostedHermesDashboardPasswordActivation: {
-            /**
-             * Enabled
-             * @constant
-             */
-            enabled: true;
-            /**
-             * Capability
-             * @constant
-             */
-            capability: "hermes-basic-auth-v1";
         };
         /** HostedOpenClawGatewayActivation */
         HostedOpenClawGatewayActivation: {
@@ -7109,8 +7063,7 @@ export interface components {
             /** Openclawcontroluibasepath */
             openclawControlUiBasePath?: string | null;
             openclawGatewayAuth?: components["schemas"]["HostedOpenClawGatewayAuth"] | null;
-            /** Hermesdashboardauth */
-            hermesDashboardAuth?: (components["schemas"]["HostedHermesDashboardAuth"] | components["schemas"]["HostedHermesDashboardOidcAuth"]) | null;
+            hermesDashboardAuth?: components["schemas"]["HostedHermesDashboardOidcAuth"] | null;
         };
         /** HostedRuntimeTools */
         HostedRuntimeTools: {

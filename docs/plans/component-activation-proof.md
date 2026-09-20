@@ -41,18 +41,16 @@ Absent legacy proof retains the existing aggregate fallback.
 Access revisions use SHA-256 over compact UTF-8 JSON arrays:
 
 - Files: `["files", auth.accessRevision, auth.secret]`.
-- Hermes UI: `["hermes-ui", username, password, sessionSecret]`.
+- Hermes UI: `["hermes-ui", issuer, clientId, accessRevision, publicUrl]`.
 - OpenClaw UI: `["openclaw-ui", gatewayToken]`.
 
 These reuse the existing credential derivation and access-reset generation; they
 do not add another secret or revision authority. No secret bytes are reported.
 Component identities fix the serving ports to 9120, 9119 and 18789 respectively.
-Hermes UI checks `/api/status` for enabled basic form authentication, then GETs
-public `/login` HTML independently of gateway health. The aggregate readiness
-check still requires the gateway. In the pinned native auth middleware,
-`_GATE_PUBLIC_PREFIXES` includes `/login`; anonymous `/` redirects there with 302.
-The probe neither assumes HTTP Basic headers nor follows redirects. Systemd v257 documents a new
-InvocationID per unit runtime cycle and formats it as 32 hexadecimal characters.
+Hermes UI checks `/api/status` for `auth_required=true` and the exact
+`self-hosted` OIDC provider. The component proof does not issue or inspect a
+Hermes password; browser login is owned by Cloud and Clerk. The aggregate
+readiness check still requires the gateway.
 
 Readers must deploy before the producing CLI. Absent, malformed, truncated,
 unknown-version or legacy proof never authorizes partial-runtime admission; the
@@ -92,45 +90,14 @@ PostgreSQL route tests passed. These results do not replace owner runtime/CLI
 release qualification or Fable's independent final review.
 
 
-## Fable correction evidence
+## Verification
 
 ```bash
-bash scripts/test.sh cli src/runtime/hermes-dashboard-auth.test.ts src/runtime/observed-v2.test.ts src/runtime/heartbeat-observation.test.ts
+bash scripts/test.sh cli src/runtime/manifest-reconciliation.test.ts --test-name-pattern 'component proof requires'
 bash scripts/test.sh runtime-systemd
+bash scripts/test.sh web src/hosted/agents/runtime-readiness.test.ts
 ```
 
-The native auth fixture downloads the exact checksum/commit already pinned in
-`tests/fixtures/runtime-official-installer-systemd/Dockerfile` and imports its
-real `gated_auth_middleware`, `BasicAuthProvider` and dashboard auth router,
-including its actual server-rendered `login_page`. Gateway status and systemd
-remain fixtures; this does not build or run the complete native SPA or gateway. It proves anonymous root 302, public login 200, healthy aggregate ok,
-and usable component UI with gateway state stopped. Ordinary HTTP regressions
-also cover timestamp-only watch rewrites surviving probes, meaningful parent
-health/receipt changes rejecting snapshots, and unknown proof preserving a
-previous definite error. No CLI package/release artifact is produced.
-
-`persistComponentActivations` runs only from `commitRuntimeAppliedState`; the
-same-receipt 304 `not_modified` path returns without that commit. Existing
-receipts therefore need a successful actual apply to gain proof. No automatic
-apply or receipt migration is added. Owner qualification must check proof
-presence; this source fact is not evidence of live rollout state.
-
-Fable correction verification (2026-09-12): the command above passed 27 tests
-with CLI typecheck, including the native middleware/provider scenario.
-`bash scripts/test.sh cli src/serve/sync-engine.test.ts src/serve/sync-module.test.ts`
-passed 71 tests, including a null initial `last_sync_error` while normal startup
-prepares. The Cloud component contract passed through `scripts/test.sh backend`
-(1 selected test), accepting unknown/error with unknown proof while rejecting
-contradictory aggregate ok. Wire fields are unchanged, so no client regeneration
-is required for this correction. Biome, Ruff and shell syntax checks passed.
-
-The existing privileged systemd CI workflow calls `runtime-systemd`, which now
-prepares the pinned dashboard fixture and executes the native auth test alongside
-systemd tests. Missing fixture setup in that suite fails instead of silently
-skipping. The native check verifies root 302, actual login 200/no-store/password
-form, native provider metadata and the unchanged CLI probe. It does not require
-an added workflow or a CLI release artifact.
-
-CI wiring follow-up: `bash scripts/test.sh runtime-systemd` passed 9 tests / 53
-assertions with the actual native login router and provider. No new workflow was
-created; the existing privileged systemd workflow now covers this scenario.
+The focused suite verifies the committed component receipt, exact native OIDC
+readiness, invocation stability, and frontend admission. No Hermes password
+fixture or password login path is part of the current contract.

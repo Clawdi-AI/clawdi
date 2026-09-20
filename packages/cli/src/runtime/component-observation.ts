@@ -166,27 +166,16 @@ export function captureComponentActivations(
 	}
 	const hermes = manifest.hermesDashboardAuth;
 	if (hermes) {
-		if (hermes.mode === "oidc") {
-			revisions["hermes-ui"] = runtimeContentSha256([
-				"hermes-ui",
-				hermes.issuer,
-				hermes.clientId,
-				String(hermes.accessRevision),
-				hermes.publicUrl,
-				...hermes.trustedProxies,
-			]);
-		} else {
-			const password = runtimeSecretValue(secrets, hermes.passwordSecretRef);
-			const session = runtimeSecretValue(secrets, hermes.sessionSecretRef);
-			if (password && session)
-				revisions["hermes-ui"] = runtimeContentSha256([
-					"hermes-ui",
-					hermes.username,
-					password,
-					session,
-				]);
-		}
+		revisions["hermes-ui"] = runtimeContentSha256([
+			"hermes-ui",
+			hermes.issuer,
+			hermes.clientId,
+			String(hermes.accessRevision),
+			hermes.publicUrl,
+			...hermes.trustedProxies,
+		]);
 	}
+
 	const result: Activation[] = [];
 	for (const component of Object.keys(services) as Component[]) {
 		const service = services[component];
