@@ -17,6 +17,8 @@ import { BILLING_API_ORIGIN, useBillingClient } from "@/hosted/billing/billing-c
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { useAuthToken, useSessionIdentity } from "@/lib/auth-client";
 
+const HERMES_OIDC_BROWSER_SESSION_RETRY_MS = 60_000;
+
 /** Credentials and OIDC priming belong to the mounted console, never to a cross-route cache. */
 export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: string | null) {
 	const client = useBillingClient();
@@ -57,22 +59,20 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 	const revision = useRef(0);
 	const requestedVersion = useRef<string | null>(null);
 	const requestAbort = useRef<AbortController | null>(null);
-	const hermesOidcRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const mountedAuthorityIdentity = useRef(authorityIdentity);
+	const currentResourceVersion = useRef(metadata.resourceVersion);
+	currentResourceVersion.current = metadata.resourceVersion;
 
 	useLayoutEffect(() => {
 		active.current = true;
 		return () => {
 			active.current = false;
 			requestAbort.current?.abort();
-			if (hermesOidcRefreshTimer.current) clearTimeout(hermesOidcRefreshTimer.current);
 		};
 	}, []);
 
 	const clear = useCallback(() => {
 		requestAbort.current?.abort();
-		if (hermesOidcRefreshTimer.current) clearTimeout(hermesOidcRefreshTimer.current);
-		hermesOidcRefreshTimer.current = null;
 		forgetOpenClawNativeHandoffLoaded(runtimeUiLocalStorage(), storageScope);
 		setNativeHandoffLoaded(false);
 		setHermesOidcPrimedAuthority(null);
@@ -100,8 +100,6 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 				forgetOpenClawNativeHandoffLoaded(runtimeUiLocalStorage(), storageScope);
 				setNativeHandoffLoaded(false);
 				setHermesOidcPrimedAuthority(null);
-				if (hermesOidcRefreshTimer.current) clearTimeout(hermesOidcRefreshTimer.current);
-				hermesOidcRefreshTimer.current = null;
 			}
 			requestedVersion.current = metadata.resourceVersion;
 			const requestRevision = ++revision.current;
@@ -129,11 +127,6 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 						);
 						if (!current()) return null;
 						setHermesOidcPrimedAuthority(authorityIdentity);
-						hermesOidcRefreshTimer.current = setTimeout(() => {
-							if (!active.current || mountedAuthorityIdentity.current !== authorityIdentity) return;
-							requestedVersion.current = null;
-							setHermesOidcPrimedAuthority(null);
-						}, HERMES_OIDC_BROWSER_SESSION_REFRESH_MS);
 						return null;
 					}
 					if (openClawBrowserSessionUrl) {
@@ -207,6 +200,54 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 			getToken,
 		],
 	);
+
+	useEffect(() => {
+		if (!isHermesOidc || !hermesOidcPrimed || !hermesOidcBrowserSessionUrl) return;
+		let cancelled = false;
+		let timer: ReturnType<typeof setTimeout> | null = null;
+		let abort: AbortController | null = null;
+
+		const schedule = (delay: number) => {
+			timer = setTimeout(() => void refresh(), delay);
+		};
+		const refresh = async () => {
+			let nextDelay = HERMES_OIDC_BROWSER_SESSION_REFRESH_MS;
+			abort = new AbortController();
+			try {
+				const token = await getToken();
+				if (cancelled || mountedAuthorityIdentity.current !== authorityIdentity) return;
+				await primeHermesOidcBrowserSession(
+					hermesOidcBrowserSessionUrl,
+					id,
+					BILLING_API_ORIGIN,
+					token,
+					currentResourceVersion.current,
+					abort.signal,
+				);
+			} catch {
+				nextDelay = HERMES_OIDC_BROWSER_SESSION_RETRY_MS;
+			} finally {
+				abort = null;
+				if (!cancelled && mountedAuthorityIdentity.current === authorityIdentity) {
+					schedule(nextDelay);
+				}
+			}
+		};
+
+		schedule(HERMES_OIDC_BROWSER_SESSION_REFRESH_MS);
+		return () => {
+			cancelled = true;
+			if (timer) clearTimeout(timer);
+			abort?.abort();
+		};
+	}, [
+		isHermesOidc,
+		hermesOidcPrimed,
+		hermesOidcBrowserSessionUrl,
+		authorityIdentity,
+		id,
+		getToken,
+	]);
 
 	useEffect(() => {
 		const shouldPrimeOpenClaw = spec.runtime === "openclaw" && !nativeHandoffLoaded;
