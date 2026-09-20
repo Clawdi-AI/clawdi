@@ -33,9 +33,7 @@ export type DeploymentEventType = S["DeploymentEventType"];
 export type DeploymentEventStreamSnapshotHandoff = S["EventStreamSnapshotHandoff"];
 export type AiProviderRemovalImpact = S["V2AiProviderRemovalImpactResponse"];
 export type AiProviderRemovalResult = S["V2AiProviderRemovalResponse"];
-export type RuntimeUiCredentials =
-	| S["V2HermesRuntimeUiCredentials"]
-	| S["V2OpenClawRuntimeUiCredentials"];
+export type RuntimeUiCredentials = S["V2OpenClawRuntimeUiCredentials"];
 export type RuntimeUiAuthMode = RuntimeUiEndpointInfo["auth_mode"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -48,9 +46,7 @@ export function isRuntimeUiEndpointInfo(value: unknown): value is RuntimeUiEndpo
 		(value.runtime === "openclaw" || value.runtime === "hermes") &&
 		value.role === "control_ui" &&
 		typeof value.url === "string" &&
-		(value.auth_mode === "openclaw_token" ||
-			value.auth_mode === "password" ||
-			value.auth_mode === "oidc") &&
+		(value.auth_mode === "openclaw_token" || value.auth_mode === "oidc") &&
 		value.browser_mode === "embedded_and_top_level" &&
 		isCleanRuntimeUiUrl(value.url) &&
 		(value.runtime === "openclaw"
@@ -58,14 +54,12 @@ export function isRuntimeUiEndpointInfo(value: unknown): value is RuntimeUiEndpo
 				(value.browser_session_url == null ||
 					value.browser_session_url ===
 						new URL("/.well-known/openclaw/browser-session", value.url).href)
-			: value.auth_mode === "password"
-				? value.browser_session_url == null && value.access_revision == null
-				: value.auth_mode === "oidc" &&
-					typeof value.browser_session_url === "string" &&
-					Number.isInteger(value.access_revision) &&
-					typeof value.access_revision === "number" &&
-					value.access_revision >= 1 &&
-					isCleanRuntimeUiUrl(value.browser_session_url))
+			: value.auth_mode === "oidc" &&
+				typeof value.browser_session_url === "string" &&
+				Number.isInteger(value.access_revision) &&
+				typeof value.access_revision === "number" &&
+				value.access_revision >= 1 &&
+				isCleanRuntimeUiUrl(value.browser_session_url))
 	);
 }
 
@@ -78,16 +72,8 @@ export function isRuntimeUiCredentials(value: unknown): value is RuntimeUiCreden
 	) {
 		return false;
 	}
-	if (value.runtime === "hermes") {
-		return (
-			value.auth_mode === "password" &&
-			typeof value.username === "string" &&
-			Boolean(value.username) &&
-			typeof value.password === "string" &&
-			Boolean(value.password) &&
-			isCleanRuntimeUiUrl(value.url)
-		);
-	}
+	if (value.runtime === "hermes") return false;
+
 	return (
 		value.runtime === "openclaw" &&
 		value.auth_mode === "openclaw_token" &&

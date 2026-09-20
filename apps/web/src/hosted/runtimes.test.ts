@@ -58,7 +58,10 @@ describe("deploymentRuntime", () => {
 						runtime: "hermes",
 						role: "control_ui",
 						url: "https://app-9119.example/dashboard",
-						auth_mode: "password",
+						auth_mode: "oidc",
+						browser_session_url:
+							"https://api.example.test/v2/deployments/hdep_fixture/hermes-oidc/session",
+						access_revision: 1,
 						browser_mode: "embedded_and_top_level",
 					},
 				}),

@@ -515,25 +515,20 @@ export async function runtimeComponentIsReady(
 	}
 }
 
-function hermesUiExpectedAuthProvider(paths: RuntimePaths): "basic" | "self-hosted" | null {
+function hermesUiExpectedAuthProvider(paths: RuntimePaths): "self-hosted" | null {
 	try {
 		const config = recordValue(
 			parseYaml(readFileSync(join(paths.userHome, ".hermes", "config.yaml"), "utf8")),
 		);
 		const dashboard = recordValue(config?.dashboard);
-		const basic = recordValue(dashboard?.basic_auth);
 		const selfHosted = recordValue(recordValue(dashboard?.oauth)?.self_hosted);
-		if (Boolean(basic) === Boolean(selfHosted)) return null;
-		return selfHosted ? "self-hosted" : "basic";
+		return selfHosted ? "self-hosted" : null;
 	} catch {
 		return null;
 	}
 }
 
-function hermesUiAuthenticationIsReady(
-	status: unknown,
-	expectedProvider: "basic" | "self-hosted",
-): boolean {
+function hermesUiAuthenticationIsReady(status: unknown, expectedProvider: "self-hosted"): boolean {
 	const value = recordValue(status);
 	const providers = arrayValue(value?.auth_providers);
 	return (

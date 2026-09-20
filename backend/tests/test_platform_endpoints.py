@@ -52,16 +52,17 @@ _TEST_SECRET_VALUES = {
     "secret://runtime/openclaw/gateway-token": "openclaw-gateway-token-test",
 }
 _TEST_HERMES_DASHBOARD_AUTH = {
-    "mode": "password",
-    "provider": "basic",
-    "username": "admin",
-    "passwordSecretRef": "secret://runtime/hermes/dashboard-password",
-    "sessionSecretRef": "secret://runtime/hermes/dashboard-session-secret",
-    "sessionTtlSeconds": 43_200,
+    "mode": "oidc",
+    "provider": "self-hosted",
+    "deploymentId": "hdep_hermesfixture",
+    "issuer": "https://api.example.test/v2/hermes/oidc",
+    "clientId": "clawdi-hermes-hdep_hermesfixture-r1",
+    "accessRevision": 1,
     "publicUrl": "https://agent.example.test/hermes",
+    "trustedProxies": ["10.173.0.1"],
     "activation": {
         "enabled": True,
-        "capability": "hermes-basic-auth-v1",
+        "capability": "hermes-self-hosted-oidc-v1",
     },
 }
 _TEST_TOOLS = {

@@ -2274,28 +2274,6 @@ export interface components {
              */
             expires_at: string;
         };
-        /** V2HermesRuntimeUiCredentials */
-        V2HermesRuntimeUiCredentials: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            runtime: "hermes";
-            /** Url */
-            url: string;
-            /** Deployment Resource Version */
-            deployment_resource_version: string;
-            /**
-             * Auth Mode
-             * @default password
-             * @constant
-             */
-            auth_mode: "password";
-            /** Username */
-            username: string;
-            /** Password */
-            password: string;
-        };
         /** V2HermesRuntimeUiEndpointInfo */
         V2HermesRuntimeUiEndpointInfo: {
             /** Component Readiness */
@@ -2315,10 +2293,10 @@ export interface components {
             url: string;
             /**
              * Auth Mode
-             * @default password
-             * @enum {string}
+             * @default oidc
+             * @constant
              */
-            auth_mode: "password" | "oidc";
+            auth_mode: "oidc";
             /**
              * Browser Mode
              * @default embedded_and_top_level
@@ -2746,8 +2724,8 @@ export interface components {
         /** V2OpenClawRuntimeUiCredentials */
         V2OpenClawRuntimeUiCredentials: {
             /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
+             * Runtime
+             * @constant
              */
             runtime: "openclaw";
             /** Url */
@@ -4195,7 +4173,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2HermesRuntimeUiCredentials"] | components["schemas"]["V2OpenClawRuntimeUiCredentials"];
+                    "application/json": components["schemas"]["V2OpenClawRuntimeUiCredentials"];
                 };
             };
             /** @description Validation Error */

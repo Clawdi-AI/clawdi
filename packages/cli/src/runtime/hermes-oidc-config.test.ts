@@ -6,17 +6,30 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { beginHermesConfigTransaction, commitHermesConfigTransaction } from "./hermes-config";
 import type { RuntimeManifest } from "./manifest-contract";
-import {
-	applyHostedRuntimeConfigProjection,
-	withHermesDashboardAuthEnvironment,
-} from "./manifest-runtime-config";
+import { applyHostedRuntimeConfigProjection } from "./manifest-runtime-config";
 
 const root = mkdtempSync(join(tmpdir(), "clawdi-hermes-oidc-config-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 test("projects only the native self-hosted OIDC provider", () => {
 	const home = join(root, "home");
-	mkdirSync(home, { recursive: true });
+	mkdirSync(join(home, ".hermes"), { recursive: true });
+	writeFileSync(
+		join(home, ".hermes", "config.yaml"),
+		[
+			"dashboard:",
+			"  basic_auth:",
+			"    username: admin",
+			"    session_ttl_seconds: 43200",
+			"  oauth:",
+			"    self_hosted:",
+			"      issuer: https://old.example.test",
+			"plugins:",
+			"  disabled:",
+			"    - dashboard_auth/self_hosted",
+			"    - custom-plugin",
+		].join("\n"),
+	);
 	const command = join(root, "hermes");
 	const mock = fileURLToPath(new URL("../test-support/hermes-config-cli-mock.ts", import.meta.url));
 	writeFileSync(
@@ -72,6 +85,9 @@ test("projects only the native self-hosted OIDC provider", () => {
 		public_url: "https://hermes.example.test",
 		trusted_proxies: ["10.173.0.1"],
 	});
-	expect(config.plugins.disabled).toEqual(["dashboard_auth/basic", "dashboard_auth/nous"]);
-	expect(withHermesDashboardAuthEnvironment(manifest, undefined)).toBeUndefined();
+	expect(config.plugins.disabled).toEqual([
+		"custom-plugin",
+		"dashboard_auth/basic",
+		"dashboard_auth/nous",
+	]);
 });

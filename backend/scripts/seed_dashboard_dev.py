@@ -67,13 +67,14 @@ from app.services.channels import (  # noqa: E402
 )
 from app.services.vault_crypto import encrypt  # noqa: E402
 
-DEV_V2_DEPLOYMENT_ID = "hdep_dev_sidebar"
+DEV_V2_DEPLOYMENT_ID = "hdep_devsidebar"
 DEV_V2_APP_ID = "app_dev_sidebar"
 DEV_V2_HOSTED_MACHINE_ID = "dev-hosted-sidebar"
 DEV_V2_HOSTED_MACHINE_NAME = "Dev Hosted Compute"
 DEV_V2_PROVIDER_ID = "openrouter-dev"
 DEV_V2_CODEX_PROVIDER_SOURCE_ID = "clawdi-v2-deployment-1"
 DEV_V2_CLI_PACKAGE_SPEC = "clawdi@1.2.3-test"
+DEV_V2_HERMES_OIDC_ISSUER = "https://api.example.test/v2/hermes/oidc"
 _STABLE_UUID_NAMESPACE = uuid.UUID("6a9575fd-7eb5-464a-89e7-e13f090f8de6")
 
 
@@ -248,16 +249,17 @@ async def _create_hosted_runtime_graph(
                 system=(
                     {
                         "hermesDashboardAuth": {
-                            "mode": "password",
-                            "provider": "basic",
-                            "username": "admin",
-                            "passwordSecretRef": "secret://runtime/hermes/dashboard-password",
-                            "sessionSecretRef": "secret://runtime/hermes/dashboard-session-secret",
-                            "sessionTtlSeconds": 43200,
+                            "mode": "oidc",
+                            "provider": "self-hosted",
+                            "deploymentId": DEV_V2_DEPLOYMENT_ID,
+                            "issuer": DEV_V2_HERMES_OIDC_ISSUER,
+                            "clientId": f"clawdi-hermes-{DEV_V2_DEPLOYMENT_ID}-r1",
+                            "accessRevision": 1,
                             "publicUrl": "https://hermes.dev-preview.local",
+                            "trustedProxies": ["10.0.0.1"],
                             "activation": {
                                 "enabled": True,
-                                "capability": "hermes-basic-auth-v1",
+                                "capability": "hermes-self-hosted-oidc-v1",
                             },
                         }
                     }

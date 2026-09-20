@@ -1976,17 +1976,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p.endsWith("/runtime-ui/credentials") && r.request().method() === "POST") {
 			options.runtimeUiRedemptionRequests?.push(p);
-			const deploymentId = p.split("/")[3] ?? "";
 			const response = options.runtimeUiRedemptionResponses?.shift() ?? {
 				status: 200,
-				body: {
-					runtime: "hermes",
-					url: "https://runtime.example/hermes",
-					deployment_resource_version: `rv_${deploymentId}`,
-					auth_mode: "password",
-					username: "admin",
-					password: "test-password",
-				},
+				body: { detail: "Hermes uses browser OIDC login" },
 			};
 			return fulfillJson(r, response.body, response.status);
 		}
@@ -3557,7 +3549,12 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 					url: endpoint,
 					deployment_resource_version: `rv_${deployment.id}`,
 					...(runtime === "hermes"
-						? { auth_mode: "password", username: "admin", password: "test-password" }
+						? {
+								auth_mode: "oidc",
+								browser_session_url:
+									"https://api.example.test/v2/deployments/hdep_fixture/hermes-oidc/session",
+								access_revision: 1,
+							}
 						: {
 								auth_mode: "openclaw_token",
 								token: "test-token",

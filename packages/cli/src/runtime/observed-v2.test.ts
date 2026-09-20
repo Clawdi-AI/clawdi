@@ -91,7 +91,8 @@ describe("hosted runtime observed v2", () => {
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 		const paths = getRuntimePaths({ mode: "hosted" });
-		mkdirSync(paths.serviceStateRoot);
+		mkdirSync(paths.serviceStateRoot, { mode: 0o700 });
+		chmodSync(paths.serviceStateRoot, 0o700);
 		writeRuntimeAppliedState(
 			{
 				schemaVersion: "clawdi.runtimeAppliedState.v2",
@@ -141,6 +142,7 @@ describe("hosted runtime observed v2", () => {
 				error: null,
 			}),
 		);
+		chmodSync(paths.cliBootstrapStatus, 0o600);
 
 		const observed = await readHostedRuntimeObserved(paths);
 		expect(observed?.schemaVersion).toBe("clawdi.hostedRuntimeObserved.v2");
@@ -242,20 +244,20 @@ describe("hosted runtime observed v2", () => {
 				gateway_running: true,
 				gateway_state: "running",
 				auth_required: true,
-				auth_providers: ["basic"],
+				auth_providers: ["self-hosted"],
 			},
 			pending: [
 				{
 					gateway_running: true,
 					gateway_state: "starting",
 					auth_required: true,
-					auth_providers: ["basic"],
+					auth_providers: ["self-hosted"],
 				},
 				{
 					gateway_running: false,
 					gateway_state: "running",
 					auth_required: true,
-					auth_providers: ["basic"],
+					auth_providers: ["self-hosted"],
 				},
 				{
 					gateway_running: true,
@@ -278,18 +280,17 @@ describe("hosted runtime observed v2", () => {
 			writeFileSync(join(paths.systemdUserRoot, unit), GENERATED_RUNTIME_SYSTEMD_FILE_HEADER);
 			const gatewayUnit = join(paths.systemdUserRoot, "hermes-gateway.service");
 			const hermesConfigPath = join(paths.userHome, ".hermes", "config.yaml");
-			const writeHermesAuthProvider = (provider: "basic" | "self-hosted") => {
+			const writeHermesAuthProvider = () => {
 				mkdirSync(dirname(hermesConfigPath), { recursive: true });
 				writeFileSync(
 					hermesConfigPath,
-					provider === "basic"
-						? "dashboard:\n  basic_auth:\n    username: admin\n"
-						: "dashboard:\n  oauth:\n    self_hosted:\n      issuer: https://api.example.test/v2/hermes/oidc\n      client_id: test\n",
+					"dashboard:\n  oauth:\n    self_hosted:\n      issuer: https://api.example.test/v2/hermes/oidc\n      client_id: test\n",
 				);
 			};
+
 			if (unit === "clawdi-hermes-dashboard.service") {
 				writeFileSync(gatewayUnit, GENERATED_RUNTIME_SYSTEMD_FILE_HEADER);
-				writeHermesAuthProvider("basic");
+				writeHermesAuthProvider();
 			}
 			const systemctl = join(paths.userHome, "systemctl");
 			writeFileSync(systemctl, "#!/bin/sh\nprintf 'ActiveState=active\nSubState=running\n'\n", {
@@ -488,17 +489,12 @@ printf '%s' '{"port":${server.port},"controlUi":{"basePath":"/control"}}'
 						gateway_running: false,
 						gateway_state: "stopped",
 						auth_required: true,
-						auth_providers: ["basic"],
-					};
-					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(true);
-					body = {
-						gateway_running: false,
-						gateway_state: "stopped",
-						auth_required: true,
 						auth_providers: ["self-hosted"],
 					};
+					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(true);
+					writeFileSync(hermesConfigPath, "dashboard: {}\n");
 					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(false);
-					writeHermesAuthProvider("self-hosted");
+					writeHermesAuthProvider();
 					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(true);
 					body = {
 						gateway_running: false,
@@ -507,14 +503,14 @@ printf '%s' '{"port":${server.port},"controlUi":{"basePath":"/control"}}'
 						auth_providers: ["self-hosted", "nous"],
 					};
 					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(false);
-					writeHermesAuthProvider("basic");
+					writeHermesAuthProvider();
 					body = {
 						gateway_running: false,
 						gateway_state: "stopped",
 						auth_required: true,
-						auth_providers: ["basic"],
+						auth_providers: ["self-hosted"],
 					};
-					expect((await readHostedRuntimeObserved(paths))?.status).not.toBe("ok");
+					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(true);
 					uiStatus = 503;
 					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(false);
 					uiStatus = 200;

@@ -247,7 +247,10 @@ export function mutationDeploymentReadFixture(
 						runtime,
 						role: "control_ui",
 						url: runtimeUiUrl,
-						auth_mode: "password",
+						auth_mode: "oidc",
+						browser_session_url:
+							"https://api.example.test/v2/deployments/hdep_fixture/hermes-oidc/session",
+						access_revision: 1,
 						browser_mode: "embedded_and_top_level",
 					}
 				: {

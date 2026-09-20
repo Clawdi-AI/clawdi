@@ -99,11 +99,10 @@ describe("Runtime UI access contracts", () => {
 			url: "https://hermes.example/",
 			browser_mode: "embedded_and_top_level",
 		} as const;
-		expect(isRuntimeUiEndpointInfo({ ...endpoint, auth_mode: "password" })).toBe(true);
 		expect(
 			isRuntimeUiEndpointInfo({
 				...endpoint,
-				auth_mode: "password",
+				auth_mode: "oidc",
 				browser_session_url: "https://api.example/v2/deployments/hdep_test/hermes-oidc/session",
 			}),
 		).toBe(false);

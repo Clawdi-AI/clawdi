@@ -111,33 +111,6 @@ function cleanHttpsUrl(value: string): URL | null {
 	}
 }
 
-const hermesDashboardPasswordAuthSchema = z
-	.object({
-		mode: z.literal("password"),
-		provider: z.literal("basic"),
-		username: z.string().trim().min(1).max(128),
-		passwordSecretRef: z.literal("secret://runtime/hermes/dashboard-password"),
-		sessionSecretRef: z.literal("secret://runtime/hermes/dashboard-session-secret"),
-		sessionTtlSeconds: z.number().int().min(60).max(604_800).default(43_200),
-		publicUrl: z.string().url(),
-		activation: z
-			.object({
-				enabled: z.literal(true),
-				capability: z.literal("hermes-basic-auth-v1"),
-			})
-			.strict(),
-	})
-	.strict()
-	.superRefine((auth, ctx) => {
-		if (!cleanHttpsUrl(auth.publicUrl)) {
-			ctx.addIssue({
-				code: "custom",
-				message: "must be an HTTPS URL without credentials, query, or fragment",
-				path: ["publicUrl"],
-			});
-		}
-	});
-
 const hermesDashboardOidcAuthSchema = z
 	.object({
 		mode: z.literal("oidc"),
@@ -186,10 +159,7 @@ const hermesDashboardOidcAuthSchema = z
 		}
 	});
 
-const hermesDashboardAuthSchema = z.union([
-	hermesDashboardPasswordAuthSchema,
-	hermesDashboardOidcAuthSchema,
-]);
+const hermesDashboardAuthSchema = hermesDashboardOidcAuthSchema;
 
 const openclawGatewayAuthSchema = z
 	.object({

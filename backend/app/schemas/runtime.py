@@ -537,31 +537,6 @@ class HostedEgressProfiles(_StrictHostedWireModel):
     profiles: list[HostedEgressProfile] | None = None
 
 
-class HostedHermesDashboardPasswordActivation(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: Literal[True]
-    capability: Literal["hermes-basic-auth-v1"]
-
-
-class HostedHermesDashboardAuth(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    mode: Literal["password"]
-    provider: Literal["basic"]
-    username: str = Field(min_length=1, max_length=128)
-    passwordSecretRef: Literal["secret://runtime/hermes/dashboard-password"]
-    sessionSecretRef: Literal["secret://runtime/hermes/dashboard-session-secret"]
-    sessionTtlSeconds: int = Field(default=43_200, ge=60, le=604_800)
-    publicUrl: str = Field(min_length=1)
-    activation: HostedHermesDashboardPasswordActivation
-
-    @field_validator("publicUrl")
-    @classmethod
-    def _validate_https_url(cls, value: str) -> str:
-        return _validate_https_url_without_credentials(value)
-
-
 class HostedHermesDashboardOidcActivation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -610,10 +585,7 @@ class HostedHermesDashboardOidcAuth(BaseModel):
         return self
 
 
-HostedHermesDashboardAuthContract = Annotated[
-    HostedHermesDashboardAuth | HostedHermesDashboardOidcAuth,
-    Field(discriminator="mode"),
-]
+HostedHermesDashboardAuthContract = HostedHermesDashboardOidcAuth
 
 
 class HostedOpenClawGatewayActivation(BaseModel):

@@ -7,13 +7,9 @@ import {
 	AlertCircle,
 	ArrowRight,
 	ArrowUp,
-	Check,
-	Copy,
 	Cpu,
 	CreditCard,
 	ExternalLink,
-	Eye,
-	EyeOff,
 	FolderOpen,
 	Info,
 	LifeBuoy,
@@ -28,7 +24,6 @@ import {
 	TerminalSquare,
 	Trash2,
 	WalletCards,
-	X,
 } from "lucide-react";
 import {
 	type ComponentProps,
@@ -93,22 +88,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import {
-	Popover,
-	PopoverContent,
-	PopoverDescription,
-	PopoverHeader,
-	PopoverTitle,
-	PopoverTrigger,
-} from "@/components/ui/popover";
 import {
 	Select,
 	SelectContent,
@@ -116,24 +96,17 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusDot, type StatusTone } from "@/components/ui/status-badge";
-import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
 import {
 	UnsavedNavigationBoundary,
 	useUnsavedNavigationState,
 } from "@/components/unsaved-navigation-state";
-import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { AgentDashboardOverview } from "@/hosted/agents/agent-dashboard-overview";
 import { useAgentManagedSkills } from "@/hosted/agents/agent-skills-query";
 import { DeploymentCancelAction } from "@/hosted/agents/deployment-cancel-action";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
-import {
-	useDeploymentLifecycle,
-	useResetRuntimeUiAccess,
-	useUpdateDeployment,
-} from "@/hosted/agents/deployment-hooks";
+import { useDeploymentLifecycle, useUpdateDeployment } from "@/hosted/agents/deployment-hooks";
 import {
 	canQueryHostedAgentSessions,
 	HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE,
@@ -1543,12 +1516,6 @@ function OverviewTab({
 // ── Runtime UI ───────────────────────────────────────────────────────────────
 
 const RUNTIME_UI_LAUNCH_TOAST_ID = "runtime-ui-launch";
-const HERMES_ACCESS_HINT_STORAGE_PREFIX = "clawdi.hermes-access-hint.dismissed";
-
-function hermesAccessHintStorageKey(deploymentId: string): string {
-	return `${HERMES_ACCESS_HINT_STORAGE_PREFIX}.${deploymentId}`;
-}
-
 export function ConsoleTab({
 	deployment,
 	runtime,
@@ -1583,8 +1550,6 @@ export function ConsoleTab({
 		nativeHandoffLoaded,
 		hermesOidcPrimed,
 		markFrameLoaded,
-		load: loadCredentials,
-		clear: clearCredentials,
 		reconnect: retryRuntimeAccess,
 	} = useRuntimeUiCredentials(deployment, url);
 	const [loadedAttempt, setLoadedAttempt] = useState<number | null>(null);
@@ -1713,15 +1678,9 @@ export function ConsoleTab({
 			action={
 				<RuntimeUiAccessDialog
 					deployment={deployment}
-					endpointUrl={url}
 					windowTarget={windowTarget}
 					runtime={runtime}
-					credentials={currentCredentials}
-					credentialError={credentialError}
 					isCredentialLoading={isCredentialLoading}
-					hermesOidc={hermesOidc}
-					onLoadCredentials={loadCredentials}
-					onClearCredentials={clearCredentials}
 					onRetryRuntimeAccess={retryRuntimeAccess}
 				/>
 			}
@@ -1842,60 +1801,6 @@ function FilesFrame({ deploymentId, url }: { deploymentId: string; url: string }
 	);
 }
 
-const MASKED_RUNTIME_UI_CREDENTIAL = "••••••••••••";
-
-function RuntimeUiCredentialRow({
-	label,
-	value,
-	secret = false,
-}: {
-	label: string;
-	value: string;
-	secret?: boolean;
-}) {
-	const [revealed, setRevealed] = useState(!secret);
-	const { copied, copy } = useCopyToClipboard({
-		success: `${label} copied`,
-		error: `Couldn't copy ${label.toLowerCase()}`,
-	});
-	const visibleValue = secret && !revealed ? MASKED_RUNTIME_UI_CREDENTIAL : value;
-
-	return (
-		<div className="grid min-w-0 grid-cols-[4.5rem_minmax(0,1fr)_auto] items-center gap-2 px-3 py-2.5">
-			<span className="text-xs font-medium text-muted-foreground">{label}</span>
-			<code
-				className="block min-w-0 truncate font-mono text-sm font-medium"
-				title={secret && !revealed ? undefined : value}
-			>
-				{visibleValue}
-			</code>
-			<div className="flex items-center gap-0.5">
-				{secret ? (
-					<Button
-						type="button"
-						variant="ghost"
-						size="icon-xs"
-						onClick={() => setRevealed((visible) => !visible)}
-						aria-label={`${revealed ? "Hide" : "Show"} ${label}`}
-						aria-pressed={revealed}
-					>
-						{revealed ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-					</Button>
-				) : null}
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon-xs"
-					onClick={() => copy(value)}
-					aria-label={`Copy ${label}`}
-				>
-					{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-				</Button>
-			</div>
-		</div>
-	);
-}
-
 function OpenInNewWindowButton({
 	label,
 	onClick,
@@ -1922,86 +1827,19 @@ function OpenInNewWindowButton({
 
 function RuntimeUiAccessDialog({
 	deployment,
-	endpointUrl,
 	windowTarget,
 	runtime,
-	credentials,
-	credentialError,
 	isCredentialLoading,
-	hermesOidc,
-	onLoadCredentials,
-	onClearCredentials,
 	onRetryRuntimeAccess,
 }: {
 	deployment: HostedDeployment;
-	endpointUrl: string;
 	windowTarget: string | null;
 	runtime: Runtime;
-	credentials: RuntimeUiCredentials | null;
-	credentialError: Error | null;
 	isCredentialLoading: boolean;
-	hermesOidc: boolean;
-	onLoadCredentials: () => Promise<RuntimeUiCredentials | null>;
-	onClearCredentials: () => void;
 	onRetryRuntimeAccess: () => Promise<RuntimeUiCredentials | null>;
 }) {
 	const label = runtimeBrowserUiLabel(runtime);
-	const reset = useResetRuntimeUiAccess();
 	const desktopBridge = useDesktopBridge();
-	const [open, setOpen] = useState(false);
-	const loadedIdentityRef = useRef<string | null>(null);
-	const triggerRef = useRef<HTMLButtonElement>(null);
-	const [accessHintOpen, setAccessHintOpen] = useState(false);
-	const credentialExit = useDialogExitLifecycle({ open, value: credentials, emptyValue: null });
-	const renderedCredentials = credentialExit.renderedValue;
-	const identity = `${deployment.resource.id}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${endpointUrl}`;
-	const accessHintStorageKey = hermesAccessHintStorageKey(deployment.resource.id);
-
-	const dismissAccessHint = useCallback(() => {
-		setAccessHintOpen(false);
-		try {
-			window.localStorage.setItem(accessHintStorageKey, "1");
-		} catch {
-			// The hint still stays dismissed for this mount when storage is unavailable.
-		}
-	}, [accessHintStorageKey]);
-
-	useEffect(() => {
-		if (loadedIdentityRef.current === identity) return;
-		loadedIdentityRef.current = identity;
-		if (open) credentialExit.beginClose();
-		setOpen(false);
-	}, [credentialExit.beginClose, identity, open]);
-
-	useEffect(() => {
-		if (runtime !== "hermes" || hermesOidc) {
-			setAccessHintOpen(false);
-			return;
-		}
-		try {
-			setAccessHintOpen(window.localStorage.getItem(accessHintStorageKey) !== "1");
-		} catch {
-			setAccessHintOpen(true);
-		}
-	}, [accessHintStorageKey, hermesOidc, runtime]);
-
-	const handleOpenChange = useCallback(
-		(nextOpen: boolean) => {
-			if (nextOpen) credentialExit.beginOpen();
-			else credentialExit.beginClose();
-			setOpen(nextOpen);
-			if (nextOpen) dismissAccessHint();
-			if (nextOpen && !credentials && !isCredentialLoading) void onLoadCredentials();
-		},
-		[
-			credentialExit.beginClose,
-			credentialExit.beginOpen,
-			credentials,
-			dismissAccessHint,
-			isCredentialLoading,
-			onLoadCredentials,
-		],
-	);
 
 	const openRuntime = useCallback(async () => {
 		if (!windowTarget) return;
@@ -2028,156 +1866,26 @@ function RuntimeUiAccessDialog({
 		trackRuntimeWindow(deployment.resource.id, popup);
 	}, [deployment.resource.id, desktopBridge, label, windowTarget]);
 
-	const acceptReset = useCallback(async () => {
-		await reset.mutateAsync({ id: deployment.resource.id });
-		credentialExit.beginClose();
-		onClearCredentials();
-		setOpen(false);
-	}, [credentialExit.beginClose, deployment.resource.id, onClearCredentials, reset]);
-
 	return (
-		<Dialog
-			open={runtime === "hermes" && !hermesOidc && open}
-			onOpenChange={handleOpenChange}
-			onOpenChangeComplete={(nextOpen) => {
-				if (!nextOpen) credentialExit.completeClose();
-			}}
-		>
-			<div className="flex items-center gap-1.5">
-				{runtime === "hermes" && !hermesOidc ? (
-					<Popover
-						open={accessHintOpen}
-						onOpenChange={(nextOpen) => {
-							if (!nextOpen) dismissAccessHint();
-						}}
-					>
-						<PopoverTrigger
-							render={
-								<Button
-									ref={triggerRef}
-									type="button"
-									variant="outline"
-									size="sm"
-									onClick={() => handleOpenChange(true)}
-									aria-label={`Access ${label}`}
-								/>
-							}
-						>
-							Access
-						</PopoverTrigger>
-						<PopoverContent side="bottom" align="end" className="w-72 gap-2">
-							<div className="flex items-start justify-between gap-3">
-								<PopoverHeader>
-									<PopoverTitle>Sign in to Hermes</PopoverTitle>
-									<PopoverDescription>
-										Get your Hermes username and password from Access.
-									</PopoverDescription>
-								</PopoverHeader>
-								<Button
-									type="button"
-									variant="ghost"
-									size="icon-xs"
-									onClick={dismissAccessHint}
-									aria-label="Dismiss Hermes sign-in hint"
-								>
-									<X />
-								</Button>
-							</div>
-						</PopoverContent>
-					</Popover>
-				) : runtime === "openclaw" ? (
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						disabled={isCredentialLoading}
-						onClick={() => void onRetryRuntimeAccess()}
-					>
-						{isCredentialLoading ? (
-							<Spinner className="size-3.5" />
-						) : (
-							<RefreshCw className="size-3.5" />
-						)}
-						Reconnect
-					</Button>
-				) : null}
-				<OpenInNewWindowButton label={label} disabled={!windowTarget} onClick={openRuntime} />
-			</div>
-			{runtime === "hermes" && !hermesOidc ? (
-				<DialogContent
-					data-hosted="true"
-					data-v2="true"
-					className="sm:max-w-md"
-					finalFocus={triggerRef}
+		<div className="flex items-center gap-1.5">
+			{runtime === "openclaw" ? (
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					disabled={isCredentialLoading}
+					onClick={() => void onRetryRuntimeAccess()}
 				>
-					<DialogHeader>
-						<DialogTitle>Agent dashboard access</DialogTitle>
-						<DialogDescription>
-							View or copy the current {label} sign-in details. Resetting them restarts the agent.
-						</DialogDescription>
-					</DialogHeader>
-
 					{isCredentialLoading ? (
-						<div
-							role="status"
-							className="flex items-center gap-2 rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground"
-						>
-							<Spinner className="size-4" />
-							Loading dashboard access…
-						</div>
-					) : null}
-
-					{credentialError ? (
-						<ApiErrorPanel
-							error={credentialError}
-							onRetry={() => void onLoadCredentials()}
-							normalizer={billingErrorNormalizer}
-							title={`Couldn't load ${label} access`}
-						/>
-					) : null}
-
-					{renderedCredentials?.runtime === "hermes" ? (
-						<div className="overflow-hidden rounded-lg border bg-card/60">
-							<RuntimeUiCredentialRow label="Username" value={renderedCredentials.username} />
-							<Separator />
-							<RuntimeUiCredentialRow
-								label="Password"
-								value={renderedCredentials.password}
-								secret
-							/>
-						</div>
-					) : null}
-
-					<div className="flex flex-wrap justify-end gap-2">
-						<ConfirmAction
-							title="Reset dashboard access?"
-							description={<p>This creates new Hermes sign-in details and restarts the agent.</p>}
-							confirmLabel="Reset access"
-							destructive
-							onConfirm={acceptReset}
-						>
-							<Button
-								type="button"
-								variant="outline"
-								disabled={isCredentialLoading || reset.isPending}
-							>
-								{reset.isPending ? <Spinner className="size-3.5" /> : null}
-								Reset access
-							</Button>
-						</ConfirmAction>
-						<Button
-							type="button"
-							disabled={!windowTarget || reset.isPending}
-							onClick={openRuntime}
-							aria-label={`Open ${label} in new window`}
-						>
-							<ExternalLink className="size-3.5" />
-							<span className="hidden sm:inline">Open in new window</span>
-						</Button>
-					</div>
-				</DialogContent>
+						<Spinner className="size-3.5" />
+					) : (
+						<RefreshCw className="size-3.5" />
+					)}
+					Reconnect
+				</Button>
 			) : null}
-		</Dialog>
+			<OpenInNewWindowButton label={label} disabled={!windowTarget} onClick={openRuntime} />
+		</div>
 	);
 }
 
