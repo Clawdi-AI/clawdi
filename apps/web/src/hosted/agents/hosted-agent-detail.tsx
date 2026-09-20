@@ -1572,16 +1572,19 @@ export function ConsoleTab({
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const ready = deploymentRuntimeUiIsReady(deployment);
 	const url = ready ? runtimeConsoleUrl(deployment, runtime) : null;
+	const runtimeEndpoint = deployment.runtime_ui_endpoint;
+	const hermesOidc = runtimeEndpoint?.runtime === "hermes" && runtimeEndpoint.auth_mode === "oidc";
 	const {
 		credentials: currentCredentials,
 		error: credentialError,
 		isLoading: isCredentialLoading,
 		attempt,
 		nativeHandoffLoaded,
+		hermesOidcPrimed,
 		markFrameLoaded,
 		load: loadCredentials,
 		clear: clearCredentials,
-		reconnect: reconnectOpenClaw,
+		reconnect: retryRuntimeAccess,
 	} = useRuntimeUiCredentials(deployment, url);
 	const [loadedAttempt, setLoadedAttempt] = useState<number | null>(null);
 	const openClawFrameLoaded = loadedAttempt === attempt;
@@ -1683,6 +1686,8 @@ export function ConsoleTab({
 	const openClawCredentials =
 		currentCredentials?.runtime === "openclaw" ? currentCredentials : null;
 	const openClawFrameCanLoad = openClawCredentials !== null || nativeHandoffLoaded;
+	const frameCanLoad =
+		runtime === "openclaw" ? openClawFrameCanLoad : !hermesOidc || hermesOidcPrimed;
 	const iframeUrl = openClawCredentials
 		? runtimeUiLaunchTarget(openClawCredentials)
 		: runtimeDashboardUrl(url, runtime);
@@ -1694,7 +1699,9 @@ export function ConsoleTab({
 					nativeHandoffLoaded,
 					openClawFrameCanLoad && openClawFrameLoaded,
 				)
-			: runtimeDashboardUrl(url, runtime);
+			: hermesOidc && !hermesOidcPrimed
+				? null
+				: runtimeDashboardUrl(url, runtime);
 
 	return (
 		<LiveToolFrame
@@ -1709,13 +1716,14 @@ export function ConsoleTab({
 					credentials={currentCredentials}
 					credentialError={credentialError}
 					isCredentialLoading={isCredentialLoading}
+					hermesOidc={hermesOidc}
 					onLoadCredentials={loadCredentials}
 					onClearCredentials={clearCredentials}
-					onReconnectOpenClaw={reconnectOpenClaw}
+					onRetryRuntimeAccess={retryRuntimeAccess}
 				/>
 			}
 		>
-			{runtime === "openclaw" && !openClawFrameCanLoad ? (
+			{!frameCanLoad ? (
 				credentialError !== null ? (
 					<EmptyState
 						icon={AlertCircle}
@@ -1727,7 +1735,7 @@ export function ConsoleTab({
 								variant="outline"
 								size="sm"
 								disabled={isCredentialLoading}
-								onClick={() => void reconnectOpenClaw()}
+								onClick={() => void retryRuntimeAccess()}
 							>
 								{isCredentialLoading ? (
 									<Spinner className="size-3.5" />
@@ -1749,7 +1757,7 @@ export function ConsoleTab({
 				)
 			) : (
 				<iframe
-					key={runtime === "openclaw" ? attempt : url}
+					key={runtime === "openclaw" || hermesOidc ? attempt : url}
 					src={iframeUrl}
 					loading="eager"
 					className="min-h-0 flex-1 border-0 bg-background"
@@ -1917,9 +1925,10 @@ function RuntimeUiAccessDialog({
 	credentials,
 	credentialError,
 	isCredentialLoading,
+	hermesOidc,
 	onLoadCredentials,
 	onClearCredentials,
-	onReconnectOpenClaw,
+	onRetryRuntimeAccess,
 }: {
 	deployment: HostedDeployment;
 	endpointUrl: string;
@@ -1928,9 +1937,10 @@ function RuntimeUiAccessDialog({
 	credentials: RuntimeUiCredentials | null;
 	credentialError: Error | null;
 	isCredentialLoading: boolean;
+	hermesOidc: boolean;
 	onLoadCredentials: () => Promise<RuntimeUiCredentials | null>;
 	onClearCredentials: () => void;
-	onReconnectOpenClaw: () => Promise<RuntimeUiCredentials | null>;
+	onRetryRuntimeAccess: () => Promise<RuntimeUiCredentials | null>;
 }) {
 	const label = runtimeBrowserUiLabel(runtime);
 	const reset = useResetRuntimeUiAccess();
@@ -1961,7 +1971,7 @@ function RuntimeUiAccessDialog({
 	}, [credentialExit.beginClose, identity, open]);
 
 	useEffect(() => {
-		if (runtime !== "hermes") {
+		if (runtime !== "hermes" || hermesOidc) {
 			setAccessHintOpen(false);
 			return;
 		}
@@ -1970,7 +1980,7 @@ function RuntimeUiAccessDialog({
 		} catch {
 			setAccessHintOpen(true);
 		}
-	}, [accessHintStorageKey, runtime]);
+	}, [accessHintStorageKey, hermesOidc, runtime]);
 
 	const handleOpenChange = useCallback(
 		(nextOpen: boolean) => {
@@ -2024,14 +2034,14 @@ function RuntimeUiAccessDialog({
 
 	return (
 		<Dialog
-			open={runtime === "hermes" && open}
+			open={runtime === "hermes" && !hermesOidc && open}
 			onOpenChange={handleOpenChange}
 			onOpenChangeComplete={(nextOpen) => {
 				if (!nextOpen) credentialExit.completeClose();
 			}}
 		>
 			<div className="flex items-center gap-1.5">
-				{runtime === "hermes" ? (
+				{runtime === "hermes" && !hermesOidc ? (
 					<Popover
 						open={accessHintOpen}
 						onOpenChange={(nextOpen) => {
@@ -2072,13 +2082,13 @@ function RuntimeUiAccessDialog({
 							</div>
 						</PopoverContent>
 					</Popover>
-				) : (
+				) : runtime === "openclaw" ? (
 					<Button
 						type="button"
 						variant="outline"
 						size="sm"
 						disabled={isCredentialLoading}
-						onClick={() => void onReconnectOpenClaw()}
+						onClick={() => void onRetryRuntimeAccess()}
 					>
 						{isCredentialLoading ? (
 							<Spinner className="size-3.5" />
@@ -2087,10 +2097,10 @@ function RuntimeUiAccessDialog({
 						)}
 						Reconnect
 					</Button>
-				)}
+				) : null}
 				<OpenInNewWindowButton label={label} disabled={!windowTarget} onClick={openRuntime} />
 			</div>
-			{runtime === "hermes" ? (
+			{runtime === "hermes" && !hermesOidc ? (
 				<DialogContent
 					data-hosted="true"
 					data-v2="true"

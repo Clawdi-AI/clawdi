@@ -291,6 +291,24 @@ def _validate_absolute_url(value: str) -> str:
     return value
 
 
+def _validate_https_url_without_credentials(value: str) -> str:
+    try:
+        parsed = urlsplit(value)
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("must be an HTTPS URL") from exc
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("must be an HTTPS URL without credentials, query, or fragment")
+    return value
+
+
 def _is_safe_egress_host(host: str) -> bool:
     if not host or len(host) > 253 or host.startswith(".") or host.endswith("."):
         return False
@@ -519,7 +537,7 @@ class HostedEgressProfiles(_StrictHostedWireModel):
     profiles: list[HostedEgressProfile] | None = None
 
 
-class HostedHermesDashboardActivation(BaseModel):
+class HostedHermesDashboardPasswordActivation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: Literal[True]
@@ -536,26 +554,66 @@ class HostedHermesDashboardAuth(BaseModel):
     sessionSecretRef: Literal["secret://runtime/hermes/dashboard-session-secret"]
     sessionTtlSeconds: int = Field(default=43_200, ge=60, le=604_800)
     publicUrl: str = Field(min_length=1)
-    activation: HostedHermesDashboardActivation
+    activation: HostedHermesDashboardPasswordActivation
 
     @field_validator("publicUrl")
     @classmethod
     def _validate_https_url(cls, value: str) -> str:
-        try:
-            parsed = urlsplit(value)
-            parsed.port
-        except ValueError as exc:
-            raise ValueError("must be an HTTPS URL") from exc
-        if (
-            parsed.scheme != "https"
-            or parsed.hostname is None
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise ValueError("must be an HTTPS URL without credentials, query, or fragment")
+        return _validate_https_url_without_credentials(value)
+
+
+class HostedHermesDashboardOidcActivation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: Literal[True]
+    capability: Literal["hermes-self-hosted-oidc-v1"]
+
+
+class HostedHermesDashboardOidcAuth(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["oidc"]
+    provider: Literal["self-hosted"]
+    deploymentId: str = Field(
+        min_length=1,
+        max_length=200,
+        pattern=r"^hdep_[A-Za-z0-9]{8,}$",
+    )
+    issuer: str = Field(min_length=1)
+    clientId: str = Field(
+        min_length=1,
+        max_length=255,
+        pattern=r"^clawdi-hermes-hdep_[A-Za-z0-9]{8,}-r[1-9][0-9]*$",
+    )
+    accessRevision: int = Field(ge=1)
+    publicUrl: str = Field(min_length=1)
+    trustedProxies: list[IPvAnyAddress] = Field(min_length=1, max_length=16)
+    activation: HostedHermesDashboardOidcActivation
+
+    @field_validator("issuer", "publicUrl")
+    @classmethod
+    def _validate_https_url(cls, value: str) -> str:
+        return _validate_https_url_without_credentials(value)
+
+    @field_validator("trustedProxies")
+    @classmethod
+    def _validate_trusted_proxies(cls, value: list[IPvAnyAddress]) -> list[IPvAnyAddress]:
+        if len(set(value)) != len(value):
+            raise ValueError("must not contain duplicate IP addresses")
         return value
+
+    @model_validator(mode="after")
+    def _validate_client_revision(self) -> "HostedHermesDashboardOidcAuth":
+        expected = f"clawdi-hermes-{self.deploymentId}-r{self.accessRevision}"
+        if self.clientId != expected:
+            raise ValueError("clientId must bind deploymentId and accessRevision")
+        return self
+
+
+HostedHermesDashboardAuthContract = Annotated[
+    HostedHermesDashboardAuth | HostedHermesDashboardOidcAuth,
+    Field(discriminator="mode"),
+]
 
 
 class HostedOpenClawGatewayActivation(BaseModel):
@@ -585,7 +643,7 @@ class HostedRuntimeSystem(BaseModel):
     )
     openclawControlUiBasePath: str | None = None
     openclawGatewayAuth: HostedOpenClawGatewayAuth | None = None
-    hermesDashboardAuth: HostedHermesDashboardAuth | None = None
+    hermesDashboardAuth: HostedHermesDashboardAuthContract | None = None
 
     @field_validator("openclawControlUiAllowedOrigins")
     @classmethod

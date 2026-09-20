@@ -22,7 +22,9 @@ import type { components as DeployComponents } from "./deploy.generated";
 export type { components as DeployComponents, paths as DeployPaths } from "./deploy.generated";
 
 type S = DeployComponents["schemas"];
-
+export type RuntimeUiEndpointInfo =
+	| S["V2HermesRuntimeUiEndpointInfo"]
+	| S["V2OpenClawRuntimeUiEndpointInfo"];
 export type DeploymentRead = S["V2HostedDeploymentReadResponse"];
 export type Deployment = DeploymentRead;
 export type DeployRequestRead = S["V2HostedDeployRequestReadResponse"];
@@ -34,9 +36,6 @@ export type AiProviderRemovalResult = S["V2AiProviderRemovalResponse"];
 export type RuntimeUiCredentials =
 	| S["V2HermesRuntimeUiCredentials"]
 	| S["V2OpenClawRuntimeUiCredentials"];
-export type RuntimeUiEndpointInfo =
-	| S["V2HermesRuntimeUiEndpointInfo"]
-	| S["V2OpenClawRuntimeUiEndpointInfo"];
 export type RuntimeUiAuthMode = RuntimeUiEndpointInfo["auth_mode"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -49,16 +48,24 @@ export function isRuntimeUiEndpointInfo(value: unknown): value is RuntimeUiEndpo
 		(value.runtime === "openclaw" || value.runtime === "hermes") &&
 		value.role === "control_ui" &&
 		typeof value.url === "string" &&
-		(value.auth_mode === "openclaw_token" || value.auth_mode === "password") &&
+		(value.auth_mode === "openclaw_token" ||
+			value.auth_mode === "password" ||
+			value.auth_mode === "oidc") &&
 		value.browser_mode === "embedded_and_top_level" &&
-		(value.runtime === "openclaw"
-			? value.auth_mode === "openclaw_token"
-			: value.auth_mode === "password") &&
 		isCleanRuntimeUiUrl(value.url) &&
-		(value.runtime !== "openclaw" ||
-			value.browser_session_url == null ||
-			value.browser_session_url ===
-				new URL("/.well-known/openclaw/browser-session", value.url).href)
+		(value.runtime === "openclaw"
+			? value.auth_mode === "openclaw_token" &&
+				(value.browser_session_url == null ||
+					value.browser_session_url ===
+						new URL("/.well-known/openclaw/browser-session", value.url).href)
+			: value.auth_mode === "password"
+				? value.browser_session_url == null && value.access_revision == null
+				: value.auth_mode === "oidc" &&
+					typeof value.browser_session_url === "string" &&
+					Number.isInteger(value.access_revision) &&
+					typeof value.access_revision === "number" &&
+					value.access_revision >= 1 &&
+					isCleanRuntimeUiUrl(value.browser_session_url))
 	);
 }
 

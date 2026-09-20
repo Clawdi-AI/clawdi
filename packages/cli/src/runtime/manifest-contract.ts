@@ -111,7 +111,7 @@ function cleanHttpsUrl(value: string): URL | null {
 	}
 }
 
-const hermesDashboardAuthSchema = z
+const hermesDashboardPasswordAuthSchema = z
 	.object({
 		mode: z.literal("password"),
 		provider: z.literal("basic"),
@@ -137,6 +137,59 @@ const hermesDashboardAuthSchema = z
 			});
 		}
 	});
+
+const hermesDashboardOidcAuthSchema = z
+	.object({
+		mode: z.literal("oidc"),
+		provider: z.literal("self-hosted"),
+		deploymentId: z
+			.string()
+			.regex(/^hdep_[A-Za-z0-9]{8,}$/)
+			.max(200),
+		issuer: z.string().url(),
+		clientId: z
+			.string()
+			.trim()
+			.regex(/^clawdi-hermes-hdep_[A-Za-z0-9]{8,}-r[1-9]\d*$/)
+			.max(255),
+		accessRevision: z.number().int().min(1),
+		publicUrl: z.string().url(),
+		trustedProxies: z
+			.array(trustedProxyIpSchema)
+			.min(1)
+			.max(16)
+			.refine((values) => new Set(values).size === values.length, "must not contain duplicates"),
+		activation: z
+			.object({
+				enabled: z.literal(true),
+				capability: z.literal("hermes-self-hosted-oidc-v1"),
+			})
+			.strict(),
+	})
+	.strict()
+	.superRefine((auth, ctx) => {
+		if (auth.clientId !== `clawdi-hermes-${auth.deploymentId}-r${auth.accessRevision}`) {
+			ctx.addIssue({
+				code: "custom",
+				message: "must bind deploymentId and accessRevision",
+				path: ["clientId"],
+			});
+		}
+		for (const field of ["issuer", "publicUrl"] as const) {
+			if (!cleanHttpsUrl(auth[field])) {
+				ctx.addIssue({
+					code: "custom",
+					message: "must be an HTTPS URL without credentials, query, or fragment",
+					path: [field],
+				});
+			}
+		}
+	});
+
+const hermesDashboardAuthSchema = z.union([
+	hermesDashboardPasswordAuthSchema,
+	hermesDashboardOidcAuthSchema,
+]);
 
 const openclawGatewayAuthSchema = z
 	.object({
@@ -913,13 +966,13 @@ function validateHostedRuntimeManifest(
 	} else {
 		if (!manifest.system.hermesDashboardAuth) {
 			addIssue(
-				"hermes direct dashboard requires official password authentication",
+				"hermes direct dashboard requires official authentication",
 				systemPath("hermesDashboardAuth"),
 			);
 		}
 		if (manifest.system.hermesDashboardAuth?.activation.enabled !== true) {
 			addIssue(
-				"hermes password authentication must be explicitly enabled",
+				"hermes dashboard authentication must be explicitly enabled",
 				systemPath("hermesDashboardAuth", "activation", "enabled"),
 			);
 		}

@@ -67,6 +67,34 @@ function applyHermesDashboardConfig(
 	context: HermesConfigTransaction,
 	auth: NonNullable<RuntimeManifest["hermesDashboardAuth"]>,
 ): void {
+	if (auth.mode === "oidc") {
+		reconcileHermesConfigValue(context, "dashboard.basic_auth", undefined);
+		reconcileHermesConfigValue(context, "dashboard.oauth", {
+			self_hosted: {
+				issuer: auth.issuer,
+				client_id: auth.clientId,
+				scopes: "openid profile email",
+			},
+		});
+		reconcileHermesConfigValue(context, "dashboard.public_url", auth.publicUrl);
+		reconcileHermesConfigValue(context, "dashboard.trusted_proxies", auth.trustedProxies);
+		const currentDisabled = getHermesRawConfigValue(context, "plugins.disabled");
+		if (
+			currentDisabled.exists &&
+			(!Array.isArray(currentDisabled.value) ||
+				currentDisabled.value.some((value) => typeof value !== "string"))
+		) {
+			throw new Error("Hermes config field plugins.disabled must be a string array");
+		}
+		const disabled = new Set(currentDisabled.exists ? (currentDisabled.value as string[]) : []);
+		disabled.add("dashboard_auth/basic");
+		disabled.add("dashboard_auth/nous");
+		disabled.delete("dashboard_auth/self_hosted");
+		reconcileHermesConfigValue(context, "plugins.disabled", [...disabled].sort());
+		return;
+	}
+	reconcileHermesConfigValue(context, "dashboard.oauth", undefined);
+	reconcileHermesConfigValue(context, "dashboard.trusted_proxies", undefined);
 	reconcileHermesConfigValue(context, "dashboard.basic_auth", {
 		username: auth.username,
 		session_ttl_seconds: auth.sessionTtlSeconds,
@@ -206,8 +234,9 @@ export function withHermesDashboardAuthEnvironment(
 	const auth = manifest.hermesDashboardAuth;
 	if (!auth) return settings;
 	if (!auth.activation.enabled) {
-		throw new Error("Hermes password authentication is disabled");
+		throw new Error("Hermes dashboard authentication is disabled");
 	}
+	if (auth.mode === "oidc") return settings;
 	return {
 		...(settings ?? {}),
 		prependPath: settings?.prependPath ?? [],

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { components } from "@clawdi/shared/api";
 import JSON5 from "json5";
+import { parse as parseYaml } from "yaml";
 import { safeTruncate, sanitizeMetadata } from "../lib/sanitize";
 import { getCliVersion } from "../lib/version";
 import { toErrorMessage } from "../serve/log";
@@ -502,7 +503,9 @@ export async function runtimeComponentIsReady(
 			const status: unknown = JSON.parse(
 				(await runtimeReadinessProbe("http://127.0.0.1:9119/api/status")).body,
 			);
-			if (!hermesUiAuthenticationIsReady(status)) return false;
+			const expectedProvider = hermesUiExpectedAuthProvider(paths);
+			if (!expectedProvider || !hermesUiAuthenticationIsReady(status, expectedProvider))
+				return false;
 			const page = await runtimeReadinessProbe("http://127.0.0.1:9119/login");
 			return /<!doctype html|<html[\s>]/i.test(page.body);
 		}
@@ -512,9 +515,30 @@ export async function runtimeComponentIsReady(
 	}
 }
 
-function hermesUiAuthenticationIsReady(status: unknown): boolean {
+function hermesUiExpectedAuthProvider(paths: RuntimePaths): "basic" | "self-hosted" | null {
+	try {
+		const config = recordValue(
+			parseYaml(readFileSync(join(paths.userHome, ".hermes", "config.yaml"), "utf8")),
+		);
+		const dashboard = recordValue(config?.dashboard);
+		const basic = recordValue(dashboard?.basic_auth);
+		const selfHosted = recordValue(recordValue(dashboard?.oauth)?.self_hosted);
+		if (Boolean(basic) === Boolean(selfHosted)) return null;
+		return selfHosted ? "self-hosted" : "basic";
+	} catch {
+		return null;
+	}
+}
+
+function hermesUiAuthenticationIsReady(
+	status: unknown,
+	expectedProvider: "basic" | "self-hosted",
+): boolean {
 	const value = recordValue(status);
-	return value?.auth_required === true && arrayValue(value.auth_providers).includes("basic");
+	const providers = arrayValue(value?.auth_providers);
+	return (
+		value?.auth_required === true && providers.length === 1 && providers[0] === expectedProvider
+	);
 }
 
 /** Native service activation precedes application startup; heartbeat health needs both. */
@@ -594,10 +618,12 @@ async function runtimeServiceIsReady(unit: string, paths: RuntimePaths): Promise
 		const status = recordValue(
 			JSON.parse((await runtimeReadinessProbe("http://127.0.0.1:9119/api/status")).body),
 		);
+		const expectedProvider = hermesUiExpectedAuthProvider(paths);
 		return (
+			expectedProvider !== null &&
 			status?.gateway_running === true &&
 			status.gateway_state === "running" &&
-			hermesUiAuthenticationIsReady(status)
+			hermesUiAuthenticationIsReady(status, expectedProvider)
 		);
 	} catch {
 		return false;

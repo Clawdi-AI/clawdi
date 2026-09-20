@@ -1,4 +1,8 @@
-import type { DeployComponents } from "@clawdi/shared/api";
+import type {
+	DeployComponents,
+	DeploymentEventStreamSnapshotHandoff,
+	DeploymentRead,
+} from "@clawdi/shared/api";
 
 type Schemas = DeployComponents["schemas"];
 
@@ -48,12 +52,12 @@ export type DeployRequest = Schemas["V2HostedDeployRequest"];
 export type HostedDeploymentSpec = Schemas["HostedDeploymentSpec"];
 export type HostedDeploymentStatus = Schemas["HostedDeploymentStatus"];
 export type DeploymentOperation = Schemas["LongRunningOperation"];
-export type HostedDeployment = Schemas["V2HostedDeploymentReadResponse"];
+export type HostedDeployment = DeploymentRead;
 export type HostedComputeSubscription = NonNullable<
 	NonNullable<HostedDeployment["commercial_display"]>["compute_subscription"]
 >;
 export type HostedDeployRequestStatus = Schemas["V2HostedDeployRequestReadResponse"];
-export type HostedEventStreamSnapshotHandoff = Schemas["EventStreamSnapshotHandoff"];
+export type HostedEventStreamSnapshotHandoff = DeploymentEventStreamSnapshotHandoff;
 export type HostedFundingFact = Schemas["V2HostedCommercialFundingFactInfo"];
 export type HostedUsageSummary = Schemas["V2HostedUsageSummaryResponse"];
 export type HostedRuntimeConfiguration = Schemas["RuntimeConfiguration"];

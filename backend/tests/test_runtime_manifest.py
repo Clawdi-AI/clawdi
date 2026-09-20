@@ -632,6 +632,37 @@ def _runtime_state_body(environment_id: str, **overrides) -> dict:
     return body
 
 
+def test_hermes_oidc_client_binds_explicit_hosted_deployment() -> None:
+    hosted_deployment_id = "hdep_K8fJ3pQm"
+    system = {
+        "hermesDashboardAuth": {
+            "mode": "oidc",
+            "provider": "self-hosted",
+            "deploymentId": hosted_deployment_id,
+            "issuer": "https://api.example.test/v2/hermes/oidc",
+            "clientId": f"clawdi-hermes-{hosted_deployment_id}-r7",
+            "accessRevision": 7,
+            "publicUrl": "https://hermes.example.test",
+            "trustedProxies": ["10.173.0.1"],
+            "activation": {
+                "enabled": True,
+                "capability": "hermes-self-hosted-oidc-v1",
+            },
+        }
+    }
+    body = _runtime_state_body(
+        str(uuid4()),
+        deployment_id="hri_runtime_instance",
+        system=system,
+        runtimes=_runtime_state("hermes"),
+    )
+    AdminRuntimeStateUpsert.model_validate(body)
+
+    body["system"]["hermesDashboardAuth"]["deploymentId"] = "hdep_Q9mN4sTr"
+    with pytest.raises(ValidationError, match="must bind deploymentId"):
+        AdminRuntimeStateUpsert.model_validate(body)
+
+
 @pytest.mark.asyncio
 async def test_workspace_skill_write_rejects_disabled_linked_project_key(
     admin_client,
