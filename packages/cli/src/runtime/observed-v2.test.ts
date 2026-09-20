@@ -277,8 +277,19 @@ describe("hosted runtime observed v2", () => {
 			mkdirSync(paths.systemdUserRoot, { recursive: true });
 			writeFileSync(join(paths.systemdUserRoot, unit), GENERATED_RUNTIME_SYSTEMD_FILE_HEADER);
 			const gatewayUnit = join(paths.systemdUserRoot, "hermes-gateway.service");
+			const hermesConfigPath = join(paths.userHome, ".hermes", "config.yaml");
+			const writeHermesAuthProvider = (provider: "basic" | "self-hosted") => {
+				mkdirSync(dirname(hermesConfigPath), { recursive: true });
+				writeFileSync(
+					hermesConfigPath,
+					provider === "basic"
+						? "dashboard:\n  basic_auth:\n    username: admin\n"
+						: "dashboard:\n  oauth:\n    self_hosted:\n      issuer: https://api.example.test/v2/hermes/oidc\n      client_id: test\n",
+				);
+			};
 			if (unit === "clawdi-hermes-dashboard.service") {
 				writeFileSync(gatewayUnit, GENERATED_RUNTIME_SYSTEMD_FILE_HEADER);
+				writeHermesAuthProvider("basic");
 			}
 			const systemctl = join(paths.userHome, "systemctl");
 			writeFileSync(systemctl, "#!/bin/sh\nprintf 'ActiveState=active\nSubState=running\n'\n", {
@@ -486,6 +497,8 @@ printf '%s' '{"port":${server.port},"controlUi":{"basePath":"/control"}}'
 						auth_required: true,
 						auth_providers: ["self-hosted"],
 					};
+					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(false);
+					writeHermesAuthProvider("self-hosted");
 					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(true);
 					body = {
 						gateway_running: false,
@@ -494,6 +507,7 @@ printf '%s' '{"port":${server.port},"controlUi":{"basePath":"/control"}}'
 						auth_providers: ["self-hosted", "nous"],
 					};
 					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(false);
+					writeHermesAuthProvider("basic");
 					body = {
 						gateway_running: false,
 						gateway_state: "stopped",

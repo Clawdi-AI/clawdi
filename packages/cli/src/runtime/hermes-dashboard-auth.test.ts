@@ -77,6 +77,11 @@ test.skipIf(
 		const paths = getRuntimePaths({ mode: "hosted" });
 		mkdirSync(paths.serviceStateRoot, { recursive: true });
 		mkdirSync(paths.systemdUserRoot, { recursive: true });
+		mkdirSync(join(paths.userHome, ".hermes"), { recursive: true });
+		writeFileSync(
+			join(paths.userHome, ".hermes", "config.yaml"),
+			"dashboard:\n  basic_auth:\n    username: admin\n",
+		);
 		writeFileSync(
 			join(paths.systemdUserRoot, "clawdi-hermes-dashboard.service"),
 			GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,

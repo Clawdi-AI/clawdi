@@ -30,12 +30,7 @@ export type Deployment = DeploymentRead;
 export type DeployRequestRead = S["V2HostedDeployRequestReadResponse"];
 export type DeploymentEvent = S["DeploymentEventEnvelope"];
 export type DeploymentEventType = S["DeploymentEventType"];
-export type DeploymentEventStreamSnapshotHandoff = Omit<
-	S["EventStreamSnapshotHandoff"],
-	"deployments"
-> & {
-	deployments: DeploymentRead[];
-};
+export type DeploymentEventStreamSnapshotHandoff = S["EventStreamSnapshotHandoff"];
 export type AiProviderRemovalImpact = S["V2AiProviderRemovalImpactResponse"];
 export type AiProviderRemovalResult = S["V2AiProviderRemovalResponse"];
 export type RuntimeUiCredentials =

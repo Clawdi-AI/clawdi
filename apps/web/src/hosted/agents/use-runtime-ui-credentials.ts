@@ -61,7 +61,9 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 	const requestAbort = useRef<AbortController | null>(null);
 	const mountedAuthorityIdentity = useRef(authorityIdentity);
 	const currentResourceVersion = useRef(metadata.resourceVersion);
+	const currentGetToken = useRef(getToken);
 	currentResourceVersion.current = metadata.resourceVersion;
+	currentGetToken.current = getToken;
 
 	useLayoutEffect(() => {
 		active.current = true;
@@ -214,7 +216,7 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 			let nextDelay = HERMES_OIDC_BROWSER_SESSION_REFRESH_MS;
 			abort = new AbortController();
 			try {
-				const token = await getToken();
+				const token = await currentGetToken.current();
 				if (cancelled || mountedAuthorityIdentity.current !== authorityIdentity) return;
 				await primeHermesOidcBrowserSession(
 					hermesOidcBrowserSessionUrl,
@@ -240,14 +242,7 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 			if (timer) clearTimeout(timer);
 			abort?.abort();
 		};
-	}, [
-		isHermesOidc,
-		hermesOidcPrimed,
-		hermesOidcBrowserSessionUrl,
-		authorityIdentity,
-		id,
-		getToken,
-	]);
+	}, [isHermesOidc, hermesOidcPrimed, hermesOidcBrowserSessionUrl, authorityIdentity, id]);
 
 	useEffect(() => {
 		const shouldPrimeOpenClaw = spec.runtime === "openclaw" && !nativeHandoffLoaded;
