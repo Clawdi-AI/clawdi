@@ -3037,9 +3037,10 @@ exec /usr/bin/systemctl "$@"
 		expect(readFileSync(join(paths.systemdEnvRoot, "hermes-gateway.service.env"), "utf8")).not.toBe(
 			initialGatewayEnvironment,
 		);
+		// OIDC carries no dashboard password/session secret in the service environment.
 		expect(
 			readFileSync(join(paths.systemdEnvRoot, "clawdi-hermes-dashboard.service.env"), "utf8"),
-		).not.toBe(initialDashboardEnvironment);
+		).toBe(initialDashboardEnvironment);
 		expect(behavioralGuardUnitState("hermes-gateway.service").ActiveState).toBe("active");
 		expect(behavioralGuardUnitState("clawdi-hermes-dashboard.service").ActiveState).toBe("active");
 	} finally {
