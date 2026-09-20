@@ -589,7 +589,7 @@ exec /usr/bin/systemctl "$@"
 			const hostedManifest = {
 				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 				runtime,
-				deploymentId: `hdep_virgin_${runtime}`,
+				deploymentId: `hdep_virgin${runtime}`,
 				environmentId: `env_virgin_${runtime}`,
 				instanceId: `hri_virgin_${runtime}`,
 				generation: 1,
@@ -610,9 +610,9 @@ exec /usr/bin/systemctl "$@"
 								hermesDashboardAuth: {
 									mode: "oidc",
 									provider: "self-hosted",
-									deploymentId: `hdep_virgin_${runtime}`,
+									deploymentId: `hdep_virgin${runtime}`,
 									issuer: "https://api.example.test/v2/hermes/oidc",
-									clientId: `clawdi-hermes-hdep_virgin_${runtime}-r1`,
+									clientId: `clawdi-hermes-hdep_virgin${runtime}-r1`,
 									accessRevision: 1,
 									publicUrl: "https://agent.example.test/hermes",
 									trustedProxies: ["10.173.0.1"],
@@ -2700,7 +2700,7 @@ function behavioralGuardLoad(input: {
 		manifest: {
 			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 			runtime: "hermes",
-			deploymentId: "hdep_behavioral_e2e_guards",
+			deploymentId: "hdep_behaviorale2eguards",
 			environmentId: "env_behavioral_e2e_guards",
 			instanceId: "hri_behavioral_e2e_guards",
 			generation: input.generation,
@@ -2710,9 +2710,9 @@ function behavioralGuardLoad(input: {
 				hermesDashboardAuth: {
 					mode: "oidc",
 					provider: "self-hosted",
-					deploymentId: "hdep_behavioral_e2e_guards",
+					deploymentId: "hdep_behaviorale2eguards",
 					issuer: "https://api.example.test/v2/hermes/oidc",
-					clientId: "clawdi-hermes-hdep_behavioral_e2e_guards-r1",
+					clientId: "clawdi-hermes-hdep_behaviorale2eguards-r1",
 					accessRevision: 1,
 					publicUrl: "https://agent.example.test/hermes",
 					trustedProxies: ["10.173.0.1"],

@@ -20,6 +20,11 @@ if [[ "$hermes_fixture_needed" == true && -z "${CLAWDI_TEST_HERMES_VENV:-}" ]]; 
 	source "$script_dir/prepare-hermes-native-fixture.sh"
 fi
 
+if [[ $# -gt 0 ]]; then
+	bun test "${test_args[@]}" "$@"
+	exit $?
+fi
+
 # Bun 1.4.0 can leave an otherwise completed multi-file suite idle after a
 # test launches child work, including through production helpers. Use each test
 # file as the process boundary. The clean-runner contract has its own CI gate.
