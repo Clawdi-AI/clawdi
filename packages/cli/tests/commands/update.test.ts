@@ -310,6 +310,28 @@ describe("update --json", () => {
 		});
 	});
 
+	it("reports Homebrew ownership without invoking the standalone updater", async () => {
+		const orig = console.log;
+		let captured = "";
+		console.log = (...args: unknown[]) => {
+			captured = args.map(String).join(" ");
+		};
+		try {
+			await update(
+				{ json: true },
+				{ isDesktopManaged: () => false, isHomebrewManaged: () => true },
+			);
+		} finally {
+			console.log = orig;
+		}
+
+		expect(JSON.parse(captured)).toMatchObject({
+			latest: null,
+			upgradeAvailable: false,
+			managedBy: "homebrew",
+		});
+	});
+
 	it("reports upgrade available when registry has a newer version", async () => {
 		const orig = console.log;
 		let captured = "";

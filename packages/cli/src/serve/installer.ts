@@ -38,6 +38,7 @@ import { AGENT_TYPES, type AgentType } from "../adapters/agent-types";
 import {
 	type CurrentCliInvocation,
 	detectDesktopManagedNativeLayout,
+	detectHomebrewManagedNativeLayout,
 	resolveCurrentCliInvocation,
 	resolveCurrentCliLayout,
 } from "../lib/current-cli-invocation";
@@ -149,6 +150,7 @@ const PERSISTED_ENV_KEYS = [
 function capturedEnv(
 	opts: InstallOpts = {},
 	desktopRuntime: { runtimeRoot?: string } | null = null,
+	homebrewManaged = false,
 ): { key: string; value: string }[] {
 	const out: { key: string; value: string }[] = [];
 	for (const key of PERSISTED_ENV_KEYS) {
@@ -168,8 +170,10 @@ function capturedEnv(
 		"CLAWDI_DAEMON_RPC_ALLOW_REMOTE",
 		opts.rpcAllowRemote === true ? "1" : undefined,
 	);
-	if (desktopRuntime) {
+	if (desktopRuntime || homebrewManaged) {
 		upsertCapturedEnv(out, "CLAWDI_NO_AUTO_UPDATE", "1");
+	}
+	if (desktopRuntime) {
 		upsertCapturedEnv(out, "CLAWDI_DESKTOP_RUNTIME", desktopRuntime.runtimeRoot);
 	}
 	return out;
@@ -198,15 +202,23 @@ interface DaemonInstallContext {
 function currentDaemonInstallContext(opts: InstallOpts): DaemonInstallContext {
 	let invocation: CurrentCliInvocation;
 	let desktopRuntime: ReturnType<typeof detectDesktopManagedNativeLayout> = null;
+	let homebrewRuntime: ReturnType<typeof detectHomebrewManagedNativeLayout> = null;
 	try {
 		const layout = resolveCurrentCliLayout();
 		desktopRuntime = detectDesktopManagedNativeLayout(layout, platform());
-		if (layout.kind === "native" && !layout.nativeOwnership && !desktopRuntime) {
+		homebrewRuntime = detectHomebrewManagedNativeLayout(layout, platform());
+		if (
+			layout.kind === "native" &&
+			!layout.nativeOwnership &&
+			!desktopRuntime &&
+			!homebrewRuntime
+		) {
 			throw new Error(
-				"an unowned native executable cannot install a daemon; install the native distribution or use the CLI bundled with Clawdi Desktop",
+				"an unowned native executable cannot install a daemon; install through Homebrew, the native distribution, or Clawdi Desktop",
 			);
 		}
 		invocation = resolveCurrentCliInvocation(daemonProgramArgs(opts));
+		if (homebrewRuntime) invocation.command = homebrewRuntime.activationPath;
 	} catch (error) {
 		throw new Error(
 			`could not resolve the current CLI for daemon installation: ${
@@ -230,7 +242,10 @@ function currentDaemonInstallContext(opts: InstallOpts): DaemonInstallContext {
 				"and re-run install from the installed binary.",
 		);
 	}
-	return { invocation, environment: capturedEnv(opts, desktopRuntime) };
+	return {
+		invocation,
+		environment: capturedEnv(opts, desktopRuntime, homebrewRuntime !== null),
+	};
 }
 
 export function install(opts: InstallOpts = {}): {

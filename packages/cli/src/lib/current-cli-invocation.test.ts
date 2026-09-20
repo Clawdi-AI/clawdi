@@ -1,9 +1,10 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
 	detectDesktopManagedNativeLayout,
+	detectHomebrewManagedNativeLayout,
 	isMacApplicationBundleExecutable,
 	resolveCurrentCliInvocation,
 	resolveCurrentCliLayout,
@@ -140,5 +141,33 @@ describe("resolveCurrentCliInvocation", () => {
 				"linux",
 			),
 		).toEqual({ runtimeRoot: appImageRuntime });
+	});
+
+	it("recognizes a complete Homebrew keg through its stable opt path", () => {
+		const prefix = join(root, "homebrew");
+		const libexec = join(prefix, "Cellar", "clawdi", "1.2.3", "libexec");
+		const executable = join(libexec, "clawdi");
+		mkdirSync(join(libexec, "egress-addon"), { recursive: true });
+		mkdirSync(join(libexec, "skills", "clawdi"), { recursive: true });
+		writeFileSync(executable, "binary\n");
+		writeFileSync(join(libexec, "egress-addon", "clawdi_egress_addon.py"), "addon\n");
+		writeFileSync(join(libexec, "skills", "clawdi", "SKILL.md"), "skill\n");
+		writeFileSync(join(dirname(libexec), "INSTALL_RECEIPT.json"), "{}\n");
+		const optLibexec = join(prefix, "opt", "clawdi", "libexec");
+		mkdirSync(dirname(optLibexec), { recursive: true });
+		symlinkSync(libexec, optLibexec);
+
+		expect(
+			detectHomebrewManagedNativeLayout(
+				{
+					kind: "native",
+					executablePath: executable,
+					resourceRoot: libexec,
+					activationPath: executable,
+					nativeOwnership: null,
+				},
+				"darwin",
+			),
+		).toEqual({ activationPath: join(optLibexec, "clawdi") });
 	});
 });
