@@ -239,6 +239,7 @@ import {
 	deploymentFilesUrl,
 	type HostedRuntime,
 	runtimeAiProviderAuthKind,
+	hermesOidcLoginUrl,
 	runtimeConsoleUrl,
 	runtimeDashboardUrl,
 	runtimeDisplayName,
@@ -1690,7 +1691,9 @@ export function ConsoleTab({
 		runtime === "openclaw" ? openClawFrameCanLoad : !hermesOidc || hermesOidcPrimed;
 	const iframeUrl = openClawCredentials
 		? runtimeUiLaunchTarget(openClawCredentials)
-		: runtimeDashboardUrl(url, runtime);
+		: hermesOidc
+			? hermesOidcLoginUrl(url)
+			: runtimeDashboardUrl(url, runtime);
 	const windowTarget =
 		runtime === "openclaw"
 			? openClawRuntimeUiWindowTarget(
