@@ -130,8 +130,7 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 						if (!current()) return null;
 						setHermesOidcPrimedAuthority(authorityIdentity);
 						hermesOidcRefreshTimer.current = setTimeout(() => {
-							if (!active.current || mountedAuthorityIdentity.current !== authorityIdentity)
-								return;
+							if (!active.current || mountedAuthorityIdentity.current !== authorityIdentity) return;
 							requestedVersion.current = null;
 							setHermesOidcPrimedAuthority(null);
 						}, HERMES_OIDC_BROWSER_SESSION_REFRESH_MS);
