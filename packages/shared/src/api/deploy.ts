@@ -22,21 +22,41 @@ import type { components as DeployComponents } from "./deploy.generated";
 export type { components as DeployComponents, paths as DeployPaths } from "./deploy.generated";
 
 type S = DeployComponents["schemas"];
+type PublishedDeploymentRead = S["V2HostedDeploymentReadResponse"];
+type PublishedHermesRuntimeUiEndpointInfo = S["V2HermesRuntimeUiEndpointInfo"];
 
-export type DeploymentRead = S["V2HostedDeploymentReadResponse"];
+// Keep generated types pinned to the published Hosted API while the additive
+// Hermes OIDC response rolls out reader-first.
+export type HermesOidcRuntimeUiEndpointInfo = Omit<
+	PublishedHermesRuntimeUiEndpointInfo,
+	"auth_mode"
+> & {
+	auth_mode: "oidc";
+	browser_session_url: string;
+	access_revision: number;
+};
+export type RuntimeUiEndpointInfo =
+	| PublishedHermesRuntimeUiEndpointInfo
+	| HermesOidcRuntimeUiEndpointInfo
+	| S["V2OpenClawRuntimeUiEndpointInfo"];
+export type DeploymentRead = Omit<PublishedDeploymentRead, "runtime_ui_endpoint"> & {
+	runtime_ui_endpoint?: RuntimeUiEndpointInfo | null;
+};
 export type Deployment = DeploymentRead;
 export type DeployRequestRead = S["V2HostedDeployRequestReadResponse"];
 export type DeploymentEvent = S["DeploymentEventEnvelope"];
 export type DeploymentEventType = S["DeploymentEventType"];
-export type DeploymentEventStreamSnapshotHandoff = S["EventStreamSnapshotHandoff"];
+export type DeploymentEventStreamSnapshotHandoff = Omit<
+	S["EventStreamSnapshotHandoff"],
+	"deployments"
+> & {
+	deployments: DeploymentRead[];
+};
 export type AiProviderRemovalImpact = S["V2AiProviderRemovalImpactResponse"];
 export type AiProviderRemovalResult = S["V2AiProviderRemovalResponse"];
 export type RuntimeUiCredentials =
 	| S["V2HermesRuntimeUiCredentials"]
 	| S["V2OpenClawRuntimeUiCredentials"];
-export type RuntimeUiEndpointInfo =
-	| S["V2HermesRuntimeUiEndpointInfo"]
-	| S["V2OpenClawRuntimeUiEndpointInfo"];
 export type RuntimeUiAuthMode = RuntimeUiEndpointInfo["auth_mode"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {

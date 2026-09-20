@@ -144,6 +144,7 @@ class PlatformRuntimeStateUpsert(PlatformMutationBody):
             raise ValueError("runtimes must contain exactly one enabled runtime")
         return value
 
+
 class PlatformRuntimeStateResponse(BaseModel):
     environment_id: UUID
     deployment_id: str

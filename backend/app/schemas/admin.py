@@ -233,6 +233,7 @@ class AdminRuntimeStateUpsert(BaseModel):
             raise ValueError("runtimes must contain exactly one enabled runtime")
         return value
 
+
 class AdminRuntimeStateResponse(BaseModel):
     environment_id: UUID
     deployment_id: str
