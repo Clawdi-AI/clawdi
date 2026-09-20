@@ -237,9 +237,9 @@ import {
 } from "@/hosted/hosted-agent-resolution";
 import {
 	deploymentFilesUrl,
+	hermesOidcLoginUrl,
 	type HostedRuntime,
 	runtimeAiProviderAuthKind,
-	hermesOidcLoginUrl,
 	runtimeConsoleUrl,
 	runtimeDashboardUrl,
 	runtimeDisplayName,

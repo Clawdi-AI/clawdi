@@ -3,11 +3,11 @@ import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture
 import {
 	deploymentFilesUrl,
 	deploymentRuntime,
+	hermesOidcLoginUrl,
 	observedCloudProjectionId,
 	runtimeAiProviderAuthKind,
 	runtimeConsoleUrl,
 	runtimeDashboardUrl,
-	hermesOidcLoginUrl,
 } from "@/hosted/runtimes";
 
 describe("deploymentFilesUrl", () => {
