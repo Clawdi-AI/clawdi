@@ -1112,8 +1112,18 @@ async def test_dashboard_dev_seed_runtime_state_validates_and_serves_manifest(
     }
     if runtime == "hermes":
         assert manifest["system"]["hermesDashboardAuth"] == {
-            **TEST_HERMES_DASHBOARD_AUTH,
+            "mode": "oidc",
+            "provider": "self-hosted",
+            "deploymentId": "hdep_devsidebar",
+            "issuer": "https://api.example.test/v2/hermes/oidc",
+            "clientId": "clawdi-hermes-hdep_devsidebar-r1",
+            "accessRevision": 1,
             "publicUrl": "https://hermes.dev-preview.local",
+            "trustedProxies": ["10.0.0.1"],
+            "activation": {
+                "enabled": True,
+                "capability": "hermes-self-hosted-oidc-v1",
+            },
         }
         assert manifest["runtimes"]["hermes"]["services"]["dashboard"]["args"] == [
             "dashboard",
