@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse, stringify } from "yaml";
+import { releaseAssetMetadataName, standardUpdateMetadataName } from "../src/update-metadata";
 
 const repository = process.env.GITHUB_REPOSITORY;
 const output = process.argv[2];
@@ -52,20 +53,8 @@ for (const { channel, arch, platform } of (["stable", "beta"] as const).flatMap(
 	const { release, version } = selected;
 	if (!Array.isArray(release.assets)) throw new Error("Missing release assets.");
 	const assets = release.assets;
-	const base = channel === "stable" ? "latest" : "beta";
-	const suffix =
-		platform === "darwin"
-			? "-mac"
-			: platform === "linux"
-				? `-linux${arch === "arm64" ? "-arm64" : ""}`
-				: "";
-	const filename = `${base}${suffix}.yml`;
-	const assetName =
-		platform === "darwin"
-			? arch === "arm64"
-				? filename
-				: filename.replace(".yml", "-x64.yml")
-			: `${base}-${platform}-${arch}.yml`;
+	const filename = standardUpdateMetadataName(platform, arch, channel);
+	const assetName = releaseAssetMetadataName(platform, arch, channel);
 	const asset = assets.find((item: unknown) => record(item) && item.name === assetName);
 	const platformMetadataPattern = new RegExp(`-${platform}-(x64|arm64)\\.yml$`);
 	const hasPlatformMatrix =

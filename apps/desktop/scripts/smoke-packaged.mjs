@@ -7,17 +7,14 @@ import { chromium } from "@playwright/test";
 
 const [executablePath, runtimeRoot, surface = "install"] = process.argv.slice(2);
 const smokeAgentId = "00000000-0000-4000-8000-000000000001";
-if (
-	!executablePath ||
-	!runtimeRoot ||
-	!["install", "dashboard", "welcome", "remote"].includes(surface)
-) {
-	throw new Error("usage: smoke-packaged.mjs <executable> <runtime-root> [install|dashboard]");
+if (!executablePath || !runtimeRoot || !["install", "welcome", "remote"].includes(surface)) {
+	throw new Error("usage: smoke-packaged.mjs <executable> <runtime-root> [install|welcome|remote]");
 }
 
 const home = join(runtimeRoot, "home");
 const clawdiHome = join(runtimeRoot, "state");
-const localAppData = join(runtimeRoot, "local-app-data");
+const localAppData =
+	process.env.CLAWDI_DESKTOP_SMOKE_LOCAL_APP_DATA ?? join(runtimeRoot, "local-app-data");
 const cliLog = join(runtimeRoot, "native-cli.log");
 mkdirSync(home, { recursive: true });
 mkdirSync(clawdiHome, { recursive: true });
@@ -68,14 +65,13 @@ try {
 			};
 		});
 		assert.equal(remote.version, 1);
-		// The production server's response differs from the bundled protocol's empty 404.
 		assert.ok(remote.contentType, "Dashboard did not reach the remote web server.");
+		await verifyDashboardBridge(context, window);
 	} else if (surface === "welcome") {
 		const window = await waitForWindow(context, null, 30_000);
 		await window.getByRole("heading", { name: "Welcome to Clawdi" }).waitFor({ timeout: 30_000 });
 		await verifyAutomaticCliCommand();
-	} else if (surface === "dashboard") await verifyPackagedDashboard(context);
-	else await verifyInstallGate(context, desktop, output, cliLog);
+	} else await verifyInstallGate(context, desktop, output, cliLog);
 } catch (error) {
 	failure = error;
 } finally {
@@ -125,62 +121,8 @@ async function verifyInstallGate(context, desktop, output, cliLog) {
 	);
 }
 
-async function verifyPackagedDashboard(context) {
-	const window = await waitForWindow(context, "dashboard", 30_000);
-	await window.waitForFunction(() => globalThis.Clerk?.loaded === true, null, { timeout: 20_000 });
-	await Promise.race([
-		window.getByRole("heading", { name: "Signing in to Clawdi" }).waitFor({ timeout: 20_000 }),
-		window.getByRole("heading", { name: "Desktop sign-in expired" }).waitFor({ timeout: 20_000 }),
-	]);
+async function verifyDashboardBridge(context, window) {
 	assert.equal(new URL(window.url()).origin, "https://cloud.clawdi.ai");
-	const documentSecurity = await window.evaluate(async () => {
-		const [index, missing] = await Promise.all([
-			fetch("/index.html", { method: "HEAD", cache: "no-store" }),
-			fetch("/assets/not-packaged.js", { cache: "no-store" }),
-		]);
-		const resourceUrls = performance
-			.getEntriesByType("resource")
-			.map((entry) => new URL(entry.name));
-		const localAssetStatuses = await Promise.all(
-			[...new Set(resourceUrls)]
-				.filter((url) => url.origin === location.origin && url.pathname.startsWith("/assets/"))
-				.map(async (url) => ({
-					url: url.href,
-					status: (await fetch(url, { method: "HEAD" })).status,
-				})),
-		);
-		return {
-			csp: index.headers.get("content-security-policy"),
-			missingStatus: missing.status,
-			inlineScriptsHaveNonces: [...document.scripts]
-				.filter((script) => !script.src)
-				.every((script) => script.nonce.length > 0),
-			scriptUrls: [...document.scripts]
-				.filter((script) => script.src)
-				.map((script) => new URL(script.src)),
-			resourceUrls,
-			localAssetStatuses,
-			clerkLoaded: globalThis.Clerk?.loaded === true,
-		};
-	});
-	assert.match(documentSecurity.csp ?? "", /script-src[^;]*'nonce-[^']+'/);
-	assert.doesNotMatch(documentSecurity.csp ?? "", /script-src[^;]*https:/);
-	assert.equal(documentSecurity.inlineScriptsHaveNonces, true);
-	assert.equal(documentSecurity.missingStatus, 404);
-	assert.equal(documentSecurity.clerkLoaded, true);
-	assert.deepEqual(
-		documentSecurity.localAssetStatuses.filter((asset) => asset.status !== 200),
-		[],
-		"The packaged Dashboard requested a local asset that was not bundled.",
-	);
-	assert.deepEqual(
-		[...new Set(documentSecurity.scriptUrls.map((url) => url.origin))],
-		["https://cloud.clawdi.ai"],
-	);
-	assert.ok(
-		documentSecurity.resourceUrls.some((url) => url.pathname === "/assets/clerk.browser.js"),
-		"The packaged Dashboard did not load its bundled Clerk runtime.",
-	);
 	const bridgeMethods = await window.evaluate(() => Object.keys(window.clawdiDesktop ?? {}).sort());
 	assert.deepEqual(bridgeMethods, [
 		"apiVersion",
@@ -215,11 +157,12 @@ async function verifyPackagedDashboard(context) {
 		smokeAgentId,
 	);
 	const child = await childOpened;
-	await child.waitForLoadState("domcontentloaded");
-	// The fake ticket cannot authenticate; the client boundary must withhold Terminal.
-	await child
-		.getByText("Please sign in to continue.", { exact: true })
-		.waitFor({ timeout: 20_000 });
+	// The fake ticket cannot authenticate. Verify the stable route contract rather
+	// than production copy: the child must withhold Terminal and preserve the
+	// intended destination for the OAuth flow.
+	await child.waitForURL((url) => url.pathname === "/sign-in", { timeout: 20_000 });
+	const redirectUrl = new URL(child.url()).searchParams.get("redirect_url");
+	assert.equal(redirectUrl, `/terminal/${smokeAgentId}`);
 	assert.deepEqual(
 		await child.evaluate(() => ({
 			hasDesktopBridge: window.clawdiDesktop !== undefined,

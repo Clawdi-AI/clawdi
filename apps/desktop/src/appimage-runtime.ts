@@ -1,18 +1,15 @@
 import {
 	accessSync,
 	constants,
-	cpSync,
 	existsSync,
 	lstatSync,
 	mkdirSync,
 	mkdtempSync,
-	readdirSync,
 	readFileSync,
 	realpathSync,
-	renameSync,
-	rmSync,
 	writeFileSync,
 } from "node:fs";
+import { cp, readdir, readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 const RUNTIME_MARKER = "desktop-runtime.json";
@@ -26,7 +23,11 @@ const RUNTIME_FILES = [
 
 /** An AppImage mount disappears on exit. Only its immutable, application-owned
  * runtime copy may be registered with systemd. Rename publishes a complete copy. */
-export function activateAppImageRuntime(source: string, userData: string, version: string): string {
+export async function activateAppImageRuntime(
+	source: string,
+	userData: string,
+	version: string,
+): Promise<string> {
 	if (!DESKTOP_VERSION.test(version)) {
 		throw new Error("Invalid Desktop version.");
 	}
@@ -39,11 +40,11 @@ export function activateAppImageRuntime(source: string, userData: string, versio
 	mkdirSync(root, { recursive: true, mode: 0o700 });
 	const staging = mkdtempSync(join(root, `${version}.staging-`));
 	try {
-		cpSync(source, staging, { recursive: true });
+		await cp(source, staging, { recursive: true });
 		writeFileSync(join(staging, RUNTIME_MARKER), JSON.stringify({ version }));
 		validateRuntime(staging, version);
 		try {
-			renameSync(staging, target);
+			await rename(staging, target);
 		} catch (error) {
 			if (
 				!(error instanceof Error) ||
@@ -56,7 +57,7 @@ export function activateAppImageRuntime(source: string, userData: string, versio
 			validateRuntime(target, version);
 		}
 	} finally {
-		rmSync(staging, { recursive: true, force: true });
+		await rm(staging, { recursive: true, force: true });
 	}
 	return realpathSync(target);
 }
@@ -64,15 +65,15 @@ export function activateAppImageRuntime(source: string, userData: string, versio
 /** Remove only complete, marker-owned runtimes after the active version has
  * successfully replaced the systemd unit. Invalid or unrelated directories
  * are left untouched. */
-export function pruneAppImageRuntimes(
+export async function pruneAppImageRuntimes(
 	userData: string,
 	activeVersion: string,
 	protectedVersions: ReadonlySet<string> = new Set(),
-): void {
+): Promise<void> {
 	if (!DESKTOP_VERSION.test(activeVersion)) return;
 	const root = join(userData, "runtimes");
 	if (!existsSync(root)) return;
-	for (const entry of readdirSync(root, { withFileTypes: true })) {
+	for (const entry of await readdir(root, { withFileTypes: true })) {
 		if (
 			!entry.isDirectory() ||
 			entry.name === activeVersion ||
@@ -83,14 +84,14 @@ export function pruneAppImageRuntimes(
 		}
 		const directory = join(root, entry.name);
 		try {
-			const marker: unknown = JSON.parse(readFileSync(join(directory, RUNTIME_MARKER), "utf8"));
+			const marker: unknown = JSON.parse(await readFile(join(directory, RUNTIME_MARKER), "utf8"));
 			if (
 				marker &&
 				typeof marker === "object" &&
 				"version" in marker &&
 				marker.version === entry.name
 			) {
-				rmSync(directory, { recursive: true, force: true });
+				await rm(directory, { recursive: true, force: true });
 			}
 		} catch {
 			// A damaged or foreign directory is not ours to remove automatically.

@@ -7,6 +7,7 @@ import {
 	desktopReleaseBuilderArgs,
 	readDesktopReleaseConfiguration,
 } from "../src/release-contract";
+import { standardUpdateMetadataName } from "../src/update-metadata";
 import { evaluateDesktopUpdatePolicy } from "../src/update-policy";
 import { readMacCodeSignature } from "../src/update-signature";
 
@@ -64,7 +65,7 @@ async function verifyReleaseArtifacts(version: string): Promise<void> {
 	const zip = files.filter((file) => file.endsWith(".zip") && file.includes(version));
 	const metadataPath = join(
 		releaseRoot,
-		configuration.channel === "stable" ? "latest-mac.yml" : "beta-mac.yml",
+		standardUpdateMetadataName(configuration.platform, configuration.arch, configuration.channel),
 	);
 	if (dmg.length !== 1 || zip.length !== 1 || !existsSync(metadataPath)) {
 		throw new Error("Desktop release must produce one DMG, one ZIP, and channel update metadata.");
@@ -151,10 +152,16 @@ async function verifyPlatformArtifacts(): Promise<void> {
 	const files = readdirSync(releaseRoot);
 	const windows = configuration.platform === "win32";
 	if (!windows || signedWindows) {
-		const suffix = windows ? "" : `-linux${configuration.arch === "arm64" ? "-arm64" : ""}`;
 		const metadata = parse(
 			readFileSync(
-				join(releaseRoot, `${configuration.channel === "stable" ? "latest" : "beta"}${suffix}.yml`),
+				join(
+					releaseRoot,
+					standardUpdateMetadataName(
+						configuration.platform,
+						configuration.arch,
+						configuration.channel,
+					),
+				),
 				"utf8",
 			),
 		);

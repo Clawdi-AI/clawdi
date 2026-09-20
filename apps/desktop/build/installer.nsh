@@ -14,4 +14,14 @@
     SetErrorLevel 1
     Abort
   ${endif}
+  ${ifNot} ${isUpdated}
+    nsExec::ExecToStack 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\support\windows-cli-path.ps1" -Action Remove -BinPath "$LOCALAPPDATA\Clawdi\bin" -LauncherPath "$LOCALAPPDATA\Clawdi\bin\clawdi.cmd"'
+    Pop $0
+    Pop $1
+    ${if} $0 != 0
+      MessageBox MB_OK|MB_ICONSTOP "Could not remove the Clawdi command from your PATH. Retry uninstalling Clawdi." /SD IDOK
+      SetErrorLevel 1
+      Abort
+    ${endif}
+  ${endif}
 !macroend

@@ -1,5 +1,5 @@
-import { realpathSync } from "node:fs";
-import { basename, dirname, isAbsolute } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	currentNativeCompiledIdentity,
@@ -35,6 +35,10 @@ export type CurrentCliLayout =
 			kind: "script";
 			entryPath: string;
 	  });
+
+export interface DesktopManagedNativeLayout {
+	runtimeRoot?: string;
+}
 
 /**
  * Resolve the current CLI process into a command that can invoke this same
@@ -92,6 +96,55 @@ export function resolveCurrentCliResourceRoot(): string {
 	return resolveCurrentCliLayout().resourceRoot;
 }
 
+/** Recognize native executables whose lifecycle is owned by Clawdi Desktop.
+ * The layout is the authority: shell launchers do not need to inject magic
+ * environment variables, and copied native binaries remain untrusted. */
+export function detectDesktopManagedNativeLayout(
+	layout: CurrentCliLayout = resolveCurrentCliLayout(),
+	platform: NodeJS.Platform = process.platform,
+): DesktopManagedNativeLayout | null {
+	if (layout.kind !== "native" || layout.nativeOwnership) return null;
+	if (
+		platform === "darwin" &&
+		isMacApplicationBundleExecutable(layout.executablePath) &&
+		existsSync(join(dirname(layout.resourceRoot), "app.asar"))
+	) {
+		return {};
+	}
+	if (
+		platform === "linux" &&
+		normalize(layout.executablePath) === "/opt/Clawdi/resources/native/clawdi" &&
+		existsSync("/opt/Clawdi/resources/app.asar") &&
+		existsSync("/opt/Clawdi/clawdi-desktop")
+	) {
+		return {};
+	}
+	if (
+		platform === "win32" &&
+		basename(layout.executablePath).toLowerCase() === "clawdi.exe" &&
+		basename(layout.resourceRoot).toLowerCase() === "native" &&
+		existsSync(join(dirname(layout.resourceRoot), "app.asar"))
+	) {
+		return {};
+	}
+	if (
+		platform === "linux" &&
+		basename(layout.executablePath) === "clawdi" &&
+		hasDesktopRuntimeMarker(layout.resourceRoot)
+	) {
+		return { runtimeRoot: layout.resourceRoot };
+	}
+	return null;
+}
+
+export function isDesktopManagedCurrentCli(): boolean {
+	try {
+		return detectDesktopManagedNativeLayout() !== null;
+	} catch {
+		return false;
+	}
+}
+
 export function isMacApplicationBundleExecutable(executablePath: string): boolean {
 	const nativeDirectory = dirname(executablePath);
 	const resourcesDirectory = dirname(nativeDirectory);
@@ -106,6 +159,26 @@ export function isMacApplicationBundleExecutable(executablePath: string): boolea
 		applicationName.length > ".app".length &&
 		applicationName.endsWith(".app")
 	);
+}
+
+function hasDesktopRuntimeMarker(runtimeRoot: string): boolean {
+	try {
+		const marker: unknown = JSON.parse(
+			readFileSync(join(runtimeRoot, "desktop-runtime.json"), "utf8"),
+		);
+		return Boolean(
+			marker &&
+				typeof marker === "object" &&
+				"version" in marker &&
+				typeof marker.version === "string" &&
+				/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(marker.version) &&
+				basename(runtimeRoot) === marker.version &&
+				basename(dirname(runtimeRoot)) === "runtimes" &&
+				existsSync(join(runtimeRoot, "skills", "clawdi", "SKILL.md")),
+		);
+	} catch {
+		return false;
+	}
 }
 
 function currentCliRuntime(): CurrentCliRuntime {

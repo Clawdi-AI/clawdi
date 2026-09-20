@@ -29,6 +29,7 @@ export interface DesktopCliCommandOptions {
 	localAppData?: string;
 	environmentPath?: string;
 	launcherPath?: string;
+	windowsPathScript?: string;
 	execute?: (
 		command: string,
 		args: readonly string[],
@@ -71,14 +72,6 @@ export async function installDesktopCliCommand(
 		path: launcher,
 		pathReady: pathContains(dirname(launcher), options.environmentPath, options.platform),
 	};
-}
-
-export function hasManagedAppImageCliCommand(options: {
-	home: string;
-	userData: string;
-	launcherPath?: string;
-}): boolean {
-	return managedAppImageCliCommandTarget(options) !== null;
 }
 
 export function managedAppImageCliCommandTarget(options: {
@@ -129,7 +122,7 @@ function installPosixLauncher(launcher: string, options: DesktopCliCommandOption
 		if (!entry.isSymbolicLink()) throw new DesktopCliCommandConflictError(launcher);
 		existingTarget = resolve(dirname(launcher), readlinkSync(launcher));
 		if (normalize(existingTarget) === normalize(options.target)) return;
-		if (!isAppImageRuntimeTarget(existingTarget, options.userData)) {
+		if (!isDesktopManagedTarget(existingTarget, options.userData)) {
 			throw new DesktopCliCommandConflictError(launcher);
 		}
 	} catch (error) {
@@ -158,20 +151,25 @@ async function installWindowsLauncher(
 
 	const bin = dirname(launcher);
 	if (pathContains(bin, options.environmentPath, options.platform)) return;
-	const script = [
-		"$bin = $env:CLAWDI_DESKTOP_CLI_BIN",
-		"if ([string]::IsNullOrWhiteSpace($bin)) { throw 'Missing CLI directory.' }",
-		"$current = [Environment]::GetEnvironmentVariable('Path', 'User')",
-		"$parts = @($current -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })",
-		"if (-not ($parts | Where-Object { [StringComparer]::OrdinalIgnoreCase.Equals($_.TrimEnd('\\'), $bin.TrimEnd('\\')) })) {",
-		"  [Environment]::SetEnvironmentVariable('Path', (($parts + $bin) -join ';'), 'User')",
-		"}",
-	].join("; ");
-	await (options.execute ?? runCommand)(
-		"powershell.exe",
-		["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-		{ env: { ...process.env, CLAWDI_DESKTOP_CLI_BIN: bin } },
-	);
+	const script = options.windowsPathScript;
+	if (!script || !isValidAbsolutePath(script) || !existsSync(script)) {
+		throw new Error("The Windows CLI PATH helper is missing.");
+	}
+	await (options.execute ?? runCommand)("powershell.exe", [
+		"-NoLogo",
+		"-NoProfile",
+		"-NonInteractive",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-File",
+		script,
+		"-Action",
+		"Add",
+		"-BinPath",
+		bin,
+		"-LauncherPath",
+		launcher,
+	]);
 }
 
 function writeLauncher(path: string, content: string): void {
@@ -247,6 +245,15 @@ function isAppImageRuntimeTarget(target: string, userData: string): boolean {
 	const root = normalize(resolve(realpathSync(userData), "runtimes"));
 	const normalized = normalize(existsSync(target) ? realpathSync(target) : resolve(target));
 	return dirname(dirname(normalized)) === root && basename(normalized) === "clawdi";
+}
+
+function isDesktopManagedTarget(target: string, userData: string): boolean {
+	if (isAppImageRuntimeTarget(target, userData)) return true;
+	const normalized = normalize(resolve(target)).replaceAll("\\", "/");
+	return (
+		/\/Clawdi\.app\/Contents\/Resources\/native\/clawdi$/.test(normalized) ||
+		normalized === "/opt/Clawdi/resources/native/clawdi"
+	);
 }
 
 function escapeCmdPath(value: string): string {

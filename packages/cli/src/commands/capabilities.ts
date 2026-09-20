@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { isDesktopManagedCurrentCli } from "../lib/current-cli-invocation";
 import { getCliVersion } from "../lib/version";
 import { normalizeDeniedCommands, readHostPolicy } from "../runtime/host-policy";
 import { detectRuntimeMode } from "../runtime/paths";
@@ -8,7 +9,7 @@ interface Capabilities {
 	cliVersion: string;
 	fullCliSurface: true;
 	runtimeMode: "local" | "hosted";
-	updateMode: "local-self-update" | "system-managed-npm";
+	updateMode: "desktop-managed" | "local-self-update" | "system-managed-npm";
 	commands: string[];
 	restrictedByHostedPolicy: Array<{ command: string; reason?: string }>;
 	hostPolicy: {
@@ -26,8 +27,9 @@ function buildCapabilities(commands: string[]): Capabilities {
 	const runtimeMode = detectRuntimeMode();
 	const hostPolicy = readHostPolicy();
 	const cliUpdateMode = hostPolicy.policy?.cliUpdateMode;
-	const updateMode =
-		runtimeMode === "hosted" || cliUpdateMode === "system-managed-npm"
+	const updateMode = isDesktopManagedCurrentCli()
+		? "desktop-managed"
+		: runtimeMode === "hosted" || cliUpdateMode === "system-managed-npm"
 			? "system-managed-npm"
 			: "local-self-update";
 
