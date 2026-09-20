@@ -74,6 +74,7 @@ DEV_V2_HOSTED_MACHINE_NAME = "Dev Hosted Compute"
 DEV_V2_PROVIDER_ID = "openrouter-dev"
 DEV_V2_CODEX_PROVIDER_SOURCE_ID = "clawdi-v2-deployment-1"
 DEV_V2_CLI_PACKAGE_SPEC = "clawdi@1.2.3-test"
+DEV_V2_HERMES_OIDC_ISSUER = "https://api.example.test/v2/hermes/oidc"
 _STABLE_UUID_NAMESPACE = uuid.UUID("6a9575fd-7eb5-464a-89e7-e13f090f8de6")
 
 
@@ -251,7 +252,7 @@ async def _create_hosted_runtime_graph(
                             "mode": "oidc",
                             "provider": "self-hosted",
                             "deploymentId": DEV_V2_DEPLOYMENT_ID,
-                            "issuer": f"{settings.public_api_url.rstrip('/')}/v2/hermes/oidc",
+                            "issuer": DEV_V2_HERMES_OIDC_ISSUER,
                             "clientId": f"clawdi-hermes-{DEV_V2_DEPLOYMENT_ID}-r1",
                             "accessRevision": 1,
                             "publicUrl": "https://hermes.dev-preview.local",
