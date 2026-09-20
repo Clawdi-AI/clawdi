@@ -291,6 +291,24 @@ def _validate_absolute_url(value: str) -> str:
     return value
 
 
+def _validate_https_url_without_credentials(value: str) -> str:
+    try:
+        parsed = urlsplit(value)
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("must be an HTTPS URL") from exc
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("must be an HTTPS URL without credentials, query, or fragment")
+    return value
+
+
 def _is_safe_egress_host(host: str) -> bool:
     if not host or len(host) > 253 or host.startswith(".") or host.endswith("."):
         return False
@@ -541,21 +559,7 @@ class HostedHermesDashboardAuth(BaseModel):
     @field_validator("publicUrl")
     @classmethod
     def _validate_https_url(cls, value: str) -> str:
-        try:
-            parsed = urlsplit(value)
-            parsed.port
-        except ValueError as exc:
-            raise ValueError("must be an HTTPS URL") from exc
-        if (
-            parsed.scheme != "https"
-            or parsed.hostname is None
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise ValueError("must be an HTTPS URL without credentials, query, or fragment")
-        return value
+        return _validate_https_url_without_credentials(value)
 
 
 class HostedHermesDashboardOidcActivation(BaseModel):
@@ -589,7 +593,7 @@ class HostedHermesDashboardOidcAuth(BaseModel):
     @field_validator("issuer", "publicUrl")
     @classmethod
     def _validate_https_url(cls, value: str) -> str:
-        return HostedHermesDashboardAuth._validate_https_url(value)
+        return _validate_https_url_without_credentials(value)
 
     @field_validator("trustedProxies")
     @classmethod
