@@ -142,6 +142,10 @@ const hermesDashboardOidcAuthSchema = z
 	.object({
 		mode: z.literal("oidc"),
 		provider: z.literal("self-hosted"),
+		deploymentId: z
+			.string()
+			.regex(/^hdep_[A-Za-z0-9]{8,}$/)
+			.max(200),
 		issuer: z.string().url(),
 		clientId: z
 			.string()
@@ -164,10 +168,10 @@ const hermesDashboardOidcAuthSchema = z
 	})
 	.strict()
 	.superRefine((auth, ctx) => {
-		if (!auth.clientId.endsWith(`-r${auth.accessRevision}`)) {
+		if (auth.clientId !== `clawdi-hermes-${auth.deploymentId}-r${auth.accessRevision}`) {
 			ctx.addIssue({
 				code: "custom",
-				message: "must bind the access revision",
+				message: "must bind deploymentId and accessRevision",
 				path: ["clientId"],
 			});
 		}
@@ -960,21 +964,6 @@ function validateHostedRuntimeManifest(
 			}
 		}
 	} else {
-		const hermesAuth = manifest.system.hermesDashboardAuth;
-		if (hermesAuth?.mode === "oidc") {
-			if (!/^hdep_[A-Za-z0-9]{8,}$/.test(manifest.deploymentId)) {
-				addIssue("Hermes OIDC requires a canonical hosted deployment ID", ["deploymentId"]);
-			}
-			if (
-				hermesAuth.clientId !==
-				`clawdi-hermes-${manifest.deploymentId}-r${hermesAuth.accessRevision}`
-			) {
-				addIssue(
-					"Hermes OIDC clientId must bind deploymentId and accessRevision",
-					systemPath("hermesDashboardAuth", "clientId"),
-				);
-			}
-		}
 		if (!manifest.system.hermesDashboardAuth) {
 			addIssue(
 				"hermes direct dashboard requires official authentication",

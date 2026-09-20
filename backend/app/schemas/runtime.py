@@ -570,6 +570,11 @@ class HostedHermesDashboardOidcAuth(BaseModel):
 
     mode: Literal["oidc"]
     provider: Literal["self-hosted"]
+    deploymentId: str = Field(
+        min_length=1,
+        max_length=200,
+        pattern=r"^hdep_[A-Za-z0-9]{8,}$",
+    )
     issuer: str = Field(min_length=1)
     clientId: str = Field(
         min_length=1,
@@ -595,8 +600,9 @@ class HostedHermesDashboardOidcAuth(BaseModel):
 
     @model_validator(mode="after")
     def _validate_client_revision(self) -> "HostedHermesDashboardOidcAuth":
-        if not self.clientId.endswith(f"-r{self.accessRevision}"):
-            raise ValueError("clientId must bind the access revision")
+        expected = f"clawdi-hermes-{self.deploymentId}-r{self.accessRevision}"
+        if self.clientId != expected:
+            raise ValueError("clientId must bind deploymentId and accessRevision")
         return self
 
 
@@ -604,22 +610,6 @@ HostedHermesDashboardAuthContract = Annotated[
     HostedHermesDashboardAuth | HostedHermesDashboardOidcAuth,
     Field(discriminator="mode"),
 ]
-
-
-_HOSTED_DEPLOYMENT_ID_PATTERN = re.compile(r"^hdep_[A-Za-z0-9]{8,}$")
-
-
-def validate_hermes_oidc_deployment_binding(
-    deployment_id: str, system: "HostedRuntimeSystem"
-) -> None:
-    auth = system.hermesDashboardAuth
-    if not isinstance(auth, HostedHermesDashboardOidcAuth):
-        return
-    if _HOSTED_DEPLOYMENT_ID_PATTERN.fullmatch(deployment_id) is None:
-        raise ValueError("Hermes OIDC requires a canonical hosted deployment ID")
-    expected = f"clawdi-hermes-{deployment_id}-r{auth.accessRevision}"
-    if auth.clientId != expected:
-        raise ValueError("Hermes OIDC clientId must bind deploymentId and accessRevision")
 
 
 class HostedOpenClawGatewayActivation(BaseModel):

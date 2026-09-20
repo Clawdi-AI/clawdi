@@ -21,7 +21,6 @@ from app.schemas.runtime import (
     HostedRuntimeSystem,
     HostedRuntimeTools,
     validate_clawdi_cli_package_spec,
-    validate_hermes_oidc_deployment_binding,
     validate_hosted_runtime_secret_values,
 )
 
@@ -144,12 +143,6 @@ class PlatformRuntimeStateUpsert(PlatformMutationBody):
         if len(value) != 1:
             raise ValueError("runtimes must contain exactly one enabled runtime")
         return value
-
-    @model_validator(mode="after")
-    def _validate_hermes_oidc_binding(self) -> PlatformRuntimeStateUpsert:
-        validate_hermes_oidc_deployment_binding(self.deployment_id, self.system)
-        return self
-
 
 class PlatformRuntimeStateResponse(BaseModel):
     environment_id: UUID

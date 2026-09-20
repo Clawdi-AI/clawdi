@@ -632,14 +632,15 @@ def _runtime_state_body(environment_id: str, **overrides) -> dict:
     return body
 
 
-def test_hermes_oidc_client_binds_manifest_deployment() -> None:
-    deployment_id = "hdep_K8fJ3pQm"
+def test_hermes_oidc_client_binds_explicit_hosted_deployment() -> None:
+    hosted_deployment_id = "hdep_K8fJ3pQm"
     system = {
         "hermesDashboardAuth": {
             "mode": "oidc",
             "provider": "self-hosted",
+            "deploymentId": hosted_deployment_id,
             "issuer": "https://api.example.test/v2/hermes/oidc",
-            "clientId": f"clawdi-hermes-{deployment_id}-r7",
+            "clientId": f"clawdi-hermes-{hosted_deployment_id}-r7",
             "accessRevision": 7,
             "publicUrl": "https://hermes.example.test",
             "trustedProxies": ["10.173.0.1"],
@@ -651,13 +652,13 @@ def test_hermes_oidc_client_binds_manifest_deployment() -> None:
     }
     body = _runtime_state_body(
         str(uuid4()),
-        deployment_id=deployment_id,
+        deployment_id="hri_runtime_instance",
         system=system,
         runtimes=_runtime_state("hermes"),
     )
     AdminRuntimeStateUpsert.model_validate(body)
 
-    body["deployment_id"] = "hdep_Q9mN4sTr"
+    body["system"]["hermesDashboardAuth"]["deploymentId"] = "hdep_Q9mN4sTr"
     with pytest.raises(ValidationError, match="must bind deploymentId"):
         AdminRuntimeStateUpsert.model_validate(body)
 

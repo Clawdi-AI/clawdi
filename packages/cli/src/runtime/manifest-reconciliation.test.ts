@@ -1044,6 +1044,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				hermesDashboardAuth: {
 					mode: "oidc",
 					provider: "self-hosted",
+					deploymentId: "hdep_K8fJ3pQm",
 					issuer: "https://api.example.test/v2/hermes/oidc",
 					clientId: "clawdi-hermes-hdep_K8fJ3pQm-r7",
 					accessRevision: 7,
@@ -1055,7 +1056,9 @@ describe("runtime manifest reconciliation invariants", () => {
 		});
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(oidc).success).toBe(true);
 		const rebound = structuredClone(oidc);
-		rebound.deploymentId = "hdep_Q9mN4sTr";
+		(
+			rebound.system as { hermesDashboardAuth: { deploymentId: string } }
+		).hermesDashboardAuth.deploymentId = "hdep_Q9mN4sTr";
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(rebound).success).toBe(false);
 	});
 	test("accepts and preserves the exact hosted locale contract", () => {

@@ -44,6 +44,7 @@ test("projects only the native self-hosted OIDC provider", () => {
 		hermesDashboardAuth: {
 			mode: "oidc",
 			provider: "self-hosted",
+			deploymentId: "hdep_K8fJ3pQm",
 			issuer: "https://api.example.test/v2/hermes/oidc",
 			clientId: "clawdi-hermes-hdep_K8fJ3pQm-r7",
 			accessRevision: 7,

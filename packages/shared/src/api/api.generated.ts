@@ -6568,6 +6568,8 @@ export interface components {
              * @constant
              */
             provider: "self-hosted";
+            /** Deploymentid */
+            deploymentId: string;
             /** Issuer */
             issuer: string;
             /** Clientid */
