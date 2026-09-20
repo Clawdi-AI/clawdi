@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { primeHermesOidcBrowserSession } from "./hermes-oidc-browser-session";
+import {
+	hermesOidcAuthorityIdentity,
+	primeHermesOidcBrowserSession,
+} from "./hermes-oidc-browser-session";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -19,6 +22,33 @@ function capturingFetch(
 }
 
 describe("primeHermesOidcBrowserSession", () => {
+	test("binds mounted authority to the stable OIDC revision", () => {
+		const current = hermesOidcAuthorityIdentity(
+			"user_test",
+			"hdep_test",
+			"https://hermes.example/",
+			"https://api.clawdi.ai/v2/deployments/hdep_test/hermes-oidc/session",
+			7,
+		);
+		expect(
+			hermesOidcAuthorityIdentity(
+				"user_test",
+				"hdep_test",
+				"https://hermes.example/",
+				"https://api.clawdi.ai/v2/deployments/hdep_test/hermes-oidc/session",
+				7,
+			),
+		).toBe(current);
+		expect(
+			hermesOidcAuthorityIdentity(
+				"user_test",
+				"hdep_test",
+				"https://hermes.example/",
+				"https://api.clawdi.ai/v2/deployments/hdep_test/hermes-oidc/session",
+				8,
+			),
+		).not.toBe(current);
+	});
 	test("posts the Clerk bearer with the exact deployment version", async () => {
 		const calls: Array<[string | URL | Request, RequestInit | undefined]> = [];
 		globalThis.fetch = capturingFetch(calls);

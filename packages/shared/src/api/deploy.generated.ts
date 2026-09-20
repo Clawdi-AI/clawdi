@@ -2327,6 +2327,8 @@ export interface components {
             browser_mode: "embedded_and_top_level";
             /** Browser Session Url */
             browser_session_url?: string | null;
+            /** Access Revision */
+            access_revision?: number | null;
         };
         /** V2HostedCommercialFundingFactInfo */
         V2HostedCommercialFundingFactInfo: {

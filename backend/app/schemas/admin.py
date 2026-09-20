@@ -40,6 +40,7 @@ from app.schemas.runtime import (
     HostedRuntimeSystem,
     HostedRuntimeTools,
     validate_clawdi_cli_package_spec,
+    validate_hermes_oidc_deployment_binding,
     validate_hosted_runtime_secret_values,
 )
 
@@ -232,6 +233,11 @@ class AdminRuntimeStateUpsert(BaseModel):
         if len(value) != 1:
             raise ValueError("runtimes must contain exactly one enabled runtime")
         return value
+
+    @model_validator(mode="after")
+    def _validate_hermes_oidc_binding(self) -> AdminRuntimeStateUpsert:
+        validate_hermes_oidc_deployment_binding(self.deployment_id, self.system)
+        return self
 
 
 class AdminRuntimeStateResponse(BaseModel):

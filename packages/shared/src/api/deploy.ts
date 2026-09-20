@@ -60,9 +60,12 @@ export function isRuntimeUiEndpointInfo(value: unknown): value is RuntimeUiEndpo
 					value.browser_session_url ===
 						new URL("/.well-known/openclaw/browser-session", value.url).href)
 			: value.auth_mode === "password"
-				? value.browser_session_url == null
+				? value.browser_session_url == null && value.access_revision == null
 				: value.auth_mode === "oidc" &&
 					typeof value.browser_session_url === "string" &&
+					Number.isInteger(value.access_revision) &&
+					typeof value.access_revision === "number" &&
+					value.access_revision >= 1 &&
 					isCleanRuntimeUiUrl(value.browser_session_url))
 	);
 }

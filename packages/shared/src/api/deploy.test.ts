@@ -112,6 +112,7 @@ describe("Runtime UI access contracts", () => {
 				...endpoint,
 				auth_mode: "oidc",
 				browser_session_url: "https://api.example/v2/deployments/hdep_test/hermes-oidc/session",
+				access_revision: 7,
 			}),
 		).toBe(true);
 		expect(isRuntimeUiEndpointInfo({ ...endpoint, auth_mode: "oidc" })).toBe(false);

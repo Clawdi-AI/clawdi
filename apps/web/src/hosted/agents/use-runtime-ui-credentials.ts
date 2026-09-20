@@ -1,6 +1,9 @@
 import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { primeHermesOidcBrowserSession } from "@/hosted/agents/hermes-oidc-browser-session";
+import {
+	hermesOidcAuthorityIdentity,
+	primeHermesOidcBrowserSession,
+} from "@/hosted/agents/hermes-oidc-browser-session";
 import { primeOpenClawBrowserSession } from "@/hosted/agents/openclaw-browser-session";
 import {
 	forgetOpenClawNativeHandoffLoaded,
@@ -26,15 +29,21 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 		runtimeEndpoint?.runtime === "hermes" && runtimeEndpoint.auth_mode === "oidc"
 			? runtimeEndpoint.browser_session_url
 			: null;
-	const isHermesOidc = hermesOidcBrowserSessionUrl != null;
+	const hermesOidcAccessRevision =
+		runtimeEndpoint?.runtime === "hermes" && runtimeEndpoint.auth_mode === "oidc"
+			? runtimeEndpoint.access_revision
+			: null;
+	const isHermesOidc = hermesOidcBrowserSessionUrl != null && hermesOidcAccessRevision != null;
 	const storageScope = JSON.stringify([identity, id]);
-	const authorityIdentity = JSON.stringify([
-		identity,
-		id,
-		metadata.resourceVersion,
-		endpoint,
-		hermesOidcBrowserSessionUrl,
-	]);
+	const authorityIdentity = isHermesOidc
+		? hermesOidcAuthorityIdentity(
+				identity,
+				id,
+				endpoint ?? "",
+				hermesOidcBrowserSessionUrl,
+				hermesOidcAccessRevision,
+			)
+		: JSON.stringify([identity, id, metadata.resourceVersion, endpoint]);
 	const [nativeHandoffLoaded, setNativeHandoffLoaded] = useState(false);
 	const [hermesOidcPrimedAuthority, setHermesOidcPrimedAuthority] = useState<string | null>(null);
 	const hermesOidcPrimed = isHermesOidc && hermesOidcPrimedAuthority === authorityIdentity;

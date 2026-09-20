@@ -70,7 +70,6 @@ function applyHermesDashboardConfig(
 	if (auth.mode === "oidc") {
 		reconcileHermesConfigValue(context, "dashboard.basic_auth", undefined);
 		reconcileHermesConfigValue(context, "dashboard.oauth", {
-			provider: "self-hosted",
 			self_hosted: {
 				issuer: auth.issuer,
 				client_id: auth.clientId,

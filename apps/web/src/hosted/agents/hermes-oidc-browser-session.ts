@@ -1,3 +1,19 @@
+export function hermesOidcAuthorityIdentity(
+	principalIdentity: string | null,
+	deploymentId: string,
+	endpointUrl: string,
+	browserSessionUrl: string,
+	accessRevision: number,
+): string {
+	return JSON.stringify([
+		principalIdentity,
+		deploymentId,
+		endpointUrl,
+		browserSessionUrl,
+		accessRevision,
+	]);
+}
+
 function strongResourceEtag(resourceVersion: string): string {
 	const valid =
 		resourceVersion.length > 0 &&

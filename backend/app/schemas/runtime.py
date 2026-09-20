@@ -574,7 +574,7 @@ class HostedHermesDashboardOidcAuth(BaseModel):
     clientId: str = Field(
         min_length=1,
         max_length=255,
-        pattern=r"^clawdi-hermes-[1-9][0-9]*-r[1-9][0-9]*$",
+        pattern=r"^clawdi-hermes-hdep_[A-Za-z0-9]{8,}-r[1-9][0-9]*$",
     )
     accessRevision: int = Field(ge=1)
     publicUrl: str = Field(min_length=1)
@@ -604,6 +604,22 @@ HostedHermesDashboardAuthContract = Annotated[
     HostedHermesDashboardAuth | HostedHermesDashboardOidcAuth,
     Field(discriminator="mode"),
 ]
+
+
+_HOSTED_DEPLOYMENT_ID_PATTERN = re.compile(r"^hdep_[A-Za-z0-9]{8,}$")
+
+
+def validate_hermes_oidc_deployment_binding(
+    deployment_id: str, system: "HostedRuntimeSystem"
+) -> None:
+    auth = system.hermesDashboardAuth
+    if not isinstance(auth, HostedHermesDashboardOidcAuth):
+        return
+    if _HOSTED_DEPLOYMENT_ID_PATTERN.fullmatch(deployment_id) is None:
+        raise ValueError("Hermes OIDC requires a canonical hosted deployment ID")
+    expected = f"clawdi-hermes-{deployment_id}-r{auth.accessRevision}"
+    if auth.clientId != expected:
+        raise ValueError("Hermes OIDC clientId must bind deploymentId and accessRevision")
 
 
 class HostedOpenClawGatewayActivation(BaseModel):

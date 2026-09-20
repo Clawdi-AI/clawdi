@@ -32,7 +32,7 @@ test("projects only the native self-hosted OIDC provider", () => {
 	});
 	const manifest: RuntimeManifest = {
 		schemaVersion: "clawdi.runtimeDesiredState.v1",
-		deploymentId: "deployment-42",
+		deploymentId: "hdep_K8fJ3pQm",
 		environmentId: "environment-42",
 		instanceId: "instance-42",
 		generation: 7,
@@ -45,7 +45,7 @@ test("projects only the native self-hosted OIDC provider", () => {
 			mode: "oidc",
 			provider: "self-hosted",
 			issuer: "https://api.example.test/v2/hermes/oidc",
-			clientId: "clawdi-hermes-42-r7",
+			clientId: "clawdi-hermes-hdep_K8fJ3pQm-r7",
 			accessRevision: 7,
 			publicUrl: "https://hermes.example.test",
 			trustedProxies: ["10.173.0.1"],
@@ -62,10 +62,9 @@ test("projects only the native self-hosted OIDC provider", () => {
 	};
 	expect(config.dashboard).toEqual({
 		oauth: {
-			provider: "self-hosted",
 			self_hosted: {
 				issuer: "https://api.example.test/v2/hermes/oidc",
-				client_id: "clawdi-hermes-42-r7",
+				client_id: "clawdi-hermes-hdep_K8fJ3pQm-r7",
 				scopes: "openid profile email",
 			},
 		},

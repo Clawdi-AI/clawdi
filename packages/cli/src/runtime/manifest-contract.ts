@@ -146,7 +146,7 @@ const hermesDashboardOidcAuthSchema = z
 		clientId: z
 			.string()
 			.trim()
-			.regex(/^clawdi-hermes-[1-9]\d*-r[1-9]\d*$/)
+			.regex(/^clawdi-hermes-hdep_[A-Za-z0-9]{8,}-r[1-9]\d*$/)
 			.max(255),
 		accessRevision: z.number().int().min(1),
 		publicUrl: z.string().url(),
@@ -960,6 +960,21 @@ function validateHostedRuntimeManifest(
 			}
 		}
 	} else {
+		const hermesAuth = manifest.system.hermesDashboardAuth;
+		if (hermesAuth?.mode === "oidc") {
+			if (!/^hdep_[A-Za-z0-9]{8,}$/.test(manifest.deploymentId)) {
+				addIssue("Hermes OIDC requires a canonical hosted deployment ID", ["deploymentId"]);
+			}
+			if (
+				hermesAuth.clientId !==
+				`clawdi-hermes-${manifest.deploymentId}-r${hermesAuth.accessRevision}`
+			) {
+				addIssue(
+					"Hermes OIDC clientId must bind deploymentId and accessRevision",
+					systemPath("hermesDashboardAuth", "clientId"),
+				);
+			}
+		}
 		if (!manifest.system.hermesDashboardAuth) {
 			addIssue(
 				"hermes direct dashboard requires official authentication",

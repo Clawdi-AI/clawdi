@@ -1584,7 +1584,7 @@ export function ConsoleTab({
 		markFrameLoaded,
 		load: loadCredentials,
 		clear: clearCredentials,
-		reconnect: reconnectOpenClaw,
+		reconnect: retryRuntimeAccess,
 	} = useRuntimeUiCredentials(deployment, url);
 	const [loadedAttempt, setLoadedAttempt] = useState<number | null>(null);
 	const openClawFrameLoaded = loadedAttempt === attempt;
@@ -1719,7 +1719,7 @@ export function ConsoleTab({
 					hermesOidc={hermesOidc}
 					onLoadCredentials={loadCredentials}
 					onClearCredentials={clearCredentials}
-					onReconnectOpenClaw={reconnectOpenClaw}
+					onRetryRuntimeAccess={retryRuntimeAccess}
 				/>
 			}
 		>
@@ -1735,7 +1735,7 @@ export function ConsoleTab({
 								variant="outline"
 								size="sm"
 								disabled={isCredentialLoading}
-								onClick={() => void reconnectOpenClaw()}
+								onClick={() => void retryRuntimeAccess()}
 							>
 								{isCredentialLoading ? (
 									<Spinner className="size-3.5" />
@@ -1928,7 +1928,7 @@ function RuntimeUiAccessDialog({
 	hermesOidc,
 	onLoadCredentials,
 	onClearCredentials,
-	onReconnectOpenClaw,
+	onRetryRuntimeAccess,
 }: {
 	deployment: HostedDeployment;
 	endpointUrl: string;
@@ -1940,7 +1940,7 @@ function RuntimeUiAccessDialog({
 	hermesOidc: boolean;
 	onLoadCredentials: () => Promise<RuntimeUiCredentials | null>;
 	onClearCredentials: () => void;
-	onReconnectOpenClaw: () => Promise<RuntimeUiCredentials | null>;
+	onRetryRuntimeAccess: () => Promise<RuntimeUiCredentials | null>;
 }) {
 	const label = runtimeBrowserUiLabel(runtime);
 	const reset = useResetRuntimeUiAccess();
@@ -2088,7 +2088,7 @@ function RuntimeUiAccessDialog({
 						variant="outline"
 						size="sm"
 						disabled={isCredentialLoading}
-						onClick={() => void onReconnectOpenClaw()}
+						onClick={() => void onRetryRuntimeAccess()}
 					>
 						{isCredentialLoading ? (
 							<Spinner className="size-3.5" />
