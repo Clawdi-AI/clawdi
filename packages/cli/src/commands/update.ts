@@ -16,6 +16,7 @@ import chalk from "chalk";
 import { getClawdiDir, getStoredConfig } from "../lib/config";
 import {
 	isDesktopManagedCurrentCli,
+	isHomebrewManagedCurrentCli,
 	resolveCurrentCliInvocation,
 	resolveCurrentCliLayout,
 } from "../lib/current-cli-invocation";
@@ -82,6 +83,7 @@ type AutoUpdateRuntime = {
 type ForegroundUpdateRuntime = {
 	detectOwnership?: () => UpdateOwnership | null;
 	isDesktopManaged?: () => boolean;
+	isHomebrewManaged?: () => boolean;
 	installRunner?: (command: string, args: string[]) => number | null;
 	platform?: NodeJS.Platform;
 	versionReader?: (command: string, args: string[]) => string | null;
@@ -161,18 +163,25 @@ export async function update(
 	runtime: ForegroundUpdateRuntime = {},
 ) {
 	const current = getCliVersion();
-	if ((runtime.isDesktopManaged ?? isDesktopManagedCurrentCli)()) {
+	const managedBy = (runtime.isDesktopManaged ?? isDesktopManagedCurrentCli)()
+		? "desktop"
+		: (runtime.isHomebrewManaged ?? isHomebrewManagedCurrentCli)()
+			? "homebrew"
+			: null;
+	if (managedBy) {
 		if (opts.json || !process.stdout.isTTY) {
 			console.log(
-				JSON.stringify(
-					{ current, latest: null, upgradeAvailable: false, managedBy: "desktop" },
-					null,
-					2,
-				),
+				JSON.stringify({ current, latest: null, upgradeAvailable: false, managedBy }, null, 2),
 			);
 		} else {
 			console.log(chalk.gray(`current:  ${current}`));
-			console.log(chalk.cyan("Clawdi Desktop manages this command and its updates."));
+			console.log(
+				chalk.cyan(
+					managedBy === "desktop"
+						? "Clawdi Desktop manages this command and its updates."
+						: "Homebrew manages this command. Upgrade with: brew upgrade clawdi",
+				),
+			);
 		}
 		return;
 	}
@@ -628,6 +637,7 @@ function outdatedDaemonAgents(current: string): string[] {
 function autoUpdateDisabled(): boolean {
 	if (process.env.CLAWDI_NO_AUTO_UPDATE) return true;
 	if (process.env.CLAWDI_NO_UPDATE_CHECK) return true;
+	if (isHomebrewManagedCurrentCli()) return true;
 	if (isTransientInvocation()) return true;
 	return getStoredConfig().autoUpdate === false;
 }
@@ -1048,6 +1058,7 @@ export function startDaemonAutoUpdate(opts: {
  */
 export async function maybeAutoUpdate(runtime: AutoUpdateRuntime = {}): Promise<void> {
 	if (detectRuntimeMode() === "hosted") return;
+	if (isHomebrewManagedCurrentCli()) return;
 	if (
 		isLongLivedDaemonInvocation() ||
 		isAutoUpdateControlInvocation() ||
