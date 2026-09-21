@@ -10,6 +10,22 @@ export type ChatwootWidgetRequest = Readonly<{
 	identity: ChatwootIdentity;
 }>;
 
+export type ChatwootWidgetSettings = Readonly<{
+	position: "right";
+	type: "standard";
+	widgetStyle: "standard";
+	darkMode: "auto";
+	useBrowserLanguage: true;
+}>;
+
+const CHATWOOT_WIDGET_SETTINGS = {
+	position: "right",
+	type: "standard",
+	widgetStyle: "standard",
+	darkMode: "auto",
+	useBrowserLanguage: true,
+} as const satisfies ChatwootWidgetSettings;
+
 export type ChatwootSdk = {
 	run: (config: { websiteToken: string; baseUrl: string }) => unknown;
 };
@@ -31,6 +47,7 @@ type ChatwootUser = {
 
 type ChatwootControllerDependencies = {
 	loadScript: (src: string) => Promise<void>;
+	installSettings: (settings: ChatwootWidgetSettings) => void;
 	readSdk: () => ChatwootSdk | undefined;
 	readApi: () => ChatwootApi | undefined;
 	subscribeReady: (listener: () => void) => void;
@@ -101,6 +118,7 @@ function identityKey(identity: ChatwootIdentity, identifierHash: string): string
 
 export function createChatwootWidgetController({
 	loadScript,
+	installSettings,
 	readSdk,
 	readApi,
 	subscribeReady,
@@ -149,6 +167,7 @@ export function createChatwootWidgetController({
 			.then(() => {
 				const sdk = readSdk();
 				if (!sdk) return false;
+				installSettings(CHATWOOT_WIDGET_SETTINGS);
 				sdk.run({ websiteToken: request.websiteToken, baseUrl: request.baseUrl });
 				return true;
 			})
@@ -200,6 +219,7 @@ declare global {
 	interface Window {
 		chatwootSDK?: ChatwootSdk;
 		$chatwoot?: ChatwootApi;
+		chatwootSettings?: ChatwootWidgetSettings;
 	}
 }
 
@@ -234,6 +254,9 @@ function loadChatwootScript(src: string): Promise<void> {
 
 export const chatwootWidgetController = createChatwootWidgetController({
 	loadScript: loadChatwootScript,
+	installSettings: (settings) => {
+		window.chatwootSettings = settings;
+	},
 	readSdk: () => window.chatwootSDK,
 	readApi: () => window.$chatwoot,
 	subscribeReady: (listener) => window.addEventListener("chatwoot:ready", listener),

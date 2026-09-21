@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 import {
 	type ChatwootApi,
 	type ChatwootSdk,
+	type ChatwootWidgetSettings,
 	createChatwootWidgetController,
 	resolveChatwootWidgetRequest,
 } from "@/lib/chatwoot";
@@ -97,7 +98,20 @@ describe("Chatwoot widget controller", () => {
 		let sdk: ChatwootSdk | undefined;
 		let api: ChatwootApi | undefined;
 		let readyListener: (() => void) | undefined;
-		const run = mock(() => {});
+		const initializationOrder: string[] = [];
+		const installSettings = mock((settings: ChatwootWidgetSettings) => {
+			initializationOrder.push("settings");
+			expect(settings).toEqual({
+				position: "right",
+				type: "standard",
+				widgetStyle: "standard",
+				darkMode: "auto",
+				useBrowserLanguage: true,
+			});
+		});
+		const run = mock(() => {
+			initializationOrder.push("run");
+		});
 		const setUser = mock(() => {});
 		const reset = mock(() => {});
 		const toggleBubbleVisibility = mock(() => {});
@@ -109,6 +123,7 @@ describe("Chatwoot widget controller", () => {
 		const getIdentifierHash = mock(async () => "trusted-hash");
 		const controller = createChatwootWidgetController({
 			loadScript,
+			installSettings,
 			readSdk: () => sdk,
 			readApi: () => api,
 			subscribeReady: (listener) => {
@@ -131,6 +146,8 @@ describe("Chatwoot widget controller", () => {
 			websiteToken: "token",
 			baseUrl: "https://support.example.com",
 		});
+		expect(installSettings).toHaveBeenCalledTimes(1);
+		expect(initializationOrder).toEqual(["settings", "run"]);
 		expect(setUser).not.toHaveBeenCalled();
 
 		readyListener?.();
@@ -140,6 +157,51 @@ describe("Chatwoot widget controller", () => {
 			identifier_hash: "trusted-hash",
 		});
 		expect(toggleBubbleVisibility).toHaveBeenCalledWith("show");
+	});
+
+	test("survives the Strict Mode setup-cleanup-setup cycle", async () => {
+		let resolveHash: ((hash: string) => void) | undefined;
+		let readyListener: (() => void) | undefined;
+		const installSettings = mock(() => {});
+		const run = mock(() => {});
+		const setUser = mock(() => {});
+		const getIdentifierHash = mock(
+			() =>
+				new Promise<string>((resolve) => {
+					resolveHash = resolve;
+				}),
+		);
+		const controller = createChatwootWidgetController({
+			loadScript: async () => {},
+			installSettings,
+			readSdk: () => ({ run }),
+			readApi: () => ({
+				setUser,
+				reset: () => {},
+				toggleBubbleVisibility: () => {},
+			}),
+			subscribeReady: (listener) => {
+				readyListener = listener;
+			},
+		});
+		const request = {
+			baseUrl: "https://support.example.com",
+			websiteToken: "token",
+			identity: { id: "user_123", name: "Ada Lovelace", email: "ada@example.com" },
+		};
+
+		const firstStart = controller.start(request, getIdentifierHash);
+		controller.cancel();
+		const remountedStart = controller.start(request, getIdentifierHash);
+		resolveHash?.("trusted-hash");
+
+		expect(await firstStart).toBe(false);
+		expect(await remountedStart).toBe(true);
+		readyListener?.();
+		expect(getIdentifierHash).toHaveBeenCalledTimes(1);
+		expect(installSettings).toHaveBeenCalledTimes(1);
+		expect(run).toHaveBeenCalledTimes(1);
+		expect(setUser).toHaveBeenCalledTimes(1);
 	});
 
 	test("prevents duplicate SDK initialization and identity calls across repeated starts", async () => {
@@ -152,6 +214,7 @@ describe("Chatwoot widget controller", () => {
 		const loadScript = mock(async () => {});
 		const controller = createChatwootWidgetController({
 			loadScript,
+			installSettings: () => {},
 			readSdk: () => ({ run }),
 			readApi: () => ({ setUser, reset, toggleBubbleVisibility }),
 			subscribeReady: (listener) => {
@@ -184,6 +247,7 @@ describe("Chatwoot widget controller", () => {
 		const toggleBubbleVisibility = mock(() => {});
 		const controller = createChatwootWidgetController({
 			loadScript: async () => {},
+			installSettings: () => {},
 			readSdk: () => ({ run: () => {} }),
 			readApi: () => ({ setUser, reset, toggleBubbleVisibility }),
 			subscribeReady: (listener) => {
@@ -212,6 +276,7 @@ describe("Chatwoot widget controller", () => {
 		const loadScript = mock(async () => {});
 		const controller = createChatwootWidgetController({
 			loadScript,
+			installSettings: () => {},
 			readSdk: () => undefined,
 			readApi: () => undefined,
 			subscribeReady: () => {},
@@ -235,6 +300,7 @@ describe("Chatwoot widget controller", () => {
 		const loadScript = mock(async () => {});
 		const controller = createChatwootWidgetController({
 			loadScript,
+			installSettings: () => {},
 			readSdk: () => ({ run: () => {} }),
 			readApi: () => undefined,
 			subscribeReady: () => {},
