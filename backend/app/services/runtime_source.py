@@ -80,6 +80,7 @@ from app.services.project_runtime_skills import (
     project_skill_file_signature,
     project_skill_runtime_identity,
 )
+from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.url_security import UnsafePublicHttpsUrlError, validate_public_https_url
 from app.services.vault_crypto import decrypt
 from app.services.whatsapp_baileys import (
@@ -98,6 +99,7 @@ RUNTIME_SOURCE_RENDERER_REVISION = "runtime-source.v5"
 RUNTIME_CAPABILITIES_HEADER = "X-Clawdi-Runtime-Capabilities"
 RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY = "agent-plugins-manifest-v1"
 RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY = "agent-plugin-github-release-source-v1"
+LEGACY_BOOTSTRAP_PROJECTION_REVISION = "legacy-bootstrap-cli.v1"
 _CLAWDI_AUTH_TOKEN_SECRET_REF = "secret://clawdi/auth-token"
 _SUPPORTED_RUNTIMES = {"hermes", "openclaw"}
 _MANAGED_PROVIDER_RUNTIME_ENV = "CLAWDI_AI_API_KEY"
@@ -1083,6 +1085,51 @@ def render_runtime_bundle(source: RenderedRuntimeSource) -> dict[str, Any]:
     if source.apply_generation is not None:
         bundle["applyGeneration"] = source.apply_generation
     return bundle
+
+
+def render_legacy_bootstrap_runtime_bundle(
+    state: HostedRuntimeState,
+    *,
+    environment_id: UUID,
+) -> dict[str, Any]:
+    try:
+        cli_package_spec = validate_clawdi_cli_package_spec(state.cli_package_spec)
+    except ValueError as exc:
+        raise RuntimeSourceError("Hosted runtime CLI package spec is invalid") from exc
+    bundle: dict[str, Any] = {
+        "schemaVersion": RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
+        "applyGeneration": resolve_runtime_apply_generation(
+            generation=state.generation,
+            apply_generation=state.apply_generation,
+        ),
+        "manifest": {
+            "schemaVersion": "clawdi.hosted-runtime.manifest.v1",
+            "environmentId": str(environment_id),
+            "clawdiCli": {
+                "source": "npm:clawdi",
+                "packageSpec": cli_package_spec,
+                "registry": "https://registry.npmjs.org",
+            },
+        },
+        "channelBindings": [],
+        "secretValues": {},
+    }
+    source_revision = hashlib.sha256(
+        _canonical(
+            {
+                "projectionRevision": LEGACY_BOOTSTRAP_PROJECTION_REVISION,
+                **bundle,
+            }
+        ).encode()
+    ).hexdigest()
+    return {
+        "schemaVersion": bundle["schemaVersion"],
+        "sourceRevision": source_revision,
+        "applyGeneration": bundle["applyGeneration"],
+        "manifest": bundle["manifest"],
+        "channelBindings": bundle["channelBindings"],
+        "secretValues": bundle["secretValues"],
+    }
 
 
 def vault_key_identity(value: str) -> str:

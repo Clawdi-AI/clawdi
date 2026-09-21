@@ -513,7 +513,16 @@ async def _runtime_client(db_session, seed_user, api_key: ApiKey | None):
     return httpx.AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Accept": RUNTIME_BUNDLE_V2_MEDIA_TYPE},
+        headers={
+            "Accept": RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+            RUNTIME_CAPABILITIES_HEADER: ", ".join(
+                (
+                    "provider-identity-v1",
+                    RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
+                    RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY,
+                )
+            ),
+        },
     )
 
 
@@ -4247,7 +4256,6 @@ async def test_runtime_manifest_conditional_render_skips_secrets_and_bundle(
     assert refreshed.json() == initial.json()
     assert render_calls == [
         (False, initial.json()["sourceRevision"]),
-        (False, initial.json()["sourceRevision"]),
         (True, initial.json()["sourceRevision"]),
     ]
     assert bundle_calls == [initial.json()["sourceRevision"]]
@@ -4415,6 +4423,112 @@ async def test_runtime_manifest_repairs_stale_persisted_revision(
     assert repaired.source_revision == response.json()["sourceRevision"]
     assert repaired.source_revision != "f" * 64
     assert "repaired stale runtime source revision" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_without_capability_header_serves_bootstrap_only_projection(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env, _, _, _, _ = await _create_bundle_runtime(admin_client, db_session, seed_user)
+    ciphertext, nonce = encrypt("sk-identity-provider")
+    provider = AiProvider(
+        owner_user_id=seed_user.id,
+        provider_id="identity-provider",
+        configuration_mode="custom",
+        type="custom_openai_compatible",
+        base_url="https://identity-provider.test/v1",
+        models=[{"id": "identity-model"}],
+        api_mode="openai_responses",
+        auth_type="api_key",
+        auth_metadata={"source": "managed"},
+        managed_by="user",
+        runtime_env_name="IDENTITY_PROVIDER_API_KEY",
+        identity_enabled=True,
+    )
+    db_session.add_all(
+        [
+            provider,
+            AiProviderAuthPayload(
+                owner_user_id=seed_user.id,
+                provider_id=provider.provider_id,
+                auth_profile="default",
+                kind="api_key",
+                source="managed",
+                encrypted_payload=ciphertext,
+                nonce=nonce,
+            ),
+        ]
+    )
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
+    state.runtimes = _runtime_state(provider_ids=[provider.provider_id])
+    state.apply_generation = 9
+    await refresh_runtime_source_revisions(db_session, [env.id])
+    await db_session.commit()
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="legacy-bootstrap")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        del client.headers[RUNTIME_CAPABILITIES_HEADER]
+        legacy = await client.get("/v1/runtime/manifest")
+        not_modified = await client.get(
+            "/v1/runtime/manifest",
+            headers={"If-None-Match": legacy.headers["etag"]},
+        )
+        insufficient = await client.get(
+            "/v1/runtime/manifest",
+            headers={RUNTIME_CAPABILITIES_HEADER: ""},
+        )
+        capable = await client.get(
+            "/v1/runtime/manifest",
+            headers={
+                RUNTIME_CAPABILITIES_HEADER: ", ".join(
+                    (
+                        "provider-identity-v1",
+                        RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
+                        RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY,
+                    )
+                )
+            },
+        )
+    app.dependency_overrides.clear()
+
+    assert legacy.status_code == 200, legacy.text
+    body = legacy.json()
+    assert set(body) == {
+        "schemaVersion",
+        "sourceRevision",
+        "applyGeneration",
+        "manifest",
+        "channelBindings",
+        "secretValues",
+    }
+    assert body["schemaVersion"] == "clawdi.hosted-runtime.bundle.v2"
+    assert body["applyGeneration"] == 9
+    assert body["channelBindings"] == []
+    assert body["secretValues"] == {}
+    assert body["manifest"] == {
+        "schemaVersion": "clawdi.hosted-runtime.manifest.v1",
+        "environmentId": str(env.id),
+        "clawdiCli": {
+            "source": "npm:clawdi",
+            "packageSpec": state.cli_package_spec,
+            "registry": "https://registry.npmjs.org",
+        },
+    }
+    assert legacy.headers["etag"] == f'"sha256:{body["sourceRevision"]}"'
+    assert not_modified.status_code == 304
+    assert not_modified.headers["etag"] == legacy.headers["etag"]
+    assert insufficient.status_code == 409
+    assert insufficient.json() == {"detail": "Provider identity requires an identity-capable CLI"}
+    assert capable.status_code == 200, capable.text
+    capable_body = capable.json()
+    assert capable_body["manifest"]["providers"][provider.provider_id]["cloudIdentity"] == {
+        "providerUuid": str(provider.id),
+        "incarnationId": str(provider.incarnation_id),
+    }
+    assert capable_body["secretValues"]
 
 
 @pytest.mark.asyncio
