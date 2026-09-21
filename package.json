@@ -34,9 +34,9 @@
 		"prepare": "node scripts/install-git-hooks.mjs"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.5.11",
-		"lefthook": "^2.1.12",
-		"turbo": "^2.10.12",
+		"@biomejs/biome": "^2.5.14",
+		"lefthook": "^2.1.14",
+		"turbo": "^2.11.2",
 		"typescript": "catalog:"
 	},
 	"engines": {
