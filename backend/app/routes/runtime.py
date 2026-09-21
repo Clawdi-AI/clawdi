@@ -73,6 +73,7 @@ from app.services.runtime_source import (
     ensure_runtime_whatsapp_credentials,
     expected_runtime_bundle_v2_etag,
     load_runtime_source_batch,
+    render_legacy_bootstrap_runtime_bundle,
     render_runtime_bundle,
     render_runtime_source,
     runtime_whatsapp_credential_repair_link_ids,
@@ -130,6 +131,12 @@ class _RuntimeManifestSnapshot:
     repair_link_ids: tuple[UUID, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _LegacyBootstrapManifestSnapshot:
+    payload: dict[str, object] | None
+    etag: str
+
+
 async def _manifest_credential(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ) -> HTTPAuthorizationCredentials | VerifiedClerkJwt:
@@ -175,10 +182,31 @@ async def get_runtime_manifest(
             headers={"Cache-Control": "no-store", "Vary": "Accept"},
         )
 
+    capabilities_header = request.headers.get(RUNTIME_CAPABILITIES_HEADER)
+    if capabilities_header is None:
+        try:
+            snapshot = await _render_legacy_bootstrap_manifest_snapshot(
+                snapshot_sessions=sessions.snapshots,
+                environment_id=environment_id,
+                owner_user_id=auth.user_id,
+                if_none_match=request.headers.get("if-none-match"),
+            )
+        except RuntimeSourceNotFoundError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+        except RuntimeSourceError as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        headers = {
+            "ETag": snapshot.etag,
+            "Cache-Control": _RUNTIME_MANIFEST_CACHE_CONTROL,
+            "Vary": _RUNTIME_MANIFEST_VARY,
+            "Content-Type": RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+        }
+        if snapshot.payload is None:
+            return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+        return JSONResponse(snapshot.payload, headers=headers)
+
     capabilities = {
-        capability.strip()
-        for capability in request.headers.get(RUNTIME_CAPABILITIES_HEADER, "").split(",")
-        if capability.strip()
+        capability.strip() for capability in capabilities_header.split(",") if capability.strip()
     }
     project_provider_identity = "provider-identity-v1" in capabilities
     project_agent_plugins = RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY in capabilities
@@ -239,6 +267,47 @@ async def get_runtime_manifest(
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
     payload = render_runtime_bundle(snapshot.source)
     return JSONResponse(payload, headers=headers)
+
+
+async def _render_legacy_bootstrap_manifest_snapshot(
+    *,
+    snapshot_sessions: async_sessionmaker[AsyncSession],
+    environment_id: UUID,
+    owner_user_id: UUID,
+    if_none_match: str | None,
+) -> _LegacyBootstrapManifestSnapshot:
+    async with runtime_snapshot_session(session_factory=snapshot_sessions) as source_db:
+        row = (
+            await source_db.execute(
+                select(AgentEnvironment, HostedRuntimeState)
+                .outerjoin(
+                    HostedRuntimeState,
+                    HostedRuntimeState.environment_id == AgentEnvironment.id,
+                )
+                .where(
+                    AgentEnvironment.id == environment_id,
+                    AgentEnvironment.user_id == owner_user_id,
+                    AgentEnvironment.archived_at.is_(None),
+                )
+            )
+        ).one_or_none()
+        if row is None:
+            raise RuntimeSourceNotFoundError("Agent environment not found")
+        _, state = row
+        if state is None:
+            raise RuntimeSourceNotFoundError("Hosted runtime state not found")
+        payload = render_legacy_bootstrap_runtime_bundle(
+            state,
+            environment_id=environment_id,
+        )
+    source_revision = payload["sourceRevision"]
+    if not isinstance(source_revision, str):
+        raise RuntimeSourceError("Legacy bootstrap projection revision is invalid")
+    etag = expected_runtime_bundle_v2_etag(source_revision)
+    return _LegacyBootstrapManifestSnapshot(
+        payload=None if if_none_match_contains(if_none_match, etag) else payload,
+        etag=etag,
+    )
 
 
 async def _render_runtime_source_snapshot(
