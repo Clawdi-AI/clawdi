@@ -98,6 +98,11 @@ export const env = createEnv({
 		VITE_DEV_AUTH_NAME: z.string().min(1).default("Dev User"),
 		VITE_DEV_AUTH_EMAIL: z.string().min(1).default("dev@clawdi.local"),
 
+		// Optional public Chatwoot widget configuration. Both values are required
+		// before the authenticated product-support widget is loaded.
+		VITE_CHATWOOT_BASE_URL: httpsOrHttp().optional(),
+		VITE_CHATWOOT_WEBSITE_TOKEN: z.string().min(1).optional(),
+
 		// Hosted-only analytics token. Optional so OSS and hosted-without-
 		// analytics both validate cleanly.
 		VITE_POSTHOG_TOKEN: z.string().min(1).optional(),
