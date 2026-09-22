@@ -17,10 +17,7 @@ export const Route = createFileRoute("/_protected/terminal/$id")({
 function TerminalWindowRoute() {
 	const { id } = Route.useParams();
 	return (
-		<main
-			data-mava-launcher="hidden"
-			className="flex h-svh min-h-0 w-full overflow-hidden bg-background"
-		>
+		<main className="flex h-svh min-h-0 w-full overflow-hidden bg-background">
 			<AccountDataBoundary>
 				<AgentDetailClient environmentId={id} section="terminal" routeSearch={{}} standalone />
 			</AccountDataBoundary>

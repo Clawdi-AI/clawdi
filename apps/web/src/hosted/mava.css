@@ -1,4 +1,0 @@
-body:has([data-mava-launcher="hidden"]) #mava-webchat-launcher {
-	/* biome-ignore lint/complexity/noImportantStyles: override the third-party launcher's injected styles */
-	display: none !important;
-}

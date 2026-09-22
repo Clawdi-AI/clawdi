@@ -38,7 +38,7 @@ function planChangeBillingEffect(changeKind: PlanChangeKind): PlanChangeBillingE
 
 declare global {
 	interface Window {
-		__mavaLiveChatToggleCalls?: number;
+		__chatwootToggleCalls?: number;
 		__stripeCheckoutClientSecrets?: string[];
 		__stripeCheckoutLoadCalls?: number;
 		__stripeConfirmCalls?: number;
@@ -2756,11 +2756,17 @@ async function _gotoHostedSettingsDialog(page: Page, section: string) {
 	throw new Error("Settings dialog did not open.");
 }
 
-test("Help opens the hosted Mava live chat", async ({ page }) => {
+test("Help opens Chatwoot live chat", async ({ page }) => {
 	await page.addInitScript(() => {
-		window.__mavaLiveChatToggleCalls = 0;
-		window.MavaWebChatToggle = () => {
-			window.__mavaLiveChatToggleCalls = (window.__mavaLiveChatToggleCalls ?? 0) + 1;
+		window.__chatwootToggleCalls = 0;
+		window.$chatwoot = {
+			hasLoaded: true,
+			setUser: () => {},
+			reset: () => {},
+			toggle: () => {
+				window.__chatwootToggleCalls = (window.__chatwootToggleCalls ?? 0) + 1;
+			},
+			toggleBubbleVisibility: () => {},
 		};
 	});
 	await stubHostedApi(page);
@@ -2772,28 +2778,7 @@ test("Help opens the hosted Mava live chat", async ({ page }) => {
 	const liveChat = page.getByRole("menuitem", { name: "Live chat" });
 	await expect(liveChat).toBeVisible();
 	await liveChat.click();
-	await expect.poll(() => page.evaluate(() => window.__mavaLiveChatToggleCalls)).toBe(1);
-});
-
-test("deploy hides the Mava launcher while other dashboard pages reserve clearance", async ({
-	page,
-}) => {
-	await stubHostedApi(page, { plans: [basicPlan, performancePlan] });
-	await page.goto("/deploy");
-	await expect(page.getByTestId("deploy-action-bar")).toBeVisible();
-	await page.evaluate(() => {
-		const launcher = document.createElement("button");
-		launcher.id = "mava-webchat-launcher";
-		launcher.textContent = "Support";
-		document.body.appendChild(launcher);
-	});
-
-	const launcher = page.locator("#mava-webchat-launcher");
-	await expect(launcher).toBeHidden();
-
-	await page.locator('a[href="/agents"]').first().click();
-	await expect(page).toHaveURL("/agents");
-	await expect(launcher).toBeVisible();
+	await expect.poll(() => page.evaluate(() => window.__chatwootToggleCalls)).toBe(1);
 });
 
 test("hosted agent overview uses the modular hierarchy", async ({ page }) => {
@@ -3217,15 +3202,6 @@ test("hosted live-tool routes keep scrolling inside their viewport", async ({ pa
 		const loadingShell = page.getByTestId("agent-live-tool-loading-shell");
 		await expect(loadingShell).toBeVisible();
 		await expect(page.getByTestId("overview-status-card-skeleton")).toHaveCount(0);
-		const dashboardContent = page.getByTestId("dashboard-page-content");
-		await expect(dashboardContent).toHaveAttribute("data-mava-launcher", "hidden");
-		await page.evaluate(() => {
-			const launcher = document.createElement("button");
-			launcher.id = "mava-webchat-launcher";
-			launcher.textContent = "Support";
-			document.body.appendChild(launcher);
-		});
-		await expect(page.locator("#mava-webchat-launcher")).toBeHidden();
 		await expectLiveToolFillsDashboard(page, loadingShell);
 		const loadingBox = await loadingShell.boundingBox();
 		if (!loadingBox) throw new Error("Live-tool loading shell should have stable geometry.");
@@ -3291,7 +3267,6 @@ test("hosted terminal opens a standalone fitted window", async ({ page, context 
 		await expect(page.getByRole("button", { name: "Open Terminal in new window" })).toHaveCount(0);
 		await expect(page.getByTestId("app-sidebar")).toHaveCount(0);
 		await expect(page.getByTestId("dashboard-page-content")).toHaveCount(0);
-		await expect(page.locator('main[data-mava-launcher="hidden"]')).toBeVisible();
 		const standaloneGeometry = await standaloneSurface.evaluate((surface) => ({
 			surface: surface.getBoundingClientRect().toJSON(),
 			viewport: { width: window.innerWidth, height: window.innerHeight },

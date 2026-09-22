@@ -19,6 +19,7 @@ import {
 	EMPTY_AGENT_OWNERSHIP,
 } from "@/lib/agent-ownership";
 import { parseAgentPathname } from "@/lib/agent-routes";
+import { shouldHideChatwoot } from "@/lib/chatwoot";
 import {
 	LOADING_PRODUCT_ACCESS,
 	type ProductAccess,
@@ -110,8 +111,8 @@ function DashboardAccountLayout({ children }: { children: ReactNode }) {
 	const agentSection = parseAgentPathname(pathname)?.section;
 	const isAgentLiveToolRoute =
 		agentSection === "console" || agentSection === "files" || agentSection === "terminal";
-	const hideHostedLauncher = IS_HOSTED_BUILD && (pathname === "/deploy" || isAgentLiveToolRoute);
-	const reserveHostedLauncherClearance = IS_HOSTED_BUILD && !hideHostedLauncher;
+	const hideChatwoot = IS_HOSTED_BUILD && shouldHideChatwoot(pathname);
+	const reserveChatwootClearance = IS_HOSTED_BUILD && !hideChatwoot;
 	return (
 		<ProductAccessProvider value={productAccess}>
 			{ready && HostedProductAccessSensor ? (
@@ -171,7 +172,6 @@ function DashboardAccountLayout({ children }: { children: ReactNode }) {
 								>
 									<div
 										data-testid="dashboard-page-content"
-										data-mava-launcher={hideHostedLauncher ? "hidden" : undefined}
 										className={cn(
 											"mx-auto flex w-full flex-col",
 											isAgentLiveToolRoute
@@ -179,7 +179,7 @@ function DashboardAccountLayout({ children }: { children: ReactNode }) {
 												: "gap-4 pt-4 md:gap-5 md:pt-5",
 											CONTENT_MAX_WIDTH,
 											!isAgentLiveToolRoute &&
-												(reserveHostedLauncherClearance
+												(reserveChatwootClearance
 													? "pb-[calc(--spacing(20)+env(safe-area-inset-bottom))]"
 													: "pb-4 md:pb-5"),
 										)}

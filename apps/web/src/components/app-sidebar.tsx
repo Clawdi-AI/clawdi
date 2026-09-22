@@ -129,6 +129,9 @@ import { cn, errorMessage, relativeTime } from "@/lib/utils";
 type AgentChromeKind = AgentOwnershipKind;
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 const IS_DESKTOP_BUILD = import.meta.env.VITE_CLAWDI_DESKTOP_BUILD === "true";
+const HAS_CHATWOOT_CONFIG = Boolean(
+	import.meta.env.VITE_CHATWOOT_BASE_URL && import.meta.env.VITE_CHATWOOT_WEBSITE_TOKEN,
+);
 const HostedUnifiedAgentListSensor = IS_HOSTED_BUILD
 	? lazy(() =>
 			import("@/hosted/use-unified-agent-list").then((m) => ({
@@ -137,12 +140,14 @@ const HostedUnifiedAgentListSensor = IS_HOSTED_BUILD
 		)
 	: null;
 
-const MavaLiveChatMenuItem = IS_HOSTED_BUILD
-	? lazy(() =>
-			import("@/hosted/mava-live-chat-menu-item").then((m) => ({
-				default: m.MavaLiveChatMenuItem,
-			})),
-		)
+const ChatwootLiveChatMenuItem = IS_HOSTED_BUILD
+	? IS_DESKTOP_BUILD || !HAS_CHATWOOT_CONFIG
+		? null
+		: lazy(() =>
+				import("@/hosted/chatwoot-live-chat-menu-item").then((m) => ({
+					default: m.ChatwootLiveChatMenuItem,
+				})),
+			)
 	: null;
 
 function useAgentChromeKind(
@@ -1348,9 +1353,9 @@ function GitHubIcon({ className, ...props }: React.ComponentProps<"svg">) {
 function HelpMenuItems() {
 	return (
 		<DropdownMenuGroup>
-			{MavaLiveChatMenuItem ? (
+			{ChatwootLiveChatMenuItem ? (
 				<Suspense fallback={null}>
-					<MavaLiveChatMenuItem />
+					<ChatwootLiveChatMenuItem />
 				</Suspense>
 			) : null}
 			<DropdownMenuItem

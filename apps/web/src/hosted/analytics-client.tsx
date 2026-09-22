@@ -5,13 +5,6 @@ import {
 	buildHostedPersonProperties,
 	resolveHostedAuthIdentityAction,
 } from "@/hosted/analytics-identity.logic";
-import {
-	buildMavaIdentity,
-	createMavaIdentityController,
-	type MavaIdentityController,
-	startMavaIdentitySync,
-} from "@/hosted/mava";
-import "@/hosted/mava.css";
 import { useCurrentUser, useDashboardAuth } from "@/lib/auth-client";
 
 const loadHostedPostHog = () => import("@/hosted/posthog");
@@ -31,11 +24,6 @@ function HostedAnalyticsIdentity() {
 	const { isSignedIn, userId } = useDashboardAuth();
 	const { user, isLoaded: isUserLoaded } = useCurrentUser();
 	const identifiedUserIdRef = useRef<string | null>(null);
-	const mavaControllerRef = useRef<MavaIdentityController | null>(null);
-	if (mavaControllerRef.current === null) {
-		mavaControllerRef.current = createMavaIdentityController();
-	}
-	const mavaController = mavaControllerRef.current;
 
 	useEffect(() => {
 		const transition = resolveHostedAuthIdentityAction({
@@ -80,18 +68,6 @@ function HostedAnalyticsIdentity() {
 			mod.enrichHostedUser(personProperties);
 		});
 	}, [isSignedIn, userId, userLoaded, userEmail, userFullName]);
-
-	useEffect(() => {
-		if (!isSignedIn || !userLoaded) return;
-		const identity = buildMavaIdentity({
-			userId,
-			emailAddress: userEmail,
-			fullName: userFullName,
-		});
-		if (!identity) return;
-
-		return startMavaIdentitySync({ controller: mavaController, identity });
-	}, [isSignedIn, mavaController, userEmail, userFullName, userId, userLoaded]);
 
 	return null;
 }

@@ -1,326 +1,309 @@
 import { describe, expect, mock, test } from "bun:test";
 import {
 	type ChatwootApi,
-	type ChatwootSdk,
+	type ChatwootSessionStore,
 	type ChatwootWidgetSettings,
-	createChatwootWidgetController,
-	resolveChatwootWidgetRequest,
+	createChatwootSessionController,
+	createChatwootToggleQueue,
+	hasChatwootIdentityFailure,
+	markChatwootIdentityFailure,
+	resetChatwootBeforeSignOut,
+	resolveChatwootIdentity,
+	shouldHideChatwoot,
+	startChatwoot,
+	watchChatwootIdentityStorage,
 } from "@/lib/chatwoot";
 
-const signedInUser = {
+function createApi(calls: string[], hasLoaded = false): ChatwootApi {
+	return {
+		hasLoaded,
+		setUser: mock((identifier: string) => calls.push(`user:${identifier}`)),
+		reset: mock(() => calls.push("reset")),
+		toggle: mock(() => calls.push("toggle")),
+		toggleBubbleVisibility: mock((visibility: "hide" | "show") => calls.push(visibility)),
+	};
+}
+
+function createStore({
+	marker = null,
+	identifiedCookie = false,
+}: {
+	marker?: string | null;
+	identifiedCookie?: boolean;
+} = {}) {
+	let currentMarker: string | null = marker;
+	const store: ChatwootSessionStore = {
+		readIdentity: () => currentMarker,
+		writeIdentity: (_websiteToken, userId) => {
+			currentMarker = userId;
+		},
+		clearIdentity: () => {
+			currentMarker = null;
+		},
+		hasSessionCookie: () => identifiedCookie,
+	};
+	return { store, readMarker: () => currentMarker };
+}
+
+const ada = {
 	id: "user_123",
-	fullName: "Ada Lovelace",
-	primaryEmailAddress: { emailAddress: "ada@example.com" },
+	name: "Ada Lovelace",
+	email: "ada@example.com",
+	identifierHash: "trusted-hash",
 };
 
-describe("resolveChatwootWidgetRequest", () => {
-	test("stays disabled without complete public configuration or in desktop builds", () => {
-		expect(
-			resolveChatwootWidgetRequest({
-				baseUrl: undefined,
-				websiteToken: "token",
-				desktopBuild: false,
-				isLoaded: true,
-				isSignedIn: true,
-				user: signedInUser,
-			}),
-		).toBeNull();
-		expect(
-			resolveChatwootWidgetRequest({
-				baseUrl: "https://support.example.com",
-				websiteToken: undefined,
-				desktopBuild: false,
-				isLoaded: true,
-				isSignedIn: true,
-				user: signedInUser,
-			}),
-		).toBeNull();
-		expect(
-			resolveChatwootWidgetRequest({
-				baseUrl: "https://support.example.com",
-				websiteToken: "token",
-				desktopBuild: true,
-				isLoaded: true,
-				isSignedIn: true,
-				user: signedInUser,
-			}),
-		).toBeNull();
-	});
-
-	test("stays disabled until Clerk has a signed-in user", () => {
-		const configured = {
-			baseUrl: "https://support.example.com",
-			websiteToken: "token",
-			desktopBuild: false,
+describe("Chatwoot Website SDK adapter", () => {
+	test("installs runtime settings before starting the official SDK", () => {
+		const calls: string[] = [];
+		const runtime = {
+			set chatwootSettings(value: ChatwootWidgetSettings | undefined) {
+				calls.push("settings");
+				expect(value).toEqual({
+					hideMessageBubble: true,
+					position: "right",
+					type: "standard",
+					widgetStyle: "standard",
+					darkMode: "auto",
+					useBrowserLanguage: true,
+				});
+			},
+			chatwootSDK: {
+				run: mock(() => calls.push("run")),
+			},
 		};
+
 		expect(
-			resolveChatwootWidgetRequest({
-				...configured,
-				isLoaded: false,
-				isSignedIn: undefined,
-				user: null,
+			startChatwoot(runtime, {
+				baseUrl: "https://support.example.com",
+				websiteToken: "website-token",
 			}),
-		).toBeNull();
-		expect(
-			resolveChatwootWidgetRequest({
-				...configured,
-				isLoaded: true,
-				isSignedIn: false,
-				user: null,
-			}),
-		).toBeNull();
+		).toBe(true);
+		expect(calls).toEqual(["settings", "run"]);
 	});
 
-	test("uses the Clerk id, full name, and primary email", () => {
-		expect(
-			resolveChatwootWidgetRequest({
-				baseUrl: "https://support.example.com/",
-				websiteToken: " token ",
-				desktopBuild: false,
-				isLoaded: true,
-				isSignedIn: true,
-				user: signedInUser,
-			}),
-		).toEqual({
-			baseUrl: "https://support.example.com",
-			websiteToken: "token",
-			identity: {
-				id: "user_123",
-				name: "Ada Lovelace",
-				email: "ada@example.com",
+	test("waits for delayed readiness before identifying or changing visibility", () => {
+		const calls: string[] = [];
+		const api = createApi(calls);
+		const { store, readMarker } = createStore();
+		const controller = createChatwootSessionController({
+			websiteToken: "website-token",
+			readApi: () => api,
+			store,
+			reload: mock(() => {}),
+		});
+
+		expect(controller.sync(ada, ada.id, false)).toBe("waiting");
+		expect(calls).toEqual([]);
+		expect(readMarker()).toBeNull();
+
+		api.hasLoaded = true;
+		expect(controller.sync(ada, ada.id, false)).toBe("identified");
+		expect(calls).toEqual(["user:user_123", "show"]);
+		expect(readMarker()).toBe("user_123");
+	});
+
+	test("resets and hard reloads when the live account changes", () => {
+		const calls: string[] = [];
+		const api = createApi(calls, true);
+		const reload = mock(() => calls.push("reload"));
+		const { store, readMarker } = createStore({ marker: "user_a" });
+		const controller = createChatwootSessionController({
+			websiteToken: "website-token",
+			readApi: () => api,
+			store,
+			reload,
+		});
+
+		expect(controller.sync({ ...ada, id: "user_b" }, "user_b", false)).toBe("reloading");
+		expect(calls).toEqual(["hide", "reset", "reload"]);
+		expect(readMarker()).toBeNull();
+	});
+
+	test("resets stale Chatwoot cookies before an anonymous session can inherit them", () => {
+		const calls: string[] = [];
+		const api = createApi(calls, true);
+		const reload = mock(() => calls.push("reload"));
+		const { store } = createStore({ identifiedCookie: true });
+		const controller = createChatwootSessionController({
+			websiteToken: "website-token",
+			readApi: () => api,
+			store,
+			reload,
+		});
+
+		expect(controller.needsSdk(null)).toBe(true);
+		expect(controller.sync(null, null, false)).toBe("reloading");
+		expect(calls).toEqual(["hide", "reset", "reload"]);
+	});
+
+	test("resets synchronously on logout and clears the identity marker", () => {
+		const calls: string[] = [];
+		const api = createApi(calls, true);
+		api.user = { identifier: ada.id };
+		api.reset = mock(() => {
+			calls.push("reset");
+			if (api.user) calls.push("user:cached");
+		});
+		const { store, readMarker } = createStore({ marker: ada.id });
+
+		resetChatwootBeforeSignOut({ $chatwoot: api }, "website-token", store);
+		expect(calls).toEqual(["hide", "reset"]);
+		expect(api.user).toBeUndefined();
+		expect(readMarker()).toBeNull();
+	});
+
+	test("invalidates pending identity work when logout resets the session", () => {
+		const calls: string[] = [];
+		const api = createApi(calls, true);
+		const { store } = createStore({ marker: ada.id });
+		const controller = createChatwootSessionController({
+			websiteToken: "website-token",
+			readApi: () => api,
+			store,
+			reload: mock(() => calls.push("reload")),
+		});
+
+		resetChatwootBeforeSignOut({ $chatwoot: api }, "website-token", store);
+		expect(controller.sync(ada, ada.id, false)).toBe("reloading");
+		expect(calls).toEqual(["hide", "reset"]);
+	});
+
+	test("resets when another tab clears the active identity marker", () => {
+		const calls: string[] = [];
+		const api = createApi(calls, true);
+		const reload = mock(() => calls.push("reload"));
+		const { store } = createStore();
+		const controller = createChatwootSessionController({
+			websiteToken: "website-token",
+			readApi: () => api,
+			store,
+			reload,
+		});
+
+		expect(controller.sync(ada, ada.id, false)).toBe("identified");
+		store.clearIdentity("website-token");
+		expect(controller.sync(ada, ada.id, false)).toBe("reloading");
+		expect(calls).toEqual(["user:user_123", "show", "hide", "reset", "reload"]);
+	});
+
+	test("fails closed when Chatwoot rejects a signed identity", () => {
+		const calls: string[] = [];
+		const api = createApi(calls, true);
+		api.isOpen = true;
+		const reload = mock(() => calls.push("reload"));
+		const { store, readMarker } = createStore({ marker: ada.id });
+		const controller = createChatwootSessionController({
+			websiteToken: "website-token",
+			readApi: () => api,
+			store,
+			reload,
+		});
+
+		expect(controller.failClosed()).toBe("reloading");
+		expect(calls).toEqual(["toggle", "hide", "reset", "reload"]);
+		expect(readMarker()).toBeNull();
+		expect(controller.failClosed()).toBe("reloading");
+		expect(controller.sync(ada, ada.id, false)).toBe("reloading");
+		expect(reload).toHaveBeenCalledTimes(1);
+	});
+
+	test("persists an identity-error circuit breaker across a page reload", () => {
+		const values = new Map<string, string>();
+		const storage = {
+			getItem: (key: string) => values.get(key) ?? null,
+			setItem: (key: string, value: string) => {
+				values.set(key, value);
+			},
+		} as unknown as Storage;
+
+		expect(hasChatwootIdentityFailure("website-token", storage)).toBe(false);
+		markChatwootIdentityFailure("website-token", storage);
+		expect(hasChatwootIdentityFailure("website-token", storage)).toBe(true);
+	});
+
+	test("reconciles both marker writes and localStorage.clear events", () => {
+		const browser = new EventTarget();
+		const onChange = mock(() => {});
+		const unwatch = watchChatwootIdentityStorage(
+			browser as Pick<Window, "addEventListener" | "removeEventListener">,
+			"website-token",
+			onChange,
+		);
+
+		const dispatchStorage = (key: string | null) => {
+			const event = new Event("storage");
+			Object.defineProperty(event, "key", { value: key });
+			browser.dispatchEvent(event);
+		};
+		dispatchStorage("clawdi:chatwoot:identity:website-token");
+		dispatchStorage(null);
+		expect(onChange).toHaveBeenCalledTimes(2);
+		unwatch();
+	});
+
+	test("closes an open panel before hiding it", () => {
+		const calls: string[] = [];
+		const api = createApi(calls, true);
+		api.isOpen = true;
+		const { store } = createStore();
+		const controller = createChatwootSessionController({
+			websiteToken: "website-token",
+			readApi: () => api,
+			store,
+			reload: mock(() => {}),
+		});
+
+		expect(controller.sync(ada, ada.id, true)).toBe("identified");
+		expect(calls).toEqual(["user:user_123", "toggle", "hide"]);
+	});
+
+	test("queues one toggle until the official ready event", () => {
+		const calls: string[] = [];
+		const api = createApi(calls);
+		let ready: (() => void) | undefined;
+		const unsubscribe = mock(() => {});
+		const queue = createChatwootToggleQueue({
+			readApi: () => api,
+			subscribeReady: (listener) => {
+				ready = listener;
+				return unsubscribe;
 			},
 		});
+
+		queue.request();
+		queue.request();
+		expect(calls).toEqual([]);
+
+		api.hasLoaded = true;
+		ready?.();
+		expect(calls).toEqual(["toggle"]);
+		expect(unsubscribe).toHaveBeenCalledTimes(1);
 	});
 });
 
-describe("Chatwoot widget controller", () => {
-	test("loads the SDK, initializes it, and sets the trusted user after readiness", async () => {
-		let sdk: ChatwootSdk | undefined;
-		let api: ChatwootApi | undefined;
-		let readyListener: (() => void) | undefined;
-		const initializationOrder: string[] = [];
-		const installSettings = mock((settings: ChatwootWidgetSettings) => {
-			initializationOrder.push("settings");
-			expect(settings).toEqual({
-				position: "right",
-				type: "standard",
-				widgetStyle: "standard",
-				darkMode: "auto",
-				useBrowserLanguage: true,
-			});
-		});
-		const run = mock(() => {
-			initializationOrder.push("run");
-		});
-		const setUser = mock(() => {});
-		const reset = mock(() => {});
-		const toggleBubbleVisibility = mock(() => {});
-		const loadScript = mock(async (src: string) => {
-			expect(src).toBe("https://support.example.com/packs/js/sdk.js");
-			sdk = { run };
-			api = { setUser, reset, toggleBubbleVisibility };
-		});
-		const getIdentifierHash = mock(async () => "trusted-hash");
-		const controller = createChatwootWidgetController({
-			loadScript,
-			installSettings,
-			readSdk: () => sdk,
-			readApi: () => api,
-			subscribeReady: (listener) => {
-				readyListener = listener;
-			},
-		});
-		const request = resolveChatwootWidgetRequest({
-			baseUrl: "https://support.example.com",
-			websiteToken: "token",
-			desktopBuild: false,
-			isLoaded: true,
-			isSignedIn: true,
-			user: signedInUser,
-		});
-		expect(request).not.toBeNull();
-		if (!request) throw new Error("expected configured request");
-
-		expect(await controller.start(request, getIdentifierHash)).toBe(true);
-		expect(run).toHaveBeenCalledWith({
-			websiteToken: "token",
-			baseUrl: "https://support.example.com",
-		});
-		expect(installSettings).toHaveBeenCalledTimes(1);
-		expect(initializationOrder).toEqual(["settings", "run"]);
-		expect(setUser).not.toHaveBeenCalled();
-
-		readyListener?.();
-		expect(setUser).toHaveBeenCalledWith("user_123", {
-			name: "Ada Lovelace",
-			email: "ada@example.com",
-			identifier_hash: "trusted-hash",
-		});
-		expect(toggleBubbleVisibility).toHaveBeenCalledWith("show");
-	});
-
-	test("survives the Strict Mode setup-cleanup-setup cycle", async () => {
-		let resolveHash: ((hash: string) => void) | undefined;
-		let readyListener: (() => void) | undefined;
-		const installSettings = mock(() => {});
-		const run = mock(() => {});
-		const setUser = mock(() => {});
-		const getIdentifierHash = mock(
-			() =>
-				new Promise<string>((resolve) => {
-					resolveHash = resolve;
-				}),
-		);
-		const controller = createChatwootWidgetController({
-			loadScript: async () => {},
-			installSettings,
-			readSdk: () => ({ run }),
-			readApi: () => ({
-				setUser,
-				reset: () => {},
-				toggleBubbleVisibility: () => {},
-			}),
-			subscribeReady: (listener) => {
-				readyListener = listener;
-			},
-		});
-		const request = {
-			baseUrl: "https://support.example.com",
-			websiteToken: "token",
-			identity: { id: "user_123", name: "Ada Lovelace", email: "ada@example.com" },
-		};
-
-		const firstStart = controller.start(request, getIdentifierHash);
-		controller.cancel();
-		const remountedStart = controller.start(request, getIdentifierHash);
-		resolveHash?.("trusted-hash");
-
-		expect(await firstStart).toBe(false);
-		expect(await remountedStart).toBe(true);
-		readyListener?.();
-		expect(getIdentifierHash).toHaveBeenCalledTimes(1);
-		expect(installSettings).toHaveBeenCalledTimes(1);
-		expect(run).toHaveBeenCalledTimes(1);
-		expect(setUser).toHaveBeenCalledTimes(1);
-	});
-
-	test("prevents duplicate SDK initialization and identity calls across repeated starts", async () => {
-		let readyListener: (() => void) | undefined;
-		const run = mock(() => {});
-		const setUser = mock(() => {});
-		const reset = mock(() => {});
-		const toggleBubbleVisibility = mock(() => {});
-		const getIdentifierHash = mock(async () => "trusted-hash");
-		const loadScript = mock(async () => {});
-		const controller = createChatwootWidgetController({
-			loadScript,
-			installSettings: () => {},
-			readSdk: () => ({ run }),
-			readApi: () => ({ setUser, reset, toggleBubbleVisibility }),
-			subscribeReady: (listener) => {
-				readyListener = listener;
-			},
-		});
-		const request = {
-			baseUrl: "https://support.example.com",
-			websiteToken: "token",
-			identity: { id: "user_123", name: "Ada Lovelace", email: "ada@example.com" },
-		};
-
-		await Promise.all([
-			controller.start(request, getIdentifierHash),
-			controller.start(request, getIdentifierHash),
-		]);
-		readyListener?.();
-		await controller.start(request, getIdentifierHash);
-
-		expect(getIdentifierHash).toHaveBeenCalledTimes(1);
-		expect(loadScript).toHaveBeenCalledTimes(1);
-		expect(run).toHaveBeenCalledTimes(1);
-		expect(setUser).toHaveBeenCalledTimes(1);
-	});
-
-	test("clears trusted identity and hides the widget when the user signs out", async () => {
-		let readyListener: (() => void) | undefined;
-		const setUser = mock(() => {});
-		const reset = mock(() => {});
-		const toggleBubbleVisibility = mock(() => {});
-		const controller = createChatwootWidgetController({
-			loadScript: async () => {},
-			installSettings: () => {},
-			readSdk: () => ({ run: () => {} }),
-			readApi: () => ({ setUser, reset, toggleBubbleVisibility }),
-			subscribeReady: (listener) => {
-				readyListener = listener;
-			},
-		});
-		const request = {
-			baseUrl: "https://support.example.com",
-			websiteToken: "token",
-			identity: { id: "user_123", name: "Ada Lovelace", email: "ada@example.com" },
-		};
-
-		await controller.start(request, async () => "trusted-hash");
-		readyListener?.();
-		controller.cancel();
-
-		expect(reset).toHaveBeenCalledTimes(1);
-		expect(toggleBubbleVisibility).toHaveBeenLastCalledWith("hide");
-
-		await controller.start(request, async () => "trusted-hash");
-		expect(setUser).toHaveBeenCalledTimes(2);
-		expect(toggleBubbleVisibility).toHaveBeenLastCalledWith("show");
-	});
-
-	test("does not load the SDK when trusted identity validation is unavailable", async () => {
-		const loadScript = mock(async () => {});
-		const controller = createChatwootWidgetController({
-			loadScript,
-			installSettings: () => {},
-			readSdk: () => undefined,
-			readApi: () => undefined,
-			subscribeReady: () => {},
-		});
-
+describe("Chatwoot identity and placement", () => {
+	test("uses the authenticated account id and primary email", () => {
 		expect(
-			await controller.start(
-				{
-					baseUrl: "https://support.example.com",
-					websiteToken: "token",
-					identity: { id: "user_123", name: "Ada Lovelace", email: "ada@example.com" },
-				},
-				async () => null,
-			),
-		).toBe(false);
-		expect(loadScript).not.toHaveBeenCalled();
+			resolveChatwootIdentity({
+				id: " user_123 ",
+				fullName: " Ada Lovelace ",
+				primaryEmailAddress: { emailAddress: " ada@example.com " },
+			}),
+		).toEqual({ id: "user_123", name: "Ada Lovelace", email: "ada@example.com" });
 	});
 
-	test("cancels pending startup when the signed-in client unmounts", async () => {
-		let resolveHash: ((hash: string) => void) | undefined;
-		const loadScript = mock(async () => {});
-		const controller = createChatwootWidgetController({
-			loadScript,
-			installSettings: () => {},
-			readSdk: () => ({ run: () => {} }),
-			readApi: () => undefined,
-			subscribeReady: () => {},
-		});
-		const startup = controller.start(
-			{
-				baseUrl: "https://support.example.com",
-				websiteToken: "token",
-				identity: { id: "user_123", name: "Ada Lovelace", email: "ada@example.com" },
-			},
-			() =>
-				new Promise<string>((resolve) => {
-					resolveHash = resolve;
-				}),
-		);
-
-		controller.cancel();
-		resolveHash?.("trusted-hash");
-
-		expect(await startup).toBe(false);
-		expect(loadScript).not.toHaveBeenCalled();
+	test("preserves the desktop live-tool route exclusions", () => {
+		for (const pathname of [
+			"/deploy",
+			"/agents/agent-1/console",
+			"/agents/agent-1/files",
+			"/agents/agent-1/terminal",
+			"/terminal/agent-1",
+		]) {
+			expect(shouldHideChatwoot(pathname)).toBe(true);
+		}
+		for (const pathname of ["/agents", "/agents/agent-1", "/settings", "/admin"]) {
+			expect(shouldHideChatwoot(pathname)).toBe(false);
+		}
 	});
 });
