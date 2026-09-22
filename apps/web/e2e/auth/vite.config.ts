@@ -53,6 +53,10 @@ export default defineConfig({
 	],
 	resolve: {
 		alias: [
+			{
+				find: "@/components/chatwoot-client",
+				replacement: fileURLToPath(new URL("./chatwoot-client-fixture.tsx", import.meta.url)),
+			},
 			{ find: "@", replacement: fileURLToPath(new URL("../../src", import.meta.url)) },
 			{
 				find: /^@clerk\/tanstack-react-start$/,
