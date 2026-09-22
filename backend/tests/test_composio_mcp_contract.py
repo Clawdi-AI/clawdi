@@ -1,17 +1,19 @@
 """Pinned SDK error and paginated catalog failure contracts."""
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import composio_client
 import httpx
+import httpx2
 import pytest
 from composio.client import HttpClient
 from composio.core.models.tool_router import ToolRouter
 from composio.core.provider._openai import OpenAIProvider
 from composio.exceptions import ComposioSDKTimeoutError
-from mcp.types import ListToolsResult
+from mcp.types import CallToolResult, ListToolsResult
 
 from app.services import composio
 
@@ -93,6 +95,81 @@ async def test_mcp_listing_rejects_broken_pagination_without_partial_catalog(mon
     with pytest.raises(composio.ComposioMcpUpstreamError, match="pagination"):
         await composio.list_tool_router_mcp_tools(session)
     assert closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["list_tools", "call_tool"])
+async def test_mcp_operations_normalize_nested_upstream_exception_groups(monkeypatch, operation):
+    failure = ExceptionGroup(
+        "MCP transport failed",
+        [
+            ExceptionGroup("connect failed", [httpx2.ConnectError("connection failed")]),
+            httpx2.RemoteProtocolError("invalid upstream response"),
+        ],
+    )
+
+    class Client:
+        async def list_tools(self, *, cursor=None):
+            assert cursor is None
+            return ListToolsResult(tools=[])
+
+        async def call_tool(self, _name, _arguments):
+            return CallToolResult(content=[])
+
+    @asynccontextmanager
+    async def client(_session):
+        yield Client()
+        raise failure
+
+    monkeypatch.setattr(composio, "_tool_router_mcp_client", client)
+    session = composio.ComposioMcpSession(
+        url="https://test.invalid", headers={}, expires_at=datetime.now(UTC)
+    )
+
+    with pytest.raises(composio.ComposioMcpUpstreamError, match="operation failed"):
+        if operation == "list_tools":
+            await composio.list_tool_router_mcp_tools(session)
+        else:
+            await composio.call_tool_router_mcp_tool(session, "COMPOSIO_TEST", {})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unhandled",
+    [
+        asyncio.CancelledError(),
+        KeyboardInterrupt(),
+        SystemExit(),
+        AssertionError("program bug"),
+    ],
+    ids=["cancellation", "keyboard-interrupt", "system-exit", "program-error"],
+)
+async def test_mcp_operation_preserves_exception_groups_with_unhandled_failures(
+    monkeypatch, unhandled
+):
+    failure = BaseExceptionGroup(
+        "mixed failure",
+        [httpx2.ConnectError("connection failed"), unhandled],
+    )
+
+    class Client:
+        async def list_tools(self, *, cursor=None):
+            assert cursor is None
+            return ListToolsResult(tools=[])
+
+    @asynccontextmanager
+    async def client(_session):
+        yield Client()
+        raise failure
+
+    monkeypatch.setattr(composio, "_tool_router_mcp_client", client)
+    session = composio.ComposioMcpSession(
+        url="https://test.invalid", headers={}, expires_at=datetime.now(UTC)
+    )
+
+    with pytest.raises(BaseExceptionGroup) as error:
+        await composio.list_tool_router_mcp_tools(session)
+    assert error.value is failure
 
 
 @pytest.mark.asyncio
