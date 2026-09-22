@@ -460,11 +460,15 @@ function listJsonlFiles(root: string): string[] {
 	return files.sort();
 }
 
-function parseSession(filePath: string, projectFilter?: string): RawSession | null {
+function parseSession(
+	filePath: string,
+	projectFilter?: string,
+	sourceId?: string,
+): RawSession | null {
 	const parsed = readPiFile(filePath);
 	if (!parsed) return null;
 	const sessionKey = jsonString(parsed.header.id);
-	if (!sessionKey) return null;
+	if (!sessionKey || (sourceId !== undefined && sessionKey !== sourceId)) return null;
 	const cwd = jsonString(parsed.header.cwd);
 	if (projectFilter && (!cwd || resolve(cwd) !== resolve(projectFilter))) return null;
 	const events = sequenceSessionEvents(
@@ -582,7 +586,7 @@ export class PiAdapter implements AgentAdapterCore {
 		const sourceId = localSessionId.startsWith("pi.") ? localSessionId.slice(3) : localSessionId;
 		for (const path of listJsonlFiles(getPiSessionsDir())) {
 			if (context) await setImmediate(undefined, { signal: context.signal });
-			const session = parseSession(path);
+			const session = parseSession(path, undefined, sourceId);
 			if (session?.localSessionId === `pi.${sourceId}`) return session;
 		}
 		return null;
