@@ -11,7 +11,7 @@ import {
 	restoreAgentHomeOverrides,
 	snapshotAndClearAgentHomeOverrides,
 } from "../commands/helpers";
-import { cleanupTmp, copyFixtureToTmp } from "./helpers";
+import { addSkillDirectorySymlinkCases, cleanupTmp, copyFixtureToTmp } from "./helpers";
 
 let tmpHome: string;
 let origHome: string | undefined;
@@ -528,6 +528,17 @@ describe("HermesAdapter.collectSkills", () => {
 			name: "demo",
 		});
 		expect(skills[0]?.content).toContain("description: A nested demo skill");
+	});
+
+	it("discovers safe top-level directory symlinks and isolates unsafe ones", async () => {
+		const root = join(tmpHome, ".hermes", "skills");
+		const linked = addSkillDirectorySymlinkCases(root, join(tmpHome, "outside-hermes-skill"));
+		const adapter = new HermesAdapter();
+		const skills = await adapter.skills.collect();
+		const keys = skills.map((skill) => skill.skillKey).sort();
+		expect(keys).toEqual(["core/demo", "linked", "source/linked-source"]);
+		expect(skills.find((skill) => skill.skillKey === "linked")?.directoryPath).toBe(linked);
+		expect((await adapter.skills.listKeys()).sort()).toEqual(keys);
 	});
 
 	it("skips archived dot-directories and invalid skill keys at every depth", async () => {

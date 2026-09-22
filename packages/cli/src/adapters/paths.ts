@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { type Dirent, existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 
@@ -14,6 +14,33 @@ export function isPathWithinRoots(path: string, roots: readonly string[]): boole
 		const fromRoot = relative(root, path);
 		return fromRoot === "" || (!fromRoot.startsWith("..") && !isAbsolute(fromRoot));
 	});
+}
+
+/**
+ * Accept real directories and directory symlinks that stay inside the Skill
+ * root. Canonical path segments retain the same hidden/SKIP_DIRS exclusions as
+ * the visible scan, so a symlink cannot bypass those boundaries.
+ */
+export function safeSkillDirectoryPath(
+	root: string,
+	entry: Dirent,
+	parent: string = root,
+): string | null {
+	if (!entry.isDirectory() && !entry.isSymbolicLink()) return null;
+	const candidate = join(parent, entry.name);
+	try {
+		const canonicalRoot = realpathSync(root);
+		const canonicalCandidate = realpathSync(candidate);
+		if (!statSync(canonicalCandidate).isDirectory()) return null;
+		if (!isPathWithinRoots(canonicalCandidate, [canonicalRoot])) return null;
+		const canonicalSegments = relative(canonicalRoot, canonicalCandidate).split(/[\\/]/);
+		if (canonicalSegments.some((segment) => segment.startsWith(".") || SKIP_DIRS.has(segment))) {
+			return null;
+		}
+		return candidate;
+	} catch {
+		return null;
+	}
 }
 
 // All getters compute lazily. Module-level constants would freeze the path at

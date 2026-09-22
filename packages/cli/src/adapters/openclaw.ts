@@ -48,7 +48,7 @@ import {
 	resolveOpenClawAgentWorkspace,
 	resolveOpenClawAgentWorkspaceAsync,
 } from "./openclaw-workspace";
-import { getOpenClawHome, isPathWithinRoots, SKIP_DIRS } from "./paths";
+import { getOpenClawHome, isPathWithinRoots, SKIP_DIRS, safeSkillDirectoryPath } from "./paths";
 import {
 	canonicalStructuredString,
 	completeJsonlRecords,
@@ -1267,35 +1267,34 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			if (!existsSync(dir)) continue;
 
 			for (const entry of readdirSync(dir, { withFileTypes: true })) {
-				if (!entry.isDirectory()) continue;
 				if (entry.name.startsWith(".")) continue;
 				if (SKIP_DIRS.has(entry.name)) continue;
-				const dirPath = join(dir, entry.name);
-				if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
-				const skillMd = join(dirPath, "SKILL.md");
-				if (!existsSync(skillMd)) continue;
-
-				const existing = seen.get(entry.name);
-				if (existing) {
-					console.warn(
-						`[openclaw] skipping duplicate skill "${entry.name}" at ${dirPath} ` +
-							`(already collected from ${existing}). Set OPENCLAW_AGENT_ID to project explicitly.`,
-					);
-					continue;
-				}
-
-				const content = readFileSync(skillMd, "utf-8");
-				const fileCount = readdirSync(dirPath, { recursive: true }).length;
-
-				seen.set(entry.name, dirPath);
-				skills.push({
-					skillKey: entry.name,
-					name: entry.name,
-					content,
-					filePath: skillMd,
-					directoryPath: dirPath,
-					isDirectory: fileCount > 1,
-				});
+				const dirPath = safeSkillDirectoryPath(dir, entry);
+				if (!dirPath) continue;
+				try {
+					if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
+					const skillMd = join(dirPath, "SKILL.md");
+					if (!existsSync(skillMd)) continue;
+					const existing = seen.get(entry.name);
+					if (existing) {
+						console.warn(
+							`[openclaw] skipping duplicate skill "${entry.name}" at ${dirPath} ` +
+								`(already collected from ${existing}). Set OPENCLAW_AGENT_ID to project explicitly.`,
+						);
+						continue;
+					}
+					const content = readFileSync(skillMd, "utf-8");
+					const fileCount = readdirSync(dirPath, { recursive: true }).length;
+					seen.set(entry.name, dirPath);
+					skills.push({
+						skillKey: entry.name,
+						name: entry.name,
+						content,
+						filePath: skillMd,
+						directoryPath: dirPath,
+						isDirectory: fileCount > 1,
+					});
+				} catch {}
 			}
 		}
 		return skills;
@@ -1338,13 +1337,15 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		if (!existsSync(root)) return [];
 		const out: string[] = [];
 		for (const entry of readdirSync(root, { withFileTypes: true })) {
-			if (!entry.isDirectory()) continue;
 			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
-			if (shouldIgnoreUserSkill(join(root, entry.name), entry.name)) continue;
-			const skillMd = join(root, entry.name, "SKILL.md");
-			if (!existsSync(skillMd)) continue;
-			out.push(entry.name);
+			const dirPath = safeSkillDirectoryPath(root, entry);
+			if (!dirPath) continue;
+			try {
+				if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
+				if (!existsSync(join(dirPath, "SKILL.md"))) continue;
+				out.push(entry.name);
+			} catch {}
 		}
 		return out;
 	}

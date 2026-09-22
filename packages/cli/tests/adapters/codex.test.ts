@@ -11,7 +11,7 @@ import {
 import { join } from "node:path";
 import { CodexAdapter } from "../../src/adapters/codex";
 import { tarSkillDir } from "../../src/lib/tar";
-import { cleanupTmp, copyFixtureToTmp } from "./helpers";
+import { addSkillDirectorySymlinkCases, cleanupTmp, copyFixtureToTmp } from "./helpers";
 
 let tmpHome: string;
 let origHome: string | undefined;
@@ -377,6 +377,16 @@ describe("CodexAdapter.collectSkills", () => {
 		// dot-prefix rule; `node_modules/` is skipped by SKIP_DIRS. Fixture
 		// includes both negative cases.
 		expect(skills.map((s) => s.skillKey)).toEqual(["demo"]);
+	});
+
+	it("discovers safe top-level directory symlinks and isolates unsafe ones", async () => {
+		const root = join(tmpHome, ".codex", "skills");
+		const linked = addSkillDirectorySymlinkCases(root, join(tmpHome, "outside-codex-skill"));
+		const adapter = new CodexAdapter();
+		const skills = await adapter.skills.collect();
+		expect(skills.map((skill) => skill.skillKey).sort()).toEqual(["demo", "linked"]);
+		expect(skills.find((skill) => skill.skillKey === "linked")?.directoryPath).toBe(linked);
+		expect((await adapter.skills.listKeys()).sort()).toEqual(["demo", "linked"]);
 	});
 });
 

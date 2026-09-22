@@ -383,6 +383,25 @@ describe("tarSkillDir filter", () => {
 		}
 	});
 
+	it("archives a top-level Skill directory symlink under its exposed key", async () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-tar-top-level-symlink-test-"));
+		try {
+			const source = join(root, "sources", "canonical");
+			mkdirSync(source, { recursive: true });
+			writeFileSync(join(source, "SKILL.md"), "# linked skill\n");
+			const exposed = join(root, "linked");
+			symlinkSync(source, exposed, "dir");
+
+			const bytes = await tarSkillDir(exposed);
+			expect(await listEntries(bytes)).toContain("linked/SKILL.md");
+			expect(await computeSkillArchiveHash(bytes, "linked")).toBe(
+				await computeSkillFolderHash(exposed, undefined, "linked"),
+			);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("trusts the agent skills root for nested Hermes keys (sibling-category symlink)", async () => {
 		// Round-39 P2 regression: when archiving a Hermes nested
 		// skill `category/foo`, the trust root must be the

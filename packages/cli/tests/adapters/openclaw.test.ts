@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { type SessionScanBatch, scanSessionModule } from "../../src/adapters/base";
 import { OpenClawAdapter } from "../../src/adapters/openclaw";
 import { tarSkillDir } from "../../src/lib/tar";
-import { cleanupTmp, copyFixtureToTmp } from "./helpers";
+import { addSkillDirectorySymlinkCases, cleanupTmp, copyFixtureToTmp } from "./helpers";
 
 let tmpHome: string;
 let origHome: string | undefined;
@@ -744,6 +744,16 @@ describe("OpenClawAdapter.collectSkills", () => {
 		const skills = await a.skills.collect();
 		// Fixture has demo/ (real) and node_modules/ (SKIP_DIRS sentinel).
 		expect(skills.map((s) => s.skillKey)).toEqual(["demo"]);
+	});
+
+	it("discovers safe top-level directory symlinks and isolates unsafe ones", async () => {
+		const root = join(tmpHome, ".openclaw", "agents", "main", "skills");
+		const linked = addSkillDirectorySymlinkCases(root, join(tmpHome, "outside-openclaw-skill"));
+		const adapter = new OpenClawAdapter();
+		const skills = await adapter.skills.collect();
+		expect(skills.map((skill) => skill.skillKey).sort()).toEqual(["demo", "linked"]);
+		expect(skills.find((skill) => skill.skillKey === "linked")?.directoryPath).toBe(linked);
+		expect((await adapter.skills.listKeys()).sort()).toEqual(["demo", "linked"]);
 	});
 
 	it("does not scan a hidden managed Skill recovery directory", async () => {
