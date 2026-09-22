@@ -37,6 +37,8 @@ export default defineConfig({
 				VITE_CLAWDI_HOSTED: "true",
 				VITE_CLAWDI_DEPLOY_API_URL: deployApiURL,
 				VITE_CLAWDI_LEGACY_DASHBOARD_URL: "https://legacy.example/dashboard",
+				VITE_CHATWOOT_BASE_URL: "https://support.example.com",
+				VITE_CHATWOOT_WEBSITE_TOKEN: "e2e-website-token",
 				VITE_DEV_AUTH_BYPASS: "true",
 				VITE_DEV_AUTH_TOKEN: "dev-bypass",
 				VITE_STRIPE_PUBLISHABLE_KEY: stripePublishableKey,

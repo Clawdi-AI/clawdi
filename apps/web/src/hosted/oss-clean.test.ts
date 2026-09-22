@@ -269,7 +269,6 @@ describe("hosted implementation ownership", () => {
 				"hosted analytics identity",
 				/\b(?:resolveHostedAuthIdentityAction|buildHostedPersonProperties)\b/,
 			],
-			["Mava SDK globals", /\b(?:MavaWebChatToggle|loadMavaWebchat)\b|window\.Mava\b/],
 			[
 				"Wallet return lifecycle",
 				/\b(?:WalletStripeReturnState|coordinateWallet(?:Payment|Setup)Return|walletSetupIdentityIsCanonical)\b/,

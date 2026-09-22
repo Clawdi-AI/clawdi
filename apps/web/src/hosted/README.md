@@ -83,9 +83,8 @@ loading/layout fallbacks, and security policy that must run before telemetry.
 - `posthog.ts` — Hosted-only PostHog init helpers (called from
   `apps/web/instrumentation-client.ts` through a compile-time hosted
   gate (`VITE_CLAWDI_HOSTED === "true"`) plus dynamic import).
-- `mava.ts` and `mava-live-chat-menu-item.tsx` — Hosted-only authenticated-user
-  identity and Live chat bridge for the Mava SDK loaded and configured by the
-  hosted deployment. They never load or configure the SDK.
+- `chatwoot-live-chat-menu-item.tsx` — Hosted Help-menu entry for the shared
+  authenticated Chatwoot Website SDK integration.
 - `agents/hosted-terminal.css` — xterm CSS loaded only with the hosted terminal
   chunk.
 
