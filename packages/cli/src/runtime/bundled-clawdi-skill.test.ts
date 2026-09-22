@@ -10,6 +10,14 @@ const hostedSkill = readFileSync(
 );
 
 describe("bundled Clawdi skill context routing", () => {
+	it("keeps the skill index description concise", () => {
+		for (const skill of [genericSkill, hostedSkill]) {
+			const description = skill.match(/^description: ["']?(.*?)["']?$/m)?.[1];
+			expect(description).toBe("Use for Clawdi credentials, memory, sessions, or connectors.");
+			expect(description?.length).toBeLessThanOrEqual(60);
+		}
+	});
+
 	it("keeps the generic and hosted context policy aligned", () => {
 		expect(section(hostedSkill, "Context Routing")).toBe(section(genericSkill, "Context Routing"));
 	});
@@ -24,7 +32,7 @@ describe("bundled Clawdi skill context routing", () => {
 			expect(memory).toBeGreaterThan(-1);
 			expect(sessions).toBeGreaterThan(memory);
 			expect(routing).not.toMatch(/aggressively|when unsure/i);
-			expect(skill.split("---")[1]).toContain("Gmail");
+			expect(routing).toMatch(/named entity alone does not justify a Cloud lookup/i);
 		}
 	});
 
