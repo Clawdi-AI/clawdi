@@ -1,0 +1,196 @@
+name: Synthetic Smoke
+
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Deployed web URL. Defaults to the SMOKE_BASE_URL secret."
+        required: false
+        type: string
+      api_base_url:
+        description: "Deployed API URL. Defaults to SMOKE_API_BASE_URL, then base_url."
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      base_url:
+        description: "Optional deployed web URL override."
+        required: false
+        type: string
+      api_base_url:
+        description: "Optional deployed API URL override."
+        required: false
+        type: string
+    secrets:
+      SMOKE_BASE_URL:
+        required: false
+      SMOKE_API_BASE_URL:
+        required: false
+      SMOKE_TEST_ACCOUNT_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: synthetic-smoke
+  cancel-in-progress: false
+
+jobs:
+  deployed:
+    name: Deployed API and pages smoke
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          bun-version: "1.4.0"
+
+      - name: Resolve deployed smoke configuration
+        id: config
+        env:
+          INPUT_API_BASE_URL: ${{ inputs.api_base_url }}
+          INPUT_BASE_URL: ${{ inputs.base_url }}
+          SECRET_API_BASE_URL: ${{ secrets.SMOKE_API_BASE_URL }}
+          SECRET_BASE_URL: ${{ secrets.SMOKE_BASE_URL }}
+        run: |
+          base_url="${INPUT_BASE_URL:-$SECRET_BASE_URL}"
+          api_base_url="${INPUT_API_BASE_URL:-$SECRET_API_BASE_URL}"
+          api_base_url="${api_base_url:-$base_url}"
+          if [ -z "$base_url" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "### Deployed smoke skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "SMOKE_BASE_URL is not configured; no deployed target was contacted." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          case "$base_url$api_base_url" in *$'\n'*|*$'\r'*) echo "smoke URLs must be single-line values" >&2; exit 1 ;; esac
+          case "$base_url" in http://*|https://*) ;; *) echo "base_url must use HTTP(S)" >&2; exit 1 ;; esac
+          case "$api_base_url" in http://*|https://*) ;; *) echo "api_base_url must use HTTP(S)" >&2; exit 1 ;; esac
+          {
+            echo "configured=true"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "SMOKE_BASE_URL=$base_url"
+            echo "SMOKE_API_BASE_URL=$api_base_url"
+          } >> "$GITHUB_ENV"
+
+      - name: Run read-only API and page probes
+        if: steps.config.outputs.configured == 'true'
+        env:
+          SMOKE_TEST_ACCOUNT_TOKEN: ${{ secrets.SMOKE_TEST_ACCOUNT_TOKEN }}
+        run: bun run scripts/synthetic-smoke.ts
+
+      - name: Install Chromium for remote pages smoke
+        if: steps.config.outputs.configured == 'true'
+        working-directory: apps/web
+        run: bunx playwright install --with-deps chromium
+
+      - name: Run deployed Playwright pages smoke
+        if: steps.config.outputs.configured == 'true'
+        run: >-
+          bun run --cwd apps/web e2e
+          --config=playwright.remote-smoke.config.ts
+
+  hosted-mock:
+    name: Nightly Hosted mock flows
+    if: github.event_name == 'schedule'
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 35
+    env:
+      VITE_CLERK_PUBLISHABLE_KEY: pk_test_dummy
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          bun-version: "1.4.0"
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          version: "0.12.5"
+          python-version: "3.12"
+
+      - name: Install Hosted mock dependencies
+        run: uv sync --project backend --frozen
+
+      - name: Install Chromium for Hosted flows
+        working-directory: apps/web
+        run: bunx playwright install --with-deps chromium
+
+      - name: Run Hosted flows against the local mock
+        run: bun run --cwd apps/web e2e:hosted
+
+  report-failure:
+    name: Update pinned failure issue
+    needs: [deployed, hosted-mock]
+    if: >-
+      always() &&
+      (needs.deployed.result == 'failure' || needs.hosted-mock.result == 'failure')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Create or update the synthetic smoke failure issue
+        uses: actions/github-script@v9
+        env:
+          DEPLOYED_RESULT: ${{ needs.deployed.result }}
+          HOSTED_MOCK_RESULT: ${{ needs.hosted-mock.result }}
+        with:
+          retries: 3
+          script: |
+            const title = "[Synthetic smoke] deployed checks failing";
+            const label = "synthetic-smoke-failure";
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              "The pinned synthetic smoke check is failing.",
+              "",
+              `- Latest failing run: ${runUrl}`,
+              `- Event: \`${context.eventName}\``,
+              `- Deployed API/pages: \`${process.env.DEPLOYED_RESULT}\``,
+              `- Hosted mock flows: \`${process.env.HOSTED_MOCK_RESULT}\``,
+              "",
+              "This issue is updated in place to avoid duplicate alerts.",
+            ].join("\n");
+
+            try {
+              await github.rest.issues.getLabel({ ...context.repo, name: label });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.issues.createLabel({
+                ...context.repo,
+                name: label,
+                color: "B60205",
+                description: "Automated synthetic smoke failure",
+              });
+            }
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              ...context.repo,
+              state: "open",
+              labels: label,
+              per_page: 100,
+            });
+            const existing = issues.find((issue) => !issue.pull_request && issue.title === title);
+            if (existing) {
+              await github.rest.issues.update({
+                ...context.repo,
+                issue_number: existing.number,
+                body,
+                labels: [label],
+              });
+              core.info(`Updated issue #${existing.number}`);
+              return;
+            }
+            const { data: created } = await github.rest.issues.create({
+              ...context.repo,
+              title,
+              body,
+              labels: [label],
+            });
+            core.info(`Created issue #${created.number}`);

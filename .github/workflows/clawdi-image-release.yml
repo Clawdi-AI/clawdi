@@ -418,3 +418,16 @@ jobs:
           fi
           scripts/deploy-whatsapp-sidecar.sh
           scripts/deploy-backend.sh
+
+  synthetic-smoke:
+    name: post-deploy synthetic smoke
+    needs: [build, deploy-vps]
+    if: needs.build.outputs.release_required == 'true' && needs.deploy-vps.result == 'success'
+    permissions:
+      contents: read
+      issues: write
+    uses: ./.github/workflows/synthetic-smoke.yml
+    secrets:
+      SMOKE_API_BASE_URL: ${{ secrets.SMOKE_API_BASE_URL }}
+      SMOKE_BASE_URL: ${{ secrets.SMOKE_BASE_URL }}
+      SMOKE_TEST_ACCOUNT_TOKEN: ${{ secrets.SMOKE_TEST_ACCOUNT_TOKEN }}
