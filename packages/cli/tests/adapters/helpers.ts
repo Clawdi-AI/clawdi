@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,4 +27,27 @@ export function copyFixtureToTmp(agent: AgentType): string {
 
 export function cleanupTmp(tmp: string) {
 	rmSync(tmp, { recursive: true, force: true });
+}
+
+export function addSkillDirectorySymlinkCases(skillsRoot: string, outsideRoot: string): string {
+	const source = join(skillsRoot, "source", "linked-source");
+	mkdirSync(source, { recursive: true });
+	writeFileSync(join(source, "SKILL.md"), "---\nname: linked\ndescription: Linked skill\n---\n");
+	const linked = join(skillsRoot, "linked");
+	symlinkSync(source, linked, "dir");
+
+	symlinkSync(join(skillsRoot, "missing"), join(skillsRoot, "broken"), "dir");
+	mkdirSync(outsideRoot, { recursive: true });
+	writeFileSync(join(outsideRoot, "SKILL.md"), "# outside\n");
+	symlinkSync(outsideRoot, join(skillsRoot, "escaping"), "dir");
+	writeFileSync(join(skillsRoot, "plain-file"), "not a directory\n");
+	symlinkSync(join(skillsRoot, "plain-file"), join(skillsRoot, "file-link"));
+	symlinkSync(join(skillsRoot, "cycle-b"), join(skillsRoot, "cycle-a"), "dir");
+	symlinkSync(join(skillsRoot, "cycle-a"), join(skillsRoot, "cycle-b"), "dir");
+
+	const skipped = join(skillsRoot, "node_modules", "hidden-skill");
+	mkdirSync(skipped, { recursive: true });
+	writeFileSync(join(skipped, "SKILL.md"), "# skipped\n");
+	symlinkSync(skipped, join(skillsRoot, "skip-bypass"), "dir");
+	return linked;
 }

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
@@ -31,7 +31,7 @@ import type {
 	SessionUserActivity,
 	SyncReadContext,
 } from "./base";
-import { getHermesHome, SKIP_DIRS } from "./paths";
+import { getHermesHome, SKIP_DIRS, safeSkillDirectoryPath } from "./paths";
 import {
 	canonicalStructuredString,
 	jsonObject,
@@ -780,7 +780,7 @@ export class HermesAdapter implements AgentAdapterCore {
 		if (!existsSync(skillsDir())) return [];
 
 		const skills: RawSkill[] = [];
-		this._scanSkillsDir(skillsDir(), skills);
+		this._scanSkillsDir(skillsDir(), skills, new Set());
 		return skills;
 	}
 
@@ -788,32 +788,44 @@ export class HermesAdapter implements AgentAdapterCore {
 	 * Recursively scan for directories containing SKILL.md.
 	 * Hermes skills can be nested: skills/category/skill-name/SKILL.md
 	 */
-	private _scanSkillsDir(dir: string, results: RawSkill[]): void {
-		for (const entry of readdirSync(dir, { withFileTypes: true })) {
-			if (!entry.isDirectory()) continue;
+	private _scanSkillsDir(dir: string, results: RawSkill[], visited: Set<string>): void {
+		let canonicalDir: string;
+		try {
+			canonicalDir = realpathSync(dir);
+		} catch {
+			return;
+		}
+		if (visited.has(canonicalDir)) return;
+		visited.add(canonicalDir);
+		let entries: Dirent[];
+		try {
+			entries = readdirSync(dir, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
 			if (shouldSkipHermesSkillDir(entry.name)) continue;
-			const fullPath = join(dir, entry.name);
-			const skillMd = join(fullPath, "SKILL.md");
-
-			if (existsSync(skillMd)) {
-				const content = readFileSync(skillMd, "utf-8");
-				const skillKey = hermesSkillKeyFromPath(fullPath);
-				if (!skillKey) continue;
-				if (shouldIgnoreUserSkill(fullPath, skillKey)) continue;
-				const fileCount = readdirSync(fullPath, { recursive: true }).length;
-
-				results.push({
-					skillKey,
-					name: entry.name,
-					content,
-					filePath: skillMd,
-					directoryPath: fullPath,
-					isDirectory: fileCount > 1,
-				});
-			} else {
-				// Might be a category directory, recurse
-				this._scanSkillsDir(fullPath, results);
-			}
+			const fullPath = safeSkillDirectoryPath(skillsDir(), entry, dir);
+			if (!fullPath) continue;
+			try {
+				const skillMd = join(fullPath, "SKILL.md");
+				if (existsSync(skillMd)) {
+					const skillKey = hermesSkillKeyFromPath(fullPath);
+					if (!skillKey || shouldIgnoreUserSkill(fullPath, skillKey)) continue;
+					const content = readFileSync(skillMd, "utf-8");
+					const fileCount = readdirSync(fullPath, { recursive: true }).length;
+					results.push({
+						skillKey,
+						name: entry.name,
+						content,
+						filePath: skillMd,
+						directoryPath: fullPath,
+						isDirectory: fileCount > 1,
+					});
+				} else {
+					this._scanSkillsDir(fullPath, results, visited);
+				}
+			} catch {}
 		}
 	}
 
@@ -851,17 +863,34 @@ export class HermesAdapter implements AgentAdapterCore {
 		});
 		if (!existsSync(skillsDir())) return [];
 		const out: string[] = [];
+		const visited = new Set<string>();
 		const walk = (dir: string): void => {
-			for (const entry of readdirSync(dir, { withFileTypes: true })) {
-				if (!entry.isDirectory()) continue;
+			let canonicalDir: string;
+			try {
+				canonicalDir = realpathSync(dir);
+			} catch {
+				return;
+			}
+			if (visited.has(canonicalDir)) return;
+			visited.add(canonicalDir);
+			let entries: Dirent[];
+			try {
+				entries = readdirSync(dir, { withFileTypes: true });
+			} catch {
+				return;
+			}
+			for (const entry of entries) {
 				if (shouldSkipHermesSkillDir(entry.name)) continue;
-				const fullPath = join(dir, entry.name);
-				if (existsSync(join(fullPath, "SKILL.md"))) {
-					const skillKey = hermesSkillKeyFromPath(fullPath);
-					if (skillKey && !shouldIgnoreUserSkill(fullPath, skillKey)) out.push(skillKey);
-				} else {
-					walk(fullPath);
-				}
+				const fullPath = safeSkillDirectoryPath(skillsDir(), entry, dir);
+				if (!fullPath) continue;
+				try {
+					if (existsSync(join(fullPath, "SKILL.md"))) {
+						const skillKey = hermesSkillKeyFromPath(fullPath);
+						if (skillKey && !shouldIgnoreUserSkill(fullPath, skillKey)) out.push(skillKey);
+					} else {
+						walk(fullPath);
+					}
+				} catch {}
 			}
 		};
 		walk(skillsDir());

@@ -23,7 +23,7 @@ import type {
 	SessionScanResult,
 	SyncReadContext,
 } from "./base";
-import { getCodexHome, isPathWithinRoots, SKIP_DIRS } from "./paths";
+import { getCodexHome, isPathWithinRoots, SKIP_DIRS, safeSkillDirectoryPath } from "./paths";
 import {
 	canonicalStructuredString,
 	completeJsonlRecords,
@@ -564,26 +564,26 @@ export class CodexAdapter implements AgentAdapterCore {
 
 		const skills: RawSkill[] = [];
 		for (const entry of readdirSync(skillsDir(), { withFileTypes: true })) {
-			if (!entry.isDirectory()) continue;
 			// Skip dot-dirs (e.g. `.system/` holds Codex's built-in skills, not user-authored ones).
 			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
-			const dirPath = join(skillsDir(), entry.name);
-			if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
-			const skillMd = join(dirPath, "SKILL.md");
-			if (!existsSync(skillMd)) continue;
-
-			const content = readFileSync(skillMd, "utf-8");
-			const fileCount = readdirSync(dirPath, { recursive: true }).length;
-
-			skills.push({
-				skillKey: entry.name,
-				name: entry.name,
-				content,
-				filePath: skillMd,
-				directoryPath: dirPath,
-				isDirectory: fileCount > 1,
-			});
+			const dirPath = safeSkillDirectoryPath(skillsDir(), entry);
+			if (!dirPath) continue;
+			try {
+				if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
+				const skillMd = join(dirPath, "SKILL.md");
+				if (!existsSync(skillMd)) continue;
+				const content = readFileSync(skillMd, "utf-8");
+				const fileCount = readdirSync(dirPath, { recursive: true }).length;
+				skills.push({
+					skillKey: entry.name,
+					name: entry.name,
+					content,
+					filePath: skillMd,
+					directoryPath: dirPath,
+					isDirectory: fileCount > 1,
+				});
+			} catch {}
 		}
 		return skills;
 	}
@@ -605,13 +605,15 @@ export class CodexAdapter implements AgentAdapterCore {
 		if (!existsSync(skillsDir())) return [];
 		const out: string[] = [];
 		for (const entry of readdirSync(skillsDir(), { withFileTypes: true })) {
-			if (!entry.isDirectory()) continue;
 			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
-			if (shouldIgnoreUserSkill(join(skillsDir(), entry.name), entry.name)) continue;
-			const skillMd = join(skillsDir(), entry.name, "SKILL.md");
-			if (!existsSync(skillMd)) continue;
-			out.push(entry.name);
+			const dirPath = safeSkillDirectoryPath(skillsDir(), entry);
+			if (!dirPath) continue;
+			try {
+				if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
+				if (!existsSync(join(dirPath, "SKILL.md"))) continue;
+				out.push(entry.name);
+			} catch {}
 		}
 		return out;
 	}
