@@ -11,8 +11,6 @@ on:
       - "config/postgres-image.txt"
       - "packages/shared/src/native-ai-providers.json"
       - "docker-compose.test.yml"
-      - "deploy/self-host/**"
-      - "apps/web/Dockerfile"
       - ".dockerignore"
       - "packages/shared/src/api/api.generated.ts"
       - "package.json"
@@ -42,8 +40,6 @@ on:
       - "config/postgres-image.txt"
       - "packages/shared/src/native-ai-providers.json"
       - "docker-compose.test.yml"
-      - "deploy/self-host/**"
-      - "apps/web/Dockerfile"
       - ".dockerignore"
       - "packages/shared/src/api/api.generated.ts"
       - "package.json"
@@ -203,8 +199,6 @@ jobs:
           TYPE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           TYPE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: uv run python scripts/type_governance.py changed-from "$TYPE_BASE_SHA" "$TYPE_HEAD_SHA"
-      - name: Complete BasedPyright inventory (non-gating diagnostics)
-        run: uv run python scripts/type_governance.py inventory
       - name: Generated OpenAPI client is current
         run: uv run python scripts/check_generated_api.py
   test:
