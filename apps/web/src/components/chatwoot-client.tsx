@@ -4,7 +4,12 @@ import * as Sentry from "@sentry/tanstackstart-react";
 import { useLocation } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useCurrentUser } from "@/lib/auth-client";
-import { CHATWOOT_SETTINGS, resolveChatwootIdentity, shouldHideChatwoot } from "@/lib/chatwoot";
+import {
+	CHATWOOT_SETTINGS,
+	resolveChatwootIdentity,
+	shouldHideChatwoot,
+	useChatwootOptIn,
+} from "@/lib/chatwoot";
 import { getChatwootIdentifierHash } from "@/lib/chatwoot.functions";
 import { env } from "@/lib/env";
 
@@ -14,6 +19,7 @@ const WEBSITE_TOKEN = env.VITE_CHATWOOT_WEBSITE_TOKEN ?? "";
 
 export function ChatwootClient() {
 	const { isLoaded, isSignedIn, user } = useCurrentUser();
+	const optedIn = useChatwootOptIn();
 	const pathname = useLocation({ select: (location) => location.pathname });
 	const hidden = shouldHideChatwoot(pathname);
 	const userId = user?.id;
@@ -32,12 +38,12 @@ export function ChatwootClient() {
 	);
 	const [ready, setReady] = useState(false);
 	const [identifiedUserId, setIdentifiedUserId] = useState<string | null>(null);
-	// Dev auth bypass has no Clerk session for the server-side identity hash.
-	const signedIn = identity !== null && !env.VITE_DEV_AUTH_BYPASS;
+	// Hidden rollout gate; dev auth bypass has no Clerk session for the identity hash.
+	const enabled = optedIn && identity !== null && !env.VITE_DEV_AUTH_BYPASS;
 
 	// Chatwoot's install snippet, loaded only once a user has signed in.
 	useEffect(() => {
-		if (!signedIn || !BASE_URL || !WEBSITE_TOKEN || document.getElementById(SCRIPT_ID)) return;
+		if (!enabled || !BASE_URL || !WEBSITE_TOKEN || document.getElementById(SCRIPT_ID)) return;
 		window.chatwootSettings = CHATWOOT_SETTINGS;
 		const script = document.createElement("script");
 		script.id = SCRIPT_ID;
@@ -48,7 +54,7 @@ export function ChatwootClient() {
 			window.chatwootSDK?.run({ websiteToken: WEBSITE_TOKEN, baseUrl: BASE_URL });
 		};
 		document.body.appendChild(script);
-	}, [signedIn]);
+	}, [enabled]);
 
 	useEffect(() => {
 		const markReady = () => setReady(true);
@@ -59,7 +65,7 @@ export function ChatwootClient() {
 
 	// Identity validation: the identifier hash is computed server-side for the Clerk user.
 	useEffect(() => {
-		if (!ready || !signedIn || !identity) return;
+		if (!ready || !enabled || !identity) return;
 		let active = true;
 		getChatwootIdentifierHash()
 			.then((result) => {
@@ -75,9 +81,10 @@ export function ChatwootClient() {
 		return () => {
 			active = false;
 		};
-	}, [identity, ready, signedIn]);
+	}, [enabled, identity, ready]);
 
-	const showBubble = ready && identity !== null && identifiedUserId === identity.id && !hidden;
+	const showBubble =
+		ready && enabled && identity !== null && identifiedUserId === identity.id && !hidden;
 	useEffect(() => {
 		const chatwoot = window.$chatwoot;
 		if (!ready || !chatwoot) return;
