@@ -11,7 +11,7 @@ export interface RuntimeProgramRevisionInput {
 		mcp: unknown;
 		provider: string | null;
 	};
-	desiredRuntime: RuntimeManifest["runtimes"][string] | undefined;
+	desiredRuntime: object | undefined;
 	secretValues: Record<string, string>;
 }
 

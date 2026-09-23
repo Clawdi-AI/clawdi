@@ -12,6 +12,14 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.91
+
+- Cloud Agents apply a new default model, AI Provider model list, or AI Provider
+  endpoint without restarting, so conversations in progress keep running.
+- OpenClaw Cloud Agents also apply Channel, MCP server, and time zone changes
+  in place. Hermes still restarts for those changes because it loads them at
+  startup.
+
 ### CLI 0.14.81
 
 - Vault request pages support added fields and pasted or uploaded `.env` imports,
