@@ -97,13 +97,13 @@ function env(overrides: Partial<Env> = {}): Env {
 
 function deploymentFailure(reason: string): NonNullable<HostedDeploymentStatus["failure"]> {
 	return {
-		type: "https://api.clawdi.ai/problems/runtime-readiness-timeout",
+		type: "https://api.clawdi.ai/problems/deployments/runtime_unreachable",
 		title: reason,
-		status: 504,
-		detail: "The runtime did not report ready before the startup deadline.",
+		status: 503,
+		detail: "Fresh healthy runtime evidence was not re-established.",
 		instance: "dep_123",
-		code: "runtime_readiness_timeout",
-		conditionReason: "RuntimeReadinessTimeout",
+		code: "runtime_unreachable",
+		conditionReason: "RuntimeUnreachable",
 		conditionMessage: reason,
 		observedGeneration: 1,
 	};

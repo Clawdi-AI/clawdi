@@ -73,6 +73,18 @@ describe("DeploymentStatus", () => {
 		expect(deploymentTerminalIsAvailable(deployment)).toBe(true);
 		const status = deployment.resource.status;
 		if (!status?.failure) throw new Error("expected deployment failure");
+		expect(
+			deploymentTerminalIsAvailable({
+				...deployment,
+				resource: {
+					...deployment.resource,
+					status: {
+						...status,
+						failure: { ...status.failure, code: "runtime_configuration_failed" },
+					},
+				},
+			}),
+		).toBe(true);
 		for (const changed of [
 			{ driver_applied_generation: 0 },
 			{ observedGeneration: 0 },
