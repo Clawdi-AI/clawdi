@@ -1,31 +1,21 @@
 "use client";
 
+import * as Sentry from "@sentry/tanstackstart-react";
 import { useLocation } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useCurrentUser } from "@/lib/auth-client";
-import {
-	browserChatwootSessionStore,
-	createChatwootSessionController,
-	getChatwootIdentityGeneration,
-	hasChatwootIdentityFailure,
-	markChatwootIdentityFailure,
-	resolveChatwootIdentity,
-	type SignedChatwootIdentity,
-	setChatwootBubbleVisibility,
-	shouldHideChatwoot,
-	startChatwoot,
-	watchChatwootIdentityStorage,
-} from "@/lib/chatwoot";
+import { CHATWOOT_SETTINGS, resolveChatwootIdentity, shouldHideChatwoot } from "@/lib/chatwoot";
 import { getChatwootIdentifierHash } from "@/lib/chatwoot.functions";
 import { env } from "@/lib/env";
 
-const SCRIPT_ID = "clawdi-chatwoot-sdk";
+const SCRIPT_ID = "chatwoot-sdk";
+const BASE_URL = env.VITE_CHATWOOT_BASE_URL?.replace(/\/+$/, "") ?? "";
+const WEBSITE_TOKEN = env.VITE_CHATWOOT_WEBSITE_TOKEN ?? "";
 
 export function ChatwootClient() {
 	const { isLoaded, isSignedIn, user } = useCurrentUser();
 	const pathname = useLocation({ select: (location) => location.pathname });
 	const hidden = shouldHideChatwoot(pathname);
-	const websiteToken = env.VITE_CHATWOOT_WEBSITE_TOKEN ?? "";
 	const userId = user?.id;
 	const userName = user?.fullName ?? null;
 	const userEmail = user?.primaryEmailAddress?.emailAddress;
@@ -40,120 +30,60 @@ export function ChatwootClient() {
 				: null,
 		[isLoaded, isSignedIn, userEmail, userId, userName],
 	);
-	const currentUserId = identity?.id ?? null;
-	const [loadSdk, setLoadSdk] = useState(false);
-	const [identityFailed, setIdentityFailed] = useState(
-		() =>
-			typeof window !== "undefined" &&
-			Boolean(websiteToken) &&
-			hasChatwootIdentityFailure(websiteToken, window.sessionStorage),
-	);
-	const [signedIdentity, setSignedIdentity] = useState<SignedChatwootIdentity | null>(null);
-	const signedIdentityRef = useRef<SignedChatwootIdentity | null>(null);
-	const authLoadedRef = useRef(isLoaded);
-	const currentUserIdRef = useRef(currentUserId);
-	const hiddenRef = useRef(hidden);
-	const sdkStartedRef = useRef(false);
-	authLoadedRef.current = isLoaded;
-	currentUserIdRef.current = currentUserId;
-	hiddenRef.current = hidden;
+	const [ready, setReady] = useState(false);
+	const [identifiedUserId, setIdentifiedUserId] = useState<string | null>(null);
+	// Dev auth bypass has no Clerk session for the server-side identity hash.
+	const signedIn = identity !== null && !env.VITE_DEV_AUTH_BYPASS;
 
-	const controller = useMemo(
-		() =>
-			createChatwootSessionController({
-				websiteToken,
-				readApi: () => window.$chatwoot,
-				store: browserChatwootSessionStore,
-				reload: () => window.location.reload(),
-			}),
-		[websiteToken],
-	);
-
-	const syncReadyIdentity = useCallback(() => {
-		if (!authLoadedRef.current) return;
-		controller.sync(signedIdentityRef.current, currentUserIdRef.current, hiddenRef.current);
-	}, [controller]);
+	// Chatwoot's install snippet, loaded only once a user has signed in.
+	useEffect(() => {
+		if (!signedIn || !BASE_URL || !WEBSITE_TOKEN || document.getElementById(SCRIPT_ID)) return;
+		window.chatwootSettings = CHATWOOT_SETTINGS;
+		const script = document.createElement("script");
+		script.id = SCRIPT_ID;
+		script.src = `${BASE_URL}/packs/js/sdk.js`;
+		script.async = true;
+		script.nonce = document.querySelector<HTMLMetaElement>('meta[name="csp-nonce"]')?.content ?? "";
+		script.onload = () => {
+			window.chatwootSDK?.run({ websiteToken: WEBSITE_TOKEN, baseUrl: BASE_URL });
+		};
+		document.body.appendChild(script);
+	}, [signedIn]);
 
 	useEffect(() => {
-		const handleIdentityError = () => {
-			if (websiteToken) markChatwootIdentityFailure(websiteToken, window.sessionStorage);
-			setIdentityFailed(true);
-			controller.failClosed();
-		};
-		const unwatchIdentityStorage = watchChatwootIdentityStorage(
-			window,
-			websiteToken,
-			syncReadyIdentity,
-		);
-		window.addEventListener("chatwoot:ready", syncReadyIdentity);
-		window.addEventListener("chatwoot:error", handleIdentityError);
-		if (window.$chatwoot?.hasLoaded) syncReadyIdentity();
-		return () => {
-			unwatchIdentityStorage();
-			window.removeEventListener("chatwoot:ready", syncReadyIdentity);
-			window.removeEventListener("chatwoot:error", handleIdentityError);
-		};
-	}, [controller, syncReadyIdentity, websiteToken]);
+		const markReady = () => setReady(true);
+		if (window.$chatwoot?.hasLoaded) markReady();
+		window.addEventListener("chatwoot:ready", markReady);
+		return () => window.removeEventListener("chatwoot:ready", markReady);
+	}, []);
 
+	// Identity validation: the identifier hash is computed server-side for the Clerk user.
 	useEffect(() => {
+		if (!ready || !signedIn || !identity) return;
 		let active = true;
-		signedIdentityRef.current = null;
-		setSignedIdentity(null);
-		if (!isLoaded || env.VITE_DEV_AUTH_BYPASS) return;
-
-		if (controller.needsSdk(currentUserId)) {
-			setLoadSdk(true);
-			if (window.$chatwoot?.hasLoaded) controller.sync(null, currentUserId, hiddenRef.current);
-			return;
-		}
-		if (!identity) return;
-		const identityGeneration = getChatwootIdentityGeneration();
-
-		void getChatwootIdentifierHash()
+		getChatwootIdentifierHash()
 			.then((result) => {
-				const identifierHash = result?.identifierHash.trim();
-				if (!active || !identifierHash || getChatwootIdentityGeneration() !== identityGeneration)
-					return;
-				const nextIdentity = { ...identity, identifierHash };
-				signedIdentityRef.current = nextIdentity;
-				setSignedIdentity(nextIdentity);
-				setLoadSdk(true);
+				if (!active || !result) return;
+				window.$chatwoot?.setUser(identity.id, {
+					name: identity.name,
+					email: identity.email,
+					identifier_hash: result.identifierHash,
+				});
+				setIdentifiedUserId(identity.id);
 			})
-			.catch(() => {});
-
+			.catch((error: unknown) => Sentry.captureException(error));
 		return () => {
 			active = false;
 		};
-	}, [controller, currentUserId, identity, isLoaded]);
+	}, [identity, ready, signedIn]);
 
+	const showBubble = ready && identity !== null && identifiedUserId === identity.id && !hidden;
 	useEffect(() => {
-		if (!signedIdentity) return;
-		const result = controller.sync(signedIdentity, signedIdentity.id, hidden);
-		if (result === "identified") {
-			setChatwootBubbleVisibility(window.$chatwoot, hidden);
-		}
-	}, [controller, hidden, signedIdentity]);
+		const chatwoot = window.$chatwoot;
+		if (!ready || !chatwoot) return;
+		if (!showBubble) chatwoot.toggle("close");
+		chatwoot.toggleBubbleVisibility(showBubble ? "show" : "hide");
+	}, [ready, showBubble]);
 
-	const startSdk = useCallback(() => {
-		if (sdkStartedRef.current) return;
-		sdkStartedRef.current = startChatwoot(window, {
-			baseUrl: env.VITE_CHATWOOT_BASE_URL ?? "",
-			websiteToken,
-		});
-	}, [websiteToken]);
-
-	if (!loadSdk || identityFailed) return null;
-	const baseUrl = env.VITE_CHATWOOT_BASE_URL?.replace(/\/+$/, "");
-	if (!baseUrl) return null;
-
-	return (
-		<script
-			id={SCRIPT_ID}
-			src={`${baseUrl}/packs/js/sdk.js`}
-			async
-			defer
-			nonce={document.querySelector<HTMLMetaElement>('meta[name="csp-nonce"]')?.content}
-			onLoad={startSdk}
-		/>
-	);
+	return null;
 }

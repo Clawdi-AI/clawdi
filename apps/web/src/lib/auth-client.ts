@@ -3,16 +3,11 @@
 import { useAuth, useClerk, useSession, useUser } from "@clerk/tanstack-react-start";
 import { useCallback } from "react";
 import { ApiError } from "@/lib/api-errors";
-import { resetChatwootBeforeSignOut } from "@/lib/chatwoot";
+import { resetChatwoot } from "@/lib/chatwoot";
 import { env } from "@/lib/env";
 import { resolveRouteAuth } from "@/lib/route-auth";
 
 const DEV_AUTH_BEARER = env.VITE_DEV_AUTH_TOKEN;
-
-function resetChatwootSessionBeforeSignOut() {
-	if (typeof window === "undefined") return;
-	resetChatwootBeforeSignOut(window, env.VITE_CHATWOOT_WEBSITE_TOKEN);
-}
 
 // Stable identity for the dev-bypass branch: returning a fresh object (and
 // fresh `getToken`) each render would churn every `useMemo`/`useQuery` that
@@ -92,7 +87,7 @@ export function useAuthActions() {
 	if (env.VITE_DEV_AUTH_BYPASS) {
 		return {
 			signOut: async ({ redirectUrl }: { redirectUrl?: string } = {}) => {
-				resetChatwootSessionBeforeSignOut();
+				resetChatwoot();
 				if (typeof window !== "undefined" && redirectUrl) {
 					window.location.href = redirectUrl;
 				}
@@ -104,7 +99,7 @@ export function useAuthActions() {
 	if (desktopBridge) {
 		return {
 			signOut: async () => {
-				resetChatwootSessionBeforeSignOut();
+				resetChatwoot();
 				await desktopBridge.signOut();
 			},
 		};
@@ -112,7 +107,7 @@ export function useAuthActions() {
 	return {
 		...clerk,
 		signOut: async ({ redirectUrl }: { redirectUrl?: string } = {}) => {
-			resetChatwootSessionBeforeSignOut();
+			resetChatwoot();
 			await clerk.signOut({ redirectUrl });
 		},
 	};
