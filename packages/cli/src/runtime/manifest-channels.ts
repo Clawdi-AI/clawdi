@@ -553,7 +553,11 @@ function openClawExternalChannelPluginSpecs(
 	if (!version) {
 		throw new Error("OpenClaw runtime version could not be determined for the WhatsApp plugin");
 	}
-	return [`clawhub:${OPENCLAW_WHATSAPP_PLUGIN_PACKAGE}@${version}`];
+	// OpenClaw's official catalog installs from npm by default; ClawHub can lag a release.
+	return [
+		`${OPENCLAW_WHATSAPP_PLUGIN_PACKAGE}@${version}`,
+		`clawhub:${OPENCLAW_WHATSAPP_PLUGIN_PACKAGE}@${version}`,
+	];
 }
 function runPluginInstallWithFallback(
 	commandPath: string,
@@ -647,13 +651,13 @@ function openClawPluginInstallMatchesSpec(
 	spec: string,
 	pluginVersion?: string,
 ): boolean {
-	const clawHubSpec = /^clawhub:(.+)@([^@]+)$/.exec(spec);
-	if (clawHubSpec) {
-		const [, expectedPackage, expectedVersion] = clawHubSpec;
+	const exactSpec = EXACT_PLUGIN_SPEC_RE.exec(spec);
+	if (exactSpec) {
+		const [, clawHubPrefix, expectedPackage, expectedVersion] = exactSpec;
+		const installedPackage = clawHubPrefix ? install.clawhubPackage : install.resolvedName;
 		if (
-			install.source !== "clawhub" ||
-			install.clawhubPackage !== expectedPackage ||
-			!expectedVersion
+			install.source !== (clawHubPrefix ? "clawhub" : "npm") ||
+			installedPackage !== expectedPackage
 		) {
 			return false;
 		}
@@ -674,6 +678,8 @@ function openClawPluginInstallMatchesSpec(
 const OPENCLAW_RUNTIME_VERSION_RE =
 	/(?:^|[^\d])(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)(?:$|[^\dA-Za-z-])/;
 const OPENCLAW_WHATSAPP_PLUGIN_PACKAGE = "@openclaw/whatsapp";
+// `[clawhub:]<package>@<version>` pins one official artifact version.
+const EXACT_PLUGIN_SPEC_RE = /^(clawhub:)?((?:@[^/@:]+\/)?[^/@:]+)@([^@]+)$/;
 
 export function normalizeOpenClawRuntimeVersion(output: string): string | null {
 	const version = OPENCLAW_RUNTIME_VERSION_RE.exec(output)?.[1];
