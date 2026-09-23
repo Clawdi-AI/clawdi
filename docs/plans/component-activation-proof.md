@@ -88,16 +88,3 @@ production build and 9 SSR checks. CLI typecheck and Biome passed. The paired
 Hosted reader/admission milestone is `1c5ede6da`; its 134 boundary tests and 13
 PostgreSQL route tests passed. These results do not replace owner runtime/CLI
 release qualification or Fable's independent final review.
-
-
-## Verification
-
-```bash
-bash scripts/test.sh cli src/runtime/manifest-reconciliation.test.ts --test-name-pattern 'component proof requires'
-bash scripts/test.sh runtime-systemd
-bash scripts/test.sh web src/hosted/agents/runtime-readiness.test.ts
-```
-
-The focused suite verifies the committed component receipt, exact native OIDC
-readiness, invocation stability, and frontend admission. No Hermes password
-fixture or password login path is part of the current contract.
