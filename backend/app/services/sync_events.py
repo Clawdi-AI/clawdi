@@ -808,15 +808,6 @@ def _on_sync_subscriptions_changed(_pid: int, _channel: str, payload: str) -> No
     sync_subscriptions_changed.signal(payload)
 
 
-async def get_skills_revision(db: AsyncSession, user_id: UUID) -> int:
-    """Read current revision — used by `GET /v1/skills` to fill the
-    `ETag` response header and check `If-None-Match`."""
-    result = (
-        await db.execute(select(User.skills_revision).where(User.id == user_id))
-    ).scalar_one_or_none()
-    return result or 0
-
-
 def queue_runtime_vaults_changed(db: AsyncSession, user_id: UUID, environment_id: UUID) -> None:
     """Commit-scoped hint; deliberately does not render native manifests."""
     _queue_for_commit(

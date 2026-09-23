@@ -7,7 +7,7 @@ import re
 import tarfile
 import unicodedata
 from copy import copy
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import TypeGuard
 
 MAX_FILES = 5000
@@ -164,22 +164,6 @@ def extract_skill_md(data: bytes, skill_key: str | None = None) -> str | None:
     except (OSError, UnicodeDecodeError, tarfile.TarError):
         return None
     return None
-
-
-def tar_from_dir(dir_path: Path) -> tuple[bytes, int]:
-    """Create a tar.gz from a directory. Returns (tar_bytes, file_count)."""
-    buf = io.BytesIO()
-    file_count = 0
-
-    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
-        for file_path in sorted(dir_path.rglob("*")):
-            if not file_path.is_file():
-                continue
-            rel = file_path.relative_to(dir_path.parent)
-            tf.add(file_path, arcname=str(rel))
-            file_count += 1
-
-    return buf.getvalue(), file_count
 
 
 def tar_from_content(skill_key: str, content: str) -> tuple[bytes, int]:
