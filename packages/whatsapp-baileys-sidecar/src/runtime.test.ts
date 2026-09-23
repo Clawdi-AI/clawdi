@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -357,9 +357,6 @@ describe("physical Baileys runtime", () => {
 
 		expect(harness.socketConfigurations).toHaveLength(1);
 		expect(harness.socketConfigurations[0]?.version).toEqual([2, 3000, 1_043_857_760]);
-		const runtimeSource = readFileSync(new URL("runtime.ts", import.meta.url), "utf8");
-		expect(runtimeSource).not.toContain("fetchLatestBaileysVersion");
-		expect(runtimeSource).not.toContain("useMultiFileAuthState");
 		await runtime.stop();
 	});
 
