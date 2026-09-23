@@ -59,14 +59,6 @@ export type AvailableAppsQueryArgs = {
 	search?: string;
 };
 
-export function availableAppsQueryKey({ page, pageSize, search }: AvailableAppsQueryArgs) {
-	return [
-		"get",
-		"/v1/connectors/available",
-		{ params: { query: { page, page_size: pageSize, ...(search ? { search } : {}) } } },
-	] as const;
-}
-
 export function availableAppsQueryOptions(api: OpenApiClient, args: AvailableAppsQueryArgs) {
 	const { page, pageSize, search } = args;
 	return api.queryOptions(
@@ -80,14 +72,6 @@ export function availableAppsQueryOptions(api: OpenApiClient, args: AvailableApp
 			gcTime: CONNECTOR_CATALOG_GC_TIME_MS,
 		},
 	);
-}
-
-export function availableAppQueryKey(appName: string) {
-	return [
-		"get",
-		"/v1/connectors/available/{app_name}",
-		{ params: { path: { app_name: appName } } },
-	] as const;
 }
 
 export function availableAppQueryOptions(api: OpenApiClient, appName: string) {
@@ -114,14 +98,6 @@ export function connectionsQueryOptions(api: OpenApiClient) {
 			select: (connections) => connections.filter(isActiveConnection),
 		},
 	);
-}
-
-export function connectorToolsQueryKey(appName: string) {
-	return [
-		"get",
-		"/v1/connectors/{app_name}/tools",
-		{ params: { path: { app_name: appName } } },
-	] as const;
 }
 
 export function connectorToolsQueryOptions(api: OpenApiClient, appName: string) {

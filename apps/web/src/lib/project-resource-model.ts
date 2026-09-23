@@ -163,10 +163,6 @@ export const PROJECT_RESOURCE_GROUPS = [
 	resourceIds: readonly ProjectResourceId[];
 }[];
 
-export const PROJECT_RESOURCE_NAV_IDS = PROJECT_RESOURCE_GROUPS.flatMap((group) =>
-	group.resourceIds.map((id) => id),
-);
-
 const PROJECT_MANAGED_RESOURCE_IDS = PROJECT_RESOURCE_DEFINITIONS.filter(
 	(resource) => resource.projectScope === "project-managed",
 ).map((resource) => resource.id);
@@ -175,13 +171,6 @@ export function getProjectResourceDefinition(id: ProjectResourceId): ProjectReso
 	const definition = PROJECT_RESOURCE_DEFINITIONS.find((resource) => resource.id === id);
 	if (!definition) throw new Error(`Unknown project resource: ${id}`);
 	return definition;
-}
-
-export function projectResourceDefinitionsForGroup(
-	group: ProjectResourceGroup,
-): ProjectResourceDefinition[] {
-	const ids = PROJECT_RESOURCE_GROUPS.find((item) => item.id === group)?.resourceIds ?? [];
-	return ids.map((id) => getProjectResourceDefinition(id));
 }
 
 export function projectManagedResourceDefinitions(): ProjectResourceDefinition[] {

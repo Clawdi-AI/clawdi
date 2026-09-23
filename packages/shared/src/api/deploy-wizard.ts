@@ -29,8 +29,6 @@ export type HostedDeployRequestStatus = Schemas["V2HostedDeployRequestReadRespon
 export type HostedDeployWallet = Schemas["V2WalletResponse"];
 export type HostedWalletBinding = Schemas["V2WalletBindingResponse"];
 
-export const HOSTED_DEPLOY_RUNTIMES = ["openclaw", "hermes"] as const;
-export const HOSTED_DEPLOY_COMPUTE_PLANS = ["compute_basic", "compute_performance"] as const;
 export const HOSTED_DEPLOY_BILLING_TERMS = [1, 12] as const;
 export const HOSTED_DEPLOY_FUNDING_SOURCES = ["stripe", "wallet"] as const;
 
