@@ -12,7 +12,6 @@ import {
 import { join, resolve } from "node:path";
 import type { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { isValidSemver } from "../lib/semver";
 import {
 	getHermesRawConfigValue,
 	type HermesConfigTransaction,
@@ -28,7 +27,6 @@ import type { RuntimeManifest } from "./manifest-contract";
 import {
 	type RuntimeInstallObservation,
 	runtimeCommandCurrentRevision,
-	runtimeCommandVersion,
 	runtimeFileCurrentRevision,
 } from "./manifest-install";
 import { isPlainRecord, recordValue } from "./manifest-shared";
@@ -57,12 +55,16 @@ export function materializeHostedChannelCredentials(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
 	home: string,
+	withdrawnOpenClawChannels: ReadonlySet<string> = new Set(),
 ): void {
 	if (!hostedChannelCredentialsDeclared(manifest)) {
 		removeStaleManagedWhatsAppAuthDirs(home, new Set<string>());
 		return;
 	}
-	const credentials = hostedWhatsAppAuthCredentials(manifest);
+	// A withdrawn managed WhatsApp channel keeps no auth state; the secret remains authoritative.
+	const credentials = hostedWhatsAppAuthCredentials(manifest).filter(
+		(credential) => credential.target !== "openclaw" || !withdrawnOpenClawChannels.has("whatsapp"),
+	);
 	const normalizedSecrets = normalizeSecretValues(secretValues);
 	const expectedAuthDirs = new Set<string>();
 	const errors: string[] = [];
@@ -417,6 +419,7 @@ export function applyHostedChannelProjection(
 	hermesWhatsAppAuthDir: string | null,
 	hermesConfig: HermesConfigTransaction | null,
 	previousManifest: RuntimeManifest | null = null,
+	withdrawnOpenClawChannels: ReadonlySet<string> = new Set(),
 ): boolean {
 	if (name !== "openclaw" && name !== "hermes") return false;
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
@@ -454,8 +457,13 @@ export function applyHostedChannelProjection(
 		}
 		return applyHermesChannelConfig(hermesConfig, patch);
 	}
+	// Omitting a withdrawn channel from the desired patch removes only the accounts the
+	// committed projection owned; unrelated native accounts and plugin entries remain.
+	const projectedChannels = Object.fromEntries(
+		Object.entries(channels).filter(([channel]) => !withdrawnOpenClawChannels.has(channel)),
+	);
 	applyOpenClawHostedChannelPatch(
-		openClawManagedChannelsPatch(channels),
+		openClawManagedChannelsPatch(projectedChannels),
 		previousManifest ? hostedChannelProjection(previousManifest) : null,
 		Object.keys(manifest.runtimes.openclaw?.run?.secretEnv ?? {}),
 		openClawContext,
@@ -463,20 +471,28 @@ export function applyHostedChannelProjection(
 	);
 	return true;
 }
+export interface ChannelPluginInstallResult {
+	/** Verified OpenClaw install path of each projected external channel plugin. */
+	installPaths: Record<string, string>;
+	/** Error for each channel whose plugin could not be installed or verified. */
+	failures: Record<string, string>;
+}
+
 export function installHostedChannelProjectionDependencies(
 	name: string,
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
 	home: string,
 	workspaceRoot: string,
-): void {
-	if (name !== "openclaw") return;
+): ChannelPluginInstallResult {
+	const none = { installPaths: {}, failures: {} };
+	if (name !== "openclaw") return none;
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
-		return;
+		return none;
 	}
 	const channels = hostedChannelProjection(manifest);
-	if (!channels) return;
-	installOpenClawChannelPlugins({
+	if (!channels) return none;
+	return installOpenClawChannelPlugins({
 		commandPath: observation.commandPath,
 		channels,
 		home,
@@ -523,37 +539,35 @@ function installOpenClawChannelPlugins(input: {
 	channels: Record<string, unknown>;
 	home: string;
 	workspaceRoot: string;
-}): void {
+}): ChannelPluginInstallResult {
+	const result: ChannelPluginInstallResult = { installPaths: {}, failures: {} };
 	for (const channel of Object.keys(input.channels).sort()) {
-		const specs = openClawExternalChannelPluginSpecs(channel, input);
+		const specs = OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS[channel];
 		if (!specs) continue;
-		const isCurrent = () =>
-			channelPluginIsCurrent({
+		const currentInstall = () =>
+			currentChannelPluginInstall({
 				channel,
 				specs,
 				commandPath: input.commandPath,
 				home: input.home,
 				workspaceRoot: input.workspaceRoot,
 			});
-		if (isCurrent()) continue;
-		runPluginInstallWithFallback(input.commandPath, specs, input.home, input.workspaceRoot);
-		if (!isCurrent()) {
-			throw new Error(`OpenClaw ${channel} channel plugin install could not be verified`);
+		// One channel's plugin must not block the other channels or the runtime.
+		try {
+			let install = currentInstall();
+			if (!install) {
+				runPluginInstallWithFallback(input.commandPath, specs, input.home, input.workspaceRoot);
+				install = currentInstall();
+			}
+			if (!install) {
+				throw new Error(`OpenClaw ${channel} channel plugin install could not be verified`);
+			}
+			if (install.installPath) result.installPaths[channel] = install.installPath;
+		} catch (error) {
+			result.failures[channel] = error instanceof Error ? error.message : String(error);
 		}
 	}
-}
-function openClawExternalChannelPluginSpecs(
-	channel: string,
-	input: { commandPath: string; home: string; workspaceRoot: string },
-): readonly string[] | null {
-	if (channel !== "whatsapp") return OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS[channel] ?? null;
-	const version = normalizeOpenClawRuntimeVersion(
-		runtimeCommandVersion(input.commandPath, input.home, input.workspaceRoot) ?? "",
-	);
-	if (!version) {
-		throw new Error("OpenClaw runtime version could not be determined for the WhatsApp plugin");
-	}
-	return [`clawhub:${OPENCLAW_WHATSAPP_PLUGIN_PACKAGE}@${version}`];
+	return result;
 }
 function runPluginInstallWithFallback(
 	commandPath: string,
@@ -596,91 +610,62 @@ function channelPluginEntries(
 	}
 	return entries;
 }
-function channelPluginIsCurrent(input: {
+function currentChannelPluginInstall(input: {
 	channel: string;
 	specs: readonly string[];
 	commandPath: string;
 	home: string;
 	workspaceRoot: string;
-}): boolean {
+}): { installPath?: string } | null {
 	const commandRevision = runtimeCommandCurrentRevision(
 		input.commandPath,
 		input.home,
 		input.workspaceRoot,
 	);
-	if (!commandRevision) return false;
+	if (!commandRevision) return null;
 	const inspect = spawnRuntimeUserCommand(
 		input.commandPath,
 		["plugins", "inspect", input.channel, "--json"],
 		input.home,
 		input.workspaceRoot,
 	);
-	if (inspect.status !== 0) return false;
+	if (inspect.status !== 0) return null;
 	try {
 		const stdout = Buffer.isBuffer(inspect.stdout)
 			? inspect.stdout.toString("utf8")
 			: inspect.stdout;
 		const parsed = openClawPluginInspectSchema.safeParse(JSON.parse(stdout) as unknown);
-		if (!parsed.success) return false;
+		if (!parsed.success) return null;
 		const { plugin, install } = parsed.data;
 		const version = plugin.version ?? install.resolvedVersion ?? install.version;
 		const sourceRevision = runtimeFileCurrentRevision(plugin.source);
 		if (
 			plugin.id !== input.channel ||
-			!input.specs.some((spec) =>
-				openClawPluginInstallMatchesSpec(install, spec, plugin.version),
-			) ||
+			!input.specs.some((spec) => openClawPluginInstallMatchesSpec(install, spec)) ||
 			plugin.status !== "loaded" ||
 			!plugin.enabled ||
 			!version ||
 			!sourceRevision
 		) {
-			return false;
+			return null;
 		}
-		return true;
+		return install.installPath ? { installPath: install.installPath } : {};
 	} catch {
-		return false;
+		return null;
 	}
 }
 function openClawPluginInstallMatchesSpec(
 	install: z.infer<typeof openClawPluginInspectSchema>["install"],
 	spec: string,
-	pluginVersion?: string,
 ): boolean {
-	const clawHubSpec = /^clawhub:(.+)@([^@]+)$/.exec(spec);
-	if (clawHubSpec) {
-		const [, expectedPackage, expectedVersion] = clawHubSpec;
-		if (
-			install.source !== "clawhub" ||
-			install.clawhubPackage !== expectedPackage ||
-			!expectedVersion
-		) {
-			return false;
-		}
-		const installedVersions = [pluginVersion, install.resolvedVersion, install.version].filter(
-			(value): value is string => Boolean(value),
-		);
-		return (
-			installedVersions.length > 0 &&
-			installedVersions.every((version) => version === expectedVersion)
-		);
-	}
 	const recordedSpecs = [install.spec, install.resolvedSpec];
 	if (install.source === "clawhub" && install.clawhubPackage) {
-		recordedSpecs.push(`clawhub:${install.clawhubPackage}`);
+		// OpenClaw may satisfy an official package from its declared ClawHub fallback.
+		recordedSpecs.push(install.clawhubPackage);
 	}
 	return recordedSpecs.includes(spec);
 }
-const OPENCLAW_RUNTIME_VERSION_RE =
-	/(?:^|[^\d])(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)(?:$|[^\dA-Za-z-])/;
-const OPENCLAW_WHATSAPP_PLUGIN_PACKAGE = "@openclaw/whatsapp";
-
-export function normalizeOpenClawRuntimeVersion(output: string): string | null {
-	const version = OPENCLAW_RUNTIME_VERSION_RE.exec(output)?.[1];
-	if (!version) return null;
-	const normalized = version.replace(/-\d+$/, "");
-	return isValidSemver(normalized) ? normalized : null;
-}
 export const OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS: Record<string, readonly string[]> = {
 	discord: ["@openclaw/discord"],
+	whatsapp: ["@openclaw/whatsapp"],
 };

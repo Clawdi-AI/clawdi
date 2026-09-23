@@ -316,13 +316,11 @@ function hermesManagedBaileysRoot(home: string): string {
 	);
 }
 
-function seedHermesManagedBaileys(home: string): void {
+function seedManagedBaileysArtifact(baileysRoot: string): void {
 	const sourceRoot = resolve(
 		import.meta.dir,
 		"../../whatsapp-baileys-sidecar/node_modules/baileys",
 	);
-	const bridgeRoot = join(home, ".hermes", "hermes-agent", "scripts", "whatsapp-bridge");
-	const baileysRoot = hermesManagedBaileysRoot(home);
 	for (const relativePath of [
 		"package.json",
 		...MANAGED_BAILEYS_STATIC_PATCH_TARGETS.map((target) => target.relativePath),
@@ -331,6 +329,11 @@ function seedHermesManagedBaileys(home: string): void {
 		mkdirSync(dirname(destination), { recursive: true });
 		copyFileSync(join(sourceRoot, relativePath), destination);
 	}
+}
+
+function seedHermesManagedBaileys(home: string): void {
+	const bridgeRoot = join(home, ".hermes", "hermes-agent", "scripts", "whatsapp-bridge");
+	seedManagedBaileysArtifact(hermesManagedBaileysRoot(home));
 	writeFileSync(join(bridgeRoot, "package.json"), '{"name":"hermes-whatsapp-bridge"}\n');
 	writeFileSync(join(bridgeRoot, "package-lock.json"), '{"lockfileVersion":3}\n');
 }
@@ -1280,6 +1283,7 @@ function openClawDiscordPluginInspectFixture(pluginSource: string): Record<strin
 
 function openClawWhatsAppPluginInspectFixture(
 	pluginSource: string,
+	source: "npm" | "clawhub" = "npm",
 	version = "2026.7.1",
 ): Record<string, unknown> {
 	return {
@@ -1291,15 +1295,28 @@ function openClawWhatsAppPluginInspectFixture(
 			version,
 			enabled: true,
 		},
-		install: {
-			source: "clawhub",
-			clawhubPackage: "@openclaw/whatsapp",
-			installPath: dirname(pluginSource),
-			version,
-			integrity: "sha256-test",
-			npmIntegrity: "sha512-test",
-			clawpackSha256: "sha256-test-clawpack",
-		},
+		install:
+			source === "npm"
+				? {
+						source: "npm",
+						spec: "@openclaw/whatsapp",
+						installPath: dirname(pluginSource),
+						version,
+						resolvedName: "@openclaw/whatsapp",
+						resolvedVersion: version,
+						resolvedSpec: `@openclaw/whatsapp@${version}`,
+						integrity: "sha512-test",
+					}
+				: {
+						source: "clawhub",
+						spec: `clawhub:@openclaw/whatsapp@${version}`,
+						clawhubPackage: "@openclaw/whatsapp",
+						installPath: dirname(pluginSource),
+						version,
+						integrity: "sha256-test",
+						npmIntegrity: "sha512-test",
+						clawpackSha256: "sha256-test-clawpack",
+					},
 	};
 }
 
@@ -10384,7 +10401,7 @@ if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw 2026.7.1-2\\n'
   exit 0
 fi
-if [ "$*" = "plugins install clawhub:@openclaw/whatsapp@2026.7.1 --force" ]; then
+if [ "$*" = "plugins install @openclaw/whatsapp --force" ]; then
   printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
   mkdir -p '${dirname(openclawPluginSource)}'
   printf 'export const whatsappPlugin = true;\\n' > '${openclawPluginSource}'
@@ -10444,11 +10461,11 @@ exit 0
 		expect(convergeRuntimeManifest(removed, paths).installErrors).toEqual([]);
 		expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual(configured);
 		expect(readFileSync(openclawPluginInstalls, "utf8")).toBe(
-			"plugins install clawhub:@openclaw/whatsapp@2026.7.1 --force\n",
+			"plugins install @openclaw/whatsapp --force\n",
 		);
 	});
 
-	it("reinstalls OpenClaw WhatsApp when the installed version differs", () => {
+	it("accepts the official WhatsApp package from its ClawHub fallback", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -10477,16 +10494,16 @@ if [ "\${1:-}" = "--version" ]; then
   exit 0
 fi
 ${fakeOpenClawConfigPatchCommand(join(home, ".openclaw", "openclaw.json"))}
-if [ "$*" = "plugins install clawhub:@openclaw/whatsapp@2026.7.1 --force" ]; then
+if [ "$*" = "plugins install @openclaw/whatsapp --force" ]; then
   printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
   touch '${installedMarker}'
   exit 0
 fi
 if [ "$*" = "plugins inspect whatsapp --json" ]; then
   if [ -f '${installedMarker}' ]; then
-    printf '%s\\n' '${JSON.stringify(openClawWhatsAppPluginInspectFixture(openclawPluginSource))}'
+    printf '%s\\n' '${JSON.stringify(openClawWhatsAppPluginInspectFixture(openclawPluginSource, "clawhub"))}'
   else
-    printf '%s\\n' '${JSON.stringify(openClawWhatsAppPluginInspectFixture(openclawPluginSource, "2026.8.2"))}'
+    exit 1
   fi
   exit 0
 fi
@@ -10520,32 +10537,51 @@ exit 0
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
+		expect(convergeRuntimeManifest(loaded, getRuntimePaths()).installErrors).toEqual([]);
 		expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe(
-			"plugins install clawhub:@openclaw/whatsapp@2026.7.1 --force\n",
+			"plugins install @openclaw/whatsapp --force\n",
 		);
 	});
 
-	it("does not mutate live config when an OpenClaw channel plugin install fails", () => {
+	it("degrades only the OpenClaw channel whose plugin install fails", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "clawdi");
 		const openclawBin = join(home, ".local", "bin", "openclaw");
+		const openclawPluginSource = join(home, ".openclaw", "extensions", "discord", "index.js");
+		const discordUnavailable = join(root, "discord-plugin-unavailable");
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		mkdirSync(workspace, { recursive: true });
 		writeFileSync(
 			openclawBin,
 			`#!/usr/bin/env bash
 set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  printf 'openclaw test-version\\n'
+  exit 0
+fi
 if [ "$*" = "plugins install --help" ]; then
   printf '%s\\n' '--accept-capabilities'
   exit 0
 fi
+${fakeOpenClawConfigPatchCommand(join(home, ".openclaw", "openclaw.json"))}
 if [ "$*" = "plugins install @openclaw/discord --force --accept-capabilities" ]; then
-  echo "plugin install failed" >&2
-  exit 73
+  if [ -f '${discordUnavailable}' ]; then
+    echo "plugin install failed" >&2
+    exit 73
+  fi
+  mkdir -p '${dirname(openclawPluginSource)}'
+  printf '%s\\n' 'export const discordPlugin = true;' > '${openclawPluginSource}'
+  exit 0
 fi
-exit 0
+if [ "$*" = "plugins inspect discord --json" ]; then
+  [ -f '${discordUnavailable}' ] && exit 1
+  printf '%s\\n' '${JSON.stringify(openClawDiscordPluginInspectFixture(openclawPluginSource))}'
+  exit 0
+fi
+printf 'unexpected openclaw command: %s\\n' "$*" >&2
+exit 64
 `,
 		);
 		chmodSync(openclawBin, 0o700);
@@ -10553,44 +10589,202 @@ exit 0
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_SYSTEMD_APPLY = "0";
-		const paths = getRuntimePaths();
-		const nativeConfigPath = writeFakeOpenClawConfigMutationSdk(home, {
-			initialConfig: { channels: { telegram: { botToken: "user-token" } } },
-		});
-		const liveFiles = [
-			join(paths.runConfigRoot, "openclaw.json"),
-			join(paths.runConfigRoot, "stale-runtime.json"),
-			join(paths.systemdUserRoot, "openclaw-gateway.service"),
-		];
-		for (const path of liveFiles) {
-			mkdirSync(dirname(path), { recursive: true });
-			writeFileSync(path, `generation-1:${path.split("/").at(-1)}\n`);
-		}
-		const previousLiveSnapshot = Object.fromEntries(
-			[...liveFiles, nativeConfigPath].map((path) => [path, readFileSync(path, "utf-8")]),
+		const configPath = writeFakeOpenClawConfigMutationSdk(home);
+		const bindings = (["telegram", "discord"] as const).map((provider) => ({
+			provider,
+			accountKey: `clawdi_${provider}`,
+			agentTokenSecretRef: `secret://channels/${provider}/clawdi_${provider}/agent-token`,
+			placeholderTokenSecretRef: `secret://channels/${provider}/clawdi_${provider}/placeholder-token`,
+		}));
+		const secrets = Object.fromEntries(
+			bindings.flatMap((binding) => [
+				[binding.agentTokenSecretRef, `${binding.provider}-agent-token`],
+				[
+					binding.placeholderTokenSecretRef,
+					binding.provider === "telegram"
+						? `999999999:${"0".repeat(32)}`
+						: `clawdi_${"0".repeat(32)}`,
+				],
+			]),
 		);
-		const loaded = hostedSingleProviderModeLoad(home, "openclaw", "unmanaged", 2);
-		loaded.manifest.projection = {
-			...loaded.manifest.projection,
-			channels: {
-				discord: {
-					enabled: true,
-					accounts: { default: { enabled: true } },
+		const paths = getRuntimePaths();
+		const discordOnly = bindings.filter((binding) => binding.provider === "discord");
+		const discordSecrets = Object.fromEntries(
+			Object.entries(secrets).filter(([ref]) => ref.includes("/discord/")),
+		);
+		const initial = convergeAndCommitTestRuntimeManifest(
+			await hostedChannelBundleLoad(home, "openclaw", 1, discordOnly, discordSecrets),
+			paths,
+		);
+		expect(initial.installErrors).toEqual([]);
+		expect(initial.resourceProjectionErrors).toEqual([]);
+		const discord = JSON.parse(readFileSync(configPath, "utf8")).channels.discord;
+		expect(discord.accounts).toHaveProperty("clawdi_discord");
+
+		// A later plugin failure must not block Telegram or withdraw the working Discord account.
+		writeFileSync(discordUnavailable, "");
+		const committed: number[] = [];
+		const degraded = convergeRuntimeManifest(
+			await hostedChannelBundleLoad(home, "openclaw", 2, bindings, secrets),
+			paths,
+			{ commitAuthority: (convergence) => committed.push(convergence.manifest.generation) },
+		);
+
+		expect(degraded.installErrors).toEqual([]);
+		expect(degraded.resourceProjectionErrors).toEqual([
+			expect.stringContaining("runtime openclaw discord channel plugin install failed"),
+		]);
+		expect(committed).toEqual([2]);
+		const configured = JSON.parse(readFileSync(configPath, "utf8"));
+		expect(configured.channels.telegram.accounts).toHaveProperty("clawdi_telegram");
+		expect(configured.channels.discord).toEqual(discord);
+		expect(configured.plugins.entries.discord.enabled).toBe(true);
+		expect(readSystemdEnvFile(paths, "openclaw-gateway")).toContain(
+			"CLAWDI_CHANNEL_TELEGRAM_CLAWDI_TELEGRAM_AGENT_TOKEN=",
+		);
+	});
+
+	it("withdraws only OpenClaw managed WhatsApp while its Baileys compatibility fails", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "clawdi");
+		const openclawBin = join(home, ".local", "bin", "openclaw");
+		const openclawPluginSource = join(home, ".openclaw", "extensions", "whatsapp", "index.js");
+		const baileysRoot = join(dirname(openclawPluginSource), "node_modules", "baileys");
+		const accountId = "00000000-0000-4000-8000-000000000001";
+		const accountKey = "clawdi_000000000000";
+		const linkId = "60000000-0000-4000-8000-000000000006";
+		const credentialId = "80000000-0000-4000-8000-000000000011";
+		const authDir = join(home, ".openclaw", "credentials", "whatsapp", accountKey);
+		const whatsappAgentTokenRef = `secret://channels/whatsapp/${accountKey}/links/${linkId}/agent-token`;
+		const whatsappCapabilityRef = `secret://channels/whatsapp/${accountKey}/links/${linkId}/egress-capability`;
+		const whatsappCredentialRef = `secret://channels/whatsapp/${accountKey}/credentials/${credentialId}/creds-json`;
+		const telegramAgentTokenRef = "secret://channels/telegram/clawdi_telegram/agent-token";
+		const telegramPlaceholderRef = "secret://channels/telegram/clawdi_telegram/placeholder-token";
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		mkdirSync(workspace, { recursive: true });
+		writeFileSync(
+			openclawBin,
+			`#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  printf 'openclaw test-version\\n'
+  exit 0
+fi
+if [ "$*" = "plugins install --help" ]; then
+  exit 0
+fi
+${fakeOpenClawConfigPatchCommand(join(home, ".openclaw", "openclaw.json"))}
+if [ "$*" = "plugins install @openclaw/whatsapp --force" ]; then
+  mkdir -p '${dirname(openclawPluginSource)}'
+  printf '%s\\n' 'export const whatsappPlugin = true;' > '${openclawPluginSource}'
+  exit 0
+fi
+if [ "$*" = "plugins inspect whatsapp --json" ]; then
+  [ -f '${openclawPluginSource}' ] || exit 1
+  printf '%s\\n' '${JSON.stringify(openClawWhatsAppPluginInspectFixture(openclawPluginSource))}'
+  exit 0
+fi
+printf 'unexpected openclaw command: %s\\n' "$*" >&2
+exit 64
+`,
+		);
+		chmodSync(openclawBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const configPath = writeFakeOpenClawConfigMutationSdk(home);
+		const bindings: RuntimeBundleChannelBinding[] = [
+			{
+				provider: "telegram",
+				accountKey: "clawdi_telegram",
+				agentTokenSecretRef: telegramAgentTokenRef,
+				placeholderTokenSecretRef: telegramPlaceholderRef,
+			},
+			{
+				provider: "whatsapp",
+				accountId,
+				accountKey,
+				linkId,
+				agentTokenSecretRef: whatsappAgentTokenRef,
+				placeholderTokenSecretRef: whatsappCapabilityRef,
+				credential: {
+					id: credentialId,
+					credsSecretRef: whatsappCredentialRef,
+					authCert: {
+						SERIAL: 7,
+						ISSUER: "clawdi",
+						PUBLIC_KEY: { type: "Buffer", data: Buffer.alloc(32, 7).toString("base64") },
+					},
 				},
 			},
+		];
+		const secrets = {
+			[telegramAgentTokenRef]: "telegram-agent-token",
+			[telegramPlaceholderRef]: `999999999:${"0".repeat(32)}`,
+			[whatsappAgentTokenRef]: "whatsapp-agent-token",
+			[whatsappCapabilityRef]: `clawdi_${"0".repeat(32)}`,
+			[whatsappCredentialRef]: JSON.stringify({
+				advSecretKey: "wa-openclaw-secret",
+				me: { id: "15551234567:1@s.whatsapp.net" },
+			}),
+		};
+		const paths = getRuntimePaths();
+		const converge = async (generation: number) => {
+			const load = await hostedChannelBundleLoad(home, "openclaw", generation, bindings, secrets);
+			const commits: Record<string, string>[] = [];
+			const convergence = convergeRuntimeManifest(load, paths, {
+				commitAuthority: (_committed, authority) => {
+					commits.push(authority.officialServiceCommandRevisions);
+				},
+			});
+			expect(convergence.installErrors).toEqual([]);
+			expect(commits).toHaveLength(1);
+			writeTestRuntimeAppliedState(paths, load, convergence, {
+				officialServiceCommandRevisions: commits[0],
+			});
+			return { convergence, config: JSON.parse(readFileSync(configPath, "utf8")) };
 		};
 
-		const convergence = convergeRuntimeManifest(loaded, paths);
+		// The installed plugin has no Baileys artifact to patch.
+		const withdrawn = await converge(1);
+		expect(withdrawn.convergence.resourceProjectionErrors).toEqual([
+			expect.stringContaining("runtime openclaw managed WhatsApp compatibility failed"),
+		]);
+		expect(withdrawn.config.channels.telegram.accounts).toHaveProperty("clawdi_telegram");
+		expect(withdrawn.config.channels.whatsapp).toBeUndefined();
+		expect(existsSync(authDir)).toBe(false);
 
-		expect(convergence.installErrors.join("\n")).toContain(
-			"runtime openclaw channel plugin install failed",
+		seedManagedBaileysArtifact(baileysRoot);
+		// The OpenClaw WhatsApp plugin depends on the same artifact under its unscoped name.
+		const baileysPackage = join(baileysRoot, "package.json");
+		writeFileSync(
+			baileysPackage,
+			JSON.stringify({ ...JSON.parse(readFileSync(baileysPackage, "utf8")), name: "baileys" }),
 		);
-		expect(convergence.outputs.systemdSystemUnits).toEqual([]);
-		expect(convergence.outputs.systemdUserUnits).toEqual([]);
-		for (const [path, content] of Object.entries(previousLiveSnapshot)) {
-			expect(readFileSync(path, "utf-8")).toBe(content);
-		}
+		const recovered = await converge(2);
+		expect(recovered.convergence.resourceProjectionErrors).toEqual([]);
+		expect(recovered.config.channels.whatsapp.accounts[accountKey].authDir).toBe(authDir);
+		expect(readFileSync(join(authDir, "creds.json"), "utf8")).toContain("wa-openclaw-secret");
+
+		// Managed auth is withdrawn rather than left on a socket that is no longer patched.
+		const socket = join(baileysRoot, "lib", "Socket", "socket.js");
+		writeFileSync(
+			socket,
+			readFileSync(socket, "utf8").replace(
+				"DEFAULT_CONNECTION_CONFIG.waWebSocketUrl",
+				"DRIFTED_CONNECTION_CONFIG.waWebSocketUrl",
+			),
+		);
+		const drifted = await converge(3);
+		expect(drifted.convergence.resourceProjectionErrors).toEqual([
+			expect.stringContaining("runtime openclaw managed WhatsApp compatibility failed"),
+		]);
+		expect(drifted.config.channels.whatsapp.accounts).toEqual({});
+		expect(drifted.config.channels.telegram).toEqual(recovered.config.channels.telegram);
+		expect(existsSync(authDir)).toBe(false);
 	});
 
 	it("materializes, rotates, and removes OpenClaw managed WhatsApp auth", () => {
@@ -10785,7 +10979,7 @@ if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin
   printf '\\n---\\n' >> '${openclawPatch}'
   exit 0
 fi
-if [ "$*" = "plugins install clawhub:@openclaw/whatsapp --force --accept-capabilities" ]; then
+if [ "$*" = "plugins install @openclaw/whatsapp --force --accept-capabilities" ]; then
   printf '%s\\n' "$*" >> '${openclawPluginInstalls}'
   exit 0
 fi

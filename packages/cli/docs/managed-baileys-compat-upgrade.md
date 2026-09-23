@@ -19,6 +19,10 @@ Rollback safety requires every hunk to be in the current or exact predecessor
 `after` state before any target is mutated. No separate ownership receipt or
 pristine-file hash is needed.
 
+OpenClaw's Baileys artifact is the `baileys` package resolved from the WhatsApp
+plugin's `install.installPath` reported by `openclaw plugins inspect whatsapp
+--json`, so npm and ClawHub installs are both covered.
+
 The patch targets are:
 
 - `lib/Socket/socket.js`

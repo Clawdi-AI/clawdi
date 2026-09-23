@@ -5,6 +5,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
+	renameSync,
 	rmSync,
 	symlinkSync,
 	writeFileSync,
@@ -256,6 +257,37 @@ it("rolls back the previous runtime before applying a runtime switch", () => {
 	expect(reconcile(hermes).status).toBe("applied");
 	assertTargetHunkState(openclaw, "before");
 	assertTargetHunkState(hermes, "after");
+});
+
+it("resolves OpenClaw Baileys from the plugin's recorded npm install path", () => {
+	const fixture = createArtifactFixture("openclaw", "7.0.0-rc14");
+	const pluginRoot = join(
+		fixture.home,
+		".openclaw",
+		"npm",
+		"projects",
+		"openclaw-whatsapp-test",
+		"node_modules",
+		"@openclaw",
+		"whatsapp",
+	);
+	const npmFixture = { ...fixture, baileysRoot: join(pluginRoot, "node_modules", "baileys") };
+	mkdirSync(dirname(npmFixture.baileysRoot), { recursive: true });
+	renameSync(fixture.baileysRoot, npmFixture.baileysRoot);
+	const input = { home: fixture.home, openClawPluginRoot: pluginRoot };
+
+	expect(
+		reconcileManagedBaileysCompatibility({
+			...input,
+			desiredRuntime: "openclaw",
+			appRoot: fixture.appRoot,
+		}).status,
+	).toBe("applied");
+	assertTargetHunkState(npmFixture, "after");
+	expect(reconcileManagedBaileysCompatibility({ ...input, desiredRuntime: null }).status).toBe(
+		"rolled-back",
+	);
+	assertTargetHunkState(npmFixture, "before");
 });
 
 it.each([

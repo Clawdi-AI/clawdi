@@ -87,7 +87,7 @@ RUN --mount=type=bind,from=e2e_artifacts,source=/,target=/mnt/artifacts,ro \
 		HOME=/opt/stock/openclaw-home \
 		NPM_CONFIG_CACHE=/var/cache/npm \
 		/opt/stock/openclaw-home/.openclaw/bin/openclaw plugins install \
-			--force "clawhub:@openclaw/whatsapp@${OPENCLAW_VERSION}"; do \
+			--force "@openclaw/whatsapp@${OPENCLAW_VERSION}"; do \
 		if [ "${OPENCLAW_PLUGIN_INSTALL_ATTEMPT}" -ge 5 ]; then exit 1; fi; \
 		sleep "$((OPENCLAW_PLUGIN_INSTALL_ATTEMPT * 3))"; \
 		OPENCLAW_PLUGIN_INSTALL_ATTEMPT="$((OPENCLAW_PLUGIN_INSTALL_ATTEMPT + 1))"; \
@@ -99,15 +99,10 @@ RUN --mount=type=bind,from=e2e_artifacts,source=/,target=/mnt/artifacts,ro \
 	&& OPENCLAW_PLUGIN_INSPECT="$(runuser -u clawdi -- env HOME=/opt/stock/openclaw-home \
 		/opt/stock/openclaw-home/.openclaw/bin/openclaw plugins inspect whatsapp --json)" \
 		OPENCLAW_EXPECTED_VERSION="${OPENCLAW_VERSION}" \
-		OPENCLAW_EXPECTED_PLUGIN_INTEGRITY="${OPENCLAW_PLUGIN_INTEGRITY}" \
 		OPENCLAW_EXPECTED_PLUGIN_NPM_INTEGRITY="${OPENCLAW_PLUGIN_NPM_INTEGRITY}" \
-		OPENCLAW_EXPECTED_CLAWPACK_SHA256="${OPENCLAW_PLUGIN_CLAWPACK_SHA256}" \
-		node --input-type=module --eval \
-			'const value = JSON.parse(process.env.OPENCLAW_PLUGIN_INSPECT); const install = value.install ?? {}; if (value.plugin?.packageName !== "@openclaw/whatsapp" || value.plugin?.version !== process.env.OPENCLAW_EXPECTED_VERSION || install.source !== "clawhub" || install.clawhubChannel !== "official" || install.clawhubPackage !== "@openclaw/whatsapp" || install.version !== process.env.OPENCLAW_EXPECTED_VERSION || install.integrity !== process.env.OPENCLAW_EXPECTED_PLUGIN_INTEGRITY || install.npmIntegrity !== process.env.OPENCLAW_EXPECTED_PLUGIN_NPM_INTEGRITY || install.clawpackSha256 !== process.env.OPENCLAW_EXPECTED_CLAWPACK_SHA256) throw new Error(`unexpected OpenClaw WhatsApp provenance: ${JSON.stringify(install)}`);' \
-	&& OPENCLAW_EXPECTED_VERSION="${OPENCLAW_VERSION}" \
 		OPENCLAW_EXPECTED_BAILEYS_VERSION="${OPENCLAW_BAILEYS_VERSION}" \
 		node --input-type=module --eval \
-			'import { readFileSync } from "node:fs"; const root = "/opt/stock/openclaw-home/.openclaw/extensions/whatsapp"; const plugin = JSON.parse(readFileSync(`${root}/package.json`, "utf8")); const baileys = JSON.parse(readFileSync(`${root}/node_modules/baileys/package.json`, "utf8")); if (plugin.name !== "@openclaw/whatsapp" || plugin.version !== process.env.OPENCLAW_EXPECTED_VERSION) throw new Error(`unexpected OpenClaw plugin: ${plugin.name}@${plugin.version}`); if (baileys.name !== "baileys" || baileys.version !== process.env.OPENCLAW_EXPECTED_BAILEYS_VERSION) throw new Error(`unexpected OpenClaw Baileys: ${baileys.name}@${baileys.version}`);'
+			'import { readFileSync } from "node:fs"; const value = JSON.parse(process.env.OPENCLAW_PLUGIN_INSPECT); const install = value.install ?? {}; if (value.plugin?.packageName !== "@openclaw/whatsapp" || value.plugin?.version !== process.env.OPENCLAW_EXPECTED_VERSION || install.source !== "npm" || install.resolvedName !== "@openclaw/whatsapp" || install.resolvedVersion !== process.env.OPENCLAW_EXPECTED_VERSION || install.integrity !== process.env.OPENCLAW_EXPECTED_PLUGIN_NPM_INTEGRITY) throw new Error(`unexpected OpenClaw WhatsApp provenance: ${JSON.stringify(install)}`); const root = install.installPath; const plugin = JSON.parse(readFileSync(`${root}/package.json`, "utf8")); const baileys = JSON.parse(readFileSync(`${root}/node_modules/baileys/package.json`, "utf8")); if (plugin.name !== "@openclaw/whatsapp" || plugin.version !== process.env.OPENCLAW_EXPECTED_VERSION) throw new Error(`unexpected OpenClaw plugin: ${plugin.name}@${plugin.version}`); if (baileys.name !== "baileys" || baileys.version !== process.env.OPENCLAW_EXPECTED_BAILEYS_VERSION) throw new Error(`unexpected OpenClaw Baileys: ${baileys.name}@${baileys.version}`);'
 
 FROM base AS hermes-stock
 

@@ -177,8 +177,8 @@ export function ensureNativeOpenClawProviderPlugins(
 	let installed = observe();
 	for (const [plugin, packageSpec] of required) {
 		if (!installed.plugins.some((entry) => entry.id === plugin)) {
-			// The target is absent. --force acknowledges this fixed official npm
-			// source; native security policy still governs installation.
+			// The target is absent. Install the official package the documented way;
+			// --force skips the interactive prompt, native security policy still applies.
 			runNativeCommand(
 				commandPath,
 				[
@@ -186,7 +186,6 @@ export function ensureNativeOpenClawProviderPlugins(
 					"install",
 					packageSpec,
 					"--force",
-					"--pin",
 					...openClawPluginCapabilityConsentArgs("install", run),
 				],
 				"",

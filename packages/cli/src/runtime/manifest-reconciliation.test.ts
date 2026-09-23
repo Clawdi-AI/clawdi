@@ -2505,7 +2505,7 @@ if [ "$1" = "plugins" ]; then
   case "$*" in
     "plugins list --json") cat '${pluginState}' ;;
     "plugins install --help"|"plugins enable --help") printf '%s\\n' '--accept-capabilities' ;;
-    "plugins install @openclaw/google-plugin --force --pin --accept-capabilities") printf '%s' '{"plugins":[{"id":"google","enabled":false,"status":"disabled"}]}' > '${pluginState}' ;;
+    "plugins install @openclaw/google-plugin --force --accept-capabilities") printf '%s' '{"plugins":[{"id":"google","enabled":false,"status":"disabled"}]}' > '${pluginState}' ;;
     "plugins enable google --accept-capabilities") printf '%s' '{"plugins":[{"id":"google","enabled":true,"status":"loaded"}]}' > '${pluginState}' ;;
     *) exit 42 ;;
   esac

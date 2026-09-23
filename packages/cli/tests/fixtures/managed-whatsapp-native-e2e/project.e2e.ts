@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
@@ -88,6 +89,7 @@ test("projects and reconciles the real managed WhatsApp runtime", () => {
 		desiredRuntime: runtime,
 		home,
 		appRoot,
+		...(runtime === "openclaw" ? { openClawPluginRoot: openClawWhatsAppPluginRoot(home) } : {}),
 	});
 	expect(["applied", "already-patched"]).toContain(compatibility.status);
 
@@ -142,7 +144,7 @@ test("projects and reconciles the real managed WhatsApp runtime", () => {
 		)}\n`,
 		{ mode: 0o600 },
 	);
-});
+}, 120_000);
 
 function openClawConfigPatch(home: string, channels: Record<string, unknown>) {
 	return {
@@ -228,4 +230,17 @@ function recordValue(value: unknown): Record<string, unknown> {
 		throw new Error("native E2E scenario must be an object");
 	}
 	return value as Record<string, unknown>;
+}
+
+function openClawWhatsAppPluginRoot(home: string): string {
+	const inspect = spawnSync(
+		join(home, ".openclaw", "bin", "openclaw"),
+		["plugins", "inspect", "whatsapp", "--json"],
+		{ encoding: "utf8", env: { ...process.env, HOME: home } },
+	);
+	if (inspect.status !== 0) throw new Error(`OpenClaw WhatsApp inspect failed: ${inspect.stderr}`);
+	return z
+		.object({ install: z.object({ installPath: z.string().min(1) }).passthrough() })
+		.passthrough()
+		.parse(JSON.parse(inspect.stdout)).install.installPath;
 }
