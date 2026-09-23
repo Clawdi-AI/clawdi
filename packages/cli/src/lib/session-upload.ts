@@ -104,16 +104,6 @@ export function sessionFence(
 	};
 }
 
-export function sessionPlanMatchesLock(fence: SessionFence, plan: SessionUploadPlan): boolean {
-	const entry = readFencedSessionEntry(readSessionsLock(), fence);
-	return (
-		entry?.protocol === plan.protocol &&
-		entry.local_hash === plan.localHash &&
-		entry.pending === undefined &&
-		entry.blocked === undefined
-	);
-}
-
 export function sessionPlanIsDurablyBlocked(
 	fence: SessionFence,
 	plan: SessionUploadPlan,

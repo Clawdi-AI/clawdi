@@ -19,7 +19,6 @@ export type AccountSuspendedProblem = Schemas["AccountSuspendedProblem"];
 export type ApiKey = Schemas["ApiKeyResponse"];
 export type ApiKeyCreated = Schemas["ApiKeyCreated"];
 export type ApiKeyCreate = Schemas["ApiKeyCreate"];
-export type ApiKeyRevoked = Schemas["ApiKeyRevokeResponse"];
 export type DeviceLookupResponse = Schemas["DeviceLookupResponse"];
 
 // ── Dashboard ────────────────────────────────────────────────────────────
@@ -35,41 +34,25 @@ export type SessionTimelineItem = Schemas["SessionTimelinePage"]["items"][number
 export type SessionTimelinePage = Schemas["SessionTimelinePage"];
 export type SessionToolCall = Schemas["SessionToolCallResponse"];
 export type SessionToolResult = Schemas["SessionToolResultResponse"];
-export type SessionUploadResult = Schemas["SessionUploadResponse"];
 export type Environment = Schemas["EnvironmentResponse"];
 
 // ── Memories ─────────────────────────────────────────────────────────────
 export type Memory = Schemas["MemoryResponse"];
 export type MemoryCreate = Schemas["MemoryCreate"];
-export type MemoryDeleted = Schemas["MemoryDeleteResponse"];
-export type EmbedBackfillResult = Schemas["EmbedBackfillResponse"];
 
 // ── Skills ───────────────────────────────────────────────────────────────
 export type SkillSummary = Schemas["SkillSummaryResponse"];
 export type SkillInstallRequest = Schemas["SkillInstallRequest"];
-export type SkillUploadResult = Schemas["SkillUploadResponse"];
-export type SkillDeleted = Schemas["SkillDeleteResponse"];
 
 // ── Vault ────────────────────────────────────────────────────────────────
 export type Vault = Schemas["VaultResponse"];
 export type VaultItems = Schemas["VaultSectionsResponse"];
 export type VaultItemUpsert = Schemas["VaultItemUpsert"];
-export type VaultCreated = Schemas["VaultCreatedResponse"];
-export type VaultDeleted = Schemas["VaultDeleteResponse"];
-export type VaultItemsUpserted = Schemas["VaultItemsUpsertResponse"];
-export type VaultItemsDeleted = Schemas["VaultItemsDeleteResponse"];
 export type VaultResolved = Schemas["VaultResolveResponse"];
 
 // ── Connectors ───────────────────────────────────────────────────────────
 export type ConnectorConnection = Schemas["ConnectorConnectionResponse"];
-export type ConnectorApp = Schemas["ConnectorAvailableAppResponse"];
 export type ConnectorTool = Schemas["ConnectorToolResponse"];
-export type ConnectorConnectResult = Schemas["ConnectorConnectResponse"];
-export type ConnectorDisconnectResult = Schemas["ConnectorDisconnectResponse"];
-
-// ── Settings ─────────────────────────────────────────────────────────────
-export type UserSettings = Schemas["SettingsResponse"];
-export type UserSettingsUpdated = Schemas["SettingsUpdateResponse"];
 
 // ── Pagination + global search ───────────────────────────────────────────
 export type SearchResponse = Schemas["SearchResponse"];

@@ -75,16 +75,3 @@ export function shouldCanonicalizeCloudSettings({
 		!hasExistingCloudAgents
 	);
 }
-
-export function settingsQueryHref(
-	section: SettingsSectionId = DEFAULT_SETTINGS_SECTION,
-	params?: URLSearchParams | ReadonlyURLSearchParams,
-) {
-	const next = new URLSearchParams(params?.toString());
-	next.set(SETTINGS_QUERY_KEY, section);
-	return `?${next.toString()}`;
-}
-
-type ReadonlyURLSearchParams = {
-	toString: () => string;
-};
