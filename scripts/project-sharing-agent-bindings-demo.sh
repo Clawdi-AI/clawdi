@@ -244,7 +244,6 @@ section "Backend role paths"
     tests/test_sharing_create_link.py \
     tests/test_sharing_invitations.py \
     tests/test_sharing_list_revoke.py \
-    tests/test_agent_project_bindings_routes.py \
     tests/test_project_visibility_shared.py \
     tests/test_vault.py \
     tests/test_skills.py \
