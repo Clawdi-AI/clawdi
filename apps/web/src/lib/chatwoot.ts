@@ -120,6 +120,47 @@ export function startChatwoot(
 	return true;
 }
 
+export const CHATWOOT_SDK_SCRIPT_ID = "clawdi-chatwoot-sdk";
+
+export type ChatwootSdkScript = {
+	id: string;
+	src: string;
+	async: boolean;
+	defer: boolean;
+	nonce: string;
+	addEventListener: (type: "load" | "error", listener: () => void, options: { once: true }) => void;
+	remove: () => void;
+};
+
+export type ChatwootSdkScriptHost<Script extends ChatwootSdkScript> = {
+	hasScript: (id: string) => boolean;
+	createScript: () => Script;
+	appendScript: (script: Script) => void;
+};
+
+/**
+ * Inserts the Website SDK script imperatively. React-rendered `<script>` elements
+ * with `onLoad` are created inert and never execute, so the SDK must not be JSX.
+ */
+export function loadChatwootSdkScript<Script extends ChatwootSdkScript>(
+	host: ChatwootSdkScriptHost<Script>,
+	{ baseUrl, nonce, onLoad }: { baseUrl: string; nonce: string | undefined; onLoad: () => void },
+): void {
+	const normalizedBaseUrl = clean(baseUrl)?.replace(/\/+$/, "");
+	if (!normalizedBaseUrl || host.hasScript(CHATWOOT_SDK_SCRIPT_ID)) return;
+
+	const script = host.createScript();
+	script.id = CHATWOOT_SDK_SCRIPT_ID;
+	script.src = `${normalizedBaseUrl}/packs/js/sdk.js`;
+	script.async = true;
+	script.defer = true;
+	if (nonce) script.nonce = nonce;
+	script.addEventListener("load", onLoad, { once: true });
+	// Drop a failed script so a later mount can retry instead of seeing a dead tag.
+	script.addEventListener("error", () => script.remove(), { once: true });
+	host.appendScript(script);
+}
+
 export function applyChatwootIdentity(
 	api: ChatwootApi | undefined,
 	identity: SignedChatwootIdentity,
@@ -294,6 +335,14 @@ export const browserChatwootSessionStore: ChatwootSessionStore = {
 	hasSessionCookie(websiteToken) {
 		const cookieName = `cw_user_${websiteToken}=`;
 		return document.cookie.split(";").some((cookie) => cookie.trim().startsWith(cookieName));
+	},
+};
+
+export const browserChatwootSdkScriptHost: ChatwootSdkScriptHost<HTMLScriptElement> = {
+	hasScript: (id) => document.getElementById(id) !== null,
+	createScript: () => document.createElement("script"),
+	appendScript: (script) => {
+		document.body.appendChild(script);
 	},
 };
 

@@ -4,10 +4,12 @@ import { useLocation } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCurrentUser } from "@/lib/auth-client";
 import {
+	browserChatwootSdkScriptHost,
 	browserChatwootSessionStore,
 	createChatwootSessionController,
 	getChatwootIdentityGeneration,
 	hasChatwootIdentityFailure,
+	loadChatwootSdkScript,
 	markChatwootIdentityFailure,
 	resolveChatwootIdentity,
 	type SignedChatwootIdentity,
@@ -18,8 +20,6 @@ import {
 } from "@/lib/chatwoot";
 import { getChatwootIdentifierHash } from "@/lib/chatwoot.functions";
 import { env } from "@/lib/env";
-
-const SCRIPT_ID = "clawdi-chatwoot-sdk";
 
 export function ChatwootClient() {
 	const { isLoaded, isSignedIn, user } = useCurrentUser();
@@ -142,18 +142,14 @@ export function ChatwootClient() {
 		});
 	}, [websiteToken]);
 
-	if (!loadSdk || identityFailed) return null;
-	const baseUrl = env.VITE_CHATWOOT_BASE_URL?.replace(/\/+$/, "");
-	if (!baseUrl) return null;
+	useEffect(() => {
+		if (!loadSdk || identityFailed) return;
+		loadChatwootSdkScript(browserChatwootSdkScriptHost, {
+			baseUrl: env.VITE_CHATWOOT_BASE_URL ?? "",
+			nonce: document.querySelector<HTMLMetaElement>('meta[name="csp-nonce"]')?.content,
+			onLoad: startSdk,
+		});
+	}, [identityFailed, loadSdk, startSdk]);
 
-	return (
-		<script
-			id={SCRIPT_ID}
-			src={`${baseUrl}/packs/js/sdk.js`}
-			async
-			defer
-			nonce={document.querySelector<HTMLMetaElement>('meta[name="csp-nonce"]')?.content}
-			onLoad={startSdk}
-		/>
-	);
+	return null;
 }

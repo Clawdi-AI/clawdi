@@ -1,11 +1,14 @@
 import { describe, expect, mock, test } from "bun:test";
 import {
 	type ChatwootApi,
+	type ChatwootSdkScript,
+	type ChatwootSdkScriptHost,
 	type ChatwootSessionStore,
 	type ChatwootWidgetSettings,
 	createChatwootSessionController,
 	createChatwootToggleQueue,
 	hasChatwootIdentityFailure,
+	loadChatwootSdkScript,
 	markChatwootIdentityFailure,
 	resetChatwootBeforeSignOut,
 	resolveChatwootIdentity,
@@ -51,6 +54,30 @@ const ada = {
 	email: "ada@example.com",
 	identifierHash: "trusted-hash",
 };
+
+function createScriptHost() {
+	const appended: (ChatwootSdkScript & EventTarget)[] = [];
+	const host: ChatwootSdkScriptHost<ChatwootSdkScript & EventTarget> = {
+		hasScript: (id) => appended.some((script) => script.id === id),
+		createScript: () => {
+			const script = Object.assign(new EventTarget(), {
+				id: "",
+				src: "",
+				async: false,
+				defer: false,
+				nonce: "",
+				remove: () => {
+					appended.splice(appended.indexOf(script), 1);
+				},
+			});
+			return script;
+		},
+		appendScript: (script) => {
+			appended.push(script);
+		},
+	};
+	return { host, appended };
+}
 
 describe("Chatwoot Website SDK adapter", () => {
 	test("installs runtime settings before starting the official SDK", () => {
@@ -278,6 +305,35 @@ describe("Chatwoot Website SDK adapter", () => {
 		ready?.();
 		expect(calls).toEqual(["toggle"]);
 		expect(unsubscribe).toHaveBeenCalledTimes(1);
+	});
+
+	test("inserts the SDK script once with the CSP nonce and starts it on load", () => {
+		const { host, appended } = createScriptHost();
+		const onLoad = mock(() => {});
+		const config = { baseUrl: " https://support.example.com/ ", nonce: "nonce-1", onLoad };
+
+		loadChatwootSdkScript(host, config);
+		loadChatwootSdkScript(host, config);
+
+		expect(appended).toHaveLength(1);
+		const [script] = appended;
+		expect(script?.src).toBe("https://support.example.com/packs/js/sdk.js");
+		expect(script?.nonce).toBe("nonce-1");
+		expect(script?.async).toBe(true);
+		script?.dispatchEvent(new Event("load"));
+		expect(onLoad).toHaveBeenCalledTimes(1);
+	});
+
+	test("removes a failed SDK script so a later load can retry", () => {
+		const { host, appended } = createScriptHost();
+		const config = { baseUrl: "https://support.example.com", nonce: undefined, onLoad: () => {} };
+
+		loadChatwootSdkScript(host, config);
+		appended[0]?.dispatchEvent(new Event("error"));
+		expect(appended).toHaveLength(0);
+
+		loadChatwootSdkScript(host, config);
+		expect(appended).toHaveLength(1);
 	});
 });
 
