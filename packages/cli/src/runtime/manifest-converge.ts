@@ -85,7 +85,6 @@ import {
 	applyHostedAiProviderProjection,
 	applyHostedCodexManagedProviderProjection,
 	ensureHostedCodexCli,
-	previewHostedAiProviderProjectionRevision,
 } from "./manifest-providers";
 import { applyHostedRuntimeConfigProjection } from "./manifest-runtime-config";
 import {
@@ -474,27 +473,13 @@ function prepareRuntimeConvergencePlan(
 		);
 		const observation = state.observations.get("openclaw");
 		if (openClawProgram && observation) {
-			// Desired connections are excluded by the preview; prior transfers also
-			// remain agent-owned without moving native transfer mutations before repair.
-			const previousIds = (previousProjectedProviderIds.openclaw ?? []).filter(
-				(id) => !Object.hasOwn(context.providerOwnership.transfers.openclaw ?? {}, id),
-			);
 			publishRetainedOpenClawEnvironment({
 				program: openClawProgram,
 				paths,
 				manifest,
 				secretValues,
 				commonEnvironment: runtimeSystemdCommonEnvironment(paths),
-				providerProjectionRevisions: {
-					openclaw: previewHostedAiProviderProjectionRevision(
-						"openclaw",
-						observation,
-						manifest,
-						projectionHome,
-						previousIds,
-						context.appliedState?.nativeCredentialProviderIds?.openclaw ?? [],
-					),
-				},
+				providerProjectionRevisions: {},
 				runtimeRevision: (desired, runtime, secrets, providerRevision) =>
 					runtimeProgramRevisionForManifest(
 						desired,
@@ -892,14 +877,6 @@ function applyRuntimeResourceProjections(
 			);
 			pendingProviderIds[name] = previousProjectedProviderIds[name];
 		}
-		providerProjectionRevisions[name] = previewHostedAiProviderProjectionRevision(
-			name,
-			observation,
-			manifest,
-			projectionHome,
-			previousProjectedProviderIds[name] ?? [],
-			context.appliedState?.nativeCredentialProviderIds?.[name] ?? [],
-		);
 		if (
 			(name === "openclaw" || name === "hermes") &&
 			observation.enabled &&

@@ -4,11 +4,7 @@ import { writePrivateFileAtomic } from "../lib/private-file";
 import { ensureRuntimeAuthTokenFile } from "./auth-token";
 import { hostedProviderEnvironment } from "./hosted-provider-resolution";
 import { buildHermesManagedChannelsPatch } from "./managed-channel-reconciliation";
-import {
-	hostedChannelProjection,
-	hostedWhatsAppAuthCredentials,
-	openClawManagedChannelsPatch,
-} from "./manifest-channels";
+import { hostedChannelProjection, hostedWhatsAppAuthCredentials } from "./manifest-channels";
 import type { LiveSyncAgent, RuntimeManifest } from "./manifest-contract";
 import { hostedMcpIntent } from "./manifest-mcp";
 import { openClawGatewayHostedPatch } from "./manifest-providers";
@@ -95,6 +91,29 @@ export function writeDaemonAuthToken(
 	makeManagedSecretRoot(dirname(path));
 	return path;
 }
+// Fields a hosted runtime reads from its config files without a process restart:
+// Hermes resolves model and provider config from config.yaml on every turn, and
+// the OpenClaw gateway watcher hot-applies external config writes (restarting
+// itself for any path that needs it). Values delivered through the unit
+// environment still change the unit fingerprint and restart the runtime.
+const HOT_RUNTIME_ENTRY_FIELDS = new Set(["primary_model", "provider_ids", "providerMode"]);
+function runtimeProgramEntry(
+	desiredRuntime: RuntimeManifest["runtimes"][string] | undefined,
+): Record<string, unknown> | undefined {
+	if (!desiredRuntime) return undefined;
+	return Object.fromEntries(
+		Object.entries(desiredRuntime).filter(([field]) => !HOT_RUNTIME_ENTRY_FIELDS.has(field)),
+	);
+}
+function hermesChannelProjection(
+	manifest: RuntimeManifest,
+	desiredRuntime: RuntimeManifest["runtimes"][string] | undefined,
+	hermesWhatsAppAuthDir: string | null,
+): Record<string, unknown> | null {
+	const channels = hostedChannelProjection(manifest);
+	if (!channels || !desiredRuntime?.enabled) return null;
+	return buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir);
+}
 export function runtimeProgramRevisionForManifest(
 	manifest: RuntimeManifest,
 	runtime: string,
@@ -125,33 +144,45 @@ export function runtimeProgramRevisionForManifest(
 					.map((credential) => credential.credsJsonSecretRef),
 			]
 		: [];
-	const channels = hostedChannelProjection(manifest);
-	const hostedTarget = runtime === "openclaw" || runtime === "hermes";
-	let channelProjection: Record<string, unknown> | null = null;
-	if (channels && runtime === "openclaw") {
-		channelProjection = openClawManagedChannelsPatch(channels);
-	} else if (channels && runtime === "hermes" && desiredRuntime?.enabled) {
-		channelProjection = buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir);
+	if (runtime !== "openclaw" && runtime !== "hermes") {
+		return runtimeProgramRevision({
+			renderedProjection: {
+				channels: null,
+				gateway: null,
+				locale: manifest.locale?.timezone ?? null,
+				mcp: null,
+				provider: providerProjectionRevision,
+			},
+			desiredRuntime,
+			secretValues: scopedSecretValues(secretValues, runtimeSecretRefs),
+		});
 	}
+	const gatewayPatch =
+		runtime === "openclaw"
+			? openClawGatewayHostedPatch(manifest, secretValues, openClawOwnerBrowserBootstrapSupported)
+			: null;
 	return runtimeProgramRevision({
-		renderedProjection: {
-			channels: channelProjection,
-			gateway:
-				runtime === "openclaw"
-					? openClawGatewayHostedPatch(
-							manifest,
-							secretValues,
-							openClawOwnerBrowserBootstrapSupported,
-						)
-					: null,
-			locale:
-				manifest.locale && hostedTarget
-					? managedLocaleBlock(manifest.locale)
-					: (manifest.locale?.timezone ?? null),
-			mcp: hostedTarget ? hostedMcpIntent(manifest) : null,
-			provider: providerProjectionRevision,
-		},
-		desiredRuntime,
+		renderedProjection:
+			runtime === "openclaw"
+				? {
+						// Only gateway listener/auth settings need a restart; OpenClaw applies
+						// channels, MCP, provider models and agent defaults from its watcher.
+						channels: null,
+						gateway: gatewayPatch?.gateway ?? null,
+						locale: null,
+						mcp: null,
+						provider: null,
+					}
+				: {
+						// Hermes builds platform adapters, MCP server connections and its
+						// timezone at startup, so those projections still restart it.
+						channels: hermesChannelProjection(manifest, desiredRuntime, hermesWhatsAppAuthDir),
+						gateway: null,
+						locale: manifest.locale ? managedLocaleBlock(manifest.locale) : null,
+						mcp: hostedMcpIntent(manifest),
+						provider: null,
+					},
+		desiredRuntime: runtimeProgramEntry(desiredRuntime),
 		secretValues: scopedSecretValues(secretValues, runtimeSecretRefs),
 	});
 }

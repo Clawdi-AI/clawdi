@@ -4,7 +4,6 @@ import {
 	applyHostedHermesAiProviderProjection,
 	buildOpenClawHostedProviderPatch,
 	type CatalogProviderConfigurationResult,
-	providerProjectionProgramImpact,
 } from "./catalog-provider-config";
 import {
 	applyConnectionProviderTransfers,
@@ -32,7 +31,6 @@ import {
 	applyOpenClawGatewayHostedProjection,
 	applyOpenClawHostedProviderPatch,
 } from "./openclaw-provider-config";
-import { runtimeImpactRevision } from "./runtime-impact-revision";
 import { runtimeSecretValue } from "./secret-values";
 
 export { buildOpenClawHostedProviderPatch } from "./catalog-provider-config";
@@ -230,62 +228,6 @@ export function applyHostedAiProviderProjection(
 		nativeCredentialProviderIds: nativePatch.providerIds,
 		nativeCredentialsChanged: nativeChanged,
 	};
-}
-
-export function previewHostedAiProviderProjectionRevision(
-	name: string,
-	observation: RuntimeInstallObservation,
-	manifest: RuntimeManifest,
-	home: string,
-	previousProviderIds: readonly string[],
-	previousNativeProviderIds: readonly string[] = [],
-): string | null {
-	if (
-		(name !== "openclaw" && name !== "hermes") ||
-		!observation.enabled ||
-		observation.status === "install_failed" ||
-		!observation.commandPath
-	)
-		return null;
-	const { native, catalog, connections } = hostedProviderConfiguration(manifest, name);
-	previousProviderIds = previousProviderIds.filter(
-		(id) => !connections.some((connection) => connection.id === id),
-	);
-	if (
-		manifest.runtimes[name]?.providerMode === "configured" &&
-		!catalog &&
-		native.length === 0 &&
-		connections.length === 0
-	)
-		return null;
-	if (name === "hermes") {
-		const revision = applyHostedHermesAiProviderProjection(
-			catalog,
-			previousProviderIds,
-			home,
-			null,
-			false,
-			native.length > 0 || connections.length > 0,
-		).revision;
-		return connections.length
-			? runtimeImpactRevision({ connections, catalog: revision })
-			: revision;
-	}
-	const patch = buildOpenClawHostedProviderPatch(
-		catalog,
-		previousProviderIds,
-		native.length > 0 ? "merge" : "replace",
-	);
-	return runtimeImpactRevision({
-		...(connections.length ? { connections } : {}),
-		catalog: providerProjectionProgramImpact("openclaw", JSON.parse(patch.content), catalog),
-		native: buildNativeOpenClawProviderPatch(
-			native,
-			previousNativeProviderIds.filter(
-				(id) => !patch.providerIds.includes(id) && !previousProviderIds.includes(id),
-			),
-		).config,
-	});
 }
 
 /** Validate the selected path without materializing any credentials. */

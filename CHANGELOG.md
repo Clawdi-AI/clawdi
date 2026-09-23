@@ -12,6 +12,47 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.91
+
+- Switching your Cloud Agent's model, or adding new models, now takes effect
+  without restarting the Agent, so conversations in progress keep running.
+- OpenClaw Agents also keep running when you change Channels, tools, or your
+  time zone.
+
+### CLI 0.14.90
+
+- OpenClaw Agents with WhatsApp connected start reliably again.
+- If one Channel has a problem, your other Channels and the Agent keep working.
+- Skills stored in linked folders are now found and loaded.
+
+### CLI 0.14.89
+
+- Open your Hermes dashboard with your Clawdi account. The separate dashboard
+  password is no longer needed.
+
+### CLI 0.14.87
+
+- Clawdi installed with Homebrew now updates through Homebrew.
+- Background sync on Windows no longer needs administrator rights.
+
+### CLI 0.14.85
+
+- If an AI Provider change can't be applied, your Agent keeps working with its
+  previous settings.
+
+### CLI 0.14.84
+
+- Vault files in your Agent's workspace keep syncing reliably.
+
+### CLI 0.14.83
+
+- Cloud Agents keep their settings through system updates.
+
+### CLI 0.14.82
+
+- Unlinking WhatsApp from a Hermes Agent no longer leaves the Agent restarting
+  repeatedly.
+
 ### CLI 0.14.81
 
 - Vault request pages support added fields and pasted or uploaded `.env` imports,

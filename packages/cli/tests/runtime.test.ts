@@ -5080,7 +5080,7 @@ cp '${sdkSource}' '${sdkTarget}'
 	});
 
 	it.each(["openclaw", "hermes"] as const)(
-		"replaces the managed %s model catalog without restarting its active runtime",
+		"hot-applies managed %s model, primary model and endpoint changes without a restart",
 		(runtimeName) => {
 			const caseRoot = join(root, runtimeName);
 			const home = join(caseRoot, "home", "clawdi");
@@ -5207,21 +5207,51 @@ cp '${sdkSource}' '${sdkTarget}'
 				});
 			}
 
-			const beforeBaseUrlChange = readSystemdUnitSnapshot(paths);
-			nextProvider.baseUrl = "https://replacement.provider.example.test/v1";
-			writeFileSync(systemctlLog, "");
-			const third = convergeRuntimeManifest(next, paths);
-			expect(third.installErrors).toEqual([]);
-			const baseUrlActivation = applySystemdRuntimeUpdate(
-				paths,
-				beforeBaseUrlChange,
-				readSystemdUnitSnapshot(paths),
-				{},
-			);
-			expect(baseUrlActivation.userUnitsChanged).toEqual([`${runtimeUnit}.service`]);
-			expect(readFileSync(systemctlLog, "utf-8")).toContain(
-				`--user restart ${runtimeUnit}.service`,
-			);
+			const expectHotApply = (change: () => void) => {
+				const before = readSystemdUnitSnapshot(paths);
+				change();
+				writeFileSync(systemctlLog, "");
+				const converged = convergeRuntimeManifest(next, paths);
+				expect(converged.installErrors).toEqual([]);
+				expect(
+					applySystemdRuntimeUpdate(paths, before, readSystemdUnitSnapshot(paths), {})
+						.userUnitsChanged,
+				).toEqual([]);
+				expect(systemdEnvDigest(readSystemdEnvFile(paths, runtimeUnit))).toBe(initialRevision);
+				expect(readFileSync(systemctlLog, "utf-8")).not.toMatch(
+					/(?:^|\s)(?:start|restart|stop)(?:\s|$)/m,
+				);
+			};
+			const runtime = expectRecord(next.manifest.runtimes[runtimeName], "runtime");
+			expectHotApply(() => {
+				runtime.primary_model = { provider_id: "clawdi-managed", model: "new-model" };
+			});
+			expectHotApply(() => {
+				nextProvider.baseUrl = "https://replacement.provider.example.test/v1";
+			});
+			if (runtimeName === "openclaw") {
+				if (!openclawConfig) throw new Error("OpenClaw config fixture is missing");
+				const config = expectRecord(
+					JSON.parse(readFileSync(openclawConfig, "utf-8")),
+					"OpenClaw config",
+				);
+				const defaults = expectRecord(
+					expectRecord(config.agents, "OpenClaw agents").defaults,
+					"OpenClaw agent defaults",
+				);
+				expect(expectRecord(defaults.model, "OpenClaw default model").primary).toBe(
+					"clawdi-managed/new-model",
+				);
+			} else {
+				const hermesConfig = readHermesConfigYaml(home);
+				expect(expectRecord(hermesConfig.model, "Hermes model").default).toBe("new-model");
+				expect(
+					expectRecord(
+						expectRecord(hermesConfig.providers, "Hermes providers")["clawdi-managed"],
+						"Hermes managed provider",
+					).api,
+				).toBe("https://replacement.provider.example.test/v1");
+			}
 		},
 	);
 
@@ -12249,13 +12279,10 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(soul).toContain("`fr`");
 		expect(soul).toContain("`Europe/Paris`");
 		expect(readFileSync(userPath, "utf-8")).toBe("User profile stays untouched.\n");
-		const updatedEnv = readSystemdEnvFile(paths, "openclaw-gateway");
-		expect(systemdEnvDigest(updatedEnv)).not.toBe(initialRevision);
+		// The OpenClaw gateway watcher applies SOUL.md and agent defaults in place.
+		expect(systemdEnvDigest(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(initialRevision);
 		converge("fr", "Europe/Paris");
 		expect(readFileSync(soulPath, "utf-8")).toBe(soul);
-		expect(systemdEnvDigest(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
-			systemdEnvDigest(updatedEnv),
-		);
 	});
 
 	it("projects Hermes locale into its managed SOUL block and timezone config", () => {
