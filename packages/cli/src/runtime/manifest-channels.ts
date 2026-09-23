@@ -12,7 +12,6 @@ import {
 import { join, resolve } from "node:path";
 import type { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { isValidSemver } from "../lib/semver";
 import {
 	getHermesRawConfigValue,
 	type HermesConfigTransaction,
@@ -28,7 +27,6 @@ import type { RuntimeManifest } from "./manifest-contract";
 import {
 	type RuntimeInstallObservation,
 	runtimeCommandCurrentRevision,
-	runtimeCommandVersion,
 	runtimeFileCurrentRevision,
 } from "./manifest-install";
 import { isPlainRecord, recordValue } from "./manifest-shared";
@@ -525,7 +523,7 @@ function installOpenClawChannelPlugins(input: {
 	workspaceRoot: string;
 }): void {
 	for (const channel of Object.keys(input.channels).sort()) {
-		const specs = openClawExternalChannelPluginSpecs(channel, input);
+		const specs = OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS[channel];
 		if (!specs) continue;
 		const isCurrent = () =>
 			channelPluginIsCurrent({
@@ -541,23 +539,6 @@ function installOpenClawChannelPlugins(input: {
 			throw new Error(`OpenClaw ${channel} channel plugin install could not be verified`);
 		}
 	}
-}
-function openClawExternalChannelPluginSpecs(
-	channel: string,
-	input: { commandPath: string; home: string; workspaceRoot: string },
-): readonly string[] | null {
-	if (channel !== "whatsapp") return OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS[channel] ?? null;
-	const version = normalizeOpenClawRuntimeVersion(
-		runtimeCommandVersion(input.commandPath, input.home, input.workspaceRoot) ?? "",
-	);
-	if (!version) {
-		throw new Error("OpenClaw runtime version could not be determined for the WhatsApp plugin");
-	}
-	// OpenClaw's official catalog installs from npm by default; ClawHub can lag a release.
-	return [
-		`${OPENCLAW_WHATSAPP_PLUGIN_PACKAGE}@${version}`,
-		`clawhub:${OPENCLAW_WHATSAPP_PLUGIN_PACKAGE}@${version}`,
-	];
 }
 function runPluginInstallWithFallback(
 	commandPath: string,
@@ -631,9 +612,7 @@ function channelPluginIsCurrent(input: {
 		const sourceRevision = runtimeFileCurrentRevision(plugin.source);
 		if (
 			plugin.id !== input.channel ||
-			!input.specs.some((spec) =>
-				openClawPluginInstallMatchesSpec(install, spec, plugin.version),
-			) ||
+			!input.specs.some((spec) => openClawPluginInstallMatchesSpec(install, spec)) ||
 			plugin.status !== "loaded" ||
 			!plugin.enabled ||
 			!version ||
@@ -649,44 +628,15 @@ function channelPluginIsCurrent(input: {
 function openClawPluginInstallMatchesSpec(
 	install: z.infer<typeof openClawPluginInspectSchema>["install"],
 	spec: string,
-	pluginVersion?: string,
 ): boolean {
-	const exactSpec = EXACT_PLUGIN_SPEC_RE.exec(spec);
-	if (exactSpec) {
-		const [, clawHubPrefix, expectedPackage, expectedVersion] = exactSpec;
-		const installedPackage = clawHubPrefix ? install.clawhubPackage : install.resolvedName;
-		if (
-			install.source !== (clawHubPrefix ? "clawhub" : "npm") ||
-			installedPackage !== expectedPackage
-		) {
-			return false;
-		}
-		const installedVersions = [pluginVersion, install.resolvedVersion, install.version].filter(
-			(value): value is string => Boolean(value),
-		);
-		return (
-			installedVersions.length > 0 &&
-			installedVersions.every((version) => version === expectedVersion)
-		);
-	}
 	const recordedSpecs = [install.spec, install.resolvedSpec];
 	if (install.source === "clawhub" && install.clawhubPackage) {
-		recordedSpecs.push(`clawhub:${install.clawhubPackage}`);
+		// OpenClaw may satisfy an official package from its declared ClawHub fallback.
+		recordedSpecs.push(install.clawhubPackage);
 	}
 	return recordedSpecs.includes(spec);
 }
-const OPENCLAW_RUNTIME_VERSION_RE =
-	/(?:^|[^\d])(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)(?:$|[^\dA-Za-z-])/;
-const OPENCLAW_WHATSAPP_PLUGIN_PACKAGE = "@openclaw/whatsapp";
-// `[clawhub:]<package>@<version>` pins one official artifact version.
-const EXACT_PLUGIN_SPEC_RE = /^(clawhub:)?((?:@[^/@:]+\/)?[^/@:]+)@([^@]+)$/;
-
-export function normalizeOpenClawRuntimeVersion(output: string): string | null {
-	const version = OPENCLAW_RUNTIME_VERSION_RE.exec(output)?.[1];
-	if (!version) return null;
-	const normalized = version.replace(/-\d+$/, "");
-	return isValidSemver(normalized) ? normalized : null;
-}
 export const OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS: Record<string, readonly string[]> = {
 	discord: ["@openclaw/discord"],
+	whatsapp: ["@openclaw/whatsapp"],
 };
