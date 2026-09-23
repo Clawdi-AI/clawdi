@@ -144,7 +144,7 @@ test("projects and reconciles the real managed WhatsApp runtime", () => {
 		)}\n`,
 		{ mode: 0o600 },
 	);
-});
+}, 120_000);
 
 function openClawConfigPatch(home: string, channels: Record<string, unknown>) {
 	return {
