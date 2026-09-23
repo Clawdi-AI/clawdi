@@ -10,7 +10,7 @@ import {
 	realpathSync,
 	statSync,
 } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { isValidSemver } from "../lib/semver";
 import { makeRuntimeUserOwned, spawnRuntimeUserCommand } from "./runtime-user-command";
@@ -220,6 +220,8 @@ export function reconcileManagedBaileysCompatibility(input: {
 	desiredRuntime: ManagedBaileysRuntime | null;
 	home: string;
 	appRoot?: string;
+	/** OpenClaw-recorded install path of the WhatsApp plugin, from `plugins inspect`. */
+	openClawPluginRoot?: string;
 }): ManagedBaileysReconcileResult {
 	if (input.desiredRuntime && !input.appRoot) {
 		throw new Error(`managed WhatsApp ${input.desiredRuntime} artifact root is unavailable`);
@@ -230,12 +232,13 @@ export function reconcileManagedBaileysCompatibility(input: {
 					runtime: input.desiredRuntime,
 					home: input.home,
 					appRoot: input.appRoot,
+					...(input.openClawPluginRoot ? { openClawPluginRoot: input.openClawPluginRoot } : {}),
 				})
 			: null;
 	let rolledBack = false;
 	for (const runtime of ["openclaw", "hermes"] as const) {
 		if (runtime === input.desiredRuntime) continue;
-		const artifact = resolveInstalledArtifact(runtime, input.home);
+		const artifact = resolveInstalledArtifact(runtime, input.home, input.openClawPluginRoot);
 		if (!artifactContainsAfterHunk(artifact)) continue;
 		try {
 			rolledBack = reconcileArtifact(artifact, "before") === "mutated" || rolledBack;
@@ -328,13 +331,14 @@ function resolveArtifact(input: {
 	runtime: ManagedBaileysRuntime;
 	home: string;
 	appRoot: string;
+	openClawPluginRoot?: string;
 }): ManagedBaileysArtifact {
 	if (input.runtime === "openclaw") {
 		const expectedAppRoot = join(input.home, ".openclaw");
 		if (resolve(input.appRoot) !== resolve(expectedAppRoot)) {
 			throw new Error(`managed WhatsApp OpenClaw app root must be ${expectedAppRoot}`);
 		}
-		return resolveInstalledArtifact("openclaw", input.home);
+		return resolveInstalledArtifact("openclaw", input.home, input.openClawPluginRoot);
 	}
 	const expectedAppRoot = join(input.home, ".hermes", "hermes-agent");
 	if (resolve(input.appRoot) !== resolve(expectedAppRoot)) {
@@ -346,11 +350,14 @@ function resolveArtifact(input: {
 function resolveInstalledArtifact(
 	runtime: ManagedBaileysRuntime,
 	home: string,
+	openClawPluginRoot?: string,
 ): ManagedBaileysArtifact {
 	if (runtime === "openclaw") {
+		// npm installs live under OpenClaw's managed npm projects; ClawHub installs under extensions.
+		const pluginRoot = openClawPluginRoot ?? join(home, ".openclaw", "extensions", "whatsapp");
 		return {
 			runtime,
-			root: join(home, ".openclaw", "extensions", "whatsapp", "node_modules", "baileys"),
+			root: resolveNodeModulesPackage(pluginRoot, "baileys", home),
 			packageName: "baileys",
 			targets: BAILEYS_TARGETS,
 		};
@@ -363,6 +370,18 @@ function resolveInstalledArtifact(
 		targets: BAILEYS_TARGETS,
 		hermesBridgeRoot,
 	};
+}
+
+/** Node module resolution for the dependency the plugin loads, without leaving `home`. */
+function resolveNodeModulesPackage(from: string, packageName: string, home: string): string {
+	const boundary = resolve(home);
+	for (let dir = resolve(from); ; dir = dirname(dir)) {
+		const candidate = join(dir, "node_modules", packageName);
+		if (existsSync(join(candidate, "package.json"))) return candidate;
+		if (dir === boundary || dirname(dir) === dir || relative(boundary, dir).startsWith("..")) {
+			return join(resolve(from), "node_modules", packageName);
+		}
+	}
 }
 
 function assertHermesBridgeRoot(artifact: ManagedBaileysArtifact): string {

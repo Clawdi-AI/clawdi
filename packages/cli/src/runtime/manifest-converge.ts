@@ -616,17 +616,19 @@ function prepareRuntimeApplyDependencies(
 				);
 			}
 		}
+		let openClawChannelPluginRoots: Record<string, string> = {};
 		for (const [name] of runtimeEntries) {
 			const observation = state.observations.get(name);
 			if (!observation) throw new Error(`runtime ${name} install observation is missing`);
 			try {
-				installHostedChannelProjectionDependencies(
+				const installPaths = installHostedChannelProjectionDependencies(
 					name,
 					observation,
 					manifest,
 					projectionHome,
 					paths.userHome,
 				);
+				if (name === "openclaw") openClawChannelPluginRoots = installPaths;
 			} catch (error) {
 				state.installErrors.push(
 					`runtime ${name} channel plugin install failed: ${
@@ -647,6 +649,9 @@ function prepareRuntimeApplyDependencies(
 				desiredRuntime: managedWhatsAppRuntime,
 				home: projectionHome,
 				...(observation?.appRoot ? { appRoot: observation.appRoot } : {}),
+				...(openClawChannelPluginRoots.whatsapp
+					? { openClawPluginRoot: openClawChannelPluginRoots.whatsapp }
+					: {}),
 			});
 			if (compatibility.status === "rollback-refused") {
 				throw new Error(compatibility.errors.join(", "));

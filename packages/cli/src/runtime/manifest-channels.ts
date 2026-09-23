@@ -461,20 +461,21 @@ export function applyHostedChannelProjection(
 	);
 	return true;
 }
+/** Returns the verified OpenClaw install path of each projected external channel plugin. */
 export function installHostedChannelProjectionDependencies(
 	name: string,
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
 	home: string,
 	workspaceRoot: string,
-): void {
-	if (name !== "openclaw") return;
+): Record<string, string> {
+	if (name !== "openclaw") return {};
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
-		return;
+		return {};
 	}
 	const channels = hostedChannelProjection(manifest);
-	if (!channels) return;
-	installOpenClawChannelPlugins({
+	if (!channels) return {};
+	return installOpenClawChannelPlugins({
 		commandPath: observation.commandPath,
 		channels,
 		home,
@@ -521,24 +522,30 @@ function installOpenClawChannelPlugins(input: {
 	channels: Record<string, unknown>;
 	home: string;
 	workspaceRoot: string;
-}): void {
+}): Record<string, string> {
+	const installPaths: Record<string, string> = {};
 	for (const channel of Object.keys(input.channels).sort()) {
 		const specs = OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS[channel];
 		if (!specs) continue;
-		const isCurrent = () =>
-			channelPluginIsCurrent({
+		const currentInstall = () =>
+			currentChannelPluginInstall({
 				channel,
 				specs,
 				commandPath: input.commandPath,
 				home: input.home,
 				workspaceRoot: input.workspaceRoot,
 			});
-		if (isCurrent()) continue;
-		runPluginInstallWithFallback(input.commandPath, specs, input.home, input.workspaceRoot);
-		if (!isCurrent()) {
+		let install = currentInstall();
+		if (!install) {
+			runPluginInstallWithFallback(input.commandPath, specs, input.home, input.workspaceRoot);
+			install = currentInstall();
+		}
+		if (!install) {
 			throw new Error(`OpenClaw ${channel} channel plugin install could not be verified`);
 		}
+		if (install.installPath) installPaths[channel] = install.installPath;
 	}
+	return installPaths;
 }
 function runPluginInstallWithFallback(
 	commandPath: string,
@@ -581,32 +588,32 @@ function channelPluginEntries(
 	}
 	return entries;
 }
-function channelPluginIsCurrent(input: {
+function currentChannelPluginInstall(input: {
 	channel: string;
 	specs: readonly string[];
 	commandPath: string;
 	home: string;
 	workspaceRoot: string;
-}): boolean {
+}): { installPath?: string } | null {
 	const commandRevision = runtimeCommandCurrentRevision(
 		input.commandPath,
 		input.home,
 		input.workspaceRoot,
 	);
-	if (!commandRevision) return false;
+	if (!commandRevision) return null;
 	const inspect = spawnRuntimeUserCommand(
 		input.commandPath,
 		["plugins", "inspect", input.channel, "--json"],
 		input.home,
 		input.workspaceRoot,
 	);
-	if (inspect.status !== 0) return false;
+	if (inspect.status !== 0) return null;
 	try {
 		const stdout = Buffer.isBuffer(inspect.stdout)
 			? inspect.stdout.toString("utf8")
 			: inspect.stdout;
 		const parsed = openClawPluginInspectSchema.safeParse(JSON.parse(stdout) as unknown);
-		if (!parsed.success) return false;
+		if (!parsed.success) return null;
 		const { plugin, install } = parsed.data;
 		const version = plugin.version ?? install.resolvedVersion ?? install.version;
 		const sourceRevision = runtimeFileCurrentRevision(plugin.source);
@@ -618,11 +625,11 @@ function channelPluginIsCurrent(input: {
 			!version ||
 			!sourceRevision
 		) {
-			return false;
+			return null;
 		}
-		return true;
+		return install.installPath ? { installPath: install.installPath } : {};
 	} catch {
-		return false;
+		return null;
 	}
 }
 function openClawPluginInstallMatchesSpec(
