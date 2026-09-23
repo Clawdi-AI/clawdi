@@ -1270,6 +1270,16 @@ does not roll back a successful CLI upgrade, and does not reject the manifest
 generation. `runtime watch` reports `healthImpact=resource_projection` and
 retries with bounded backoff while runtime readiness continues to use the
 committed core authority.
+OpenClaw external channel plugins follow the same rule per channel. A plugin
+that cannot be installed or verified is reported for that channel only; the
+other channels and the generation still commit. The channel stays projected,
+because OpenClaw validates a configured channel whose referenced plugin is
+missing as a warning, so a transient failure does not withdraw a working
+channel. Managed WhatsApp on OpenClaw is the exception: if its Baileys
+compatibility patch, or the WhatsApp plugin that locates it, cannot be verified,
+only the committed managed WhatsApp accounts and their auth state are withdrawn
+until a later convergence proves the patched socket. Hermes managed WhatsApp
+compatibility remains part of the core gate.
 The last-good manifest and scoped secret cache are each replaced atomically,
 then `runtime-applied.json` is replaced atomically as the final commit record.
 After a crash, strict-v2 offline load requires that final record to match the

@@ -55,12 +55,16 @@ export function materializeHostedChannelCredentials(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
 	home: string,
+	withdrawnOpenClawChannels: ReadonlySet<string> = new Set(),
 ): void {
 	if (!hostedChannelCredentialsDeclared(manifest)) {
 		removeStaleManagedWhatsAppAuthDirs(home, new Set<string>());
 		return;
 	}
-	const credentials = hostedWhatsAppAuthCredentials(manifest);
+	// A withdrawn managed WhatsApp channel keeps no auth state; the secret remains authoritative.
+	const credentials = hostedWhatsAppAuthCredentials(manifest).filter(
+		(credential) => credential.target !== "openclaw" || !withdrawnOpenClawChannels.has("whatsapp"),
+	);
 	const normalizedSecrets = normalizeSecretValues(secretValues);
 	const expectedAuthDirs = new Set<string>();
 	const errors: string[] = [];
@@ -415,6 +419,7 @@ export function applyHostedChannelProjection(
 	hermesWhatsAppAuthDir: string | null,
 	hermesConfig: HermesConfigTransaction | null,
 	previousManifest: RuntimeManifest | null = null,
+	withdrawnOpenClawChannels: ReadonlySet<string> = new Set(),
 ): boolean {
 	if (name !== "openclaw" && name !== "hermes") return false;
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
@@ -452,8 +457,13 @@ export function applyHostedChannelProjection(
 		}
 		return applyHermesChannelConfig(hermesConfig, patch);
 	}
+	// Omitting a withdrawn channel from the desired patch removes only the accounts the
+	// committed projection owned; unrelated native accounts and plugin entries remain.
+	const projectedChannels = Object.fromEntries(
+		Object.entries(channels).filter(([channel]) => !withdrawnOpenClawChannels.has(channel)),
+	);
 	applyOpenClawHostedChannelPatch(
-		openClawManagedChannelsPatch(channels),
+		openClawManagedChannelsPatch(projectedChannels),
 		previousManifest ? hostedChannelProjection(previousManifest) : null,
 		Object.keys(manifest.runtimes.openclaw?.run?.secretEnv ?? {}),
 		openClawContext,
@@ -461,20 +471,27 @@ export function applyHostedChannelProjection(
 	);
 	return true;
 }
-/** Returns the verified OpenClaw install path of each projected external channel plugin. */
+export interface ChannelPluginInstallResult {
+	/** Verified OpenClaw install path of each projected external channel plugin. */
+	installPaths: Record<string, string>;
+	/** Error for each channel whose plugin could not be installed or verified. */
+	failures: Record<string, string>;
+}
+
 export function installHostedChannelProjectionDependencies(
 	name: string,
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
 	home: string,
 	workspaceRoot: string,
-): Record<string, string> {
-	if (name !== "openclaw") return {};
+): ChannelPluginInstallResult {
+	const none = { installPaths: {}, failures: {} };
+	if (name !== "openclaw") return none;
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
-		return {};
+		return none;
 	}
 	const channels = hostedChannelProjection(manifest);
-	if (!channels) return {};
+	if (!channels) return none;
 	return installOpenClawChannelPlugins({
 		commandPath: observation.commandPath,
 		channels,
@@ -522,8 +539,8 @@ function installOpenClawChannelPlugins(input: {
 	channels: Record<string, unknown>;
 	home: string;
 	workspaceRoot: string;
-}): Record<string, string> {
-	const installPaths: Record<string, string> = {};
+}): ChannelPluginInstallResult {
+	const result: ChannelPluginInstallResult = { installPaths: {}, failures: {} };
 	for (const channel of Object.keys(input.channels).sort()) {
 		const specs = OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS[channel];
 		if (!specs) continue;
@@ -535,17 +552,22 @@ function installOpenClawChannelPlugins(input: {
 				home: input.home,
 				workspaceRoot: input.workspaceRoot,
 			});
-		let install = currentInstall();
-		if (!install) {
-			runPluginInstallWithFallback(input.commandPath, specs, input.home, input.workspaceRoot);
-			install = currentInstall();
+		// One channel's plugin must not block the other channels or the runtime.
+		try {
+			let install = currentInstall();
+			if (!install) {
+				runPluginInstallWithFallback(input.commandPath, specs, input.home, input.workspaceRoot);
+				install = currentInstall();
+			}
+			if (!install) {
+				throw new Error(`OpenClaw ${channel} channel plugin install could not be verified`);
+			}
+			if (install.installPath) result.installPaths[channel] = install.installPath;
+		} catch (error) {
+			result.failures[channel] = error instanceof Error ? error.message : String(error);
 		}
-		if (!install) {
-			throw new Error(`OpenClaw ${channel} channel plugin install could not be verified`);
-		}
-		if (install.installPath) installPaths[channel] = install.installPath;
 	}
-	return installPaths;
+	return result;
 }
 function runPluginInstallWithFallback(
 	commandPath: string,

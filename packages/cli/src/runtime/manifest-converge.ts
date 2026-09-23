@@ -39,6 +39,7 @@ import { reconcileManagedBaileysCompatibility } from "./managed-baileys-compat";
 import { managedHermesWhatsAppAuthDir } from "./managed-channel-reconciliation";
 import {
 	applyHostedChannelProjection,
+	type ChannelPluginInstallResult,
 	installHostedChannelProjectionDependencies,
 	materializeHostedChannelCredentials,
 } from "./manifest-channels";
@@ -177,6 +178,8 @@ interface RuntimeConvergenceState {
 	runtimeSystemdUserPrograms: RuntimeSystemdUserProgram[];
 	installErrors: string[];
 	resourceProjectionErrors: string[];
+	/** OpenClaw channels whose managed projection is withdrawn for this generation. */
+	withdrawnOpenClawChannels: Set<string>;
 	projectedProviderIds: Record<string, string[]>;
 	observations: Map<string, RuntimeInstallObservation>;
 	openClawOwnerBrowserBootstrapSupported: boolean;
@@ -308,6 +311,7 @@ function initializeRuntimeConvergence(
 		runtimeSystemdUserPrograms: [],
 		installErrors: [],
 		resourceProjectionErrors: [],
+		withdrawnOpenClawChannels: new Set(),
 		projectedProviderIds: {},
 		observations: new Map(),
 		openClawOwnerBrowserBootstrapSupported: false,
@@ -616,19 +620,26 @@ function prepareRuntimeApplyDependencies(
 				);
 			}
 		}
-		let openClawChannelPluginRoots: Record<string, string> = {};
+		let openClawChannelPlugins: ChannelPluginInstallResult = { installPaths: {}, failures: {} };
 		for (const [name] of runtimeEntries) {
 			const observation = state.observations.get(name);
 			if (!observation) throw new Error(`runtime ${name} install observation is missing`);
 			try {
-				const installPaths = installHostedChannelProjectionDependencies(
+				const plugins = installHostedChannelProjectionDependencies(
 					name,
 					observation,
 					manifest,
 					projectionHome,
 					paths.userHome,
 				);
-				if (name === "openclaw") openClawChannelPluginRoots = installPaths;
+				if (name === "openclaw") openClawChannelPlugins = plugins;
+				// OpenClaw keeps a configured channel whose plugin is missing as a warning, so
+				// the channel stays projected and a later convergence retries the install.
+				for (const [channel, error] of Object.entries(plugins.failures)) {
+					state.resourceProjectionErrors.push(
+						`runtime ${name} ${channel} channel plugin install failed: ${error}`,
+					);
+				}
 			} catch (error) {
 				state.installErrors.push(
 					`runtime ${name} channel plugin install failed: ${
@@ -638,31 +649,44 @@ function prepareRuntimeApplyDependencies(
 			}
 		}
 		const managedWhatsAppRuntime = managedWhatsAppCompatibilityRuntime(manifest);
-		try {
-			const observation = managedWhatsAppRuntime
-				? state.observations.get(managedWhatsAppRuntime)
-				: undefined;
-			if (managedWhatsAppRuntime && !observation?.appRoot) {
-				throw new Error(`runtime ${managedWhatsAppRuntime} artifact root is unavailable`);
+		if (managedWhatsAppRuntime === "openclaw" && openClawChannelPlugins.failures.whatsapp) {
+			// Without a verified plugin install the patched Baileys cannot be located or proven,
+			// and managed auth must not be projected onto an unverified socket.
+			state.withdrawnOpenClawChannels.add("whatsapp");
+		} else {
+			try {
+				const observation = managedWhatsAppRuntime
+					? state.observations.get(managedWhatsAppRuntime)
+					: undefined;
+				if (managedWhatsAppRuntime && !observation?.appRoot) {
+					throw new Error(`runtime ${managedWhatsAppRuntime} artifact root is unavailable`);
+				}
+				const compatibility = reconcileManagedBaileysCompatibility({
+					desiredRuntime: managedWhatsAppRuntime,
+					home: projectionHome,
+					...(observation?.appRoot ? { appRoot: observation.appRoot } : {}),
+					...(openClawChannelPlugins.installPaths.whatsapp
+						? { openClawPluginRoot: openClawChannelPlugins.installPaths.whatsapp }
+						: {}),
+				});
+				if (compatibility.status === "rollback-refused") {
+					throw new Error(compatibility.errors.join(", "));
+				}
+			} catch (error) {
+				const operation = managedWhatsAppRuntime
+					? `runtime ${managedWhatsAppRuntime} managed WhatsApp compatibility`
+					: "runtime managed WhatsApp compatibility cleanup";
+				const message = `${operation} failed: ${
+					error instanceof Error ? error.message : String(error)
+				}`;
+				if (managedWhatsAppRuntime === "openclaw") {
+					// Degrade only the OpenClaw managed WhatsApp channel.
+					state.withdrawnOpenClawChannels.add("whatsapp");
+					state.resourceProjectionErrors.push(message);
+				} else {
+					state.installErrors.push(message);
+				}
 			}
-			const compatibility = reconcileManagedBaileysCompatibility({
-				desiredRuntime: managedWhatsAppRuntime,
-				home: projectionHome,
-				...(observation?.appRoot ? { appRoot: observation.appRoot } : {}),
-				...(openClawChannelPluginRoots.whatsapp
-					? { openClawPluginRoot: openClawChannelPluginRoots.whatsapp }
-					: {}),
-			});
-			if (compatibility.status === "rollback-refused") {
-				throw new Error(compatibility.errors.join(", "));
-			}
-		} catch (error) {
-			const operation = managedWhatsAppRuntime
-				? `runtime ${managedWhatsAppRuntime} managed WhatsApp compatibility`
-				: "runtime managed WhatsApp compatibility cleanup";
-			state.installErrors.push(
-				`${operation} failed: ${error instanceof Error ? error.message : String(error)}`,
-			);
 		}
 		if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
 		mkdirSync(workspaceRoot, { recursive: true });
@@ -719,7 +743,12 @@ function prepareRuntimeEgressProjection(
 	let liveSyncEnvironments: string[] = [];
 	withRuntimeUserFileAccess(() => {
 		try {
-			materializeHostedChannelCredentials(manifest, secretValues, projectionHome);
+			materializeHostedChannelCredentials(
+				manifest,
+				secretValues,
+				projectionHome,
+				state.withdrawnOpenClawChannels,
+			);
 		} catch (error) {
 			state.installErrors.push(
 				`runtime channel credential materialization failed: ${
@@ -1063,6 +1092,7 @@ function applyRuntimeEntryProjections(
 					hermesWhatsAppAuthDir,
 					hermesConfig,
 					context.previousChannelManifest,
+					state.withdrawnOpenClawChannels,
 				);
 			} catch (error) {
 				state.installErrors.push(
