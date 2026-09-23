@@ -12280,9 +12280,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(soul).toContain("`Europe/Paris`");
 		expect(readFileSync(userPath, "utf-8")).toBe("User profile stays untouched.\n");
 		// The OpenClaw gateway watcher applies SOUL.md and agent defaults in place.
-		expect(systemdEnvDigest(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
-			initialRevision,
-		);
+		expect(systemdEnvDigest(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(initialRevision);
 		converge("fr", "Europe/Paris");
 		expect(readFileSync(soulPath, "utf-8")).toBe(soul);
 	});

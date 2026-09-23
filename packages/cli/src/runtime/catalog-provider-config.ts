@@ -10,41 +10,10 @@ import {
 import type { HostedAiProviderProjectionInput } from "./hosted-provider-resolution";
 import { isPlainRecord, recordValue } from "./manifest-shared";
 import type { OpenClawHostedProviderPatch } from "./openclaw-provider-config";
-import { runtimeImpactRevision } from "./runtime-impact-revision";
 export interface CatalogProviderConfigurationResult {
 	path: string | null;
 	revision: string | null;
 	providerIds: string[];
-}
-export function providerProjectionProgramImpact(
-	runtime: "openclaw" | "hermes",
-	patch: unknown,
-	projectionInput: HostedAiProviderProjectionInput | null,
-): unknown {
-	const root = recordValue(patch);
-	const managedProviderIds = new Set(
-		(projectionInput?.catalog.providers ?? [])
-			.filter((provider) => provider.managed_by === "clawdi")
-			.map((provider) => provider.id),
-	);
-	if (!root || managedProviderIds.size === 0) return patch;
-
-	const providerContainer = runtime === "openclaw" ? recordValue(root.models) : root;
-	if (!providerContainer) return patch;
-	const providers = recordValue(providerContainer.providers);
-	if (!providers) return patch;
-	const programProviders = Object.fromEntries(
-		Object.entries(providers).map(([providerId, provider]) => {
-			const providerConfig = recordValue(provider);
-			if (!managedProviderIds.has(providerId) || !providerConfig) return [providerId, provider];
-			const { models: _models, ...programConfig } = providerConfig;
-			return [providerId, programConfig];
-		}),
-	);
-	if (runtime === "openclaw") {
-		return { ...root, models: { ...providerContainer, providers: programProviders } };
-	}
-	return { ...root, providers: programProviders };
 }
 export function applyHostedHermesAiProviderProjection(
 	projectionInput: HostedAiProviderProjectionInput | null,
@@ -61,14 +30,7 @@ export function applyHostedHermesAiProviderProjection(
 			if (!config) throw new Error("Hermes config command is unavailable");
 			applyHermesProviderConfig(config, {}, deletedProviderIds, preserveModelSelection);
 		}
-		return {
-			path: null,
-			providerIds: [],
-			revision: runtimeImpactRevision({
-				hermesProviderProjection: "none",
-				deletedProviderIds,
-			}),
-		};
+		return { path: null, providerIds: [], revision: null };
 	}
 
 	const projection = buildAgentTargetProjection(
@@ -84,7 +46,6 @@ export function applyHostedHermesAiProviderProjection(
 		new Set(previousProviderIds),
 		new Set(activeProviderIds),
 	);
-	const patchContent = mergeProviderDeletes("hermes", file.content, deletedProviderIds);
 	if (apply) {
 		if (!config) throw new Error("Hermes config command is unavailable");
 		const patch = parseYaml(file.content) as unknown;
@@ -92,14 +53,7 @@ export function applyHostedHermesAiProviderProjection(
 		if (!root) throw new Error("Hermes projection patch must be a YAML object.");
 		applyHermesProviderConfig(config, root, deletedProviderIds, preserveModelSelection);
 	}
-	return {
-		path: configPath,
-		providerIds: activeProviderIds,
-		revision: runtimeImpactRevision({
-			hermesProviderProjection: "yaml-merge",
-			patch: providerProjectionProgramImpact("hermes", parseYaml(patchContent), projectionInput),
-		}),
-	};
+	return { path: configPath, providerIds: activeProviderIds, revision: null };
 }
 export function buildOpenClawHostedProviderPatch(
 	projectionInput: HostedAiProviderProjectionInput | null,
