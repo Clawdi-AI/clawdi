@@ -20,6 +20,52 @@ database migration, CI, and implementation details.
   in place. Hermes still restarts for those changes because it loads them at
   startup.
 
+### CLI 0.14.90
+
+- Managed OpenClaw WhatsApp installs the official plugin the way OpenClaw
+  documents (npm first, ClawHub as fallback), so new runtimes no longer fail to
+  start when a matching ClawHub release is missing. Existing ClawHub installs are
+  kept.
+- A Channel plugin that cannot be installed or verified affects only that Channel;
+  other Channels and the gateway still start, and the Channel retries later.
+- Skill discovery follows safe directory symlinks under Claude Code, Codex,
+  OpenClaw, and Hermes Skill roots; broken, cyclic, hidden, or out-of-root links
+  are ignored.
+
+### CLI 0.14.89
+
+- Hosted Hermes dashboards sign in with your Clawdi account; the separate Hermes
+  dashboard password and its reset flow are removed. Existing Hermes Agents need
+  their managed update.
+
+### CLI 0.14.87
+
+- Homebrew installs (`brew install clawdi-ai/tap/clawdi`) are recognized:
+  background services use Homebrew's stable path, and updates go through
+  `brew upgrade clawdi` instead of the built-in updater.
+- On Windows, the background sync service runs as a per-user scheduled task
+  without administrator rights.
+
+### CLI 0.14.85
+
+- A rejected Custom provider change no longer leaves a healthy Agent with
+  mismatched configuration; the last committed configuration is kept.
+
+### CLI 0.14.84
+
+- Vault files delivered to the workspace keep syncing after volume remounts.
+
+### CLI 0.14.83
+
+- Cloud Agents keep their last committed configuration when the system image is
+  replaced.
+
+### CLI 0.14.82
+
+- Unlinking a managed Hermes WhatsApp account also withdraws its managed
+  enablement, so the gateway no longer restarts repeatedly as unpaired. Native
+  pairing and user settings are preserved.
+
 ### CLI 0.14.81
 
 - Vault request pages support added fields and pasted or uploaded `.env` imports,
