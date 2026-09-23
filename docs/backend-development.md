@@ -163,7 +163,7 @@ cd backend
 uv run --extra mem0 python scripts/type_governance.py inventory
 ```
 
-The current CI Python 3.14 non-gating BasedPyright 1.39.10 inventory is:
+The last recorded Python 3.14 non-gating BasedPyright 1.39.10 inventory is:
 
 | Area | Files | Errors |
 | --- | ---: | ---: |
