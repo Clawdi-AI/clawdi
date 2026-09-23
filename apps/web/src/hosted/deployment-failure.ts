@@ -15,6 +15,11 @@ const RUNTIME_UNAVAILABLE_REASON =
 	"Clawdi is checking this Agent. Open Agent settings for details.";
 const SUBSCRIPTION_REQUIRED_REASON =
 	"This agent needs an active subscription to start. Open Agent settings and choose a subscription. Your saved data is kept.";
+const RUNTIME_CONFIGURATION_FAILURE_CODE = "runtime_configuration_failed";
+const RUNTIME_CONFIGURATION_FAILURE_REASON =
+	"One of this agent’s channels, AI providers, or tools could not be set up. Review recent changes, then restart the agent.";
+const RUNTIME_CONFIGURATION_FAILURE_DESCRIPTION =
+	"Clawdi could not apply part of this agent’s configuration. Fix or disable the item named above, then restart the agent.";
 
 export type DeploymentFailureProjection = {
 	reason: string;
@@ -40,7 +45,10 @@ export type DeploymentFailurePresentation = DeploymentFailureProjection & {
 	remediation: DeploymentFailureRemediation;
 };
 
-const RUNTIME_FAILURE_CODES = new Set(["runtime_readiness_timeout"]);
+// Public projection maps internal runtime codes (for example
+// runtime_readiness_timeout) to deployment_service_unavailable, so only the
+// user-facing post-ready health loss can reach the client.
+const RUNTIME_FAILURE_CODES = new Set(["runtime_unreachable"]);
 const FAILED_STATUS = { kind: "failed", label: "Failed", tone: "destructive" } as const;
 const RUNTIME_UNAVAILABLE_STATUS = {
 	kind: "runtime_unavailable",
@@ -146,6 +154,18 @@ export function deploymentFailurePresentation(
 			description: SUBSCRIPTION_REQUIRED_REASON,
 			status: FAILED_STATUS,
 			remediation: { kind: "none", label: null },
+		};
+	}
+	if (failure.code === RUNTIME_CONFIGURATION_FAILURE_CODE) {
+		return {
+			...failure,
+			title: "Agent configuration failed",
+			description: RUNTIME_CONFIGURATION_FAILURE_DESCRIPTION,
+			status: FAILED_STATUS,
+			remediation: {
+				kind: "restart",
+				label: failure.failedVerb === "create" ? "Retry startup" : "Restart agent",
+			},
 		};
 	}
 	const statusFailure =
@@ -271,6 +291,12 @@ export function deploymentFailureReason(
 	const failure = input?.failure;
 	if (!failure) return null;
 	if (failure.code === "funding_revoked_after_accept") return SUBSCRIPTION_REQUIRED_REASON;
+	// The one exception to the rule below: Hosted builds this code's detail only
+	// from closed templates naming the failing component (for example "The
+	// WhatsApp channel could not be set up…"), never from runtime output.
+	if (failure.code === RUNTIME_CONFIGURATION_FAILURE_CODE) {
+		return failure.detail?.trim() || RUNTIME_CONFIGURATION_FAILURE_REASON;
+	}
 
 	// Failure title/detail/conditionMessage are free-form backend strings. Even
 	// after removing identifiers they can contain exception names or service

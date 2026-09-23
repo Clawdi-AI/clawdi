@@ -145,6 +145,42 @@ describe("deployment failure status rendering", () => {
 		expect(markup).not.toContain("failure reason and operation");
 	});
 
+	test("names the failing component for a runtime configuration failure", () => {
+		if (!computeStatusDetails) throw new Error("agent detail was not loaded");
+		const detail =
+			"The WhatsApp channel could not be set up on this agent. Reconnect or disable the WhatsApp channel, then restart the agent.";
+		const deployment = hostedDeploymentFixture({
+			status: "failed",
+			failure: {
+				type: "https://api.clawdi.ai/problems/deployments/runtime_configuration_failed",
+				title: "Runtime configuration failed",
+				status: 502,
+				detail,
+				code: "runtime_configuration_failed",
+				phase: "reconcile",
+				retryable: true,
+				conditionReason: "RuntimeConfigurationFailed",
+				conditionMessage: "Runtime configuration failed",
+				observedGeneration: 1,
+			},
+		});
+		const failure = deploymentFailurePresentation(deployment);
+		if (!failure) throw new Error("Expected runtime configuration failure presentation");
+
+		const markup = renderToStaticMarkup(
+			createElement(computeStatusDetails, {
+				deployment,
+				failure,
+				deploymentTransitionTimedOut: false,
+				deploymentTransitionEscalated: false,
+			}),
+		);
+
+		expect(markup).toContain("Agent configuration failed");
+		expect(markup).toContain("The WhatsApp channel could not be set up on this agent.");
+		expect(markup).not.toContain("The Clawdi service could not complete this request.");
+	});
+
 	test("renders a later runtime failure without blaming a successful restart", () => {
 		if (!computeStatusDetails) throw new Error("agent detail was not loaded");
 		const running = hostedDeploymentFixture({ id: "hdep_runtime_degraded" });
@@ -153,14 +189,14 @@ describe("deployment failure status rendering", () => {
 			status: "failed",
 			acceptedOperation: successfulOperation("restart", running),
 			failure: {
-				type: "https://api.clawdi.ai/problems/runtime-readiness-timeout",
+				type: "https://api.clawdi.ai/problems/deployments/runtime_unreachable",
 				title: "Runtime apply failed",
-				status: 504,
+				status: 503,
 				detail: "Hermes prerequisite failed: internal build output",
-				code: "runtime_readiness_timeout",
+				code: "runtime_unreachable",
 				phase: "reconcile",
 				retryable: true,
-				conditionReason: "RuntimeReadinessTimeout",
+				conditionReason: "RuntimeUnreachable",
 				conditionMessage: "internal runtime health error",
 				observedGeneration: 2,
 			},

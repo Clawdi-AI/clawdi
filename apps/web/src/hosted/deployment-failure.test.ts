@@ -187,14 +187,14 @@ describe("deploymentFailureReason", () => {
 				},
 			},
 			failure: {
-				type: "https://api.clawdi.ai/problems/runtime-readiness-timeout",
-				title: "Runtime readiness timed out",
-				status: 504,
+				type: "https://api.clawdi.ai/problems/deployments/runtime_unreachable",
+				title: "Runtime is unreachable",
+				status: 503,
 				detail: "runtime apply failed: internal prerequisite output",
-				code: "runtime_readiness_timeout",
+				code: "runtime_unreachable",
 				phase: "reconcile",
 				retryable: true,
-				conditionReason: "RuntimeReadinessTimeout",
+				conditionReason: "RuntimeUnreachable",
 				conditionMessage: "internal runtime health error",
 				observedGeneration: 2,
 			},
@@ -204,7 +204,7 @@ describe("deploymentFailureReason", () => {
 			reason: "Clawdi is checking this Agent. Open Agent settings for details.",
 			failedVerb: null,
 			retryable: true,
-			code: "runtime_readiness_timeout",
+			code: "runtime_unreachable",
 		});
 		expect(deploymentFailurePresentation(deployment)).toMatchObject({
 			title: "Temporarily unavailable",
@@ -237,7 +237,7 @@ describe("deploymentFailureReason", () => {
 	test("prioritizes customer-actionable codes over a broad reconcile phase", () => {
 		const cases = [
 			{
-				code: "runtime_readiness_timeout",
+				code: "runtime_unreachable",
 				title: "Temporarily unavailable",
 				reason: "Clawdi is checking this Agent. Open Agent settings for details.",
 			},
@@ -525,6 +525,80 @@ describe("operationCancelErrorMessage", () => {
 		const error = new BillingApiError(404, "Operation not found");
 		expect(operationCancelErrorMessage(error)).toBe(
 			"This agent is no longer available. Return to Agents and refresh the list.",
+		);
+	});
+});
+
+describe("runtime configuration failures", () => {
+	const channelDetail =
+		"The WhatsApp channel could not be set up on this agent. Reconnect or disable the WhatsApp channel, then restart the agent.";
+
+	function configurationFailure(detail: string) {
+		return {
+			type: "https://api.clawdi.ai/problems/deployments/runtime_configuration_failed",
+			title: "Runtime configuration failed",
+			status: 502,
+			detail,
+			code: "runtime_configuration_failed",
+			phase: "reconcile",
+			retryable: true,
+			conditionReason: "RuntimeConfigurationFailed",
+			conditionMessage: "Runtime configuration failed",
+			observedGeneration: 2,
+		};
+	}
+
+	test("names the failing component after the agent was ready", () => {
+		const deployment = hostedDeploymentFixture({
+			status: "failed",
+			failure: configurationFailure(channelDetail),
+		});
+
+		expect(deploymentFailurePresentation(deployment)).toMatchObject({
+			title: "Agent configuration failed",
+			reason: channelDetail,
+			failedVerb: null,
+			code: "runtime_configuration_failed",
+			status: { kind: "failed", label: "Failed", tone: "destructive" },
+			remediation: { kind: "restart", label: "Restart agent" },
+		});
+	});
+
+	test("wins over the generic setup copy when initial startup fails", () => {
+		const operation = failedOperation("create");
+		const deployment = hostedDeploymentFixture({
+			status: "failed",
+			acceptedOperation: {
+				...operation,
+				error: {
+					code: 13,
+					message: "operation failed",
+					details: [
+						{
+							"@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails",
+							...configurationFailure(channelDetail),
+						},
+					],
+				},
+			},
+		});
+
+		expect(deploymentFailurePresentation(deployment)).toMatchObject({
+			title: "Agent configuration failed",
+			reason: channelDetail,
+			failedVerb: "create",
+			remediation: { kind: "restart", label: "Retry startup" },
+		});
+	});
+
+	test("falls back to client copy when the component summary is missing", () => {
+		const deployment = hostedDeploymentFixture({
+			status: "failed",
+			failure: configurationFailure("   "),
+		});
+
+		expect(deploymentFailureProjection(deployment)?.reason).toBe(
+			"One of this agent’s channels, AI providers, or tools could not be set up. Review recent changes, then restart the agent.",
 		);
 	});
 });

@@ -153,15 +153,15 @@ export function mutationDeploymentReadFixture(
 		runtime === "openclaw" ? deployment.openclaw_control_ui_url : deployment.hermes_control_ui_url;
 	const failure = deployment.failure_reason
 		? {
-				type: "https://api.clawdi.ai/problems/runtime-readiness-timeout",
+				type: "https://api.clawdi.ai/problems/deployments/runtime_unreachable",
 				title: deployment.failure_reason,
-				status: 504,
-				detail: "The runtime did not become ready before the startup deadline.",
+				status: 503,
+				detail: "Fresh healthy runtime evidence was not re-established.",
 				instance: deployment.id,
-				code: "runtime_readiness_timeout",
+				code: "runtime_unreachable",
 				phase: "readiness",
 				retryable: true,
-				conditionReason: "RuntimeReadinessTimeout",
+				conditionReason: "RuntimeUnreachable",
 				conditionMessage: deployment.failure_reason,
 				observedGeneration: 1,
 			}
