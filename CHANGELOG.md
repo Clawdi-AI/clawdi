@@ -14,57 +14,44 @@ database migration, CI, and implementation details.
 
 ### CLI 0.14.91
 
-- Cloud Agents apply a new default model, AI Provider model list, or AI Provider
-  endpoint without restarting, so conversations in progress keep running.
-- OpenClaw Cloud Agents also apply Channel, MCP server, and time zone changes
-  in place. Hermes still restarts for those changes because it loads them at
-  startup.
+- Switching your Cloud Agent's model, or adding new models, now takes effect
+  without restarting the Agent, so conversations in progress keep running.
+- OpenClaw Agents also keep running when you change Channels, tools, or your
+  time zone.
 
 ### CLI 0.14.90
 
-- Managed OpenClaw WhatsApp installs the official plugin the way OpenClaw
-  documents (npm first, ClawHub as fallback), so new runtimes no longer fail to
-  start when a matching ClawHub release is missing. Existing ClawHub installs are
-  kept.
-- A Channel plugin that cannot be installed or verified affects only that Channel;
-  other Channels and the gateway still start, and the Channel retries later.
-- Skill discovery follows safe directory symlinks under Claude Code, Codex,
-  OpenClaw, and Hermes Skill roots; broken, cyclic, hidden, or out-of-root links
-  are ignored.
+- OpenClaw Agents with WhatsApp connected start reliably again.
+- If one Channel has a problem, your other Channels and the Agent keep working.
+- Skills stored in linked folders are now found and loaded.
 
 ### CLI 0.14.89
 
-- Hosted Hermes dashboards sign in with your Clawdi account; the separate Hermes
-  dashboard password and its reset flow are removed. Existing Hermes Agents need
-  their managed update.
+- Open your Hermes dashboard with your Clawdi account. The separate dashboard
+  password is no longer needed.
 
 ### CLI 0.14.87
 
-- Homebrew installs (`brew install clawdi-ai/tap/clawdi`) are recognized:
-  background services use Homebrew's stable path, and updates go through
-  `brew upgrade clawdi` instead of the built-in updater.
-- On Windows, the background sync service runs as a per-user scheduled task
-  without administrator rights.
+- Clawdi installed with Homebrew now updates through Homebrew.
+- Background sync on Windows no longer needs administrator rights.
 
 ### CLI 0.14.85
 
-- A rejected Custom provider change no longer leaves a healthy Agent with
-  mismatched configuration; the last committed configuration is kept.
+- If an AI Provider change can't be applied, your Agent keeps working with its
+  previous settings.
 
 ### CLI 0.14.84
 
-- Vault files delivered to the workspace keep syncing after volume remounts.
+- Vault files in your Agent's workspace keep syncing reliably.
 
 ### CLI 0.14.83
 
-- Cloud Agents keep their last committed configuration when the system image is
-  replaced.
+- Cloud Agents keep their settings through system updates.
 
 ### CLI 0.14.82
 
-- Unlinking a managed Hermes WhatsApp account also withdraws its managed
-  enablement, so the gateway no longer restarts repeatedly as unpaired. Native
-  pairing and user settings are preserved.
+- Unlinking WhatsApp from a Hermes Agent no longer leaves the Agent restarting
+  repeatedly.
 
 ### CLI 0.14.81
 
