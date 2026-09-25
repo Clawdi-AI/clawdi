@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 import pytest_asyncio
+import zstandard as zstd
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -16003,7 +16004,7 @@ def test_discord_gateway_rejects_unsupported_encoding_and_compress():
             assert exc.value.code == 4012
 
         with sync_client.websocket_connect(
-            "/v1/channels/discord/gateway?encoding=json&compress=zstd-stream"
+            "/v1/channels/discord/gateway?encoding=json&compress=brotli"
         ) as websocket:
             with pytest.raises(WebSocketDisconnect) as exc:
                 websocket.receive_json()
@@ -16017,6 +16018,23 @@ def test_discord_gateway_zlib_stream_compresses_outbound_frames(monkeypatch):
     with TestClient(app) as sync_client:
         with sync_client.websocket_connect(
             "/v1/channels/discord/gateway?encoding=json&compress=zlib-stream"
+        ) as websocket:
+            hello = json.loads(inflater.decompress(websocket.receive_bytes()).decode("utf-8"))
+            websocket.send_json({"op": 2, "d": {"token": "valid-discord-token", "intents": 0}})
+            ready = json.loads(inflater.decompress(websocket.receive_bytes()).decode("utf-8"))
+
+    assert hello["op"] == 10
+    assert ready["t"] == "READY"
+    assert ready["d"]["v"] == 10
+
+
+def test_discord_gateway_zstd_stream_compresses_outbound_frames(monkeypatch):
+    _install_discord_gateway_protocol_fakes(monkeypatch)
+    inflater = zstd.ZstdDecompressor().decompressobj()
+
+    with TestClient(app) as sync_client:
+        with sync_client.websocket_connect(
+            "/v1/channels/discord/gateway?encoding=json&compress=zstd-stream"
         ) as websocket:
             hello = json.loads(inflater.decompress(websocket.receive_bytes()).decode("utf-8"))
             websocket.send_json({"op": 2, "d": {"token": "valid-discord-token", "intents": 0}})
