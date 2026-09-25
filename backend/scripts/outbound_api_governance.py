@@ -63,6 +63,7 @@ EXPECTED_THIRD_PARTY_IMPORT_ROOTS = frozenset(
         "websockets",
         "xeddsa",
         "yaml",
+        "zstandard",
     }
 )
 

@@ -21,6 +21,7 @@ from urllib.parse import quote
 from uuid import UUID
 
 import jwt
+import zstandard as zstd
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -841,7 +842,9 @@ async def discord_agent_gateway(
     await websocket.accept()
     encoding = websocket.query_params.get("encoding") or "json"
     compress = websocket.query_params.get("compress")
-    if encoding != "json" or (compress is not None and compress != "zlib-stream"):
+    if encoding != "json" or (
+        compress is not None and compress not in {"zlib-stream", "zstd-stream"}
+    ):
         await websocket.close(code=4012)
         return
     raw_capability = path_capability or websocket.query_params.get("capability")
@@ -857,7 +860,12 @@ async def discord_agent_gateway(
         await websocket.close(code=4004)
         return
 
-    compressor = zlib.compressobj(wbits=zlib.MAX_WBITS) if compress == "zlib-stream" else None
+    if compress == "zlib-stream":
+        compressor = zlib.compressobj(wbits=zlib.MAX_WBITS)
+    elif compress == "zstd-stream":
+        compressor = zstd.ZstdCompressor().compressobj()
+    else:
+        compressor = None
     account: ChannelAccount | None = None
     bot_agent_link_id: UUID | None = None
     last_inbox_sequence = 0
@@ -903,10 +911,15 @@ async def discord_agent_gateway(
                         session_state["dropped_through_sequence"] = dropped_sequence
         if compressor is None:
             await websocket.send_json(payload)
-        else:
+        elif compress == "zlib-stream":
             raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
             await websocket.send_bytes(
                 compressor.compress(raw) + compressor.flush(zlib.Z_SYNC_FLUSH)
+            )
+        else:
+            raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+            await websocket.send_bytes(
+                compressor.compress(raw) + compressor.flush(zstd.COMPRESSOBJ_FLUSH_BLOCK)
             )
         if session_state is not None:
             _DISCORD_GATEWAY_SESSIONS.touch(session_id)
