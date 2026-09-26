@@ -266,8 +266,14 @@ function prepareConnection(
 		throw new NativeProviderConflictError(
 			"Existing native provider requires explicit operator handoff",
 		);
+	// Clawdi declares the custom providers it owns, so a missing row is recreated from the
+	// binding. Rows backed by native credentials or a handoff are never recreated.
+	const clawdiOwned =
+		previous !== undefined && !previous.handoffId && connection.credentialAuthority !== "native";
 	const creating =
-		!existing && connection.initialize && (!previous || previous.pendingCreation === true);
+		!existing &&
+		connection.initialize &&
+		(!previous || previous.pendingCreation === true || clawdiOwned);
 	if (!existing && !creating) throw new Error(`Connection provider ${id} must already exist`);
 	if (current[id] !== undefined && !existing)
 		throw new Error("Custom provider config must be an object");

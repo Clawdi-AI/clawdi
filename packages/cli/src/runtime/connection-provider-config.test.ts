@@ -346,9 +346,13 @@ for (const runtime of ["openclaw", "hermes"] as const) {
 				expect(config.document.getIn(["model", "default"])).toBe("existing");
 				expect(recordValue(f.read())?.models).toEqual(edited.models);
 			}
-			// A successful initialization is not permission to recreate a user-deleted row.
+			// The binding still declares a Clawdi-owned provider, so a deleted row is recreated
+			// with Clawdi's own credential reference.
 			f.set(undefined);
-			expect(() => f.prepare()).toThrow("must already exist");
+			f.prepare();
+			applyConnectionProviderTransfers(f.input());
+			const recreated = recordValue(f.read());
+			expect(recreated?.apiKey ?? recreated?.key_env).toBeDefined();
 		} finally {
 			f.cleanup();
 		}
