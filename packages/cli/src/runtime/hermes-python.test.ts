@@ -38,7 +38,10 @@ function writePackageManagerInstall(home: string, committedPython: string | null
 
 test("keeps the in-tree venv of installs that predate the Hermes package manager", () => {
 	const home = tempHome();
-	const inTree = writeExecutable(join(home, ".hermes", "hermes-agent", "venv", "bin", "python"), "");
+	const inTree = writeExecutable(
+		join(home, ".hermes", "hermes-agent", "venv", "bin", "python"),
+		"",
+	);
 	writePackageManagerInstall(home, "/unused");
 
 	expect(hermesManagedPython(home)).toBe(inTree);
@@ -47,7 +50,17 @@ test("keeps the in-tree venv of installs that predate the Hermes package manager
 test("resolves the committed environment of a package-manager install", () => {
 	const home = tempHome();
 	const committed = writeExecutable(
-		join(home, ".hermes", "installs", "0123456789abcdef", "environments", "gen", "venv", "bin", "python"),
+		join(
+			home,
+			".hermes",
+			"installs",
+			"0123456789abcdef",
+			"environments",
+			"gen",
+			"venv",
+			"bin",
+			"python",
+		),
 		"",
 	);
 	writePackageManagerInstall(home, committed);
