@@ -85,7 +85,7 @@ const HERMES_API: Partial<Record<AiProviderApiMode, string>> = {
 // Public installed APIs only. Never load_pool(): it can seed/write credentials.
 // NousResearch/hermes-agent@0d08cd295fd73427833ee349eb858569d4d0dd3a.
 // The deployed 7a963456 baseline resolves one pool via get_custom_provider_pool_key.
-const HERMES_POOL_GUARD = `
+export const HERMES_POOL_GUARD = `
 import contextlib, io, json, sys
 sys.path.insert(0, sys.argv[1])
 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):

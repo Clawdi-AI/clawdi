@@ -72,7 +72,7 @@ export function runtimeAppRoot(name: string, home: string): string | null {
 	if (name === "hermes") return join(home, ".hermes", "hermes-agent");
 	return null;
 }
-const HERMES_DASHBOARD_CAPABILITY_PROBE =
+export const HERMES_DASHBOARD_CAPABILITY_PROBE =
 	"import uvicorn; assert callable(getattr(uvicorn.Server, 'capture_signals', None))";
 const HERMES_DASHBOARD_CAPABILITY_PROBE_TIMEOUT_MS = 30_000;
 const DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS = 30 * 60 * 1000;

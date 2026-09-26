@@ -30,7 +30,7 @@ export const OFFICIAL_INSTALL_URLS: Record<string, string> = {
 	hermes: "https://hermes-agent.nousresearch.com/install.sh",
 };
 
-const HOSTED_GATEWAY_RUN_ARGS = ["gateway", "run"] as const;
+export const HOSTED_GATEWAY_RUN_ARGS = ["gateway", "run"] as const;
 // SUNSET: delete after hosted flips `_runtime_run_state('openclaw')` to the canonical
 // official gateway command, existing runtime states are re-pushed, and the wire is
 // verified canonical.
@@ -44,7 +44,7 @@ const LEGACY_HOSTED_OPENCLAW_GATEWAY_RUN_ARGS = [
 	"lan",
 	"--force",
 ] as const;
-const HOSTED_HERMES_DASHBOARD_ARGS = [
+export const HOSTED_HERMES_DASHBOARD_ARGS = [
 	"dashboard",
 	"--host",
 	"0.0.0.0",

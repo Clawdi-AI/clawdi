@@ -792,6 +792,24 @@ without a version or channel argument. Convergence runs the installer when the
 runtime executable is absent; it does not resolve, compare, or rewrite upstream
 versions independently.
 
+Because new Hermes Agents always receive upstream `main`, the
+[Hermes Upstream Contract](../.github/workflows/hermes-upstream-contract.yml)
+workflow installs the current official Hermes every three hours as UID 10001
+in a clean Ubuntu container and drives the CLI's own Hermes adapter code
+against it: interpreter resolution, command-line surfaces, config, Skill,
+credential-pool, Codex OAuth, and Agent Plugin helpers, the dashboard cold
+build, OIDC dashboard and gateway readiness, and the managed WhatsApp Baileys
+patch. The installer URL and arguments come from the CLI source. A failure
+names the upstream commit and `displayVersion` in the job summary; scheduled
+and manual runs also keep one open issue labeled `hermes-upstream-contract`
+updated until the contract passes again. Run it locally with:
+
+```bash
+scripts/test-hermes-upstream-contract.sh
+```
+
+Done: the command exits 0 and its report shows `PASS`.
+
 Hosted parsing does not accept camel-case runtime binding aliases, snake-case
 provider transport aliases, or string `primary_model` values. Provider model
 catalog fields such as `models[].api_mode` and ownership metadata such as

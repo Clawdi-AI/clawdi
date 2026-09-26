@@ -1,0 +1,112 @@
+name: Hermes Upstream Contract
+
+# Hosted Agents install Hermes from the official, unpinned installer, so an
+# upstream change can break new Agents without any Clawdi change. Run the CLI
+# adapter contract against the current upstream install on a schedule, on
+# demand, and on PRs that change the adapter itself. This check is advisory:
+# PRs that do not touch the adapter never depend on upstream availability.
+on:
+  schedule:
+    - cron: "23 */3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "packages/cli/src/lib/codex-oauth-native-store.ts"
+      - "packages/cli/src/runtime/connection-provider-config.ts"
+      - "packages/cli/src/runtime/hermes-config.ts"
+      - "packages/cli/src/runtime/hermes-native-credentials.ts"
+      - "packages/cli/src/runtime/hermes-python.ts"
+      - "packages/cli/src/runtime/hermes_native_credentials.py"
+      - "packages/cli/src/runtime/hosted-agent-plugin-runtime.ts"
+      - "packages/cli/src/runtime/hosted-hermes-skill.ts"
+      - "packages/cli/src/runtime/managed-baileys-compat.ts"
+      - "packages/cli/src/runtime/manifest-contract.ts"
+      - "packages/cli/src/runtime/manifest-install.ts"
+      - "packages/cli/src/runtime/manifest-runtime-config.ts"
+      - "packages/cli/src/runtime/observed.ts"
+      - "packages/cli/src/runtime/runtime-systemd-reconciliation.ts"
+      - "packages/cli/tests/e2e/hermes-upstream-contract.e2e.test.ts"
+      - "packages/cli/tests/fixtures/hermes-upstream-contract/**"
+      - "scripts/test-hermes-upstream-contract.sh"
+      - ".github/workflows/hermes-upstream-contract.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermes-upstream-contract-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  contract:
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.contract.outputs.commit }}
+      display_version: ${{ steps.contract.outputs.display_version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check Docker availability
+        run: docker version
+      - name: Run adapter contract against the latest official Hermes install
+        id: contract
+        run: scripts/test-hermes-upstream-contract.sh
+
+  # Scheduled and manual runs keep exactly one open tracking issue while the
+  # latest upstream install breaks the adapter, and close it once it passes.
+  tracking-issue:
+    needs: contract
+    if: >-
+      always() &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
+      (needs.contract.result == 'success' || needs.contract.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ISSUE_LABEL: hermes-upstream-contract
+      RESULT: ${{ needs.contract.result }}
+      UPSTREAM_COMMIT: ${{ needs.contract.outputs.commit || 'unknown' }}
+      UPSTREAM_VERSION: ${{ needs.contract.outputs.display_version || 'unknown' }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open, update, or close the tracking issue
+        run: |
+          issue="$(gh issue list --state open --label "$ISSUE_LABEL" --limit 1 \
+            --json number --jq '.[0].number // empty')"
+          if [[ "$UPSTREAM_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            upstream="[\`$UPSTREAM_COMMIT\`](https://github.com/NousResearch/hermes-agent/commit/$UPSTREAM_COMMIT)"
+          else
+            upstream="\`$UPSTREAM_COMMIT\`"
+          fi
+          details="- Upstream commit: $upstream
+          - displayVersion: \`$UPSTREAM_VERSION\`
+          - Run: $RUN_URL"
+
+          if [[ "$RESULT" == "success" ]]; then
+            if [[ -n "$issue" ]]; then
+              gh issue close "$issue" --comment "The adapter contract passes again against the latest official Hermes install.
+
+          $details"
+            fi
+            exit 0
+          fi
+
+          body="The latest official Hermes install breaks the Clawdi CLI Hermes adapter contract. New Hermes Agents install this upstream revision.
+
+          $details
+
+          See the run's job summary for the failing checks."
+          if [[ -n "$issue" ]]; then
+            gh issue comment "$issue" --body "$body"
+          else
+            gh label create "$ISSUE_LABEL" --color B60205 \
+              --description "Latest upstream Hermes breaks the CLI adapter contract" 2>/dev/null || true
+            gh issue create --title "Hermes upstream adapter contract is failing" \
+              --label "$ISSUE_LABEL" --body "$body"
+          fi
