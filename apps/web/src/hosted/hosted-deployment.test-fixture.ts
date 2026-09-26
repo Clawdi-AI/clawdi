@@ -36,6 +36,9 @@ type HostedDeploymentFixtureOptions = {
 	runtimeUiEndpoint?: HostedDeployment["runtime_ui_endpoint"];
 	filesEndpoint?: HostedDeployment["files_endpoint"];
 	currentPlanSlug?: HostedDeployment["current_plan_slug"];
+	/** Conditions appended after the fixture's Ready condition. */
+	extraConditions?: HostedDeploymentStatus["conditions"];
+	providerConflicts?: HostedDeployment["provider_conflicts"];
 };
 
 const DEFAULT_CREATED_AT = "2026-01-01T00:00:00Z";
@@ -95,6 +98,7 @@ export function hostedDeploymentFixture(
 									message: "Runtime observation",
 									lastTransitionTime: createdAt,
 								},
+								...(options.extraConditions ?? []),
 							],
 							failure: options.failure,
 							driver_acknowledged_generation: 1,
@@ -115,6 +119,9 @@ export function hostedDeploymentFixture(
 			recovery_action: options.recoveryAction,
 		},
 		current_plan_slug: options.currentPlanSlug ?? "compute_basic",
+		...(options.providerConflicts === undefined
+			? {}
+			: { provider_conflicts: options.providerConflicts }),
 		upgrade_available: upgradeAvailable,
 		upgrade_eligibility: options.upgradeEligibility ?? {
 			eligible: upgradeAvailable,

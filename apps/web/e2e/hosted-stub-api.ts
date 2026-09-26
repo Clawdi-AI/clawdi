@@ -56,6 +56,9 @@ export type DeploymentMutationFixture = {
 	};
 	endpoints?: string[];
 	failure_reason?: string | null;
+	/** A serving advisory projected as a current `Degraded=True` condition. */
+	serving_advisory?: "ProviderConflict" | "RuntimeUiUnavailable";
+	provider_conflicts?: DeploymentRead["provider_conflicts"];
 	hermes_control_ui_url?: string | null;
 	openclaw_control_ui_url?: string | null;
 	last_funding_event?: {
@@ -228,6 +231,18 @@ export function mutationDeploymentReadFixture(
 						message: "Runtime observation",
 						lastTransitionTime: deployment.created_at,
 					},
+					...(deployment.serving_advisory
+						? [
+								{
+									type: "Degraded",
+									status: "True",
+									observedGeneration: 1,
+									reason: deployment.serving_advisory,
+									message: "Serving advisory",
+									lastTransitionTime: deployment.created_at,
+								} as const,
+							]
+						: []),
 				],
 				failure,
 				driver_acknowledged_generation: 1,
@@ -273,6 +288,7 @@ export function mutationDeploymentReadFixture(
 			latest_funding_fact: fundingFact,
 		},
 		current_plan_slug: config.compute_plan_slug,
+		...(deployment.provider_conflicts ? { provider_conflicts: deployment.provider_conflicts } : {}),
 		upgrade_available: deployment.upgrade_available,
 		upgrade_eligibility: deployment.upgrade_eligibility ?? {
 			eligible: deployment.upgrade_available,

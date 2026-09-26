@@ -68,6 +68,7 @@ export function HostedAgentEventStreamLayout() {
 							deployment={persistentConsole}
 							runtime="openclaw"
 							terminalHref={agentSectionHref(agentId, "terminal")}
+							channelsHref={agentSectionHref(agentId, "channels")}
 							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 							deploymentTransitionEscalated={deploymentTransitionEscalated}
 							isCheckingDeployment={isFetching}

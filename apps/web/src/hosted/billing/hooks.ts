@@ -33,8 +33,8 @@ import {
 } from "@/hosted/billing/subscription/subscription-create-adapter";
 import { isComputeSubscriptionActionUnconfirmed } from "@/hosted/billing/subscription/subscription-utils";
 import {
+	deploymentAwaitingRuntimeUi,
 	deploymentPollingState,
-	deploymentRuntimeUiIsReady,
 	deploymentStatusFromResource,
 	isTransitionalStatus,
 	type SettlingTracker,
@@ -490,9 +490,7 @@ export function useHostedDeployments({
 			);
 			const awaitingRuntimeUi = q.state.data?.some(
 				(deployment) =>
-					deployment.agent_id === pollBillingRecoveryFor &&
-					deployment.resource.status?.summary_state === "running" &&
-					!deploymentRuntimeUiIsReady(deployment),
+					deployment.agent_id === pollBillingRecoveryFor && deploymentAwaitingRuntimeUi(deployment),
 			);
 			return shortestRefetchInterval(
 				eventStreamFallbackInterval(inventoryInterval, eventStreamActive && !awaitingRuntimeUi),

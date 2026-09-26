@@ -16,6 +16,7 @@ import {
 	Link2,
 	Link2Off,
 	type LucideIcon,
+	MessagesSquare,
 	MonitorPlay,
 	Plus,
 	QrCode,
@@ -197,6 +198,7 @@ import {
 	type DeploymentStatus,
 	deploymentRuntimeStatusPresentation,
 	deploymentRuntimeUiIsReady,
+	deploymentRuntimeUiWithdrawn,
 	deploymentStatusFromResource,
 	deploymentStatusLabel,
 	deploymentTerminalIsAvailable,
@@ -248,6 +250,12 @@ import {
 	providerChoiceFromRef,
 	providerDisplayLabel,
 } from "@/hosted/v2/ai-providers/model-binding";
+import { ProviderConflictNotices } from "@/hosted/v2/ai-providers/provider-conflict-notice";
+import {
+	keepAgentOwnSettingsUpdate,
+	providerConflictDisplayId,
+	providerConflictNotices,
+} from "@/hosted/v2/ai-providers/provider-conflicts";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import type { ChannelAccountSummary } from "@/hosted/v2/channels/agent-channel-bindings.logic";
 import {
@@ -690,6 +698,7 @@ export function HostedAgentDetail({
 							deployment={deployment}
 							runtime={runtime}
 							terminalHref={terminalHref}
+							channelsHref={agentSectionHref(environmentId, "channels")}
 							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 							deploymentTransitionEscalated={deploymentTransitionEscalated}
 							isCheckingDeployment={isCheckingDeployment}
@@ -1516,10 +1525,13 @@ function OverviewTab({
 // ── Runtime UI ───────────────────────────────────────────────────────────────
 
 const RUNTIME_UI_LAUNCH_TOAST_ID = "runtime-ui-launch";
+const RUNTIME_UI_WITHDRAWN_DESCRIPTION =
+	"Your agent keeps running. Chat with it through channels, or use Terminal.";
 export function ConsoleTab({
 	deployment,
 	runtime,
 	terminalHref,
+	channelsHref,
 	deploymentTransitionTimedOut,
 	deploymentTransitionEscalated,
 	isCheckingDeployment,
@@ -1528,6 +1540,7 @@ export function ConsoleTab({
 	deployment: HostedDeployment;
 	runtime: Runtime;
 	terminalHref: string;
+	channelsHref: string;
 	deploymentTransitionTimedOut: boolean;
 	deploymentTransitionEscalated: boolean;
 	isCheckingDeployment: boolean;
@@ -1607,6 +1620,39 @@ export function ConsoleTab({
 					) : canStartDeployment(status) ? (
 						<StartComputeAction deployment={deployment} />
 					) : null
+				}
+			/>
+		);
+	}
+
+	// Serving advisory: the runtime withdrew only its optional browser UI.
+	if (deploymentRuntimeUiWithdrawn(deployment.resource.status)) {
+		return (
+			<EmptyState
+				icon={MonitorPlay}
+				title={`${browserUiLabel} is unavailable`}
+				description={RUNTIME_UI_WITHDRAWN_DESCRIPTION}
+				action={
+					<div className="flex flex-wrap justify-center gap-2">
+						<Button
+							render={<Link to={channelsHref} />}
+							nativeButton={false}
+							variant="outline"
+							size="sm"
+						>
+							<MessagesSquare className="size-3.5" />
+							Open channels
+						</Button>
+						<Button
+							render={<Link to={terminalHref} />}
+							nativeButton={false}
+							variant="outline"
+							size="sm"
+						>
+							<TerminalSquare className="size-3.5" />
+							Use Terminal
+						</Button>
+					</div>
 				}
 			/>
 		);
@@ -2073,6 +2119,10 @@ function AiProviderTab({
 		deploymentStatusFromResource(deployment.resource.status).kind === "updating";
 	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
 	const list = providers.data ?? [];
+	const conflictNotices = providerConflictNotices(deployment).map((notice) => ({
+		notice,
+		label: providerDisplayLabel(providerConflictDisplayId(notice, deployment), list),
+	}));
 	const currentProviderIds = runtimeConfiguration.providers.map((provider) => provider.provider_id);
 	const availabilityContext = { runtime, environmentId, currentProviderIds };
 	const managedModels = managedModelCatalog.data?.models ?? [];
@@ -2173,9 +2223,18 @@ function AiProviderTab({
 		}
 		updateDeployment.mutate({ id: deployment.resource.id, update });
 	}
+	function keepAgentOwnSettings() {
+		updateDeployment.mutate({ id: deployment.resource.id, update: keepAgentOwnSettingsUpdate() });
+	}
 
 	return (
 		<div className="flex flex-col gap-4">
+			<ProviderConflictNotices
+				items={conflictNotices}
+				keepPending={updateDeployment.isPending}
+				keepDisabled={updateInProgress}
+				onKeepAgentSettings={keepAgentOwnSettings}
+			/>
 			<div className={ENTITY_CHOICE_GRID_CLASS} data-testid="provider-choice-grid">
 				<EntityChoiceCard
 					onClick={() => selectProvider(MANAGED_AI_CHOICE)}

@@ -3094,6 +3094,121 @@ test("Clawdi AI model selection saves the chosen managed model", async ({ page }
 	});
 });
 
+test("provider conflict notice keeps the agent's own settings through the canonical update", async ({
+	page,
+}, testInfo) => {
+	const providerId = "custom-openrouter";
+	const deployment: DeploymentMutationFixture = {
+		...railHostedDeployment,
+		hermes_control_ui_url: "https://runtime.example/",
+		serving_advisory: "ProviderConflict",
+		provider_conflicts: [
+			{ runtime: "hermes", provider_id: providerId, code: "native_provider_exists" },
+		],
+		config_info: {
+			...railHostedDeployment.config_info,
+			ai_provider_auth_kind: "api_key",
+			runtime_configuration: {
+				providers: [{ provider_id: providerId, auth_kind: "secret_reference", models: ["m-1"] }],
+				primary_model: { provider_id: providerId, model: "m-1" },
+				features: [],
+			},
+		},
+	};
+	const updateDeploymentRequests: Array<{
+		body: string;
+		idempotencyKey: string | null;
+		ifMatch: string | null;
+	}> = [];
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		cloudAgents: [railHostedCloudAgent],
+		aiProviders: [userProvider(providerId, "OpenRouter", [{ id: "m-1" }])],
+		updateDeploymentRequests,
+	});
+
+	// The advisory never reads as a failure: the agent is running.
+	await page.goto(`/agents/${railHostedEnvironmentId}`);
+	const computeStatus = page
+		.locator("main")
+		.locator('[data-overview-status="compute"] [data-overview-compute-status]');
+	await expect(computeStatus).toHaveText("Running");
+	// A provider conflict leaves the dashboard available.
+	await expect(page.getByRole("link", { name: "Chat on the web", exact: true })).toBeVisible();
+
+	await page.goto(`/agents/${railHostedEnvironmentId}/model-provider`);
+	const notice = page.locator(`[data-provider-conflict="${providerId}"]`);
+	await expect(notice).toContainText("OpenRouter isn’t applied");
+	await expect(notice).toContainText(
+		"The agent’s own Hermes settings already set up this provider, so Clawdi kept them. Nothing was changed.",
+	);
+	await expect(notice).toContainText(
+		"To let Clawdi manage it instead, remove it from the agent’s Hermes settings. Clawdi applies it within about 5 minutes.",
+	);
+	await page.screenshot({ path: testInfo.outputPath("provider-conflict-notice.png") });
+	await notice.getByRole("button", { name: "Keep the agent’s own settings" }).click();
+	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
+	expect(updateDeploymentRequests[0]?.idempotencyKey).toMatch(/^deployment-update-/);
+	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toEqual({
+		ai_provider_auth_kind: "unmanaged",
+		ai_provider_id: null,
+		provider_ids: [],
+		primary_model: null,
+		ai_provider_bootstrap: null,
+	});
+});
+
+test("a withdrawn dashboard is explained while the agent keeps running", async ({
+	page,
+}, testInfo) => {
+	await stubHostedApi(page, {
+		deployments: [
+			{
+				...railHostedDeployment,
+				hermes_control_ui_url: "https://runtime.example/",
+				serving_advisory: "RuntimeUiUnavailable",
+			},
+		],
+		cloudAgents: [railHostedCloudAgent],
+	});
+	let runtimeDocuments = 0;
+	await page.route("https://runtime.example/**", (route) => {
+		runtimeDocuments += 1;
+		return route.abort();
+	});
+
+	await page.goto(`/agents/${railHostedEnvironmentId}`);
+	const main = page.locator("main");
+	await expect(
+		main.locator('[data-overview-status="compute"] [data-overview-compute-status]'),
+	).toHaveText("Running");
+	const dashboard = main.getByRole("button", { name: "Chat on the web", exact: true });
+	await expect(dashboard).toBeDisabled();
+	await expect(dashboard).toContainText(
+		"Hermes Dashboard is unavailable. Your agent keeps running.",
+	);
+
+	await page.goto(`/agents/${railHostedEnvironmentId}/console`);
+	await expect(main.getByText("Hermes Dashboard is unavailable", { exact: true })).toBeVisible();
+	await expect(
+		main.getByText("Your agent keeps running. Chat with it through channels, or use Terminal.", {
+			exact: true,
+		}),
+	).toBeVisible();
+	// Chat and Terminal stay available as the way to reach the running agent.
+	await expect(main.getByRole("button", { name: "Open channels" })).toHaveAttribute(
+		"href",
+		`/agents/${railHostedEnvironmentId}/channel-links`,
+	);
+	await expect(main.getByRole("button", { name: "Use Terminal" })).toHaveAttribute(
+		"href",
+		`/agents/${railHostedEnvironmentId}/terminal`,
+	);
+	await expect(page.locator("iframe")).toHaveCount(0);
+	expect(runtimeDocuments).toBe(0);
+	await page.screenshot({ path: testInfo.outputPath("runtime-ui-withdrawn.png") });
+});
+
 for (const kind of ["native", "custom"] as const) {
 	test(`${kind} provider creation stays in context and binds without choosing a model`, async ({
 		page,
