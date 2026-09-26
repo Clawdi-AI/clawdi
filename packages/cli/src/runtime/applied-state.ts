@@ -41,6 +41,31 @@ const providerIdsSchema = z
 		message: "provider IDs must be unique",
 	});
 
+const RUNTIME_PROVIDER_CONFLICT_LIMIT = 64;
+const runtimeProviderConflictSchema = z
+	.object({
+		runtime: z.enum(["hermes", "openclaw"]),
+		providerId: z.string().regex(/^[a-z][a-z0-9._-]{0,119}$/),
+		code: z.enum(["native_provider_exists", "native_credential_pool_conflict"]),
+	})
+	.strict();
+export type RuntimeProviderConflict = z.infer<typeof runtimeProviderConflictSchema>;
+
+/** Unique, sorted, wire-valid entries; a malformed ID is skipped but never reported. */
+export function runtimeProviderConflicts(
+	entries: readonly { runtime: string; providerId: string; code: string }[],
+): RuntimeProviderConflict[] {
+	const valid = new Map<string, RuntimeProviderConflict>();
+	for (const entry of entries) {
+		const parsed = runtimeProviderConflictSchema.safeParse(entry);
+		if (parsed.success) valid.set(`${entry.runtime}\0${entry.providerId}`, parsed.data);
+	}
+	return [...valid.entries()]
+		.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+		.map(([, entry]) => entry)
+		.slice(0, RUNTIME_PROVIDER_CONFLICT_LIMIT);
+}
+
 export const runtimeAppliedStateSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.runtimeAppliedState.v2"),
@@ -60,6 +85,16 @@ export const runtimeAppliedStateSchema = z
 		projectedProviderIds: projectedProviderIdsSchema,
 		skillEvidence: z.array(hostedSkillEvidenceSchema).optional(),
 		nativeCredentialProviderIds: projectedProviderIdsSchema.optional(),
+		providerConflicts: z
+			.array(runtimeProviderConflictSchema)
+			.min(1)
+			.max(RUNTIME_PROVIDER_CONFLICT_LIMIT)
+			.refine(
+				(entries) =>
+					runtimeContentSha256(runtimeProviderConflicts(entries)) === runtimeContentSha256(entries),
+				{ message: "provider conflicts must be unique and sorted" },
+			)
+			.optional(),
 	})
 	.strict()
 	.superRefine((state, ctx) => {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { parseDocument } from "yaml";
 import {
 	applyConnectionProviderTransfers,
+	type ConnectionProviderConflictCode,
 	type ConnectionProviderOwnership,
 	prepareConnectionProviderTransfers,
 } from "./connection-provider-config";
@@ -226,6 +227,22 @@ function applyProjector(f: ReturnType<typeof fixture>, previousProviderIds: stri
 	);
 }
 
+/** Native ownership wins: the connection is skipped, its journal entry kept, nothing written. */
+function expectNativeWins(
+	f: ReturnType<typeof fixture>,
+	code: ConnectionProviderConflictCode = "native_provider_exists",
+) {
+	const before = f.read();
+	const previous = f.input().ownership.providers;
+	const plan = f.prepare();
+	expect(plan.conflicts).toEqual({ [id]: code });
+	expect(plan.patch).toEqual({});
+	expect(plan.hermesModelRouting).toBeUndefined();
+	expect(plan.providers).toEqual(previous);
+	expect(applyConnectionProviderTransfers(f.input())).toBe(false);
+	expect(f.read()).toEqual(before);
+}
+
 for (const runtime of ["openclaw", "hermes"] as const) {
 	test(`${runtime}: upgrading an unmarked legacy binding converges without inventing a Cloud tuple`, () => {
 		const f = fixture(runtime, "custom");
@@ -247,8 +264,24 @@ for (const runtime of ["openclaw", "hermes"] as const) {
 			expect(f.input().ownership.providers[id]?.cloudIdentity).toBeUndefined();
 			const provider = f.manifest.projection?.providers?.[id];
 			if (!provider) throw new Error("Missing fixture provider");
+			// A Clawdi-held credential in the same environment adopts its first Cloud identity.
+			const identity = { providerUuid: randomUUID(), incarnationId: randomUUID() };
+			provider.cloudIdentity = identity;
+			expect(f.prepare().providers[id]?.cloudIdentity).toEqual(identity);
+			applyProjector(f);
+			expect(f.read()).toEqual(before);
+			f.restoreOwnership(
+				commitProviderTransfers({ [runtime]: f.input().ownership.providers })[runtime],
+			);
+			f.prepare();
+			// A different recorded identity is a reincarnation and still needs a handoff.
 			provider.cloudIdentity = { providerUuid: randomUUID(), incarnationId: randomUUID() };
 			expect(() => f.prepare()).toThrow("explicit operator handoff");
+			provider.cloudIdentity = identity;
+			// Native credential authority never adopts an unmarked journal entry.
+			f.restoreOwnership(loaded.transfers[runtime] ?? {});
+			provider.credentialAuthority = "native";
+			expect(() => f.prepare()).toThrow("acknowledged identity handoff");
 			expect(f.read()).toEqual(before);
 		} finally {
 			f.cleanup();
@@ -475,7 +508,7 @@ export async function mutateConfigFile(options) {
 		}
 	});
 
-	test(`${runtime}: rotation preserves user model edits; preflight rejects route/auth conflicts without writes`, () => {
+	test(`${runtime}: rotation preserves user model edits; native route/auth conflicts are skipped without writes`, () => {
 		const f = fixture(runtime);
 		try {
 			const original = recordValue(f.read()) ?? {};
@@ -485,7 +518,7 @@ export async function mutateConfigFile(options) {
 				...original,
 				...(runtime === "openclaw" ? { apiKey: "foreign-key" } : { key_cmd: "foreign-command" }),
 			});
-			expect(() => f.prepare()).toThrow("credential ownership conflict");
+			expectNativeWins(f);
 			if (runtime === "openclaw") {
 				for (const fields of [
 					{ authHeader: false },
@@ -497,9 +530,7 @@ export async function mutateConfigFile(options) {
 					},
 				]) {
 					f.set({ ...original, ...fields });
-					const before = f.read();
-					expect(() => f.prepare()).toThrow("authentication header conflict");
-					expect(f.read()).toEqual(before);
+					expectNativeWins(f);
 				}
 			}
 			f.set({
@@ -508,9 +539,7 @@ export async function mutateConfigFile(options) {
 					? { baseUrl: "https://changed.example/v1" }
 					: { api: "https://changed.example/v1" }),
 			});
-			const conflict = f.read();
-			expect(() => f.prepare()).toThrow("routing changed");
-			expect(f.read()).toEqual(conflict);
+			expectNativeWins(f);
 			f.set(original);
 			f.prepare();
 			applyConnectionProviderTransfers(f.input());
@@ -563,7 +592,7 @@ test.each([id, `custom:${id}`])(
 			]) {
 				config.document.setIn(["model", field], value);
 				const conflicting = config.document.toString();
-				expect(() => f.prepare()).toThrow("model credentials conflict");
+				expectNativeWins(f);
 				expect(config.document.toString()).toBe(conflicting);
 				config.document.deleteIn(["model", field]);
 				config.document.setIn(["model", "key_env"], envName);
@@ -577,14 +606,62 @@ test.each([id, `custom:${id}`])(
 	},
 );
 
-test("Hermes public pool conflict prevents ownership transfer and config mutation", () => {
+test("Hermes public pool conflict skips the connection without ownership or config mutation", () => {
 	const f = fixture("hermes");
 	try {
 		writeFileSync(join(f.home, ".hermes/pool-conflict"), "present");
-		const before = f.read();
-		expect(() => f.prepare()).toThrow("credential conflict");
-		expect(f.read()).toEqual(before);
+		expectNativeWins(f, "native_credential_pool_conflict");
 		expect(f.input().ownership.providers).toEqual({});
+		rmSync(join(f.home, ".hermes/pool-conflict"));
+		expect(f.prepare().conflicts).toEqual({});
+		// A native pool row that appears after preflight still blocks the config write.
+		writeFileSync(join(f.home, ".hermes/pool-conflict"), "present");
+		const before = f.read();
+		expect(() => applyConnectionProviderTransfers(f.input())).toThrow(
+			"pool changed after preflight",
+		);
+		expect(f.read()).toEqual(before);
+	} finally {
+		f.cleanup();
+	}
+});
+
+test("Hermes pool conflict skips only its connection; the native selection is preserved", () => {
+	const f = fixture("hermes", "custom");
+	try {
+		const app = join(f.home, ".hermes/hermes-agent");
+		// The user's native custom_providers entry shares banban's base URL.
+		writeFileSync(
+			join(app, "agent/credential_pool.py"),
+			"def custom_provider_pool_key_candidates(base_url, provider_name=None):\n    return ['custom:shared.example'] if 'shared' in base_url else [provider_name]\n",
+		);
+		writeFileSync(
+			join(app, "hermes_cli/auth.py"),
+			"def read_credential_pool(key):\n    return [{'source': 'model_config'}] if key == 'custom:shared.example' else []\n",
+		);
+		const binding = f.manifest.runtimes.hermes;
+		const providers = f.manifest.projection?.providers;
+		const saved = providers?.[id];
+		if (!binding || !providers || !saved) throw new Error("Missing fixture");
+		binding.provider_ids = [id, "banban"];
+		providers.banban = {
+			...saved,
+			baseUrl: "https://shared.example/v1",
+			runtimeEnvName: "CLAWDI_PROVIDER_BANBAN_API_KEY",
+			apiKeySecretRef: "secret://provider.banban.apiKey",
+		};
+		f.secretValues["secret://provider.banban.apiKey"] = "banban-test-key";
+		const config = f.input().hermesConfig;
+		config.document.setIn(["model", "provider"], "custom:banban");
+		const model = getHermesRawConfigValue(config, "model").value;
+		const plan = f.prepare();
+		expect(plan.conflicts).toEqual({ banban: "native_credential_pool_conflict" });
+		expect(Object.keys(plan.providers)).toEqual([id]);
+		expect(Object.keys(plan.patch)).toEqual([id]);
+		applyConnectionProviderTransfers(f.input());
+		expect(recordValue(f.read())?.key_env).toBe(envName);
+		expect(getHermesRawConfigValue(config, "providers.banban").exists).toBe(false);
+		expect(getHermesRawConfigValue(config, "model").value).toEqual(model);
 	} finally {
 		f.cleanup();
 	}
@@ -608,7 +685,7 @@ test.each(["empty", "occupied", "no-match"])(
 			);
 			const before = f.read();
 			if (state === "occupied") {
-				expect(() => f.prepare()).toThrow("credential conflict");
+				expect(f.prepare().conflicts).toEqual({ [id]: "native_credential_pool_conflict" });
 				expect(f.input().ownership.providers).toEqual({});
 			} else {
 				f.prepare();

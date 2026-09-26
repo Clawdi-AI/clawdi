@@ -7,7 +7,11 @@ import {
 } from "./hermes-config";
 import { hermesManagedPython } from "./hermes-python";
 import type { OpenClawHostedContext } from "./hosted-openclaw-context";
-import { customProviderConnections, hostedProviderEnvironment } from "./hosted-provider-resolution";
+import {
+	type CustomProviderConnection,
+	customProviderConnections,
+	hostedProviderEnvironment,
+} from "./hosted-provider-resolution";
 import type { RuntimeManifest } from "./manifest-contract";
 import { type RuntimeInstallObservation, runtimeAppRoot } from "./manifest-install";
 import { canonicalJsonEqual, recordValue } from "./manifest-shared";
@@ -30,12 +34,28 @@ export interface ConnectionProviderOwnership {
 	prepared?: PreparedConnectionProviderTransfers;
 }
 
+export type ConnectionProviderConflictCode =
+	| "native_provider_exists"
+	| "native_credential_pool_conflict";
+
 export interface PreparedConnectionProviderTransfers {
 	runtime: string;
 	providers: Record<string, ConnectionProviderTransfer>;
 	sourceRevision: string;
 	patch: Record<string, Record<string, unknown>>;
 	hermesModelRouting?: { source: string; patch: Record<string, string> };
+	/** Connections skipped because native configuration owns them; nothing native is written. */
+	conflicts: Record<string, ConnectionProviderConflictCode>;
+}
+
+/** Native ownership wins: the connection is skipped instead of failing the runtime. */
+class NativeProviderConflictError extends Error {
+	constructor(
+		message: string,
+		readonly code: ConnectionProviderConflictCode = "native_provider_exists",
+	) {
+		super(message);
+	}
 }
 
 interface ConnectionContext {
@@ -73,6 +93,7 @@ with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.St
     from hermes_cli.auth import read_credential_pool
     candidates = getattr(credential_pool, "custom_provider_pool_key_candidates", None)
     legacy_key = getattr(credential_pool, "get_custom_provider_pool_key", None)
+    conflicts = []
     for connection in json.load(sys.stdin):
         if callable(candidates):
             keys = candidates(connection["baseUrl"], provider_name=connection["id"])
@@ -85,9 +106,12 @@ with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.St
             raise ValueError("Custom provider public pool API returned invalid keys")
         for key in keys:
             rows = read_credential_pool(key)
-            if not isinstance(rows, list) or rows:
-                raise ValueError("Custom provider credential pool conflicts with connection ownership")
-print("ok")
+            if not isinstance(rows, list):
+                raise ValueError("Custom provider public pool API returned an invalid pool")
+            if rows:
+                conflicts.append(connection["id"])
+                break
+print(json.dumps({"conflicts": conflicts}))
 `;
 
 function environment(input: ConnectionContext): Record<string, string> {
@@ -129,9 +153,12 @@ function revision(providers: Record<string, unknown>, ids: string[]): string {
 	);
 }
 
-function guardHermesPools(input: ConnectionContext): void {
-	const connections = customProviderConnections(input.manifest, input.runtime);
-	if (input.runtime !== "hermes" || connections.length === 0) return;
+/** Returns connections whose base URL already has native credential pool rows. */
+function hermesPoolConflicts(
+	input: ConnectionContext,
+	connections: readonly CustomProviderConnection[],
+): string[] {
+	if (input.runtime !== "hermes" || connections.length === 0) return [];
 	const appRoot = runtimeAppRoot("hermes", input.home);
 	if (!appRoot) throw new Error("Hermes application path is unavailable");
 	const result = spawnRuntimeUserCommand(
@@ -146,8 +173,19 @@ function guardHermesPools(input: ConnectionContext): void {
 			maxBufferBytes: 64 * 1024,
 		},
 	);
-	if (result.status !== 0 || String(result.stdout).trim() !== "ok")
+	let conflicts: unknown;
+	try {
+		conflicts = result.status === 0 ? JSON.parse(String(result.stdout)).conflicts : null;
+	} catch {
+		conflicts = null;
+	}
+	// A pool API that cannot be evaluated gives no safe per-connection answer.
+	if (
+		!Array.isArray(conflicts) ||
+		conflicts.some((id) => !connections.some((connection) => connection.id === id))
+	)
 		throw new Error("Hermes custom provider credential conflict or unsupported public pool API");
+	return conflicts;
 }
 
 function ownedOpenClawRef(value: unknown, envName: string): boolean {
@@ -198,11 +236,167 @@ export function validateConnectionProviderEnvironments(
 		}
 		if (credentialAuthority === "native" && (!previous?.handoffId || !cloudIdentity))
 			throw new Error("Native credentials require an acknowledged identity handoff");
-		if (previous && !canonicalJsonEqual(previous.cloudIdentity ?? null, cloudIdentity ?? null))
-			throw new Error("Provider Cloud identity requires explicit operator handoff");
 		if (previous && previous.envName !== envName)
 			throw new Error("Connection credential environment is immutable");
+		// Journal entries written before Cloud identity carry none. When Clawdi still holds
+		// the credential in the same environment, the first identity is adopted by prepare.
+		const adoptsLegacyIdentity =
+			!previous?.cloudIdentity &&
+			!previous?.handoffId &&
+			cloudIdentity !== undefined &&
+			credentialAuthority !== "native";
+		if (
+			previous &&
+			!adoptsLegacyIdentity &&
+			!canonicalJsonEqual(previous.cloudIdentity ?? null, cloudIdentity ?? null)
+		)
+			throw new Error("Provider Cloud identity requires explicit operator handoff");
 	}
+}
+
+function prepareConnection(
+	input: ConnectionContext,
+	connection: CustomProviderConnection,
+	previous: ConnectionProviderTransfer | undefined,
+	current: Record<string, unknown>,
+): { transfer: ConnectionProviderTransfer; patch: Record<string, unknown> } {
+	const { id, baseUrl, apiMode, envName } = connection;
+	const existing = recordValue(current[id]);
+	if (connection.cloudIdentity && connection.initialize && !previous && existing)
+		throw new NativeProviderConflictError(
+			"Existing native provider requires explicit operator handoff",
+		);
+	const creating =
+		!existing && connection.initialize && (!previous || previous.pendingCreation === true);
+	if (!existing && !creating) throw new Error(`Connection provider ${id} must already exist`);
+	if (current[id] !== undefined && !existing)
+		throw new Error("Custom provider config must be an object");
+	if (creating) {
+		const protocol = input.runtime === "openclaw" ? OPENCLAW_API[apiMode] : HERMES_API[apiMode];
+		if (!protocol) throw new Error("Connection protocol is unsupported by this runtime");
+		return {
+			transfer: {
+				envName,
+				baseUrl,
+				apiMode,
+				cloudIdentity: connection.cloudIdentity,
+				pendingCreation: true,
+			},
+			patch:
+				input.runtime === "openclaw"
+					? {
+							baseUrl,
+							api: protocol,
+							models: [],
+							auth: "api-key",
+							apiKey: { source: "env", provider: "clawdi-connection", id: envName },
+						}
+					: { base_url: baseUrl, transport: protocol, key_env: envName },
+		};
+	}
+	if (!existing) throw new Error("Connection provider config is unavailable");
+	if (
+		connection.initialize &&
+		!previous &&
+		!(input.runtime === "openclaw"
+			? ownedOpenClawRef(existing.apiKey, envName)
+			: existing.key_env === envName || existing.api_key_env === envName)
+	)
+		throw new NativeProviderConflictError(
+			"Custom provider ID is already owned by another connection",
+		);
+	const endpoint =
+		input.runtime === "openclaw"
+			? existing.baseUrl
+			: (existing.api ?? existing.url ?? existing.base_url);
+	const protocol =
+		input.runtime === "openclaw"
+			? (existing.api ?? "openai-completions")
+			: (existing.api_mode ?? existing.transport);
+	const expectedApi = input.runtime === "openclaw" ? OPENCLAW_API[apiMode] : HERMES_API[apiMode];
+	if (!expectedApi) throw new Error("Connection protocol is unsupported by this runtime");
+	if (!previous && (endpoint !== baseUrl || protocol !== expectedApi))
+		throw new NativeProviderConflictError(
+			`Connection provider ${id} routing changed before handoff`,
+		);
+	const fields: Record<string, unknown> = {};
+	if (input.runtime === "openclaw") {
+		if (!Array.isArray(existing.models))
+			throw new Error("Custom OpenClaw provider must retain its models array");
+		if (existing.apiKey !== undefined && !ownedOpenClawRef(existing.apiKey, envName))
+			throw new NativeProviderConflictError("OpenClaw connection credential ownership conflict");
+		if (existing.auth !== undefined && existing.auth !== "api-key")
+			throw new NativeProviderConflictError("OpenClaw connection auth mode conflict");
+		if (
+			existing.authHeader === false ||
+			hasAuthenticationHeaders(existing.headers) ||
+			existing.models.some((model) => hasAuthenticationHeaders(recordValue(model)?.headers))
+		)
+			throw new NativeProviderConflictError("OpenClaw connection authentication header conflict");
+		fields.auth = "api-key";
+		fields.apiKey = { source: "env", provider: "clawdi-connection", id: envName };
+		if (previous && endpoint !== baseUrl) fields.baseUrl = baseUrl;
+		if (previous && protocol !== expectedApi) fields.api = expectedApi;
+	} else {
+		if (
+			existing.api_key ||
+			existing.key_cmd ||
+			(existing.key_env && existing.key_env !== envName) ||
+			(existing.api_key_env && existing.api_key_env !== envName)
+		)
+			throw new NativeProviderConflictError("Hermes connection credential ownership conflict");
+		fields.key_env = envName;
+		if (previous && endpoint !== baseUrl)
+			fields[
+				Object.hasOwn(existing, "api") ? "api" : Object.hasOwn(existing, "url") ? "url" : "base_url"
+			] = baseUrl;
+		if (previous && protocol !== expectedApi)
+			fields[Object.hasOwn(existing, "api_mode") ? "api_mode" : "transport"] = expectedApi;
+	}
+	return {
+		transfer: { ...previous, envName, baseUrl, apiMode, cloudIdentity: connection.cloudIdentity },
+		patch: fields,
+	};
+}
+
+function prepareHermesModelRouting(
+	model: Record<string, unknown> | null,
+	connection: CustomProviderConnection,
+	existing: Record<string, unknown> | null,
+): NonNullable<PreparedConnectionProviderTransfers["hermesModelRouting"]> {
+	if (
+		["api_key", "api", "auth_mode"].some((field) => Boolean(model?.[field])) ||
+		(model?.key_env && model.key_env !== connection.envName)
+	)
+		throw new NativeProviderConflictError(
+			"Hermes model credentials conflict with the custom connection",
+		);
+	const oldEndpoint = existing?.api ?? existing?.url ?? existing?.base_url ?? connection.baseUrl;
+	const oldProtocol = existing?.api_mode ?? existing?.transport ?? HERMES_API[connection.apiMode];
+	const modelPatch: Record<string, string> = {};
+	// Hermes /model --global persists these routing mirrors. Preserve model choice;
+	// update only mirrors that still match the connection they describe.
+	if (model?.base_url) {
+		if (
+			typeof model.base_url !== "string" ||
+			typeof oldEndpoint !== "string" ||
+			model.base_url.replace(/\/+$/, "") !== oldEndpoint.replace(/\/+$/, "")
+		)
+			throw new NativeProviderConflictError(
+				"Hermes model endpoint conflicts with the custom connection",
+			);
+		if (model.base_url.replace(/\/+$/, "") !== connection.baseUrl.replace(/\/+$/, ""))
+			modelPatch.base_url = connection.baseUrl;
+	}
+	if (model?.api_mode) {
+		if (model.api_mode !== oldProtocol)
+			throw new NativeProviderConflictError(
+				"Hermes model protocol conflicts with the custom connection",
+			);
+		const nextProtocol = HERMES_API[connection.apiMode];
+		if (nextProtocol && model.api_mode !== nextProtocol) modelPatch.api_mode = nextProtocol;
+	}
+	return { source: hermesModelRoutingSource(model), patch: modelPatch };
 }
 
 /** Read-only preflight. The root coordinator must durably persist providers before apply. */
@@ -221,107 +415,26 @@ export function prepareConnectionProviderTransfers(
 	const current = readProviders(input);
 	const providers = { ...input.ownership.providers };
 	const patch: Record<string, Record<string, unknown>> = {};
+	const conflicts: PreparedConnectionProviderTransfers["conflicts"] = {};
+	// A skipped connection keeps its previous journal entry verbatim and patches nothing.
+	const skip = (id: string, code: ConnectionProviderConflictCode) => {
+		conflicts[id] = code;
+		delete patch[id];
+		const previous = input.ownership.providers[id];
+		if (previous) providers[id] = previous;
+		else delete providers[id];
+	};
 	for (const connection of connections) {
-		const { id, baseUrl, apiMode, envName } = connection;
-		const previous = providers[id];
-		const existing = recordValue(current[id]);
-		if (connection.cloudIdentity && connection.initialize && !previous && existing)
-			throw new Error("Existing native provider requires explicit operator handoff");
-		const creating =
-			!existing && connection.initialize && (!previous || previous.pendingCreation === true);
-		if (!existing && !creating) throw new Error(`Connection provider ${id} must already exist`);
-		if (current[id] !== undefined && !existing)
-			throw new Error("Custom provider config must be an object");
-		if (creating) {
-			const protocol = input.runtime === "openclaw" ? OPENCLAW_API[apiMode] : HERMES_API[apiMode];
-			if (!protocol) throw new Error("Connection protocol is unsupported by this runtime");
-			providers[id] = {
-				envName,
-				baseUrl,
-				apiMode,
-				cloudIdentity: connection.cloudIdentity,
-				pendingCreation: true,
-			};
-			patch[id] =
-				input.runtime === "openclaw"
-					? {
-							baseUrl,
-							api: protocol,
-							models: [],
-							auth: "api-key",
-							apiKey: { source: "env", provider: "clawdi-connection", id: envName },
-						}
-					: { base_url: baseUrl, transport: protocol, key_env: envName };
-			continue;
+		try {
+			const prepared = prepareConnection(input, connection, providers[connection.id], current);
+			providers[connection.id] = prepared.transfer;
+			patch[connection.id] = prepared.patch;
+		} catch (error) {
+			if (!(error instanceof NativeProviderConflictError)) throw error;
+			skip(connection.id, error.code);
 		}
-		if (!existing) throw new Error("Connection provider config is unavailable");
-		if (
-			connection.initialize &&
-			!previous &&
-			!(input.runtime === "openclaw"
-				? ownedOpenClawRef(existing.apiKey, envName)
-				: existing.key_env === envName || existing.api_key_env === envName)
-		)
-			throw new Error("Custom provider ID is already owned by another connection");
-		const endpoint =
-			input.runtime === "openclaw"
-				? existing.baseUrl
-				: (existing.api ?? existing.url ?? existing.base_url);
-		const protocol =
-			input.runtime === "openclaw"
-				? (existing.api ?? "openai-completions")
-				: (existing.api_mode ?? existing.transport);
-		const expectedApi = input.runtime === "openclaw" ? OPENCLAW_API[apiMode] : HERMES_API[apiMode];
-		if (!expectedApi) throw new Error("Connection protocol is unsupported by this runtime");
-		if (!previous && (endpoint !== baseUrl || protocol !== expectedApi))
-			throw new Error(`Connection provider ${id} routing changed before handoff`);
-		const fields: Record<string, unknown> = {};
-		if (input.runtime === "openclaw") {
-			if (!Array.isArray(existing.models))
-				throw new Error("Custom OpenClaw provider must retain its models array");
-			if (existing.apiKey !== undefined && !ownedOpenClawRef(existing.apiKey, envName))
-				throw new Error("OpenClaw connection credential ownership conflict");
-			if (existing.auth !== undefined && existing.auth !== "api-key")
-				throw new Error("OpenClaw connection auth mode conflict");
-			if (
-				existing.authHeader === false ||
-				hasAuthenticationHeaders(existing.headers) ||
-				existing.models.some((model) => hasAuthenticationHeaders(recordValue(model)?.headers))
-			)
-				throw new Error("OpenClaw connection authentication header conflict");
-			fields.auth = "api-key";
-			fields.apiKey = { source: "env", provider: "clawdi-connection", id: envName };
-			if (previous && endpoint !== baseUrl) fields.baseUrl = baseUrl;
-			if (previous && protocol !== expectedApi) fields.api = expectedApi;
-		} else {
-			if (
-				existing.api_key ||
-				existing.key_cmd ||
-				(existing.key_env && existing.key_env !== envName) ||
-				(existing.api_key_env && existing.api_key_env !== envName)
-			)
-				throw new Error("Hermes connection credential ownership conflict");
-			fields.key_env = envName;
-			if (previous && endpoint !== baseUrl)
-				fields[
-					Object.hasOwn(existing, "api")
-						? "api"
-						: Object.hasOwn(existing, "url")
-							? "url"
-							: "base_url"
-				] = baseUrl;
-			if (previous && protocol !== expectedApi)
-				fields[Object.hasOwn(existing, "api_mode") ? "api_mode" : "transport"] = expectedApi;
-		}
-		providers[id] = {
-			...previous,
-			envName,
-			baseUrl,
-			apiMode,
-			cloudIdentity: connection.cloudIdentity,
-		};
-		patch[id] = fields;
 	}
+	// Skipped connections stay active: their native config is never unbound either.
 	const active = new Set(connections.map((connection) => connection.id));
 	for (const [id, previous] of Object.entries(providers)) {
 		if (active.has(id)) continue;
@@ -343,50 +456,41 @@ export function prepareConnectionProviderTransfers(
 		}
 	}
 	let hermesModelRouting: PreparedConnectionProviderTransfers["hermesModelRouting"];
+	let routedConnectionId: string | null = null;
 	if (input.runtime === "hermes" && input.hermesConfig) {
 		const model = recordValue(getHermesRawConfigValue(input.hermesConfig, "model").value);
 		const selected = recordValue(model?.default)?.provider ?? model?.provider;
-		const connection = connections.find(({ id }) => selected === id || selected === `custom:${id}`);
+		const connection = connections.find(
+			({ id }) => !conflicts[id] && (selected === id || selected === `custom:${id}`),
+		);
 		if (connection) {
-			if (
-				["api_key", "api", "auth_mode"].some((field) => Boolean(model?.[field])) ||
-				(model?.key_env && model.key_env !== connection.envName)
-			)
-				throw new Error("Hermes model credentials conflict with the custom connection");
-			const existing = recordValue(current[connection.id]);
-			const oldEndpoint =
-				existing?.api ?? existing?.url ?? existing?.base_url ?? connection.baseUrl;
-			const oldProtocol =
-				existing?.api_mode ?? existing?.transport ?? HERMES_API[connection.apiMode];
-			const modelPatch: Record<string, string> = {};
-			// Hermes /model --global persists these routing mirrors. Preserve model choice;
-			// update only mirrors that still match the connection they describe.
-			if (model?.base_url) {
-				if (
-					typeof model.base_url !== "string" ||
-					typeof oldEndpoint !== "string" ||
-					model.base_url.replace(/\/+$/, "") !== oldEndpoint.replace(/\/+$/, "")
-				)
-					throw new Error("Hermes model endpoint conflicts with the custom connection");
-				if (model.base_url.replace(/\/+$/, "") !== connection.baseUrl.replace(/\/+$/, ""))
-					modelPatch.base_url = connection.baseUrl;
+			try {
+				hermesModelRouting = prepareHermesModelRouting(
+					model,
+					connection,
+					recordValue(current[connection.id]),
+				);
+				routedConnectionId = connection.id;
+			} catch (error) {
+				if (!(error instanceof NativeProviderConflictError)) throw error;
+				skip(connection.id, error.code);
 			}
-			if (model?.api_mode) {
-				if (model.api_mode !== oldProtocol)
-					throw new Error("Hermes model protocol conflicts with the custom connection");
-				const nextProtocol = HERMES_API[connection.apiMode];
-				if (nextProtocol && model.api_mode !== nextProtocol) modelPatch.api_mode = nextProtocol;
-			}
-			hermesModelRouting = { source: hermesModelRoutingSource(model), patch: modelPatch };
 		}
 	}
-	guardHermesPools(input);
+	for (const id of hermesPoolConflicts(
+		input,
+		connections.filter((connection) => !conflicts[connection.id]),
+	)) {
+		skip(id, "native_credential_pool_conflict");
+		if (id === routedConnectionId) hermesModelRouting = undefined;
+	}
 	return {
 		runtime: input.runtime,
 		providers,
 		sourceRevision: revision(current, Object.keys(providers)),
 		patch,
 		...(hermesModelRouting ? { hermesModelRouting } : {}),
+		conflicts,
 	};
 }
 
@@ -401,7 +505,11 @@ export function applyConnectionProviderTransfers(input: ConnectionContext): bool
 	const current = readProviders(input);
 	if (revision(current, Object.keys(plan.providers)) !== plan.sourceRevision)
 		throw new Error("Connection provider config changed after preflight");
-	guardHermesPools(input);
+	const pooled = customProviderConnections(input.manifest, input.runtime).filter(
+		({ id }) => !plan.conflicts[id],
+	);
+	if (hermesPoolConflicts(input, pooled).length > 0)
+		throw new Error("Hermes custom provider credential pool changed after preflight");
 	if (
 		plan.hermesModelRouting &&
 		(!input.hermesConfig ||

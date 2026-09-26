@@ -149,7 +149,7 @@ for (const runtime of ["hermes", "openclaw"] as const) {
 	});
 }
 
-test("new Cloud incarnation cannot silently inherit a legacy journal by provider name", () => {
+test("legacy journal adopts a Cloud identity only for Clawdi-held credentials", () => {
 	const manifest: RuntimeManifest = {
 		schemaVersion: "clawdi.runtimeDesiredState.v1",
 		deploymentId: "dep",
@@ -178,14 +178,34 @@ test("new Cloud incarnation cannot silently inherit a legacy journal by provider
 			},
 		},
 	};
-	expect(() =>
-		validateConnectionProviderEnvironments(manifest, "hermes", {
-			work: { envName: "OLD_KEY", baseUrl: "https://provider.example", apiMode: "openai_chat" },
-		}),
-	).toThrow("explicit operator handoff");
+	const legacy = {
+		envName: "OLD_KEY",
+		baseUrl: "https://provider.example",
+		apiMode: "openai_chat",
+	} as const;
 	const provider = manifest.projection?.providers?.work;
 	if (!provider?.cloudIdentity) throw new Error("Missing test provider");
+	// Pre-identity journal entries never recorded a tuple; the Clawdi env remains the authority.
+	expect(() =>
+		validateConnectionProviderEnvironments(manifest, "hermes", { work: legacy }),
+	).not.toThrow();
+	expect(() =>
+		validateConnectionProviderEnvironments(manifest, "hermes", {
+			work: { ...legacy, envName: "NEW_KEY" },
+		}),
+	).toThrow("environment is immutable");
+	expect(() =>
+		validateConnectionProviderEnvironments(manifest, "hermes", {
+			work: {
+				...legacy,
+				cloudIdentity: { providerUuid: randomUUID(), incarnationId: randomUUID() },
+			},
+		}),
+	).toThrow("explicit operator handoff");
 	provider.credentialAuthority = "native";
+	expect(() =>
+		validateConnectionProviderEnvironments(manifest, "hermes", { work: legacy }),
+	).toThrow("acknowledged identity handoff");
 	expect(hostedProviderEnvironment(manifest, "hermes").secretEnv).toEqual({});
 	expect(() => validateConnectionProviderEnvironments(manifest, "hermes", {})).toThrow(
 		"acknowledged identity handoff",

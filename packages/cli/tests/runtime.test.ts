@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
 	chmodSync,
 	copyFileSync,
@@ -4952,6 +4952,69 @@ cp '${sdkSource}' '${sdkTarget}'
 		expect(readFileSync(join(home, ".hermes", "config.yaml"), "utf-8")).toBe(firstConfig);
 		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
 		expect(systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"))).toBe(firstRevision);
+	});
+
+	it("leaves a Hermes connection to native credentials and commits the rest", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		writeHermesVersionBinary(home, "0.18.0");
+		// The public pool API reports a native model_config row for banban's base URL.
+		const app = join(home, ".hermes", "hermes-agent");
+		mkdirSync(join(app, "agent"), { recursive: true });
+		mkdirSync(join(app, "hermes_cli"), { recursive: true });
+		writeFileSync(
+			join(app, "agent", "credential_pool.py"),
+			"def custom_provider_pool_key_candidates(base_url, provider_name=None):\n    return ['custom:ai.shared.example']\n",
+		);
+		writeFileSync(
+			join(app, "hermes_cli", "auth.py"),
+			"def read_credential_pool(key):\n    return [{'source': 'model_config'}]\n",
+		);
+		writeFileSync(
+			join(app, "venv", "bin", "python"),
+			'#!/usr/bin/env bash\ncase "$*" in *uvicorn*) exit 0 ;; esac\nexec python3 "$@"\n',
+		);
+		const loaded = hostedHermesProviderLoad(home);
+		const providers = loaded.manifest.projection?.providers;
+		if (!providers) throw new Error("Missing provider projection fixture");
+		providers.banban = {
+			kind: "openai-compatible",
+			type: "custom_openai_compatible",
+			configurationMode: "custom",
+			managed_by: "user",
+			baseUrl: "https://ai.shared.example/v1",
+			apiMode: "openai_chat",
+			runtimeEnvName: "CLAWDI_PROVIDER_BANBAN_API_KEY",
+			apiKeySecretRef: "secret://provider.banban.apiKey",
+			cloudIdentity: { providerUuid: randomUUID(), incarnationId: randomUUID() },
+		};
+		loaded.manifest.runtimes.hermes.provider_ids = ["hermes", "banban"];
+		loaded.secretValues = {
+			...loaded.secretValues,
+			"secret://provider.banban.apiKey": "sk-banban",
+		};
+		const paths = getRuntimePaths();
+
+		const result = convergeRuntimeManifest(loaded, paths);
+
+		expect(result.installErrors).toEqual([]);
+		expect(result.resourceProjectionErrors).toEqual([]);
+		expect(result.providerConflicts).toEqual([
+			{ runtime: "hermes", providerId: "banban", code: "native_credential_pool_conflict" },
+		]);
+		const configured = expectRecord(readHermesConfigYaml(home).providers, "Hermes providers");
+		expect(configured.hermes).toBeDefined();
+		expect(configured.banban).toBeUndefined();
+		const journal = JSON.parse(
+			readFileSync(join(paths.serviceStateRoot, "provider-ownership.json"), "utf8"),
+		);
+		expect(journal.transfers.hermes).toEqual({});
 	});
 
 	it("ignores a retired Hermes plugin while removing the native provider", () => {

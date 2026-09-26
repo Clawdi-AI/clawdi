@@ -8,6 +8,7 @@ import {
 	runtimeAppliedApplyIdentity,
 	runtimeAppliedStateSchema,
 	runtimeContentSha256,
+	runtimeProviderConflicts,
 	writeRuntimeAppliedState,
 } from "../runtime/applied-state";
 import {
@@ -340,6 +341,7 @@ export function commitRuntimeAppliedState(input: {
 	// The apply identity names the Hosted control-plane snapshot; `etag` names
 	// the independently rendered runtime bundle. Persist both authorities.
 	const providerIds = runtimeSourceProviderIds(input.load.manifest);
+	const providerConflicts = runtimeProviderConflicts(input.convergence.providerConflicts ?? []);
 	const applied = runtimeAppliedStateSchema.parse({
 		schemaVersion: "clawdi.runtimeAppliedState.v2",
 		appliedAt: new Date().toISOString(),
@@ -364,6 +366,7 @@ export function commitRuntimeAppliedState(input: {
 		projectedProviderIds: input.convergence.projectedProviderIds,
 		...(input.skillEvidence ? { skillEvidence: input.skillEvidence } : {}),
 		nativeCredentialProviderIds: input.convergence.nativeCredentialProviderIds,
+		...(providerConflicts.length > 0 ? { providerConflicts } : {}),
 	});
 	if (input.load.manifest.recovery.cacheManifest !== false) {
 		input.convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(

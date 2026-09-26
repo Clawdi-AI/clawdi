@@ -1,5 +1,6 @@
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
+import type { RuntimeProviderConflict } from "./applied-state";
 import type { HostedSkillEvidence } from "./hosted-skill-evidence";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimeManifestLoad } from "./manifest-source";
@@ -18,6 +19,8 @@ export interface RuntimeConvergenceResult {
 	installErrors: string[];
 	resourceProjectionErrors: string[];
 	projectedProviderIds: Record<string, string[]>;
+	/** Connections left to native configuration; they never fail the apply. */
+	providerConflicts?: RuntimeProviderConflict[];
 	agentPluginFailedNames: string[];
 	deferredReason?: "hermes_config_conflict" | "systemd_reobservation_required";
 	outputs: {

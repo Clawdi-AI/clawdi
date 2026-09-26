@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { readRuntimeAppliedState } from "./applied-state";
+import { type RuntimeProviderConflict, readRuntimeAppliedState } from "./applied-state";
 import {
 	applyHostedHermesAiProviderProjection,
 	buildOpenClawHostedProviderPatch,
@@ -177,6 +177,7 @@ interface RuntimeConvergenceState {
 	runtimeSystemdUserPrograms: RuntimeSystemdUserProgram[];
 	installErrors: string[];
 	resourceProjectionErrors: string[];
+	providerConflicts: RuntimeProviderConflict[];
 	/** OpenClaw channels whose managed projection is withdrawn for this generation. */
 	withdrawnOpenClawChannels: Set<string>;
 	projectedProviderIds: Record<string, string[]>;
@@ -310,6 +311,7 @@ function initializeRuntimeConvergence(
 		runtimeSystemdUserPrograms: [],
 		installErrors: [],
 		resourceProjectionErrors: [],
+		providerConflicts: [],
 		withdrawnOpenClawChannels: new Set(),
 		projectedProviderIds: {},
 		observations: new Map(),
@@ -872,6 +874,13 @@ function applyRuntimeResourceProjections(
 				throw new Error(
 					"Connection transfer cannot remove ownership or change its credential environment",
 				);
+			for (const [providerId, code] of Object.entries(prepared.conflicts)) {
+				// Native configuration wins; everything else in this generation still applies.
+				state.providerConflicts.push({ runtime: name, providerId, code });
+				console.warn(
+					`runtime ${name} provider ${providerId} left to native configuration: ${code}`,
+				);
+			}
 			context.connectionPlans[name] = prepared;
 			context.providerOwnership.transfers[name] = prepared.providers;
 			previousProjectedProviderIds[name] = (previousProjectedProviderIds[name] ?? []).filter(
@@ -1316,6 +1325,7 @@ function buildRuntimeConvergenceResult(
 		installErrors: state.installErrors,
 		resourceProjectionErrors: state.resourceProjectionErrors,
 		projectedProviderIds: state.projectedProviderIds,
+		providerConflicts: state.providerConflicts,
 		nativeCredentialProviderIds: state.nativeCredentialProviderIds,
 		agentPluginFailedNames: [...state.agentPluginFailedNames].sort(),
 		outputs: {
