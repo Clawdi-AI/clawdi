@@ -8,7 +8,8 @@
 # Usage: scripts/test-hermes-upstream-contract.sh [bun test args...]
 #
 # The Markdown report is appended to $GITHUB_STEP_SUMMARY when set and printed
-# otherwise.
+# otherwise. When $GITHUB_OUTPUT is set, the upstream identity is published as
+# the step outputs `commit` and `display_version`.
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -16,8 +17,6 @@ repo_root="$(cd -- "$script_dir/.." && pwd)"
 fixture_dir="$repo_root/packages/cli/tests/fixtures/hermes-upstream-contract"
 contract_test="tests/e2e/hermes-upstream-contract.e2e.test.ts"
 report_dir="/tmp/hermes-upstream-contract"
-# Arguments Hosted passes to the official installer for every new Hermes Agent.
-hermes_install_args=(--skip-setup --skip-browser --non-interactive)
 # The CLI hands official installers the system trust store (manifest-install.ts).
 system_ca_bundle="/etc/ssl/certs/ca-certificates.crt"
 
@@ -39,9 +38,18 @@ in_container() {
 		return 1
 	}
 
-	local installer_url
+	# The CLI owns the official installer URL and arguments for Hosted installs.
+	local installer_url hermes_install_args=()
 	installer_url="$(cd packages/cli && bun --eval \
 		'import { OFFICIAL_INSTALL_URLS } from "./src/runtime/manifest-contract"; console.log(OFFICIAL_INSTALL_URLS.hermes)')"
+	(cd packages/cli && bun --eval \
+		'import { officialInstallArgs } from "./src/runtime/manifest-contract"; for (const arg of officialInstallArgs("hermes", process.env.HOME ?? "")) process.stdout.write(`${arg}\0`);') \
+		>"$report_dir/install-args"
+	mapfile -d '' hermes_install_args <"$report_dir/install-args"
+	if [[ -z "$installer_url" || "${#hermes_install_args[@]}" -eq 0 ]]; then
+		report_failure "CLI source did not provide the official Hermes installer" /dev/null
+		return 1
+	fi
 	printf 'installer=%s %s\n' "$installer_url" "${hermes_install_args[*]}" >"$report_dir/identity"
 
 	local installer="$report_dir/install.sh"
@@ -180,9 +188,15 @@ if docker cp "$container:$report_dir/." "$output_dir" >/dev/null 2>&1 \
 	fi
 fi
 
+commit="$(sed -n 's/^commit=//p' "$output_dir/identity" 2>/dev/null | tail -1)"
+version="$(sed -n 's/^displayVersion=//p' "$output_dir/identity" 2>/dev/null | tail -1)"
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+	{
+		printf 'commit=%s\n' "${commit:-unknown}"
+		printf 'display_version=%s\n' "${version:-unknown}"
+	} >>"$GITHUB_OUTPUT"
+fi
 if [[ "$status" -ne 0 && -n "${GITHUB_ACTIONS:-}" ]]; then
-	commit="$(sed -n 's/^commit=//p' "$output_dir/identity" 2>/dev/null | tail -1)"
-	version="$(sed -n 's/^displayVersion=//p' "$output_dir/identity" 2>/dev/null | tail -1)"
 	echo "::error title=Hermes upstream adapter contract failed::Latest official Hermes install (commit ${commit:-unknown}, displayVersion ${version:-unknown}) breaks the Clawdi CLI adapter. See the job summary."
 fi
 exit "$status"
