@@ -12,6 +12,11 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.95
+
+- When the Hermes dashboard cannot start, Clawdi now reports that clearly
+  instead of guessing, and the report clears once the dashboard works again.
+
 ### CLI 0.14.94
 
 - A custom provider you selected in Clawdi is set up again if it was removed from
