@@ -296,20 +296,30 @@ describe("HermesAdapter.collectSessions", () => {
 		expect(changedIds.sort()).toEqual(["bulk-00", "bulk-01", "bulk-02", "bulk-03", "bulk-04"]);
 	});
 
-	it("classifies only top-level user rows from non-internal Hermes sessions", async () => {
+	it("classifies user rows from Hermes conversations, including compression splits", async () => {
 		const db = new Database(join(tmpHome, ".hermes", "state.db"));
-		for (const [id, source, parentSessionId, timestamp] of [
-			["activity-user", "telegram", null, 2_000_000_000],
-			["activity-cron", "cron", null, 2_000_000_100],
-			["activity-subagent", "subagent", null, 2_000_000_200],
-			["activity-curator", "curator", null, 2_000_000_300],
-			["activity-child", "telegram", "activity-user", 2_000_000_400],
+		for (const [id, source, parentSessionId, modelConfig, timestamp] of [
+			["activity-root", "telegram", null, null, 2_000_000_000],
+			["activity-cron", "cron", null, null, 2_000_000_600],
+			["activity-subagent", "subagent", null, null, 2_000_000_700],
+			["activity-curator", "curator", null, null, 2_000_000_800],
+			["activity-kanban", "kanban", null, null, 2_000_000_900],
+			[
+				"activity-delegate",
+				"telegram",
+				"activity-root",
+				'{"_delegate_from":"activity-root"}',
+				2_000_001_000,
+			],
+			// A compression split continues the same conversation under a new session row.
+			["activity-split", "telegram", "activity-root", null, 2_000_000_400],
 		] as const) {
 			db.run(
-				"INSERT INTO sessions (id, source, parent_session_id, title, started_at, message_count) VALUES (?, ?, ?, ?, ?, 1)",
+				"INSERT INTO sessions (id, source, parent_session_id, model_config, title, started_at, message_count) VALUES (?, ?, ?, ?, ?, ?, 1)",
 				id,
 				source,
 				parentSessionId,
+				modelConfig,
 				id,
 				timestamp,
 			);
@@ -324,23 +334,28 @@ describe("HermesAdapter.collectSessions", () => {
 		const scan = await scanSessionModule(new HermesAdapter().sessions, { kind: "complete" });
 
 		expect(scan.userActivity).toEqual({
-			lastUserInputAt: new Date(2_000_000_000 * 1000).toISOString(),
+			lastUserInputAt: new Date(2_000_000_400 * 1000).toISOString(),
 			complete: true,
 		});
 	});
 
-	it("fails Hermes activity closed when the top-level session relation is unavailable", async () => {
+	it("fails Hermes activity closed when the session source is unavailable", async () => {
 		const db = new Database(join(tmpHome, ".hermes", "state.db"));
 		db.exec(`
-			ALTER TABLE sessions DROP COLUMN parent_session_id;
+			ALTER TABLE sessions DROP COLUMN source;
 		`);
 		db.close();
 
 		const scan = await scanSessionModule(new HermesAdapter().sessions, { kind: "complete" });
 		expect(scan.userActivity).toEqual({ lastUserInputAt: null, complete: false });
-		for await (const _batch of scan.batches) {
-			// Consume the iterator so its read-only SQLite handle closes.
-		}
+		// Session batches need the same column; draining them surfaces the schema error.
+		await expect(
+			(async () => {
+				for await (const _batch of scan.batches) {
+					// Drain so the read-only SQLite handle closes.
+				}
+			})(),
+		).rejects.toThrow("no such column: source");
 	});
 
 	it("uses events-v1 with stable ids when newer optional message columns are absent", async () => {

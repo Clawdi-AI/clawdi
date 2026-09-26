@@ -197,11 +197,16 @@ function hermesUserActivity(db: ReadonlySqliteDatabase): SessionUserActivity {
 	);
 	const messageColumns = new Set(messageTableInfo(db).map((column) => column.name));
 	if (
-		!["id", "source", "parent_session_id"].every((column) => sessionColumns.has(column)) ||
+		!["id", "source"].every((column) => sessionColumns.has(column)) ||
 		!["session_id", "role", "timestamp"].every((column) => messageColumns.has(column))
 	) {
 		return { lastUserInputAt: null, complete: false };
 	}
+	// parent_session_id chains are compression splits of the same conversation, so they
+	// count. Delegated subagents are tagged by source or by model_config._delegate_from.
+	const delegated = sessionColumns.has("model_config")
+		? "AND NOT (json_valid(s.model_config) AND json_extract(s.model_config, '$._delegate_from') IS NOT NULL)"
+		: "";
 	try {
 		const row = db
 			.prepare(`
@@ -209,8 +214,8 @@ function hermesUserActivity(db: ReadonlySqliteDatabase): SessionUserActivity {
 				FROM messages AS m
 				JOIN sessions AS s ON s.id = m.session_id
 				WHERE lower(m.role) = 'user'
-				  AND lower(coalesce(s.source, '')) NOT IN ('cron', 'subagent', 'curator')
-				  AND s.parent_session_id IS NULL
+				  AND lower(coalesce(s.source, '')) NOT IN ('cron', 'subagent', 'curator', 'kanban')
+				  ${delegated}
 			`)
 			.get() as UserActivityRow | undefined;
 		const timestamp = row?.last_user_input_at ?? null;

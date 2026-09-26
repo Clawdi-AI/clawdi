@@ -12,6 +12,11 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.96
+
+- Chatting with a Hermes Cloud Agent through Telegram or another channel now always
+  counts as activity, so an Agent in active use is no longer stopped as idle.
+
 ### CLI 0.14.95
 
 - When the Hermes dashboard cannot start, Clawdi now reports that clearly
