@@ -185,6 +185,48 @@ export function hasCurrentRuntimeHealthDegradation(status: HostedDeploymentStatu
 	);
 }
 
+/**
+ * Serving advisories are user-resolvable `Degraded=True` reasons the hosted
+ * controller projects while the agent keeps running (`Ready` stays True). They
+ * never carry a lifecycle failure, so they must not render as failed.
+ */
+export const DEPLOYMENT_SERVING_ADVISORY_REASONS = [
+	"ProviderConflict",
+	"RuntimeUiUnavailable",
+] as const;
+export type DeploymentServingAdvisoryReason = (typeof DEPLOYMENT_SERVING_ADVISORY_REASONS)[number];
+
+const SERVING_ADVISORY_REASON_SET = new Set<string>(DEPLOYMENT_SERVING_ADVISORY_REASONS);
+
+function isServingAdvisoryReason(reason: string): reason is DeploymentServingAdvisoryReason {
+	return SERVING_ADVISORY_REASON_SET.has(reason);
+}
+
+/** The current-generation serving advisory, if the controller projects one. */
+export function currentServingAdvisory(
+	status: HostedDeploymentStatus | null | undefined,
+): DeploymentServingAdvisoryReason | null {
+	if (!status) return null;
+	for (const condition of status.conditions) {
+		if (
+			condition.type === "Degraded" &&
+			condition.status === "True" &&
+			condition.observedGeneration === status.observedGeneration &&
+			isServingAdvisoryReason(condition.reason)
+		) {
+			return condition.reason;
+		}
+	}
+	return null;
+}
+
+/** The runtime withdrew only its optional dashboard; the agent itself keeps serving. */
+export function deploymentRuntimeUiWithdrawn(
+	status: HostedDeploymentStatus | null | undefined,
+): boolean {
+	return currentServingAdvisory(status) === "RuntimeUiUnavailable";
+}
+
 // Post-ready runtime failures keep the running substrate so the owner can repair it.
 const POST_READY_RUNTIME_FAILURE_CODES = new Set([
 	"runtime_unreachable",
@@ -226,6 +268,7 @@ export function deploymentRuntimeUiIsReady(deployment: HostedDeployment): boolea
 			!status.deleted_at &&
 			status.observed_at &&
 			status.observedGeneration === generation &&
+			!deploymentRuntimeUiWithdrawn(status) &&
 			status.driver_acknowledged_generation === generation &&
 			status.driver_applied_generation === generation &&
 			(componentReady ||
@@ -235,6 +278,19 @@ export function deploymentRuntimeUiIsReady(deployment: HostedDeployment): boolea
 			deployment.runtime_ui_endpoint?.runtime === spec.runtime &&
 			deployment.runtime_ui_endpoint.role === "control_ui" &&
 			deployment.runtime_ui_endpoint.url,
+	);
+}
+
+/**
+ * A running agent whose browser UI has not been admitted yet. A withdrawn
+ * dashboard is a settled advisory, not a convergence to poll for.
+ */
+export function deploymentAwaitingRuntimeUi(deployment: HostedDeployment): boolean {
+	const status = deployment.resource.status;
+	return (
+		deploymentStatusFromResource(status).kind === "running" &&
+		!deploymentRuntimeUiWithdrawn(status) &&
+		!deploymentRuntimeUiIsReady(deployment)
 	);
 }
 
@@ -498,7 +554,7 @@ export function deploymentPollingState(
 	for (const deployment of deployments ?? []) {
 		if (deployment.accepted_operation?.done && deployment.accepted_operation.error) continue;
 		const status = deploymentStatusFromResource(deployment.resource.status);
-		const awaitingRuntimeUi = status.kind === "running" && !deploymentRuntimeUiIsReady(deployment);
+		const awaitingRuntimeUi = deploymentAwaitingRuntimeUi(deployment);
 		if (!isTransitionalStatus(status) && !awaitingRuntimeUi) continue;
 
 		const deploymentId = deployment.resource.id;

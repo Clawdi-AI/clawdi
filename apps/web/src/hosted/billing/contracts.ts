@@ -57,6 +57,7 @@ export type HostedComputeSubscription = NonNullable<
 	NonNullable<HostedDeployment["commercial_display"]>["compute_subscription"]
 >;
 export type HostedDeployRequestStatus = Schemas["V2HostedDeployRequestReadResponse"];
+export type HostedProviderConflict = Schemas["V2HostedProviderConflict"];
 export type HostedEventStreamSnapshotHandoff = DeploymentEventStreamSnapshotHandoff;
 export type HostedFundingFact = Schemas["V2HostedCommercialFundingFactInfo"];
 export type HostedUsageSummary = Schemas["V2HostedUsageSummaryResponse"];

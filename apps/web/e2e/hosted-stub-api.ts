@@ -56,6 +56,9 @@ export type DeploymentMutationFixture = {
 	};
 	endpoints?: string[];
 	failure_reason?: string | null;
+	/** A serving advisory projected as a current `Degraded=True` condition. */
+	serving_advisory?: "ProviderConflict" | "RuntimeUiUnavailable";
+	provider_conflicts?: DeploymentRead["provider_conflicts"];
 	hermes_control_ui_url?: string | null;
 	openclaw_control_ui_url?: string | null;
 	last_funding_event?: {
@@ -66,6 +69,22 @@ export type DeploymentMutationFixture = {
 		subscription_id: number;
 	} | null;
 };
+
+type ProviderConflictFixture = NonNullable<DeploymentRead["provider_conflicts"]>[number];
+
+/**
+ * A runtime-reported provider conflict ("native wins"). Its reason is a
+ * provider-conflict classification, not a lifecycle Problem code, so specs build
+ * it here rather than spelling a Problem-shaped `code:` field in the smoke
+ * fixtures that the problem-code contract scans.
+ */
+export function nativeProviderConflict(
+	runtime: ProviderConflictFixture["runtime"],
+	providerId: string,
+	reason: ProviderConflictFixture["code"],
+): ProviderConflictFixture {
+	return { runtime, provider_id: providerId, code: reason };
+}
 
 export function fixtureAgentId(
 	deployment: Pick<DeploymentMutationFixture, "id" | "agent_id" | "config_info">,
@@ -228,6 +247,18 @@ export function mutationDeploymentReadFixture(
 						message: "Runtime observation",
 						lastTransitionTime: deployment.created_at,
 					},
+					...(deployment.serving_advisory
+						? [
+								{
+									type: "Degraded",
+									status: "True",
+									observedGeneration: 1,
+									reason: deployment.serving_advisory,
+									message: "Serving advisory",
+									lastTransitionTime: deployment.created_at,
+								} as const,
+							]
+						: []),
 				],
 				failure,
 				driver_acknowledged_generation: 1,
@@ -273,6 +304,7 @@ export function mutationDeploymentReadFixture(
 			latest_funding_fact: fundingFact,
 		},
 		current_plan_slug: config.compute_plan_slug,
+		...(deployment.provider_conflicts ? { provider_conflicts: deployment.provider_conflicts } : {}),
 		upgrade_available: deployment.upgrade_available,
 		upgrade_eligibility: deployment.upgrade_eligibility ?? {
 			eligible: deployment.upgrade_available,

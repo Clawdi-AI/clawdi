@@ -61,3 +61,50 @@ test("current runtime degradation disables a retained endpoint", () => {
 	expect(markup).toContain('disabled=""');
 	expect(markup).not.toContain("/console");
 });
+
+function advisoryDeployment(reason: "ProviderConflict" | "RuntimeUiUnavailable") {
+	return hostedDeploymentFixture({
+		runtime: "hermes",
+		runtimeUiEndpoint: {
+			runtime: "hermes",
+			role: "control_ui",
+			url: "https://runtime.example/",
+			auth_mode: "oidc",
+			browser_session_url:
+				"https://api.example.test/v2/deployments/hdep_fixture/hermes-oidc/session",
+			access_revision: 1,
+			browser_mode: "embedded_and_top_level",
+		},
+		extraConditions: [
+			{
+				type: "Degraded",
+				status: "True",
+				reason,
+				message: "Advisory",
+				observedGeneration: 1,
+				lastTransitionTime: "2026-01-01T00:00:00Z",
+			},
+		],
+	});
+}
+
+test("a withdrawn dashboard is disabled with a short explanation while the agent keeps running", () => {
+	const deployment = advisoryDeployment("RuntimeUiUnavailable");
+	const markup = renderOverview(
+		<AgentDashboardOverview agentId={deployment.agent_id} deployment={deployment} />,
+	);
+	expect(markup).toContain("Hermes Dashboard is unavailable. Your agent keeps running.");
+	expect(markup).toContain('disabled=""');
+	expect(markup).not.toContain("/console");
+	expect(markup).not.toContain("Failed");
+});
+
+test("a provider conflict advisory keeps the dashboard available", () => {
+	const deployment = advisoryDeployment("ProviderConflict");
+	const markup = renderOverview(
+		<AgentDashboardOverview agentId={deployment.agent_id} deployment={deployment} />,
+	);
+	expect(markup).not.toContain("unavailable");
+	expect(markup).not.toContain('disabled=""');
+	expect(markup).toContain("/console");
+});

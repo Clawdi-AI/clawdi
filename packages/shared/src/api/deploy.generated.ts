@@ -2585,6 +2585,11 @@ export interface components {
             upgrade_available: boolean;
             upgrade_eligibility: components["schemas"]["V2HostedComputeUpgradeEligibility"];
             compute_slot_occupancy: components["schemas"]["V2HostedComputeSlotOccupancy"] | null;
+            /**
+             * Provider Conflicts
+             * @description Clawdi AI providers the current runtime did not apply because its native Hermes/OpenClaw configuration already owns them. Populated only while the deployment serves with a current-generation advisory Degraded condition (reason ProviderConflict or RuntimeUiUnavailable).
+             */
+            provider_conflicts?: components["schemas"]["V2HostedProviderConflict"][];
         };
         /** V2HostedFilesEndpointInfo */
         V2HostedFilesEndpointInfo: {
@@ -2592,6 +2597,24 @@ export interface components {
             component_readiness?: 1 | null;
             /** Url */
             url: string;
+        };
+        /**
+         * V2HostedProviderConflict
+         * @description A Clawdi AI provider the runtime skipped to keep its native configuration.
+         */
+        V2HostedProviderConflict: {
+            /**
+             * Runtime
+             * @enum {string}
+             */
+            runtime: "openclaw" | "hermes";
+            /** Provider Id */
+            provider_id: string;
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "native_provider_exists" | "native_credential_pool_conflict";
         };
         /** V2HostedUsageAgentBreakdown */
         V2HostedUsageAgentBreakdown: {
