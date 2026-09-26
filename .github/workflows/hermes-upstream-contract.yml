@@ -1,0 +1,49 @@
+name: Hermes Upstream Contract
+
+# Hosted Agents install Hermes from the official, unpinned installer, so an
+# upstream change can break new Agents without any Clawdi change. Run the CLI
+# adapter contract against the current upstream install on a schedule, on
+# demand, and on PRs that change the adapter itself. This check is advisory:
+# PRs that do not touch the adapter never depend on upstream availability.
+on:
+  schedule:
+    - cron: "23 */3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "packages/cli/src/lib/codex-oauth-native-store.ts"
+      - "packages/cli/src/runtime/connection-provider-config.ts"
+      - "packages/cli/src/runtime/hermes-config.ts"
+      - "packages/cli/src/runtime/hermes-native-credentials.ts"
+      - "packages/cli/src/runtime/hermes-python.ts"
+      - "packages/cli/src/runtime/hermes_native_credentials.py"
+      - "packages/cli/src/runtime/hosted-agent-plugin-runtime.ts"
+      - "packages/cli/src/runtime/hosted-hermes-skill.ts"
+      - "packages/cli/src/runtime/managed-baileys-compat.ts"
+      - "packages/cli/src/runtime/manifest-contract.ts"
+      - "packages/cli/src/runtime/manifest-install.ts"
+      - "packages/cli/src/runtime/manifest-runtime-config.ts"
+      - "packages/cli/src/runtime/observed.ts"
+      - "packages/cli/src/runtime/runtime-systemd-reconciliation.ts"
+      - "packages/cli/tests/e2e/hermes-upstream-contract.e2e.test.ts"
+      - "packages/cli/tests/fixtures/hermes-upstream-contract/**"
+      - "scripts/test-hermes-upstream-contract.sh"
+      - ".github/workflows/hermes-upstream-contract.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermes-upstream-contract-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  contract:
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check Docker availability
+        run: docker version
+      - name: Run adapter contract against the latest official Hermes install
+        run: scripts/test-hermes-upstream-contract.sh
