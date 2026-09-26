@@ -1,6 +1,10 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { type RuntimeProviderConflict, readRuntimeAppliedState } from "./applied-state";
+import {
+	type RuntimeProviderConflict,
+	readRuntimeAppliedState,
+	runtimeServiceWithdrawals,
+} from "./applied-state";
 import {
 	applyHostedHermesAiProviderProjection,
 	buildOpenClawHostedProviderPatch,
@@ -178,6 +182,7 @@ interface RuntimeConvergenceState {
 	installErrors: string[];
 	resourceProjectionErrors: string[];
 	providerConflicts: RuntimeProviderConflict[];
+	serviceWithdrawals: { runtime: string; service: string }[];
 	/** OpenClaw channels whose managed projection is withdrawn for this generation. */
 	withdrawnOpenClawChannels: Set<string>;
 	projectedProviderIds: Record<string, string[]>;
@@ -312,6 +317,7 @@ function initializeRuntimeConvergence(
 		installErrors: [],
 		resourceProjectionErrors: [],
 		providerConflicts: [],
+		serviceWithdrawals: [],
 		withdrawnOpenClawChannels: new Set(),
 		projectedProviderIds: {},
 		observations: new Map(),
@@ -379,6 +385,17 @@ function runtimeConvergenceFailure(
 	});
 }
 
+/** Records a withdrawn optional service as committed state plus a non-fatal diagnostic. */
+function withdrawRuntimeService(
+	state: RuntimeConvergenceState,
+	runtime: string,
+	service: string,
+	error: string,
+): void {
+	state.serviceWithdrawals.push({ runtime, service });
+	state.resourceProjectionErrors.push(`runtime ${runtime} ${service} unavailable: ${error}`);
+}
+
 function prepareRuntimeInstallStage(
 	context: RuntimeConvergenceContext,
 	state: RuntimeConvergenceState,
@@ -409,7 +426,7 @@ function prepareRuntimeInstallStage(
 		state.observations.set(name, observation);
 		if (observation.error) state.installErrors.push(observation.error);
 		for (const [service, error] of Object.entries(observation.serviceErrors ?? {}))
-			state.resourceProjectionErrors.push(`runtime ${name} ${service} unavailable: ${error}`);
+			withdrawRuntimeService(state, name, service, error);
 		if (name === "openclaw") context.openClawContext.refreshSdkExports(observation);
 		if (name === "openclaw" && observation.enabled && observation.commandPath) {
 			state.openClawOwnerBrowserBootstrapSupported = openClawSupportsOwnerBrowserBootstrap(
@@ -1212,7 +1229,7 @@ function prepareRuntimeActivation(
 			state.runtimeSystemdUserPrograms = state.runtimeSystemdUserPrograms.filter(
 				(program) => program.runtime !== "hermes" || program.service !== "dashboard",
 			);
-			state.resourceProjectionErrors.push(`runtime hermes dashboard unavailable: ${error}`);
+			withdrawRuntimeService(state, "hermes", "dashboard", error);
 			const republished = publishSystemdUnits(deferredUnitNames);
 			const stale = republished.staleFiles;
 			state.staleSystemdFiles = {
@@ -1326,6 +1343,7 @@ function buildRuntimeConvergenceResult(
 		resourceProjectionErrors: state.resourceProjectionErrors,
 		projectedProviderIds: state.projectedProviderIds,
 		providerConflicts: state.providerConflicts,
+		serviceWithdrawals: runtimeServiceWithdrawals(state.serviceWithdrawals),
 		nativeCredentialProviderIds: state.nativeCredentialProviderIds,
 		agentPluginFailedNames: [...state.agentPluginFailedNames].sort(),
 		outputs: {

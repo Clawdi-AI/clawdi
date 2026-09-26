@@ -3202,6 +3202,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		).toContain("missing capture_signals");
 		expect(readSystemdUserServiceConfig(paths, "hermes-gateway")).not.toBe("\n");
 		expect(readSystemdUserServiceConfig(paths, "clawdi-hermes-dashboard")).toBe("\n");
+		expect(degraded.serviceWithdrawals).toEqual([{ runtime: "hermes", service: "dashboard" }]);
 		expect(existsSync(installerCalls)).toBe(false);
 		expect(readFileSync(appMarker, "utf8")).toBe("before-repair\n");
 		expect(readFileSync(skillMarker, "utf8")).toBe("user-skill-before-repair\n");
@@ -3210,6 +3211,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const installed = convergeRuntimeManifest(load, paths);
 		expect(installed.installErrors).toEqual([]);
 		expect(installed.resourceProjectionErrors).toEqual([]);
+		expect(installed.serviceWithdrawals).toEqual([]);
 		expect(readSystemdUserServiceConfig(paths, "clawdi-hermes-dashboard")).not.toBe("\n");
 		expect(readFileSync(installerCalls, "utf8").trim().split("\n")).toEqual(["install"]);
 	});
@@ -8877,7 +8879,10 @@ esac
 				expect(event.error).toContain(
 					"runtime hermes dashboard unavailable: Hermes dashboard prerequisite failed",
 				);
-				expect(readRuntimeAppliedState(paths)).toMatchObject({ generation: 41 });
+				expect(readRuntimeAppliedState(paths)).toMatchObject({
+					generation: 41,
+					serviceWithdrawals: [{ runtime: "hermes", service: "dashboard" }],
+				});
 				const calls = readFileSync(systemctlLog, "utf8").trim().split("\n");
 				expect(calls).toContain("official hermes installer");
 				expect(
@@ -8932,10 +8937,12 @@ esac
 				expect(installerCalls.some((call) => call.startsWith("npm "))).toBe(false);
 				expect(existsSync(join(home, ".hermes", "config.yaml"))).toBe(true);
 			}
-			expect(readRuntimeAppliedState(paths)).toMatchObject({
+			const applied = readRuntimeAppliedState(paths);
+			expect(applied).toMatchObject({
 				generation: 41,
 				etag: testBundleEtag("cold-home-egress"),
 			});
+			expect(applied).not.toHaveProperty("serviceWithdrawals");
 		},
 		30_000,
 	);

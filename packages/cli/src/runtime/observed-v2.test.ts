@@ -7,6 +7,7 @@ import {
 	readRuntimeAppliedState,
 	runtimeContentSha256,
 	runtimeProviderConflicts,
+	runtimeServiceWithdrawals,
 	writeRuntimeAppliedState,
 } from "./applied-state";
 import { HostedRuntimeHeartbeatSession } from "./heartbeat-observation";
@@ -209,6 +210,40 @@ describe("hosted runtime observed v2", () => {
 		expect(observed?.status).toBe("ok");
 		expect(observed?.convergeError).toBeUndefined();
 		expect(observed?.providerConflicts).toEqual({ schemaVersion: 1, entries });
+	});
+
+	test("reports committed service withdrawals without degrading runtime health", async () => {
+		const paths = healthyAppliedRuntimePaths();
+		const applied = readRuntimeAppliedState(paths);
+		if (!applied) throw new Error("Missing applied state fixture");
+		const entries = runtimeServiceWithdrawals([
+			{ runtime: "openclaw", service: "dashboard" },
+			{ runtime: "hermes", service: "dashboard" },
+			{ runtime: "hermes", service: "dashboard" },
+			{ runtime: "hermes", service: "gateway" },
+		]);
+		expect(entries).toEqual([
+			{ runtime: "hermes", service: "dashboard" },
+			{ runtime: "openclaw", service: "dashboard" },
+		]);
+		expect(() =>
+			writeRuntimeAppliedState({ ...applied, serviceWithdrawals: [...entries].reverse() }, paths),
+		).toThrow("unique and sorted");
+		expect(() => writeRuntimeAppliedState({ ...applied, serviceWithdrawals: [] }, paths)).toThrow();
+		writeRuntimeAppliedState({ ...applied, serviceWithdrawals: entries }, paths);
+		writeRuntimeWatchStatus({ status: "applied", stage: "final" }, paths);
+
+		expect(await readHostedRuntimeObserved(paths)).not.toHaveProperty("serviceWithdrawals");
+		const observed = await readHostedRuntimeObserved(paths, { includeServiceWithdrawals: true });
+		expect(observed?.status).toBe("ok");
+		expect(observed?.convergeError).toBeUndefined();
+		expect(observed?.serviceWithdrawals).toEqual({ schemaVersion: 1, entries });
+
+		// A later healthy generation commits without the field and stops reporting it.
+		writeRuntimeAppliedState(applied, paths);
+		expect(
+			await readHostedRuntimeObserved(paths, { includeServiceWithdrawals: true }),
+		).not.toHaveProperty("serviceWithdrawals");
 	});
 
 	test("reports durable Hermes user activity through the existing observation contract", async () => {

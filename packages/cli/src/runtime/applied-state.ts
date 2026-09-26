@@ -51,19 +51,53 @@ const runtimeProviderConflictSchema = z
 	.strict();
 export type RuntimeProviderConflict = z.infer<typeof runtimeProviderConflictSchema>;
 
-/** Unique, sorted, wire-valid entries; a malformed ID is skipped but never reported. */
-export function runtimeProviderConflicts(
-	entries: readonly { runtime: string; providerId: string; code: string }[],
-): RuntimeProviderConflict[] {
-	const valid = new Map<string, RuntimeProviderConflict>();
+/** Unique, sorted, wire-valid entries; a malformed entry is skipped but never reported. */
+function canonicalRuntimeEntries<T>(
+	schema: z.ZodType<T>,
+	entries: readonly unknown[],
+	key: (entry: T) => string,
+	limit: number,
+): T[] {
+	const valid = new Map<string, T>();
 	for (const entry of entries) {
-		const parsed = runtimeProviderConflictSchema.safeParse(entry);
-		if (parsed.success) valid.set(`${entry.runtime}\0${entry.providerId}`, parsed.data);
+		const parsed = schema.safeParse(entry);
+		if (parsed.success) valid.set(key(parsed.data), parsed.data);
 	}
 	return [...valid.entries()]
 		.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
 		.map(([, entry]) => entry)
-		.slice(0, RUNTIME_PROVIDER_CONFLICT_LIMIT);
+		.slice(0, limit);
+}
+
+export function runtimeProviderConflicts(
+	entries: readonly { runtime: string; providerId: string; code: string }[],
+): RuntimeProviderConflict[] {
+	return canonicalRuntimeEntries(
+		runtimeProviderConflictSchema,
+		entries,
+		(entry) => `${entry.runtime}\0${entry.providerId}`,
+		RUNTIME_PROVIDER_CONFLICT_LIMIT,
+	);
+}
+
+const RUNTIME_SERVICE_WITHDRAWAL_LIMIT = 8;
+const runtimeServiceWithdrawalSchema = z
+	.object({
+		runtime: z.enum(["hermes", "openclaw"]),
+		service: z.enum(["dashboard"]),
+	})
+	.strict();
+export type RuntimeServiceWithdrawal = z.infer<typeof runtimeServiceWithdrawalSchema>;
+
+export function runtimeServiceWithdrawals(
+	entries: readonly { runtime: string; service: string }[],
+): RuntimeServiceWithdrawal[] {
+	return canonicalRuntimeEntries(
+		runtimeServiceWithdrawalSchema,
+		entries,
+		(entry) => `${entry.runtime}\0${entry.service}`,
+		RUNTIME_SERVICE_WITHDRAWAL_LIMIT,
+	);
 }
 
 export const runtimeAppliedStateSchema = z
@@ -93,6 +127,17 @@ export const runtimeAppliedStateSchema = z
 				(entries) =>
 					runtimeContentSha256(runtimeProviderConflicts(entries)) === runtimeContentSha256(entries),
 				{ message: "provider conflicts must be unique and sorted" },
+			)
+			.optional(),
+		serviceWithdrawals: z
+			.array(runtimeServiceWithdrawalSchema)
+			.min(1)
+			.max(RUNTIME_SERVICE_WITHDRAWAL_LIMIT)
+			.refine(
+				(entries) =>
+					runtimeContentSha256(runtimeServiceWithdrawals(entries)) ===
+					runtimeContentSha256(entries),
+				{ message: "service withdrawals must be unique and sorted" },
 			)
 			.optional(),
 	})

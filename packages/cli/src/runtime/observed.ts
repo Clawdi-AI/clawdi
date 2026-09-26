@@ -34,7 +34,12 @@ type ObservedStatus = "ok" | "error" | "unknown";
 export type HostedRuntimeObserved = components["schemas"]["HostedRuntimeObservedV2"] &
 	Pick<
 		components["schemas"]["RuntimeObservationEventV2"],
-		"agentPlugins" | "userActivity" | "skills" | "components" | "providerConflicts"
+		| "agentPlugins"
+		| "userActivity"
+		| "skills"
+		| "components"
+		| "providerConflicts"
+		| "serviceWithdrawals"
 	>;
 type HostedRuntimeObservedBoot = components["schemas"]["HostedRuntimeObservedBootV1"];
 type HostedRuntimeObservedCli = components["schemas"]["HostedRuntimeObservedCliV1"];
@@ -62,6 +67,7 @@ export async function readHostedRuntimeObserved(
 		includeUserActivity?: boolean;
 		includeComponents?: boolean;
 		includeProviderConflicts?: boolean;
+		includeServiceWithdrawals?: boolean;
 	} = {},
 ): Promise<HostedRuntimeObserved | null> {
 	if (paths.mode !== "hosted") return null;
@@ -126,6 +132,9 @@ export async function readHostedRuntimeObserved(
 	// Skipped providers are committed state, not health: native configuration kept ownership.
 	if (appliedState?.providerConflicts && options.includeProviderConflicts)
 		observed.providerConflicts = { schemaVersion: 1, entries: appliedState.providerConflicts };
+	// Withdrawn optional services belong to the committed generation that is actually running.
+	if (appliedState?.serviceWithdrawals && options.includeServiceWithdrawals)
+		observed.serviceWithdrawals = { schemaVersion: 1, entries: appliedState.serviceWithdrawals };
 	if (options.includeUserActivity) {
 		const userActivity = observedUserActivity(boot.status, observed.reportedAt);
 		if (userActivity) observed.userActivity = userActivity;
