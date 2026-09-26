@@ -3157,6 +3157,47 @@ test("provider conflict notice keeps the agent's own settings through the canoni
 	});
 });
 
+test("switching to an agent-owned provider explains that the model is chosen in the agent", async ({
+	page,
+}) => {
+	const current = {
+		...userProvider("custom-current", "Current", [{ id: "m-1" }]),
+		configuration_mode: "custom" as const,
+	};
+	const next = {
+		...userProvider("custom-next", "Next Provider", [{ id: "m-2" }]),
+		configuration_mode: "custom" as const,
+	};
+	await stubHostedApi(page, {
+		deployments: [
+			{
+				...railHostedDeployment,
+				config_info: {
+					...railHostedDeployment.config_info,
+					ai_provider_auth_kind: "api_key",
+					runtime_configuration: {
+						providers: [{ provider_id: current.provider_id, auth_kind: "secret_reference" }],
+						primary_model: null,
+						features: [],
+					},
+				},
+			},
+		],
+		cloudAgents: [railHostedCloudAgent],
+		aiProviders: [current, next],
+	});
+
+	await page.goto(`/agents/${railHostedEnvironmentId}/model-provider`);
+	const hint = page.getByText("The agent keeps its current model.");
+	await expect(hint).toHaveCount(0);
+	await page.getByRole("button", { name: /Next Provider/ }).click();
+	await expect(hint).toContainText(
+		"choose a model from Next Provider in the agent's own settings.",
+	);
+	await page.getByRole("button", { name: /Current/ }).click();
+	await expect(hint).toHaveCount(0);
+});
+
 test("a withdrawn dashboard is explained while the agent keeps running", async ({
 	page,
 }, testInfo) => {

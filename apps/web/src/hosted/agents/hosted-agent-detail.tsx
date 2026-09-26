@@ -2319,6 +2319,21 @@ function AiProviderTab({
 				/>
 			)}
 
+			{bindingMode === "configured" &&
+			primaryProviderChoice !== initialPrimaryChoice &&
+			list.some(
+				(provider) =>
+					provider.provider_id === primaryProviderChoice &&
+					(provider.configuration_mode === "connection" ||
+						provider.configuration_mode === "native" ||
+						provider.configuration_mode === "custom"),
+			) ? (
+				<p className="text-sm text-muted-foreground">
+					The agent keeps its current model. After saving, choose a model from{" "}
+					{providerDisplayLabel(primaryProviderChoice, list)} in the agent's own settings.
+				</p>
+			) : null}
+
 			<div className="flex items-center gap-2">
 				<Button
 					disabled={
