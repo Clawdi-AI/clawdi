@@ -14,7 +14,7 @@ import { spawnRuntimeUserCommand } from "./runtime-user-command";
 
 // Supply a verified bundle to Hermes' public pipeline. Hermes owns scanning,
 // install/uninstall mutations, Hub records and cache invalidation.
-const HERMES_SKILL_OPERATION = `
+export const HERMES_SKILL_OPERATION = `
 import base64, json, shutil, sys
 from tools.skills_hub import HubLockFile, LOCK_FILE, SKILLS_DIR
 try:

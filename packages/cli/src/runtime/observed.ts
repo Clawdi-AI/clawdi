@@ -537,7 +537,7 @@ function hermesUiAuthenticationIsReady(status: unknown, expectedProvider: "self-
 }
 
 /** Native service activation precedes application startup; heartbeat health needs both. */
-async function runtimeServiceIsReady(unit: string, paths: RuntimePaths): Promise<boolean> {
+export async function runtimeServiceIsReady(unit: string, paths: RuntimePaths): Promise<boolean> {
 	if (unit !== "openclaw-gateway.service" && unit !== "clawdi-hermes-dashboard.service")
 		return true;
 	try {

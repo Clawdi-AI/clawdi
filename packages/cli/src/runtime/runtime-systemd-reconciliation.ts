@@ -345,7 +345,7 @@ function systemdEnvironmentFileQuote(value: string): string {
 	return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-type OfficialRuntimeServiceDescriptor = {
+export type OfficialRuntimeServiceDescriptor = {
 	runtime: RuntimeName;
 	programName: string;
 	command: string;
@@ -363,7 +363,7 @@ type OfficialRuntimeServiceDescriptor = {
 	matchesProgram: (program: RuntimeSystemdUserProgram) => boolean;
 };
 
-const OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS: OfficialRuntimeServiceDescriptor[] = [
+export const OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS: OfficialRuntimeServiceDescriptor[] = [
 	{
 		runtime: "openclaw",
 		programName: "openclaw-gateway",
