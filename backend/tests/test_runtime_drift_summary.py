@@ -106,6 +106,7 @@ async def observe(
     activity=None,
     skills=None,
     provider_conflicts=None,
+    service_withdrawals=None,
     apply_receipt_id="apply-receipt-0001",
     boot_nonce="boot-nonce-000001",
 ):
@@ -135,6 +136,7 @@ async def observe(
             "userActivity": activity,
             "skills": skills,
             **({"providerConflicts": provider_conflicts} if provider_conflicts else {}),
+            **({"serviceWithdrawals": service_withdrawals} if service_withdrawals else {}),
         }
     )
     result = await ingest_runtime_observation(
@@ -315,8 +317,15 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
             {"runtime": "hermes", "providerId": "banban", "code": "native_credential_pool_conflict"}
         ],
     }
+    withdrawals = {"schemaVersion": 1, "entries": [{"runtime": "hermes", "service": "dashboard"}]}
     first = await observe(
-        db_session, fresh, old, activity=activity, skills=skills, provider_conflicts=conflicts
+        db_session,
+        fresh,
+        old,
+        activity=activity,
+        skills=skills,
+        provider_conflicts=conflicts,
+        service_withdrawals=withdrawals,
     )
     coalesced = await observe(
         db_session,
@@ -326,6 +335,7 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
         activity=activity,
         skills=skills,
         provider_conflicts=conflicts,
+        service_withdrawals=withdrawals,
     )
     assert first.stream_position == coalesced.stream_position
     await observe(db_session, expired, old - timedelta(seconds=1), boot="boot-older")
@@ -393,11 +403,14 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
         "skills",
         "userActivity",
         "providerConflicts",
+        "serviceWithdrawals",
     }
     assert diagnostics["skills"] == skills
     assert diagnostics["providerConflicts"] == conflicts
+    assert diagnostics["serviceWithdrawals"] == withdrawals
     assert observations[3]["head"]["diagnostics"]["skills"] is None
     assert observations[3]["head"]["diagnostics"]["providerConflicts"] is None
+    assert observations[3]["head"]["diagnostics"]["serviceWithdrawals"] is None
     assert observations[1]["head"]["diagnostics"] == dict.fromkeys(diagnostics)
     assert diagnostics["activeCliVersion"] == "1.2.3"
     assert diagnostics["agentPlugins"] == {"schemaVersion": 1, "installations": []}
@@ -421,6 +434,7 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
         {"agentPlugins": {}},
         {"userActivity": {}},
         {"providerConflicts": {"schemaVersion": 1, "entries": []}},
+        {"serviceWithdrawals": {"schemaVersion": 1, "entries": []}},
         {"rawPayload": {}},
     ):
         with pytest.raises(ValidationError):

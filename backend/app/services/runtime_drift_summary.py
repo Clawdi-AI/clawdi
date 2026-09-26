@@ -196,6 +196,9 @@ async def read_runtime_drift_summaries(
                     V2RuntimeObservationInbox.diagnostics["providerConflicts"].label(
                         "provider_conflicts"
                     ),
+                    V2RuntimeObservationInbox.diagnostics["serviceWithdrawals"].label(
+                        "service_withdrawals"
+                    ),
                 )
                 .outerjoin(
                     V2RuntimeObservationInbox,
@@ -237,6 +240,7 @@ async def read_runtime_drift_summaries(
                             "agentPlugins": row.agent_plugins,
                             "userActivity": row.user_activity,
                             "providerConflicts": row.provider_conflicts,
+                            "serviceWithdrawals": row.service_withdrawals,
                         },
                     }
                 )
