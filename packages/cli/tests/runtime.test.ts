@@ -3141,7 +3141,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		}
 	});
 
-	it("does not reinstall Hermes for dashboard capability drift but preserves cold install", () => {
+	it("withdraws only an incompatible Hermes dashboard and never reinstalls for it", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -3189,10 +3189,19 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const paths = getRuntimePaths();
 		const load = hostedHermesDashboardCapabilityLoad(home);
 
-		const rejected = convergeRuntimeManifest(load, paths);
-		expect(rejected.installErrors.join("\n")).toContain(
-			"Hermes dashboard runtime is incompatible: missing capture_signals",
-		);
+		const degraded = convergeRuntimeManifest(load, paths);
+		expect(degraded.installErrors).toEqual([]);
+		expect(degraded.resourceProjectionErrors).toEqual([
+			`runtime hermes dashboard unavailable: Hermes dashboard runtime is incompatible; see ${join(paths.statusRoot, "installer-logs", "hermes-dashboard-capability.log")}`,
+		]);
+		expect(
+			readFileSync(
+				join(paths.statusRoot, "installer-logs", "hermes-dashboard-capability.log"),
+				"utf8",
+			),
+		).toContain("missing capture_signals");
+		expect(readSystemdUserServiceConfig(paths, "hermes-gateway")).not.toBe("\n");
+		expect(readSystemdUserServiceConfig(paths, "clawdi-hermes-dashboard")).toBe("\n");
 		expect(existsSync(installerCalls)).toBe(false);
 		expect(readFileSync(appMarker, "utf8")).toBe("before-repair\n");
 		expect(readFileSync(skillMarker, "utf8")).toBe("user-skill-before-repair\n");
@@ -3200,6 +3209,8 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		rmSync(command);
 		const installed = convergeRuntimeManifest(load, paths);
 		expect(installed.installErrors).toEqual([]);
+		expect(installed.resourceProjectionErrors).toEqual([]);
+		expect(readSystemdUserServiceConfig(paths, "clawdi-hermes-dashboard")).not.toBe("\n");
 		expect(readFileSync(installerCalls, "utf8").trim().split("\n")).toEqual(["install"]);
 	});
 
@@ -8650,12 +8661,13 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it.each([
-		{ runtime: "openclaw" as const, publishCa: true },
-		{ runtime: "hermes" as const, publishCa: true },
-		{ runtime: "openclaw" as const, publishCa: false },
+		{ runtime: "openclaw" as const, publishCa: true, dashboardBuilds: true },
+		{ runtime: "hermes" as const, publishCa: true, dashboardBuilds: true },
+		{ runtime: "hermes" as const, publishCa: true, dashboardBuilds: false },
+		{ runtime: "openclaw" as const, publishCa: false, dashboardBuilds: true },
 	])(
-		"orders the cold $runtime installer after egress (publishCa=$publishCa)",
-		async ({ runtime, publishCa }) => {
+		"orders the cold $runtime installer after egress (publishCa=$publishCa, dashboardBuilds=$dashboardBuilds)",
+		async ({ runtime, publishCa, dashboardBuilds }) => {
 			setRuntimeApplyGeneration(41, CANONICAL_TEST_CONTEXT);
 			const home = join(root, "home", "clawdi");
 			const state = join(root, "var", "lib", "clawdi");
@@ -8743,6 +8755,7 @@ case "$*" in
     mkdir -p '${join(appRoot, "node_modules", ".bin")}'
     ;;
   "run build")
+    ${dashboardBuilds ? "" : "exit 1"}
     mkdir -p '${join(appRoot, "hermes_cli", "web_dist")}'
     printf '%s\n' '<html>Hermes dashboard</html>' > '${join(appRoot, "hermes_cli", "web_dist", "index.html")}'
     ;;
@@ -8792,6 +8805,23 @@ esac
 				expect(
 					failedManagerCalls.some((call) => /^(start|restart) .*clawdi-daemon\.service/.test(call)),
 				).toBe(false);
+				return;
+			}
+			if (!dashboardBuilds) {
+				// The failed optional build withdraws the dashboard; the gateway still commits.
+				const event = JSON.parse(logs.at(-1) ?? "{}");
+				expect(event).toMatchObject({ status: "error", healthImpact: "resource_projection" });
+				expect(event.error).toContain(
+					"runtime hermes dashboard unavailable: Hermes dashboard prerequisite failed",
+				);
+				expect(readRuntimeAppliedState(paths)).toMatchObject({ generation: 41 });
+				const calls = readFileSync(systemctlLog, "utf8").trim().split("\n");
+				expect(calls).toContain("official hermes installer");
+				expect(
+					calls.some((call) => call.startsWith("--user start ") && call.includes(serviceName)),
+				).toBe(true);
+				expect(calls.some((call) => call.includes("clawdi-hermes-dashboard"))).toBe(false);
+				expect(readSystemdUserServiceConfig(paths, "clawdi-hermes-dashboard")).toBe("\n");
 				return;
 			}
 			if (runtimeExitCode !== undefined && runtimeExitCode !== 0) {

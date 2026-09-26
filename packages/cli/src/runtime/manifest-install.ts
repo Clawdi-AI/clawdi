@@ -43,6 +43,8 @@ export interface RuntimeInstallObservation {
 	installFinishedAt?: string;
 	installDurationMs?: number;
 	error: string | null;
+	/** Optional services that cannot run; the runtime itself remains installed and usable. */
+	serviceErrors?: Record<string, string>;
 }
 function runtimeInstallObservation(
 	observation: Pick<RuntimeInstallObservation, "runtime" | "enabled" | "status"> &
@@ -91,40 +93,26 @@ function runtimeInstallTimeoutMs(): number {
 function hermesDashboardCapabilityError(
 	name: string,
 	runtime: RuntimeManifest["runtimes"][string],
+	paths: RuntimePaths,
 ): string | null {
 	if (name !== "hermes" || !runtime.enabled || !runtime.install || !runtime.services?.dashboard)
 		return null;
-	let python: string;
-	try {
-		python = hermesManagedPython(runtime.install.home);
-	} catch (error) {
-		return `Hermes dashboard runtime is missing its managed Python interpreter: ${
-			error instanceof Error ? error.message : String(error)
-		}`;
-	}
-	let result: ReturnType<typeof spawnRuntimeUserCommand>;
+	let result: Parameters<typeof writeRuntimeInstallerLog>[2];
 	try {
 		result = spawnRuntimeUserCommand(
-			python,
+			hermesManagedPython(runtime.install.home),
 			["-c", HERMES_DASHBOARD_CAPABILITY_PROBE],
 			runtime.install.home,
 			runtime.install.home,
 			{ timeoutMs: HERMES_DASHBOARD_CAPABILITY_PROBE_TIMEOUT_MS },
 		);
+		if (result.status === 0) return null;
 	} catch (error) {
-		return `Hermes dashboard runtime capability probe failed: ${
-			error instanceof Error ? error.message : String(error)
-		}`;
+		result = { error };
 	}
-	if (result.status === 0) {
-		return null;
-	}
-	return `Hermes dashboard runtime is incompatible: ${
-		tail(String(result.stderr ?? "")) ??
-		(result.error instanceof Error
-			? result.error.message
-			: "uvicorn.Server.capture_signals is unavailable")
-	}`;
+	// Probe output is native text; the observed diagnostic stays fixed and bounded.
+	const logPath = writeRuntimeInstallerLog(paths, "hermes-dashboard-capability", result);
+	return `Hermes dashboard runtime is incompatible; see ${logPath}`;
 }
 function runtimeInstallerExecution(
 	runtime: string,
@@ -376,9 +364,10 @@ export function observeRuntimeInstall(
 	}
 	const observation = runOfficialInstaller(name, runtime.install, paths, identity);
 	if (observation.error) return observation;
-	const capabilityError = hermesDashboardCapabilityError(name, runtime);
-	return capabilityError
-		? { ...observation, status: "install_failed" as const, error: capabilityError }
+	// The dashboard is optional: an incompatible one is withdrawn, never the gateway.
+	const dashboardError = hermesDashboardCapabilityError(name, runtime, paths);
+	return dashboardError
+		? { ...observation, serviceErrors: { dashboard: dashboardError } }
 		: observation;
 }
 export function planRuntimeInstallObservation(

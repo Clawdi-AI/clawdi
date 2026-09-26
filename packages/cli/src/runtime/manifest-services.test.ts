@@ -178,9 +178,21 @@ fi
 			gid: TEST_PROCESS_GID,
 		});
 
-	expect(observe().error).toBeNull();
+	mkdirSync(paths.serviceStateRoot, { recursive: true });
+	expect(observe()).toMatchObject({ error: null, status: "present" });
+	expect(observe().serviceErrors).toBeUndefined();
 	writeFileSync(dependencyError, "dependency changed without replacing Python\n");
-	expect(observe().error).toContain("dependency unavailable");
+	// Only the optional dashboard is withdrawn; the native output stays in the private log.
+	const degraded = observe();
+	expect(degraded).toMatchObject({ error: null, status: "present" });
+	expect(degraded.serviceErrors?.dashboard).toStartWith("Hermes dashboard runtime is incompatible");
+	expect(degraded.serviceErrors?.dashboard).not.toContain("dependency unavailable");
+	expect(
+		readFileSync(
+			join(paths.statusRoot, "installer-logs", "hermes-dashboard-capability.log"),
+			"utf8",
+		),
+	).toContain("dependency unavailable");
 });
 
 test("reuses a Hermes dashboard build until its runtime revision changes", () => {
