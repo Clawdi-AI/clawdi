@@ -20,7 +20,12 @@ const SNAPSHOT_SET = new Set(SNAPSHOT);
 /** Client-side fallback code injected when a failure carries no code. */
 const SYNTHETIC_FALLBACK_CODES = new Set(["operation_failed"]);
 
-/** Code emitted by the provider connection-test surface, not a problem code. */
+/**
+ * Code emitted by the provider connection-test surface, not a problem code.
+ * Runtime provider-conflict reasons are not problem codes either; smoke specs
+ * build them with `nativeProviderConflict` in hosted-stub-api.ts, so every
+ * `code:` field left in the smoke fixtures is still held to the snapshot.
+ */
 const SMOKE_NON_PROBLEM_CODES = new Set(["invalid_api_key"]);
 
 const DEPLOYMENT_FAILURE_SOURCE = readFileSync(

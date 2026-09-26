@@ -70,6 +70,22 @@ export type DeploymentMutationFixture = {
 	} | null;
 };
 
+type ProviderConflictFixture = NonNullable<DeploymentRead["provider_conflicts"]>[number];
+
+/**
+ * A runtime-reported provider conflict ("native wins"). Its reason is a
+ * provider-conflict classification, not a lifecycle Problem code, so specs build
+ * it here rather than spelling a Problem-shaped `code:` field in the smoke
+ * fixtures that the problem-code contract scans.
+ */
+export function nativeProviderConflict(
+	runtime: ProviderConflictFixture["runtime"],
+	providerId: string,
+	reason: ProviderConflictFixture["code"],
+): ProviderConflictFixture {
+	return { runtime, provider_id: providerId, code: reason };
+}
+
 export function fixtureAgentId(
 	deployment: Pick<DeploymentMutationFixture, "id" | "agent_id" | "config_info">,
 ) {

@@ -15,6 +15,7 @@ import {
 	isDeploymentMutationFixture,
 	isRecord,
 	mutationDeploymentReadFixture,
+	nativeProviderConflict,
 	readDeploymentFixture,
 } from "./hosted-stub-api";
 import { expectRecordedLiveToolGeometry, recordLiveToolGeometry } from "./live-tool-geometry";
@@ -3102,9 +3103,7 @@ test("provider conflict notice keeps the agent's own settings through the canoni
 		...railHostedDeployment,
 		hermes_control_ui_url: "https://runtime.example/",
 		serving_advisory: "ProviderConflict",
-		provider_conflicts: [
-			{ runtime: "hermes", provider_id: providerId, code: "native_provider_exists" },
-		],
+		provider_conflicts: [nativeProviderConflict("hermes", providerId, "native_provider_exists")],
 		config_info: {
 			...railHostedDeployment.config_info,
 			ai_provider_auth_kind: "api_key",
