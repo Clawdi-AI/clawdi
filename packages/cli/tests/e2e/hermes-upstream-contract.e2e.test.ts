@@ -70,7 +70,7 @@ import {
 	prepareOfficialRuntimeServiceDependencies,
 	type RuntimeSystemdUserProgram,
 } from "../../src/runtime/runtime-systemd-reconciliation";
-import { spawnRuntimeUserCommand } from "../../src/runtime/runtime-user-command";
+import { executableExists, spawnRuntimeUserCommand } from "../../src/runtime/runtime-user-command";
 
 const CONTRACT_GATE = "CLAWDI_TEST_HERMES_UPSTREAM_CONTRACT";
 const HERMES_DASHBOARD_PORT = 9119;
@@ -285,6 +285,7 @@ describe.skipIf(!enabled)("upstream Hermes adapter contract", () => {
 	test("resolves the managed Python interpreter", () => {
 		const resolved = managedPythonPath();
 		expect(isAbsolute(resolved)).toBe(true);
+		expect(executableExists(resolved)).toBe(true);
 		console.log(`managed Python: ${resolved}`);
 	});
 
