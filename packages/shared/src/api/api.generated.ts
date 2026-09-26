@@ -6779,6 +6779,34 @@ export interface components {
             /** Entries */
             entries: components["schemas"]["HostedRuntimeObservedComponentV1"][];
         };
+        /**
+         * HostedRuntimeObservedProviderConflictV1
+         * @description A Cloud provider the runtime skipped because native configuration owns it.
+         */
+        HostedRuntimeObservedProviderConflictV1: {
+            /**
+             * Runtime
+             * @enum {string}
+             */
+            runtime: "hermes" | "openclaw";
+            /** Providerid */
+            providerId: string;
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "native_provider_exists" | "native_credential_pool_conflict";
+        };
+        /** HostedRuntimeObservedProviderConflictsV1 */
+        HostedRuntimeObservedProviderConflictsV1: {
+            /**
+             * Schemaversion
+             * @constant
+             */
+            schemaVersion: 1;
+            /** Entries */
+            entries: components["schemas"]["HostedRuntimeObservedProviderConflictV1"][];
+        };
         /** HostedRuntimeObservedProviderPayload */
         HostedRuntimeObservedProviderPayload: {
             [key: string]: components["schemas"]["JsonValue"];
@@ -8182,6 +8210,7 @@ export interface components {
             skills?: components["schemas"]["HostedRuntimeObservedSkillsV1"] | null;
             agentPlugins: components["schemas"]["HostedRuntimeObservedAgentPluginsV1"] | null;
             userActivity: components["schemas"]["HostedRuntimeObservedUserActivityV1"] | null;
+            providerConflicts?: components["schemas"]["HostedRuntimeObservedProviderConflictsV1"] | null;
         };
         /** RuntimeDriftObservationHead */
         RuntimeDriftObservationHead: {
@@ -8411,6 +8440,7 @@ export interface components {
             agentPlugins?: components["schemas"]["HostedRuntimeObservedAgentPluginsV1"] | null;
             skills?: components["schemas"]["HostedRuntimeObservedSkillsV1"] | null;
             userActivity?: components["schemas"]["HostedRuntimeObservedUserActivityV1"] | null;
+            providerConflicts?: components["schemas"]["HostedRuntimeObservedProviderConflictsV1"] | null;
             /** Error */
             error?: string | null;
             /** Convergeerror */

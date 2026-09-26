@@ -105,6 +105,7 @@ async def observe(
     sequence=1,
     activity=None,
     skills=None,
+    provider_conflicts=None,
     apply_receipt_id="apply-receipt-0001",
     boot_nonce="boot-nonce-000001",
 ):
@@ -133,6 +134,7 @@ async def observe(
             "eventId": str(uuid.uuid4()),
             "userActivity": activity,
             "skills": skills,
+            **({"providerConflicts": provider_conflicts} if provider_conflicts else {}),
         }
     )
     result = await ingest_runtime_observation(
@@ -307,8 +309,24 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
         ],
         "truncated": False,
     }
-    first = await observe(db_session, fresh, old, activity=activity, skills=skills)
-    coalesced = await observe(db_session, fresh, now, sequence=2, activity=activity, skills=skills)
+    conflicts = {
+        "schemaVersion": 1,
+        "entries": [
+            {"runtime": "hermes", "providerId": "banban", "code": "native_credential_pool_conflict"}
+        ],
+    }
+    first = await observe(
+        db_session, fresh, old, activity=activity, skills=skills, provider_conflicts=conflicts
+    )
+    coalesced = await observe(
+        db_session,
+        fresh,
+        now,
+        sequence=2,
+        activity=activity,
+        skills=skills,
+        provider_conflicts=conflicts,
+    )
     assert first.stream_position == coalesced.stream_position
     await observe(db_session, expired, old - timedelta(seconds=1), boot="boot-older")
     await observe(db_session, expired, old, boot="boot-expired")
@@ -374,9 +392,12 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
         "agentPlugins",
         "skills",
         "userActivity",
+        "providerConflicts",
     }
     assert diagnostics["skills"] == skills
+    assert diagnostics["providerConflicts"] == conflicts
     assert observations[3]["head"]["diagnostics"]["skills"] is None
+    assert observations[3]["head"]["diagnostics"]["providerConflicts"] is None
     assert observations[1]["head"]["diagnostics"] == dict.fromkeys(diagnostics)
     assert diagnostics["activeCliVersion"] == "1.2.3"
     assert diagnostics["agentPlugins"] == {"schemaVersion": 1, "installations": []}
@@ -399,6 +420,7 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
         {"applied": {}},
         {"agentPlugins": {}},
         {"userActivity": {}},
+        {"providerConflicts": {"schemaVersion": 1, "entries": []}},
         {"rawPayload": {}},
     ):
         with pytest.raises(ValidationError):

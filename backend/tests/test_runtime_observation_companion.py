@@ -320,6 +320,32 @@ def test_agent_plugin_observation_rejects_stale_or_unfenced_apply_identity() -> 
         )
 
 
+def test_provider_conflicts_are_optional_canonical_and_fixed_vocabulary() -> None:
+    payload = _payload().model_dump(mode="json", by_alias=True, exclude_unset=True)
+    assert RuntimeObservationEventV2.model_validate(payload).provider_conflicts is None
+    entries = [
+        {"runtime": "hermes", "providerId": "banban", "code": "native_credential_pool_conflict"},
+        {"runtime": "openclaw", "providerId": "banban", "code": "native_provider_exists"},
+    ]
+    observed = RuntimeObservationEventV2.model_validate(
+        {**payload, "providerConflicts": {"schemaVersion": 1, "entries": entries}}
+    )
+    assert observed.provider_conflicts is not None
+    assert observed.status == "ok"
+
+    for conflicts in [
+        {"schemaVersion": 1, "entries": []},
+        {"schemaVersion": 2, "entries": entries},
+        {"schemaVersion": 1, "entries": list(reversed(entries))},
+        {"schemaVersion": 1, "entries": [entries[0], entries[0]]},
+        {"schemaVersion": 1, "entries": [{**entries[0], "code": "credential_conflict"}]},
+        {"schemaVersion": 1, "entries": [{**entries[0], "providerId": "Banban"}]},
+        {"schemaVersion": 1, "entries": [{**entries[0], "error": "native pool"}]},
+    ]:
+        with pytest.raises(ValueError):
+            RuntimeObservationEventV2.model_validate({**payload, "providerConflicts": conflicts})
+
+
 async def retire_runtime_environment(*args, **kwargs):
     return (await _retire_runtime_environment(*args, **kwargs)).receipt
 
@@ -3022,6 +3048,7 @@ def _legacy_runtime_observed(value: RuntimeObservationEventV2) -> dict:
         "skills",
         "userActivity",
         "components",
+        "providerConflicts",
     ):
         payload.pop(field)
     return payload
