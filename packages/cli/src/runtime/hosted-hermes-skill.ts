@@ -16,10 +16,17 @@ import { spawnRuntimeUserCommand } from "./runtime-user-command";
 // install/uninstall mutations, Hub records and cache invalidation.
 const HERMES_SKILL_OPERATION = `
 import base64, json, shutil, sys
-from tools.skills_hub import (
-    SkillBundle, HubLockFile, LOCK_FILE, SKILLS_DIR,
-    quarantine_bundle, install_from_quarantine, uninstall_skill,
-)
+from tools.skills_hub import HubLockFile, LOCK_FILE, SKILLS_DIR
+try:
+    from tools.skills_hub_models import SkillBundle
+    from tools.skills_hub_install import (
+        quarantine_bundle, install_from_quarantine, uninstall_skill,
+    )
+except ImportError:
+    # Hermes releases before the Hub module split export these from skills_hub.
+    from tools.skills_hub import (
+        SkillBundle, quarantine_bundle, install_from_quarantine, uninstall_skill,
+    )
 from tools.skills_guard import scan_skill, should_allow_install
 from agent.prompt_builder import clear_skills_system_prompt_cache
 
