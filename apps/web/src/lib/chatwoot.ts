@@ -1,6 +1,4 @@
-import { useMemo } from "react";
 import { parseAgentPathname } from "@/lib/agent-routes";
-import { useHydrated } from "@/lib/use-hydrated";
 
 // Official Website SDK surface: https://www.chatwoot.com/hc/user-guide/articles/1677587234
 export type ChatwootSettings = Readonly<{
@@ -63,25 +61,6 @@ export function shouldHideChatwoot(pathname: string): boolean {
 	if (pathname === "/deploy" || /^\/terminal\/[^/]+\/?$/.test(pathname)) return true;
 	const section = parseAgentPathname(pathname)?.section;
 	return section === "console" || section === "files" || section === "terminal";
-}
-
-const OPT_IN_STORAGE_KEY = "clawdi:chatwoot:opt-in";
-
-/** Hidden rollout: `?chatwoot=on` opts this browser in and `?chatwoot=off` opts it out. */
-export function readChatwootOptIn(): boolean {
-	try {
-		const param = new URLSearchParams(window.location.search).get("chatwoot");
-		if (param === "on") window.localStorage.setItem(OPT_IN_STORAGE_KEY, "1");
-		if (param === "off") window.localStorage.removeItem(OPT_IN_STORAGE_KEY);
-		return window.localStorage.getItem(OPT_IN_STORAGE_KEY) === "1";
-	} catch {
-		return false;
-	}
-}
-
-export function useChatwootOptIn(): boolean {
-	const hydrated = useHydrated();
-	return useMemo(() => hydrated && readChatwootOptIn(), [hydrated]);
 }
 
 /** Opens the widget, waiting for `chatwoot:ready` when the SDK is still loading. */
