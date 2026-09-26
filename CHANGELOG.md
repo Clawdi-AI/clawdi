@@ -12,6 +12,11 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.94
+
+- A custom provider you selected in Clawdi is set up again if it was removed from
+  the agent's own settings, instead of stopping the Agent from starting.
+
 ### CLI 0.14.93
 
 - If a custom model provider you add in Clawdi overlaps with one you already set
