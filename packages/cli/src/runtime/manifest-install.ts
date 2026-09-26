@@ -14,6 +14,7 @@ import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runtimeContentSha256 } from "./applied-state";
 import { SYSTEM_CA_BUNDLE } from "./egress-env";
+import { hermesManagedPython } from "./hermes-python";
 import type { RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 import { isSupportedRuntimeName } from "./run-config";
@@ -93,9 +94,13 @@ function hermesDashboardCapabilityError(
 ): string | null {
 	if (name !== "hermes" || !runtime.enabled || !runtime.install || !runtime.services?.dashboard)
 		return null;
-	const python = join(runtime.install.home, ".hermes", "hermes-agent", "venv", "bin", "python");
-	if (!executableExists(python)) {
-		return `Hermes dashboard runtime is missing its managed Python interpreter: ${python}`;
+	let python: string;
+	try {
+		python = hermesManagedPython(runtime.install.home);
+	} catch (error) {
+		return `Hermes dashboard runtime is missing its managed Python interpreter: ${
+			error instanceof Error ? error.message : String(error)
+		}`;
 	}
 	let result: ReturnType<typeof spawnRuntimeUserCommand>;
 	try {

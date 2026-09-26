@@ -1,5 +1,6 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { hermesManagedPython } from "./hermes-python";
 import { hostedSkillArchiveSourceIdentity } from "./hosted-sourced-skill-archive";
 import {
 	collectManagedSkillTree,
@@ -160,8 +161,14 @@ function nativeOperation(
 		throw nativeSkillError("Hermes Skill target is invalid", false);
 	}
 	const appRoot = join(home, ".hermes", "hermes-agent");
+	let python: string;
+	try {
+		python = hermesManagedPython(home);
+	} catch {
+		throw nativeSkillError("Hermes native Skill process failed", false);
+	}
 	const result = spawnRuntimeUserCommand(
-		join(appRoot, "venv", "bin", "python"),
+		python,
 		["-B", "-c", HERMES_SKILL_OPERATION],
 		home,
 		appRoot,

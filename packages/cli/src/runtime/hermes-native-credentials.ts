@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import HERMES_NATIVE_CREDENTIALS_HELPER from "./hermes_native_credentials.py" with { type: "text" };
+import { hermesManagedPython } from "./hermes-python";
 import { runtimeAppRoot } from "./manifest-install";
 import { spawnRuntimeUserCommand } from "./runtime-user-command";
 
@@ -42,7 +43,7 @@ export function reconcileHermesNativeCredentials(input: HermesNativeCredentialsI
 	const appRoot = runtimeAppRoot("hermes", input.home);
 	if (!appRoot) throw new Error("Hermes application path is unavailable");
 	const result = spawnRuntimeUserCommand(
-		join(appRoot, "venv", "bin", "python"),
+		hermesManagedPython(input.home),
 		["-c", HERMES_NATIVE_CREDENTIALS_HELPER, appRoot],
 		input.home,
 		input.workspaceRoot,

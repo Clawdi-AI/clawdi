@@ -12,6 +12,11 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.92
+
+- New Hermes Cloud Agents start again. Hermes now keeps its Python environment
+  in a new location, which stopped fresh Agents from finishing setup.
+
 ### CLI 0.14.91
 
 - Switching your Cloud Agent's model, or adding new models, now takes effect
