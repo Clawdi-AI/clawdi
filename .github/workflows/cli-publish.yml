@@ -210,15 +210,15 @@ jobs:
           if ! npm_release_visible; then
             npm publish "./release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"
             registry_visible=false
-            for attempt in $(seq 1 12); do
+            for attempt in $(seq 1 60); do
               if npm_release_visible; then
                 registry_visible=true
                 break
               fi
-              if [ "$attempt" -lt 12 ]; then sleep 5; fi
+              if [ "$attempt" -lt 60 ]; then sleep 10; fi
             done
             if [ "$registry_visible" != "true" ]; then
-              echo "clawdi@$VERSION was not visible in the npm registry after 60 seconds" >&2
+              echo "clawdi@$VERSION was not visible in the npm registry after 10 minutes" >&2
               exit 69
             fi
           fi

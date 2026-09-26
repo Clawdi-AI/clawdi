@@ -230,7 +230,7 @@ describe("CLI publish workflow contract", () => {
 		const publishJob = workflow.slice(workflow.indexOf("  publish-immutable-artifact-with-oidc:"));
 		const absenceCheck = publishJob.indexOf("if ! npm_release_visible; then");
 		const publishCommand = publishJob.indexOf("npm publish ");
-		const visibilityWait = publishJob.indexOf("for attempt in $(seq 1 12); do", publishCommand);
+		const visibilityWait = publishJob.indexOf("for attempt in $(seq 1 60); do", publishCommand);
 		const versionRead = publishJob.indexOf(
 			'registry_version=$(npm view "clawdi@$VERSION" version)',
 		);
@@ -249,9 +249,9 @@ describe("CLI publish workflow contract", () => {
 		expect(publishJob).toContain(
 			'echo "clawdi@$VERSION registry integrity does not match this workflow artifact" >&2',
 		);
-		expect(workflow).toContain('if [ "$attempt" -lt 12 ]; then sleep 5; fi');
+		expect(workflow).toContain('if [ "$attempt" -lt 60 ]; then sleep 10; fi');
 		expect(workflow).toContain(
-			'echo "clawdi@$VERSION was not visible in the npm registry after 60 seconds" >&2',
+			'echo "clawdi@$VERSION was not visible in the npm registry after 10 minutes" >&2',
 		);
 	});
 
