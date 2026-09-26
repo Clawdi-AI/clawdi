@@ -258,6 +258,32 @@ class HostedRuntimeObservedProviderConflictsV1(RuntimeObservationRequestModel):
         return entries
 
 
+class HostedRuntimeObservedServiceWithdrawalV1(RuntimeObservationRequestModel):
+    """An optional runtime service the committed generation withdrew because it cannot run."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+
+    runtime: Literal["hermes", "openclaw"]
+    service: Literal["dashboard"]
+
+
+class HostedRuntimeObservedServiceWithdrawalsV1(RuntimeObservationRequestModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+
+    schema_version: Literal[1] = Field(alias="schemaVersion")
+    entries: list[HostedRuntimeObservedServiceWithdrawalV1] = Field(min_length=1, max_length=8)
+
+    @field_validator("entries")
+    @classmethod
+    def validate_entries(
+        cls, entries: list[HostedRuntimeObservedServiceWithdrawalV1]
+    ) -> list[HostedRuntimeObservedServiceWithdrawalV1]:
+        keys = [(item.runtime, item.service) for item in entries]
+        if keys != sorted(set(keys)):
+            raise ValueError("Service withdrawals must be unique and sorted by runtime and service")
+        return entries
+
+
 RuntimeUserActivityClassification = Literal[
     "known_last_user_input",
     "known_no_user_input",
@@ -354,6 +380,10 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
     )
     provider_conflicts: HostedRuntimeObservedProviderConflictsV1 | None = Field(
         alias="providerConflicts",
+        default=None,
+    )
+    service_withdrawals: HostedRuntimeObservedServiceWithdrawalsV1 | None = Field(
+        alias="serviceWithdrawals",
         default=None,
     )
     error: str | None = Field(default=None, max_length=4000)
@@ -606,6 +636,9 @@ class RuntimeDriftObservationDiagnostics(RuntimeObservationResponseModel):
     user_activity: HostedRuntimeObservedUserActivityV1 | None = Field(alias="userActivity")
     provider_conflicts: HostedRuntimeObservedProviderConflictsV1 | None = Field(
         alias="providerConflicts", default=None
+    )
+    service_withdrawals: HostedRuntimeObservedServiceWithdrawalsV1 | None = Field(
+        alias="serviceWithdrawals", default=None
     )
 
     @model_validator(mode="after")

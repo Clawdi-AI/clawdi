@@ -6811,6 +6811,32 @@ export interface components {
         HostedRuntimeObservedProviderPayload: {
             [key: string]: components["schemas"]["JsonValue"];
         };
+        /**
+         * HostedRuntimeObservedServiceWithdrawalV1
+         * @description An optional runtime service the committed generation withdrew because it cannot run.
+         */
+        HostedRuntimeObservedServiceWithdrawalV1: {
+            /**
+             * Runtime
+             * @enum {string}
+             */
+            runtime: "hermes" | "openclaw";
+            /**
+             * Service
+             * @constant
+             */
+            service: "dashboard";
+        };
+        /** HostedRuntimeObservedServiceWithdrawalsV1 */
+        HostedRuntimeObservedServiceWithdrawalsV1: {
+            /**
+             * Schemaversion
+             * @constant
+             */
+            schemaVersion: 1;
+            /** Entries */
+            entries: components["schemas"]["HostedRuntimeObservedServiceWithdrawalV1"][];
+        };
         /** HostedRuntimeObservedSkillV1 */
         HostedRuntimeObservedSkillV1: {
             /** Skillkey */
@@ -8211,6 +8237,7 @@ export interface components {
             agentPlugins: components["schemas"]["HostedRuntimeObservedAgentPluginsV1"] | null;
             userActivity: components["schemas"]["HostedRuntimeObservedUserActivityV1"] | null;
             providerConflicts?: components["schemas"]["HostedRuntimeObservedProviderConflictsV1"] | null;
+            serviceWithdrawals?: components["schemas"]["HostedRuntimeObservedServiceWithdrawalsV1"] | null;
         };
         /** RuntimeDriftObservationHead */
         RuntimeDriftObservationHead: {
@@ -8441,6 +8468,7 @@ export interface components {
             skills?: components["schemas"]["HostedRuntimeObservedSkillsV1"] | null;
             userActivity?: components["schemas"]["HostedRuntimeObservedUserActivityV1"] | null;
             providerConflicts?: components["schemas"]["HostedRuntimeObservedProviderConflictsV1"] | null;
+            serviceWithdrawals?: components["schemas"]["HostedRuntimeObservedServiceWithdrawalsV1"] | null;
             /** Error */
             error?: string | null;
             /** Convergeerror */

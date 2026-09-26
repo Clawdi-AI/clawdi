@@ -1,6 +1,6 @@
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import type { RuntimeProviderConflict } from "./applied-state";
+import type { RuntimeProviderConflict, RuntimeServiceWithdrawal } from "./applied-state";
 import type { HostedSkillEvidence } from "./hosted-skill-evidence";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimeManifestLoad } from "./manifest-source";
@@ -21,6 +21,8 @@ export interface RuntimeConvergenceResult {
 	projectedProviderIds: Record<string, string[]>;
 	/** Connections left to native configuration; they never fail the apply. */
 	providerConflicts?: RuntimeProviderConflict[];
+	/** Optional services withdrawn from this generation; the runtime itself still runs. */
+	serviceWithdrawals?: RuntimeServiceWithdrawal[];
 	agentPluginFailedNames: string[];
 	deferredReason?: "hermes_config_conflict" | "systemd_reobservation_required";
 	outputs: {
