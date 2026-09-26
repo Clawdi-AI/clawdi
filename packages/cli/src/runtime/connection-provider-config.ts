@@ -5,6 +5,7 @@ import {
 	type HermesConfigTransaction,
 	reconcileHermesConfigValue,
 } from "./hermes-config";
+import { hermesManagedPython } from "./hermes-python";
 import type { OpenClawHostedContext } from "./hosted-openclaw-context";
 import { customProviderConnections, hostedProviderEnvironment } from "./hosted-provider-resolution";
 import type { RuntimeManifest } from "./manifest-contract";
@@ -134,7 +135,7 @@ function guardHermesPools(input: ConnectionContext): void {
 	const appRoot = runtimeAppRoot("hermes", input.home);
 	if (!appRoot) throw new Error("Hermes application path is unavailable");
 	const result = spawnRuntimeUserCommand(
-		join(appRoot, "venv", "bin", "python"),
+		hermesManagedPython(input.home),
 		["-c", HERMES_POOL_GUARD, appRoot],
 		input.home,
 		input.workspaceRoot,
