@@ -2770,7 +2770,7 @@ test("Help opens Chatwoot live chat", async ({ page }) => {
 		};
 	});
 	await stubHostedApi(page);
-	await page.goto("/agents?chatwoot=on");
+	await page.goto("/agents");
 	await page.waitForLoadState("networkidle");
 
 	await page.getByTestId("app-sidebar-help-menu-button").click();

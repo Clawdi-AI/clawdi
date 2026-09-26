@@ -4,12 +4,7 @@ import * as Sentry from "@sentry/tanstackstart-react";
 import { useLocation } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useCurrentUser } from "@/lib/auth-client";
-import {
-	CHATWOOT_SETTINGS,
-	resolveChatwootIdentity,
-	shouldHideChatwoot,
-	useChatwootOptIn,
-} from "@/lib/chatwoot";
+import { CHATWOOT_SETTINGS, resolveChatwootIdentity, shouldHideChatwoot } from "@/lib/chatwoot";
 import { getChatwootIdentifierHash } from "@/lib/chatwoot.functions";
 import { env } from "@/lib/env";
 
@@ -19,7 +14,6 @@ const WEBSITE_TOKEN = env.VITE_CHATWOOT_WEBSITE_TOKEN ?? "";
 
 export function ChatwootClient() {
 	const { isLoaded, isSignedIn, user } = useCurrentUser();
-	const optedIn = useChatwootOptIn();
 	const pathname = useLocation({ select: (location) => location.pathname });
 	const hidden = shouldHideChatwoot(pathname);
 	const userId = user?.id;
@@ -38,8 +32,8 @@ export function ChatwootClient() {
 	);
 	const [ready, setReady] = useState(false);
 	const [identifiedUserId, setIdentifiedUserId] = useState<string | null>(null);
-	// Hidden rollout gate; dev auth bypass has no Clerk session for the identity hash.
-	const enabled = optedIn && identity !== null && !env.VITE_DEV_AUTH_BYPASS;
+	// Dev auth bypass has no Clerk session for the server-side identity hash.
+	const enabled = identity !== null && !env.VITE_DEV_AUTH_BYPASS;
 
 	// Chatwoot's install snippet, loaded only once a user has signed in.
 	useEffect(() => {
