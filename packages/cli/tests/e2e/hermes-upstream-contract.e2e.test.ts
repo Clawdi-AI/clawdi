@@ -401,7 +401,8 @@ describe.skipIf(!enabled)("upstream Hermes adapter contract", () => {
 			JSON.stringify([{ id: "clawdi-contract", baseUrl: "https://example.test/v1" }]),
 		);
 		expect(result.status, result.stderr).toBe(0);
-		expect(result.stdout.trim()).toBe("ok");
+		// A fresh install has no native pool rows, so no connection conflicts.
+		expect(JSON.parse(result.stdout)).toEqual({ conflicts: [] });
 	});
 
 	test("native provider credentials round-trip through the Hermes pool", () => {
