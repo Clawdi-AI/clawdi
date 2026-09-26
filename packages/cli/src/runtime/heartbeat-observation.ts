@@ -221,6 +221,7 @@ export class HostedRuntimeHeartbeatSession {
 			includeSkills: true,
 			includeUserActivity: true,
 			includeComponents: true,
+			includeProviderConflicts: true,
 		});
 		// A refresh or another capture during probes must not mix heartbeat identities.
 		if (

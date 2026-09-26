@@ -224,6 +224,40 @@ class HostedRuntimeObservedSkillsV1(RuntimeObservationRequestModel):
             raise ValueError("Skill observations must match the full applied identity")
 
 
+RuntimeProviderConflictCode = Literal["native_provider_exists", "native_credential_pool_conflict"]
+
+
+class HostedRuntimeObservedProviderConflictV1(RuntimeObservationRequestModel):
+    """A Cloud provider the runtime skipped because native configuration owns it."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+
+    runtime: Literal["hermes", "openclaw"]
+    provider_id: str = Field(
+        alias="providerId", min_length=1, max_length=120, pattern=r"^[a-z][a-z0-9._-]{0,119}$"
+    )
+    code: RuntimeProviderConflictCode
+
+
+class HostedRuntimeObservedProviderConflictsV1(RuntimeObservationRequestModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+
+    schema_version: Literal[1] = Field(alias="schemaVersion")
+    entries: list[HostedRuntimeObservedProviderConflictV1] = Field(min_length=1, max_length=64)
+
+    @field_validator("entries")
+    @classmethod
+    def validate_entries(
+        cls, entries: list[HostedRuntimeObservedProviderConflictV1]
+    ) -> list[HostedRuntimeObservedProviderConflictV1]:
+        keys = [(item.runtime, item.provider_id) for item in entries]
+        if keys != sorted(set(keys)):
+            raise ValueError(
+                "Provider conflicts must be unique and sorted by runtime and providerId"
+            )
+        return entries
+
+
 RuntimeUserActivityClassification = Literal[
     "known_last_user_input",
     "known_no_user_input",
@@ -316,6 +350,10 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
     skills: HostedRuntimeObservedSkillsV1 | None = None
     user_activity: HostedRuntimeObservedUserActivityV1 | None = Field(
         alias="userActivity",
+        default=None,
+    )
+    provider_conflicts: HostedRuntimeObservedProviderConflictsV1 | None = Field(
+        alias="providerConflicts",
         default=None,
     )
     error: str | None = Field(default=None, max_length=4000)
@@ -566,6 +604,9 @@ class RuntimeDriftObservationDiagnostics(RuntimeObservationResponseModel):
     skills: HostedRuntimeObservedSkillsV1 | None = None
     agent_plugins: HostedRuntimeObservedAgentPluginsV1 | None = Field(alias="agentPlugins")
     user_activity: HostedRuntimeObservedUserActivityV1 | None = Field(alias="userActivity")
+    provider_conflicts: HostedRuntimeObservedProviderConflictsV1 | None = Field(
+        alias="providerConflicts", default=None
+    )
 
     @model_validator(mode="after")
     def validate_plugin_identity(self) -> RuntimeDriftObservationDiagnostics:

@@ -12,6 +12,17 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.93
+
+- If a custom model provider you add in Clawdi overlaps with one you already set
+  up directly in Hermes or OpenClaw, your Agent keeps running. Your own
+  provider stays as it is, Clawdi skips the overlapping one, and the rest of
+  your changes still apply.
+- Custom model providers added before a recent update no longer stop an Agent
+  from applying new settings.
+- If the Hermes dashboard cannot start, the Hermes Agent itself still starts
+  and keeps working.
+
 ### CLI 0.14.92
 
 - New Hermes Cloud Agents start again. Hermes now keeps its Python environment

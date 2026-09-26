@@ -6,6 +6,7 @@ import { getCliVersion } from "../lib/version";
 import {
 	readRuntimeAppliedState,
 	runtimeContentSha256,
+	runtimeProviderConflicts,
 	writeRuntimeAppliedState,
 } from "./applied-state";
 import { HostedRuntimeHeartbeatSession } from "./heartbeat-observation";
@@ -185,6 +186,29 @@ describe("hosted runtime observed v2", () => {
 		const observed = await readHostedRuntimeObserved(paths);
 		expect(observed?.status).toBe("ok");
 		expect(observed?.convergeError).toBe("runtime hermes sourced Skill projection failed");
+	});
+
+	test("reports committed provider conflicts without degrading runtime health", async () => {
+		const paths = healthyAppliedRuntimePaths();
+		const applied = readRuntimeAppliedState(paths);
+		if (!applied) throw new Error("Missing applied state fixture");
+		const entries = runtimeProviderConflicts([
+			{ runtime: "openclaw", providerId: "banban", code: "native_provider_exists" },
+			{ runtime: "hermes", providerId: "banban", code: "native_credential_pool_conflict" },
+			{ runtime: "hermes", providerId: "Not A Wire ID", code: "native_provider_exists" },
+		]);
+		expect(entries.map(({ runtime }) => runtime)).toEqual(["hermes", "openclaw"]);
+		expect(() =>
+			writeRuntimeAppliedState({ ...applied, providerConflicts: [...entries].reverse() }, paths),
+		).toThrow("unique and sorted");
+		writeRuntimeAppliedState({ ...applied, providerConflicts: entries }, paths);
+		writeRuntimeWatchStatus({ status: "applied", stage: "final" }, paths);
+
+		expect(await readHostedRuntimeObserved(paths)).not.toHaveProperty("providerConflicts");
+		const observed = await readHostedRuntimeObserved(paths, { includeProviderConflicts: true });
+		expect(observed?.status).toBe("ok");
+		expect(observed?.convergeError).toBeUndefined();
+		expect(observed?.providerConflicts).toEqual({ schemaVersion: 1, entries });
 	});
 
 	test("reports durable Hermes user activity through the existing observation contract", async () => {

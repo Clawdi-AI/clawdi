@@ -193,6 +193,9 @@ async def read_runtime_drift_summaries(
                     V2RuntimeObservationInbox.diagnostics["skills"].label("skills"),
                     V2RuntimeObservationInbox.diagnostics["agentPlugins"].label("agent_plugins"),
                     V2RuntimeObservationInbox.diagnostics["userActivity"].label("user_activity"),
+                    V2RuntimeObservationInbox.diagnostics["providerConflicts"].label(
+                        "provider_conflicts"
+                    ),
                 )
                 .outerjoin(
                     V2RuntimeObservationInbox,
@@ -233,6 +236,7 @@ async def read_runtime_drift_summaries(
                             "skills": row.skills,
                             "agentPlugins": row.agent_plugins,
                             "userActivity": row.user_activity,
+                            "providerConflicts": row.provider_conflicts,
                         },
                     }
                 )

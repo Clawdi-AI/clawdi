@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
 	chmodSync,
 	copyFileSync,
@@ -3141,7 +3141,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		}
 	});
 
-	it("does not reinstall Hermes for dashboard capability drift but preserves cold install", () => {
+	it("withdraws only an incompatible Hermes dashboard and never reinstalls for it", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -3189,10 +3189,19 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const paths = getRuntimePaths();
 		const load = hostedHermesDashboardCapabilityLoad(home);
 
-		const rejected = convergeRuntimeManifest(load, paths);
-		expect(rejected.installErrors.join("\n")).toContain(
-			"Hermes dashboard runtime is incompatible: missing capture_signals",
-		);
+		const degraded = convergeRuntimeManifest(load, paths);
+		expect(degraded.installErrors).toEqual([]);
+		expect(degraded.resourceProjectionErrors).toEqual([
+			`runtime hermes dashboard unavailable: Hermes dashboard runtime is incompatible; see ${join(paths.statusRoot, "installer-logs", "hermes-dashboard-capability.log")}`,
+		]);
+		expect(
+			readFileSync(
+				join(paths.statusRoot, "installer-logs", "hermes-dashboard-capability.log"),
+				"utf8",
+			),
+		).toContain("missing capture_signals");
+		expect(readSystemdUserServiceConfig(paths, "hermes-gateway")).not.toBe("\n");
+		expect(readSystemdUserServiceConfig(paths, "clawdi-hermes-dashboard")).toBe("\n");
 		expect(existsSync(installerCalls)).toBe(false);
 		expect(readFileSync(appMarker, "utf8")).toBe("before-repair\n");
 		expect(readFileSync(skillMarker, "utf8")).toBe("user-skill-before-repair\n");
@@ -3200,6 +3209,8 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		rmSync(command);
 		const installed = convergeRuntimeManifest(load, paths);
 		expect(installed.installErrors).toEqual([]);
+		expect(installed.resourceProjectionErrors).toEqual([]);
+		expect(readSystemdUserServiceConfig(paths, "clawdi-hermes-dashboard")).not.toBe("\n");
 		expect(readFileSync(installerCalls, "utf8").trim().split("\n")).toEqual(["install"]);
 	});
 
@@ -4941,6 +4952,69 @@ cp '${sdkSource}' '${sdkTarget}'
 		expect(readFileSync(join(home, ".hermes", "config.yaml"), "utf-8")).toBe(firstConfig);
 		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
 		expect(systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"))).toBe(firstRevision);
+	});
+
+	it("leaves a Hermes connection to native credentials and commits the rest", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(home, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		writeHermesVersionBinary(home, "0.18.0");
+		// The public pool API reports a native model_config row for banban's base URL.
+		const app = join(home, ".hermes", "hermes-agent");
+		mkdirSync(join(app, "agent"), { recursive: true });
+		mkdirSync(join(app, "hermes_cli"), { recursive: true });
+		writeFileSync(
+			join(app, "agent", "credential_pool.py"),
+			"def custom_provider_pool_key_candidates(base_url, provider_name=None):\n    return ['custom:ai.shared.example']\n",
+		);
+		writeFileSync(
+			join(app, "hermes_cli", "auth.py"),
+			"def read_credential_pool(key):\n    return [{'source': 'model_config'}]\n",
+		);
+		writeFileSync(
+			join(app, "venv", "bin", "python"),
+			'#!/usr/bin/env bash\ncase "$*" in *uvicorn*) exit 0 ;; esac\nexec python3 "$@"\n',
+		);
+		const loaded = hostedHermesProviderLoad(home);
+		const providers = loaded.manifest.projection?.providers;
+		if (!providers) throw new Error("Missing provider projection fixture");
+		providers.banban = {
+			kind: "openai-compatible",
+			type: "custom_openai_compatible",
+			configurationMode: "custom",
+			managed_by: "user",
+			baseUrl: "https://ai.shared.example/v1",
+			apiMode: "openai_chat",
+			runtimeEnvName: "CLAWDI_PROVIDER_BANBAN_API_KEY",
+			apiKeySecretRef: "secret://provider.banban.apiKey",
+			cloudIdentity: { providerUuid: randomUUID(), incarnationId: randomUUID() },
+		};
+		loaded.manifest.runtimes.hermes.provider_ids = ["hermes", "banban"];
+		loaded.secretValues = {
+			...loaded.secretValues,
+			"secret://provider.banban.apiKey": "sk-banban",
+		};
+		const paths = getRuntimePaths();
+
+		const result = convergeRuntimeManifest(loaded, paths);
+
+		expect(result.installErrors).toEqual([]);
+		expect(result.resourceProjectionErrors).toEqual([]);
+		expect(result.providerConflicts).toEqual([
+			{ runtime: "hermes", providerId: "banban", code: "native_credential_pool_conflict" },
+		]);
+		const configured = expectRecord(readHermesConfigYaml(home).providers, "Hermes providers");
+		expect(configured.hermes).toBeDefined();
+		expect(configured.banban).toBeUndefined();
+		const journal = JSON.parse(
+			readFileSync(join(paths.serviceStateRoot, "provider-ownership.json"), "utf8"),
+		);
+		expect(journal.transfers.hermes).toEqual({});
 	});
 
 	it("ignores a retired Hermes plugin while removing the native provider", () => {
@@ -8650,12 +8724,13 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it.each([
-		{ runtime: "openclaw" as const, publishCa: true },
-		{ runtime: "hermes" as const, publishCa: true },
-		{ runtime: "openclaw" as const, publishCa: false },
+		{ runtime: "openclaw" as const, publishCa: true, dashboardBuilds: true },
+		{ runtime: "hermes" as const, publishCa: true, dashboardBuilds: true },
+		{ runtime: "hermes" as const, publishCa: true, dashboardBuilds: false },
+		{ runtime: "openclaw" as const, publishCa: false, dashboardBuilds: true },
 	])(
-		"orders the cold $runtime installer after egress (publishCa=$publishCa)",
-		async ({ runtime, publishCa }) => {
+		"orders the cold $runtime installer after egress (publishCa=$publishCa, dashboardBuilds=$dashboardBuilds)",
+		async ({ runtime, publishCa, dashboardBuilds }) => {
 			setRuntimeApplyGeneration(41, CANONICAL_TEST_CONTEXT);
 			const home = join(root, "home", "clawdi");
 			const state = join(root, "var", "lib", "clawdi");
@@ -8743,6 +8818,7 @@ case "$*" in
     mkdir -p '${join(appRoot, "node_modules", ".bin")}'
     ;;
   "run build")
+    ${dashboardBuilds ? "" : "exit 1"}
     mkdir -p '${join(appRoot, "hermes_cli", "web_dist")}'
     printf '%s\n' '<html>Hermes dashboard</html>' > '${join(appRoot, "hermes_cli", "web_dist", "index.html")}'
     ;;
@@ -8792,6 +8868,23 @@ esac
 				expect(
 					failedManagerCalls.some((call) => /^(start|restart) .*clawdi-daemon\.service/.test(call)),
 				).toBe(false);
+				return;
+			}
+			if (!dashboardBuilds) {
+				// The failed optional build withdraws the dashboard; the gateway still commits.
+				const event = JSON.parse(logs.at(-1) ?? "{}");
+				expect(event).toMatchObject({ status: "error", healthImpact: "resource_projection" });
+				expect(event.error).toContain(
+					"runtime hermes dashboard unavailable: Hermes dashboard prerequisite failed",
+				);
+				expect(readRuntimeAppliedState(paths)).toMatchObject({ generation: 41 });
+				const calls = readFileSync(systemctlLog, "utf8").trim().split("\n");
+				expect(calls).toContain("official hermes installer");
+				expect(
+					calls.some((call) => call.startsWith("--user start ") && call.includes(serviceName)),
+				).toBe(true);
+				expect(calls.some((call) => call.includes("clawdi-hermes-dashboard"))).toBe(false);
+				expect(readSystemdUserServiceConfig(paths, "clawdi-hermes-dashboard")).toBe("\n");
 				return;
 			}
 			if (runtimeExitCode !== undefined && runtimeExitCode !== 0) {

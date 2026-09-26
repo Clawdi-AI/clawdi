@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { readRuntimeAppliedState } from "./applied-state";
+import { type RuntimeProviderConflict, readRuntimeAppliedState } from "./applied-state";
 import {
 	applyHostedHermesAiProviderProjection,
 	buildOpenClawHostedProviderPatch,
@@ -177,6 +177,7 @@ interface RuntimeConvergenceState {
 	runtimeSystemdUserPrograms: RuntimeSystemdUserProgram[];
 	installErrors: string[];
 	resourceProjectionErrors: string[];
+	providerConflicts: RuntimeProviderConflict[];
 	/** OpenClaw channels whose managed projection is withdrawn for this generation. */
 	withdrawnOpenClawChannels: Set<string>;
 	projectedProviderIds: Record<string, string[]>;
@@ -310,6 +311,7 @@ function initializeRuntimeConvergence(
 		runtimeSystemdUserPrograms: [],
 		installErrors: [],
 		resourceProjectionErrors: [],
+		providerConflicts: [],
 		withdrawnOpenClawChannels: new Set(),
 		projectedProviderIds: {},
 		observations: new Map(),
@@ -406,6 +408,8 @@ function prepareRuntimeInstallStage(
 		);
 		state.observations.set(name, observation);
 		if (observation.error) state.installErrors.push(observation.error);
+		for (const [service, error] of Object.entries(observation.serviceErrors ?? {}))
+			state.resourceProjectionErrors.push(`runtime ${name} ${service} unavailable: ${error}`);
 		if (name === "openclaw") context.openClawContext.refreshSdkExports(observation);
 		if (name === "openclaw" && observation.enabled && observation.commandPath) {
 			state.openClawOwnerBrowserBootstrapSupported = openClawSupportsOwnerBrowserBootstrap(
@@ -870,6 +874,13 @@ function applyRuntimeResourceProjections(
 				throw new Error(
 					"Connection transfer cannot remove ownership or change its credential environment",
 				);
+			for (const [providerId, code] of Object.entries(prepared.conflicts)) {
+				// Native configuration wins; everything else in this generation still applies.
+				state.providerConflicts.push({ runtime: name, providerId, code });
+				console.warn(
+					`runtime ${name} provider ${providerId} left to native configuration: ${code}`,
+				);
+			}
 			context.connectionPlans[name] = prepared;
 			context.providerOwnership.transfers[name] = prepared.providers;
 			previousProjectedProviderIds[name] = (previousProjectedProviderIds[name] ?? []).filter(
@@ -1120,6 +1131,7 @@ interface RuntimeActivationPlan {
 	publishSystemdUnits: (
 		deferredRuntimeUserUnitNames?: readonly string[],
 	) => ReturnType<typeof writeRuntimeSystemdState>;
+	withdrawHermesDashboard: (error: string) => ReturnType<typeof writeRuntimeSystemdState>;
 }
 
 function prepareRuntimeActivation(
@@ -1161,12 +1173,11 @@ function prepareRuntimeActivation(
 			// the official base unit.
 			deferredRuntimeUserUnitNames,
 		});
-	const systemdUnits = publishSystemdUnits(
-		// Hermes permits its environment before installation and defers startup to activation.
-		officialServicePlan.pending
-			.filter((item) => item.program.runtime === "openclaw")
-			.map((item) => item.unitName),
-	);
+	// Hermes permits its environment before installation and defers startup to activation.
+	const deferredUnitNames = officialServicePlan.pending
+		.filter((item) => item.program.runtime === "openclaw")
+		.map((item) => item.unitName);
+	const systemdUnits = publishSystemdUnits(deferredUnitNames);
 	state.staleSystemdFiles = systemdUnits.staleFiles;
 	const staleSystemdFileErrors = removeStaleRuntimeSystemdFiles(state.staleSystemdFiles);
 	if (staleSystemdFileErrors.length > 0) throw new Error(staleSystemdFileErrors.join("; "));
@@ -1192,7 +1203,31 @@ function prepareRuntimeActivation(
 		state.agentPluginTransaction = null;
 		state.agentPluginMutationAttempted = false;
 	}
-	return { systemdUnits, officialServicePlan, publishSystemdUnits };
+	return {
+		systemdUnits,
+		officialServicePlan,
+		publishSystemdUnits,
+		withdrawHermesDashboard: (error) => {
+			// The dashboard is optional. Unpublish only its unit so the gateway still starts.
+			state.runtimeSystemdUserPrograms = state.runtimeSystemdUserPrograms.filter(
+				(program) => program.runtime !== "hermes" || program.service !== "dashboard",
+			);
+			state.resourceProjectionErrors.push(`runtime hermes dashboard unavailable: ${error}`);
+			const republished = publishSystemdUnits(deferredUnitNames);
+			const stale = republished.staleFiles;
+			state.staleSystemdFiles = {
+				platformFiles: [
+					...new Set([...state.staleSystemdFiles.platformFiles, ...stale.platformFiles]),
+				],
+				userFiles: [...new Set([...state.staleSystemdFiles.userFiles, ...stale.userFiles])],
+				systemUnits: [...new Set([...state.staleSystemdFiles.systemUnits, ...stale.systemUnits])],
+				userUnits: [...new Set([...state.staleSystemdFiles.userUnits, ...stale.userUnits])],
+			};
+			const staleErrors = removeStaleRuntimeSystemdFiles(stale);
+			if (staleErrors.length > 0) throw new Error(staleErrors.join("; "));
+			return republished;
+		},
+	};
 }
 
 interface RuntimeActivationOutputs {
@@ -1226,7 +1261,9 @@ function activateRuntimeServices(
 		paths,
 		systemdUnits.egressSidecarActive ? paths.egressSystemCaFile : undefined,
 	);
-	if (dependencyError) throw new Error(dependencyError);
+	// Only the optional dashboard build is a prerequisite; its failure withdraws the dashboard.
+	if (dependencyError)
+		activationPlan.systemdUnits = activationPlan.withdrawHermesDashboard(dependencyError);
 
 	for (const item of officialServicePlan.pending) {
 		const error = installOfficialRuntimeService(item, paths, hostedRuntimeContract.identity);
@@ -1288,6 +1325,7 @@ function buildRuntimeConvergenceResult(
 		installErrors: state.installErrors,
 		resourceProjectionErrors: state.resourceProjectionErrors,
 		projectedProviderIds: state.projectedProviderIds,
+		providerConflicts: state.providerConflicts,
 		nativeCredentialProviderIds: state.nativeCredentialProviderIds,
 		agentPluginFailedNames: [...state.agentPluginFailedNames].sort(),
 		outputs: {

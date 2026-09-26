@@ -220,6 +220,8 @@ export function resolveRuntimeRunConfigs(input: {
 		.sort(([left], [right]) => left.localeCompare(right))
 		.map(([serviceName, serviceSettings]) => {
 			const service = runtimeServiceNameSchema.parse(serviceName);
+			// A withdrawn optional service keeps its run config but no systemd program.
+			const enabled = input.runtime.enabled && !input.observation.serviceErrors?.[service];
 			const settings = resolvedRuntimeServiceSettings(
 				input.manifest,
 				runtimeName,
@@ -230,7 +232,7 @@ export function resolveRuntimeRunConfigs(input: {
 			return buildRuntimeRunConfig({
 				runtime: runtimeName,
 				service,
-				enabled: input.runtime.enabled,
+				enabled,
 				generatedAt: input.generatedAt,
 				generation: input.manifest.generation,
 				instanceId: input.manifest.instanceId,
@@ -239,7 +241,7 @@ export function resolveRuntimeRunConfigs(input: {
 				workspaceRoot: input.workspaceRoot,
 				settings,
 				secretFilePath: null,
-				secretEnv: input.runtime.enabled
+				secretEnv: enabled
 					? mergeRuntimeSecretEnv(input.name, settings, providerSecretEnv, service)
 					: {},
 			});
