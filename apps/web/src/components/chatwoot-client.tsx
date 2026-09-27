@@ -19,6 +19,7 @@ export function ChatwootClient() {
 	const userId = user?.id;
 	const userName = user?.fullName ?? null;
 	const userEmail = user?.primaryEmailAddress?.emailAddress;
+	const userImageUrl = user?.imageUrl ?? "";
 	const identity = useMemo(
 		() =>
 			isLoaded && isSignedIn && userId
@@ -26,9 +27,10 @@ export function ChatwootClient() {
 						id: userId,
 						fullName: userName,
 						primaryEmailAddress: userEmail ? { emailAddress: userEmail } : null,
+						imageUrl: userImageUrl,
 					})
 				: null,
-		[isLoaded, isSignedIn, userEmail, userId, userName],
+		[isLoaded, isSignedIn, userEmail, userId, userImageUrl, userName],
 	);
 	const [ready, setReady] = useState(false);
 	const [identifiedUserId, setIdentifiedUserId] = useState<string | null>(null);
@@ -67,6 +69,7 @@ export function ChatwootClient() {
 				window.$chatwoot?.setUser(identity.id, {
 					name: identity.name,
 					email: identity.email,
+					...(identity.avatarUrl ? { avatar_url: identity.avatarUrl } : {}),
 					identifier_hash: result.identifierHash,
 				});
 				setIdentifiedUserId(identity.id);
