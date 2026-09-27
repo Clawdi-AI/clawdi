@@ -5,6 +5,7 @@ import { useRouter } from "@tanstack/react-router";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { isApiNetworkError } from "@/lib/api-errors";
 import { DesktopBridgeCompatibilityError } from "@/lib/desktop-bridge";
 
 const isDevelopment =
@@ -29,7 +30,8 @@ export default function RootError({
 	const needsDesktopUpdate = error instanceof DesktopBridgeCompatibilityError;
 
 	useEffect(() => {
-		if (import.meta.env.VITE_SENTRY_DSN) {
+		// Lost connections are client conditions, not app faults.
+		if (import.meta.env.VITE_SENTRY_DSN && !isApiNetworkError(error)) {
 			Sentry.captureException(error);
 		}
 

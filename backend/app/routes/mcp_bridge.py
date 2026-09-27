@@ -835,7 +835,9 @@ async def _dispatch_composio_mcp(body: JsonValue | None, user_id: str) -> JsonOb
             session = await get_tool_router_mcp_session(user_id)
             result = await call_tool_router_mcp_tool(session, name, arguments)
     except (ComposioMcpUpstreamError, ComposioRouteError) as exc:
-        logger.error(
+        # Sanitized connector failures; /v1/mcp/clawdi treats the same ones as
+        # expected unavailability rather than server errors.
+        logger.warning(
             "Legacy Composio MCP error: method=%s error_type=%s", method, type(exc).__name__
         )
         return _mcp_error(rpc_id, -32000, "internal error")

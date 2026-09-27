@@ -74,6 +74,7 @@ EXPECTED_EXTERNAL_IMPORTS: dict[str, frozenset[str]] = {
     "httpx": frozenset(
         {
             "app/core/auth.py",
+            "app/core/sentry.py",
             "app/routes/ai_providers.py",
             "app/routes/channel_routers/shared.py",
             "app/routes/channel_routers/telegram.py",

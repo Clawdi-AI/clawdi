@@ -5,6 +5,7 @@ import { setResponseHeader } from "@tanstack/react-start/server";
 import { AuthStatus } from "@/components/auth-status";
 import { ProtectedAuthBoundary } from "@/components/protected-auth-boundary";
 import RootError from "@/components/root-error";
+import { ApiNetworkError } from "@/lib/api-errors";
 import { useRouteAuth, useSessionIdentity } from "@/lib/auth-client";
 import { env } from "@/lib/env";
 import { requireRouteIdentity } from "@/lib/route-auth";
@@ -21,7 +22,15 @@ const getAuthState = createServerFn({ method: "GET" }).handler(async () => {
 export const Route = createFileRoute("/_protected")({
 	beforeLoad: async ({ location }) => {
 		if (env.VITE_CLAWDI_DESKTOP_BUILD) return { authIdentity: null };
-		return { authIdentity: requireRouteIdentity(await getAuthState(), location.href) };
+		const authState = await getAuthState({
+			// Navigation can outlive the connection; classify the transport
+			// failure so the error boundary does not report it as an app fault.
+			fetch: (input, init) =>
+				fetch(input, init).catch((cause: unknown) => {
+					throw new ApiNetworkError("offline", { cause });
+				}),
+		});
+		return { authIdentity: requireRouteIdentity(authState, location.href) };
 	},
 	errorComponent: RootError,
 	component: ProtectedLayout,

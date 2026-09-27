@@ -12,6 +12,7 @@ import pytest
 import xeddsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from sqlalchemy import select
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from starlette.websockets import WebSocketDisconnect
 
 from app.core.database import async_session_factory
@@ -1417,6 +1418,48 @@ async def test_managed_whatsapp_websocket_revokes_before_delivery_after_link_arc
     stored_pending = await db_session.get(ChannelMessage, pending_id)
     assert stored_pending is not None
     assert stored_pending.delivered_at is None
+
+
+@pytest.mark.asyncio
+async def test_managed_whatsapp_websocket_ends_session_when_inbox_pump_fails(
+    client,
+    db_session,
+    channel_agent,
+    monkeypatch,
+):
+    created = await _create_whatsapp_channel_with_existing_link(
+        client,
+        db_session,
+        channel_agent,
+        name="wa-managed-session-pump-failure",
+    )
+    synthetic = await _mint_synthetic_credential(db_session, created)
+    creds = synthetic.minted.creds
+    client_noise = _MiniNoiseClient(
+        static=KeyPair(
+            private=creds["noiseKey"]["private"],
+            public=creds["noiseKey"]["public"],
+        )
+    )
+
+    async def exhausted_inbox(**_kwargs):
+        raise SQLAlchemyTimeoutError("pool exhausted")
+
+    monkeypatch.setattr(whatsapp_router_module, "_wait_whatsapp_websocket_inbox", exhausted_inbox)
+    websocket, route_task = await _connect_whatsapp_managed_route(
+        agent_token=created["agent_token"],
+        client_noise=client_noise,
+    )
+    assert client_noise.transport is not None
+    websocket.inbound.put_nowait(
+        pack_frame(client_noise.transport.encrypt(_agent_bundle_upload_node("before-pump-failure")))
+    )
+
+    # The failure reaches the app's pool-timeout boundary (close 1013) instead
+    # of leaving the session idle with a dead pump.
+    done, _ = await asyncio.wait({route_task}, timeout=WEBSOCKET_TEST_TIMEOUT_SECONDS)
+    assert done == {route_task}
+    assert isinstance(route_task.exception(), SQLAlchemyTimeoutError)
 
 
 @pytest.mark.asyncio

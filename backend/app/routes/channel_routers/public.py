@@ -103,6 +103,7 @@ from app.services.channel_debug_events import (
 from app.services.channels import (
     PAIR_COMMAND,
     RUNTIME_CHANNEL_PROVIDERS,
+    TELEGRAM_BOT_TOKEN_PATTERN,
     archive_bot_agent_link,
     archive_channel_account,
     bot_agent_link_has_strict_v2_authority,
@@ -450,6 +451,17 @@ async def create_channel(
                 detail="Discord channels require a bot token.",
             )
         validate_required_discord_interactions_config(body.config)
+    if (
+        body.provider == CHANNEL_PROVIDER_TELEGRAM
+        and body.provider_token is not None
+        and not TELEGRAM_BOT_TOKEN_PATTERN.fullmatch(body.provider_token)
+    ):
+        # Reject pasted usernames or mangled tokens before Telegram does; its
+        # rejection is otherwise reported as a provider outage.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Enter a valid Telegram bot token from @BotFather.",
+        )
     initial_agent_id = (
         None
         if (

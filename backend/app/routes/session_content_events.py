@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
@@ -12,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy import select
-from starlette.types import Send
+from starlette.types import Message, Send
 
 from app.core.auth import (
     AuthContext,
@@ -86,8 +87,18 @@ class _ContentStreamingResponse(SyncStreamingResponse):
             else None
         )
         closed = asyncio.Event()
+        # True while headers are out, the body is unfinished and no send is in
+        # flight, so the stream can still end without waiting on the client.
+        body_open = False
+
+        async def tracked_send(message: Message) -> None:
+            nonlocal body_open
+            body_open = False
+            await send(message)
+            body_open = message["type"] == "http.response.start" or bool(message.get("more_body"))
+
         renewal = asyncio.create_task(refresh_subscription_lease(self.lease_id, closed))
-        sending = asyncio.create_task(super().stream_response(send))
+        sending = asyncio.create_task(super().stream_response(tracked_send))
         revoked = asyncio.create_task(closed.wait())
         try:
             # Deadline and lease loss also interrupt blocked header/body sends.
@@ -101,6 +112,13 @@ class _ContentStreamingResponse(SyncStreamingResponse):
             finally:
                 # Cancellation may precede the sending task's first step.
                 await self._cleanup()
+        if body_open:
+            # Terminate the chunked body so the server does not report the
+            # deliberate close as an incomplete response. A client that stopped
+            # reading gets one heartbeat interval to drain it.
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(HEARTBEAT_INTERVAL_S):
+                    await send({"type": "http.response.body", "body": b"", "more_body": False})
 
 
 @router.get(
