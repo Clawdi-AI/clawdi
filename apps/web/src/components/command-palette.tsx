@@ -101,7 +101,8 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
 		// cmdk already grabs focus inside the dialog so we just need to open it.
 		if (!ready) return;
 		const handler = (e: KeyboardEvent) => {
-			if (e.key.toLowerCase() === "k" && (e.metaKey || e.ctrlKey)) {
+			// Browser autofill dispatches keydown events without `key`.
+			if (e.key?.toLowerCase() === "k" && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault();
 				setOpenInternal((prev) => !prev);
 			}
