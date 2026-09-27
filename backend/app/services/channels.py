@@ -157,6 +157,8 @@ PAIR_CODE_PATTERN = re.compile(
     rf"^(?:[{PAIR_CODE_ALPHABET}]{{{PAIR_CODE_LENGTH}}}|PAIR[A-Z0-9]{{8,}})$"
 )
 TELEGRAM_BOT_USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{5,32}bot$", re.IGNORECASE)
+# BotFather tokens are "<numeric bot id>:<secret>"; the secret is URL-safe base64.
+TELEGRAM_BOT_TOKEN_PATTERN = re.compile(r"[0-9]+:[A-Za-z0-9_-]+")
 DEFAULT_CHANNEL_COMMANDS: tuple[JsonObject, ...] = (
     {
         "name": "clawdi_pair",

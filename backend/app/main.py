@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.requests import ClientDisconnect
 
 from app.core.auth import AccountSuspendedHTTPException, warm_clerk_jwks
 from app.core.config import settings
@@ -498,6 +499,16 @@ async def database_pool_timeout_exception_handler(
         request,
         _apply_public_session_export_cache_policy(request, response),
     )
+
+
+@app.exception_handler(ClientDisconnect)
+async def client_disconnect_exception_handler(
+    _request: Request,
+    _exc: ClientDisconnect,
+) -> Response:
+    # The client left before its request body arrived. Nobody reads this
+    # response; 499 (Client Closed Request) keeps it out of server-error logs.
+    return Response(status_code=499)
 
 
 @app.exception_handler(StarletteHTTPException)

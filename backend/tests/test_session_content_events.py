@@ -154,6 +154,23 @@ async def test_credential_deadline_cancels_backpressure_and_releases_lease(db_se
     )
 
 
+async def test_credential_deadline_completes_idle_stream(db_session, seed_user):
+    session, key, credentials = await make_session_key(db_session, seed_user)
+    key.expires_at = datetime.now(UTC) + timedelta(seconds=1)
+    await db_session.commit()
+    response = await session_content_events(
+        session.id, credentials, AuthContext(seed_user, key), request=Request({"type": "http"})
+    )
+    messages = []
+
+    async def record_send(message):
+        messages.append(message)
+
+    await asyncio.wait_for(response.stream_response(record_send), 3)
+    assert messages[0]["type"] == "http.response.start"
+    assert messages[-1] == {"type": "http.response.body", "body": b"", "more_body": False}
+
+
 async def test_lost_lease_interrupts_blocked_send(db_session, seed_user, monkeypatch):
     from app.routes import session_content_events as route
 

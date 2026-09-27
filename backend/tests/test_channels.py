@@ -1272,6 +1272,25 @@ async def test_historical_discord_without_public_key_is_readable_but_cannot_pair
 
 
 @pytest.mark.asyncio
+async def test_create_telegram_channel_rejects_malformed_token_before_provider_io(
+    client: httpx.AsyncClient,
+    monkeypatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": {"username": "ClawdiWebhookBot"}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+
+    # Observed pastes: a bot username and a token with a full-width colon.
+    for token in ("@clawdi_bot", "123456\uff1atelegram-secret"):
+        response = await client.post(
+            "/v1/channels",
+            json={"provider": "telegram", "name": "bad-token", "provider_token": token},
+        )
+        assert response.status_code == 400
+        assert response.json() == {"detail": "Enter a valid Telegram bot token from @BotFather."}
+    assert _FakeProviderClient.calls == []
+
+
+@pytest.mark.asyncio
 async def test_create_telegram_channel_registers_provider_webhook(
     client: httpx.AsyncClient,
     monkeypatch,
@@ -19082,7 +19101,7 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
             {
                 "provider": "telegram",
                 "name": "telegram-shared-chat",
-                "provider_token": "telegram-provider-token",
+                "provider_token": "123456:telegram-provider-token",
             },
         ),
         (

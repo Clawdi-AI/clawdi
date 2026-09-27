@@ -3,9 +3,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import httpx
 from sentry_sdk.types import Event, Hint
+from starlette.exceptions import HTTPException
 
-from app.core.sentry import _scrub_event
+from app.core.sentry import _before_send
 
 
 def test_scrub_event_redacts_nested_credentials_without_changing_shape() -> None:
@@ -21,7 +23,7 @@ def test_scrub_event_redacts_nested_credentials_without_changing_shape() -> None
     event: Event = {"extra": {"payload": payload}}
     hint: Hint = {}
 
-    result = _scrub_event(event, hint)
+    result = _before_send(event, hint)
 
     assert result is event
     assert payload == {
@@ -33,6 +35,25 @@ def test_scrub_event_redacts_nested_credentials_without_changing_shape() -> None
         ],
         "public_key_id": "visible",
     }
+
+
+def _raised_hint(exc: HTTPException, cause: BaseException | None) -> Hint:
+    try:
+        raise exc from cause
+    except HTTPException as raised:
+        return {"exc_info": (type(raised), raised, raised.__traceback__)}
+
+
+def test_before_send_drops_only_provider_transport_failures() -> None:
+    unreachable = _raised_hint(
+        HTTPException(502, "telegram api unreachable"), httpx.ConnectError("refused")
+    )
+    rejected = _raised_hint(HTTPException(502, "telegram bot token was rejected"), None)
+    internal = _raised_hint(HTTPException(500, "failed"), httpx.ConnectError("refused"))
+
+    assert _before_send({}, unreachable) is None
+    assert _before_send({}, rejected) == {}
+    assert _before_send({}, internal) == {}
 
 
 def test_disabled_sentry_does_not_import_sdk() -> None:

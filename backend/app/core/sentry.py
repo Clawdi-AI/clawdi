@@ -13,6 +13,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, TypeGuard
 
+import httpx
+from starlette.exceptions import HTTPException
+
 from app.core.config import settings
 
 if TYPE_CHECKING:
@@ -66,14 +69,30 @@ def init_sentry() -> None:
             FastApiIntegration(),
             StarletteIntegration(),
         ],
-        before_send=_scrub_event,
+        before_send=_before_send,
     )
 
 
-def _scrub_event(event: Event, _hint: Hint) -> Event:
-    """Walk the event and redact anything that looks like a credential."""
+def _before_send(event: Event, hint: Hint) -> Event | None:
+    """Drop expected provider outages, then redact anything that looks like a credential."""
+    if _is_provider_transport_failure(hint):
+        return None
     _scrub(event)
     return event
+
+
+def _is_provider_transport_failure(hint: Hint) -> bool:
+    # Routes answer an unreachable provider with a deliberate 502 chained from
+    # the transport error; request logs still record it, but it is not an
+    # application fault. Provider rejections and invalid responses carry no
+    # transport cause and are still reported.
+    exc_info = hint.get("exc_info")
+    exc = exc_info[1] if exc_info else None
+    return (
+        isinstance(exc, HTTPException)
+        and exc.status_code == 502
+        and isinstance(exc.__cause__, httpx.TransportError)
+    )
 
 
 def _scrub(obj: object) -> None:

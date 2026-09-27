@@ -337,7 +337,8 @@ async def _run_whatsapp_baileys_websocket(
         tenant = session.tenant
         if tenant is None or tenant.tenant_id is None or session.bundle is None:
             return
-        if inbox_pump_task is not None and not inbox_pump_task.done():
+        if inbox_pump_task is not None:
+            # One pump per session; the receive loop owns its outcome.
             return
         inbox_pump_task = asyncio.create_task(
             _run_whatsapp_websocket_inbox_pump(
@@ -355,7 +356,9 @@ async def _run_whatsapp_baileys_websocket(
     await websocket.accept()
     try:
         while True:
-            chunk = await _receive_websocket_bytes_or_revocation(websocket, session_revoked)
+            chunk = await _receive_websocket_bytes_or_revocation(
+                websocket, session_revoked, inbox_pump_task
+            )
             if chunk is None:
                 return
             try:
@@ -395,11 +398,8 @@ async def _run_whatsapp_baileys_websocket(
     finally:
         if inbox_pump_task is not None:
             inbox_pump_task.cancel()
-            with contextlib.suppress(
-                asyncio.CancelledError,
-                _WhatsAppSessionAuthorityRevoked,
-            ):
-                await inbox_pump_task
+            # The receive loop surfaces pump failures; teardown only collects it.
+            await asyncio.gather(inbox_pump_task, return_exceptions=True)
 
 
 async def _resolve_whatsapp_noise_lid(
@@ -486,14 +486,21 @@ class _WhatsAppSessionAuthorityRevoked(RuntimeError):
 async def _receive_websocket_bytes_or_revocation(
     websocket: WebSocket,
     session_revoked: asyncio.Event,
+    inbox_pump_task: asyncio.Task[None] | None,
 ) -> bytes | None:
     receive_task = asyncio.create_task(websocket.receive_bytes())
     revocation_task = asyncio.create_task(session_revoked.wait())
+    inbox_pump = () if inbox_pump_task is None else (inbox_pump_task,)
     try:
         done, _pending = await asyncio.wait(
-            {receive_task, revocation_task},
+            {receive_task, revocation_task, *inbox_pump},
             return_when=asyncio.FIRST_COMPLETED,
         )
+        if inbox_pump_task is not None and inbox_pump_task in done:
+            # The pump runs for the whole session; its failure ends the session
+            # at this boundary instead of dying unobserved in the background.
+            inbox_pump_task.result()
+            return None
         if revocation_task in done:
             return None
         return receive_task.result()
