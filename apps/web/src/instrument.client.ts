@@ -19,8 +19,6 @@ if (dsn && window.location.pathname !== "/vault-request") {
 			// Clerk's background session refresh lost the network; Clerk retries it.
 			/^Error: ClerkJS: Network error at "[^"]+\/v1\/client\/sessions\/[^/"]+\/touch\?/,
 		],
-		// Third-party support widget injected outside this app.
-		denyUrls: [/^https:\/\/widget\.mava\.app\//],
 		beforeSend: (event) => (window.location.pathname === "/vault-request" ? null : event),
 		beforeSendTransaction: (event) =>
 			window.location.pathname === "/vault-request" ? null : event,
