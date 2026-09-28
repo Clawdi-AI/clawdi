@@ -7,7 +7,7 @@ export type ChatwootSettings = Readonly<{
 	type: "standard" | "expanded_bubble";
 	widgetStyle: "standard" | "flat";
 	darkMode: "light" | "auto";
-	useBrowserLanguage: boolean;
+	locale: string;
 }>;
 
 export type ChatwootApi = {
@@ -35,7 +35,8 @@ export const CHATWOOT_SETTINGS = {
 	type: "standard",
 	widgetStyle: "standard",
 	darkMode: "auto",
-	useBrowserLanguage: true,
+	// Support runs in English, and Chatwoot writes its system messages in the widget locale.
+	locale: "en",
 } as const satisfies ChatwootSettings;
 
 function clean(value: string | null | undefined): string | undefined {
