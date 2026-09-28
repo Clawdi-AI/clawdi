@@ -35,7 +35,7 @@ dependencies = [
     "composio-client==1.43.0",
     # Official Streamable HTTP client lifecycle for Composio Tool Router.
     "mcp==2.0.0",
-    "prometheus-client>=0.25.0",
+    "prometheus-client>=0.26.0",
     # Keep the runtime and generated typing distributions on their latest
     # common public patch. https://pypi.org/pypi/boto3/1.43.67/json
     "boto3==1.43.67",
