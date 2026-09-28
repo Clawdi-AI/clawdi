@@ -10,7 +10,7 @@ dependencies = [
     "asyncpg==0.31.0",
     "alembic>=1.14",
     "pydantic-settings>=2.14.0",
-    "pyjwt[crypto]==2.13.0",
+    "pyjwt[crypto]==2.15.0",
     "cryptography>=44.0",
     # SafePublicHttpClient relies on request extension forwarding and
     # sni_hostname handling verified in these exact paired releases.
@@ -24,25 +24,25 @@ dependencies = [
     "pgvector>=0.2.5",
     "openai>=2.52.0",
     "fastembed>=0.3",
-    "sentry-sdk[fastapi]==2.68.0",
+    "sentry-sdk[fastapi]==2.70.0",
     # https://pypi.org/pypi/websockets/17.0.1/json
-    "websockets==17.0.1",
+    "websockets==17.1",
     "zstandard>=0.25.0",
     "pyyaml>=6.0",
     # Keep the published pair exact: PyPI composio 0.21.1 metadata pins
     # composio-client 1.43.0. https://pypi.org/pypi/composio/0.21.1/json
-    "composio==0.21.1",
+    "composio==0.24.0",
     "composio-client==1.43.0",
     # Official Streamable HTTP client lifecycle for Composio Tool Router.
-    "mcp==2.0.0",
+    "mcp==2.2.0",
     "prometheus-client>=0.25.0",
     # Keep the runtime and generated typing distributions on their latest
     # common public patch. https://pypi.org/pypi/boto3/1.43.67/json
-    "boto3==1.43.67",
-    "botocore==1.43.67",
+    "boto3==1.43.103",
+    "botocore==1.43.103",
     "xeddsa==1.2.0",
     # ZoneInfo fallback for slim production images without system zoneinfo.
-    "tzdata==2026.3",
+    "tzdata==2026.4",
 ]
 
 [project.optional-dependencies]
@@ -55,11 +55,11 @@ dependencies = [
 # back to the builtin provider with a warning when the import
 # fails — so this extra controls whether mem0 is *available*,
 # not whether memories work at all.
-mem0 = ["mem0ai==2.0.18"]
+mem0 = ["mem0ai==2.2.1"]
 
 [dependency-groups]
 dev = [
-    "basedpyright==1.39.10",
+    "basedpyright==1.40.1",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "aiosqlite>=0.20",
@@ -71,8 +71,8 @@ dev = [
     # Generated from boto3/botocore service models and pinned to the runtime
     # SDK line. The full bundle resolves every generated client overload for
     # strict Pyright consumers; the base stubs own boto3's public surface.
-    "boto3-stubs==1.43.67",
-    "boto3-stubs-full==1.43.67",
+    "boto3-stubs==1.43.103",
+    "boto3-stubs-full==1.43.102",
     "botocore-stubs==1.43.67",
     # Public annotations for the pinned asyncpg 0.31 runtime contract.
     "asyncpg-stubs==0.31.3",
