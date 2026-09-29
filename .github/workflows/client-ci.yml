@@ -210,7 +210,7 @@ jobs:
         run: bun run --cwd apps/web test:ssr:internal
       - name: Set up native Agent test dependencies
         if: needs.changes.outputs.cli == 'true'
-        uses: astral-sh/setup-uv@v10.0.1
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           version: "0.12.5"
           python-version: "3.12"
@@ -306,7 +306,7 @@ jobs:
       - name: OSS web e2e
         run: bun run --cwd apps/web e2e
       - name: Set up Hosted browser fixture dependencies
-        uses: astral-sh/setup-uv@v10.0.1
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           version: "0.12.5"
           python-version: "3.12"
