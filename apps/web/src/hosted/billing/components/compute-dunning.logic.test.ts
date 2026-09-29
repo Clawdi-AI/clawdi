@@ -78,6 +78,27 @@ function includedSubscription(): HostedComputeSubscription {
 }
 
 describe("computeDunningState", () => {
+	test("a quarantined Wallet invoice needs review, not another top-up", () => {
+		const state = computeDunningState(
+			deployment({
+				currentPlanSlug: "compute_performance",
+				computeSubscription: subscription({
+					status: "past_due",
+					funding_source: "wallet",
+					payment_state: "past_due",
+					recovery_action: null,
+					recovery_blocked_reason: "reconciliation_required",
+				}),
+			}),
+		);
+		expect(state).toMatchObject({
+			title: "Wallet payment needs review",
+			recoveryTarget: null,
+			secondaryTarget: "support",
+		});
+		expect(state?.description).not.toContain("Top up");
+	});
+
 	test("returns null without an active billing problem", () => {
 		expect(computeDunningState(deployment())).toBeNull();
 		expect(computeDunningState(deployment({ computeSubscription: subscription() }))).toBeNull();
@@ -224,7 +245,7 @@ describe("computeDunningState", () => {
 
 	test("recovers revoked funding even without a subscription, but not an active replacement", () => {
 		expect(
-			computeDunningState(deployment({ factKind: "funding_revoked" }))?.recoveryTarget.kind,
+			computeDunningState(deployment({ factKind: "funding_revoked" }))?.recoveryTarget?.kind,
 		).toBe("start_new");
 		expect(
 			computeDunningState(

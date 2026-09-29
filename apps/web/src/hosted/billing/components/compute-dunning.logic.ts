@@ -25,7 +25,7 @@ type FundingRevocationReason = NonNullable<HostedFundingFact["reason"]>;
 export type ComputeDunningState = {
 	paymentState: Exclude<ComputePaymentState, "ok">;
 	fundingSource: "stripe" | "wallet";
-	recoveryTarget: ComputeRecoveryTarget;
+	recoveryTarget: ComputeRecoveryTarget | null;
 	tone: "neutral" | "warning" | "destructive";
 	title: string;
 	description: string;
@@ -148,7 +148,6 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 	}
 	if (!subscription) return null;
 	const recoveryTarget = computeSubscriptionRecoveryTarget(subscription);
-	if (!recoveryTarget) return null;
 
 	const recoveryPlanSlug = recoveryPlanSlugFor(deployment, subscription);
 	const computeName = recoveryPlanSlug
@@ -163,6 +162,24 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 		recoveryPlanSlug,
 		secondaryTarget: null,
 	};
+	if (
+		fundingSource === "wallet" &&
+		subscription.recovery_blocked_reason === "reconciliation_required" &&
+		subscription.actions?.command_state == null &&
+		subscription.payment_state !== "ok"
+	) {
+		return {
+			...common,
+			paymentState: subscription.payment_state,
+			recoveryTarget: null,
+			secondaryTarget: "support",
+			tone: "warning",
+			title: "Wallet payment needs review",
+			description:
+				"This invoice needs billing review before payment can continue. Contact support; adding funds will not resolve this billing state.",
+		};
+	}
+	if (!recoveryTarget) return null;
 
 	if (recoveryTarget.kind === "start_new") {
 		return {
