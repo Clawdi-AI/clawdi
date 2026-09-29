@@ -17,6 +17,9 @@ updates:
         update-types: ["minor", "patch"]
       minor-and-patch:
         update-types: ["minor", "patch"]
+        # Dependabot ranks a pattern-less group as more specific, so the
+        # TanStack packages must be excluded here explicitly.
+        exclude-patterns: ["@tanstack/*"]
     ignore:
       # Majors come through a human-owned upgrade PR.
       - dependency-name: "*"
