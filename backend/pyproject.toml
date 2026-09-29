@@ -39,7 +39,7 @@ dependencies = [
     # Keep the runtime and generated typing distributions on their latest
     # common public patch. https://pypi.org/pypi/boto3/1.43.67/json
     "boto3==1.43.67",
-    "botocore==1.43.67",
+    "botocore==1.43.103",
     "xeddsa==1.2.0",
     # ZoneInfo fallback for slim production images without system zoneinfo.
     "tzdata==2026.3",
@@ -71,8 +71,8 @@ dev = [
     # Generated from boto3/botocore service models and pinned to the runtime
     # SDK line. The full bundle resolves every generated client overload for
     # strict Pyright consumers; the base stubs own boto3's public surface.
-    "boto3-stubs==1.43.67",
-    "boto3-stubs-full==1.43.67",
+    "boto3-stubs==1.43.103",
+    "boto3-stubs-full==1.43.103",
     "botocore-stubs==1.43.67",
     # Public annotations for the pinned asyncpg 0.31 runtime contract.
     "asyncpg-stubs==0.31.3",
