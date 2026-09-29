@@ -14,6 +14,11 @@ def test_scrub_event_redacts_nested_credentials_without_changing_shape() -> None
     payload: dict[object, object] = {
         "authorization": "exact-secret",
         "service_api_key": "suffix-secret",
+        "headers": {
+            "X-Admin-Key": "admin-secret",
+            "Set-Cookie": "session",
+            "X-Request-Id": "visible",
+        },
         "items": [
             {"CLIENT_SECRET": "case-insensitive-secret", "label": "visible"},
             {7: {"access_token": "nested-secret", "display_name": "visible"}},
@@ -29,6 +34,11 @@ def test_scrub_event_redacts_nested_credentials_without_changing_shape() -> None
     assert payload == {
         "authorization": "[redacted]",
         "service_api_key": "[redacted]",
+        "headers": {
+            "X-Admin-Key": "[redacted]",
+            "Set-Cookie": "[redacted]",
+            "X-Request-Id": "visible",
+        },
         "items": [
             {"CLIENT_SECRET": "[redacted]", "label": "visible"},
             {7: {"access_token": "[redacted]", "display_name": "visible"}},
