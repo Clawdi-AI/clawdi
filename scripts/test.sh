@@ -124,6 +124,10 @@ copy_repo() {
 
 install_js() {
 	bun install --frozen-lockfile --ignore-scripts
+	# The package cache sits on a memory-backed tmpfs and node_modules on the
+	# work disk is a copy of it, so release ~1.8 GB of the runner's memory
+	# budget before builds and tests start.
+	find "${BUN_INSTALL_CACHE_DIR:?}" -mindepth 1 -delete
 }
 
 install_backend() {
