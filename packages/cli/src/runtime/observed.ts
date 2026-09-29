@@ -11,9 +11,14 @@ import { toErrorMessage } from "../serve/log";
 import {
 	type RuntimeAppliedState,
 	readRuntimeAppliedState,
+	runtimeAppliedApplyIdentity,
 	runtimeContentSha256,
 } from "./applied-state";
-import { resolveRuntimeApplyGeneration } from "./apply-identity";
+import {
+	resolveRuntimeApplyGeneration,
+	runtimeApplyIdentitiesEqual,
+	runtimeApplyIdentitySchema,
+} from "./apply-identity";
 import { type RuntimeCliBootstrapStatus, readRuntimeCliBootstrapStatus } from "./cli-update";
 import {
 	type ComponentServiceState,
@@ -103,7 +108,7 @@ export async function readHostedRuntimeObserved(
 		schemaVersion: "clawdi.hostedRuntimeObserved.v2",
 		reportedAt: options.reportedAt ?? new Date().toISOString(),
 		runtimeMode: paths.mode,
-		status: observedStatus(boot.status, watchStatus, systemd, providers, appliedAuthority !== null),
+		status: observedStatus(boot.status, watchStatus, systemd, providers, appliedState),
 		activeCliVersion,
 		applied: appliedAuthority,
 		boot: boot.status ? summarizeBootStatus(boot.status) : null,
@@ -293,11 +298,11 @@ function readJsonRecord(path: string): JsonRecord | null {
 }
 
 function observedStatus(
-	bootStatus: { status: string; errors?: string[] } | undefined,
+	bootStatus: RuntimeBootStatus | undefined,
 	watchStatus: JsonRecord | null,
 	systemd: HostedRuntimeObservedSystemd | null,
 	providers: HostedRuntimeObservedProviders | null,
-	hasAppliedAuthority: boolean,
+	applied: RuntimeAppliedState | null,
 ): ObservedStatus {
 	const watchEvent = recordValue(watchStatus?.event);
 	if (bootStatus?.status === "error") return "error";
@@ -307,15 +312,48 @@ function observedStatus(
 	}
 	if (
 		watchEvent?.status === "error" &&
-		(!hasAppliedAuthority || watchEvent.healthImpact !== "resource_projection")
+		(!applied ||
+			(watchEvent.healthImpact !== "resource_projection" &&
+				!manifestTransportIsDiagnostic(watchEvent, applied, bootStatus)))
 	) {
 		return "error";
 	}
-	if (!hasAppliedAuthority) return "unknown";
+	if (!applied) return "unknown";
 	if (systemd && systemdReadinessStatus(systemd.units) === "unknown") return "unknown";
 	if (watchEvent?.status === "applied" || watchEvent?.status === "not_modified") return "ok";
 	if (bootStatus?.status === "ok") return "ok";
 	return "unknown";
+}
+
+function manifestTransportIsDiagnostic(
+	event: JsonRecord,
+	applied: RuntimeAppliedState,
+	boot: RuntimeBootStatus | undefined,
+): boolean {
+	if (
+		event.healthImpact !== "manifest_transport" ||
+		event.stage !== "network" ||
+		event.mode !== "repair" ||
+		boot?.status !== "ok" ||
+		boot.activeGeneration !== applied.generation ||
+		boot.instanceId !== applied.instanceId
+	)
+		return false;
+	const authority = recordValue(event.healthAuthority);
+	if (!authority) return false;
+	const identity = runtimeApplyIdentitySchema.safeParse({
+		generation: authority.generation,
+		manifestETag: authority.manifestETag,
+		applyReceiptId: authority.applyReceiptId,
+		bootNonce: authority.bootNonce,
+	});
+	return (
+		identity.success &&
+		runtimeApplyIdentitiesEqual(identity.data, runtimeAppliedApplyIdentity(applied)) &&
+		authority.instanceId === applied.instanceId &&
+		authority.sourceRevision === applied.sourceRevision &&
+		authority.etag === applied.etag
+	);
 }
 
 function summarizeBootStatus(status: RuntimeBootStatus): HostedRuntimeObservedBoot {

@@ -2,16 +2,20 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
+import { runtimeWatchEventForOutcome } from "../commands/runtime";
 import { getCliVersion } from "../lib/version";
 import {
 	readRuntimeAppliedState,
+	runtimeAppliedApplyIdentity,
 	runtimeContentSha256,
 	runtimeProviderConflicts,
 	runtimeServiceWithdrawals,
 	writeRuntimeAppliedState,
 } from "./applied-state";
+import type { RuntimeApplyContext } from "./apply-identity";
 import { componentConfigurationRevision } from "./component-observation";
 import { HostedRuntimeHeartbeatSession } from "./heartbeat-observation";
+import { HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE, loadRemoteRuntimeManifest } from "./manifest-source";
 import {
 	readComponentServiceState,
 	readHostedRuntimeObserved,
@@ -30,10 +34,12 @@ import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 import { recordRuntimeUserActivityScan } from "./user-activity-state";
 
 const originalEnv = { ...process.env };
+const originalFetch = globalThis.fetch;
 const roots: string[] = [];
 
 afterEach(() => {
 	process.env = { ...originalEnv };
+	globalThis.fetch = originalFetch;
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -200,6 +206,139 @@ describe("hosted runtime observed v2", () => {
 		expect(observed?.status).toBe("ok");
 		expect(observed?.convergeError).toBe("runtime hermes sourced Skill projection failed");
 	});
+
+	test("keeps transport-only fetch failures diagnostic only for the exact healthy committed runtime", async () => {
+		const paths = healthyAppliedRuntimePaths();
+		const applied = readRuntimeAppliedState(paths);
+		const identity = applied ? runtimeAppliedApplyIdentity(applied) : null;
+		const boot = readRuntimeBootStatus(paths).status;
+		if (!applied || !identity || !boot) throw new Error("Expected committed fixture");
+		const context: RuntimeApplyContext = {
+			kind: "context-file",
+			backend: "incus",
+			identity,
+			manifestSource: {
+				type: "http",
+				url: "https://runtime.example.test/manifest",
+				auth: { type: "bearer", token: "fixture" },
+			},
+		};
+		globalThis.fetch = Object.assign(
+			async () => {
+				throw new TypeError("fetch failed");
+			},
+			{ preconnect: () => undefined },
+		);
+		const failure = await loadRemoteRuntimeManifest(paths, { applyContext: context });
+		if (!("errors" in failure)) throw new Error("Expected transport failure");
+		expect(failure).toMatchObject({ failureKind: "transport", requestedApplyIdentity: identity });
+		const event = runtimeWatchEventForOutcome({ kind: "load_failed", failure }, paths);
+		if (!event) throw new Error("Expected watch error");
+		expect(event).toHaveProperty("healthImpact", "manifest_transport");
+		writeRuntimeWatchStatus(event, paths);
+		const healthy = await readHostedRuntimeObserved(paths);
+		expect(healthy?.status).toBe("ok");
+		expect(healthy?.convergeError).toBe("could not fetch runtime manifest: fetch failed");
+		expect(runtimeWatchEventForOutcome({ kind: "load_failed", failure }, paths)).toHaveProperty(
+			"healthImpact",
+			"manifest_transport",
+		);
+		writeRuntimeWatchStatus({ ...event, stage: "final" }, paths);
+		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		const mutationFailure = runtimeWatchEventForOutcome(
+			{ kind: "apply_error", error: "fetch failed" },
+			paths,
+		);
+		if (!mutationFailure) throw new Error("Expected mutation failure");
+		expect(mutationFailure).not.toHaveProperty("healthImpact");
+		writeRuntimeWatchStatus(mutationFailure, paths);
+		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		const afterMutation = runtimeWatchEventForOutcome({ kind: "load_failed", failure }, paths);
+		if (!afterMutation) throw new Error("Expected transport failure after mutation");
+		expect(afterMutation).not.toHaveProperty("healthImpact");
+		writeRuntimeWatchStatus(afterMutation, paths);
+		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+
+		for (const change of [
+			{ generation: identity.generation + 1 },
+			{ manifestETag: '"other"' },
+			{ applyReceiptId: "different-receipt" },
+			{ bootNonce: "different-boot-nonce" },
+		]) {
+			const mismatched = await loadRemoteRuntimeManifest(paths, {
+				applyContext: { ...context, identity: { ...identity, ...change } },
+			});
+			if (!("errors" in mismatched)) throw new Error("Expected transport failure");
+			const rejected = runtimeWatchEventForOutcome(
+				{ kind: "load_failed", failure: mismatched },
+				paths,
+			);
+			if (!rejected) throw new Error("Expected watch error");
+			expect(rejected).not.toHaveProperty("healthImpact");
+			writeRuntimeWatchStatus(rejected, paths);
+			expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		}
+		writeRuntimeWatchStatus(event, paths);
+		writeRuntimeAppliedState({ ...applied, sourceRevision: "c".repeat(64) }, paths);
+		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		writeRuntimeAppliedState(applied, paths);
+		writeRuntimeBootStatus({ ...boot, activeGeneration: applied.generation + 1 }, paths);
+		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		writeRuntimeBootStatus({ ...boot, status: "error" }, paths);
+		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		rmSync(paths.bootStatus);
+		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		writeRuntimeBootStatus(boot, paths);
+		rmSync(paths.appliedState);
+		expect(runtimeWatchEventForOutcome({ kind: "load_failed", failure }, paths)).not.toHaveProperty(
+			"healthImpact",
+		);
+		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+	});
+
+	test.each([
+		{ status: 401, contentType: HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE, body: "unauthorized" },
+		{ status: 403, contentType: HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE, body: "forbidden" },
+		{ status: 503, contentType: HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE, body: "unavailable" },
+		{ status: 200, contentType: "application/json", body: "{}" },
+		{ status: 200, contentType: HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE, body: "invalid JSON" },
+		{ status: 200, contentType: HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE, body: "{}" },
+	])(
+		"does not classify HTTP $status or invalid manifest responses as transport-only",
+		async ({ status, contentType, body }) => {
+			const paths = healthyAppliedRuntimePaths();
+			const applied = readRuntimeAppliedState(paths);
+			const identity = applied ? runtimeAppliedApplyIdentity(applied) : null;
+			if (!identity) throw new Error("Expected applied fixture");
+			globalThis.fetch = Object.assign(
+				async () =>
+					new Response(body, {
+						status,
+						headers: { "content-type": contentType, etag: '"response"' },
+					}),
+				{ preconnect: () => undefined },
+			);
+			const failure = await loadRemoteRuntimeManifest(paths, {
+				applyContext: {
+					kind: "context-file",
+					backend: "incus",
+					identity,
+					manifestSource: {
+						type: "http",
+						url: "https://runtime.example.test/manifest",
+						auth: { type: "bearer", token: "fixture" },
+					},
+				},
+			});
+			if (!("errors" in failure)) throw new Error("Expected rejected response");
+			expect(failure).not.toHaveProperty("failureKind");
+			const event = runtimeWatchEventForOutcome({ kind: "load_failed", failure }, paths);
+			if (!event) throw new Error("Expected watch error");
+			expect(event).not.toHaveProperty("healthImpact");
+			writeRuntimeWatchStatus(event, paths);
+			expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		},
+	);
 
 	test("reports committed provider conflicts without degrading runtime health", async () => {
 		const paths = healthyAppliedRuntimePaths();
@@ -812,6 +951,23 @@ printf '\n'
 		if (!applied || !fingerprint) throw new Error("Expected service fixture");
 		applied.activated = { [unit]: fingerprint };
 		writeRuntimeAppliedState(applied, paths);
+		const identityForFetch = runtimeAppliedApplyIdentity(applied);
+		if (!identityForFetch) throw new Error("Expected apply identity");
+		const transportEvent = runtimeWatchEventForOutcome(
+			{
+				kind: "load_failed",
+				failure: {
+					mode: "repair",
+					stage: "network",
+					errors: ["could not fetch runtime manifest: fetch failed"],
+					failureKind: "transport",
+					requestedApplyIdentity: identityForFetch,
+				},
+			},
+			paths,
+		);
+		if (!transportEvent) throw new Error("Expected watch event");
+		writeRuntimeWatchStatus(transportEvent, paths);
 		const manager = readComponentServiceState(paths, "user", unit);
 		const config = componentConfigurationRevision(component, paths, fingerprint);
 		if (!manager || !config) throw new Error("Expected bound component fixture");
