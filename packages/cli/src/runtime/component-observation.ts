@@ -105,7 +105,7 @@ function hasIncludes(value: unknown): boolean {
 	return Object.hasOwn(value, "$include") || Object.values(value).some(hasIncludes);
 }
 
-function configRevision(
+export function componentConfigurationRevision(
 	component: Component,
 	paths: RuntimePaths,
 	expectedUnit: string | undefined,
@@ -182,7 +182,7 @@ export function captureComponentActivations(
 		const accessRevision = revisions[component];
 		if (!accessRevision || !activated[service.unit]) continue;
 		const manager = readServiceState(service.scope, service.unit);
-		const config = configRevision(component, paths, activated[service.unit]);
+		const config = componentConfigurationRevision(component, paths, activated[service.unit]);
 		const after = readServiceState(service.scope, service.unit);
 		if (
 			manager &&
@@ -220,7 +220,7 @@ export async function observeComponents(
 				const current = readServiceState(service.scope, service.unit);
 				invocationId = current?.invocationId ?? invocationId;
 				const configurationMatches = (manager: ComponentServiceState) => {
-					const config = configRevision(
+					const config = componentConfigurationRevision(
 						activation.component,
 						paths,
 						applied.activated[service.unit],

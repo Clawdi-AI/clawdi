@@ -11,11 +11,20 @@ import { toErrorMessage } from "../serve/log";
 import {
 	type RuntimeAppliedState,
 	readRuntimeAppliedState,
+	runtimeAppliedApplyIdentity,
 	runtimeContentSha256,
 } from "./applied-state";
-import { resolveRuntimeApplyGeneration } from "./apply-identity";
+import {
+	resolveRuntimeApplyGeneration,
+	runtimeApplyIdentitiesEqual,
+	runtimeApplyIdentitySchema,
+} from "./apply-identity";
 import { type RuntimeCliBootstrapStatus, readRuntimeCliBootstrapStatus } from "./cli-update";
-import { type ComponentServiceState, observeComponents } from "./component-observation";
+import {
+	type ComponentServiceState,
+	componentConfigurationRevision,
+	observeComponents,
+} from "./component-observation";
 import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import { installedOpenClawCommandPath } from "./hosted-openclaw-context";
 import { readHostedSkillsObservation } from "./hosted-skill-observation";
@@ -77,10 +86,12 @@ export async function readHostedRuntimeObserved(
 	const watchStatus = readJsonRecord(paths.runtimeWatchStatus);
 	const activeCliVersion = getCliVersion();
 	const cliBootstrap = readRuntimeCliBootstrapStatus(paths);
+	const servingSamples = observationServingSamples(paths, appliedState);
 	const systemd = await readSystemdObserved(
 		paths,
 		appliedState,
 		boot.status?.enabledRuntimes ?? [],
+		servingSamples,
 	);
 	const providers = readProviderObserved(paths);
 	const appliedAuthority = appliedState
@@ -97,7 +108,7 @@ export async function readHostedRuntimeObserved(
 		schemaVersion: "clawdi.hostedRuntimeObserved.v2",
 		reportedAt: options.reportedAt ?? new Date().toISOString(),
 		runtimeMode: paths.mode,
-		status: observedStatus(boot.status, watchStatus, systemd, providers, appliedAuthority !== null),
+		status: observedStatus(boot.status, watchStatus, systemd, providers, appliedState),
 		activeCliVersion,
 		applied: appliedAuthority,
 		boot: boot.status ? summarizeBootStatus(boot.status) : null,
@@ -144,13 +155,50 @@ export async function readHostedRuntimeObserved(
 			paths,
 			appliedState,
 			(scope, unit) => readComponentServiceState(paths, scope, unit),
-			(component) => runtimeComponentIsReady(component, paths),
+			(component) =>
+				component === "files"
+					? runtimeComponentIsReady(component, paths)
+					: servingSamples
+							.read(
+								component === "hermes-ui"
+									? "clawdi-hermes-dashboard.service"
+									: "openclaw-gateway.service",
+							)
+							.then((sample) => sample.componentReady),
 		);
 		if (proof) {
 			observed.components = proof;
 			if (observed.status === "ok" && proof.entries.some((entry) => entry.status !== "ok"))
 				observed.status = "unknown";
 		}
+	}
+	// Optional evidence collection may separate the two consumers. Validate all
+	// sampled services again even when no component receipt could be admitted.
+	if (systemd) {
+		for (const unit of systemd.units) {
+			if (unit.scope !== "user" || !servingSamples.has(unit.name)) continue;
+			const sample = await servingSamples.read(unit.name);
+			if (!sample.serviceReady && unit.status === "ok") {
+				unit.status = "unknown";
+				unit.error = sample.error ?? "Runtime service readiness is not established";
+			}
+			if (!sample.componentReady) {
+				const component =
+					unit.name === "clawdi-hermes-dashboard.service" ? "hermes-ui" : "openclaw-ui";
+				const entry = observed.components?.entries.find(
+					(candidate) => candidate.component === component,
+				);
+				if (entry) entry.status = "unknown";
+			}
+		}
+		if (observed.systemd) observed.systemd.status = systemdUnitsStatus(systemd.units);
+		if (observed.status === "ok" && systemdReadinessStatus(systemd.units) !== "ok")
+			observed.status = "unknown";
+		if (
+			observed.status === "ok" &&
+			observed.components?.entries.some((entry) => entry.status !== "ok")
+		)
+			observed.status = "unknown";
 	}
 
 	// Reject the whole snapshot when its parent authority or health changed while
@@ -250,11 +298,11 @@ function readJsonRecord(path: string): JsonRecord | null {
 }
 
 function observedStatus(
-	bootStatus: { status: string; errors?: string[] } | undefined,
+	bootStatus: RuntimeBootStatus | undefined,
 	watchStatus: JsonRecord | null,
 	systemd: HostedRuntimeObservedSystemd | null,
 	providers: HostedRuntimeObservedProviders | null,
-	hasAppliedAuthority: boolean,
+	applied: RuntimeAppliedState | null,
 ): ObservedStatus {
 	const watchEvent = recordValue(watchStatus?.event);
 	if (bootStatus?.status === "error") return "error";
@@ -264,15 +312,48 @@ function observedStatus(
 	}
 	if (
 		watchEvent?.status === "error" &&
-		(!hasAppliedAuthority || watchEvent.healthImpact !== "resource_projection")
+		(!applied ||
+			(watchEvent.healthImpact !== "resource_projection" &&
+				!manifestTransportIsDiagnostic(watchEvent, applied, bootStatus)))
 	) {
 		return "error";
 	}
-	if (!hasAppliedAuthority) return "unknown";
+	if (!applied) return "unknown";
 	if (systemd && systemdReadinessStatus(systemd.units) === "unknown") return "unknown";
 	if (watchEvent?.status === "applied" || watchEvent?.status === "not_modified") return "ok";
 	if (bootStatus?.status === "ok") return "ok";
 	return "unknown";
+}
+
+function manifestTransportIsDiagnostic(
+	event: JsonRecord,
+	applied: RuntimeAppliedState,
+	boot: RuntimeBootStatus | undefined,
+): boolean {
+	if (
+		event.healthImpact !== "manifest_transport" ||
+		event.stage !== "network" ||
+		event.mode !== "repair" ||
+		boot?.status !== "ok" ||
+		boot.activeGeneration !== applied.generation ||
+		boot.instanceId !== applied.instanceId
+	)
+		return false;
+	const authority = recordValue(event.healthAuthority);
+	if (!authority) return false;
+	const identity = runtimeApplyIdentitySchema.safeParse({
+		generation: authority.generation,
+		manifestETag: authority.manifestETag,
+		applyReceiptId: authority.applyReceiptId,
+		bootNonce: authority.bootNonce,
+	});
+	return (
+		identity.success &&
+		runtimeApplyIdentitiesEqual(identity.data, runtimeAppliedApplyIdentity(applied)) &&
+		authority.instanceId === applied.instanceId &&
+		authority.sourceRevision === applied.sourceRevision &&
+		authority.etag === applied.etag
+	);
 }
 
 function summarizeBootStatus(status: RuntimeBootStatus): HostedRuntimeObservedBoot {
@@ -355,10 +436,75 @@ function providerSecretAvailable(secrets: JsonRecord, ref: string): boolean {
 	return runtimeSecretValue(secrets, ref) !== null;
 }
 
+interface ServingSample {
+	serviceReady: boolean;
+	componentReady: boolean;
+	error?: string;
+}
+
+function observationServingSamples(paths: RuntimePaths, applied: RuntimeAppliedState | null) {
+	const samples = new Map<string, Promise<ServingSample & { binding: string | null }>>();
+	const bindingFor = (unit: string): string | null => {
+		try {
+			const manager = readComponentServiceState(paths, "user", unit);
+			if (!manager) return null;
+			const hermes = unit === "clawdi-hermes-dashboard.service";
+			const nativeConfig = readFileSync(
+				join(paths.userHome, hermes ? ".hermes/config.yaml" : ".openclaw/openclaw.json"),
+				"utf8",
+			);
+			const desiredConfig = componentConfigurationRevision(
+				hermes ? "hermes-ui" : "openclaw-ui",
+				paths,
+				applied?.activated[unit],
+			);
+			return runtimeContentSha256([manager, nativeConfig, desiredConfig]);
+		} catch {
+			return null;
+		}
+	};
+	const read = async (unit: string): Promise<ServingSample> => {
+		if (unit !== "openclaw-gateway.service" && unit !== "clawdi-hermes-dashboard.service")
+			return { serviceReady: true, componentReady: true };
+		let pending = samples.get(unit);
+		if (!pending) {
+			pending = (async () => {
+				const binding = bindingFor(unit);
+				if (!binding) return { binding, serviceReady: false, componentReady: false };
+				let componentReady: boolean | undefined;
+				let error: string | undefined;
+				const serviceReady = await runtimeServiceIsReady(unit, paths, {
+					onComponentReady: (ready) => {
+						componentReady = ready;
+					},
+					onFailure: (reason) => {
+						error = reason;
+					},
+				});
+				return { binding, serviceReady, componentReady: componentReady ?? serviceReady, error };
+			})();
+			samples.set(unit, pending);
+		}
+		const sample = await pending;
+		// Revalidate on every consumer, including after any intervening scans.
+		// A changed invocation/configuration invalidates even a successful sample;
+		// failures are also shared, never retried within this observation.
+		if (!sample.binding || bindingFor(unit) !== sample.binding) {
+			sample.binding = null;
+			sample.serviceReady = false;
+			sample.componentReady = false;
+			sample.error = "Runtime readiness sample: invocation or configuration changed or unavailable";
+		}
+		return sample;
+	};
+	return { read, has: (unit: string) => samples.has(unit) };
+}
+
 async function readSystemdObserved(
 	paths: RuntimePaths,
 	appliedState: RuntimeAppliedState | null,
 	enabledRuntimes: readonly string[],
+	servingSamples: ReturnType<typeof observationServingSamples>,
 ): Promise<HostedRuntimeObservedSystemd | null> {
 	const systemUnits = managedSystemdUnitNames(paths.systemdSystemRoot).map((unit) =>
 		systemdUnitStatus("system", unit, paths),
@@ -385,9 +531,11 @@ async function readSystemdObserved(
 		.map((unit) => systemdUnitStatus("user", unit, paths));
 	await Promise.all(
 		userUnits.map(async (unit) => {
-			if (unit.status === "ok" && !(await runtimeServiceIsReady(unit.name, paths))) {
+			if (unit.status !== "ok") return;
+			const sample = await servingSamples.read(unit.name);
+			if (!sample.serviceReady) {
 				unit.status = "unknown";
-				unit.error = "Runtime service readiness is not established";
+				unit.error = sample.error ?? "Runtime service readiness is not established";
 			}
 		}),
 	);
@@ -513,14 +661,13 @@ export async function runtimeComponentIsReady(
 		if (component === "files")
 			return (await runtimeReadinessProbe("http://127.0.0.1:9120/health")).status === 200;
 		if (component === "hermes-ui") {
-			const status: unknown = JSON.parse(
-				(await runtimeReadinessProbe("http://127.0.0.1:9119/api/status")).body,
-			);
-			const expectedProvider = hermesUiExpectedAuthProvider(paths);
-			if (!expectedProvider || !hermesUiAuthenticationIsReady(status, expectedProvider))
-				return false;
-			const page = await runtimeReadinessProbe("http://127.0.0.1:9119/login");
-			return /<!doctype html|<html[\s>]/i.test(page.body);
+			let ready = false;
+			await runtimeServiceIsReady("clawdi-hermes-dashboard.service", paths, {
+				onComponentReady: (value) => {
+					ready = value;
+				},
+			});
+			return ready;
 		}
 		return runtimeServiceIsReady("openclaw-gateway.service", paths);
 	} catch {
@@ -550,7 +697,14 @@ function hermesUiAuthenticationIsReady(status: unknown, expectedProvider: "self-
 }
 
 /** Native service activation precedes application startup; heartbeat health needs both. */
-export async function runtimeServiceIsReady(unit: string, paths: RuntimePaths): Promise<boolean> {
+export async function runtimeServiceIsReady(
+	unit: string,
+	paths: RuntimePaths,
+	options: {
+		onComponentReady?: (ready: boolean) => void;
+		onFailure?: (reason: string) => void;
+	} = {},
+): Promise<boolean> {
 	if (unit !== "openclaw-gateway.service" && unit !== "clawdi-hermes-dashboard.service")
 		return true;
 	try {
@@ -623,19 +777,37 @@ export async function runtimeServiceIsReady(unit: string, paths: RuntimePaths): 
 			return (await runtimeReadinessProbe(uiUrl.href, true)).status === 200;
 		}
 		// The managed Hermes dashboard command binds the native port 9119.
-		const status = recordValue(
-			JSON.parse((await runtimeReadinessProbe("http://127.0.0.1:9119/api/status")).body),
-		);
+		const status = recordValue(await probeHermesStatus());
 		const expectedProvider = hermesUiExpectedAuthProvider(paths);
-		return (
-			expectedProvider !== null &&
-			status?.gateway_running === true &&
-			status.gateway_state === "running" &&
-			hermesUiAuthenticationIsReady(status, expectedProvider)
+		if (!expectedProvider || !hermesUiAuthenticationIsReady(status, expectedProvider)) {
+			options.onFailure?.(
+				"Hermes dashboard readiness: self-hosted authentication is not established",
+			);
+			return false;
+		}
+		const page = await runtimeReadinessProbe("http://127.0.0.1:9119/login");
+		const ready = /<!doctype html|<html[\s>]/i.test(page.body);
+		options.onComponentReady?.(ready);
+		if (!ready) options.onFailure?.("Hermes dashboard readiness: login HTML is not available");
+		if (status?.gateway_running !== true || status.gateway_state !== "running") {
+			options.onFailure?.("Hermes service readiness: native gateway is not running");
+			return false;
+		}
+		return ready;
+	} catch (error) {
+		options.onFailure?.(
+			error instanceof RuntimeProbeError
+				? error.message
+				: "Runtime readiness probe: invalid response or configuration",
 		);
-	} catch {
 		return false;
 	}
+}
+
+class RuntimeProbeError extends Error {}
+
+async function probeHermesStatus(): Promise<unknown> {
+	return JSON.parse((await runtimeReadinessProbe("http://127.0.0.1:9119/api/status")).body);
 }
 
 async function runtimeReadinessProbe(
@@ -643,25 +815,41 @@ async function runtimeReadinessProbe(
 	headersOnly = false,
 	acceptedStatuses: readonly number[] = [200],
 ): Promise<{ status: number; body: string }> {
-	const { stdout } = await execFileAsync(
-		"curl",
-		[
-			"--disable",
-			"--noproxy",
-			"*",
-			"--silent",
-			"--max-time",
-			String(RUNTIME_READINESS_TIMEOUT_MS / 1_000),
-			...(headersOnly ? ["--head", "--output", "/dev/null"] : []),
-			"--write-out",
-			"\n%{http_code}",
-			url,
-		],
-		{ encoding: "utf8", maxBuffer: 64 * 1024, timeout: RUNTIME_READINESS_TIMEOUT_MS + 500 },
-	);
+	let stdout: string;
+	try {
+		({ stdout } = await execFileAsync(
+			"curl",
+			[
+				"--disable",
+				"--noproxy",
+				"*",
+				"--silent",
+				"--max-time",
+				String(RUNTIME_READINESS_TIMEOUT_MS / 1_000),
+				...(headersOnly ? ["--head", "--output", "/dev/null"] : []),
+				"--write-out",
+				"\n%{http_code}",
+				url,
+			],
+			{ encoding: "utf8", maxBuffer: 64 * 1024, timeout: RUNTIME_READINESS_TIMEOUT_MS + 500 },
+		));
+	} catch (error) {
+		// Never include curl stderr, response bodies, URLs, or arbitrary exception text.
+		const code = error && typeof error === "object" && "code" in error ? error.code : null;
+		const reason =
+			code === 28
+				? `timeout (${RUNTIME_READINESS_TIMEOUT_MS}ms)`
+				: code === 7
+					? "connection refused"
+					: "transport failure";
+		throw new RuntimeProbeError(`Runtime readiness probe: ${reason}`);
+	}
 	const separator = stdout.lastIndexOf("\n");
 	const status = Number(stdout.slice(separator + 1));
-	if (!acceptedStatuses.includes(status)) throw new Error("Runtime probe HTTP failure");
+	if (!acceptedStatuses.includes(status))
+		throw new RuntimeProbeError(
+			`Runtime readiness probe: HTTP ${Number.isInteger(status) && status >= 100 && status <= 599 ? status : "invalid"}`,
+		);
 	return { status, body: stdout.slice(0, separator) };
 }
 

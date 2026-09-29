@@ -486,7 +486,18 @@ case "$command" in
       [ ! -f "$(state_path "$unit" reload)" ] || need_daemon_reload=yes
       main_pid=0
       [ ! -f "$(state_path "$unit" pid)" ] || main_pid="$(cat "$(state_path "$unit" pid)")"
-      printf 'LoadState=%s\\nActiveState=%s\\nMainPID=%s\\nNeedDaemonReload=%s\\nJob=\\n' "$load_state" "$active_state" "$main_pid" "$need_daemon_reload"
+      printf 'LoadState=%s\\nActiveState=%s\\nMainPID=%s\\nNeedDaemonReload=%s\\nJob=\\nInvocationID=%032x\\n' "$load_state" "$active_state" "$main_pid" "$need_daemon_reload" "$((main_pid + 1))"
+    done
+    ;;
+  cat)
+    [ "\${1:-}" != "--no-pager" ] || shift
+    for unit in "$@"; do
+      if [ "$scope" = user ]; then
+        path="$HOME/.config/systemd/user/$unit"
+      else
+        path="\${CLAWDI_SYSTEMD_SYSTEM_ROOT:-/etc/systemd/system}/$unit"
+      fi
+      if [ -f "$path" ]; then cat "$path"; else printf '# fixture unit: %s\\n' "$unit"; fi
     done
     ;;
   is-enabled)

@@ -80,6 +80,7 @@ import {
 	hostPolicySummary,
 	type RuntimeBootStage,
 	type RuntimeBootStatus,
+	runtimeWatchAllowsTransportDiagnostic,
 	writeRuntimeBootStatus,
 	writeRuntimeWatchStatus,
 } from "../runtime/state";
@@ -1245,11 +1246,36 @@ export function runtimeWatchEventForOutcome(
 		});
 	}
 	if (outcome.kind === "load_failed") {
+		const active = readRuntimeAppliedState(paths);
+		const identity = active ? runtimeAppliedApplyIdentity(active) : null;
+		const healthAuthority =
+			active && identity
+				? {
+						...identity,
+						instanceId: active.instanceId,
+						sourceRevision: active.sourceRevision,
+						etag: active.etag,
+					}
+				: null;
+		const transportOnly =
+			outcome.failure.failureKind === "transport" &&
+			healthAuthority !== null &&
+			runtimeWatchAllowsTransportDiagnostic(healthAuthority, paths) &&
+			active !== null &&
+			identity !== null &&
+			outcome.failure.requestedApplyIdentity != null &&
+			runtimeApplyIdentitiesEqual(outcome.failure.requestedApplyIdentity, identity);
 		return runtimeWatchError(outcome.failure.stage, outcome.failure.errors, {
 			mode: outcome.failure.mode,
 			activeGeneration: outcome.failure.activeGeneration ?? null,
 			rejectedGeneration: outcome.failure.rejectedGeneration ?? null,
 			...(outcome.failure.etag ? { etag: outcome.failure.etag } : {}),
+			...(transportOnly
+				? {
+						healthImpact: "manifest_transport",
+						healthAuthority,
+					}
+				: {}),
 		});
 	}
 	if (outcome.kind === "not_modified") {
