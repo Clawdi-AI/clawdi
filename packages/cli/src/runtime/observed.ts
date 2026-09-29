@@ -15,7 +15,11 @@ import {
 } from "./applied-state";
 import { resolveRuntimeApplyGeneration } from "./apply-identity";
 import { type RuntimeCliBootstrapStatus, readRuntimeCliBootstrapStatus } from "./cli-update";
-import { type ComponentServiceState, observeComponents } from "./component-observation";
+import {
+	type ComponentServiceState,
+	componentConfigurationRevision,
+	observeComponents,
+} from "./component-observation";
 import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import { installedOpenClawCommandPath } from "./hosted-openclaw-context";
 import { readHostedSkillsObservation } from "./hosted-skill-observation";
@@ -77,10 +81,12 @@ export async function readHostedRuntimeObserved(
 	const watchStatus = readJsonRecord(paths.runtimeWatchStatus);
 	const activeCliVersion = getCliVersion();
 	const cliBootstrap = readRuntimeCliBootstrapStatus(paths);
+	const servingSamples = observationServingSamples(paths, appliedState);
 	const systemd = await readSystemdObserved(
 		paths,
 		appliedState,
 		boot.status?.enabledRuntimes ?? [],
+		servingSamples,
 	);
 	const providers = readProviderObserved(paths);
 	const appliedAuthority = appliedState
@@ -144,13 +150,50 @@ export async function readHostedRuntimeObserved(
 			paths,
 			appliedState,
 			(scope, unit) => readComponentServiceState(paths, scope, unit),
-			(component) => runtimeComponentIsReady(component, paths),
+			(component) =>
+				component === "files"
+					? runtimeComponentIsReady(component, paths)
+					: servingSamples
+							.read(
+								component === "hermes-ui"
+									? "clawdi-hermes-dashboard.service"
+									: "openclaw-gateway.service",
+							)
+							.then((sample) => sample.componentReady),
 		);
 		if (proof) {
 			observed.components = proof;
 			if (observed.status === "ok" && proof.entries.some((entry) => entry.status !== "ok"))
 				observed.status = "unknown";
 		}
+	}
+	// Optional evidence collection may separate the two consumers. Validate all
+	// sampled services again even when no component receipt could be admitted.
+	if (systemd) {
+		for (const unit of systemd.units) {
+			if (unit.scope !== "user" || !servingSamples.has(unit.name)) continue;
+			const sample = await servingSamples.read(unit.name);
+			if (!sample.serviceReady && unit.status === "ok") {
+				unit.status = "unknown";
+				unit.error = sample.error ?? "Runtime service readiness is not established";
+			}
+			if (!sample.componentReady) {
+				const component =
+					unit.name === "clawdi-hermes-dashboard.service" ? "hermes-ui" : "openclaw-ui";
+				const entry = observed.components?.entries.find(
+					(candidate) => candidate.component === component,
+				);
+				if (entry) entry.status = "unknown";
+			}
+		}
+		if (observed.systemd) observed.systemd.status = systemdUnitsStatus(systemd.units);
+		if (observed.status === "ok" && systemdReadinessStatus(systemd.units) !== "ok")
+			observed.status = "unknown";
+		if (
+			observed.status === "ok" &&
+			observed.components?.entries.some((entry) => entry.status !== "ok")
+		)
+			observed.status = "unknown";
 	}
 
 	// Reject the whole snapshot when its parent authority or health changed while
@@ -355,10 +398,75 @@ function providerSecretAvailable(secrets: JsonRecord, ref: string): boolean {
 	return runtimeSecretValue(secrets, ref) !== null;
 }
 
+interface ServingSample {
+	serviceReady: boolean;
+	componentReady: boolean;
+	error?: string;
+}
+
+function observationServingSamples(paths: RuntimePaths, applied: RuntimeAppliedState | null) {
+	const samples = new Map<string, Promise<ServingSample & { binding: string | null }>>();
+	const bindingFor = (unit: string): string | null => {
+		try {
+			const manager = readComponentServiceState(paths, "user", unit);
+			if (!manager) return null;
+			const hermes = unit === "clawdi-hermes-dashboard.service";
+			const nativeConfig = readFileSync(
+				join(paths.userHome, hermes ? ".hermes/config.yaml" : ".openclaw/openclaw.json"),
+				"utf8",
+			);
+			const desiredConfig = componentConfigurationRevision(
+				hermes ? "hermes-ui" : "openclaw-ui",
+				paths,
+				applied?.activated[unit],
+			);
+			return runtimeContentSha256([manager, nativeConfig, desiredConfig]);
+		} catch {
+			return null;
+		}
+	};
+	const read = async (unit: string): Promise<ServingSample> => {
+		if (unit !== "openclaw-gateway.service" && unit !== "clawdi-hermes-dashboard.service")
+			return { serviceReady: true, componentReady: true };
+		let pending = samples.get(unit);
+		if (!pending) {
+			pending = (async () => {
+				const binding = bindingFor(unit);
+				if (!binding) return { binding, serviceReady: false, componentReady: false };
+				let componentReady: boolean | undefined;
+				let error: string | undefined;
+				const serviceReady = await runtimeServiceIsReady(unit, paths, {
+					onComponentReady: (ready) => {
+						componentReady = ready;
+					},
+					onFailure: (reason) => {
+						error = reason;
+					},
+				});
+				return { binding, serviceReady, componentReady: componentReady ?? serviceReady, error };
+			})();
+			samples.set(unit, pending);
+		}
+		const sample = await pending;
+		// Revalidate on every consumer, including after any intervening scans.
+		// A changed invocation/configuration invalidates even a successful sample;
+		// failures are also shared, never retried within this observation.
+		if (!sample.binding || bindingFor(unit) !== sample.binding) {
+			sample.binding = null;
+			sample.serviceReady = false;
+			sample.componentReady = false;
+			sample.error = "Runtime readiness sample: invocation or configuration changed or unavailable";
+		}
+		return sample;
+	};
+	return { read, has: (unit: string) => samples.has(unit) };
+}
+
 async function readSystemdObserved(
 	paths: RuntimePaths,
 	appliedState: RuntimeAppliedState | null,
 	enabledRuntimes: readonly string[],
+	servingSamples: ReturnType<typeof observationServingSamples>,
 ): Promise<HostedRuntimeObservedSystemd | null> {
 	const systemUnits = managedSystemdUnitNames(paths.systemdSystemRoot).map((unit) =>
 		systemdUnitStatus("system", unit, paths),
@@ -383,24 +491,13 @@ async function readSystemdObserved(
 	]
 		.sort()
 		.map((unit) => systemdUnitStatus("user", unit, paths));
-	// One live status sample per systemd capture, never reused across heartbeats
-	// or component invocation proofs.
-	let hermesStatus: Promise<unknown> | undefined;
-	const readHermesStatus = () => (hermesStatus ??= probeHermesStatus());
 	await Promise.all(
 		userUnits.map(async (unit) => {
-			let evidence: string | undefined;
-			if (
-				unit.status === "ok" &&
-				!(await runtimeServiceIsReady(unit.name, paths, {
-					readHermesStatus,
-					onFailure: (reason) => {
-						evidence = reason;
-					},
-				}))
-			) {
+			if (unit.status !== "ok") return;
+			const sample = await servingSamples.read(unit.name);
+			if (!sample.serviceReady) {
 				unit.status = "unknown";
-				unit.error = evidence ?? "Runtime service readiness is not established";
+				unit.error = sample.error ?? "Runtime service readiness is not established";
 			}
 		}),
 	);
@@ -526,7 +623,13 @@ export async function runtimeComponentIsReady(
 		if (component === "files")
 			return (await runtimeReadinessProbe("http://127.0.0.1:9120/health")).status === 200;
 		if (component === "hermes-ui") {
-			return runtimeServiceIsReady("clawdi-hermes-dashboard.service", paths);
+			let ready = false;
+			await runtimeServiceIsReady("clawdi-hermes-dashboard.service", paths, {
+				onComponentReady: (value) => {
+					ready = value;
+				},
+			});
+			return ready;
 		}
 		return runtimeServiceIsReady("openclaw-gateway.service", paths);
 	} catch {
@@ -559,13 +662,12 @@ function hermesUiAuthenticationIsReady(status: unknown, expectedProvider: "self-
 export async function runtimeServiceIsReady(
 	unit: string,
 	paths: RuntimePaths,
-	options: { readHermesStatus?: () => Promise<unknown>; onFailure?: (reason: string) => void } = {},
+	options: {
+		onComponentReady?: (ready: boolean) => void;
+		onFailure?: (reason: string) => void;
+	} = {},
 ): Promise<boolean> {
-	if (
-		unit !== "openclaw-gateway.service" &&
-		unit !== "clawdi-hermes-dashboard.service" &&
-		unit !== "hermes-gateway.service"
-	)
+	if (unit !== "openclaw-gateway.service" && unit !== "clawdi-hermes-dashboard.service")
 		return true;
 	try {
 		if (unit === "openclaw-gateway.service") {
@@ -637,12 +739,7 @@ export async function runtimeServiceIsReady(
 			return (await runtimeReadinessProbe(uiUrl.href, true)).status === 200;
 		}
 		// The managed Hermes dashboard command binds the native port 9119.
-		const status = recordValue(await (options.readHermesStatus ?? probeHermesStatus)());
-		if (unit === "hermes-gateway.service") {
-			const ready = status?.gateway_running === true && status.gateway_state === "running";
-			if (!ready) options.onFailure?.("Hermes gateway readiness: native gateway is not running");
-			return ready;
-		}
+		const status = recordValue(await probeHermesStatus());
 		const expectedProvider = hermesUiExpectedAuthProvider(paths);
 		if (!expectedProvider || !hermesUiAuthenticationIsReady(status, expectedProvider)) {
 			options.onFailure?.(
@@ -652,7 +749,12 @@ export async function runtimeServiceIsReady(
 		}
 		const page = await runtimeReadinessProbe("http://127.0.0.1:9119/login");
 		const ready = /<!doctype html|<html[\s>]/i.test(page.body);
+		options.onComponentReady?.(ready);
 		if (!ready) options.onFailure?.("Hermes dashboard readiness: login HTML is not available");
+		if (status?.gateway_running !== true || status.gateway_state !== "running") {
+			options.onFailure?.("Hermes service readiness: native gateway is not running");
+			return false;
+		}
 		return ready;
 	} catch (error) {
 		options.onFailure?.(

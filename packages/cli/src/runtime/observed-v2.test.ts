@@ -10,10 +10,22 @@ import {
 	runtimeServiceWithdrawals,
 	writeRuntimeAppliedState,
 } from "./applied-state";
+import { componentConfigurationRevision } from "./component-observation";
 import { HostedRuntimeHeartbeatSession } from "./heartbeat-observation";
-import { readHostedRuntimeObserved, runtimeComponentIsReady } from "./observed";
+import {
+	readComponentServiceState,
+	readHostedRuntimeObserved,
+	runtimeComponentIsReady,
+} from "./observed";
 import { getRuntimePaths } from "./paths";
-import { buildRuntimeBootStatus, writeRuntimeBootStatus, writeRuntimeWatchStatus } from "./state";
+import { runtimeRunConfigPath } from "./run-config";
+import {
+	buildRuntimeBootStatus,
+	readRuntimeBootStatus,
+	writeRuntimeBootStatus,
+	writeRuntimeWatchStatus,
+} from "./state";
+import { readSystemdComponentFingerprint } from "./systemd-transaction";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 import { recordRuntimeUserActivityScan } from "./user-activity-state";
 
@@ -352,9 +364,13 @@ describe("hosted runtime observed v2", () => {
 				writeHermesAuthProvider();
 			}
 			const systemctl = join(paths.userHome, "systemctl");
-			writeFileSync(systemctl, "#!/bin/sh\nprintf 'ActiveState=active\nSubState=running\n'\n", {
-				mode: 0o700,
-			});
+			writeFileSync(
+				systemctl,
+				"#!/bin/sh\nprintf 'ActiveState=active\nSubState=running\nLoadState=loaded\nNeedDaemonReload=no\nJob=\nInvocationID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'\n",
+				{
+					mode: 0o700,
+				},
+			);
 			process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
 			let body: unknown = ready;
 			let mutateParent: (() => void) | undefined;
@@ -413,14 +429,13 @@ describe("hosted runtime observed v2", () => {
 						if (response === pending[0] || response === pending[1]) {
 							expect(
 								observed?.systemd?.units.find((candidate) => candidate.name === unit)?.status,
-							).toBe("ok");
+							).toBe("unknown");
 							expect(
 								observed?.systemd?.units.find(
 									(candidate) => candidate.name === "hermes-gateway.service",
 								),
 							).toMatchObject({
-								status: "unknown",
-								error: "Hermes gateway readiness: native gateway is not running",
+								status: "ok",
 							});
 						}
 					}
@@ -720,6 +735,188 @@ esac
 		expect(observed?.systemd?.units.filter((unit) => unit.scope === "user")).toHaveLength(15);
 	});
 });
+
+test.each(["hermes", "openclaw"] as const)(
+	"shares one identity-bound %s serving sample with component proof",
+	async (runtime) => {
+		const paths = healthyAppliedRuntimePaths([runtime]);
+		const originalBoot = readRuntimeBootStatus(paths).status;
+		if (!originalBoot) throw new Error("Expected boot fixture");
+		const identity = userInfo();
+		process.env.CLAWDI_RUNTIME_USER = identity.username;
+		process.env.CLAWDI_RUNTIME_UID = String(identity.uid);
+		process.env.CLAWDI_RUNTIME_GID = String(identity.gid);
+		const component = runtime === "hermes" ? "hermes-ui" : "openclaw-ui";
+		const unit =
+			runtime === "hermes" ? "clawdi-hermes-dashboard.service" : "openclaw-gateway.service";
+		mkdirSync(paths.systemdUserRoot, { recursive: true });
+		writeFileSync(
+			join(paths.systemdUserRoot, unit),
+			`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\nExecStart=/fixture\n`,
+		);
+		const invocationPath = join(paths.userHome, "invocation");
+		const managerConfigPath = join(paths.userHome, "manager-config");
+		const nativeConfigPath = join(
+			paths.userHome,
+			runtime === "hermes" ? ".hermes/config.yaml" : ".openclaw/openclaw.json",
+		);
+		const nativeConfig =
+			runtime === "hermes"
+				? "dashboard:\n  oauth:\n    self_hosted:\n      client_id: fixture\n"
+				: JSON.stringify({ gateway: { port: 18789, auth: { token: "fixture" } } });
+		mkdirSync(dirname(nativeConfigPath), { recursive: true });
+		let resetDesiredConfiguration = () => {};
+		const resetConfiguration = () => {
+			writeFileSync(invocationPath, "a".repeat(32));
+			writeFileSync(managerConfigPath, "fixture-effective-unit");
+			writeFileSync(nativeConfigPath, nativeConfig);
+			resetDesiredConfiguration();
+		};
+		resetConfiguration();
+		if (runtime === "hermes") {
+			const runPath = runtimeRunConfigPath("hermes", paths, "dashboard");
+			mkdirSync(dirname(runPath), { recursive: true });
+			resetDesiredConfiguration = () =>
+				writeFileSync(
+					runPath,
+					JSON.stringify({
+						schemaVersion: "clawdi.runtimeRunConfig.v1",
+						runtime: "hermes",
+						service: "dashboard",
+						enabled: true,
+						generatedAt: "2026-09-29T00:00:00Z",
+						generation: 1,
+						instanceId: "fixture",
+						command: "hermes",
+						commandPath: null,
+						appRoot: null,
+					}),
+				);
+			resetDesiredConfiguration();
+		}
+		const systemctl = join(paths.userHome, "systemctl");
+		writeFileSync(
+			systemctl,
+			`#!/bin/sh
+[ "$1" = --user ] && shift
+if [ "$1" = cat ]; then cat '${managerConfigPath}'; exit 0; fi
+printf 'ActiveState=active\nSubState=running\nLoadState=loaded\nNeedDaemonReload=no\nJob=\nInvocationID='
+cat '${invocationPath}'
+printf '\n'
+`,
+			{ mode: 0o700 },
+		);
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
+		const applied = readRuntimeAppliedState(paths);
+		const fingerprint = readSystemdComponentFingerprint(paths, "user", unit);
+		if (!applied || !fingerprint) throw new Error("Expected service fixture");
+		applied.activated = { [unit]: fingerprint };
+		writeRuntimeAppliedState(applied, paths);
+		const manager = readComponentServiceState(paths, "user", unit);
+		const config = componentConfigurationRevision(component, paths, fingerprint);
+		if (!manager || !config) throw new Error("Expected bound component fixture");
+		writeFileSync(
+			join(dirname(paths.appliedState), "component-activations.json"),
+			JSON.stringify({
+				schemaVersion: 1,
+				appliedStateRevision: runtimeContentSha256(applied),
+				entries: [
+					{
+						component,
+						invocationId: manager.invocationId,
+						configRevision: runtimeContentSha256([config, manager.configurationRevision]),
+						accessRevision: "b".repeat(64),
+					},
+				],
+			}),
+		);
+		let requests = 0;
+		let releaseTimedOutRequest: (() => void) | undefined;
+		let mode:
+			| "healthy"
+			| "http-failure"
+			| "invalid-json"
+			| "boot-change"
+			| "timeout"
+			| "restart"
+			| "native-config"
+			| "desired-config"
+			| "unit-config" = "healthy";
+		const server = Bun.serve({
+			hostname: "127.0.0.1",
+			port: runtime === "hermes" ? 9119 : 18789,
+			async fetch(request) {
+				const path = new URL(request.url).pathname;
+				if (path === "/login" || path === "/") return new Response("<!doctype html><html></html>");
+				if (path !== "/api/status" && path !== "/readyz")
+					return new Response(null, { status: 404 });
+				requests++;
+				// A second independent probe would succeed and contradict the first.
+				if (requests === 1) {
+					if (mode === "http-failure") return new Response("unavailable", { status: 503 });
+					if (mode === "invalid-json") return new Response("not JSON");
+					if (mode === "boot-change")
+						writeRuntimeBootStatus({ ...originalBoot, bootId: "changed-boot" }, paths);
+					if (mode === "timeout")
+						await new Promise<void>((resolve) => {
+							releaseTimedOutRequest = resolve;
+						});
+					if (mode === "restart") writeFileSync(invocationPath, "c".repeat(32));
+					if (mode === "native-config")
+						writeFileSync(nativeConfigPath, `${nativeConfig}\n# changed\n`);
+					if (mode === "unit-config") writeFileSync(managerConfigPath, "changed-effective-unit");
+					if (mode === "desired-config")
+						writeFileSync(runtimeRunConfigPath("hermes", paths, "dashboard"), "{}");
+				}
+				return Response.json(
+					runtime === "hermes"
+						? {
+								gateway_running: true,
+								gateway_state: "running",
+								auth_required: true,
+								auth_providers: ["self-hosted"],
+							}
+						: { ready: true },
+				);
+			},
+		});
+		try {
+			for (const nextMode of [
+				"healthy",
+				"http-failure",
+				"invalid-json",
+				"timeout",
+				"restart",
+				"native-config",
+				"unit-config",
+				...(runtime === "hermes" ? ["desired-config" as const] : []),
+				"healthy",
+			] as const) {
+				resetConfiguration();
+				mode = nextMode;
+				requests = 0;
+				const observed = await readHostedRuntimeObserved(paths, { includeComponents: true });
+				releaseTimedOutRequest?.();
+				releaseTimedOutRequest = undefined;
+				expect(requests).toBe(1);
+				const expected = mode === "healthy" ? "ok" : "unknown";
+				expect({ mode, status: observed?.status }).toEqual({ mode, status: expected });
+				expect(observed?.systemd?.units.find((entry) => entry.name === unit)?.status).toBe(
+					expected,
+				);
+				expect(observed?.components?.entries[0]?.status).toBe(expected);
+			}
+			resetConfiguration();
+			mode = "boot-change";
+			requests = 0;
+			expect(await readHostedRuntimeObserved(paths, { includeComponents: true })).toBeNull();
+			expect(requests).toBe(1);
+		} finally {
+			releaseTimedOutRequest?.();
+			await server.stop(true);
+		}
+	},
+);
 
 test("unknown component evidence downgrades healthy aggregate without replacing a definite error", async () => {
 	const paths = healthyAppliedRuntimePaths();
