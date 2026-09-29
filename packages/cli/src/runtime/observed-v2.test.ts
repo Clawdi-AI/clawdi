@@ -363,6 +363,7 @@ describe("hosted runtime observed v2", () => {
 			let nativeStatus: unknown;
 			let probeWait: Promise<void> | undefined;
 			let releaseProbe: (() => void) | undefined;
+			let statusRequests = 0;
 			const server = Bun.serve({
 				hostname: "127.0.0.1",
 				port: unit === "openclaw-gateway.service" ? 0 : 9119,
@@ -372,6 +373,7 @@ describe("hosted runtime observed v2", () => {
 					mutateParent = undefined;
 					mutate?.();
 					const path = new URL(request.url).pathname;
+					if (path === "/api/status") statusRequests++;
 					if (path === "/native-status")
 						return new Response(
 							typeof nativeStatus === "string" ? nativeStatus : JSON.stringify(nativeStatus),
@@ -400,11 +402,28 @@ describe("hosted runtime observed v2", () => {
 			try {
 				for (const response of [...pending, null, "not JSON", ready, ...pending]) {
 					body = response;
+					statusRequests = 0;
 					const observed = await readHostedRuntimeObserved(paths);
 					expect(
 						observed?.systemd?.units.find((candidate) => candidate.name === unit)?.activeState,
 					).toBe("active");
 					expect(observed?.status).toBe(response === ready ? "ok" : "unknown");
+					if (runtime === "hermes") {
+						expect(statusRequests).toBe(1);
+						if (response === pending[0] || response === pending[1]) {
+							expect(
+								observed?.systemd?.units.find((candidate) => candidate.name === unit)?.status,
+							).toBe("ok");
+							expect(
+								observed?.systemd?.units.find(
+									(candidate) => candidate.name === "hermes-gateway.service",
+								),
+							).toMatchObject({
+								status: "unknown",
+								error: "Hermes gateway readiness: native gateway is not running",
+							});
+						}
+					}
 				}
 				body = ready;
 				const idleWatch = {
@@ -433,7 +452,12 @@ describe("hosted runtime observed v2", () => {
 				expect(await readHostedRuntimeObserved(paths)).toBeNull();
 				rmSync(paths.runtimeWatchStatus);
 				probeStatus = 503;
-				expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+				const unavailable = await readHostedRuntimeObserved(paths);
+				expect(unavailable?.status).toBe("unknown");
+				if (runtime === "hermes")
+					expect(
+						unavailable?.systemd?.units.find((candidate) => candidate.name === unit)?.error,
+					).toBe("Runtime readiness probe: HTTP 503");
 				probeStatus = 200;
 				if (unit === "openclaw-gateway.service") {
 					// The old native status command proves handshake admission independently of channels.
@@ -572,8 +596,22 @@ printf '%s' '{"port":${server.port},"controlUi":{"basePath":"/control"}}'
 					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(true);
 					uiStatus = 503;
 					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(false);
+					const missingLogin = await readHostedRuntimeObserved(paths);
+					expect(
+						missingLogin?.systemd?.units.find((candidate) => candidate.name === unit)?.error,
+					).toBe("Runtime readiness probe: HTTP 503");
 					uiStatus = 200;
 					body = ready;
+					probeWait = new Promise<void>((resolve) => {
+						releaseProbe = resolve;
+					});
+					const timedOut = await readHostedRuntimeObserved(paths);
+					expect(timedOut?.status).toBe("unknown");
+					expect(timedOut?.systemd?.units.find((candidate) => candidate.name === unit)?.error).toBe(
+						"Runtime readiness probe: timeout (3000ms)",
+					);
+					releaseProbe?.();
+					probeWait = undefined;
 					writeFileSync(
 						systemctl,
 						`#!/bin/sh

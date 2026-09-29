@@ -383,11 +383,24 @@ async function readSystemdObserved(
 	]
 		.sort()
 		.map((unit) => systemdUnitStatus("user", unit, paths));
+	// One live status sample per systemd capture, never reused across heartbeats
+	// or component invocation proofs.
+	let hermesStatus: Promise<unknown> | undefined;
+	const readHermesStatus = () => (hermesStatus ??= probeHermesStatus());
 	await Promise.all(
 		userUnits.map(async (unit) => {
-			if (unit.status === "ok" && !(await runtimeServiceIsReady(unit.name, paths))) {
+			let evidence: string | undefined;
+			if (
+				unit.status === "ok" &&
+				!(await runtimeServiceIsReady(unit.name, paths, {
+					readHermesStatus,
+					onFailure: (reason) => {
+						evidence = reason;
+					},
+				}))
+			) {
 				unit.status = "unknown";
-				unit.error = "Runtime service readiness is not established";
+				unit.error = evidence ?? "Runtime service readiness is not established";
 			}
 		}),
 	);
@@ -513,14 +526,7 @@ export async function runtimeComponentIsReady(
 		if (component === "files")
 			return (await runtimeReadinessProbe("http://127.0.0.1:9120/health")).status === 200;
 		if (component === "hermes-ui") {
-			const status: unknown = JSON.parse(
-				(await runtimeReadinessProbe("http://127.0.0.1:9119/api/status")).body,
-			);
-			const expectedProvider = hermesUiExpectedAuthProvider(paths);
-			if (!expectedProvider || !hermesUiAuthenticationIsReady(status, expectedProvider))
-				return false;
-			const page = await runtimeReadinessProbe("http://127.0.0.1:9119/login");
-			return /<!doctype html|<html[\s>]/i.test(page.body);
+			return runtimeServiceIsReady("clawdi-hermes-dashboard.service", paths);
 		}
 		return runtimeServiceIsReady("openclaw-gateway.service", paths);
 	} catch {
@@ -550,8 +556,16 @@ function hermesUiAuthenticationIsReady(status: unknown, expectedProvider: "self-
 }
 
 /** Native service activation precedes application startup; heartbeat health needs both. */
-export async function runtimeServiceIsReady(unit: string, paths: RuntimePaths): Promise<boolean> {
-	if (unit !== "openclaw-gateway.service" && unit !== "clawdi-hermes-dashboard.service")
+export async function runtimeServiceIsReady(
+	unit: string,
+	paths: RuntimePaths,
+	options: { readHermesStatus?: () => Promise<unknown>; onFailure?: (reason: string) => void } = {},
+): Promise<boolean> {
+	if (
+		unit !== "openclaw-gateway.service" &&
+		unit !== "clawdi-hermes-dashboard.service" &&
+		unit !== "hermes-gateway.service"
+	)
 		return true;
 	try {
 		if (unit === "openclaw-gateway.service") {
@@ -623,19 +637,37 @@ export async function runtimeServiceIsReady(unit: string, paths: RuntimePaths): 
 			return (await runtimeReadinessProbe(uiUrl.href, true)).status === 200;
 		}
 		// The managed Hermes dashboard command binds the native port 9119.
-		const status = recordValue(
-			JSON.parse((await runtimeReadinessProbe("http://127.0.0.1:9119/api/status")).body),
-		);
+		const status = recordValue(await (options.readHermesStatus ?? probeHermesStatus)());
+		if (unit === "hermes-gateway.service") {
+			const ready = status?.gateway_running === true && status.gateway_state === "running";
+			if (!ready) options.onFailure?.("Hermes gateway readiness: native gateway is not running");
+			return ready;
+		}
 		const expectedProvider = hermesUiExpectedAuthProvider(paths);
-		return (
-			expectedProvider !== null &&
-			status?.gateway_running === true &&
-			status.gateway_state === "running" &&
-			hermesUiAuthenticationIsReady(status, expectedProvider)
+		if (!expectedProvider || !hermesUiAuthenticationIsReady(status, expectedProvider)) {
+			options.onFailure?.(
+				"Hermes dashboard readiness: self-hosted authentication is not established",
+			);
+			return false;
+		}
+		const page = await runtimeReadinessProbe("http://127.0.0.1:9119/login");
+		const ready = /<!doctype html|<html[\s>]/i.test(page.body);
+		if (!ready) options.onFailure?.("Hermes dashboard readiness: login HTML is not available");
+		return ready;
+	} catch (error) {
+		options.onFailure?.(
+			error instanceof RuntimeProbeError
+				? error.message
+				: "Runtime readiness probe: invalid response or configuration",
 		);
-	} catch {
 		return false;
 	}
+}
+
+class RuntimeProbeError extends Error {}
+
+async function probeHermesStatus(): Promise<unknown> {
+	return JSON.parse((await runtimeReadinessProbe("http://127.0.0.1:9119/api/status")).body);
 }
 
 async function runtimeReadinessProbe(
@@ -643,25 +675,41 @@ async function runtimeReadinessProbe(
 	headersOnly = false,
 	acceptedStatuses: readonly number[] = [200],
 ): Promise<{ status: number; body: string }> {
-	const { stdout } = await execFileAsync(
-		"curl",
-		[
-			"--disable",
-			"--noproxy",
-			"*",
-			"--silent",
-			"--max-time",
-			String(RUNTIME_READINESS_TIMEOUT_MS / 1_000),
-			...(headersOnly ? ["--head", "--output", "/dev/null"] : []),
-			"--write-out",
-			"\n%{http_code}",
-			url,
-		],
-		{ encoding: "utf8", maxBuffer: 64 * 1024, timeout: RUNTIME_READINESS_TIMEOUT_MS + 500 },
-	);
+	let stdout: string;
+	try {
+		({ stdout } = await execFileAsync(
+			"curl",
+			[
+				"--disable",
+				"--noproxy",
+				"*",
+				"--silent",
+				"--max-time",
+				String(RUNTIME_READINESS_TIMEOUT_MS / 1_000),
+				...(headersOnly ? ["--head", "--output", "/dev/null"] : []),
+				"--write-out",
+				"\n%{http_code}",
+				url,
+			],
+			{ encoding: "utf8", maxBuffer: 64 * 1024, timeout: RUNTIME_READINESS_TIMEOUT_MS + 500 },
+		));
+	} catch (error) {
+		// Never include curl stderr, response bodies, URLs, or arbitrary exception text.
+		const code = error && typeof error === "object" && "code" in error ? error.code : null;
+		const reason =
+			code === 28
+				? `timeout (${RUNTIME_READINESS_TIMEOUT_MS}ms)`
+				: code === 7
+					? "connection refused"
+					: "transport failure";
+		throw new RuntimeProbeError(`Runtime readiness probe: ${reason}`);
+	}
 	const separator = stdout.lastIndexOf("\n");
 	const status = Number(stdout.slice(separator + 1));
-	if (!acceptedStatuses.includes(status)) throw new Error("Runtime probe HTTP failure");
+	if (!acceptedStatuses.includes(status))
+		throw new RuntimeProbeError(
+			`Runtime readiness probe: HTTP ${Number.isInteger(status) && status >= 100 && status <= 599 ? status : "invalid"}`,
+		);
 	return { status, body: stdout.slice(0, separator) };
 }
 
