@@ -10,6 +10,11 @@ updates:
       day: "monday"
     open-pull-requests-limit: 5
     groups:
+      # TanStack Router/Start ship API changes in minors; keep them out of the
+      # broad group so a TanStack break does not block unrelated updates.
+      tanstack:
+        patterns: ["@tanstack/*"]
+        update-types: ["minor", "patch"]
       minor-and-patch:
         update-types: ["minor", "patch"]
     ignore:
@@ -24,11 +29,25 @@ updates:
       day: "monday"
     open-pull-requests-limit: 3
     groups:
+      # boto3, botocore and their stubs are pinned to one exact patch
+      # (tests/test_boto_dependency_alignment.py), so they must move together.
+      aws-sdk:
+        patterns: ["boto3", "botocore", "s3transfer", "boto3-stubs", "boto3-stubs-full", "botocore-stubs"]
+        update-types: ["minor", "patch"]
       minor-and-patch:
         update-types: ["minor", "patch"]
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # Exact pins owned by humans: mem0ai is locked by the pinned public-client
+      # contract, and composio/composio-client are a published pair.
+      - dependency-name: "mem0ai"
+      - dependency-name: "composio"
+      - dependency-name: "composio-client"
+      # SQLAlchemy 2.1 switches the default PostgreSQL driver to psycopg 3;
+      # that migration needs a human-owned PR.
+      - dependency-name: "sqlalchemy"
+        update-types: ["version-update:semver-minor"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
