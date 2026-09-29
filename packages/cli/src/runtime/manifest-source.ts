@@ -18,6 +18,7 @@ import {
 } from "./applied-state";
 import {
 	type RuntimeApplyContext,
+	type RuntimeApplyIdentity,
 	readRuntimeApplyContext,
 	resolveRuntimeApplyGeneration,
 	runtimeApplyIdentitiesEqual,
@@ -153,6 +154,8 @@ export interface RuntimeManifestFailure {
 	etag?: string;
 	rejectedGeneration?: number | null;
 	activeGeneration?: number | null;
+	failureKind?: "transport";
+	requestedApplyIdentity?: RuntimeApplyIdentity | null;
 }
 
 interface ExistingManifestState {
@@ -181,6 +184,8 @@ class RuntimeManifestResponseError extends Error {
 		super(message);
 	}
 }
+
+class RuntimeManifestTransportError extends Error {}
 
 function readJsonFile(path: string): unknown {
 	const content = readFileSync(path, "utf-8");
@@ -242,20 +247,27 @@ async function fetchRuntimeManifestPayload(
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	try {
-		const response = await fetch(url, {
-			method: "GET",
-			headers: {
-				accept: HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
-				authorization: `Bearer ${token}`,
-				[HOSTED_RUNTIME_CAPABILITIES_HEADER]: [
-					HOSTED_AGENT_PLUGIN_MANIFEST_CAPABILITY,
-					"provider-identity-v1",
-					HOSTED_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY,
-				].join(", "),
-				...(opts.ifNoneMatch ? { "if-none-match": opts.ifNoneMatch } : {}),
-			},
-			signal: controller.signal,
-		});
+		let response: Response;
+		try {
+			response = await fetch(url, {
+				method: "GET",
+				headers: {
+					accept: HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+					authorization: `Bearer ${token}`,
+					[HOSTED_RUNTIME_CAPABILITIES_HEADER]: [
+						HOSTED_AGENT_PLUGIN_MANIFEST_CAPABILITY,
+						"provider-identity-v1",
+						HOSTED_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY,
+					].join(", "),
+					...(opts.ifNoneMatch ? { "if-none-match": opts.ifNoneMatch } : {}),
+				},
+				signal: controller.signal,
+			});
+		} catch (error) {
+			// Only failure to obtain an HTTP response is non-mutating transport
+			// evidence. Authentication, payload and authority failures stay fatal.
+			throw new RuntimeManifestTransportError(toErrorMessage(error));
+		}
 		const etag = response.headers.get("etag") ?? undefined;
 		if (response.status === 304) {
 			return { url, notModified: true, etag };
@@ -315,6 +327,9 @@ export async function loadRemoteRuntimeManifest(
 			mode: "repair",
 			stage: runtimeFetchFailureStage(error),
 			errors: [`could not fetch runtime manifest: ${toErrorMessage(error)}`],
+			...(error instanceof RuntimeManifestTransportError
+				? { failureKind: "transport" as const, requestedApplyIdentity: applyContext.identity }
+				: {}),
 			...(error instanceof RuntimeManifestResponseError && error.etag ? { etag: error.etag } : {}),
 		};
 	}

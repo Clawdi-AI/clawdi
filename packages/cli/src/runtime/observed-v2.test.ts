@@ -2,26 +2,44 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
+import { runtimeWatchEventForOutcome } from "../commands/runtime";
 import { getCliVersion } from "../lib/version";
 import {
 	readRuntimeAppliedState,
+	runtimeAppliedApplyIdentity,
 	runtimeContentSha256,
 	runtimeProviderConflicts,
 	runtimeServiceWithdrawals,
 	writeRuntimeAppliedState,
 } from "./applied-state";
+import type { RuntimeApplyContext } from "./apply-identity";
+import { componentConfigurationRevision } from "./component-observation";
 import { HostedRuntimeHeartbeatSession } from "./heartbeat-observation";
-import { readHostedRuntimeObserved, runtimeComponentIsReady } from "./observed";
+import { HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE, loadRemoteRuntimeManifest } from "./manifest-source";
+import {
+	readComponentServiceState,
+	readHostedRuntimeObserved,
+	runtimeComponentIsReady,
+} from "./observed";
 import { getRuntimePaths } from "./paths";
-import { buildRuntimeBootStatus, writeRuntimeBootStatus, writeRuntimeWatchStatus } from "./state";
+import { runtimeRunConfigPath } from "./run-config";
+import {
+	buildRuntimeBootStatus,
+	readRuntimeBootStatus,
+	writeRuntimeBootStatus,
+	writeRuntimeWatchStatus,
+} from "./state";
+import { readSystemdComponentFingerprint } from "./systemd-transaction";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 import { recordRuntimeUserActivityScan } from "./user-activity-state";
 
 const originalEnv = { ...process.env };
+const originalFetch = globalThis.fetch;
 const roots: string[] = [];
 
 afterEach(() => {
 	process.env = { ...originalEnv };
+	globalThis.fetch = originalFetch;
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -189,6 +207,139 @@ describe("hosted runtime observed v2", () => {
 		expect(observed?.convergeError).toBe("runtime hermes sourced Skill projection failed");
 	});
 
+	test("keeps transport-only fetch failures diagnostic only for the exact healthy committed runtime", async () => {
+		const paths = healthyAppliedRuntimePaths();
+		const applied = readRuntimeAppliedState(paths);
+		const identity = applied ? runtimeAppliedApplyIdentity(applied) : null;
+		const boot = readRuntimeBootStatus(paths).status;
+		if (!applied || !identity || !boot) throw new Error("Expected committed fixture");
+		const context: RuntimeApplyContext = {
+			kind: "context-file",
+			backend: "incus",
+			identity,
+			manifestSource: {
+				type: "http",
+				url: "https://runtime.example.test/manifest",
+				auth: { type: "bearer", token: "fixture" },
+			},
+		};
+		globalThis.fetch = Object.assign(
+			async () => {
+				throw new TypeError("fetch failed");
+			},
+			{ preconnect: () => undefined },
+		);
+		const failure = await loadRemoteRuntimeManifest(paths, { applyContext: context });
+		if (!("errors" in failure)) throw new Error("Expected transport failure");
+		expect(failure).toMatchObject({ failureKind: "transport", requestedApplyIdentity: identity });
+		const event = runtimeWatchEventForOutcome({ kind: "load_failed", failure }, paths);
+		if (!event) throw new Error("Expected watch error");
+		expect(event).toHaveProperty("healthImpact", "manifest_transport");
+		writeRuntimeWatchStatus(event, paths);
+		const healthy = await readHostedRuntimeObserved(paths);
+		expect(healthy?.status).toBe("ok");
+		expect(healthy?.convergeError).toBe("could not fetch runtime manifest: fetch failed");
+		expect(runtimeWatchEventForOutcome({ kind: "load_failed", failure }, paths)).toHaveProperty(
+			"healthImpact",
+			"manifest_transport",
+		);
+		writeRuntimeWatchStatus({ ...event, stage: "final" }, paths);
+		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		const mutationFailure = runtimeWatchEventForOutcome(
+			{ kind: "apply_error", error: "fetch failed" },
+			paths,
+		);
+		if (!mutationFailure) throw new Error("Expected mutation failure");
+		expect(mutationFailure).not.toHaveProperty("healthImpact");
+		writeRuntimeWatchStatus(mutationFailure, paths);
+		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		const afterMutation = runtimeWatchEventForOutcome({ kind: "load_failed", failure }, paths);
+		if (!afterMutation) throw new Error("Expected transport failure after mutation");
+		expect(afterMutation).not.toHaveProperty("healthImpact");
+		writeRuntimeWatchStatus(afterMutation, paths);
+		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+
+		for (const change of [
+			{ generation: identity.generation + 1 },
+			{ manifestETag: '"other"' },
+			{ applyReceiptId: "different-receipt" },
+			{ bootNonce: "different-boot-nonce" },
+		]) {
+			const mismatched = await loadRemoteRuntimeManifest(paths, {
+				applyContext: { ...context, identity: { ...identity, ...change } },
+			});
+			if (!("errors" in mismatched)) throw new Error("Expected transport failure");
+			const rejected = runtimeWatchEventForOutcome(
+				{ kind: "load_failed", failure: mismatched },
+				paths,
+			);
+			if (!rejected) throw new Error("Expected watch error");
+			expect(rejected).not.toHaveProperty("healthImpact");
+			writeRuntimeWatchStatus(rejected, paths);
+			expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		}
+		writeRuntimeWatchStatus(event, paths);
+		writeRuntimeAppliedState({ ...applied, sourceRevision: "c".repeat(64) }, paths);
+		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		writeRuntimeAppliedState(applied, paths);
+		writeRuntimeBootStatus({ ...boot, activeGeneration: applied.generation + 1 }, paths);
+		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		writeRuntimeBootStatus({ ...boot, status: "error" }, paths);
+		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		rmSync(paths.bootStatus);
+		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		writeRuntimeBootStatus(boot, paths);
+		rmSync(paths.appliedState);
+		expect(runtimeWatchEventForOutcome({ kind: "load_failed", failure }, paths)).not.toHaveProperty(
+			"healthImpact",
+		);
+		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+	});
+
+	test.each([
+		{ status: 401, contentType: HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE, body: "unauthorized" },
+		{ status: 403, contentType: HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE, body: "forbidden" },
+		{ status: 503, contentType: HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE, body: "unavailable" },
+		{ status: 200, contentType: "application/json", body: "{}" },
+		{ status: 200, contentType: HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE, body: "invalid JSON" },
+		{ status: 200, contentType: HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE, body: "{}" },
+	])(
+		"does not classify HTTP $status or invalid manifest responses as transport-only",
+		async ({ status, contentType, body }) => {
+			const paths = healthyAppliedRuntimePaths();
+			const applied = readRuntimeAppliedState(paths);
+			const identity = applied ? runtimeAppliedApplyIdentity(applied) : null;
+			if (!identity) throw new Error("Expected applied fixture");
+			globalThis.fetch = Object.assign(
+				async () =>
+					new Response(body, {
+						status,
+						headers: { "content-type": contentType, etag: '"response"' },
+					}),
+				{ preconnect: () => undefined },
+			);
+			const failure = await loadRemoteRuntimeManifest(paths, {
+				applyContext: {
+					kind: "context-file",
+					backend: "incus",
+					identity,
+					manifestSource: {
+						type: "http",
+						url: "https://runtime.example.test/manifest",
+						auth: { type: "bearer", token: "fixture" },
+					},
+				},
+			});
+			if (!("errors" in failure)) throw new Error("Expected rejected response");
+			expect(failure).not.toHaveProperty("failureKind");
+			const event = runtimeWatchEventForOutcome({ kind: "load_failed", failure }, paths);
+			if (!event) throw new Error("Expected watch error");
+			expect(event).not.toHaveProperty("healthImpact");
+			writeRuntimeWatchStatus(event, paths);
+			expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		},
+	);
+
 	test("reports committed provider conflicts without degrading runtime health", async () => {
 		const paths = healthyAppliedRuntimePaths();
 		const applied = readRuntimeAppliedState(paths);
@@ -352,9 +503,13 @@ describe("hosted runtime observed v2", () => {
 				writeHermesAuthProvider();
 			}
 			const systemctl = join(paths.userHome, "systemctl");
-			writeFileSync(systemctl, "#!/bin/sh\nprintf 'ActiveState=active\nSubState=running\n'\n", {
-				mode: 0o700,
-			});
+			writeFileSync(
+				systemctl,
+				"#!/bin/sh\nprintf 'ActiveState=active\nSubState=running\nLoadState=loaded\nNeedDaemonReload=no\nJob=\nInvocationID=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'\n",
+				{
+					mode: 0o700,
+				},
+			);
 			process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
 			let body: unknown = ready;
 			let mutateParent: (() => void) | undefined;
@@ -363,6 +518,7 @@ describe("hosted runtime observed v2", () => {
 			let nativeStatus: unknown;
 			let probeWait: Promise<void> | undefined;
 			let releaseProbe: (() => void) | undefined;
+			let statusRequests = 0;
 			const server = Bun.serve({
 				hostname: "127.0.0.1",
 				port: unit === "openclaw-gateway.service" ? 0 : 9119,
@@ -372,6 +528,7 @@ describe("hosted runtime observed v2", () => {
 					mutateParent = undefined;
 					mutate?.();
 					const path = new URL(request.url).pathname;
+					if (path === "/api/status") statusRequests++;
 					if (path === "/native-status")
 						return new Response(
 							typeof nativeStatus === "string" ? nativeStatus : JSON.stringify(nativeStatus),
@@ -400,11 +557,27 @@ describe("hosted runtime observed v2", () => {
 			try {
 				for (const response of [...pending, null, "not JSON", ready, ...pending]) {
 					body = response;
+					statusRequests = 0;
 					const observed = await readHostedRuntimeObserved(paths);
 					expect(
 						observed?.systemd?.units.find((candidate) => candidate.name === unit)?.activeState,
 					).toBe("active");
 					expect(observed?.status).toBe(response === ready ? "ok" : "unknown");
+					if (runtime === "hermes") {
+						expect(statusRequests).toBe(1);
+						if (response === pending[0] || response === pending[1]) {
+							expect(
+								observed?.systemd?.units.find((candidate) => candidate.name === unit)?.status,
+							).toBe("unknown");
+							expect(
+								observed?.systemd?.units.find(
+									(candidate) => candidate.name === "hermes-gateway.service",
+								),
+							).toMatchObject({
+								status: "ok",
+							});
+						}
+					}
 				}
 				body = ready;
 				const idleWatch = {
@@ -433,7 +606,12 @@ describe("hosted runtime observed v2", () => {
 				expect(await readHostedRuntimeObserved(paths)).toBeNull();
 				rmSync(paths.runtimeWatchStatus);
 				probeStatus = 503;
-				expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+				const unavailable = await readHostedRuntimeObserved(paths);
+				expect(unavailable?.status).toBe("unknown");
+				if (runtime === "hermes")
+					expect(
+						unavailable?.systemd?.units.find((candidate) => candidate.name === unit)?.error,
+					).toBe("Runtime readiness probe: HTTP 503");
 				probeStatus = 200;
 				if (unit === "openclaw-gateway.service") {
 					// The old native status command proves handshake admission independently of channels.
@@ -572,8 +750,22 @@ printf '%s' '{"port":${server.port},"controlUi":{"basePath":"/control"}}'
 					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(true);
 					uiStatus = 503;
 					expect(await runtimeComponentIsReady("hermes-ui", paths)).toBe(false);
+					const missingLogin = await readHostedRuntimeObserved(paths);
+					expect(
+						missingLogin?.systemd?.units.find((candidate) => candidate.name === unit)?.error,
+					).toBe("Runtime readiness probe: HTTP 503");
 					uiStatus = 200;
 					body = ready;
+					probeWait = new Promise<void>((resolve) => {
+						releaseProbe = resolve;
+					});
+					const timedOut = await readHostedRuntimeObserved(paths);
+					expect(timedOut?.status).toBe("unknown");
+					expect(timedOut?.systemd?.units.find((candidate) => candidate.name === unit)?.error).toBe(
+						"Runtime readiness probe: timeout (3000ms)",
+					);
+					releaseProbe?.();
+					probeWait = undefined;
 					writeFileSync(
 						systemctl,
 						`#!/bin/sh
@@ -682,6 +874,205 @@ esac
 		expect(observed?.systemd?.units.filter((unit) => unit.scope === "user")).toHaveLength(15);
 	});
 });
+
+test.each(["hermes", "openclaw"] as const)(
+	"shares one identity-bound %s serving sample with component proof",
+	async (runtime) => {
+		const paths = healthyAppliedRuntimePaths([runtime]);
+		const originalBoot = readRuntimeBootStatus(paths).status;
+		if (!originalBoot) throw new Error("Expected boot fixture");
+		const identity = userInfo();
+		process.env.CLAWDI_RUNTIME_USER = identity.username;
+		process.env.CLAWDI_RUNTIME_UID = String(identity.uid);
+		process.env.CLAWDI_RUNTIME_GID = String(identity.gid);
+		const component = runtime === "hermes" ? "hermes-ui" : "openclaw-ui";
+		const unit =
+			runtime === "hermes" ? "clawdi-hermes-dashboard.service" : "openclaw-gateway.service";
+		mkdirSync(paths.systemdUserRoot, { recursive: true });
+		writeFileSync(
+			join(paths.systemdUserRoot, unit),
+			`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\nExecStart=/fixture\n`,
+		);
+		const invocationPath = join(paths.userHome, "invocation");
+		const managerConfigPath = join(paths.userHome, "manager-config");
+		const nativeConfigPath = join(
+			paths.userHome,
+			runtime === "hermes" ? ".hermes/config.yaml" : ".openclaw/openclaw.json",
+		);
+		const nativeConfig =
+			runtime === "hermes"
+				? "dashboard:\n  oauth:\n    self_hosted:\n      client_id: fixture\n"
+				: JSON.stringify({ gateway: { port: 18789, auth: { token: "fixture" } } });
+		mkdirSync(dirname(nativeConfigPath), { recursive: true });
+		let resetDesiredConfiguration = () => {};
+		const resetConfiguration = () => {
+			writeFileSync(invocationPath, "a".repeat(32));
+			writeFileSync(managerConfigPath, "fixture-effective-unit");
+			writeFileSync(nativeConfigPath, nativeConfig);
+			resetDesiredConfiguration();
+		};
+		resetConfiguration();
+		if (runtime === "hermes") {
+			const runPath = runtimeRunConfigPath("hermes", paths, "dashboard");
+			mkdirSync(dirname(runPath), { recursive: true });
+			resetDesiredConfiguration = () =>
+				writeFileSync(
+					runPath,
+					JSON.stringify({
+						schemaVersion: "clawdi.runtimeRunConfig.v1",
+						runtime: "hermes",
+						service: "dashboard",
+						enabled: true,
+						generatedAt: "2026-09-29T00:00:00Z",
+						generation: 1,
+						instanceId: "fixture",
+						command: "hermes",
+						commandPath: null,
+						appRoot: null,
+					}),
+				);
+			resetDesiredConfiguration();
+		}
+		const systemctl = join(paths.userHome, "systemctl");
+		writeFileSync(
+			systemctl,
+			`#!/bin/sh
+[ "$1" = --user ] && shift
+if [ "$1" = cat ]; then cat '${managerConfigPath}'; exit 0; fi
+printf 'ActiveState=active\nSubState=running\nLoadState=loaded\nNeedDaemonReload=no\nJob=\nInvocationID='
+cat '${invocationPath}'
+printf '\n'
+`,
+			{ mode: 0o700 },
+		);
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
+		const applied = readRuntimeAppliedState(paths);
+		const fingerprint = readSystemdComponentFingerprint(paths, "user", unit);
+		if (!applied || !fingerprint) throw new Error("Expected service fixture");
+		applied.activated = { [unit]: fingerprint };
+		writeRuntimeAppliedState(applied, paths);
+		const identityForFetch = runtimeAppliedApplyIdentity(applied);
+		if (!identityForFetch) throw new Error("Expected apply identity");
+		const transportEvent = runtimeWatchEventForOutcome(
+			{
+				kind: "load_failed",
+				failure: {
+					mode: "repair",
+					stage: "network",
+					errors: ["could not fetch runtime manifest: fetch failed"],
+					failureKind: "transport",
+					requestedApplyIdentity: identityForFetch,
+				},
+			},
+			paths,
+		);
+		if (!transportEvent) throw new Error("Expected watch event");
+		writeRuntimeWatchStatus(transportEvent, paths);
+		const manager = readComponentServiceState(paths, "user", unit);
+		const config = componentConfigurationRevision(component, paths, fingerprint);
+		if (!manager || !config) throw new Error("Expected bound component fixture");
+		writeFileSync(
+			join(dirname(paths.appliedState), "component-activations.json"),
+			JSON.stringify({
+				schemaVersion: 1,
+				appliedStateRevision: runtimeContentSha256(applied),
+				entries: [
+					{
+						component,
+						invocationId: manager.invocationId,
+						configRevision: runtimeContentSha256([config, manager.configurationRevision]),
+						accessRevision: "b".repeat(64),
+					},
+				],
+			}),
+		);
+		let requests = 0;
+		let releaseTimedOutRequest: (() => void) | undefined;
+		let mode:
+			| "healthy"
+			| "http-failure"
+			| "invalid-json"
+			| "boot-change"
+			| "timeout"
+			| "restart"
+			| "native-config"
+			| "desired-config"
+			| "unit-config" = "healthy";
+		const server = Bun.serve({
+			hostname: "127.0.0.1",
+			port: runtime === "hermes" ? 9119 : 18789,
+			async fetch(request) {
+				const path = new URL(request.url).pathname;
+				if (path === "/login" || path === "/") return new Response("<!doctype html><html></html>");
+				if (path !== "/api/status" && path !== "/readyz")
+					return new Response(null, { status: 404 });
+				requests++;
+				// A second independent probe would succeed and contradict the first.
+				if (requests === 1) {
+					if (mode === "http-failure") return new Response("unavailable", { status: 503 });
+					if (mode === "invalid-json") return new Response("not JSON");
+					if (mode === "boot-change")
+						writeRuntimeBootStatus({ ...originalBoot, bootId: "changed-boot" }, paths);
+					if (mode === "timeout")
+						await new Promise<void>((resolve) => {
+							releaseTimedOutRequest = resolve;
+						});
+					if (mode === "restart") writeFileSync(invocationPath, "c".repeat(32));
+					if (mode === "native-config")
+						writeFileSync(nativeConfigPath, `${nativeConfig}\n# changed\n`);
+					if (mode === "unit-config") writeFileSync(managerConfigPath, "changed-effective-unit");
+					if (mode === "desired-config")
+						writeFileSync(runtimeRunConfigPath("hermes", paths, "dashboard"), "{}");
+				}
+				return Response.json(
+					runtime === "hermes"
+						? {
+								gateway_running: true,
+								gateway_state: "running",
+								auth_required: true,
+								auth_providers: ["self-hosted"],
+							}
+						: { ready: true },
+				);
+			},
+		});
+		try {
+			for (const nextMode of [
+				"healthy",
+				"http-failure",
+				"invalid-json",
+				"timeout",
+				"restart",
+				"native-config",
+				"unit-config",
+				...(runtime === "hermes" ? ["desired-config" as const] : []),
+				"healthy",
+			] as const) {
+				resetConfiguration();
+				mode = nextMode;
+				requests = 0;
+				const observed = await readHostedRuntimeObserved(paths, { includeComponents: true });
+				releaseTimedOutRequest?.();
+				releaseTimedOutRequest = undefined;
+				expect(requests).toBe(1);
+				const expected = mode === "healthy" ? "ok" : "unknown";
+				expect({ mode, status: observed?.status }).toEqual({ mode, status: expected });
+				expect(observed?.systemd?.units.find((entry) => entry.name === unit)?.status).toBe(
+					expected,
+				);
+				expect(observed?.components?.entries[0]?.status).toBe(expected);
+			}
+			resetConfiguration();
+			mode = "boot-change";
+			requests = 0;
+			expect(await readHostedRuntimeObserved(paths, { includeComponents: true })).toBeNull();
+			expect(requests).toBe(1);
+		} finally {
+			releaseTimedOutRequest?.();
+			await server.stop(true);
+		}
+	},
+);
 
 test("unknown component evidence downgrades healthy aggregate without replacing a definite error", async () => {
 	const paths = healthyAppliedRuntimePaths();

@@ -263,6 +263,31 @@ export function writeRuntimeWatchStatus(event: object, paths = getRuntimePaths()
 	);
 }
 
+export function runtimeWatchAllowsTransportDiagnostic(
+	authority: Record<string, string | number>,
+	paths = getRuntimePaths(),
+): boolean {
+	if (!existsSync(paths.runtimeWatchStatus)) return true;
+	try {
+		const record = JSON.parse(readFileSync(paths.runtimeWatchStatus, "utf8"));
+		if (record?.schemaVersion !== "clawdi.runtimeWatchStatus.v1") return false;
+		const event = record.event;
+		if (!event || typeof event !== "object") return false;
+		if (["applied", "not_modified"].includes(event.status)) return true;
+		if (event.status !== "error") return false;
+		// A network diagnostic must not clear an unresolved mutation failure.
+		return (
+			event.healthImpact === "resource_projection" ||
+			(event.healthImpact === "manifest_transport" &&
+				event.stage === "network" &&
+				event.mode === "repair" &&
+				Object.entries(authority).every(([key, value]) => event.healthAuthority?.[key] === value))
+		);
+	} catch {
+		return false;
+	}
+}
+
 function readJson<T>(path: string): T {
 	return JSON.parse(readFileSync(path, "utf-8")) as T;
 }
