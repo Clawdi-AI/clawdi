@@ -26,9 +26,9 @@ logger = logging.getLogger(__name__)
 _SENSITIVE_KEYS = {
     "authorization",
     "cookie",
-    "set-cookie",
-    "x-api-key",
-    "x-clawdi-token",
+    "set_cookie",
+    "x_api_key",
+    "x_clawdi_token",
     "token",
     "access_token",
     "refresh_token",
@@ -118,7 +118,8 @@ def _is_object_list(value: object) -> TypeGuard[list[object]]:
 def _is_sensitive_key(key: object) -> bool:
     if not isinstance(key, str):
         return False
-    lowered = key.lower()
+    # Header names use dashes (X-Admin-Key); match them like snake_case keys.
+    lowered = key.lower().replace("-", "_")
     if lowered in _SENSITIVE_KEYS:
         return True
     return any(lowered.endswith(suffix) for suffix in _SENSITIVE_SUFFIXES)
