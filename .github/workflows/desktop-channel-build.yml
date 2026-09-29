@@ -52,7 +52,7 @@ jobs:
       - uses: ./.github/actions/setup-bun-ci
       - name: Resolve Pages URL
         id: pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - name: Verify Desktop
         shell: bash
         run: |
@@ -125,7 +125,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-bun-ci
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
         id: pages
       - name: Verify native target and contracts
         if: matrix.platform != 'win32'
