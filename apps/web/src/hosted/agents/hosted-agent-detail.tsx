@@ -3478,7 +3478,7 @@ function ComputeSettingsSections({
 	const currentSubscription = deployment.commercial_display?.compute_subscription;
 	const fundingSource = computeFundingSource(computePlanSlug, currentSubscription);
 	const dunningState = computeDunningState(deployment);
-	const terminalRecovery = dunningState?.recoveryTarget.kind === "start_new" ? dunningState : null;
+	const terminalRecovery = dunningState?.recoveryTarget?.kind === "start_new" ? dunningState : null;
 	const hasWalletFallback = terminalRecovery?.fundingSource === "wallet";
 	const pendingPlanSlug = pendingComputePlanSlug(currentSubscription);
 	const tierLabel = computeTierLabel(computePlanSlug);

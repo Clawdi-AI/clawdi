@@ -2107,7 +2107,7 @@ export interface components {
             /** Lifecycle Status */
             lifecycle_status?: string | null;
             /** Recovery Blocked Reason */
-            recovery_blocked_reason?: ("payment_pending" | "paused" | "authority_pending") | null;
+            recovery_blocked_reason?: ("payment_pending" | "paused" | "authority_pending" | "reconciliation_required") | null;
             actions?: components["schemas"]["ComputeSubscriptionActions"] | null;
         };
         /** V2ComputeSubscriptionListResponse */
@@ -2402,7 +2402,7 @@ export interface components {
             /** Pending Plan Slug */
             pending_plan_slug?: string | null;
             /** Recovery Blocked Reason */
-            recovery_blocked_reason?: ("payment_pending" | "paused" | "authority_pending") | null;
+            recovery_blocked_reason?: ("payment_pending" | "paused" | "authority_pending" | "reconciliation_required") | null;
             actions?: components["schemas"]["ComputeSubscriptionActions"] | null;
         };
         /** V2HostedComputeUpgradeEligibility */

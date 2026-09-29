@@ -23,7 +23,7 @@ export function ComputeDunningBanner({
 }) {
 	const state = computeDunningState(deployment);
 	const subscription = deployment.commercial_display?.compute_subscription;
-	const actions = state
+	const actions = state?.recoveryTarget
 		? resolveComputeSubscriptionActions({
 				entitlement: {
 					deploymentId: deployment.resource.id,
