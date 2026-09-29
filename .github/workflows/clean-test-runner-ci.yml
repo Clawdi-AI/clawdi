@@ -179,6 +179,12 @@ jobs:
         run: docker compose -f docker-compose.test.yml config >/dev/null
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+        with:
+          # Docker Hub rate-limits anonymous CI pulls; mirror.gcr.io serves cached
+          # Docker Hub images and BuildKit falls back to Docker Hub on a miss.
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
       - name: Build cached test runner image
         uses: docker/build-push-action@v7
         with:
