@@ -7,10 +7,21 @@ hermes_fixture_source="${CLAWDI_TEST_HERMES_SOURCE:-}"
 if [[ -z "$hermes_fixture_source" ]]; then
 	hermes_fixture_source="$hermes_fixture_root/source"
 	mkdir -p "$hermes_fixture_source"
-	curl --fail --silent --show-error --location --max-time 120 --max-filesize 104857600 \
-		--retry 3 --retry-max-time 180 \
-		"https://codeload.github.com/NousResearch/hermes-agent/tar.gz/$hermes_fixture_commit" \
-		-o "$hermes_fixture_root/source.tar.gz"
+	# Both repositories contain the same immutable upstream commit.
+	hermes_fixture_downloaded=false
+	for hermes_fixture_repository in NousResearch/hermes-agent Clawdi-AI/hermes-agent; do
+		if curl --fail --silent --show-error --location --max-time 120 --max-filesize 104857600 \
+			--retry 1 --retry-max-time 150 \
+			"https://codeload.github.com/$hermes_fixture_repository/tar.gz/$hermes_fixture_commit" \
+			-o "$hermes_fixture_root/source.tar.gz"; then
+			hermes_fixture_downloaded=true
+			break
+		fi
+	done
+	if [[ "$hermes_fixture_downloaded" != true ]]; then
+		echo "Unable to download the pinned Hermes native fixture" >&2
+		exit 1
+	fi
 	tar -xzf "$hermes_fixture_root/source.tar.gz" --strip-components=1 -C "$hermes_fixture_source"
 fi
 export CLAWDI_TEST_HERMES_VENV="$hermes_fixture_root/venv"
