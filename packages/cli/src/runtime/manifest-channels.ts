@@ -441,15 +441,15 @@ export function applyHostedChannelProjection(
 			getHermesRawConfigValue(hermesConfig, "platforms.whatsapp.extra.session_path").value ===
 				previousAuthDir
 		) {
-			// Withdraw only unchanged fields from the committed managed projection.
+			// Explicitly disable unchanged managed fields; native defaults must not re-enable them.
 			// A different path or surviving native pairing retains native ownership.
 			if (getHermesRawConfigValue(hermesConfig, "whatsapp.enabled").value === true) {
-				patch.whatsapp = { enabled: null };
+				patch.whatsapp = { enabled: false };
 			}
 			patch.platforms = {
 				whatsapp: {
 					...(getHermesRawConfigValue(hermesConfig, "platforms.whatsapp.enabled").value === true
-						? { enabled: null }
+						? { enabled: false }
 						: {}),
 					extra: { session_path: null },
 				},

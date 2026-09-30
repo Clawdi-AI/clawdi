@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { runtimeWatchEventForOutcome } from "../commands/runtime";
@@ -722,6 +722,43 @@ printf '%s' '{"port":${server.port},"controlUi":{"basePath":"/control"}}'
 					});
 					expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
 				} else {
+					const nativeStatePath = join(paths.userHome, ".hermes", "gateway_state.json");
+					const currentPlatform = {
+						state: "connected",
+						writer_pid: 101,
+						writer_start_time: 200,
+					};
+					const writePlatformState = (platforms: Record<string, unknown>) =>
+						writeFileSync(
+							nativeStatePath,
+							JSON.stringify({ gateway_state: "running", pid: 101, start_time: 200, platforms }),
+						);
+					for (const config of [
+						"discord:\n  enabled: true\n",
+						"platforms:\n  discord:\n    enabled: true\n",
+					]) {
+						writeHermesAuthProvider();
+						writeFileSync(hermesConfigPath, readFileSync(hermesConfigPath, "utf8") + config);
+						for (const platform of [
+							currentPlatform,
+							{ ...currentPlatform, state: "fatal" },
+							{ ...currentPlatform, state: "connecting" },
+							{ ...currentPlatform, writer_pid: 99 },
+							{ ...currentPlatform, writer_start_time: 100 },
+							undefined,
+						]) {
+							writePlatformState({ discord: platform });
+							expect((await readHostedRuntimeObserved(paths))?.status).toBe(
+								platform === currentPlatform ? "ok" : "unknown",
+							);
+						}
+					}
+					writeHermesAuthProvider();
+					writePlatformState({
+						whatsapp: { state: "fatal", error_code: "whatsapp_not_paired", writer_pid: 99 },
+					});
+					expect((await readHostedRuntimeObserved(paths))?.status).toBe("ok");
+					rmSync(nativeStatePath);
 					body = {
 						gateway_running: false,
 						gateway_state: "stopped",

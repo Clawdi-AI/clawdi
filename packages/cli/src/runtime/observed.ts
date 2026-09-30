@@ -25,6 +25,7 @@ import {
 	componentConfigurationRevision,
 	observeComponents,
 } from "./component-observation";
+import { configuredHermesPlatforms, hermesChannelsAreReady } from "./hermes-channel-health";
 import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import { installedOpenClawCommandPath } from "./hosted-openclaw-context";
 import { readHostedSkillsObservation } from "./hosted-skill-observation";
@@ -791,6 +792,21 @@ export async function runtimeServiceIsReady(
 		if (!ready) options.onFailure?.("Hermes dashboard readiness: login HTML is not available");
 		if (status?.gateway_running !== true || status.gateway_state !== "running") {
 			options.onFailure?.("Hermes service readiness: native gateway is not running");
+			return false;
+		}
+		const requiredPlatforms = configuredHermesPlatforms(
+			parseYaml(readFileSync(join(paths.userHome, ".hermes", "config.yaml"), "utf8")),
+		);
+		if (
+			requiredPlatforms.length &&
+			!hermesChannelsAreReady(
+				requiredPlatforms,
+				JSON.parse(readFileSync(join(paths.userHome, ".hermes", "gateway_state.json"), "utf8")),
+			)
+		) {
+			options.onFailure?.(
+				"Hermes service readiness: configured messaging platforms are not connected in the current gateway",
+			);
 			return false;
 		}
 		return ready;

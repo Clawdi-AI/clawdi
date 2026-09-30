@@ -1939,13 +1939,21 @@ function writeHermesVersionBinary(home: string, version: string): string {
 	return hermesBin;
 }
 
+function hermesTestPythonScript(compatible: boolean): string {
+	const venv = process.env.CLAWDI_TEST_HERMES_VENV;
+	if (!venv) throw new Error("Run runtime tests through the Docker CLI test runner");
+	return `#!/usr/bin/env bash
+case "$*" in
+  *hermes-managed-env.json*) exec '${join(venv, "bin", "python")}' "$@" ;;
+esac
+${compatible ? "exit 0" : "printf '%s\\n' 'missing capture_signals' >&2\nexit 1"}
+`;
+}
+
 function writeHermesDashboardPython(home: string, compatible: boolean): string {
 	const python = join(home, ".hermes", "hermes-agent", "venv", "bin", "python");
 	mkdirSync(dirname(python), { recursive: true });
-	writeFileSync(
-		python,
-		`#!/usr/bin/env bash\n${compatible ? "exit 0" : "printf '%s\\n' 'missing capture_signals' >&2\nexit 1"}\n`,
-	);
+	writeFileSync(python, hermesTestPythonScript(compatible));
 	chmodSync(python, 0o700);
 	return python;
 }
@@ -3025,8 +3033,7 @@ SH
 chmod +x "$HOME/.local/bin/hermes"
 install -d "$HOME/.hermes/hermes-agent/venv/bin"
 cat > "$HOME/.hermes/hermes-agent/venv/bin/python" <<'SH'
-#!/usr/bin/env bash
-exit 0
+${hermesTestPythonScript(true)}
 SH
 chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 `,
@@ -10450,9 +10457,10 @@ exit 64
 		writeTestRuntimeAppliedState(paths, removed, removedConvergence);
 		const removedHermesConfig = readHermesConfigYaml(home);
 		expect(removedHermesConfig).not.toHaveProperty("platforms.whatsapp.extra.session_path");
-		expect(removedHermesConfig).not.toHaveProperty("whatsapp.enabled");
-		expect(removedHermesConfig).not.toHaveProperty("platforms.whatsapp.enabled");
+		expect(removedHermesConfig).toHaveProperty("whatsapp.enabled", false);
+		expect(removedHermesConfig).toHaveProperty("platforms.whatsapp.enabled", false);
 		expect(removedHermesConfig).toHaveProperty("whatsapp", {
+			enabled: false,
 			user_owned: "keep-whatsapp",
 			dm_policy: "allowlist",
 			allow_from: ["15550000001"],
@@ -10460,6 +10468,7 @@ exit 64
 			group_allow_from: ["120363000000000000@g.us"],
 		});
 		expect(removedHermesConfig).toHaveProperty("platforms.whatsapp", {
+			enabled: false,
 			custom: "keep-platform",
 			extra: {
 				custom_extra: "keep-extra",

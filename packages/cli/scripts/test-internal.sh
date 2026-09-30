@@ -11,7 +11,7 @@ hermes_fixture_needed=false
 if [[ $# -eq 0 ]]; then hermes_fixture_needed=true; fi
 for test_arg in "$@"; do
 	case "$test_arg" in
-		src|src/|src/runtime|src/runtime/|*hosted-hermes-skill*|*hosted-skill-observation*|*manifest-reconciliation*|--test-name-pattern*|-t)
+		src|src/|src/runtime|src/runtime/|tests|tests/|tests/runtime.test.ts|*hosted-hermes-skill*|*hosted-skill-observation*|*manifest-reconciliation*|*hermes-managed-env*|--test-name-pattern*|-t)
 			hermes_fixture_needed=true
 			;;
 	esac
