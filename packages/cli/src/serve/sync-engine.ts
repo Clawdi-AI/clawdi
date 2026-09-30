@@ -60,7 +60,7 @@ import { computeLastActivityIso } from "../lib/session-activity";
 import {
 	negotiateSessionProtocol,
 	persistSuppressedSession,
-	planSessionUpload,
+	prepareSessionUpload,
 	type SelectedSessionProtocol,
 	sessionFence,
 	sessionPlanIsDurablyBlocked,
@@ -285,7 +285,7 @@ interface StableSessionEnqueueOptions {
 	inFlightHash: Map<string, string>;
 	protocol: SelectedSessionProtocol;
 	fenceFor(session: RawSession): SessionFence;
-	onBlocked?(session: RawSession, message: string): void;
+	onBlocked?(session: RawSession, message: string, hash: string): void;
 }
 
 interface StableSessionEnqueueResult {
@@ -301,7 +301,7 @@ export async function enqueueChangedSessionsAfterStability(
 	let enqueued = 0;
 	for (const session of opts.sessions) {
 		if (opts.abort.aborted) return { enqueued, confirmedSourceRevisions };
-		const plan = planSessionUpload(session, opts.protocol);
+		const plan = await prepareSessionUpload(session, opts.protocol);
 		const hash = plan.localHash;
 		const fence = opts.fenceFor(session);
 		const sourceRevisionUpdate = session.sourceRevision
@@ -315,7 +315,7 @@ export async function enqueueChangedSessionsAfterStability(
 		const blocked = sessionPlanIsDurablyBlocked(fence, plan);
 		if (blocked) {
 			if (sourceRevisionUpdate) confirmedSourceRevisions.push(sourceRevisionUpdate);
-			opts.onBlocked?.(session, blocked);
+			opts.onBlocked?.(session, blocked, hash);
 			continue;
 		}
 		if (opts.lastPushedHash.get(session.localSessionId) === hash) {
@@ -1122,12 +1122,9 @@ async function prepareSessionSync(
 							adapter: opts.adapter.agentType,
 							sourceSessionKey: session.localSessionId,
 						}),
-					onBlocked: (session, message) => {
+					onBlocked: (session, message, hash) => {
 						health.set("push", `session:${session.localSessionId}`, `blocked: ${message}`);
-						lastPushedSessionHash.set(
-							session.localSessionId,
-							planSessionUpload(session, protocol).localHash,
-						);
+						lastPushedSessionHash.set(session.localSessionId, hash);
 					},
 				});
 				enqueued += result.enqueued;
@@ -1940,13 +1937,16 @@ async function uploadSessionFromQueue(
 	| { outcome: "not_applied" }
 > {
 	if (!hasSessionFence(item)) return { outcome: "not_applied" };
-	const session = await sessions.resolve(item.source_session_key, { signal: opts.abort });
+	const session = await sessions.resolve(item.source_session_key, {
+		signal: opts.abort,
+		streaming: true,
+	});
 	opts.abort.throwIfAborted();
 	if (!session) {
 		log.info("engine.session_gone", { local_session_id: item.local_session_id });
 		return { outcome: "absent" };
 	}
-	if (session.messages.length === 0) {
+	if (session.messages.length === 0 && !session.readEvents && !session.readMessages) {
 		// Session file exists but parsed empty — push the metadata
 		// row anyway so the dashboard knows the session existed,
 		// but skip the content blob.
@@ -1955,7 +1955,7 @@ async function uploadSessionFromQueue(
 
 	// Resolve the current backing store and derive a fresh canonical plan. The
 	// queued hash/cursor is only a wake-up hint and never an append fence.
-	const plan = planSessionUpload(session, protocol);
+	const plan = await prepareSessionUpload(session, protocol);
 	const actualHash = plan.localHash;
 
 	const result = unwrap(

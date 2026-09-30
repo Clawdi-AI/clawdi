@@ -24,10 +24,12 @@ import {
 	runtimeApplyIdentitiesEqual,
 } from "./apply-identity";
 import { applyRuntimeBundleChannelsToManifestLoad } from "./channels";
+import type { RuntimeCliUpdateResult } from "./cli-update";
 import { egressProfileSecretRefs } from "./egress-profiles";
 import { isClawdiManagedProviderProjection } from "./hosted-egress-profiles";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
+	hostedCliPayloadPolicySchema,
 	hostedRuntimeBundleV2ManifestSchema,
 	type RuntimeManifest,
 	validateUnmanagedProviderSecretValues,
@@ -309,10 +311,47 @@ type RemoteRuntimeManifestResult =
 	| RuntimeManifestFailure
 	| RuntimeManifestNotModified;
 
+interface RuntimeManifestSourceOptions {
+	ifNoneMatch?: string;
+	applyContext?: RuntimeApplyContext;
+}
+
+interface RuntimeManifestCliOptions extends RuntimeManifestSourceOptions {
+	prepareCli: (policy: Pick<RuntimeManifest, "clawdiCli">) => RuntimeCliUpdateResult;
+}
+
+export interface RuntimeManifestCliPreparation {
+	cliPreparation: RuntimeCliUpdateResult;
+	generation: number;
+	instanceId: string;
+	etag: string;
+}
+
+// This stable header is understood before version-specific runtime fields.
+const runtimeCliEnvelopeSchema = z.object({
+	schemaVersion: z.literal(HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION),
+	sourceRevision: z.string().regex(/^[a-f0-9]{64}$/),
+	applyGeneration: z.number().int().positive().safe().optional(),
+	manifest: z.object({
+		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
+		instanceId: z.string().min(1),
+		generation: z.number().int().positive().safe(),
+		clawdiCli: hostedCliPayloadPolicySchema,
+	}),
+});
+
+export function loadRemoteRuntimeManifest(
+	paths: RuntimePaths,
+	opts: RuntimeManifestCliOptions,
+): Promise<RemoteRuntimeManifestResult | RuntimeManifestCliPreparation>;
+export function loadRemoteRuntimeManifest(
+	paths: RuntimePaths,
+	opts?: RuntimeManifestSourceOptions,
+): Promise<RemoteRuntimeManifestResult>;
 export async function loadRemoteRuntimeManifest(
 	paths: RuntimePaths,
-	opts: { ifNoneMatch?: string; applyContext?: RuntimeApplyContext } = {},
-): Promise<RemoteRuntimeManifestResult> {
+	opts: RuntimeManifestSourceOptions | RuntimeManifestCliOptions = {},
+): Promise<RemoteRuntimeManifestResult | RuntimeManifestCliPreparation> {
 	let applyContext: RuntimeApplyContext;
 	try {
 		applyContext = opts.applyContext ?? readRuntimeApplyContext();
@@ -345,6 +384,31 @@ export async function loadRemoteRuntimeManifest(
 
 	let normalized: RuntimeManifestLoad;
 	try {
+		if ("prepareCli" in opts) {
+			const envelope = runtimeCliEnvelopeSchema.parse(fetched.raw);
+			assertRuntimeBundleAuthority(envelope.sourceRevision, fetched.etag);
+			const header = {
+				...envelope.manifest,
+				...(envelope.applyGeneration === undefined
+					? {}
+					: { applyGeneration: envelope.applyGeneration }),
+			};
+			assertRuntimeApplyIdentityMatchesManifest(header, applyContext);
+			const continuityErrors = manifestContinuityErrors(header, paths);
+			if (continuityErrors.length) throw new Error(continuityErrors.join("; "));
+			const cliPreparation = opts.prepareCli({ clawdiCli: header.clawdiCli });
+			if (
+				cliPreparation.selfReexec ||
+				!["current", "not_requested"].includes(cliPreparation.status)
+			) {
+				return {
+					cliPreparation,
+					generation: header.generation,
+					instanceId: header.instanceId,
+					etag: fetched.etag ?? "",
+				};
+			}
+		}
 		normalized = parseHostedRuntimeBundleV2(fetched.raw, fetched.url);
 		assertRuntimeBundleAuthority(normalized.sourceRevision, fetched.etag);
 		assertRuntimeApplyIdentityMatchesManifest(normalized.manifest, applyContext);
@@ -381,7 +445,7 @@ function runtimeApplyContextFailure(error: unknown): RuntimeManifestFailure {
 }
 
 function assertRuntimeApplyIdentityMatchesManifest(
-	manifest: RuntimeManifest,
+	manifest: Pick<RuntimeManifest, "generation" | "applyGeneration">,
 	applyContext: RuntimeApplyContext,
 ): void {
 	if (
@@ -420,17 +484,29 @@ function loadExistingState(paths: RuntimePaths): ExistingManifestState {
 	};
 }
 
+export function loadRuntimeManifest(
+	paths: RuntimePaths,
+	opts: RuntimeManifestCliOptions,
+): Promise<RuntimeManifestLoad | RuntimeManifestFailure | RuntimeManifestCliPreparation>;
+export function loadRuntimeManifest(
+	paths: RuntimePaths,
+	opts?: RuntimeManifestSourceOptions,
+): Promise<RuntimeManifestLoad | RuntimeManifestFailure>;
 export async function loadRuntimeManifest(
 	paths: RuntimePaths,
-	opts: { applyContext?: RuntimeApplyContext } = {},
-): Promise<RuntimeManifestLoad | RuntimeManifestFailure> {
+	opts: RuntimeManifestSourceOptions | RuntimeManifestCliOptions = {},
+): Promise<RuntimeManifestLoad | RuntimeManifestFailure | RuntimeManifestCliPreparation> {
 	let applyContext: RuntimeApplyContext;
 	try {
 		applyContext = opts.applyContext ?? readRuntimeApplyContext();
 	} catch (error) {
 		return runtimeApplyContextFailure(error);
 	}
-	const remote = await loadRemoteRuntimeManifest(paths, { applyContext });
+	const remote =
+		"prepareCli" in opts
+			? await loadRemoteRuntimeManifest(paths, { applyContext, prepareCli: opts.prepareCli })
+			: await loadRemoteRuntimeManifest(paths, { applyContext });
+	if ("cliPreparation" in remote) return remote;
 	const fetchFailed =
 		"errors" in remote &&
 		remote.mode === "repair" &&
@@ -851,12 +927,11 @@ function plainRecord(value: unknown): Record<string, unknown> | null {
 		: null;
 }
 
-function validateLoadedManifest(
-	normalized: RuntimeManifestLoad,
+function manifestContinuityErrors(
+	manifest: Pick<RuntimeManifest, "instanceId" | "generation">,
 	paths: RuntimePaths,
-): RuntimeManifestLoad | RuntimeManifestFailure {
+): string[] {
 	const existing = loadExistingState(paths);
-	const manifest = normalized.manifest;
 	const continuityErrors: string[] = [];
 	if (existing.instanceId && existing.instanceId !== manifest.instanceId) {
 		continuityErrors.push(
@@ -872,13 +947,22 @@ function validateLoadedManifest(
 			`manifest generation ${manifest.generation} is older than applied generation ${existing.generation}`,
 		);
 	}
+	return continuityErrors;
+}
+
+function validateLoadedManifest(
+	normalized: RuntimeManifestLoad,
+	paths: RuntimePaths,
+): RuntimeManifestLoad | RuntimeManifestFailure {
+	const manifest = normalized.manifest;
+	const continuityErrors = manifestContinuityErrors(manifest, paths);
 	if (continuityErrors.length > 0) {
 		return {
 			mode: "manifest-rejected",
 			stage: normalized.source === "remote-datasource" ? "network" : "local",
 			errors: continuityErrors,
 			rejectedGeneration: manifest.generation,
-			activeGeneration: existing.generation ?? null,
+			activeGeneration: loadExistingState(paths).generation ?? null,
 		};
 	}
 	return normalized;

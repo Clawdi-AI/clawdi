@@ -7,13 +7,14 @@ repo_root="$(cd -- "$script_dir/.." && pwd)"
 compose_project_name="${CLAWDI_TEST_COMPOSE_PROJECT_NAME:-clawdi-test-$$}"
 remove_test_runner_image=false
 provider_baseline_dir=""
+memory_output=""
 if [[ -z "${TEST_RUNNER_IMAGE:-}" ]]; then
 	export TEST_RUNNER_IMAGE="clawdi-test-runner:${compose_project_name}"
 	remove_test_runner_image=true
 fi
 
 usage() {
-	echo "Usage: scripts/test.sh [all|ci|js|cli|cli-native|desktop|shared|sidecar|web|backend|runtime-vaults|runtime-systemd|provider-recovery-fixture] [suite args...]"
+	echo "Usage: scripts/test.sh [all|ci|js|cli|cli-native|desktop|shared|sidecar|web|backend|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory] [suite args...]"
 }
 
 compose() {
@@ -22,7 +23,7 @@ compose() {
 
 validate_suite() {
 	case "$1" in
-		all|backend|ci|js|cli|cli-native|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture)
+		all|backend|ci|js|cli|cli-native|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory)
 			;;
 		*)
 			echo "Unknown test suite: $1" >&2
@@ -66,6 +67,16 @@ run_on_host() {
 		[[ "$baseline_revision" =~ ^[0-9a-f]{40}$ ]] || return 2
 		provider_baseline_dir="$(mktemp -d "$repo_root/.provider-recovery-baseline.XXXXXX")"
 	fi
+	if [[ "$suite" == hermes-sync-memory || "$suite" == session-sync-memory ]]; then
+		memory_output="$(realpath "${1:?Provide an existing empty output directory inside this checkout}")"
+		case "$memory_output/" in "$repo_root/"*) ;; *) echo "Fixture output must be inside this checkout" >&2; return 2;; esac
+		if [[ -n "$(ls -A "$memory_output")" ]]; then echo "Memory fixture output must be empty" >&2; return 2; fi
+		if [[ "$suite" == hermes-sync-memory ]]; then
+			local memory_baseline="${2:?Provide the full pre-fix commit SHA}"
+			[[ "$memory_baseline" =~ ^[0-9a-f]{40}$ ]] || return 2
+			provider_baseline_dir="$(mktemp -d "$repo_root/.hermes-memory-baseline.XXXXXX")"
+		fi
+	fi
 
 	cleanup() {
 		compose down --remove-orphans --volumes >/dev/null
@@ -73,10 +84,17 @@ run_on_host() {
 			docker image rm "$TEST_RUNNER_IMAGE" >/dev/null 2>&1 || true
 		fi
 		if [[ -n "$provider_baseline_dir" ]]; then rm -rf "$provider_baseline_dir"; fi
+		if [[ -n "$memory_output" ]]; then
+			rm -f "$memory_output/current" "$memory_output/before"
+			rm -rf "$memory_output/home" "$memory_output/hermes" "$memory_output/opencode.db"
+		fi
 	}
 	trap cleanup EXIT
-	if [[ -n "$provider_baseline_dir" ]]; then
+	if [[ "$suite" == provider-recovery-fixture ]]; then
 		git -C "$repo_root" show "$baseline_revision:packages/cli/src/runtime/connection-provider-config.ts" > "$provider_baseline_dir/connection-provider-config.ts"
+	fi
+	if [[ "$suite" == hermes-sync-memory ]]; then
+		git -C "$repo_root" show "$memory_baseline:packages/cli/src/adapters/hermes.ts" > "$provider_baseline_dir/hermes.ts"
 	fi
 
 	if [[ "${CLAWDI_TEST_RUNNER_SKIP_BUILD:-0}" != "1" ]]; then
@@ -84,13 +102,39 @@ run_on_host() {
 	fi
 
 	local run_args=(run --rm)
-	if [[ -n "$provider_baseline_dir" ]]; then
+	if [[ "$suite" == provider-recovery-fixture ]]; then
 		run_args+=(--volume "$provider_baseline_dir:/provider-baseline:ro" --volume "$provider_output:/provider-artifacts")
+	fi
+	if [[ "$suite" == hermes-sync-memory ]]; then
+		run_args+=(--volume "$provider_baseline_dir:/memory-baseline:ro" --volume "$memory_output:/memory-artifacts")
+	fi
+	if [[ "$suite" == session-sync-memory ]]; then
+		run_args+=(--volume "$memory_output:/memory-artifacts")
 	fi
 	if ! needs_postgres "$suite"; then
 		run_args+=(--no-deps)
 	fi
 	compose "${run_args[@]}" test-runner bash /repo/scripts/test.sh --in-container "$suite" "$@"
+	if [[ "$suite" == hermes-sync-memory ]]; then
+		local memory_args=(--rm --network none --cpus 2 --memory 512m --memory-swap 512m --pids-limit 128 --user 1000:1000 --volume "$memory_output:/memory-artifacts" --env CLAWDI_MEMORY_FIXTURE_ROOT=/memory-artifacts)
+		docker run "${memory_args[@]}" "$TEST_RUNNER_IMAGE" /memory-artifacts/current --seed
+		local before_exit=0
+		docker run "${memory_args[@]}" "$TEST_RUNNER_IMAGE" /memory-artifacts/before > "$memory_output/before.log" 2>&1 || before_exit=$?
+		printf 'baseline_exit=%s\n' "$before_exit"
+		if [[ "$before_exit" != 137 ]]; then echo "Expected baseline memory-limit kill" >&2; return 1; fi
+		docker run "${memory_args[@]}" "$TEST_RUNNER_IMAGE" /memory-artifacts/current > "$memory_output/current.log" 2>&1
+		cat "$memory_output/current.log"
+	fi
+	if [[ "$suite" == session-sync-memory ]]; then
+		local adapter
+		for adapter in hermes codex claude_code pi opencode openclaw; do
+			rm -rf "$memory_output/home" "$memory_output/hermes" "$memory_output/opencode.db"
+			local session_memory_args=(--rm --network none --cpus 2 --memory 512m --memory-swap 512m --pids-limit 128 --user 1000:1000 --volume "$memory_output:/memory-artifacts" --env CLAWDI_MEMORY_FIXTURE_ROOT=/memory-artifacts)
+			docker run "${session_memory_args[@]}" "$TEST_RUNNER_IMAGE" /memory-artifacts/current --seed "--adapter=$adapter"
+			docker run "${session_memory_args[@]}" "$TEST_RUNNER_IMAGE" /memory-artifacts/current "--adapter=$adapter" > "$memory_output/$adapter.log" 2>&1
+			cat "$memory_output/$adapter.log"
+		done
+	fi
 }
 
 source_dir="${CLAWDI_REPO_SOURCE:-/repo}"
@@ -314,6 +358,18 @@ run_in_container() {
 			cli_typecheck
 			bun run --cwd packages/cli build:native
 			CLAWDI_NATIVE_BINARY="$work_dir/packages/cli/dist-native/linux-x64/clawdi" cli_tests tests/e2e/native-installer.e2e.test.ts tests/e2e/native-daemon.e2e.test.ts
+			;;
+		hermes-sync-memory)
+			install_js
+			cli_typecheck
+			bun build packages/cli/tests/fixtures/hermes-sync-memory/scenario.ts --compile --outfile=/memory-artifacts/current
+			cp /memory-baseline/hermes.ts packages/cli/src/adapters/hermes.ts
+			bun build packages/cli/tests/fixtures/hermes-sync-memory/scenario.ts --compile --outfile=/memory-artifacts/before
+			;;
+		session-sync-memory)
+			install_js
+			cli_typecheck
+			bun build packages/cli/tests/fixtures/hermes-sync-memory/scenario.ts --compile --outfile=/memory-artifacts/current
 			;;
 		provider-recovery-fixture)
 			install_js

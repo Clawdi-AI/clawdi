@@ -8,11 +8,47 @@ export function runOpenClawCommand(
 	args: string[],
 	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal">,
 ): Promise<string> {
+	return runOpenClawSubprocess("openclaw", args, options);
+}
+
+export function runOpenClawSdkCommand(
+	sdkPath: string,
+	params: { agentId: string; sessionId: string; sessionKey: string },
+	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal">,
+): Promise<string> {
+	const source = `
+		import { pathToFileURL } from 'node:url';
+		const sdk = await import(pathToFileURL(process.argv[1]).href);
+		const read = sdk.readVisibleSessionTranscriptMessageEntries;
+		if (typeof read !== 'function') process.exit(2);
+		const entries = await read(JSON.parse(process.argv[2]));
+		process.stdout.write(JSON.stringify(entries));
+	`;
+	// This API returns a whole array. Keep its allocation outside the daemon heap.
+	return runOpenClawSubprocess(
+		"node",
+		[
+			"--max-old-space-size=64",
+			"--input-type=module",
+			"-e",
+			source,
+			sdkPath,
+			JSON.stringify(params),
+		],
+		options,
+	);
+}
+
+function runOpenClawSubprocess(
+	executable: string,
+	args: string[],
+	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal">,
+): Promise<string> {
 	// Session reads and async Skill discovery share a subprocess slot, not the event loop.
 	const command = commandTail.then(async () => {
 		options.signal?.throwIfAborted();
 		const { signal, ...limits } = options;
-		const running = execFileAsync("openclaw", args, {
+		const running = execFileAsync(executable, args, {
 			...limits,
 			killSignal: "SIGKILL",
 			encoding: "utf8",

@@ -2,7 +2,12 @@ import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import type { AgentAdapter, RawSession, RawSkill } from "../adapters/base";
+import {
+	type AgentAdapter,
+	type RawSession,
+	type RawSkill,
+	scanSessionModule,
+} from "../adapters/base";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
@@ -18,7 +23,7 @@ import { computeLastActivityIso } from "../lib/session-activity";
 import {
 	negotiateSessionProtocol,
 	persistSuppressedSession,
-	planSessionUpload,
+	prepareSessionUpload,
 	type SelectedSessionProtocol,
 	type SessionUploadPlan,
 	sessionFence,
@@ -388,7 +393,8 @@ async function scanOneAgent(
 		sessionProtocol = opts.dryRun
 			? await sessionsModule.contentProtocol()
 			: await negotiateSessionProtocol(sessionApi, sessionsModule);
-		sessions = (await sessionsModule.collect({ kind: "complete", projectFilter })).sessions;
+		const scan = await scanSessionModule(sessionsModule, { kind: "complete", projectFilter });
+		for await (const batch of scan.batches) sessions.push(...batch.sessions);
 	}
 	if (modules.includes("skills") && adapter.skills) {
 		// Always route local Skills through the authenticated Agent claim
@@ -464,14 +470,18 @@ async function scanOneAgent(
 	// filters can't pollute it because each session has its own entry.
 	let sessionsCacheSkipped = 0;
 	let sessionsBlocked = 0;
-	// This snapshot belongs only to the synchronous eligibility pass after collection.
+	// This snapshot belongs only to the eligibility pass after collection.
 	const sessionsLock = modules.includes("sessions") ? readSessionsLock() : null;
 	if (sessionsModule && sessionProtocol && sessionsLock) {
 		const before = sessions.length;
-		sessions = sessions.filter((s) => {
-			const plan = planSessionUpload(s, sessionProtocol);
+		const retained: RawSession[] = [];
+		for (const s of sessions) {
+			const plan = await prepareSessionUpload(s, sessionProtocol);
 			sessionPlans.set(s.localSessionId, plan);
-			if (!envId) return true;
+			if (!envId) {
+				retained.push(s);
+				continue;
+			}
 			const fence = sessionFence(sessionApi, {
 				environmentId: envId,
 				adapter: agentType,
@@ -481,15 +491,19 @@ async function scanOneAgent(
 			if (blocked) {
 				sessionsBlocked += 1;
 				notes.push(blocked);
-				return false;
+				continue;
 			}
 			const cached = readFencedSessionEntry(sessionsLock, fence);
-			return !(
-				cached?.protocol === plan.protocol &&
-				cached.local_hash === plan.localHash &&
-				cached.pending === undefined
-			);
-		});
+			if (
+				!(
+					cached?.protocol === plan.protocol &&
+					cached.local_hash === plan.localHash &&
+					cached.pending === undefined
+				)
+			)
+				retained.push(s);
+		}
+		sessions = retained;
 		sessionsCacheSkipped = before - sessions.length - sessionsBlocked;
 		const retainedSessionIds = new Set(sessions.map((session) => session.localSessionId));
 		for (const id of [...sessionPlans.keys()]) {

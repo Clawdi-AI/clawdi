@@ -254,6 +254,34 @@ function fixtureDatabase(): { adapter: OpenCodeAdapter; databasePath: string } {
 }
 
 describe("OpenCode session adapter", () => {
+	test("invalidates the source revision for metadata changes and refuses rewritten content", async () => {
+		const { adapter, databasePath } = fixtureDatabase();
+		const context = { streaming: true, signal: new AbortController().signal };
+		const original = await adapter.sessions.resolve("opencode.ses_fixture", context);
+		expect(original?.readEvents).toBeDefined();
+		const db = new Database(databasePath);
+		try {
+			db.run("UPDATE session SET title='Updated title', tokens_input=999 WHERE id='ses_fixture'");
+		} finally {
+			db.close();
+		}
+		const current = await adapter.sessions.resolve("opencode.ses_fixture", context);
+		expect(current?.sourceRevision).not.toBe(original?.sourceRevision);
+		expect(current?.summary).toBe("Updated title");
+		const writer = new Database(databasePath);
+		try {
+			writer.run("UPDATE part SET data=? WHERE id='prt_001'", [
+				JSON.stringify({ type: "text", text: "Rewritten" }),
+			]);
+		} finally {
+			writer.close();
+		}
+		const read = async () => {
+			for await (const _event of current?.readEvents?.() ?? []) {
+			}
+		};
+		await expect(read()).rejects.toThrow("OpenCode source changed");
+	});
 	test("follows the official XDG default and relative database override", () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-opencode-paths-"));
 		temporaryRoots.push(root);

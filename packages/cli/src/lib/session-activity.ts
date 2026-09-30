@@ -20,7 +20,7 @@ import type { RawSession, SessionMessage, SessionUserActivity } from "../adapter
  * actively chatting.
  */
 export function computeLastActivityIso(s: RawSession): string {
-	const msgMax = maxMessageTimestamp(s.messages);
+	const msgMax = s.lastMessageTimestamp ?? maxMessageTimestamp(s.messages);
 	if (msgMax) return msgMax;
 	if (s.endedAt) return s.endedAt.toISOString();
 	return s.startedAt.toISOString();

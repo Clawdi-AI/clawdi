@@ -113,6 +113,10 @@ export interface RawSession {
 	messages: SessionMessage[];
 	/** Present only when the source supports strict, stable events-v1. */
 	events?: SessionEvent[];
+	/** Repeatable bounded reader for histories too large to retain in memory. */
+	readEvents?: () => AsyncIterable<SessionEvent>;
+	readMessages?: () => AsyncIterable<SessionMessage>;
+	lastMessageTimestamp?: string;
 	rawFilePath: string;
 	/** Opaque adapter revision used to avoid materializing unchanged backing content. */
 	sourceRevision?: string;
@@ -168,6 +172,8 @@ export interface SessionBatchScan {
 
 export interface SyncReadContext {
 	signal: AbortSignal;
+	/** Keep content lazy even for small sessions during whole-inventory synchronization. */
+	streaming?: boolean;
 }
 
 export interface SessionModule {
@@ -194,8 +200,9 @@ export async function scanSessionModule(
 	context?: SyncReadContext,
 ): Promise<SessionBatchScan> {
 	context?.signal.throwIfAborted();
-	if (module.scan) return module.scan(request, knownSourceRevisions, context);
-	const result = await module.collect(request, context);
+	const readContext = { signal: context?.signal ?? new AbortController().signal, streaming: true };
+	if (module.scan) return module.scan(request, knownSourceRevisions, readContext);
+	const result = await module.collect(request, readContext);
 	context?.signal.throwIfAborted();
 	return {
 		coverage: result.coverage,

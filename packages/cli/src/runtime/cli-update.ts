@@ -162,7 +162,7 @@ export function removeHostedCliPathExposure(paths: RuntimePaths): void {
 }
 
 export function applyRuntimeCliDesiredState(
-	manifest: RuntimeManifest,
+	manifest: Pick<RuntimeManifest, "clawdiCli">,
 	paths: RuntimePaths,
 	opts: { runningVersion?: string } = {},
 ): RuntimeCliUpdateResult {

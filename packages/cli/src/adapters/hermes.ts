@@ -23,6 +23,7 @@ import type {
 	RawSkill,
 	SessionBatchScan,
 	SessionContentPart,
+	SessionEvent,
 	SessionEventDisplayMetadata,
 	SessionEventSemantics,
 	SessionMessage,
@@ -63,6 +64,7 @@ interface MessageRow {
 }
 
 interface ModernMessageRow extends MessageRow {
+	source_bytes: number;
 	id: number;
 	tool_call_id: string | null;
 	tool_calls: string | null;
@@ -84,8 +86,10 @@ interface TableInfoRow {
 	pk: number;
 }
 
-interface MessageRevisionRow {
-	presentation_state: string;
+interface SessionSizeRow {
+	row_count: number;
+	size_bytes: number;
+	last_id: number;
 }
 
 interface UserActivityRow {
@@ -112,7 +116,18 @@ const MODERN_MESSAGE_OPTIONAL_COLUMNS = [
 const HERMES_CONTENT_JSON_PREFIX = "\0json:";
 const HERMES_SESSION_SCAN_BATCH_SIZE = 32;
 // Bump when persisted Hermes rows map to different Session/Event bytes.
-const HERMES_SESSION_PROJECTION_REVISION = 2;
+const HERMES_SESSION_PROJECTION_REVISION = 3;
+const HERMES_EAGER_MAX_BYTES = 256 * 1024;
+const HERMES_EAGER_MAX_ROWS = 512;
+const HERMES_MESSAGE_MAX_BYTES = 8 * 1024 * 1024;
+
+function messagePayloadSizeSql(columns: readonly TableInfoRow[]): string {
+	const names = new Set(columns.map((column) => column.name));
+	return ["role", "content", ...MODERN_MESSAGE_OPTIONAL_COLUMNS.map(([name]) => name)]
+		.filter((name) => names.has(name))
+		.map((name) => `coalesce(octet_length(${name}), 0)`)
+		.join(" + ");
+}
 
 function messageTableInfo(db: ReadonlySqliteDatabase): TableInfoRow[] {
 	return db.prepare("PRAGMA table_info(messages)").all() as TableInfoRow[];
@@ -129,64 +144,59 @@ function hasStableModernMessageIds(columns: readonly TableInfoRow[]): boolean {
 
 function modernMessageSelectColumns(columns: readonly TableInfoRow[]): string {
 	const names = new Set(columns.map((column) => column.name));
+	const size = messagePayloadSizeSql(columns);
+	const bounded = (name: string) =>
+		`CASE WHEN (${size}) <= ${HERMES_MESSAGE_MAX_BYTES} THEN ${name} ELSE NULL END AS ${name}`;
 	return [
 		"id",
 		"role",
-		"content",
+		bounded("content"),
 		...MODERN_MESSAGE_OPTIONAL_COLUMNS.map(([name, fallback]) =>
-			names.has(name) ? name : `${fallback} AS ${name}`,
+			names.has(name) ? bounded(name) : `${fallback} AS ${name}`,
 		),
 		"timestamp",
+		`(${size}) AS source_bytes`,
 	].join(", ");
 }
 
 function messageRevisionQuery(columns: readonly TableInfoRow[]): string {
-	const names = new Set(columns.map((column) => column.name));
-	const columnOr = (name: string, fallback: string) =>
-		names.has(name) ? name : `${fallback} AS ${name}`;
-	// Hermes appends and replaces rows with stable IDs, toggles lifecycle flags,
-	// updates presentation metadata in place, and may clear stale content. Keep
-	// that state exact while reducing large immutable payloads to byte lengths.
-	// SQLite can answer octet_length from the record header without reading the
-	// content payload from overflow pages.
+	// Equal-length edits and tool/reasoning changes must invalidate the scan cache.
 	return `
-		SELECT json_group_array(
-		         json_array(
-		           id, timestamp, active, compacted, display_kind, display_metadata,
-		           octet_length(content)
-		         ) ORDER BY id
-		       ) AS presentation_state
-		FROM (
-			SELECT id, timestamp, content,
-			       ${columnOr("active", "1")},
-			       ${columnOr("compacted", "0")},
-			       ${columnOr("display_kind", "NULL")},
-			       ${columnOr("display_metadata", "NULL")}
-			FROM messages
-			WHERE session_id = ?
-		)
+		SELECT ${modernMessageSelectColumns(columns)} FROM messages
+		WHERE session_id = ? AND id <= ?
+		ORDER BY id
 	`;
 }
 
-function sessionSourceRevision(row: SessionRow, messages: MessageRevisionRow): string {
-	return createHash("sha256")
-		.update(
-			JSON.stringify([
-				HERMES_SESSION_PROJECTION_REVISION,
-				row.id,
-				row.source,
-				row.model,
-				row.title,
-				row.started_at,
-				row.ended_at,
-				row.message_count,
-				row.input_tokens,
-				row.output_tokens,
-				row.cache_read_tokens,
-				messages.presentation_state,
-			]),
-		)
-		.digest("hex");
+async function sessionSourceRevision(
+	row: SessionRow,
+	statement: ReturnType<ReadonlySqliteDatabase["prepare"]>,
+	context?: SyncReadContext,
+	lastId = Number.MAX_SAFE_INTEGER,
+): Promise<string> {
+	const hash = createHash("sha256").update(
+		JSON.stringify([
+			HERMES_SESSION_PROJECTION_REVISION,
+			row.id,
+			row.source,
+			row.model,
+			row.title,
+			row.started_at,
+			row.ended_at,
+			row.message_count,
+			row.input_tokens,
+			row.output_tokens,
+			row.cache_read_tokens,
+		]),
+	);
+	let count = 0;
+	for (const value of statement.iterate(row.id, lastId)) {
+		context?.signal.throwIfAborted();
+		hash.update(JSON.stringify(value)).update("\n");
+		if (++count % 128 === 0)
+			await setImmediate(undefined, context ? { signal: context.signal } : {});
+	}
+	return hash.digest("hex");
 }
 
 function hermesUserActivity(db: ReadonlySqliteDatabase): SessionUserActivity {
@@ -641,15 +651,18 @@ export class HermesAdapter implements AgentAdapterCore {
 				const observedLocalSessionIds = rows.map((row) => row.id);
 				const sessions: RawSession[] = [];
 				for (const row of rows) {
+					const size = readers.size.get(row.id) as SessionSizeRow;
 					const sourceRevision = readers.revision
-						? sessionSourceRevision(row, readers.revision.get(row.id) as MessageRevisionRow)
+						? await sessionSourceRevision(row, readers.revision, context, size.last_id)
 						: undefined;
 					if (sourceRevision && knownSourceRevisions.get(row.id) === sourceRevision) continue;
-					const session = this.materializeSession(
+					const session = await this.materializeSession(
 						row,
 						sourceRevision,
 						readers.modern,
 						readers.messages,
+						size,
+						context,
 					);
 					if (session) sessions.push(session);
 				}
@@ -682,13 +695,16 @@ export class HermesAdapter implements AgentAdapterCore {
 				.get(localSessionId) as SessionRow | undefined;
 			if (!row) return null;
 			const readers = this.sessionReaders(db);
-			return this.materializeSession(
+			const size = readers.size.get(row.id) as SessionSizeRow;
+			return await this.materializeSession(
 				row,
 				readers.revision
-					? sessionSourceRevision(row, readers.revision.get(row.id) as MessageRevisionRow)
+					? await sessionSourceRevision(row, readers.revision, context, size.last_id)
 					: undefined,
 				readers.modern,
 				readers.messages,
+				size,
+				context,
 			);
 		} finally {
 			db.close();
@@ -700,13 +716,16 @@ export class HermesAdapter implements AgentAdapterCore {
 		const modern = hasStableModernMessageIds(messageColumns);
 		return {
 			modern,
+			size: db.prepare(
+				`SELECT count(*) AS row_count, coalesce(sum(${messagePayloadSizeSql(messageColumns)}), 0) AS size_bytes, ${modern ? "coalesce(max(id), 0)" : "0"} AS last_id FROM messages WHERE session_id = ?`,
+			),
 			revision: modern ? db.prepare(messageRevisionQuery(messageColumns)) : null,
 			messages: db.prepare(
 				modern
 					? `
 						SELECT ${modernMessageSelectColumns(messageColumns)}
 						FROM messages
-						WHERE session_id = ?
+						WHERE session_id = ? AND id <= ?
 						ORDER BY id ASC
 					`
 					: `
@@ -719,17 +738,38 @@ export class HermesAdapter implements AgentAdapterCore {
 		};
 	}
 
-	private materializeSession(
+	private async materializeSession(
 		row: SessionRow,
 		sourceRevision: string | undefined,
 		modern: boolean,
 		messagesStatement: ReturnType<ReadonlySqliteDatabase["prepare"]>,
-	): RawSession | null {
+		size: SessionSizeRow,
+		context?: SyncReadContext,
+	): Promise<RawSession | null> {
 		const model = parseModelField(row.model);
 		const startedAt = new Date(row.started_at * 1000);
 		const endedAt = row.ended_at ? new Date(row.ended_at * 1000) : null;
 		const durationSeconds = durationSecondsBetween(startedAt, endedAt);
-		const messageRows = messagesStatement.all(row.id) as Array<MessageRow | ModernMessageRow>;
+		const stream =
+			context?.streaming ||
+			size.size_bytes > HERMES_EAGER_MAX_BYTES ||
+			size.row_count > HERMES_EAGER_MAX_ROWS;
+		const path = stateDbPath();
+		const readEvents =
+			stream && modern
+				? () => this.readSessionEvents(path, row, sourceRevision, size.last_id, context)
+				: undefined;
+		const readMessages =
+			stream && !modern ? () => this.readLegacySessionMessages(path, row, context) : undefined;
+		const messageRows = stream
+			? []
+			: (messagesStatement.all(row.id, ...(modern ? [size.last_id] : [])) as Array<
+					MessageRow | ModernMessageRow
+				>);
+		for (const message of messageRows) {
+			if ("source_bytes" in message && message.source_bytes > HERMES_MESSAGE_MAX_BYTES)
+				throw new Error(`Hermes message exceeds ${HERMES_MESSAGE_MAX_BYTES} source bytes`);
+		}
 		const events = modern
 			? sequenceSessionEvents(
 					(messageRows as ModernMessageRow[]).flatMap((message) =>
@@ -747,11 +787,40 @@ export class HermesAdapter implements AgentAdapterCore {
 						? { timestamp: timestampIso(message.timestamp) }
 						: {}),
 				}));
-		if (modern ? events?.length === 0 : messages.length === 0) return null;
+		let streamedMessageCount = 0;
+		let streamedEventCount = 0;
+		let firstUser: SessionMessage | undefined;
+		let lastMessageTimestamp: string | undefined;
+		const observeMessage = (message: SessionMessage) => {
+			streamedMessageCount++;
+			if (!firstUser && message.role === "user")
+				firstUser = { ...message, content: safeTruncate(message.content, 200) };
+			if (message.timestamp && (!lastMessageTimestamp || message.timestamp > lastMessageTimestamp))
+				lastMessageTimestamp = message.timestamp;
+		};
+		if (readEvents) {
+			for await (const event of readEvents()) {
+				streamedEventCount++;
+				for (const message of projectEventsToMessages([event])) {
+					observeMessage(message);
+				}
+			}
+		}
+		if (readMessages) for await (const message of readMessages()) observeMessage(message);
+		if (
+			modern
+				? stream
+					? streamedEventCount === 0
+					: events?.length === 0
+				: stream
+					? streamedMessageCount === 0
+					: messages.length === 0
+		)
+			return null;
 
 		let summary = row.title;
 		if (!summary || summary === "New Chat" || summary.startsWith("New Chat #")) {
-			const firstUser = messages.find((message) => message.role === "user");
+			firstUser ??= messages.find((message) => message.role === "user");
 			summary = firstUser ? safeTruncate(firstUser.content, 200) : null;
 		}
 		return {
@@ -759,7 +828,7 @@ export class HermesAdapter implements AgentAdapterCore {
 			projectPath: null,
 			startedAt,
 			endedAt,
-			messageCount: row.message_count ?? messages.length,
+			messageCount: row.message_count ?? (stream ? streamedMessageCount : messages.length),
 			inputTokens: row.input_tokens ?? 0,
 			outputTokens: row.output_tokens ?? 0,
 			cacheReadTokens: row.cache_read_tokens ?? 0,
@@ -768,10 +837,93 @@ export class HermesAdapter implements AgentAdapterCore {
 			durationSeconds,
 			summary,
 			messages,
-			...(events ? { events } : {}),
+			...(stream ? { readEvents, readMessages, lastMessageTimestamp } : events ? { events } : {}),
 			rawFilePath: `${stateDbPath()}#${row.id}`,
 			...(sourceRevision ? { sourceRevision } : {}),
 		};
+	}
+
+	private async *readLegacySessionMessages(
+		path: string,
+		row: SessionRow,
+		context?: SyncReadContext,
+	): AsyncGenerator<SessionMessage> {
+		const db = await openReadonlySqlite(path);
+		try {
+			let count = 0;
+			const statement = db.prepare(
+				`SELECT role, CASE WHEN octet_length(content) <= ${HERMES_MESSAGE_MAX_BYTES} THEN content ELSE NULL END AS content, octet_length(content) AS source_bytes, timestamp FROM messages WHERE session_id = ? AND role IN ('user', 'assistant') AND content IS NOT NULL ORDER BY timestamp ASC`,
+			);
+			for (const value of statement.iterate(row.id)) {
+				context?.signal.throwIfAborted();
+				const message = value as MessageRow & { source_bytes: number };
+				if (message.source_bytes > HERMES_MESSAGE_MAX_BYTES)
+					throw new Error(`Hermes legacy message exceeds ${HERMES_MESSAGE_MAX_BYTES} source bytes`);
+				yield {
+					role: message.role as "user" | "assistant",
+					content: message.content ?? "",
+					model:
+						message.role === "assistant" ? (parseModelField(row.model) ?? undefined) : undefined,
+					...(timestampIso(message.timestamp)
+						? { timestamp: timestampIso(message.timestamp) }
+						: {}),
+				};
+				if (++count % 128 === 0)
+					await setImmediate(undefined, context ? { signal: context.signal } : {});
+			}
+		} finally {
+			db.close();
+		}
+	}
+
+	private async *readSessionEvents(
+		path: string,
+		row: SessionRow,
+		revision: string | undefined,
+		lastId: number,
+		context?: SyncReadContext,
+	): AsyncGenerator<SessionEvent> {
+		const db = await openReadonlySqlite(path);
+		try {
+			context?.signal.throwIfAborted();
+			const readers = this.sessionReaders(db);
+			const verifyRevision = async () => {
+				const current = db
+					.prepare(
+						"SELECT id, source, model, title, started_at, ended_at, message_count, input_tokens, output_tokens, cache_read_tokens FROM sessions WHERE id = ?",
+					)
+					.get(row.id) as SessionRow | undefined;
+				if (
+					!current ||
+					!readers.revision ||
+					current.model !== row.model ||
+					(await sessionSourceRevision(row, readers.revision, context, lastId)) !== revision
+				)
+					throw new Error(`Hermes session ${row.id} changed during sync; retry with a fresh scan`);
+			};
+			await verifyRevision();
+			let seq = 0;
+			let count = 0;
+			for (const value of readers.messages.iterate(row.id, lastId)) {
+				context?.signal.throwIfAborted();
+				const message = value as ModernMessageRow;
+				if (message.source_bytes > HERMES_MESSAGE_MAX_BYTES)
+					throw new Error(
+						`Hermes message ${message.id} exceeds ${HERMES_MESSAGE_MAX_BYTES} source bytes`,
+					);
+				const events = sequenceSessionEvents(
+					hermesEventDrafts(message, row.id, parseModelField(row.model)),
+					seq,
+				);
+				seq += events.length;
+				yield* events;
+				if (++count % 128 === 0)
+					await setImmediate(undefined, context ? { signal: context.signal } : {});
+			}
+			await verifyRevision();
+		} finally {
+			db.close();
+		}
 	}
 
 	private async collectSkills(context?: SyncReadContext): Promise<RawSkill[]> {

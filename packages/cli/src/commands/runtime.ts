@@ -67,6 +67,7 @@ import {
 	loadRemoteRuntimeManifest,
 	migrateCommittedRuntimeSnapshot,
 	pruneRuntimeSnapshots,
+	type RuntimeManifestCliPreparation,
 	type RuntimeManifestFailure,
 	type RuntimeManifestLoad,
 	runtimeSnapshotPath,
@@ -203,6 +204,7 @@ interface RuntimeWatchTickOptions {
 
 type ConvergeLoadResult =
 	| { kind: "ready"; load: RuntimeManifestLoad }
+	| { kind: "cli_preparation"; preparation: RuntimeManifestCliPreparation }
 	| {
 			kind: "not_modified";
 			sourcePath: string;
@@ -215,6 +217,7 @@ type ConvergeLoadResult =
 
 type ConvergeOutcome =
 	| { kind: "idle" }
+	| { kind: "cli_preparation"; preparation: RuntimeManifestCliPreparation }
 	| { kind: "reconciliation_error"; error: string }
 	| {
 			kind: "cli_handoff";
@@ -222,7 +225,12 @@ type ConvergeOutcome =
 				| { kind: "reconciliation"; reconciliation: RuntimeCliReconciliationResult }
 				| { kind: "update"; load: RuntimeManifestLoad; cliUpdate: RuntimeCliUpdateResult };
 	  }
-	| { kind: "load_failed"; failure: RuntimeManifestFailure }
+	| {
+			kind: "load_failed";
+			failure: RuntimeManifestFailure;
+			cliRollback?: RuntimeCliRollbackResult;
+			selfReexec?: boolean;
+	  }
 	| ({ kind: "not_modified"; selfReexec: boolean } & Extract<
 			ConvergeLoadResult,
 			{ kind: "not_modified" }
@@ -828,7 +836,12 @@ async function runtimeInitLocked(
 
 	const outcome = await convergeOnce(
 		async () => {
-			const loaded = await loadRuntimeManifest(paths, { applyContext: opts.applyContext });
+			const loaded = await loadRuntimeManifest(paths, {
+				applyContext: opts.applyContext,
+				prepareCli: (policy) => prepareRuntimeCliPolicy(policy, paths),
+			});
+			if ("cliPreparation" in loaded)
+				return { kind: "cli_preparation" as const, preparation: loaded };
 			return "errors" in loaded
 				? { kind: "failed" as const, failure: loaded }
 				: { kind: "ready" as const, load: loaded };
@@ -839,6 +852,22 @@ async function runtimeInitLocked(
 
 	if (outcome.kind === "reconciliation_error") {
 		repair("local", [outcome.error]);
+		return;
+	}
+	if (outcome.kind === "cli_preparation") {
+		const cliUpdate = outcome.preparation.cliPreparation;
+		if (cliUpdate.selfReexec) {
+			finishRuntimeInitCliHandoff({
+				opts,
+				paths,
+				mode,
+				bootId,
+				hostPolicy,
+				detail: { cliUpdate },
+			});
+		} else {
+			repair("local", [cliUpdate.error ?? "CLI update deferred"], 23);
+		}
 		return;
 	}
 	if (outcome.kind === "cli_handoff") {
@@ -877,6 +906,10 @@ async function runtimeInitLocked(
 				hostPolicy: hostPolicySummary(hostPolicy),
 			},
 			render: renderRuntimeInit(paths, `${failure.mode}: ${failure.errors[0]}`, chalk.yellow),
+			jsonExtras: {
+				...(outcome.cliRollback ? { cliRollback: outcome.cliRollback } : {}),
+				...(outcome.selfReexec ? { selfReexec: true, handoff: "cli_reexec" } : {}),
+			},
 		});
 		return;
 	}
@@ -1020,7 +1053,20 @@ async function convergeOnce(
 
 	const requested = await load();
 	if (requested.kind === "idle") return requested;
-	if (requested.kind === "failed") return { kind: "load_failed", failure: requested.failure };
+	if (requested.kind === "cli_preparation") return requested;
+	if (requested.kind === "failed") {
+		if (requested.failure.mode !== "manifest-rejected")
+			return { kind: "load_failed", failure: requested.failure };
+		const errors = [...requested.failure.errors];
+		const cliRollback = maybeRollbackFailedCliUpgrade(paths, errors);
+		return {
+			kind: "load_failed",
+			failure: { ...requested.failure, errors },
+			...(cliRollback.status !== "not_pending"
+				? { cliRollback, selfReexec: cliRollback.status === "rolled_back" }
+				: {}),
+		};
+	}
 	if (requested.kind === "error") return { ...requested, kind: "apply_error" };
 	if (requested.kind === "not_modified") {
 		const completion = completePendingRuntimeCliUpgrade(paths, ACTIVE_CLI_VERSION);
@@ -1143,7 +1189,9 @@ async function loadRuntimeManifestForWatch(
 	const conditional = await loadRemoteRuntimeManifest(paths, {
 		ifNoneMatch: manifestEtag,
 		applyContext: opts.applyContext,
+		prepareCli: (policy) => prepareRuntimeCliPolicy(policy, paths),
 	});
+	if ("cliPreparation" in conditional) return { kind: "cli_preparation", preparation: conditional };
 	if ("errors" in conditional) {
 		return retryDeferred &&
 			opts.failureBackoff &&
@@ -1187,8 +1235,12 @@ async function loadRuntimeManifestForWatch(
 	try {
 		const fresh =
 			"notModified" in conditional
-				? await loadRemoteRuntimeManifest(paths, { applyContext: opts.applyContext })
+				? await loadRemoteRuntimeManifest(paths, {
+						applyContext: opts.applyContext,
+						prepareCli: (policy) => prepareRuntimeCliPolicy(policy, paths),
+					})
 				: conditional;
+		if ("cliPreparation" in fresh) return { kind: "cli_preparation", preparation: fresh };
 		if ("notModified" in fresh) {
 			throw new Error("runtime manifest datasource returned 304 without If-None-Match");
 		}
@@ -1220,6 +1272,29 @@ export function runtimeWatchEventForOutcome(
 	}
 	if (outcome.kind === "reconciliation_error") {
 		return runtimeWatchError("cli-update", [outcome.error], { selfReexec: false });
+	}
+	if (outcome.kind === "cli_preparation") {
+		const { cliPreparation: cliUpdate, generation, etag } = outcome.preparation;
+		const applied = runtimeAppliedStatus(paths);
+		const detail = {
+			activeGeneration: applied.activeGeneration,
+			desiredGeneration: generation,
+			instanceId: applied.instanceId,
+			cliUpdate,
+			etag,
+			selfReexec: cliUpdate.selfReexec,
+			systemdUnitsChanged: false,
+			systemdApply: NO_SYSTEMD_APPLY,
+		};
+		return cliUpdate.selfReexec
+			? runtimeWatchEvent({
+					...detail,
+					status: "cli_handoff",
+					stage: "cli-update",
+					handoff: "cli_reexec",
+					selfReexec: true,
+				})
+			: runtimeWatchError("cli-update", [cliUpdate.error ?? "CLI update deferred"], detail);
 	}
 	if (outcome.kind === "cli_handoff") {
 		if (outcome.detail.kind === "reconciliation") {
@@ -1270,6 +1345,8 @@ export function runtimeWatchEventForOutcome(
 			activeGeneration: outcome.failure.activeGeneration ?? null,
 			rejectedGeneration: outcome.failure.rejectedGeneration ?? null,
 			...(outcome.failure.etag ? { etag: outcome.failure.etag } : {}),
+			...(outcome.cliRollback ? { cliRollback: outcome.cliRollback } : {}),
+			...(outcome.selfReexec ? { selfReexec: true } : {}),
 			...(transportOnly
 				? {
 						healthImpact: "manifest_transport",
@@ -1679,8 +1756,19 @@ async function applyRuntimeDesiredState(
 	}
 }
 
+function prepareRuntimeCliPolicy(
+	policy: Pick<RuntimeManifestLoad["manifest"], "clawdiCli">,
+	paths: RuntimePaths,
+): RuntimeCliUpdateResult {
+	try {
+		return applyRuntimeCliDesiredState(policy, paths, { runningVersion: ACTIVE_CLI_VERSION });
+	} catch (error) {
+		return runtimeCliUpdateError(policy, paths, error);
+	}
+}
+
 function runtimeCliUpdateError(
-	manifest: RuntimeManifestLoad["manifest"],
+	manifest: Pick<RuntimeManifestLoad["manifest"], "clawdiCli">,
 	paths: ReturnType<typeof getRuntimePaths>,
 	error: unknown,
 ): RuntimeCliUpdateResult {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
@@ -5,7 +6,6 @@ import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import {
 	canonicalJson,
-	projectEventsToMessages,
 	type SessionEventDraft,
 	sequenceSessionEvents,
 } from "../lib/session-events";
@@ -13,6 +13,7 @@ import type {
 	AgentAdapterCore,
 	RawSession,
 	SessionContentPart,
+	SessionEvent,
 	SessionEventSemantics,
 	SessionScanRequest,
 	SessionScanResult,
@@ -28,6 +29,7 @@ import {
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
+import { describeSessionContent, SESSION_RECORD_MAX_BYTES } from "./session-source";
 import { openReadonlySqlite, type ReadonlySqliteDatabase } from "./sqlite";
 import { readCommandVersion } from "./version";
 
@@ -66,12 +68,6 @@ interface OpenCodePartRow {
 	time_created: number;
 	time_updated: number;
 	data: string;
-}
-
-interface ParsedMessage {
-	row: OpenCodeMessageRow;
-	data: JsonObject;
-	parts: Array<{ row: OpenCodePartRow; data: JsonObject }>;
 }
 
 const REQUIRED_COLUMNS = {
@@ -446,73 +442,130 @@ function partEvents(
 	return [];
 }
 
-function parseMessages(db: ReadonlySqliteDatabase, sessionId: string): ParsedMessage[] {
-	const messageRows = db
-		.prepare(
-			`SELECT id, time_created, time_updated, data
-			 FROM message
-			 WHERE session_id = ?
-			 ORDER BY time_created ASC, id ASC`,
-		)
-		.all(sessionId) as OpenCodeMessageRow[];
-	const partRows = db
-		.prepare(
-			`SELECT id, message_id, time_created, time_updated, data
-			 FROM part
-			 WHERE session_id = ?
-			 ORDER BY id ASC`,
-		)
-		.all(sessionId) as OpenCodePartRow[];
-	const partsByMessage = new Map<string, Array<{ row: OpenCodePartRow; data: JsonObject }>>();
-	for (const row of partRows) {
-		const item = { row, data: parseStoredObject(row.data, `part ${row.id}`) };
-		const existing = partsByMessage.get(row.message_id);
-		if (existing) existing.push(item);
-		else partsByMessage.set(row.message_id, [item]);
-	}
-	return messageRows.map((row) => ({
-		row,
-		data: parseStoredObject(row.data, `message ${row.id}`),
-		parts: partsByMessage.get(row.id) ?? [],
-	}));
-}
-
-function parseSession(db: ReadonlySqliteDatabase, row: OpenCodeSessionRow): RawSession | null {
-	const parsedMessages = parseMessages(db, row.id);
-	const events = sequenceSessionEvents(
-		parsedMessages.flatMap((message) => [
-			...messagePreludeEvents(row.id, message.row, message.data),
-			...message.parts.flatMap((part) =>
-				partEvents(row.id, message.row, message.data, part.row, part.data),
-			),
-			...messageEpilogueEvents(row.id, message.row, message.data),
-		]),
+async function parseSession(
+	db: ReadonlySqliteDatabase,
+	row: OpenCodeSessionRow,
+	context?: SyncReadContext,
+): Promise<RawSession | null> {
+	const boundary = (table: "message" | "part") =>
+		db
+			.prepare(
+				`SELECT time_created, id FROM ${table} WHERE session_id=? ORDER BY time_created DESC, id DESC LIMIT 1`,
+			)
+			.get(row.id) as { time_created: number; id: string } | undefined;
+	const lastMessage = boundary("message");
+	if (!lastMessage) return null;
+	const lastPart = boundary("part");
+	const size = db
+		.prepare(`
+		SELECT (SELECT coalesce(sum(octet_length(data)), 0) FROM message WHERE session_id=?)
+		+ (SELECT coalesce(sum(octet_length(data)), 0) FROM part WHERE session_id=?) AS bytes
+	`)
+		.get(row.id, row.id) as { bytes: number };
+	let revision: string | undefined;
+	let messageCount = 0;
+	const databasePath = getOpenCodeDbPath();
+	const readEvents = async function* (): AsyncGenerator<SessionEvent> {
+		const reader = await openReadonlySqlite(databasePath);
+		let transaction = false;
+		try {
+			reader.exec("BEGIN");
+			transaction = true;
+			const digest = createHash("sha256").update(canonicalJson(row));
+			let seq = 0;
+			let count = 0;
+			const select = `CASE WHEN octet_length(data) <= ${SESSION_RECORD_MAX_BYTES} THEN data END AS data, octet_length(data) AS source_bytes`;
+			const parts = reader.prepare(`
+				SELECT id, message_id, time_created, time_updated, ${select} FROM part
+				WHERE session_id=? AND message_id=? AND (time_created < ? OR (time_created=? AND id<=?)) ORDER BY id ASC
+			`);
+			const messages = reader.prepare(`
+				SELECT id, time_created, time_updated, ${select} FROM message WHERE session_id=?
+				AND (time_created < ? OR (time_created=? AND id<=?)) ORDER BY time_created ASC, id ASC
+			`);
+			for (const value of messages.iterate(
+				row.id,
+				lastMessage.time_created,
+				lastMessage.time_created,
+				lastMessage.id,
+			)) {
+				context?.signal.throwIfAborted();
+				const message = value as OpenCodeMessageRow & { source_bytes: number };
+				if (message.source_bytes > SESSION_RECORD_MAX_BYTES)
+					throw new Error("OpenCode message exceeds supported source record size");
+				digest.update(JSON.stringify(message));
+				const data = parseStoredObject(message.data, `message ${message.id}`);
+				let events = sequenceSessionEvents(messagePreludeEvents(row.id, message, data), seq);
+				seq += events.length;
+				yield* events;
+				if (lastPart)
+					for (const value of parts.iterate(
+						row.id,
+						message.id,
+						lastPart.time_created,
+						lastPart.time_created,
+						lastPart.id,
+					)) {
+						context?.signal.throwIfAborted();
+						const part = value as OpenCodePartRow & { source_bytes: number };
+						if (part.source_bytes > SESSION_RECORD_MAX_BYTES)
+							throw new Error("OpenCode part exceeds supported source record size");
+						digest.update(JSON.stringify(part));
+						events = sequenceSessionEvents(
+							partEvents(
+								row.id,
+								message,
+								data,
+								part,
+								parseStoredObject(part.data, `part ${part.id}`),
+							),
+							seq,
+						);
+						seq += events.length;
+						yield* events;
+						await setImmediate(undefined, context ? { signal: context.signal } : {});
+					}
+				events = sequenceSessionEvents(messageEpilogueEvents(row.id, message, data), seq);
+				seq += events.length;
+				yield* events;
+				if (++count % 128 === 0)
+					await setImmediate(undefined, context ? { signal: context.signal } : {});
+			}
+			const hash = digest.digest("hex");
+			if (revision !== undefined && hash !== revision)
+				throw new Error("OpenCode source changed during sync; retry with a fresh scan");
+			revision = hash;
+			messageCount = count;
+		} finally {
+			try {
+				if (transaction) reader.exec("ROLLBACK");
+			} finally {
+				reader.close();
+			}
+		}
+	};
+	const description = await describeSessionContent(
+		readEvents,
+		!context?.streaming && size.bytes <= 256 * 1024,
 	);
-	if (events.length === 0) return null;
-	const messages = projectEventsToMessages(events);
-	const eventModels = events
-		.map((event) =>
-			event.type === "message" || event.type === "tool_call" || event.type === "reasoning"
-				? event.model
-				: undefined,
-		)
-		.filter((value): value is string => Boolean(value));
+	if (description.eventCount === 0) return null;
+	const eventModels = description.modelsUsed;
 	const fallbackModel = sessionModel(row.model);
 	const modelsUsed = [...new Set([...eventModels, ...(fallbackModel ? [fallbackModel] : [])])];
 	const startedAt = new Date(row.time_created);
 	const endedAt = new Date(row.time_updated);
-	const firstUser = messages.find((message) => message.role === "user");
+	const firstUser = description.firstUser;
 	const defaultTitle = row.title.startsWith("New session - ");
 	return {
 		localSessionId: `opencode.${row.id}`,
 		projectPath: row.directory,
 		startedAt,
 		endedAt,
-		messageCount: parsedMessages.length,
+		messageCount,
 		inputTokens: nonNegativeNumber(row.tokens_input),
 		outputTokens: nonNegativeNumber(row.tokens_output),
 		cacheReadTokens: nonNegativeNumber(row.tokens_cache_read),
-		model: eventModels.at(-1) ?? fallbackModel ?? null,
+		model: description.lastModel ?? fallbackModel ?? null,
 		modelsUsed,
 		durationSeconds: durationSecondsBetween(startedAt, endedAt),
 		summary:
@@ -521,8 +574,8 @@ function parseSession(db: ReadonlySqliteDatabase, row: OpenCodeSessionRow): RawS
 				: firstUser
 					? safeTruncate(firstUser.content, 200)
 					: null,
-		messages,
-		events,
+		...description.content,
+		sourceRevision: revision,
 		rawFilePath: `${getOpenCodeDbPath()}#${row.id}`,
 	};
 }
@@ -590,13 +643,14 @@ export class OpenCodeAdapter implements AgentAdapterCore {
 					 ${sourceId === undefined ? "" : "WHERE id = ?"}
 					 ORDER BY time_created DESC, id ASC`,
 				)
-				.all(...(sourceId === undefined ? [] : [sourceId])) as OpenCodeSessionRow[];
+				.iterate(...(sourceId === undefined ? [] : [sourceId]));
 			const normalizedFilter = projectFilter ? resolve(projectFilter) : null;
 			const sessions: RawSession[] = [];
-			for (const row of rows) {
+			for (const value of rows) {
+				const row = value as OpenCodeSessionRow;
 				if (context) await setImmediate(undefined, { signal: context.signal });
 				if (normalizedFilter !== null && resolve(row.directory) !== normalizedFilter) continue;
-				const session = parseSession(db, row);
+				const session = await parseSession(db, row, context);
 				if (session) sessions.push(session);
 			}
 			return sessions;

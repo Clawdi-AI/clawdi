@@ -14,6 +14,7 @@ import {
 import {
 	negotiateSessionProtocol,
 	planSessionUpload,
+	prepareSessionUpload,
 	sessionFence,
 	sessionPlanIsDurablyBlocked,
 	syncSessionContent,
@@ -73,7 +74,7 @@ function events(...values: Array<[string, string]>): SessionEvent[] {
 	);
 }
 
-function rawSession(content: readonly SessionEvent[]): RawSession {
+function rawSession(content: readonly SessionEvent[], streamed = false): RawSession {
 	return {
 		localSessionId: "pi.fixture",
 		projectPath: "/workspace",
@@ -87,8 +88,14 @@ function rawSession(content: readonly SessionEvent[]): RawSession {
 		modelsUsed: [],
 		durationSeconds: null,
 		summary: null,
-		messages: projectEventsToMessages(content),
-		events: [...content],
+		messages: streamed ? [] : projectEventsToMessages(content),
+		...(streamed
+			? {
+					readEvents: async function* () {
+						yield* content;
+					},
+				}
+			: { events: [...content] }),
 		rawFilePath: "/sessions/fixture.jsonl",
 		sourceRevision: "source-r1",
 	};
@@ -105,6 +112,22 @@ function eventApi(): ApiClient {
 }
 
 describe("session upload negotiation and integrity", () => {
+	it("plans snapshots without retaining bodies and verifies content when materialized", async () => {
+		let text = "original";
+		const session = rawSession([]);
+		session.readEvents = async function* () {
+			yield event("snapshot", text);
+		};
+		const plan = await prepareSessionUpload(session, "snapshot-v1");
+		expect(plan.snapshotBytes).toBeUndefined();
+		expect(plan.readSnapshot).toBeDefined();
+		const bytes = await plan.readSnapshot?.();
+		expect(bytes?.toString()).toBe(
+			JSON.stringify(projectEventsToMessages([event("snapshot", text)])),
+		);
+		text = "changed";
+		await expect(plan.readSnapshot?.()).rejects.toThrow("snapshot source changed");
+	});
 	it("uses a supplied scan snapshot while default blocked reads stay fresh", () => {
 		const session = rawSession([event("snapshot", "content")]);
 		const plan = planSessionUpload(session, "events-v1");
@@ -274,181 +297,190 @@ describe("events-v1 incremental upload", () => {
 		},
 	);
 
-	it("does not mark a multi-chunk append complete before the final chunk", async () => {
-		const api = eventApi();
-		const content = events(["one", "a".repeat(700_000)], ["two", "b".repeat(700_000)]);
-		const generation = "11111111-1111-4111-8111-111111111111";
-		const finalHead = advanceEventHead(EMPTY_EVENT_HEAD, content);
-		api.getSessionEventHead = async () => ({
-			protocol: "events-v1",
-			generation,
-			revision: 1,
-			count: 0,
-			head_hash: EMPTY_EVENT_HEAD,
-		});
-		const session = rawSession(content);
-		const plan = planSessionUpload(session, "events-v1");
-		const fence = sessionFence(api, {
-			environmentId: "agent-pi",
-			adapter: "pi",
-			sourceSessionKey: session.localSessionId,
-		});
-		let calls = 0;
-		api.appendSessionEvents = async (input) => {
-			calls += 1;
-			if (calls === 2) {
-				expect(readFencedSessionEntry(readSessionsLock(), fence)).toMatchObject({
-					pending: { base_count: 1 },
-				});
-				expect(readFencedSessionEntry(readSessionsLock(), fence)?.event_count).toBeUndefined();
-			}
-			return {
-				generation: input.generation,
-				revision: input.baseRevision + 1,
-				count: input.finalCount,
-				head_hash: input.finalHeadHash,
+	it.each([false, true])(
+		"does not mark a multi-chunk append complete before the final chunk (streamed=%s)",
+		async (streamed) => {
+			const api = eventApi();
+			const content = events(["one", "a".repeat(700_000)], ["two", "b".repeat(700_000)]);
+			const generation = "11111111-1111-4111-8111-111111111111";
+			const finalHead = advanceEventHead(EMPTY_EVENT_HEAD, content);
+			api.getSessionEventHead = async () => ({
+				protocol: "events-v1",
+				generation,
+				revision: 1,
+				count: 0,
+				head_hash: EMPTY_EVENT_HEAD,
+			});
+			const session = rawSession(content, streamed);
+			const plan = await prepareSessionUpload(session, "events-v1");
+			const fence = sessionFence(api, {
+				environmentId: "agent-pi",
+				adapter: "pi",
+				sourceSessionKey: session.localSessionId,
+			});
+			let calls = 0;
+			api.appendSessionEvents = async (input) => {
+				calls += 1;
+				if (calls === 2) {
+					expect(readFencedSessionEntry(readSessionsLock(), fence)).toMatchObject({
+						pending: { base_count: 1 },
+					});
+					expect(readFencedSessionEntry(readSessionsLock(), fence)?.event_count).toBeUndefined();
+				}
+				return {
+					generation: input.generation,
+					revision: input.baseRevision + 1,
+					count: input.finalCount,
+					head_hash: input.finalHeadHash,
+				};
 			};
-		};
 
-		const result = await syncSessionContent({
-			api,
-			fence,
-			session,
-			plan,
-			needsSnapshotContent: false,
-		});
+			const result = await syncSessionContent({
+				api,
+				fence,
+				session,
+				plan,
+				needsSnapshotContent: false,
+			});
 
-		expect(calls).toBe(2);
-		expect(result).toMatchObject({ status: "synced", localHash: finalHead });
-		expect(readFencedSessionEntry(readSessionsLock(), fence)).toMatchObject({
-			event_count: 2,
-			event_head_hash: finalHead,
-			source_revision: "source-r1",
-		});
-	});
+			expect(calls).toBe(2);
+			expect(result).toMatchObject({ status: "synced", localHash: finalHead });
+			expect(readFencedSessionEntry(readSessionsLock(), fence)).toMatchObject({
+				event_count: 2,
+				event_head_hash: finalHead,
+				source_revision: "source-r1",
+			});
+		},
+	);
 
-	it("reuses the durable append id after a conflict and transport retry", async () => {
-		const api = eventApi();
-		const content = events(["one", "first"], ["two", "second"]);
-		const prefixHead = advanceEventHead(EMPTY_EVENT_HEAD, content.slice(0, 1));
-		const finalHead = advanceEventHead(EMPTY_EVENT_HEAD, content);
-		api.getSessionEventHead = async () => ({
-			protocol: "events-v1",
-			generation: "11111111-1111-4111-8111-111111111111",
-			revision: 4,
-			count: 1,
-			head_hash: prefixHead,
-		});
-		const appendIds: string[] = [];
-		let fail = true;
-		api.appendSessionEvents = async (input) => {
-			appendIds.push(input.appendId);
-			if (appendIds.length === 1) {
-				throw new ApiError({ status: 409, body: "conflict", hint: "retry" });
-			}
-			if (fail) throw new Error("connection reset after request");
-			return {
-				generation: input.generation,
-				revision: input.baseRevision + 1,
-				count: input.finalCount,
-				head_hash: input.finalHeadHash,
+	it.each([false, true])(
+		"reuses the durable append id after a conflict and transport retry (streamed=%s)",
+		async (streamed) => {
+			const api = eventApi();
+			const content = events(["one", "first"], ["two", "second"]);
+			const prefixHead = advanceEventHead(EMPTY_EVENT_HEAD, content.slice(0, 1));
+			const finalHead = advanceEventHead(EMPTY_EVENT_HEAD, content);
+			api.getSessionEventHead = async () => ({
+				protocol: "events-v1",
+				generation: "11111111-1111-4111-8111-111111111111",
+				revision: 4,
+				count: 1,
+				head_hash: prefixHead,
+			});
+			const appendIds: string[] = [];
+			let fail = true;
+			api.appendSessionEvents = async (input) => {
+				appendIds.push(input.appendId);
+				if (appendIds.length === 1) {
+					throw new ApiError({ status: 409, body: "conflict", hint: "retry" });
+				}
+				if (fail) throw new Error("connection reset after request");
+				return {
+					generation: input.generation,
+					revision: input.baseRevision + 1,
+					count: input.finalCount,
+					head_hash: input.finalHeadHash,
+				};
 			};
-		};
-		const session = rawSession(content);
-		const plan = planSessionUpload(session, "events-v1");
-		const fence = sessionFence(api, {
-			environmentId: "agent-pi",
-			adapter: "pi",
-			sourceSessionKey: session.localSessionId,
-		});
+			const session = rawSession(content, streamed);
+			const plan = await prepareSessionUpload(session, "events-v1");
+			const fence = sessionFence(api, {
+				environmentId: "agent-pi",
+				adapter: "pi",
+				sourceSessionKey: session.localSessionId,
+			});
 
-		await expect(
-			syncSessionContent({ api, fence, session, plan, needsSnapshotContent: false }),
-		).rejects.toThrow("connection reset");
-		const pendingAppendId = readFencedSessionEntry(readSessionsLock(), fence)?.pending?.append_id;
-		if (!pendingAppendId) throw new Error("expected a durable pending append id");
-		expect(pendingAppendId).toBe(appendIds[0]);
+			await expect(
+				syncSessionContent({ api, fence, session, plan, needsSnapshotContent: false }),
+			).rejects.toThrow("connection reset");
+			const pendingAppendId = readFencedSessionEntry(readSessionsLock(), fence)?.pending?.append_id;
+			if (!pendingAppendId) throw new Error("expected a durable pending append id");
+			expect(pendingAppendId).toBe(appendIds[0]);
 
-		fail = false;
-		const result = await syncSessionContent({
-			api,
-			fence,
-			session,
-			plan,
-			needsSnapshotContent: false,
-		});
-		expect(result).toMatchObject({ status: "synced", localHash: finalHead });
-		expect(appendIds).toEqual([pendingAppendId, pendingAppendId, pendingAppendId]);
-		expect(readFencedSessionEntry(readSessionsLock(), fence)?.pending).toBeUndefined();
-	});
+			fail = false;
+			const result = await syncSessionContent({
+				api,
+				fence,
+				session,
+				plan,
+				needsSnapshotContent: false,
+			});
+			expect(result).toMatchObject({ status: "synced", localHash: finalHead });
+			expect(appendIds).toEqual([pendingAppendId, pendingAppendId, pendingAppendId]);
+			expect(readFencedSessionEntry(readSessionsLock(), fence)?.pending).toBeUndefined();
+		},
+	);
 
-	it("rejects a mismatched rewrite receipt and resumes the staged generation", async () => {
-		const api = eventApi();
-		const remote = events(["old-one", "old first"], ["old-two", "old second"]);
-		const replacement = events(["new-one", "rewritten"]);
-		const remoteHead = advanceEventHead(EMPTY_EVENT_HEAD, remote);
-		const finalHead = advanceEventHead(EMPTY_EVENT_HEAD, replacement);
-		api.getSessionEventHead = async () => ({
-			protocol: "events-v1",
-			generation: "11111111-1111-4111-8111-111111111111",
-			revision: 7,
-			count: remote.length,
-			head_hash: remoteHead,
-		});
-		let stagedGeneration = "";
-		api.stageSessionEventGeneration = async (_localSessionId, body) => {
-			expect(body.base_count).toBe(2);
-			expect(body.base_head_hash).toBe(remoteHead);
-			stagedGeneration = body.generation;
-			return { generation: body.generation, status: "staging" };
-		};
-		let corruptReceipt = true;
-		api.uploadSessionEventGenerationChunk = async (input) => ({
-			generation: input.generation,
-			start_seq: input.startSeq,
-			end_seq: input.startSeq,
-			count: 1,
-			content_hash: input.contentHash,
-			result_head_hash: corruptReceipt ? "f".repeat(64) : finalHead,
-		});
-		api.commitSessionEventGeneration = async (_localSessionId, generation, body) => ({
-			generation,
-			revision: body.base_revision + 1,
-			count: body.final_count,
-			head_hash: body.final_head_hash,
-		});
-		const session = rawSession(replacement);
-		const plan = planSessionUpload(session, "events-v1");
-		const fence = sessionFence(api, {
-			environmentId: "agent-pi",
-			adapter: "pi",
-			sourceSessionKey: session.localSessionId,
-		});
+	it.each([false, true])(
+		"rejects a mismatched rewrite receipt and resumes the staged generation (streamed=%s)",
+		async (streamed) => {
+			const api = eventApi();
+			const remote = events(["old-one", "old first"], ["old-two", "old second"]);
+			const replacement = events(["new-one", "rewritten"]);
+			const remoteHead = advanceEventHead(EMPTY_EVENT_HEAD, remote);
+			const finalHead = advanceEventHead(EMPTY_EVENT_HEAD, replacement);
+			api.getSessionEventHead = async () => ({
+				protocol: "events-v1",
+				generation: "11111111-1111-4111-8111-111111111111",
+				revision: 7,
+				count: remote.length,
+				head_hash: remoteHead,
+			});
+			let stagedGeneration = "";
+			api.stageSessionEventGeneration = async (_localSessionId, body) => {
+				expect(body.base_count).toBe(2);
+				expect(body.base_head_hash).toBe(remoteHead);
+				stagedGeneration = body.generation;
+				return { generation: body.generation, status: "staging" };
+			};
+			let corruptReceipt = true;
+			api.uploadSessionEventGenerationChunk = async (input) => ({
+				generation: input.generation,
+				start_seq: input.startSeq,
+				end_seq: input.startSeq,
+				count: 1,
+				content_hash: input.contentHash,
+				result_head_hash: corruptReceipt ? "f".repeat(64) : finalHead,
+			});
+			api.commitSessionEventGeneration = async (_localSessionId, generation, body) => ({
+				generation,
+				revision: body.base_revision + 1,
+				count: body.final_count,
+				head_hash: body.final_head_hash,
+			});
+			const session = rawSession(replacement, streamed);
+			const plan = await prepareSessionUpload(session, "events-v1");
+			const fence = sessionFence(api, {
+				environmentId: "agent-pi",
+				adapter: "pi",
+				sourceSessionKey: session.localSessionId,
+			});
 
-		await expect(
-			syncSessionContent({ api, fence, session, plan, needsSnapshotContent: false }),
-		).rejects.toThrow("server event chunk receipt does not match uploaded bytes");
-		const pendingGeneration = readFencedSessionEntry(readSessionsLock(), fence)?.pending
-			?.generation;
-		if (!pendingGeneration) throw new Error("expected a durable pending generation");
-		expect(pendingGeneration).toBe(stagedGeneration);
-		expect(readFencedSessionEntry(readSessionsLock(), fence)?.event_head_hash).toBeUndefined();
-		corruptReceipt = false;
+			await expect(
+				syncSessionContent({ api, fence, session, plan, needsSnapshotContent: false }),
+			).rejects.toThrow("server event chunk receipt does not match uploaded bytes");
+			const pendingGeneration = readFencedSessionEntry(readSessionsLock(), fence)?.pending
+				?.generation;
+			if (!pendingGeneration) throw new Error("expected a durable pending generation");
+			expect(pendingGeneration).toBe(stagedGeneration);
+			expect(readFencedSessionEntry(readSessionsLock(), fence)?.event_head_hash).toBeUndefined();
+			corruptReceipt = false;
 
-		const result = await syncSessionContent({
-			api,
-			fence,
-			session,
-			plan,
-			needsSnapshotContent: false,
-		});
-		expect(stagedGeneration).toBe(pendingGeneration);
-		expect(result).toMatchObject({ status: "synced", localHash: finalHead });
-		expect(readFencedSessionEntry(readSessionsLock(), fence)).toMatchObject({
-			event_generation: stagedGeneration,
-			event_revision: 8,
-			event_count: 1,
-			event_head_hash: finalHead,
-		});
-	});
+			const result = await syncSessionContent({
+				api,
+				fence,
+				session,
+				plan,
+				needsSnapshotContent: false,
+			});
+			expect(stagedGeneration).toBe(pendingGeneration);
+			expect(result).toMatchObject({ status: "synced", localHash: finalHead });
+			expect(readFencedSessionEntry(readSessionsLock(), fence)).toMatchObject({
+				event_generation: stagedGeneration,
+				event_revision: 8,
+				event_count: 1,
+				event_head_hash: finalHead,
+			});
+		},
+	);
 });

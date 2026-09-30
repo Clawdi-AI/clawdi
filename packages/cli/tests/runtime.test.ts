@@ -9831,6 +9831,7 @@ exit 64
 		};
 		const missingSecretRef = bundle.channelBindings[0]?.agentTokenSecretRef;
 		if (!missingSecretRef) throw new Error("golden bundle has no channel binding");
+		bundle.manifest.clawdiCli.packageSpec = TEST_RUNNING_CLI_SPEC;
 		delete bundle.secretValues[missingSecretRef];
 		bundle.sourceRevision = runtimeContentSha256({
 			manifest: bundle.manifest,
@@ -9857,6 +9858,7 @@ exit 64
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_HOME = home;
 		process.env.CLAWDI_HOST_POLICY_PATH = policyPath;
+		seedCurrentCliInstall(state, TEST_RUNNING_CLI_VERSION);
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
