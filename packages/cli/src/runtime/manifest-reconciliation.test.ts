@@ -3164,6 +3164,9 @@ fi
 			expect(gatewayAfter).not.toBe(gatewayBefore);
 			expect(existsSync(credsPath)).toBe(ownership === "native-pairing");
 			const removed = parseYaml(readFileSync(configPath, "utf8"));
+			expect(readFileSync(join(paths.userHome, ".hermes", ".env"), "utf8")).not.toContain(
+				"WHATSAPP_ENABLED",
+			);
 			expect(nativeEnabled()).toEqual(
 				expect.objectContaining({
 					telegram: true,
@@ -3185,10 +3188,8 @@ fi
 				expect(removed.whatsapp).toEqual(configured.whatsapp);
 				expect(removed.platforms.whatsapp).toEqual(configured.platforms.whatsapp);
 			} else {
-				expect(removed.whatsapp.enabled).toBe(ownership === "local-disabled" ? false : undefined);
-				expect(removed.platforms.whatsapp.enabled).toBe(
-					ownership === "local-disabled" ? false : undefined,
-				);
+				expect(removed.whatsapp.enabled).toBe(false);
+				expect(removed.platforms.whatsapp.enabled).toBe(false);
 				expect(removed.platforms.whatsapp.extra).not.toHaveProperty("session_path");
 			}
 			const run = JSON.parse(readFileSync(runtimeRunConfigPath("hermes", paths), "utf8"));
@@ -3199,6 +3200,42 @@ fi
 			expect(readSystemdUnitSnapshot(paths).user.get("hermes-gateway.service")).toBe(gatewayAfter);
 		},
 	);
+
+	test("managed profile refresh is retried after failed activation and acknowledged only once", () => {
+		const paths = tempRuntimePaths();
+		const command = writeFakeHermesCli(paths);
+		const manifest = baseManifest(
+			paths,
+			{
+				hermes: {
+					enabled: true,
+					run: {
+						...runSettings(command, ["gateway", "run"]),
+						env: { DISCORD_BOT_TOKEN: "egress-test" },
+					},
+					services: {},
+				},
+			},
+			{ projection: { channels: { discord: { accounts: { one: { enabled: true } } } } } },
+		);
+		let invalidated: string[] = [];
+		const converge = (applied: boolean) =>
+			convergeRuntimeManifest(manifestLoad(manifest, "profile-refresh"), paths, {
+				systemdApply: {
+					activateEgressPrerequisite: successfulPrerequisiteActivation,
+					activate: (signal) => {
+						invalidated = signal.invalidatedUserUnits;
+						return { applied, systemUnitsChanged: [], userUnitsChanged: [] };
+					},
+				},
+			});
+		expect(converge(false).installErrors).not.toEqual([]);
+		expect(invalidated).toContain("hermes-gateway.service");
+		expect(converge(true).installErrors).toEqual([]);
+		expect(invalidated).toContain("hermes-gateway.service");
+		expect(converge(true).installErrors).toEqual([]);
+		expect(invalidated).toEqual([]);
+	});
 
 	test("replaces the selected Hermes provider with secret refs and stale cleanup", () => {
 		const paths = tempRuntimePaths();

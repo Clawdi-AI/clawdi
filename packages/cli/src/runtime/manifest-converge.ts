@@ -26,6 +26,11 @@ import {
 	commitHermesConfigTransaction,
 	type HermesConfigTransaction,
 } from "./hermes-config";
+import {
+	acknowledgeHermesManagedEnvironment,
+	hermesManagedProfileEnvironment,
+	reconcileHermesManagedEnvironment,
+} from "./hermes-managed-env";
 import { writeHostedAgentPluginReceipt } from "./hosted-agent-plugin-package";
 import {
 	type HostedAgentPluginTransaction,
@@ -1014,6 +1019,18 @@ function applyRuntimeEntryProjections(
 		previousProjectedProviderIds,
 		runtimeEntries,
 	} = context;
+	if (!manifest.runtimes.hermes?.enabled || state.observations.get("hermes")?.commandPath) {
+		const profileEnvironment = reconcileHermesManagedEnvironment({
+			home: projectionHome,
+			workspaceRoot,
+			desired: hermesManagedProfileEnvironment(manifest, secretValues),
+		});
+		if (profileEnvironment.changed) state.nativeCredentialChangedRuntimes.add("hermes");
+		for (const key of profileEnvironment.conflicts)
+			state.resourceProjectionErrors.push(
+				`Hermes managed profile field ${key} conflicts with native configuration`,
+			);
+	}
 	for (const [name, runtime] of runtimeEntries) {
 		const observation = state.observations.get(name);
 		if (!observation) throw new Error(`runtime ${name} install observation is missing`);
@@ -1312,6 +1329,11 @@ function activateRuntimeServices(
 		}
 		state.activated = activation.activated ?? {};
 		probeFileBrowserReadiness(manifest, { probe: opts.fileBrowserReadinessProbe });
+		if (state.nativeCredentialChangedRuntimes.has("hermes"))
+			acknowledgeHermesManagedEnvironment({
+				home: context.projectionHome,
+				workspaceRoot: context.workspaceRoot,
+			});
 	}
 	let manifestLastGood: string | null = null;
 	if (
