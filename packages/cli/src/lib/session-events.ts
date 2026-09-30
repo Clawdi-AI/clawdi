@@ -46,12 +46,15 @@ export function canonicalPayloadJson(value: unknown): string | undefined {
 	return canonicalJson(value);
 }
 
-export function sequenceSessionEvents(drafts: readonly SessionEventDraft[]): SessionEvent[] {
-	return drafts.map((draft, seq) => {
+export function sequenceSessionEvents(
+	drafts: readonly SessionEventDraft[],
+	startSeq = 0,
+): SessionEvent[] {
+	return drafts.map((draft, index) => {
 		const eventId = createHash("sha256")
 			.update(canonicalJson({ source: draft.source, type: draft.type }), "ascii")
 			.digest("hex");
-		return { ...draft, seq, event_id: eventId } as SessionEvent;
+		return { ...draft, seq: startSeq + index, event_id: eventId } as SessionEvent;
 	});
 }
 

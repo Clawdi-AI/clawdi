@@ -3,11 +3,7 @@ import { join, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
-import {
-	projectEventsToMessages,
-	type SessionEventDraft,
-	sequenceSessionEvents,
-} from "../lib/session-events";
+import { type SessionEventDraft, sequenceSessionEvents } from "../lib/session-events";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
 import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
@@ -26,7 +22,6 @@ import type {
 import { getCodexHome, isPathWithinRoots, SKIP_DIRS, safeSkillDirectoryPath } from "./paths";
 import {
 	canonicalStructuredString,
-	completeJsonlRecords,
 	type JsonObject,
 	jsonObject,
 	jsonString,
@@ -35,6 +30,7 @@ import {
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
+import { addSessionModel, describeSessionContent, JsonlSessionSource } from "./session-source";
 import { readCommandVersion } from "./version";
 
 function codexDir() {
@@ -329,15 +325,18 @@ function resolveProjectFilter(projectFilter?: string): string | null {
 	return projectFilter ? resolve(projectFilter) : null;
 }
 
-function parseSessionFile(filePath: string, absFilter: string | null): RawSession | null {
-	let content: string;
+async function parseSessionFile(
+	filePath: string,
+	absFilter: string | null,
+	context?: SyncReadContext,
+): Promise<RawSession | null> {
+	let source: JsonlSessionSource;
 	try {
-		content = readFileSync(filePath, "utf-8");
-	} catch {
-		return null;
+		source = await JsonlSessionSource.open(filePath, context);
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+		throw error;
 	}
-	const records = completeJsonlRecords(content);
-	if (records.length === 0) return null;
 
 	let sessionId: string | null = null;
 	let projectPath: string | null = null;
@@ -345,12 +344,11 @@ function parseSessionFile(filePath: string, absFilter: string | null): RawSessio
 	let endedAt: Date | null = null;
 	let lastModel: string | null = null;
 	const modelsUsed = new Set<string>();
-	const rawEntries: Array<{ raw: JsonObject; recordSeq: number; model: string | null }> = [];
 	let inputTokens = 0;
 	let outputTokens = 0;
 	let cacheReadTokens = 0;
 
-	for (const { data: raw, recordSeq } of records) {
+	for await (const { data: raw } of source.records()) {
 		const parsed = raw as SessionLine;
 
 		const ts = parsed.timestamp ? new Date(parsed.timestamp) : null;
@@ -373,7 +371,7 @@ function parseSessionFile(filePath: string, absFilter: string | null): RawSessio
 			const model = parsed.payload?.model;
 			if (model) {
 				lastModel = model;
-				modelsUsed.add(model);
+				addSessionModel(modelsUsed, model);
 			}
 			continue;
 		}
@@ -386,35 +384,49 @@ function parseSessionFile(filePath: string, absFilter: string | null): RawSessio
 				cacheReadTokens = total.cached_input_tokens ?? cacheReadTokens;
 			}
 		}
-		rawEntries.push({ raw, recordSeq, model: lastModel });
 	}
 	if (!sessionId) return null;
 	if (absFilter) {
 		if (typeof projectPath !== "string") return null;
 		if (projectPath !== absFilter && !projectPath.startsWith(`${absFilter}/`)) return null;
 	}
-	const events = sequenceSessionEvents(
-		rawEntries.flatMap(({ raw, recordSeq, model }) =>
-			codexEventDrafts(raw, sessionId as string, recordSeq).map((draft) =>
-				bindAssistantModel(draft, model),
-			),
-		),
+	const sessionKey = sessionId;
+	const readEvents = async function* () {
+		let model: string | null = null;
+		let seq = 0;
+		for await (const { data: raw, recordSeq } of source.records()) {
+			const parsed = raw as SessionLine;
+			if (parsed.type === "session_meta") continue;
+			if (parsed.type === "turn_context") {
+				model = parsed.payload?.model ?? model;
+				continue;
+			}
+			const events = sequenceSessionEvents(
+				codexEventDrafts(raw, sessionKey, recordSeq).map((draft) =>
+					bindAssistantModel(draft, model),
+				),
+				seq,
+			);
+			seq += events.length;
+			yield* events;
+		}
+	};
+	const description = await describeSessionContent(
+		readEvents,
+		source.eager,
+		(message) => !message.content.startsWith("<environment_context>"),
 	);
-	const messages = projectEventsToMessages(events);
-
-	if (messages.length === 0 || !startedAt) return null;
+	if (description.messageCount === 0 || !startedAt) return null;
 
 	endedAt ??= startedAt;
-	const firstRealUser = messages.find(
-		(message) => message.role === "user" && !message.content.startsWith("<environment_context>"),
-	);
+	const firstRealUser = description.firstUser;
 
 	return {
 		localSessionId: sessionId,
 		projectPath,
 		startedAt,
 		endedAt,
-		messageCount: messages.length,
+		messageCount: description.messageCount,
 		inputTokens,
 		outputTokens,
 		cacheReadTokens,
@@ -422,8 +434,8 @@ function parseSessionFile(filePath: string, absFilter: string | null): RawSessio
 		modelsUsed: [...modelsUsed],
 		durationSeconds: durationSecondsBetween(startedAt, endedAt),
 		summary: firstRealUser ? safeTruncate(firstRealUser.content, 200) : null,
-		messages,
-		events,
+		...description.content,
+		sourceRevision: source.revision,
 		rawFilePath: filePath,
 	};
 }
@@ -501,7 +513,7 @@ export class CodexAdapter implements AgentAdapterCore {
 			const sessionsById = new Map<string, RawSession>();
 			for (const filePath of files) {
 				if (context) await setImmediate(undefined, { signal: context.signal });
-				const session = parseSessionFile(filePath, absFilter);
+				const session = await parseSessionFile(filePath, absFilter, context);
 				if (session) {
 					sessionsById.set(session.localSessionId, session);
 					this.sessionPaths.set(session.localSessionId, filePath);
@@ -515,7 +527,7 @@ export class CodexAdapter implements AgentAdapterCore {
 		for (const root of sessionRoots()) {
 			for (const filePath of collectJsonlFiles(root)) {
 				if (context) await setImmediate(undefined, { signal: context.signal });
-				const session = parseSessionFile(filePath, absFilter);
+				const session = await parseSessionFile(filePath, absFilter, context);
 				if (session && !sessionsById.has(session.localSessionId)) {
 					sessionsById.set(session.localSessionId, session);
 					pathsById.set(session.localSessionId, filePath);
@@ -541,7 +553,7 @@ export class CodexAdapter implements AgentAdapterCore {
 		context?.signal.throwIfAborted();
 		const knownPath = this.sessionPaths.get(localSessionId);
 		if (knownPath) {
-			const current = parseSessionFile(knownPath, null);
+			const current = await parseSessionFile(knownPath, null, context);
 			if (current?.localSessionId === localSessionId) return current;
 			this.sessionPaths.delete(localSessionId);
 		}

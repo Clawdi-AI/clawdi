@@ -54,6 +54,15 @@ if [ "$*" = "sessions --json --all-agents --limit all" ] && [ -f "$HOME/.opencla
   printf '%s\n' '{"path":null,"stores":[],"allAgents":true,"sessions":[{"agentId":"main","key":"agent:main:main","kind":"direct","updatedAt":1776247205000},{"agentId":"main","key":"agent:main:cron:daily","kind":"cron","updatedAt":1776247205000}]}'
   exit 0
 fi
+if [ "$1 $2 $3" = "gateway call chat.history" ] && [ -f "$HOME/.openclaw/paged-history-test" ]; then
+  case "$5" in
+    *'"offset":0'*) printf '%s\n' '{"messages":[{"id":"new","role":"user","content":"new question","timestamp":"2026-04-15T10:00:02.000Z"}],"hasMore":true,"nextOffset":1}' ;;
+    *)
+      if [ -f "$HOME/.openclaw/pagination-failure-test" ]; then exit 1; fi
+      printf '%s\n' '{"messages":[{"id":"old","role":"user","content":"old question","timestamp":"2026-04-15T10:00:01.000Z"}],"hasMore":false}' ;;
+  esac
+  exit 0
+fi
 if [ "$1 $2 $3" = "gateway call chat.history" ] && [ -f "$HOME/.openclaw/sqlite-session-test" ]; then
   case "$*" in *sessionId*) exit 1 ;; esac
   printf '%s\n' '{"messages":[{"id":"active-user","role":"user","content":"kept question","timestamp":"2026-04-15T10:00:00.000Z"},{"id":"active-assistant","parentId":"active-user","role":"assistant","content":"kept answer","model":"gpt-5.6-sol","timestamp":"2026-04-15T10:00:05.000Z"}],"hasMore":false}'
@@ -448,6 +457,23 @@ describe("OpenClawAdapter.collectSessions", () => {
 		expect(adapter.sessions.watchPaths()).toContain(sqlitePath);
 		expect(adapter.sessions.watchPaths()).toContain(`${sqlitePath}-wal`);
 		expect(adapter.sessions.watchPaths()).toContain(`${sqlitePath}-journal`);
+	});
+
+	it("spools Gateway pages in chronological order and rejects incomplete pagination", async () => {
+		const stateRoot = join(tmpHome, ".openclaw");
+		mkdirSync(join(stateRoot, "agents", "main", "agent"), { recursive: true });
+		writeFileSync(join(stateRoot, "agents", "main", "agent", "openclaw-agent.sqlite"), "fixture");
+		writeFileSync(join(stateRoot, "sqlite-session-test"), "enabled");
+		writeFileSync(join(stateRoot, "paged-history-test"), "enabled");
+		rmSync(join(stateRoot, "agents", "main", "sessions", "sessions.json"));
+		const adapter = new OpenClawAdapter();
+		const { sessions } = await adapter.sessions.collect({ kind: "complete" });
+		expect(sessions[0]?.messages.map((message) => message.content)).toEqual([
+			"old question",
+			"new question",
+		]);
+		writeFileSync(join(stateRoot, "pagination-failure-test"), "enabled");
+		expect((await adapter.sessions.collect({ kind: "complete" })).sessions).toEqual([]);
 	});
 
 	it("classifies official sessionKey-only entries through Gateway history", async () => {

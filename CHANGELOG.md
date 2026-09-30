@@ -12,6 +12,13 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.100
+
+- Large session histories sync without loading the entire history into memory,
+  keeping connected agents responsive while preserving every uploaded event.
+- Managed CLI updates prepare the required CLI before reading new runtime
+  settings, allowing compatible upgrades to keep agent services running.
+
 ### CLI 0.14.96
 
 - Chatting with a Hermes Cloud Agent through Telegram or another channel now always

@@ -3,11 +3,7 @@ import { basename, join, relative, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
-import {
-	projectEventsToMessages,
-	type SessionEventDraft,
-	sequenceSessionEvents,
-} from "../lib/session-events";
+import { type SessionEventDraft, sequenceSessionEvents } from "../lib/session-events";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
 import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
@@ -26,7 +22,6 @@ import type {
 import { getClaudeHome, isPathWithinRoots, SKIP_DIRS, safeSkillDirectoryPath } from "./paths";
 import {
 	canonicalStructuredString,
-	completeJsonlRecords,
 	type JsonObject,
 	jsonObject,
 	jsonString,
@@ -35,6 +30,8 @@ import {
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
+import { describeSessionContent, JsonlSessionSource } from "./session-source";
+import { withSessionIndex } from "./sqlite";
 import { readCommandVersion } from "./version";
 
 function claudeDir() {
@@ -140,14 +137,7 @@ function claudeEventDrafts(
 	return drafts;
 }
 
-/**
- * Internal-only intermediate shape produced by `parseSessionJsonl`. The
- * `uuidSet` lives in a sibling `Map<RawSession, Set<string>>` for the dedupe
- * pass and never leaves this module — it does NOT become part of `RawSession`.
- */
-type ParsedSession = Omit<RawSession, "localSessionId" | "rawFilePath"> & {
-	uuidSet: Set<string>;
-};
+type ParsedSession = Omit<RawSession, "localSessionId" | "rawFilePath">;
 
 export class ClaudeCodeAdapter implements AgentAdapterCore {
 	readonly agentType = "claude_code" as const;
@@ -294,51 +284,88 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		coverage: SessionScanResult["coverage"],
 		context?: SyncReadContext,
 	): Promise<SessionScanResult> {
-		const sessions: RawSession[] = [];
-		const uuidsBySession = new Map<RawSession, Set<string>>();
-		for (const projectDirName of projectDirNames) {
-			const projectPath = join(projectsDir(), projectDirName);
-			if (!existsSync(projectPath)) continue;
-			for (const file of readdirSync(projectPath).filter((name) => name.endsWith(".jsonl"))) {
-				if (context) await setImmediate(undefined, { signal: context.signal });
-				try {
-					const parsed = this.parseRawSession(join(projectPath, file), projectDirName);
-					if (!parsed) continue;
-					const cwd = parsed.session.projectPath;
-					if (absFilter && (!cwd || (cwd !== absFilter && !cwd.startsWith(`${absFilter}/`)))) {
-						continue;
+		return withSessionIndex(async (index) => {
+			index.exec(`
+				CREATE TABLE uuids (source_key INTEGER, uuid TEXT, PRIMARY KEY (source_key, uuid)) WITHOUT ROWID;
+				CREATE TABLE inventory (source_key INTEGER PRIMARY KEY, project TEXT, uuid_count INTEGER);
+				BEGIN;
+			`);
+			const insertUuid = index.prepare("INSERT OR IGNORE INTO uuids VALUES (?, ?)");
+			const insertSource = index.prepare(
+				"INSERT INTO inventory VALUES (?, ?, (SELECT count(*) FROM uuids WHERE source_key=?))",
+			);
+			const sources: Array<{ session: RawSession; sourceKey: number }> = [];
+			let sourceKey = 0;
+			for (const projectDirName of projectDirNames) {
+				const projectPath = join(projectsDir(), projectDirName);
+				if (!existsSync(projectPath)) continue;
+				for (const file of readdirSync(projectPath).filter((name) => name.endsWith(".jsonl"))) {
+					if (context) await setImmediate(undefined, { signal: context.signal });
+					const key = sourceKey++;
+					try {
+						const session = await this.parseRawSession(join(projectPath, file), context, (uuid) =>
+							insertUuid.run(key, uuid),
+						);
+						if (!session) continue;
+						const cwd = session.projectPath;
+						if (absFilter && (!cwd || (cwd !== absFilter && !cwd.startsWith(`${absFilter}/`)))) {
+							continue;
+						}
+						insertSource.run(key, cwd, key);
+						sources.push({ session, sourceKey: key });
+					} catch (error) {
+						context?.signal.throwIfAborted();
+						if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
+							throw error;
 					}
-					sessions.push(parsed.session);
-					uuidsBySession.set(parsed.session, parsed.uuidSet);
-				} catch {
-					// Skip files that disappear or become unreadable during collection.
 				}
 			}
-		}
-		return dedupeResumeChains(sessions, uuidsBySession, coverage);
+			index.exec("COMMIT");
+			const subset = index.prepare(`
+				SELECT 1 FROM inventory b
+				WHERE b.project IS ? AND b.uuid_count > (SELECT uuid_count FROM inventory WHERE source_key=?)
+				AND (SELECT uuid_count FROM inventory WHERE source_key=?) >= 10
+				AND NOT EXISTS (
+					SELECT 1 FROM uuids a WHERE a.source_key=? AND NOT EXISTS (
+						SELECT 1 FROM uuids bu WHERE bu.source_key=b.source_key AND bu.uuid=a.uuid
+					)
+				) LIMIT 1
+			`);
+			const dedupedIds = new Set<string>();
+			for (const { session, sourceKey: key } of sources) {
+				context?.signal.throwIfAborted();
+				if (subset.get(session.projectPath, key, key, key)) dedupedIds.add(session.localSessionId);
+			}
+			return {
+				sessions: sources
+					.map(({ session }) => session)
+					.filter((session) => !dedupedIds.has(session.localSessionId)),
+				dedupedCount: dedupedIds.size,
+				coverage,
+			};
+		});
 	}
 
-	private parseRawSession(
+	private async parseRawSession(
 		filePath: string,
-		projectDirName: string,
-	): { session: RawSession; uuidSet: Set<string> } | null {
-		const parsed = this.parseSessionJsonl(filePath, projectDirName);
+		context: SyncReadContext | undefined,
+		observeUuid: (uuid: string) => void,
+	): Promise<RawSession | null> {
+		const parsed = await this.parseSessionJsonl(filePath, context, observeUuid);
 		if (!parsed) return null;
-		const { uuidSet, ...sessionFields } = parsed;
 		return {
-			session: {
-				...sessionFields,
-				localSessionId: basename(filePath, ".jsonl"),
-				rawFilePath: filePath,
-			},
-			uuidSet,
+			...parsed,
+			localSessionId: basename(filePath, ".jsonl"),
+			rawFilePath: filePath,
 		};
 	}
 
-	private parseSessionJsonl(filePath: string, _projectDirName: string): ParsedSession | null {
-		const content = readFileSync(filePath, "utf-8");
-		const records = completeJsonlRecords(content);
-		if (records.length < 3) return null;
+	private async parseSessionJsonl(
+		filePath: string,
+		context: SyncReadContext | undefined,
+		observeUuid: (uuid: string) => void,
+	): Promise<ParsedSession | null> {
+		const source = await JsonlSessionSource.open(filePath, context);
 
 		let inputTokens = 0;
 		let outputTokens = 0;
@@ -349,63 +376,64 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		const modelsUsed = new Set<string>();
 		let projectPath: string | null = null;
 		let firstUserMessage: string | null = null;
-		const rawEntries: Array<{ raw: JsonObject; recordSeq: number }> = [];
-		const uuidSet = new Set<string>();
 
-		for (const { data: raw, recordSeq } of records) {
-			try {
-				const entry = raw as SessionJsonlEntry;
-				rawEntries.push({ raw, recordSeq });
-				const msg = entry.message;
-				const role = msg?.role;
+		for await (const { data: raw } of source.records()) {
+			const entry = raw as SessionJsonlEntry;
+			const msg = entry.message;
+			const role = msg?.role;
 
-				if (entry.uuid) uuidSet.add(entry.uuid);
+			const uuid = jsonString(raw.uuid);
+			if (uuid) observeUuid(uuid);
 
-				if (entry.timestamp) {
-					const ts = new Date(entry.timestamp);
-					if (!startedAt) startedAt = ts;
-					endedAt = ts;
-				}
+			if (entry.timestamp) {
+				const ts = new Date(entry.timestamp);
+				if (!startedAt) startedAt = ts;
+				endedAt = ts;
+			}
 
-				if (entry.cwd && !projectPath) {
-					projectPath = entry.cwd;
-				}
+			if (entry.cwd && !projectPath) {
+				projectPath = entry.cwd;
+			}
 
-				if (role === "user" && !firstUserMessage) {
-					const c = msg?.content;
-					if (typeof c === "string") {
-						firstUserMessage = safeTruncate(c, 200);
-					} else if (Array.isArray(c)) {
-						const textBlock = c.find((b) => b.type === "text" && b.text);
-						if (textBlock?.text) {
-							firstUserMessage = safeTruncate(textBlock.text, 200);
-						}
+			if (role === "user" && !firstUserMessage) {
+				const c = msg?.content;
+				if (typeof c === "string") {
+					firstUserMessage = safeTruncate(c, 200);
+				} else if (Array.isArray(c)) {
+					const textBlock = c.find((b) => b.type === "text" && b.text);
+					if (textBlock?.text) {
+						firstUserMessage = safeTruncate(textBlock.text, 200);
 					}
 				}
+			}
 
-				if (role === "assistant" && msg?.model) {
-					modelsUsed.add(msg.model);
-					model = msg.model;
-				}
+			if (role === "assistant" && msg?.model) {
+				modelsUsed.add(msg.model);
+				model = msg.model;
+			}
 
-				if (msg?.usage) {
-					inputTokens += msg.usage.input_tokens ?? 0;
-					outputTokens += msg.usage.output_tokens ?? 0;
-					cacheReadTokens += msg.usage.cache_read_input_tokens ?? 0;
-				}
-			} catch {
-				// Skip unparseable lines
+			if (msg?.usage) {
+				inputTokens += msg.usage.input_tokens ?? 0;
+				outputTokens += msg.usage.output_tokens ?? 0;
+				cacheReadTokens += msg.usage.cache_read_input_tokens ?? 0;
 			}
 		}
+		if (source.validRecords < 3) return null;
 		const sourceSessionKey = basename(filePath, ".jsonl");
-		const events = sequenceSessionEvents(
-			rawEntries.flatMap(({ raw, recordSeq }) =>
-				claudeEventDrafts(raw, sourceSessionKey, recordSeq),
-			),
-		);
-		const messages = projectEventsToMessages(events);
+		const readEvents = async function* () {
+			let seq = 0;
+			for await (const { data: raw, recordSeq } of source.records()) {
+				const events = sequenceSessionEvents(
+					claudeEventDrafts(raw, sourceSessionKey, recordSeq),
+					seq,
+				);
+				seq += events.length;
+				yield* events;
+			}
+		};
+		const description = await describeSessionContent(readEvents, source.eager);
 
-		if (!startedAt || messages.length === 0) return null;
+		if (!startedAt || description.messageCount === 0) return null;
 
 		const durationSeconds = durationSecondsBetween(startedAt, endedAt);
 
@@ -413,17 +441,16 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			projectPath,
 			startedAt,
 			endedAt,
-			messageCount: messages.length,
+			messageCount: description.messageCount,
 			inputTokens,
 			outputTokens,
 			cacheReadTokens,
 			model,
 			modelsUsed: [...modelsUsed],
 			summary: firstUserMessage,
-			messages,
-			events,
+			...description.content,
+			sourceRevision: source.revision,
 			durationSeconds,
-			uuidSet,
 		};
 	}
 
@@ -541,71 +568,4 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			tarGzBytes,
 		);
 	}
-}
-
-/**
- * Dedupe resume chains: when `claude --resume` produces a new sessionId file
- * whose message-uuid set strictly contains an older file's, the older one is
- * a redundant predecessor (its content is fully embedded in the newer file
- * via Claude Code's file-history-snapshot replay). We drop the predecessor
- * from the upload set and keep the longest leaf.
- *
- * Multi-link chains (A ⊂ B ⊂ C) collapse in a single pass: each predecessor
- * is dropped as soon as any proper superset is found in its project group.
- *
- * Sessions with fewer than 10 uuids are excluded from the predecessor side
- * of the comparison — too short to reliably tell "real subset" from
- * "happens to share a few system uuids".
- */
-function dedupeResumeChains(
-	sessions: RawSession[],
-	uuids: Map<RawSession, Set<string>>,
-	coverage: SessionScanResult["coverage"],
-): SessionScanResult {
-	// Group by projectPath — resume chains are always within a single cwd.
-	const byProject = new Map<string, RawSession[]>();
-	for (const s of sessions) {
-		const key = s.projectPath ?? "<no-project>";
-		const arr = byProject.get(key);
-		if (arr) arr.push(s);
-		else byProject.set(key, [s]);
-	}
-
-	const dedupedIds = new Set<string>();
-
-	for (const group of byProject.values()) {
-		if (group.length < 2) continue;
-		// Sort by uuid count ascending so we scan smaller candidates first.
-		const candidates = group
-			.filter((s) => (uuids.get(s)?.size ?? 0) >= 10)
-			.sort((a, b) => (uuids.get(a)?.size ?? 0) - (uuids.get(b)?.size ?? 0));
-
-		for (let i = 0; i < candidates.length; i++) {
-			const a = candidates[i];
-			const aSet = uuids.get(a);
-			if (!aSet) continue;
-			for (let j = i + 1; j < candidates.length; j++) {
-				const b = candidates[j];
-				const bSet = uuids.get(b);
-				if (!bSet || bSet.size <= aSet.size) continue;
-				let isSubset = true;
-				for (const u of aSet) {
-					if (!bSet.has(u)) {
-						isSubset = false;
-						break;
-					}
-				}
-				if (isSubset) {
-					dedupedIds.add(a.localSessionId);
-					break;
-				}
-			}
-		}
-	}
-
-	return {
-		sessions: sessions.filter((s) => !dedupedIds.has(s.localSessionId)),
-		dedupedCount: dedupedIds.size,
-		coverage,
-	};
 }

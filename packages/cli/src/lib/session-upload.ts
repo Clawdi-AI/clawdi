@@ -1,8 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { RawSession, SessionEvent, SessionModule } from "../adapters/base";
+import type { RawSession, SessionEvent, SessionMessage, SessionModule } from "../adapters/base";
 import { type ApiClient, ApiError } from "./api-client";
 import { canonicalApiOrigin } from "./api-origin";
-import { advanceEventHead, canonicalJson, EMPTY_EVENT_HEAD } from "./session-events";
+import {
+	advanceEventHead,
+	canonicalJson,
+	EMPTY_EVENT_HEAD,
+	projectEventsToMessages,
+} from "./session-events";
 import {
 	type PendingEventUpload,
 	persistFencedSessionEntry,
@@ -18,8 +23,12 @@ export interface SessionUploadPlan {
 	protocol: SelectedSessionProtocol;
 	localHash: string;
 	snapshotBytes?: Buffer;
+	readSnapshot?: () => Promise<Buffer>;
 	events?: readonly SessionEvent[];
+	readEvents?: () => AsyncIterable<SessionEvent>;
+	eventCount?: number;
 	finalEventHead?: string;
+	snapshotSizeBytes?: number;
 }
 
 export type SessionContentSyncResult =
@@ -36,7 +45,7 @@ interface EventHead {
 
 interface EventChunk {
 	startSeq: number;
-	events: readonly SessionEvent[];
+	count: number;
 	bytes: Buffer;
 	contentHash: string;
 	baseHead: string;
@@ -46,6 +55,53 @@ interface EventChunk {
 const LEGACY_SESSION_MAX_BYTES = 50 * 1024 * 1024;
 const CLIENT_EVENT_CHUNK_MAX_BYTES = 8 * 1024 * 1024;
 const EVENT_RETRY_LIMIT = 3;
+
+class SnapshotAccumulator {
+	private readonly hash = createHash("sha256").update("[");
+	private readonly parts: Buffer[] = [];
+	private count = 0;
+	private size = 2;
+
+	constructor(private readonly retain: boolean) {}
+
+	add(message: SessionMessage): void {
+		const bytes = Buffer.from(`${this.count++ ? "," : ""}${JSON.stringify(message)}`);
+		this.hash.update(bytes);
+		this.size += bytes.length;
+		if (this.retain && this.size <= LEGACY_SESSION_MAX_BYTES) this.parts.push(bytes);
+		else this.parts.length = 0;
+	}
+
+	finish(): { hash: string; size: number; bytes?: Buffer } {
+		return {
+			hash: this.hash.update("]").digest("hex"),
+			size: this.size,
+			...(this.retain && this.size <= LEGACY_SESSION_MAX_BYTES
+				? { bytes: Buffer.concat([Buffer.from("["), ...this.parts, Buffer.from("]")]) }
+				: {}),
+		};
+	}
+}
+
+async function snapshotPlan(session: RawSession): Promise<SessionUploadPlan> {
+	const describe = async (retain: boolean) => {
+		const accumulator = new SnapshotAccumulator(retain);
+		for await (const message of readSessionMessages(session)) accumulator.add(message);
+		return accumulator.finish();
+	};
+	const initial = await describe(false);
+	return {
+		protocol: "snapshot-v1",
+		localHash: initial.hash,
+		snapshotSizeBytes: initial.size,
+		readSnapshot: async () => {
+			const current = await describe(true);
+			if (current.hash !== initial.hash || current.size !== initial.size || !current.bytes)
+				throw new Error("snapshot source changed after planning; retry with a fresh scan");
+			return current.bytes;
+		},
+	};
+}
 
 const capabilityRequests = new WeakMap<
 	ApiClient,
@@ -67,11 +123,21 @@ export function planSessionUpload(
 	protocol: SelectedSessionProtocol,
 ): SessionUploadPlan {
 	if (protocol === "snapshot-v1") {
-		const snapshotBytes = Buffer.from(JSON.stringify(session.messages), "utf-8");
+		const accumulator = new SnapshotAccumulator(false);
+		for (const message of session.messages) accumulator.add(message);
+		const initial = accumulator.finish();
 		return {
 			protocol,
-			localHash: sha256(snapshotBytes),
-			snapshotBytes,
+			localHash: initial.hash,
+			snapshotSizeBytes: initial.size,
+			readSnapshot: async () => {
+				const accumulator = new SnapshotAccumulator(true);
+				for (const message of session.messages) accumulator.add(message);
+				const current = accumulator.finish();
+				if (current.hash !== initial.hash || current.size !== initial.size || !current.bytes)
+					throw new Error("snapshot source changed after planning; retry with a fresh scan");
+				return current.bytes;
+			},
 		};
 	}
 	const events = session.events;
@@ -84,8 +150,41 @@ export function planSessionUpload(
 		protocol,
 		localHash: finalEventHead,
 		events,
+		eventCount: events.length,
 		finalEventHead,
 	};
+}
+
+export async function prepareSessionUpload(
+	session: RawSession,
+	protocol: SelectedSessionProtocol,
+): Promise<SessionUploadPlan> {
+	if (protocol === "snapshot-v1") return snapshotPlan(session);
+	if (!session.readEvents && !session.readMessages) return planSessionUpload(session, protocol);
+	if (protocol === "events-v1") {
+		if (!session.readEvents) throw new Error(`${session.localSessionId} has no events-v1 content`);
+		let head = EMPTY_EVENT_HEAD;
+		let count = 0;
+		for await (const event of session.readEvents()) {
+			assertEventIdentity(event, count++);
+			head = advanceEventHead(head, [event]);
+		}
+		return {
+			protocol,
+			localHash: head,
+			finalEventHead: head,
+			eventCount: count,
+			readEvents: session.readEvents,
+		};
+	}
+	throw new Error("events-v1 plan is missing its event reader");
+}
+
+async function* readSessionMessages(session: RawSession): AsyncGenerator<SessionMessage> {
+	if (session.readMessages) yield* session.readMessages();
+	else if (session.readEvents) {
+		for await (const event of session.readEvents()) yield* projectEventsToMessages([event]);
+	} else yield* session.messages;
 }
 
 export function sessionFence(
@@ -148,17 +247,18 @@ async function syncSnapshotSession(input: {
 	plan: SessionUploadPlan;
 	needsSnapshotContent: boolean;
 }): Promise<SessionContentSyncResult> {
-	const bytes = input.plan.snapshotBytes;
-	if (!bytes) throw new Error("snapshot-v1 plan is missing bytes");
-	if (bytes.length > LEGACY_SESSION_MAX_BYTES) {
+	const sizeBytes = input.plan.snapshotSizeBytes ?? input.plan.snapshotBytes?.length;
+	if (sizeBytes !== undefined && sizeBytes > LEGACY_SESSION_MAX_BYTES) {
 		return persistBlocked(input, {
 			code: "legacy_session_too_large",
-			sizeBytes: bytes.length,
+			sizeBytes,
 			message: `${input.session.localSessionId} exceeds the legacy 50 MiB session limit`,
 		});
 	}
 	let uploaded = false;
 	if (input.needsSnapshotContent) {
+		const bytes = input.plan.snapshotBytes ?? (await input.plan.readSnapshot?.());
+		if (!bytes) throw new Error("snapshot-v1 plan is missing bytes");
 		try {
 			const response = await input.api.uploadSessionContent(
 				input.session.localSessionId,
@@ -201,14 +301,14 @@ async function syncEventSession(input: {
 	session: RawSession;
 	plan: SessionUploadPlan;
 }): Promise<SessionContentSyncResult> {
-	const events = input.plan.events;
+	const eventCount = input.plan.eventCount;
 	const finalHead = input.plan.finalEventHead;
-	if (!events || finalHead === undefined) throw new Error("events-v1 plan is incomplete");
+	if (eventCount === undefined || finalHead === undefined)
+		throw new Error("events-v1 plan is incomplete");
 	const capabilities = await eventUploadCapabilities(input.api);
 	if (capabilities === null) {
 		throw new Error("events-v1 capability disappeared after session negotiation");
 	}
-	let heads: readonly string[] | undefined;
 	let uploaded = false;
 	for (let attempt = 0; attempt < EVENT_RETRY_LIMIT; attempt++) {
 		const remote = await input.api.getSessionEventHead(
@@ -222,24 +322,23 @@ async function syncEventSession(input: {
 			count: remote.count,
 			head_hash: remote.head_hash,
 		};
-		if (head.count === events.length && head.head_hash === finalHead && head.generation) {
+		if (head.count === eventCount && head.head_hash === finalHead && head.generation) {
 			persistEventSuccess(input, head);
 			return { status: "synced", uploaded, localHash: finalHead };
 		}
 		try {
-			heads ??= eventHeads(events);
 			if (
 				head.protocol === "events-v1" &&
 				head.generation !== null &&
-				head.count < events.length &&
-				heads[head.count] === head.head_hash
+				head.count < eventCount &&
+				(await eventPrefixHead(input.plan, head.count)) === head.head_hash
 			) {
-				const appendResult = await appendEvents(input, head, events, heads, capabilities);
+				const appendResult = await appendEvents(input, head, capabilities);
 				uploaded = uploaded || appendResult.uploaded;
 				persistEventSuccess(input, appendResult.head);
 				return { status: "synced", uploaded, localHash: finalHead };
 			}
-			const rewriteResult = await replaceEventGeneration(input, head, events, heads, capabilities);
+			const rewriteResult = await replaceEventGeneration(input, head, capabilities);
 			uploaded = uploaded || rewriteResult.uploaded;
 			persistEventSuccess(input, rewriteResult.head);
 			return { status: "synced", uploaded, localHash: finalHead };
@@ -265,15 +364,13 @@ async function appendEvents(
 		plan: SessionUploadPlan;
 	},
 	initialHead: EventHead,
-	events: readonly SessionEvent[],
-	heads: readonly string[],
 	limits: { targetBytes: number; maxBytes: number },
 ): Promise<{ head: EventHead; uploaded: boolean }> {
 	if (!initialHead.generation) throw new Error("cannot append without a generation");
 	let head = initialHead;
-	const chunks = chunkEvents(events.slice(initialHead.count), initialHead.count, limits, heads);
-	for (const chunk of chunks) {
-		const finalCount = chunk.startSeq + chunk.events.length;
+	let uploaded = false;
+	for await (const chunk of chunkEvents(input.plan, initialHead.count, limits)) {
+		const finalCount = chunk.startSeq + chunk.count;
 		const pendingShape = {
 			kind: "append" as const,
 			generation: initialHead.generation,
@@ -312,8 +409,9 @@ async function appendEvents(
 			count: response.count,
 			head_hash: response.head_hash,
 		};
+		uploaded = true;
 	}
-	return { head, uploaded: chunks.length > 0 };
+	return { head, uploaded };
 }
 
 async function replaceEventGeneration(
@@ -324,19 +422,18 @@ async function replaceEventGeneration(
 		plan: SessionUploadPlan;
 	},
 	base: EventHead,
-	events: readonly SessionEvent[],
-	heads: readonly string[],
 	limits: { targetBytes: number; maxBytes: number },
 ): Promise<{ head: EventHead; uploaded: boolean }> {
 	const finalHead = input.plan.finalEventHead;
-	if (!finalHead) throw new Error("events-v1 plan is missing final head");
+	const eventCount = input.plan.eventCount;
+	if (!finalHead || eventCount === undefined) throw new Error("events-v1 plan is incomplete");
 	const pendingShape = {
 		kind: "rewrite" as const,
 		base_generation: base.generation,
 		base_revision: base.revision,
 		base_count: base.count,
 		base_head_hash: base.head_hash,
-		final_count: events.length,
+		final_count: eventCount,
 		final_head_hash: finalHead,
 	};
 	const reusable = reusablePending(input.fence, pendingShape);
@@ -352,7 +449,7 @@ async function replaceEventGeneration(
 		base_revision: base.revision,
 		base_count: base.count,
 		base_head_hash: base.head_hash,
-		final_count: events.length,
+		final_count: eventCount,
 		final_head_hash: finalHead,
 	};
 	const staged = await input.api.stageSessionEventGeneration(input.session.localSessionId, {
@@ -363,7 +460,7 @@ async function replaceEventGeneration(
 		base_revision: base.revision,
 		base_count: base.count,
 		base_head_hash: base.head_hash,
-		final_count: events.length,
+		final_count: eventCount,
 		final_head_hash: finalHead,
 	});
 	if (staged.generation !== pending.generation) {
@@ -380,7 +477,7 @@ async function replaceEventGeneration(
 		assertEventResponse(committed, {
 			generation: pending.generation,
 			revision: base.revision + 1,
-			count: events.length,
+			count: eventCount,
 			headHash: finalHead,
 		});
 		return {
@@ -394,8 +491,8 @@ async function replaceEventGeneration(
 			uploaded: false,
 		};
 	}
-	const chunks = chunkEvents(events, 0, limits, heads);
-	for (const chunk of chunks) {
+	let uploaded = false;
+	for await (const chunk of chunkEvents(input.plan, 0, limits)) {
 		const response = await input.api.uploadSessionEventGenerationChunk({
 			localSessionId: input.session.localSessionId,
 			generation: pending.generation,
@@ -407,13 +504,14 @@ async function replaceEventGeneration(
 		if (
 			response.generation !== pending.generation ||
 			response.start_seq !== chunk.startSeq ||
-			response.end_seq !== chunk.startSeq + chunk.events.length - 1 ||
-			response.count !== chunk.events.length ||
+			response.end_seq !== chunk.startSeq + chunk.count - 1 ||
+			response.count !== chunk.count ||
 			response.content_hash !== chunk.contentHash ||
 			response.result_head_hash !== chunk.resultHead
 		) {
 			throw new Error("server event chunk receipt does not match uploaded bytes");
 		}
+		uploaded = true;
 	}
 	const committed = await input.api.commitSessionEventGeneration(
 		input.session.localSessionId,
@@ -423,7 +521,7 @@ async function replaceEventGeneration(
 	assertEventResponse(committed, {
 		generation: pending.generation,
 		revision: base.revision + 1,
-		count: events.length,
+		count: eventCount,
 		headHash: finalHead,
 	});
 	return {
@@ -434,75 +532,100 @@ async function replaceEventGeneration(
 			count: committed.count,
 			head_hash: committed.head_hash,
 		},
-		uploaded: chunks.length > 0,
+		uploaded,
 	};
 }
 
-function chunkEvents(
-	events: readonly SessionEvent[],
+async function* chunkEvents(
+	plan: SessionUploadPlan,
 	startSeq: number,
 	limits: { targetBytes: number; maxBytes: number },
-	heads: readonly string[],
-): EventChunk[] {
-	const chunks: EventChunk[] = [];
-	let index = 0;
-	while (index < events.length) {
-		const chunkStartIndex = index;
-		let size = 0;
-		const lines: string[] = [];
-		while (index < events.length) {
-			const line = `${canonicalJson(events[index])}\n`;
-			const lineSize = Buffer.byteLength(line, "ascii");
-			if (lineSize > limits.maxBytes) {
-				throw new EventTooLargeError(startSeq + index, lineSize, limits.maxBytes);
-			}
-			if (index > chunkStartIndex && size + lineSize > limits.targetBytes) break;
-			lines.push(line);
-			size += lineSize;
-			index += 1;
-		}
-		const chunkStart = startSeq + chunkStartIndex;
-		const selected = events.slice(chunkStartIndex, index);
+): AsyncGenerator<EventChunk> {
+	let head = EMPTY_EVENT_HEAD;
+	let baseHead = head;
+	let chunkStart = startSeq;
+	let count = 0;
+	let size = 0;
+	let lines: string[] = [];
+	const chunk = (): EventChunk => {
 		const bytes = Buffer.from(lines.join(""), "ascii");
-		if (bytes.length > limits.maxBytes) {
-			throw new EventTooLargeError(chunkStart, bytes.length, limits.maxBytes);
-		}
-		const baseHead = heads[chunkStart];
-		const resultHead = heads[chunkStart + selected.length];
-		if (!baseHead || !resultHead) throw new Error("events-v1 chunk head index is incomplete");
-		chunks.push({
+		return {
 			startSeq: chunkStart,
-			events: selected,
+			count,
 			bytes,
 			contentHash: sha256(bytes),
 			baseHead,
-			resultHead,
-		});
+			resultHead: head,
+		};
+	};
+	for await (const event of readPlanEvents(plan)) {
+		if (event.seq < startSeq) {
+			head = advanceEventHead(head, [event]);
+			baseHead = head;
+			continue;
+		}
+		const line = `${canonicalJson(event)}\n`;
+		const lineSize = Buffer.byteLength(line, "ascii");
+		if (lineSize > limits.maxBytes)
+			throw new EventTooLargeError(event.seq, lineSize, limits.maxBytes);
+		if (count && size + lineSize > limits.targetBytes) {
+			yield chunk();
+			chunkStart += count;
+			baseHead = head;
+			count = 0;
+			size = 0;
+			lines = [];
+		}
+		lines.push(line);
+		size += lineSize;
+		count++;
+		head = advanceEventHead(head, [event]);
 	}
-	return chunks;
+	if (count) yield chunk();
 }
 
-function eventHeads(events: readonly SessionEvent[]): string[] {
-	const heads = [EMPTY_EVENT_HEAD];
+async function* readPlanEvents(plan: SessionUploadPlan): AsyncGenerator<SessionEvent> {
+	const events = plan.readEvents?.() ?? plan.events;
+	if (!events) throw new Error("events-v1 plan is missing its reader");
+	let count = 0;
 	let head = EMPTY_EVENT_HEAD;
-	for (const event of events) {
+	for await (const event of events) {
+		assertEventIdentity(event, count++);
 		head = advanceEventHead(head, [event]);
-		heads.push(head);
+		yield event;
 	}
-	return heads;
+	if (count !== plan.eventCount || head !== plan.finalEventHead) {
+		throw new Error("session source changed after upload planning; retry with a fresh plan");
+	}
+}
+
+async function eventPrefixHead(
+	plan: SessionUploadPlan,
+	count: number,
+): Promise<string | undefined> {
+	let head = EMPTY_EVENT_HEAD;
+	let prefix = count === 0 ? head : undefined;
+	for await (const event of readPlanEvents(plan)) {
+		head = advanceEventHead(head, [event]);
+		if (event.seq + 1 === count) prefix = head;
+	}
+	return prefix;
 }
 
 function assertEventSequence(events: readonly SessionEvent[]): void {
 	for (let index = 0; index < events.length; index++) {
 		const event = events[index];
-		if (!event || event.seq !== index)
-			throw new Error("events-v1 seq must be continuous from zero");
-		const expectedId = createHash("sha256")
-			.update(canonicalJson({ source: event.source, type: event.type }), "ascii")
-			.digest("hex");
-		if (event.event_id !== expectedId)
-			throw new Error(`events-v1 event_id mismatch at seq ${index}`);
+		if (!event) throw new Error("events-v1 event is missing");
+		assertEventIdentity(event, index);
 	}
+}
+
+function assertEventIdentity(event: SessionEvent, index: number): void {
+	if (event.seq !== index) throw new Error("events-v1 seq must be continuous from zero");
+	const expectedId = createHash("sha256")
+		.update(canonicalJson({ source: event.source, type: event.type }), "ascii")
+		.digest("hex");
+	if (event.event_id !== expectedId) throw new Error(`events-v1 event_id mismatch at seq ${index}`);
 }
 
 function persistEventSuccess(

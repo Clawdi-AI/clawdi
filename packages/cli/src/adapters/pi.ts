@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
@@ -7,20 +7,19 @@ import { durationSecondsBetween } from "../lib/session-duration";
 import {
 	canonicalJson,
 	canonicalPayloadJson,
-	projectEventsToMessages,
 	type SessionEventDraft,
 	sequenceSessionEvents,
 } from "../lib/session-events";
 import type {
 	AgentAdapterCore,
 	RawSession,
+	SessionEvent,
 	SessionScanRequest,
 	SessionScanResult,
 	SyncReadContext,
 } from "./base";
 import { getPiHome, getPiSessionsDir, isPathWithinRoots } from "./paths";
 import {
-	completeJsonlRecords,
 	type JsonObject,
 	jsonObject,
 	jsonString,
@@ -28,6 +27,8 @@ import {
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
+import { describeSessionContent, JsonlSessionSource } from "./session-source";
+import { openSessionIndex } from "./sqlite";
 import { readCommandVersion } from "./version";
 
 interface ParsedPiEntry {
@@ -35,13 +36,6 @@ interface ParsedPiEntry {
 	id: string;
 	parentId: string | null;
 	recordSeq: number;
-}
-
-interface ParsedPiFile {
-	header: JsonObject;
-	entries: ParsedPiEntry[];
-	leafId: string | null;
-	usage: PiUsage;
 }
 
 function numberValue(value: unknown): number | null {
@@ -88,130 +82,221 @@ function stableV1Id(entry: JsonObject, recordSeq: number): string {
 	return `v1-${recordSeq}-${createHash("sha256").update(canonicalJson(entry), "ascii").digest("hex").slice(0, 16)}`;
 }
 
-function readPiFile(filePath: string): ParsedPiFile | null {
-	let content: string;
-	try {
-		content = readFileSync(filePath, "utf-8");
-	} catch {
-		return null;
-	}
-	const parsed = completeJsonlRecords(content);
-	const first = parsed[0];
-	if (!first) return null;
-	if (first.data.kind === "header" && first.data.version === 4) {
-		return readPiV4File(first.data, parsed.slice(1));
-	}
-	if (first.data.type !== "session" || !jsonString(first.data.id)) return null;
-	const version = numberValue(first.data.version) ?? 1;
-	const entryRows = parsed.slice(1);
-	const ids = entryRows.map(
-		({ data, recordSeq }) => jsonString(data.id) ?? stableV1Id(data, recordSeq),
-	);
-	const usage = emptyUsage();
-	const entries = entryRows.map(({ data, recordSeq }, index): ParsedPiEntry => {
-		const migrated = { ...data };
-		const id = ids[index] as string;
-		let parentId = jsonString(data.parentId);
-		if (data.parentId === null) parentId = null;
-		else if (parentId === null) parentId = index > 0 ? (ids[index - 1] ?? null) : null;
-		if (version < 2 && data.type === "compaction") {
-			const keptIndex = numberValue(data.firstKeptEntryIndex);
-			if (keptIndex !== null) migrated.firstKeptEntryId = ids[keptIndex - 1];
-		}
-		const message = jsonObject(data.message);
-		if (version < 3 && message?.role === "hookMessage") {
-			migrated.message = { ...message, role: "custom" };
-		}
-		if (data.type === "message") addUsage(usage, message?.usage);
-		else if (data.type === "compaction" || data.type === "branch_summary") {
-			addUsage(usage, data.usage);
-		}
-		return { data: migrated, id, parentId, recordSeq };
-	});
-	return { header: first.data, entries, leafId: entries.at(-1)?.id ?? null, usage };
+interface PiReadMetadata {
+	header: JsonObject | null;
+	usage: PiUsage;
 }
 
-function readPiV4File(
-	header: JsonObject,
-	records: Array<{ data: JsonObject; recordSeq: number }>,
-): ParsedPiFile | null {
-	if (!jsonString(header.id) || numberValue(header.createdAt) === null) return null;
-	const entries: ParsedPiEntry[] = [];
-	const entriesById = new Map<string, ParsedPiEntry>();
-	const lanes = new Map<string, string | null>([["main", null]]);
-	const usage = emptyUsage();
-	let expectedSeq = 1;
-	for (const { data, recordSeq } of records) {
-		const seq = numberValue(data.seq);
-		if (!Number.isSafeInteger(seq) || seq !== expectedSeq) break;
-		expectedSeq += 1;
-		if (data.kind === "entry") {
-			const id = jsonString(data.id);
-			const parentId = data.parentId === null ? null : jsonString(data.parentId);
+interface IndexedPiEntry {
+	id: string;
+	parent_id: string | null;
+	record_seq: number;
+	ordinal: number;
+	offset: number;
+	length: number;
+	type: string | null;
+	first_kept_id: string | null;
+	kept_index: number | null;
+	retained_tail: number;
+	position?: number;
+}
+
+async function* readPiEvents(
+	sourceFile: JsonlSessionSource,
+	metadata: PiReadMetadata,
+): AsyncGenerator<SessionEvent> {
+	const index = await openSessionIndex();
+	try {
+		index.exec(`
+   CREATE TABLE entries (
+    id TEXT PRIMARY KEY, parent_id TEXT, record_seq INTEGER, ordinal INTEGER UNIQUE,
+    offset INTEGER, length INTEGER, type TEXT, first_kept_id TEXT, kept_index INTEGER, retained_tail INTEGER
+   );
+   CREATE TABLE lanes (name TEXT PRIMARY KEY, leaf_id TEXT);
+   CREATE TABLE ordinals (ordinal INTEGER PRIMARY KEY, id TEXT);
+   INSERT INTO lanes VALUES ('main', NULL);
+   CREATE TABLE branch (id TEXT PRIMARY KEY, position INTEGER UNIQUE);
+   BEGIN;
+  `);
+		const entryById = index.prepare("SELECT * FROM entries WHERE id=?");
+		const laneByName = index.prepare("SELECT leaf_id FROM lanes WHERE name=?");
+		const setLane = index.prepare("INSERT OR REPLACE INTO lanes VALUES (?, ?)");
+		const insertEntry = index.prepare(
+			"INSERT OR REPLACE INTO entries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		);
+		const insertOrdinal = index.prepare("INSERT INTO ordinals VALUES (?, ?)");
+		let header: JsonObject | null = null;
+		let version = 1;
+		let v4 = false;
+		let stopped = false;
+		let expectedSeq = 1;
+		let ordinal = 0;
+		let lastId: string | null = null;
+		const usage = emptyUsage();
+		for await (const record of sourceFile.records()) {
+			const data = record.data;
+			if (!header) {
+				if (stopped) continue;
+				v4 = data.kind === "header" && data.version === 4;
+				if (
+					!jsonString(data.id) ||
+					(v4 ? numberValue(data.createdAt) === null : data.type !== "session")
+				) {
+					stopped = true;
+					continue;
+				}
+				header = {
+					id: data.id,
+					cwd: data.cwd,
+					createdAt: data.createdAt,
+					timestamp: data.timestamp,
+				};
+				version = numberValue(data.version) ?? 1;
+				continue;
+			}
+			if (stopped) continue;
+			if (v4) {
+				const seq = numberValue(data.seq);
+				if (!Number.isSafeInteger(seq) || seq !== expectedSeq++) {
+					stopped = true;
+					continue;
+				}
+				if (data.kind === "lane") {
+					const lane = jsonString(data.lane);
+					const leaf = data.leafId === null ? null : jsonString(data.leafId);
+					if (!lane || (data.leafId !== null && (!leaf || !entryById.get(leaf)))) stopped = true;
+					else setLane.run(lane, leaf);
+					continue;
+				}
+				if (data.kind === "record") {
+					if (data.type === "usage") addUsage(usage, data.usage);
+					continue;
+				}
+				if (data.kind === "fact") continue;
+				if (data.kind !== "entry") {
+					stopped = true;
+					continue;
+				}
+			}
+			const id = jsonString(data.id) ?? (v4 ? null : stableV1Id(data, record.recordSeq));
+			let parent = data.parentId === null ? null : jsonString(data.parentId);
+			if (!v4 && data.parentId !== null && parent === null) parent = lastId;
 			const lane = data.lane === undefined ? null : jsonString(data.lane);
 			if (
 				!id ||
-				!jsonString(data.type) ||
-				(data.parentId !== null && !parentId) ||
-				(parentId !== null && !entriesById.has(parentId)) ||
-				(data.lane !== undefined && (!lane || !lanes.has(lane))) ||
-				entriesById.has(id)
+				(v4 &&
+					(!jsonString(data.type) ||
+						(data.parentId !== null && !parent) ||
+						(parent !== null && !entryById.get(parent)) ||
+						(data.lane !== undefined && (!lane || !laneByName.get(lane))) ||
+						entryById.get(id)))
 			) {
-				break;
+				stopped = true;
+				continue;
 			}
-			const entry = { data, id, parentId, recordSeq };
-			entries.push(entry);
-			entriesById.set(id, entry);
-			if (lane) lanes.set(lane, id);
-			continue;
+			ordinal++;
+			insertOrdinal.run(ordinal, id);
+			insertEntry.run(
+				id,
+				parent,
+				record.recordSeq,
+				ordinal,
+				record.offset,
+				record.length,
+				jsonString(data.type),
+				jsonString(data.firstKeptEntryId),
+				!v4 && version < 2 ? numberValue(data.firstKeptEntryIndex) : null,
+				Array.isArray(data.retainedTail) ? 1 : 0,
+			);
+			lastId = id;
+			if (v4 && lane) setLane.run(lane, id);
+			if (!v4) {
+				if (data.type === "message") addUsage(usage, jsonObject(data.message)?.usage);
+				else if (data.type === "compaction" || data.type === "branch_summary")
+					addUsage(usage, data.usage);
+			}
 		}
-		if (data.kind === "lane") {
-			const lane = jsonString(data.lane);
-			const leafId = data.leafId === null ? null : jsonString(data.leafId);
-			if (!lane || (data.leafId !== null && (!leafId || !entriesById.has(leafId)))) break;
-			lanes.set(lane, leafId);
-			continue;
+		index.exec("COMMIT");
+		metadata.header = header;
+		metadata.usage = usage;
+		if (!header) return;
+		const sessionKey = jsonString(header.id);
+		if (!sessionKey) return;
+		let current = v4 ? (laneByName.get("main") as { leaf_id: string | null }).leaf_id : lastId;
+		let position = 0;
+		const addBranch = index.prepare("INSERT INTO branch VALUES (?, ?)");
+		const inBranch = index.prepare("SELECT 1 FROM branch WHERE id=?");
+		index.exec("BEGIN");
+		while (current && !inBranch.get(current)) {
+			const entry = entryById.get(current) as IndexedPiEntry | undefined;
+			if (!entry) break;
+			addBranch.run(entry.id, position++);
+			current = entry.parent_id;
+			if (position % 128 === 0) await sourceFile.checkpoint();
 		}
-		if (data.kind === "record") {
-			if (data.type === "usage") addUsage(usage, data.usage);
-			continue;
+		index.exec("COMMIT");
+		const compaction = index
+			.prepare(`
+   SELECT e.*, b.position FROM branch b JOIN entries e ON e.id=b.id
+   WHERE e.type='compaction' ORDER BY b.position ASC LIMIT 1
+  `)
+			.get() as IndexedPiEntry | undefined;
+		let retainedPosition = -1;
+		if (compaction && !compaction.retained_tail) {
+			const keptId =
+				compaction.kept_index === null
+					? compaction.first_kept_id
+					: (
+							index.prepare("SELECT id FROM ordinals WHERE ordinal=?").get(compaction.kept_index) as
+								| { id: string }
+								| undefined
+						)?.id;
+			if (keptId) {
+				const kept = index
+					.prepare("SELECT position FROM branch WHERE id=? AND position>?")
+					.get(keptId, compaction.position ?? -1) as { position: number } | undefined;
+				retainedPosition = kept?.position ?? -1;
+			}
 		}
-		if (data.kind !== "fact") break;
+		const positions = compaction
+			? index
+					.prepare(`
+    SELECT e.*, b.position FROM branch b JOIN entries e ON e.id=b.id
+    WHERE b.position < ? OR (b.position > ? AND b.position <= ?) ORDER BY b.position DESC
+   `)
+					.iterate(compaction.position ?? -1, compaction.position ?? -1, retainedPosition)
+			: index
+					.prepare("SELECT e.* FROM branch b JOIN entries e ON e.id=b.id ORDER BY b.position DESC")
+					.iterate();
+		let seq = 0;
+		const readEntry = async (entry: IndexedPiEntry) => {
+			const data = await sourceFile.readRecord(entry.offset, entry.length);
+			if (!v4 && version < 3 && jsonObject(data.message)?.role === "hookMessage")
+				data.message = { ...jsonObject(data.message), role: "custom" };
+			return { data, id: entry.id, parentId: entry.parent_id, recordSeq: entry.record_seq };
+		};
+		if (compaction) {
+			const events = sequenceSessionEvents(
+				entryEvents(sessionKey, await readEntry(compaction)),
+				seq,
+			);
+			seq += events.length;
+			yield* events;
+		}
+		for (const value of positions) {
+			const events = sequenceSessionEvents(
+				entryEvents(sessionKey, await readEntry(value as IndexedPiEntry)),
+				seq,
+			);
+			seq += events.length;
+			yield* events;
+		}
+		// Verify the indexed prefix again before the upload can report a stable head.
+		for await (const _record of sourceFile.records()) {
+		}
+	} finally {
+		index.close();
 	}
-	return { header, entries, leafId: lanes.get("main") ?? null, usage };
-}
-
-function activeBranch(entries: ParsedPiEntry[], leafId: string | null): ParsedPiEntry[] {
-	const byId = new Map(entries.map((entry) => [entry.id, entry]));
-	const path: ParsedPiEntry[] = [];
-	let current = leafId ? byId.get(leafId) : undefined;
-	const seen = new Set<string>();
-	while (current && !seen.has(current.id)) {
-		seen.add(current.id);
-		path.push(current);
-		current = current.parentId ? byId.get(current.parentId) : undefined;
-	}
-	return path.reverse();
-}
-
-function compactionAwareBranch(entries: ParsedPiEntry[], leafId: string | null): ParsedPiEntry[] {
-	const branch = activeBranch(entries, leafId);
-	const compactionIndex = branch.findLastIndex((entry) => entry.data.type === "compaction");
-	if (compactionIndex < 0) return branch;
-	const compaction = branch[compactionIndex];
-	if (!compaction) return branch;
-	if (Array.isArray(compaction.data.retainedTail)) {
-		return [compaction, ...branch.slice(compactionIndex + 1)];
-	}
-	const firstKeptId = jsonString(compaction.data.firstKeptEntryId);
-	const retainedStart = firstKeptId
-		? branch.slice(0, compactionIndex).findIndex((entry) => entry.id === firstKeptId)
-		: -1;
-	return [
-		compaction,
-		...(retainedStart >= 0 ? branch.slice(retainedStart, compactionIndex) : []),
-		...branch.slice(compactionIndex + 1),
-	];
 }
 
 function source(sessionKey: string, entry: ParsedPiEntry, partIndex?: number) {
@@ -460,63 +545,63 @@ function listJsonlFiles(root: string): string[] {
 	return files.sort();
 }
 
-function parseSession(
+async function parseSession(
 	filePath: string,
 	projectFilter?: string,
 	sourceId?: string,
-): RawSession | null {
-	const parsed = readPiFile(filePath);
-	if (!parsed) return null;
-	const sessionKey = jsonString(parsed.header.id);
+	context?: SyncReadContext,
+): Promise<RawSession | null> {
+	let sourceFile: JsonlSessionSource;
+	try {
+		sourceFile = await JsonlSessionSource.open(filePath, context);
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+		throw error;
+	}
+	for await (const record of sourceFile.records()) {
+		const id = jsonString(record.data.id);
+		const cwd = jsonString(record.data.cwd);
+		if (sourceId !== undefined && id !== sourceId) return null;
+		if (projectFilter && (!cwd || resolve(cwd) !== resolve(projectFilter))) return null;
+		break;
+	}
+	const metadata: PiReadMetadata = { header: null, usage: emptyUsage() };
+	const readEvents = () => readPiEvents(sourceFile, metadata);
+	const description = await describeSessionContent(readEvents, sourceFile.eager);
+	const header = metadata.header;
+	if (!header || description.eventCount === 0) return null;
+	const sessionKey = jsonString(header.id);
 	if (!sessionKey || (sourceId !== undefined && sessionKey !== sourceId)) return null;
-	const cwd = jsonString(parsed.header.cwd);
+	const cwd = jsonString(header.cwd);
 	if (projectFilter && (!cwd || resolve(cwd) !== resolve(projectFilter))) return null;
-	const events = sequenceSessionEvents(
-		compactionAwareBranch(parsed.entries, parsed.leafId).flatMap((entry) =>
-			entryEvents(sessionKey, entry),
-		),
-	);
-	const messages = projectEventsToMessages(events);
-	if (events.length === 0) return null;
-	const timestamps = events
-		.map((event) => event.timestamp)
-		.filter((value): value is string => value !== undefined)
-		.map((value) => new Date(value))
-		.filter((value) => !Number.isNaN(value.getTime()));
 	const headerTimestamp =
-		numberValue(parsed.header.createdAt) ?? jsonString(parsed.header.timestamp) ?? undefined;
-	const stat = statSync(filePath);
+		numberValue(header.createdAt) ?? jsonString(header.timestamp) ?? undefined;
 	const parsedHeaderTimestamp = headerTimestamp === undefined ? null : new Date(headerTimestamp);
-	const startedAt =
-		timestamps[0] ??
-		(parsedHeaderTimestamp && !Number.isNaN(parsedHeaderTimestamp.getTime())
+	const startedAt = description.firstTimestamp
+		? new Date(description.firstTimestamp)
+		: parsedHeaderTimestamp && !Number.isNaN(parsedHeaderTimestamp.getTime())
 			? parsedHeaderTimestamp
-			: stat.birthtime);
-	const endedAt = timestamps.at(-1) ?? stat.mtime;
-	const models = events
-		.map((event) =>
-			event.type === "message" || event.type === "tool_call" || event.type === "reasoning"
-				? event.model
-				: undefined,
-		)
-		.filter((value): value is string => Boolean(value));
-	const modelsUsed = [...new Set(models)];
-	const firstUser = messages.find((message) => message.role === "user");
+			: new Date(Number(sourceFile.stat.birthtimeMs));
+	const endedAt = description.lastTimestamp
+		? new Date(description.lastTimestamp)
+		: new Date(Number(sourceFile.stat.mtimeMs));
 	return {
 		localSessionId: `pi.${sessionKey}`,
 		projectPath: cwd,
 		startedAt,
 		endedAt,
-		messageCount: messages.length,
-		inputTokens: parsed.usage.inputTokens,
-		outputTokens: parsed.usage.outputTokens,
-		cacheReadTokens: parsed.usage.cacheReadTokens,
-		model: models.at(-1) ?? null,
-		modelsUsed,
+		messageCount: description.messageCount,
+		inputTokens: metadata.usage.inputTokens,
+		outputTokens: metadata.usage.outputTokens,
+		cacheReadTokens: metadata.usage.cacheReadTokens,
+		model: description.lastModel,
+		modelsUsed: description.modelsUsed,
 		durationSeconds: durationSecondsBetween(startedAt, endedAt),
-		summary: firstUser ? safeTruncate(firstUser.content, 200) : basename(filePath, ".jsonl"),
-		messages,
-		events,
+		summary: description.firstUser
+			? safeTruncate(description.firstUser.content, 200)
+			: basename(filePath, ".jsonl"),
+		...description.content,
+		sourceRevision: sourceFile.revision,
 		rawFilePath: filePath,
 	};
 }
@@ -563,16 +648,17 @@ export class PiAdapter implements AgentAdapterCore {
 					context,
 				);
 			}
-			const sessions = paths
-				.filter((path) => existsSync(path))
-				.map((path) => parseSession(path, request.projectFilter))
-				.filter((session): session is RawSession => session !== null);
+			const sessions: RawSession[] = [];
+			for (const path of paths) {
+				const session = await parseSession(path, request.projectFilter, undefined, context);
+				if (session) sessions.push(session);
+			}
 			return { sessions, dedupedCount: 0, coverage: "partial" };
 		}
 		const sessions: RawSession[] = [];
 		for (const path of listJsonlFiles(root)) {
 			if (context) await setImmediate(undefined, { signal: context.signal });
-			const session = parseSession(path, request.projectFilter);
+			const session = await parseSession(path, request.projectFilter, undefined, context);
 			if (session) sessions.push(session);
 		}
 		return { sessions, dedupedCount: 0, coverage: "complete" };
@@ -586,7 +672,7 @@ export class PiAdapter implements AgentAdapterCore {
 		const sourceId = localSessionId.startsWith("pi.") ? localSessionId.slice(3) : localSessionId;
 		for (const path of listJsonlFiles(getPiSessionsDir())) {
 			if (context) await setImmediate(undefined, { signal: context.signal });
-			const session = parseSession(path, undefined, sourceId);
+			const session = await parseSession(path, undefined, sourceId, context);
 			if (session?.localSessionId === `pi.${sourceId}`) return session;
 		}
 		return null;

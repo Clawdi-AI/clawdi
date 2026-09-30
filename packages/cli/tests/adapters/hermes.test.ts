@@ -4,6 +4,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { scanSessionModule } from "../../src/adapters/base";
 import { HermesAdapter } from "../../src/adapters/hermes";
+import { computeLastActivityIso } from "../../src/lib/session-activity";
+import { prepareSessionUpload } from "../../src/lib/session-upload";
 import { tarSkillDir } from "../../src/lib/tar";
 import { reserveManagedSkill } from "../../src/runtime/managed-skill-reservation";
 import {
@@ -282,6 +284,7 @@ describe("HermesAdapter.collectSessions", () => {
 			 WHERE session_id = 'bulk-02'`,
 		);
 		changedDb.run("UPDATE messages SET content = 'M' WHERE session_id = 'bulk-03'");
+		changedDb.run("UPDATE messages SET content = 'message 5' WHERE session_id = 'bulk-05'");
 		changedDb.run(
 			`UPDATE messages
 			 SET content = CASE role WHEN 'user' THEN 'Short' ELSE 'Message 4' END
@@ -293,7 +296,76 @@ describe("HermesAdapter.collectSessions", () => {
 		for await (const batch of changed.batches) {
 			changedIds.push(...batch.sessions.map((session) => session.localSessionId));
 		}
-		expect(changedIds.sort()).toEqual(["bulk-00", "bulk-01", "bulk-02", "bulk-03", "bulk-04"]);
+		expect(changedIds.sort()).toEqual([
+			"bulk-00",
+			"bulk-01",
+			"bulk-02",
+			"bulk-03",
+			"bulk-04",
+			"bulk-05",
+		]);
+	});
+
+	it("streams a large history without losing sequence, summary, activity or revision fencing", async () => {
+		const path = join(tmpHome, ".hermes", "state.db");
+		const db = new Database(path);
+		db.run(
+			"INSERT INTO sessions (id, source, started_at, message_count) VALUES ('large', 'discord', 1776247000, 600)",
+		);
+		const insert = db.prepare(
+			"INSERT INTO messages (session_id, role, content, timestamp) VALUES ('large', 'user', ?, ?)",
+		);
+		db.transaction(() => {
+			for (let index = 0; index < 600; index++)
+				insert.run(`Message ${index} ${"x".repeat(8192)}`, 1776247000 + index);
+		})();
+		db.close();
+		const adapter = new HermesAdapter();
+		const session = await adapter.sessions.resolve("large");
+		if (!session?.readEvents) throw new Error("expected bounded reader");
+		expect(session.events).toBeUndefined();
+		expect(session.messages).toEqual([]);
+		expect(session.summary).toStartWith("Message 0 ");
+		expect(session.messageCount).toBe(600);
+		expect(computeLastActivityIso(session)).toBe(new Date(1776247599 * 1000).toISOString());
+		let count = 0;
+		for await (const event of session.readEvents()) {
+			expect(event.seq).toBe(count++);
+		}
+		expect(count).toBe(600);
+		const plan = await prepareSessionUpload(session, "events-v1");
+		expect(plan.eventCount).toBe(600);
+		expect(plan.events).toBeUndefined();
+		expect((await prepareSessionUpload(session, "events-v1")).localHash).toBe(plan.localHash);
+		const append = new Database(path);
+		append.run(
+			"INSERT INTO messages (session_id, role, content, timestamp) VALUES ('large', 'user', 'Appended during sync', 1776247600)",
+		);
+		append.run("UPDATE sessions SET message_count = 601 WHERE id = 'large'");
+		append.close();
+		expect((await prepareSessionUpload(session, "events-v1")).localHash).toBe(plan.localHash);
+		const latest = await adapter.sessions.resolve("large");
+		if (!latest) throw new Error("expected appended session");
+		expect((await prepareSessionUpload(latest, "events-v1")).eventCount).toBe(601);
+		const changed = new Database(path);
+		changed.run(
+			"UPDATE messages SET active = 0 WHERE session_id = 'large' AND id = (SELECT min(id) FROM messages WHERE session_id = 'large')",
+		);
+		changed.close();
+		await expect(prepareSessionUpload(session, "events-v1")).rejects.toThrow("changed during sync");
+		expect(await adapter.sessions.resolve("large")).not.toBeNull();
+	});
+
+	it("rejects an oversized source row without materializing its payload", async () => {
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		db.run(
+			"INSERT INTO sessions (id, source, started_at) VALUES ('oversized', 'discord', 1776247000)",
+		);
+		db.run(
+			"INSERT INTO messages (session_id, role, content, timestamp) VALUES ('oversized', 'user', zeroblob(9000000), 1776247000)",
+		);
+		db.close();
+		await expect(new HermesAdapter().sessions.resolve("oversized")).rejects.toThrow("source bytes");
 	});
 
 	it("classifies user rows from Hermes conversations, including compression splits", async () => {
