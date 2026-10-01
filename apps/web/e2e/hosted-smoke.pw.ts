@@ -2762,6 +2762,8 @@ test("Help opens Chatwoot live chat", async ({ page }) => {
 		window.__chatwootToggleCalls = 0;
 		window.$chatwoot = {
 			hasLoaded: true,
+			darkMode: "light",
+			setColorScheme: () => {},
 			setUser: () => {},
 			reset: () => {},
 			toggle: () => {
