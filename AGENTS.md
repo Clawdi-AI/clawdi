@@ -176,6 +176,7 @@ host-local workspace loop. Done: command output reports passing tests/typechecks
 ## Owner Docs
 
 - Agent documentation: [`docs/agent-docs-guide.md`](docs/agent-docs-guide.md)
+- Cloud Admin API: [`clawdi-cloud-admin`](.agents/skills/clawdi-cloud-admin/SKILL.md) - direct Cloud administration; Hosted resources retain their control-plane owner.
 - Backend: [`docs/backend-development.md`](docs/backend-development.md)
 - Frontend: [`docs/frontend-development.md`](docs/frontend-development.md)
 - CLI: [`docs/cli-development.md`](docs/cli-development.md)

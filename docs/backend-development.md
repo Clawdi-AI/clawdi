@@ -456,6 +456,11 @@ limit 10;
 
 ## Local admin API
 
+For task-specific Cloud administration, read the standard
+[`clawdi-cloud-admin` skill](../.agents/skills/clawdi-cloud-admin/SKILL.md).
+It covers identity/credentials, settings, managed providers, channels and
+platform bootstrap, with direct API contracts and explicit Hosted ownership.
+
 Deployment control routes use `get_control_session`, not the ordinary request
 pool: Agent registration/deletion, credentials and principal suspension,
 deployment-managed providers, platform token issuance/authentication and
