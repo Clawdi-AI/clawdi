@@ -3,6 +3,7 @@
 import * as Sentry from "@sentry/tanstackstart-react";
 import { useLocation } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
+import { useTheme } from "@/components/theme-provider";
 import { useCurrentUser } from "@/lib/auth-client";
 import { CHATWOOT_SETTINGS, resolveChatwootIdentity, shouldHideChatwoot } from "@/lib/chatwoot";
 import { getChatwootIdentifierHash } from "@/lib/chatwoot.functions";
@@ -14,6 +15,7 @@ const WEBSITE_TOKEN = env.VITE_CHATWOOT_WEBSITE_TOKEN ?? "";
 
 export function ChatwootClient() {
 	const { isLoaded, isSignedIn, user } = useCurrentUser();
+	const { resolvedTheme } = useTheme();
 	const pathname = useLocation({ select: (location) => location.pathname });
 	const hidden = shouldHideChatwoot(pathname);
 	const userId = user?.id;
@@ -37,10 +39,22 @@ export function ChatwootClient() {
 	// Dev auth bypass has no Clerk session for the server-side identity hash.
 	const enabled = identity !== null && !env.VITE_DEV_AUTH_BYPASS;
 
+	useEffect(() => {
+		window.chatwootSettings = { ...CHATWOOT_SETTINGS, darkMode: resolvedTheme };
+		const chatwoot = window.$chatwoot;
+		if (!ready || !chatwoot) return;
+		try {
+			// The SDK reuses darkMode when reset() reloads the widget iframe.
+			chatwoot.darkMode = resolvedTheme;
+			chatwoot.setColorScheme(resolvedTheme);
+		} catch (error: unknown) {
+			Sentry.captureException(error);
+		}
+	}, [ready, resolvedTheme]);
+
 	// Chatwoot's install snippet, loaded only once a user has signed in.
 	useEffect(() => {
 		if (!enabled || !BASE_URL || !WEBSITE_TOKEN || document.getElementById(SCRIPT_ID)) return;
-		window.chatwootSettings = CHATWOOT_SETTINGS;
 		const script = document.createElement("script");
 		script.id = SCRIPT_ID;
 		script.src = `${BASE_URL}/packs/js/sdk.js`;
@@ -49,6 +63,7 @@ export function ChatwootClient() {
 		script.onload = () => {
 			window.chatwootSDK?.run({ websiteToken: WEBSITE_TOKEN, baseUrl: BASE_URL });
 		};
+		script.onerror = () => Sentry.captureException(new Error("Failed to load the Chatwoot SDK"));
 		document.body.appendChild(script);
 	}, [enabled]);
 

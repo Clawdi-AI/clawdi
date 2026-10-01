@@ -6,12 +6,13 @@ export type ChatwootSettings = Readonly<{
 	position: "left" | "right";
 	type: "standard" | "expanded_bubble";
 	widgetStyle: "standard" | "flat";
-	darkMode: "light" | "auto";
+	darkMode: "light" | "dark" | "auto";
 	locale: string;
 }>;
 
 export type ChatwootApi = {
 	hasLoaded: boolean;
+	darkMode: ChatwootSettings["darkMode"];
 	setUser: (
 		identifier: string,
 		user: { name: string; email: string; avatar_url?: string; identifier_hash: string },
@@ -19,6 +20,7 @@ export type ChatwootApi = {
 	reset: () => void;
 	toggle: (state?: "open" | "close") => void;
 	toggleBubbleVisibility: (visibility: "hide" | "show") => void;
+	setColorScheme: (scheme: ChatwootSettings["darkMode"]) => void;
 };
 
 export type ChatwootIdentity = Readonly<{
