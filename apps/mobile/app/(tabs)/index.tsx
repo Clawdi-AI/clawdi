@@ -8,6 +8,7 @@ import {
 	useCloudSessions,
 } from "../../src/features/cloud-inventory";
 import { useI18n } from "../../src/i18n";
+import { CloudActions } from "../../src/ui/cloud-actions";
 import { ErrorState, LoadingScreen } from "../../src/ui/feedback";
 import { AppScrollView, AppText, AppView } from "../../src/ui/primitives";
 
@@ -39,6 +40,7 @@ export default function HomeRoute() {
 						{isLoaded && displayName ? displayName : t("app.name")}
 					</AppText>
 				</AppView>
+				<CloudActions />
 				<AppView className="gap-3">
 					<SectionHeader title={t("home.agentsTitle")} onPress={() => router.push("/agents")} />
 					{agents.isPending ? (

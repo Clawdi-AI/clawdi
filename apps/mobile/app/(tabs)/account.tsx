@@ -42,6 +42,7 @@ export default function AccountRoute() {
 					{isLoaded && email ? email : t("account.accountUnavailable")}
 				</AppText>
 			</AppView>
+			<NativeButton label={t("navigation.billing")} onPress={() => router.push("/billing")} />
 			{error ? (
 				<AppText className="text-base text-danger">{t("account.signOutFailed")}</AppText>
 			) : null}

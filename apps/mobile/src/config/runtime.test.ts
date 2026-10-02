@@ -37,4 +37,39 @@ describe("mobile runtime configuration", () => {
 			},
 		});
 	});
+
+	test("enables optional v2 compute without requiring legacy Hosted configuration", () => {
+		expect(
+			parseMobileRuntimeConfig({
+				cloudApiUrl: "https://cloud.example.test",
+				clerkPublishableKey: "pk_test_example",
+				computeApiUrl: " https://compute.example.test/v2/// ",
+			}),
+		).toEqual({
+			ok: true,
+			value: {
+				cloudApiUrl: "https://cloud.example.test",
+				clerkPublishableKey: "pk_test_example",
+				computeApiUrl: "https://compute.example.test",
+			},
+		});
+	});
+
+	test("rejects an explicitly configured unsafe compute endpoint", () => {
+		for (const computeApiUrl of [
+			"https://user:password@compute.example.test",
+			"https://compute.example.test?token=forbidden",
+			"file:///compute",
+			42,
+			{ url: "https://compute.example.test" },
+		]) {
+			expect(
+				parseMobileRuntimeConfig({
+					cloudApiUrl: "https://cloud.example.test",
+					clerkPublishableKey: "pk_test_example",
+					computeApiUrl,
+				}),
+			).toEqual({ ok: false, reason: "invalid" });
+		}
+	});
 });

@@ -3,6 +3,10 @@ import {
 	type ApiClientFetch,
 	type CloudApiClient,
 	createCloudApiClient,
+	createHostedApiClient,
+	createHostedComputeClient,
+	type HostedApiClient,
+	type HostedComputeClient,
 } from "@clawdi/shared/api";
 import { useAuth } from "@clerk/expo";
 import { createContext, type ReactNode, useCallback, useContext, useMemo } from "react";
@@ -11,6 +15,8 @@ import { useAccountScope } from "../platform/account-lifecycle";
 
 export type MobileApiClients = Readonly<{
 	cloud: CloudApiClient;
+	compute: HostedComputeClient | null;
+	hosted: HostedApiClient | null;
 }>;
 
 const MobileApiContext = createContext<MobileApiClients | null>(null);
@@ -51,8 +57,22 @@ export function MobileApiProvider({
 				getToken: readToken,
 				fetch: fetcher,
 			}),
+			compute: config.computeApiUrl
+				? createHostedComputeClient({
+						baseUrl: config.computeApiUrl,
+						getToken: readToken,
+						fetch: fetcher,
+					})
+				: null,
+			hosted: config.computeApiUrl
+				? createHostedApiClient({
+						baseUrl: config.computeApiUrl,
+						getToken: readToken,
+						fetch: fetcher,
+					})
+				: null,
 		}),
-		[config.cloudApiUrl, fetcher, readToken],
+		[config.cloudApiUrl, config.computeApiUrl, fetcher, readToken],
 	);
 	return <MobileApiContext.Provider value={clients}>{children}</MobileApiContext.Provider>;
 }

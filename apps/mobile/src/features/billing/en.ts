@@ -1,0 +1,30 @@
+export const billingEn = {
+	title: "Wallet & subscriptions",
+	independent: "Each Agent has its own independent compute subscription.",
+	balance: "Wallet balance",
+	subscriptions: "Subscriptions",
+	transactions: "Transactions",
+	section: "View",
+	empty: "No items are available yet.",
+	unavailable: "The v2 compute API is not configured.",
+	unknown: "Unavailable",
+	details: "Subscription details",
+	status: "Status",
+	plan: "Compute plan",
+	price: "Price per billing term",
+	term: "Billing term (months)",
+	periodEnd: "Current period ends",
+	source: "Funding source",
+	stripe: "Stripe",
+	wallet: "Wallet",
+	included: "Included Basic",
+	agent: "Agent",
+	deployment: "View deployment",
+	management:
+		"Manage this subscription through its purchasing provider. Native billing management and purchases are not connected yet.",
+	walletNotice:
+		"Wallet-funded compute currently uses Stripe invoice orchestration. It is not a store subscription.",
+	noStore: "Store purchases, top-ups, restore and refunds are not available in this build.",
+	moreToSearch:
+		"This subscription was not on the loaded pages. Load more before concluding it is unavailable.",
+} as const;
