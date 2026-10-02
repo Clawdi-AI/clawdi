@@ -29,7 +29,6 @@ services:
       - .:/repo:ro
     tmpfs:
       - /tmp:rw,exec,nosuid,nodev,size=2g,mode=1777,uid=1000,gid=1000
-      - /var/cache/bun:rw,nosuid,nodev,noexec,size=2g,mode=1777,uid=1000,gid=1000
       - /var/cache/uv:rw,nosuid,nodev,noexec,size=2g,mode=1777,uid=1000,gid=1000
     depends_on:
       postgres:

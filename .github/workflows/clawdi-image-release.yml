@@ -81,7 +81,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.4.0"
+          bun-version-file: package.json
 
       - name: Resolve last successful deployment authority
         id: deployment-authority
@@ -384,8 +384,6 @@ jobs:
           chmod 600 .kamal/secrets
 
       - uses: ./.github/actions/setup-bun-ci
-        with:
-          bun-version: "1.4.0"
 
       - name: Prepare runner for Ruby
         run: |

@@ -1,0 +1,10 @@
+{
+	"expo": {
+		"name": "Clawdi Compatibility Probe",
+		"slug": "clawdi-compatibility-probe",
+		"scheme": "clawdi-compatibility-probe",
+		"version": "0.0.0",
+		"plugins": ["expo-router", "expo-secure-store"],
+		"platforms": ["ios", "android"]
+	}
+}

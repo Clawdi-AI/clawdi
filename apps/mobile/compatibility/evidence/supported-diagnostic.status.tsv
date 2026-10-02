@@ -1,0 +1,9 @@
+install	0
+frozen-reinstall	0
+expo-dependencies	1
+expo-polyfills	0
+generate-uniwind-types	0
+typecheck	1
+typecheck-official-wrapper	0
+metro-ios	0
+metro-android	0

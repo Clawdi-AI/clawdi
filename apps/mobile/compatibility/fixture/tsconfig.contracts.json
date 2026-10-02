@@ -1,0 +1,4 @@
+{
+	"extends": "./tsconfig.json",
+	"include": ["contracts.ts", "wrapped.tsx", "styles.d.ts", "uniwind-types.d.ts"]
+}

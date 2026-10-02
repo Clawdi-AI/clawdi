@@ -1,0 +1,10 @@
+{
+	"extends": "expo/tsconfig.base",
+	"compilerOptions": {
+		"strict": true,
+		"noEmit": true,
+		"types": ["bun"]
+	},
+	"include": ["**/*.ts", "**/*.tsx", "uniwind-types.d.ts"],
+	"exclude": ["compatibility"]
+}
