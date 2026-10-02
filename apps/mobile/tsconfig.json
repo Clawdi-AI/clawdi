@@ -3,6 +3,7 @@
 	"compilerOptions": {
 		"strict": true,
 		"noEmit": true,
+		"types": ["bun"],
 		"customConditions": ["react-native-strict-api"]
 	},
 	"include": ["**/*.ts", "**/*.tsx", "uniwind-types.d.ts"],

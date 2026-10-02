@@ -46,6 +46,7 @@
 	"devDependencies": {
 		"@babel/core": "catalog:expo57",
 		"@react-native/metro-config": "catalog:expo57",
+		"@types/bun": "catalog:",
 		"@types/react": "catalog:expo57",
 		"babel-preset-expo": "57.0.13",
 		"typescript": "catalog:"

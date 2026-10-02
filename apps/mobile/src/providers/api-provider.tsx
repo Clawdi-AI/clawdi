@@ -5,7 +5,6 @@ import {
 	createCloudApiClient,
 } from "@clawdi/shared/api";
 import { useAuth } from "@clerk/expo";
-import { fetch as expoFetch } from "expo/fetch";
 import { createContext, type ReactNode, useCallback, useContext, useMemo } from "react";
 import type { MobileRuntimeConfig } from "../config/runtime";
 import { useAccountScope } from "../platform/account-lifecycle";
@@ -35,7 +34,10 @@ export function MobileApiProvider({
 		}
 		return token ?? null;
 	}, [getToken, scope, sessionId]);
-	const fetcher = useCallback<ApiClientFetch>((request, init) => expoFetch(request.url, init), []);
+	const fetcher = useCallback<ApiClientFetch>(
+		(request, init) => globalThis.fetch(request, init),
+		[],
+	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
 			cloud: createCloudApiClient({
