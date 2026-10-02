@@ -21,6 +21,7 @@ module.exports = ({ config }) => ({
 		...config.extra,
 		clawdi: {
 			cloudApiUrl: publicValue("EXPO_PUBLIC_CLAWDI_API_URL"),
+			computeApiUrl: publicValue("EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL"),
 			clerkPublishableKey: publicValue("EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY"),
 		},
 	},

@@ -1,6 +1,9 @@
 # Mobile development
 
-Status: Wave 2 implementation is a merge candidate. `apps/mobile` contains the
+Status: the foundation is merged in PR 1610; Wave 2 is a merge candidate in
+PR 1611. Wave 3 adds existing-entitlement Agent creation, deployment progress
+and v2 billing reads; purchases remain unavailable.
+`apps/mobile` contains the
 Cloud-only v2 Expo app, Clerk verification/recovery flows, account-generation
 fencing, and paginated read-only Agent/Session history. Hosted v1 legacy
 configuration is intentionally not required by the mobile app. The compatibility
@@ -50,6 +53,60 @@ values are embedded in the app; never put private credentials in them. Clerk
 email/password verification, recovery and supported second factors must be
 configured by the account owner. This work does not change Clerk settings.
 
+`EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL` optionally enables the v2 compute control
+plane. It is separate from the Cloud identity/Session API and does not enable
+Hosted v1. A trailing `/v2` is normalized. An absent compute URL leaves Cloud
+browsing available; an explicitly unsafe URL fails configuration validation.
+The same captured-account token fence protects both API clients. No payment
+keys, signing material or private infrastructure addresses belong in this
+public configuration.
+
+## Agent creation and billing boundaries
+
+Each Agent has its own independent compute subscription. The mobile work does
+not introduce an account-wide subscription slot or multi-Agent bundle. Included
+Basic availability and reusable subscriptions come from the server, not local
+assumptions. The server remains the final authority for capacity and assignment.
+
+The current Basic deployment route can select Included Basic or an existing
+funded, unbound subscription for regular users; only CLI principals enforce
+Included-only admission. The client does not purchase compute or debit a Wallet
+through that route. Its legacy-named `createIncludedDeployment` method rejects
+non-Basic plans but cannot promise a specific existing entitlement. Creation
+uses a persistent, account-scoped request key and explicit user confirmation;
+mounting or restoring the app must never automatically replay a POST.
+
+The saved journal records `prepared`, `uncertain`, or `entitlement_rejected`.
+Persist `uncertain` before starting a POST. Only an unsubmitted draft or a first
+submission rejected with the server's pre-admission `compute_entitlement_required`
+can be explicitly discarded. A later rejection cannot resolve earlier uncertainty,
+and a by-request 404 is never proof that no POST is in flight. Legacy journals
+without a marker restore as uncertain. Storage compare-and-set prevents an old
+screen from deleting another screen's in-flight marker. Explicit retries retain
+the exact saved body/key and do not revalidate it against a changed model catalog.
+New drafts still validate the current catalog; the server remains authoritative.
+
+Creation reads current product capabilities from the existing `/v1/me` profile
+route and uses only the generated capability booleans. Route versions are not
+product generations: using this shared profile projection does not migrate the
+legacy Hosted v1 UI. The Included availability response contains slot counts,
+not capability flags, and catalog plans do not expose an `enabled` field.
+
+The canonical create request id equals `Idempotency-Key`. This endpoint restricts
+keys to 191 visible ASCII characters even though the generic header permits
+255. If supplied, `deploy_request_id` must match the key. After an uncertain
+response, reconcile the original request through the existing by-request API;
+do not replace the key and create another Agent.
+
+Subscription quotes are explicitly requested previews, not payments. They may
+initialize and commit customer, enrollment and Wallet profiles. They do not
+purchase or debit Wallet funds and must not be described as strictly read-only.
+Current catalog prices and Stripe/Wallet quotes are not App Store/Play purchase
+offers. Native purchases, top-ups, refunds, restore and subscription management
+remain disabled until a reviewed provider-aware contract and authorized store
+sandbox are available. Wallet-funded compute still uses Stripe invoice
+orchestration; it is not a store-independent funding rail.
+
 Run the isolated product suite from the repository root:
 
 ```bash
@@ -86,6 +143,20 @@ documented root-scoped variants; their emitted Tailwind selectors were checked
 separately from Metro. These are source/bundling checks, not proof of a native
 build, visual layout, accessibility interaction or a live Clerk flow.
 
+Wave 3 also wraps native system pickers and switches in the same bridge. Billing
+and deployment lists are virtualized. Wallet USD decimals retain server precision;
+subscription inventory and transactions use opaque cursor pagination. Subscription
+detail does not infer absence from only the first page of account inventory.
+
+The final Wave 3 candidate passed bounded Docker verification with Bun `1.4.2`
+(registry latest at verification) and TypeScript 7: all six workspace typechecks,
+Biome on 71 files with no writes, 37 Mobile tests (137 assertions), 130 Shared
+tests (440 assertions), 84 focused Web regressions (394 assertions), and separate
+iOS/Android Metro/Hermes exports. The final container exited 0, and the manifest
+and frozen root lock remained unchanged. The post-export Mobile typecheck also
+passed. Independent static review confirmed the native hosting contract and
+the corrected durable-recovery boundaries; this is not a live-device acceptance.
+
 ## Device acceptance still required
 
 On an authorized simulator/device build, verify:
@@ -98,6 +169,15 @@ On an authorized simulator/device build, verify:
    unavailable-content and revision-conflict states; test foreground recovery.
 4. Check native tabs, deep links/back navigation, safe areas, dark/light modes,
    large text and screen-reader labels on both platforms.
+5. With current server eligibility, confirm Basic creation against an existing
+   entitlement, inspect its operation/deployment and navigate to its Cloud Agent.
+   Lose connectivity or terminate the app after admission; recover the same
+   stored request without a fresh key or an automatic replay.
+   Verify explicit discard after proven first-send admission refusal and same-body
+   replay after a saved managed model disappears from the current catalog.
+6. Inspect Wallet balance, paginated transactions and subscription details.
+   Missing compute configuration, invalid deep links and restricted accounts
+   must show safe states. Native payment/management actions stay unavailable.
 
 Done: record the device/OS and observed outcomes. No live authentication,
 native compilation/signing, purchases or provisioning has been verified here.

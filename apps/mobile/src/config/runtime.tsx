@@ -17,6 +17,7 @@ export function loadMobileRuntimeConfig(): MobileRuntimeConfigResult {
 	return parseMobileRuntimeConfig({
 		cloudApiUrl: configuredValue("cloudApiUrl"),
 		clerkPublishableKey: configuredValue("clerkPublishableKey"),
+		computeApiUrl: configuredValue("computeApiUrl"),
 	});
 }
 

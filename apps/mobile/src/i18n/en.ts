@@ -1,4 +1,11 @@
+import { billingEn } from "../features/billing/en";
+import { creationEn } from "../features/creation/en";
+import { deploymentsEn } from "../features/deployments/en";
+
 export const en = {
+	billing: billingEn,
+	creation: creationEn,
+	deployments: deploymentsEn,
 	app: {
 		name: "Clawdi",
 	},
@@ -6,6 +13,9 @@ export const en = {
 		home: "Home",
 		account: "Account",
 		back: "Back",
+		createAgent: "New Cloud Agent",
+		deployments: "Deployments",
+		billing: "Wallet & subscriptions",
 	},
 	loading: {
 		app: "Loading Clawdi",
