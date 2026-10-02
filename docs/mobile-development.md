@@ -17,6 +17,17 @@ still reports only the deliberate TypeScript 7 versus Expo's `~6.0.3` checker
 expectation; TypeScript 7 remains an explicit project decision. Expo export is
 Metro bundling evidence, not native compilation or store-readiness evidence.
 
+The product uses SDK 57 / RN 0.86.3's default TypeScript declarations with
+TypeScript 7 and `strict: true`. It does not opt into RN 0.86's alternative
+`react-native-strict-api` export condition: the full product surface exposed
+five incompatibilities in Gesture Handler, Router Link and FlatList props.
+Removing only that condition passed the full Mobile typecheck; compiler
+strictness and runtime versions were unchanged. RN 0.86.3's published package
+maps `types` to `types/index.d.ts` and the opt-in condition to
+`types_generated/index.d.ts`. The [RN migration guide](https://reactnative.dev/docs/strict-typescript-api)
+describes the opt-in on pre-0.87 releases. The V0 strict-API probe below remains
+historical evidence; it is not a claim that the product passes that opt-in gate.
+
 ## Reproduce the compatibility gate
 
 Run from this checkout on Linux with Docker, GNU `timeout`, and UID 1000. No
