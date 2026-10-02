@@ -33,7 +33,7 @@ function linkedAbortSignal(signals: readonly AbortSignal[]): {
 } {
 	const controller = new AbortController();
 	const listeners = signals.map((signal) => {
-		const abort = () => controller.abort();
+		const abort = () => controller.abort(signal.reason);
 		if (signal.aborted) abort();
 		else signal.addEventListener("abort", abort, { once: true });
 		return { signal, abort };
@@ -52,22 +52,42 @@ export async function readInAccountScope<Data>(
 	reader: (signal: AbortSignal) => Promise<Data>,
 	callerSignal?: AbortSignal,
 ): Promise<Data> {
-	if (!scope.isReady || !scope.isCurrent()) throw new AccountScopeChangedError();
+	if (!scope.isReady || !scope.isCurrent() || scope.signal.aborted) {
+		throw new AccountScopeChangedError();
+	}
+	if (callerSignal?.aborted) {
+		throw callerSignal.reason ?? createAbortError();
+	}
 	const linked = linkedAbortSignal(callerSignal ? [scope.signal, callerSignal] : [scope.signal]);
 	try {
+		if (scope.signal.aborted || !scope.isCurrent()) throw new AccountScopeChangedError();
+		if (callerSignal?.aborted) throw callerSignal.reason ?? createAbortError();
 		const value = await reader(linked.signal);
-		if (!scope.isCurrent()) throw new AccountScopeChangedError();
+		if (scope.signal.aborted || !scope.isCurrent()) throw new AccountScopeChangedError();
+		if (callerSignal?.aborted) throw callerSignal.reason ?? createAbortError();
 		return value;
+	} catch (error) {
+		// A reader is allowed to ignore AbortSignal. Re-check both fences after
+		// it rejects so an old account can never surface its result or error.
+		if (scope.signal.aborted || !scope.isCurrent()) throw new AccountScopeChangedError();
+		if (callerSignal?.aborted) throw callerSignal.reason ?? createAbortError();
+		throw error;
 	} finally {
 		linked.dispose();
 	}
 }
 
+function createAbortError(): Error {
+	const error = new Error("The request was cancelled");
+	error.name = "AbortError";
+	return error;
+}
+
 export function accountQueryKey(
 	scope: AccountScope,
 	...parts: readonly unknown[]
-): readonly ["account", string, ...unknown[]] {
-	return ["account", scope.accountKey ?? "signed-out", ...parts];
+): readonly ["account", string, number, ...unknown[]] {
+	return ["account", scope.accountKey ?? "signed-out", scope.generation, ...parts];
 }
 
 export function AccountScopeProvider({ children }: { children: ReactNode }) {
@@ -118,8 +138,8 @@ export function useAccountScope(): AccountScope {
 
 export function useAccountRead(): AccountRead {
 	const scope = useAccountScope();
-	return useCallback<AccountRead>(
-		function accountRead<Data>(
+	return useCallback(
+		function read<Data>(
 			reader: (signal: AbortSignal) => Promise<Data>,
 			callerSignal?: AbortSignal,
 		) {

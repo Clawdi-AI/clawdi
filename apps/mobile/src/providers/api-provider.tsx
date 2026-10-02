@@ -25,7 +25,7 @@ export function MobileApiProvider({
 }) {
 	const scope = useAccountScope();
 	const { getToken, sessionId } = useAuth();
-	const readToken = useCallback(async () => {
+	const readToken = useCallback(async (): Promise<string | null> => {
 		if (!scope.isReady || !scope.isCurrent() || sessionId !== scope.sessionId) {
 			throw new ApiClientError(401, "authentication_required");
 		}
@@ -33,7 +33,7 @@ export function MobileApiProvider({
 		if (!scope.isCurrent() || sessionId !== scope.sessionId) {
 			throw new ApiClientError(401, "authentication_required");
 		}
-		return token;
+		return token ?? null;
 	}, [getToken, scope, sessionId]);
 	const fetcher = useCallback<ApiClientFetch>((request, init) => expoFetch(request.url, init), []);
 	const clients = useMemo<MobileApiClients>(

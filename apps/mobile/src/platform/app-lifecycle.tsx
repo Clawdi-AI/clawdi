@@ -20,16 +20,22 @@ export function AppLifecycleBridge({ children }: { children: ReactNode }) {
 			}
 		};
 		void refreshNetworkState();
+		focusManager.setFocused(AppState.currentState === "active");
 		const networkSubscription = Network.addNetworkStateListener((state) => {
 			if (mounted) setOnlineState(state.isConnected ?? null, state.isInternetReachable ?? null);
 		});
 		const appStateSubscription = AppState.addEventListener("change", (state) => {
 			const active = state === "active";
 			focusManager.setFocused(active);
-			if (active) {
-				void refreshNetworkState();
-				void queryClient.refetchQueries({ type: "active", stale: true }).catch(() => undefined);
+			if (!active) {
+				void queryClient.cancelQueries().catch(() => undefined);
+				return;
 			}
+			void refreshNetworkState().then(() => {
+				if (mounted) {
+					void queryClient.refetchQueries({ type: "active", stale: true }).catch(() => undefined);
+				}
+			});
 		});
 		return () => {
 			mounted = false;

@@ -1,3 +1,5 @@
+// The custom forms use Clerk's legacy resource API (`create` + `setActive`).
+// The root export in @clerk/expo 4.8 exposes the newer signal API instead.
 import { useSignIn, useSignUp } from "@clerk/expo/legacy";
 import { Link } from "expo-router";
 import { useState } from "react";

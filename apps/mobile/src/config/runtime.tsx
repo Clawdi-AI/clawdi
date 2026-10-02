@@ -1,6 +1,6 @@
 import { readApiBaseUrl } from "@clawdi/shared/api";
 import Constants from "expo-constants";
-import { createContext, useContext } from "react";
+import { createContext, createElement, useContext } from "react";
 
 export type MobileRuntimeConfig = Readonly<{
 	cloudApiUrl: string;
@@ -11,6 +11,11 @@ export type MobileRuntimeConfigResult =
 	| { ok: true; value: MobileRuntimeConfig }
 	| { ok: false; reason: "missing" | "invalid" };
 
+type RuntimeConfigValues = Readonly<{
+	cloudApiUrl: unknown;
+	clerkPublishableKey: unknown;
+}>;
+
 function configuredValue(name: string): unknown {
 	const extra = Constants.expoConfig?.extra;
 	if (typeof extra !== "object" || extra === null) return undefined;
@@ -19,17 +24,22 @@ function configuredValue(name: string): unknown {
 	return clawdi[name as keyof typeof clawdi];
 }
 
-function requiredString(value: unknown): value is string {
-	return typeof value === "string" && value.trim().length > 0;
+function requiredString(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function loadMobileRuntimeConfig(): MobileRuntimeConfigResult {
-	const cloudApiUrl = configuredValue("cloudApiUrl");
-	const clerkPublishableKey = configuredValue("clerkPublishableKey");
-	if (!requiredString(cloudApiUrl) || !requiredString(clerkPublishableKey)) {
+const clerkPublishableKeyPattern = /^pk_(?:test|live)_[A-Za-z0-9_-]+$/;
+
+export function parseMobileRuntimeConfig(values: RuntimeConfigValues): MobileRuntimeConfigResult {
+	const cloudApiUrl = requiredString(values.cloudApiUrl);
+	const clerkPublishableKey = requiredString(values.clerkPublishableKey);
+	if (!cloudApiUrl || !clerkPublishableKey) {
 		return { ok: false, reason: "missing" };
 	}
-	if (!clerkPublishableKey.startsWith("pk_")) return { ok: false, reason: "invalid" };
+	if (!clerkPublishableKeyPattern.test(clerkPublishableKey))
+		return { ok: false, reason: "invalid" };
 	try {
 		return {
 			ok: true,
@@ -41,6 +51,13 @@ export function loadMobileRuntimeConfig(): MobileRuntimeConfigResult {
 	} catch {
 		return { ok: false, reason: "invalid" };
 	}
+}
+
+export function loadMobileRuntimeConfig(): MobileRuntimeConfigResult {
+	return parseMobileRuntimeConfig({
+		cloudApiUrl: configuredValue("cloudApiUrl"),
+		clerkPublishableKey: configuredValue("clerkPublishableKey"),
+	});
 }
 
 const RuntimeConfigContext = createContext<MobileRuntimeConfigResult>({
@@ -55,7 +72,7 @@ export function RuntimeConfigProvider({
 	children: React.ReactNode;
 	value: MobileRuntimeConfigResult;
 }) {
-	return <RuntimeConfigContext.Provider value={value}>{children}</RuntimeConfigContext.Provider>;
+	return createElement(RuntimeConfigContext.Provider, { value }, children);
 }
 
 export function useMobileRuntimeConfig(): MobileRuntimeConfigResult {
