@@ -54,8 +54,10 @@ export const en = {
 		newPassword: "New password",
 		resetPassword: "Reset password and sign in",
 		startOver: "Start over",
-		unsupportedVerification: "This account requires a verification method or account details that this app does not support. Continue on the web or contact your administrator.",
-		sessionTaskRequired: "Your account has a required setup step. Complete it on the web before using the mobile app.",
+		unsupportedVerification:
+			"This account requires a verification method or account details that this app does not support. Continue on the web or contact your administrator.",
+		sessionTaskRequired:
+			"Your account has a required setup step. Complete it on the web before using the mobile app.",
 	},
 	home: {
 		greeting: "Welcome back",

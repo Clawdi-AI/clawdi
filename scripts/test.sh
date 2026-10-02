@@ -14,7 +14,7 @@ if [[ -z "${TEST_RUNNER_IMAGE:-}" ]]; then
 fi
 
 usage() {
-	echo "Usage: scripts/test.sh [all|ci|js|cli|cli-native|desktop|shared|sidecar|web|backend|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory] [suite args...]"
+	echo "Usage: scripts/test.sh [all|ci|js|mobile|cli|cli-native|desktop|shared|sidecar|web|backend|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory] [suite args...]"
 }
 
 compose() {
@@ -23,7 +23,7 @@ compose() {
 
 validate_suite() {
 	case "$1" in
-		all|backend|ci|js|cli|cli-native|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory)
+		all|backend|ci|js|mobile|cli|cli-native|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory)
 			;;
 		*)
 			echo "Unknown test suite: $1" >&2
@@ -214,6 +214,10 @@ desktop_tests() {
 	bun run --cwd apps/desktop test:internal
 }
 
+mobile_tests() {
+	bun run --cwd apps/mobile test:internal "$@"
+}
+
 shared_typecheck() {
 	bun run --cwd packages/shared typecheck
 }
@@ -256,6 +260,7 @@ run_js() {
 	install_js
 	workspace_typecheck
 	desktop_tests
+	mobile_tests
 	web_tests
 	shared_tests
 	sidecar_tests
@@ -272,6 +277,12 @@ run_desktop() {
 	install_js
 	desktop_typecheck
 	desktop_tests
+}
+
+run_mobile() {
+	install_js
+	bun run --cwd apps/mobile typecheck
+	mobile_tests "$@"
 }
 
 run_shared() {
@@ -316,6 +327,7 @@ run_ci() {
 	workspace_typecheck
 	runner_contract_tests
 	desktop_tests
+	mobile_tests
 	web_tests src/hosted/oss-clean.test.ts
 	web_build
 	shared_tests
@@ -349,6 +361,9 @@ run_in_container() {
 				exit 2
 			fi
 			run_js
+			;;
+		mobile)
+			run_mobile "$@"
 			;;
 		cli)
 			run_cli "$@"

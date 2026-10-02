@@ -1,14 +1,26 @@
 import "../global.css";
 import { ClerkProvider } from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
-import { Stack } from "expo-router";
+import { type ErrorBoundaryProps, Stack } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 import { HeroUINativeProvider } from "heroui-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { loadMobileRuntimeConfig, RuntimeConfigProvider } from "../src/config/runtime";
 import { I18nProvider } from "../src/i18n";
 import { MobileProviders } from "../src/providers/mobile-providers";
-import { ConfigurationErrorScreen } from "../src/ui/feedback";
+import { ConfigurationErrorScreen, ErrorState } from "../src/ui/feedback";
+import { AppView } from "../src/ui/primitives";
+
+export function ErrorBoundary({ retry }: ErrorBoundaryProps) {
+	return (
+		<I18nProvider>
+			<AppView className="flex-1 justify-center bg-background p-6">
+				<ErrorState onRetry={() => void retry().catch(() => undefined)} />
+			</AppView>
+		</I18nProvider>
+	);
+}
 
 function Navigation() {
 	return (
@@ -27,6 +39,7 @@ export default function RootLayout() {
 			<I18nProvider>
 				<GestureHandlerRootView style={{ flex: 1 }}>
 					<SafeAreaProvider>
+						<StatusBar style="auto" />
 						<HeroUINativeProvider>
 							{runtime.ok ? (
 								<ClerkProvider

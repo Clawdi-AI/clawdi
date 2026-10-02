@@ -13,11 +13,11 @@ export default function TabsLayout() {
 		<NativeTabs>
 			<NativeTabs.Trigger name="index">
 				<NativeTabs.Trigger.Label>{t("navigation.home")}</NativeTabs.Trigger.Label>
-				<NativeTabs.Trigger.Icon sf="house.fill" />
+				<NativeTabs.Trigger.Icon sf="house.fill" md="home" />
 			</NativeTabs.Trigger>
 			<NativeTabs.Trigger name="account">
 				<NativeTabs.Trigger.Label>{t("navigation.account")}</NativeTabs.Trigger.Label>
-				<NativeTabs.Trigger.Icon sf="person.crop.circle" />
+				<NativeTabs.Trigger.Icon sf="person.crop.circle" md="person" />
 			</NativeTabs.Trigger>
 		</NativeTabs>
 	);
