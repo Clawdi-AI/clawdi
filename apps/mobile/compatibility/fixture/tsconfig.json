@@ -1,0 +1,9 @@
+{
+	"extends": "expo/tsconfig.base",
+	"compilerOptions": {
+		"strict": true,
+		"noEmit": true,
+		"customConditions": ["react-native-strict-api"]
+	},
+	"include": ["app/**/*.tsx", "contracts.ts", "styles.d.ts", "uniwind-types.d.ts"]
+}
