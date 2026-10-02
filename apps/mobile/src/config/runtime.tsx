@@ -1,10 +1,9 @@
-import Constants from "expo-constants";
 import { readApiBaseUrl } from "@clawdi/shared/api";
+import Constants from "expo-constants";
 import { createContext, useContext } from "react";
 
 export type MobileRuntimeConfig = Readonly<{
 	cloudApiUrl: string;
-	hostedApiUrl: string;
 	clerkPublishableKey: string;
 }>;
 
@@ -26,9 +25,8 @@ function requiredString(value: unknown): value is string {
 
 export function loadMobileRuntimeConfig(): MobileRuntimeConfigResult {
 	const cloudApiUrl = configuredValue("cloudApiUrl");
-	const hostedApiUrl = configuredValue("hostedApiUrl");
 	const clerkPublishableKey = configuredValue("clerkPublishableKey");
-	if (!requiredString(cloudApiUrl) || !requiredString(hostedApiUrl) || !requiredString(clerkPublishableKey)) {
+	if (!requiredString(cloudApiUrl) || !requiredString(clerkPublishableKey)) {
 		return { ok: false, reason: "missing" };
 	}
 	if (!clerkPublishableKey.startsWith("pk_")) return { ok: false, reason: "invalid" };
@@ -37,7 +35,6 @@ export function loadMobileRuntimeConfig(): MobileRuntimeConfigResult {
 			ok: true,
 			value: {
 				cloudApiUrl: readApiBaseUrl(cloudApiUrl),
-				hostedApiUrl: readApiBaseUrl(hostedApiUrl),
 				clerkPublishableKey,
 			},
 		};

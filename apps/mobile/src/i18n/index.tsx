@@ -18,7 +18,11 @@ export type Translator = (key: TranslationKey) => string;
 const I18nContext = createContext<Translator>((key) => readTranslation(en, key));
 
 export function I18nProvider({ children }: { children: React.ReactNode }) {
-	return <I18nContext.Provider value={(key) => readTranslation(en, key)}>{children}</I18nContext.Provider>;
+	return (
+		<I18nContext.Provider value={(key) => readTranslation(en, key)}>
+			{children}
+		</I18nContext.Provider>
+	);
 }
 
 export function useI18n(): Translator {

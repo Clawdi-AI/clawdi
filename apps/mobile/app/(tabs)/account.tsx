@@ -1,7 +1,7 @@
 import { useClerk, useUser } from "@clerk/expo";
 import { useState } from "react";
-import { NativeButton } from "../../src/ui/native-controls";
 import { useI18n } from "../../src/i18n";
+import { NativeButton } from "../../src/ui/native-controls";
 import { AppText, AppView } from "../../src/ui/primitives";
 
 export default function AccountRoute() {
@@ -31,7 +31,9 @@ export default function AccountRoute() {
 					{isLoaded && email ? email : t("account.accountUnavailable")}
 				</AppText>
 			</AppView>
-			{error ? <AppText className="text-base text-danger">{t("account.signOutFailed")}</AppText> : null}
+			{error ? (
+				<AppText className="text-base text-danger">{t("account.signOutFailed")}</AppText>
+			) : null}
 			<NativeButton label={t("account.signOut")} onPress={() => void onSignOut()} disabled={busy} />
 		</AppView>
 	);

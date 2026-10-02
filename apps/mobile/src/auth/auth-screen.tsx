@@ -1,10 +1,10 @@
-import { useSignIn, useSignUp } from "@clerk/expo";
+import { useSignIn, useSignUp } from "@clerk/expo/legacy";
 import { Link } from "expo-router";
 import { useState } from "react";
 import { useI18n } from "../i18n";
+import { LoadingScreen } from "../ui/feedback";
 import { NativeButton } from "../ui/native-controls";
 import { AppScrollView, AppText, AppTextInput, AppView } from "../ui/primitives";
-import { LoadingScreen } from "../ui/feedback";
 
 function AuthFrame({
 	children,
@@ -16,7 +16,11 @@ function AuthFrame({
 	title: string;
 }) {
 	return (
-		<AppScrollView className="flex-1 bg-background" contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
+		<AppScrollView
+			className="flex-1 bg-background"
+			contentContainerStyle={{ flexGrow: 1 }}
+			keyboardShouldPersistTaps="handled"
+		>
 			<AppView className="flex-1 justify-center gap-8 px-6 py-12">
 				<AppView className="gap-2">
 					<AppText className="text-4xl font-semibold text-foreground">{title}</AppText>
@@ -43,27 +47,27 @@ function AuthFields({
 	return (
 		<AppView className="gap-4">
 			<AppTextInput
-			autoCapitalize="none"
-			autoComplete="email"
-			className="rounded-2xl bg-surface px-4 py-4 text-base text-foreground"
-			keyboardType="email-address"
-			onChangeText={onEmailChange}
-			placeholder={t("auth.email")}
-			placeholderTextColor="#64748b"
-			textContentType="emailAddress"
-			value={email}
-		/>
+				autoCapitalize="none"
+				autoComplete="email"
+				className="rounded-2xl bg-surface px-4 py-4 text-base text-foreground"
+				keyboardType="email-address"
+				onChangeText={onEmailChange}
+				placeholder={t("auth.email")}
+				placeholderTextColor="#64748b"
+				textContentType="emailAddress"
+				value={email}
+			/>
 			<AppTextInput
-			autoCapitalize="none"
-			autoComplete="password"
-			className="rounded-2xl bg-surface px-4 py-4 text-base text-foreground"
-			onChangeText={onPasswordChange}
-			placeholder={t("auth.password")}
-			placeholderTextColor="#64748b"
-			secureTextEntry
-			textContentType="password"
-			value={password}
-		/>
+				autoCapitalize="none"
+				autoComplete="password"
+				className="rounded-2xl bg-surface px-4 py-4 text-base text-foreground"
+				onChangeText={onPasswordChange}
+				placeholder={t("auth.password")}
+				placeholderTextColor="#64748b"
+				secureTextEntry
+				textContentType="password"
+				value={password}
+			/>
 		</AppView>
 	);
 }
@@ -107,7 +111,9 @@ export function SignInScreen() {
 			<AppView className="flex-row flex-wrap justify-center gap-1">
 				<AppText className="text-base text-muted">{t("auth.noAccount")}</AppText>
 				<Link href="/(auth)/sign-up">
-					<AppText className="text-base font-semibold text-primary">{t("auth.createAccount")}</AppText>
+					<AppText className="text-base font-semibold text-primary">
+						{t("auth.createAccount")}
+					</AppText>
 				</Link>
 			</AppView>
 		</AuthFrame>
@@ -153,7 +159,9 @@ export function SignUpScreen() {
 			<AppView className="flex-row flex-wrap justify-center gap-1">
 				<AppText className="text-base text-muted">{t("auth.haveAccount")}</AppText>
 				<Link href="/(auth)/sign-in">
-					<AppText className="text-base font-semibold text-primary">{t("auth.returnToSignIn")}</AppText>
+					<AppText className="text-base font-semibold text-primary">
+						{t("auth.returnToSignIn")}
+					</AppText>
 				</Link>
 			</AppView>
 		</AuthFrame>

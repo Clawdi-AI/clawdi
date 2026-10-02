@@ -1,7 +1,7 @@
-import { AppState } from "react-native";
 import { focusManager, onlineManager, useQueryClient } from "@tanstack/react-query";
 import * as Network from "expo-network";
-import { useEffect, type ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
+import { AppState } from "react-native";
 
 function setOnlineState(isConnected: boolean | null, isInternetReachable: boolean | null) {
 	onlineManager.setOnline(isConnected === true && isInternetReachable !== false);
@@ -16,7 +16,7 @@ export function AppLifecycleBridge({ children }: { children: ReactNode }) {
 				const state = await Network.getNetworkStateAsync();
 				if (mounted) setOnlineState(state.isConnected ?? null, state.isInternetReachable ?? null);
 			} catch {
-				if (mounted) onlineManager.setOnline(undefined);
+				if (mounted) onlineManager.setOnline(true);
 			}
 		};
 		void refreshNetworkState();
@@ -35,8 +35,8 @@ export function AppLifecycleBridge({ children }: { children: ReactNode }) {
 			mounted = false;
 			networkSubscription.remove();
 			appStateSubscription.remove();
-			focusManager.setFocused(undefined);
-			onlineManager.setOnline(undefined);
+			focusManager.setFocused(true);
+			onlineManager.setOnline(true);
 		};
 	}, [queryClient]);
 

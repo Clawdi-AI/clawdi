@@ -26,7 +26,9 @@ export default function HomeRoute() {
 								<Chip.Label>{t("home.emptyTitle")}</Chip.Label>
 							</Chip>
 						</AppView>
-						<AppText className="text-base leading-6 text-muted">{t("home.workspaceMessage")}</AppText>
+						<AppText className="text-base leading-6 text-muted">
+							{t("home.workspaceMessage")}
+						</AppText>
 						<AppText className="text-base leading-6 text-muted">{t("home.emptyMessage")}</AppText>
 					</AppView>
 				</Card>

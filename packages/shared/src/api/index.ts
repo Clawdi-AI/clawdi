@@ -39,5 +39,6 @@ export {
 	ApiClientNetworkError,
 	type ApiClientOptions,
 	ApiClientResponseError,
+	readApiBaseUrl,
 } from "./read-transport";
 export * from "./schemas";

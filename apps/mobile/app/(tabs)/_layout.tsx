@@ -1,6 +1,6 @@
 import { useAuth } from "@clerk/expo";
-import { NativeTabs } from "expo-router/unstable-native-tabs";
 import { Redirect } from "expo-router";
+import { NativeTabs } from "expo-router/unstable-native-tabs";
 import { useI18n } from "../../src/i18n";
 import { LoadingScreen } from "../../src/ui/feedback";
 

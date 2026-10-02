@@ -1,20 +1,17 @@
 import {
 	ApiClientError,
-	createCloudApiClient,
-	createHostedApiClient,
 	type ApiClientFetch,
 	type CloudApiClient,
-	type HostedApiClient,
+	createCloudApiClient,
 } from "@clawdi/shared/api";
 import { useAuth } from "@clerk/expo";
 import { fetch as expoFetch } from "expo/fetch";
-import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
-import { useAccountScope } from "../platform/account-lifecycle";
+import { createContext, type ReactNode, useCallback, useContext, useMemo } from "react";
 import type { MobileRuntimeConfig } from "../config/runtime";
+import { useAccountScope } from "../platform/account-lifecycle";
 
 export type MobileApiClients = Readonly<{
 	cloud: CloudApiClient;
-	hosted: HostedApiClient;
 }>;
 
 const MobileApiContext = createContext<MobileApiClients | null>(null);
@@ -46,13 +43,8 @@ export function MobileApiProvider({
 				getToken: readToken,
 				fetch: fetcher,
 			}),
-			hosted: createHostedApiClient({
-				baseUrl: config.hostedApiUrl,
-				getToken: readToken,
-				fetch: fetcher,
-			}),
 		}),
-		[config.cloudApiUrl, config.hostedApiUrl, fetcher, readToken],
+		[config.cloudApiUrl, fetcher, readToken],
 	);
 	return <MobileApiContext.Provider value={clients}>{children}</MobileApiContext.Provider>;
 }

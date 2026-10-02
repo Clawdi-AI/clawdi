@@ -36,13 +36,14 @@ export const en = {
 	home: {
 		greeting: "Welcome back",
 		workspaceTitle: "Your Agent workspace",
-		workspaceMessage: "Your mobile foundation is ready. Agent inventory and sessions will appear here.",
+		workspaceMessage:
+			"Your mobile foundation is ready. Agent inventory and sessions will appear here.",
 		emptyTitle: "No Agents to show",
 		emptyMessage: "When an Agent is available for this account, its status will appear here.",
 	},
 	account: {
 		title: "Account",
-		 signedInAs: "Signed in as",
+		signedInAs: "Signed in as",
 		signOut: "Sign out",
 		signOutFailed: "We could not sign you out. Please try again.",
 		accountUnavailable: "Account details are not available yet.",

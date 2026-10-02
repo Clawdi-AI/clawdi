@@ -1,13 +1,6 @@
 import { useAuth } from "@clerk/expo";
-import {
-	useCallback,
-	useContext,
-	useEffect,
-	useRef,
-	type ReactNode,
-	createContext,
-} from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef } from "react";
 
 export class AccountScopeChangedError extends Error {
 	constructor() {
@@ -41,14 +34,15 @@ function linkedAbortSignal(signals: readonly AbortSignal[]): {
 	const controller = new AbortController();
 	const listeners = signals.map((signal) => {
 		const abort = () => controller.abort();
-	if (signal.aborted) abort();
-	else signal.addEventListener("abort", abort, { once: true });
-	return { signal, abort };
+		if (signal.aborted) abort();
+		else signal.addEventListener("abort", abort, { once: true });
+		return { signal, abort };
 	});
 	return {
 		signal: controller.signal,
 		dispose: () => {
-			for (const listener of listeners) listener.signal.removeEventListener("abort", listener.abort);
+			for (const listener of listeners)
+				listener.signal.removeEventListener("abort", listener.abort);
 		},
 	};
 }
@@ -79,7 +73,12 @@ export function accountQueryKey(
 export function AccountScopeProvider({ children }: { children: ReactNode }) {
 	const { isLoaded, isSignedIn, sessionId, userId } = useAuth();
 	const queryClient = useQueryClient();
-	const identity = isLoaded && isSignedIn && userId ? `${userId}:${sessionId ?? ""}` : null;
+	const normalizedUserId = userId ?? null;
+	const normalizedSessionId = sessionId ?? null;
+	const identity =
+		isLoaded && isSignedIn && normalizedUserId
+			? `${normalizedUserId}:${normalizedSessionId ?? ""}`
+			: null;
 	const scopeRef = useRef<AccountScope | null>(null);
 	if (scopeRef.current?.identity !== identity) {
 		const previous = scopeRef.current;
@@ -89,8 +88,8 @@ export function AccountScopeProvider({ children }: { children: ReactNode }) {
 		let next: AccountScope;
 		next = {
 			identity,
-			accountKey: identity ? userId : null,
-			sessionId: identity ? sessionId : null,
+			accountKey: identity ? normalizedUserId : null,
+			sessionId: identity ? normalizedSessionId : null,
 			generation,
 			isReady: Boolean(identity),
 			signal: controller.signal,
@@ -120,7 +119,12 @@ export function useAccountScope(): AccountScope {
 export function useAccountRead(): AccountRead {
 	const scope = useAccountScope();
 	return useCallback<AccountRead>(
-		<Data>(reader, callerSignal) => readInAccountScope(scope, reader, callerSignal),
+		function accountRead<Data>(
+			reader: (signal: AbortSignal) => Promise<Data>,
+			callerSignal?: AbortSignal,
+		) {
+			return readInAccountScope(scope, reader, callerSignal);
+		},
 		[scope],
 	);
 }

@@ -1,7 +1,7 @@
-import { Redirect } from "expo-router";
 import { useAuth } from "@clerk/expo";
-import { ConfigurationErrorScreen, LoadingScreen } from "../src/ui/feedback";
+import { Redirect } from "expo-router";
 import { useMobileRuntimeConfig } from "../src/config/runtime";
+import { ConfigurationErrorScreen, LoadingScreen } from "../src/ui/feedback";
 
 export default function IndexRoute() {
 	const runtime = useMobileRuntimeConfig();
