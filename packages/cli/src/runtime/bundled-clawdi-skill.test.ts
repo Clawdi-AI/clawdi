@@ -10,6 +10,11 @@ const hostedSkill = readFileSync(
 );
 
 describe("bundled Clawdi skill context routing", () => {
+	it("uses Clawdi as the only product name in shipped skill headers", () => {
+		expect(genericSkill).toContain("# Clawdi\n");
+		expect(genericSkill).not.toContain("Clawdi Cloud");
+	});
+
 	it("keeps the generic and hosted context policy aligned", () => {
 		expect(section(hostedSkill, "Context Routing")).toBe(section(genericSkill, "Context Routing"));
 	});

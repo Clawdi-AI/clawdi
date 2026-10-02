@@ -33,7 +33,7 @@ export type HostedInventoryQueryState = {
 
 export class HostedInventoryUnavailableError extends Error {
 	constructor() {
-		super("Clawdi Cloud inventory is unavailable from this dashboard.");
+		super("Hosted agent inventory is unavailable from this dashboard.");
 		this.name = "HostedInventoryUnavailableError";
 	}
 }

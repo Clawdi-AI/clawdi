@@ -1,7 +1,7 @@
 # API compatibility
 
 This policy describes the API compatibility contract currently in force for
-Clawdi Cloud. It is grounded in the FastAPI routes and regression tests in this
+Clawdi. It is grounded in the FastAPI routes and regression tests in this
 repository, especially `backend/app/main.py`,
 `backend/app/routes/sessions.py`, `backend/app/routes/admin.py`,
 `backend/tests/test_api_version_alias.py`, and
@@ -13,7 +13,7 @@ system map, read [`architecture.md`](architecture.md#api-and-identity).
 
 ## Canonical surface
 
-`/v1` is the canonical Clawdi Cloud API namespace. Hosted runtime “bundle v2” is
+`/v1` is the canonical Clawdi API namespace. Hosted runtime “bundle v2” is
 a media-type and schema contract served by `GET /v1/runtime/manifest`; it is not
 a replacement `/v2` URL namespace.
 

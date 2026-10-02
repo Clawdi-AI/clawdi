@@ -42,7 +42,7 @@ program
 		"after",
 		`
 Examples:
-  $ clawdi auth login               Authenticate with Clawdi Cloud
+  $ clawdi auth login               Authenticate with Clawdi
   $ clawdi deploy                   Create a Hosted agent with the deploy wizard
   $ clawdi auth status --json       Inspect credential source without printing secrets
   $ clawdi setup                    Detect agents and register the current machine
@@ -56,7 +56,7 @@ Examples:
   $ clawdi run --env-file .env.clawdi -- npm run dev  Resolve clawdi:// refs at runtime
 
 Environment:
-  CLAWDI_API_URL           Override the Clawdi Cloud API endpoint
+  CLAWDI_API_URL           Override the Clawdi API endpoint
   CLAWDI_DEPLOY_API_URL    Override the Hosted deploy API endpoint
   CLAWDI_AUTH_TOKEN_ORIGIN Explicit Cloud origin binding for CLAWDI_AUTH_TOKEN
   CLAWDI_DEBUG             Print stack traces on error
@@ -134,7 +134,7 @@ any create or checkout mutation. No provider secrets are accepted as flags.`,
 // ─────────────────────────────────────────────────────────────
 // auth
 // ─────────────────────────────────────────────────────────────
-const authCmd = program.command("auth").description("Authenticate with Clawdi Cloud");
+const authCmd = program.command("auth").description("Authenticate with Clawdi");
 
 authCmd
 	.command("login")

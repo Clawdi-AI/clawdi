@@ -74,7 +74,7 @@ function postLoginHint() {
 async function authLoginManual(apiUrl: string, expectedCredential: StoredCredentialIdentity) {
 	p.log.message(
 		"To get an API key:\n" +
-			chalk.gray("  1. Sign in at the Clawdi Cloud dashboard\n") +
+			chalk.gray("  1. Sign in at the Clawdi dashboard\n") +
 			chalk.gray("  2. Open Settings → API Keys\n") +
 			chalk.gray("  3. Create a new key and copy it"),
 	);
