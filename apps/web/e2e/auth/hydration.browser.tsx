@@ -1,3 +1,4 @@
+import type { RouterManagedTag } from "@tanstack/react-router";
 import {
 	createMemoryHistory,
 	createRootRoute,
@@ -21,6 +22,29 @@ const serverAuth = { userId: "user-a", sessionId: "session-a" };
 let admissions = 0;
 const errors: string[] = [];
 let hydrated = false;
+
+function escapeHtmlAttribute(value: string) {
+	return value.replace(/[&"'<>]/g, (character) => {
+		const codePoint = character.charCodeAt(0).toString(16);
+		return `&#x${codePoint};`;
+	});
+}
+
+function renderHydrationTags(tags: RouterManagedTag[]) {
+	return tags
+		.map(({ tag, attrs, children }) => {
+			const attributes = Object.entries(attrs ?? {})
+				.filter(([, value]) => value !== undefined && value !== false)
+				.map(([name, value]) => {
+					if (value === true) return ` ${name}`;
+					return ` ${name}="${escapeHtmlAttribute(String(value))}"`;
+				})
+				.join("");
+			const content = children === undefined ? "" : children;
+			return `<${tag}${attributes}>${content}</${tag}>`;
+		})
+		.join("");
+}
 
 function HydrationProbe() {
 	const isHydrated = useHydrated();
@@ -98,7 +122,13 @@ export async function renderHydrationProbe() {
 		await ssr.dehydrate();
 		const markup = renderToString(<RouterProvider router={router} />);
 		ssr.setRenderFinished();
-		return { markup, bootstrap: ssr.takeBufferedHtml() ?? "" };
+		const hydrationTags = ssr.takeInitialHydrationScriptTags();
+		return {
+			markup,
+			bootstrap: hydrationTags
+				? renderHydrationTags([...hydrationTags.before, hydrationTags.boundary])
+				: "",
+		};
 	} finally {
 		ssr.cleanup();
 	}
