@@ -1654,6 +1654,11 @@ export interface components {
              * @default false
              */
             can_use_v2: boolean;
+            /**
+             * Can Create V1 Deployment
+             * @default false
+             */
+            can_create_v1_deployment: boolean;
         };
         /** V1UserResponse */
         V1UserResponse: {
