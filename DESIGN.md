@@ -1,4 +1,4 @@
-# Clawdi Cloud design system (UI 2.0)
+# Clawdi design system (UI 2.0)
 
 Linear/Vercel-style: dense, crisp, **light-first**, monochrome warm-gray with
 **one accent — Clawdi orange**. Tokens live in

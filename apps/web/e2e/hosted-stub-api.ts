@@ -323,7 +323,7 @@ export function readDeploymentFixture(value: unknown): unknown {
 	return isDeploymentMutationFixture(value) ? mutationDeploymentReadFixture(value) : value;
 }
 
-// HOSTED (Clawdi Cloud) smoke against the vite dev server with dev-auth-bypass
+// HOSTED (Clawdi hosted deployment) smoke against the vite dev server with dev-auth-bypass
 // (NO Clerk key needed) + deploy-api enabled so /deploy renders. Exercises the
 // deploy wizard's Base UI Select asserting ZERO browser console/page errors.
 //

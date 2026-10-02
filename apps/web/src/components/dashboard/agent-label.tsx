@@ -146,13 +146,11 @@ export function agentSourceLabel(source: AgentSourceKind): string {
 }
 
 export function agentSourceKindLabel(source: AgentSourceKind): string {
-	return source === "hosted" ? "Clawdi Cloud agent" : "Your machine agent";
+	return source === "hosted" ? "Clawdi hosted agent" : "Your machine agent";
 }
 
 export function agentSourceDescription(source: AgentSourceKind): string {
-	return source === "hosted"
-		? "Hosted and managed by Clawdi Cloud"
-		: "Runs from your machine or server";
+	return source === "hosted" ? "Hosted and managed by Clawdi" : "Runs from your machine or server";
 }
 
 export function AgentSourceBadge({

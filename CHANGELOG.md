@@ -12,6 +12,9 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+- Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
+  name while keeping hosted and connected agent distinctions intact.
+
 ### CLI 0.14.100
 
 - Large session histories sync without loading the entire history into memory,
