@@ -9,8 +9,34 @@ if [[ "$PROBE_PROFILE" == verify-source ]]; then
 	cp /probe/*.mjs /work/
 	cp -R /probe/fixture /work/fixture
 	bun x @biomejs/biome@2.5.14 check --config-path=/work/biome.json --vcs-enabled=false \
-		/work/*.mjs /work/fixture/*.json /work/fixture/*.ts /work/fixture/app/*.tsx \
+		/work/*.mjs /work/fixture/*.json /work/fixture/*.ts /work/fixture/*.tsx /work/fixture/app/*.tsx \
 		/work/fixture/*.cjs /work/fixture/global.css 2>&1 | tee /output/verification.log
+	node --input-type=module <<'NODE' | tee -a /output/verification.log
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+
+const directory = mkdtempSync("/tmp/clawdi-mobile-summary-");
+try {
+	writeFileSync(path.join(directory, "status.tsv"), "synthetic\t0\n");
+	for (const identity of [true, false, undefined]) {
+		writeFileSync(path.join(directory, "audit.json"), JSON.stringify({
+			peerConflicts: [], singleReactIdentity: identity,
+		}));
+		const result = spawnSync(process.execPath, ["/probe/summarize.mjs", directory, "synthetic"], {
+			encoding: "utf8", timeout: 5_000,
+		});
+		if (result.error) throw result.error;
+		const expected = identity === true ? 0 : 1;
+		if (result.status !== expected) {
+			throw new Error(`Synthetic identity ${identity}: expected exit ${expected}, received ${result.status}`);
+		}
+		console.log(`Synthetic summary identity=${identity ?? "missing"}: exit ${result.status}`);
+	}
+} finally {
+	rmSync(directory, { recursive: true });
+}
+NODE
 	exit
 fi
 cp -R /probe/fixture/. /work/

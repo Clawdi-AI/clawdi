@@ -186,6 +186,9 @@ bash apps/mobile/compatibility/run.sh verify-source
 ```
 
 Done: containerized Node syntax checks, Bash syntax checks, and the repository's
-Biome 2.5.14 configuration exit 0, reporting `Checked 14 files` without fixes.
+Biome 2.5.14 configuration exit 0, reporting `Checked 15 files` without fixes,
+including `fixture/wrapped.tsx`. In that same container, temporary synthetic
+summary inputs with zero check exits and no peer conflicts return exit 0 for
+`singleReactIdentity: true`, and exit 1 for false or an omitted identity marker.
 Root workspace typecheck/CI/native-build integration remains root-owned; this
 probe does not register a product workspace or change root manifests/locks.

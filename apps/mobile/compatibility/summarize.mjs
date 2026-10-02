@@ -26,6 +26,10 @@ const summary = {
 };
 await writeFile(path.join(outputDir, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
 console.log(JSON.stringify(summary, null, 2));
-if (Object.values(checks).some((exitCode) => exitCode !== 0) || audit.peerConflicts.length > 0) {
+if (
+	Object.values(checks).some((exitCode) => exitCode !== 0) ||
+	audit.peerConflicts.length > 0 ||
+	audit.singleReactIdentity !== true
+) {
 	process.exitCode = 1;
 }

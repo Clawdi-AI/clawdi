@@ -9,9 +9,15 @@ esac
 
 probe_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 artifact_dir="$probe_dir/.artifacts/$profile"
-mkdir -p "$artifact_dir"
 image="clawdi-mobile-v0-${UID}-$$"
 container="clawdi-mobile-v0-${UID}-$$"
+existing_container="$(timeout 30s docker container ls --all --quiet --filter "name=^/${container}$")"
+existing_image="$(timeout 30s docker image ls --quiet --filter "reference=${image}:latest")"
+if [[ -n "$existing_container" || -n "$existing_image" ]]; then
+	printf 'Refusing to reuse existing probe resources: %s\n' "$container" >&2
+	exit 73
+fi
+mkdir -p "$artifact_dir"
 cleanup() {
 	docker rm -f "$container" >/dev/null 2>&1 || true
 	docker image rm "$image" >/dev/null 2>&1 || true
