@@ -12,6 +12,10 @@ module.exports = ({ config }) => ({
 	orientation: "portrait",
 	userInterfaceStyle: "automatic",
 	platforms: ["ios", "android"],
+	newArchEnabled: true,
+	experiments: {
+		typedRoutes: true,
+	},
 	plugins: ["expo-router", "expo-secure-store"],
 	extra: {
 		...config.extra,

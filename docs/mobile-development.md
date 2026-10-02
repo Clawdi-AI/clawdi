@@ -1,8 +1,21 @@
 # Mobile development
 
-Status: V0 blocked. There is no product mobile app or approved native dependency
-selection yet. The compatibility fixture is not an authentication foundation,
-native build, payment implementation, or working product.
+Status: Wave 1 implementation is in progress. `apps/mobile` now contains the
+Cloud-only v2 Expo shell, Clerk authentication boundary, account-generation
+fencing, and read-only Agent/Session surfaces. Hosted remains the v1 legacy
+product and is intentionally not required by the mobile app. The compatibility
+fixture below is historical V0 evidence; it is not a payment implementation,
+native iOS/Android build, or real-device authentication proof.
+
+## Wave 1 verification snapshot
+
+The root workspace uses Bun `1.4.2` and a named `expo57` catalog for the
+approved SDK 57 runtime exception. A bounded Bun 1.4.2 install generated the
+root lock and a frozen reinstall passed. Mobile and Shared TypeScript 7 strict
+checks, Biome, and iOS/Android Expo exports passed. `expo install --check`
+still reports only the deliberate TypeScript 7 versus Expo's `~6.0.3` checker
+expectation; TypeScript 7 remains an explicit project decision. Expo export is
+Metro bundling evidence, not native compilation or store-readiness evidence.
 
 ## Reproduce the compatibility gate
 
@@ -26,7 +39,7 @@ shared Docker build caches are not pruned. Output goes to the ignored
 `apps/mobile/compatibility/.artifacts/<profile>/` directory. Preserve needed
 evidence, then remove only that task-owned directory.
 
-Done for reproduction: both commands currently exit 1 and produce `summary.json`
+At the time of the V0 probe, both commands exited 1 and produced `summary.json`
 with the check outcomes below. A reproduced failure is not a passed product gate.
 The registry check rejects a snapshot that no longer matches stable `latest`
 tags; re-review versions rather than automatically replacing the lock.
