@@ -1,0 +1,4 @@
+app/index.tsx(9,9): error TS2322: Type '{ className: string; children: Element[]; }' is not assignable to type 'IntrinsicAttributes & Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<ViewProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+app/index.tsx(18,11): error TS2322: Type '{ className: string; children: string; }' is not assignable to type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.
+  Property 'className' does not exist on type 'IntrinsicAttributes & Omit<TextProps, "ref"> & { ref?: Ref<ReactNativeElement> | undefined; }'.

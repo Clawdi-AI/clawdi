@@ -1,0 +1,30 @@
+{
+  "profile": "supported-diagnostic",
+  "checkedAt": "2026-10-02T06:37:30.791Z",
+  "checks": {
+    "install": 0,
+    "frozen-reinstall": 0,
+    "expo-dependencies": 1,
+    "expo-polyfills": 0,
+    "generate-uniwind-types": 0,
+    "typecheck": 1,
+    "typecheck-official-wrapper": 0,
+    "metro-ios": 0,
+    "metro-android": 0
+  },
+  "peerConflicts": [],
+  "invalidPeerRanges": [
+    {
+      "package": "@gorhom/bottom-sheet",
+      "peer": "react-native-reanimated",
+      "range": ">=3.16.0 || >=4.0.0-",
+      "installed": "4.5.1"
+    }
+  ],
+  "singleReactIdentity": true,
+  "nativeCompile": {
+    "android": "not run: compatibility gate blocked; no Android SDK in this container",
+    "ios": "not run: Linux container has no Xcode/Apple build runner"
+  },
+  "productApproved": false
+}

@@ -1,0 +1,15 @@
+The following packages should be updated for best compatibility with the installed expo version:
+  react@19.3.0 - expected version: 19.2.3
+  react-dom@19.3.0 - expected version: 19.2.3
+  react-native@0.87.1 - expected version: 0.86.3
+  react-native-gesture-handler@3.3.0 - expected version: ~2.32.0
+  react-native-reanimated@4.7.0 - expected version: 4.5.1
+  react-native-safe-area-context@5.10.1 - expected version: ~5.7.0
+  react-native-screens@4.28.0 - expected version: ~4.26.0
+  react-native-svg@15.15.5 - expected version: 15.15.4
+  react-native-worklets@0.13.0 - expected version: 0.10.1
+  @babel/core@8.0.6 - expected version: ^7.29.0
+  @types/react@19.3.0 - expected version: ~19.2.4
+  typescript@7.0.2 - expected version: ~6.0.3
+Your project may not work correctly until you install the expected versions of the packages.
+Found outdated dependencies
