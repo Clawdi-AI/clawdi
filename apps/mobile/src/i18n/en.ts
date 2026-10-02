@@ -49,6 +49,10 @@ export const en = {
 		emptyMessage: "When an Agent is available for this account, its status will appear here.",
 	},
 	inventory: {
+		loadMore: "Load more",
+		refresh: "Refresh",
+		notFound: "This item is unavailable or no longer exists.",
+		end: "All available items loaded.",
 		viewAll: "View all",
 		viewDetails: "Details",
 	},
@@ -69,6 +73,17 @@ export const en = {
 		adapters: "Adapters",
 	},
 	sessions: {
+		filter: "Sessions for this Agent",
+		clearFilter: "Show all Sessions",
+		transcript: "Message transcript",
+		noMessages: "No message transcript is available yet.",
+		truncated: "Long messages are limited to 12,000 characters.",
+		revisionChanged: "The transcript changed. Refresh to load its current version.",
+		user: "You",
+		assistant: "Assistant",
+		readOnly: "Read-only transcript",
+		loaded: "Messages loaded",
+		filterInvalid: "The Agent filter is invalid.",
 		title: "Sessions",
 		description: "Read-only history from your Cloud Agents.",
 		detailDescription: "Read-only Session information from Cloud.",
@@ -108,86 +123,7 @@ export const en = {
 	},
 } as const;
 
-export type TranslationKey =
-	| "app.name"
-	| "navigation.home"
-	| "navigation.account"
-	| "navigation.back"
-	| "loading.app"
-	| "loading.authentication"
-	| "loading.agents"
-	| "loading.agent"
-	| "loading.sessions"
-	| "loading.session"
-	| "configuration.title"
-	| "configuration.message"
-	| "configuration.missing"
-	| "configuration.invalid"
-	| "auth.signInTitle"
-	| "auth.signInSubtitle"
-	| "auth.signUpTitle"
-	| "auth.signUpSubtitle"
-	| "auth.email"
-	| "auth.password"
-	| "auth.signIn"
-	| "auth.signUp"
-	| "auth.noAccount"
-	| "auth.haveAccount"
-	| "auth.createAccount"
-	| "auth.returnToSignIn"
-	| "auth.unavailable"
-	| "auth.failed"
-	| "auth.verificationRequired"
-	| "home.greeting"
-	| "home.agentsTitle"
-	| "home.sessionsTitle"
-	| "home.workspaceTitle"
-	| "home.workspaceMessage"
-	| "home.emptyTitle"
-	| "home.emptyMessage"
-	| "inventory.viewAll"
-	| "inventory.viewDetails"
-	| "agents.title"
-	| "agents.description"
-	| "agents.detailDescription"
-	| "agents.empty"
-	| "agents.type"
-	| "agents.machine"
-	| "agents.operatingSystem"
-	| "agents.version"
-	| "agents.lastSeen"
-	| "agents.lastSync"
-	| "agents.neverSeen"
-	| "agents.unknown"
-	| "agents.syncEnabled"
-	| "agents.adapters"
-	| "sessions.title"
-	| "sessions.description"
-	| "sessions.detailDescription"
-	| "sessions.empty"
-	| "sessions.agent"
-	| "sessions.status"
-	| "sessions.project"
-	| "sessions.localId"
-	| "sessions.started"
-	| "sessions.lastActivity"
-	| "sessions.ended"
-	| "sessions.inProgress"
-	| "sessions.messages"
-	| "sessions.model"
-	| "sessions.unknownModel"
-	| "sessions.unknownAgent"
-	| "sessions.unknownProject"
-	| "sessions.unknownActivity"
-	| "sessions.tags"
-	| "common.yes"
-	| "common.no"
-	| "account.title"
-	| "account.signedInAs"
-	| "account.signOut"
-	| "account.signOutFailed"
-	| "account.accountUnavailable"
-	| "error.genericTitle"
-	| "error.genericMessage"
-	| "error.tryAgain"
-	| "error.offline";
+type Translations = typeof en;
+export type TranslationKey = {
+	[Scope in keyof Translations]: `${Scope}.${Extract<keyof Translations[Scope], string>}`;
+}[keyof Translations];

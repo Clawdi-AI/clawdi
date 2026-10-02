@@ -2,38 +2,34 @@ import { useLocalSearchParams } from "expo-router";
 import {
 	BackButton,
 	formatDate,
+	isNotFound,
 	sessionDisplayName,
 	useCloudSession,
 } from "../../src/features/cloud-inventory";
+import { routeParam } from "../../src/features/read-helpers";
+import { ResourceError } from "../../src/features/resource-error";
+import { Transcript } from "../../src/features/transcript";
 import { useI18n } from "../../src/i18n";
-import { ErrorState, LoadingScreen } from "../../src/ui/feedback";
+import { LoadingScreen } from "../../src/ui/feedback";
+import { DetailRow } from "../../src/ui/metadata-row";
 import { AppScrollView, AppText, AppView } from "../../src/ui/primitives";
-
-function searchParam(value: string | string[] | undefined): string | undefined {
-	return Array.isArray(value) ? value[0] : value;
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-	return (
-		<AppView className="gap-1 rounded-2xl bg-surface px-4 py-3">
-			<AppText className="text-sm text-muted">{label}</AppText>
-			<AppText className="text-base text-foreground">{value}</AppText>
-		</AppView>
-	);
-}
+import { ReadScreen } from "../../src/ui/read-screen";
 
 export default function SessionDetailRoute() {
 	const t = useI18n();
 	const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
-	const sessionId = searchParam(params.sessionId);
+	const sessionId = routeParam(params.sessionId);
 	const session = useCloudSession(sessionId);
-	if (session.isPending) return <LoadingScreen label={t("loading.session")} />;
-	return (
-		<AppScrollView className="flex-1 bg-background" contentContainerStyle={{ flexGrow: 1 }}>
-			<AppView className="flex-1 gap-5 px-6 pb-10 pt-6">
+	if (sessionId && session.isPending) return <LoadingScreen label={t("loading.session")} />;
+	const header = (
+		<AppView className="bg-background">
+			<AppView className="gap-5">
 				<BackButton />
-				{session.isError || !session.data ? (
-					<ErrorState onRetry={() => void session.refetch()} />
+				{!sessionId || session.isError || !session.data ? (
+					<ResourceError
+						missing={!sessionId || isNotFound(session.error)}
+						onRetry={session.isFetching ? undefined : () => void session.refetch()}
+					/>
 				) : (
 					<>
 						<AppView className="gap-1">
@@ -87,6 +83,13 @@ export default function SessionDetailRoute() {
 					</>
 				)}
 			</AppView>
-		</AppScrollView>
+		</AppView>
+	);
+	return session.data && !session.isError ? (
+		<Transcript sessionId={session.data.id} header={header} />
+	) : (
+		<ReadScreen>
+			<AppScrollView contentContainerStyle={{ padding: 24, flexGrow: 1 }}>{header}</AppScrollView>
+		</ReadScreen>
 	);
 }
