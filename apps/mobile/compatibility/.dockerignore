@@ -1,0 +1,6 @@
+.artifacts
+evidence
+fixture
+*.mjs
+*.sh
+.gitignore

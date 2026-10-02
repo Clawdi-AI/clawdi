@@ -1,0 +1,4 @@
+The following packages should be updated for best compatibility with the installed expo version:
+  typescript@7.0.2 - expected version: ~6.0.3
+Your project may not work correctly until you install the expected versions of the packages.
+Found outdated dependencies
