@@ -1,4 +1,4 @@
-import { Button } from "@expo/ui";
+import { Button, Host } from "@expo/ui";
 
 export function NativeButton({
 	disabled,
@@ -9,5 +9,9 @@ export function NativeButton({
 	label: string;
 	onPress: () => void;
 }) {
-	return <Button disabled={disabled} label={label} onPress={onPress} />;
+	return (
+		<Host matchContents={{ vertical: true }} style={{ width: "100%" }}>
+			<Button disabled={disabled} label={label} onPress={onPress} />
+		</Host>
+	);
 }
