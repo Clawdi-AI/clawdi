@@ -465,9 +465,9 @@ describe("Hosted read client", () => {
 				"/proxy/v2/deployments/hdep%2Fa",
 				"/proxy/v2/operations/operation%2Fa",
 			]);
-			expect(
-				requests.every((request) => request.authorization === "Bearer owner-token"),
-			).toBe(true);
+			expect(requests.every((request) => request.authorization === "Bearer owner-token")).toBe(
+				true,
+			);
 			expect(requests.every((request) => request.method === "GET")).toBe(true);
 		} finally {
 			await server.stop(true);
