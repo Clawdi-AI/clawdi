@@ -22,6 +22,7 @@
 		"@x402/core": "2.27.0",
 		"@x402/evm": "2.27.0",
 		"@x402/fetch": "2.27.0",
+		"openapi-fetch": "^0.17.0",
 		"viem": "2.56.9"
 	},
 	"devDependencies": {
