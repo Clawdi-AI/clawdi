@@ -60,7 +60,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.4.0"
+          bun-version-file: package.json
 
       - name: Install workspace dependencies
         run: bun install --frozen-lockfile
@@ -151,7 +151,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.4.0"
+          bun-version-file: package.json
 
       - name: Verify current workflow source
         env:

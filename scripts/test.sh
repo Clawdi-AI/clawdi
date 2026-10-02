@@ -168,9 +168,9 @@ copy_repo() {
 
 install_js() {
 	bun install --frozen-lockfile --ignore-scripts
-	# The package cache sits on a memory-backed tmpfs and node_modules on the
-	# work disk is a copy of it, so release ~1.8 GB of the runner's memory
-	# budget before builds and tests start.
+	# The disposable container disk holds Bun's cache: the mobile dependency
+	# graph exceeds the former 2 GiB tmpfs. Release the cache after installation;
+	# node_modules remains available and no cache persists between runs.
 	find "${BUN_INSTALL_CACHE_DIR:?}" -mindepth 1 -delete
 }
 

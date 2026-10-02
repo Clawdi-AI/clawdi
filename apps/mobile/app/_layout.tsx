@@ -8,6 +8,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { loadMobileRuntimeConfig, RuntimeConfigProvider } from "../src/config/runtime";
 import { I18nProvider } from "../src/i18n";
 import { MobileProviders } from "../src/providers/mobile-providers";
+import { ConfigurationErrorScreen } from "../src/ui/feedback";
 
 function Navigation() {
 	return (
@@ -37,7 +38,7 @@ export default function RootLayout() {
 									</MobileProviders>
 								</ClerkProvider>
 							) : (
-								<Navigation />
+								<ConfigurationErrorScreen reason={runtime.reason} />
 							)}
 						</HeroUINativeProvider>
 					</SafeAreaProvider>
