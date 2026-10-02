@@ -37,6 +37,25 @@ export const en = {
 		unavailable: "Authentication is not ready yet.",
 		failed: "We could not complete authentication. Check your details and try again.",
 		verificationRequired: "This account needs an additional verification step.",
+		working: "Please wait…",
+		verificationCode: "Verification code",
+		authenticatorCode: "Authenticator code",
+		backupCode: "Backup code",
+		codeSubtitle: "Enter your verification code to continue.",
+		verify: "Verify and continue",
+		resendCode: "Resend code",
+		codeSentTo: "Code sent to",
+		codeSent: "A new verification code has been sent.",
+		useBackupCode: "Use a backup code",
+		forgotPassword: "Forgot password?",
+		recoveryTitle: "Reset your password",
+		recoverySubtitle: "Receive a code at your account email address.",
+		sendRecoveryCode: "Send recovery code",
+		newPassword: "New password",
+		resetPassword: "Reset password and sign in",
+		startOver: "Start over",
+		unsupportedVerification: "This account requires a verification method or account details that this app does not support. Continue on the web or contact your administrator.",
+		sessionTaskRequired: "Your account has a required setup step. Complete it on the web before using the mobile app.",
 	},
 	home: {
 		greeting: "Welcome back",
@@ -123,7 +142,6 @@ export const en = {
 	},
 } as const;
 
-type Translations = typeof en;
 export type TranslationKey = {
-	[Scope in keyof Translations]: `${Scope}.${Extract<keyof Translations[Scope], string>}`;
-}[keyof Translations];
+	[Scope in keyof typeof en]: `${Scope}.${keyof (typeof en)[Scope] & string}`;
+}[keyof typeof en];

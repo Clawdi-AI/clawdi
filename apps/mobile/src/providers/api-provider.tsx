@@ -25,11 +25,17 @@ export function MobileApiProvider({
 	const scope = useAccountScope();
 	const { getToken, sessionId } = useAuth();
 	const readToken = useCallback(async (): Promise<string | null> => {
-		if (!scope.isReady || !scope.isCurrent() || sessionId !== scope.sessionId) {
+		const scopeSignal = scope.signal;
+		if (
+			!scope.isReady ||
+			!scope.isCurrent() ||
+			scopeSignal.aborted ||
+			sessionId !== scope.sessionId
+		) {
 			throw new ApiClientError(401, "authentication_required");
 		}
 		const token = await getToken();
-		if (!scope.isCurrent() || sessionId !== scope.sessionId) {
+		if (!scope.isCurrent() || scopeSignal.aborted || sessionId !== scope.sessionId) {
 			throw new ApiClientError(401, "authentication_required");
 		}
 		return token ?? null;
