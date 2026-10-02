@@ -1,4 +1,11 @@
 export type { components, paths } from "./api.generated";
+export {
+	type ComputeReusableSubscriptionsQuery,
+	type ComputeSubscriptionsQuery,
+	type ComputeWalletTransactionsQuery,
+	createHostedComputeClient,
+	type HostedComputeClient,
+} from "./compute-client";
 export type {
 	AiProviderRemovalImpact,
 	AiProviderRemovalResult,
