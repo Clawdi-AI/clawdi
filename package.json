@@ -8,6 +8,11 @@
 			"packages/*"
 		],
 		"catalog": {
+			"@types/mdast": "4.0.4",
+			"remark-parse": "11.0.0",
+			"remark-gfm": "4.0.1",
+			"remark-breaks": "4.0.0",
+			"unified": "11.0.5",
 			"@lobehub/icons": "5.21.0",
 			"@playwright/test": "^1.63.0",
 			"@types/bun": "^1.4.2",

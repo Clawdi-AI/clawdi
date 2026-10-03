@@ -5,7 +5,7 @@
 	"main": "expo-router/entry",
 	"scripts": {
 		"dev": "expo start",
-		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+		"typecheck": "EXPO_OFFLINE=1 expo customize tsconfig.json && tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
 		"lint": "biome check .",
 		"test": "../../scripts/test.sh mobile",
 		"test:internal": "bun test src"

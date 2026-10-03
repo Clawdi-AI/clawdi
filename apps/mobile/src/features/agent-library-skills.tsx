@@ -174,10 +174,14 @@ function AgentLibrarySkills({ id }: { id: string }) {
 						<>
 							<NativeButton
 								label={t("agentExtensions.view")}
+								disabled={!item.project_id || !item.source_skill_key}
 								onPress={() =>
 									router.push({
-										pathname: "/skills/[skillId]",
-										params: { skillId: item.skill_id ?? "" },
+										pathname: "/skills/detail",
+										params: {
+											projectId: item.project_id ?? "",
+											skillKey: item.source_skill_key ?? "",
+										},
 									})
 								}
 							/>

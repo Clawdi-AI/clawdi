@@ -5,6 +5,6 @@
 		"noEmit": true,
 		"types": ["react", "react-native"]
 	},
-	"include": ["**/*.ts", "**/*.tsx", "uniwind-types.d.ts"],
+	"include": ["**/*.ts", "**/*.tsx", "uniwind-types.d.ts", ".expo/types/**/*.ts", "expo-env.d.ts"],
 	"exclude": ["compatibility", "**/*.test.ts", "**/*.test.tsx"]
 }

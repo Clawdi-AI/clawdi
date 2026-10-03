@@ -2,6 +2,7 @@ import { type SessionTimelineRow, splitSearchHighlight } from "@clawdi/shared/ap
 import { router } from "expo-router";
 import { useState } from "react";
 import { useI18n } from "../i18n";
+import { Markdown } from "../ui/markdown";
 import { NativeButton } from "../ui/native-controls";
 import { AppText, AppView } from "../ui/primitives";
 import { formatDate } from "./cloud-inventory";
@@ -61,7 +62,7 @@ export function TimelineRow({
 			) : null}
 			{row.kind === "message" ? (
 				<>
-					<Payload value={row.message.content} query={query} />
+					<Markdown content={row.message.content} query={query} />
 					{position !== undefined ? (
 						<>
 							<NativeButton

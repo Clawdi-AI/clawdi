@@ -36,6 +36,13 @@ programs. `apps/mobile` typecheck runs both `tsconfig.json` and
 `tsconfig.test.json`; Bun-only global Blob extensions must not leak into native
 file APIs. Tests remain typechecked, not excluded from verification.
 
+Mobile typecheck first runs the official offline `expo customize tsconfig.json`
+command to generate Expo Router types without starting a dev server. The native
+program includes `.expo/types/**/*.ts` and `expo-env.d.ts`; both generated paths
+are ignored. An isolated negative compilation confirmed that the nonexistent
+`/skills/[skillId]` route fails with TS2322, while the actual `/skills/detail`
+Project/key navigation passes. The temporary negative fixture is not shipped.
+
 ## Develop and verify the product
 
 Use the root `packageManager` (`bun@1.4.2`) and committed root lock. Common
@@ -347,6 +354,35 @@ share-sheet acceptance remain outstanding; Metro exports do not prove these beha
 
 ### Full-parity completion scope
 
+Session messages and Library Skill bodies now use a native Markdown renderer
+with the same GFM and line-break plugins as Web, exposed through
+`@clawdi/shared/markdown`. Parser dependencies are explicit root-catalog entries,
+not accidental Web hoists. Native text supports headings, emphasis, lists/tasks,
+reference links, quotes, horizontally scrollable tables/code and footnote text.
+Raw HTML remains literal text. Source view and progressive text expansion remain
+available; oversized or overly deep syntax falls back to readable plain text.
+Remote images remain explicit external links, not automatic tracking requests;
+inline image preview and device/accessibility acceptance remain outstanding.
+Native HTTP(S) links show their full target for confirmation, reject credentials,
+ambiguous control characters and app/file/data schemes, and respect captured
+account/focus leases. Relative URLs have no invented base and remain text.
+
+This batch passed six workspace TS7 checks, 263 Shared/Mobile tests (1,217
+assertions), 10 related Web tests (33 assertions), frozen Bun 1.4.2 reinstall,
+and final iOS/Android exports plus post-export native/test TS programs in one
+bounded container. The lock change only records explicit Shared dependencies
+and root catalogs for versions already resolved by Web. No native build or
+visual/device acceptance is implied. Library reference detail navigation now
+uses the existing `/skills/detail` route and generated source Project/key;
+missing source metadata disables navigation instead of inventing a route.
+
+Runtime UI and terminal remain separate unfinished surfaces. Read-only inspection
+confirmed that the current Hermes browser-session endpoint requires the configured
+Web Origin and browser cookie context. Native support needs an explicit backend
+authentication handoff contract; spoofing Origin or assuming native fetch cookies
+are shared with an external browser is not an implementation. No live session,
+terminal connection or server configuration was changed during this audit.
+
 Account links to the native AI Provider inventory. It reuses Shared managed-provider
 filtering, generated Cloud contracts and the bounded authenticated transport.
 Label-only updates preserve credentials and routing; explicit configuration
@@ -490,7 +526,7 @@ until each surface has implementation, focused verification and device evidence:
 | --- | --- | --- |
 | Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings | Remaining general/profile settings and real Clerk flows |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
-| Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing and text export | Rich-text/link presentation, public/universal-link entrypoints, device scrolling/sharing and visual acceptance |
+| Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing and text export, native Markdown with confirmed safe external links | Inline image preview, public/universal-link entrypoints, device scrolling/sharing and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport | Universal-link intake and device acceptance |

@@ -4,6 +4,7 @@
 	"private": true,
 	"type": "module",
 	"exports": {
+		"./markdown": "./src/markdown.ts",
 		".": "./src/index.ts",
 		"./client": "./src/client.ts",
 		"./desktop": "./src/desktop.ts",
@@ -20,6 +21,11 @@
 		"test:internal": "bun test src"
 	},
 	"dependencies": {
+		"@types/mdast": "catalog:",
+		"remark-parse": "catalog:",
+		"remark-gfm": "catalog:",
+		"remark-breaks": "catalog:",
+		"unified": "catalog:",
 		"@x402/core": "catalog:",
 		"@x402/evm": "2.27.0",
 		"@x402/fetch": "2.27.0",

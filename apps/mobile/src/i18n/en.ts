@@ -12,6 +12,15 @@ import { skillArchiveEn } from "../features/skill-archive-en";
 import { vaultEn } from "../features/vault/en";
 
 export const en = {
+	markdown: {
+		openLink: "Open external link",
+		openFailed: "Could not open this link. Try again when this screen is active.",
+		image: "Image",
+		source: "Show Markdown source",
+		formatted: "Show formatted text",
+		plainFallback:
+			"This content is shown as plain text to keep large or complex messages responsive.",
+	},
 	agentExtensions: agentExtensionsEn,
 	workspaceSkills: workspaceSkillsEn,
 	skillArchive: skillArchiveEn,

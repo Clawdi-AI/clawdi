@@ -17,6 +17,7 @@ import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
 import { ErrorState } from "../ui/feedback";
+import { Markdown } from "../ui/markdown";
 import { NativeButton, NativePicker } from "../ui/native-controls";
 import { AppScrollView, AppText, AppTextInput, AppView } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
@@ -257,9 +258,11 @@ function SkillEditor({
 					<AppView className="gap-3">
 						<AppText className="text-xl text-foreground">{detail.data.name}</AppText>
 						<AppText className="text-muted">{detail.data.description}</AppText>
-						<AppText selectable className="text-foreground">
-							{detail.data.content ?? t("skills.noContent")}
-						</AppText>
+						{detail.data.content !== null ? (
+							<Markdown content={stripFrontmatter(detail.data.content)} />
+						) : (
+							<AppText>{t("skills.noContent")}</AppText>
+						)}
 						<NativeButton
 							label={t("skills.edit")}
 							disabled={disabled || detail.data.content === null}
