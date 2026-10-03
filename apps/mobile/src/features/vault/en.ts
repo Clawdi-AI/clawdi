@@ -1,4 +1,22 @@
 export const vaultEn = {
+	requests: "Secret requests",
+	requestsDescription:
+		"Recent 100 requests. Pending requests refresh for two minutes while this screen is active; refresh manually to continue. The latest link can be shared again until you leave this screen or background the app. Links are never saved to device storage.",
+	requestReshare: "Share latest request again",
+	requestCreate: "Create and share request",
+	requestShare: "Supply requested credentials",
+	requestWarning:
+		"Anyone with this link can supply credentials, replace requested existing keys and add keys to this section. Share only with the intended recipient. After leaving this screen or backgrounding the app, the link cannot be recovered here. Continue?",
+	requestFields: "Key names only, separated by commas or new lines",
+	requestInvalid:
+		"Select an attached Project and enter 1–32 distinct valid key names. Do not paste secret values here.",
+	requestPending: "Awaiting input",
+	requestSupplied: "Supplied",
+	requestConflict: "Credentials changed",
+	requestExpired: "Expired",
+	requestFiveMinutes: "Expires in 5 minutes",
+	requestHour: "Expires in 1 hour",
+	requestDay: "Expires in 24 hours",
 	title: "Vault",
 	description:
 		"Manage encrypted secrets. Only key names are returned; stored values are never revealed here.",

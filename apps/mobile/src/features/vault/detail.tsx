@@ -16,6 +16,7 @@ import { useCloudProjects } from "../projects";
 import { routeParam } from "../read-helpers";
 import { ResourceError } from "../resource-error";
 import { useVaultCatalog } from "./catalog";
+import { VaultRequests } from "./requests";
 
 export function VaultDetailScreen() {
 	const scope = useAccountScope();
@@ -192,6 +193,7 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 						<AppText className="text-muted">
 							{current.slug} · {t(current.is_owner ? "vault.owner" : "vault.shared")}
 						</AppText>
+						{current.is_owner ? <VaultRequests current={current} /> : null}
 						<NativeButton
 							label={t("vault.refresh")}
 							disabled={detail.isFetching || sections.isFetching || action.busy}

@@ -53,6 +53,22 @@ test("Vault operations retain exact identities and never fetch plaintext", async
 		expect(calls[8]?.url.searchParams.get("vault_id")).toBe(source.id);
 		expect(calls[8]?.url.pathname).toBe("/v1/vault/same%2Fname%3F/attachments/project-id");
 		expect(calls[8]?.body).toBeNull();
+		await client.listRequests(source);
+		expect(calls[9]?.url.pathname).toBe("/v1/vault/requests");
+		expect(calls[9]?.url.searchParams.get("vault_id")).toBe(source.id);
+		expect(calls[9]?.url.searchParams.get("limit")).toBe("100");
+		const request = {
+			vault_id: source.id,
+			slug: source.slug,
+			project_id: "project-id",
+			section: "",
+			fields: ["Mixed.Key"],
+			expires_in_seconds: 3600,
+		};
+		await client.createRequest(request);
+		expect(calls[10]?.url.pathname).toBe("/v1/vault/requests");
+		expect(calls[10]?.url.search).toBe("");
+		expect(calls[10]?.body).toEqual(request);
 	} finally {
 		server.stop(true);
 	}

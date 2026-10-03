@@ -22,6 +22,25 @@ export function createVaultClient(options: ApiClientOptions) {
 		query: { vault_id: readResourceId(vault.id) },
 	});
 	return {
+		listRequests: (vault: VaultIdentity, signal?: AbortSignal) =>
+			transport.read(
+				(init) =>
+					api.GET("/v1/vault/requests", {
+						...init,
+						params: {
+							query: {
+								slug: readResourceId(vault.slug),
+								vault_id: readResourceId(vault.id),
+								limit: 100,
+							},
+						},
+					}),
+				signal,
+			),
+		createRequest: (
+			body: components["schemas"]["VaultSecretRequestCreate"],
+			signal?: AbortSignal,
+		) => transport.read((init) => api.POST("/v1/vault/requests", { ...init, body }), signal),
 		list: (query?: VaultCatalogQuery, signal?: AbortSignal) =>
 			transport.read((init) => api.GET("/v1/vault", { ...init, params: { query } }), signal),
 		get: (vault: VaultIdentity, signal?: AbortSignal) =>
