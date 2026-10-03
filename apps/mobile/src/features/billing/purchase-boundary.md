@@ -5,7 +5,9 @@ Basic admission only. It does not start a store purchase, restore purchases, or
 claim a client-side entitlement. `purchase-boundary.ts` keeps this boundary
 explicit: web/unknown platforms are `unsupported`; incomplete native setup and
 the missing Hosted sync contract are `disabled`; an injected provider is only
-called after all gates pass.
+called after all gates pass. The adapter also accepts the auth provider's
+account-generation `isCurrent` fence, so a late provider result is discarded
+after sign-out or account switch.
 
 No RevenueCat SDK dependency or public key is committed here. A future native
 integration must inject the SDK adapter and configure only the platform's public

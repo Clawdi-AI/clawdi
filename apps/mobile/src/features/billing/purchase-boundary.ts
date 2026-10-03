@@ -11,6 +11,7 @@ export type PurchasePlatform = "ios" | "android" | "web" | "unknown";
 
 export type PurchaseDisabledReason =
 	| "account_required"
+	| "account_scope_changed"
 	| "hosted_sync_unavailable"
 	| "missing_api_key"
 	| "missing_product_id"
@@ -102,6 +103,8 @@ type RevenueCatPurchaseBoundaryOptions = RevenueCatAvailabilityInput &
 	Readonly<{
 		accountId: string | null | undefined;
 		client?: RevenueCatPurchaseClient;
+		/** Account-generation fence supplied by the auth provider. */
+		isCurrent?: () => boolean;
 	}>;
 
 /**
@@ -114,6 +117,7 @@ export function createRevenueCatPurchaseBoundary(
 ): RevenueCatPurchaseBoundary {
 	const availability = resolveRevenueCatPurchaseAvailability(options);
 	const apiKey = nonEmptyString(options.apiKey);
+	const isCurrent = () => options.isCurrent?.() ?? true;
 	let configuration: Promise<void> | undefined;
 
 	const unavailable = (): PurchaseActionResult => {
@@ -126,6 +130,7 @@ export function createRevenueCatPurchaseBoundary(
 		if (availability.state !== "ready") return unavailable();
 		const accountId = nonEmptyString(options.accountId);
 		if (!accountId) return { state: "disabled", reason: "account_required" };
+		if (!isCurrent()) return { state: "disabled", reason: "account_scope_changed" };
 		if (!options.client || !apiKey) return unavailable();
 		configuration ??= Promise.resolve()
 			.then(() => options.client?.configure({ apiKey, appUserId: accountId }))
@@ -136,6 +141,7 @@ export function createRevenueCatPurchaseBoundary(
 			});
 		try {
 			await configuration;
+			if (!isCurrent()) return { state: "disabled", reason: "account_scope_changed" };
 			return null;
 		} catch {
 			return { state: "failed", reason: "provider_error" };
@@ -149,8 +155,10 @@ export function createRevenueCatPurchaseBoundary(
 			if (blocked) return blocked;
 			if (availability.state !== "ready" || !options.client)
 				return { state: "disabled", reason: "sdk_unavailable" };
+			if (!isCurrent()) return { state: "disabled", reason: "account_scope_changed" };
 			try {
 				await options.client.purchaseProduct(availability.productId);
+				if (!isCurrent()) return { state: "disabled", reason: "account_scope_changed" };
 				return { state: "completed" };
 			} catch {
 				return { state: "failed", reason: "provider_error" };
@@ -161,8 +169,10 @@ export function createRevenueCatPurchaseBoundary(
 			if (blocked) return blocked;
 			if (availability.state !== "ready" || !options.client)
 				return { state: "disabled", reason: "sdk_unavailable" };
+			if (!isCurrent()) return { state: "disabled", reason: "account_scope_changed" };
 			try {
 				await options.client.restorePurchases();
+				if (!isCurrent()) return { state: "disabled", reason: "account_scope_changed" };
 				return { state: "completed" };
 			} catch {
 				return { state: "failed", reason: "provider_error" };

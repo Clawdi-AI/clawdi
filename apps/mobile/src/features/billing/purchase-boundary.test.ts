@@ -116,3 +116,25 @@ test("synchronous SDK configuration failures stay inside the public error bounda
 	});
 	expect(await boundary.purchase()).toEqual({ state: "failed", reason: "provider_error" });
 });
+
+test("account-generation retirement fences provider calls and late results", async () => {
+	let current = true;
+	let calls = 0;
+	const boundary = createRevenueCatPurchaseBoundary({
+		...valid,
+		accountId: "user_123",
+		isCurrent: () => current,
+		client: {
+			configure: () => {
+				calls += 1;
+			},
+			purchaseProduct: async () => {
+				calls += 1;
+				current = false;
+			},
+			restorePurchases: async () => undefined,
+		},
+	});
+	expect(await boundary.purchase()).toEqual({ state: "disabled", reason: "account_scope_changed" });
+	expect(calls).toBe(2);
+});
