@@ -1,5 +1,6 @@
 import type { Project } from "@clawdi/shared/api";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
 import { useRef, useState } from "react";
 import { Alert, type FlatList } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
@@ -44,10 +45,12 @@ export function ProjectsScreen() {
 
 function ProjectsView() {
 	const t = useI18n();
+	const cache = useQueryClient();
+	const router = useRouter();
 	const projects = useCloudProjects();
 	const scope = useAccountScope();
 	const read = useAccountRead();
-	const { cloud } = useMobileApi();
+	const { cloud, sharing } = useMobileApi();
 	const action = useAuthAction(scope);
 	const [name, setName] = useState("");
 	const [description, setDescription] = useState("");
@@ -88,11 +91,36 @@ function ProjectsView() {
 			},
 		]);
 	};
+	const leave = (project: Project) => {
+		const signal = scope.signal;
+		Alert.alert(t("projects.leave"), t("projects.leaveWarning"), [
+			{ text: t("account.cancel"), style: "cancel" },
+			{
+				text: t("projects.leave"),
+				style: "destructive",
+				onPress: () => {
+					if (signal.aborted || !scope.isCurrent()) return;
+					void action.run(async (isCurrent) => {
+						await read((requestSignal) => sharing.leaveProject(project.id, requestSignal), signal);
+						if (isCurrent()) await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
+					});
+				},
+			},
+		]);
+	};
 	return (
 		<InventoryList
 			listRef={listRef}
 			header={
 				<AppView className="gap-3">
+					<NativeButton
+						label={t("sharing.joinLink")}
+						onPress={() => router.push("/projects/join")}
+					/>
+					<NativeButton
+						label={t("sharing.received")}
+						onPress={() => router.push("/projects/invitations")}
+					/>
 					<AppText>{t(editing ? "projects.edit" : "projects.create")}</AppText>
 					<AppTextInput
 						accessibilityLabel={t("projects.name")}
@@ -133,8 +161,25 @@ function ProjectsView() {
 			renderItem={(project) => (
 				<AppView className="gap-2">
 					<ProjectRow project={project} />
+					{!project.is_owner && !project.archived_at ? (
+						<NativeButton
+							label={t("projects.leave")}
+							disabled={action.busy}
+							onPress={() => leave(project)}
+						/>
+					) : null}
 					{project.is_owner && project.kind === "workspace" && !project.archived_at ? (
 						<>
+							<NativeButton
+								label={t("projects.sharing")}
+								disabled={action.busy}
+								onPress={() =>
+									router.push({
+										pathname: "/projects/[projectId]",
+										params: { projectId: project.id },
+									})
+								}
+							/>
 							<NativeButton
 								label={t("projects.edit")}
 								disabled={action.busy}

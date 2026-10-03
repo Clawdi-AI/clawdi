@@ -173,6 +173,10 @@ export const en = {
 		unknown: "Uncategorized memory",
 	},
 	projects: {
+		sharing: "Manage sharing",
+		leave: "Leave project",
+		leaveWarning:
+			"Leave this shared project? Your Agents will lose its shared context and key access.",
 		create: "New project",
 		edit: "Edit project",
 		name: "Project name",
@@ -188,6 +192,59 @@ export const en = {
 		unknown: "Unnamed project",
 		owner: "Owner",
 		shared: "Shared",
+	},
+	sharing: {
+		joinLink: "Join using an invite link",
+		joinDescription:
+			"Paste an HTTPS invite link to preview it against your configured Clawdi server. Joining grants project membership but does not attach an Agent. The link is cleared when you leave or background the app.",
+		pasteLink: "Invite link",
+		invalidLink: "Enter a valid HTTPS project invite link.",
+		preview: "Preview project",
+		join: "Join this project",
+		joined: "Joined. The project is now available in your project list.",
+		joinFailed:
+			"This link may be invalid, expired, revoked, or belong to your own project. Check your project list before retrying a join.",
+		vaults: "Vaults",
+		received: "Project invitations",
+		receivedDescription:
+			"Review projects shared with you. Accepting adds membership; it does not automatically attach any Agent.",
+		noInvitations: "No pending invitations.",
+		accept: "Accept invitation",
+		decline: "Decline invitation",
+		responseFailed: "The invitation may have changed or expired. Refresh before trying again.",
+		description: "Manage project invitations, links and members.",
+		permissions:
+			"Members can view this project and let their Agents use its keys. Secret values stay hidden; only you can edit. Set a profile display name before inviting people.",
+		unavailable: "Only the owner of an active user-created project can manage sharing.",
+		empty: "No share links, pending invitations or members.",
+		email: "Existing account email",
+		invite: "Invite account",
+		label: "Link label (optional)",
+		createLink: "Create invite link",
+		shareLink: "Share invite link",
+		once: "This link grants access to the project. It is shown once and hidden when you leave this screen or background the app.",
+		dismiss: "Hide link",
+		failed:
+			"The change could not be confirmed. Refresh before retrying. Invitations require an existing account and sharing requires a profile display name.",
+		stop: "Stop all sharing",
+		stopWarning:
+			"Revoke every link, cancel all pending invitations and remove all members and their Agent bindings?",
+		link: "Invite link",
+		active: "Active",
+		inactive: "Expired or revoked",
+		redemptions: "redemptions",
+		expires: "Expires",
+		revoke: "Revoke link",
+		revokeWarning:
+			"Prevent new joins using this link? Existing members keep access. Remove members separately or stop all sharing to remove their access.",
+		invitation: "Pending invitation",
+		cancelInvite: "Cancel invitation",
+		cancelWarning: "Cancel this pending invitation?",
+		member: "Member",
+		unknownMember: "Unknown member",
+		removeMember: "Remove member",
+		removeWarning:
+			"Remove this member and their Agent bindings? Active invite links may let them rejoin; revoke those links if needed.",
 	},
 	common: {
 		yes: "Yes",

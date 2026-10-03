@@ -37,6 +37,7 @@ export {
 export * from "./deploy-wizard";
 export { extractApiDetail } from "./error-detail";
 export * from "./hosted-ai-binding";
+export { createProjectSharingClient, type ProjectSharingClient } from "./project-sharing-client";
 export {
 	type AgentListQuery,
 	type CloudApiClient,

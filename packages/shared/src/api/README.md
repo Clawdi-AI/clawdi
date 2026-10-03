@@ -23,6 +23,14 @@ Memory search returns ranked top matches; do not append offset pages for a searc
 Keep newly returned raw keys out of query caches, persistence and logs. Settings
 editors must not send a masked secret back as a replacement value.
 
+[`createProjectSharingClient`](project-sharing-client.ts) exposes owner-managed
+links/invitations/members, stop-sharing, recipient invitations, link preview/join
+and leaving a Project. Accepting an invitation or link
+does not include any Agent IDs. Membership and ownership remain server decisions;
+no share token is used as an authentication fallback. Newly created link URLs and
+raw tokens must not enter query caches, logs or persistent storage. Native callers
+must fence their presentation against blur, backgrounding and account retirement.
+
 Query types and inferred return types come from the existing generated
 [`api.generated.ts`](api.generated.ts) and
 [`deploy.generated.ts`](deploy.generated.ts), not handwritten response copies.

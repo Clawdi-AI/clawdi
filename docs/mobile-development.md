@@ -166,8 +166,16 @@ destructive confirmations retain the captured account scope. Raw API keys and
 Mem0 input are transient and cleared on backgrounding. Dashboard statistics now
 participate in pull-to-refresh and expose loading/error states.
 
-These additions do not establish full Web parity. Project sharing and Agent
-bindings, full Skill management, connectors, provider configuration, vaults,
+[Project sharing](../apps/mobile/src/features/project-sharing.tsx) now includes
+owner-managed links, invitations and members, stop-sharing, recipient accept/decline,
+manual link preview/join, and leaving a shared project. Joining does not
+automatically bind an Agent. Newly created links remain out of query
+caches and persistence, are cleared on blur/background/account retirement, and
+can be explicitly sent through the native share sheet. Removing a member and
+revoking an invite link are distinct actions with distinct confirmation copy.
+
+These additions do not establish full Web parity. Universal-link routing,
+Agent bindings, full Skill management, connectors, provider configuration, vaults,
 Session sharing/export, native builds and real store payments remain separate
 acceptance work. Existing Session transcripts remain read-only by design.
 
@@ -190,6 +198,14 @@ On an authorized simulator/device build, verify:
 6. Inspect Wallet balance, paginated transactions and subscription details.
    Missing compute configuration, invalid deep links and restricted accounts
    must show safe states. Native payment/management actions stay unavailable.
+7. In authorized test accounts, invite an existing account, accept/decline,
+   leave, revoke a link, remove a member and stop all sharing. Confirm membership
+   changes refresh account-owned caches and no Agent is bound implicitly.
+   Background or navigate away during link creation: a late response must not
+   redisplay the URL. Verify native sharing and destructive confirmation behavior.
+   Paste a link, preview its owner/project and explicitly join. The pasted host
+   must never become a fetch destination: requests use the configured Cloud API.
+   Cancel/blur/background pending previews and verify they do not restore a token.
 
 Done: record the device/OS and observed outcomes. No live authentication,
 native compilation/signing, purchases or provisioning has been verified here.

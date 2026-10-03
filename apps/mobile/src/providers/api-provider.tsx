@@ -7,8 +7,10 @@ import {
 	createCloudApiClient,
 	createHostedApiClient,
 	createHostedComputeClient,
+	createProjectSharingClient,
 	type HostedApiClient,
 	type HostedComputeClient,
+	type ProjectSharingClient,
 } from "@clawdi/shared/api";
 import { useAuth } from "@clerk/expo";
 import { createContext, type ReactNode, useCallback, useContext, useMemo } from "react";
@@ -18,6 +20,7 @@ import { useAccountScope } from "../platform/account-lifecycle";
 export type MobileApiClients = Readonly<{
 	cloud: CloudApiClient;
 	account: AccountApiClient;
+	sharing: ProjectSharingClient;
 	compute: HostedComputeClient | null;
 	hosted: HostedApiClient | null;
 }>;
@@ -72,6 +75,11 @@ export function MobileApiProvider({
 						fetch: fetcher,
 					})
 				: null,
+			sharing: createProjectSharingClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
 			hosted: config.computeApiUrl
 				? createHostedApiClient({
 						baseUrl: config.computeApiUrl,
