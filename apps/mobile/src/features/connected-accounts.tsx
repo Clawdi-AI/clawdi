@@ -1,8 +1,16 @@
 import { useUser } from "@clerk/expo";
 import type { UserResource } from "@clerk/expo/types";
-import { Redirect } from "expo-router";
-import { useRef, useState } from "react";
+import { randomUUID } from "expo-crypto";
+import { Redirect, useFocusEffect } from "expo-router";
+import { openAuthSessionAsync } from "expo-web-browser";
+import { useCallback, useRef, useState } from "react";
 import { Alert } from "react-native";
+import {
+	accountOAuthAuthorizationUrl,
+	accountOAuthNonce,
+	accountOAuthRedirect,
+	accountOAuthReturnUrl,
+} from "../auth/account-oauth";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useNativeReverification } from "../auth/use-native-reverification";
 import { useI18n } from "../i18n";
@@ -29,8 +37,60 @@ function ConnectedAccounts({ user }: { user: UserResource }) {
 	const action = useAuthAction(scope.identity);
 	const reverification = useNativeReverification();
 	const confirmation = useRef(0);
+	const pageEpoch = useRef(0);
+	useFocusEffect(
+		useCallback(
+			() => () => {
+				pageEpoch.current++;
+			},
+			[],
+		),
+	);
 	const [accounts, setAccounts] = useState([...user.externalAccounts]);
 	const [saved, setSaved] = useState(false);
+	const [reauthorized, setReauthorized] = useState(false);
+	const reauthorize = (id: string) =>
+		void action.run(async (active) => {
+			const epoch = pageEpoch.current;
+			const signal = scope.signal;
+			const owned = () =>
+				active() &&
+				!signal.aborted &&
+				scope.isCurrent() &&
+				user.id === scope.accountKey &&
+				pageEpoch.current === epoch;
+			const visible = capture();
+			if (!owned() || !visible()) return;
+			setSaved(false);
+			setReauthorized(false);
+			const redirectUrl = accountOAuthRedirect(randomUUID());
+			let authorizationUrl: string | undefined;
+			await reverification.execute(async () => {
+				if (!owned() || !visible()) throw new Error("Account action retired");
+				await user.reload();
+				if (!owned() || !visible()) return;
+				const account = user.externalAccounts.find((value) => value.id === id);
+				if (!account) throw new Error("Connection no longer exists");
+				const result = await account.reauthorize({ redirectUrl });
+				if (!owned() || !visible()) return;
+				if (result.id !== id) throw new Error("Connection identity changed");
+				authorizationUrl = accountOAuthAuthorizationUrl(
+					result.verification?.externalVerificationRedirectURL,
+				);
+			});
+			if (!authorizationUrl || !owned() || !visible()) return;
+			// The system browser intentionally backgrounds the app; page/account changes still retire this operation.
+			const result = await openAuthSessionAsync(authorizationUrl, accountOAuthReturnUrl);
+			if (!owned() || result.type !== "success") return;
+			const rotatingTokenNonce = accountOAuthNonce(result.url, redirectUrl);
+			await user.reload({ rotatingTokenNonce });
+			if (!owned() || !capture()()) return;
+			setAccounts([...user.externalAccounts]);
+			const updated = user.externalAccounts.find((value) => value.id === id);
+			if (updated?.verification?.status !== "verified")
+				throw new Error("Connection authorization incomplete");
+			setReauthorized(true);
+		});
 	const run = (removeId?: string) =>
 		void action.run(async (active) => {
 			const visible = capture();
@@ -38,6 +98,7 @@ function ConnectedAccounts({ user }: { user: UserResource }) {
 				active() && visible() && scope.isCurrent() && user.id === scope.accountKey;
 			if (!current()) return;
 			setSaved(false);
+			setReauthorized(false);
 			await reverification.execute(async () => {
 				if (!current()) throw new Error("Account action retired");
 				await user.reload();
@@ -97,6 +158,11 @@ function ConnectedAccounts({ user }: { user: UserResource }) {
 							)}
 						</AppText>
 						<NativeButton
+							label={t("connections.reauthorize")}
+							disabled={action.busy}
+							onPress={() => void reauthorize(account.id)}
+						/>
+						<NativeButton
 							label={t("connections.remove")}
 							disabled={action.busy}
 							onPress={() => confirmRemove(account.id)}
@@ -108,6 +174,9 @@ function ConnectedAccounts({ user }: { user: UserResource }) {
 					<AppText accessibilityRole="alert">{t("connections.failed")}</AppText>
 				) : null}
 				{saved ? <AppText accessibilityRole="alert">{t("connections.saved")}</AppText> : null}
+				{reauthorized ? (
+					<AppText accessibilityRole="alert">{t("connections.reauthorized")}</AppText>
+				) : null}
 			</AppScrollView>
 		</ReadScreen>
 	);

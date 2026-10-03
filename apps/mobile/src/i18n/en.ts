@@ -37,7 +37,10 @@ export const en = {
 		remove: "Disconnect account",
 		removeWarning:
 			"Remove this sign-in connection? Make sure you have another way to sign in. Provider-backed access may stop working. Your account service may require fresh verification or prevent removal of your last sign-in method.",
-		linkingUnavailable: "Adding or reconnecting a provider is not yet available in this app.",
+		reauthorize: "Reauthorize in browser",
+		reauthorized: "Connection authorization confirmed.",
+		linkingUnavailable:
+			"Adding a new provider is not yet available in this app. Reauthorization uses the system browser and requires the app callback to be allowed by your sign-in service. If interrupted, refresh before retrying.",
 		failed:
 			"Could not confirm this change. Refresh before retrying. Account security requirements may prevent removing this connection.",
 		saved: "Connection removed.",
