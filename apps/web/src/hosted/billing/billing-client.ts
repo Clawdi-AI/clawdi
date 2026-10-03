@@ -6,6 +6,7 @@ import {
 	type DeployPaths,
 	extractApiDetail,
 	projectHostedDeployRequest,
+	providerRemovalHeaders,
 	unwrapDeploymentEventStreamSnapshotHandoff,
 	unwrapDeploymentList,
 } from "@clawdi/shared/api";
@@ -833,11 +834,11 @@ export function createBillingClient(
 				await api.DELETE("/v2/ai-providers/{provider_id}", {
 					params: {
 						path: { provider_id: providerId },
-						header: {
-							"Idempotency-Key": idempotencyKey,
-							"Impact-Revision": impactRevision,
-							"Provider-Incarnation": providerIncarnationToken,
-						},
+						header: providerRemovalHeaders(
+							impactRevision,
+							providerIncarnationToken,
+							idempotencyKey,
+						),
 					},
 				}),
 			),

@@ -55,6 +55,7 @@ export * from "./project-sharing-state";
 export * from "./provider-form";
 export * from "./provider-oauth";
 export * from "./provider-presets";
+export * from "./provider-removal-client";
 export * from "./provider-types";
 export {
 	type AgentListQuery,

@@ -7,6 +7,23 @@ import { vaultEn } from "../features/vault/en";
 
 export const en = {
 	providers: {
+		removalUnavailable: "Provider removal requires a configured Hosted API.",
+		reviewRemoval: "Review provider removal",
+		reviewCurrentImpact: "Review current impact again",
+		removeWarning:
+			"Removal cannot be undone. Affected Agents lose this provider configuration and may stop working until another provider is configured. Upstream ChatGPT revocation can finish asynchronously.",
+		removalUncertain:
+			"The previous removal may already have unset Agent configurations. Retry its exact confirmation to recover. Reviewing a new impact does not undo that request.",
+		retryRemoval: "Retry previous removal",
+		affectedAgents: "Affected Agents",
+		noAffectedAgents: "No Hosted Agents currently reference this provider.",
+		acknowledgeRemoval: "I understand the impact and want to remove this provider.",
+		removePermanently: "Remove provider permanently",
+		removalFailed:
+			"Removal was not confirmed. Retry the original request, or review current impact and explicitly approve it again if the provider changed.",
+		removed: "Provider removed. Local access is revoked.",
+		removedRevoking:
+			"Provider removed. Local access is revoked; upstream ChatGPT revocation is still pending.",
 		connectOAuth: "Connect ChatGPT",
 		reconnectOAuth: "Reconnect ChatGPT",
 		deviceInstructions:

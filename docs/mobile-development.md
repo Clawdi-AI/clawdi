@@ -288,8 +288,17 @@ polling respects server intervals, pauses on blur/background/offline, fences lat
 results and stops on expiry or three consecutive failures. Browser handoff keeps
 the current authorization in memory; account retirement/unmount drops it.
 Only the exact HTTPS device-verification page emitted by Cloud can open externally.
-Metadata refresh does not remount an active OAuth row. Real-device browser return,
-actual provider sign-in and Hosted impact-confirmed removal remain outstanding.
+Metadata refresh does not remount an active OAuth row. Real-device browser return
+and actual provider sign-in remain outstanding.
+
+Native removal reviews Hosted impact and requires explicit acknowledgement before
+DELETE. Web/native share strict confirmation-header validation. Retries retain
+the same impact revision, provider incarnation and idempotency key; 409/503 never
+imply that no Agent configuration changed. A new impact requires a separate review
+and acknowledgement, without silently abandoning the prior attempt. Confirmed
+removal invalidates only the current account's caches and distinguishes pending
+upstream revocation from completed local removal. No direct Cloud DELETE is used.
+Device interaction and real provider/Agent removal remain unverified.
 
 Native Project detail is readable by accessible members; sharing management has
 its own owner-gated route. Agent, Skill and Vault catalogs reuse their existing

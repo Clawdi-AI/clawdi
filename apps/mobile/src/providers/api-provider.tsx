@@ -14,6 +14,7 @@ import {
 	createHostedApiClient,
 	createHostedComputeClient,
 	createProjectSharingClient,
+	createProviderRemovalClient,
 	createSessionSharingClient,
 	createSkillClient,
 	createVaultClient,
@@ -21,6 +22,7 @@ import {
 	type HostedApiClient,
 	type HostedComputeClient,
 	type ProjectSharingClient,
+	type ProviderRemovalClient,
 	type SessionSharingClient,
 	type SkillClient,
 	type VaultClient,
@@ -42,6 +44,7 @@ export type MobileApiClients = Readonly<{
 	vault: VaultClient;
 	vaultSupply: ReturnType<typeof createVaultSupplyClient>;
 	compute: HostedComputeClient | null;
+	providerRemoval: ProviderRemovalClient | null;
 	hosted: HostedApiClient | null;
 }>;
 
@@ -78,6 +81,13 @@ export function MobileApiProvider({
 	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
+			providerRemoval: config.computeApiUrl
+				? createProviderRemovalClient({
+						baseUrl: config.computeApiUrl,
+						getToken: readToken,
+						fetch: fetcher,
+					})
+				: null,
 			aiProviders: createAiProviderClient({
 				baseUrl: config.cloudApiUrl,
 				getToken: readToken,

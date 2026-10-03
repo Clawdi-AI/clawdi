@@ -1,6 +1,6 @@
 import { projectUserSelectableAiProviders } from "@clawdi/shared";
-import type { SavedAiProvider } from "@clawdi/shared/api";
-import { useQuery } from "@tanstack/react-query";
+import type { AiProviderRemovalResult, SavedAiProvider } from "@clawdi/shared/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
@@ -12,6 +12,7 @@ import { InventoryList } from "./inventory-list";
 import { ProviderCreate } from "./provider-create";
 import { ProviderEdit } from "./provider-edit";
 import { ProviderOAuth } from "./provider-oauth";
+import { ProviderRemove } from "./provider-remove";
 
 export function AiProvidersScreen() {
 	const scope = useAccountScope();
@@ -19,6 +20,8 @@ export function AiProvidersScreen() {
 }
 
 function ProvidersView() {
+	const cache = useQueryClient();
+	const [removed, setRemoved] = useState<AiProviderRemovalResult | null>(null);
 	const t = useI18n();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -33,6 +36,15 @@ function ProvidersView() {
 		<InventoryList
 			header={
 				<AppView className="gap-3">
+					{removed ? (
+						<AppText accessibilityRole="alert">
+							{t(
+								removed.remote_revoke_status === "pending"
+									? "providers.removedRevoking"
+									: "providers.removed",
+							)}
+						</AppText>
+					) : null}
 					<ProviderCreate
 						providers={providers.data?.providers}
 						refresh={async () => {
@@ -55,6 +67,10 @@ function ProvidersView() {
 				<ProviderRow
 					key={provider.id}
 					provider={provider}
+					onRemoved={async (result) => {
+						setRemoved(result);
+						await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
+					}}
 					refresh={async () => {
 						await providers.refetch();
 					}}
@@ -74,9 +90,11 @@ function ProvidersView() {
 function ProviderRow({
 	provider,
 	refresh,
+	onRemoved,
 }: {
 	provider: SavedAiProvider;
 	refresh: () => Promise<void>;
+	onRemoved: (result: AiProviderRemovalResult) => Promise<void>;
 }) {
 	const t = useI18n();
 	const scope = useAccountScope();
@@ -96,6 +114,7 @@ function ProviderRow({
 				{t(provider.usable ? "providers.credentialPresent" : "providers.credentialMissing")}
 			</AppText>
 			<ProviderEdit key={provider.updated_at} provider={provider} refresh={refresh} />
+			<ProviderRemove providerId={provider.provider_id} onRemoved={onRemoved} />
 			{provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile" ? (
 				<ProviderOAuth provider={provider} refresh={refresh} />
 			) : null}

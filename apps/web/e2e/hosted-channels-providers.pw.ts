@@ -5,6 +5,84 @@ test.beforeEach(async ({ page }) => {
 	await stubCloudApi(page);
 });
 
+test("provider removal requires impact acknowledgement and retries the exact confirmation", async ({
+	page,
+}) => {
+	const provider = {
+		id: "remove-row",
+		provider_id: "remove-work",
+		label: "Removal target",
+		type: "openai",
+		configuration_mode: "native",
+		native_provider: "openai",
+		base_url: "https://api.openai.com/v1",
+		api_mode: "openai_responses",
+		managed_by: "user",
+		scope: "account",
+		auth: { type: "api_key", source: "managed" },
+		usable: true,
+	};
+	const impact = {
+		provider_id: provider.provider_id,
+		impact_revision: "a".repeat(64),
+		provider_incarnation_token: "b".repeat(64),
+		agents: [{ deployment_id: "hdep_affected", name: "Affected Agent" }],
+	};
+	let removed = false;
+	const attempts: {
+		key: string | undefined;
+		revision: string | undefined;
+		incarnation: string | undefined;
+	}[] = [];
+	await page.route("**/v1/ai-providers", (route) =>
+		route.fulfill({ json: { providers: removed ? [] : [provider] } }),
+	);
+	await page.route("**/v2/ai-providers/remove-work/removal-impact", (route) =>
+		route.fulfill({ json: impact }),
+	);
+	await page.route("**/v2/ai-providers/remove-work", async (route) => {
+		expect(route.request().method()).toBe("DELETE");
+		const headers = route.request().headers();
+		attempts.push({
+			key: headers["idempotency-key"],
+			revision: headers["impact-revision"],
+			incarnation: headers["provider-incarnation"],
+		});
+		if (attempts.length === 1) {
+			await route.fulfill({ status: 503, json: { detail: "Archival pending" } });
+			return;
+		}
+		removed = true;
+		await route.fulfill({
+			json: {
+				status: "removed",
+				provider_id: provider.provider_id,
+				affected_agents: impact.agents,
+				cloud_archive_status: "archived",
+				remote_revoke_status: "pending",
+			},
+		});
+	});
+	await page.goto("/ai-providers");
+	await page.getByRole("button", { name: "Remove Removal target", exact: true }).click();
+	const dialog = page.getByRole("alertdialog");
+	await expect(dialog.getByText("Affected Agent", { exact: true })).toBeVisible();
+	const confirm = dialog.getByRole("button", { name: "Remove provider", exact: true });
+	await expect(confirm).toBeDisabled();
+	await dialog.getByRole("checkbox").check();
+	await confirm.click();
+	await expect.poll(() => attempts.length).toBe(1);
+	await expect(confirm).toBeEnabled();
+	expect(attempts).toHaveLength(1);
+	await confirm.click();
+	await expect(dialog).toBeHidden();
+	expect(attempts).toHaveLength(2);
+	expect(attempts[0]?.key).toBeTruthy();
+	expect(attempts[1]).toEqual(attempts[0]);
+	expect(attempts[0]?.revision).toBe(impact.impact_revision);
+	expect(attempts[0]?.incarnation).toBe(impact.provider_incarnation_token);
+});
+
 for (const kind of ["api-key", "oauth"] as const) {
 	test(`renaming a native ${kind} provider changes only its Clawdi label`, async ({ page }) => {
 		const provider = {
