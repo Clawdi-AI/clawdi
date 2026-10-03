@@ -27,6 +27,34 @@ export const en = {
 		reconnecting: "Reconnecting…",
 		disconnected: "Disconnected",
 	},
+	mfa: {
+		title: "Authenticator and backup codes",
+		description:
+			"Manage authenticator-based two-factor sign-in. Account policy and fresh identity verification may be required. Secrets are shown only on this screen and never saved by the app.",
+		enabled: "Authenticator enabled.",
+		disabled: "Authenticator not enabled.",
+		setup: "Set up authenticator",
+		setupInstructions:
+			"Scan this QR code with an authenticator, or enter the secret manually. Switching apps hides the secret; return here to enter the generated code.",
+		qr: "Authenticator setup QR code",
+		codeHint:
+			"Enter the code from your configured authenticator. You can finish an existing pending setup after reopening this page. If the setup secret was lost, discard the pending setup before starting again.",
+		code: "Authenticator code",
+		verify: "Verify and enable authenticator",
+		disable: "Disable authenticator",
+		discard: "Discard pending authenticator setup",
+		disableWarning:
+			"Remove the authenticator secret from this account? If enabled, authenticator codes will stop working. Other account sign-in policies still apply.",
+		backup: "Generate new backup codes",
+		backupWarning:
+			"Generate a new set? All previous backup codes will stop working. Save the new codes somewhere secure before leaving this screen.",
+		saveCodes:
+			"Keep these one-use codes somewhere secure. They disappear when you leave or background the app. Generating another set invalidates these codes.",
+		hide: "Hide secrets",
+		failed:
+			"Could not confirm this change. Refresh to check account state before retrying. Your account policy, code or verification requirements may prevent the action.",
+		saved: "Security settings updated.",
+	},
 	password: {
 		title: "Password",
 		description:

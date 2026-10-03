@@ -12,7 +12,6 @@ import { randomUUID } from "expo-crypto";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState, ScrollView } from "react-native";
-import Svg, { Path, Rect } from "react-native-svg";
 import { useAuthAction } from "../../auth/use-auth-action";
 import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
@@ -20,6 +19,7 @@ import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
 import { NativeButton, NativeSwitch } from "../../ui/native-controls";
 import { AppText, AppTextInput, AppView } from "../../ui/primitives";
+import { QrImage } from "../../ui/qr-image";
 import { ReadScreen } from "../../ui/read-screen";
 import { BackButton } from "../cloud-inventory";
 import { routeParam } from "../read-helpers";
@@ -275,16 +275,7 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 						) : null}
 						{qr ? (
 							<AppView className="items-center">
-								<Svg
-									width={280}
-									height={280}
-									viewBox={`0 0 ${qr.size} ${qr.size}`}
-									accessibilityLabel={t("whatsapp.qrLabel")}
-									accessibilityRole="image"
-								>
-									<Rect width={qr.size} height={qr.size} fill="white" />
-									<Path d={qr.path} fill="black" />
-								</Svg>
+								<QrImage matrix={qr} label={t("whatsapp.qrLabel")} />
 							</AppView>
 						) : null}
 						{session.state === "ready" && !expired ? (

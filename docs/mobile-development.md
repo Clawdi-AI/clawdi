@@ -593,6 +593,20 @@ The root ClerkProvider enables the published `experimental.rethrowOfflineNetwork
 option: Clerk JS 6.34.1 otherwise may resolve an offline failure with the unchanged
 resource. Expo 4.8.0 forwards this option; no internal SDK mutation or live configuration
 is used. Actual password changes, removal and session effects remain unverified.
+Password and reverification inputs no longer impose a silent native length cutoff;
+the unchanged value is submitted for server validation rather than truncating a secret.
+
+`/mfa` adds authenticator creation, manual-secret/local-QR setup, verification,
+confirmed disable/pending-setup discard and confirmed backup-code replacement.
+It reuses the same native assurance flow and account/foreground guards. Verification
+and disable reload and confirm the resulting `totpEnabled` state; a changed setup
+identity is rejected. The code-entry path also works after returning to an existing
+pending setup without retaining its secret. Setup secrets and backup codes remain
+in component memory only, clear on blur/background, and are never automatically
+copied, downloaded, logged or uploaded to a QR service. Backup regeneration warns
+that older codes will stop working. MFA and WhatsApp share the native `QrImage`
+renderer and existing Shared QR encoder. Real authenticator enrollment, backup-code
+use, server policy and device privacy/accessibility remain acceptance gates.
 
 Public Session routes (`/s/[shareId]`, `/open-share`) support anonymous snapshots,
 legacy live links with optional account authentication, explicit pagination and
@@ -644,7 +658,7 @@ until each surface has implementation, focused verification and device evidence:
 
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
-| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and email-address management, shared native password/code reverification, active-device review/revocation, password management | Remaining MFA enrollment/security management, passkey/enterprise reverification and real Clerk/device acceptance |
+| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and email-address management, shared native password/code reverification, active-device review/revocation, password management, authenticator enrollment and backup codes | Remaining phone/passkey/linked-account/security management, passkey/enterprise reverification and real Clerk/device acceptance |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |

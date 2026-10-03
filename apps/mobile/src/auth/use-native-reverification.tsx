@@ -215,7 +215,6 @@ export function useNativeReverification() {
 						autoCapitalize="none"
 						autoCorrect={false}
 						autoComplete={factor.strategy === "password" ? "current-password" : "one-time-code"}
-						maxLength={256}
 						className="rounded-xl bg-background p-3 text-foreground"
 					/>
 					<NativeButton

@@ -126,7 +126,6 @@ function PasswordForm({ user }: { user: UserResource }) {
 						autoComplete="current-password"
 						autoCapitalize="none"
 						autoCorrect={false}
-						maxLength={256}
 						className="rounded-xl bg-surface p-3 text-foreground"
 					/>
 				) : null}
@@ -140,7 +139,6 @@ function PasswordForm({ user }: { user: UserResource }) {
 					autoComplete="new-password"
 					autoCapitalize="none"
 					autoCorrect={false}
-					maxLength={256}
 					className="rounded-xl bg-surface p-3 text-foreground"
 				/>
 				<AppTextInput
@@ -153,7 +151,6 @@ function PasswordForm({ user }: { user: UserResource }) {
 					autoComplete="new-password"
 					autoCapitalize="none"
 					autoCorrect={false}
-					maxLength={256}
 					className="rounded-xl bg-surface p-3 text-foreground"
 				/>
 				<NativeSwitch
