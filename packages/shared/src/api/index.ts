@@ -119,3 +119,8 @@ export * from "./vault-supply-state";
 export * from "./vault-transfer";
 export * from "./whatsapp-client";
 export * from "./whatsapp-onboarding";
+export * from "./workspace-skill-client";
+export {
+	parseWorkspaceSkillGitHubInput,
+	workspaceSkillMutationsAvailable,
+} from "./workspace-skill-policy";

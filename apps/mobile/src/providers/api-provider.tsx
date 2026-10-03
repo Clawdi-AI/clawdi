@@ -25,6 +25,7 @@ import {
 	createVaultClient,
 	createVaultSupplyClient,
 	createWhatsAppClient,
+	createWorkspaceSkillClient,
 	type DeploymentMutationClient,
 	type HostedApiClient,
 	type HostedComputeClient,
@@ -34,6 +35,7 @@ import {
 	type SkillClient,
 	type VaultClient,
 	type WhatsAppClient,
+	type WorkspaceSkillClient,
 } from "@clawdi/shared/api";
 import { useAuth } from "@clerk/expo";
 import { createContext, type ReactNode, useCallback, useContext, useMemo } from "react";
@@ -45,6 +47,7 @@ export type MobileApiClients = Readonly<{
 	agentSettings: AgentSettingsClient;
 	channels: ChannelClient;
 	deploymentMutations: DeploymentMutationClient | null;
+	workspaceSkills: WorkspaceSkillClient | null;
 	whatsapp: WhatsAppClient;
 	account: AccountApiClient;
 	aiProviders: AiProviderClient;
@@ -93,6 +96,13 @@ export function MobileApiProvider({
 	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
+			workspaceSkills: config.computeApiUrl
+				? createWorkspaceSkillClient({
+						baseUrl: config.computeApiUrl,
+						getToken: readToken,
+						fetch: fetcher,
+					})
+				: null,
 			agentSettings: createAgentSettingsClient({
 				baseUrl: config.cloudApiUrl,
 				getToken: readToken,

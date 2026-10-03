@@ -241,6 +241,15 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 						)}
 						{deployment ? (
 							<AppView className="gap-3 rounded-2xl bg-surface p-4">
+								<NativeButton
+									label={t("workspaceSkills.title")}
+									onPress={() =>
+										router.push({
+											pathname: "/deployments/[deploymentId]/skills",
+											params: { deploymentId },
+										})
+									}
+								/>
 								<AppText className="text-xl font-semibold text-foreground">
 									{deployment.resource.name}
 								</AppText>

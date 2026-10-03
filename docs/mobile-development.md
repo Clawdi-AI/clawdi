@@ -213,6 +213,35 @@ the file, so files remain until OS cache eviction or explicit account-scoped
 cleanup. A stale account/focus lease cannot open the share sheet or clear files.
 Incoming share extensions are not enabled by this outgoing-sharing feature.
 
+Hosted deployment detail now links to a separate GitHub Workspace Skills surface.
+It reads the server capability and resource version, renders desired-state status
+and source-pinned detail, and explicitly confirms installation/removal. This uses
+Hosted `/v2/deployments/{deployment_id}/workspace-skills`, not Cloud Skill package
+upload or Project CRUD. Web/native share GitHub input parsing and capability
+eligibility; generated Hosted schemas and the shared bounded transport remain
+authoritative. Library references and runtime plugin management remain separate
+unfinished surfaces.
+
+Workspace Skill mutation recovery persists account/deployment-scoped original
+body, idempotency key and resource version using the existing serialized CAS
+store. Replay never silently refreshes the version, which participates in the
+server request fingerprint. Only a prepared request or its first proven
+pre-admission rejection can be discarded; later errors cannot resolve earlier
+uncertainty. Saved retries do not depend on a refreshed catalog/capability view.
+Matching server receipts clear the journal, but receipt acceptance is not proof
+that the runtime has applied the manifest. Requested entries use the existing
+bounded foreground/online polling policy; errors, blur/background or the polling
+deadline stop it. Explicit refresh restarts status checking, never a mutation.
+
+The GitHub Workspace Skills batch passed bounded Bun 1.4.2 Docker verification:
+six workspace typechecks, 256 Shared/Mobile tests (1,187 assertions), 39 focused
+Web tests (159 assertions), Biome on 14 files, final independent iOS/Android
+exports and post-export Mobile app/test typechecks. Manifest/lock and exact
+implementation comparisons passed. A TS7 query inference issue introduced by
+polling was corrected using the generated response type, without a cast or
+suppression. Native storage recovery, runtime application and device navigation
+remain acceptance gates, not results inferred from these exports.
+
 The package-transfer batch passed bounded Bun 1.4.2 Docker checks: six workspace
 typechecks, 253 Shared/Mobile tests (1,159 assertions), 56 focused Web tests
 (206 assertions), Biome on 14 source/config files, independent iOS/Android
@@ -438,7 +467,7 @@ until each surface has implementation, focused verification and device evidence:
 | Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings | Remaining general/profile settings and real Clerk flows |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing and text export | Rich-text/link presentation, public/universal-link entrypoints, device scrolling/sharing and visual acceptance |
-| Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Memory CRUD/search | Managed runtime Skill/plugin actions, remaining detail views and native file/share acceptance |
+| Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skill inventory/detail/install/removal with durable exact-request recovery; Memory CRUD/search | Library-reference/runtime plugin actions, remaining detail views and native file/share/managed-runtime acceptance |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport | Universal-link intake and device acceptance |
 | v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal and Agent model binding; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity, Custom deletion and WhatsApp device onboarding/repair | Native/live provider and channel acceptance |
@@ -545,6 +574,11 @@ On an authorized simulator/device build, verify:
    Projects; fail destination upload and change source revision during transfer.
    Neither case may delete unconfirmed source content. A partial move must retain
    the destination and report that source removal was not confirmed.
+   For a test hosted Agent, install/uninstall a GitHub Workspace Skill and check
+   desired versus observed runtime state. Kill/relaunch after uncertain delivery:
+   the saved key/body/version must remain unchanged. A later rejection must not
+   unlock an earlier uncertain request; stale screens must not clear a newer
+   journal. Verify capability loss, source changes and background/offline polling.
 9. Create full/excerpt/response Session snapshots after explicit confirmation;
    use event-backed transcripts with gaps between canonical positions. Check
    exact-kind revocation of both snapshot and legacy live links, export links,
