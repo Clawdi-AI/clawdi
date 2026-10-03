@@ -4,6 +4,7 @@
 	"private": true,
 	"type": "module",
 	"exports": {
+		"./terminal": "./src/terminal-dom.ts",
 		"./markdown": "./src/markdown.ts",
 		".": "./src/index.ts",
 		"./client": "./src/client.ts",
@@ -21,6 +22,9 @@
 		"test:internal": "bun test src"
 	},
 	"dependencies": {
+		"@xterm/xterm": "catalog:",
+		"@xterm/addon-fit": "catalog:",
+		"@xterm/addon-web-links": "catalog:",
 		"@types/mdast": "catalog:",
 		"remark-parse": "catalog:",
 		"remark-gfm": "catalog:",

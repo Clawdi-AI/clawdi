@@ -242,6 +242,15 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 						{deployment ? (
 							<AppView className="gap-3 rounded-2xl bg-surface p-4">
 								<NativeButton
+									label={t("terminal.title")}
+									onPress={() =>
+										router.push({
+											pathname: "/deployments/[deploymentId]/terminal",
+											params: { deploymentId },
+										})
+									}
+								/>
+								<NativeButton
 									label={t("workspaceSkills.title")}
 									onPress={() =>
 										router.push({

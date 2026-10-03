@@ -12,6 +12,21 @@ import { skillArchiveEn } from "../features/skill-archive-en";
 import { vaultEn } from "../features/vault/en";
 
 export const en = {
+	terminal: {
+		unavailable:
+			"Terminal access requires a configured compute API and an eligible running deployment. Reload to check its current state.",
+		reconnect: "Reconnect terminal",
+		title: "Terminal",
+		connect: "Connect terminal",
+		disconnect: "Disconnect terminal",
+		reload: "Reload deployment",
+		warning:
+			"Commands run on your Agent. Leaving this screen or backgrounding the app disconnects this terminal; it does not stop Agent compute or guarantee running commands are terminated.",
+		connecting: "Connecting…",
+		connected: "Connected",
+		reconnecting: "Reconnecting…",
+		disconnected: "Disconnected",
+	},
 	profile: {
 		unsavedTitle: "Discard profile changes?",
 		unsavedMessage: "Your account name changes have not been saved.",

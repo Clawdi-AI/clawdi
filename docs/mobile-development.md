@@ -556,18 +556,29 @@ Manual HTTPS/custom-scheme input extracts the ID and uses the configured Cloud
 API; it never fetches a pasted hostname. OS HTTPS domain association and real-device
 link intake remain unverified and are not configured by this implementation.
 
-Terminal preparation shares ttyd framing constants, token/subprotocol selection,
-output flow control and bounded reconnect helpers between the existing Web panel
-and future native renderer. Web compatibility exports remain intact; xterm imports
-stay hosted-only. `createTerminalClient` uses the generated POST contract, existing
+The native deployment terminal uses Expo SDK 57 DOM components with
+`@expo/dom-webview` 57.0.1 and SDK-compatible `react-native-web` 0.21.3. A dedicated
+Shared DOM entrypoint owns the xterm 6 renderer, ttyd transport, resize, output
+flow control and reconnect lifecycle, consumed by both the Web panel and native
+DOM adapter. Root catalogs centralize these versions; the regular Shared API
+barrel never imports xterm. Web compatibility exports remain intact.
+`createTerminalClient` uses the generated POST contract, existing
 bounded auth transport and no automatic retry. It rejects expired/mismatched
 capabilities and WebSocket targets outside the configured compute origin/path.
 Alternative public terminal origins require an explicit allowlist contract rather
 than silently trusting an arbitrary response URL. Native callers must pass their
 account-generation read signal and never persist/log/cache credential URLs.
-The mobile provider exposes this client but does not issue credentials on mount.
-This is preparation, not an implemented native terminal: renderer, input/resize,
-foreground socket lifecycle, reconnect UX and device round-trip remain pending.
+The mobile route issues credentials only after explicit Connect, offers native
+disconnect/reconnect and Esc/Tab/Ctrl+C controls, and destroys the DOM view on
+blur/background/account change. DOM callbacks recheck foreground/account leases;
+short-lived URLs never enter persistent/query storage. Native-module bridging is
+disabled; external links and OSC hyperlinks are disabled in the native terminal.
+Both platforms exported native and DOM bundles with a single React 19.2.3
+identity in each source map. An isolated Chromium/local-WebSocket probe exercised
+real xterm input, resize, two handshakes with fresh credentials after 1013, and
+socket cleanup. This is not an iOS/Android WebView, keyboard, real server or native
+compile acceptance test; those gates remain open. DOM view background teardown
+does not stop compute or guarantee remote command termination.
 Runtime browser UI needs a separate native authentication handoff; do not spoof
 Web Origin or assume native fetch cookies prime an external browser.
 
@@ -584,7 +595,7 @@ until each surface has implementation, focused verification and device evidence:
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport | Universal-link intake and device acceptance |
 | v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal and Agent model binding; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity, Custom deletion and WhatsApp device onboarding/repair | Native/live provider and channel acceptance |
 | Deployment/billing | Basic eligibility/creation/recovery and read-only billing/deployment views | Paid creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
-| Runtime UI/terminal | Shared Web terminal protocol helpers and generated, bounded credential client | Native terminal renderer/socket lifecycle and real round-trip; authenticated native runtime browser handoff |
+| Runtime UI/terminal | Shared Web/native xterm engine, Expo DOM terminal route, native controls and foreground teardown; generated bounded credential client | Native WebView/keyboard/real-server round-trip and compilation; authenticated native runtime browser handoff |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |
 
 The source reference is `apps/web/src/pages/dashboard`, its settings components,

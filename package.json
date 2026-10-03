@@ -8,6 +8,9 @@
 			"packages/*"
 		],
 		"catalog": {
+			"@xterm/xterm": "6.0.0",
+			"@xterm/addon-fit": "0.11.0",
+			"@xterm/addon-web-links": "0.12.0",
 			"@types/mdast": "4.0.4",
 			"remark-parse": "11.0.0",
 			"remark-gfm": "4.0.1",
@@ -36,6 +39,7 @@
 		},
 		"catalogs": {
 			"expo57": {
+				"@expo/dom-webview": "57.0.1",
 				"@babel/core": "7.29.7",
 				"@expo/ui": "57.0.21",
 				"@react-native/metro-config": "0.86.3",
@@ -47,6 +51,7 @@
 				"react": "19.2.3",
 				"react-dom": "19.2.3",
 				"react-native": "0.86.3",
+				"react-native-web": "0.21.3",
 				"react-native-gesture-handler": "2.32.0",
 				"react-native-reanimated": "4.5.1",
 				"react-native-safe-area-context": "5.7.0",

@@ -1,44 +1,35 @@
-"use client";
+"use dom";
+
 import type { HostedTerminalStatus } from "@clawdi/shared/api";
 import { mountTerminal, TERMINAL_THEMES, type TerminalHandle } from "@clawdi/shared/terminal";
+import type { DOMProps } from "expo/dom";
 import { useEffect, useRef } from "react";
-import { useTheme } from "@/components/theme-provider";
-import "@/hosted/agents/hosted-terminal.css";
+import "@xterm/xterm/css/xterm.css";
 
-export {
-	canUseTerminalTransport,
-	createTtydOutputWriter,
-	type HostedTerminalStatus,
-	isRetryableTerminalCloseCode,
-	nextTerminalReconnect,
-	TERMINAL_CONNECTION_STABILITY_MS,
-	TERMINAL_RECONNECT_DELAYS_MS,
-	type TerminalReconnectState,
-	TTYD_OUTPUT_FLOW_CONTROL,
-	terminalConnectionClosedMessage,
-	terminalReconnectAttemptsForClose,
-	terminalWebSocketTarget,
-} from "@clawdi/shared/api";
-
-export function HostedTerminalPanel({
+export default function TerminalDom({
 	requestWebsocketUrl,
-	reconnectRequest,
 	onStatusChange,
+	dark,
+	input,
+	reconnectRequest,
 }: {
+	dom?: DOMProps;
 	requestWebsocketUrl: () => Promise<string>;
+	onStatusChange: (status: HostedTerminalStatus) => Promise<void>;
+	dark: boolean;
+	input: { sequence: number; value: string };
 	reconnectRequest: number;
-	onStatusChange?: (status: HostedTerminalStatus) => void;
 }) {
-	const { resolvedTheme } = useTheme();
 	const container = useRef<HTMLDivElement>(null);
 	const handle = useRef<TerminalHandle | null>(null);
 	const request = useRef(requestWebsocketUrl);
 	request.current = requestWebsocketUrl;
 	const status = useRef(onStatusChange);
 	status.current = onStatusChange;
-	const theme = TERMINAL_THEMES[resolvedTheme === "dark" ? "dark" : "light"];
+	const theme = TERMINAL_THEMES[dark ? "dark" : "light"];
 	const currentTheme = useRef(theme);
 	currentTheme.current = theme;
+	const previousInput = useRef(input.sequence);
 	const previousReconnect = useRef(reconnectRequest);
 	useEffect(() => {
 		if (!container.current) return;
@@ -47,8 +38,11 @@ export function HostedTerminalPanel({
 			container.current,
 			{
 				requestWebsocketUrl: () => request.current(),
-				onStatusChange: (value) => status.current?.(value),
+				onStatusChange: (value) => {
+					void status.current(value).catch(() => undefined);
+				},
 				theme: currentTheme.current,
+				links: false,
 			},
 			controller.signal,
 		)
@@ -60,7 +54,7 @@ export function HostedTerminalPanel({
 				}
 			})
 			.catch(() => {
-				if (!controller.signal.aborted) status.current?.("disconnected");
+				if (!controller.signal.aborted) void status.current("disconnected").catch(() => undefined);
 			});
 		return () => {
 			controller.abort();
@@ -76,13 +70,15 @@ export function HostedTerminalPanel({
 		previousReconnect.current = reconnectRequest;
 		handle.current?.reconnect();
 	}, [reconnectRequest]);
+	useEffect(() => {
+		if (previousInput.current === input.sequence) return;
+		previousInput.current = input.sequence;
+		handle.current?.sendInput(input.value);
+	}, [input]);
 	return (
-		<div data-hosted="true" className="flex min-h-0 flex-1 flex-col">
-			<div
-				ref={container}
-				data-terminal-theme={resolvedTheme === "dark" ? "dark" : "light"}
-				className="hosted-terminal min-h-0 flex-1 overflow-hidden transition-colors"
-			/>
-		</div>
+		<div
+			ref={container}
+			style={{ position: "fixed", inset: 0, overflow: "hidden", backgroundColor: theme.background }}
+		/>
 	);
 }
