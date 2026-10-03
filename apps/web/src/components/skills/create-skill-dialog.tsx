@@ -1,5 +1,7 @@
 "use client";
 
+import { buildSkillCreateRequest } from "@clawdi/shared/api";
+
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { type ReactElement, useRef, useState } from "react";
@@ -56,11 +58,7 @@ export function CreateSkillDialog({
 			unwrap(
 				await api.POST("/v1/projects/{project_id}/skills", {
 					params: { path: { project_id: project.id } },
-					body: {
-						name,
-						description,
-						instructions: instructions.trim(),
-					},
+					body: buildSkillCreateRequest({ name, description, instructions }),
 				}),
 			),
 		onSuccess: async () => {

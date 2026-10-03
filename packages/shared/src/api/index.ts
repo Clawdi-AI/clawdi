@@ -4,6 +4,7 @@ export type {
 	SettingsUpdate,
 } from "./account-client";
 export { createAccountApiClient } from "./account-client";
+export { type AgentProjectClient, createAgentProjectClient } from "./agent-project-client";
 export type { components, paths } from "./api.generated";
 export {
 	type ComputeReusableSubscriptionsQuery,
@@ -37,7 +38,9 @@ export {
 export * from "./deploy-wizard";
 export { extractApiDetail } from "./error-detail";
 export * from "./hosted-ai-binding";
+export * from "./project-scope";
 export { createProjectSharingClient, type ProjectSharingClient } from "./project-sharing-client";
+export * from "./project-sharing-state";
 export {
 	type AgentListQuery,
 	type CloudApiClient,
@@ -59,3 +62,6 @@ export {
 	readApiBaseUrl,
 } from "./read-transport";
 export * from "./schemas";
+export { createSkillClient, type SkillClient } from "./skill-client";
+export * from "./skill-content";
+export * from "./skill-policy";

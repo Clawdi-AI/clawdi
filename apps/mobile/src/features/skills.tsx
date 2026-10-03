@@ -1,8 +1,10 @@
 import type { components } from "@clawdi/shared/api";
 import { useInfiniteQuery } from "@tanstack/react-query";
+import { router } from "expo-router";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
+import { NativeButton } from "../ui/native-controls";
 import { AppText, AppView } from "../ui/primitives";
 import { InventoryList } from "./inventory-list";
 
@@ -38,6 +40,17 @@ export function SkillRow({ skill }: { skill: Skill }) {
 			<AppText className="text-xs text-muted">
 				{skill.source} · v{skill.version}
 			</AppText>
+			{skill.project_id ? (
+				<NativeButton
+					label={t("skills.open")}
+					onPress={() =>
+						router.push({
+							pathname: "/skills/detail",
+							params: { projectId: skill.project_id ?? "", skillKey: skill.skill_key },
+						})
+					}
+				/>
+			) : null}
 		</AppView>
 	);
 }
@@ -49,8 +62,11 @@ export function SkillsScreen() {
 	return (
 		<InventoryList
 			items={items}
+			header={
+				<NativeButton label={t("skills.create")} onPress={() => router.push("/skills/new")} />
+			}
 			title={t("skills.title")}
-			description={t("skills.description")}
+			description={t("skills.summary")}
 			empty={t("skills.empty")}
 			renderItem={(skill) => <SkillRow skill={skill} />}
 			refreshing={skills.isRefetching}

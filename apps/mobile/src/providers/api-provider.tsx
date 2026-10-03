@@ -1,16 +1,20 @@
 import {
 	type AccountApiClient,
+	type AgentProjectClient,
 	ApiClientError,
 	type ApiClientFetch,
 	type CloudApiClient,
 	createAccountApiClient,
+	createAgentProjectClient,
 	createCloudApiClient,
 	createHostedApiClient,
 	createHostedComputeClient,
 	createProjectSharingClient,
+	createSkillClient,
 	type HostedApiClient,
 	type HostedComputeClient,
 	type ProjectSharingClient,
+	type SkillClient,
 } from "@clawdi/shared/api";
 import { useAuth } from "@clerk/expo";
 import { createContext, type ReactNode, useCallback, useContext, useMemo } from "react";
@@ -21,6 +25,8 @@ export type MobileApiClients = Readonly<{
 	cloud: CloudApiClient;
 	account: AccountApiClient;
 	sharing: ProjectSharingClient;
+	agentProjects: AgentProjectClient;
+	skills: SkillClient;
 	compute: HostedComputeClient | null;
 	hosted: HostedApiClient | null;
 }>;
@@ -58,6 +64,11 @@ export function MobileApiProvider({
 	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
+			skills: createSkillClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
 			cloud: createCloudApiClient({
 				baseUrl: config.cloudApiUrl,
 				getToken: readToken,
@@ -76,6 +87,11 @@ export function MobileApiProvider({
 					})
 				: null,
 			sharing: createProjectSharingClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
+			agentProjects: createAgentProjectClient({
 				baseUrl: config.cloudApiUrl,
 				getToken: readToken,
 				fetch: fetcher,

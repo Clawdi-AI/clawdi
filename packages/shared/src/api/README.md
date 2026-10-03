@@ -2,7 +2,7 @@
 
 `@clawdi/shared/api` exports `createCloudApiClient` and `createHostedApiClient`.
 They take `{ baseUrl, getToken, fetch, timeoutMs?, observeResponse? }`. Supply the
-platform fetch implementation (the native foundation selects `expo/fetch`) and
+platform fetch implementation (the native provider injects `globalThis.fetch`) and
 an authenticated, account-generation-scoped token getter. No React, Clerk, DOM
 lifecycle, billing mutation, or message sending implementation is imported.
 
@@ -30,6 +30,18 @@ does not include any Agent IDs. Membership and ownership remain server decisions
 no share token is used as an authentication fallback. Newly created link URLs and
 raw tokens must not enter query caches, logs or persistent storage. Native callers
 must fence their presentation against blur, backgrounding and account retirement.
+
+`createAgentProjectClient` exposes Agent Project bindings and context link/unlink/
+reorder operations. `project-scope.ts` is also used by Web: the primary Workspace
+is immutable, and the context reorder builder excludes it from mutation payloads.
+
+`createSkillClient` uses explicit Project-scoped get/create/update/delete/install
+routes. `skill-policy.ts` and `skill-content.ts` are shared by actual Web and native
+consumers, not separate copies. Capture the content hash when editing starts;
+never replace it with a background refetch's hash. Deletion requires a valid
+captured hash. HTTP 412 must preserve the draft until explicit discard/reload.
+GitHub input parsing rejects non-HTTPS URLs and ambiguous traversal. Skill
+provenance and Project ownership remain server-enforced, regardless of UI policy.
 
 Query types and inferred return types come from the existing generated
 [`api.generated.ts`](api.generated.ts) and

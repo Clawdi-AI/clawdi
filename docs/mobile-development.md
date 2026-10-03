@@ -174,8 +174,26 @@ caches and persistence, are cleared on blur/background/account retirement, and
 can be explicitly sent through the native share sheet. Removing a member and
 revoking an invite link are distinct actions with distinct confirmation copy.
 
+Agent Project bindings now expose context linking/unlinking and ordering while
+keeping the primary Workspace immutable. Skill details use explicit Project
+scope; owned cloud Skills support text creation/editing/deletion and GitHub import.
+Edits retain the hash captured at edit start, and deletion retains the confirmed
+revision. A conflict preserves the draft and requires explicit discard/reload.
+
+### Shared Web and native domain code
+
+`packages/shared/src/api` owns Agent Project scope/order resolution and query
+keys, project sharing expiry/URL rules, Skill provenance capabilities, frontmatter
+handling, revision-bound request builders and GitHub import parsing. Existing Web
+consumers now import those implementations (some through compatibility re-exports);
+the native screens use the same functions. Import URLs must use canonical HTTPS
+GitHub URLs or owner/repository paths; ambiguous traversal is rejected before URL
+normalization. Invalid share expiration dates fail closed on both platforms.
+Generated schema types remain authoritative. Platform UI, authentication,
+account-scoped query lifetime and navigation stay in their respective apps.
+
 These additions do not establish full Web parity. Universal-link routing,
-Agent bindings, full Skill management, connectors, provider configuration, vaults,
+Skill bundle upload/download/send, connectors, provider configuration, vaults,
 Session sharing/export, native builds and real store payments remain separate
 acceptance work. Existing Session transcripts remain read-only by design.
 
@@ -206,6 +224,12 @@ On an authorized simulator/device build, verify:
    Paste a link, preview its owner/project and explicitly join. The pasted host
    must never become a fetch destination: requests use the configured Cloud API.
    Cancel/blur/background pending previews and verify they do not restore a token.
+8. Link, reorder and unlink context Projects without changing the primary
+   Workspace. Create/import a cloud Skill, edit it concurrently on Web, and
+   confirm native save reports conflict without losing the draft. Delete after
+   a concurrent revision change and confirm it cannot remove the replacement.
+   Verify Agent-synced/shared Skills remain read-only and account switching
+   retires every pending Skill action.
 
 Done: record the device/OS and observed outcomes. No live authentication,
 native compilation/signing, purchases or provisioning has been verified here.
