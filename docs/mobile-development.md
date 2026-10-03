@@ -386,8 +386,9 @@ omits cookies, caching, redirects and referrers. Native fields support dotenv im
 case-sensitive names and server preflight before explicit overwrite confirmation.
 Submission is never automatically retried; unknown outcomes are not reported as
 success. Native blur/background clears entered secrets and retires response permission.
-Automatic universal-link intake and device networking, input, lifecycle and
-share-sheet acceptance remain outstanding; Metro exports do not prove these behaviors.
+Configured HTTPS links now support one-shot native intake as described below.
+Device networking, input, lifecycle and share-sheet acceptance remain outstanding;
+Metro exports do not prove these behaviors.
 
 ### Full-parity completion scope
 
@@ -704,8 +705,31 @@ Pagination rejects changed totals or revisions; when the public API omits a
 revision, same-count live edits cannot be detected. Live links are not snapshots.
 Sign-in continuation accepts only a validated share UUID, not arbitrary redirects.
 Manual HTTPS/custom-scheme input extracts the ID and uses the configured Cloud
-API; it never fetches a pasted hostname. OS HTTPS domain association and real-device
-link intake remain unverified and are not configured by this implementation.
+API; it never fetches a pasted hostname.
+
+Optional `EXPO_PUBLIC_CLAWDI_LINK_HOSTS` is a comma-separated list of owned DNS
+hostnames, without schemes, ports, wildcards or paths. Build and runtime use the
+same validator. Expo config adds iOS `applinks` associations and Android verified
+HTTPS filters for `/s/` and `/vault-request`, preserving existing associations.
+No configured hosts means no new HTTPS associations. For an isolated config check:
+
+```bash
+EXPO_PUBLIC_CLAWDI_LINK_HOSTS=links.example.test bunx expo config --type public
+```
+
+Done: the generated config includes `applinks:links.example.test` and the two
+Android paths. This does not establish OS verification: the owner must supply
+native application/signing identifiers and publish matching website AASA and
+assetlinks files, then verify delivery on signed iOS/Android builds.
+
+Allowed HTTPS Vault request links stay in a single-use, 60-second memory inbox;
+Router receives only a random intake reference, never the capability token.
+The focused supply screen requires explicit inspection and submission. Its
+received secrets clear on blur/background; no automatic request is sent.
+Relative/custom-scheme Vault request links lack a verified HTTPS origin and
+open manual input without retaining the token. OAuth callbacks retain their
+existing credential-stripping navigation. Real-device cold/warm starts,
+StrictMode, backgrounding and account transitions remain acceptance checks.
 
 The native deployment terminal uses Expo SDK 57 DOM components with
 `@expo/dom-webview` 57.0.1 and SDK-compatible `react-native-web` 0.21.3. A dedicated
@@ -749,7 +773,7 @@ until each surface has implementation, focused verification and device evidence:
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
-| Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport | Universal-link intake and device acceptance |
+| Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport and configured HTTPS intake | Signed domain association and device acceptance |
 | v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal and Agent model binding; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity, Custom deletion and WhatsApp device onboarding/repair | Native/live provider and channel acceptance |
 | Deployment/billing | Included Basic and existing funded Basic/Performance eligibility/creation/recovery, paginated reusable inventory and read-only billing/deployment views | New paid subscription creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
 | Runtime UI/terminal | Shared Web/native xterm engine, Expo DOM terminal route, native controls and foreground teardown; generated bounded credential client | Native WebView/keyboard/real-server round-trip and compilation; authenticated native runtime browser handoff |

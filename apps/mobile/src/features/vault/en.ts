@@ -12,6 +12,8 @@ export const vaultEn = {
 		"New Vaults are not linked to Projects automatically. Failed or interrupted operations may leave destinations behind. Inspect both source and destinations before trying again; existing Vaults are never reused automatically.",
 	splitReset: "Close report and review remaining keys",
 	supplyTitle: "Supply requested credentials",
+	supplyReceived:
+		"Request link received. Inspect it before entering credentials. Nothing has been submitted.",
 	supplyPrivacy:
 		"Paste a request link to securely fill its fields. No sign-in token is sent. Leaving this screen or backgrounding the app clears the link and all entered secrets.",
 	supplyLink: "HTTPS request link",

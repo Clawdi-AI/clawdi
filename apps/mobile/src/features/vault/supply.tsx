@@ -2,16 +2,18 @@ import {
 	ApiClientError,
 	type components,
 	importVaultSupplyRows,
+	publicSessionId,
 	type VaultSupplyRow,
 	vaultRequestToken,
 	vaultSupplyFields,
 } from "@clawdi/shared/api";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import { Alert, AppState, Share } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
 import { useI18n } from "../../i18n";
 import { useAccountScope } from "../../platform/account-lifecycle";
+import { incomingVaultLink } from "../../platform/incoming-link";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
 import { NativeButton, NativeSwitch } from "../../ui/native-controls";
@@ -22,9 +24,11 @@ import { BackButton } from "../cloud-inventory";
 type Context = components["schemas"]["VaultSecretRequestStatus"];
 export function VaultSupplyScreen() {
 	const scope = useAccountScope();
-	return <VaultSupply key={`${scope.identity}:${scope.generation}`} />;
+	const params = useLocalSearchParams<{ intake?: string }>();
+	const intake = typeof params.intake === "string" ? publicSessionId(params.intake) : null;
+	return <VaultSupply key={`${scope.identity}:${scope.generation}:${intake}`} intake={intake} />;
 }
-function VaultSupply() {
+function VaultSupply({ intake }: { intake: string | null }) {
 	const t = useI18n();
 	const scope = useAccountScope();
 	const { vaultSupply: api } = useMobileApi();
@@ -38,6 +42,7 @@ function VaultSupply() {
 	} | null>(null);
 	const activeRequest = useRef<AbortController | null>(null);
 	const [link, setLink] = useState("");
+	const [incoming, setIncoming] = useState(false);
 	const [context, setContext] = useState<Context>();
 	const [rows, setRows] = useState<VaultSupplyRow[]>([]);
 	const [envText, setEnvText] = useState("");
@@ -50,12 +55,14 @@ function VaultSupply() {
 		token.current = "";
 		pendingSupply.current = null;
 		setLink("");
+		setIncoming(false);
 		setRows([]);
 		setEnvText("");
 		setShow(false);
 	}, []);
 	useFocusEffect(
 		useCallback(() => {
+			let focused = true;
 			const retire = () => {
 				activeRequest.current?.abort();
 				clearSecrets();
@@ -63,14 +70,30 @@ function VaultSupply() {
 				setPhase("link");
 				setError(null);
 			};
+			const receive = () =>
+				queueMicrotask(() => {
+					// StrictMode's retired setup must not consume the one-shot capability.
+					if (!focused || !intake || AppState.currentState !== "active") return;
+					const received = incomingVaultLink.take(intake);
+					if (!received) return;
+					retire();
+					token.current = vaultRequestToken(received) ?? "";
+					setIncoming(Boolean(token.current));
+				});
+			receive();
 			const listener = AppState.addEventListener("change", (state) => {
-				if (state !== "active") retire();
+				if (state === "active") receive();
+				else {
+					if (intake) incomingVaultLink.clear(intake);
+					retire();
+				}
 			});
 			return () => {
+				focused = false;
 				listener.remove();
 				retire();
 			};
-		}, [clearSecrets]),
+		}, [clearSecrets, intake]),
 	);
 	const requestSignal = () => {
 		activeRequest.current?.abort();
@@ -86,13 +109,14 @@ function VaultSupply() {
 		const visible = capture();
 		void action.run(async (isCurrent) => {
 			if (!visible()) return;
-			const value = vaultRequestToken(link);
+			const value = incoming ? token.current : vaultRequestToken(link);
 			if (!value) {
 				setError("invalid");
 				return;
 			}
 			setError(null);
 			setLink("");
+			setIncoming(false);
 			token.current = value;
 			try {
 				const result = await api.inspect(value, undefined, requestSignal());
@@ -201,23 +225,27 @@ function VaultSupply() {
 				<AppText className="text-muted">{t("vault.supplyPrivacy")}</AppText>
 				{phase === "link" ? (
 					<>
-						<AppTextInput
-							accessibilityLabel={t("vault.supplyLink")}
-							placeholder={t("vault.supplyLink")}
-							value={link}
-							onChangeText={setLink}
-							maxLength={4096}
-							secureTextEntry
-							autoCorrect={false}
-							autoCapitalize="none"
-							autoComplete="off"
-							textContentType="none"
-							editable={!action.busy}
-							className="rounded-xl bg-surface p-3 text-foreground"
-						/>
+						{incoming ? (
+							<AppText>{t("vault.supplyReceived")}</AppText>
+						) : (
+							<AppTextInput
+								accessibilityLabel={t("vault.supplyLink")}
+								placeholder={t("vault.supplyLink")}
+								value={link}
+								onChangeText={setLink}
+								maxLength={4096}
+								secureTextEntry
+								autoCorrect={false}
+								autoCapitalize="none"
+								autoComplete="off"
+								textContentType="none"
+								editable={!action.busy}
+								className="rounded-xl bg-surface p-3 text-foreground"
+							/>
+						)}
 						<NativeButton
 							label={t("vault.supplyLoad")}
-							disabled={action.busy || !link}
+							disabled={action.busy || (!incoming && !link)}
 							onPress={load}
 						/>
 					</>
