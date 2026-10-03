@@ -238,7 +238,7 @@ with the same slug. Existing legacy create-or-attach semantics stay unchanged.
 Ship the backend route before these clients: older servers fail closed at the
 new route, and clients never fall back to the legacy endpoint. Missing identities,
 foreign owners and out-of-bound Agent keys are rejected; exact attachment does
-not rename or create Vaults. Credential profiles, native request-supply entrypoints,
+not rename or create Vaults. Credential profiles, automatic capability-link intake,
 key selection/splitting, Project
 scope filtering and device interaction verification remain open; this is not
 full Vault parity. Existing-key skipping uses the fetched key-name snapshot,
@@ -252,9 +252,16 @@ and enforces the server's 1–32 distinct-name limit. Pending records poll every
 refresh restarts that window. Supplied records invalidate the key-name view.
 Request capabilities never enter query keys/caches, route parameters, logs or
 device storage. Only the latest link is retained in a foreground ref for share
-retry, cleared on blur/background/account retirement. Recipients currently use
-the existing Web supply page; native capability intake, secret-entry UI and
-device lifecycle/share-sheet acceptance remain outstanding.
+retry, cleared on blur/background/account retirement.
+
+Recipients can paste a request link into the public native supply screen, including
+while signed out. Shared capability transport sends no account token and explicitly
+omits cookies, caching, redirects and referrers. Native fields support dotenv import,
+case-sensitive names and server preflight before explicit overwrite confirmation.
+Submission is never automatically retried; unknown outcomes are not reported as
+success. Blur/background clears entered secrets and retires response permission.
+Automatic universal-link intake and device networking, input, lifecycle and
+share-sheet acceptance remain outstanding; Metro exports do not prove these behaviors.
 
 ### Full-parity completion scope
 
@@ -268,7 +275,7 @@ until each surface has implementation, focused verification and device evidence:
 | Sessions | Inventory, pinned message history, snapshot/live sharing and text export | Search/filter parity, tool timeline, public/universal-link entrypoints, device sharing |
 | Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
-| Vault | Search/pagination, create, stable-ID detail/attach, import, section copy, global delete/detach, owner secret-request inventory/create/share | Credential profiles, native request supply, key selection/split, Project filters and device acceptance |
+| Vault | Search/pagination, create, stable-ID detail/attach, import, section copy, global delete/detach, owner secret-request inventory/create/share, public native request supply | Credential profiles, universal-link intake, key selection/split, Project filters and device acceptance |
 | v2 AI providers/channels | Not implemented | BYOK, provider OAuth/model bindings, channel connection/pairing/repair |
 | Deployment/billing | Basic eligibility/creation/recovery and read-only billing/deployment views | Paid creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |

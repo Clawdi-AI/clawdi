@@ -87,3 +87,5 @@ export * from "./vault-import-preview";
 export * from "./vault-key-import";
 export * from "./vault-request-state";
 export * from "./vault-state";
+export * from "./vault-supply-client";
+export * from "./vault-supply-state";

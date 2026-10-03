@@ -1,4 +1,34 @@
 export const vaultEn = {
+	supplyTitle: "Supply requested credentials",
+	supplyPrivacy:
+		"Paste a request link to securely fill its fields. No sign-in token is sent. Leaving this screen or backgrounding the app clears the link and all entered secrets.",
+	supplyLink: "HTTPS request link",
+	supplyLoad: "Inspect request",
+	supplyReveal: "Show secret values / edit multiline values",
+	supplyName: "Field name",
+	supplyValue: "Secret value",
+	supplyMultiline: "Multiline secret hidden",
+	supplyAdd: "Add field",
+	supplyRemove: "Remove added field",
+	supplyImport: "Import dotenv assignments",
+	supplyReview: "Check fields and review",
+	supplySave: "Save credentials",
+	supplyWarning:
+		"Save all entered fields to this Vault? The following existing keys will be replaced:",
+	supplyNoUpdates: "No existing keys will be replaced.",
+	supplyDone: "Credentials saved securely. No secret values are included in the receipt.",
+	supplyReceipt: "Share completion receipt",
+	supplyReceiptText:
+		"Credentials saved. Check this Vault request status before continuing; never put secret values in chat:",
+	supplyUnavailable:
+		"This request is unavailable or its fields changed. Ask its creator to check the status or send a new link.",
+	supplyUncertain:
+		"Save could not be confirmed. Ask the request creator to check its status before trying again. No retry was sent.",
+	supplyInvalid:
+		"Check the request link or fields. Supply every required field, use distinct valid names, and at most 32 nonempty values (65536 characters each).",
+	supplyConflict:
+		"Selected fields changed or are reserved. Remove added fields or ask for a new link; no secrets were sent.",
+	supplyReset: "Clear and start again",
 	requests: "Secret requests",
 	requestsDescription:
 		"Recent 100 requests. Pending requests refresh for two minutes while this screen is active; refresh manually to continue. The latest link can be shared again until you leave this screen or background the app. Links are never saved to device storage.",

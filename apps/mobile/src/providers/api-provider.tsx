@@ -15,6 +15,7 @@ import {
 	createSessionSharingClient,
 	createSkillClient,
 	createVaultClient,
+	createVaultSupplyClient,
 	type HostedApiClient,
 	type HostedComputeClient,
 	type ProjectSharingClient,
@@ -36,6 +37,7 @@ export type MobileApiClients = Readonly<{
 	sessionSharing: SessionSharingClient;
 	connectors: ConnectorClient;
 	vault: VaultClient;
+	vaultSupply: ReturnType<typeof createVaultSupplyClient>;
 	compute: HostedComputeClient | null;
 	hosted: HostedApiClient | null;
 }>;
@@ -73,6 +75,7 @@ export function MobileApiProvider({
 	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
+			vaultSupply: createVaultSupplyClient({ baseUrl: config.cloudApiUrl, fetch: fetcher }),
 			vault: createVaultClient({
 				baseUrl: config.cloudApiUrl,
 				getToken: readToken,

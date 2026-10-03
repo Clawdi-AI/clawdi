@@ -381,6 +381,13 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 					onPress={() => void submit()}
 					disabled={disabled}
 				/>
+				{step === "credentials" ? (
+					<NativeButton
+						label={t("vault.supplyTitle")}
+						disabled={busy}
+						onPress={() => router.replace("/vault-supply")}
+					/>
+				) : null}
 				{verifying && factor?.strategy !== "totp" && factor?.strategy !== "backup_code" ? (
 					<NativeButton
 						label={t("auth.resendCode")}
