@@ -1,3 +1,4 @@
+import { validateSessionDetailSearch } from "@clawdi/shared/api";
 import { useLocalSearchParams } from "expo-router";
 import {
 	BackButton,
@@ -91,7 +92,11 @@ export default function SessionDetailRoute() {
 		</AppView>
 	);
 	return session.data && !session.isError ? (
-		<Transcript sessionId={session.data.id} header={header} />
+		<Transcript
+			sessionId={session.data.id}
+			header={header}
+			search={validateSessionDetailSearch(params)}
+		/>
 	) : (
 		<ReadScreen>
 			<AppScrollView contentContainerStyle={{ padding: 24, flexGrow: 1 }}>{header}</AppScrollView>

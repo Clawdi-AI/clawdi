@@ -127,6 +127,15 @@ describe("Session search anchors", () => {
 	});
 
 	test("drops partial or malformed anchors as one unit", () => {
+		for (const matchPosition of ["", " ", "0x10", "1.5", ["1", "2"]]) {
+			expect(
+				validateSessionDetailSearch({
+					matchKind: "event_seq",
+					matchPosition,
+					matchRevision: "revision",
+				}),
+			).toEqual({});
+		}
 		expect(validateSessionDetailSearch({ matchKind: "event_seq", matchPosition: 3 })).toEqual({});
 		expect(
 			validateSessionDetailSearch({

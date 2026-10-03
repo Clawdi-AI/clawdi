@@ -3,6 +3,7 @@ import {
 	type components,
 	normalizeSessionListQuery,
 	type SessionListQuery,
+	sessionDetailLink,
 } from "@clawdi/shared/api";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
@@ -137,14 +138,34 @@ export function AgentRow({ agent }: { agent: CloudAgent }) {
 	);
 }
 
-export function SessionRow({ session }: { session: CloudSession }) {
+export function SessionRow({
+	session,
+	searchQuery,
+}: {
+	session: CloudSession;
+	searchQuery?: string;
+}) {
 	const router = useRouter();
 	const t = useI18n();
 	return (
 		<AppPressable
 			accessibilityRole="button"
 			className="gap-2 rounded-2xl bg-surface px-4 py-4"
-			onPress={() => router.push(`/sessions/${encodeURIComponent(session.id)}`)}
+			onPress={() => {
+				const { search } = sessionDetailLink(session, { searchQuery });
+				router.push({
+					pathname: "/sessions/[sessionId]",
+					params: {
+						sessionId: session.id,
+						...(search.matchKind ? { matchKind: search.matchKind } : {}),
+						...(search.matchPosition !== undefined
+							? { matchPosition: String(search.matchPosition) }
+							: {}),
+						...(search.matchRevision ? { matchRevision: search.matchRevision } : {}),
+						...(search.matchQuery ? { matchQuery: search.matchQuery } : {}),
+					},
+				});
+			}}
 		>
 			<AppView className="flex-row items-center justify-between gap-3">
 				<AppText numberOfLines={2} className="flex-1 text-base font-semibold text-foreground">

@@ -193,7 +193,9 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 					) : null}
 				</AppView>
 			}
-			renderItem={(session) => <SessionRow session={session} />}
+			renderItem={(session) => (
+				<SessionRow session={session} searchQuery={applied.q ?? undefined} />
+			)}
 			refreshing={sessions.isRefetching && !sessions.isFetchingNextPage}
 			onRefresh={() => {
 				if (!sessions.isFetching) void sessions.refetch();

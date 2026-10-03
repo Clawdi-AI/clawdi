@@ -68,6 +68,8 @@ export {
 	readApiBaseUrl,
 } from "./read-transport";
 export * from "./schemas";
+export * from "./search-highlight";
+export * from "./session-navigation";
 export * from "./session-query";
 export * from "./session-sharing";
 export {
@@ -75,6 +77,7 @@ export {
 	type SessionSharesQuery,
 	type SessionSharingClient,
 } from "./session-sharing-client";
+export * from "./session-timeline";
 export { createSkillClient, type SkillClient } from "./skill-client";
 export * from "./skill-content";
 export * from "./skill-policy";

@@ -302,8 +302,17 @@ Agent type, automated/manual work, PR-link presence, sort direction and page siz
 are server-side filters. The immutable Agent route scope remains in every request.
 Account generation and normalized filters isolate pagination caches; filter changes
 start at page one, preserve explicit false values, and do not reuse the old result
-as placeholder data. Match excerpts render as plain text. Transcript match jumping
-and tool-category views remain separate unfinished work.
+as placeholder data. Match excerpts render as plain text.
+
+Native Session activity reuses Shared search-anchor parsing, literal highlighting,
+and timeline row/tool-pair grouping with Web. User/assistant/tool categories,
+in-Session search, previous/next matches, beginning/latest windows and bidirectional
+history paging use the generated typed timeline API. Only the initial window sends
+an anchor/search query; adjacent pages pin its content revision and use returned
+offsets (not event positions). Partial previous windows request only their missing
+range. Native scroll-to-match recovery is bounded and cancelled on retirement;
+real-device variable-height scroll behavior remains an acceptance gate. Tool output
+is expandable plain text, never executable, and long payloads reveal incrementally.
 
 Source implementation is not native acceptance. Keep the complete v2 Web scope
 until each surface has implementation, focused verification and device evidence:
@@ -312,7 +321,7 @@ until each surface has implementation, focused verification and device evidence:
 | --- | --- | --- |
 | Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings | Remaining general/profile settings and real Clerk flows |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation | Agent settings and runtime controls, device navigation/permission acceptance |
-| Sessions | Search/filter/sort inventory, match excerpts, pinned message history, snapshot/live sharing and text export | Transcript search navigation, tool timeline, public/universal-link entrypoints, device sharing |
+| Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing and text export | Rich-text/link presentation, public/universal-link entrypoints, device scrolling/sharing and visual acceptance |
 | Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport | Universal-link intake and device acceptance |
