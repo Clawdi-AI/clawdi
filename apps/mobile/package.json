@@ -31,6 +31,7 @@
 		"expo-router": "catalog:expo57",
 		"expo-secure-store": "57.0.4",
 		"expo-status-bar": "57.0.1",
+		"expo-system-ui": "catalog:expo57",
 		"expo-web-browser": "57.0.3",
 		"heroui-native": "1.0.10",
 		"openapi-fetch": "catalog:",

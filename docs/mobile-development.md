@@ -808,6 +808,34 @@ isolated runner. Done: credential issuance binds authorization, ETag and exact
 endpoint, rejects stale/foreign responses, and never retries implicitly.
 Real-device cold/warm browser auth, account switching and revocation remain gates.
 
+### Native project generation
+
+The dynamic Expo config accepts owner-selected build-time
+`CLAWDI_IOS_BUNDLE_IDENTIFIER` and `CLAWDI_ANDROID_PACKAGE`. Neither has a
+production default. Existing `config.ios.bundleIdentifier` / `config.android.package`
+are preserved when the corresponding environment value is absent. Expo validates
+the native identifier during prebuild; these values are not runtime API settings.
+Use the identifiers registered for the intended app and signing environment;
+do not use the diagnostic `test.example.clawdi.probe` identifier for distribution.
+
+Run `bunx expo prebuild --platform android --no-install` (or `--platform ios`)
+from `apps/mobile` in the isolated build environment with the approved identifier.
+Native directories are generated and ignored, not a second hand-maintained source
+tree. This step checks config plugins and native metadata, not Gradle/Xcode
+compilation, signing, device login or store acceptance. `expo-system-ui` is pinned
+in the Expo workspace catalog to support Android automatic appearance.
+
+The October 3 probe generated both Android and iOS projects in one disposable
+Bun 1.4.2 container with `test.example.clawdi.probe` and `links.example.test`.
+Android's application ID/namespace and iOS Debug/Release bundle identifiers
+matched the injected value; associated-domain/intent-filter metadata was present.
+The first Android generation warned that `expo-system-ui` was missing. After
+adding SDK57/registry-latest `57.0.4`, generation completed without that warning
+and Android resources contained `expo_system_ui_user_interface_style=automatic`.
+Expo's template comparison still reports `catalog:expo57` rather than a numeric
+manifest version; this does not change the frozen resolved Expo/RN versions.
+Neither Gradle, CocoaPods nor Xcode compilation ran in this probe.
+
 Source implementation is not native acceptance. Keep the complete v2 Web scope
 until each surface has implementation, focused verification and device evidence:
 

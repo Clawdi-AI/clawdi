@@ -7,6 +7,17 @@ function publicValue(name) {
 
 module.exports = ({ config }) => {
 	const linkHosts = readLinkHosts(publicValue("EXPO_PUBLIC_CLAWDI_LINK_HOSTS"));
+	// Build-time identifiers are owner-selected; never infer a production app identity.
+	const bundleIdentifier = publicValue("CLAWDI_IOS_BUNDLE_IDENTIFIER");
+	const packageName = publicValue("CLAWDI_ANDROID_PACKAGE");
+	const ios = {
+		...config.ios,
+		...(bundleIdentifier ? { bundleIdentifier } : {}),
+	};
+	const android = {
+		...config.android,
+		...(packageName ? { package: packageName } : {}),
+	};
 	return {
 		...config,
 		name: "Clawdi",
@@ -21,10 +32,12 @@ module.exports = ({ config }) => {
 			typedRoutes: true,
 		},
 		plugins: ["expo-router", "expo-secure-store"],
+		...(Object.keys(ios).length ? { ios } : {}),
+		...(Object.keys(android).length ? { android } : {}),
 		...(linkHosts.length
 			? {
 					ios: {
-						...config.ios,
+						...ios,
 						associatedDomains: [
 							...new Set([
 								...(config.ios?.associatedDomains ?? []),
@@ -33,7 +46,7 @@ module.exports = ({ config }) => {
 						],
 					},
 					android: {
-						...config.android,
+						...android,
 						intentFilters: [
 							...(config.android?.intentFilters ?? []),
 							...linkHosts.map((host) => ({
