@@ -13,7 +13,15 @@ export const deploymentsEn = {
 	noSessions: "A deployment can be ready before any Sessions exist. Sessions are read only.",
 	operation: "Operation",
 	complete: "Complete",
+	operationCancelled: "Operation cancelled",
 	progress: "In progress",
+	cancelChange: "Request cancellation of this change",
+	cancelWarning:
+		"Cancellation is not immediate and may be rejected or require recovery. Do not assume already-applied work is undone, or that the Agent or its subscription is stopped. Check the final operation status before making another change.",
+	cancelRequested:
+		"Cancellation requested. Waiting for the server's final operation status; the Agent and its billing have not been declared stopped.",
+	cancelUncertain:
+		"Cancellation was not confirmed. Refresh the operation status. Retrying this same operation reuses the original cancellation key; no new Agent change is sent.",
 	failed: "Deployment failed",
 	creating: "Creating deployment",
 	starting: "Starting runtime",

@@ -13,6 +13,30 @@ export type DeploymentUpdate = DeployComponents["schemas"]["V2UpdateDeploymentRe
 export type DeploymentMutation =
 	| { action: "start" | "stop" | "restart" | "reset_runtime_ui_access" }
 	| { action: "update"; body: DeploymentUpdate };
+export function canCancelDeploymentOperation(
+	operation: DeployComponents["schemas"]["LongRunningOperation"] | null | undefined,
+): boolean {
+	return Boolean(
+		operation?.done === false &&
+			[
+				"create",
+				"plan_change",
+				"start",
+				"stop",
+				"restart",
+				"update",
+				"rename",
+				"delete",
+				"reset_runtime_ui_access",
+			].includes(operation.metadata?.verb),
+	);
+}
+
+export function deploymentIdempotencyHeaders(key: string) {
+	if (typeof key !== "string" || !/^[\x21-\x7e]{1,255}$/.test(key))
+		throw new ApiClientError(400, "invalid_idempotency_key");
+	return { "Idempotency-Key": key };
+}
 export function deploymentLifecycleAvailable(
 	action: "start" | "stop" | "restart",
 	state:
@@ -35,9 +59,10 @@ export function strongDeploymentEtag(value: string): string {
 	return `"${value}"`;
 }
 export function deploymentMutationHeaders(resourceVersion: string, key: string) {
-	if (typeof key !== "string" || !/^[\x21-\x7e]{1,255}$/.test(key))
-		throw new ApiClientError(400, "invalid_idempotency_key");
-	return { "If-Match": strongDeploymentEtag(resourceVersion), "Idempotency-Key": key };
+	return {
+		...deploymentIdempotencyHeaders(key),
+		"If-Match": strongDeploymentEtag(resourceVersion),
+	};
 }
 
 /** Caller owns confirmation and exact-attempt recovery; never refreshes ETags or retries writes. */
@@ -48,6 +73,25 @@ export function createDeploymentMutationClient(options: ApiClientOptions) {
 		fetch: transport.fetch,
 	});
 	return {
+		cancel: async (operationName: string, key: string, signal?: AbortSignal): Promise<void> => {
+			const match = /^operations\/([A-Za-z0-9_-]{1,180})$/.exec(operationName);
+			if (!match?.[1]) throw new ApiClientError(400, "invalid_operation_name");
+			const params = {
+				path: { operation_id: match[1] },
+				header: deploymentIdempotencyHeaders(key),
+			};
+			const response = await transport.read(
+				(init) => api.POST("/v2/operations/{operation_id}:cancel", { ...init, params, body: {} }),
+				signal,
+			);
+			if (
+				!response ||
+				typeof response !== "object" ||
+				Array.isArray(response) ||
+				Object.keys(response).length !== 0
+			)
+				throw new ApiClientResponseError();
+		},
 		apply: async (
 			id: string,
 			resourceVersion: string,

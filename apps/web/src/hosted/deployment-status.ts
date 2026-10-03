@@ -1,4 +1,4 @@
-import { deploymentLifecycleAvailable } from "@clawdi/shared/api";
+import { canCancelDeploymentOperation, deploymentLifecycleAvailable } from "@clawdi/shared/api";
 import type {
 	DeploymentOperation,
 	HostedDeployment,
@@ -430,14 +430,11 @@ export function canDelete(status: DeploymentStatus): boolean {
 /**
  * Whether the in-flight accepted operation can accept a cancel request. Mirrors
  * the cancel acceptance side in clawdi-hosted operation_cancellation.py: only
- * operations that are still running and are not backend-managed image cohort
- * operations are cancellable.
+ * known operations that are still running and are not backend-managed
+ * image or runtime-context migrations are cancellable.
  */
 export function canCancelOperation(operation: DeploymentOperation | null | undefined): boolean {
-	if (!operation || operation.done) return false;
-	return (
-		operation.metadata.verb !== "migrate_image" && operation.metadata.verb !== "rollback_image"
-	);
+	return canCancelDeploymentOperation(operation);
 }
 
 /** Shared started-at/timeout primitive for lifecycle and runtime-UI convergence. */

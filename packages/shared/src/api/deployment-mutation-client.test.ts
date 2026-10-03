@@ -4,6 +4,69 @@ import {
 	type DeploymentMutation,
 } from "./deployment-mutation-client";
 
+test("cancel admission is not completion and explicit retry keeps its operation and key", async () => {
+	const requests: { path: string; method: string; key: string | null; body: unknown }[] = [];
+	const server = Bun.serve({
+		hostname: "127.0.0.1",
+		port: 0,
+		async fetch(request) {
+			expect(request.headers.get("authorization")).toBe("Bearer fixture");
+			requests.push({
+				path: new URL(request.url).pathname,
+				method: request.method,
+				key: request.headers.get("idempotency-key"),
+				body: await request.json(),
+			});
+			return requests.length === 1
+				? Response.json({ detail: "Unavailable" }, { status: 503 })
+				: Response.json({});
+		},
+	});
+	try {
+		const client = createDeploymentMutationClient({
+			baseUrl: server.url.href,
+			getToken: async () => "fixture",
+			fetch,
+		});
+		await expect(client.cancel("operations/op-1", "stable-cancel-key")).rejects.toMatchObject({
+			status: 503,
+		});
+		expect(requests).toHaveLength(1);
+		expect(await client.cancel("operations/op-1", "stable-cancel-key")).toBeUndefined();
+		expect(requests).toEqual(
+			Array(2).fill({
+				path: "/v2/operations/op-1:cancel",
+				method: "POST",
+				key: "stable-cancel-key",
+				body: {},
+			}),
+		);
+	} finally {
+		server.stop(true);
+	}
+});
+
+test("invalid cancel targets/keys fail before auth and non-contract acknowledgements are rejected", async () => {
+	let tokens = 0;
+	const client = createDeploymentMutationClient({
+		baseUrl: "https://hosted.example",
+		getToken: async () => {
+			tokens++;
+			return "fixture";
+		},
+		fetch: async () => Response.json({ done: true }),
+	});
+	for (const name of ["op", "operations/", "operations/../other", `operations/${"x".repeat(181)}`])
+		await expect(client.cancel(name, "key")).rejects.toMatchObject({ status: 400 });
+	await expect(client.cancel("operations/op", "invalid key")).rejects.toMatchObject({
+		status: 400,
+	});
+	expect(tokens).toBe(0);
+	await expect(client.cancel("operations/op", "key")).rejects.toThrow(
+		"API response could not be read",
+	);
+});
+
 test("invalid concurrency tokens fail before authentication or network", async () => {
 	let tokens = 0;
 	const client = createDeploymentMutationClient({

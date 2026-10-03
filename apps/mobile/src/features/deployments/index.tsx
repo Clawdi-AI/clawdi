@@ -11,6 +11,7 @@ import { ReadScreen } from "../../ui/read-screen";
 import { BackButton, isNotFound } from "../cloud-inventory";
 import { InventoryList } from "../inventory-list";
 import { ResourceError } from "../resource-error";
+import { CancelOperation } from "./cancel";
 import { DeploymentControls } from "./controls";
 import {
 	canPollDeployment,
@@ -234,9 +235,29 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 									</AppText>
 								) : null}
 								{operation.data?.error ? (
-									<AppText className="text-danger">{t("deployments.failed")}</AppText>
+									<AppText className="text-danger">
+										{t(
+											operation.data.error.code === 1
+												? "deployments.operationCancelled"
+												: "deployments.failed",
+										)}
+									</AppText>
 								) : null}
 								{operation.isError ? <ResourceError missing={false} /> : null}
+								{operation.data &&
+								!operation.isError &&
+								operation.data.name === operationName &&
+								operation.data.metadata?.deploymentId === deploymentId ? (
+									<CancelOperation
+										key={operation.data.name}
+										operation={operation.data}
+										onRequested={async () => {
+											setStartedAt(Date.now());
+											await operation.refetch();
+											await query.refetch();
+										}}
+									/>
+								) : null}
 								{deploymentNeedsPolling(deployment) &&
 								Date.now() - startedAt >= DEPLOYMENT_POLL_WINDOW_MS ? (
 									<AppText>{t("deployments.timeout")}</AppText>
