@@ -1,7 +1,7 @@
 import { pairingQr } from "@clawdi/shared/qr";
 import { useUser } from "@clerk/expo";
 import type { TOTPResource, UserResource } from "@clerk/expo/types";
-import { Redirect, useFocusEffect } from "expo-router";
+import { Redirect, router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AppState } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
@@ -33,6 +33,7 @@ function MfaForm({ user }: { user: UserResource }) {
 	const confirmation = useRef(0);
 	const [enabled, setEnabled] = useState(user.totpEnabled);
 	const [mfaEnabled, setMfaEnabled] = useState(user.twoFactorEnabled);
+	const [phones, setPhones] = useState([...user.phoneNumbers]);
 	const [setup, setSetup] = useState<TOTPResource | null>(null);
 	const [codes, setCodes] = useState<string[] | null>(null);
 	const [code, setCode] = useState("");
@@ -56,13 +57,25 @@ function MfaForm({ user }: { user: UserResource }) {
 	const sync = () => {
 		setEnabled(user.totpEnabled);
 		setMfaEnabled(user.twoFactorEnabled);
+		setPhones([...user.phoneNumbers]);
 	};
 	const publishCodes = (values: string[]) => {
 		if (!values.length || values.some((value) => typeof value !== "string" || !value.trim()))
 			throw new Error("Invalid backup codes");
 		setCodes([...values]);
 	};
-	const run = (operation: "refresh" | "create" | "verify" | "disable" | "backup") =>
+	const run = (
+		operation:
+			| "refresh"
+			| "create"
+			| "verify"
+			| "disable"
+			| "backup"
+			| "sms-enable"
+			| "sms-disable"
+			| "sms-default",
+		phoneId?: string,
+	) =>
 		void action.run(async (active) => {
 			const visible = capture();
 			const current = () =>
@@ -81,6 +94,44 @@ function MfaForm({ user }: { user: UserResource }) {
 					if (!current()) throw new Error("Account action retired");
 					sync();
 					if (operation === "refresh") return;
+					if (
+						operation === "sms-enable" ||
+						operation === "sms-disable" ||
+						operation === "sms-default"
+					) {
+						const phone = user.phoneNumbers.find((value) => value.id === phoneId);
+						if (phone?.verification.status !== "verified")
+							throw new Error("Verified phone required");
+						let backupCodes: string[] | undefined;
+						if (operation === "sms-default") {
+							if (!phone.reservedForSecondFactor) throw new Error("SMS factor no longer enabled");
+							await phone.makeDefaultSecondFactor();
+						} else {
+							const reserved = operation === "sms-enable";
+							// An explicit retry reconciles first; do not regenerate codes for an already-enabled factor.
+							if (phone.reservedForSecondFactor !== reserved) {
+								const result = await phone.setReservedForSecondFactor({ reserved });
+								if (!current()) return;
+								if (result.id !== phoneId || result.reservedForSecondFactor !== reserved)
+									throw new Error("SMS factor change not confirmed");
+								if (reserved) backupCodes = result.backupCodes;
+							}
+						}
+						if (!current()) return;
+						await user.reload();
+						if (!current()) return;
+						sync();
+						const updated = user.phoneNumbers.find((value) => value.id === phoneId);
+						if (
+							!updated ||
+							updated.reservedForSecondFactor !== (operation !== "sms-disable") ||
+							(operation === "sms-default" && !updated.defaultSecondFactor)
+						)
+							throw new Error("SMS factor state not confirmed");
+						if (backupCodes?.length) publishCodes(backupCodes);
+						setSuccess(true);
+						return;
+					}
 					if (operation === "create") {
 						if (user.totpEnabled) throw new Error("Authenticator already enabled");
 						const result = await user.createTOTP();
@@ -149,6 +200,33 @@ function MfaForm({ user }: { user: UserResource }) {
 			},
 		]);
 	};
+	const confirmSms = (phoneId: string, operation: "sms-enable" | "sms-disable" | "sms-default") => {
+		const visible = capture();
+		const ticket = ++confirmation.current;
+		const label = t(
+			operation === "sms-enable"
+				? "mfa.smsEnable"
+				: operation === "sms-disable"
+					? "mfa.smsDisable"
+					: "mfa.smsDefault",
+		);
+		Alert.alert(
+			label,
+			t(operation === "sms-disable" ? "mfa.smsDisableWarning" : "mfa.smsEnableWarning"),
+			[
+				{ text: t("account.cancel"), style: "cancel" },
+				{
+					text: label,
+					style: operation === "sms-disable" ? "destructive" : "default",
+					onPress: () => {
+						if (ticket !== confirmation.current || !visible() || !scope.isCurrent()) return;
+						confirmation.current++;
+						run(operation, phoneId);
+					},
+				},
+			],
+		);
+	};
 	return (
 		<ReadScreen>
 			<AppScrollView contentContainerClassName="gap-4 p-6">
@@ -215,6 +293,40 @@ function MfaForm({ user }: { user: UserResource }) {
 						<NativeButton label={t("mfa.hide")} onPress={clear} />
 					</AppView>
 				) : null}
+				<AppText accessibilityRole="header">{t("mfa.smsTitle")}</AppText>
+				<AppText>{t("mfa.smsDescription")}</AppText>
+				<NativeButton
+					label={t("phones.title")}
+					disabled={action.busy}
+					onPress={() => router.push("/phone-numbers")}
+				/>
+				{phones
+					.filter((phone) => phone.verification.status === "verified")
+					.map((phone) => (
+						<AppView key={phone.id} className="gap-2 rounded-xl bg-surface p-4">
+							<AppText selectable>{phone.phoneNumber}</AppText>
+							<AppText>
+								{t(phone.reservedForSecondFactor ? "mfa.smsEnabled" : "mfa.smsDisabled")}
+							</AppText>
+							{phone.reservedForSecondFactor && phone.defaultSecondFactor ? (
+								<AppText>{t("mfa.smsPreferred")}</AppText>
+							) : null}
+							<NativeButton
+								label={t(phone.reservedForSecondFactor ? "mfa.smsDisable" : "mfa.smsEnable")}
+								disabled={action.busy}
+								onPress={() =>
+									confirmSms(phone.id, phone.reservedForSecondFactor ? "sms-disable" : "sms-enable")
+								}
+							/>
+							{phone.reservedForSecondFactor && !phone.defaultSecondFactor ? (
+								<NativeButton
+									label={t("mfa.smsDefault")}
+									disabled={action.busy}
+									onPress={() => confirmSms(phone.id, "sms-default")}
+								/>
+							) : null}
+						</AppView>
+					))}
 				{action.error ? <AppText accessibilityRole="alert">{t("mfa.failed")}</AppText> : null}
 				{success ? <AppText accessibilityRole="alert">{t("mfa.saved")}</AppText> : null}
 			</AppScrollView>

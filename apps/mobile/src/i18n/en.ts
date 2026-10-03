@@ -28,9 +28,22 @@ export const en = {
 		disconnected: "Disconnected",
 	},
 	mfa: {
-		title: "Authenticator and backup codes",
+		title: "Two-factor authentication",
+		smsTitle: "SMS verification",
+		smsDescription:
+			"Add and verify a phone number first, then explicitly enable it for two-factor sign-in. An authenticator takes priority over the preferred SMS number. SMS availability and required security factors depend on your account policy.",
+		smsEnable: "Enable SMS two-factor verification",
+		smsDisable: "Disable SMS two-factor verification",
+		smsDefault: "Use as preferred SMS number",
+		smsPreferred: "Preferred SMS number",
+		smsEnabled: "Enabled for SMS two-factor verification",
+		smsDisabled: "Not enabled for SMS two-factor verification",
+		smsEnableWarning:
+			"Use this verified number for two-factor sign-in? Ensure you can receive SMS at this number. An authenticator remains the preferred method when enabled. Save any returned backup codes before leaving this screen.",
+		smsDisableWarning:
+			"Stop using this number as a second factor? This does not delete the phone number. The account service may prevent removal of a required security factor.",
 		description:
-			"Manage authenticator-based two-factor sign-in. Account policy and fresh identity verification may be required. Secrets are shown only on this screen and never saved by the app.",
+			"Manage authenticator and SMS two-factor sign-in. Account policy and fresh identity verification may be required. Secrets are shown only on this screen and never saved by the app.",
 		enabled: "Authenticator enabled.",
 		disabled: "Authenticator not enabled.",
 		setup: "Set up authenticator",

@@ -612,6 +612,15 @@ that older codes will stop working. MFA and WhatsApp share the native `QrImage`
 renderer and existing Shared QR encoder. Real authenticator enrollment, backup-code
 use, server policy and device privacy/accessibility remain acceptance gates.
 
+The same security page lists verified phones and supports confirmed SMS factor
+enable/disable and preferred-SMS selection using the published PhoneNumber
+`setReservedForSecondFactor` and `makeDefaultSecondFactor` methods. It reloads
+before mutations and confirms the resulting flags after reload; enabling an
+already-enabled factor reconciles without generating codes again. Returned backup
+codes use the existing ephemeral display. Disabling a factor does not delete its
+phone contact. TOTP remains preferred over SMS; server policy controls required
+factors and SMS availability. Real SMS factor enrollment and sign-in remain unverified.
+
 Public Session routes (`/s/[shareId]`, `/open-share`) support anonymous snapshots,
 legacy live links with optional account authentication, explicit pagination and
 native Markdown/JSON sharing. Web's initial metadata/message reads reuse the same
@@ -662,7 +671,7 @@ until each surface has implementation, focused verification and device evidence:
 
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
-| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and shared email/phone contact management, shared native password/code reverification, active-device review/revocation, password management, authenticator enrollment and backup codes | SMS MFA enrollment, passkey/linked-account/security management, passkey/enterprise reverification and real Clerk/device acceptance |
+| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and shared email/phone contact management, shared native password/code reverification, active-device review/revocation, password management, authenticator/SMS factor management and backup codes | Passkey/linked-account/security management, passkey/enterprise reverification and real Clerk/device acceptance |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |
