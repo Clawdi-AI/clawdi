@@ -222,11 +222,12 @@ export function useSubscriptions() {
 	});
 }
 
-export function useIncludedBasicAvailability() {
+export function useIncludedBasicAvailability({ enabled = true }: { enabled?: boolean } = {}) {
 	const client = useBillingClient();
 	return useBillingQuery({
 		queryKey: billingKeys.includedBasicAvailability,
 		queryFn: () => client.getIncludedBasicAvailability(),
+		enabled,
 	});
 }
 

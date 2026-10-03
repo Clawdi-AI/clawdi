@@ -183,7 +183,7 @@ import {
 } from "@/hosted/v2/ai-providers/model-binding";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
-import { resolveDeployChannel } from "@/lib/deploy-channel";
+import { deployChannelConfig, resolveDeployChannel } from "@/lib/deploy-channel";
 import { env } from "@/lib/env";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
@@ -298,6 +298,7 @@ function ComputeResources({
 export function DeployWizard() {
 	const search = useRouterState({ select: (state) => state.location.searchStr });
 	const channel = resolveDeployChannel(search);
+	const channelConfig = channel ? deployChannelConfig(channel) : null;
 	const [preinstallBundle, setPreinstallBundle] = useState(true);
 	const router = useRouter();
 	const queryClient = useQueryClient();
@@ -418,7 +419,9 @@ export function DeployWizard() {
 		onNavigate: navigateCheckoutReturn,
 	});
 	const plans = usePlans();
-	const includedBasic = useIncludedBasicAvailability();
+	const includedBasic = useIncludedBasicAvailability({
+		enabled: channel === null || channelConfig?.defaultSubscriptionSource === "included",
+	});
 	const reusableSubscriptions = useReusableSubscriptions(billingClient);
 	const managedModelCatalog = useManagedModelCatalog();
 	const aiProviders = useUserAiProviders();
@@ -434,11 +437,14 @@ export function DeployWizard() {
 	const blockingIncludedBasicError = shouldBlockQueryError(includedBasic.error, includedBasic.data)
 		? includedBasic.error
 		: null;
-	const includedBasicAvailable = blockingIncludedBasicError
-		? undefined
-		: includedBasic.data
-			? includedBasic.data.available_slots > 0
-			: undefined;
+	const includedBasicAvailable =
+		channel !== null && channelConfig?.defaultSubscriptionSource !== "included"
+			? false
+			: blockingIncludedBasicError
+				? undefined
+				: includedBasic.data
+					? includedBasic.data.available_slots > 0
+					: undefined;
 	const createSubscription = useSensitiveCreateSubscription();
 	const runAction = useActionLock();
 	const walletCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
@@ -483,12 +489,22 @@ export function DeployWizard() {
 	);
 	const subscriptionSource = resolveSubscriptionSource({
 		selected: selectedSubscriptionSource,
-		includedAvailable: includedBasicAvailable,
+		includedAvailable:
+			channelConfig?.defaultSubscriptionSource === "included"
+				? includedBasicAvailable
+				: channel
+					? false
+					: includedBasicAvailable,
 		reusableSubscriptions: reusableSubscriptionInventory,
 	});
 	const defaultSubscriptionSource = resolveSubscriptionSource({
 		selected: null,
-		includedAvailable: includedBasicAvailable,
+		includedAvailable:
+			channelConfig?.defaultSubscriptionSource === "included"
+				? includedBasicAvailable
+				: channel
+					? false
+					: includedBasicAvailable,
 		reusableSubscriptions: reusableSubscriptionInventory,
 	});
 	const perfOfferSelection = useMemo(
@@ -783,7 +799,10 @@ export function DeployWizard() {
 				},
 				aiFields,
 			}),
-			...(channel && preinstallBundle ? { plugin_bundle: "sui" as const } : {}),
+			...(channel ? { acquisition_channel: channel } : {}),
+			...(channelConfig?.pluginBundle && preinstallBundle
+				? { plugin_bundle: channelConfig.pluginBundle }
+				: {}),
 		};
 	}
 
@@ -1286,7 +1305,10 @@ export function DeployWizard() {
 						<SubscriptionSourcePicker
 							value={subscriptionSource}
 							onChange={setSubscriptionSource}
-							showIncluded={includedBasicAvailable === true}
+							showIncluded={
+								channelConfig?.defaultSubscriptionSource === "included" &&
+								includedBasicAvailable === true
+							}
 							reusableSubscriptions={reusableSubscriptionInventory ?? []}
 							isLoading={reusableSubscriptions.isFetching || includedBasic.isFetching}
 							error={blockingReusableSubscriptionsError}
