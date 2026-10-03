@@ -1,10 +1,23 @@
-export const accountOAuthReturnUrl = "clawdi://account-oauth";
+import { publicSessionId } from "@clawdi/shared/api";
 
-export function accountOAuthRedirect(attempt: string): string {
+export const accountOAuthReturnUrl = "clawdi://account-oauth";
+type OAuthFlow = "account" | "sign-in" | "sign-up";
+export const oauthReturnUrl = (flow: OAuthFlow) => `clawdi://${flow}-oauth`;
+
+export function accountOAuthRedirect(
+	attempt: string,
+	flow: OAuthFlow = "account",
+	publicShareId?: string | null,
+): string {
 	if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(attempt))
 		throw new Error("Invalid OAuth attempt");
-	const url = new URL(accountOAuthReturnUrl);
+	const url = new URL(oauthReturnUrl(flow));
 	url.searchParams.set("clawdi_attempt", attempt);
+	if (publicShareId) {
+		const share = publicSessionId(publicShareId);
+		if (!share) throw new Error("Invalid public Session return");
+		url.searchParams.set("publicShareId", share);
+	}
 	return url.href;
 }
 
@@ -21,6 +34,8 @@ export function accountOAuthNonce(callback: string, expected: string): string {
 		url.password ||
 		url.hash ||
 		url.searchParams.has("error") ||
+		url.searchParams.getAll("publicShareId").length > 1 ||
+		url.searchParams.get("publicShareId") !== target.searchParams.get("publicShareId") ||
 		url.searchParams.getAll("clawdi_attempt").length !== 1 ||
 		url.searchParams.get("clawdi_attempt") !== target.searchParams.get("clawdi_attempt") ||
 		url.searchParams.getAll("rotating_token_nonce").length !== 1
@@ -39,6 +54,18 @@ export function accountOAuthAuthorizationUrl(value: URL | null | undefined): str
 
 /** Keep callback credentials out of Router parameters, including cold starts. */
 export function accountOAuthNavigation(path: string): string {
-	if (/^(?:clawdi:\/\/\/?|\/?)account-oauth(?:[/?#]|$)/i.test(path)) return "/connected-accounts";
+	const match = /^(?:clawdi:\/\/\/?|\/?)(account|sign-in|sign-up)-oauth(?:[/?#]|$)/i.exec(path);
+	if (match) {
+		if (match[1]?.toLowerCase() === "account") return "/connected-accounts";
+		const destination =
+			match[1]?.toLowerCase() === "sign-up" ? "/(auth)/sign-up" : "/(auth)/sign-in";
+		try {
+			const url = new URL(path, "clawdi:///");
+			const share = publicSessionId(url.searchParams.get("publicShareId") ?? "");
+			return share ? `${destination}?publicShareId=${encodeURIComponent(share)}` : destination;
+		} catch {
+			return destination;
+		}
+	}
 	return path;
 }

@@ -3,13 +3,24 @@
 
 import { publicSessionId } from "@clawdi/shared/api";
 import { useSignIn, useSignUp } from "@clerk/expo/legacy";
-import type { SignInResource } from "@clerk/expo/types";
-import { Link, useLocalSearchParams, useRouter } from "expo-router";
-import { useState } from "react";
+import type { OAuthProvider, SignInResource } from "@clerk/expo/types";
+import { randomUUID } from "expo-crypto";
+import { Link, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { openAuthSessionAsync } from "expo-web-browser";
+import { useCallback, useRef, useState } from "react";
+import { useMobileRuntimeConfig } from "../config/runtime";
 import { useI18n } from "../i18n";
+import { useAccountScope } from "../platform/account-lifecycle";
+import { useForegroundLease } from "../platform/use-foreground-lease";
 import { LoadingScreen } from "../ui/feedback";
 import { NativeButton } from "../ui/native-controls";
 import { AppScrollView, AppText, AppTextInput, AppView } from "../ui/primitives";
+import {
+	accountOAuthAuthorizationUrl,
+	accountOAuthNonce,
+	accountOAuthRedirect,
+	oauthReturnUrl,
+} from "./account-oauth";
 import { type SupportedSecondFactor, selectSecondFactor } from "./sign-in-factor";
 import { useAuthAction } from "./use-auth-action";
 
@@ -98,6 +109,19 @@ type AuthStep =
 function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 	const t = useI18n();
 	const router = useRouter();
+	const scope = useAccountScope();
+	const capture = useForegroundLease();
+	const config = useMobileRuntimeConfig();
+	const providers = config.ok ? (config.value.clerkOauthProviders ?? []) : [];
+	const pageEpoch = useRef(0);
+	useFocusEffect(
+		useCallback(
+			() => () => {
+				pageEpoch.current++;
+			},
+			[],
+		),
+	);
 	const params = useLocalSearchParams<{ publicShareId?: string }>();
 	const returnShare =
 		typeof params.publicShareId === "string" ? publicSessionId(params.publicShareId) : null;
@@ -195,7 +219,7 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 				setNotice(t("auth.unavailable"));
 				return;
 			}
-			const completedAttempt = signingUp ? signUp : signIn;
+			const completedAttempt = signingUp || step === "sign-up-code" ? signUp : signIn;
 			if (
 				verifying &&
 				completedAttempt?.status === "complete" &&
@@ -244,6 +268,49 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 								: await signIn.create({ identifier: email.trim(), password });
 				await advanceSignIn(attempt, isCurrent);
 			} else setNotice(t("auth.unavailable"));
+		});
+
+	const startSocial = (provider: OAuthProvider) =>
+		run(async (active) => {
+			const epoch = pageEpoch.current;
+			const signal = scope.signal;
+			const current = () =>
+				active() &&
+				!signal.aborted &&
+				scope.isCurrent() &&
+				scope.identity === null &&
+				pageEpoch.current === epoch;
+			const visible = capture();
+			if (!current() || !visible() || !signIn || !signUp || !providers.includes(provider)) return;
+			setNotice(null);
+			setPassword("");
+			setCode("");
+			setFactor(null);
+			const redirectUrl = accountOAuthRedirect(randomUUID(), mode, returnShare);
+			const attempt = await signIn.create({ strategy: `oauth_${provider}`, redirectUrl });
+			if (!current() || !visible()) return;
+			const attemptId = attempt.id;
+			if (!attemptId) throw new Error("Missing sign-in attempt");
+			const url = accountOAuthAuthorizationUrl(
+				attempt.firstFactorVerification.externalVerificationRedirectURL,
+			);
+			const result = await openAuthSessionAsync(url, oauthReturnUrl(mode));
+			if (!current() || result.type !== "success") return;
+			if (signIn.id !== attemptId) throw new Error("Sign-in attempt changed");
+			const rotatingTokenNonce = accountOAuthNonce(result.url, redirectUrl);
+			const completed = await signIn.reload({ rotatingTokenNonce });
+			if (!current()) return;
+			if (completed.id !== attemptId) throw new Error("Sign-in attempt changed");
+			if (completed.firstFactorVerification.status === "transferable") {
+				const signup = await signUp.create({ transfer: true });
+				if (!current()) return;
+				if (signup.status === "complete" && signup.createdSessionId)
+					await finish(signup.createdSessionId, current);
+				else if (signup.unverifiedFields.includes("email_address")) {
+					await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
+					if (current()) setStep("sign-up-code");
+				} else setNotice(t("auth.unsupportedVerification"));
+			} else await advanceSignIn(completed, current);
 		});
 
 	const startEmailCode = () =>
@@ -407,6 +474,16 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 						onPress={() => router.replace("/vault-supply")}
 					/>
 				) : null}
+				{step === "credentials"
+					? providers.map((provider) => (
+							<NativeButton
+								key={provider}
+								label={`${t("auth.continueWith")} · ${provider}`}
+								disabled={busy || !signInHook.isLoaded || !signUpHook.isLoaded}
+								onPress={() => void startSocial(provider)}
+							/>
+						))
+					: null}
 				{verifying && factor?.strategy !== "totp" && factor?.strategy !== "backup_code" ? (
 					<NativeButton
 						label={t("auth.resendCode")}

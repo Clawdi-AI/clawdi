@@ -70,7 +70,7 @@ submitting a password. It creates an identifier-only SignIn attempt, prepares on
 the server-advertised email factor and reuses the existing code/MFA/finalization
 flow. If the account service disallows email codes, the app shows the existing
 unsupported-factor notice instead of claiming a code was sent. Real delivery and
-passwordless sign-in remain acceptance gates; social sign-in is still pending.
+passwordless sign-in remain acceptance gates.
 
 `EXPO_PUBLIC_CLERK_OAUTH_PROVIDERS` optionally supplies a comma-separated list
 such as `google,github` for native account linking. Only the installed SDK's
@@ -78,6 +78,16 @@ provider names or bounded `custom_<slug>` names are accepted; duplicate choices
 are removed. No list means no new-link buttons. This public build-time list does
 not enable providers in Clerk: configure those and the native redirect separately.
 Malformed explicit lists fail configuration validation. Never include credentials.
+The same list supplies social sign-in/sign-up buttons. Public SignIn OAuth creation,
+nonce reload and transferable SignUp creation follow the installed SDK flow; MFA,
+email verification and final session activation reuse the existing forms. Required
+signup fields beyond the supported form still show an unsupported-step notice.
+Login/register use separate `clawdi://sign-in-oauth` and `clawdi://sign-up-oauth`
+callbacks. Shared callback validation binds the flow, attempt and optional public
+Session return; native-intent routing preserves only a validated public share ID.
+Signed-out scope/page replacement retires a pending browser continuation.
+SignIn resource identity is also checked before and after nonce reload. Real
+social login, transfer, cancellation, MFA and browser/Router behavior remain gates.
 
 `EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL` optionally enables the v2 compute control
 plane. It is separate from the Cloud identity/Session API and does not enable

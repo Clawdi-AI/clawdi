@@ -47,3 +47,29 @@ test("native callback navigation drops secrets without rewriting other deep link
 	);
 	expect(accountOAuthNavigation("clawdi://s/share-id")).toBe("clawdi://s/share-id");
 });
+
+test("login callbacks cannot substitute account linking or change a public Session return", () => {
+	const attempt = "a1234567-1234-1234-1234-123456789abc";
+	const login = accountOAuthRedirect(attempt, "sign-in", attempt);
+	const signup = accountOAuthRedirect(attempt, "sign-up", attempt);
+	expect(accountOAuthNavigation(`${login}&rotating_token_nonce=secret`)).toBe(
+		`/(auth)/sign-in?publicShareId=${attempt}`,
+	);
+	expect(accountOAuthNavigation(`${signup}&rotating_token_nonce=secret`)).toBe(
+		`/(auth)/sign-up?publicShareId=${attempt}`,
+	);
+	expect(accountOAuthNonce(`${login}&rotating_token_nonce=nonce`, login)).toBe("nonce");
+	expect(() => accountOAuthNonce(`${redirect}&rotating_token_nonce=nonce`, login)).toThrow();
+	expect(() => accountOAuthNonce(`${signup}&rotating_token_nonce=nonce`, login)).toThrow();
+	expect(() =>
+		accountOAuthNonce(
+			`${login.replace(`publicShareId=${attempt}`, "publicShareId=b1234567-1234-1234-1234-123456789abc")}&rotating_token_nonce=nonce`,
+			login,
+		),
+	).toThrow();
+	expect(
+		accountOAuthNavigation(
+			"clawdi://sign-in-oauth?publicShareId=https://evil.test&rotating_token_nonce=secret",
+		),
+	).toBe("/(auth)/sign-in");
+});

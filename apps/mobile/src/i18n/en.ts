@@ -370,6 +370,7 @@ export const en = {
 		useBackupCode: "Use a backup code",
 		forgotPassword: "Forgot password?",
 		signInWithEmailCode: "Email me a sign-in code",
+		continueWith: "Continue with",
 		recoveryTitle: "Reset your password",
 		recoverySubtitle: "Receive a code at your account email address.",
 		sendRecoveryCode: "Send recovery code",
