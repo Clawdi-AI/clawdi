@@ -621,6 +621,15 @@ codes use the existing ephemeral display. Disabling a factor does not delete its
 phone contact. TOTP remains preferred over SMS; server policy controls required
 factors and SMS availability. Real SMS factor enrollment and sign-in remain unverified.
 
+`/connected-accounts` lists the current Clerk external accounts and supports
+confirmed unlinking via the published `ExternalAccountResource.destroy`. It uses
+the shared native reverification and account/foreground guards, reloads before
+writing, and only reports success after a reload confirms absence. Unlinking does
+not delete the provider account; Clerk enforces remaining sign-in methods. Adding
+or reauthorizing a connection is explicitly unavailable pending native OAuth
+callback/nonce ownership integration, not substituted with the login-oriented
+`useSSO` flow. Real unlink and device behavior remain unverified.
+
 Public Session routes (`/s/[shareId]`, `/open-share`) support anonymous snapshots,
 legacy live links with optional account authentication, explicit pagination and
 native Markdown/JSON sharing. Web's initial metadata/message reads reuse the same
@@ -671,7 +680,7 @@ until each surface has implementation, focused verification and device evidence:
 
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
-| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and shared email/phone contact management, shared native password/code reverification, active-device review/revocation, password management, authenticator/SMS factor management and backup codes | Passkey/linked-account/security management, passkey/enterprise reverification and real Clerk/device acceptance |
+| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and shared email/phone contact management, shared native password/code reverification, active-device review/revocation, password management, authenticator/SMS factor management and backup codes, linked-account inventory/unlink | Passkey management, linked-account creation/reauthorization, remaining security management, passkey/enterprise reverification and real Clerk/device acceptance |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |

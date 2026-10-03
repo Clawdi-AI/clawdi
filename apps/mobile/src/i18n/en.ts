@@ -27,6 +27,21 @@ export const en = {
 		reconnecting: "Reconnecting…",
 		disconnected: "Disconnected",
 	},
+	connections: {
+		title: "Connected accounts",
+		description:
+			"Review the third-party accounts linked to your sign-in. Removing a connection does not delete the account at that provider.",
+		empty: "No third-party accounts are connected.",
+		verified: "Verified connection",
+		unverified: "Connection is not verified",
+		remove: "Disconnect account",
+		removeWarning:
+			"Remove this sign-in connection? Make sure you have another way to sign in. Provider-backed access may stop working. Your account service may require fresh verification or prevent removal of your last sign-in method.",
+		linkingUnavailable: "Adding or reconnecting a provider is not yet available in this app.",
+		failed:
+			"Could not confirm this change. Refresh before retrying. Account security requirements may prevent removing this connection.",
+		saved: "Connection removed.",
+	},
 	mfa: {
 		title: "Two-factor authentication",
 		smsTitle: "SMS verification",
