@@ -106,6 +106,7 @@ import {
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
 import {
+	billingErrorDetail,
 	billingErrorNormalizer,
 	deploymentRequestTerminalOutcome,
 	deploySubmissionErrorPresentation,
@@ -644,8 +645,6 @@ export function DeployWizard() {
 	const submitBlockingReason = (() => {
 		if (submitting) return null;
 		if (personaError) return personaError;
-		if (trialOffer.isPending) return "Checking trial availability.";
-		if (trialOffer.error) return "Retry the trial availability check above.";
 		if (!subscriptionSource) return "Choose a subscription source.";
 		if (subscriptionSource.mode === "included") {
 			if (includedBasicAvailable === undefined) {
@@ -906,9 +905,6 @@ export function DeployWizard() {
 					fundingSource: paymentMethod === "wallet" ? "wallet" : "stripe",
 				};
 				const subscriptionSelection = { mode: "new" } as const;
-				const cardCheckoutUiMode = cardlessTrial
-					? HOSTED_CHECKOUT_UI_MODE
-					: checkoutUiModeForPublishableKey(env.VITE_STRIPE_PUBLISHABLE_KEY);
 				const target = { kind: "new_deployment", deployConfig } as const;
 				if (paymentMethod === "wallet") {
 					const fingerprint = idempotencyFingerprint({
@@ -950,38 +946,66 @@ export function DeployWizard() {
 					return;
 				}
 				const checkoutFingerprint = idempotencyFingerprint({
-					cardlessTrial,
 					selection,
 					subscriptionSelection,
 					target,
 				});
-				checkoutAttemptRef.current = idempotencyAttemptFor(
-					checkoutAttemptRef.current,
-					"subscription-checkout",
-					checkoutFingerprint,
-					newIdempotencyKey,
-				);
-				const trialOfferToken = cardlessTrial ? await getTrialOfferToken() : null;
-				if (cardlessTrial && !trialOfferToken)
-					throw new Error("Your trial offer is unavailable. Refresh this page before continuing.");
-				const outcome = await createSubscription
-					.execute({
+				let trialOfferToken: string | null = null;
+				if (cardlessTrial) {
+					try {
+						trialOfferToken = await getTrialOfferToken();
+					} catch {
+						// The optional offer credential must never block a normal checkout.
+						trialOfferToken = null;
+					}
+				}
+				const checkoutCardlessTrial = cardlessTrial && trialOfferToken !== null;
+				const cardCheckoutUiMode = checkoutCardlessTrial
+					? HOSTED_CHECKOUT_UI_MODE
+					: checkoutUiModeForPublishableKey(env.VITE_STRIPE_PUBLISHABLE_KEY);
+				const executeCheckout = (attempt: IdempotencyAttempt) =>
+					createSubscription.execute({
 						selection,
 						subscriptionSelection,
-						target: trialOfferToken
+						target: checkoutCardlessTrial
 							? { ...target, deployConfig: { ...deployConfig, trial_offer_token: trialOfferToken } }
 							: target,
 						uiMode: cardCheckoutUiMode,
-						idempotencyKey: checkoutAttemptRef.current.key,
+						idempotencyKey: attempt.key,
 						quote: lastSuccessfulSubscriptionQuote,
-					})
-					.catch((error: unknown) => {
+					});
+				const executeCheckoutWithCleanup = (attempt: IdempotencyAttempt) =>
+					executeCheckout(attempt).catch((error: unknown) => {
 						if (isIdempotencyKeyReusedError(error)) {
 							forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
 							checkoutAttemptRef.current = null;
 						}
 						throw error;
 					});
+				let checkoutAttempt = idempotencyAttemptFor(
+					checkoutAttemptRef.current,
+					"subscription-checkout",
+					checkoutFingerprint,
+					newIdempotencyKey,
+				);
+				checkoutAttemptRef.current = checkoutAttempt;
+				let outcome: Awaited<ReturnType<typeof executeCheckout>>;
+				try {
+					outcome = await executeCheckoutWithCleanup(checkoutAttempt);
+				} catch (error: unknown) {
+					if (billingErrorDetail(error)?.code !== "checkout_attempt_expired") {
+						throw error;
+					}
+					forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
+					checkoutAttempt = idempotencyAttemptFor(
+						null,
+						"subscription-checkout",
+						checkoutFingerprint,
+						newIdempotencyKey,
+					);
+					checkoutAttemptRef.current = checkoutAttempt;
+					outcome = await executeCheckoutWithCleanup(checkoutAttempt);
+				}
 				if (outcome.flowType === "subscription_activation") {
 					forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
 					checkoutAttemptRef.current = null;
@@ -993,7 +1017,7 @@ export function DeployWizard() {
 				if (cardCheckoutUiMode === CHECKOUT_ELEMENTS_UI_MODE && clientSecret) {
 					setCheckoutSession({
 						clientSecret,
-						requestKey: checkoutAttemptRef.current.key,
+						requestKey: checkoutAttempt.key,
 						summary: computeCheckoutSummary({
 							offer: paidSelection.offer,
 							plan: paidSelection.plan,
