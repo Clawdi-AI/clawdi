@@ -1,7 +1,7 @@
 "use client";
 
 import { validateHostedDeployPersona } from "@clawdi/shared/api";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import {
 	Cpu,
@@ -54,6 +54,7 @@ import {
 	checkoutRedirectUrl,
 	checkoutSessionClientSecret,
 	checkoutUiModeForPublishableKey,
+	HOSTED_CHECKOUT_UI_MODE,
 } from "@/hosted/billing/components/stripe-checkout.logic";
 import {
 	StripeCheckoutDialog,
@@ -151,6 +152,7 @@ import {
 	selectExplicitOfferForTerm,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
+import { getTrialOffer, getTrialOfferToken } from "@/hosted/billing/trial-offer.functions";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { walletDebitShortfallUsd } from "@/hosted/billing/wallet/wallet-debit-summary";
@@ -297,7 +299,12 @@ function ComputeResources({
 
 export function DeployWizard() {
 	const search = useRouterState({ select: (state) => state.location.searchStr });
-	const channel = resolveDeployChannel(search);
+	const trialOffer = useQuery({
+		queryKey: ["billing", "trial-offer"],
+		queryFn: () => getTrialOffer(),
+	});
+	const cardlessOfferAvailable = trialOffer.data?.available === true;
+	const channel = resolveDeployChannel(search) ?? trialOffer.data?.plugin_bundle;
 	const [preinstallBundle, setPreinstallBundle] = useState(true);
 	const router = useRouter();
 	const queryClient = useQueryClient();
@@ -446,7 +453,7 @@ export function DeployWizard() {
 	const agentNameEditedRef = useRef(false);
 	const [runtime, setRuntime] = useState(DEFAULT_DEPLOY_RUNTIME);
 	const [agentName, setAgentName] = useState(() => runtimeDisplayName(DEFAULT_DEPLOY_RUNTIME));
-	const [compute, setCompute] = useState<Compute>("basic");
+	const [selectedCompute, setCompute] = useState<Compute | null>(null);
 	const [language, setLanguage] = useState("");
 	const [timezone, setTimezone] = useState("");
 	const [personaDefaults, setPersonaDefaults] = useState({ language: "", timezone: "" });
@@ -482,12 +489,12 @@ export function DeployWizard() {
 		[basicPlan, term],
 	);
 	const subscriptionSource = resolveSubscriptionSource({
-		selected: selectedSubscriptionSource,
+		selected: selectedSubscriptionSource ?? (cardlessOfferAvailable ? { mode: "new" } : null),
 		includedAvailable: includedBasicAvailable,
 		reusableSubscriptions: reusableSubscriptionInventory,
 	});
 	const defaultSubscriptionSource = resolveSubscriptionSource({
-		selected: null,
+		selected: cardlessOfferAvailable ? { mode: "new" } : null,
 		includedAvailable: includedBasicAvailable,
 		reusableSubscriptions: reusableSubscriptionInventory,
 	});
@@ -497,6 +504,13 @@ export function DeployWizard() {
 	);
 	const perfOffer = perfOfferSelection?.offer ?? null;
 	const basicOffer = basicOfferSelection?.offer ?? null;
+	const defaultCompute: Compute =
+		cardlessOfferAvailable &&
+		!basicOffer?.card_trial_period_days &&
+		perfOffer?.card_trial_period_days
+			? "performance"
+			: "basic";
+	const compute = selectedCompute ?? defaultCompute;
 	const basicBillingTermMonths = basicOfferSelection?.billingTermMonths ?? term;
 	const perfBillingTermMonths = perfOfferSelection?.billingTermMonths ?? term;
 	const basicOffers = basicPlan ? explicitPlanOffers(basicPlan) : [];
@@ -535,6 +549,7 @@ export function DeployWizard() {
 				paidSelection.offer.card_trial_period_days,
 			)
 		: null;
+	const cardlessTrial = cardlessOfferAvailable && selectedCardTrial !== null;
 	const walletBillingTerm = supportedBillingTerm(paidSelection?.billingTermMonths ?? 1);
 	const walletDisabledReason = walletBillingTerm
 		? null
@@ -629,6 +644,8 @@ export function DeployWizard() {
 	const submitBlockingReason = (() => {
 		if (submitting) return null;
 		if (personaError) return personaError;
+		if (trialOffer.isPending) return "Checking trial availability.";
+		if (trialOffer.error) return "Retry the trial availability check above.";
 		if (!subscriptionSource) return "Choose a subscription source.";
 		if (subscriptionSource.mode === "included") {
 			if (includedBasicAvailable === undefined) {
@@ -889,7 +906,9 @@ export function DeployWizard() {
 					fundingSource: paymentMethod === "wallet" ? "wallet" : "stripe",
 				};
 				const subscriptionSelection = { mode: "new" } as const;
-				const cardCheckoutUiMode = checkoutUiModeForPublishableKey(env.VITE_STRIPE_PUBLISHABLE_KEY);
+				const cardCheckoutUiMode = cardlessTrial
+					? HOSTED_CHECKOUT_UI_MODE
+					: checkoutUiModeForPublishableKey(env.VITE_STRIPE_PUBLISHABLE_KEY);
 				const target = { kind: "new_deployment", deployConfig } as const;
 				if (paymentMethod === "wallet") {
 					const fingerprint = idempotencyFingerprint({
@@ -931,6 +950,7 @@ export function DeployWizard() {
 					return;
 				}
 				const checkoutFingerprint = idempotencyFingerprint({
+					cardlessTrial,
 					selection,
 					subscriptionSelection,
 					target,
@@ -941,11 +961,16 @@ export function DeployWizard() {
 					checkoutFingerprint,
 					newIdempotencyKey,
 				);
+				const trialOfferToken = cardlessTrial ? await getTrialOfferToken() : null;
+				if (cardlessTrial && !trialOfferToken)
+					throw new Error("Your trial offer is unavailable. Refresh this page before continuing.");
 				const outcome = await createSubscription
 					.execute({
 						selection,
 						subscriptionSelection,
-						target,
+						target: trialOfferToken
+							? { ...target, deployConfig: { ...deployConfig, trial_offer_token: trialOfferToken } }
+							: target,
 						uiMode: cardCheckoutUiMode,
 						idempotencyKey: checkoutAttemptRef.current.key,
 						quote: lastSuccessfulSubscriptionQuote,
@@ -1063,7 +1088,9 @@ export function DeployWizard() {
 								state: walletQuoteState,
 								walletDebit,
 							})
-						: cardDeployAmountPresentation(paidSelection.offer)
+						: cardlessTrial && selectedCardTrial
+							? { amount: selectedCardTrial.label, caption: "No card required", detail: null }
+							: cardDeployAmountPresentation(paidSelection.offer)
 					: null;
 	const walletTopUpAction =
 		paidSelection !== null && paymentMethod === "wallet" && walletInsufficient;
@@ -1109,7 +1136,7 @@ export function DeployWizard() {
 	const deployBaseline: DeployWizardDirtyState = {
 		runtime: DEFAULT_DEPLOY_RUNTIME,
 		agentName: runtimeDisplayName(DEFAULT_DEPLOY_RUNTIME),
-		compute: "basic",
+		compute: defaultCompute,
 		language: personaDefaults.language,
 		timezone: personaDefaults.timezone,
 		term: defaultBillingTerm,
@@ -1283,6 +1310,14 @@ export function DeployWizard() {
 
 				<SettingsSection title="Compute">
 					<div className="flex min-w-0 flex-col gap-4">
+						{trialOffer.error ? (
+							<ApiErrorPanel
+								normalizer={billingErrorNormalizer}
+								error={trialOffer.error}
+								onRetry={() => void trialOffer.refetch()}
+								title="Couldn’t check trial availability"
+							/>
+						) : null}
 						<SubscriptionSourcePicker
 							value={subscriptionSource}
 							onChange={setSubscriptionSource}
@@ -1415,8 +1450,12 @@ export function DeployWizard() {
 														<CreditCard />
 													</IconChip>
 												}
-												title="Card subscription"
-												description="Recurring subscription via Stripe. Manage or cancel anytime."
+												title={cardlessTrial ? "Free trial" : "Card subscription"}
+												description={
+													cardlessTrial
+														? "No card required. Add a payment method to continue after your trial."
+														: "Recurring subscription via Stripe. Manage or cancel anytime."
+												}
 												badge={
 													selectedCardTrial ? (
 														<Badge variant="secondary">{selectedCardTrial.label}</Badge>

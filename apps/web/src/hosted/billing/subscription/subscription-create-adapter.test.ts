@@ -212,3 +212,20 @@ describe("subscription creation adapter", () => {
 		).toThrow("Activation did not return an agent request.");
 	});
 });
+
+test("trial credentials survive the standard checkout request projection", () => {
+	const request = subscriptionCreateRequest(
+		createRequest({
+			selection: { planSlug: "compute_performance", billingTermMonths: 1, fundingSource: "stripe" },
+			target: {
+				kind: "new_deployment",
+				deployConfig: { ...deployConfig, trial_offer_token: "opaque_credential" },
+			},
+			uiMode: "hosted",
+			quote: null,
+		}),
+	);
+	expect(request.body.deploy_config?.trial_offer_token).toBe("opaque_credential");
+	expect(request.body.deploy_config?.deploy_request_id).toBe(request.idempotencyKey);
+	expect(request.body.ui_mode).toBe("hosted");
+});

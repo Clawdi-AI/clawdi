@@ -122,3 +122,17 @@ for (const path of ["/", "/agents"]) {
 		assert.equal(await response.text(), "");
 	});
 }
+
+test("production trial offer handoff is public, opaque, and strips the credential", async () => {
+	const response = await server.fetch(
+		request("/trial-offer?token=opaque_credential&target=deploy"),
+	);
+	assert.equal(response.status, 303);
+	assert.equal(response.headers.get("location"), "/deploy");
+	assert.match(response.headers.get("set-cookie") ?? "", /clawdi-trial-offer=opaque_credential/);
+	assert.match(response.headers.get("set-cookie") ?? "", /HttpOnly/);
+	assert.equal(await response.text(), "");
+	const invalid = await server.fetch(request("/trial-offer?token=opaque&target=//evil.example"));
+	assert.equal(invalid.status, 400);
+	assert.equal(invalid.headers.get("location"), null);
+});
