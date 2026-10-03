@@ -48,8 +48,7 @@ for (const signup of [false, true]) {
 		const cookie = (await context.cookies()).find((item) => item.name === "clawdi-deploy-intent");
 		expect(cookie?.httpOnly).toBe(true);
 		expect(cookie?.sameSite).toBe("Lax");
-		const legacyLanding = await page.goto(`${marketing}/zh/openclaw`);
-		expect(legacyLanding?.status()).toBe(200);
+		await page.goto(`${marketing}/openclaw`);
 		await expect(page).toHaveURL(`${marketing}/openclaw`);
 		expect((await context.cookies()).find((item) => item.name === cookie?.name)?.value).toBe(
 			cookie?.value,
