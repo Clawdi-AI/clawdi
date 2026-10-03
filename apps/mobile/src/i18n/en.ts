@@ -609,6 +609,14 @@ export const en = {
 		unknown: "Unknown skill",
 	},
 	memories: {
+		detail: "Memory details",
+		recallScope:
+			"This memory belongs to your account. Agents can recall it across runs; it is not shared through Projects. Deleting it affects all Agents in this account.",
+		savedAt: "Saved at",
+		notRecorded: "Not recorded",
+		recalled: "Recall count",
+		learnedOn: "Learned on",
+		sourceSession: "View source Session",
 		search: "Search memories",
 		searchLimit: "Showing the top matching memories. Clear the search to browse all memories.",
 		create: "New memory",

@@ -1,5 +1,6 @@
 import type { components } from "@clawdi/shared/api";
 import { useInfiniteQuery } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
 import { useRef, useState } from "react";
 import { Alert, type FlatList } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
@@ -36,17 +37,20 @@ export function useCloudMemories(search = "") {
 	});
 }
 
-export function MemoryRow({ memory }: { memory: Memory }) {
+export function MemoryRow({ memory, onOpen }: { memory: Memory; onOpen?: () => void }) {
 	const t = useI18n();
 	return (
 		<AppView className="gap-2 rounded-2xl bg-surface p-4">
-			<AppText className="text-base leading-6 text-foreground">{memory.content}</AppText>
+			<AppText selectable className="text-base leading-6 text-foreground">
+				{memory.content}
+			</AppText>
 			<AppText className="text-xs text-muted">
 				{memory.category || t("memories.unknown")} · {memory.source}
 			</AppText>
 			{memory.tags?.length ? (
 				<AppText className="text-xs text-muted">{memory.tags.join(" · ")}</AppText>
 			) : null}
+			{onOpen ? <NativeButton label={t("memories.detail")} onPress={onOpen} /> : null}
 		</AppView>
 	);
 }
@@ -58,6 +62,7 @@ export function MemoriesScreen() {
 
 function MemoriesView() {
 	const t = useI18n();
+	const router = useRouter();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { cloud } = useMobileApi();
@@ -167,7 +172,13 @@ function MemoriesView() {
 			empty={t(memories.isPending ? "loading.app" : "memories.empty")}
 			renderItem={(memory) => (
 				<AppView className="gap-2">
-					<MemoryRow memory={memory} />
+					<MemoryRow
+						memory={memory}
+						onOpen={() => {
+							if (scope.isCurrent() && !scope.signal.aborted)
+								router.push({ pathname: "/memories/[memoryId]", params: { memoryId: memory.id } });
+						}}
+					/>
 					<NativeButton
 						label={t("memories.edit")}
 						disabled={action.busy}

@@ -816,7 +816,7 @@ until each surface has implementation, focused verification and device evidence:
 | Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/username/picture and shared email/phone contact management, shared native password/code reverification, active-device review/revocation, password management, authenticator/SMS factor management and backup codes, linked-account inventory/unlink and configured-provider browser linking/reauthorization, Passkey inventory/rename/removal, confirmed Hosted account-deletion request | Native Passkey creation/sign-in, end-to-end account termination, remaining security management, passkey/enterprise reverification and real Clerk/browser/device acceptance |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
-| Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |
+| Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search and details with recall metadata/source Session navigation | Remaining Skill detail parity and native file/share/managed-runtime acceptance |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport and configured HTTPS intake | Signed domain association and device acceptance |
 | v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal and Agent model binding; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity, Custom deletion and WhatsApp device onboarding/repair | Native/live provider and channel acceptance |
@@ -827,6 +827,20 @@ until each surface has implementation, focused verification and device evidence:
 The source reference is `apps/web/src/pages/dashboard`, its settings components,
 and `apps/web/src/hosted/v2`; exclude Hosted v1 product surfaces, not v2 features
 whose implementation happens to live under a legacy directory name.
+
+`/memories/[memoryId]` reuses the list's content/tag presentation and the existing
+generated Memory response. Shared `getMemory` uses the authenticated bounded
+transport, escapes the path identifier and rejects a mismatched response ID.
+Details show recall count, creation time and source machine, with navigation to
+the existing source Session route. Account-level recall scope is explicit: this
+is not Project sharing. Deletion requires native confirmation, fences late
+callbacks and invalidates only the captured account's detail/list queries.
+Both list and detail deletion require the generated `status: deleted` receipt;
+an empty or malformed acknowledgement is not success or an automatic retry.
+Unknown deletion outcomes are errors, not assumed success; 404 reads have a
+separate unavailable state. The existing HTTP regression covers owned reads,
+foreign-account 404, escaped identifiers and response-ID mismatch. Real-device
+deep links, long content, confirmation and source navigation remain acceptance gates.
 
 Channel admission rules, Discord credential checks and provider-specific pairing
 URL validation live in Shared and are re-exported by Web. Native mutations use

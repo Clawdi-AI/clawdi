@@ -64,6 +64,15 @@ describe("Cloud read client over HTTP", () => {
 	test("preserves query encoding, owner auth, transcript revisions and paging without retries", async () => {
 		const requests: ObservedRequest[] = [];
 		let revision = "events:revision-a";
+		const memory: components["schemas"]["MemoryResponse"] = {
+			id: "memory/a?owner=other",
+			content: "Owner context",
+			category: "fact",
+			source: "manual",
+			source_session_id: "session-a",
+			source_machine_name: "Laptop",
+			access_count: 2,
+		};
 		const server = Bun.serve({
 			hostname: "127.0.0.1",
 			port: 0,
@@ -78,6 +87,7 @@ describe("Cloud read client over HTTP", () => {
 					return Response.json({ detail: "Not found" }, { status: 404 });
 				}
 				if (url.pathname === "/v1/agents") return Response.json([agent]);
+				if (url.pathname.startsWith("/v1/memories/")) return Response.json(memory);
 				if (url.pathname.startsWith("/v1/agents/")) return Response.json(agent);
 				if (url.pathname === "/v1/sessions") {
 					return Response.json({
@@ -187,6 +197,16 @@ describe("Cloud read client over HTTP", () => {
 			expect(pageUrl.searchParams.get("anchor_revision")).toBe("events:revision-a");
 			expect(pageUrl.searchParams.get("search_query")).toBe(query);
 			expect(requests[7].authorization).toBe("Bearer owner-b");
+			await expect(client.getMemory(memory.id)).rejects.toMatchObject({ status: 404 });
+			token = "owner-a";
+			expect(await client.getMemory(memory.id)).toEqual(memory);
+			const memoryRequest = requests.at(-1);
+			if (!memoryRequest) throw new Error("Missing memory request");
+			expect(new URL(memoryRequest.url).pathname).toBe("/v1/memories/memory%2Fa%3Fowner%3Dother");
+			expect(new URL(memoryRequest.url).search).toBe("");
+			await expect(client.getMemory("different-memory")).rejects.toBeInstanceOf(
+				ApiClientResponseError,
+			);
 		} finally {
 			await server.stop(true);
 		}

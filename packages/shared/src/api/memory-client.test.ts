@@ -3,6 +3,7 @@ import { createCloudApiClient } from "./read-clients";
 
 test("memory mutations preserve authenticated bodies and encode resource identifiers", async () => {
 	const requests: { method: string; path: string; body: unknown }[] = [];
+	let deletionReceipt: unknown = { status: "deleted" };
 	const client = createCloudApiClient({
 		baseUrl: "https://api.example.test",
 		getToken: async () => "test-token",
@@ -13,7 +14,7 @@ test("memory mutations preserve authenticated bodies and encode resource identif
 				path: new URL(request.url).pathname,
 				body: request.method === "DELETE" ? null : await request.json(),
 			});
-			return Response.json({});
+			return Response.json(request.method === "DELETE" ? deletionReceipt : {});
 		},
 	});
 	await client.createMemory({ content: "Remember this", category: "fact", source: "manual" });
@@ -28,4 +29,11 @@ test("memory mutations preserve authenticated bodies and encode resource identif
 		{ method: "PATCH", path: "/v1/memories/memory%2Fa%3Fb", body: { content: "Updated content" } },
 		{ method: "DELETE", path: "/v1/memories/memory%2Fa%3Fb", body: null },
 	]);
+	deletionReceipt = {};
+	await expect(client.deleteMemory("memory/a?b")).rejects.toHaveProperty(
+		"name",
+		"ApiClientResponseError",
+	);
+	// A malformed acknowledgement is uncertain, not permission to repeat the deletion.
+	expect(requests).toHaveLength(4);
 });

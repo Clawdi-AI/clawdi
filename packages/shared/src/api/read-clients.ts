@@ -32,6 +32,16 @@ export function createCloudApiClient(options: ApiClientOptions) {
 			transport.read((init) => api.GET("/v1/skills", { ...init, params: { query } }), signal),
 		listMemories: (query?: MemoryListQuery, signal?: AbortSignal) =>
 			transport.read((init) => api.GET("/v1/memories", { ...init, params: { query } }), signal),
+		getMemory: async (memoryId: string, signal?: AbortSignal) => {
+			const id = readResourceId(memoryId);
+			const memory = await transport.read(
+				(init) =>
+					api.GET("/v1/memories/{memory_id}", { ...init, params: { path: { memory_id: id } } }),
+				signal,
+			);
+			if (!memory || memory.id !== id) throw new ApiClientResponseError();
+			return memory;
+		},
 		createMemory: (
 			body: paths["/v1/memories"]["post"]["requestBody"]["content"]["application/json"],
 			signal?: AbortSignal,
@@ -46,15 +56,18 @@ export function createCloudApiClient(options: ApiClientOptions) {
 					}),
 				signal,
 			),
-		deleteMemory: (memoryId: string, signal?: AbortSignal) =>
-			transport.read(
+		deleteMemory: async (memoryId: string, signal?: AbortSignal) => {
+			const result = await transport.read(
 				(init) =>
 					api.DELETE("/v1/memories/{memory_id}", {
 						...init,
 						params: { path: { memory_id: readResourceId(memoryId) } },
 					}),
 				signal,
-			),
+			);
+			if (result?.status !== "deleted") throw new ApiClientResponseError();
+			return result;
+		},
 		listProjects: (signal?: AbortSignal) =>
 			transport.read((init) => api.GET("/v1/projects", init), signal),
 		createProject: (
