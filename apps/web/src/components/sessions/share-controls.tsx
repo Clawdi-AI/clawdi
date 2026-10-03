@@ -1,6 +1,11 @@
 "use client";
 
-import type { components } from "@clawdi/shared/api";
+import {
+	buildSessionShareRequest,
+	type components,
+	type SessionShareTarget,
+	sessionShareMatchesTarget,
+} from "@clawdi/shared/api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, Link2, Share2, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -32,9 +37,7 @@ import { ApiError, unwrap, useApi } from "@/lib/api";
 import { sessionDetailQueryKey } from "@/lib/session-queries";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
-export type SessionShareTarget =
-	| { scope: "session" }
-	| { scope: "through" | "response"; position: number };
+export type { SessionShareTarget } from "@clawdi/shared/api";
 
 type SessionShareItem = components["schemas"]["SessionShareResponse"];
 type SessionPermission = components["schemas"]["SessionPermissionResponse"];
@@ -112,7 +115,7 @@ function SessionShareDialogContent({
 			unwrap(
 				await api.POST("/v1/sessions/{session_id}/shares", {
 					params: { path: { session_id: sessionId } },
-					body: target,
+					body: buildSessionShareRequest(target),
 				}),
 			),
 		onSuccess: (share) => {
@@ -139,10 +142,7 @@ function SessionShareDialogContent({
 				? "Anyone with the link can view the conversation through this message."
 				: "Anyone with the link can view this conversation. Future messages won’t be added.";
 	const shares = sharesQuery.data?.shares ?? [];
-	const matchingShares = shares.filter((share) => {
-		if (share.scope !== target.scope) return false;
-		return target.scope === "session" || share.end_position === target.position;
-	});
+	const matchingShares = shares.filter((share) => sessionShareMatchesTarget(share, target));
 	const latestShare =
 		matchingShares.find((share) => share.id === createdShareId) ?? matchingShares[0];
 	const previousShares = matchingShares.filter((share) => share.id !== latestShare?.id);

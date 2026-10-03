@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import type { ReactElement, Ref } from "react";
 import { FlatList } from "react-native";
 import { useI18n } from "../i18n";
 import { ErrorState } from "../ui/feedback";
@@ -21,6 +21,7 @@ export function InventoryList<Item extends { id: string }>({
 	more,
 	busy,
 	onMore,
+	listRef,
 }: {
 	items: Item[];
 	title: string;
@@ -35,11 +36,13 @@ export function InventoryList<Item extends { id: string }>({
 	more?: boolean;
 	busy?: boolean;
 	onMore?: () => void;
+	listRef?: Ref<FlatList<Item>>;
 }) {
 	const t = useI18n();
 	return (
 		<ReadScreen>
 			<FlatList
+				ref={listRef}
 				data={items}
 				keyExtractor={(item) => item.id}
 				renderItem={({ item }) => renderItem(item)}

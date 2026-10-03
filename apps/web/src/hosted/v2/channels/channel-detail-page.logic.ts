@@ -1,43 +1,4 @@
-export function telegramPairDeepLink({
-	deepLink,
-	qrPayload,
-	botUsername,
-	code,
-}: {
-	deepLink: string | null | undefined;
-	qrPayload: string | null | undefined;
-	botUsername: string | null | undefined;
-	code: string;
-}): string | null {
-	const username = botUsername?.trim().replace(/^@/, "");
-	if (!deepLink || qrPayload !== deepLink || (username && !/^[A-Za-z0-9_]{5,32}$/.test(username))) {
-		return null;
-	}
-	try {
-		const url = new URL(deepLink);
-		const query = [...url.searchParams.entries()];
-		const linkedUsername = url.pathname.slice(1);
-		if (
-			url.protocol !== "https:" ||
-			url.hostname !== "t.me" ||
-			url.port ||
-			url.username ||
-			url.password ||
-			url.hash ||
-			url.pathname !== `/${linkedUsername}` ||
-			!/^[A-Za-z0-9_]{5,32}$/.test(linkedUsername) ||
-			(username ? linkedUsername.toLowerCase() !== username.toLowerCase() : false) ||
-			query.length !== 1 ||
-			query[0][0] !== "start" ||
-			query[0][1] !== code
-		) {
-			return null;
-		}
-		return deepLink;
-	} catch {
-		return null;
-	}
-}
+export { telegramPairDeepLink } from "@clawdi/shared/api";
 
 export function pairCodeExpiryLabel(expiresAt: string, nowMs: number): string {
 	const expiresAtMs = Date.parse(expiresAt);

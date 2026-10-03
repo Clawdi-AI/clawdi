@@ -1,5 +1,9 @@
 "use client";
 
+import { buildSkillUpdateRequest, stripFrontmatter } from "@clawdi/shared/api";
+
+export { stripFrontmatter } from "@clawdi/shared/api";
+
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
@@ -69,15 +73,6 @@ import {
 	skillDetailQueryPrefix,
 	skillDetailViewState,
 } from "@/pages/dashboard/skills/skill-query-cache";
-
-// Strip the leading `---\n...\n---` YAML frontmatter so the markdown
-// renderer doesn't show "name:" / "description:" lines (already
-// rendered above in PageHeader) and so the closing
-// `---` doesn't render as a stray `<hr>` next to the Separator.
-export function stripFrontmatter(raw: string): string {
-	const m = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/);
-	return m ? (m[1] ?? "") : raw;
-}
 
 // nuqs used to require a Suspense boundary here; router-owned search does
 // not suspend, so the page renders directly.
@@ -316,12 +311,14 @@ export function SkillDetailContent({
 			return unwrap(
 				await api.PUT("/v1/projects/{project_id}/skills/{skill_key}/content", {
 					params: { path: { project_id: targetProjectId, skill_key: skillKey } },
-					body: {
-						name: draftName,
-						description: draftDescription,
-						instructions: draftInstructions.trim(),
-						content_hash: editingHash,
-					},
+					body: buildSkillUpdateRequest(
+						{
+							name: draftName,
+							description: draftDescription,
+							instructions: draftInstructions,
+						},
+						editingHash,
+					),
 				}),
 			);
 		},

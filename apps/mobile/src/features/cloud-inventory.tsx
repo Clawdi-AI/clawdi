@@ -1,4 +1,10 @@
-import { ApiClientError, type components, type SessionListQuery } from "@clawdi/shared/api";
+import {
+	ApiClientError,
+	type components,
+	normalizeSessionListQuery,
+	type SessionListQuery,
+	sessionDetailLink,
+} from "@clawdi/shared/api";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useI18n } from "../i18n";
@@ -10,20 +16,18 @@ import { nextSessionPage } from "./read-helpers";
 export type CloudAgent = components["schemas"]["AgentResponse"];
 export type CloudSession = components["schemas"]["SessionListItemResponse"];
 
-const sessionListQuery = {
-	page: 1,
-	page_size: 25,
-	sort: "last_activity_at",
-	order: "desc",
-} satisfies SessionListQuery;
-
-export function useCloudAgents() {
+export function useCloudAgents(projectId?: string) {
 	const { cloud } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	return useQuery({
-		queryKey: accountQueryKey(scope, "cloud-agents"),
-		queryFn: ({ signal }) => read((readSignal) => cloud.listAgents(undefined, readSignal), signal),
+		queryKey: accountQueryKey(scope, "cloud-agents", projectId ?? "all"),
+		queryFn: ({ signal }) =>
+			read(
+				(readSignal) =>
+					cloud.listAgents(projectId ? { project_id: projectId } : undefined, readSignal),
+				signal,
+			),
 		enabled: scope.isReady,
 		retry: false,
 	});
@@ -44,22 +48,16 @@ export function useCloudAgent(agentId: string | undefined) {
 	});
 }
 
-export function useCloudSessions(agentId?: string, enabled = true) {
+export function useCloudSessions(agentId?: string, enabled = true, filters?: SessionListQuery) {
 	const { cloud } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
+	const query = normalizeSessionListQuery({ ...filters, environment_id: agentId, page: 1 });
 	return useInfiniteQuery({
-		queryKey: accountQueryKey(scope, "cloud-sessions", agentId ?? "all", sessionListQuery),
+		queryKey: accountQueryKey(scope, "cloud-sessions", query),
 		initialPageParam: 1,
 		queryFn: ({ signal, pageParam }) =>
-			read(
-				(readSignal) =>
-					cloud.listSessions(
-						{ ...sessionListQuery, page: pageParam, environment_id: agentId },
-						readSignal,
-					),
-				signal,
-			),
+			read((readSignal) => cloud.listSessions({ ...query, page: pageParam }, readSignal), signal),
 		getNextPageParam: nextSessionPage,
 		enabled: scope.isReady && enabled,
 		retry: false,
@@ -140,14 +138,34 @@ export function AgentRow({ agent }: { agent: CloudAgent }) {
 	);
 }
 
-export function SessionRow({ session }: { session: CloudSession }) {
+export function SessionRow({
+	session,
+	searchQuery,
+}: {
+	session: CloudSession;
+	searchQuery?: string;
+}) {
 	const router = useRouter();
 	const t = useI18n();
 	return (
 		<AppPressable
 			accessibilityRole="button"
 			className="gap-2 rounded-2xl bg-surface px-4 py-4"
-			onPress={() => router.push(`/sessions/${encodeURIComponent(session.id)}`)}
+			onPress={() => {
+				const { search } = sessionDetailLink(session, { searchQuery });
+				router.push({
+					pathname: "/sessions/[sessionId]",
+					params: {
+						sessionId: session.id,
+						...(search.matchKind ? { matchKind: search.matchKind } : {}),
+						...(search.matchPosition !== undefined
+							? { matchPosition: String(search.matchPosition) }
+							: {}),
+						...(search.matchRevision ? { matchRevision: search.matchRevision } : {}),
+						...(search.matchQuery ? { matchQuery: search.matchQuery } : {}),
+					},
+				});
+			}}
 		>
 			<AppView className="flex-row items-center justify-between gap-3">
 				<AppText numberOfLines={2} className="flex-1 text-base font-semibold text-foreground">
@@ -166,6 +184,11 @@ export function SessionRow({ session }: { session: CloudSession }) {
 			<AppText className="text-sm text-muted">
 				{session.status} · {formatDate(session.last_activity_at) ?? t("sessions.unknownActivity")}
 			</AppText>
+			{session.search_match ? (
+				<AppText numberOfLines={4} className="text-sm text-foreground">
+					{session.search_match.excerpt}
+				</AppText>
+			) : null}
 		</AppPressable>
 	);
 }

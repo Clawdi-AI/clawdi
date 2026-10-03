@@ -1,9 +1,15 @@
 import { Button, Host, Picker, Switch } from "@expo/ui";
 import type { ReactNode } from "react";
+import { useUniwind } from "uniwind";
 
 function NativeControlHost({ children }: { children: ReactNode }) {
+	const { theme } = useUniwind();
 	return (
-		<Host matchContents={{ vertical: true }} style={{ width: "100%" }}>
+		<Host
+			colorScheme={theme === "dark" ? "dark" : "light"}
+			matchContents={{ vertical: true }}
+			style={{ width: "100%" }}
+		>
 			{children}
 		</Host>
 	);

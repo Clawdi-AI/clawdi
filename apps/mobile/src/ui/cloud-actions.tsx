@@ -8,6 +8,7 @@ export function CloudActions() {
 	const t = useI18n();
 	return (
 		<AppView className="gap-3">
+			<NativeButton label={t("publicSession.open")} onPress={() => router.push("/open-share")} />
 			<NativeButton
 				label={t("navigation.createAgent")}
 				onPress={() => router.push("/agents/new")}
@@ -17,6 +18,12 @@ export function CloudActions() {
 				onPress={() => router.push("/deployments")}
 			/>
 			<NativeButton label={t("navigation.billing")} onPress={() => router.push("/billing")} />
+			<NativeButton label={t("navigation.skills")} onPress={() => router.push("/skills")} />
+			<NativeButton label={t("navigation.memories")} onPress={() => router.push("/memories")} />
+			<NativeButton label={t("navigation.projects")} onPress={() => router.push("/projects")} />
+			<NativeButton label={t("navigation.connectors")} onPress={() => router.push("/connectors")} />
+			<NativeButton label={t("vault.title")} onPress={() => router.push("/vault")} />
+			<NativeButton label={t("vault.supplyTitle")} onPress={() => router.push("/vault-supply")} />
 		</AppView>
 	);
 }

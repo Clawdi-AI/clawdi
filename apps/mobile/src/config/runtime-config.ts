@@ -1,9 +1,14 @@
 import { readApiBaseUrl } from "@clawdi/shared/api";
+import type { OAuthProvider } from "@clerk/expo/types";
+import { readLinkHosts } from "../../config/linking.cjs";
+import { readOAuthProviders } from "../auth/oauth-providers";
 
 export type MobileRuntimeConfig = Readonly<{
 	cloudApiUrl: string;
 	clerkPublishableKey: string;
 	computeApiUrl?: string;
+	clerkOauthProviders?: readonly OAuthProvider[];
+	linkHosts?: readonly string[];
 }>;
 
 export type MobileRuntimeConfigResult =
@@ -14,6 +19,8 @@ type RuntimeConfigValues = Readonly<{
 	cloudApiUrl: unknown;
 	clerkPublishableKey: unknown;
 	computeApiUrl?: unknown;
+	clerkOauthProviders?: unknown;
+	linkHosts?: unknown;
 }>;
 
 function requiredString(value: unknown): string | undefined {
@@ -36,11 +43,15 @@ export function parseMobileRuntimeConfig(values: RuntimeConfigValues): MobileRun
 	if (values.computeApiUrl != null && typeof values.computeApiUrl !== "string")
 		return { ok: false, reason: "invalid" };
 	try {
+		const clerkOauthProviders = readOAuthProviders(values.clerkOauthProviders);
+		const linkHosts = readLinkHosts(values.linkHosts);
 		return {
 			ok: true,
 			value: {
 				cloudApiUrl: readApiBaseUrl(cloudApiUrl),
 				clerkPublishableKey,
+				...(clerkOauthProviders.length ? { clerkOauthProviders } : {}),
+				...(linkHosts.length ? { linkHosts } : {}),
 				...(computeApiUrl ? { computeApiUrl: readApiBaseUrl(computeApiUrl, true) } : {}),
 			},
 		};

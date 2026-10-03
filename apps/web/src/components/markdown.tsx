@@ -1,5 +1,6 @@
 "use client";
 
+import { markdownPlugins } from "@clawdi/shared/markdown";
 import { Check, Copy } from "lucide-react";
 import {
 	Children,
@@ -13,8 +14,6 @@ import {
 	useState,
 } from "react";
 import ReactMarkdown from "react-markdown";
-import remarkBreaks from "remark-breaks";
-import remarkGfm from "remark-gfm";
 import { createSearchHighlighter, SEARCH_MARK_CLASS } from "@/lib/search-highlight";
 import { cn } from "@/lib/utils";
 
@@ -162,8 +161,7 @@ function MarkdownImpl({ content, highlightQuery }: { content: string; highlightQ
 	return (
 		<ReactMarkdown
 			remarkPlugins={[
-				remarkGfm,
-				remarkBreaks,
+				...markdownPlugins,
 				...(highlightQuery ? [searchHighlightPlugin(highlightQuery)] : []),
 			]}
 			components={{

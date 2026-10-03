@@ -51,38 +51,7 @@ export function runtimeConsoleUrl(
 	return endpoint?.runtime === runtime && endpoint.role === "control_ui" ? endpoint.url : null;
 }
 
-/** Browser entry only; credential validation still uses the exact published endpoint. */
-export function runtimeDashboardUrl(url: string, runtime: HostedRuntime): string {
-	if (runtime !== "hermes") return url;
-	try {
-		const target = new URL(url);
-		const path = target.pathname.replace(/\/+$/, "");
-		// Hosted path-based proxy roots end in the Hermes dashboard port.
-		if (path !== "" && !path.endsWith("-9119")) return url;
-		target.pathname = `${path}/chat`;
-		return target.toString();
-	} catch {
-		return url;
-	}
-}
-
-/** Start Hermes OIDC at its own login route so Hermes creates the PKCE/state cookies. */
-export function hermesOidcLoginUrl(url: string): string {
-	try {
-		const dashboard = new URL(runtimeDashboardUrl(url, "hermes"));
-		const dashboardPath = dashboard.pathname.replace(/\/+$/, "");
-		if (!dashboardPath.endsWith("/chat")) return url;
-		dashboard.pathname = `${dashboardPath.slice(0, -"/chat".length)}/auth/login`;
-		dashboard.search = new URLSearchParams({
-			provider: "self-hosted",
-			next: `${dashboardPath}`,
-		}).toString();
-		dashboard.hash = "";
-		return dashboard.toString();
-	} catch {
-		return url;
-	}
-}
+export { hermesOidcLoginUrl, runtimeDashboardUrl } from "@clawdi/shared/api";
 
 export function deploymentFilesUrl(deployment: HostedDeployment): string | null {
 	const value = deployment.files_endpoint?.url;

@@ -1,5 +1,4 @@
-import { defaultAiProviderBaseUrl } from "@clawdi/shared";
-import type { AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
+export { codexProviderBody } from "@clawdi/shared/api";
 
 export const CLAWDI_CODEX_OAUTH_PROVIDER_ID = "openai-codex";
 
@@ -59,24 +58,4 @@ export function parseCodexCallback(input: string): CodexOAuthResult | null {
 	const error = query.get("error") || fragment.get("error") || undefined;
 	if (error) return { code: "", state: "", error };
 	return code && state ? { code, state } : null;
-}
-
-/** Provider accepted by one independent ChatGPT device-code flow. */
-export function codexProviderBody(identity: {
-	providerId: string;
-	label: string | null;
-}): AiProviderUpsert {
-	return {
-		provider_id: identity.providerId,
-		type: "openai",
-		label: identity.label,
-		base_url: defaultAiProviderBaseUrl("openai") ?? "https://api.openai.com/v1",
-		configuration_mode: "native",
-		native_provider: "openai-codex",
-		native_variant: null,
-		api_mode: "openai_responses",
-		auth: { type: "agent_profile", tool: "codex", profile: "default" },
-		managed_by: "user",
-		runtime_env_name: null,
-	};
 }

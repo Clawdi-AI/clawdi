@@ -1,4 +1,5 @@
-import { focusManager, onlineManager, useQuery } from "@tanstack/react-query";
+import type { HostedDeployOperation } from "@clawdi/shared/api";
+import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
@@ -10,6 +11,9 @@ import { ReadScreen } from "../../ui/read-screen";
 import { BackButton, isNotFound } from "../cloud-inventory";
 import { InventoryList } from "../inventory-list";
 import { ResourceError } from "../resource-error";
+import { RuntimeBrowser } from "./browser";
+import { CancelOperation } from "./cancel";
+import { DeploymentControls } from "./controls";
 import {
 	canPollDeployment,
 	DEPLOYMENT_POLL_WINDOW_MS,
@@ -96,6 +100,9 @@ export function DeploymentDetailScreen({ deploymentId }: { deploymentId: string 
 }
 
 function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }) {
+	const cache = useQueryClient();
+	const [accepted, setAccepted] = useState<HostedDeployOperation | null>(null);
+	const [deletionReported, setDeletionReported] = useState(false);
 	const { hosted } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -144,7 +151,17 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 		refetchOnReconnect: false,
 	});
 	const deployment = query.data;
-	const operationName = deployment?.accepted_operation?.name;
+	useEffect(() => {
+		if (
+			accepted &&
+			deployment?.accepted_operation &&
+			(deployment.accepted_operation.name === accepted.name ||
+				deployment.accepted_operation.metadata.targetGeneration >
+					accepted.metadata.targetGeneration)
+		)
+			setAccepted(null);
+	}, [accepted, deployment?.accepted_operation]);
+	const operationName = accepted?.name ?? deployment?.accepted_operation?.name;
 	const operationId = operationIdFromName(operationName);
 	const operation = useQuery({
 		queryKey: accountQueryKey(scope, "deployment-operation", operationName ?? "missing"),
@@ -166,6 +183,17 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 		refetchOnWindowFocus: false,
 		refetchOnReconnect: false,
 	});
+	const refreshResources = async () => {
+		await Promise.all([
+			cache.invalidateQueries({
+				queryKey: accountQueryKey(scope, "deployment", deploymentId ?? "missing"),
+			}),
+			cache.invalidateQueries({ queryKey: accountQueryKey(scope, "deployments") }),
+			cache.invalidateQueries({ queryKey: accountQueryKey(scope, "cloud-agents") }),
+			cache.invalidateQueries({ queryKey: accountQueryKey(scope, "cloud-agent") }),
+		]);
+	};
+	const activeOperation = operation.data ?? accepted ?? deployment?.accepted_operation;
 	return (
 		<ReadScreen>
 			<AppScrollView contentContainerClassName="gap-4 p-5">
@@ -190,8 +218,49 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 						/>
 						{query.isError ? <ResourceError missing={isNotFound(query.error)} /> : null}
 						{query.isPending ? <AppText>{t("loading.app")}</AppText> : null}
+						{deletionReported ? (
+							<AppText accessibilityRole="alert">{t("runtime.deleteReported")}</AppText>
+						) : (
+							<DeploymentControls
+								deployment={deployment}
+								deploymentId={deploymentId}
+								blocked={
+									query.isError ||
+									(activeOperation?.metadata?.verb === "delete" && !activeOperation.done)
+								}
+								transitioning={Boolean(activeOperation && !activeOperation.done)}
+								onAccepted={async (result) => {
+									setAccepted(result);
+									setStartedAt(Date.now());
+									await refreshResources();
+								}}
+								onAbsent={async () => {
+									setDeletionReported(true);
+									await refreshResources();
+								}}
+							/>
+						)}
 						{deployment ? (
 							<AppView className="gap-3 rounded-2xl bg-surface p-4">
+								<RuntimeBrowser deployment={deployment} />
+								<NativeButton
+									label={t("terminal.title")}
+									onPress={() =>
+										router.push({
+											pathname: "/deployments/[deploymentId]/terminal",
+											params: { deploymentId },
+										})
+									}
+								/>
+								<NativeButton
+									label={t("workspaceSkills.title")}
+									onPress={() =>
+										router.push({
+											pathname: "/deployments/[deploymentId]/skills",
+											params: { deploymentId },
+										})
+									}
+								/>
 								<AppText className="text-xl font-semibold text-foreground">
 									{deployment.resource.name}
 								</AppText>
@@ -220,9 +289,30 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 									</AppText>
 								) : null}
 								{operation.data?.error ? (
-									<AppText className="text-danger">{t("deployments.failed")}</AppText>
+									<AppText className="text-danger">
+										{t(
+											operation.data.error.code === 1
+												? "deployments.operationCancelled"
+												: "deployments.failed",
+										)}
+									</AppText>
 								) : null}
 								{operation.isError ? <ResourceError missing={false} /> : null}
+								{!deletionReported &&
+								operation.data &&
+								!operation.isError &&
+								operation.data.name === operationName &&
+								operation.data.metadata?.deploymentId === deploymentId ? (
+									<CancelOperation
+										key={operation.data.name}
+										operation={operation.data}
+										onRequested={async () => {
+											setStartedAt(Date.now());
+											await operation.refetch();
+											await query.refetch();
+										}}
+									/>
+								) : null}
 								{deploymentNeedsPolling(deployment) &&
 								Date.now() - startedAt >= DEPLOYMENT_POLL_WINDOW_MS ? (
 									<AppText>{t("deployments.timeout")}</AppText>

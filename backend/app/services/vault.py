@@ -88,6 +88,28 @@ async def create_account_vault(
     return vault
 
 
+async def attach_account_vault(
+    db: AsyncSession, auth: AuthContext, slug: str, vault_id: UUID, project_id: UUID
+) -> Vault:
+    """Attach an exact owned identity; never create or fall back to a slug."""
+    await validate_project_for_caller(db, auth, project_id)
+    # Preserve bound-Agent source visibility in addition to target authorization.
+    await get_vault_for_write(db, auth, slug, vault_id=vault_id)
+    vault = (
+        await db.execute(
+            select(Vault)
+            .where(Vault.id == vault_id, Vault.user_id == auth.user_id, Vault.slug == slug)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if vault is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Vault not found")
+    await _ensure_vault_attached(db, vault.id, project_id)
+    await db.commit()
+    await db.refresh(vault)
+    return vault
+
+
 async def get_vault_for_write(
     db: AsyncSession,
     auth: AuthContext,

@@ -1,6 +1,10 @@
 "use client";
 
-import type { components } from "@clawdi/shared/api";
+import {
+	AGENT_AVATAR_MIME_TYPES,
+	type components,
+	MAX_AGENT_AVATAR_BYTES,
+} from "@clawdi/shared/api";
 import { agentDisconnectEligibility } from "@clawdi/shared/client";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
@@ -32,9 +36,6 @@ import { cn, errorMessage } from "@/lib/utils";
 
 type Environment = components["schemas"]["AgentResponse"];
 type EnvironmentUpdate = components["schemas"]["EnvironmentUpdate"];
-
-const MAX_AGENT_AVATAR_BYTES = 2 * 1024 * 1024;
-const AGENT_AVATAR_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 function updateEnvironmentCaches(queryClient: QueryClient, environment: Environment) {
 	queryClient.setQueryData(agentDetailQueryKey(environment.id), environment);
@@ -146,7 +147,7 @@ export function AgentSettingsPanel({
 		const file = event.target.files?.[0];
 		event.target.value = "";
 		if (!file) return;
-		if (!AGENT_AVATAR_MIME_TYPES.has(file.type)) {
+		if (!AGENT_AVATAR_MIME_TYPES.some((type) => type === file.type)) {
 			toast.error("Unsupported avatar file", {
 				description: "Upload a PNG, JPEG, or WebP image.",
 			});

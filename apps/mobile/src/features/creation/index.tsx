@@ -5,11 +5,12 @@ import {
 	type HostedDeploySubscriptionSelection,
 	type HostedDeployWizardDraft,
 	hostedDeployRuntimeLabel,
+	isHostedDeployComputePlan,
 	isHostedDeployRuntime,
 	projectHostedDeployRequest,
 	validateAndBuildHostedDeployRequest,
 } from "@clawdi/shared/api";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import * as Crypto from "expo-crypto";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
@@ -20,7 +21,7 @@ import { useMobileApi } from "../../providers/api-provider";
 import { NativeButton, NativePicker, NativeSwitch } from "../../ui/native-controls";
 import { AppScrollView, AppText, AppTextInput, AppView } from "../../ui/primitives";
 import { ReadScreen } from "../../ui/read-screen";
-import { subscriptionPrice } from "../billing/helpers";
+import { nextBillingCursor, subscriptionPrice, uniqueBillingItems } from "../billing/helpers";
 import { BackButton, formatDate } from "../cloud-inventory";
 import { operationIdFromName } from "../deployments/state";
 import { ResourceError } from "../resource-error";
@@ -29,7 +30,7 @@ import {
 	canDiscardCreationAttempt,
 	isDefinitiveAdmissionRejection,
 	offeredQuoteSelections,
-	serverAllowsBasicCreation,
+	serverAllowsEntitledCreation,
 	validationTranslationKeys,
 } from "./state";
 import { clearAttempt, readSavedAttempt, replaceAttempt, saveAttempt } from "./storage";
@@ -74,18 +75,33 @@ function CreationForm() {
 		queryFn: ({ signal }) =>
 			read(async (s) => {
 				if (!compute) throw new Error("Compute API unavailable");
-				const [plans, catalog, included, reusable, capabilities] = await Promise.all([
+				const [plans, catalog, included, capabilities] = await Promise.all([
 					compute.listPlans(s),
 					compute.getManagedModels(s),
 					compute.getIncludedBasicAvailability(s),
-					compute.getReusableSubscriptions(undefined, s),
 					compute.getProductCapabilities(s),
 				]);
-				return { plans, catalog, included, reusable, capabilities };
+				return { plans, catalog, included, capabilities };
 			}, signal),
 		enabled: scope.isReady && Boolean(compute),
 		retry: false,
 	});
+	const reusable = useInfiniteQuery({
+		queryKey: accountQueryKey(scope, "creation-reusable"),
+		initialPageParam: undefined as string | undefined,
+		queryFn: ({ signal, pageParam }) =>
+			read((s) => {
+				if (!compute) throw new Error("Compute API unavailable");
+				return compute.getReusableSubscriptions({ limit: 25, cursor: pageParam }, s);
+			}, signal),
+		getNextPageParam: nextBillingCursor,
+		enabled: scope.isReady && Boolean(compute),
+		retry: false,
+	});
+	const reusableItems = uniqueBillingItems(
+		reusable.data?.pages.flatMap((page) => page.items ?? []) ?? [],
+		(item) => item.subscription_id,
+	);
 
 	useEffect(() => {
 		let mounted = true;
@@ -116,12 +132,12 @@ function CreationForm() {
 	}, [scope]);
 
 	const models = inventory.data?.catalog.models ?? [];
-	const basic = inventory.data?.plans.find((plan) => plan.slug === "compute_basic");
-	const eligible = serverAllowsBasicCreation(
+	const selectedPlan = inventory.data?.plans.find((plan) => plan.slug === draft.computePlanSlug);
+	const eligible = serverAllowsEntitledCreation(
 		inventory.data?.capabilities,
 		inventory.data?.included,
-		basic,
-		{ reusable: inventory.data?.reusable.items, hasSavedAttempt: Boolean(attempt) },
+		selectedPlan,
+		{ reusable: reusableItems, hasSavedAttempt: Boolean(attempt) },
 	);
 	const quoteOptions = offeredQuoteSelections(inventory.data?.plans ?? []);
 	const quoteAvailable =
@@ -173,21 +189,27 @@ function CreationForm() {
 			)
 				return;
 			// Refresh authorization at the explicit mutation boundary, never rely on a stale query.
-			const [capabilities, included, plans, reusable] = await read((s) =>
+			const [capabilities, included, plans] = await read((s) =>
 				Promise.all([
 					compute.getProductCapabilities(s),
 					compute.getIncludedBasicAvailability(s),
 					compute.listPlans(s),
-					compute.getReusableSubscriptions(undefined, s),
 				]),
 			);
+			if (!current(owns)) return;
+			const refreshedReusable = attempt
+				? undefined
+				: await reusable.refetch({ throwOnError: true });
 			if (
 				!current(owns) ||
-				!serverAllowsBasicCreation(
+				!serverAllowsEntitledCreation(
 					capabilities,
 					included,
-					plans.find((p) => p.slug === "compute_basic"),
-					{ reusable: reusable.items, hasSavedAttempt: Boolean(attempt) },
+					plans.find((p) => p.slug === draft.computePlanSlug),
+					{
+						reusable: refreshedReusable?.data?.pages.flatMap((page) => page.items ?? []),
+						hasSavedAttempt: Boolean(attempt),
+					},
 				)
 			) {
 				if (current(owns)) setMessage(t("creation.blocked"));
@@ -225,7 +247,7 @@ function CreationForm() {
 			if (!current(owns)) return;
 			setAttempt(submitting);
 			try {
-				await read((s) => compute.createIncludedDeployment(submitting.request, submitting.id, s));
+				await read((s) => compute.createEntitledDeployment(submitting.request, submitting.id, s));
 			} catch (error) {
 				if (current(owns) && isDefinitiveAdmissionRejection(saved, error)) {
 					const rejected: CreationAttempt = { ...saved, submission: "entitlement_rejected" };
@@ -268,10 +290,11 @@ function CreationForm() {
 						{inventory.isError ? <ResourceError missing={false} /> : null}
 						<NativeButton
 							label={t("creation.refresh")}
-							disabled={inventory.isFetching || action.busy}
+							disabled={inventory.isFetching || reusable.isFetching || action.busy}
 							onPress={() => {
 								setConfirmed(false);
 								void inventory.refetch();
+								void reusable.refetch();
 							}}
 						/>
 						<AppText>{t("creation.runtime")}</AppText>
@@ -349,6 +372,28 @@ function CreationForm() {
 							</>
 						)}
 						<AppText>{t("creation.compute")}</AppText>
+						<NativePicker
+							value={draft.computePlanSlug}
+							options={[
+								{
+									value: "compute_basic",
+									label:
+										inventory.data?.plans.find((plan) => plan.slug === "compute_basic")?.name ??
+										t("creation.basic"),
+								},
+								{
+									value: "compute_performance",
+									label:
+										inventory.data?.plans.find((plan) => plan.slug === "compute_performance")
+											?.name ?? t("creation.performance"),
+								},
+							]}
+							disabled={locked}
+							onValueChange={(computePlanSlug) => {
+								if (isHostedDeployComputePlan(computePlanSlug)) update({ computePlanSlug });
+							}}
+						/>
+						<AppText>{t("creation.selectionNotice")}</AppText>
 						{inventory.data?.plans.map((plan) => (
 							<AppView key={plan.slug} className="gap-2 rounded-xl bg-surface p-3">
 								<AppText>
@@ -370,9 +415,17 @@ function CreationForm() {
 							{t("creation.included")}: {inventory.data?.included.available_slots ?? "—"}
 						</AppText>
 						<AppText>
-							{t("creation.reusable")}: {inventory.data?.reusable.items?.length ?? "—"}
+							{t("creation.reusable")}: {reusable.isPending ? "—" : reusableItems.length}
 						</AppText>
-						{inventory.data?.reusable.items?.map((subscription) => (
+						{reusable.isError ? <ResourceError missing={false} /> : null}
+						{reusable.hasNextPage ? (
+							<NativeButton
+								label={t("inventory.loadMore")}
+								disabled={reusable.isFetching || action.busy}
+								onPress={() => void reusable.fetchNextPage()}
+							/>
+						) : null}
+						{reusableItems.map((subscription) => (
 							<AppView
 								key={subscription.subscription_id}
 								className="gap-2 rounded-xl bg-surface p-3"

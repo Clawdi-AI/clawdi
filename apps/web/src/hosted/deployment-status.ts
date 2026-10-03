@@ -1,3 +1,4 @@
+import { canCancelDeploymentOperation, deploymentLifecycleAvailable } from "@clawdi/shared/api";
 import type {
 	DeploymentOperation,
 	HostedDeployment,
@@ -227,34 +228,7 @@ export function deploymentRuntimeUiWithdrawn(
 	return currentServingAdvisory(status) === "RuntimeUiUnavailable";
 }
 
-// Post-ready runtime failures keep the running substrate so the owner can repair it.
-const POST_READY_RUNTIME_FAILURE_CODES = new Set([
-	"runtime_unreachable",
-	"runtime_configuration_failed",
-]);
-
-/** Public readiness evidence authorizes a launch attempt, not an authenticated browser session. */
-export function deploymentTerminalIsAvailable(deployment: HostedDeployment): boolean {
-	const { metadata, spec, status } = deployment.resource;
-	if (spec.desired_lifecycle !== "running" || !status || status.deleted_at) return false;
-	if (status.summary_state === "running") return true;
-	const generation = metadata.generation;
-	return Boolean(
-		status.summary_state === "failed" &&
-			generation >= 1 &&
-			status.observedGeneration === generation &&
-			status.driver_acknowledged_generation === generation &&
-			status.driver_applied_generation === generation &&
-			status.observed_at &&
-			deployment.compute_slot_occupancy?.backing_infra === "present" &&
-			status.failure &&
-			POST_READY_RUNTIME_FAILURE_CODES.has(status.failure.code) &&
-			status.failure.phase === "reconcile" &&
-			status.failure.observedGeneration === generation,
-	);
-}
-
-/** Versioned component admission or aggregate readiness permits a credential attempt. */
+export { deploymentTerminalIsAvailable } from "@clawdi/shared/api";
 export function deploymentRuntimeUiIsReady(deployment: HostedDeployment): boolean {
 	const { metadata, spec, status } = deployment.resource;
 	const generation = metadata.generation;
@@ -395,96 +369,29 @@ export function isTransitionalStatus(status: DeploymentStatus): boolean {
 }
 
 export function canStart(status: DeploymentStatus): boolean {
-	switch (status.kind) {
-		case "stopped":
-		case "failed":
-			return true;
-		case "creating":
-		case "starting":
-		case "running":
-		case "stopping":
-		case "restarting":
-		case "updating":
-		case "deleting":
-		case "deleted":
-		case "unknown":
-			return false;
-		default:
-			return exhaustive(status);
-	}
+	return deploymentLifecycleAvailable("start", status.kind);
 }
 
 export function canStop(status: DeploymentStatus): boolean {
-	switch (status.kind) {
-		case "running":
-		case "starting":
-			return true;
-		case "creating":
-		case "stopping":
-		case "stopped":
-		case "restarting":
-		case "updating":
-		case "failed":
-		case "deleting":
-		case "deleted":
-		case "unknown":
-			return false;
-		default:
-			return exhaustive(status);
-	}
+	return deploymentLifecycleAvailable("stop", status.kind);
 }
 
 export function canRestart(status: DeploymentStatus): boolean {
-	switch (status.kind) {
-		case "running":
-		case "failed":
-			return true;
-		case "creating":
-		case "starting":
-		case "stopping":
-		case "stopped":
-		case "restarting":
-		case "updating":
-		case "deleting":
-		case "deleted":
-		case "unknown":
-			return false;
-		default:
-			return exhaustive(status);
-	}
+	return deploymentLifecycleAvailable("restart", status.kind);
 }
 
 export function canDelete(status: DeploymentStatus): boolean {
-	switch (status.kind) {
-		case "creating":
-		case "starting":
-		case "running":
-		case "stopping":
-		case "stopped":
-		case "restarting":
-		case "updating":
-		case "failed":
-			return true;
-		case "deleting":
-		case "deleted":
-		case "unknown":
-			return false;
-		default:
-			return exhaustive(status);
-	}
+	return deploymentLifecycleAvailable("delete", status.kind);
 }
 
 /**
  * Whether the in-flight accepted operation can accept a cancel request. Mirrors
  * the cancel acceptance side in clawdi-hosted operation_cancellation.py: only
- * operations that are still running and are not backend-managed image cohort
- * operations are cancellable.
+ * known operations that are still running and are not backend-managed
+ * image or runtime-context migrations are cancellable.
  */
 export function canCancelOperation(operation: DeploymentOperation | null | undefined): boolean {
-	if (!operation || operation.done) return false;
-	return (
-		operation.metadata.verb !== "migrate_image" && operation.metadata.verb !== "rollback_image"
-	);
+	return canCancelDeploymentOperation(operation);
 }
 
 /** Shared started-at/timeout primitive for lifecycle and runtime-UI convergence. */

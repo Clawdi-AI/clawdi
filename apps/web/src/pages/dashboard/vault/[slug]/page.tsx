@@ -230,7 +230,7 @@ export default function VaultDetailPage({
 		[keyNames, selectedKeys],
 	);
 	// App-prefixed keys (`clawdi-backend/DATABASE_URL`) are a grab-bag
-	// smell — offer the split wizard when at least two app groups exist.
+	// smell — offer the split wizard for repeated names under any app prefix.
 	const prefixGroups = useMemo(() => prefixGroupsFor(keyNames), [keyNames]);
 	const allFilteredSelected =
 		filteredKeyNames.length > 0 && filteredKeyNames.every((k) => selectedKeys.has(keyId(k)));
@@ -314,9 +314,11 @@ export default function VaultDetailPage({
 			)
 				throw new Error("Project unavailable");
 			return unwrap(
-				await api.POST("/v1/vault", {
-					params: { query: { project_id: projectId } },
-					body: { slug: vault.slug, name: vault.name },
+				await api.POST("/v1/vault/{slug}/attachments/{project_id}", {
+					params: {
+						path: { slug: vault.slug, project_id: projectId },
+						query: { vault_id: vault.id },
+					},
 				}),
 			);
 		},
@@ -566,7 +568,7 @@ export default function VaultDetailPage({
 								) : null}
 							</>
 						) : null}
-						{canManageVault && prefixGroups.length >= 2 ? (
+						{canManageVault ? (
 							<SplitVaultDialog
 								vault={vault}
 								groups={prefixGroups}

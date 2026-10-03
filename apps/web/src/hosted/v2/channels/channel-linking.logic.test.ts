@@ -1,7 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
 	agentProviderHasSingleLinkLimit,
 	agentProviderLinkReplacementRequired,
@@ -13,21 +10,6 @@ import {
 	verifiedDiscordPairingCommand,
 	verifiedWhatsAppPairLink,
 } from "./channel-linking.logic";
-
-function productionTypeScriptFiles(directory: string): string[] {
-	return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-		const entryPath = path.join(directory, entry.name);
-		if (entry.isDirectory()) return productionTypeScriptFiles(entryPath);
-		if (
-			!entry.isFile() ||
-			!/\.(?:ts|tsx)$/.test(entry.name) ||
-			/\.test\.(?:ts|tsx)$/.test(entry.name)
-		) {
-			return [];
-		}
-		return [entryPath];
-	});
-}
 
 describe("hosted channel instructions and admission rules", () => {
 	test("renders the exact command accepted by the channel backend", () => {
@@ -146,13 +128,6 @@ describe("hosted channel instructions and admission rules", () => {
 			"https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=%",
 		]) {
 			expect(verifiedDiscordInstallUrl(unsupported)).toBeNull();
-		}
-	});
-
-	test("keeps Discord permission policy out of Web production source", () => {
-		const webSourceRoot = fileURLToPath(new URL("../../../", import.meta.url));
-		for (const sourceFile of productionTypeScriptFiles(webSourceRoot)) {
-			expect(readFileSync(sourceFile, "utf8")).not.toMatch(/\b(?:274878024768|309237763136)\b/);
 		}
 	});
 

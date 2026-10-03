@@ -1,5 +1,7 @@
 "use client";
 
+import { linkIsExpired } from "@clawdi/shared/api";
+
 import { buildShareAgentHandoffPrompt } from "@clawdi/shared/sharing";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, CheckCircle2, Copy, Link2, Share2, Trash2, UserMinus } from "lucide-react";
@@ -361,9 +363,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 	);
 }
 
-function isExpiredLink(link: ShareLinkRow) {
-	return link.expires_at !== null && new Date(link.expires_at).getTime() <= Date.now();
-}
+const isExpiredLink = linkIsExpired;
 
 function LinkRow({
 	link,

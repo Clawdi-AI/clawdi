@@ -1,6 +1,9 @@
 "use client";
 
-import type { components } from "@clawdi/shared/api";
+import { type components, connectorMetadataBatches, isActiveConnection } from "@clawdi/shared/api";
+
+export { connectorMetadataBatches, isActiveConnection } from "@clawdi/shared/api";
+
 import {
 	keepPreviousData,
 	queryOptions,
@@ -33,15 +36,6 @@ export const CONNECTOR_CATALOG_GC_TIME_MS = CONNECTOR_CATALOG_STALE_TIME_MS;
 
 export type ConnectorAvailableApp = components["schemas"]["ConnectorAvailableAppResponse"];
 export type ConnectorMetadata = components["schemas"]["ConnectorMetadataResponse"];
-
-export function connectorMetadataBatches(names: readonly string[]): string[][] {
-	const unique = [...new Set(names.filter(Boolean))];
-	const batches: string[][] = [];
-	for (let offset = 0; offset < unique.length; offset += 100) {
-		batches.push(unique.slice(offset, offset + 100));
-	}
-	return batches;
-}
 
 function connectorMetadataQueryOptions(api: ReturnType<typeof useApi>, names: string[]) {
 	return queryOptions({
@@ -254,13 +248,4 @@ export function useConnectedAppCards({ enabled = true }: { enabled?: boolean } =
 		metadataError,
 		refetch,
 	};
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Status helpers
-//
-// Keep every account available for management. Only ACTIVE accounts grant tool access.
-
-export function isActiveConnection(c: { status: string; is_disabled?: boolean }): boolean {
-	return c.status.trim().toUpperCase() === "ACTIVE" && !c.is_disabled;
 }

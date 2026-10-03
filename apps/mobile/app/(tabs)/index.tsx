@@ -1,4 +1,5 @@
 import { useUser } from "@clerk/expo";
+import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { RefreshControl } from "react-native";
 import {
@@ -8,6 +9,12 @@ import {
 	useCloudSessions,
 } from "../../src/features/cloud-inventory";
 import { useI18n } from "../../src/i18n";
+import {
+	accountQueryKey,
+	useAccountRead,
+	useAccountScope,
+} from "../../src/platform/account-lifecycle";
+import { useMobileApi } from "../../src/providers/api-provider";
 import { CloudActions } from "../../src/ui/cloud-actions";
 import { ErrorState, LoadingScreen } from "../../src/ui/feedback";
 import { AppScrollView, AppText, AppView } from "../../src/ui/primitives";
@@ -18,6 +25,15 @@ export default function HomeRoute() {
 	const router = useRouter();
 	const agents = useCloudAgents();
 	const sessions = useCloudSessions();
+	const { cloud } = useMobileApi();
+	const scope = useAccountScope();
+	const read = useAccountRead();
+	const stats = useQuery({
+		queryKey: accountQueryKey(scope, "dashboard-stats"),
+		queryFn: ({ signal }) => read((readSignal) => cloud.getDashboardStats(readSignal), signal),
+		enabled: scope.isReady,
+		retry: false,
+	});
 	const displayName = user?.firstName ?? user?.primaryEmailAddress?.emailAddress;
 	return (
 		<AppScrollView
@@ -25,10 +41,11 @@ export default function HomeRoute() {
 			contentContainerStyle={{ flexGrow: 1 }}
 			refreshControl={
 				<RefreshControl
-					refreshing={agents.isRefetching || sessions.isRefetching}
+					refreshing={agents.isRefetching || sessions.isRefetching || stats.isRefetching}
 					onRefresh={() => {
 						if (!agents.isFetching) void agents.refetch();
 						if (!sessions.isFetching) void sessions.refetch();
+						if (!stats.isFetching) void stats.refetch();
 					}}
 				/>
 			}
@@ -41,6 +58,23 @@ export default function HomeRoute() {
 					</AppText>
 				</AppView>
 				<CloudActions />
+				{stats.isPending ? <LoadingScreen /> : null}
+				{stats.isError ? (
+					<ErrorState onRetry={stats.isFetching ? undefined : () => void stats.refetch()} />
+				) : null}
+				{stats.data ? (
+					<AppView className="gap-3 rounded-3xl bg-surface p-5">
+						<AppText className="text-lg font-semibold text-foreground">
+							{t("home.statsTitle")}
+						</AppText>
+						<AppView className="flex-row flex-wrap gap-4">
+							<Stat label={t("home.statsSessions")} value={stats.data.total_sessions} />
+							<Stat label={t("home.statsMessages")} value={stats.data.total_messages} />
+							<Stat label={t("home.statsProjects")} value={stats.data.projects_count} />
+							<Stat label={t("home.statsSkills")} value={stats.data.skills_count} />
+						</AppView>
+					</AppView>
+				) : null}
 				<AppView className="gap-3">
 					<SectionHeader title={t("home.agentsTitle")} onPress={() => router.push("/agents")} />
 					{agents.isPending ? (
@@ -73,6 +107,15 @@ export default function HomeRoute() {
 				</AppView>
 			</AppView>
 		</AppScrollView>
+	);
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+	return (
+		<AppView className="flex-1 gap-1">
+			<AppText className="text-2xl font-semibold text-foreground">{value}</AppText>
+			<AppText className="text-sm text-muted">{label}</AppText>
+		</AppView>
 	);
 }
 

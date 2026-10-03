@@ -1,4 +1,11 @@
 export const deploymentsEn = {
+	openDashboard: "Open Agent dashboard",
+	browserWarning:
+		"Open the runtime in the system browser. OpenClaw receives an access credential; the browser may retain access after you sign out of this app. Hermes may require a separate browser sign-in: use the same Clawdi account. Closing the browser does not revoke access; use Reset dashboard access when needed.",
+	browserUnavailable:
+		"An authenticated browser endpoint is not available yet. Refresh deployment status.",
+	browserFailed:
+		"Could not open the dashboard. Refresh deployment status and try again. No credentials have been saved by this app.",
 	title: "Cloud deployments",
 	description: "Deployment status from the v2 control plane.",
 	detail: "Deployment progress",
@@ -13,7 +20,15 @@ export const deploymentsEn = {
 	noSessions: "A deployment can be ready before any Sessions exist. Sessions are read only.",
 	operation: "Operation",
 	complete: "Complete",
+	operationCancelled: "Operation cancelled",
 	progress: "In progress",
+	cancelChange: "Request cancellation of this change",
+	cancelWarning:
+		"Cancellation is not immediate and may be rejected or require recovery. Do not assume already-applied work is undone, or that the Agent or its subscription is stopped. Check the final operation status before making another change.",
+	cancelRequested:
+		"Cancellation requested. Waiting for the server's final operation status; the Agent and its billing have not been declared stopped.",
+	cancelUncertain:
+		"Cancellation was not confirmed. Refresh the operation status. Retrying this same operation reuses the original cancellation key; no new Agent change is sent.",
 	failed: "Deployment failed",
 	creating: "Creating deployment",
 	starting: "Starting runtime",

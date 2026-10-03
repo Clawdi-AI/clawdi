@@ -21,6 +21,7 @@ export type { AccountRead, AccountScope } from "../auth/account-scope";
 export {
 	AccountScopeChangedError,
 	accountQueryKey,
+	clearAccountScope,
 	readInAccountScope,
 } from "../auth/account-scope";
 

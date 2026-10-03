@@ -11,6 +11,10 @@ import {
 } from "./read-transport";
 
 export type AgentListQuery = paths["/v1/agents"]["get"]["parameters"]["query"];
+export type SkillListQuery = paths["/v1/skills"]["get"]["parameters"]["query"];
+export type MemoryListQuery = paths["/v1/memories"]["get"]["parameters"]["query"];
+export type Project =
+	paths["/v1/projects"]["get"]["responses"][200]["content"]["application/json"][number];
 export type SessionListQuery = paths["/v1/sessions"]["get"]["parameters"]["query"];
 export type SessionMessagesQuery =
 	paths["/v1/sessions/{session_id}/messages"]["get"]["parameters"]["query"];
@@ -24,6 +28,77 @@ export function createCloudApiClient(options: ApiClientOptions) {
 	return {
 		listAgents: (query?: AgentListQuery, signal?: AbortSignal) =>
 			transport.read((init) => api.GET("/v1/agents", { ...init, params: { query } }), signal),
+		listSkills: (query?: SkillListQuery, signal?: AbortSignal) =>
+			transport.read((init) => api.GET("/v1/skills", { ...init, params: { query } }), signal),
+		listMemories: (query?: MemoryListQuery, signal?: AbortSignal) =>
+			transport.read((init) => api.GET("/v1/memories", { ...init, params: { query } }), signal),
+		getMemory: async (memoryId: string, signal?: AbortSignal) => {
+			const id = readResourceId(memoryId);
+			const memory = await transport.read(
+				(init) =>
+					api.GET("/v1/memories/{memory_id}", { ...init, params: { path: { memory_id: id } } }),
+				signal,
+			);
+			if (!memory || memory.id !== id) throw new ApiClientResponseError();
+			return memory;
+		},
+		createMemory: (
+			body: paths["/v1/memories"]["post"]["requestBody"]["content"]["application/json"],
+			signal?: AbortSignal,
+		) => transport.read((init) => api.POST("/v1/memories", { ...init, body }), signal),
+		updateMemory: (memoryId: string, content: string, signal?: AbortSignal) =>
+			transport.read(
+				(init) =>
+					api.PATCH("/v1/memories/{memory_id}", {
+						...init,
+						params: { path: { memory_id: readResourceId(memoryId) } },
+						body: { content },
+					}),
+				signal,
+			),
+		deleteMemory: async (memoryId: string, signal?: AbortSignal) => {
+			const result = await transport.read(
+				(init) =>
+					api.DELETE("/v1/memories/{memory_id}", {
+						...init,
+						params: { path: { memory_id: readResourceId(memoryId) } },
+					}),
+				signal,
+			);
+			if (result?.status !== "deleted") throw new ApiClientResponseError();
+			return result;
+		},
+		listProjects: (signal?: AbortSignal) =>
+			transport.read((init) => api.GET("/v1/projects", init), signal),
+		createProject: (
+			body: paths["/v1/projects"]["post"]["requestBody"]["content"]["application/json"],
+			signal?: AbortSignal,
+		) => transport.read((init) => api.POST("/v1/projects", { ...init, body }), signal),
+		updateProject: (
+			projectId: string,
+			body: paths["/v1/projects/{project_id}"]["patch"]["requestBody"]["content"]["application/json"],
+			signal?: AbortSignal,
+		) =>
+			transport.read(
+				(init) =>
+					api.PATCH("/v1/projects/{project_id}", {
+						...init,
+						params: { path: { project_id: readResourceId(projectId) } },
+						body,
+					}),
+				signal,
+			),
+		archiveProject: (projectId: string, signal?: AbortSignal) =>
+			transport.read(
+				(init) =>
+					api.DELETE("/v1/projects/{project_id}", {
+						...init,
+						params: { path: { project_id: readResourceId(projectId) } },
+					}),
+				signal,
+			),
+		getDashboardStats: (signal?: AbortSignal) =>
+			transport.read((init) => api.GET("/v1/dashboard/stats", init), signal),
 		getAgent: (agentId: string, signal?: AbortSignal) =>
 			transport.read(
 				(init) =>

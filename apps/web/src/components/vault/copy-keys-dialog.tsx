@@ -1,5 +1,6 @@
 "use client";
 
+import { transferVaultKeys } from "@clawdi/shared/api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Plus } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
@@ -38,7 +39,6 @@ type VaultSummary = components["schemas"]["VaultResponse"];
  * decrypt/re-encrypt server-side; "move" is copy + delete-at-source. */
 
 const NEW_VAULT = "__new__";
-const CHUNK = 150; // API caps fields per request at 200
 
 export function CopyKeysDialog({
 	vault,
@@ -135,62 +135,29 @@ export function CopyKeysDialog({
 				);
 				targetVaultId = created.id;
 			}
-			// Group by section — the copy endpoint works per section.
-			const bySection = new Map<string, string[]>();
-			for (const k of keys) {
-				const section = k.section === "(default)" ? "" : k.section;
-				const bucket = bySection.get(section);
-				if (bucket) bucket.push(k.name);
-				else bySection.set(section, [k.name]);
-			}
-			let copied = 0;
-			const failed: string[] = [];
-			const sourceRemoveFailed: string[] = [];
-			for (const [section, names] of bySection) {
-				for (let i = 0; i < names.length; i += CHUNK) {
-					const fields = names.slice(i, i + CHUNK);
-					let copiedInChunk = 0;
-					try {
-						const result = unwrap(
-							await api.POST("/v1/vault/{slug}/items/copy", {
-								params: {
-									path: { slug: vault.slug },
-									query: {
-										vault_id: vault.id,
-										target_vault_id: targetVaultId,
-									},
-								},
-								body: { target_slug: targetSlug, section, fields },
-							}),
-						);
-						copiedInChunk = result.copied;
-						copied += result.copied;
-					} catch {
-						failed.push(...fields);
-						continue;
-					}
-					if (mode === "move") {
-						try {
-							if (copiedInChunk > 0) {
-								await unwrap(
-									await api.DELETE("/v1/vault/{slug}/items", {
-										params: {
-											path: { slug: vault.slug },
-											query: {
-												vault_id: vault.id,
-												global_delete: true,
-											},
-										},
-										body: { section, fields },
-									}),
-								);
-							}
-						} catch {
-							sourceRemoveFailed.push(...fields);
-						}
-					}
-				}
-			}
+			if (!targetVaultId || targetVaultId === vault.id) throw new Error("Choose another vault");
+			const { copied, failed, sourceRemoveFailed } = await transferVaultKeys(keys, mode, {
+				copy: async (section, fields) =>
+					unwrap(
+						await api.POST("/v1/vault/{slug}/items/copy", {
+							params: {
+								path: { slug: vault.slug },
+								query: { vault_id: vault.id, target_vault_id: targetVaultId },
+							},
+							body: { target_slug: targetSlug, section, fields },
+						}),
+					),
+				remove: async (section, fields) =>
+					unwrap(
+						await api.DELETE("/v1/vault/{slug}/items", {
+							params: {
+								path: { slug: vault.slug },
+								query: { vault_id: vault.id, global_delete: true },
+							},
+							body: { section, fields },
+						}),
+					),
+			});
 			if (copied === 0) {
 				throw new Error(
 					failed.length > 0 ? `Couldn't copy ${failed.join(", ")}` : "No keys copied",
@@ -199,8 +166,6 @@ export function CopyKeysDialog({
 			return { targetSlug, copied, failed, sourceRemoveFailed };
 		},
 		onSuccess: ({ targetSlug, copied, failed, sourceRemoveFailed }) => {
-			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
-			qc.invalidateQueries({ queryKey: ["vault-items"] });
 			const sourceCleanupFailed = sourceRemoveFailed.length > 0;
 			toast.success(
 				`${copied} ${copied === 1 ? "key" : "keys"} ${
@@ -209,14 +174,23 @@ export function CopyKeysDialog({
 				{
 					description:
 						`Now in vault://${targetSlug}.` +
-						(sourceCleanupFailed ? ` Source not removed: ${sourceRemoveFailed.join(", ")}.` : "") +
-						(failed.length > 0 ? ` Failed: ${failed.join(", ")}.` : ""),
+						(sourceCleanupFailed
+							? ` Source deletion skipped or unconfirmed: ${sourceRemoveFailed.join(", ")}.`
+							: "") +
+						(failed.length > 0
+							? ` Copy incomplete or unconfirmed: ${failed.join(", ")}. Check both vaults before retrying.`
+							: ""),
 				},
 			);
 			setOpen(false);
 			onDone?.();
 		},
 		onError: (e) => toast.error(`Couldn't ${mode} keys`, { description: errorMessage(e) }),
+		onSettled: () =>
+			Promise.all([
+				qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] }),
+				qc.invalidateQueries({ queryKey: ["vault-items"] }),
+			]),
 	});
 
 	useEffect(() => {
@@ -241,7 +215,7 @@ export function CopyKeysDialog({
 					    offer it right here. */}
 					<DialogDescription>
 						{mode === "move"
-							? "Values stay server-side; the originals are removed from this vault."
+							? "Values stay server-side. Move is a non-atomic copy followed by deletion; partial results are possible. Avoid editing these keys concurrently."
 							: "Each key becomes an independent copy — changing a value later updates only one vault, not both."}
 					</DialogDescription>
 				</DialogHeader>

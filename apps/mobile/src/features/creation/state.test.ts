@@ -13,7 +13,7 @@ import {
 	isDefinitiveAdmissionRejection,
 	offeredQuoteSelections,
 	parseCreationAttempt,
-	serverAllowsBasicCreation,
+	serverAllowsEntitledCreation,
 } from "./state";
 
 describe("durable creation boundary", () => {
@@ -36,18 +36,21 @@ describe("durable creation boundary", () => {
 		disk_size: 20,
 		signup_grant_usd: "0",
 	};
-	test("creation requires actual capability, inventory and catalog Basic", () => {
-		expect(serverAllowsBasicCreation(capabilities, included, basic)).toBe(true);
-		expect(serverAllowsBasicCreation({ ...capabilities, can_use_v2: false }, included, basic)).toBe(
-			false,
-		);
-		expect(serverAllowsBasicCreation(undefined, included, basic)).toBe(false);
+	test("creation requires actual capability, matching inventory and a supported catalog plan", () => {
+		expect(serverAllowsEntitledCreation(capabilities, included, basic)).toBe(true);
 		expect(
-			serverAllowsBasicCreation(capabilities, { ...included, available_slots: 0 }, basic),
+			serverAllowsEntitledCreation({ ...capabilities, can_use_v2: false }, included, basic),
 		).toBe(false);
-		expect(serverAllowsBasicCreation(capabilities, included, undefined)).toBe(false);
+		expect(serverAllowsEntitledCreation(undefined, included, basic)).toBe(false);
 		expect(
-			serverAllowsBasicCreation(capabilities, included, { ...basic, slug: "compute_performance" }),
+			serverAllowsEntitledCreation(capabilities, { ...included, available_slots: 0 }, basic),
+		).toBe(false);
+		expect(serverAllowsEntitledCreation(capabilities, included, undefined)).toBe(false);
+		expect(
+			serverAllowsEntitledCreation(capabilities, included, {
+				...basic,
+				slug: "compute_performance",
+			}),
 		).toBe(false);
 	});
 	test("quote choices follow offered plans and monthly/annual terms", () => {
@@ -70,10 +73,10 @@ describe("durable creation boundary", () => {
 	});
 	test("same-key recovery does not depend on capacity consumed by the original admission", () => {
 		expect(
-			serverAllowsBasicCreation(capabilities, undefined, undefined, { hasSavedAttempt: true }),
+			serverAllowsEntitledCreation(capabilities, undefined, undefined, { hasSavedAttempt: true }),
 		).toBe(true);
 		expect(
-			serverAllowsBasicCreation({ ...capabilities, can_use_v2: false }, included, basic, {
+			serverAllowsEntitledCreation({ ...capabilities, can_use_v2: false }, included, basic, {
 				hasSavedAttempt: true,
 			}),
 		).toBe(false);
@@ -87,13 +90,30 @@ describe("durable creation boundary", () => {
 			entitled_until: "2026-11-01T00:00:00Z",
 			cancel_at_period_end: false,
 		};
+		const performance = { ...basic, slug: "compute_performance" };
 		expect(
-			serverAllowsBasicCreation(capabilities, { ...included, available_slots: 0 }, basic, {
+			serverAllowsEntitledCreation(capabilities, included, performance, { reusable: [reusable] }),
+		).toBe(false);
+		expect(
+			serverAllowsEntitledCreation(capabilities, included, performance, {
+				reusable: [{ ...reusable, plan_slug: "compute_performance" }],
+			}),
+		).toBe(true);
+		expect(
+			serverAllowsEntitledCreation(
+				capabilities,
+				included,
+				{ ...performance, slug: "unknown" },
+				{ reusable: [reusable] },
+			),
+		).toBe(false);
+		expect(
+			serverAllowsEntitledCreation(capabilities, { ...included, available_slots: 0 }, basic, {
 				reusable: [reusable],
 			}),
 		).toBe(true);
 		expect(
-			serverAllowsBasicCreation(capabilities, { ...included, available_slots: 0 }, basic, {
+			serverAllowsEntitledCreation(capabilities, { ...included, available_slots: 0 }, basic, {
 				reusable: [{ ...reusable, plan_slug: "compute_performance" }],
 			}),
 		).toBe(false);
@@ -118,6 +138,20 @@ describe("durable creation boundary", () => {
 			request: { ...built.request, deploy_request_id: id },
 		};
 		expect(parseCreationAttempt(JSON.stringify(saved))).toEqual(saved);
+		const performanceDraft: HostedDeployWizardDraft = {
+			...draft,
+			computePlanSlug: "compute_performance",
+		};
+		const performanceBuilt = validateAndBuildHostedDeployRequest(performanceDraft);
+		if (!performanceBuilt.ok) throw new Error("Invalid Performance fixture");
+		const performanceSaved: CreationAttempt = {
+			...saved,
+			submission: "uncertain",
+			draft: performanceDraft,
+			request: { ...performanceBuilt.request, deploy_request_id: id },
+		};
+		expect(parseCreationAttempt(JSON.stringify(performanceSaved))).toEqual(performanceSaved);
+		expect(canDiscardCreationAttempt(performanceSaved)).toBe(false);
 		expect(
 			parseCreationAttempt(JSON.stringify({ ...saved, submission: undefined }))?.submission,
 		).toBe("uncertain");

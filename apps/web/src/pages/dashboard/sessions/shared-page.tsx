@@ -1,6 +1,6 @@
 "use client";
 
-import type { components } from "@clawdi/shared/api";
+import { type components, sessionShareIdentity, sessionShareScope } from "@clawdi/shared/api";
 import { keepPreviousData, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowLeft, Check, Copy, ExternalLink, Link2, Trash2 } from "lucide-react";
@@ -95,7 +95,7 @@ export default function SharedSessionLinksPage() {
 					<div className="overflow-hidden rounded-lg border bg-card">
 						{items.map((share, index) => (
 							<SharedLinkRow
-								key={`${share.kind}:${share.id}`}
+								key={sessionShareIdentity(share)}
 								share={share}
 								onRevoked={refresh}
 								className={index > 0 ? "border-t" : undefined}
@@ -232,9 +232,10 @@ function SharedLinkRow({
 }
 
 function shareScopeLabel(share: SessionShare): string {
-	if (share.kind === "live") return "Full Session, live";
-	if (share.scope === "response") return "Single Agent response";
-	if (share.scope === "through") return "Conversation excerpt";
+	const scope = sessionShareScope(share);
+	if (scope === "live") return "Full Session, live";
+	if (scope === "response") return "Single Agent response";
+	if (scope === "through") return "Conversation excerpt";
 	return "Full Session snapshot";
 }
 

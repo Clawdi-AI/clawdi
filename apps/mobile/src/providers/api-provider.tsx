@@ -1,12 +1,47 @@
 import {
+	type AccountApiClient,
+	type AgentExtensionsClient,
+	type AgentProjectClient,
+	type AgentSettingsClient,
+	type AiProviderClient,
 	ApiClientError,
 	type ApiClientFetch,
+	type ChannelClient,
 	type CloudApiClient,
+	type ConnectorClient,
+	createAccountApiClient,
+	createAgentExtensionsClient,
+	createAgentProjectClient,
+	createAgentSettingsClient,
+	createAiProviderClient,
+	createChannelClient,
 	createCloudApiClient,
+	createConnectorClient,
+	createDeploymentMutationClient,
 	createHostedApiClient,
 	createHostedComputeClient,
+	createProjectSharingClient,
+	createProviderRemovalClient,
+	createPublicSessionClient,
+	createSessionSharingClient,
+	createSkillClient,
+	createTerminalClient,
+	createVaultClient,
+	createVaultSupplyClient,
+	createWhatsAppClient,
+	createWorkspaceSkillClient,
+	type DeploymentMutationClient,
 	type HostedApiClient,
 	type HostedComputeClient,
+	type ProjectSharingClient,
+	type ProviderRemovalClient,
+	type PublicSessionClient,
+	type SessionSharingClient,
+	type SkillClient,
+	type TerminalClient,
+	type VaultClient,
+	type WhatsAppClient,
+	type WorkspaceSkillClient,
 } from "@clawdi/shared/api";
 import { useAuth } from "@clerk/expo";
 import { createContext, type ReactNode, useCallback, useContext, useMemo } from "react";
@@ -15,7 +50,25 @@ import { useAccountScope } from "../platform/account-lifecycle";
 
 export type MobileApiClients = Readonly<{
 	cloud: CloudApiClient;
+	publicSessions: PublicSessionClient;
+	agentExtensions: AgentExtensionsClient;
+	agentSettings: AgentSettingsClient;
+	channels: ChannelClient;
+	deploymentMutations: DeploymentMutationClient | null;
+	terminal: TerminalClient | null;
+	workspaceSkills: WorkspaceSkillClient | null;
+	whatsapp: WhatsAppClient;
+	account: AccountApiClient;
+	aiProviders: AiProviderClient;
+	sharing: ProjectSharingClient;
+	agentProjects: AgentProjectClient;
+	skills: SkillClient;
+	sessionSharing: SessionSharingClient;
+	connectors: ConnectorClient;
+	vault: VaultClient;
+	vaultSupply: ReturnType<typeof createVaultSupplyClient>;
 	compute: HostedComputeClient | null;
+	providerRemoval: ProviderRemovalClient | null;
 	hosted: HostedApiClient | null;
 }>;
 
@@ -52,7 +105,91 @@ export function MobileApiProvider({
 	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
+			publicSessions: createPublicSessionClient({
+				baseUrl: config.cloudApiUrl,
+				fetch: fetcher,
+				getToken: scope.isReady ? readToken : undefined,
+			}),
+			agentExtensions: createAgentExtensionsClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
+			workspaceSkills: config.computeApiUrl
+				? createWorkspaceSkillClient({
+						baseUrl: config.computeApiUrl,
+						getToken: readToken,
+						fetch: fetcher,
+					})
+				: null,
+			agentSettings: createAgentSettingsClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
+			deploymentMutations: config.computeApiUrl
+				? createDeploymentMutationClient({
+						baseUrl: config.computeApiUrl,
+						getToken: readToken,
+						fetch: fetcher,
+					})
+				: null,
+			terminal: config.computeApiUrl
+				? createTerminalClient({
+						baseUrl: config.computeApiUrl,
+						getToken: readToken,
+						fetch: fetcher,
+					})
+				: null,
+			whatsapp: createWhatsAppClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
+			channels: createChannelClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
+			providerRemoval: config.computeApiUrl
+				? createProviderRemovalClient({
+						baseUrl: config.computeApiUrl,
+						getToken: readToken,
+						fetch: fetcher,
+					})
+				: null,
+			aiProviders: createAiProviderClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
+			vaultSupply: createVaultSupplyClient({ baseUrl: config.cloudApiUrl, fetch: fetcher }),
+			vault: createVaultClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
+			connectors: createConnectorClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
+			sessionSharing: createSessionSharingClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
+			skills: createSkillClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
 			cloud: createCloudApiClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
+			account: createAccountApiClient({
 				baseUrl: config.cloudApiUrl,
 				getToken: readToken,
 				fetch: fetcher,
@@ -64,6 +201,16 @@ export function MobileApiProvider({
 						fetch: fetcher,
 					})
 				: null,
+			sharing: createProjectSharingClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
+			agentProjects: createAgentProjectClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
 			hosted: config.computeApiUrl
 				? createHostedApiClient({
 						baseUrl: config.computeApiUrl,

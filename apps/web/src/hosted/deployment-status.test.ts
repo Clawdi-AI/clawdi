@@ -312,8 +312,8 @@ describe("DeploymentStatus", () => {
 		expect(canCancelOperation(done)).toBe(false);
 	});
 
-	test("refuses cancellation for backend-managed image cohort operations", () => {
-		for (const verb of ["migrate_image", "rollback_image"] as const) {
+	test("refuses cancellation for backend-managed image and runtime-context migrations", () => {
+		for (const verb of ["migrate_image", "rollback_image", "migrate_runtime_context"] as const) {
 			const operation = acceptedOperation(verb);
 			expect(canCancelOperation(operation)).toBe(false);
 		}
