@@ -101,3 +101,18 @@ test("ready actions require a signed-in account", async () => {
 	const boundary = createRevenueCatPurchaseBoundary({ ...valid, accountId: null });
 	expect(await boundary.purchase()).toEqual({ state: "disabled", reason: "account_required" });
 });
+
+test("synchronous SDK configuration failures stay inside the public error boundary", async () => {
+	const boundary = createRevenueCatPurchaseBoundary({
+		...valid,
+		accountId: "user_123",
+		client: {
+			configure: () => {
+				throw new Error("SDK diagnostic must not escape");
+			},
+			purchaseProduct: async () => undefined,
+			restorePurchases: async () => undefined,
+		},
+	});
+	expect(await boundary.purchase()).toEqual({ state: "failed", reason: "provider_error" });
+});

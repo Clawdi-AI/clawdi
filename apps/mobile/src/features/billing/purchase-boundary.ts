@@ -65,8 +65,8 @@ function nonEmptyString(value: unknown): string | undefined {
 function validPublicApiKey(value: unknown, platform: "ios" | "android"): value is string {
 	const key = nonEmptyString(value);
 	const prefix = platform === "ios" ? "appl_" : "goog_";
-	if (!key || !key.startsWith(prefix)) return false;
-	return !/[\r\n]/.test(key);
+	if (typeof key !== "string") return false;
+	return key.startsWith(prefix) && !/[\r\n]/.test(key);
 }
 
 function validProductId(value: unknown): value is string {
@@ -127,12 +127,13 @@ export function createRevenueCatPurchaseBoundary(
 		const accountId = nonEmptyString(options.accountId);
 		if (!accountId) return { state: "disabled", reason: "account_required" };
 		if (!options.client || !apiKey) return unavailable();
-		configuration ??= Promise.resolve(
-			options.client.configure({ apiKey, appUserId: accountId }),
-		).catch((error: unknown) => {
-			configuration = undefined;
-			throw error;
-		});
+		configuration ??= Promise.resolve()
+			.then(() => options.client?.configure({ apiKey, appUserId: accountId }))
+			.then(() => undefined)
+			.catch((error: unknown) => {
+				configuration = undefined;
+				throw error;
+			});
 		try {
 			await configuration;
 			return null;
