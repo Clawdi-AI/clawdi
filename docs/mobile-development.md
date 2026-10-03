@@ -550,8 +550,9 @@ a possible next integration,
 but its 4.8.0 plugin requires iOS 17 and enables additional platform configuration;
 it is not already wired or verified by the existing JavaScript auth flows.
 
-`/email-addresses` uses Clerk's published User/EmailAddress resources to add an
-address, explicitly send/resend an email code, verify it, confirm a primary-address
+`/email-addresses` and `/phone-numbers` share `account-contacts.tsx`, using Clerk's
+published User/EmailAddress/PhoneNumber resources to add a contact, explicitly
+send/resend an email or SMS code, verify it, confirm a primary-address
 change and remove a non-primary address. Refresh reloads the User resource. An
 explicit add retry first reloads and reuses an existing matching address; the app
 never automatically retries mutations. Primary change/removal reload ownership and verification
@@ -559,6 +560,9 @@ before writing, and primary removal is unavailable. Account/action/foreground le
 fence every asynchronous continuation; verification codes clear on blur/background.
 Success requires a returned address/primary ID or a reload confirming deletion.
 Clerk remains authoritative for enterprise, rate-limit and reverification requirements.
+Phone input requires E.164 (`+` and international digits); country codes are not
+guessed. Phone contact verification does not enable SMS MFA. Native compilation,
+real SMS/email delivery and device interaction remain acceptance gates.
 Email and profile changes share a native `useReverification` challenge UI with
 password, email/SMS codes, TOTP and backup codes, limited to factors returned by
 the current Session verification resource. The server's requested level is retained
@@ -658,7 +662,7 @@ until each surface has implementation, focused verification and device evidence:
 
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
-| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and email-address management, shared native password/code reverification, active-device review/revocation, password management, authenticator enrollment and backup codes | Remaining phone/passkey/linked-account/security management, passkey/enterprise reverification and real Clerk/device acceptance |
+| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and shared email/phone contact management, shared native password/code reverification, active-device review/revocation, password management, authenticator enrollment and backup codes | SMS MFA enrollment, passkey/linked-account/security management, passkey/enterprise reverification and real Clerk/device acceptance |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |

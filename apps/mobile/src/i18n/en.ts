@@ -115,7 +115,7 @@ export const en = {
 		primary: "Primary email",
 		verified: "Verified",
 		unverified: "Not verified",
-		newEmail: "New email address",
+		input: "New email address",
 		add: "Add email address",
 		sendCode: "Send verification code",
 		codeSent: "Enter the code sent to this email address. Use Send verification code to resend.",
@@ -128,6 +128,28 @@ export const en = {
 		failed:
 			"Could not complete this request. Check the address or code and refresh before retrying. Your account may require signing in again or a different verification method.",
 		saved: "Email address updated.",
+	},
+	phones: {
+		title: "Phone numbers",
+		description:
+			"Add and verify a phone number before making it primary. Enter the full international number, starting with + and the country code (for example +14155552671). Your primary number cannot be removed here. This does not enable SMS two-factor authentication.",
+		primary: "Primary phone number",
+		verified: "Verified",
+		unverified: "Not verified",
+		input: "New phone number (+country code and number)",
+		add: "Add phone number",
+		sendCode: "Send verification code",
+		codeSent: "Enter the SMS code sent to this number. Use Send verification code to resend.",
+		code: "Verification code",
+		verify: "Verify phone number",
+		makePrimary: "Make primary",
+		primaryWarning: "Use this verified phone number as your primary account number?",
+		remove: "Remove phone number",
+		removeWarning:
+			"Remove this phone number from your account? Sign-in and SMS verification using this number may no longer work. Account security requirements still apply.",
+		failed:
+			"Could not complete this request. Check the international number or SMS code and refresh before retrying. Phone verification may not be available for your account or region, or further account verification may be required.",
+		saved: "Phone number updated.",
 	},
 	profile: {
 		avatar: "Profile picture",

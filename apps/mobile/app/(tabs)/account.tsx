@@ -115,6 +115,7 @@ function AccountView() {
 			<NativeButton label={t("navigation.billing")} onPress={() => router.push("/billing")} />
 			<NativeButton label={t("profile.title")} onPress={() => router.push("/profile")} />
 			<NativeButton label={t("emails.title")} onPress={() => router.push("/email-addresses")} />
+			<NativeButton label={t("phones.title")} onPress={() => router.push("/phone-numbers")} />
 			<NativeButton label={t("devices.title")} onPress={() => router.push("/device-sessions")} />
 			<NativeButton label={t("password.title")} onPress={() => router.push("/password")} />
 			<NativeButton label={t("mfa.title")} onPress={() => router.push("/mfa")} />

@@ -1,5 +1,5 @@
 import { useUser } from "@clerk/expo";
-import type { UserResource } from "@clerk/expo/types";
+import type { EmailAddressResource, PhoneNumberResource, UserResource } from "@clerk/expo/types";
 import { Redirect, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, AppState } from "react-native";
@@ -14,23 +14,52 @@ import { AppScrollView, AppText, AppTextInput, AppView } from "../ui/primitives"
 import { ReadScreen } from "../ui/read-screen";
 import { BackButton } from "./cloud-inventory";
 
+type Contact = EmailAddressResource | PhoneNumberResource;
+type Kind = "emails" | "phones";
+const contactValue = (contact: Contact) =>
+	"emailAddress" in contact ? contact.emailAddress : contact.phoneNumber;
+
 export function EmailAddressesScreen() {
+	return <ContactAddressesScreen kind="emails" />;
+}
+export function PhoneNumbersScreen() {
+	return <ContactAddressesScreen kind="phones" />;
+}
+
+function ContactAddressesScreen({ kind }: { kind: Kind }) {
 	const { isLoaded, user } = useUser();
 	const scope = useAccountScope();
 	if (!isLoaded) return <LoadingScreen />;
 	if (!user || !scope.isReady) return <Redirect href="/(auth)/sign-in" />;
-	return <EmailAddresses key={`${scope.identity}:${scope.generation}`} user={user} />;
+	return (
+		<ContactAddresses
+			key={`${scope.identity}:${scope.generation}:${kind}`}
+			user={user}
+			kind={kind}
+		/>
+	);
 }
 
-function EmailAddresses({ user }: { user: UserResource }) {
+function ContactAddresses({ user, kind }: { user: UserResource; kind: Kind }) {
+	const getContacts = (): Contact[] =>
+		kind === "emails" ? user.emailAddresses : user.phoneNumbers;
+	const getPrimary = (value: UserResource = user) =>
+		kind === "emails" ? value.primaryEmailAddressId : value.primaryPhoneNumberId;
+	const normalize = (value: string) => (kind === "emails" ? value.toLowerCase() : value);
+	const create = (value: string) =>
+		kind === "emails"
+			? user.createEmailAddress({ email: value })
+			: user.createPhoneNumber({ phoneNumber: value });
+	const updatePrimary = (id: string) =>
+		user.update(kind === "emails" ? { primaryEmailAddressId: id } : { primaryPhoneNumberId: id });
 	const t = useI18n();
 	const scope = useAccountScope();
 	const action = useAuthAction(scope.identity);
 	const reverification = useNativeReverification();
 	const capture = useForegroundLease();
 	const confirmation = useRef(0);
-	const [emails, setEmails] = useState([...user.emailAddresses]);
-	const [primary, setPrimary] = useState(user.primaryEmailAddressId);
+	const [contacts, setContacts] = useState<Contact[]>([...getContacts()]);
+	const [primary, setPrimary] = useState(getPrimary());
 	const [draft, setDraft] = useState("");
 	const [verifying, setVerifying] = useState<string | null>(null);
 	const [code, setCode] = useState("");
@@ -43,8 +72,8 @@ function EmailAddresses({ user }: { user: UserResource }) {
 		return () => listener.remove();
 	}, []);
 	const sync = () => {
-		setEmails([...user.emailAddresses]);
-		setPrimary(user.primaryEmailAddressId);
+		setContacts([...getContacts()]);
+		setPrimary(getPrimary());
 	};
 	const run = (work: (current: () => boolean) => Promise<void>) =>
 		void action.run(async (active) => {
@@ -65,45 +94,45 @@ function EmailAddresses({ user }: { user: UserResource }) {
 		});
 	const add = () =>
 		run(async (current) => {
-			const emailAddress = draft.trim();
-			if (
-				!emailAddress ||
-				emailAddress.length > 254 ||
-				!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailAddress)
-			)
-				throw new Error("Invalid email address");
+			const address = draft.trim();
+			const valid =
+				kind === "emails"
+					? address.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)
+					: /^\+[1-9]\d{1,14}$/.test(address);
+			if (!valid) throw new Error("Invalid contact address");
 			// Reconcile before an explicit retry of an ambiguous create response.
 			await user.reload();
 			if (!current()) return;
 			sync();
-			const existing = user.emailAddresses.find(
-				(email) => email.emailAddress.toLowerCase() === emailAddress.toLowerCase(),
+			const existing = getContacts().find(
+				(contact) => normalize(contactValue(contact)) === normalize(address),
 			);
-			const added = existing ?? (await user.createEmailAddress({ email: emailAddress }));
+			const added = existing ?? (await create(address));
 			if (!current()) return;
-			if (!added.id || added.emailAddress.toLowerCase() !== emailAddress.toLowerCase())
+			if (!added.id || normalize(contactValue(added)) !== normalize(address))
 				throw new Error("Email addition not confirmed");
-			setEmails((values) => [...values.filter((email) => email.id !== added.id), added]);
+			setContacts((values) => [...values.filter((contact) => contact.id !== added.id), added]);
 			setDraft("");
 			setSaved(true);
 		});
 	const sendCode = (id: string) =>
 		run(async (current) => {
-			const email = emails.find((item) => item.id === id);
-			if (!email || email.verification.status === "verified") return;
-			await email.prepareVerification({ strategy: "email_code" });
+			const contact = contacts.find((item) => item.id === id);
+			if (!contact || contact.verification.status === "verified") return;
+			if ("emailAddress" in contact) await contact.prepareVerification({ strategy: "email_code" });
+			else await contact.prepareVerification();
 			if (!current()) return;
 			setVerifying(id);
 			setCode("");
 		});
 	const verify = () =>
 		run(async (current) => {
-			const email = emails.find((item) => item.id === verifying);
-			if (!email || !code.trim()) return;
-			const verified = await email.attemptVerification({ code: code.trim() });
+			const contact = contacts.find((item) => item.id === verifying);
+			if (!contact || !code.trim()) return;
+			const verified = await contact.attemptVerification({ code: code.trim() });
 			if (!current()) return;
 			if (verified.verification.status !== "verified") throw new Error("Email not verified");
-			setEmails((values) => values.map((item) => (item.id === verified.id ? verified : item)));
+			setContacts((values) => values.map((item) => (item.id === verified.id ? verified : item)));
 			setVerifying(null);
 			setCode("");
 			setSaved(true);
@@ -111,8 +140,8 @@ function EmailAddresses({ user }: { user: UserResource }) {
 	const confirm = (id: string, remove: boolean) => {
 		const visible = capture();
 		const ticket = ++confirmation.current;
-		const label = t(remove ? "emails.remove" : "emails.makePrimary");
-		Alert.alert(label, t(remove ? "emails.removeWarning" : "emails.primaryWarning"), [
+		const label = t(remove ? `${kind}.remove` : `${kind}.makePrimary`);
+		Alert.alert(label, t(remove ? `${kind}.removeWarning` : `${kind}.primaryWarning`), [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
 				text: label,
@@ -124,23 +153,23 @@ function EmailAddresses({ user }: { user: UserResource }) {
 						await user.reload();
 						if (!current()) return;
 						sync();
-						const email = user.emailAddresses.find((item) => item.id === id);
-						if (!email || id === user.primaryEmailAddressId) throw new Error("Email changed");
+						const contact = getContacts().find((item) => item.id === id);
+						if (!contact || id === getPrimary()) throw new Error("Email changed");
 						if (remove) {
-							await email.destroy();
+							await contact.destroy();
 							if (!current()) return;
 							await user.reload();
 							if (!current()) return;
-							if (user.emailAddresses.some((item) => item.id === id))
+							if (getContacts().some((item) => item.id === id))
 								throw new Error("Email removal not confirmed");
 						} else {
-							if (email.verification.status !== "verified") throw new Error("Email not verified");
-							const updated = await user.update({ primaryEmailAddressId: id });
-							if (updated.id !== user.id || updated.primaryEmailAddressId !== id)
-								throw new Error("Primary email change not confirmed");
+							if (contact.verification.status !== "verified") throw new Error("Email not verified");
+							const updated = await updatePrimary(id);
+							if (updated.id !== user.id || getPrimary(updated) !== id)
+								throw new Error("Primary contact change not confirmed");
 						}
 						if (!current()) return;
-						if (remove) setEmails((values) => values.filter((item) => item.id !== id));
+						if (remove) setContacts((values) => values.filter((item) => item.id !== id));
 						else setPrimary(id);
 						if (verifying === id) {
 							setVerifying(null);
@@ -157,59 +186,58 @@ function EmailAddresses({ user }: { user: UserResource }) {
 			<AppScrollView contentContainerClassName="gap-4 p-6">
 				<BackButton />
 				<AppText accessibilityRole="header" className="text-2xl font-semibold text-foreground">
-					{t("emails.title")}
+					{t(`${kind}.title`)}
 				</AppText>
-				<AppText>{t("emails.description")}</AppText>
+				<AppText>{t(`${kind}.description`)}</AppText>
 				{reverification.prompt}
 				<NativeButton label={t("inventory.refresh")} disabled={action.busy} onPress={refresh} />
-				{emails.map((email) => (
-					<AppView key={email.id} className="gap-2 rounded-xl bg-surface p-4">
-						<AppText selectable>{email.emailAddress}</AppText>
+				{contacts.map((contact) => (
+					<AppView key={contact.id} className="gap-2 rounded-xl bg-surface p-4">
+						<AppText selectable>{contactValue(contact)}</AppText>
 						<AppText>
 							{t(
-								email.id === primary
-									? "emails.primary"
-									: email.verification.status === "verified"
-										? "emails.verified"
-										: "emails.unverified",
+								contact.id === primary
+									? `${kind}.primary`
+									: contact.verification.status === "verified"
+										? `${kind}.verified`
+										: `${kind}.unverified`,
 							)}
 						</AppText>
-						{email.verification.status !== "verified" ? (
+						{contact.verification.status !== "verified" ? (
 							<NativeButton
-								label={t("emails.sendCode")}
+								label={t(`${kind}.sendCode`)}
 								disabled={action.busy}
-								onPress={() => sendCode(email.id)}
+								onPress={() => sendCode(contact.id)}
 							/>
 						) : null}
-						{email.id !== primary ? (
+						{contact.id !== primary ? (
 							<>
 								<NativeButton
-									label={t("emails.makePrimary")}
-									disabled={action.busy || email.verification.status !== "verified"}
-									onPress={() => confirm(email.id, false)}
+									label={t(`${kind}.makePrimary`)}
+									disabled={action.busy || contact.verification.status !== "verified"}
+									onPress={() => confirm(contact.id, false)}
 								/>
 								<NativeButton
-									label={t("emails.remove")}
+									label={t(`${kind}.remove`)}
 									disabled={action.busy}
-									onPress={() => confirm(email.id, true)}
+									onPress={() => confirm(contact.id, true)}
 								/>
 							</>
 						) : null}
-						{verifying === email.id ? (
+						{verifying === contact.id ? (
 							<>
-								<AppText>{t("emails.codeSent")}</AppText>
+								<AppText>{t(`${kind}.codeSent`)}</AppText>
 								<AppTextInput
-									accessibilityLabel={t("emails.code")}
+									accessibilityLabel={t(`${kind}.code`)}
 									value={code}
 									onChangeText={setCode}
 									editable={!action.busy}
 									autoComplete="one-time-code"
 									keyboardType="number-pad"
-									maxLength={12}
 									className="rounded-xl bg-background p-3 text-foreground"
 								/>
 								<NativeButton
-									label={t("emails.verify")}
+									label={t(`${kind}.verify`)}
 									disabled={action.busy || !code.trim()}
 									onPress={verify}
 								/>
@@ -218,25 +246,24 @@ function EmailAddresses({ user }: { user: UserResource }) {
 					</AppView>
 				))}
 				<AppTextInput
-					accessibilityLabel={t("emails.newEmail")}
-					placeholder={t("emails.newEmail")}
+					accessibilityLabel={t(`${kind}.input`)}
+					placeholder={t(`${kind}.input`)}
 					value={draft}
 					onChangeText={setDraft}
 					editable={!action.busy}
-					autoComplete="email"
-					keyboardType="email-address"
+					autoComplete={kind === "emails" ? "email" : "tel"}
+					keyboardType={kind === "emails" ? "email-address" : "phone-pad"}
 					autoCapitalize="none"
 					autoCorrect={false}
-					maxLength={254}
 					className="rounded-xl bg-surface p-3 text-foreground"
 				/>
 				<NativeButton
-					label={t("emails.add")}
+					label={t(`${kind}.add`)}
 					disabled={action.busy || !draft.trim()}
 					onPress={add}
 				/>
-				{action.error ? <AppText accessibilityRole="alert">{t("emails.failed")}</AppText> : null}
-				{saved ? <AppText accessibilityRole="alert">{t("emails.saved")}</AppText> : null}
+				{action.error ? <AppText accessibilityRole="alert">{t(`${kind}.failed`)}</AppText> : null}
+				{saved ? <AppText accessibilityRole="alert">{t(`${kind}.saved`)}</AppText> : null}
 			</AppScrollView>
 		</ReadScreen>
 	);

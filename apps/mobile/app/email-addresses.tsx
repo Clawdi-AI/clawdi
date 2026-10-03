@@ -1,1 +1,1 @@
-export { EmailAddressesScreen as default } from "../src/features/email-addresses";
+export { EmailAddressesScreen as default } from "../src/features/account-contacts";
