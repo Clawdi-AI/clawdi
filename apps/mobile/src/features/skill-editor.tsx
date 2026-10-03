@@ -9,12 +9,14 @@ import {
 	stripFrontmatter,
 } from "@clawdi/shared/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { router, useLocalSearchParams } from "expo-router";
-import { useState } from "react";
+import { router, useLocalSearchParams, useNavigation } from "expo-router";
+import { usePreventRemove } from "expo-router/react-navigation";
+import { useRef, useState } from "react";
 import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
+import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
 import { ErrorState } from "../ui/feedback";
 import { Markdown } from "../ui/markdown";
@@ -71,6 +73,12 @@ function SkillEditor({
 	const { skills } = useMobileApi();
 	const cache = useQueryClient();
 	const action = useAuthAction(scope);
+	const navigation = useNavigation();
+	const capture = useForegroundLease();
+	const confirmation = useRef(0);
+	const acknowledged = useRef(false);
+	const [completed, setCompleted] = useState(false);
+	const [baseline, setBaseline] = useState<SkillTextDraft | null>(null);
 	const projects = useCloudProjects();
 	const [selection, setSelection] = useState(projectId ?? "");
 	const writable = (projects.data ?? []).filter((p) => isWritableSkillProject(p) && !p.archived_at);
@@ -87,6 +95,35 @@ function SkillEditor({
 	);
 	const [source, setSource] = useState("");
 	const [conflict, setConflict] = useState(false);
+	const dirty = Boolean(
+		source ||
+			(draft &&
+				(draft.name !== (baseline?.name ?? "") ||
+					draft.description !== (baseline?.description ?? "") ||
+					draft.instructions !== (baseline?.instructions ?? ""))),
+	);
+	usePreventRemove(scope.isReady && !completed && (dirty || action.busy), ({ data }) => {
+		// Redispatch the original action only after a confirmed mutation or explicit discard.
+		if (acknowledged.current) {
+			navigation.dispatch(data.action);
+			return;
+		}
+		if (action.busy) return;
+		const visible = capture();
+		const ticket = ++confirmation.current;
+		Alert.alert(t("profile.unsavedTitle"), t("skills.discardWarning"), [
+			{ text: t("account.cancel"), style: "cancel" },
+			{
+				text: t("profile.discard"),
+				style: "destructive",
+				onPress: () => {
+					if (ticket !== confirmation.current || !visible() || !scope.isCurrent()) return;
+					confirmation.current++;
+					navigation.dispatch(data.action);
+				},
+			},
+		]);
+	});
 	const matches = detail.data?.project_id === projectId && detail.data?.skill_key === skillKey;
 	const canWrite = create
 		? Boolean(project && isWritableSkillProject(project))
@@ -97,6 +134,7 @@ function SkillEditor({
 					skillCapabilities(detail.data, project).canUpdate,
 			);
 	const disabled =
+		completed ||
 		action.busy ||
 		projects.isPending ||
 		projects.isError ||
@@ -107,6 +145,9 @@ function SkillEditor({
 	const save = (install = false) =>
 		action.run(async (isCurrent) => {
 			if (disabled || !selectedId || (!install && !draft)) return;
+			confirmation.current++;
+			const visible = capture();
+			if (!visible()) return;
 			try {
 				if (install)
 					await read((s) => skills.install(selectedId, parseProjectSkillGitHubInput(source), s));
@@ -127,8 +168,11 @@ function SkillEditor({
 				setConflict(false);
 				await invalidate();
 				if (!isCurrent()) return;
-				if (create) router.replace("/skills");
-				else setDraft(null);
+				if (create) {
+					acknowledged.current = true;
+					setCompleted(true);
+					if (visible()) router.replace("/skills");
+				} else setDraft(null);
 			} catch (error) {
 				if (isCurrent() && error instanceof ApiClientError && error.status === 412)
 					setConflict(true);
@@ -139,18 +183,22 @@ function SkillEditor({
 		const current = detail.data;
 		if (disabled || !current || !projectId || !skillKey) return;
 		const signal = scope.signal;
+		const visible = capture();
 		Alert.alert(t("skills.remove"), t("skills.removeWarning"), [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
 				text: t("skills.remove"),
 				style: "destructive",
 				onPress: () => {
-					if (signal.aborted || !scope.isCurrent()) return;
+					if (signal.aborted || !scope.isCurrent() || !visible()) return;
 					void action.run(async (isCurrent) => {
 						await read((s) => skills.remove(projectId, skillKey, current.content_hash, s));
 						if (!isCurrent()) return;
 						await invalidate();
-						if (isCurrent()) router.replace("/skills");
+						if (isCurrent() && visible()) {
+							acknowledged.current = true;
+							router.replace("/skills");
+						}
 					});
 				},
 			},
@@ -158,6 +206,11 @@ function SkillEditor({
 	};
 	const startEdit = () => {
 		if (disabled || !detail.data || detail.data.content === null) return;
+		setBaseline({
+			name: detail.data.name,
+			description: detail.data.description ?? "",
+			instructions: stripFrontmatter(detail.data.content),
+		});
 		setDraft({
 			name: detail.data.name,
 			description: detail.data.description ?? "",
@@ -174,6 +227,7 @@ function SkillEditor({
 				contentContainerStyle={{ padding: 24, gap: 16 }}
 			>
 				<BackButton />
+				{completed ? <AppText className="text-foreground">{t("skills.saved")}</AppText> : null}
 				<AppText accessibilityRole="header" className="text-3xl font-semibold text-foreground">
 					{t(create ? "skills.create" : "skills.title")}
 				</AppText>
@@ -235,22 +289,26 @@ function SkillEditor({
 							<NativeButton
 								disabled={action.busy}
 								label={t("skills.discard")}
-								onPress={() =>
+								onPress={() => {
+									const visible = capture();
+									const ticket = ++confirmation.current;
 									Alert.alert(t("skills.discard"), t("skills.discardWarning"), [
 										{ text: t("account.cancel"), style: "cancel" },
 										{
 											text: t("skills.discard"),
 											style: "destructive",
 											onPress: () => {
-												if (!scope.isCurrent()) return;
+												if (ticket !== confirmation.current || !visible() || !scope.isCurrent())
+													return;
+												confirmation.current++;
 												setDraft(null);
 												setConflict(false);
 												action.clearError();
 												void detail.refetch();
 											},
 										},
-									])
-								}
+									]);
+								}}
 							/>
 						) : null}
 					</AppView>
@@ -258,6 +316,22 @@ function SkillEditor({
 					<AppView className="gap-3">
 						<AppText className="text-xl text-foreground">{detail.data.name}</AppText>
 						<AppText className="text-muted">{detail.data.description}</AppText>
+						<AppText selectable className="text-muted">
+							{t("skills.project")}: {project?.name ?? detail.data.project_id}
+						</AppText>
+						<AppText className="text-muted">
+							{t("skills.version")}: {detail.data.version}
+						</AppText>
+						{detail.data.file_count !== null ? (
+							<AppText className="text-muted">
+								{t("skills.files")}: {detail.data.file_count}
+							</AppText>
+						) : null}
+						{detail.data.source_repo ? (
+							<AppText selectable className="text-muted">
+								{t("skills.source")}: {detail.data.source_repo}
+							</AppText>
+						) : null}
 						{detail.data.content !== null ? (
 							<Markdown content={stripFrontmatter(detail.data.content)} />
 						) : (

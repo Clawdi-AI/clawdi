@@ -824,6 +824,14 @@ until each surface has implementation, focused verification and device evidence:
 | Runtime UI/terminal | Shared Web/native xterm engine, Expo DOM terminal route, native controls and foreground teardown; bounded generated credential clients; confirmed system-browser OpenClaw handoff and Hermes OIDC entry with shared URL validation | Native WebView/keyboard/real-server round-trip and compilation; device browser authentication and revocation acceptance |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |
 
+Skill detail also presents generated version, file count, Project and source
+repository metadata. Text/create/import drafts have native navigation protection:
+leaving requires confirmation, pending writes block removal, and acknowledged
+creation can return without a false discard prompt. Edit dirtiness uses the
+captured draft baseline, not a background-refreshed revision. Discard callbacks
+are account/foreground fenced; uncertain writes retain the draft. Gesture/back
+confirmation and background completion still require real-device acceptance.
+
 The source reference is `apps/web/src/pages/dashboard`, its settings components,
 and `apps/web/src/hosted/v2`; exclude Hosted v1 product surfaces, not v2 features
 whose implementation happens to live under a legacy directory name.

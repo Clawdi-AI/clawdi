@@ -583,6 +583,11 @@ export const en = {
 		failed: "The action could not be confirmed. Refresh the links before retrying.",
 	},
 	skills: {
+		saved: "Skill saved. You can return to the Skills list.",
+		project: "Project",
+		version: "Version",
+		files: "Files",
+		source: "Source repository",
 		search: "Search Skills",
 		open: "Open Skill",
 		create: "Create or import a Skill",
