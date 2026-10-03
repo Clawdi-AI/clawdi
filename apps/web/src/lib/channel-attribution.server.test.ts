@@ -44,6 +44,7 @@ describe("trusted channel invitations", () => {
 		});
 		for (const invalid of [
 			`${VECTOR}A`,
+			`${VECTOR}\n`,
 			token("other"),
 			token("sui", 1000, 1901),
 			token("sui", 1200, 2100),

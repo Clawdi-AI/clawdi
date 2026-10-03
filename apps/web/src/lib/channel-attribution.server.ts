@@ -13,7 +13,7 @@ export function verifyChannelAttribution(
 ): { channel: DeployChannelId; expiresAt: number; token: string } | null {
 	if (!token || !secret || Buffer.byteLength(secret) < 32 || token.length > 512) return null;
 	const match = TOKEN_PATTERN.exec(token);
-	if (!match) return null;
+	if (!match || match[0] !== token) return null;
 	const [, channel, issuedRaw, expiresRaw, nonce, signature] = match;
 	if (!channel || !issuedRaw || !expiresRaw || !nonce || !signature) return null;
 	const config = Object.values(DEPLOY_CHANNELS).find((entry) => entry.id === channel);
