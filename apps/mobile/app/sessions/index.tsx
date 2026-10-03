@@ -9,6 +9,7 @@ import { routeParam, uniqueSessions } from "../../src/features/read-helpers";
 import { useI18n } from "../../src/i18n";
 import { LoadingScreen } from "../../src/ui/feedback";
 import { NativeButton } from "../../src/ui/native-controls";
+import { AppView } from "../../src/ui/primitives";
 
 export default function SessionsRoute() {
 	const t = useI18n();
@@ -44,12 +45,18 @@ export default function SessionsRoute() {
 			description={t(agentId ? "sessions.filter" : "sessions.description")}
 			empty={t("sessions.empty")}
 			header={
-				agentId ? (
+				<AppView className="gap-3">
 					<NativeButton
-						label={t("sessions.clearFilter")}
-						onPress={() => router.replace("/sessions")}
+						label={t("sessionShares.title")}
+						onPress={() => router.push("/sessions/shared")}
 					/>
-				) : undefined
+					{agentId ? (
+						<NativeButton
+							label={t("sessions.clearFilter")}
+							onPress={() => router.replace("/sessions")}
+						/>
+					) : null}
+				</AppView>
 			}
 			renderItem={(session) => <SessionRow session={session} />}
 			refreshing={sessions.isRefetching && !sessions.isFetchingNextPage}

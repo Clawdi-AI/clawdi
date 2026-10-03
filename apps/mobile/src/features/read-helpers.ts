@@ -37,10 +37,17 @@ export function uniqueSessions(
 
 export function messagePage(
 	page: components["schemas"]["SessionMessagesPage"] | components["schemas"]["SessionTimelinePage"],
-): components["schemas"]["SessionMessagesPage"] {
-	const items: components["schemas"]["SessionMessageResponse"][] = [];
+): Omit<components["schemas"]["SessionTimelinePage"], "items"> & {
+	items: components["schemas"]["SessionTimelineMessageResponse"][];
+} {
+	const items: components["schemas"]["SessionTimelineMessageResponse"][] = [];
 	for (const item of page.items) {
 		if (
+			!("kind" in item) ||
+			item.kind !== "message" ||
+			!("position" in item) ||
+			!Number.isSafeInteger(item.position) ||
+			item.position < 0 ||
 			!("role" in item) ||
 			!("content" in item) ||
 			typeof item.content !== "string" ||
@@ -49,6 +56,8 @@ export function messagePage(
 			throw new Error("Unexpected message projection");
 		}
 		items.push({
+			kind: "message",
+			position: item.position,
 			role: item.role,
 			content: item.content,
 			timestamp: item.timestamp,

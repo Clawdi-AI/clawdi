@@ -8,6 +8,7 @@ import {
 } from "../../src/features/cloud-inventory";
 import { routeParam } from "../../src/features/read-helpers";
 import { ResourceError } from "../../src/features/resource-error";
+import { SessionShareActions } from "../../src/features/session-sharing";
 import { Transcript } from "../../src/features/transcript";
 import { useI18n } from "../../src/i18n";
 import { LoadingScreen } from "../../src/ui/feedback";
@@ -41,6 +42,10 @@ export default function SessionDetailRoute() {
 							</AppText>
 						</AppView>
 						<AppView className="gap-3">
+							<SessionShareActions
+								sessionId={session.data.id}
+								hasContent={session.data.has_content}
+							/>
 							<DetailRow
 								label={t("sessions.agent")}
 								value={

@@ -194,8 +194,37 @@ account-scoped query lifetime and navigation stay in their respective apps.
 
 These additions do not establish full Web parity. Universal-link routing,
 Skill bundle upload/download/send, connectors, provider configuration, vaults,
-Session sharing/export, native builds and real store payments remain separate
+native builds and real store payments remain separate
 acceptance work. Existing Session transcripts remain read-only by design.
+
+Session link management now includes paginated snapshot/live inventory, explicit
+public snapshot confirmation, canonical-position excerpts and individual Agent
+responses, exact-kind revocation, and native sharing of Web/Markdown/JSON links.
+Owner Markdown export uses the authenticated server serializer and the native
+text share sheet; it does not create a public link or persist an export file.
+The native transcript requests the message-only timeline projection so share
+positions remain canonical event positions, not visible-page offsets. Native
+presentation is fenced against blur, backgrounding and account retirement.
+
+### Full-parity completion scope
+
+Source implementation is not native acceptance. Keep the complete v2 Web scope
+until each surface has implementation, focused verification and device evidence:
+
+| Surface | Implemented source | Remaining scope |
+| --- | --- | --- |
+| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings | Remaining general/profile settings and real Clerk flows |
+| Agents/Projects | Inventories, context bindings, Project CRUD/sharing | Agent settings and runtime controls, Project-scoped resource navigation |
+| Sessions | Inventory, pinned message history, snapshot/live sharing and text export | Search/filter parity, tool timeline, public/universal-link entrypoints, device sharing |
+| Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
+| Connectors/Vault | Not implemented | Catalog, credentials, detail and lifecycle surfaces |
+| v2 AI providers/channels | Not implemented | BYOK, provider OAuth/model bindings, channel connection/pairing/repair |
+| Deployment/billing | Basic eligibility/creation/recovery and read-only billing/deployment views | Paid creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
+| Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |
+
+The source reference is `apps/web/src/pages/dashboard`, its settings components,
+and `apps/web/src/hosted/v2`; exclude Hosted v1 product surfaces, not v2 features
+whose implementation happens to live under a legacy directory name.
 
 On an authorized simulator/device build, verify:
 
@@ -230,6 +259,12 @@ On an authorized simulator/device build, verify:
    a concurrent revision change and confirm it cannot remove the replacement.
    Verify Agent-synced/shared Skills remain read-only and account switching
    retires every pending Skill action.
+9. Create full/excerpt/response Session snapshots after explicit confirmation;
+   use event-backed transcripts with gaps between canonical positions. Check
+   exact-kind revocation of both snapshot and legacy live links, export links,
+   and owner Markdown text sharing. Blur/background during a create/export and
+   confirm a late result never opens a native share sheet. These operations must
+   be exercised only with explicitly authorized test content/accounts.
 
 Done: record the device/OS and observed outcomes. No live authentication,
 native compilation/signing, purchases or provisioning has been verified here.

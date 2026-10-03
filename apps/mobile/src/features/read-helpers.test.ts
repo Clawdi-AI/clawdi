@@ -32,13 +32,21 @@ const session: components["schemas"]["SessionListItemResponse"] = {
 	content_protocol: "events-v1",
 	is_shared: false,
 };
-const page: components["schemas"]["SessionMessagesPage"] = {
+const page = {
 	content_revision: "events:revision-a",
 	offset: 0,
 	limit: 50,
 	total: 3,
-	items: [{ role: "user", content: "<script>alert(1)</script>", timestamp: null }],
-};
+	items: [
+		{
+			kind: "message",
+			position: 17,
+			role: "user",
+			content: "<script>alert(1)</script>",
+			timestamp: null,
+		},
+	],
+} satisfies components["schemas"]["SessionTimelinePage"];
 
 describe("read-only pagination boundaries", () => {
 	test("continues by actual returned message count and stops on empty/final/unpinned pages", () => {
@@ -61,6 +69,10 @@ describe("read-only pagination boundaries", () => {
 	});
 	test("preserves plain text, rejects tool projection, and bounds rendering", () => {
 		expect(messagePage(page).items[0]?.content).toBe("<script>alert(1)</script>");
+		expect(messagePage(page).items[0]?.position).toBe(17);
+		expect(() =>
+			messagePage({ ...page, items: [{ role: "user", content: "No source position" }] }),
+		).toThrow();
 		expect(limitedText("123456", 4)).toBe("1234…");
 		expect(limitedText("1234", 4)).toBe("1234");
 		expect(() =>

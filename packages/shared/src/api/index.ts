@@ -62,6 +62,12 @@ export {
 	readApiBaseUrl,
 } from "./read-transport";
 export * from "./schemas";
+export * from "./session-sharing";
+export {
+	createSessionSharingClient,
+	type SessionSharesQuery,
+	type SessionSharingClient,
+} from "./session-sharing-client";
 export { createSkillClient, type SkillClient } from "./skill-client";
 export * from "./skill-content";
 export * from "./skill-policy";

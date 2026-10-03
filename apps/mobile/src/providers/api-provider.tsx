@@ -10,10 +10,12 @@ import {
 	createHostedApiClient,
 	createHostedComputeClient,
 	createProjectSharingClient,
+	createSessionSharingClient,
 	createSkillClient,
 	type HostedApiClient,
 	type HostedComputeClient,
 	type ProjectSharingClient,
+	type SessionSharingClient,
 	type SkillClient,
 } from "@clawdi/shared/api";
 import { useAuth } from "@clerk/expo";
@@ -27,6 +29,7 @@ export type MobileApiClients = Readonly<{
 	sharing: ProjectSharingClient;
 	agentProjects: AgentProjectClient;
 	skills: SkillClient;
+	sessionSharing: SessionSharingClient;
 	compute: HostedComputeClient | null;
 	hosted: HostedApiClient | null;
 }>;
@@ -64,6 +67,11 @@ export function MobileApiProvider({
 	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
+			sessionSharing: createSessionSharingClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
 			skills: createSkillClient({
 				baseUrl: config.cloudApiUrl,
 				getToken: readToken,

@@ -1,5 +1,6 @@
 import { ApiClientError } from "@clawdi/shared/api";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { router } from "expo-router";
 import type { ReactElement } from "react";
 import { FlatList } from "react-native";
 import { useI18n } from "../i18n";
@@ -37,6 +38,7 @@ export function Transcript({ sessionId, header }: { sessionId: string; header: R
 								limit: 50,
 								direction: "asc",
 								view: "messages",
+								include: ["user", "assistant"],
 								content_revision: pageParam.revision,
 							},
 							readSignal,
@@ -55,7 +57,7 @@ export function Transcript({ sessionId, header }: { sessionId: string; header: R
 	});
 	const items =
 		messages.data?.pages.flatMap((page) =>
-			page.items.map((message, index) => ({ message, position: page.offset + index })),
+			page.items.map((message) => ({ message, position: message.position })),
 		) ?? [];
 	const conflict = messages.error instanceof ApiClientError && messages.error.status === 409;
 	const refresh = () => {
@@ -94,6 +96,28 @@ export function Transcript({ sessionId, header }: { sessionId: string; header: R
 						<AppText selectable className="text-base leading-6 text-foreground">
 							{limitedText(item.message.content)}
 						</AppText>
+						<NativeButton
+							label={t("sessionShares.through")}
+							disabled={messages.isFetching || messages.isError}
+							onPress={() =>
+								router.push({
+									pathname: "/sessions/shared",
+									params: { sessionId, scope: "through", position: String(item.position) },
+								})
+							}
+						/>
+						{item.message.role === "assistant" ? (
+							<NativeButton
+								label={t("sessionShares.response")}
+								disabled={messages.isFetching || messages.isError}
+								onPress={() =>
+									router.push({
+										pathname: "/sessions/shared",
+										params: { sessionId, scope: "response", position: String(item.position) },
+									})
+								}
+							/>
+						) : null}
 					</AppView>
 				)}
 				ListEmptyComponent={

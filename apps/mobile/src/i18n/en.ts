@@ -143,6 +143,28 @@ export const en = {
 		unknownActivity: "Unknown activity",
 		tags: "Tags",
 	},
+	sessionShares: {
+		title: "Shared Session links",
+		description: "Review and revoke active public links. Snapshots do not include future messages.",
+		empty: "No active Session links.",
+		session: "Full Session snapshot",
+		through: "Conversation excerpt",
+		response: "Single Agent response",
+		live: "Full Session, live",
+		create: "Create public snapshot",
+		warning:
+			"Anyone with the link can read this conversation snapshot. Review its contents before making it public.",
+		rangeWarning:
+			"Anyone with the link can read the selected response or excerpt from the current server transcript. If the Session changed, review its current contents first.",
+		share: "Share link",
+		shareMarkdown: "Share Markdown link",
+		shareJson: "Share JSON link",
+		export: "Export Markdown",
+		openSession: "Open Session",
+		revoke: "Revoke link",
+		revokeWarning: "This link will stop working. The original Session will not be deleted.",
+		failed: "The action could not be confirmed. Refresh the links before retrying.",
+	},
 	skills: {
 		open: "Open Skill",
 		create: "Create or import a Skill",
