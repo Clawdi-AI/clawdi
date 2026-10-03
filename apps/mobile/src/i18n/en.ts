@@ -175,6 +175,9 @@ export const en = {
 		accountUnavailable: "Account details are not available yet.",
 		apiKeys: "API keys",
 		noApiKeys: "No API keys are available.",
+		apiKeyLabel: "Key label",
+		createApiKey: "Create API key",
+		revokeApiKey: "Revoke API key",
 	},
 	error: {
 		genericTitle: "Something went wrong",

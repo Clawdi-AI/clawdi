@@ -1,6 +1,7 @@
 import { useClerk, useUser } from "@clerk/expo";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
+import { useState } from "react";
 import { useAuthAction } from "../../src/auth/use-auth-action";
 import { useI18n } from "../../src/i18n";
 import {
@@ -11,7 +12,7 @@ import {
 import { useMobileApi } from "../../src/providers/api-provider";
 import { LoadingScreen } from "../../src/ui/feedback";
 import { NativeButton } from "../../src/ui/native-controls";
-import { AppText, AppView } from "../../src/ui/primitives";
+import { AppText, AppTextInput, AppView } from "../../src/ui/primitives";
 
 export default function AccountRoute() {
 	const t = useI18n();
@@ -29,6 +30,8 @@ export default function AccountRoute() {
 		retry: false,
 	});
 	const { busy, error, run } = useAuthAction(scope.identity);
+	const [keyLabel, setKeyLabel] = useState("");
+	const [rawKey, setRawKey] = useState<string | null>(null);
 	const email = user?.primaryEmailAddress?.emailAddress;
 	const onSignOut = () =>
 		run(async (isCurrent) => {
@@ -45,6 +48,23 @@ export default function AccountRoute() {
 			});
 			if (isCurrent() && wasCurrent) router.replace("/(auth)/sign-in");
 		});
+	const onCreateKey = () =>
+		run(async (isCurrent) => {
+			const created = await read(
+				(signal) => account.createApiKey({ label: keyLabel.trim() }, signal),
+				scope.signal,
+			);
+			if (!isCurrent()) return;
+			setRawKey(created.raw_key);
+			setKeyLabel("");
+			await queryClient.invalidateQueries({ queryKey: accountQueryKey(scope, "account-api-keys") });
+		});
+	const onRevokeKey = (keyId: string) =>
+		run(async (isCurrent) => {
+			await read((signal) => account.revokeApiKey(keyId, signal), scope.signal);
+			if (!isCurrent()) return;
+			await queryClient.invalidateQueries({ queryKey: accountQueryKey(scope, "account-api-keys") });
+		});
 	if (!isLoaded) return <LoadingScreen label={t("loading.authentication")} />;
 	return (
 		<AppView className="flex-1 gap-8 bg-background px-6 pb-10 pt-8">
@@ -58,11 +78,31 @@ export default function AccountRoute() {
 			<NativeButton label={t("navigation.billing")} onPress={() => router.push("/billing")} />
 			<AppView className="gap-2 rounded-3xl bg-surface p-5">
 				<AppText className="text-sm text-muted">{t("account.apiKeys")}</AppText>
+				<AppTextInput
+					accessibilityLabel={t("account.apiKeyLabel")}
+					className="rounded-xl bg-background px-3 py-2 text-foreground"
+					value={keyLabel}
+					onChangeText={setKeyLabel}
+					placeholder={t("account.apiKeyLabel")}
+				/>
+				<NativeButton
+					label={t("account.createApiKey")}
+					disabled={busy || !keyLabel.trim()}
+					onPress={() => void onCreateKey()}
+				/>
+				{rawKey ? <AppText className="text-sm text-danger">{rawKey}</AppText> : null}
 				{keys.data?.length ? (
 					keys.data.map((key) => (
-						<AppText className="text-sm text-foreground" key={key.id}>
-							{key.label} · {key.key_prefix}
-						</AppText>
+							<AppView className="gap-2" key={key.id}>
+								<AppText className="text-sm text-foreground">
+									{key.label} · {key.key_prefix}
+								</AppText>
+								<NativeButton
+									label={t("account.revokeApiKey")}
+									disabled={busy}
+									onPress={() => void onRevokeKey(key.id)}
+								/>
+							</AppView>
 					))
 				) : (
 					<AppText className="text-sm text-muted">{t("account.noApiKeys")}</AppText>
