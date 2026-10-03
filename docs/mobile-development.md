@@ -276,8 +276,13 @@ request body and idempotency key are fixed for explicit retry. Keys remain in
 component memory and are cleared on blur/background; an uncertain result warns
 the user to inspect the inventory before starting a new connection. There is no
 implicit model discovery or inference request. Web retains compatibility exports
-for the extracted Shared form helpers. OAuth, connection editing and Hosted
-impact-confirmed removal remain outstanding.
+for the extracted Shared form helpers. Connection editing also shares
+`providerEditOperation`: connection/custom credentials use an atomic PATCH
+without model or credential-environment fields, while native/catalog key
+replacement uses accept with `replace: true` and the captured idempotency key.
+Settings-only edits do not carry credentials. Native forms support routing and
+region choices, preserve immutable retry input and clear entered secrets on
+blur/background. OAuth and Hosted impact-confirmed removal remain outstanding.
 
 Native Project detail is readable by accessible members; sharing management has
 its own owner-gated route. Agent, Skill and Vault catalogs reuse their existing

@@ -7,6 +7,9 @@ import { vaultEn } from "../features/vault/en";
 
 export const en = {
 	providers: {
+		edit: "Edit connection",
+		keepCredential:
+			"Leave the API key blank to keep the current credential. Stored model settings are not edited here.",
 		add: "Add API-key connection",
 		apiKey: "API key",
 		endpoint: "API endpoint",
@@ -18,7 +21,6 @@ export const en = {
 			"Manage saved connections. Credential presence is not proof of connectivity or runtime compatibility.",
 		empty: "No saved AI Providers.",
 		label: "Connection name",
-		rename: "Rename connection",
 		credentialPresent: "Credential material available",
 		credentialMissing: "Credential material unavailable",
 		validate: "Validate configuration",

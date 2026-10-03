@@ -6,6 +6,7 @@ export {
 	type DerivedProviderFields,
 	derivedProviderFields,
 	type ProviderFormIdentity,
+	providerEditOperation,
 	providerFormIdentity,
 	providerListAllowsSubmit,
 	providerSettingsPatch,

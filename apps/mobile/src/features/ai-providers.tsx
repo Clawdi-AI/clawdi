@@ -7,9 +7,10 @@ import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
 import { NativeButton } from "../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../ui/primitives";
+import { AppText, AppView } from "../ui/primitives";
 import { InventoryList } from "./inventory-list";
 import { ProviderCreate } from "./provider-create";
+import { ProviderEdit } from "./provider-edit";
 
 export function AiProvidersScreen() {
 	const scope = useAccountScope();
@@ -73,8 +74,6 @@ function ProviderRow({
 	const read = useAccountRead();
 	const { aiProviders } = useMobileApi();
 	const action = useAuthAction(scope.identity);
-	const [editing, setEditing] = useState(false);
-	const [label, setLabel] = useState(provider.label ?? "");
 	const [valid, setValid] = useState<boolean | null>(null);
 	return (
 		<AppView className="gap-3 rounded-2xl bg-surface p-4">
@@ -87,46 +86,7 @@ function ProviderRow({
 			<AppText className="text-sm text-muted">
 				{t(provider.usable ? "providers.credentialPresent" : "providers.credentialMissing")}
 			</AppText>
-			{editing ? (
-				<>
-					<AppTextInput
-						accessibilityLabel={t("providers.label")}
-						value={label}
-						onChangeText={setLabel}
-						editable={!action.busy}
-						maxLength={200}
-						className="rounded-xl bg-background p-3 text-foreground"
-					/>
-					<NativeButton
-						label={t("projects.save")}
-						disabled={action.busy || !label.trim()}
-						onPress={() =>
-							void action.run(async (current) => {
-								await read((signal) =>
-									aiProviders.update(provider.provider_id, { label: label.trim() }, signal),
-								);
-								if (!current()) return;
-								setEditing(false);
-								await refresh();
-							})
-						}
-					/>
-					<NativeButton
-						label={t("account.cancel")}
-						disabled={action.busy}
-						onPress={() => {
-							setEditing(false);
-							setLabel(provider.label ?? "");
-						}}
-					/>
-				</>
-			) : (
-				<NativeButton
-					label={t("providers.rename")}
-					disabled={action.busy || !scope.isReady}
-					onPress={() => setEditing(true)}
-				/>
-			)}
+			<ProviderEdit provider={provider} refresh={refresh} />
 			<NativeButton
 				label={t("providers.validate")}
 				disabled={action.busy || !scope.isReady}

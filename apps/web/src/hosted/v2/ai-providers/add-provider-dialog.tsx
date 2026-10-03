@@ -22,12 +22,11 @@ import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
 	type AuthMethod,
 	authFor,
-	connectionProviderPatch,
 	customProviderRuntimeEnv,
 	derivedProviderFields,
+	providerEditOperation,
 	providerFormIdentity,
 	providerListAllowsSubmit,
-	providerSettingsPatch,
 } from "@/hosted/v2/ai-providers/add-provider-dialog.logic";
 import {
 	useAcceptProvider,
@@ -375,16 +374,12 @@ export function AddProviderDialog({
 		if (!canSubmit) return;
 		if (editing) {
 			const replacementKey = form.apiKey.trim();
-			if (editing.configuration_mode === "connection" || editing.configuration_mode === "custom") {
+			const operation = providerEditOperation(editing, providerBody(), replacementKey);
+			if (operation.kind === "connection") {
 				const saved = await updateConnection
 					.execute({
 						providerId: editing.provider_id,
-						body: connectionProviderPatch(editing, {
-							label: identity.label,
-							baseUrl: form.baseUrl,
-							apiMode: form.apiMode,
-							apiKey: replacementKey,
-						}),
+						body: operation.body,
 					})
 					.catch(() => null);
 				if (!saved) return;
@@ -392,12 +387,8 @@ export function AddProviderDialog({
 				requestClose(false);
 				return;
 			}
-			if (replacementKey) {
-				const body = {
-					provider: providerBody(),
-					credential: { type: "api_key", value: replacementKey },
-					replace: true,
-				} satisfies AiProviderAcceptRequest;
+			if (operation.kind === "accept") {
+				const body = operation.body;
 				const result = await acceptProvider
 					.execute({
 						body,
@@ -410,11 +401,10 @@ export function AddProviderDialog({
 				requestClose(false);
 				return;
 			}
-			const update = providerSettingsPatch(editing, providerBody());
 			const saved = await patchProvider
 				.mutateAsync({
 					params: { path: { provider_id: editing.provider_id } },
-					body: update,
+					body: operation.body,
 				})
 				.catch(() => null);
 			if (!saved) return;

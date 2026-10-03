@@ -100,6 +100,37 @@ export function connectionProviderPatch(
 	};
 }
 
+/** Choose the same atomic edit path on Web and native; never send credentials via query mutations. */
+export function providerEditOperation(
+	provider: AiProvider,
+	fields: AiProviderUpsert,
+	apiKey: string,
+):
+	| { kind: "connection" | "settings"; body: AiProviderPatch }
+	| { kind: "accept"; body: components["schemas"]["AiProviderAcceptRequest"] } {
+	if (provider.configuration_mode === "connection" || provider.configuration_mode === "custom") {
+		return {
+			kind: "connection",
+			body: connectionProviderPatch(provider, {
+				label: fields.label ?? null,
+				baseUrl: fields.base_url,
+				apiMode: fields.api_mode ?? derivedProviderFields(provider.type, "api_key").apiMode,
+				apiKey,
+			}),
+		};
+	}
+	if (apiKey.trim())
+		return {
+			kind: "accept",
+			body: {
+				provider: fields,
+				credential: { type: "api_key", value: apiKey.trim() },
+				replace: true,
+			},
+		};
+	return { kind: "settings", body: providerSettingsPatch(provider, fields) };
+}
+
 export function derivedProviderFields(
 	type: ProviderTypeId,
 	authMethod: AuthMethod,
