@@ -173,6 +173,8 @@ export const en = {
 		signOut: "Sign out",
 		signOutFailed: "We could not sign you out. Please try again.",
 		accountUnavailable: "Account details are not available yet.",
+		apiKeys: "API keys",
+		noApiKeys: "No API keys are available.",
 	},
 	error: {
 		genericTitle: "Something went wrong",

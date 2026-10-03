@@ -1,9 +1,10 @@
 import { useClerk, useUser } from "@clerk/expo";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useAuthAction } from "../../src/auth/use-auth-action";
 import { useI18n } from "../../src/i18n";
-import { useAccountScope } from "../../src/platform/account-lifecycle";
+import { accountQueryKey, useAccountRead, useAccountScope } from "../../src/platform/account-lifecycle";
+import { useMobileApi } from "../../src/providers/api-provider";
 import { LoadingScreen } from "../../src/ui/feedback";
 import { NativeButton } from "../../src/ui/native-controls";
 import { AppText, AppView } from "../../src/ui/primitives";
@@ -15,6 +16,14 @@ export default function AccountRoute() {
 	const scope = useAccountScope();
 	const queryClient = useQueryClient();
 	const router = useRouter();
+	const { account } = useMobileApi();
+	const read = useAccountRead();
+	const keys = useQuery({
+		queryKey: accountQueryKey(scope, "account-api-keys"),
+		queryFn: ({ signal }) => read((readSignal) => account.listApiKeys(readSignal), signal),
+		enabled: scope.isReady,
+		retry: false,
+	});
 	const { busy, error, run } = useAuthAction(scope.identity);
 	const email = user?.primaryEmailAddress?.emailAddress;
 	const onSignOut = () =>
@@ -43,6 +52,18 @@ export default function AccountRoute() {
 				</AppText>
 			</AppView>
 			<NativeButton label={t("navigation.billing")} onPress={() => router.push("/billing")} />
+			<AppView className="gap-2 rounded-3xl bg-surface p-5">
+				<AppText className="text-sm text-muted">{t("account.apiKeys")}</AppText>
+				{keys.data?.length ? (
+					keys.data.map((key) => (
+						<AppText className="text-sm text-foreground" key={key.id}>
+							{key.label} · {key.key_prefix}
+						</AppText>
+					))
+				) : (
+					<AppText className="text-sm text-muted">{t("account.noApiKeys")}</AppText>
+				)}
+			</AppView>
 			{error ? (
 				<AppText className="text-base text-danger">{t("account.signOutFailed")}</AppText>
 			) : null}

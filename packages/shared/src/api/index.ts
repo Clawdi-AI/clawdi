@@ -7,6 +7,12 @@ export {
 	type HostedComputeClient,
 } from "./compute-client";
 export type {
+	AccountApiClient,
+	ApiKeyCreate,
+	SettingsUpdate,
+} from "./account-client";
+export { createAccountApiClient } from "./account-client";
+export type {
 	AiProviderRemovalImpact,
 	AiProviderRemovalResult,
 	DeployComponents,

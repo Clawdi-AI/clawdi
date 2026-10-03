@@ -1,6 +1,8 @@
 import {
 	ApiClientError,
 	type ApiClientFetch,
+	createAccountApiClient,
+	type AccountApiClient,
 	type CloudApiClient,
 	createCloudApiClient,
 	createHostedApiClient,
@@ -15,6 +17,7 @@ import { useAccountScope } from "../platform/account-lifecycle";
 
 export type MobileApiClients = Readonly<{
 	cloud: CloudApiClient;
+	account: AccountApiClient;
 	compute: HostedComputeClient | null;
 	hosted: HostedApiClient | null;
 }>;
@@ -53,6 +56,11 @@ export function MobileApiProvider({
 	const clients = useMemo<MobileApiClients>(
 		() => ({
 			cloud: createCloudApiClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
+			account: createAccountApiClient({
 				baseUrl: config.cloudApiUrl,
 				getToken: readToken,
 				fetch: fetcher,
