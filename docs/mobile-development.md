@@ -65,6 +65,13 @@ values are embedded in the app; never put private credentials in them. Clerk
 email/password verification, recovery and supported second factors must be
 configured by the account owner. This work does not change Clerk settings.
 
+`EXPO_PUBLIC_CLERK_OAUTH_PROVIDERS` optionally supplies a comma-separated list
+such as `google,github` for native account linking. Only the installed SDK's
+provider names or bounded `custom_<slug>` names are accepted; duplicate choices
+are removed. No list means no new-link buttons. This public build-time list does
+not enable providers in Clerk: configure those and the native redirect separately.
+Malformed explicit lists fail configuration validation. Never include credentials.
+
 `EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL` optionally enables the v2 compute control
 plane. It is separate from the Cloud identity/Session API and does not enable
 Hosted v1. A trailing `/v2` is normalized. An absent compute URL leaves Cloud
@@ -625,9 +632,11 @@ factors and SMS availability. Real SMS factor enrollment and sign-in remain unve
 confirmed unlinking via the published `ExternalAccountResource.destroy`. It uses
 the shared native reverification and account/foreground guards, reloads before
 writing, and only reports success after a reload confirms absence. Unlinking does
-not delete the provider account; Clerk enforces remaining sign-in methods. Adding
-a new connection remains unavailable; existing connections can request public
-`reauthorize` and use Expo's system auth browser. Each request adds a random
+not delete the provider account; Clerk enforces remaining sign-in methods. New
+connections use public `createExternalAccount` with an explicitly configured
+provider; a matching existing resource is reauthorized after a refresh instead of
+blindly creating another link. Existing connections use public `reauthorize`.
+Both use the same Expo system auth browser continuation. Each request adds a random
 `clawdi_attempt` query value to `clawdi://account-oauth`; callback validation requires
 that exact attempt/address and one nonempty rotating token nonce before reloading
 the original User. Page/account replacement retires the browser continuation;
@@ -688,7 +697,7 @@ until each surface has implementation, focused verification and device evidence:
 
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
-| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and shared email/phone contact management, shared native password/code reverification, active-device review/revocation, password management, authenticator/SMS factor management and backup codes, linked-account inventory/unlink and browser reauthorization | Passkey management, linked-account creation, remaining security management, passkey/enterprise reverification and real Clerk/browser/device acceptance |
+| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and shared email/phone contact management, shared native password/code reverification, active-device review/revocation, password management, authenticator/SMS factor management and backup codes, linked-account inventory/unlink and configured-provider browser linking/reauthorization | Passkey management, remaining security management, passkey/enterprise reverification and real Clerk/browser/device acceptance |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |

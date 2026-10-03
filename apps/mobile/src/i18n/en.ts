@@ -39,10 +39,12 @@ export const en = {
 			"Remove this sign-in connection? Make sure you have another way to sign in. Provider-backed access may stop working. Your account service may require fresh verification or prevent removal of your last sign-in method.",
 		reauthorize: "Reauthorize in browser",
 		reauthorized: "Connection authorization confirmed.",
-		linkingUnavailable:
-			"Adding a new provider is not yet available in this app. Reauthorization uses the system browser and requires the app callback to be allowed by your sign-in service. If interrupted, refresh before retrying.",
+		connect: "Connect account",
+		notConfigured: "No new sign-in providers are configured for this app build.",
+		browserHint:
+			"Connecting and reauthorizing use the system browser and require the app callback to be allowed by your sign-in service. Listed providers must also be enabled there. If interrupted, refresh before retrying.",
 		failed:
-			"Could not confirm this change. Refresh before retrying. Account security requirements may prevent removing this connection.",
+			"Could not confirm this change. Refresh before retrying. Your sign-in service may require additional verification, deny this provider or restrict changing connections.",
 		saved: "Connection removed.",
 	},
 	mfa: {

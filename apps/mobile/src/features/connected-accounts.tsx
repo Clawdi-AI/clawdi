@@ -1,5 +1,5 @@
 import { useUser } from "@clerk/expo";
-import type { UserResource } from "@clerk/expo/types";
+import type { OAuthProvider, UserResource } from "@clerk/expo/types";
 import { randomUUID } from "expo-crypto";
 import { Redirect, useFocusEffect } from "expo-router";
 import { openAuthSessionAsync } from "expo-web-browser";
@@ -13,6 +13,7 @@ import {
 } from "../auth/account-oauth";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useNativeReverification } from "../auth/use-native-reverification";
+import { useMobileRuntimeConfig } from "../config/runtime";
 import { useI18n } from "../i18n";
 import { useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
@@ -32,6 +33,8 @@ export function ConnectedAccountsScreen() {
 
 function ConnectedAccounts({ user }: { user: UserResource }) {
 	const t = useI18n();
+	const config = useMobileRuntimeConfig();
+	const providers = config.ok ? (config.value.clerkOauthProviders ?? []) : [];
 	const scope = useAccountScope();
 	const capture = useForegroundLease();
 	const action = useAuthAction(scope.identity);
@@ -49,7 +52,7 @@ function ConnectedAccounts({ user }: { user: UserResource }) {
 	const [accounts, setAccounts] = useState([...user.externalAccounts]);
 	const [saved, setSaved] = useState(false);
 	const [reauthorized, setReauthorized] = useState(false);
-	const reauthorize = (id: string) =>
+	const authorize = (target: { id: string } | { provider: OAuthProvider }) =>
 		void action.run(async (active) => {
 			const epoch = pageEpoch.current;
 			const signal = scope.signal;
@@ -65,20 +68,39 @@ function ConnectedAccounts({ user }: { user: UserResource }) {
 			setReauthorized(false);
 			const redirectUrl = accountOAuthRedirect(randomUUID());
 			let authorizationUrl: string | undefined;
+			let expectedId: string | undefined;
 			await reverification.execute(async () => {
 				if (!owned() || !visible()) throw new Error("Account action retired");
 				await user.reload();
 				if (!owned() || !visible()) return;
-				const account = user.externalAccounts.find((value) => value.id === id);
-				if (!account) throw new Error("Connection no longer exists");
-				const result = await account.reauthorize({ redirectUrl });
+				const account = user.externalAccounts.find((value) =>
+					"id" in target ? value.id === target.id : value.provider === target.provider,
+				);
+				if ("id" in target && !account) throw new Error("Connection no longer exists");
+				if ("provider" in target && !providers.includes(target.provider))
+					throw new Error("Provider is not configured");
+				// Reuse pending resources after an ambiguous create; never blindly create another link.
+				const result = account
+					? await account.reauthorize({ redirectUrl })
+					: "provider" in target
+						? await user.createExternalAccount({
+								strategy: `oauth_${target.provider}`,
+								redirectUrl,
+							})
+						: undefined;
 				if (!owned() || !visible()) return;
-				if (result.id !== id) throw new Error("Connection identity changed");
+				if (
+					!result?.id ||
+					(account && result.id !== account.id) ||
+					("provider" in target && result.provider !== target.provider)
+				)
+					throw new Error("Connection identity changed");
+				expectedId = result.id;
 				authorizationUrl = accountOAuthAuthorizationUrl(
 					result.verification?.externalVerificationRedirectURL,
 				);
 			});
-			if (!authorizationUrl || !owned() || !visible()) return;
+			if (!authorizationUrl || !expectedId || !owned() || !visible()) return;
 			// The system browser intentionally backgrounds the app; page/account changes still retire this operation.
 			const result = await openAuthSessionAsync(authorizationUrl, accountOAuthReturnUrl);
 			if (!owned() || result.type !== "success") return;
@@ -86,7 +108,7 @@ function ConnectedAccounts({ user }: { user: UserResource }) {
 			await user.reload({ rotatingTokenNonce });
 			if (!owned() || !capture()()) return;
 			setAccounts([...user.externalAccounts]);
-			const updated = user.externalAccounts.find((value) => value.id === id);
+			const updated = user.externalAccounts.find((value) => value.id === expectedId);
 			if (updated?.verification?.status !== "verified")
 				throw new Error("Connection authorization incomplete");
 			setReauthorized(true);
@@ -160,7 +182,7 @@ function ConnectedAccounts({ user }: { user: UserResource }) {
 						<NativeButton
 							label={t("connections.reauthorize")}
 							disabled={action.busy}
-							onPress={() => void reauthorize(account.id)}
+							onPress={() => void authorize({ id: account.id })}
 						/>
 						<NativeButton
 							label={t("connections.remove")}
@@ -169,7 +191,24 @@ function ConnectedAccounts({ user }: { user: UserResource }) {
 						/>
 					</AppView>
 				))}
-				<AppText>{t("connections.linkingUnavailable")}</AppText>
+				<AppText>{t("connections.browserHint")}</AppText>
+				{providers.length === 0 ? <AppText>{t("connections.notConfigured")}</AppText> : null}
+				{providers
+					.filter(
+						(provider) =>
+							!accounts.some(
+								(account) =>
+									account.provider === provider && account.verification?.status === "verified",
+							),
+					)
+					.map((provider) => (
+						<NativeButton
+							key={provider}
+							label={`${t("connections.connect")} · ${provider}`}
+							disabled={action.busy}
+							onPress={() => void authorize({ provider })}
+						/>
+					))}
 				{action.error ? (
 					<AppText accessibilityRole="alert">{t("connections.failed")}</AppText>
 				) : null}

@@ -18,6 +18,7 @@ export function loadMobileRuntimeConfig(): MobileRuntimeConfigResult {
 		cloudApiUrl: configuredValue("cloudApiUrl"),
 		clerkPublishableKey: configuredValue("clerkPublishableKey"),
 		computeApiUrl: configuredValue("computeApiUrl"),
+		clerkOauthProviders: configuredValue("clerkOauthProviders"),
 	});
 }
 

@@ -2,6 +2,35 @@ import { describe, expect, test } from "bun:test";
 import { parseMobileRuntimeConfig } from "./runtime-config";
 
 describe("mobile runtime configuration", () => {
+	test("OAuth choices are explicit, SDK-named and never inferred from arbitrary configuration", () => {
+		const base = {
+			cloudApiUrl: "https://api.example.test",
+			clerkPublishableKey: "pk_test_example",
+		};
+		expect(
+			parseMobileRuntimeConfig({
+				...base,
+				clerkOauthProviders: "google, github,google,custom_team",
+			}),
+		).toEqual({
+			ok: true,
+			value: { ...base, clerkOauthProviders: ["google", "github", "custom_team"] },
+		});
+		for (const clerkOauthProviders of [
+			"unknown",
+			"google,",
+			"__proto__",
+			"custom_",
+			"custom_../../secret",
+			["google"],
+			42,
+		]) {
+			expect(parseMobileRuntimeConfig({ ...base, clerkOauthProviders })).toEqual({
+				ok: false,
+				reason: "invalid",
+			});
+		}
+	});
 	test("requires both the Cloud URL and Clerk publishable key", () => {
 		expect(
 			parseMobileRuntimeConfig({ cloudApiUrl: undefined, clerkPublishableKey: undefined }),
