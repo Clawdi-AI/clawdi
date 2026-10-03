@@ -2451,6 +2451,8 @@ export interface components {
              * @enum {string}
              */
             compute_plan_slug: "compute_basic" | "compute_performance";
+            /** Acquisition Channel */
+            acquisition_channel?: "sui" | null;
             /** Plugin Bundle */
             plugin_bundle?: "sui" | null;
             /** Primary Model */

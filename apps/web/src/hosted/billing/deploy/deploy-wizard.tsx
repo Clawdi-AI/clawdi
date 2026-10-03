@@ -183,7 +183,7 @@ import {
 } from "@/hosted/v2/ai-providers/model-binding";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
-import { resolveDeployChannel } from "@/lib/deploy-channel";
+import { deployChannelConfig, resolveDeployChannel } from "@/lib/deploy-channel";
 import { env } from "@/lib/env";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
@@ -297,7 +297,9 @@ function ComputeResources({
 
 export function DeployWizard() {
 	const search = useRouterState({ select: (state) => state.location.searchStr });
-	const channel = resolveDeployChannel(search);
+	const channelId = resolveDeployChannel(search);
+	const channel = channelId ? deployChannelConfig(channelId) : null;
+	const defaultPaymentMethod = channel?.defaultPaymentMethod ?? "card";
 	const [preinstallBundle, setPreinstallBundle] = useState(true);
 	const router = useRouter();
 	const queryClient = useQueryClient();
@@ -455,7 +457,7 @@ export function DeployWizard() {
 	const [checkoutSession, setCheckoutSession] = useState<NativeDeployCheckout | null>(null);
 	const [term, setTerm] = useState(1);
 	const [submitting, setSubmitting] = useState(false);
-	const [paymentMethod, setPaymentMethod] = useState<DeployPaymentMethod>("card");
+	const [paymentMethod, setPaymentMethod] = useState<DeployPaymentMethod>(defaultPaymentMethod);
 	const [selectedSubscriptionSource, setSubscriptionSource] = useState<SubscriptionSource | null>(
 		null,
 	);
@@ -463,6 +465,10 @@ export function DeployWizard() {
 
 	// Keep the first client render on the same deterministic fallback as SSR,
 	// then adopt runtime IANA data and best-effort browser defaults after mount.
+	useEffect(() => {
+		setPaymentMethod(defaultPaymentMethod);
+	}, [defaultPaymentMethod]);
+
 	useEffect(() => {
 		const browserTimezoneValue = browserTimezone();
 		const browserLanguageValue = browserLanguage();
@@ -783,7 +789,10 @@ export function DeployWizard() {
 				},
 				aiFields,
 			}),
-			...(channel && preinstallBundle ? { plugin_bundle: "sui" as const } : {}),
+			...(channel ? { acquisition_channel: channel.acquisitionChannel } : {}),
+			...(channel?.pluginBundle && preinstallBundle
+				? { plugin_bundle: channel.pluginBundle }
+				: {}),
 		};
 	}
 
@@ -1113,7 +1122,7 @@ export function DeployWizard() {
 		language: personaDefaults.language,
 		timezone: personaDefaults.timezone,
 		term: defaultBillingTerm,
-		paymentMethod: "card",
+		paymentMethod: defaultPaymentMethod,
 		subscriptionSource: defaultSubscriptionSource,
 		aiBindingDraft: {
 			bindingMode: DEFAULT_DEPLOY_AI_ACCESS_MODE,

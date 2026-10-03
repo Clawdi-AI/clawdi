@@ -1,7 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { deployChannelAuthSearch, resolveDeployChannel } from "./deploy-channel";
+import {
+	deployChannelAuthSearch,
+	deployChannelConfig,
+	resolveDeployChannel,
+} from "./deploy-channel";
 
 describe("deployment channel links", () => {
+	test("exposes the Sui offer through the shared channel registry", () => {
+		expect(deployChannelConfig("sui")).toEqual({
+			id: "sui",
+			defaultPaymentMethod: "wallet",
+			acquisitionChannel: "sui",
+			pluginBundle: "sui",
+		});
+	});
 	test("accepts direct and authentication return links", () => {
 		expect(resolveDeployChannel("?deploy_profile=sui")).toBe("sui");
 		expect(resolveDeployChannel("?utm_source=sui")).toBe("sui");
