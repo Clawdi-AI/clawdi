@@ -27,6 +27,27 @@ export const en = {
 		reconnecting: "Reconnecting…",
 		disconnected: "Disconnected",
 	},
+	emails: {
+		title: "Email addresses",
+		description:
+			"Add and verify an address before making it primary. Your primary address cannot be removed here. Account security requirements still apply.",
+		primary: "Primary email",
+		verified: "Verified",
+		unverified: "Not verified",
+		newEmail: "New email address",
+		add: "Add email address",
+		sendCode: "Send verification code",
+		codeSent: "Enter the code sent to this email address. Use Send verification code to resend.",
+		code: "Verification code",
+		verify: "Verify email address",
+		makePrimary: "Make primary",
+		primaryWarning: "Use this verified email as your primary account address?",
+		remove: "Remove email address",
+		removeWarning: "Remove this email from your account? It may no longer be used to sign in.",
+		failed:
+			"Could not complete this request. Check the address or code and refresh before retrying. Your account may require signing in again or a different verification method.",
+		saved: "Email address updated.",
+	},
 	profile: {
 		avatar: "Profile picture",
 		avatarSaved: "Profile picture updated. Any unsaved name changes still need to be saved.",
