@@ -1,3 +1,4 @@
+import { agentExtensionsEn } from "../features/agent-extensions-en";
 import { billingEn } from "../features/billing/en";
 import { channelsEn } from "../features/channels/en";
 import { whatsappEn } from "../features/channels/whatsapp-en";
@@ -11,6 +12,7 @@ import { skillArchiveEn } from "../features/skill-archive-en";
 import { vaultEn } from "../features/vault/en";
 
 export const en = {
+	agentExtensions: agentExtensionsEn,
 	workspaceSkills: workspaceSkillsEn,
 	skillArchive: skillArchiveEn,
 	agentSettings: agentSettingsEn,

@@ -4,6 +4,8 @@ export type {
 	SettingsUpdate,
 } from "./account-client";
 export { createAccountApiClient } from "./account-client";
+export * from "./agent-extensions-client";
+export * from "./agent-plugin-model";
 export { type AgentProjectClient, createAgentProjectClient } from "./agent-project-client";
 export * from "./agent-settings-client";
 export {

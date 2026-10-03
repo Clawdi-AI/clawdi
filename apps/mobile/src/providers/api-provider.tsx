@@ -1,5 +1,6 @@
 import {
 	type AccountApiClient,
+	type AgentExtensionsClient,
 	type AgentProjectClient,
 	type AgentSettingsClient,
 	type AiProviderClient,
@@ -9,6 +10,7 @@ import {
 	type CloudApiClient,
 	type ConnectorClient,
 	createAccountApiClient,
+	createAgentExtensionsClient,
 	createAgentProjectClient,
 	createAgentSettingsClient,
 	createAiProviderClient,
@@ -44,6 +46,7 @@ import { useAccountScope } from "../platform/account-lifecycle";
 
 export type MobileApiClients = Readonly<{
 	cloud: CloudApiClient;
+	agentExtensions: AgentExtensionsClient;
 	agentSettings: AgentSettingsClient;
 	channels: ChannelClient;
 	deploymentMutations: DeploymentMutationClient | null;
@@ -96,6 +99,11 @@ export function MobileApiProvider({
 	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
+			agentExtensions: createAgentExtensionsClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
 			workspaceSkills: config.computeApiUrl
 				? createWorkspaceSkillClient({
 						baseUrl: config.computeApiUrl,

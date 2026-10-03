@@ -219,8 +219,32 @@ and source-pinned detail, and explicitly confirms installation/removal. This use
 Hosted `/v2/deployments/{deployment_id}/workspace-skills`, not Cloud Skill package
 upload or Project CRUD. Web/native share GitHub input parsing and capability
 eligibility; generated Hosted schemas and the shared bounded transport remain
-authoritative. Library references and runtime plugin management remain separate
-unfinished surfaces.
+authoritative.
+
+Agent detail also exposes Library Skill references and runtime plugins through
+canonical Cloud APIs. Library browsing reuses paginated search and stable Skill
+IDs; shared visible Cloud Skills remain eligible subject to server authorization.
+Only explicit Library references can be removed here, not Project, GitHub or
+bundled sources. Runtime plugins support catalog/category/search, component
+metadata, explicit install/update/retry and confirmed removal. Web and native
+reuse the same version ordering, compatibility and action-state model. New
+plugin installs require one matching nondeleted Hosted deployment with a known
+supported runtime; server policy remains authoritative.
+
+These Cloud desired-state routes have no request-key contract: clients do not
+invent idempotency headers or automatically retry mutations. Shared clients
+validate response identity, requested plugin version and desired state. Native
+reads are account-fenced and observation polling is bounded, foreground-only
+and stops on errors. Accepted requests do not establish runtime installation;
+removal may still be pending after a desired row disappears. Network failures
+require an explicit refresh/retry decision, not silent replay. Real runtime and
+device acceptance remains unverified.
+
+Extension-source verification used bounded Bun 1.4.2 Docker with the unchanged
+frozen root lock: six workspace TS7 checks, 260 Shared/Mobile tests (1,198
+assertions), 49 related Web tests (199 assertions), and Biome on 13 source files
+passed. Both platform Metro exports passed. These checks do not exercise real
+accounts, device interaction or runtime convergence.
 
 Workspace Skill mutation recovery persists account/deployment-scoped original
 body, idempotency key and resource version using the existing serialized CAS
@@ -467,7 +491,7 @@ until each surface has implementation, focused verification and device evidence:
 | Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings | Remaining general/profile settings and real Clerk flows |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing and text export | Rich-text/link presentation, public/universal-link entrypoints, device scrolling/sharing and visual acceptance |
-| Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skill inventory/detail/install/removal with durable exact-request recovery; Memory CRUD/search | Library-reference/runtime plugin actions, remaining detail views and native file/share/managed-runtime acceptance |
+| Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport | Universal-link intake and device acceptance |
 | v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal and Agent model binding; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity, Custom deletion and WhatsApp device onboarding/repair | Native/live provider and channel acceptance |
