@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { generateKeyPairSync, sign } from "node:crypto";
+import { createHmac, generateKeyPairSync, sign } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
 import { after, mock, test } from "node:test";
 
 // Exercise the deployed bundle graph with real Clerk middleware and providers.
@@ -16,6 +17,7 @@ Object.assign(process.env, {
 	NITRO_PRESET: "vercel",
 	VITE_CLAWDI_HOSTED: "true",
 	VITE_DEV_AUTH_BYPASS: "false",
+	CHANNEL_ATTRIBUTION_SECRET: "ssr-channel-signing-key-32-bytes!!",
 	VITE_CLERK_PUBLISHABLE_KEY: "pk_test_c3NyLmNsZXJrLmFjY291bnRzLmRldiQ=",
 });
 
@@ -44,6 +46,38 @@ function request(path) {
 		headers: { "user-agent": "Mozilla/5.0" },
 	});
 }
+
+test("production channel entry exchanges an invitation before auth or app rendering", async () => {
+	const issued = Math.floor(Date.now() / 1000);
+	const expires = issued + 900;
+	const nonce = "n".repeat(22);
+	const signature = createHmac("sha256", process.env.CHANNEL_ATTRIBUTION_SECRET)
+		.update(`clawdi/channel-trial/v1|sui|${issued}|${expires}|${nonce}`)
+		.digest("base64url");
+	const token = `v1.sui.${issued}.${expires}.${nonce}.${signature}`;
+	const response = await server.fetch(request(`/attribution/sui?token=${token}`));
+	assert.equal(response.status, 303);
+	assert.equal(response.headers.get("location"), "/deploy");
+	assert.match(
+		response.headers.get("set-cookie") ?? "",
+		/__Host-clawdi-channel-attribution=.*;.*HttpOnly; Secure; SameSite=Lax/,
+	);
+	assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+	assert.equal(await response.text(), "");
+	const invalid = await server.fetch(request("/attribution/sui?token=invalid"));
+	assert.equal(invalid.status, 400);
+	assert.equal(invalid.headers.get("set-cookie"), null);
+	const mismatched = await server.fetch(request(`/attribution/other?token=${token}`));
+	assert.equal(mismatched.status, 400);
+	// The signature implementation and server-only key stay out of public assets.
+	const root = new URL("../.vercel/output/static/", import.meta.url);
+	for (const file of readdirSync(root, { recursive: true })) {
+		if (!file.endsWith(".js")) continue;
+		const content = readFileSync(new URL(file, root), "utf8");
+		assert.ok(!content.includes(process.env.CHANNEL_ATTRIBUTION_SECRET), `Signing key in ${file}`);
+		assert.ok(!content.includes("clawdi/channel-trial/v1"), `Verifier in ${file}`);
+	}
+});
 
 test("production documents use fresh CSP nonces on every executable script", async () => {
 	const nonces = new Set();

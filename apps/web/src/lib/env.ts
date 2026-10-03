@@ -48,6 +48,11 @@ const isLocalDevAuthBypass = isDevAuthBypassEnabled();
  */
 export const env = createEnv({
 	clientPrefix: "VITE_",
+	server: {
+		// Shared only with Hosted for short-lived channel attribution tokens. This
+		// value must never use the VITE_ prefix or enter the browser bundle.
+		CHANNEL_ATTRIBUTION_SECRET: z.string().min(32).optional(),
+	},
 	client: {
 		// cloud-api base URL. `httpsOrHttp` rejects `ftp:` /
 		// `javascript:` schemes that `z.string().url()` would let through.

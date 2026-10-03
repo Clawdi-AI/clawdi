@@ -1,7 +1,7 @@
 "use client";
 
 import { validateHostedDeployPersona } from "@clawdi/shared/api";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import {
 	Cpu,
@@ -54,6 +54,7 @@ import {
 	checkoutRedirectUrl,
 	checkoutSessionClientSecret,
 	checkoutUiModeForPublishableKey,
+	HOSTED_CHECKOUT_UI_MODE,
 } from "@/hosted/billing/components/stripe-checkout.logic";
 import {
 	StripeCheckoutDialog,
@@ -183,6 +184,8 @@ import {
 } from "@/hosted/v2/ai-providers/model-binding";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
+import { useSessionIdentity } from "@/lib/auth-client";
+import { getChannelAttribution } from "@/lib/channel-attribution.functions";
 import { deployChannelConfig, resolveDeployChannel } from "@/lib/deploy-channel";
 import { env } from "@/lib/env";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -297,8 +300,23 @@ function ComputeResources({
 
 export function DeployWizard() {
 	const search = useRouterState({ select: (state) => state.location.searchStr });
-	const channel = resolveDeployChannel(search);
+	const identity = useSessionIdentity();
+	const attribution = useQuery({
+		queryKey: ["channel-attribution", identity],
+		queryFn: async () => {
+			const verified = await getChannelAttribution();
+			return verified ? { channel: verified.channel } : null;
+		},
+		enabled: env.VITE_CLAWDI_HOSTED && !env.VITE_CLAWDI_DESKTOP_BUILD && identity !== null,
+		retry: false,
+		staleTime: 60_000,
+	});
+	const channel = attribution.data?.channel ?? null;
 	const channelConfig = channel ? deployChannelConfig(channel) : null;
+	const hintedChannel = resolveDeployChannel(search);
+	const pluginBundle =
+		channelConfig?.pluginBundle ??
+		(hintedChannel ? deployChannelConfig(hintedChannel).pluginBundle : null);
 	const [preinstallBundle, setPreinstallBundle] = useState(true);
 	const router = useRouter();
 	const queryClient = useQueryClient();
@@ -489,22 +507,12 @@ export function DeployWizard() {
 	);
 	const subscriptionSource = resolveSubscriptionSource({
 		selected: selectedSubscriptionSource,
-		includedAvailable:
-			channelConfig?.defaultSubscriptionSource === "included"
-				? includedBasicAvailable
-				: channel
-					? false
-					: includedBasicAvailable,
+		includedAvailable: includedBasicAvailable,
 		reusableSubscriptions: reusableSubscriptionInventory,
 	});
 	const defaultSubscriptionSource = resolveSubscriptionSource({
 		selected: null,
-		includedAvailable:
-			channelConfig?.defaultSubscriptionSource === "included"
-				? includedBasicAvailable
-				: channel
-					? false
-					: includedBasicAvailable,
+		includedAvailable: includedBasicAvailable,
 		reusableSubscriptions: reusableSubscriptionInventory,
 	});
 	const perfOfferSelection = useMemo(
@@ -644,6 +652,8 @@ export function DeployWizard() {
 			: undefined;
 	const submitBlockingReason = (() => {
 		if (submitting) return null;
+		if (attribution.isLoading) return "Checking trial invitation.";
+		if (attribution.error) return "Could not check your trial invitation. Reload this page.";
 		if (personaError) return personaError;
 		if (!subscriptionSource) return "Choose a subscription source.";
 		if (subscriptionSource.mode === "included") {
@@ -799,10 +809,7 @@ export function DeployWizard() {
 				},
 				aiFields,
 			}),
-			...(channel ? { acquisition_channel: channel } : {}),
-			...(channelConfig?.pluginBundle && preinstallBundle
-				? { plugin_bundle: channelConfig.pluginBundle }
-				: {}),
+			...(pluginBundle && preinstallBundle ? { plugin_bundle: pluginBundle } : {}),
 		};
 	}
 
@@ -908,7 +915,11 @@ export function DeployWizard() {
 					fundingSource: paymentMethod === "wallet" ? "wallet" : "stripe",
 				};
 				const subscriptionSelection = { mode: "new" } as const;
-				const cardCheckoutUiMode = checkoutUiModeForPublishableKey(env.VITE_STRIPE_PUBLISHABLE_KEY);
+				// Stripe's native Checkout owns payment collection for cardless trials.
+				const cardCheckoutUiMode =
+					channel && selectedCardTrial
+						? HOSTED_CHECKOUT_UI_MODE
+						: checkoutUiModeForPublishableKey(env.VITE_STRIPE_PUBLISHABLE_KEY);
 				const target = { kind: "new_deployment", deployConfig } as const;
 				if (paymentMethod === "wallet") {
 					const fingerprint = idempotencyFingerprint({
@@ -960,11 +971,24 @@ export function DeployWizard() {
 					checkoutFingerprint,
 					newIdempotencyKey,
 				);
+				const verifiedAttribution =
+					channel && selectedCardTrial ? await getChannelAttribution() : null;
+				if (channel && selectedCardTrial && !verifiedAttribution) {
+					throw new Error("Your trial invitation expired. Reopen your Sui invitation.");
+				}
 				const outcome = await createSubscription
 					.execute({
 						selection,
 						subscriptionSelection,
-						target,
+						target: verifiedAttribution
+							? {
+									...target,
+									deployConfig: {
+										...deployConfig,
+										channel_attribution_token: verifiedAttribution.token,
+									},
+								}
+							: target,
 						uiMode: cardCheckoutUiMode,
 						idempotencyKey: checkoutAttemptRef.current.key,
 						quote: lastSuccessfulSubscriptionQuote,
@@ -1046,7 +1070,9 @@ export function DeployWizard() {
 					? walletInsufficient
 						? "Top up Wallet"
 						: "Pay & deploy"
-					: "Continue"
+					: channel && selectedCardTrial
+						? "Start free trial"
+						: "Continue"
 				: "Deploy";
 	const primaryProvider = providerList.find(
 		(provider) => provider.provider_id === primaryProviderChoice,
@@ -1154,7 +1180,7 @@ export function DeployWizard() {
 			subscriptionSource,
 			aiBindingDraft,
 			checkoutOpen: checkoutSession !== null,
-			preinstallBundle: channel ? preinstallBundle : true,
+			preinstallBundle: pluginBundle ? preinstallBundle : true,
 		},
 		deployBaseline,
 		deploymentCommitted,
@@ -1201,7 +1227,7 @@ export function DeployWizard() {
 					</div>
 				</SettingsSection>
 
-				{channel ? (
+				{pluginBundle ? (
 					<SettingsSection title="Preinstalled plugins">
 						<div className={ENTITY_CHOICE_GRID_CLASS}>
 							<EntityChoiceCard
@@ -1305,10 +1331,7 @@ export function DeployWizard() {
 						<SubscriptionSourcePicker
 							value={subscriptionSource}
 							onChange={setSubscriptionSource}
-							showIncluded={
-								channelConfig?.defaultSubscriptionSource === "included" &&
-								includedBasicAvailable === true
-							}
+							showIncluded={includedBasicAvailable === true}
 							reusableSubscriptions={reusableSubscriptionInventory ?? []}
 							isLoading={reusableSubscriptions.isFetching || includedBasic.isFetching}
 							error={blockingReusableSubscriptionsError}
@@ -1437,8 +1460,12 @@ export function DeployWizard() {
 														<CreditCard />
 													</IconChip>
 												}
-												title="Card subscription"
-												description="Recurring subscription via Stripe. Manage or cancel anytime."
+												title={channel && selectedCardTrial ? "Free trial" : "Card subscription"}
+												description={
+													channel && selectedCardTrial
+														? "No card required. Ends automatically without a payment method."
+														: "Recurring subscription via Stripe. Manage or cancel anytime."
+												}
 												badge={
 													selectedCardTrial ? (
 														<Badge variant="secondary">{selectedCardTrial.label}</Badge>

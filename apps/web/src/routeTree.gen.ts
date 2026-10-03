@@ -17,6 +17,7 @@ import { Route as VaultRequestRouteImport } from './routes/vault-request'
 import { Route as ProtectedDashboardRouteImport } from './routes/_protected/_dashboard'
 import { Route as ProtectedCliAuthorizeRouteImport } from './routes/_protected/cli-authorize'
 import { Route as ProtectedRuntimeHandoffRouteImport } from './routes/_protected/runtime-handoff'
+import { Route as AttributionChannelRouteImport } from './routes/attribution/$channel'
 import { Route as SIdRouteImport } from './routes/s/$id'
 import { Route as SChar123idChar125DotjsonRouteImport } from './routes/s/{$id}[.]json'
 import { Route as SChar123idChar125DotmdRouteImport } from './routes/s/{$id}[.]md'
@@ -98,6 +99,11 @@ const ProtectedRuntimeHandoffRoute = ProtectedRuntimeHandoffRouteImport.update({
   id: '/runtime-handoff',
   path: '/runtime-handoff',
   getParentRoute: () => ProtectedRoute,
+} as any)
+const AttributionChannelRoute = AttributionChannelRouteImport.update({
+  id: '/attribution/$channel',
+  path: '/attribution/$channel',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const SIdRoute = SIdRouteImport.update({
   id: '/s/$id',
@@ -359,6 +365,7 @@ export interface FileRoutesByFullPath {
   '/vault-request': typeof VaultRequestRoute
   '/cli-authorize': typeof ProtectedCliAuthorizeRoute
   '/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
+  '/attribution/$channel': typeof AttributionChannelRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
   '/s/{$id}.md': typeof SChar123idChar125DotmdRoute
@@ -410,6 +417,7 @@ export interface FileRoutesByTo {
   '/vault-request': typeof VaultRequestRoute
   '/cli-authorize': typeof ProtectedCliAuthorizeRoute
   '/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
+  '/attribution/$channel': typeof AttributionChannelRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
   '/s/{$id}.md': typeof SChar123idChar125DotmdRoute
@@ -461,6 +469,7 @@ export interface FileRoutesById {
   '/_protected/_dashboard': typeof ProtectedDashboardRouteWithChildren
   '/_protected/cli-authorize': typeof ProtectedCliAuthorizeRoute
   '/_protected/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
+  '/attribution/$channel': typeof AttributionChannelRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
   '/s/{$id}.md': typeof SChar123idChar125DotmdRoute
@@ -515,6 +524,7 @@ export interface FileRouteTypes {
     | '/vault-request'
     | '/cli-authorize'
     | '/runtime-handoff'
+    | '/attribution/$channel'
     | '/s/$id'
     | '/s/{$id}.json'
     | '/s/{$id}.md'
@@ -566,6 +576,7 @@ export interface FileRouteTypes {
     | '/vault-request'
     | '/cli-authorize'
     | '/runtime-handoff'
+    | '/attribution/$channel'
     | '/s/$id'
     | '/s/{$id}.json'
     | '/s/{$id}.md'
@@ -616,6 +627,7 @@ export interface FileRouteTypes {
     | '/_protected/_dashboard'
     | '/_protected/cli-authorize'
     | '/_protected/runtime-handoff'
+    | '/attribution/$channel'
     | '/s/$id'
     | '/s/{$id}.json'
     | '/s/{$id}.md'
@@ -667,6 +679,7 @@ export interface RootRouteChildren {
   SignInRoute: typeof SignInRouteWithChildren
   SignUpRoute: typeof SignUpRouteWithChildren
   VaultRequestRoute: typeof VaultRequestRoute
+  AttributionChannelRoute: typeof AttributionChannelRoute
   SIdRoute: typeof SIdRoute
   SChar123idChar125DotjsonRoute: typeof SChar123idChar125DotjsonRoute
   SChar123idChar125DotmdRoute: typeof SChar123idChar125DotmdRoute
@@ -730,6 +743,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/runtime-handoff'
       preLoaderRoute: typeof ProtectedRuntimeHandoffRouteImport
       parentRoute: typeof ProtectedRoute
+    }
+    '/attribution/$channel': {
+      id: '/attribution/$channel'
+      path: '/attribution/$channel'
+      fullPath: '/attribution/$channel'
+      preLoaderRoute: typeof AttributionChannelRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/s/$id': {
       id: '/s/$id'
@@ -1199,6 +1219,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignInRoute: SignInRouteWithChildren,
   SignUpRoute: SignUpRouteWithChildren,
   VaultRequestRoute: VaultRequestRoute,
+  AttributionChannelRoute: AttributionChannelRoute,
   SIdRoute: SIdRoute,
   SChar123idChar125DotjsonRoute: SChar123idChar125DotjsonRoute,
   SChar123idChar125DotmdRoute: SChar123idChar125DotmdRoute,

@@ -2451,6 +2451,8 @@ export interface components {
              * @enum {string}
              */
             compute_plan_slug: "compute_basic" | "compute_performance";
+            /** Channel Attribution Token */
+            channel_attribution_token?: string | null;
             /** Acquisition Channel */
             acquisition_channel?: "sui" | null;
             /** Plugin Bundle */
