@@ -93,16 +93,16 @@ export default function AccountRoute() {
 				{rawKey ? <AppText className="text-sm text-danger">{rawKey}</AppText> : null}
 				{keys.data?.length ? (
 					keys.data.map((key) => (
-					<AppView className="gap-2" key={key.id}>
-						<AppText className="text-sm text-foreground">
-							{key.label} · {key.key_prefix}
-						</AppText>
-						<NativeButton
-							label={t("account.revokeApiKey")}
-							disabled={busy}
-							onPress={() => void onRevokeKey(key.id)}
-						/>
-					</AppView>
+						<AppView className="gap-2" key={key.id}>
+							<AppText className="text-sm text-foreground">
+								{key.label} · {key.key_prefix}
+							</AppText>
+							<NativeButton
+								label={t("account.revokeApiKey")}
+								disabled={busy}
+								onPress={() => void onRevokeKey(key.id)}
+							/>
+						</AppView>
 					))
 				) : (
 					<AppText className="text-sm text-muted">{t("account.noApiKeys")}</AppText>
