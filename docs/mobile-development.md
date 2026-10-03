@@ -159,6 +159,18 @@ the corrected durable-recovery boundaries; this is not a live-device acceptance.
 
 ## Device acceptance still required
 
+The current mobile parity batch adds Memory creation/editing/deletion and ranked
+search, builtin/Mem0 provider settings, user-created Project creation/editing/
+archiving, and safer API key management. Account changes reset local drafts;
+destructive confirmations retain the captured account scope. Raw API keys and
+Mem0 input are transient and cleared on backgrounding. Dashboard statistics now
+participate in pull-to-refresh and expose loading/error states.
+
+These additions do not establish full Web parity. Project sharing and Agent
+bindings, full Skill management, connectors, provider configuration, vaults,
+Session sharing/export, native builds and real store payments remain separate
+acceptance work. Existing Session transcripts remain read-only by design.
+
 On an authorized simulator/device build, verify:
 
 1. Sign in, register/verify email, recover a password and complete enabled

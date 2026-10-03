@@ -1,4 +1,4 @@
-# Portable read clients
+# Portable API clients
 
 `@clawdi/shared/api` exports `createCloudApiClient` and `createHostedApiClient`.
 They take `{ baseUrl, getToken, fetch, timeoutMs?, observeResponse? }`. Supply the
@@ -10,6 +10,18 @@ lifecycle, billing mutation, or message sending implementation is imported.
 | --- | --- |
 | Cloud | `listAgents(query?, signal?)`, `getAgent(id, signal?)`, `listSessions(query?, signal?)`, `getSession(id, signal?)`, `getSessionMessages(id, query?, signal?)` |
 | Hosted | `listDeployments(signal?)`, `getDeployment(id, signal?)`, `getDeploymentByRequest(requestId, signal?)`, `getOperation(operationId, signal?)` |
+
+Cloud also exposes generated-contract Project, Skill and Memory inventories,
+dashboard statistics, Memory create/update/delete and Project create/update/archive.
+These explicit mutations use the same authenticated, bounded transport; its
+historical `read` name does not restrict the HTTP method. Mutations are never
+automatically retried. After an uncertain result, refresh before an explicit retry.
+Project ownership and kind restrictions remain authoritative on the server.
+Memory search returns ranked top matches; do not append offset pages for a search.
+
+`createAccountApiClient` exposes account settings and API key list/create/revoke.
+Keep newly returned raw keys out of query caches, persistence and logs. Settings
+editors must not send a masked secret back as a replacement value.
 
 Query types and inferred return types come from the existing generated
 [`api.generated.ts`](api.generated.ts) and

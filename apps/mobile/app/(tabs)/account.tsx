@@ -1,7 +1,8 @@
 import { useClerk, useUser } from "@clerk/expo";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Alert, AppState } from "react-native";
 import { useAuthAction } from "../../src/auth/use-auth-action";
 import { useI18n } from "../../src/i18n";
 import {
@@ -10,11 +11,16 @@ import {
 	useAccountScope,
 } from "../../src/platform/account-lifecycle";
 import { useMobileApi } from "../../src/providers/api-provider";
-import { LoadingScreen } from "../../src/ui/feedback";
+import { ErrorState, LoadingScreen } from "../../src/ui/feedback";
 import { NativeButton } from "../../src/ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../../src/ui/primitives";
+import { AppScrollView, AppText, AppTextInput, AppView } from "../../src/ui/primitives";
 
 export default function AccountRoute() {
+	const scope = useAccountScope();
+	return <AccountView key={`${scope.accountKey}:${scope.generation}`} />;
+}
+
+function AccountView() {
 	const t = useI18n();
 	const { isLoaded, user } = useUser();
 	const { signOut } = useClerk();
@@ -32,6 +38,12 @@ export default function AccountRoute() {
 	const { busy, error, run } = useAuthAction(scope.identity);
 	const [keyLabel, setKeyLabel] = useState("");
 	const [rawKey, setRawKey] = useState<string | null>(null);
+	useEffect(() => {
+		const subscription = AppState.addEventListener("change", (state) => {
+			if (state !== "active") setRawKey(null);
+		});
+		return () => subscription.remove();
+	}, []);
 	const email = user?.primaryEmailAddress?.emailAddress;
 	const onSignOut = () =>
 		run(async (isCurrent) => {
@@ -50,12 +62,13 @@ export default function AccountRoute() {
 		});
 	const onCreateKey = () =>
 		run(async (isCurrent) => {
+			if (!keyLabel.trim() || rawKey) return;
 			const created = await read(
 				(signal) => account.createApiKey({ label: keyLabel.trim() }, signal),
 				scope.signal,
 			);
 			if (!isCurrent()) return;
-			setRawKey(created.raw_key);
+			if (AppState.currentState === "active") setRawKey(created.raw_key);
 			setKeyLabel("");
 			await queryClient.invalidateQueries({ queryKey: accountQueryKey(scope, "account-api-keys") });
 		});
@@ -65,9 +78,25 @@ export default function AccountRoute() {
 			if (!isCurrent()) return;
 			await queryClient.invalidateQueries({ queryKey: accountQueryKey(scope, "account-api-keys") });
 		});
+	const confirmRevoke = (keyId: string) => {
+		const signal = scope.signal;
+		Alert.alert(t("account.revokeApiKey"), t("account.revokeWarning"), [
+			{ text: t("account.cancel"), style: "cancel" },
+			{
+				text: t("account.revokeApiKey"),
+				style: "destructive",
+				onPress: () => {
+					if (scope.isCurrent() && !signal.aborted) void onRevokeKey(keyId);
+				},
+			},
+		]);
+	};
 	if (!isLoaded) return <LoadingScreen label={t("loading.authentication")} />;
 	return (
-		<AppView className="flex-1 gap-8 bg-background px-6 pb-10 pt-8">
+		<AppScrollView
+			className="flex-1 bg-background"
+			contentContainerClassName="gap-8 px-6 pb-10 pt-8"
+		>
 			<AppText className="text-3xl font-semibold text-foreground">{t("account.title")}</AppText>
 			<AppView className="gap-2 rounded-3xl bg-surface p-5">
 				<AppText className="text-sm text-muted">{t("account.signedInAs")}</AppText>
@@ -87,11 +116,23 @@ export default function AccountRoute() {
 				/>
 				<NativeButton
 					label={t("account.createApiKey")}
-					disabled={busy || !keyLabel.trim()}
+					disabled={busy || !scope.isReady || !keyLabel.trim() || Boolean(rawKey)}
 					onPress={() => void onCreateKey()}
 				/>
-				{rawKey ? <AppText className="text-sm text-danger">{rawKey}</AppText> : null}
-				{keys.data?.length ? (
+				{rawKey ? (
+					<AppView className="gap-2">
+						<AppText>{t("account.keyShownOnce")}</AppText>
+						<AppText selectable className="text-sm text-foreground">
+							{rawKey}
+						</AppText>
+						<NativeButton label={t("account.dismissKey")} onPress={() => setRawKey(null)} />
+					</AppView>
+				) : null}
+				{keys.isPending ? (
+					<LoadingScreen />
+				) : keys.isError ? (
+					<ErrorState onRetry={keys.isFetching ? undefined : () => void keys.refetch()} />
+				) : keys.data?.length ? (
 					keys.data.map((key) => (
 						<AppView className="gap-2" key={key.id}>
 							<AppText className="text-sm text-foreground">
@@ -99,8 +140,8 @@ export default function AccountRoute() {
 							</AppText>
 							<NativeButton
 								label={t("account.revokeApiKey")}
-								disabled={busy}
-								onPress={() => void onRevokeKey(key.id)}
+								disabled={busy || Boolean(key.revoked_at)}
+								onPress={() => confirmRevoke(key.id)}
 							/>
 						</AppView>
 					))
@@ -109,13 +150,15 @@ export default function AccountRoute() {
 				)}
 			</AppView>
 			{error ? (
-				<AppText className="text-base text-danger">{t("account.signOutFailed")}</AppText>
+				<AppText accessibilityRole="alert" className="text-base text-danger">
+					{t("account.actionFailed")}
+				</AppText>
 			) : null}
 			<NativeButton
 				label={busy ? t("auth.working") : t("account.signOut")}
 				onPress={() => void onSignOut()}
 				disabled={busy || !scope.isReady || !scope.sessionId}
 			/>
-		</AppView>
+		</AppScrollView>
 	);
 }

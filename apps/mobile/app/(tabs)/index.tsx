@@ -41,10 +41,11 @@ export default function HomeRoute() {
 			contentContainerStyle={{ flexGrow: 1 }}
 			refreshControl={
 				<RefreshControl
-					refreshing={agents.isRefetching || sessions.isRefetching}
+					refreshing={agents.isRefetching || sessions.isRefetching || stats.isRefetching}
 					onRefresh={() => {
 						if (!agents.isFetching) void agents.refetch();
 						if (!sessions.isFetching) void sessions.refetch();
+						if (!stats.isFetching) void stats.refetch();
 					}}
 				/>
 			}
@@ -57,6 +58,10 @@ export default function HomeRoute() {
 					</AppText>
 				</AppView>
 				<CloudActions />
+				{stats.isPending ? <LoadingScreen /> : null}
+				{stats.isError ? (
+					<ErrorState onRetry={stats.isFetching ? undefined : () => void stats.refetch()} />
+				) : null}
 				{stats.data ? (
 					<AppView className="gap-3 rounded-3xl bg-surface p-5">
 						<AppText className="text-lg font-semibold text-foreground">

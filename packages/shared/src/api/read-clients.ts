@@ -32,8 +32,58 @@ export function createCloudApiClient(options: ApiClientOptions) {
 			transport.read((init) => api.GET("/v1/skills", { ...init, params: { query } }), signal),
 		listMemories: (query?: MemoryListQuery, signal?: AbortSignal) =>
 			transport.read((init) => api.GET("/v1/memories", { ...init, params: { query } }), signal),
+		createMemory: (
+			body: paths["/v1/memories"]["post"]["requestBody"]["content"]["application/json"],
+			signal?: AbortSignal,
+		) => transport.read((init) => api.POST("/v1/memories", { ...init, body }), signal),
+		updateMemory: (memoryId: string, content: string, signal?: AbortSignal) =>
+			transport.read(
+				(init) =>
+					api.PATCH("/v1/memories/{memory_id}", {
+						...init,
+						params: { path: { memory_id: readResourceId(memoryId) } },
+						body: { content },
+					}),
+				signal,
+			),
+		deleteMemory: (memoryId: string, signal?: AbortSignal) =>
+			transport.read(
+				(init) =>
+					api.DELETE("/v1/memories/{memory_id}", {
+						...init,
+						params: { path: { memory_id: readResourceId(memoryId) } },
+					}),
+				signal,
+			),
 		listProjects: (signal?: AbortSignal) =>
 			transport.read((init) => api.GET("/v1/projects", init), signal),
+		createProject: (
+			body: paths["/v1/projects"]["post"]["requestBody"]["content"]["application/json"],
+			signal?: AbortSignal,
+		) => transport.read((init) => api.POST("/v1/projects", { ...init, body }), signal),
+		updateProject: (
+			projectId: string,
+			body: paths["/v1/projects/{project_id}"]["patch"]["requestBody"]["content"]["application/json"],
+			signal?: AbortSignal,
+		) =>
+			transport.read(
+				(init) =>
+					api.PATCH("/v1/projects/{project_id}", {
+						...init,
+						params: { path: { project_id: readResourceId(projectId) } },
+						body,
+					}),
+				signal,
+			),
+		archiveProject: (projectId: string, signal?: AbortSignal) =>
+			transport.read(
+				(init) =>
+					api.DELETE("/v1/projects/{project_id}", {
+						...init,
+						params: { path: { project_id: readResourceId(projectId) } },
+					}),
+				signal,
+			),
 		getDashboardStats: (signal?: AbortSignal) =>
 			transport.read((init) => api.GET("/v1/dashboard/stats", init), signal),
 		getAgent: (agentId: string, signal?: AbortSignal) =>
