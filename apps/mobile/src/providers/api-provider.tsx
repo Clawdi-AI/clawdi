@@ -4,11 +4,13 @@ import {
 	type AiProviderClient,
 	ApiClientError,
 	type ApiClientFetch,
+	type ChannelClient,
 	type CloudApiClient,
 	type ConnectorClient,
 	createAccountApiClient,
 	createAgentProjectClient,
 	createAiProviderClient,
+	createChannelClient,
 	createCloudApiClient,
 	createConnectorClient,
 	createHostedApiClient,
@@ -34,6 +36,7 @@ import { useAccountScope } from "../platform/account-lifecycle";
 
 export type MobileApiClients = Readonly<{
 	cloud: CloudApiClient;
+	channels: ChannelClient;
 	account: AccountApiClient;
 	aiProviders: AiProviderClient;
 	sharing: ProjectSharingClient;
@@ -81,6 +84,11 @@ export function MobileApiProvider({
 	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
+			channels: createChannelClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
 			providerRemoval: config.computeApiUrl
 				? createProviderRemovalClient({
 						baseUrl: config.computeApiUrl,

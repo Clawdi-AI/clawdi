@@ -360,13 +360,42 @@ until each surface has implementation, focused verification and device evidence:
 | Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport | Universal-link intake and device acceptance |
-| v2 AI providers/channels | Not implemented | BYOK, provider OAuth/model bindings, channel connection/pairing/repair |
+| v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity and Custom bot deletion | WhatsApp device onboarding/repair, Agent model binding, native/live provider and channel acceptance |
 | Deployment/billing | Basic eligibility/creation/recovery and read-only billing/deployment views | Paid creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |
 
 The source reference is `apps/web/src/pages/dashboard`, its settings components,
 and `apps/web/src/hosted/v2`; exclude Hosted v1 product surfaces, not v2 features
 whose implementation happens to live under a legacy directory name.
+
+Channel admission rules, Discord credential checks and provider-specific pairing
+URL validation live in Shared and are re-exported by Web. Native mutations use
+generated Cloud routes with no automatic retries. Runtime Agent tokens and newly
+created webhook secrets are excluded from the client projection. Pairing codes
+and form credentials remain in component memory and are cleared on blur/background;
+account generations fence late results. Creation sends `agent_id: null` explicitly,
+leaving linking and pairing as separate actions. An uncertain creation requires
+inventory review before another submission; refreshing does not prove that an
+earlier request had no effect. Provider replacement requires explicit acknowledgement.
+Unpairing preserves incomplete notification/cleanup outcomes rather than reporting
+unqualified success. Empty 204 deletion/unlink responses are accepted without
+weakening response validation for other routes. Inactive owned bots remain visible
+through the owner inventory rather than disappearing with the available bot pool.
+
+Verify the shared channel behavior and existing Web contracts in the isolated
+runner: Shared/Mobile suites plus Web's `channel-linking.logic.test.ts`,
+`channel-detail-page.logic.test.ts`, `connect-bot-dialog.logic.test.ts` and
+`agent-channel-cards.logic.test.ts`. Done: all behavior tests and the three
+workspace typechecks pass. Native browser handoff, expiry/background behavior,
+destructive confirmations and live channel operations still require authorized
+device acceptance. WhatsApp onboarding/repair is not implemented by these screens.
+
+The channel batch passed Bun 1.4.2 frozen installation, Shared/Mobile/Web TS7,
+231 Shared/Mobile tests (990 assertions), 33 focused Web tests (119 assertions),
+Biome on 19 source files, separate iOS/Android Metro-Hermes exports and the
+post-export Mobile typecheck. Exact source and root manifest/lock comparisons
+passed. These are isolated source/bundling checks, not native compilation or
+real channel acceptance.
 
 On an authorized simulator/device build, verify:
 

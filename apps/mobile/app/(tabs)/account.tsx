@@ -111,6 +111,7 @@ function AccountView() {
 			</AppView>
 			<NativeButton label={t("navigation.billing")} onPress={() => router.push("/billing")} />
 			<NativeButton label={t("providers.title")} onPress={() => router.push("/ai-providers")} />
+			<NativeButton label={t("channels.title")} onPress={() => router.push("/channels")} />
 			<AppView className="gap-2 rounded-3xl bg-surface p-5">
 				<AppText className="text-sm text-muted">{t("account.apiKeys")}</AppText>
 				<AppTextInput

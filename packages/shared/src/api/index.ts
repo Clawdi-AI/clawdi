@@ -11,6 +11,9 @@ export {
 	type SavedAiProvider,
 } from "./ai-provider-client";
 export type { components, paths } from "./api.generated";
+export * from "./channel-client";
+export * from "./channel-form";
+export * from "./channel-linking";
 export {
 	type ComputeReusableSubscriptionsQuery,
 	type ComputeSubscriptionsQuery,
