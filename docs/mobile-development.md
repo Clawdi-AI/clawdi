@@ -231,10 +231,14 @@ submit/blur/background, and do not enter query or mutation caches. Confirmations
 are fenced against backgrounding, navigation and account retirement. Shared
 Vaults are read-only in the UI and server authorization remains authoritative.
 
-The legacy create-or-attach endpoint identifies Vaults by slug, not stable ID.
-It is explicitly named `createOrAttachBySlug` in the shared client and is not
-used to attach a selected Vault from the native detail screen. Exact-identity
-attachment, credential/secret-request flows, key selection/splitting, Project
+The dedicated `POST /v1/vault/{slug}/attachments/{project_id}` endpoint requires
+`vault_id` and attaches only that owned identity. Both Web attachment surfaces
+and native detail use it; a deleted identity never resolves to a replacement
+with the same slug. Existing legacy create-or-attach semantics stay unchanged.
+Ship the backend route before these clients: older servers fail closed at the
+new route, and clients never fall back to the legacy endpoint. Missing identities,
+foreign owners and out-of-bound Agent keys are rejected; exact attachment does
+not rename or create Vaults. Credential/secret-request flows, key selection/splitting, Project
 scope filtering and device interaction verification remain open; this is not
 full Vault parity. Existing-key skipping uses the fetched key-name snapshot,
 not a server-side compare-and-set guarantee against concurrent writes.
@@ -251,7 +255,7 @@ until each surface has implementation, focused verification and device evidence:
 | Sessions | Inventory, pinned message history, snapshot/live sharing and text export | Search/filter parity, tool timeline, public/universal-link entrypoints, device sharing |
 | Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
-| Vault | Search/pagination, create, stable-ID detail, import, section copy, global delete and detach | Exact-ID attach, credential/secret requests, key selection/split, Project filters and device acceptance |
+| Vault | Search/pagination, create, stable-ID detail/attach, import, section copy, global delete and detach | Credential/secret requests, key selection/split, Project filters and device acceptance |
 | v2 AI providers/channels | Not implemented | BYOK, provider OAuth/model bindings, channel connection/pairing/repair |
 | Deployment/billing | Basic eligibility/creation/recovery and read-only billing/deployment views | Paid creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |

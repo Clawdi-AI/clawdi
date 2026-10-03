@@ -36,6 +36,10 @@ export const vaultEn = {
 		"Permanently delete this key for EVERY Project using this Vault? This cannot be undone.",
 	projects: "Attached Projects",
 	detach: "Detach Project",
+	attach: "Attach to Project",
+	attachTarget: "Choose a Project",
+	attachWarning:
+		"Give this Project and its Agents access to this Vault? Existing secrets remain in the selected Vault.",
 	detachWarning:
 		"Remove this Project's access to the Vault? Its Agents may no longer receive these secrets. The Vault and keys remain.",
 	unattached: "Not attached to any Project.",

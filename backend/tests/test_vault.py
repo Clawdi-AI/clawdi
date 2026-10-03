@@ -1182,6 +1182,110 @@ async def test_vault_create_only_rejects_existing_slug(client, db_session, seed_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("prefix", ["/v1", "/api"])
+async def test_vault_exact_attachment_never_falls_back_to_slug(client, workspace_project, prefix):
+    created = await client.post(
+        "/v1/vault?create_only=true", json={"slug": "exact-attach", "name": "Original"}
+    )
+    assert created.status_code == 200, created.text
+    vault_id = created.json()["id"]
+    target = f"{prefix}/vault/exact-attach/attachments/{workspace_project.id}?vault_id={vault_id}"
+    payload = {"slug": "exact-attach", "name": "Must not rename"}
+    for _ in range(2):
+        attached = await client.post(target, json=payload)
+        assert attached.status_code == 200, attached.text
+        assert attached.json()["id"] == vault_id
+    detail = await client.get(f"/v1/vault/detail?slug=exact-attach&vault_id={vault_id}")
+    assert detail.json()["name"] == "Original"
+    assert detail.json()["project_ids"] == [str(workspace_project.id)]
+
+    removed = await client.delete(f"/v1/vault/exact-attach?vault_id={vault_id}")
+    assert removed.status_code == 200, removed.text
+    replacement = await client.post(
+        "/v1/vault?create_only=true", json={"slug": "exact-attach", "name": "Replacement"}
+    )
+    assert replacement.status_code == 200, replacement.text
+    assert replacement.json()["id"] != vault_id
+    stale = await client.post(target, json=payload)
+    assert stale.status_code == 404, stale.text
+    listing = await client.get(f"/v1/vault?project_id={workspace_project.id}")
+    assert listing.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_vault_exact_attachment_requires_matching_identity(client, workspace_project):
+    created = await client.post(
+        "/v1/vault?create_only=true", json={"slug": "exact-mode", "name": "Exact"}
+    )
+    vault_id = created.json()["id"]
+    payload = {"slug": "exact-mode", "name": "Exact"}
+    missing_identity = await client.post(f"/v1/vault/exact-mode/attachments/{workspace_project.id}")
+    assert missing_identity.status_code == 422, missing_identity.text
+    mismatched = await client.post(
+        f"/v1/vault/another-slug/attachments/{workspace_project.id}?vault_id={vault_id}"
+    )
+    assert mismatched.status_code == 404, mismatched.text
+    unknown = await client.post(
+        f"/v1/vault/exact-mode/attachments/{workspace_project.id}?vault_id={uuid.uuid4()}",
+        json=payload,
+    )
+    assert unknown.status_code == 404, unknown.text
+    listing = await client.get(f"/v1/vault?project_id={workspace_project.id}")
+    assert listing.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_vault_exact_attachment_preserves_owner_and_agent_boundaries(
+    client, db_session, seed_user, workspace_project
+):
+    from app.models.user import User
+    from tests.conftest import create_env_with_project
+
+    other = User(clerk_id=f"attach-other-{uuid.uuid4().hex}")
+    db_session.add(other)
+    await db_session.flush()
+    foreign = Vault(user_id=other.id, slug="foreign-vault", name="Foreign")
+    db_session.add(foreign)
+    await db_session.commit()
+    try:
+        denied = await client.post(
+            f"/v1/vault/foreign-vault/attachments/{workspace_project.id}?vault_id={foreign.id}",
+            json={"slug": foreign.slug, "name": foreign.name},
+        )
+        assert denied.status_code == 404, denied.text
+        owned = await client.post(
+            "/v1/vault?create_only=true", json={"slug": "account-secret", "name": "Account"}
+        )
+        owned_id = owned.json()["id"]
+        env = await create_env_with_project(
+            db_session,
+            user_id=seed_user.id,
+            machine_id=f"attach-bound-{uuid.uuid4().hex}",
+            machine_name="Bound Agent",
+        )
+        key = ApiKey(user_id=seed_user.id, environment_id=env.id)
+
+        async def bound_auth() -> AuthContext:
+            return AuthContext(user=seed_user, api_key=key)
+
+        app.dependency_overrides[get_auth] = bound_auth
+        # A bound key may not pull an unbound account secret into its own Project.
+        source_denied = await client.post(
+            f"/v1/vault/account-secret/attachments/{env.default_project_id}?vault_id={owned_id}",
+            json={"slug": "account-secret", "name": "Account"},
+        )
+        assert source_denied.status_code == 404, source_denied.text
+        target_denied = await client.post(
+            f"/v1/vault/account-secret/attachments/{workspace_project.id}?vault_id={owned_id}",
+            json={"slug": "account-secret", "name": "Account"},
+        )
+        assert target_denied.status_code == 403, target_denied.text
+    finally:
+        await db_session.delete(other)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
 async def test_vault_item_delete_requires_global_confirmation_for_shared_vault(
     client, seed_project, workspace_project
 ):

@@ -314,9 +314,11 @@ export default function VaultDetailPage({
 			)
 				throw new Error("Project unavailable");
 			return unwrap(
-				await api.POST("/v1/vault", {
-					params: { query: { project_id: projectId } },
-					body: { slug: vault.slug, name: vault.name },
+				await api.POST("/v1/vault/{slug}/attachments/{project_id}", {
+					params: {
+						path: { slug: vault.slug, project_id: projectId },
+						query: { vault_id: vault.id },
+					},
 				}),
 			);
 		},

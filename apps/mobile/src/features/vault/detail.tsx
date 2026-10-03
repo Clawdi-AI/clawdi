@@ -43,6 +43,7 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 	const [draft, setDraft] = useState("");
 	const [replace, setReplace] = useState(false);
 	const [targetId, setTargetId] = useState("");
+	const [projectTargetId, setProjectTargetId] = useState("");
 	const [saved, setSaved] = useState(false);
 	const capture = useForegroundLease();
 	useFocusEffect(
@@ -77,6 +78,14 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 		retry: false,
 	});
 	const current = detail.data;
+	const attachableProjects = (projects.data ?? []).filter(
+		(project) =>
+			project.is_owner &&
+			project.kind === "workspace" &&
+			!project.archived_at &&
+			!current?.project_ids.includes(project.id),
+	);
+	const projectTarget = attachableProjects.find((project) => project.id === projectTargetId);
 	const writable =
 		!!identity &&
 		current?.id === identity.id &&
@@ -271,6 +280,41 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 						))}
 						{writable ? (
 							<AppView className="gap-3">
+								<NativePicker
+									value={projectTargetId}
+									onValueChange={setProjectTargetId}
+									disabled={action.busy || projects.isError || projects.isFetching}
+									options={[
+										{ value: "", label: t("vault.attachTarget") },
+										...attachableProjects.map((project) => ({
+											value: project.id,
+											label: project.name,
+										})),
+									]}
+								/>
+								{projects.isError ? (
+									<ResourceError missing={false} onRetry={() => void projects.refetch()} />
+								) : null}
+								<NativeButton
+									label={t("vault.attach")}
+									disabled={
+										action.busy || projects.isError || projects.isFetching || !projectTarget
+									}
+									onPress={() => {
+										if (!current || !projectTarget) return;
+										confirm(
+											t("vault.attach"),
+											`${projectTarget.name}\n\n${t("vault.attachWarning")}`,
+											async (isCurrent) => {
+												await read((signal) => vault.attach(current, projectTarget.id, signal));
+												if (isCurrent()) {
+													setProjectTargetId("");
+													await refresh();
+												}
+											},
+										);
+									}}
+								/>
 								<AppTextInput
 									accessibilityLabel={t("vault.section")}
 									placeholder={t("vault.section")}

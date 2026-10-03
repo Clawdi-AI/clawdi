@@ -125,9 +125,11 @@ export function ProjectVaultCatalog({
 						}),
 					)
 				: unwrap(
-						await api.POST("/v1/vault", {
-							params: { query: { project_id: project.id } },
-							body: { slug: vault.slug, name: vault.name },
+						await api.POST("/v1/vault/{slug}/attachments/{project_id}", {
+							params: {
+								path: { slug: vault.slug, project_id: project.id },
+								query: { vault_id: vault.id },
+							},
 						}),
 					);
 		},

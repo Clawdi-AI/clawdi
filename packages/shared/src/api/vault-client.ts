@@ -96,7 +96,19 @@ export function createVaultClient(options: ApiClientOptions) {
 				(init) => api.DELETE("/v1/vault/{slug}", { ...init, params: params(vault) }),
 				signal,
 			),
-		/** Legacy create-or-attach is slug based; it cannot safely attach a selected stable identity. */
+		attach: (vault: VaultIdentity, projectId: string, signal?: AbortSignal) =>
+			transport.read(
+				(init) =>
+					api.POST("/v1/vault/{slug}/attachments/{project_id}", {
+						...init,
+						params: {
+							path: { slug: readResourceId(vault.slug), project_id: readResourceId(projectId) },
+							query: { vault_id: readResourceId(vault.id) },
+						},
+					}),
+				signal,
+			),
+		/** Legacy create-or-attach is slug based; use attach for a selected stable identity. */
 		createOrAttachBySlug: (
 			vault: Pick<components["schemas"]["VaultResponse"], "slug" | "name">,
 			projectId: string,

@@ -2871,6 +2871,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/vault/{slug}/attachments/{project_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Attach Vault */
+        post: operations["attach_vault_v1_vault__slug__attachments__project_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/vault/detail": {
         parameters: {
             query?: never;
@@ -16658,6 +16675,41 @@ export interface operations {
                 "application/json": components["schemas"]["VaultCreate"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaultCreatedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    attach_vault_v1_vault__slug__attachments__project_id__post: {
+        parameters: {
+            query: {
+                /** @description Required exact existing Vault identity; never creates. */
+                vault_id: string;
+            };
+            header?: never;
+            path: {
+                slug: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

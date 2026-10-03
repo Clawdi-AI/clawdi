@@ -49,6 +49,10 @@ test("Vault operations retain exact identities and never fetch plaintext", async
 		expect(calls[6]?.url.searchParams.get("project_id")).toBe("project-id");
 		await client.create({ slug: "new", name: "New" });
 		expect(calls[7]?.url.searchParams.get("create_only")).toBe("true");
+		await client.attach(source, "project-id");
+		expect(calls[8]?.url.searchParams.get("vault_id")).toBe(source.id);
+		expect(calls[8]?.url.pathname).toBe("/v1/vault/same%2Fname%3F/attachments/project-id");
+		expect(calls[8]?.body).toBeNull();
 	} finally {
 		server.stop(true);
 	}
@@ -73,4 +77,20 @@ test("stale Vault identity errors do not retry against a slug or expose server d
 	expect(caught).toBeInstanceOf(Error);
 	expect(String(caught)).not.toContain("sensitive-server-detail");
 	expect(calls).toBe(1);
+});
+
+test("unsupported exact attachment never falls back to legacy create-or-attach", async () => {
+	const paths: string[] = [];
+	const client = createVaultClient({
+		baseUrl: "https://vault.invalid",
+		getToken: async () => "fixture",
+		fetch: async (request) => {
+			paths.push(new URL(request.url).pathname);
+			return Response.json({ detail: "Not Found" }, { status: 404 });
+		},
+	});
+	await expect(
+		client.attach({ id: "selected-id", slug: "selected-slug" }, "project-id"),
+	).rejects.toThrow();
+	expect(paths).toEqual(["/v1/vault/selected-slug/attachments/project-id"]);
 });
