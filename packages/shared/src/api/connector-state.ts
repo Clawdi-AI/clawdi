@@ -1,5 +1,21 @@
 import type { components } from "./api.generated";
 
+type SearchableTool = Pick<
+	components["schemas"]["ConnectorToolResponse"],
+	"name" | "display_name" | "description"
+>;
+
+/** Literal substring search: provider identifiers may contain regex/search punctuation. */
+export function filterConnectorTools<T extends SearchableTool>(tools: T[], search: string): T[] {
+	const query = search.trim().toLowerCase();
+	if (!query) return tools;
+	return tools.filter((tool) =>
+		[tool.name, tool.display_name, tool.description].some((value) =>
+			value?.toLowerCase().includes(query),
+		),
+	);
+}
+
 const REDIRECT_AUTH_TYPES = new Set(["oauth", "oauth1", "oauth2", "dcr_oauth", "composio_link"]);
 const CREDENTIAL_AUTH_TYPES = new Set(["api_key", "bearer_token", "basic"]);
 const NO_AUTH_TYPES = new Set(["none", "no_auth"]);

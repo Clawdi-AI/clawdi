@@ -1,6 +1,6 @@
 "use client";
 
-import type { components } from "@clawdi/shared/api";
+import { type components, filterConnectorTools } from "@clawdi/shared/api";
 import { AlertCircle, Check, Link2Off, Plug, Wrench } from "lucide-react";
 import { parseAsString, useQueryStates } from "nuqs";
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -426,13 +426,10 @@ function ConnectorToolsList({
 	const [search, setSearch] = useState("");
 	const deferredSearch = useDeferredValue(search);
 
-	const filtered = useMemo(() => {
-		if (!deferredSearch.trim()) return tools;
-		const q = deferredSearch.trim().toLowerCase();
-		return tools.filter(
-			(t) => t.display_name?.toLowerCase().includes(q) || t.description?.toLowerCase().includes(q),
-		);
-	}, [tools, deferredSearch]);
+	const filtered = useMemo(
+		() => filterConnectorTools(tools, deferredSearch),
+		[tools, deferredSearch],
+	);
 
 	if (isLoading) {
 		return (

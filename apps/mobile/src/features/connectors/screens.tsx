@@ -1,6 +1,7 @@
 import {
 	buildCredentialPayload,
 	type components,
+	filterConnectorTools,
 	getConnectorAuthFlow,
 	getVisibleCredentialFields,
 	isActiveConnection,
@@ -9,7 +10,7 @@ import {
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { openBrowserAsync } from "expo-web-browser";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Alert, AppState } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
 import { useI18n } from "../../i18n";
@@ -169,6 +170,8 @@ function Detail({ name }: { name?: string }) {
 	const capture = useForegroundLease();
 	const [values, setValues] = useState<Record<string, string>>({});
 	const [alias, setAlias] = useState("");
+	const [toolSearch, setToolSearch] = useState("");
+	const deferredToolSearch = useDeferredValue(toolSearch);
 	useFocusEffect(useCallback(() => () => setValues({}), []));
 	useEffect(() => {
 		const listener = AppState.addEventListener("change", (state) => {
@@ -197,6 +200,14 @@ function Detail({ name }: { name?: string }) {
 		retry: false,
 	});
 	const accounts = useConnections();
+	const filteredTools = useMemo(
+		() =>
+			filterConnectorTools(tools.data ?? [], deferredToolSearch).map((tool) => ({
+				...tool,
+				id: tool.name,
+			})),
+		[tools.data, deferredToolSearch],
+	);
 	const visibleFields = getVisibleCredentialFields(fields.data?.expected_input_fields ?? []);
 	const fieldValue = (key: string) => (Object.hasOwn(values, key) ? (values[key] ?? "") : "");
 	const canConnect = Boolean(
@@ -244,8 +255,14 @@ function Detail({ name }: { name?: string }) {
 		<InventoryList
 			title={app.data?.display_name || name || t("connectors.title")}
 			description={app.data?.description || t("connectors.description")}
-			items={(tools.data ?? []).map((tool) => ({ ...tool, id: tool.name }))}
-			empty={t(tools.isPending ? "loading.app" : "connectors.noTools")}
+			items={filteredTools}
+			empty={t(
+				tools.isPending
+					? "loading.app"
+					: deferredToolSearch.trim()
+						? "connectors.noMatchingTools"
+						: "connectors.noTools",
+			)}
 			refreshing={tools.isRefetching || accounts.isRefetching || app.isRefetching}
 			onRefresh={() => {
 				if (name) {
@@ -349,6 +366,16 @@ function Detail({ name }: { name?: string }) {
 					<AppText className="text-xl font-semibold text-foreground">
 						{t("connectors.tools")}
 					</AppText>
+					<AppTextInput
+						accessibilityLabel={t("connectors.searchTools")}
+						placeholder={t("connectors.searchTools")}
+						value={toolSearch}
+						onChangeText={setToolSearch}
+						maxLength={256}
+						autoCapitalize="none"
+						autoCorrect={false}
+						className="rounded-xl bg-surface p-3 text-foreground"
+					/>
 				</AppView>
 			}
 			renderItem={(tool) => (

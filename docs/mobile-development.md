@@ -817,12 +817,18 @@ until each surface has implementation, focused verification and device evidence:
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search and details with recall metadata/source Session navigation | Remaining Skill detail parity and native file/share/managed-runtime acceptance |
-| Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
+| Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools with shared Web/native identifier/name/description search | Device/provider OAuth verification and keyboard/list accessibility acceptance |
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport and configured HTTPS intake | Signed domain association and device acceptance |
 | v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal and Agent model binding; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity, Custom deletion and WhatsApp device onboarding/repair | Native/live provider and channel acceptance |
 | Deployment/billing | Included Basic and existing funded Basic/Performance eligibility/creation/recovery, paginated reusable inventory and read-only billing/deployment views | New paid subscription creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
 | Runtime UI/terminal | Shared Web/native xterm engine, Expo DOM terminal route, native controls and foreground teardown; bounded generated credential clients; confirmed system-browser OpenClaw handoff and Hermes OIDC entry with shared URL validation | Native WebView/keyboard/real-server round-trip and compilation; device browser authentication and revocation acceptance |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |
+
+Connector tool search is a Shared literal substring filter consumed by both Web
+and native; punctuation is not treated as regex or query syntax. Native keeps the
+virtualized tool list and distinguishes an empty catalog from no search matches.
+The current Web connector detail has no separate MCP setup surface: MCP component
+presentation belongs to the v2 runtime plugin detail, not a second connector flow.
 
 Skill detail also presents generated version, file count, Project and source
 repository metadata. Text/create/import drafts have native navigation protection:

@@ -1,5 +1,19 @@
 import { expect, test } from "bun:test";
 import { createConnectorClient } from "./connector-client";
+import { filterConnectorTools } from "./connector-state";
+
+test("tool search matches identifiers, names and descriptions literally without mutating order", () => {
+	const tools = [
+		{ name: "files.list[v2]", display_name: "List files", description: "Read shared documents" },
+		{ name: "users.get", display_name: "Find user", description: "Read account profile" },
+	];
+	expect(filterConnectorTools(tools, "  FILES.LIST[V2] ")).toEqual([tools[0]]);
+	expect(filterConnectorTools(tools, "find USER")).toEqual([tools[1]]);
+	expect(filterConnectorTools(tools, "shared documents")).toEqual([tools[0]]);
+	expect(filterConnectorTools(tools, ".*")).toEqual([]);
+	expect(filterConnectorTools(tools, "read")).toEqual(tools);
+	expect(filterConnectorTools(tools, "   ")).toEqual(tools);
+});
 
 test("connector requests preserve provider-managed callback, credentials, aliases and escaped identities", async () => {
 	const calls: { path: string; query: string; method: string; body: unknown }[] = [];

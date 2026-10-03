@@ -22,6 +22,8 @@ export const connectorsEn = {
 	refresh: "Refresh accounts",
 	failed: "The action could not be completed. Refresh accounts before trying again.",
 	tools: "Available tools",
+	searchTools: "Search tools by name or description",
+	noMatchingTools: "No tools match your search.",
 	noTools: "No tools available.",
 	deprecated: "Deprecated",
 	required: "Required",
