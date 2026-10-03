@@ -373,13 +373,22 @@ name, so explicit retries after a restart target the same cancellation. A succes
 acknowledgement only restarts bounded status polling: it does not assert rollback, stopped
 compute or cancelled billing. Failed/ambiguous requests never automatically retry.
 
+Native Agent deletion explicitly preserves paid subscriptions and warns that billing may
+continue. Included Basic capacity release remains a server lifecycle decision. The shared
+client rejects cancellation choices before authentication/network;
+provider-origin subscription management remains gated, not silently bundled with deletion.
+The same durable journal pins DELETE body/version/key and remains accessible when the
+deployment snapshot is unavailable. A GET 404 never clears an uncertain request: only its
+matching DELETE acknowledgement (accepted operation or `status: absent`) resolves it.
+Server-reported absence is not a claim that background infrastructure cleanup has finished.
+
 Source implementation is not native acceptance. Keep the complete v2 Web scope
 until each surface has implementation, focused verification and device evidence:
 
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
 | Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings | Remaining general/profile settings and real Clerk flows |
-| Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, language/timezone and provider/model settings | Remaining Agent settings/migration/deletion and device persistence/navigation/permission acceptance |
+| Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings | Remaining Agent settings/migration, provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing and text export | Rich-text/link presentation, public/universal-link entrypoints, device scrolling/sharing and visual acceptance |
 | Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |

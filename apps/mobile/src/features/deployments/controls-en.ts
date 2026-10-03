@@ -8,6 +8,11 @@ export const runtimeEn = {
 	stop: "Stop runtime",
 	restart: "Restart runtime",
 	resetAccess: "Reset dashboard access",
+	deleteAgent: "Delete Agent, keep subscription",
+	deleteWarning:
+		"This permanently deletes the Agent and its saved data. This cannot be undone. Any paid subscription is kept and may continue billing; manage it separately through its original purchase provider. Only confirm if you want to delete this Agent without cancelling its subscription.",
+	deleteReported:
+		"The server reports this Agent deleted for your account. Cleanup may still be in progress. This action did not request subscription cancellation.",
 	paymentRequired:
 		"Starting requires a server-approved subscription or payment action. No payment is made by these controls.",
 	uncertain:

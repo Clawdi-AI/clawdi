@@ -29,12 +29,18 @@ import { runtimeAttempts } from "./attempt-storage";
 
 export function DeploymentControls({
 	deployment,
+	deploymentId,
 	blocked,
+	transitioning,
 	onAccepted,
+	onAbsent,
 }: {
-	deployment: DeploymentRead;
+	deployment: DeploymentRead | undefined;
+	deploymentId: string;
 	blocked: boolean;
+	transitioning: boolean;
 	onAccepted: (operation: HostedDeployOperation) => Promise<void>;
+	onAbsent: () => Promise<void>;
 }) {
 	const t = useI18n();
 	const scope = useAccountScope();
@@ -57,14 +63,13 @@ export function DeploymentControls({
 			try {
 				const digest = await digestStringAsync(
 					CryptoDigestAlgorithm.SHA256,
-					JSON.stringify([scope.accountKey, deployment.resource.id]),
+					JSON.stringify([scope.accountKey, deploymentId]),
 				);
 				if (!current()) return;
 				const key = `clawdi.runtime.v1.${digest}`;
 				const saved = await runtimeAttempts.readSavedAttempt(key);
 				if (!current()) return;
-				if (saved && saved.deploymentId !== deployment.resource.id)
-					throw new Error("Wrong runtime journal");
+				if (saved && saved.deploymentId !== deploymentId) throw new Error("Wrong runtime journal");
 				setAttempt(saved);
 				setStorageKey(key);
 			} catch {
@@ -74,17 +79,23 @@ export function DeploymentControls({
 		return () => {
 			mounted = false;
 		};
-	}, [scope, deployment.resource.id, restoreEpoch]);
+	}, [scope, deploymentId, restoreEpoch]);
 	const confirmation = useRef(0);
-	const state = deployment.resource.status?.summary_state;
-	const busy =
+	const state = deployment?.resource.status?.summary_state;
+	const writeBlocked =
 		action.busy ||
 		blocked ||
 		Boolean(attempt) ||
 		!scope.isReady ||
+		!deployment ||
+		deployment.resource.id !== deploymentId ||
+		deployment.resource.spec.desired_lifecycle === "deleted" ||
 		!storageKey ||
-		storageError ||
-		Boolean(deployment.accepted_operation && !deployment.accepted_operation.done);
+		storageError;
+	const busy =
+		writeBlocked ||
+		transitioning ||
+		Boolean(deployment?.accepted_operation && !deployment.accepted_operation.done);
 	const submit = (saved: RuntimeAttempt, fresh = false) =>
 		action.run(async (current) => {
 			const visible = capture();
@@ -117,7 +128,8 @@ export function DeploymentControls({
 				await runtimeAttempts.clearAttempt(storageKey, submitting, owns);
 				if (!owns()) return;
 				setAttempt(null);
-				await onAccepted(operation);
+				if ("status" in operation) await onAbsent();
+				else await onAccepted(operation);
 			} catch (error) {
 				if (
 					owns() &&
@@ -134,7 +146,8 @@ export function DeploymentControls({
 			}
 		});
 	const confirm = (mutation: DeploymentMutation) => {
-		if (busy || !deploymentMutations) return;
+		if ((mutation.action === "delete" ? writeBlocked : busy) || !deploymentMutations || !deployment)
+			return;
 		const visible = capture();
 		const saved: RuntimeAttempt = {
 			format: 1,
@@ -145,23 +158,30 @@ export function DeploymentControls({
 			status: "prepared",
 		};
 		const ticket = ++confirmation.current;
-		Alert.alert(t("runtime.confirm"), t("runtime.warning"), [
-			{ text: t("account.cancel"), style: "cancel" },
-			{
-				text: t("runtime.apply"),
-				onPress: () => {
-					if (
-						confirmation.current === ticket &&
-						scope.isCurrent() &&
-						!scope.signal.aborted &&
-						visible()
-					) {
-						confirmation.current++;
-						void submit(saved, true);
-					}
+		Alert.alert(
+			t(mutation.action === "delete" ? "runtime.deleteAgent" : "runtime.confirm"),
+			mutation.action === "delete"
+				? `${deployment.resource.name}\n\n${t("runtime.deleteWarning")}`
+				: t("runtime.warning"),
+			[
+				{ text: t("account.cancel"), style: "cancel" },
+				{
+					text: t(mutation.action === "delete" ? "runtime.deleteAgent" : "runtime.apply"),
+					style: mutation.action === "delete" ? "destructive" : "default",
+					onPress: () => {
+						if (
+							confirmation.current === ticket &&
+							scope.isCurrent() &&
+							!scope.signal.aborted &&
+							visible()
+						) {
+							confirmation.current++;
+							void submit(saved, true);
+						}
+					},
 				},
-			},
-		]);
+			],
+		);
 	};
 	const stable = state === "running" || state === "stopped" || state === "failed";
 	return (
@@ -214,14 +234,14 @@ export function DeploymentControls({
 				</>
 			) : null}
 			{action.error ? <AppText accessibilityRole="alert">{t("runtime.failed")}</AppText> : null}
-			{deploymentLifecycleAvailable("start", state) && deployment.start_action === "start" ? (
+			{deploymentLifecycleAvailable("start", state) && deployment?.start_action === "start" ? (
 				<NativeButton
 					label={t("runtime.start")}
 					disabled={busy}
 					onPress={() => confirm({ action: "start" })}
 				/>
 			) : null}
-			{state === "stopped" && deployment.start_action !== "start" ? (
+			{state === "stopped" && deployment?.start_action !== "start" ? (
 				<AppText>{t("runtime.paymentRequired")}</AppText>
 			) : null}
 			{deploymentLifecycleAvailable("stop", state) ? (
@@ -245,24 +265,40 @@ export function DeploymentControls({
 					onPress={() => confirm({ action: "reset_runtime_ui_access" })}
 				/>
 			) : null}
-			<LocaleSettings
-				key={JSON.stringify([
-					deployment.resource.spec.runtime_configuration.language,
-					deployment.resource.spec.runtime_configuration.timezone,
-				])}
-				deployment={deployment}
-				disabled={busy || !stable}
-				apply={(body) => confirm({ action: "update", body })}
-			/>
-			<ModelSettings
-				key={JSON.stringify([
-					deployment.resource.spec.runtime_configuration.providers,
-					deployment.resource.spec.runtime_configuration.primary_model,
-				])}
-				deployment={deployment}
-				disabled={busy || !stable}
-				apply={(body) => confirm({ action: "update", body })}
-			/>
+			{deploymentLifecycleAvailable("delete", state) ? (
+				<NativeButton
+					label={t("runtime.deleteAgent")}
+					disabled={writeBlocked}
+					onPress={() =>
+						confirm({ action: "delete", body: { subscription_choice: "keep_subscription" } })
+					}
+				/>
+			) : null}
+			{attempt?.mutation.action === "delete" ? (
+				<AppText accessibilityRole="alert">{t("runtime.deleteWarning")}</AppText>
+			) : null}
+			{deployment ? (
+				<>
+					<LocaleSettings
+						key={JSON.stringify([
+							deployment.resource.spec.runtime_configuration.language,
+							deployment.resource.spec.runtime_configuration.timezone,
+						])}
+						deployment={deployment}
+						disabled={busy || !stable}
+						apply={(body) => confirm({ action: "update", body })}
+					/>
+					<ModelSettings
+						key={JSON.stringify([
+							deployment.resource.spec.runtime_configuration.providers,
+							deployment.resource.spec.runtime_configuration.primary_model,
+						])}
+						deployment={deployment}
+						disabled={busy || !stable}
+						apply={(body) => confirm({ action: "update", body })}
+					/>
+				</>
+			) : null}
 		</AppView>
 	);
 }

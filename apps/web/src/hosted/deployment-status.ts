@@ -408,23 +408,7 @@ export function canRestart(status: DeploymentStatus): boolean {
 }
 
 export function canDelete(status: DeploymentStatus): boolean {
-	switch (status.kind) {
-		case "creating":
-		case "starting":
-		case "running":
-		case "stopping":
-		case "stopped":
-		case "restarting":
-		case "updating":
-		case "failed":
-			return true;
-		case "deleting":
-		case "deleted":
-		case "unknown":
-			return false;
-		default:
-			return exhaustive(status);
-	}
+	return deploymentLifecycleAvailable("delete", status.kind);
 }
 
 /**

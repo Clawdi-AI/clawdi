@@ -4,6 +4,96 @@ import {
 	type DeploymentMutation,
 } from "./deployment-mutation-client";
 
+test("delete keeps subscriptions and distinguishes admission from server-confirmed absence", async () => {
+	const requests: unknown[] = [];
+	const server = Bun.serve({
+		hostname: "127.0.0.1",
+		port: 0,
+		async fetch(request) {
+			requests.push({
+				method: request.method,
+				path: new URL(request.url).pathname,
+				version: request.headers.get("if-match"),
+				key: request.headers.get("idempotency-key"),
+				body: await request.json(),
+			});
+			if (requests.length === 1) return Response.json({ detail: "Unavailable" }, { status: 503 });
+			if (requests.length === 2)
+				return Response.json(
+					{
+						name: "operations/delete-op",
+						done: false,
+						metadata: { deploymentId: "deployment", verb: "delete" },
+					},
+					{ status: 202 },
+				);
+			return Response.json({ status: "absent", deployment_id: "deployment" });
+		},
+	});
+	try {
+		const client = createDeploymentMutationClient({
+			baseUrl: server.url.href,
+			getToken: async () => "fixture",
+			fetch,
+		});
+		const mutation: DeploymentMutation = {
+			action: "delete",
+			body: { subscription_choice: "keep_subscription" },
+		};
+		await expect(client.apply("deployment", "v1", "delete-key", mutation)).rejects.toMatchObject({
+			status: 503,
+		});
+		expect(requests).toHaveLength(1);
+		expect(await client.apply("deployment", "v1", "delete-key", mutation)).toMatchObject({
+			name: "operations/delete-op",
+			done: false,
+		});
+		expect(await client.apply("deployment", "v1", "delete-key", mutation)).toEqual({
+			status: "absent",
+			deployment_id: "deployment",
+		});
+		expect(requests).toEqual(
+			Array(3).fill({
+				method: "DELETE",
+				path: "/v2/deployments/deployment",
+				version: '"v1"',
+				key: "delete-key",
+				body: { subscription_choice: "keep_subscription" },
+			}),
+		);
+	} finally {
+		server.stop(true);
+	}
+});
+
+test("delete never crosses the native subscription boundary or accepts a foreign absence receipt", async () => {
+	let tokens = 0;
+	const client = createDeploymentMutationClient({
+		baseUrl: "https://hosted.example",
+		getToken: async () => {
+			tokens++;
+			return "fixture";
+		},
+		fetch: async () => Response.json({ status: "absent", deployment_id: "other" }),
+	});
+	await expect(
+		client.apply("deployment", "v1", "key", {
+			action: "delete",
+			body: { subscription_choice: "cancel_subscription" },
+		}),
+	).rejects.toMatchObject({ status: 400, code: "subscription_management_unavailable" });
+	expect(tokens).toBe(0);
+	await expect(
+		client.apply("deployment", "v1", "key", {
+			action: "delete",
+			body: { subscription_choice: "keep_subscription" },
+		}),
+	).rejects.toThrow("API response could not be read");
+	await expect(client.apply("deployment", "v1", "key", { action: "stop" })).rejects.toThrow(
+		"API response could not be read",
+	);
+});
+
 test("cancel admission is not completion and explicit retry keeps its operation and key", async () => {
 	const requests: { path: string; method: string; key: string | null; body: unknown }[] = [];
 	const server = Bun.serve({

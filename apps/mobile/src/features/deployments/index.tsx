@@ -101,6 +101,7 @@ export function DeploymentDetailScreen({ deploymentId }: { deploymentId: string 
 function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }) {
 	const cache = useQueryClient();
 	const [accepted, setAccepted] = useState<HostedDeployOperation | null>(null);
+	const [deletionReported, setDeletionReported] = useState(false);
 	const { hosted } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -181,6 +182,17 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 		refetchOnWindowFocus: false,
 		refetchOnReconnect: false,
 	});
+	const refreshResources = async () => {
+		await Promise.all([
+			cache.invalidateQueries({
+				queryKey: accountQueryKey(scope, "deployment", deploymentId ?? "missing"),
+			}),
+			cache.invalidateQueries({ queryKey: accountQueryKey(scope, "deployments") }),
+			cache.invalidateQueries({ queryKey: accountQueryKey(scope, "cloud-agents") }),
+			cache.invalidateQueries({ queryKey: accountQueryKey(scope, "cloud-agent") }),
+		]);
+	};
+	const activeOperation = operation.data ?? accepted ?? deployment?.accepted_operation;
 	return (
 		<ReadScreen>
 			<AppScrollView contentContainerClassName="gap-4 p-5">
@@ -205,6 +217,28 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 						/>
 						{query.isError ? <ResourceError missing={isNotFound(query.error)} /> : null}
 						{query.isPending ? <AppText>{t("loading.app")}</AppText> : null}
+						{deletionReported ? (
+							<AppText accessibilityRole="alert">{t("runtime.deleteReported")}</AppText>
+						) : (
+							<DeploymentControls
+								deployment={deployment}
+								deploymentId={deploymentId}
+								blocked={
+									query.isError ||
+									(activeOperation?.metadata?.verb === "delete" && !activeOperation.done)
+								}
+								transitioning={Boolean(activeOperation && !activeOperation.done)}
+								onAccepted={async (result) => {
+									setAccepted(result);
+									setStartedAt(Date.now());
+									await refreshResources();
+								}}
+								onAbsent={async () => {
+									setDeletionReported(true);
+									await refreshResources();
+								}}
+							/>
+						)}
 						{deployment ? (
 							<AppView className="gap-3 rounded-2xl bg-surface p-4">
 								<AppText className="text-xl font-semibold text-foreground">
@@ -244,7 +278,8 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 									</AppText>
 								) : null}
 								{operation.isError ? <ResourceError missing={false} /> : null}
-								{operation.data &&
+								{!deletionReported &&
+								operation.data &&
 								!operation.isError &&
 								operation.data.name === operationName &&
 								operation.data.metadata?.deploymentId === deploymentId ? (
@@ -264,26 +299,6 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 								) : null}
 								<AppText>{t("deployments.paused")}</AppText>
 								<AppText>{t("deployments.noSessions")}</AppText>
-								<DeploymentControls
-									deployment={deployment}
-									blocked={
-										query.isError ||
-										Boolean(
-											(operation.data ?? accepted ?? deployment.accepted_operation) &&
-												!(operation.data ?? accepted ?? deployment.accepted_operation)?.done,
-										)
-									}
-									onAccepted={async (result) => {
-										setAccepted(result);
-										setStartedAt(Date.now());
-										await cache.invalidateQueries({
-											queryKey: accountQueryKey(scope, "deployment", deploymentId ?? "missing"),
-										});
-										await cache.invalidateQueries({
-											queryKey: accountQueryKey(scope, "deployments"),
-										});
-									}}
-								/>
 								{deployment.agent_id ? (
 									<NativeButton
 										label={t("deployments.agent")}

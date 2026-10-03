@@ -112,7 +112,14 @@ export function parseRuntimeAttempt(raw: string): RuntimeAttempt | null {
 		deploymentMutationHeaders(value.version, value.key);
 		let mutation: DeploymentMutation;
 		const action = value.mutation.action;
-		if (action === "update") {
+		if (action === "delete") {
+			if (
+				!record(value.mutation.body) ||
+				value.mutation.body.subscription_choice !== "keep_subscription"
+			)
+				return null;
+			mutation = { action, body: { subscription_choice: "keep_subscription" } };
+		} else if (action === "update") {
 			const body = update(value.mutation.body);
 			if (!body) return null;
 			mutation = { action, body };

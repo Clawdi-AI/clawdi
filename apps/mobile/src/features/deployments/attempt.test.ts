@@ -30,6 +30,27 @@ function fixture() {
 	return { values, storage, journal: createRuntimeAttemptStore(storage) };
 }
 
+test("delete recovery keeps the original subscription choice even without a deployment snapshot", async () => {
+	const { journal, storage } = fixture();
+	const deletion: RuntimeAttempt = {
+		...attempt,
+		mutation: { action: "delete", body: { subscription_choice: "keep_subscription" } },
+		status: "uncertain",
+	};
+	await journal.saveAttempt("account-agent", deletion, () => true);
+	expect(await createRuntimeAttemptStore(storage).readSavedAttempt("account-agent")).toEqual(
+		deletion,
+	);
+	expect(
+		parseRuntimeAttempt(
+			JSON.stringify({
+				...deletion,
+				mutation: { action: "delete", body: { subscription_choice: "cancel_subscription" } },
+			}),
+		),
+	).toBeNull();
+});
+
 test("restart preserves exact uncertain intent without consulting the live model catalog", async () => {
 	const { journal, storage } = fixture();
 	await journal.saveAttempt("account-agent", attempt, () => true);

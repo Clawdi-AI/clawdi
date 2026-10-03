@@ -12,7 +12,8 @@ import {
 export type DeploymentUpdate = DeployComponents["schemas"]["V2UpdateDeploymentRequest"];
 export type DeploymentMutation =
 	| { action: "start" | "stop" | "restart" | "reset_runtime_ui_access" }
-	| { action: "update"; body: DeploymentUpdate };
+	| { action: "update"; body: DeploymentUpdate }
+	| { action: "delete"; body: DeployComponents["schemas"]["V2DeleteDeploymentRequest"] };
 export function canCancelDeploymentOperation(
 	operation: DeployComponents["schemas"]["LongRunningOperation"] | null | undefined,
 ): boolean {
@@ -38,7 +39,7 @@ export function deploymentIdempotencyHeaders(key: string) {
 	return { "Idempotency-Key": key };
 }
 export function deploymentLifecycleAvailable(
-	action: "start" | "stop" | "restart",
+	action: "start" | "stop" | "restart" | "delete",
 	state:
 		| DeployComponents["schemas"]["HostedDeploymentStatus"]["summary_state"]
 		| "unknown"
@@ -51,6 +52,20 @@ export function deploymentLifecycleAvailable(
 			return state === "running" || state === "starting";
 		case "restart":
 			return state === "running" || state === "failed";
+		case "delete":
+			return (
+				typeof state === "string" &&
+				[
+					"creating",
+					"starting",
+					"running",
+					"stopping",
+					"stopped",
+					"restarting",
+					"updating",
+					"failed",
+				].includes(state)
+			);
 	}
 }
 export function strongDeploymentEtag(value: string): string {
@@ -99,12 +114,21 @@ export function createDeploymentMutationClient(options: ApiClientOptions) {
 			mutation: DeploymentMutation,
 			signal?: AbortSignal,
 		) => {
+			// Provider-specific subscription management is a separate, gated workflow.
+			if (mutation.action === "delete" && mutation.body.subscription_choice !== "keep_subscription")
+				throw new ApiClientError(400, "subscription_management_unavailable");
 			const params = {
 				path: { deployment_id: readResourceId(id) },
 				header: deploymentMutationHeaders(resourceVersion, key),
 			};
 			const operation = await transport.read((init) => {
 				switch (mutation.action) {
+					case "delete":
+						return api.DELETE("/v2/deployments/{deployment_id}", {
+							...init,
+							params,
+							body: mutation.body,
+						});
 					case "start":
 						return api.POST("/v2/deployments/{deployment_id}/start", { ...init, params });
 					case "stop":
@@ -124,6 +148,15 @@ export function createDeploymentMutationClient(options: ApiClientOptions) {
 						});
 				}
 			}, signal);
+			if (operation && "status" in operation) {
+				if (
+					mutation.action !== "delete" ||
+					operation.status !== "absent" ||
+					operation.deployment_id !== id
+				)
+					throw new ApiClientResponseError();
+				return operation;
+			}
 			if (
 				!operation ||
 				operation.metadata?.deploymentId !== id ||
