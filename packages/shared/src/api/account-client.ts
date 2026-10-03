@@ -1,10 +1,10 @@
 import createClient from "openapi-fetch";
 import type { paths } from "./api.generated";
 import {
+	type ApiClientOptions,
 	createReadTransport,
 	readApiBaseUrl,
 	readResourceId,
-	type ApiClientOptions,
 } from "./read-transport";
 
 export type ApiKeyCreate =
