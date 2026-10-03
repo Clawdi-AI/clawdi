@@ -1,4 +1,11 @@
 export const deploymentsEn = {
+	openDashboard: "Open Agent dashboard",
+	browserWarning:
+		"Open the runtime in the system browser. OpenClaw receives an access credential; the browser may retain access after you sign out of this app. Hermes may require a separate browser sign-in: use the same Clawdi account. Closing the browser does not revoke access; use Reset dashboard access when needed.",
+	browserUnavailable:
+		"An authenticated browser endpoint is not available yet. Refresh deployment status.",
+	browserFailed:
+		"Could not open the dashboard. Refresh deployment status and try again. No credentials have been saved by this app.",
 	title: "Cloud deployments",
 	description: "Deployment status from the v2 control plane.",
 	detail: "Deployment progress",

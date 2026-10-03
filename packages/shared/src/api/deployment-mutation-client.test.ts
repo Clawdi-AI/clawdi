@@ -4,6 +4,68 @@ import {
 	type DeploymentMutation,
 } from "./deployment-mutation-client";
 
+test("runtime handoff issuance binds auth, version and exact published endpoint without retry", async () => {
+	const endpoint = "https://runtime.example.test/";
+	let version = "v1";
+	let url = endpoint;
+	const requests: unknown[] = [];
+	const server = Bun.serve({
+		hostname: "127.0.0.1",
+		port: 0,
+		fetch(request) {
+			requests.push({
+				path: new URL(request.url).pathname,
+				method: request.method,
+				auth: request.headers.get("authorization"),
+				version: request.headers.get("if-match"),
+			});
+			return Response.json({
+				runtime: "openclaw",
+				auth_mode: "openclaw_token",
+				url,
+				deployment_resource_version: version,
+				token: "fixture",
+				handoff_url: `${url}#token=fixture`,
+			});
+		},
+	});
+	try {
+		const client = createDeploymentMutationClient({
+			baseUrl: server.url.href,
+			getToken: async () => "owner",
+			fetch,
+		});
+		expect((await client.runtimeCredentials("deployment", "v1", endpoint)).handoff_url).toBe(
+			`${endpoint}#token=fixture`,
+		);
+		expect(requests).toEqual([
+			{
+				path: "/v2/deployments/deployment/runtime-ui/credentials",
+				method: "POST",
+				auth: "Bearer owner",
+				version: '"v1"',
+			},
+		]);
+		version = "v2";
+		await expect(client.runtimeCredentials("deployment", "v1", endpoint)).rejects.toHaveProperty(
+			"name",
+			"ApiClientResponseError",
+		);
+		version = "v1";
+		url = "https://other.example.test/";
+		await expect(client.runtimeCredentials("deployment", "v1", endpoint)).rejects.toHaveProperty(
+			"name",
+			"ApiClientResponseError",
+		);
+		await expect(
+			client.runtimeCredentials("deployment", 'bad"version', endpoint),
+		).rejects.toHaveProperty("name", "ApiClientResponseError");
+		expect(requests).toHaveLength(3);
+	} finally {
+		server.stop(true);
+	}
+});
+
 test("delete keeps subscriptions and distinguishes admission from server-confirmed absence", async () => {
 	const requests: unknown[] = [];
 	const server = Bun.serve({

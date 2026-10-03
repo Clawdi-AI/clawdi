@@ -11,6 +11,7 @@ import { ReadScreen } from "../../ui/read-screen";
 import { BackButton, isNotFound } from "../cloud-inventory";
 import { InventoryList } from "../inventory-list";
 import { ResourceError } from "../resource-error";
+import { RuntimeBrowser } from "./browser";
 import { CancelOperation } from "./cancel";
 import { DeploymentControls } from "./controls";
 import {
@@ -241,6 +242,7 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 						)}
 						{deployment ? (
 							<AppView className="gap-3 rounded-2xl bg-surface p-4">
+								<RuntimeBrowser deployment={deployment} />
 								<NativeButton
 									label={t("terminal.title")}
 									onPress={() =>

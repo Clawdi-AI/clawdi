@@ -787,8 +787,26 @@ real xterm input, resize, two handshakes with fresh credentials after 1013, and
 socket cleanup. This is not an iOS/Android WebView, keyboard, real server or native
 compile acceptance test; those gates remain open. DOM view background teardown
 does not stop compute or guarantee remote command termination.
-Runtime browser UI needs a separate native authentication handoff; do not spoof
-Web Origin or assume native fetch cookies prime an external browser.
+Deployment detail now offers an explicitly confirmed system-browser dashboard
+entry. It refreshes the deployment and refuses a changed published endpoint.
+OpenClaw credential issuance uses generated POST, `If-Match`, and the same exact
+endpoint/resource-version validator as Web. The capability remains local to the
+action, never Router parameters, query cache or persistent app storage. Issuance
+is not automatically retried; browser storage/access may survive app sign-out.
+Use runtime access reset to revoke access when needed.
+
+Hermes opens its own OIDC login route so the browser creates PKCE/state cookies;
+the existing server redirects a missing browser grant through Web's protected
+runtime-handoff page. A separate browser sign-in may be required. Native never
+spoofs Web Origin or attempts to prime browser cookies with native fetch. Shared
+navigation helpers now supply both Web and native, with Web compatibility
+re-exports. Browser dismissal is not authentication or runtime-session proof.
+
+Verify Shared/Mobile tests and Web's `runtimes.test.ts`,
+`runtime-ui-credentials.test.ts`, and `hermes-oidc-browser-session.test.ts` in the
+isolated runner. Done: credential issuance binds authorization, ETag and exact
+endpoint, rejects stale/foreign responses, and never retries implicitly.
+Real-device cold/warm browser auth, account switching and revocation remain gates.
 
 Source implementation is not native acceptance. Keep the complete v2 Web scope
 until each surface has implementation, focused verification and device evidence:
@@ -803,7 +821,7 @@ until each surface has implementation, focused verification and device evidence:
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport and configured HTTPS intake | Signed domain association and device acceptance |
 | v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal and Agent model binding; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity, Custom deletion and WhatsApp device onboarding/repair | Native/live provider and channel acceptance |
 | Deployment/billing | Included Basic and existing funded Basic/Performance eligibility/creation/recovery, paginated reusable inventory and read-only billing/deployment views | New paid subscription creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
-| Runtime UI/terminal | Shared Web/native xterm engine, Expo DOM terminal route, native controls and foreground teardown; generated bounded credential client | Native WebView/keyboard/real-server round-trip and compilation; authenticated native runtime browser handoff |
+| Runtime UI/terminal | Shared Web/native xterm engine, Expo DOM terminal route, native controls and foreground teardown; bounded generated credential clients; confirmed system-browser OpenClaw handoff and Hermes OIDC entry with shared URL validation | Native WebView/keyboard/real-server round-trip and compilation; device browser authentication and revocation acceptance |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |
 
 The source reference is `apps/web/src/pages/dashboard`, its settings components,

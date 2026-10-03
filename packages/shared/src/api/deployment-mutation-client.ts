@@ -8,6 +8,7 @@ import {
 	readApiBaseUrl,
 	readResourceId,
 } from "./read-transport";
+import { resolveRuntimeUiCredentials } from "./runtime-navigation";
 
 export type DeploymentUpdate = DeployComponents["schemas"]["V2UpdateDeploymentRequest"];
 export type DeploymentMutation =
@@ -88,6 +89,26 @@ export function createDeploymentMutationClient(options: ApiClientOptions) {
 		fetch: transport.fetch,
 	});
 	return {
+		/** Explicit owner handoff; never cache credentials or retry issuance. */
+		runtimeCredentials: async (
+			id: string,
+			version: string,
+			endpoint: string,
+			signal?: AbortSignal,
+		) => {
+			const params = {
+				path: { deployment_id: readResourceId(id) },
+				header: { "If-Match": strongDeploymentEtag(version) },
+			};
+			const result = await transport.read(
+				(init) =>
+					api.POST("/v2/deployments/{deployment_id}/runtime-ui/credentials", { ...init, params }),
+				signal,
+			);
+			const credentials = resolveRuntimeUiCredentials(result, endpoint, version);
+			if (!credentials) throw new ApiClientResponseError();
+			return credentials;
+		},
 		cancel: async (operationName: string, key: string, signal?: AbortSignal): Promise<void> => {
 			const match = /^operations\/([A-Za-z0-9_-]{1,180})$/.exec(operationName);
 			if (!match?.[1]) throw new ApiClientError(400, "invalid_operation_name");
