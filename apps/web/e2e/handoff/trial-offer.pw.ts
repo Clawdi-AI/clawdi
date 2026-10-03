@@ -32,6 +32,7 @@ test("trial offer survives login and uses checkout without asking for a card", a
 	context,
 }) => {
 	const checkoutRequests: string[] = [];
+	const checkoutIdempotencyKeys: string[] = [];
 	await stubHostedApi(page, {
 		plans: [
 			{
@@ -40,6 +41,7 @@ test("trial offer survives login and uses checkout without asking for a card", a
 			},
 		],
 		checkoutRequests,
+		checkoutIdempotencyKeys,
 	});
 	await page.goto("/trial-offer?token=opaque_credential&target=sign-in");
 	await expect(page).toHaveURL(/\/sign-in\?redirect_url=/);
@@ -60,4 +62,18 @@ test("trial offer survives login and uses checkout without asking for a card", a
 	expect(checkout.ui_mode).toBe("hosted");
 	expect(checkout.funding_source).toBe("stripe");
 	expect(checkout.deploy_config.trial_offer_token).toBe("opaque_credential");
+
+	await page.reload();
+	await expect(page.getByRole("button", { name: /^Free trial/ })).toHaveAttribute(
+		"aria-pressed",
+		"true",
+	);
+	await page.getByRole("button", { name: /^Configure inside agent/ }).click();
+	await page.getByRole("button", { name: "Continue", exact: true }).click();
+	await expect.poll(() => checkoutRequests.length).toBe(2);
+	expect(checkoutIdempotencyKeys[1]).toBe(checkoutIdempotencyKeys[0]);
+	expect(JSON.parse(checkoutRequests[1] ?? "{}").deploy_config.trial_offer_token).toBe(
+		"opaque_credential",
+	);
+	expect(await page.evaluate(() => JSON.stringify(sessionStorage))).not.toContain("opaque_credential");
 });
