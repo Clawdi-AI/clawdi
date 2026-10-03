@@ -27,6 +27,24 @@ export const en = {
 		reconnecting: "Reconnecting…",
 		disconnected: "Disconnected",
 	},
+	reverification: {
+		title: "Verify your identity",
+		description:
+			"This account change needs a fresh identity check. Once verified, the original request will be tried once more. Leaving this screen or backgrounding the app cancels it.",
+		start: "Start verification",
+		password: "Password",
+		email_code: "Email code",
+		phone_code: "SMS code",
+		totp: "Authenticator code",
+		backup_code: "Backup code",
+		inputHint:
+			"Enter the selected password or code. Select the delivery method again to resend a code.",
+		verify: "Verify and continue",
+		unsupported:
+			"This account requires a verification method not yet supported here. Cancel and use the Web account settings.",
+		failed:
+			"Verification failed. Check your password or code and try again, or cancel to start over.",
+	},
 	emails: {
 		title: "Email addresses",
 		description:

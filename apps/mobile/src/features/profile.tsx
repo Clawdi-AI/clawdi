@@ -6,6 +6,7 @@ import { usePreventRemove } from "expo-router/react-navigation";
 import { useRef, useState } from "react";
 import { Alert, Image } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
+import { useNativeReverification } from "../auth/use-native-reverification";
 import { useI18n } from "../i18n";
 import { useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
@@ -27,6 +28,7 @@ function ProfileForm({ user }: { user: UserResource }) {
 	const t = useI18n();
 	const scope = useAccountScope();
 	const action = useAuthAction(scope.identity);
+	const reverification = useNativeReverification();
 	const capture = useForegroundLease();
 	const navigation = useNavigation();
 	const confirmation = useRef(0);
@@ -64,10 +66,15 @@ function ProfileForm({ user }: { user: UserResource }) {
 					throw new Error("Profile image exceeds upload limit");
 				file = `data:${image.type};base64,${base64}`;
 			}
-			const result = await user.setProfileImage({ file });
-			if (!current() || !scope.isCurrent()) return;
-			setAvatar({ url: result.publicUrl ?? "", custom: !remove });
-			setSuccess("avatar");
+			const visible = capture();
+			await reverification.execute(async () => {
+				if (!current() || !scope.isCurrent() || !visible())
+					throw new Error("Account action retired");
+				const result = await user.setProfileImage({ file });
+				if (!current() || !scope.isCurrent() || !visible()) return;
+				setAvatar({ url: result.publicUrl ?? "", custom: !remove });
+				setSuccess("avatar");
+			});
 		});
 	const removeAvatar = () => {
 		const visible = capture();
@@ -108,13 +115,20 @@ function ProfileForm({ user }: { user: UserResource }) {
 			const visible = capture();
 			if (!visible()) return;
 			setSuccess(false);
-			const updated = await user.update({ firstName: firstName.trim(), lastName: lastName.trim() });
-			if (!current() || !scope.isCurrent() || updated.id !== user.id) return;
-			const next = { firstName: updated.firstName ?? "", lastName: updated.lastName ?? "" };
-			setSaved(next);
-			setFirstName(next.firstName);
-			setLastName(next.lastName);
-			setSuccess("name");
+			await reverification.execute(async () => {
+				if (!current() || !scope.isCurrent() || !visible())
+					throw new Error("Account action retired");
+				const updated = await user.update({
+					firstName: firstName.trim(),
+					lastName: lastName.trim(),
+				});
+				if (!current() || !scope.isCurrent() || !visible() || updated.id !== user.id) return;
+				const next = { firstName: updated.firstName ?? "", lastName: updated.lastName ?? "" };
+				setSaved(next);
+				setFirstName(next.firstName);
+				setLastName(next.lastName);
+				setSuccess("name");
+			});
 		});
 	return (
 		<ReadScreen>
@@ -124,6 +138,7 @@ function ProfileForm({ user }: { user: UserResource }) {
 					{t("profile.title")}
 				</AppText>
 				<AppText>{t("profile.description")}</AppText>
+				{reverification.prompt}
 				<AppText>
 					{user.primaryEmailAddress?.emailAddress ?? t("account.accountUnavailable")}
 				</AppText>

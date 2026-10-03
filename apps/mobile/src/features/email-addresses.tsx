@@ -4,6 +4,7 @@ import { Redirect, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, AppState } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
+import { useNativeReverification } from "../auth/use-native-reverification";
 import { useI18n } from "../i18n";
 import { useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
@@ -25,6 +26,7 @@ function EmailAddresses({ user }: { user: UserResource }) {
 	const t = useI18n();
 	const scope = useAccountScope();
 	const action = useAuthAction(scope.identity);
+	const reverification = useNativeReverification();
 	const capture = useForegroundLease();
 	const confirmation = useRef(0);
 	const [emails, setEmails] = useState([...user.emailAddresses]);
@@ -51,7 +53,10 @@ function EmailAddresses({ user }: { user: UserResource }) {
 				active() && scope.isCurrent() && user.id === scope.accountKey && visible();
 			if (!current()) return;
 			setSaved(false);
-			await work(current);
+			await reverification.execute(async () => {
+				if (!current()) throw new Error("Account action retired");
+				await work(current);
+			});
 		});
 	const refresh = () =>
 		run(async (current) => {
@@ -155,6 +160,7 @@ function EmailAddresses({ user }: { user: UserResource }) {
 					{t("emails.title")}
 				</AppText>
 				<AppText>{t("emails.description")}</AppText>
+				{reverification.prompt}
 				<NativeButton label={t("inventory.refresh")} disabled={action.busy} onPress={refresh} />
 				{emails.map((email) => (
 					<AppView key={email.id} className="gap-2 rounded-xl bg-surface p-4">

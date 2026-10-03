@@ -558,9 +558,18 @@ never automatically retries mutations. Primary change/removal reload ownership a
 before writing, and primary removal is unavailable. Account/action/foreground leases
 fence every asynchronous continuation; verification codes clear on blur/background.
 Success requires a returned address/primary ID or a reload confirming deletion.
-Clerk remains authoritative for enterprise, rate-limit and reverification requirements;
-unsupported methods fail safely rather than bypassing policy. Real email delivery,
-reverification and device acceptance are not established by static types or exports.
+Clerk remains authoritative for enterprise, rate-limit and reverification requirements.
+Email and profile changes share a native `useReverification` challenge UI with
+password, email/SMS codes, TOTP and backup codes, limited to factors returned by
+the current Session verification resource. The server's requested level is retained
+(an absent hint uses multi-factor); only a complete response for the captured
+Session releases the original request for the SDK's single retry. The original
+account/action/foreground lease is checked again before that retry. Cancellation,
+blur, background and account replacement reject the waiting challenge, clear inputs
+and retire late verification responses. A repeated assurance hint is not success.
+Passkey/enterprise-only verification currently fails closed with an explicit
+unsupported message. Real factor delivery, reverification and device acceptance
+are not established by static types or exports.
 Device-session management remains open: Clerk JS 6.34.1 `getSessions()` caches its
 first response and `SessionWithActivities.retrieve()` converts failures to an empty
 array, so those methods alone cannot prove a refreshed security inventory.
@@ -615,7 +624,7 @@ until each surface has implementation, focused verification and device evidence:
 
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
-| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and email-address management | Remaining security/reverification/device-session management and real Clerk/device acceptance |
+| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and email-address management, shared native password/code reverification | Remaining security/device-session management, passkey/enterprise reverification and real Clerk/device acceptance |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |
