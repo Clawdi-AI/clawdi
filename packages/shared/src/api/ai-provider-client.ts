@@ -19,6 +19,26 @@ export function createAiProviderClient(options: ApiClientOptions) {
 	});
 	const path = (id: string) => ({ provider_id: readResourceId(id) });
 	return {
+		startDeviceAuthorization: (id: string, signal?: AbortSignal) =>
+			transport.read(
+				(init) =>
+					api.POST("/v1/ai-providers/{provider_id}/auth/oauth/device/start", {
+						...init,
+						params: { path: path(id) },
+						body: { provider: "codex" },
+					}),
+				signal,
+			),
+		pollDeviceAuthorization: (id: string, state: string, signal?: AbortSignal) =>
+			transport.read(
+				(init) =>
+					api.POST("/v1/ai-providers/{provider_id}/auth/oauth/device/poll", {
+						...init,
+						params: { path: path(id) },
+						body: { state },
+					}),
+				signal,
+			),
 		accept: async (
 			body: components["schemas"]["AiProviderAcceptRequest"],
 			key: string,

@@ -11,6 +11,7 @@ import { AppText, AppView } from "../ui/primitives";
 import { InventoryList } from "./inventory-list";
 import { ProviderCreate } from "./provider-create";
 import { ProviderEdit } from "./provider-edit";
+import { ProviderOAuth } from "./provider-oauth";
 
 export function AiProvidersScreen() {
 	const scope = useAccountScope();
@@ -31,12 +32,20 @@ function ProvidersView() {
 	return (
 		<InventoryList
 			header={
-				<ProviderCreate
-					providers={providers.data?.providers}
-					refresh={async () => {
-						await providers.refetch();
-					}}
-				/>
+				<AppView className="gap-3">
+					<ProviderCreate
+						providers={providers.data?.providers}
+						refresh={async () => {
+							await providers.refetch();
+						}}
+					/>
+					<ProviderOAuth
+						providers={providers.data?.providers}
+						refresh={async () => {
+							await providers.refetch();
+						}}
+					/>
+				</AppView>
 			}
 			items={projectUserSelectableAiProviders(providers.data?.providers ?? [])}
 			title={t("providers.title")}
@@ -44,7 +53,7 @@ function ProvidersView() {
 			empty={t(providers.isPending ? "loading.app" : "providers.empty")}
 			renderItem={(provider) => (
 				<ProviderRow
-					key={`${provider.id}:${provider.updated_at}`}
+					key={provider.id}
 					provider={provider}
 					refresh={async () => {
 						await providers.refetch();
@@ -74,7 +83,7 @@ function ProviderRow({
 	const read = useAccountRead();
 	const { aiProviders } = useMobileApi();
 	const action = useAuthAction(scope.identity);
-	const [valid, setValid] = useState<boolean | null>(null);
+	const [valid, setValid] = useState<{ revision: string; value: boolean } | null>(null);
 	return (
 		<AppView className="gap-3 rounded-2xl bg-surface p-4">
 			<AppText className="text-lg font-semibold text-foreground">
@@ -86,7 +95,10 @@ function ProviderRow({
 			<AppText className="text-sm text-muted">
 				{t(provider.usable ? "providers.credentialPresent" : "providers.credentialMissing")}
 			</AppText>
-			<ProviderEdit provider={provider} refresh={refresh} />
+			<ProviderEdit key={provider.updated_at} provider={provider} refresh={refresh} />
+			{provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile" ? (
+				<ProviderOAuth provider={provider} refresh={refresh} />
+			) : null}
 			<NativeButton
 				label={t("providers.validate")}
 				disabled={action.busy || !scope.isReady}
@@ -96,13 +108,13 @@ function ProviderRow({
 						const result = await read((signal) =>
 							aiProviders.validate(provider.provider_id, signal),
 						);
-						if (current()) setValid(result.valid);
+						if (current()) setValid({ revision: provider.updated_at, value: result.valid });
 					})
 				}
 			/>
-			{valid !== null ? (
+			{valid?.revision === provider.updated_at ? (
 				<AppText accessibilityRole="alert">
-					{t(valid ? "providers.valid" : "providers.invalid")}
+					{t(valid.value ? "providers.valid" : "providers.invalid")}
 				</AppText>
 			) : null}
 			{action.error ? <AppText accessibilityRole="alert">{t("providers.failed")}</AppText> : null}

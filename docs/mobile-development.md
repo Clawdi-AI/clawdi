@@ -282,7 +282,14 @@ without model or credential-environment fields, while native/catalog key
 replacement uses accept with `replace: true` and the captured idempotency key.
 Settings-only edits do not carry credentials. Native forms support routing and
 region choices, preserve immutable retry input and clear entered secrets on
-blur/background. OAuth and Hosted impact-confirmed removal remain outstanding.
+blur/background. ChatGPT device authorization and reconnect use the generated
+Cloud start/poll contracts and the same Shared Provider body as Web. Native
+polling respects server intervals, pauses on blur/background/offline, fences late
+results and stops on expiry or three consecutive failures. Browser handoff keeps
+the current authorization in memory; account retirement/unmount drops it.
+Only the exact HTTPS device-verification page emitted by Cloud can open externally.
+Metadata refresh does not remount an active OAuth row. Real-device browser return,
+actual provider sign-in and Hosted impact-confirmed removal remain outstanding.
 
 Native Project detail is readable by accessible members; sharing management has
 its own owner-gated route. Agent, Skill and Vault catalogs reuse their existing

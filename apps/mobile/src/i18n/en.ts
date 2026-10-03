@@ -7,6 +7,16 @@ import { vaultEn } from "../features/vault/en";
 
 export const en = {
 	providers: {
+		connectOAuth: "Connect ChatGPT",
+		reconnectOAuth: "Reconnect ChatGPT",
+		deviceInstructions:
+			"Open the authorization page, enter this code, then return here. Polling pauses while the app is in the background.",
+		openAuthorization: "Open authorization page",
+		resumeOAuth: "Resume checking",
+		stopOAuth: "Stop waiting",
+		oauthExpired: "This code has expired. Stop waiting and begin a new authorization.",
+		oauthOffline: "Offline. Checking will resume when connectivity returns.",
+		oauthReady: "Connection authorized.",
 		edit: "Edit connection",
 		keepCredential:
 			"Leave the API key blank to keep the current credential. Stored model settings are not edited here.",
