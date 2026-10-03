@@ -51,6 +51,8 @@ export function initHostedPostHog({
 		capture_pageleave: true,
 		autocapture: true,
 		property_denylist: POSTHOG_PROPERTY_DENYLIST,
+		// Run only the bundled SDK; never load remote PostHog scripts or the toolbar.
+		disable_external_dependency_loading: true,
 		before_send: (event) => {
 			const url = event?.properties?.$current_url;
 			if (
@@ -61,6 +63,12 @@ export function initHostedPostHog({
 			return event;
 		},
 	});
+	// Remove toolbar state left in storage by earlier sessions.
+	try {
+		window.localStorage.removeItem("_postHogToolbarParams");
+	} catch {
+		// localStorage can be unavailable (e.g. blocked storage); nothing to clear.
+	}
 	sdk.__loaded = true;
 	return true;
 }
