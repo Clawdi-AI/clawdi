@@ -3,8 +3,8 @@
 	"compilerOptions": {
 		"strict": true,
 		"noEmit": true,
-		"types": ["bun"]
+		"types": ["react", "react-native"]
 	},
 	"include": ["**/*.ts", "**/*.tsx", "uniwind-types.d.ts"],
-	"exclude": ["compatibility"]
+	"exclude": ["compatibility", "**/*.test.ts", "**/*.test.tsx"]
 }

@@ -9,6 +9,7 @@ import { deploymentsEn } from "../features/deployments/en";
 import { vaultEn } from "../features/vault/en";
 
 export const en = {
+	agentSettings: agentSettingsEn,
 	runtime: runtimeEn,
 	channels: channelsEn,
 	whatsapp: whatsappEn,
@@ -463,3 +464,5 @@ export const en = {
 export type TranslationKey = {
 	[Scope in keyof typeof en]: `${Scope}.${keyof (typeof en)[Scope] & string}`;
 }[keyof typeof en];
+
+import { agentSettingsEn } from "../features/agent-settings-en";

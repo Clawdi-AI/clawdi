@@ -23,6 +23,19 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 		fetch: transport.fetch,
 	});
 	return {
+		/** Ownership protection only; this does not expose legacy product actions. */
+		getLegacyAgentIds: async (signal?: AbortSignal) => {
+			const result = await transport.read(
+				(init) => api.GET("/v1/agent-environments", init),
+				signal,
+			);
+			if (
+				!Array.isArray(result?.environment_ids) ||
+				result.environment_ids.some((id) => typeof id !== "string" || !id || id !== id.trim())
+			)
+				throw new ApiClientResponseError();
+			return result.environment_ids;
+		},
 		getProductCapabilities: async (signal?: AbortSignal) => {
 			const profile = await transport.read((init) => api.GET("/v1/me", init), signal);
 			const capabilities = profile?.capabilities;

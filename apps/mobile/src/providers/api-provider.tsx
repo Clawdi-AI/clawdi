@@ -1,6 +1,7 @@
 import {
 	type AccountApiClient,
 	type AgentProjectClient,
+	type AgentSettingsClient,
 	type AiProviderClient,
 	ApiClientError,
 	type ApiClientFetch,
@@ -9,6 +10,7 @@ import {
 	type ConnectorClient,
 	createAccountApiClient,
 	createAgentProjectClient,
+	createAgentSettingsClient,
 	createAiProviderClient,
 	createChannelClient,
 	createCloudApiClient,
@@ -40,6 +42,7 @@ import { useAccountScope } from "../platform/account-lifecycle";
 
 export type MobileApiClients = Readonly<{
 	cloud: CloudApiClient;
+	agentSettings: AgentSettingsClient;
 	channels: ChannelClient;
 	deploymentMutations: DeploymentMutationClient | null;
 	whatsapp: WhatsAppClient;
@@ -90,6 +93,11 @@ export function MobileApiProvider({
 	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
+			agentSettings: createAgentSettingsClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
 			deploymentMutations: config.computeApiUrl
 				? createDeploymentMutationClient({
 						baseUrl: config.computeApiUrl,

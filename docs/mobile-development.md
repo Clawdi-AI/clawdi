@@ -31,6 +31,11 @@ maps `types` to `types/index.d.ts` and the opt-in condition to
 describes the opt-in on pre-0.87 releases. The V0 strict-API probe below remains
 historical evidence; it is not a claim that the product passes that opt-in gate.
 
+Native application types and Bun test types use separate strict TypeScript
+programs. `apps/mobile` typecheck runs both `tsconfig.json` and
+`tsconfig.test.json`; Bun-only global Blob extensions must not leak into native
+file APIs. Tests remain typechecked, not excluded from verification.
+
 ## Develop and verify the product
 
 Use the root `packageManager` (`bun@1.4.2`) and committed root lock. Common
@@ -382,13 +387,30 @@ deployment snapshot is unavailable. A GET 404 never clears an uncertain request:
 matching DELETE acknowledgement (accepted operation or `status: absent`) resolves it.
 Server-reported absence is not a claim that background infrastructure cleanup has finished.
 
+Agent settings expose name/reset, avatar upload/reset and confirmed local-Agent
+disconnect. Web/native share name-draft synchronization, avatar limits and
+disconnect eligibility. The system file picker uses the existing SDK-aligned
+`expo-file-system` 57.0.7 through `catalog:expo57`, without an additional image
+picker dependency. Uploads accept PNG/JPEG/WebP up to 2 MiB and never auto-retry.
+Disconnect refreshes ownership and Agent identity before dispatch; incomplete
+ownership fails closed. Legacy ownership IDs are read only when server capabilities
+require them; this does not expose legacy product actions. Device picker/upload,
+disconnect and unsaved-name navigation acceptance remain pending.
+
+The Agent settings batch passed bounded Bun 1.4.2 Docker verification: all six
+workspace typechecks (including both Mobile programs), 249 Shared/Mobile tests
+(1,129 assertions), 37 focused Web tests (143 assertions), Biome on 18 files,
+independent iOS/Android exports and post-export Mobile typechecks. Frozen install
+preserved the lock and manifests; exact implementation files matched the tested
+container. These results do not establish native compilation or live mutations.
+
 Source implementation is not native acceptance. Keep the complete v2 Web scope
 until each surface has implementation, focused verification and device evidence:
 
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
 | Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings | Remaining general/profile settings and real Clerk flows |
-| Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings | Remaining Agent settings/migration, provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
+| Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar and ownership-protected local disconnect | Unsaved-name navigation protection, provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing and text export | Rich-text/link presentation, public/universal-link entrypoints, device scrolling/sharing and visual acceptance |
 | Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |

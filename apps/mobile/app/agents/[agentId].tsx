@@ -44,6 +44,15 @@ export default function AgentDetailRoute() {
 							</AppView>
 							<AppView className="gap-3">
 								<NativeButton
+									label={t("agentSettings.title")}
+									onPress={() =>
+										router.push({
+											pathname: "/agents/[agentId]/settings",
+											params: { agentId: agent.data.id },
+										})
+									}
+								/>
+								<NativeButton
 									label={t("bindings.title")}
 									onPress={() =>
 										router.push({

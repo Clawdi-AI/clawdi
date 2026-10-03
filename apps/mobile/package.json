@@ -5,7 +5,7 @@
 	"main": "expo-router/entry",
 	"scripts": {
 		"dev": "expo start",
-		"typecheck": "tsc --noEmit",
+		"typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
 		"lint": "biome check .",
 		"test": "../../scripts/test.sh mobile",
 		"test:internal": "bun test src"
@@ -21,6 +21,7 @@
 		"expo-blur": "57.0.3",
 		"expo-constants": "57.0.20",
 		"expo-crypto": "57.0.3",
+		"expo-file-system": "catalog:expo57",
 		"expo-linking": "57.0.11",
 		"expo-localization": "57.0.2",
 		"expo-network": "57.0.2",

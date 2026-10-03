@@ -49,6 +49,7 @@ describe("agentDisconnectEligibility", () => {
 			{ platform: "web", explicitIdentity: false },
 			{ platform: "web" },
 			{ platform: "desktop", explicitIdentity: false },
+			{ platform: "mobile", explicitIdentity: false },
 		] as const;
 		for (const input of cases) {
 			expect(
@@ -61,14 +62,14 @@ describe("agentDisconnectEligibility", () => {
 		}
 	});
 
-	test("keeps the action off Mobile", () => {
+	test("requires resolved ownership on Mobile", () => {
 		expect(
 			agentDisconnectEligibility({
 				platform: "mobile",
 				agentId: "agent-id",
-				ownership: EMPTY_AGENT_OWNERSHIP,
+				ownership: null,
 			}),
-		).toEqual({ eligible: false, reason: "platform_unsupported" });
+		).toEqual({ eligible: false, reason: "ownership_unresolved" });
 	});
 
 	test("denies explicit identities", () => {

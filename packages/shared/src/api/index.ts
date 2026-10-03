@@ -5,6 +5,7 @@ export type {
 } from "./account-client";
 export { createAccountApiClient } from "./account-client";
 export { type AgentProjectClient, createAgentProjectClient } from "./agent-project-client";
+export * from "./agent-settings-client";
 export {
 	type AiProviderClient,
 	createAiProviderClient,
