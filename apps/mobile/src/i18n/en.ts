@@ -16,6 +16,7 @@ export const en = {
 		createAgent: "New Cloud Agent",
 		deployments: "Deployments",
 		billing: "Wallet & subscriptions",
+		skills: "Skills",
 	},
 	loading: {
 		app: "Loading Clawdi",
@@ -134,6 +135,12 @@ export const en = {
 		unknownProject: "Unknown project",
 		unknownActivity: "Unknown activity",
 		tags: "Tags",
+	},
+	skills: {
+		title: "Skills",
+		description: "Read-only skills available to your account.",
+		empty: "No skills are available for this account.",
+		unknown: "Unknown skill",
 	},
 	common: {
 		yes: "Yes",

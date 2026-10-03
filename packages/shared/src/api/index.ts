@@ -39,6 +39,7 @@ export {
 	type HostedApiClient,
 	type SessionListQuery,
 	type SessionMessagesQuery,
+	type SkillListQuery,
 } from "./read-clients";
 export {
 	ApiClientError,
