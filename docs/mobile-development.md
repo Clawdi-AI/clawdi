@@ -556,6 +556,21 @@ Manual HTTPS/custom-scheme input extracts the ID and uses the configured Cloud
 API; it never fetches a pasted hostname. OS HTTPS domain association and real-device
 link intake remain unverified and are not configured by this implementation.
 
+Terminal preparation shares ttyd framing constants, token/subprotocol selection,
+output flow control and bounded reconnect helpers between the existing Web panel
+and future native renderer. Web compatibility exports remain intact; xterm imports
+stay hosted-only. `createTerminalClient` uses the generated POST contract, existing
+bounded auth transport and no automatic retry. It rejects expired/mismatched
+capabilities and WebSocket targets outside the configured compute origin/path.
+Alternative public terminal origins require an explicit allowlist contract rather
+than silently trusting an arbitrary response URL. Native callers must pass their
+account-generation read signal and never persist/log/cache credential URLs.
+The mobile provider exposes this client but does not issue credentials on mount.
+This is preparation, not an implemented native terminal: renderer, input/resize,
+foreground socket lifecycle, reconnect UX and device round-trip remain pending.
+Runtime browser UI needs a separate native authentication handoff; do not spoof
+Web Origin or assume native fetch cookies prime an external browser.
+
 Source implementation is not native acceptance. Keep the complete v2 Web scope
 until each surface has implementation, focused verification and device evidence:
 
@@ -569,6 +584,7 @@ until each surface has implementation, focused verification and device evidence:
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport | Universal-link intake and device acceptance |
 | v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal and Agent model binding; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity, Custom deletion and WhatsApp device onboarding/repair | Native/live provider and channel acceptance |
 | Deployment/billing | Basic eligibility/creation/recovery and read-only billing/deployment views | Paid creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
+| Runtime UI/terminal | Shared Web terminal protocol helpers and generated, bounded credential client | Native terminal renderer/socket lifecycle and real round-trip; authenticated native runtime browser handoff |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |
 
 The source reference is `apps/web/src/pages/dashboard`, its settings components,

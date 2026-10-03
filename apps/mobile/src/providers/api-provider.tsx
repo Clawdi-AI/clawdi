@@ -25,6 +25,7 @@ import {
 	createPublicSessionClient,
 	createSessionSharingClient,
 	createSkillClient,
+	createTerminalClient,
 	createVaultClient,
 	createVaultSupplyClient,
 	createWhatsAppClient,
@@ -37,6 +38,7 @@ import {
 	type PublicSessionClient,
 	type SessionSharingClient,
 	type SkillClient,
+	type TerminalClient,
 	type VaultClient,
 	type WhatsAppClient,
 	type WorkspaceSkillClient,
@@ -53,6 +55,7 @@ export type MobileApiClients = Readonly<{
 	agentSettings: AgentSettingsClient;
 	channels: ChannelClient;
 	deploymentMutations: DeploymentMutationClient | null;
+	terminal: TerminalClient | null;
 	workspaceSkills: WorkspaceSkillClient | null;
 	whatsapp: WhatsAppClient;
 	account: AccountApiClient;
@@ -126,6 +129,13 @@ export function MobileApiProvider({
 			}),
 			deploymentMutations: config.computeApiUrl
 				? createDeploymentMutationClient({
+						baseUrl: config.computeApiUrl,
+						getToken: readToken,
+						fetch: fetcher,
+					})
+				: null,
+			terminal: config.computeApiUrl
+				? createTerminalClient({
 						baseUrl: config.computeApiUrl,
 						getToken: readToken,
 						fetch: fetcher,
