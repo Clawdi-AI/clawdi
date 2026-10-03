@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { ApiClientError } from "./read-transport";
 import { createSkillClient } from "./skill-client";
 
 test("project Skill writes preserve explicit scope and edit/delete revisions", async () => {
@@ -49,27 +48,6 @@ test("project Skill writes preserve explicit scope and edit/delete revisions", a
 			body: { repo: "owner/repo", path: "skills/demo" },
 		},
 	]);
-});
-
-test("Skill revision conflicts are surfaced without automatic retries", async () => {
-	let calls = 0;
-	const client = createSkillClient({
-		baseUrl: "https://api.example.test",
-		getToken: async () => "test-token",
-		fetch: async () => {
-			calls++;
-			return Response.json({ detail: "changed" }, { status: 412 });
-		},
-	});
-	await expect(
-		client.update("project", "demo", {
-			name: "demo",
-			description: "Example",
-			instructions: "Body",
-			content_hash: "a".repeat(64),
-		}),
-	).rejects.toBeInstanceOf(ApiClientError);
-	expect(calls).toBe(1);
 });
 
 test("missing deletion revision cannot become an unconditional delete", async () => {

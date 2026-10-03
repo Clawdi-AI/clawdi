@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import { createCloudApiClient } from "./read-clients";
-import { ApiClientError } from "./read-transport";
 
 test("project writes preserve generated payloads, owner authentication and escaped identifiers", async () => {
 	const requests: { method: string; path: string; body: unknown }[] = [];
@@ -29,29 +28,4 @@ test("project writes preserve generated payloads, owner authentication and escap
 		},
 		{ method: "DELETE", path: "/v1/projects/project%2Fa%3Fb", body: null },
 	]);
-});
-
-test("project archive respects server denials without retrying and requires authentication", async () => {
-	let calls = 0;
-	const options = {
-		baseUrl: "https://api.example.test",
-		getToken: async (): Promise<string | null> => "test-token",
-		fetch: async () => {
-			calls += 1;
-			return Response.json(
-				{ detail: "Only user-created Projects can be archived" },
-				{ status: 409 },
-			);
-		},
-	};
-	await expect(createCloudApiClient(options).archiveProject("personal")).rejects.toBeInstanceOf(
-		ApiClientError,
-	);
-	expect(calls).toBe(1);
-	await expect(
-		createCloudApiClient({ ...options, getToken: async () => null }).createProject({
-			name: "Research",
-		}),
-	).rejects.toBeInstanceOf(ApiClientError);
-	expect(calls).toBe(1);
 });

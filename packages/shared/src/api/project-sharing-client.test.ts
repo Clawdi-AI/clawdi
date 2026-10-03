@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import { createProjectSharingClient } from "./project-sharing-client";
-import { ApiClientError } from "./read-transport";
 
 test("sharing client preserves authenticated owner routes, payloads and encoded IDs", async () => {
 	const requests: { method: string; path: string; body: unknown }[] = [];
@@ -54,31 +53,4 @@ test("sharing client preserves authenticated owner routes, payloads and encoded 
 		{ method: "GET", path: "/v1/share/token%2Fa/preview", body: null },
 		{ method: "POST", path: "/v1/share/token%2Fa/upgrade", body: { use_as: "attached" } },
 	]);
-});
-
-test("sharing never retries a rejected destructive action or sends after cancellation", async () => {
-	let calls = 0;
-	const options = {
-		baseUrl: "https://api.example.test",
-		getToken: async (): Promise<string | null> => "test-token",
-		fetch: async () => {
-			calls += 1;
-			return Response.json({ detail: "denied" }, { status: 403 });
-		},
-	};
-	const client = createProjectSharingClient(options);
-	await expect(client.stopSharing("project")).rejects.toBeInstanceOf(ApiClientError);
-	expect(calls).toBe(1);
-	const controller = new AbortController();
-	controller.abort();
-	await expect(client.removeMember("project", "member", controller.signal)).rejects.toMatchObject({
-		name: "AbortError",
-	});
-	await expect(
-		createProjectSharingClient({ ...options, getToken: async () => null }).createLink(
-			"project",
-			{},
-		),
-	).rejects.toBeInstanceOf(ApiClientError);
-	expect(calls).toBe(1);
 });

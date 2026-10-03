@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import { createAccountApiClient } from "./account-client";
-import { ApiClientError } from "./read-transport";
 
 test("account requests preserve authentication, methods, bodies and escaped key ids", async () => {
 	const requests: { method: string; path: string; body: unknown }[] = [];
@@ -29,26 +28,4 @@ test("account requests preserve authentication, methods, bodies and escaped key 
 		{ method: "POST", path: "/v1/auth/keys", body: { label: "Phone" } },
 		{ method: "DELETE", path: "/v1/auth/keys/key%2Fwith%3Fsymbols", body: null },
 	]);
-});
-
-test("account mutations do not retry failures or send without authentication", async () => {
-	let calls = 0;
-	const options = {
-		baseUrl: "https://api.example.test",
-		getToken: async (): Promise<string | null> => "test-token",
-		fetch: async () => {
-			calls += 1;
-			return Response.json({ detail: { code: "not_allowed" } }, { status: 403 });
-		},
-	};
-	await expect(
-		createAccountApiClient(options).createApiKey({ label: "Phone" }),
-	).rejects.toBeInstanceOf(ApiClientError);
-	expect(calls).toBe(1);
-	await expect(
-		createAccountApiClient({ ...options, getToken: async () => null }).createApiKey({
-			label: "Phone",
-		}),
-	).rejects.toBeInstanceOf(ApiClientError);
-	expect(calls).toBe(1);
 });

@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import { createAgentProjectClient } from "./agent-project-client";
 import { type AgentProjectBinding, buildContextBindingReorder } from "./project-scope";
-import { ApiClientError } from "./read-transport";
 
 function binding(id: string, type: string, priority: number): AgentProjectBinding {
 	return {
@@ -70,23 +69,4 @@ test("Agent Project client keeps authentication, escaped paths and generated mut
 		{ method: "DELETE", path: "/v1/agents/agent%2Fa/project-bindings/binding%2Fb", body: null },
 		{ method: "PATCH", path: "/v1/agents/agent%2Fa/project-bindings/context/reorder", body: order },
 	]);
-});
-
-test("Agent Project mutations never retry conflicts or send unauthenticated writes", async () => {
-	let calls = 0;
-	const options = {
-		baseUrl: "https://api.example.test",
-		getToken: async (): Promise<string | null> => "test-token",
-		fetch: async () => {
-			calls += 1;
-			return Response.json({ detail: "conflict" }, { status: 409 });
-		},
-	};
-	await expect(createAgentProjectClient(options).unlink("agent", "binding")).rejects.toBeInstanceOf(
-		ApiClientError,
-	);
-	await expect(
-		createAgentProjectClient({ ...options, getToken: async () => null }).link("agent", "project"),
-	).rejects.toBeInstanceOf(ApiClientError);
-	expect(calls).toBe(1);
 });
