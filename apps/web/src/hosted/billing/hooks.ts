@@ -32,6 +32,7 @@ import {
 	subscriptionCreateQuoteView,
 } from "@/hosted/billing/subscription/subscription-create-adapter";
 import { isComputeSubscriptionActionUnconfirmed } from "@/hosted/billing/subscription/subscription-utils";
+import type { DeployChannelId } from "@/lib/deploy-channel";
 import {
 	deploymentAwaitingRuntimeUi,
 	deploymentPollingState,
@@ -222,11 +223,13 @@ export function useSubscriptions() {
 	});
 }
 
-export function useIncludedBasicAvailability() {
+export function useIncludedBasicAvailability(channel: DeployChannelId | null = null) {
 	const client = useBillingClient();
 	return useBillingQuery({
-		queryKey: billingKeys.includedBasicAvailability,
-		queryFn: () => client.getIncludedBasicAvailability(),
+		queryKey: channel
+			? [...billingKeys.includedBasicAvailability, channel]
+			: billingKeys.includedBasicAvailability,
+		queryFn: () => client.getIncludedBasicAvailability(channel),
 	});
 }
 

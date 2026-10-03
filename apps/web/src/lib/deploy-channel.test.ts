@@ -1,7 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { deployChannelAuthSearch, resolveDeployChannel } from "./deploy-channel";
+import {
+	deployChannelAuthSearch,
+	deployChannelConfig,
+	resolveDeployChannel,
+} from "./deploy-channel";
 
 describe("deployment channel links", () => {
+	test("uses the included Basic entitlement for Sui", () => {
+		expect(deployChannelConfig("sui")).toMatchObject({
+			defaultSubscriptionSource: "included",
+			pluginBundle: "sui",
+		});
+	});
+
 	test("accepts direct and authentication return links", () => {
 		expect(resolveDeployChannel("?deploy_profile=sui")).toBe("sui");
 		expect(resolveDeployChannel("?utm_source=sui")).toBe("sui");

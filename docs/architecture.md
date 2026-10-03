@@ -138,12 +138,14 @@ runtime state; a same-name native server override may opt into the runtime's
 official OAuth flow without changing Store metadata, package bytes, or Clawdi
 desired state.
 
-### Channel bundle initialization
+### Channel bundle and free access
 
 `/deploy?deploy_profile=sui` (also `utm_source=sui`) recommends the optional
 Sui bundle. First-party marketing captures only known values at its server
 boundary and hands them to a fixed Cloud destination. Marketing attribution
-expires after seven days; navigation and handoff do not renew it.
+expires after seven days; navigation and handoff do not renew it. A Sui
+deployment carries that trusted acquisition channel to Hosted, where the
+account can use one included Basic slot without adding a card.
 
 Cloud keeps the recommendation in the current URL through Clerk's `redirect_url`
 across sign-in/sign-up. The shared dashboard route uses TanStack Router's
@@ -152,12 +154,14 @@ links and programmatic navigation preserve them without per-button handling.
 A fresh page load without those parameters clears the recommendation; internal
 navigation retains them. The deployment form resolves only the known URL value and
 shows a selected, optional Sui bundle card. Its choice participates in the
-existing dirty state and request fingerprint. Only this deployment submits
-`plugin_bundle: "sui"`; unchecking omits the field. Cloud does not save channel
+existing dirty state and request fingerprint. Only this deployment submits the
+Sui `plugin_bundle` and `acquisition_channel`; unchecking the bundle omits only
+the plugin field. Cloud does not save channel
 attribution to an account or database, or consume the URL. Anyone using the same
-link can choose the recommendation. Visiting Cloud without the parameter is an
-ordinary deployment; future visits without it and cross-device continuity are
-not guaranteed. A recommendation grants no billing or external-service authority.
+link can choose the recommendation; Hosted applies the one-account free Basic
+entitlement when the deployment is accepted. Visiting Cloud without the
+parameter is an ordinary deployment; future visits without it and cross-device
+continuity are not guaranteed.
 
 Both platform and admin runtime-state writes accept only the known bundle
 identifier. Cloud selects whole plugins whose trusted catalog keywords contain

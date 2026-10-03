@@ -2451,6 +2451,8 @@ export interface components {
              * @enum {string}
              */
             compute_plan_slug: "compute_basic" | "compute_performance";
+            /** Acquisition Channel */
+            acquisition_channel?: "sui" | null;
             /** Plugin Bundle */
             plugin_bundle?: "sui" | null;
             /** Primary Model */
@@ -5005,7 +5007,9 @@ export interface operations {
     };
     get_v2_included_basic_availability_v2_subscriptions_included_basic_get: {
         parameters: {
-            query?: never;
+            query?: {
+                acquisition_channel?: "sui" | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -5019,6 +5023,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2ComputeIncludedBasicAvailabilityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

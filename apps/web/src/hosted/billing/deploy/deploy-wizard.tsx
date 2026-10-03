@@ -183,7 +183,7 @@ import {
 } from "@/hosted/v2/ai-providers/model-binding";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
-import { resolveDeployChannel } from "@/lib/deploy-channel";
+import { deployChannelConfig, resolveDeployChannel } from "@/lib/deploy-channel";
 import { env } from "@/lib/env";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
@@ -298,6 +298,7 @@ function ComputeResources({
 export function DeployWizard() {
 	const search = useRouterState({ select: (state) => state.location.searchStr });
 	const channel = resolveDeployChannel(search);
+	const channelConfig = channel ? deployChannelConfig(channel) : null;
 	const [preinstallBundle, setPreinstallBundle] = useState(true);
 	const router = useRouter();
 	const queryClient = useQueryClient();
@@ -418,7 +419,7 @@ export function DeployWizard() {
 		onNavigate: navigateCheckoutReturn,
 	});
 	const plans = usePlans();
-	const includedBasic = useIncludedBasicAvailability();
+	const includedBasic = useIncludedBasicAvailability(channel);
 	const reusableSubscriptions = useReusableSubscriptions(billingClient);
 	const managedModelCatalog = useManagedModelCatalog();
 	const aiProviders = useUserAiProviders();
@@ -481,13 +482,17 @@ export function DeployWizard() {
 		() => (basicPlan ? selectExplicitOfferForTerm(basicPlan, term) : null),
 		[basicPlan, term],
 	);
+	const channelDefaultSubscriptionSource =
+		channelConfig?.defaultSubscriptionSource === "included" && includedBasicAvailable === true
+			? ({ mode: "included" } as const)
+			: null;
 	const subscriptionSource = resolveSubscriptionSource({
-		selected: selectedSubscriptionSource,
+		selected: selectedSubscriptionSource ?? channelDefaultSubscriptionSource,
 		includedAvailable: includedBasicAvailable,
 		reusableSubscriptions: reusableSubscriptionInventory,
 	});
 	const defaultSubscriptionSource = resolveSubscriptionSource({
-		selected: null,
+		selected: channelDefaultSubscriptionSource,
 		includedAvailable: includedBasicAvailable,
 		reusableSubscriptions: reusableSubscriptionInventory,
 	});
@@ -783,7 +788,10 @@ export function DeployWizard() {
 				},
 				aiFields,
 			}),
-			...(channel && preinstallBundle ? { plugin_bundle: "sui" as const } : {}),
+			...(channel ? { acquisition_channel: channel } : {}),
+			...(channelConfig?.pluginBundle && preinstallBundle
+				? { plugin_bundle: channelConfig.pluginBundle }
+				: {}),
 		};
 	}
 
