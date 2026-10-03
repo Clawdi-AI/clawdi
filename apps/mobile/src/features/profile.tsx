@@ -35,9 +35,11 @@ function ProfileForm({ user }: { user: UserResource }) {
 	const [saved, setSaved] = useState({
 		firstName: user.firstName ?? "",
 		lastName: user.lastName ?? "",
+		username: user.username ?? "",
 	});
 	const [firstName, setFirstName] = useState(saved.firstName);
 	const [lastName, setLastName] = useState(saved.lastName);
+	const [username, setUsername] = useState(saved.username);
 	const [success, setSuccess] = useState<false | "name" | "avatar">(false);
 	const [avatar, setAvatar] = useState({ url: user.imageUrl, custom: user.hasImage });
 	const updateAvatar = (remove: boolean) =>
@@ -92,7 +94,8 @@ function ProfileForm({ user }: { user: UserResource }) {
 			},
 		]);
 	};
-	const dirty = firstName !== saved.firstName || lastName !== saved.lastName;
+	const dirty =
+		firstName !== saved.firstName || lastName !== saved.lastName || username !== saved.username;
 	usePreventRemove(scope.isReady && dirty, ({ data }) => {
 		const visible = capture();
 		const ticket = ++confirmation.current;
@@ -113,20 +116,36 @@ function ProfileForm({ user }: { user: UserResource }) {
 		void action.run(async (current) => {
 			if (!dirty || user.id !== scope.accountKey || !scope.isCurrent()) return;
 			const visible = capture();
+			const signal = scope.signal;
 			if (!visible()) return;
 			setSuccess(false);
+			// Patch only edited fields so disabled or externally updated attributes are not overwritten.
+			const changes: Parameters<UserResource["update"]>[0] = {
+				...(firstName !== saved.firstName ? { firstName: firstName.trim() } : {}),
+				...(lastName !== saved.lastName ? { lastName: lastName.trim() } : {}),
+				...(username !== saved.username ? { username: username.trim() || null } : {}),
+			};
 			await reverification.execute(async () => {
-				if (!current() || !scope.isCurrent() || !visible())
+				if (!current() || signal.aborted || !scope.isCurrent() || !visible())
 					throw new Error("Account action retired");
-				const updated = await user.update({
-					firstName: firstName.trim(),
-					lastName: lastName.trim(),
-				});
-				if (!current() || !scope.isCurrent() || !visible() || updated.id !== user.id) return;
-				const next = { firstName: updated.firstName ?? "", lastName: updated.lastName ?? "" };
+				const updated = await user.update(changes);
+				if (
+					!current() ||
+					signal.aborted ||
+					!scope.isCurrent() ||
+					!visible() ||
+					updated.id !== user.id
+				)
+					return;
+				const next = {
+					firstName: updated.firstName ?? "",
+					lastName: updated.lastName ?? "",
+					username: updated.username ?? "",
+				};
 				setSaved(next);
 				setFirstName(next.firstName);
 				setLastName(next.lastName);
+				setUsername(next.username);
 				setSuccess("name");
 			});
 		});
@@ -189,6 +208,24 @@ function ProfileForm({ user }: { user: UserResource }) {
 							setSuccess(false);
 						}}
 					/>
+				</AppView>
+				<AppView className="gap-2">
+					<AppText>{t("profile.username")}</AppText>
+					<AppTextInput
+						accessibilityLabel={t("profile.username")}
+						autoComplete="username"
+						autoCapitalize="none"
+						autoCorrect={false}
+						value={username}
+						editable={!action.busy}
+						maxLength={256}
+						className="rounded-xl bg-surface p-3 text-foreground"
+						onChangeText={(value) => {
+							setUsername(value);
+							setSuccess(false);
+						}}
+					/>
+					<AppText className="text-muted">{t("profile.usernameHint")}</AppText>
 				</AppView>
 				{action.error ? <AppText accessibilityRole="alert">{t("profile.failed")}</AppText> : null}
 				{success ? (
