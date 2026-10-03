@@ -14,11 +14,13 @@ import {
 	createProjectSharingClient,
 	createSessionSharingClient,
 	createSkillClient,
+	createVaultClient,
 	type HostedApiClient,
 	type HostedComputeClient,
 	type ProjectSharingClient,
 	type SessionSharingClient,
 	type SkillClient,
+	type VaultClient,
 } from "@clawdi/shared/api";
 import { useAuth } from "@clerk/expo";
 import { createContext, type ReactNode, useCallback, useContext, useMemo } from "react";
@@ -33,6 +35,7 @@ export type MobileApiClients = Readonly<{
 	skills: SkillClient;
 	sessionSharing: SessionSharingClient;
 	connectors: ConnectorClient;
+	vault: VaultClient;
 	compute: HostedComputeClient | null;
 	hosted: HostedApiClient | null;
 }>;
@@ -70,6 +73,11 @@ export function MobileApiProvider({
 	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
+			vault: createVaultClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
 			connectors: createConnectorClient({
 				baseUrl: config.cloudApiUrl,
 				getToken: readToken,

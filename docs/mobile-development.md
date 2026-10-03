@@ -193,7 +193,7 @@ Generated schema types remain authoritative. Platform UI, authentication,
 account-scoped query lifetime and navigation stay in their respective apps.
 
 These additions do not establish full Web parity. Universal-link routing,
-Skill bundle upload/download/send, provider configuration, vaults,
+Skill bundle upload/download/send, provider configuration, remaining Vault workflows,
 native builds and real store payments remain separate
 acceptance work. Existing Session transcripts remain read-only by design.
 
@@ -222,6 +222,23 @@ result establishes authorization success. Return/focus and manual refresh query
 the server's actual accounts. Native callback/deep-link integration and live
 OAuth are still acceptance work; no callback allowlist is changed here.
 
+Vault now has a paginated/searchable catalog, strict creation, stable-ID detail,
+section/key-name inventory, dotenv/JSON import preview, server-side section copy,
+explicit global key/Vault deletion and Project detachment. Web and native use
+the same import parser, conflict preview and slug normalizer in Shared. Stored
+values are never requested; pasted values stay in component state, clear on
+submit/blur/background, and do not enter query or mutation caches. Confirmations
+are fenced against backgrounding, navigation and account retirement. Shared
+Vaults are read-only in the UI and server authorization remains authoritative.
+
+The legacy create-or-attach endpoint identifies Vaults by slug, not stable ID.
+It is explicitly named `createOrAttachBySlug` in the shared client and is not
+used to attach a selected Vault from the native detail screen. Exact-identity
+attachment, credential/secret-request flows, key selection/splitting, Project
+scope filtering and device interaction verification remain open; this is not
+full Vault parity. Existing-key skipping uses the fetched key-name snapshot,
+not a server-side compare-and-set guarantee against concurrent writes.
+
 ### Full-parity completion scope
 
 Source implementation is not native acceptance. Keep the complete v2 Web scope
@@ -234,7 +251,7 @@ until each surface has implementation, focused verification and device evidence:
 | Sessions | Inventory, pinned message history, snapshot/live sharing and text export | Search/filter parity, tool timeline, public/universal-link entrypoints, device sharing |
 | Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
-| Vault | Not implemented | Catalog, credentials, detail and lifecycle surfaces |
+| Vault | Search/pagination, create, stable-ID detail, import, section copy, global delete and detach | Exact-ID attach, credential/secret requests, key selection/split, Project filters and device acceptance |
 | v2 AI providers/channels | Not implemented | BYOK, provider OAuth/model bindings, channel connection/pairing/repair |
 | Deployment/billing | Basic eligibility/creation/recovery and read-only billing/deployment views | Paid creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |

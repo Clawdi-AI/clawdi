@@ -21,6 +21,7 @@ export function CloudActions() {
 			<NativeButton label={t("navigation.memories")} onPress={() => router.push("/memories")} />
 			<NativeButton label={t("navigation.projects")} onPress={() => router.push("/projects")} />
 			<NativeButton label={t("navigation.connectors")} onPress={() => router.push("/connectors")} />
+			<NativeButton label={t("vault.title")} onPress={() => router.push("/vault")} />
 		</AppView>
 	);
 }

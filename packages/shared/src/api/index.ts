@@ -77,3 +77,12 @@ export {
 export { createSkillClient, type SkillClient } from "./skill-client";
 export * from "./skill-content";
 export * from "./skill-policy";
+export {
+	createVaultClient,
+	type VaultCatalogQuery,
+	type VaultClient,
+	type VaultIdentity,
+} from "./vault-client";
+export * from "./vault-import-preview";
+export * from "./vault-key-import";
+export * from "./vault-state";

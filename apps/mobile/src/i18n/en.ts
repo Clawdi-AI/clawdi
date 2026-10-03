@@ -3,7 +3,10 @@ import { connectorsEn } from "../features/connectors/en";
 import { creationEn } from "../features/creation/en";
 import { deploymentsEn } from "../features/deployments/en";
 
+import { vaultEn } from "../features/vault/en";
+
 export const en = {
+	vault: vaultEn,
 	connectors: connectorsEn,
 	billing: billingEn,
 	creation: creationEn,
