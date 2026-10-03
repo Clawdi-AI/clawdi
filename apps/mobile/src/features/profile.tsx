@@ -1,0 +1,117 @@
+import { useUser } from "@clerk/expo";
+import type { UserResource } from "@clerk/expo/types";
+import { Redirect, useNavigation } from "expo-router";
+import { usePreventRemove } from "expo-router/react-navigation";
+import { useRef, useState } from "react";
+import { Alert } from "react-native";
+import { useAuthAction } from "../auth/use-auth-action";
+import { useI18n } from "../i18n";
+import { useAccountScope } from "../platform/account-lifecycle";
+import { useForegroundLease } from "../platform/use-foreground-lease";
+import { LoadingScreen } from "../ui/feedback";
+import { NativeButton } from "../ui/native-controls";
+import { AppScrollView, AppText, AppTextInput, AppView } from "../ui/primitives";
+import { ReadScreen } from "../ui/read-screen";
+import { BackButton } from "./cloud-inventory";
+
+export function ProfileScreen() {
+	const { isLoaded, user } = useUser();
+	const scope = useAccountScope();
+	if (!isLoaded) return <LoadingScreen />;
+	if (!user || !scope.isReady) return <Redirect href="/(auth)/sign-in" />;
+	return <ProfileForm key={`${scope.identity}:${scope.generation}`} user={user} />;
+}
+
+function ProfileForm({ user }: { user: UserResource }) {
+	const t = useI18n();
+	const scope = useAccountScope();
+	const action = useAuthAction(scope.identity);
+	const capture = useForegroundLease();
+	const navigation = useNavigation();
+	const confirmation = useRef(0);
+	const [saved, setSaved] = useState({
+		firstName: user.firstName ?? "",
+		lastName: user.lastName ?? "",
+	});
+	const [firstName, setFirstName] = useState(saved.firstName);
+	const [lastName, setLastName] = useState(saved.lastName);
+	const [success, setSuccess] = useState(false);
+	const dirty = firstName !== saved.firstName || lastName !== saved.lastName;
+	usePreventRemove(scope.isReady && dirty, ({ data }) => {
+		const visible = capture();
+		const ticket = ++confirmation.current;
+		Alert.alert(t("profile.unsavedTitle"), t("profile.unsavedMessage"), [
+			{ text: t("account.cancel"), style: "cancel" },
+			{
+				text: t("profile.discard"),
+				style: "destructive",
+				onPress: () => {
+					if (ticket !== confirmation.current || !visible() || !scope.isCurrent()) return;
+					confirmation.current++;
+					navigation.dispatch(data.action);
+				},
+			},
+		]);
+	});
+	const save = () =>
+		void action.run(async (current) => {
+			if (!dirty || user.id !== scope.accountKey || !scope.isCurrent()) return;
+			const visible = capture();
+			if (!visible()) return;
+			setSuccess(false);
+			const updated = await user.update({ firstName: firstName.trim(), lastName: lastName.trim() });
+			if (!current() || !scope.isCurrent() || updated.id !== user.id) return;
+			const next = { firstName: updated.firstName ?? "", lastName: updated.lastName ?? "" };
+			setSaved(next);
+			setFirstName(next.firstName);
+			setLastName(next.lastName);
+			setSuccess(true);
+		});
+	return (
+		<ReadScreen>
+			<AppScrollView contentContainerClassName="gap-5 p-6">
+				<BackButton />
+				<AppText accessibilityRole="header" className="text-2xl font-semibold text-foreground">
+					{t("profile.title")}
+				</AppText>
+				<AppText>{t("profile.description")}</AppText>
+				<AppText>
+					{user.primaryEmailAddress?.emailAddress ?? t("account.accountUnavailable")}
+				</AppText>
+				<AppView className="gap-2">
+					<AppText>{t("profile.firstName")}</AppText>
+					<AppTextInput
+						accessibilityLabel={t("profile.firstName")}
+						autoComplete="given-name"
+						value={firstName}
+						editable={!action.busy}
+						maxLength={256}
+						className="rounded-xl bg-surface p-3 text-foreground"
+						onChangeText={(value) => {
+							setFirstName(value);
+							setSuccess(false);
+						}}
+					/>
+				</AppView>
+				<AppView className="gap-2">
+					<AppText>{t("profile.lastName")}</AppText>
+					<AppTextInput
+						accessibilityLabel={t("profile.lastName")}
+						autoComplete="family-name"
+						value={lastName}
+						editable={!action.busy}
+						maxLength={256}
+						className="rounded-xl bg-surface p-3 text-foreground"
+						onChangeText={(value) => {
+							setLastName(value);
+							setSuccess(false);
+						}}
+					/>
+				</AppView>
+				{action.error ? <AppText accessibilityRole="alert">{t("profile.failed")}</AppText> : null}
+				{success ? <AppText accessibilityRole="alert">{t("profile.saved")}</AppText> : null}
+				<NativeButton label={t("profile.save")} disabled={!dirty || action.busy} onPress={save} />
+			</AppScrollView>
+		</ReadScreen>
+	);
+}

@@ -12,6 +12,20 @@ import { skillArchiveEn } from "../features/skill-archive-en";
 import { vaultEn } from "../features/vault/en";
 
 export const en = {
+	profile: {
+		unsavedTitle: "Discard profile changes?",
+		unsavedMessage: "Your account name changes have not been saved.",
+		discard: "Discard changes",
+		title: "Edit profile",
+		description:
+			"Update your account name. Your sign-in email and security settings are not changed here.",
+		firstName: "First name",
+		lastName: "Last name",
+		save: "Save profile",
+		saved: "Profile saved.",
+		failed:
+			"Could not save your profile. Check your connection and account requirements, then retry.",
+	},
 	appearance: {
 		title: "Appearance",
 		description: "Choose light, dark, or follow your device. Saved only on this device.",

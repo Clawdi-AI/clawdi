@@ -113,6 +113,7 @@ function AccountView() {
 				</AppText>
 			</AppView>
 			<NativeButton label={t("navigation.billing")} onPress={() => router.push("/billing")} />
+			<NativeButton label={t("profile.title")} onPress={() => router.push("/profile")} />
 			<AppView className="gap-2 rounded-3xl bg-surface p-5">
 				<AppText accessibilityRole="header">{t("appearance.title")}</AppText>
 				<AppText>{t("appearance.description")}</AppText>

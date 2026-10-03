@@ -526,7 +526,11 @@ change handling; Expo control Hosts and the status bar consume the resolved them
 Storage read failures expose an explicit retry; writes are serialized and applied
 only after persistence succeeds. Stale hydration/unmount results are ignored.
 Real-device cold start, OS theme changes and native control rendering remain
-acceptance gates. Clerk's native UserProfileView is a possible next integration,
+acceptance gates. `/profile` edits first/last name through the existing Clerk
+UserResource, with account-generation/unmount fencing, a synchronous save lock,
+safe failure feedback and unsaved-change navigation confirmation. It does not
+change email, credentials or account security. Clerk's native UserProfileView is
+a possible next integration,
 but its 4.8.0 plugin requires iOS 17 and enables additional platform configuration;
 it is not already wired or verified by the existing JavaScript auth flows.
 
@@ -548,7 +552,7 @@ until each surface has implementation, focused verification and device evidence:
 
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
-| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance | Profile/security management and real Clerk/device appearance flows |
+| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name editing | Remaining avatar/email/security management and real Clerk/device appearance flows |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed safe external links | Inline image preview, OS universal-link association, device scrolling/sharing and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |
