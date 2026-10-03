@@ -55,6 +55,15 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 		);
 	};
 	return {
+		/** Starts durable account termination, including hosted resources and Clerk identity.
+		 * A 204 acknowledges the request; asynchronous cleanup is not proven complete.
+		 * Never automatically retry a timeout or infer deletion from a later 401/403.
+		 */
+		deleteAccount: (signal?: AbortSignal): Promise<null> =>
+			transport.read(async (init) => {
+				const result = await api.DELETE("/v1/me", init);
+				return { ...result, data: result.response.status === 204 ? null : undefined };
+			}, signal),
 		/**
 		 * Basic/Performance admission against existing server-selected entitlement.
 		 * Reads are advisory: the server decides availability and does not buy missing capacity.

@@ -49,6 +49,43 @@ const operation: components["schemas"]["LongRunningOperation"] = {
 };
 
 describe("Hosted compute client", () => {
+	test("account termination requires authenticated DELETE and exact 204, without retrying failures", async () => {
+		let status = 204;
+		const requests: { method: string; path: string; auth: string | null; body: string }[] = [];
+		const server = Bun.serve({
+			hostname: "127.0.0.1",
+			port: 0,
+			async fetch(request) {
+				requests.push({
+					method: request.method,
+					path: new URL(request.url).pathname,
+					auth: request.headers.get("authorization"),
+					body: await request.text(),
+				});
+				return status === 204 ? new Response(null, { status }) : Response.json({}, { status });
+			},
+		});
+		const client = createHostedComputeClient({
+			...options,
+			baseUrl: `${server.url.href}v2`,
+			fetch: (request, init) => fetch(request, init),
+		});
+		try {
+			expect(await client.deleteAccount()).toBeNull();
+			expect(requests).toEqual([
+				{ method: "DELETE", path: "/v1/me", auth: "Bearer owner-token", body: "" },
+			]);
+			status = 200;
+			await expect(client.deleteAccount()).rejects.toBeInstanceOf(ApiClientResponseError);
+			status = 403;
+			await expect(client.deleteAccount()).rejects.toMatchObject({ status: 403 });
+			status = 500;
+			await expect(client.deleteAccount()).rejects.toMatchObject({ status: 500 });
+			expect(requests).toHaveLength(4);
+		} finally {
+			server.stop(true);
+		}
+	});
 	test("serializes catalog, paging, preview and existing Basic/Performance admission over HTTP", async () => {
 		const requests: {
 			url: string;

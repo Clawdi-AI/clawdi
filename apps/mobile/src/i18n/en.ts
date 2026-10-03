@@ -184,6 +184,20 @@ export const en = {
 			"Could not complete this request. Check the international number or SMS code and refresh before retrying. Phone verification may not be available for your account or region, or further account verification may be required.",
 		saved: "Phone number updated.",
 	},
+	deletion: {
+		title: "Delete account",
+		warning:
+			"This permanently terminates your Clawdi account and starts cleanup of hosted Agents, credentials and associated account data. You will lose access. Cleanup may continue asynchronously. This is not a refund request; do not assume an Apple or Google subscription is cancelled—manage store subscriptions in the store where you purchased them.",
+		phrase: "DELETE",
+		typePhrase: "Type DELETE to continue",
+		confirm: "Permanently delete account",
+		unavailable:
+			"Account deletion requires the hosted account service. It is not configured in this build; use Clawdi on the web or contact support.",
+		accepted:
+			"The account service acknowledged your deletion request. Resource cleanup may still be running. Sign out of this device; this screen cannot verify final cleanup or subscription cancellation.",
+		uncertain:
+			"Deletion has not been confirmed. The request may already have been accepted. Do not assume your account or subscriptions are unchanged. Sign out and contact support to verify the outcome; no request will be retried automatically.",
+	},
 	profile: {
 		avatar: "Profile picture",
 		avatarSaved: "Profile picture updated. Any unsaved profile changes still need to be saved.",

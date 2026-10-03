@@ -3,6 +3,7 @@ import { QueryClient } from "@tanstack/react-query";
 import {
 	AccountScopeChangedError,
 	accountQueryKey,
+	clearAccountScope,
 	createAccountScope,
 	isObsoleteAccountQuery,
 	readInAccountScope,
@@ -129,6 +130,23 @@ describe("account read fencing", () => {
 		client.setQueryData(["configuration"], "shared data");
 		client.removeQueries({ predicate: ({ queryKey }) => isObsoleteAccountQuery(next, queryKey) });
 		expect(client.getQueryData<string>(accountQueryKey(oldScope, "agents"))).toBeUndefined();
+		expect(client.getQueryData<string>(accountQueryKey(next, "agents"))).toBe("new data");
+		expect(client.getQueryData<string>(["configuration"])).toBe("shared data");
+		const laterSession = createAccountScope(
+			"later",
+			oldScope.accountKey,
+			"later",
+			oldScope.generation + 1,
+			() => true,
+		);
+		client.setQueryData(accountQueryKey(oldScope, "agents"), "late old data");
+		client.setQueryData(accountQueryKey(laterSession, "agents"), "later session data");
+		clearAccountScope(oldScope, client);
+		expect(oldScope.signal.aborted).toBe(true);
+		expect(client.getQueryData<string>(accountQueryKey(oldScope, "agents"))).toBeUndefined();
+		expect(client.getQueryData<string>(accountQueryKey(laterSession, "agents"))).toBe(
+			"later session data",
+		);
 		expect(client.getQueryData<string>(accountQueryKey(next, "agents"))).toBe("new data");
 		expect(client.getQueryData<string>(["configuration"])).toBe("shared data");
 		client.clear();

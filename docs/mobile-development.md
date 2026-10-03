@@ -592,6 +592,29 @@ a possible next integration,
 but its 4.8.0 plugin requires iOS 17 and enables additional platform configuration;
 it is not already wired or verified by the existing JavaScript auth flows.
 
+`/delete-account` uses the generated Hosted `DELETE /v1/me` contract, not a
+Clerk-only delete call. The screen displays the captured account, requires typed
+`DELETE` and a native destructive confirmation, and sends no automatic retry.
+Missing Hosted configuration disables the action. Only HTTP 204 acknowledges
+the request; it does not prove resource cleanup, refunds or subscription
+cancellation completed. An unknown/failed response retains an uncertainty
+notice instead of claiming success or offering a blind retry. Sign-out targets
+only the captured session, and cache cleanup targets its account generation.
+Store subscriptions must still be managed in their purchase store. No real
+account deletion was performed; device confirmation, late responses, account
+switches and end-to-end termination remain acceptance gates.
+
+The deploy OpenAPI allowlist explicitly includes only the new DELETE operation;
+the existing generator adds its 204 response without handwritten wire types.
+Verify against the coordinated contract in an isolated runner:
+
+```bash
+DEPLOY_OPENAPI_SOURCE=/path/to/reviewed/openapi.json DEPLOY_CONTRACT_FETCH_MODE=strict bash scripts/check-deploy-generated-api.sh
+```
+
+Done: the filtered generated client matches exactly; the HTTP client regression
+accepts 204, rejects an unexpected 200 and does not retry 403/500 responses.
+
 `/email-addresses` and `/phone-numbers` share `account-contacts.tsx`, using Clerk's
 published User/EmailAddress/PhoneNumber resources to add a contact, explicitly
 send/resend an email or SMS code, verify it, confirm a primary-address
@@ -772,7 +795,7 @@ until each surface has implementation, focused verification and device evidence:
 
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
-| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/username/picture and shared email/phone contact management, shared native password/code reverification, active-device review/revocation, password management, authenticator/SMS factor management and backup codes, linked-account inventory/unlink and configured-provider browser linking/reauthorization, Passkey inventory/rename/removal | Native Passkey creation/sign-in, account deletion, remaining security management, passkey/enterprise reverification and real Clerk/browser/device acceptance |
+| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/username/picture and shared email/phone contact management, shared native password/code reverification, active-device review/revocation, password management, authenticator/SMS factor management and backup codes, linked-account inventory/unlink and configured-provider browser linking/reauthorization, Passkey inventory/rename/removal, confirmed Hosted account-deletion request | Native Passkey creation/sign-in, end-to-end account termination, remaining security management, passkey/enterprise reverification and real Clerk/browser/device acceptance |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |

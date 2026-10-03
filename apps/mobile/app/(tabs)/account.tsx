@@ -8,6 +8,7 @@ import { useAuthAction } from "../../src/auth/use-auth-action";
 import { useI18n } from "../../src/i18n";
 import {
 	accountQueryKey,
+	clearAccountScope,
 	useAccountRead,
 	useAccountScope,
 } from "../../src/platform/account-lifecycle";
@@ -57,13 +58,7 @@ function AccountView() {
 			await signOut({ sessionId: scope.sessionId });
 			// Invalidate only the captured account; another account may now be active.
 			const wasCurrent = scope.isCurrent();
-			scope.abort();
-			queryClient.removeQueries({
-				predicate: ({ queryKey }) =>
-					queryKey[0] === "account" &&
-					queryKey[1] === (scope.accountKey ?? "signed-out") &&
-					queryKey[2] === scope.generation,
-			});
+			clearAccountScope(scope, queryClient);
 			if (isCurrent() && wasCurrent) router.replace("/(auth)/sign-in");
 		});
 	const onCreateKey = () =>
@@ -124,6 +119,7 @@ function AccountView() {
 			<NativeButton label={t("password.title")} onPress={() => router.push("/password")} />
 			<NativeButton label={t("mfa.title")} onPress={() => router.push("/mfa")} />
 			<NativeButton label={t("passkeys.title")} onPress={() => router.push("/passkeys")} />
+			<NativeButton label={t("deletion.title")} onPress={() => router.push("/delete-account")} />
 			<AppView className="gap-2 rounded-3xl bg-surface p-5">
 				<AppText accessibilityRole="header">{t("appearance.title")}</AppText>
 				<AppText>{t("appearance.description")}</AppText>
