@@ -112,11 +112,16 @@ not introduce an account-wide subscription slot or multi-Agent bundle. Included
 Basic availability and reusable subscriptions come from the server, not local
 assumptions. The server remains the final authority for capacity and assignment.
 
-The current Basic deployment route can select Included Basic or an existing
-funded, unbound subscription for regular users; only CLI principals enforce
+The deployment route can select Included Basic or an existing funded, unbound
+Basic/Performance subscription for regular users; only CLI principals enforce
 Included-only admission. The client does not purchase compute or debit a Wallet
-through that route. Its legacy-named `createIncludedDeployment` method rejects
-non-Basic plans but cannot promise a specific existing entitlement. Creation
+through that route. Shared `createEntitledDeployment` supports both generated plan
+slugs; the existing `createIncludedDeployment` remains a Basic-only compatibility
+wrapper. Native creation now lets the user select the plan, not a subscription ID:
+the wire contract delegates matching entitlement selection to the server. Reusable
+inventory is paginated with explicit load-more, and refreshed before new admission;
+an Included Basic slot never authorizes Performance. A saved request remains
+replayable even if its capacity was consumed by its original admission. Creation
 uses a persistent, account-scoped request key and explicit user confirmation;
 mounting or restoring the app must never automatically replay a POST.
 
@@ -746,7 +751,7 @@ until each surface has implementation, focused verification and device evidence:
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport | Universal-link intake and device acceptance |
 | v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal and Agent model binding; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity, Custom deletion and WhatsApp device onboarding/repair | Native/live provider and channel acceptance |
-| Deployment/billing | Basic eligibility/creation/recovery and read-only billing/deployment views | Paid creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
+| Deployment/billing | Included Basic and existing funded Basic/Performance eligibility/creation/recovery, paginated reusable inventory and read-only billing/deployment views | New paid subscription creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
 | Runtime UI/terminal | Shared Web/native xterm engine, Expo DOM terminal route, native controls and foreground teardown; generated bounded credential client | Native WebView/keyboard/real-server round-trip and compilation; authenticated native runtime browser handoff |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |
 
@@ -820,8 +825,10 @@ On an authorized simulator/device build, verify:
    unavailable-content and revision-conflict states; test foreground recovery.
 4. Check native tabs, deep links/back navigation, safe areas, dark/light modes,
    large text and screen-reader labels on both platforms.
-5. With current server eligibility, confirm Basic creation against an existing
-   entitlement, inspect its operation/deployment and navigate to its Cloud Agent.
+5. With current server eligibility, confirm Basic and Performance creation against
+   existing matching entitlements, inspect operations/deployments and navigate to
+   their Cloud Agents. Test reusable inventory beyond the first page and denial
+   after a concurrent client claims the last entitlement. No purchase is implied.
    Lose connectivity or terminate the app after admission; recover the same
    stored request without a fresh key or an automatic replay.
    Verify explicit discard after proven first-send admission refusal and same-body

@@ -1,6 +1,10 @@
 import createClient from "openapi-fetch";
 import type { paths as DeployPaths } from "./deploy.generated";
-import type { HostedDeployRequest, HostedDeploySubscriptionQuoteRequest } from "./deploy-wizard";
+import {
+	type HostedDeployRequest,
+	type HostedDeploySubscriptionQuoteRequest,
+	isHostedDeployComputePlan,
+} from "./deploy-wizard";
 import {
 	ApiClientError,
 	type ApiClientOptions,
@@ -22,7 +26,41 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 		baseUrl: readApiBaseUrl(options.baseUrl, true),
 		fetch: transport.fetch,
 	});
+	/** Admission consumes an existing entitlement; it never initiates checkout or a Wallet debit. */
+	const createEntitledDeployment = async (
+		body: HostedDeployRequest,
+		idempotencyKey: string,
+		signal?: AbortSignal,
+	) => {
+		if (
+			typeof idempotencyKey !== "string" ||
+			idempotencyKey.length < 1 ||
+			idempotencyKey.length > 191 ||
+			/[^\x21-\x7e]/.test(idempotencyKey)
+		) {
+			throw new ApiClientError(400, "invalid_idempotency_key");
+		}
+		if (!isHostedDeployComputePlan(body?.compute_plan_slug))
+			throw new ApiClientError(400, "invalid_compute_plan");
+		if (body.deploy_request_id != null && body.deploy_request_id !== idempotencyKey)
+			throw new ApiClientError(409, "deploy_request_id_mismatch");
+		return transport.read(
+			(init) =>
+				api.POST("/v2/deployments", {
+					...init,
+					body,
+					params: { header: { "Idempotency-Key": idempotencyKey } },
+				}),
+			signal,
+		);
+	};
 	return {
+		/**
+		 * Basic/Performance admission against existing server-selected entitlement.
+		 * Reads are advisory: the server decides availability and does not buy missing capacity.
+		 * No subscription-ID selection exists in this wire contract. Preserve request/key on uncertainty.
+		 */
+		createEntitledDeployment,
 		/** Ownership protection only; this does not expose legacy product actions. */
 		getLegacyAgentIds: async (signal?: AbortSignal) => {
 			const result = await transport.read(
@@ -92,29 +130,10 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 			idempotencyKey: string,
 			signal?: AbortSignal,
 		) => {
-			if (
-				typeof idempotencyKey !== "string" ||
-				idempotencyKey.length < 1 ||
-				idempotencyKey.length > 191 ||
-				/[^\x21-\x7e]/.test(idempotencyKey)
-			) {
-				throw new ApiClientError(400, "invalid_idempotency_key");
-			}
 			if (body?.compute_plan_slug !== "compute_basic") {
 				throw new ApiClientError(400, "compute_basic_required");
 			}
-			if (body.deploy_request_id != null && body.deploy_request_id !== idempotencyKey) {
-				throw new ApiClientError(409, "deploy_request_id_mismatch");
-			}
-			return transport.read(
-				(init) =>
-					api.POST("/v2/deployments", {
-						...init,
-						body,
-						params: { header: { "Idempotency-Key": idempotencyKey } },
-					}),
-				signal,
-			);
+			return createEntitledDeployment(body, idempotencyKey, signal);
 		},
 	};
 }

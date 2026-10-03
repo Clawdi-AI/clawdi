@@ -99,10 +99,10 @@ export function isDefinitiveAdmissionRejection(attempt: CreationAttempt, error: 
 }
 
 /** Eligible reads expose inventory; POST remains the final permission boundary. */
-export function serverAllowsBasicCreation(
+export function serverAllowsEntitledCreation(
 	capabilities: DeployComponents["schemas"]["V1UserProductCapabilities"] | undefined,
 	availability: HostedIncludedBasicAvailability | undefined,
-	basicPlan: HostedDeployPlan | undefined,
+	plan: HostedDeployPlan | undefined,
 	options: {
 		reusable?: readonly DeployComponents["schemas"]["V2ComputeReusableSubscriptionItem"][];
 		hasSavedAttempt?: boolean;
@@ -111,11 +111,13 @@ export function serverAllowsBasicCreation(
 	return Boolean(
 		capabilities?.can_use_v2 === true &&
 			(options.hasSavedAttempt ||
-				(basicPlan?.slug === "compute_basic" &&
-					((availability &&
+				(plan &&
+					isHostedDeployComputePlan(plan.slug) &&
+					((plan.slug === "compute_basic" &&
+						availability &&
 						Number.isFinite(availability.available_slots) &&
 						availability.available_slots > 0) ||
-						options.reusable?.some((subscription) => subscription.plan_slug === "compute_basic")))),
+						options.reusable?.some((subscription) => subscription.plan_slug === plan.slug)))),
 	);
 }
 

@@ -49,7 +49,7 @@ const operation: components["schemas"]["LongRunningOperation"] = {
 };
 
 describe("Hosted compute client", () => {
-	test("serializes catalog, paging, preview and Basic admission over HTTP", async () => {
+	test("serializes catalog, paging, preview and existing Basic/Performance admission over HTTP", async () => {
 		const requests: {
 			url: string;
 			method: string;
@@ -92,7 +92,15 @@ describe("Hosted compute client", () => {
 			await client.quoteSubscription(quote);
 			const key = "!".repeat(191);
 			const deploymentBody = { ...body, deploy_request_id: key };
+			const performanceBody: HostedDeployRequest = {
+				...body,
+				compute_plan_slug: "compute_performance",
+				deploy_request_id: "performance-key",
+			};
 			expect(await client.createIncludedDeployment(deploymentBody, key)).toEqual(operation);
+			expect(await client.createEntitledDeployment(performanceBody, "performance-key")).toEqual(
+				operation,
+			);
 			expect(requests.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
 				["GET", "/v1/me"],
 				["GET", "/v2/subscription/plans"],
@@ -103,6 +111,7 @@ describe("Hosted compute client", () => {
 				["GET", "/v2/subscriptions/included-basic"],
 				["GET", "/v2/wallet/transactions"],
 				["POST", "/v2/subscription/quote"],
+				["POST", "/v2/deployments"],
 				["POST", "/v2/deployments"],
 			]);
 			for (const request of requests) {
@@ -119,9 +128,16 @@ describe("Hosted compute client", () => {
 					expect(url.searchParams.get("limit")).toBe("9");
 				if (request.method === "POST") {
 					expect(request.headers.get("Content-Type")).toBe("application/json");
-					expect(request.body).toEqual(url.pathname === "/v2/deployments" ? deploymentBody : quote);
+					const performance = request.headers.get("Idempotency-Key") === "performance-key";
+					expect(request.body).toEqual(
+						url.pathname === "/v2/deployments"
+							? performance
+								? performanceBody
+								: deploymentBody
+							: quote,
+					);
 					expect(request.headers.get("Idempotency-Key")).toBe(
-						url.pathname === "/v2/deployments" ? key : null,
+						url.pathname === "/v2/deployments" ? (performance ? "performance-key" : key) : null,
 					);
 				}
 			}
@@ -180,6 +196,9 @@ describe("Hosted compute client", () => {
 				code: "invalid_idempotency_key",
 				category: "invalid_request",
 			});
+			await expect(
+				client.createEntitledDeployment({ ...body, compute_plan_slug: "compute_performance" }, key),
+			).rejects.toMatchObject({ status: 400, code: "invalid_idempotency_key" });
 		}
 		await expect(
 			client.createIncludedDeployment(
@@ -191,6 +210,9 @@ describe("Hosted compute client", () => {
 			code: "compute_basic_required",
 		});
 		for (const deployRequestId of ["other-key", ""]) {
+			await expect(
+				client.createEntitledDeployment({ ...body, deploy_request_id: deployRequestId }, "valid"),
+			).rejects.toMatchObject({ status: 409, code: "deploy_request_id_mismatch" });
 			await expect(
 				client.createIncludedDeployment({ ...body, deploy_request_id: deployRequestId }, "valid"),
 			).rejects.toMatchObject({
@@ -220,6 +242,11 @@ describe("Hosted compute client", () => {
 		for (const action of [
 			() => client.quoteSubscription(quote),
 			() => client.createIncludedDeployment(body, "same-key"),
+			() =>
+				client.createEntitledDeployment(
+					{ ...body, compute_plan_slug: "compute_performance" },
+					"same-key",
+				),
 		]) {
 			try {
 				await action();
@@ -232,7 +259,7 @@ describe("Hosted compute client", () => {
 				expect(error.message).not.toContain("private server detail");
 			}
 		}
-		expect(sends).toBe(2);
+		expect(sends).toBe(3);
 	});
 
 	test("fences late mutation results on caller cancellation", async () => {
@@ -255,7 +282,11 @@ describe("Hosted compute client", () => {
 		});
 		const controller = new AbortController();
 		const reason = new Error("Account generation changed");
-		const result = client.createIncludedDeployment(body, "key", controller.signal);
+		const result = client.createEntitledDeployment(
+			{ ...body, compute_plan_slug: "compute_performance" },
+			"key",
+			controller.signal,
+		);
 		await sent;
 		controller.abort(reason);
 		await expect(result).rejects.toBe(reason);

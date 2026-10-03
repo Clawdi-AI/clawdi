@@ -10,19 +10,23 @@ export const creationEn = {
 	model: "Managed model",
 	chooseModel: "Choose a catalog model",
 	compute: "Independent compute subscription for this Agent",
+	basic: "Basic",
+	performance: "Performance",
+	selectionNotice:
+		"Choose the compute plan for this Agent. The server selects a matching unbound entitlement; this does not select or purchase a specific subscription.",
 	included: "Server-reported available Basic slots",
 	reusable: "Existing reusable subscriptions",
 	pending:
-		"New paid subscriptions and choosing a reusable subscription are pending integration. No purchase or wallet funding is available here.",
+		"New paid subscriptions and store purchases are not connected. You can use existing unbound Basic or Performance entitlements without buying new compute.",
 	quote: "Request price preview",
 	quoteNotice:
 		"A preview may initialize your billing profile. It does not pay an invoice or debit your wallet.",
 	preview: "Invoice preview, not a payment",
 	confirm:
-		"I confirm the server may assign an existing Basic entitlement, including an already-paid unbound subscription. This action does not purchase new compute.",
+		"I confirm the server may assign an existing entitlement for the selected plan, including an already-paid unbound subscription. This action does not purchase new compute.",
 	create: "Create with server-selected entitlement",
 	blocked:
-		"Creation requires available server inventory and a Basic plan in the current catalog. The server verifies permission when you submit.",
+		"Creation requires the selected plan in the catalog and matching reusable inventory (or an available included Basic slot). Load more subscriptions if needed. The server verifies permission when you submit.",
 	monthly: "Monthly preview",
 	months: "months",
 	annual: "Annual preview",
