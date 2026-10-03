@@ -1,3 +1,9 @@
+export type {
+	AccountApiClient,
+	ApiKeyCreate,
+	SettingsUpdate,
+} from "./account-client";
+export { createAccountApiClient } from "./account-client";
 export type { components, paths } from "./api.generated";
 export {
 	type ComputeReusableSubscriptionsQuery,
@@ -6,12 +12,6 @@ export {
 	createHostedComputeClient,
 	type HostedComputeClient,
 } from "./compute-client";
-export type {
-	AccountApiClient,
-	ApiKeyCreate,
-	SettingsUpdate,
-} from "./account-client";
-export { createAccountApiClient } from "./account-client";
 export type {
 	AiProviderRemovalImpact,
 	AiProviderRemovalResult,

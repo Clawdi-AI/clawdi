@@ -3,7 +3,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useAuthAction } from "../../src/auth/use-auth-action";
 import { useI18n } from "../../src/i18n";
-import { accountQueryKey, useAccountRead, useAccountScope } from "../../src/platform/account-lifecycle";
+import {
+	accountQueryKey,
+	useAccountRead,
+	useAccountScope,
+} from "../../src/platform/account-lifecycle";
 import { useMobileApi } from "../../src/providers/api-provider";
 import { LoadingScreen } from "../../src/ui/feedback";
 import { NativeButton } from "../../src/ui/native-controls";
