@@ -394,8 +394,10 @@ disconnect eligibility. The system file picker uses the existing SDK-aligned
 picker dependency. Uploads accept PNG/JPEG/WebP up to 2 MiB and never auto-retry.
 Disconnect refreshes ownership and Agent identity before dispatch; incomplete
 ownership fails closed. Legacy ownership IDs are read only when server capabilities
-require them; this does not expose legacy product actions. Device picker/upload,
-disconnect and unsaved-name navigation acceptance remain pending.
+require them; this does not expose legacy product actions. Unsaved names use
+Expo Router's removal guard with a native discard confirmation and captured
+account/focus permission. Device picker/upload, disconnect and navigation
+acceptance remain pending.
 
 The Agent settings batch passed bounded Bun 1.4.2 Docker verification: all six
 workspace typechecks (including both Mobile programs), 249 Shared/Mobile tests
@@ -410,7 +412,7 @@ until each surface has implementation, focused verification and device evidence:
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
 | Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings | Remaining general/profile settings and real Clerk flows |
-| Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar and ownership-protected local disconnect | Unsaved-name navigation protection, provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
+| Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing and text export | Rich-text/link presentation, public/universal-link entrypoints, device scrolling/sharing and visual acceptance |
 | Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |

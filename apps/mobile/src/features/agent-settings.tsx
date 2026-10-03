@@ -11,7 +11,8 @@ import {
 } from "@clawdi/shared/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { File } from "expo-file-system";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import { usePreventRemove } from "expo-router/react-navigation";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Image } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
@@ -40,13 +41,34 @@ function Settings({ id }: { id: string | undefined }) {
 	const capture = useForegroundLease();
 	const action = useAuthAction(scope.identity);
 	const router = useRouter();
+	const navigation = useNavigation();
 	const cache = useQueryClient();
 	const { cloud, agentSettings, hosted, compute } = useMobileApi();
 	const agent = useCloudAgent(id);
 	const [draft, setDraft] = useState("");
+	const [disconnected, setDisconnected] = useState(false);
 	const previous = useRef<string | undefined>(undefined);
 	const confirmation = useRef(0);
 	const serverName = agent.data?.display_name ?? "";
+	usePreventRemove(
+		scope.isReady && !disconnected && previous.current !== undefined && draft !== serverName,
+		({ data }) => {
+			const visible = capture();
+			const ticket = ++confirmation.current;
+			Alert.alert(t("agentSettings.unsavedTitle"), t("agentSettings.unsavedMessage"), [
+				{ text: t("account.cancel"), style: "cancel" },
+				{
+					text: t("agentSettings.discard"),
+					style: "destructive",
+					onPress: () => {
+						if (ticket !== confirmation.current || !visible() || !scope.isCurrent()) return;
+						confirmation.current++;
+						navigation.dispatch(data.action);
+					},
+				},
+			]);
+		},
+	);
 	useEffect(() => {
 		if (!agent.data) return;
 		const previousName = previous.current;
@@ -93,7 +115,12 @@ function Settings({ id }: { id: string | undefined }) {
 		await cache.invalidateQueries({ queryKey: accountQueryKey(scope, "cloud-agents") });
 	};
 	const unavailable =
-		action.busy || !scope.isReady || agent.isError || !agent.data || agent.data.id !== id;
+		disconnected ||
+		action.busy ||
+		!scope.isReady ||
+		agent.isError ||
+		!agent.data ||
+		agent.data.id !== id;
 	let validName = true;
 	let normalized: string | null = null;
 	try {
@@ -139,6 +166,7 @@ function Settings({ id }: { id: string | undefined }) {
 							),
 						);
 						if (!current()) return;
+						setDisconnected(true);
 						cache.removeQueries({
 							queryKey: accountQueryKey(scope, "cloud-agent", id),
 							exact: true,
