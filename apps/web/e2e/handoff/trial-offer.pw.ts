@@ -75,5 +75,7 @@ test("trial offer survives login and uses checkout without asking for a card", a
 	expect(JSON.parse(checkoutRequests[1] ?? "{}").deploy_config.trial_offer_token).toBe(
 		"opaque_credential",
 	);
-	expect(await page.evaluate(() => JSON.stringify(sessionStorage))).not.toContain("opaque_credential");
+	expect(await page.evaluate(() => JSON.stringify(sessionStorage))).not.toContain(
+		"opaque_credential",
+	);
 });
