@@ -155,6 +155,8 @@ export const en = {
 		description: "Projects available to your account.",
 		empty: "No projects are available for this account.",
 		unknown: "Unnamed project",
+		owner: "Owner",
+		shared: "Shared",
 	},
 	common: {
 		yes: "Yes",

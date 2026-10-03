@@ -27,7 +27,7 @@ export function ProjectRow({ project }: { project: Project }) {
 			</AppText>
 			<AppText className="text-sm text-muted">{project.description ?? project.kind}</AppText>
 			<AppText className="text-xs text-muted">
-				{project.is_owner ? "Owner" : project.owner_display ?? "Shared"}
+				{project.is_owner ? t("projects.owner") : project.owner_display ?? t("projects.shared")}
 			</AppText>
 		</AppView>
 	);
