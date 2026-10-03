@@ -116,6 +116,7 @@ function AccountView() {
 			<NativeButton label={t("profile.title")} onPress={() => router.push("/profile")} />
 			<NativeButton label={t("emails.title")} onPress={() => router.push("/email-addresses")} />
 			<NativeButton label={t("devices.title")} onPress={() => router.push("/device-sessions")} />
+			<NativeButton label={t("password.title")} onPress={() => router.push("/password")} />
 			<AppView className="gap-2 rounded-3xl bg-surface p-5">
 				<AppText accessibilityRole="header">{t("appearance.title")}</AppText>
 				<AppText>{t("appearance.description")}</AppText>

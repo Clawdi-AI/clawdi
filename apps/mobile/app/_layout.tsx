@@ -45,6 +45,7 @@ export default function RootLayout() {
 									<ClerkProvider
 										publishableKey={runtime.value.clerkPublishableKey}
 										tokenCache={tokenCache}
+										experimental={{ rethrowOfflineNetworkErrors: true }}
 									>
 										<MobileProviders config={runtime.value}>
 											<Navigation />

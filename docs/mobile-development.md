@@ -582,6 +582,18 @@ revoke the current session, delete the account or cancel billing. Device/activit
 metadata stays in memory and clears on blur/background. Real cross-device revocation
 and native acceptance remain unverified; focused tests cover freshness and late reads.
 
+`/password` uses the public Clerk `updatePassword` and `removePassword` methods,
+with an explicit opt-in to sign out other sessions on update and native confirmation
+before removal. It reloads the account before dispatch, reuses the native assurance
+flow, retains the original account/foreground lease across its single assurance
+retry, and clears secret inputs on blur/background and after the request. Password
+policy and permitted alternative sign-in methods remain server decisions. Ambiguous
+network outcomes advise checking sign-in before retrying, not assuming a rollback.
+The root ClerkProvider enables the published `experimental.rethrowOfflineNetworkErrors`
+option: Clerk JS 6.34.1 otherwise may resolve an offline failure with the unchanged
+resource. Expo 4.8.0 forwards this option; no internal SDK mutation or live configuration
+is used. Actual password changes, removal and session effects remain unverified.
+
 Public Session routes (`/s/[shareId]`, `/open-share`) support anonymous snapshots,
 legacy live links with optional account authentication, explicit pagination and
 native Markdown/JSON sharing. Web's initial metadata/message reads reuse the same
@@ -632,7 +644,7 @@ until each surface has implementation, focused verification and device evidence:
 
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
-| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and email-address management, shared native password/code reverification, active-device review/revocation | Remaining security management, passkey/enterprise reverification and real Clerk/device acceptance |
+| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and email-address management, shared native password/code reverification, active-device review/revocation, password management | Remaining MFA enrollment/security management, passkey/enterprise reverification and real Clerk/device acceptance |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |

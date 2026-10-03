@@ -27,6 +27,25 @@ export const en = {
 		reconnecting: "Reconnecting…",
 		disconnected: "Disconnected",
 	},
+	password: {
+		title: "Password",
+		description:
+			"Manage your account password. Strength, compromised-password and account sign-in policies are checked by the sign-in service. Passwords are not stored by this app.",
+		enabled: "This account has a password.",
+		absent: "This account does not currently have a password.",
+		current: "Current password",
+		new: "New password",
+		confirm: "Confirm new password",
+		otherSessions: "Sign out other sessions when updating the password",
+		update: "Update password",
+		add: "Add password",
+		remove: "Remove password",
+		removeWarning:
+			"Remove password sign-in? You must have another permitted way to sign in. The account service will check whether removal is allowed. This does not delete your account.",
+		failed:
+			"Could not confirm the password change. Check your current password and account password requirements. If the connection was lost, try signing in with the new password before retrying; the change may already have succeeded.",
+		saved: "Password settings updated.",
+	},
 	devices: {
 		title: "Signed-in devices",
 		description:
