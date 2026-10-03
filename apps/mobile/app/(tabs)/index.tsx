@@ -1,4 +1,5 @@
 import { useUser } from "@clerk/expo";
+import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { RefreshControl } from "react-native";
 import {
@@ -13,7 +14,6 @@ import { ErrorState, LoadingScreen } from "../../src/ui/feedback";
 import { AppScrollView, AppText, AppView } from "../../src/ui/primitives";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../src/platform/account-lifecycle";
 import { useMobileApi } from "../../src/providers/api-provider";
-import { useQuery } from "@tanstack/react-query";
 
 export default function HomeRoute() {
 	const t = useI18n();
@@ -55,7 +55,9 @@ export default function HomeRoute() {
 				<CloudActions />
 				{stats.data ? (
 					<AppView className="gap-3 rounded-3xl bg-surface p-5">
-						<AppText className="text-lg font-semibold text-foreground">{t("home.statsTitle")}</AppText>
+						<AppText className="text-lg font-semibold text-foreground">
+							{t("home.statsTitle")}
+						</AppText>
 						<AppView className="flex-row flex-wrap gap-4">
 							<Stat label={t("home.statsSessions")} value={stats.data.total_sessions} />
 							<Stat label={t("home.statsMessages")} value={stats.data.total_messages} />

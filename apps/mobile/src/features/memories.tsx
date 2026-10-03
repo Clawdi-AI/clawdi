@@ -16,7 +16,10 @@ export function useCloudMemories() {
 		queryKey: accountQueryKey(scope, "cloud-memories"),
 		initialPageParam: 1,
 		queryFn: ({ signal, pageParam }) =>
-			read((readSignal) => cloud.listMemories({ page: pageParam, page_size: 25 }, readSignal), signal),
+			read(
+				(readSignal) => cloud.listMemories({ page: pageParam, page_size: 25 }, readSignal),
+				signal,
+			),
 		getNextPageParam: (page) =>
 			page.page * page.page_size < page.total ? page.page + 1 : undefined,
 		enabled: scope.isReady,
