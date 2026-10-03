@@ -1,5 +1,6 @@
 "use client";
 
+import { SESSION_SORT_KEYS as SORT_KEYS } from "@clawdi/shared/api";
 import {
 	isSearchQueryReady,
 	SEARCH_QUERY_MAX_LENGTH,
@@ -41,14 +42,6 @@ import { cn, formatNumber, recencyBucketFor } from "@/lib/utils";
 // is non-empty, and the route silently falls back to last_activity_at
 // otherwise. We mirror that in the UI by only surfacing the "Relevance"
 // sort option when the search box has text.
-const SORT_KEYS = [
-	"last_activity_at",
-	"started_at",
-	"message_count",
-	"tokens",
-	"updated_at",
-	"relevance",
-] as const;
 type SortKey = (typeof SORT_KEYS)[number];
 const SESSIONS_RESOURCE = getProjectResourceDefinition("sessions");
 

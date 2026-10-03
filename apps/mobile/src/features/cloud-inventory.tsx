@@ -1,4 +1,9 @@
-import { ApiClientError, type components, type SessionListQuery } from "@clawdi/shared/api";
+import {
+	ApiClientError,
+	type components,
+	normalizeSessionListQuery,
+	type SessionListQuery,
+} from "@clawdi/shared/api";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useI18n } from "../i18n";
@@ -9,13 +14,6 @@ import { nextSessionPage } from "./read-helpers";
 
 export type CloudAgent = components["schemas"]["AgentResponse"];
 export type CloudSession = components["schemas"]["SessionListItemResponse"];
-
-const sessionListQuery = {
-	page: 1,
-	page_size: 25,
-	sort: "last_activity_at",
-	order: "desc",
-} satisfies SessionListQuery;
 
 export function useCloudAgents(projectId?: string) {
 	const { cloud } = useMobileApi();
@@ -49,22 +47,16 @@ export function useCloudAgent(agentId: string | undefined) {
 	});
 }
 
-export function useCloudSessions(agentId?: string, enabled = true) {
+export function useCloudSessions(agentId?: string, enabled = true, filters?: SessionListQuery) {
 	const { cloud } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
+	const query = normalizeSessionListQuery({ ...filters, environment_id: agentId, page: 1 });
 	return useInfiniteQuery({
-		queryKey: accountQueryKey(scope, "cloud-sessions", agentId ?? "all", sessionListQuery),
+		queryKey: accountQueryKey(scope, "cloud-sessions", query),
 		initialPageParam: 1,
 		queryFn: ({ signal, pageParam }) =>
-			read(
-				(readSignal) =>
-					cloud.listSessions(
-						{ ...sessionListQuery, page: pageParam, environment_id: agentId },
-						readSignal,
-					),
-				signal,
-			),
+			read((readSignal) => cloud.listSessions({ ...query, page: pageParam }, readSignal), signal),
 		getNextPageParam: nextSessionPage,
 		enabled: scope.isReady && enabled,
 		retry: false,
@@ -171,6 +163,11 @@ export function SessionRow({ session }: { session: CloudSession }) {
 			<AppText className="text-sm text-muted">
 				{session.status} · {formatDate(session.last_activity_at) ?? t("sessions.unknownActivity")}
 			</AppText>
+			{session.search_match ? (
+				<AppText numberOfLines={4} className="text-sm text-foreground">
+					{session.search_match.excerpt}
+				</AppText>
+			) : null}
 		</AppPressable>
 	);
 }

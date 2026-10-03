@@ -68,6 +68,7 @@ export {
 	readApiBaseUrl,
 } from "./read-transport";
 export * from "./schemas";
+export * from "./session-query";
 export * from "./session-sharing";
 export {
 	createSessionSharingClient,
