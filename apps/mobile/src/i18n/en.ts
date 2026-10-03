@@ -5,10 +5,12 @@ import { connectorsEn } from "../features/connectors/en";
 import { creationEn } from "../features/creation/en";
 import { runtimeEn } from "../features/deployments/controls-en";
 import { deploymentsEn } from "../features/deployments/en";
+import { skillArchiveEn } from "../features/skill-archive-en";
 
 import { vaultEn } from "../features/vault/en";
 
 export const en = {
+	skillArchive: skillArchiveEn,
 	agentSettings: agentSettingsEn,
 	runtime: runtimeEn,
 	channels: channelsEn,

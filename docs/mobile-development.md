@@ -197,8 +197,32 @@ normalization. Invalid share expiration dates fail closed on both platforms.
 Generated schema types remain authoritative. Platform UI, authentication,
 account-scoped query lifetime and navigation stay in their respective apps.
 
+Skill packages use the shared generated download/upload client and multipart
+builder (also consumed by the Web uploader). Uploads are limited to 25 MiB;
+new uploads and transfers use server `create_only`, while replacement requires
+explicit confirmation. Web/native share destination eligibility and transfer
+ordering. A move only deletes the source after a matching upload receipt and
+matching content hash, with the original hash as the delete precondition.
+Uncertain uploads never trigger removal; failed removal reports a partial copy.
+
+Native download uses Expo FileSystem and the SDK-aligned `expo-sharing` 57.0.22
+from `catalog:expo57`. Rebuild the development client for this native module.
+Files use random safe names under an account-hashed cache directory. Native
+sharing completion does not prove delivery or that Android receivers have read
+the file, so files remain until OS cache eviction or explicit account-scoped
+cleanup. A stale account/focus lease cannot open the share sheet or clear files.
+Incoming share extensions are not enabled by this outgoing-sharing feature.
+
+The package-transfer batch passed bounded Bun 1.4.2 Docker checks: six workspace
+typechecks, 253 Shared/Mobile tests (1,159 assertions), 56 focused Web tests
+(206 assertions), Biome on 14 source/config files, independent iOS/Android
+exports and post-export Mobile app/test typechecks. Frozen manifest/lock and
+exact implementation comparisons passed. Expo dependency checking still reports
+only the explicit TS7 policy difference. Native compilation, system picker/share
+interaction and actual package transfers remain device acceptance work.
+
 These additions do not establish full Web parity. Universal-link routing,
-Skill bundle upload/download/send, provider configuration, remaining Vault workflows,
+managed runtime Skill/plugin actions, remaining provider and Vault workflows,
 native builds and real store payments remain separate
 acceptance work. Existing Session transcripts remain read-only by design.
 
@@ -414,7 +438,7 @@ until each surface has implementation, focused verification and device evidence:
 | Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings | Remaining general/profile settings and real Clerk flows |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing and text export | Rich-text/link presentation, public/universal-link entrypoints, device scrolling/sharing and visual acceptance |
-| Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
+| Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Memory CRUD/search | Managed runtime Skill/plugin actions, remaining detail views and native file/share acceptance |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport | Universal-link intake and device acceptance |
 | v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal and Agent model binding; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity, Custom deletion and WhatsApp device onboarding/repair | Native/live provider and channel acceptance |
@@ -514,6 +538,13 @@ On an authorized simulator/device build, verify:
    a concurrent revision change and confirm it cannot remove the replacement.
    Verify Agent-synced/shared Skills remain read-only and account switching
    retires every pending Skill action.
+   Upload a tar.gz package using the system picker; duplicate new keys must not
+   overwrite existing Skills. Confirm replacement separately. Download/share on
+   both OSes and confirm receiving apps can read the file before explicitly
+   clearing the account's export cache. Copy/move between owned workspace
+   Projects; fail destination upload and change source revision during transfer.
+   Neither case may delete unconfirmed source content. A partial move must retain
+   the destination and report that source removal was not confirmed.
 9. Create full/excerpt/response Session snapshots after explicit confirmation;
    use event-backed transcripts with gaps between canonical positions. Check
    exact-kind revocation of both snapshot and legacy live links, export links,

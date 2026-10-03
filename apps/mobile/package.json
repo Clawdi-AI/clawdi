@@ -22,6 +22,7 @@
 		"expo-constants": "57.0.20",
 		"expo-crypto": "57.0.3",
 		"expo-file-system": "catalog:expo57",
+		"expo-sharing": "catalog:expo57",
 		"expo-linking": "57.0.11",
 		"expo-localization": "57.0.2",
 		"expo-network": "57.0.2",

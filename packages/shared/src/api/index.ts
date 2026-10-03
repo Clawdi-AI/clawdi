@@ -93,9 +93,16 @@ export {
 	type SessionSharingClient,
 } from "./session-sharing-client";
 export * from "./session-timeline";
-export { createSkillClient, type SkillClient } from "./skill-client";
+export {
+	buildSkillArchiveForm,
+	createSkillClient,
+	MAX_SKILL_ARCHIVE_BYTES,
+	type SkillClient,
+	skillArchiveFilename,
+} from "./skill-client";
 export * from "./skill-content";
 export * from "./skill-policy";
+export { skillTransferTargets, transferSkill } from "./skill-transfer";
 export {
 	createVaultClient,
 	type VaultCatalogQuery,

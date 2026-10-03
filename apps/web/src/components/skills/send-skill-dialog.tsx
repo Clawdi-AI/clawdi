@@ -1,5 +1,6 @@
 "use client";
 
+import { skillTransferTargets, transferSkill } from "@clawdi/shared/api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Copy } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useRef, useState } from "react";
@@ -30,7 +31,6 @@ import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { skillCapabilities } from "@/lib/skill-authority";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type SendableSkill = Pick<
@@ -74,13 +74,11 @@ export function SendSkillDialog({
 	// projections are excluded at both source and destination boundaries.
 	const projectTargets = useMemo(
 		() =>
-			(projects ?? [])
-				.filter((p) => p.is_owner !== false && p.id !== skill.project_id && p.kind === "workspace")
-				.map((p) => ({
-					value: p.id,
-					label: displayProjectName(p),
-					emoji: identityFor(displayProjectName(p)).emoji,
-				})),
+			skillTransferTargets(projects ?? [], skill.project_id ?? "").map((p) => ({
+				value: p.id,
+				label: displayProjectName(p),
+				emoji: identityFor(displayProjectName(p)).emoji,
+			})),
 		[projects, skill.project_id],
 	);
 	const targetItems = useMemo(
@@ -97,34 +95,36 @@ export function SendSkillDialog({
 			if (!target) throw new Error("Choose a destination first");
 			if (!skill.project_id) throw new Error("Open this Skill from its Project and try again");
 			const projectsById = new Map((projects ?? []).map((project) => [project.id, project]));
-			if (!skillCapabilities(skill, projectsById.get(skill.project_id)).canSend) {
-				throw new Error("This Skill is read-only");
-			}
-			const blob = ensureBlob(
-				unwrap(
-					await api.GET("/v1/projects/{project_id}/skills/{skill_key}/download", {
-						params: {
-							path: { project_id: skill.project_id, skill_key: skill.skill_key },
-						},
-						parseAs: "blob",
-					}),
-				),
-			);
-			await uploadSkillArchive(target, skill.skill_key, blob, { createOnly: true });
-			if (action === "copy") return { sourceRemoved: null };
-			try {
-				unwrap(
-					await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
-						params: {
-							path: { project_id: skill.project_id, skill_key: skill.skill_key },
-							query: { expected_content_hash: skill.content_hash },
-						},
-					}),
-				);
-				return { sourceRemoved: true };
-			} catch {
-				return { sourceRemoved: false };
-			}
+			const sourceProject = projectsById.get(skill.project_id);
+			const targetProject = projectsById.get(target);
+			if (!sourceProject || !targetProject) throw new Error("Project unavailable");
+			return transferSkill({
+				skill,
+				source: sourceProject,
+				target: targetProject,
+				move: action === "move",
+				download: async () =>
+					ensureBlob(
+						unwrap(
+							await api.GET("/v1/projects/{project_id}/skills/{skill_key}/download", {
+								params: {
+									path: { project_id: sourceProject.id, skill_key: skill.skill_key },
+								},
+								parseAs: "blob",
+							}),
+						),
+					),
+				upload: (blob) => uploadSkillArchive(target, skill.skill_key, blob, { createOnly: true }),
+				remove: async (contentHash) =>
+					unwrap(
+						await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
+							params: {
+								path: { project_id: sourceProject.id, skill_key: skill.skill_key },
+								query: { expected_content_hash: contentHash },
+							},
+						}),
+					),
+			});
 		},
 		onSuccess: ({ sourceRemoved }) => {
 			qc.invalidateQueries({ queryKey: ["skills"] });

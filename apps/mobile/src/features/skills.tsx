@@ -91,6 +91,17 @@ function SkillsView({ project }: { project?: Project }) {
 					<NativeButton label={t("vault.searchAction")} onPress={() => setQuery(search.trim())} />
 					{!project || (isWritableSkillProject(project) && !project.archived_at) ? (
 						<NativeButton
+							label={t("skillArchive.title")}
+							onPress={() =>
+								router.push({
+									pathname: "/skills/archive",
+									params: project ? { projectId: project.id } : {},
+								})
+							}
+						/>
+					) : null}
+					{!project || (isWritableSkillProject(project) && !project.archived_at) ? (
+						<NativeButton
 							label={t("skills.create")}
 							onPress={() =>
 								router.push({

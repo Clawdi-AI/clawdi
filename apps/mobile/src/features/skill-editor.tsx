@@ -266,6 +266,16 @@ function SkillEditor({
 							onPress={startEdit}
 						/>
 						<NativeButton label={t("skills.remove")} disabled={disabled} onPress={remove} />
+						<NativeButton
+							label={t("skillArchive.open")}
+							disabled={action.busy || detail.isError}
+							onPress={() =>
+								router.push({
+									pathname: "/skills/archive",
+									params: { projectId: projectId ?? "", skillKey: skillKey ?? "" },
+								})
+							}
+						/>
 					</AppView>
 				) : null}
 				{create ? (
