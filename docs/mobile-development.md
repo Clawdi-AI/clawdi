@@ -1,13 +1,13 @@
 # Mobile development
 
-Status: Wave 1 implementation is in progress. `apps/mobile` now contains the
-Cloud-only v2 Expo shell, Clerk authentication boundary, account-generation
-fencing, and read-only Agent/Session surfaces. Hosted remains the v1 legacy
-product and is intentionally not required by the mobile app. The compatibility
+Status: Wave 2 implementation is a merge candidate. `apps/mobile` contains the
+Cloud-only v2 Expo app, Clerk verification/recovery flows, account-generation
+fencing, and paginated read-only Agent/Session history. Hosted v1 legacy
+configuration is intentionally not required by the mobile app. The compatibility
 fixture below is historical V0 evidence; it is not a payment implementation,
 native iOS/Android build, or real-device authentication proof.
 
-## Wave 1 verification snapshot
+## Foundation toolchain
 
 The root workspace uses Bun `1.4.2` and a named `expo57` catalog for the
 approved SDK 57 runtime exception. A bounded Bun 1.4.2 install generated the
@@ -28,7 +28,88 @@ maps `types` to `types/index.d.ts` and the opt-in condition to
 describes the opt-in on pre-0.87 releases. The V0 strict-API probe below remains
 historical evidence; it is not a claim that the product passes that opt-in gate.
 
+## Develop and verify the product
+
+Use the root `packageManager` (`bun@1.4.2`) and committed root lock. Common
+versions belong in the root Bun catalog; SDK-constrained native packages use
+`catalog:expo57`. Do not flatten the Web/Desktop and native React versions or
+install an independent mobile lockfile.
+
+Set `EXPO_PUBLIC_CLAWDI_API_URL` and `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` for the
+development build, then run:
+
+```bash
+bun run --cwd apps/mobile dev
+```
+
+Use a development build containing the project's native modules; Metro export
+success does not establish Expo Go support. Done: Expo starts and the app shows sign-in; missing or invalid configuration
+shows a safe configuration screen instead. Use a reachable Cloud API URL on
+physical devices, not the development computer's `localhost`. These public
+values are embedded in the app; never put private credentials in them. Clerk
+email/password verification, recovery and supported second factors must be
+configured by the account owner. This work does not change Clerk settings.
+
+Run the isolated product suite from the repository root:
+
+```bash
+bun run --cwd apps/mobile test
+```
+
+Done: the clean Docker runner installs the frozen workspace lock, completes
+the Mobile TypeScript 7 check, and reports passing tests without modifying
+the checkout. `test:internal` is only for the disposable runner and CI.
+`scripts/test.sh ci` also includes the Mobile tests.
+
+The read surfaces use generated API types and account-fenced queries. Agent
+inventory is virtualized; Sessions use explicit load-more and pull-to-refresh.
+Agent-to-Sessions navigation uses the generated `environment_id` filter.
+Session responses do not expose a stable Agent id, so no reverse link is
+invented. Transcripts pin subsequent pages to the first response's content
+revision, offer an explicit reset on a revision conflict, and distinguish
+unuploaded content from a network error. Messages remain read-only and plain
+text; this app does not send messages or embed a runtime UI.
+
+After independent review corrected the Expo UI hosting contract, one bounded
+Docker run passed the exact foundation's Mobile/Shared TypeScript 7, Biome
+(32 files), 11 Mobile tests and independent iOS/Android Metro exports. In the
+same disposable workspace, the full Wave 2 candidate passed all six workspace
+typechecks, Biome (57 files), 22 Mobile tests (54 assertions), 125 Shared tests,
+five runner contract tests and both platform exports. The container exited 0;
+frozen install did not change the root manifest or lock. Separate resolution
+checks against that lock found one Mobile React identity across eight peers.
+
+Every native system button is wrapped in Expo UI's `Host`, with vertical
+content sizing and full available width. The Universal Button adapters do not
+create that native bridge themselves. Dark/light tokens retain UniWind's
+documented root-scoped variants; their emitted Tailwind selectors were checked
+separately from Metro. These are source/bundling checks, not proof of a native
+build, visual layout, accessibility interaction or a live Clerk flow.
+
+## Device acceptance still required
+
+On an authorized simulator/device build, verify:
+
+1. Sign in, register/verify email, recover a password and complete enabled
+   second factors. Unsupported factors/session tasks must show safe guidance.
+2. Switch accounts during a pending read and sign out during a pending action;
+   no previous account's data or navigation may leak into the new account.
+3. Browse Agent/Session lists and transcript pages, including empty, offline,
+   unavailable-content and revision-conflict states; test foreground recovery.
+4. Check native tabs, deep links/back navigation, safe areas, dark/light modes,
+   large text and screen-reader labels on both platforms.
+
+Done: record the device/OS and observed outcomes. No live authentication,
+native compilation/signing, purchases or provisioning has been verified here.
+RevenueCat and new paid Cloud Agent creation remain gated by the separate
+reviewed store/capacity/backend contracts; a read-only UI does not satisfy them.
+
 ## Reproduce the compatibility gate
+
+> HISTORICAL V0 - The probe and pending decisions below describe the original
+> investigation. The product now uses the approved SDK 57 runtime exception
+> and default native type policy documented above; original evidence is kept
+> unchanged for reproducibility.
 
 Run from this checkout on Linux with Docker, GNU `timeout`, and UID 1000. No
 backend, credentials, store configuration, signing, real login, or purchases are

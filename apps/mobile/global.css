@@ -2,13 +2,30 @@
 @import "uniwind";
 @import "heroui-native/styles";
 
-@theme {
-	--color-background: #f8fafc;
-	--color-surface: #ffffff;
-	--color-foreground: #172033;
-	--color-muted: #64748b;
-	--color-primary: #2454d9;
-	--color-danger: #b42318;
+@layer theme {
+	:root {
+		@variant light {
+			--color-background: #f8fafc;
+			--color-surface: #ffffff;
+			--color-foreground: #172033;
+			--color-muted: #64748b;
+			--color-primary: #2454d9;
+			--color-danger: #b42318;
+		}
+	}
+}
+
+@layer theme {
+	:root {
+		@variant dark {
+			--color-background: #0f172a;
+			--color-surface: #1e293b;
+			--color-foreground: #f1f5f9;
+			--color-muted: #94a3b8;
+			--color-primary: #93b4ff;
+			--color-danger: #fda4af;
+		}
+	}
 }
 
 @source "./app";

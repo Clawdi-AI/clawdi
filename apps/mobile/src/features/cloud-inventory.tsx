@@ -1,10 +1,11 @@
-import type { components, SessionListQuery } from "@clawdi/shared/api";
-import { useQuery } from "@tanstack/react-query";
+import { ApiClientError, type components, type SessionListQuery } from "@clawdi/shared/api";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
 import { AppPressable, AppText, AppView } from "../ui/primitives";
+import { nextSessionPage } from "./read-helpers";
 
 export type CloudAgent = components["schemas"]["AgentResponse"];
 export type CloudSession = components["schemas"]["SessionListItemResponse"];
@@ -24,6 +25,7 @@ export function useCloudAgents() {
 		queryKey: accountQueryKey(scope, "cloud-agents"),
 		queryFn: ({ signal }) => read((readSignal) => cloud.listAgents(undefined, readSignal), signal),
 		enabled: scope.isReady,
+		retry: false,
 	});
 }
 
@@ -38,19 +40,34 @@ export function useCloudAgent(agentId: string | undefined) {
 			return read((readSignal) => cloud.getAgent(agentId, readSignal), signal);
 		},
 		enabled: scope.isReady && Boolean(agentId),
+		retry: false,
 	});
 }
 
-export function useCloudSessions() {
+export function useCloudSessions(agentId?: string, enabled = true) {
 	const { cloud } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
-	return useQuery({
-		queryKey: accountQueryKey(scope, "cloud-sessions", sessionListQuery),
-		queryFn: ({ signal }) =>
-			read((readSignal) => cloud.listSessions(sessionListQuery, readSignal), signal),
-		enabled: scope.isReady,
+	return useInfiniteQuery({
+		queryKey: accountQueryKey(scope, "cloud-sessions", agentId ?? "all", sessionListQuery),
+		initialPageParam: 1,
+		queryFn: ({ signal, pageParam }) =>
+			read(
+				(readSignal) =>
+					cloud.listSessions(
+						{ ...sessionListQuery, page: pageParam, environment_id: agentId },
+						readSignal,
+					),
+				signal,
+			),
+		getNextPageParam: nextSessionPage,
+		enabled: scope.isReady && enabled,
+		retry: false,
 	});
+}
+
+export function isNotFound(error: unknown) {
+	return error instanceof ApiClientError && error.status === 404;
 }
 
 export function useCloudSession(sessionId: string | undefined) {
@@ -64,6 +81,7 @@ export function useCloudSession(sessionId: string | undefined) {
 			return read((readSignal) => cloud.getSession(sessionId, readSignal), signal);
 		},
 		enabled: scope.isReady && Boolean(sessionId),
+		retry: false,
 	});
 }
 
@@ -103,7 +121,7 @@ export function AgentRow({ agent }: { agent: CloudAgent }) {
 			onPress={() => router.push(`/agents/${encodeURIComponent(agent.id)}`)}
 		>
 			<AppView className="flex-row items-center justify-between gap-3">
-				<AppText className="flex-1 text-base font-semibold text-foreground">
+				<AppText numberOfLines={2} className="flex-1 text-base font-semibold text-foreground">
 					{agentDisplayName(agent)}
 				</AppText>
 				<AppText className="text-sm font-semibold text-primary">
@@ -132,7 +150,7 @@ export function SessionRow({ session }: { session: CloudSession }) {
 			onPress={() => router.push(`/sessions/${encodeURIComponent(session.id)}`)}
 		>
 			<AppView className="flex-row items-center justify-between gap-3">
-				<AppText className="flex-1 text-base font-semibold text-foreground">
+				<AppText numberOfLines={2} className="flex-1 text-base font-semibold text-foreground">
 					{sessionDisplayName(session)}
 				</AppText>
 				<AppText className="text-sm font-semibold text-primary">
@@ -159,7 +177,7 @@ export function BackButton() {
 		<AppPressable
 			accessibilityRole="button"
 			className="self-start py-2"
-			onPress={() => router.back()}
+			onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
 		>
 			<AppText className="text-base font-semibold text-primary">‹ {t("navigation.back")}</AppText>
 		</AppPressable>

@@ -1,5 +1,6 @@
 import { useUser } from "@clerk/expo";
 import { useRouter } from "expo-router";
+import { RefreshControl } from "react-native";
 import {
 	AgentRow,
 	SessionRow,
@@ -18,7 +19,19 @@ export default function HomeRoute() {
 	const sessions = useCloudSessions();
 	const displayName = user?.firstName ?? user?.primaryEmailAddress?.emailAddress;
 	return (
-		<AppScrollView className="flex-1 bg-background" contentContainerStyle={{ flexGrow: 1 }}>
+		<AppScrollView
+			className="flex-1 bg-background"
+			contentContainerStyle={{ flexGrow: 1 }}
+			refreshControl={
+				<RefreshControl
+					refreshing={agents.isRefetching || sessions.isRefetching}
+					onRefresh={() => {
+						if (!agents.isFetching) void agents.refetch();
+						if (!sessions.isFetching) void sessions.refetch();
+					}}
+				/>
+			}
+		>
 			<AppView className="flex-1 gap-6 px-6 pb-10 pt-8">
 				<AppView className="gap-1">
 					<AppText className="text-base text-muted">{t("home.greeting")}</AppText>
@@ -31,7 +44,7 @@ export default function HomeRoute() {
 					{agents.isPending ? (
 						<LoadingScreen label={t("loading.agents")} />
 					) : agents.isError ? (
-						<ErrorState onRetry={() => void agents.refetch()} />
+						<ErrorState onRetry={agents.isFetching ? undefined : () => void agents.refetch()} />
 					) : agents.data?.length ? (
 						agents.data.slice(0, 3).map((agent) => <AgentRow agent={agent} key={agent.id} />)
 					) : (
@@ -45,9 +58,9 @@ export default function HomeRoute() {
 					{sessions.isPending ? (
 						<LoadingScreen label={t("loading.sessions")} />
 					) : sessions.isError ? (
-						<ErrorState onRetry={() => void sessions.refetch()} />
-					) : sessions.data?.items.length ? (
-						sessions.data.items
+						<ErrorState onRetry={sessions.isFetching ? undefined : () => void sessions.refetch()} />
+					) : sessions.data?.pages[0]?.items.length ? (
+						sessions.data.pages[0]?.items
 							.slice(0, 3)
 							.map((session) => <SessionRow key={session.id} session={session} />)
 					) : (

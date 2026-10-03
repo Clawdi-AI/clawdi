@@ -37,6 +37,27 @@ export const en = {
 		unavailable: "Authentication is not ready yet.",
 		failed: "We could not complete authentication. Check your details and try again.",
 		verificationRequired: "This account needs an additional verification step.",
+		working: "Please wait…",
+		verificationCode: "Verification code",
+		authenticatorCode: "Authenticator code",
+		backupCode: "Backup code",
+		codeSubtitle: "Enter your verification code to continue.",
+		verify: "Verify and continue",
+		resendCode: "Resend code",
+		codeSentTo: "Code sent to",
+		codeSent: "A new verification code has been sent.",
+		useBackupCode: "Use a backup code",
+		forgotPassword: "Forgot password?",
+		recoveryTitle: "Reset your password",
+		recoverySubtitle: "Receive a code at your account email address.",
+		sendRecoveryCode: "Send recovery code",
+		newPassword: "New password",
+		resetPassword: "Reset password and sign in",
+		startOver: "Start over",
+		unsupportedVerification:
+			"This account requires a verification method or account details that this app does not support. Continue on the web or contact your administrator.",
+		sessionTaskRequired:
+			"Your account has a required setup step. Complete it on the web before using the mobile app.",
 	},
 	home: {
 		greeting: "Welcome back",
@@ -49,6 +70,10 @@ export const en = {
 		emptyMessage: "When an Agent is available for this account, its status will appear here.",
 	},
 	inventory: {
+		loadMore: "Load more",
+		refresh: "Refresh",
+		notFound: "This item is unavailable or no longer exists.",
+		end: "All available items loaded.",
 		viewAll: "View all",
 		viewDetails: "Details",
 	},
@@ -69,6 +94,17 @@ export const en = {
 		adapters: "Adapters",
 	},
 	sessions: {
+		filter: "Sessions for this Agent",
+		clearFilter: "Show all Sessions",
+		transcript: "Message transcript",
+		noMessages: "No message transcript is available yet.",
+		truncated: "Long messages are limited to 12,000 characters.",
+		revisionChanged: "The transcript changed. Refresh to load its current version.",
+		user: "You",
+		assistant: "Assistant",
+		readOnly: "Read-only transcript",
+		loaded: "Messages loaded",
+		filterInvalid: "The Agent filter is invalid.",
 		title: "Sessions",
 		description: "Read-only history from your Cloud Agents.",
 		detailDescription: "Read-only Session information from Cloud.",
@@ -108,86 +144,6 @@ export const en = {
 	},
 } as const;
 
-export type TranslationKey =
-	| "app.name"
-	| "navigation.home"
-	| "navigation.account"
-	| "navigation.back"
-	| "loading.app"
-	| "loading.authentication"
-	| "loading.agents"
-	| "loading.agent"
-	| "loading.sessions"
-	| "loading.session"
-	| "configuration.title"
-	| "configuration.message"
-	| "configuration.missing"
-	| "configuration.invalid"
-	| "auth.signInTitle"
-	| "auth.signInSubtitle"
-	| "auth.signUpTitle"
-	| "auth.signUpSubtitle"
-	| "auth.email"
-	| "auth.password"
-	| "auth.signIn"
-	| "auth.signUp"
-	| "auth.noAccount"
-	| "auth.haveAccount"
-	| "auth.createAccount"
-	| "auth.returnToSignIn"
-	| "auth.unavailable"
-	| "auth.failed"
-	| "auth.verificationRequired"
-	| "home.greeting"
-	| "home.agentsTitle"
-	| "home.sessionsTitle"
-	| "home.workspaceTitle"
-	| "home.workspaceMessage"
-	| "home.emptyTitle"
-	| "home.emptyMessage"
-	| "inventory.viewAll"
-	| "inventory.viewDetails"
-	| "agents.title"
-	| "agents.description"
-	| "agents.detailDescription"
-	| "agents.empty"
-	| "agents.type"
-	| "agents.machine"
-	| "agents.operatingSystem"
-	| "agents.version"
-	| "agents.lastSeen"
-	| "agents.lastSync"
-	| "agents.neverSeen"
-	| "agents.unknown"
-	| "agents.syncEnabled"
-	| "agents.adapters"
-	| "sessions.title"
-	| "sessions.description"
-	| "sessions.detailDescription"
-	| "sessions.empty"
-	| "sessions.agent"
-	| "sessions.status"
-	| "sessions.project"
-	| "sessions.localId"
-	| "sessions.started"
-	| "sessions.lastActivity"
-	| "sessions.ended"
-	| "sessions.inProgress"
-	| "sessions.messages"
-	| "sessions.model"
-	| "sessions.unknownModel"
-	| "sessions.unknownAgent"
-	| "sessions.unknownProject"
-	| "sessions.unknownActivity"
-	| "sessions.tags"
-	| "common.yes"
-	| "common.no"
-	| "account.title"
-	| "account.signedInAs"
-	| "account.signOut"
-	| "account.signOutFailed"
-	| "account.accountUnavailable"
-	| "error.genericTitle"
-	| "error.genericMessage"
-	| "error.tryAgain"
-	| "error.offline";
+export type TranslationKey = {
+	[Scope in keyof typeof en]: `${Scope}.${keyof (typeof en)[Scope] & string}`;
+}[keyof typeof en];
