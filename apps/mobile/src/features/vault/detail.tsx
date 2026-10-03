@@ -1,9 +1,13 @@
 import {
 	ApiClientError,
 	buildKeyImportPreview,
+	splitVaultKeys,
 	transferVaultKeys,
 	type VaultIdentity,
 	type VaultKeySelection,
+	type VaultPrefixGroup,
+	type VaultSplitResult,
+	validVaultSplit,
 } from "@clawdi/shared/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
@@ -23,6 +27,7 @@ import { routeParam } from "../read-helpers";
 import { ResourceError } from "../resource-error";
 import { useVaultCatalog } from "./catalog";
 import { VaultRequests } from "./requests";
+import { VaultSplit } from "./split";
 
 export function VaultDetailScreen() {
 	const scope = useAccountScope();
@@ -53,6 +58,7 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 	const [projectTargetId, setProjectTargetId] = useState("");
 	const [saved, setSaved] = useState(false);
 	const [selected, setSelected] = useState<VaultKeySelection[]>([]);
+	const [splitResult, setSplitResult] = useState<VaultSplitResult>();
 	const [transferResult, setTransferResult] =
 		useState<Awaited<ReturnType<typeof transferVaultKeys>>>();
 	const capture = useForegroundLease();
@@ -207,6 +213,34 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 				]);
 			},
 			mode === "move",
+			false,
+		);
+	};
+	const split = (groups: VaultPrefixGroup[], removeOriginals: boolean) => {
+		if (!identity || !validVaultSplit(identity, groups)) return;
+		confirm(
+			t("vault.splitTitle"),
+			`${groups.map((g) => `${g.prefix} → ${g.slug}`).join("\n")}\n\n${t(removeOriginals ? "vault.moveWarning" : "vault.selectedCopyWarning")}\n\n${t("vault.splitInspect")}`,
+			async (isCurrent) => {
+				const result = await splitVaultKeys(
+					identity,
+					groups,
+					removeOriginals,
+					{
+						create: (body) => read((signal) => vault.create(body, signal)),
+						copyItems: (source, target, body) =>
+							read((signal) => vault.copyItems(source, target, body, signal)),
+						deleteItems: (source, body, globalDelete) =>
+							read((signal) => vault.deleteItems(source, body, globalDelete, signal)),
+					},
+					isCurrent,
+				);
+				if (!isCurrent()) return;
+				setSplitResult(result);
+				setSelected([]);
+				await refresh();
+			},
+			removeOriginals,
 			false,
 		);
 	};
@@ -505,6 +539,18 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 							</AppView>
 						) : null}
 					</>
+				) : null}
+				{identity && (writable || splitResult) ? (
+					<VaultSplit
+						source={identity}
+						keys={Object.entries(sections.data ?? {}).flatMap(([section, names]) =>
+							names.map((name) => ({ section, name })),
+						)}
+						disabled={action.busy}
+						result={splitResult}
+						onSubmit={split}
+						onReset={() => setSplitResult(undefined)}
+					/>
 				) : null}
 				{action.error ? <AppText accessibilityRole="alert">{t("vault.failed")}</AppText> : null}
 				{saved ? <AppText accessibilityRole="alert">{t("vault.saved")}</AppText> : null}

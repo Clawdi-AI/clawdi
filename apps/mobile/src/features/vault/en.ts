@@ -1,4 +1,16 @@
 export const vaultEn = {
+	splitTitle: "Split by app prefix",
+	splitDescription:
+		"Keys named app/KEY can be copied into one new Vault per prefix, removing that prefix from each name. Edit destination slugs to resolve naming conflicts. Values stay server-side.",
+	splitSlug: "Destination slug",
+	splitRemove: "Delete confirmed copied originals for every attached Project",
+	splitInvalid:
+		"Select prefixes with distinct valid destination slugs, different from this Vault. Use lowercase letters, numbers and hyphens.",
+	splitComplete: "Complete",
+	splitIncomplete: "Incomplete or unconfirmed",
+	splitInspect:
+		"New Vaults are not linked to Projects automatically. Failed or interrupted operations may leave destinations behind. Inspect both source and destinations before trying again; existing Vaults are never reused automatically.",
+	splitReset: "Close report and review remaining keys",
 	supplyTitle: "Supply requested credentials",
 	supplyPrivacy:
 		"Paste a request link to securely fill its fields. No sign-in token is sent. Leaving this screen or backgrounding the app clears the link and all entered secrets.",

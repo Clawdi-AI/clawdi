@@ -239,7 +239,7 @@ Ship the backend route before these clients: older servers fail closed at the
 new route, and clients never fall back to the legacy endpoint. Missing identities,
 foreign owners and out-of-bound Agent keys are rejected; exact attachment does
 not rename or create Vaults. Credential profiles, automatic capability-link intake,
-prefix-based splitting, Project
+Project
 scope filtering and device interaction verification remain open; this is not
 full Vault parity. Existing-key skipping uses the fetched key-name snapshot,
 not a server-side compare-and-set guarantee against concurrent writes.
@@ -275,6 +275,16 @@ source edits can race between copy and deletion, and the UI warns against them.
 Native foreground/account retirement stops subsequent batch operations; an already
 sent mutation can still finish server-side. No automatic mutation retries occur.
 
+Prefix splitting is implemented on both surfaces through Shared `prefixGroupsFor`,
+`validVaultSplit` and `splitVaultKeys`. Exact prefixes stay distinct even when their
+default slugs collide; editable destination slugs must be unique before any write.
+Creation uses `create_only`, never implicitly reuses an existing destination, then
+copies with the exact returned Vault ID and `strip_prefix`. Optional source cleanup
+uses the same full-copy guard as normal moves. Reports retain partial destinations
+for inspection; failed creation can have an unknown outcome, and empty/partial
+Vaults are not automatically rolled back or linked to Projects. Native lifecycle
+retirement prevents subsequent operations, not already admitted server writes.
+
 Source implementation is not native acceptance. Keep the complete v2 Web scope
 until each surface has implementation, focused verification and device evidence:
 
@@ -285,7 +295,7 @@ until each surface has implementation, focused verification and device evidence:
 | Sessions | Inventory, pinned message history, snapshot/live sharing and text export | Search/filter parity, tool timeline, public/universal-link entrypoints, device sharing |
 | Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
-| Vault | Search/pagination, create, stable-ID detail/attach, import, selected-key copy/move, global delete/detach, owner secret-request inventory/create/share, public native request supply | Credential profiles, universal-link intake, prefix splitting, Project filters and device acceptance |
+| Vault | Search/pagination, create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public native request supply | Credential profiles, universal-link intake, Project filters and device acceptance |
 | v2 AI providers/channels | Not implemented | BYOK, provider OAuth/model bindings, channel connection/pairing/repair |
 | Deployment/billing | Basic eligibility/creation/recovery and read-only billing/deployment views | Paid creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |
