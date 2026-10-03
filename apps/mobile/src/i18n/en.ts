@@ -28,12 +28,19 @@ export const en = {
 		disconnected: "Disconnected",
 	},
 	profile: {
+		avatar: "Profile picture",
+		avatarSaved: "Profile picture updated. Any unsaved name changes still need to be saved.",
+		avatarHint:
+			"Choose a PNG, JPEG or WebP image up to 2 MiB. It will be uploaded to your account.",
+		uploadAvatar: "Change profile picture",
+		removeAvatar: "Remove profile picture",
+		removeAvatarWarning: "Remove your custom account picture? Your account name will not change.",
 		unsavedTitle: "Discard profile changes?",
 		unsavedMessage: "Your account name changes have not been saved.",
 		discard: "Discard changes",
 		title: "Edit profile",
 		description:
-			"Update your account name. Your sign-in email and security settings are not changed here.",
+			"Update your account name and picture. Your sign-in email and security settings are not changed here.",
 		firstName: "First name",
 		lastName: "Last name",
 		save: "Save profile",

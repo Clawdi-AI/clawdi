@@ -1,9 +1,10 @@
 import { useUser } from "@clerk/expo";
 import type { UserResource } from "@clerk/expo/types";
+import { File } from "expo-file-system";
 import { Redirect, useNavigation } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import { useRef, useState } from "react";
-import { Alert } from "react-native";
+import { Alert, Image } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { useAccountScope } from "../platform/account-lifecycle";
@@ -35,7 +36,55 @@ function ProfileForm({ user }: { user: UserResource }) {
 	});
 	const [firstName, setFirstName] = useState(saved.firstName);
 	const [lastName, setLastName] = useState(saved.lastName);
-	const [success, setSuccess] = useState(false);
+	const [success, setSuccess] = useState<false | "name" | "avatar">(false);
+	const [avatar, setAvatar] = useState({ url: user.imageUrl, custom: user.hasImage });
+	const updateAvatar = (remove: boolean) =>
+		void action.run(async (current) => {
+			if (user.id !== scope.accountKey || !scope.isCurrent() || !capture()()) return;
+			setSuccess(false);
+			let file: string | null = null;
+			if (!remove) {
+				const picked = await File.pickFileAsync({
+					mimeTypes: ["image/png", "image/jpeg", "image/webp"],
+				});
+				// Capture foreground permission after the system picker returns.
+				const visible = capture();
+				if (picked.canceled || !current() || !scope.isCurrent() || !visible()) return;
+				const image = picked.result;
+				if (
+					!Number.isSafeInteger(image.size) ||
+					image.size <= 0 ||
+					image.size > 2 * 1024 * 1024 ||
+					!["image/png", "image/jpeg", "image/webp"].includes(image.type)
+				)
+					throw new Error("Unsupported profile image");
+				const base64 = await image.base64();
+				if (!current() || !scope.isCurrent() || !visible()) return;
+				if (base64.length > 4 * Math.ceil((2 * 1024 * 1024) / 3))
+					throw new Error("Profile image exceeds upload limit");
+				file = `data:${image.type};base64,${base64}`;
+			}
+			const result = await user.setProfileImage({ file });
+			if (!current() || !scope.isCurrent()) return;
+			setAvatar({ url: result.publicUrl ?? "", custom: !remove });
+			setSuccess("avatar");
+		});
+	const removeAvatar = () => {
+		const visible = capture();
+		const ticket = ++confirmation.current;
+		Alert.alert(t("profile.removeAvatar"), t("profile.removeAvatarWarning"), [
+			{ text: t("account.cancel"), style: "cancel" },
+			{
+				text: t("profile.removeAvatar"),
+				style: "destructive",
+				onPress: () => {
+					if (ticket !== confirmation.current || !visible() || !scope.isCurrent()) return;
+					confirmation.current++;
+					updateAvatar(true);
+				},
+			},
+		]);
+	};
 	const dirty = firstName !== saved.firstName || lastName !== saved.lastName;
 	usePreventRemove(scope.isReady && dirty, ({ data }) => {
 		const visible = capture();
@@ -65,7 +114,7 @@ function ProfileForm({ user }: { user: UserResource }) {
 			setSaved(next);
 			setFirstName(next.firstName);
 			setLastName(next.lastName);
-			setSuccess(true);
+			setSuccess("name");
 		});
 	return (
 		<ReadScreen>
@@ -78,6 +127,24 @@ function ProfileForm({ user }: { user: UserResource }) {
 				<AppText>
 					{user.primaryEmailAddress?.emailAddress ?? t("account.accountUnavailable")}
 				</AppText>
+				{avatar.url.startsWith("https://") ? (
+					<Image
+						source={{ uri: avatar.url }}
+						style={{ width: 88, height: 88, borderRadius: 44 }}
+						accessibilityLabel={t("profile.avatar")}
+					/>
+				) : null}
+				<AppText>{t("profile.avatarHint")}</AppText>
+				<NativeButton
+					label={t("profile.uploadAvatar")}
+					disabled={action.busy}
+					onPress={() => updateAvatar(false)}
+				/>
+				<NativeButton
+					label={t("profile.removeAvatar")}
+					disabled={action.busy || !avatar.custom}
+					onPress={removeAvatar}
+				/>
 				<AppView className="gap-2">
 					<AppText>{t("profile.firstName")}</AppText>
 					<AppTextInput
@@ -109,7 +176,11 @@ function ProfileForm({ user }: { user: UserResource }) {
 					/>
 				</AppView>
 				{action.error ? <AppText accessibilityRole="alert">{t("profile.failed")}</AppText> : null}
-				{success ? <AppText accessibilityRole="alert">{t("profile.saved")}</AppText> : null}
+				{success ? (
+					<AppText accessibilityRole="alert">
+						{t(success === "avatar" ? "profile.avatarSaved" : "profile.saved")}
+					</AppText>
+				) : null}
 				<NativeButton label={t("profile.save")} disabled={!dirty || action.busy} onPress={save} />
 			</AppScrollView>
 		</ReadScreen>
