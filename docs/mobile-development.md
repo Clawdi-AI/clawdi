@@ -360,7 +360,7 @@ until each surface has implementation, focused verification and device evidence:
 | Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport | Universal-link intake and device acceptance |
-| v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity and Custom bot deletion | WhatsApp device onboarding/repair, Agent model binding, native/live provider and channel acceptance |
+| v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity, Custom deletion and WhatsApp device onboarding/repair | Agent model binding, native/live provider and channel acceptance |
 | Deployment/billing | Basic eligibility/creation/recovery and read-only billing/deployment views | Paid creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |
 
@@ -388,7 +388,7 @@ runner: Shared/Mobile suites plus Web's `channel-linking.logic.test.ts`,
 `agent-channel-cards.logic.test.ts`. Done: all behavior tests and the three
 workspace typechecks pass. Native browser handoff, expiry/background behavior,
 destructive confirmations and live channel operations still require authorized
-device acceptance. WhatsApp onboarding/repair is not implemented by these screens.
+device acceptance.
 
 The channel batch passed Bun 1.4.2 frozen installation, Shared/Mobile/Web TS7,
 231 Shared/Mobile tests (990 assertions), 33 focused Web tests (119 assertions),
@@ -396,6 +396,33 @@ Biome on 19 source files, separate iOS/Android Metro-Hermes exports and the
 post-export Mobile typecheck. Exact source and root manifest/lock comparisons
 passed. These are isolated source/bundling checks, not native compilation or
 real channel acceptance.
+
+WhatsApp linked-device onboarding and owner-confirmed repair use generated Cloud
+contracts. Start retries keep the original UUID and name; repair keeps the durable
+Custom bot identity. Polling is read-only from the client's perspective, pauses on
+blur/background/offline, and stops after three consecutive failures or the server
+deadline. Check/retry/cancel are explicit actions. Returning from another app can
+resume a known session even when new-allocation readiness or inventory reads fail.
+QR payloads, pairing codes and phone input are never persisted or query-cached;
+backgrounding retains only redacted in-memory recovery metadata. Leaving the screen
+does not promise cancellation: unfinished server sessions expire, and users can
+explicitly cancel before leaving. No automatic repair or replacement runs on mount.
+
+Shared `pairingQr` uses catalog-pinned `uqr` (0.1.3) to generate local-only paths
+with a four-module quiet zone. Web renders the same geometry as native SVG; neither
+uploads pairing material to a QR service nor inserts server-supplied SVG. Invalid
+or oversized values fail closed. The phone-number fallback is only offered when
+the server supports it; QR-only repair remains supported. Real QR scanning, device
+switching, session expiry, cleanup and WhatsApp repair require authorized acceptance.
+
+This batch passed Bun 1.4.2 frozen reinstall, Shared/Mobile/Web TS7, 234
+Shared/Mobile tests (1009 assertions), all 73 Web channel tests (247 assertions),
+and both platform exports plus post-export Mobile TS7. An independent jsQR decoder
+recovered four distinct synthetic payloads from the actual shared path geometry;
+empty/oversized inputs were rejected. Eight existing Chromium cases passed. The new
+WhatsApp recovery/QR case passed a focused rerun after its assertion was corrected
+to allow only the intentionally injected 503 network diagnostic. Source formatting
+and exact source/manifest/lock comparisons passed. No live pairing was performed.
 
 On an authorized simulator/device build, verify:
 

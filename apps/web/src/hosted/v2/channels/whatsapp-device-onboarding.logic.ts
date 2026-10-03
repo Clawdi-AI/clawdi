@@ -1,24 +1,10 @@
-import type {
-	WhatsAppOnboardingReadiness,
-	WhatsAppOnboardingState,
-} from "@/hosted/v2/channels/channel-types";
+import type { WhatsAppOnboardingReadiness } from "@/hosted/v2/channels/channel-types";
 
-const E164_DIGITS = /^[1-9][0-9]{6,14}$/;
-
-export function whatsappPhoneNumberError(value: string): string | null {
-	if (!value) return null;
-	return E164_DIGITS.test(value)
-		? null
-		: "Use country code and digits only, without +, spaces, or punctuation.";
-}
-
-export function whatsappOnboardingShouldPoll(state: WhatsAppOnboardingState): boolean {
-	return state === "generating" || state === "ready" || state === "scanned";
-}
-
-export function whatsappOnboardingRequiresCleanup(state: WhatsAppOnboardingState): boolean {
-	return whatsappOnboardingShouldPoll(state) || state === "error";
-}
+export {
+	whatsappOnboardingRequiresCleanup,
+	whatsappOnboardingShouldPoll,
+	whatsappPhoneNumberError,
+} from "@clawdi/shared/api";
 
 export function whatsappQrExpiryLabel(expiresAt: string | null | undefined, nowMs: number): string {
 	if (!expiresAt) return "Waiting for a new QR code…";

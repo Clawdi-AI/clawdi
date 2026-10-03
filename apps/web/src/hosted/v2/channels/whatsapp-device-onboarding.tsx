@@ -323,6 +323,7 @@ function YourWhatsAppFlow({
 						onChange={(event) => setName(event.target.value)}
 						placeholder="Personal WhatsApp"
 						maxLength={120}
+						disabled={Boolean(startRequestIdRef.current) || actions.start.isPending}
 						autoComplete="off"
 					/>
 					<p className="text-xs text-muted-foreground">
@@ -331,7 +332,7 @@ function YourWhatsAppFlow({
 				</div>
 				{requestError ? (
 					<PairingNotice title="Couldn't start WhatsApp connection">
-						Try again. No account was added.
+						The previous request may still be running. Try again to recover the same request.
 					</PairingNotice>
 				) : null}
 				<PairingDialogActions>

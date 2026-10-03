@@ -35,13 +35,19 @@ function ChannelsView() {
 	return (
 		<InventoryList
 			header={
-				<ChannelCreate
-					refresh={async () => {
-						const results = await Promise.all([pool.refetch(), owned.refetch()]);
-						if (results.some((result) => result.isError))
-							throw new Error("Channel inventory unavailable");
-					}}
-				/>
+				<AppView className="gap-3">
+					<NativeButton
+						label={t("whatsapp.title")}
+						onPress={() => router.push("/channels/whatsapp")}
+					/>
+					<ChannelCreate
+						refresh={async () => {
+							const results = await Promise.all([pool.refetch(), owned.refetch()]);
+							if (results.some((result) => result.isError))
+								throw new Error("Channel inventory unavailable");
+						}}
+					/>
+				</AppView>
 			}
 			title={t("channels.title")}
 			description={t("channels.description")}

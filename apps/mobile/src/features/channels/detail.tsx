@@ -364,6 +364,15 @@ function ChannelDetail({ id }: { id?: string }) {
 						onPress={() => void perform((signal) => channels.syncCommands(id ?? "", signal))}
 					/>
 				) : null}
+				{ownedBot?.provider === "whatsapp" ? (
+					<NativeButton
+						label={t("whatsapp.repair")}
+						disabled={disabled}
+						onPress={() =>
+							router.push({ pathname: "/channels/whatsapp", params: { accountId: ownedBot.id } })
+						}
+					/>
+				) : null}
 				{ownedBot ||
 				(bot?.access === "owner" && bot.capabilities.manage_account && !pool.isError) ? (
 					<NativeButton

@@ -108,3 +108,5 @@ export * from "./vault-state";
 export * from "./vault-supply-client";
 export * from "./vault-supply-state";
 export * from "./vault-transfer";
+export * from "./whatsapp-client";
+export * from "./whatsapp-onboarding";

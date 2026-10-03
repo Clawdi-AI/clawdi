@@ -5,6 +5,56 @@ test.beforeEach(async ({ page }) => {
 	await stubCloudApi(page);
 });
 
+test("WhatsApp retries an uncertain start with the same identity and renders the shared QR", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	const attempts: unknown[] = [];
+	const session = {
+		id: "fixture-wa",
+		name: "Work WhatsApp",
+		state: "ready",
+		method: "qr",
+		qr: "synthetic-linked-device-reference",
+		qr_expires_at: new Date(Date.now() + 60000).toISOString(),
+		expires_at: new Date(Date.now() + 300000).toISOString(),
+		started_at: new Date().toISOString(),
+		manual_pairing_code_supported: false,
+	};
+	await page.route("**/v1/channels/whatsapp/onboarding/readiness", (route) =>
+		route.fulfill({ json: { available: true, manual_pairing_code_supported: false } }),
+	);
+	await page.route("**/v1/channels/whatsapp/onboarding/sessions", async (route) => {
+		attempts.push(route.request().postDataJSON());
+		await route.fulfill(
+			attempts.length === 1 ? { status: 503, json: { detail: "unavailable" } } : { json: session },
+		);
+	});
+	await page.route("**/v1/channels/whatsapp/onboarding/sessions/fixture-wa", (route) =>
+		route.fulfill({ json: session }),
+	);
+	await page.goto("/channels");
+	await page.getByRole("button", { name: "Add channel" }).first().click();
+	const dialog = page.getByRole("dialog", { name: "Add channel" });
+	await dialog.getByRole("button", { name: /WhatsApp/ }).click();
+	await dialog.getByRole("button", { name: "Connect your account" }).click();
+	await dialog.getByLabel("Account name", { exact: true }).fill("Work WhatsApp");
+	await dialog.getByRole("button", { name: "Generate QR", exact: true }).click();
+	await expect(
+		dialog.getByText("The previous request may still be running.", { exact: false }),
+	).toBeVisible();
+	await expect(dialog.getByLabel("Account name", { exact: true })).toBeDisabled();
+	await dialog.getByRole("button", { name: "Generate QR", exact: true }).click();
+	await expect(dialog.getByRole("img", { name: "WhatsApp linked-device QR code" })).toBeVisible();
+	expect(attempts).toHaveLength(2);
+	expect(attempts[1]).toEqual(attempts[0]);
+	expect(errors).toEqual([
+		expect.stringMatching(
+			/^Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) \(http:\/\/127\.0\.0\.1:\d+\/v1\/channels\/whatsapp\/onboarding\/sessions\)$/,
+		),
+	]);
+});
+
 test("provider removal requires impact acknowledgement and retries the exact confirmation", async ({
 	page,
 }) => {

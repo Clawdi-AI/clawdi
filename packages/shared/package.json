@@ -11,6 +11,7 @@
 		"./sharing": "./src/sharing/agent-handoff.ts",
 		"./x402": "./src/x402/index.ts",
 		"./api": "./src/api/index.ts",
+		"./qr": "./src/qr.ts",
 		"./style/theme.css": "./src/style/theme.css"
 	},
 	"scripts": {
@@ -23,6 +24,7 @@
 		"@x402/evm": "2.27.0",
 		"@x402/fetch": "2.27.0",
 		"openapi-fetch": "catalog:",
+		"uqr": "catalog:",
 		"viem": "catalog:"
 	},
 	"devDependencies": {

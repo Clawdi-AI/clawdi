@@ -1,5 +1,6 @@
 import { billingEn } from "../features/billing/en";
 import { channelsEn } from "../features/channels/en";
+import { whatsappEn } from "../features/channels/whatsapp-en";
 import { connectorsEn } from "../features/connectors/en";
 import { creationEn } from "../features/creation/en";
 import { deploymentsEn } from "../features/deployments/en";
@@ -8,6 +9,7 @@ import { vaultEn } from "../features/vault/en";
 
 export const en = {
 	channels: channelsEn,
+	whatsapp: whatsappEn,
 	providers: {
 		removalUnavailable: "Provider removal requires a configured Hosted API.",
 		reviewRemoval: "Review provider removal",

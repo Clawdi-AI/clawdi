@@ -21,6 +21,7 @@ import {
 	createSkillClient,
 	createVaultClient,
 	createVaultSupplyClient,
+	createWhatsAppClient,
 	type HostedApiClient,
 	type HostedComputeClient,
 	type ProjectSharingClient,
@@ -28,6 +29,7 @@ import {
 	type SessionSharingClient,
 	type SkillClient,
 	type VaultClient,
+	type WhatsAppClient,
 } from "@clawdi/shared/api";
 import { useAuth } from "@clerk/expo";
 import { createContext, type ReactNode, useCallback, useContext, useMemo } from "react";
@@ -37,6 +39,7 @@ import { useAccountScope } from "../platform/account-lifecycle";
 export type MobileApiClients = Readonly<{
 	cloud: CloudApiClient;
 	channels: ChannelClient;
+	whatsapp: WhatsAppClient;
 	account: AccountApiClient;
 	aiProviders: AiProviderClient;
 	sharing: ProjectSharingClient;
@@ -84,6 +87,11 @@ export function MobileApiProvider({
 	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
+			whatsapp: createWhatsAppClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
 			channels: createChannelClient({
 				baseUrl: config.cloudApiUrl,
 				getToken: readToken,
