@@ -59,6 +59,7 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 	const boundedAgentRequests: string[] = [];
 	const updateBodies: unknown[] = [];
 	const vaultCreateRequests: Array<{ url: URL; body: unknown }> = [];
+	const vaultAttachRequests: URL[] = [];
 	const vaultDetachRequests: URL[] = [];
 	const vaultRows = [
 		{
@@ -115,6 +116,19 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 		if (path === "/v1/skills") {
 			projectResourceRequests.push(request.url());
 			return fulfill(route, { items: [], total: 0, page: 1, page_size: 200 });
+		}
+		if (
+			path === `/v1/vault/release-archive/attachments/${projectId}` &&
+			request.method() === "POST"
+		) {
+			vaultAttachRequests.push(url);
+			const existing = vaultRows.find(
+				(vault) =>
+					vault.id === url.searchParams.get("vault_id") && vault.slug === "release-archive",
+			);
+			if (!existing) return route.fulfill({ status: 404, json: { detail: "Vault not found" } });
+			if (!existing.project_ids.includes(projectId)) existing.project_ids.push(projectId);
+			return fulfill(route, existing);
 		}
 		if (path === "/v1/vault") {
 			projectResourceRequests.push(request.url());
@@ -248,12 +262,11 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 		"In this Project2",
 	);
 	await expect(available).toHaveCount(0);
-	await expect.poll(() => vaultCreateRequests).toHaveLength(1);
-	expect(vaultCreateRequests[0]?.body).toEqual({
-		slug: "release-archive",
-		name: "Release archive",
-	});
-	expect(vaultCreateRequests[0]?.url.searchParams.get("project_id")).toBe(projectId);
+	await expect.poll(() => vaultAttachRequests).toHaveLength(1);
+	expect(vaultAttachRequests[0]?.searchParams.get("vault_id")).toBe(
+		"88888888-8888-4888-8888-888888888888",
+	);
+	expect(vaultCreateRequests).toHaveLength(0);
 	await releaseVault.getByRole("button", { name: "Remove Release archive from Project" }).click();
 	await expect(
 		releaseVault.getByRole("button", { name: "Add Release archive to Project" }),

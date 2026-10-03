@@ -1,4 +1,10 @@
-import { ApiClientError, buildKeyImportPreview, type VaultIdentity } from "@clawdi/shared/api";
+import {
+	ApiClientError,
+	buildKeyImportPreview,
+	transferVaultKeys,
+	type VaultIdentity,
+	type VaultKeySelection,
+} from "@clawdi/shared/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useState } from "react";
@@ -46,6 +52,9 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 	const [targetId, setTargetId] = useState("");
 	const [projectTargetId, setProjectTargetId] = useState("");
 	const [saved, setSaved] = useState(false);
+	const [selected, setSelected] = useState<VaultKeySelection[]>([]);
+	const [transferResult, setTransferResult] =
+		useState<Awaited<ReturnType<typeof transferVaultKeys>>>();
 	const capture = useForegroundLease();
 	useFocusEffect(
 		useCallback(() => {
@@ -124,6 +133,7 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 		warning: string,
 		perform: (isCurrent: () => boolean) => Promise<void>,
 		destructive = false,
+		reportSuccess = true,
 	) => {
 		const visible = capture();
 		if (!writable || action.busy || !visible()) return;
@@ -137,8 +147,9 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 					if (signal.aborted || !scope.isCurrent() || !visible()) return;
 					void action.run(async (isCurrent) => {
 						setSaved(false);
+						setTransferResult(undefined);
 						await perform(() => isCurrent() && visible());
-						if (isCurrent() && visible()) setSaved(true);
+						if (isCurrent() && visible() && reportSuccess) setSaved(true);
 					});
 				},
 			},
@@ -166,6 +177,37 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 				if (isCurrent()) router.replace("/vault");
 			},
 			true,
+		);
+	};
+	const transfer = (mode: "copy" | "move") => {
+		if (!identity || !destination || !selected.length || targets.isError) return;
+		const source = identity;
+		const target = destination;
+		const keys = selected.filter((key) => sections.data?.[key.section]?.includes(key.name));
+		if (keys.length !== selected.length) return;
+		confirm(
+			t(mode === "move" ? "vault.moveSelected" : "vault.copySelected"),
+			`${keys.length} → ${target.name}\n\n${t(mode === "move" ? "vault.moveWarning" : "vault.selectedCopyWarning")}`,
+			async (isCurrent) => {
+				const result = await transferVaultKeys(keys, mode, {
+					copy: (section, fields) =>
+						read((signal) => vault.copyItems(source, target, { section, fields }, signal)),
+					remove: (section, fields) =>
+						read((signal) => vault.deleteItems(source, { section, fields }, true, signal)),
+					isCurrent,
+				});
+				if (!isCurrent()) return;
+				setTransferResult(result);
+				setSelected([]);
+				await Promise.all([
+					refresh(),
+					cache.invalidateQueries({
+						queryKey: accountQueryKey(scope, "vault-sections", target.id),
+					}),
+				]);
+			},
+			mode === "move",
+			false,
 		);
 	};
 	return (
@@ -215,9 +257,44 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 										<AppText className="font-semibold text-foreground">
 											{group === "(default)" ? t("vault.defaultSection") : group}
 										</AppText>
+										{writable ? (
+											<NativeSwitch
+												label={t("vault.selectSection")}
+												value={
+													keys.length > 0 &&
+													keys.every((name) =>
+														selected.some((key) => key.section === group && key.name === name),
+													)
+												}
+												disabled={action.busy || !keys.length}
+												onValueChange={(checked) =>
+													setSelected((current) => [
+														...current.filter((key) => key.section !== group),
+														...(checked ? keys.map((name) => ({ section: group, name })) : []),
+													])
+												}
+											/>
+										) : null}
 										{keys.map((key) => (
 											<AppView key={key} className="gap-1">
 												<AppText className="text-foreground">{key}</AppText>
+												{writable ? (
+													<NativeSwitch
+														label={`${t("vault.selectKey")}: ${key}`}
+														value={selected.some(
+															(item) => item.section === group && item.name === key,
+														)}
+														disabled={action.busy}
+														onValueChange={(checked) =>
+															setSelected((current) => [
+																...current.filter(
+																	(item) => item.section !== group || item.name !== key,
+																),
+																...(checked ? [{ section: group, name: key }] : []),
+															])
+														}
+													/>
+												) : null}
 												{writable ? (
 													<NativeButton
 														label={`${t("vault.deleteKey")}: ${key}`}
@@ -402,35 +479,28 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 										onPress={() => void targets.fetchNextPage()}
 									/>
 								) : null}
+								<AppText>
+									{t("vault.selectedCount")}: {selected.length}
+								</AppText>
 								<NativeButton
-									label={t("vault.copy")}
-									disabled={
-										action.busy ||
-										!destination ||
-										targets.isError ||
-										!validSection ||
-										existing.size === 0 ||
-										existing.size > 200
-									}
-									onPress={() => {
-										if (!identity || !destination) return;
-										confirm(
-											t("vault.copy"),
-											`${destination.name}\n\n${t("vault.copyWarning")}`,
-											async (isCurrent) => {
-												await read((s) =>
-													vault.copyItems(
-														identity,
-														destination,
-														{ section: normalizedSection, fields: [...existing] },
-														s,
-													),
-												);
-												if (isCurrent()) await refresh();
-											},
-										);
-									}}
+									label={t("vault.clearSelection")}
+									disabled={action.busy || !selected.length}
+									onPress={() => setSelected([])}
 								/>
+								{(["copy", "move"] as const).map((mode) => (
+									<NativeButton
+										key={mode}
+										label={t(mode === "copy" ? "vault.copySelected" : "vault.moveSelected")}
+										disabled={
+											action.busy ||
+											!destination ||
+											targets.isError ||
+											!selected.length ||
+											selected.some((key) => !sections.data?.[key.section]?.includes(key.name))
+										}
+										onPress={() => transfer(mode)}
+									/>
+								))}
 								<NativeButton label={t("vault.remove")} disabled={action.busy} onPress={remove} />
 							</AppView>
 						) : null}
@@ -438,6 +508,30 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 				) : null}
 				{action.error ? <AppText accessibilityRole="alert">{t("vault.failed")}</AppText> : null}
 				{saved ? <AppText accessibilityRole="alert">{t("vault.saved")}</AppText> : null}
+				{transferResult ? (
+					<AppView accessibilityRole="alert" className="gap-2">
+						<AppText>
+							{t("vault.copiedCount")}: {transferResult.copied}
+						</AppText>
+						{transferResult.failed.length > 0 ? (
+							<AppText>
+								{t("vault.copyUnconfirmed")}: {transferResult.failed.join(", ")}
+							</AppText>
+						) : null}
+						{transferResult.sourceRemoveFailed.length > 0 ? (
+							<AppText>
+								{t("vault.cleanupUnconfirmed")}: {transferResult.sourceRemoveFailed.join(", ")}
+							</AppText>
+						) : null}
+						{!transferResult.failed.length &&
+						!transferResult.sourceRemoveFailed.length &&
+						!transferResult.interrupted ? (
+							<AppText>{t("vault.saved")}</AppText>
+						) : (
+							<AppText>{t("vault.failed")}</AppText>
+						)}
+					</AppView>
+				) : null}
 			</AppScrollView>
 		</ReadScreen>
 	);

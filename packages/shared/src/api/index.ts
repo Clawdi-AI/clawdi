@@ -89,3 +89,4 @@ export * from "./vault-request-state";
 export * from "./vault-state";
 export * from "./vault-supply-client";
 export * from "./vault-supply-state";
+export * from "./vault-transfer";

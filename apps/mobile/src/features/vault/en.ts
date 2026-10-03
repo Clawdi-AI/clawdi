@@ -92,9 +92,19 @@ export const vaultEn = {
 		"Remove this Project's access to the Vault? Its Agents may no longer receive these secrets. The Vault and keys remain.",
 	unattached: "Not attached to any Project.",
 	copyTarget: "Copy destination",
-	copy: "Copy section to another Vault",
-	copyWarning:
-		"Copy every key in this section to the selected Vault? Matching destination keys will be overwritten. Values remain server-side.",
+	selectSection: "Select entire section",
+	selectKey: "Select key",
+	selectedCount: "Selected keys",
+	clearSelection: "Clear selection",
+	copySelected: "Copy selected keys",
+	moveSelected: "Move selected keys",
+	selectedCopyWarning:
+		"Matching destination keys will be overwritten. Copies are independent: later changes do not sync. To share one source of truth, attach this Vault to another Project instead. Values remain server-side.",
+	moveWarning:
+		"Matching destination keys will be overwritten, then confirmed copied keys will be deleted from this Vault for EVERY attached Project. This is a non-atomic copy followed by delete; avoid editing these keys concurrently. Partial results are possible. Values remain server-side.",
+	copiedCount: "Confirmed copies",
+	copyUnconfirmed: "Copy incomplete or unconfirmed; check both Vaults before retrying",
+	cleanupUnconfirmed: "Source deletion skipped or unconfirmed; check source keys",
 	chooseTarget: "Choose a destination Vault",
 	loadTargets: "Load more destinations",
 	noKeys: "No keys in this Vault.",

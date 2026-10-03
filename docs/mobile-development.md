@@ -223,7 +223,7 @@ the server's actual accounts. Native callback/deep-link integration and live
 OAuth are still acceptance work; no callback allowlist is changed here.
 
 Vault now has a paginated/searchable catalog, strict creation, stable-ID detail,
-section/key-name inventory, dotenv/JSON import preview, server-side section copy,
+section/key-name inventory, dotenv/JSON import preview, server-side selected-key copy/move,
 explicit global key/Vault deletion and Project detachment. Web and native use
 the same import parser, conflict preview and slug normalizer in Shared. Stored
 values are never requested; pasted values stay in component state, clear on
@@ -239,7 +239,7 @@ Ship the backend route before these clients: older servers fail closed at the
 new route, and clients never fall back to the legacy endpoint. Missing identities,
 foreign owners and out-of-bound Agent keys are rejected; exact attachment does
 not rename or create Vaults. Credential profiles, automatic capability-link intake,
-key selection/splitting, Project
+prefix-based splitting, Project
 scope filtering and device interaction verification remain open; this is not
 full Vault parity. Existing-key skipping uses the fetched key-name snapshot,
 not a server-side compare-and-set guarantee against concurrent writes.
@@ -265,6 +265,16 @@ share-sheet acceptance remain outstanding; Metro exports do not prove these beha
 
 ### Full-parity completion scope
 
+Web and native use `transferVaultKeys` for deduplicated, section-grouped batches
+of at most 150 names. Native selection supports individual keys and whole sections.
+Both source and destination mutations pin Vault IDs. A partial/unconfirmed copy
+never authorizes source deletion; only a full matching count permits the delete
+step. Results distinguish confirmed copies from incomplete copy and skipped or
+unconfirmed cleanup. This is not a transactional move or compare-and-set: concurrent
+source edits can race between copy and deletion, and the UI warns against them.
+Native foreground/account retirement stops subsequent batch operations; an already
+sent mutation can still finish server-side. No automatic mutation retries occur.
+
 Source implementation is not native acceptance. Keep the complete v2 Web scope
 until each surface has implementation, focused verification and device evidence:
 
@@ -275,7 +285,7 @@ until each surface has implementation, focused verification and device evidence:
 | Sessions | Inventory, pinned message history, snapshot/live sharing and text export | Search/filter parity, tool timeline, public/universal-link entrypoints, device sharing |
 | Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
-| Vault | Search/pagination, create, stable-ID detail/attach, import, section copy, global delete/detach, owner secret-request inventory/create/share, public native request supply | Credential profiles, universal-link intake, key selection/split, Project filters and device acceptance |
+| Vault | Search/pagination, create, stable-ID detail/attach, import, selected-key copy/move, global delete/detach, owner secret-request inventory/create/share, public native request supply | Credential profiles, universal-link intake, prefix splitting, Project filters and device acceptance |
 | v2 AI providers/channels | Not implemented | BYOK, provider OAuth/model bindings, channel connection/pairing/repair |
 | Deployment/billing | Basic eligibility/creation/recovery and read-only billing/deployment views | Paid creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |
