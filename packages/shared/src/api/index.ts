@@ -52,6 +52,9 @@ export * from "./hosted-ai-binding";
 export * from "./project-scope";
 export { createProjectSharingClient, type ProjectSharingClient } from "./project-sharing-client";
 export * from "./project-sharing-state";
+export * from "./provider-form";
+export * from "./provider-presets";
+export * from "./provider-types";
 export {
 	type AgentListQuery,
 	type CloudApiClient,

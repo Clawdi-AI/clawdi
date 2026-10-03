@@ -1,6 +1,7 @@
 import createClient from "openapi-fetch";
 import type { components, paths } from "./api.generated";
 import {
+	ApiClientError,
 	type ApiClientOptions,
 	createReadTransport,
 	readApiBaseUrl,
@@ -18,6 +19,23 @@ export function createAiProviderClient(options: ApiClientOptions) {
 	});
 	const path = (id: string) => ({ provider_id: readResourceId(id) });
 	return {
+		accept: async (
+			body: components["schemas"]["AiProviderAcceptRequest"],
+			key: string,
+			signal?: AbortSignal,
+		) => {
+			if (!/^[\x21-\x7e]{1,200}$/.test(key))
+				throw new ApiClientError(400, "invalid_idempotency_key");
+			return transport.read(
+				(init) =>
+					api.POST("/v1/ai-providers/accept", {
+						...init,
+						body,
+						params: { header: { "Idempotency-Key": key } },
+					}),
+				signal,
+			);
+		},
 		list: (signal?: AbortSignal) =>
 			transport.read((init) => api.GET("/v1/ai-providers", init), signal),
 		update: (id: string, body: components["schemas"]["AiProviderPatch"], signal?: AbortSignal) =>

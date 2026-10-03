@@ -7,6 +7,12 @@ import { vaultEn } from "../features/vault/en";
 
 export const en = {
 	providers: {
+		add: "Add API-key connection",
+		apiKey: "API key",
+		endpoint: "API endpoint",
+		retrySame: "Retry the same request",
+		uncertain:
+			"A save may have reached the server. Retry the same request, or refresh the list before starting another connection. Leaving this screen clears the entered key.",
 		title: "AI Providers",
 		description:
 			"Manage saved connections. Credential presence is not proof of connectivity or runtime compatibility.",

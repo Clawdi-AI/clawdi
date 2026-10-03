@@ -9,6 +9,7 @@ import { useMobileApi } from "../providers/api-provider";
 import { NativeButton } from "../ui/native-controls";
 import { AppText, AppTextInput, AppView } from "../ui/primitives";
 import { InventoryList } from "./inventory-list";
+import { ProviderCreate } from "./provider-create";
 
 export function AiProvidersScreen() {
 	const scope = useAccountScope();
@@ -28,6 +29,14 @@ function ProvidersView() {
 	});
 	return (
 		<InventoryList
+			header={
+				<ProviderCreate
+					providers={providers.data?.providers}
+					refresh={async () => {
+						await providers.refetch();
+					}}
+				/>
+			}
 			items={projectUserSelectableAiProviders(providers.data?.providers ?? [])}
 			title={t("providers.title")}
 			description={t("providers.description")}

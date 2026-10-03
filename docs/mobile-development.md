@@ -269,8 +269,15 @@ Account links to the native AI Provider inventory. It reuses Shared managed-prov
 filtering, generated Cloud contracts and the bounded authenticated transport.
 Label-only updates preserve credentials and routing; explicit configuration
 validation does not claim upstream connectivity. Queries and action completions
-are account-scoped, and mutations never automatically retry. BYOK creation,
-OAuth, connection editing and Hosted impact-confirmed removal remain outstanding.
+are account-scoped, and mutations never automatically retry. Native BYOK creation
+shares Web provider metadata, region choices and duplicate-safe form identity;
+custom connections expose all four supported protocols. After submission, the
+request body and idempotency key are fixed for explicit retry. Keys remain in
+component memory and are cleared on blur/background; an uncertain result warns
+the user to inspect the inventory before starting a new connection. There is no
+implicit model discovery or inference request. Web retains compatibility exports
+for the extracted Shared form helpers. OAuth, connection editing and Hosted
+impact-confirmed removal remain outstanding.
 
 Native Project detail is readable by accessible members; sharing management has
 its own owner-gated route. Agent, Skill and Vault catalogs reuse their existing
