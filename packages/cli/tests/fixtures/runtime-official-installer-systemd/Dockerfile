@@ -78,8 +78,12 @@ RUN mkdir -p /opt/stock/base-home /opt/stock/openclaw-home \
 
 ARG HERMES_COMMIT=cc4cab2f592e60a197e796506de9168f74baf3ea
 ARG HERMES_VERSION=0.19.1
-ADD --checksum=sha256:e75ad450f3e0932737bbfff3a0a997d4ed532dd8b5ece024072274791a648679 \
-	https://github.com/NousResearch/hermes-agent/archive/cc4cab2f592e60a197e796506de9168f74baf3ea.tar.gz \
+# GitHub generates the gzip wrapper for commit archives at request time, so the
+# compressed-byte digest is not stable even though the commit URL is immutable.
+# Pin the source to the exact commit. The checksum is intentionally omitted:
+# ADD --checksum would reject a valid archive when generated gzip metadata
+# changes between runners.
+ADD https://codeload.github.com/NousResearch/hermes-agent/tar.gz/${HERMES_COMMIT} \
 	/tmp/hermes-agent.tar.gz
 RUN mkdir -p /home/clawdi/.hermes/hermes-agent \
 	&& tar --extract --gzip --file /tmp/hermes-agent.tar.gz \
