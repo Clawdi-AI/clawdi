@@ -37,6 +37,7 @@ import type {
 	HostedWorkspaceSkillListResponse,
 	HostedWorkspaceSkillMutationResponse,
 	PortalRequest,
+	TrialOfferRequest,
 	WalletAutoReloadRequest,
 	WalletAutoReloadSetupFinalizeRequest,
 	WalletAutoReloadSetupRequest,
@@ -906,6 +907,8 @@ export function createBillingClient(
 				}),
 			),
 		getPlans: async () => unwrapDeploy(await api.GET("/v2/subscription/plans")),
+		resolveTrialOffer: async (body: TrialOfferRequest) =>
+			unwrapDeploy(await api.POST("/v2/subscription/trial-offer", { body })),
 		checkout: async (body: CheckoutRequest, idempotencyKey: string) =>
 			unwrapDeploy(
 				await api.POST("/v2/subscription/checkout", {
