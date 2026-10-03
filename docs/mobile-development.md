@@ -65,6 +65,13 @@ values are embedded in the app; never put private credentials in them. Clerk
 email/password verification, recovery and supported second factors must be
 configured by the account owner. This work does not change Clerk settings.
 
+The sign-in screen also offers an explicit email-code path without requiring or
+submitting a password. It creates an identifier-only SignIn attempt, prepares only
+the server-advertised email factor and reuses the existing code/MFA/finalization
+flow. If the account service disallows email codes, the app shows the existing
+unsupported-factor notice instead of claiming a code was sent. Real delivery and
+passwordless sign-in remain acceptance gates; social sign-in is still pending.
+
 `EXPO_PUBLIC_CLERK_OAUTH_PROVIDERS` optionally supplies a comma-separated list
 such as `google,github` for native account linking. Only the installed SDK's
 provider names or bounded `custom_<slug>` names are accepted; duplicate choices

@@ -246,6 +246,18 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 			} else setNotice(t("auth.unavailable"));
 		});
 
+	const startEmailCode = () =>
+		run(async (isCurrent) => {
+			if (!loaded || !signIn || signingUp || !validEmail || !isCurrent()) return;
+			setNotice(null);
+			setPassword("");
+			setCode("");
+			setFactor(null);
+			// Discover the server's permitted factors without submitting a password.
+			const attempt = await signIn.create({ identifier: email.trim() });
+			await advanceSignIn(attempt, isCurrent);
+		});
+
 	const resend = () =>
 		run(async (isCurrent) => {
 			setNotice(null);
@@ -259,11 +271,11 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 				const next = signIn.supportedFirstFactors?.find(
 					(candidate) => candidate.strategy === "email_code",
 				);
-				if (next?.strategy === "email_code")
-					await signIn.prepareFirstFactor({
-						strategy: "email_code",
-						emailAddressId: next.emailAddressId,
-					});
+				if (next?.strategy !== "email_code") throw new Error("Email factor unavailable");
+				await signIn.prepareFirstFactor({
+					strategy: "email_code",
+					emailAddressId: next.emailAddressId,
+				});
 			}
 			if (isCurrent()) setNotice(t("auth.codeSent"));
 		});
@@ -414,6 +426,13 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 							})
 						}
 						disabled={busy}
+					/>
+				) : null}
+				{!signingUp && step === "credentials" ? (
+					<NativeButton
+						label={t("auth.signInWithEmailCode")}
+						disabled={busy || !validEmail}
+						onPress={() => void startEmailCode()}
 					/>
 				) : null}
 				{!signingUp && step === "credentials" ? (

@@ -369,6 +369,7 @@ export const en = {
 		codeSent: "A new verification code has been sent.",
 		useBackupCode: "Use a backup code",
 		forgotPassword: "Forgot password?",
+		signInWithEmailCode: "Email me a sign-in code",
 		recoveryTitle: "Reset your password",
 		recoverySubtitle: "Receive a code at your account email address.",
 		sendRecoveryCode: "Send recovery code",
