@@ -4,9 +4,11 @@ import {
 	ApiClientError,
 	type ApiClientFetch,
 	type CloudApiClient,
+	type ConnectorClient,
 	createAccountApiClient,
 	createAgentProjectClient,
 	createCloudApiClient,
+	createConnectorClient,
 	createHostedApiClient,
 	createHostedComputeClient,
 	createProjectSharingClient,
@@ -30,6 +32,7 @@ export type MobileApiClients = Readonly<{
 	agentProjects: AgentProjectClient;
 	skills: SkillClient;
 	sessionSharing: SessionSharingClient;
+	connectors: ConnectorClient;
 	compute: HostedComputeClient | null;
 	hosted: HostedApiClient | null;
 }>;
@@ -67,6 +70,11 @@ export function MobileApiProvider({
 	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
+			connectors: createConnectorClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
 			sessionSharing: createSessionSharingClient({
 				baseUrl: config.cloudApiUrl,
 				getToken: readToken,

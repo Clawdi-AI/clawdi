@@ -193,7 +193,7 @@ Generated schema types remain authoritative. Platform UI, authentication,
 account-scoped query lifetime and navigation stay in their respective apps.
 
 These additions do not establish full Web parity. Universal-link routing,
-Skill bundle upload/download/send, connectors, provider configuration, vaults,
+Skill bundle upload/download/send, provider configuration, vaults,
 native builds and real store payments remain separate
 acceptance work. Existing Session transcripts remain read-only by design.
 
@@ -206,6 +206,22 @@ The native transcript requests the message-only timeline projection so share
 positions remain canonical event positions, not visible-page offsets. Native
 presentation is fenced against blur, backgrounding and account retirement.
 
+Connector screens provide searchable/paginated catalog, all-status account
+management, credential forms, provider-managed OAuth in the system browser,
+alias updates, disconnect confirmation and tool schemas. Web and native share
+authentication-flow selection, credential/default-field rules, active-account
+checks and metadata batching. Secrets stay out of query/mutation caches and
+are cleared on submit, blur and background. API-key presentation uses the same
+foreground lease so a background/foreground cycle cannot revive a late key.
+
+The Cloud connector contract accepts HTTP(S) allowlisted callbacks, not an app
+scheme (`backend/app/schemas/connector.py`). Native deliberately omits the
+callback and uses the provider-managed completion page. Expo WebBrowser 57.0.3
+resolves on opening Android Custom Tabs but on closing the iOS browser; neither
+result establishes authorization success. Return/focus and manual refresh query
+the server's actual accounts. Native callback/deep-link integration and live
+OAuth are still acceptance work; no callback allowlist is changed here.
+
 ### Full-parity completion scope
 
 Source implementation is not native acceptance. Keep the complete v2 Web scope
@@ -217,7 +233,8 @@ until each surface has implementation, focused verification and device evidence:
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing | Agent settings and runtime controls, Project-scoped resource navigation |
 | Sessions | Inventory, pinned message history, snapshot/live sharing and text export | Search/filter parity, tool timeline, public/universal-link entrypoints, device sharing |
 | Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
-| Connectors/Vault | Not implemented | Catalog, credentials, detail and lifecycle surfaces |
+| Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
+| Vault | Not implemented | Catalog, credentials, detail and lifecycle surfaces |
 | v2 AI providers/channels | Not implemented | BYOK, provider OAuth/model bindings, channel connection/pairing/repair |
 | Deployment/billing | Basic eligibility/creation/recovery and read-only billing/deployment views | Paid creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |
@@ -265,6 +282,12 @@ On an authorized simulator/device build, verify:
    and owner Markdown text sharing. Blur/background during a create/export and
    confirm a late result never opens a native share sheet. These operations must
    be exercised only with explicitly authorized test content/accounts.
+10. With authorized test connectors, exercise credentials and OAuth separately
+    on iOS and Android. Cancel the browser, return from background, and refresh;
+    only the server's account status establishes tool access. Verify disabled
+    accounts remain manageable, required hidden defaults are sent, aliases can
+    be cleared, and disconnect requires confirmation. Navigate away/background
+    while creating an API key and confirm a late result never redisplays it.
 
 Done: record the device/OS and observed outcomes. No live authentication,
 native compilation/signing, purchases or provisioning has been verified here.

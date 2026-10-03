@@ -6,6 +6,14 @@ import {
 } from "./credentials-dialog.logic";
 
 describe("credential field visibility", () => {
+	test("provider field names remain data instead of object prototype properties", () => {
+		const fields = [{ name: "constructor" }, { name: "__proto__" }];
+		expect(buildCredentialPayload(fields, {})).toEqual({});
+		const supplied = JSON.parse('{"__proto__":"secret","constructor":"key"}');
+		const result = buildCredentialPayload(fields, supplied);
+		expect(JSON.stringify(result)).toBe('{"constructor":"key","__proto__":"secret"}');
+		expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+	});
 	test("shows customer-facing fields", () => {
 		expect(
 			shouldShowCredentialField({

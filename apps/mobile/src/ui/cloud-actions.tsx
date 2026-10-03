@@ -20,6 +20,7 @@ export function CloudActions() {
 			<NativeButton label={t("navigation.skills")} onPress={() => router.push("/skills")} />
 			<NativeButton label={t("navigation.memories")} onPress={() => router.push("/memories")} />
 			<NativeButton label={t("navigation.projects")} onPress={() => router.push("/projects")} />
+			<NativeButton label={t("navigation.connectors")} onPress={() => router.push("/connectors")} />
 		</AppView>
 	);
 }

@@ -13,6 +13,12 @@ export {
 	createHostedComputeClient,
 	type HostedComputeClient,
 } from "./compute-client";
+export {
+	type ConnectorCatalogQuery,
+	type ConnectorClient,
+	createConnectorClient,
+} from "./connector-client";
+export * from "./connector-state";
 export type {
 	AiProviderRemovalImpact,
 	AiProviderRemovalResult,

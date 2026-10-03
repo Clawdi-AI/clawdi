@@ -1,8 +1,10 @@
 import { billingEn } from "../features/billing/en";
+import { connectorsEn } from "../features/connectors/en";
 import { creationEn } from "../features/creation/en";
 import { deploymentsEn } from "../features/deployments/en";
 
 export const en = {
+	connectors: connectorsEn,
 	billing: billingEn,
 	creation: creationEn,
 	deployments: deploymentsEn,
@@ -19,6 +21,7 @@ export const en = {
 		skills: "Skills",
 		memories: "Memories",
 		projects: "Projects",
+		connectors: "Connectors",
 	},
 	loading: {
 		app: "Loading Clawdi",

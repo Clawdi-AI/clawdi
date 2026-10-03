@@ -1,7 +1,7 @@
 import { useClerk, useUser } from "@clerk/expo";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
 import { Alert, AppState } from "react-native";
 import { useAuthAction } from "../../src/auth/use-auth-action";
 import { useI18n } from "../../src/i18n";
@@ -10,6 +10,7 @@ import {
 	useAccountRead,
 	useAccountScope,
 } from "../../src/platform/account-lifecycle";
+import { useForegroundLease } from "../../src/platform/use-foreground-lease";
 import { useMobileApi } from "../../src/providers/api-provider";
 import { ErrorState, LoadingScreen } from "../../src/ui/feedback";
 import { NativeButton } from "../../src/ui/native-controls";
@@ -38,6 +39,8 @@ function AccountView() {
 	const { busy, error, run } = useAuthAction(scope.identity);
 	const [keyLabel, setKeyLabel] = useState("");
 	const [rawKey, setRawKey] = useState<string | null>(null);
+	const capture = useForegroundLease();
+	useFocusEffect(useCallback(() => () => setRawKey(null), []));
 	useEffect(() => {
 		const subscription = AppState.addEventListener("change", (state) => {
 			if (state !== "active") setRawKey(null);
@@ -63,12 +66,14 @@ function AccountView() {
 	const onCreateKey = () =>
 		run(async (isCurrent) => {
 			if (!keyLabel.trim() || rawKey) return;
+			const visible = capture();
+			if (!visible()) return;
 			const created = await read(
 				(signal) => account.createApiKey({ label: keyLabel.trim() }, signal),
 				scope.signal,
 			);
 			if (!isCurrent()) return;
-			if (AppState.currentState === "active") setRawKey(created.raw_key);
+			if (visible()) setRawKey(created.raw_key);
 			setKeyLabel("");
 			await queryClient.invalidateQueries({ queryKey: accountQueryKey(scope, "account-api-keys") });
 		});

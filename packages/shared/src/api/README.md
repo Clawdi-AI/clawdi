@@ -107,6 +107,21 @@ payment methods or regenerating Hosted contracts requires the Hosted owner's
 reviewed immutable schema, source SHA, OpenAPI digest, generator command, and
 compatibility results. Do not hand-edit either generated file.
 
+## Connectors
+
+`createConnectorClient` uses the generated Cloud catalog, connection, credential,
+alias and tool contracts with the same bounded account-authenticated transport.
+It does not retry mutations or store credentials. Consumers must keep submitted
+secrets outside query/mutation caches and discard presentation after account or
+foreground changes. An omitted OAuth `redirect_url` selects the provider-managed
+callback; native custom schemes are not permitted by the existing Cloud schema.
+Browser return is not authorization success: reload the connection inventory.
+
+`connector-state.ts` is consumed by both Web and native for auth-flow selection,
+credential defaults/visibility, active status and metadata batching. Existing Web
+logic tests continue through compatibility re-exports, rather than duplicating
+each case for mobile. `connector-client.test.ts` checks the mutation wire shapes.
+
 ## Verification
 
 Run `bun run --cwd packages/shared test` through the repository Docker runner
