@@ -6,6 +6,21 @@ import { deploymentsEn } from "../features/deployments/en";
 import { vaultEn } from "../features/vault/en";
 
 export const en = {
+	providers: {
+		title: "AI Providers",
+		description:
+			"Manage saved connections. Credential presence is not proof of connectivity or runtime compatibility.",
+		empty: "No saved AI Providers.",
+		label: "Connection name",
+		rename: "Rename connection",
+		credentialPresent: "Credential material available",
+		credentialMissing: "Credential material unavailable",
+		validate: "Validate configuration",
+		valid: "Configuration is valid. This does not test the upstream connection.",
+		invalid: "Configuration needs attention. Review this connection's settings.",
+		failed:
+			"Could not complete the action. Refresh to check the current state before trying again.",
+	},
 	vault: vaultEn,
 	connectors: connectorsEn,
 	billing: billingEn,

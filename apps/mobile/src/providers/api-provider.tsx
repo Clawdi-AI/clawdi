@@ -1,12 +1,14 @@
 import {
 	type AccountApiClient,
 	type AgentProjectClient,
+	type AiProviderClient,
 	ApiClientError,
 	type ApiClientFetch,
 	type CloudApiClient,
 	type ConnectorClient,
 	createAccountApiClient,
 	createAgentProjectClient,
+	createAiProviderClient,
 	createCloudApiClient,
 	createConnectorClient,
 	createHostedApiClient,
@@ -31,6 +33,7 @@ import { useAccountScope } from "../platform/account-lifecycle";
 export type MobileApiClients = Readonly<{
 	cloud: CloudApiClient;
 	account: AccountApiClient;
+	aiProviders: AiProviderClient;
 	sharing: ProjectSharingClient;
 	agentProjects: AgentProjectClient;
 	skills: SkillClient;
@@ -75,6 +78,11 @@ export function MobileApiProvider({
 	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
+			aiProviders: createAiProviderClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
 			vaultSupply: createVaultSupplyClient({ baseUrl: config.cloudApiUrl, fetch: fetcher }),
 			vault: createVaultClient({
 				baseUrl: config.cloudApiUrl,

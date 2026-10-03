@@ -265,6 +265,13 @@ share-sheet acceptance remain outstanding; Metro exports do not prove these beha
 
 ### Full-parity completion scope
 
+Account links to the native AI Provider inventory. It reuses Shared managed-provider
+filtering, generated Cloud contracts and the bounded authenticated transport.
+Label-only updates preserve credentials and routing; explicit configuration
+validation does not claim upstream connectivity. Queries and action completions
+are account-scoped, and mutations never automatically retry. BYOK creation,
+OAuth, connection editing and Hosted impact-confirmed removal remain outstanding.
+
 Native Project detail is readable by accessible members; sharing management has
 its own owner-gated route. Agent, Skill and Vault catalogs reuse their existing
 list UI with explicit Project scope and account/Project/search cache keys. A
