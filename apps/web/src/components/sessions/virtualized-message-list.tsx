@@ -155,16 +155,20 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 		issuedLatestScrollRequestRef.current = requestId;
 		activeLatestScrollRef.current = {
 			requestId,
-			reachedBottom: false,
+			// An already-bottom window will not emit another atBottomStateChange.
+			reachedBottom: atBottomWindowKey === windowKey,
 			windowKey,
 		};
 		virtuoso.scrollToIndex({ index: "LAST", align: "end", behavior: "auto" });
+		syncPageBottom();
 	}, [
+		atBottomWindowKey,
 		props.latestScrollRequestId,
 		props.windowStartOffset,
 		readyWindowKey,
 		rows.length,
 		scrollParent,
+		syncPageBottom,
 		windowKey,
 	]);
 	useEffect(requestLatestScroll, [requestLatestScroll]);
