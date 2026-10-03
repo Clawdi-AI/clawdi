@@ -1,6 +1,5 @@
-import type { components, paths } from "@clawdi/shared/api";
+import { ApiClientError, type components, createVaultSupplyClient } from "@clawdi/shared/api";
 import { Eye, EyeOff } from "lucide-react";
-import createClient from "openapi-fetch";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,7 +21,10 @@ import {
 import { env } from "@/lib/env";
 
 type RequestContext = components["schemas"]["VaultSecretRequestStatus"];
-const client = createClient<paths>({ baseUrl: env.VITE_CLAWDI_API_URL });
+const client = createVaultSupplyClient({
+	baseUrl: env.VITE_CLAWDI_API_URL,
+	fetch: (request, init) => fetch(request, init),
+});
 const UNAVAILABLE =
 	"This request has changed or its link has expired. Ask your agent for a new link.";
 
@@ -157,13 +159,8 @@ export function VaultRequestPage() {
 		const controller = new AbortController();
 		setPhase("loading");
 		void client
-			.POST("/v1/vault/requests/inspect", {
-				body: { token: token.current },
-				cache: "no-store",
-				referrerPolicy: "no-referrer",
-				signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
-			})
-			.then(({ data, response }) => {
+			.inspect(token.current, undefined, controller.signal)
+			.then((data) => {
 				if (controller.signal.aborted) return;
 				if (data) {
 					setContext(data);
@@ -177,15 +174,19 @@ export function VaultRequestPage() {
 					);
 					setUpdates(data.update_fields);
 					setPhase("ready");
-				} else if (response.status === 410 || response.status === 422) setPhase("unavailable");
-				else {
-					setError("Could not load this request. Try again.");
-					setPhase("error");
 				}
 			})
-			.catch(() => {
+			.catch((error: unknown) => {
 				if (!controller.signal.aborted) {
-					setError("Could not connect. Try again.");
+					if (error instanceof ApiClientError && [410, 422].includes(error.status)) {
+						setPhase("unavailable");
+						return;
+					}
+					setError(
+						error instanceof ApiClientError
+							? "Could not load this request. Try again."
+							: "Could not connect. Try again.",
+					);
 					setPhase("error");
 				}
 			});
@@ -221,42 +222,37 @@ export function VaultRequestPage() {
 		const generation = selectionGeneration.current;
 		const timer = window.setTimeout(() => {
 			void client
-				.POST("/v1/vault/requests/inspect", {
-					body: { token: token.current, fields },
-					cache: "no-store",
-					referrerPolicy: "no-referrer",
-					signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
-				})
-				.then(({ data, response }) => {
+				.inspect(token.current, fields, controller.signal)
+				.then((data) => {
 					if (controller.signal.aborted || generation !== selectionGeneration.current) return;
-					if (data) {
-						setUpdates(data.update_fields);
-						setSelectionReady(true);
-					} else if (response.status === 410) {
+					setUpdates(data.update_fields);
+					setSelectionReady(true);
+				})
+				.catch((error: unknown) => {
+					if (controller.signal.aborted || generation !== selectionGeneration.current) return;
+					const status = error instanceof ApiClientError ? error.status : undefined;
+					if (status === 410) {
 						setRows([]);
 						setImportText("");
 						setPreview(undefined);
 						token.current = "";
 						setPhase("unavailable");
-					} else if (response.status === 409) {
+					} else if (status === 409) {
 						setSelectionError(
 							"Selected fields changed or are reserved. Remove added fields or ask your agent for a new link.",
 						);
-					} else if (response.status === 422) {
+					} else if (status === 422) {
 						setSelectionError(
 							"Selected field names are invalid. Use distinct names and at most 32 fields.",
 						);
 					} else {
 						setSelectionError(
-							"Could not check selected fields. The server is unavailable. Try again.",
+							status === undefined
+								? "Could not connect to check selected fields. Try again."
+								: "Could not check selected fields. The server is unavailable. Try again.",
 						);
 						setSelectionRetryable(true);
 					}
-				})
-				.catch(() => {
-					if (controller.signal.aborted || generation !== selectionGeneration.current) return;
-					setSelectionError("Could not connect to check selected fields. Try again.");
-					setSelectionRetryable(true);
 				});
 		}, 300);
 		return () => {
@@ -285,31 +281,27 @@ export function VaultRequestPage() {
 		}
 		setImportBusy(true);
 		try {
-			const { data, response } = await client.POST("/v1/vault/requests/inspect", {
-				body: { token: token.current, fields },
-				cache: "no-store",
-				referrerPolicy: "no-referrer",
-				signal: AbortSignal.timeout(20000),
-			});
-			if (!data) {
-				if (response.status === 410) {
-					setRows([]);
-					setImportText("");
-					setPreview(undefined);
-					token.current = "";
-					setPhase("unavailable");
-				} else if (response.status === 409) {
-					setError("Could not preview these fields. A selected field changed or is reserved.");
-				} else if (response.status === 422) {
-					setError("Selected field names are invalid. Use distinct names and at most 32 fields.");
-				} else {
-					setError("Could not preview these fields. The server is unavailable. Try again.");
-				}
-				return;
-			}
+			const data = await client.inspect(token.current, fields);
 			setPreview({ entries: parsed.entries, updateFields: data.update_fields });
-		} catch {
-			setError("Could not connect. Try previewing again.");
+		} catch (error) {
+			const status = error instanceof ApiClientError ? error.status : undefined;
+			if (status === 410) {
+				setRows([]);
+				setImportText("");
+				setPreview(undefined);
+				token.current = "";
+				setPhase("unavailable");
+			} else if (status === 409) {
+				setError("Could not preview these fields. A selected field changed or is reserved.");
+			} else if (status === 422) {
+				setError("Selected field names are invalid. Use distinct names and at most 32 fields.");
+			} else {
+				setError(
+					status === undefined
+						? "Could not connect. Try previewing again."
+						: "Could not preview these fields. The server is unavailable. Try again.",
+				);
+			}
 		} finally {
 			setImportBusy(false);
 		}
@@ -343,39 +335,36 @@ export function VaultRequestPage() {
 		setPhase("saving");
 		setError("");
 		try {
-			const { data, response } = await client.POST("/v1/vault/requests/supply", {
-				body: {
-					token: token.current,
-					fields: Object.fromEntries(rows.map((row) => [row.name, row.value])),
-				},
-				cache: "no-store",
-				referrerPolicy: "no-referrer",
-				signal: AbortSignal.timeout(20000),
-			});
-			if (data) {
-				setContext(data);
+			const data = await client.supply(
+				token.current,
+				Object.fromEntries(rows.map((row) => [row.name, row.value])),
+			);
+			setContext(data);
+			setRows([]);
+			setImportText("");
+			setPreview(undefined);
+			token.current = "";
+			setPhase("done");
+		} catch (error) {
+			const status = error instanceof ApiClientError ? error.status : undefined;
+			if (status === 409) {
+				setPhase("ready");
+				invalidateSelection();
+			} else if (status === 410) {
 				setRows([]);
 				setImportText("");
 				setPreview(undefined);
 				token.current = "";
-				setPhase("done");
-			} else if (response.status === 409) {
-				setPhase("ready");
-				invalidateSelection();
-			} else if (response.status === 410) {
-				setRows([]);
-				setImportText("");
-				setPreview(undefined);
 				setPhase("unavailable");
-			} else {
+			} else if (status !== undefined && status < 500) {
 				setError("Could not save. Supply every requested field and try again.");
 				setPhase("ready");
+			} else {
+				setError(
+					"Save could not be confirmed. Ask your agent to check the request status before trying again.",
+				);
+				setPhase("ready");
 			}
-		} catch {
-			setError(
-				"Save could not be confirmed. Ask your agent to check the request status before trying again.",
-			);
-			setPhase("ready");
 		}
 	}
 

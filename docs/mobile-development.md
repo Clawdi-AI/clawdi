@@ -254,11 +254,12 @@ device storage. Only the latest link is retained in a foreground ref for share
 retry, cleared on blur/background/account retirement.
 
 Recipients can paste a request link into the public native supply screen, including
-while signed out. Shared capability transport sends no account token and explicitly
+while signed out. Web's public supply page uses the same Shared capability
+transport for inspection, import preflight and submission. It sends no account token and explicitly
 omits cookies, caching, redirects and referrers. Native fields support dotenv import,
 case-sensitive names and server preflight before explicit overwrite confirmation.
 Submission is never automatically retried; unknown outcomes are not reported as
-success. Blur/background clears entered secrets and retires response permission.
+success. Native blur/background clears entered secrets and retires response permission.
 Automatic universal-link intake and device networking, input, lifecycle and
 share-sheet acceptance remain outstanding; Metro exports do not prove these behaviors.
 
@@ -305,7 +306,7 @@ until each surface has implementation, focused verification and device evidence:
 | Sessions | Inventory, pinned message history, snapshot/live sharing and text export | Search/filter parity, tool timeline, public/universal-link entrypoints, device sharing |
 | Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
-| Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public native request supply | Credential profiles, universal-link intake and device acceptance |
+| Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport | Universal-link intake and device acceptance |
 | v2 AI providers/channels | Not implemented | BYOK, provider OAuth/model bindings, channel connection/pairing/repair |
 | Deployment/billing | Basic eligibility/creation/recovery and read-only billing/deployment views | Paid creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |
