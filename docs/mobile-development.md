@@ -573,6 +573,12 @@ disconnect/reconnect and Esc/Tab/Ctrl+C controls, and destroys the DOM view on
 blur/background/account change. DOM callbacks recheck foreground/account leases;
 short-lived URLs never enter persistent/query storage. Native-module bridging is
 disabled; external links and OSC hyperlinks are disabled in the native terminal.
+Each connection attempt has a 20-second deadline covering credential acquisition
+and WebSocket opening, including subprotocol-to-query fallback. Timeout retires
+late callbacks and closes the socket; explicit retry remains available. Disposal
+clears the deadline and prevents retained handles from starting another attempt.
+An isolated Chromium clock/network probe verified stalled credentials, stalled
+handshake, zero sockets from late credentials and no retry after disposal.
 Both platforms exported native and DOM bundles with a single React 19.2.3
 identity in each source map. An isolated Chromium/local-WebSocket probe exercised
 real xterm input, resize, two handshakes with fresh credentials after 1013, and

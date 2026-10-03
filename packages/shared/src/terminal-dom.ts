@@ -108,6 +108,7 @@ export async function mountTerminal(
 	let fitFrame: number | null = null;
 	let retryTimer: number | null = null;
 	let stabilityTimer: number | null = null;
+	let connectionTimer: number | null = null;
 	let connectionGeneration = 0;
 	let reconnectAttempts = 0;
 	let hasConnected = false;
@@ -126,7 +127,13 @@ export async function mountTerminal(
 		window.clearTimeout(stabilityTimer);
 		stabilityTimer = null;
 	};
+	const clearConnectionTimer = () => {
+		if (connectionTimer === null) return;
+		window.clearTimeout(connectionTimer);
+		connectionTimer = null;
+	};
 	const closeCurrentSocket = () => {
+		clearConnectionTimer();
 		clearStabilityTimer();
 		const current = socket;
 		socket = null;
@@ -183,6 +190,7 @@ export async function mountTerminal(
 	};
 
 	const handleConnectionFailure = (message: string, mode: "initial" | "manual" | "automatic") => {
+		clearConnectionTimer();
 		if (mode === "automatic") {
 			scheduleReconnect(message, 1011);
 			return;
@@ -237,6 +245,7 @@ export async function mountTerminal(
 		};
 		const failTransport = () => {
 			if (!isCurrentTransport()) return;
+			clearConnectionTimer();
 			transportFailed = true;
 			clearStabilityTimer();
 			detachTransport();
@@ -267,6 +276,7 @@ export async function mountTerminal(
 
 		ws.onopen = () => {
 			if (!isCurrentTransport()) return;
+			clearConnectionTimer();
 			opened = true;
 			if (!sendTransport(JSON.stringify({ AuthToken: "", columns: term.cols, rows: term.rows }))) {
 				return;
@@ -312,6 +322,7 @@ export async function mountTerminal(
 				return;
 			}
 			const message = terminalConnectionClosedMessage(event);
+			clearConnectionTimer();
 			if (isRetryableTerminalCloseCode(event.code)) {
 				scheduleReconnect(message, event.code, connectionStable);
 				return;
@@ -323,12 +334,21 @@ export async function mountTerminal(
 	};
 
 	async function connect(mode: "initial" | "manual" | "automatic") {
+		if (disposed) return;
 		clearRetryTimer();
 		clearStabilityTimer();
 		closeCurrentSocket();
 		connectionGeneration += 1;
 		const generation = connectionGeneration;
 		updateStatus(mode === "initial" ? "connecting" : "reconnecting");
+		connectionTimer = window.setTimeout(() => {
+			connectionTimer = null;
+			if (disposed || generation !== connectionGeneration) return;
+			// Retire late credentials and socket callbacks before closing the attempt.
+			connectionGeneration += 1;
+			closeCurrentSocket();
+			handleConnectionFailure("Terminal connection timed out. Try again.", mode);
+		}, 20_000);
 		let websocketUrl: string;
 		try {
 			websocketUrl = await options.requestWebsocketUrl();
