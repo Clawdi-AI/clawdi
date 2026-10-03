@@ -65,7 +65,8 @@ function nonEmptyString(value: unknown): string | undefined {
 function validPublicApiKey(value: unknown, platform: "ios" | "android"): value is string {
 	const key = nonEmptyString(value);
 	const prefix = platform === "ios" ? "appl_" : "goog_";
-	return Boolean(key?.startsWith(prefix) && !/[\r\n]/.test(key));
+	if (!key || !key.startsWith(prefix)) return false;
+	return !/[\r\n]/.test(key);
 }
 
 function validProductId(value: unknown): value is string {
