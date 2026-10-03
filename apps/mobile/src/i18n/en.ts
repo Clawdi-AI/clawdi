@@ -18,6 +18,7 @@ export const en = {
 		billing: "Wallet & subscriptions",
 		skills: "Skills",
 		memories: "Memories",
+		projects: "Projects",
 	},
 	loading: {
 		app: "Loading Clawdi",
@@ -148,6 +149,12 @@ export const en = {
 		description: "Read-only memories available to your account.",
 		empty: "No memories are available for this account.",
 		unknown: "Uncategorized memory",
+	},
+	projects: {
+		title: "Projects",
+		description: "Projects available to your account.",
+		empty: "No projects are available for this account.",
+		unknown: "Unnamed project",
 	},
 	common: {
 		yes: "Yes",
