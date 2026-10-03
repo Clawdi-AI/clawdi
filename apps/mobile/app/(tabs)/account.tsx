@@ -1,3 +1,4 @@
+import { APPEARANCE_MODES } from "@clawdi/shared/consts";
 import { useClerk, useUser } from "@clerk/expo";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -12,8 +13,9 @@ import {
 } from "../../src/platform/account-lifecycle";
 import { useForegroundLease } from "../../src/platform/use-foreground-lease";
 import { useMobileApi } from "../../src/providers/api-provider";
+import { useAppearance } from "../../src/providers/appearance-provider";
 import { ErrorState, LoadingScreen } from "../../src/ui/feedback";
-import { NativeButton } from "../../src/ui/native-controls";
+import { NativeButton, NativePicker } from "../../src/ui/native-controls";
 import { AppScrollView, AppText, AppTextInput, AppView } from "../../src/ui/primitives";
 
 export default function AccountRoute() {
@@ -23,6 +25,7 @@ export default function AccountRoute() {
 
 function AccountView() {
 	const t = useI18n();
+	const appearance = useAppearance();
 	const { isLoaded, user } = useUser();
 	const { signOut } = useClerk();
 	const scope = useAccountScope();
@@ -110,6 +113,22 @@ function AccountView() {
 				</AppText>
 			</AppView>
 			<NativeButton label={t("navigation.billing")} onPress={() => router.push("/billing")} />
+			<AppView className="gap-2 rounded-3xl bg-surface p-5">
+				<AppText accessibilityRole="header">{t("appearance.title")}</AppText>
+				<AppText>{t("appearance.description")}</AppText>
+				<NativePicker
+					value={appearance.mode}
+					options={APPEARANCE_MODES.map((value) => ({ value, label: t(`appearance.${value}`) }))}
+					disabled={!appearance.ready || appearance.busy}
+					onValueChange={(value) => void appearance.select(value)}
+				/>
+				{appearance.error ? (
+					<AppText accessibilityRole="alert">{t("appearance.failed")}</AppText>
+				) : null}
+				{!appearance.ready && appearance.error ? (
+					<NativeButton label={t("appearance.retry")} onPress={appearance.reload} />
+				) : null}
+			</AppView>
 			<NativeButton label={t("providers.title")} onPress={() => router.push("/ai-providers")} />
 			<NativeButton label={t("channels.title")} onPress={() => router.push("/channels")} />
 			<AppView className="gap-2 rounded-3xl bg-surface p-5">

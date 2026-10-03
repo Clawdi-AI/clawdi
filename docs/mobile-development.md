@@ -519,6 +519,17 @@ independent iOS/Android exports and post-export Mobile typechecks. Frozen instal
 preserved the lock and manifests; exact implementation files matched the tested
 container. These results do not establish native compilation or live mutations.
 
+Account appearance uses the Expo native picker for light/dark/system, with a
+device-local SecureStore preference. The allowed modes/validation are shared with
+Web. UniWind 1.12.1 `setTheme` owns React Native Appearance integration and system
+change handling; Expo control Hosts and the status bar consume the resolved theme.
+Storage read failures expose an explicit retry; writes are serialized and applied
+only after persistence succeeds. Stale hydration/unmount results are ignored.
+Real-device cold start, OS theme changes and native control rendering remain
+acceptance gates. Clerk's native UserProfileView is a possible next integration,
+but its 4.8.0 plugin requires iOS 17 and enables additional platform configuration;
+it is not already wired or verified by the existing JavaScript auth flows.
+
 Public Session routes (`/s/[shareId]`, `/open-share`) support anonymous snapshots,
 legacy live links with optional account authentication, explicit pagination and
 native Markdown/JSON sharing. Web's initial metadata/message reads reuse the same
@@ -537,7 +548,7 @@ until each surface has implementation, focused verification and device evidence:
 
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
-| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings | Remaining general/profile settings and real Clerk flows |
+| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance | Profile/security management and real Clerk/device appearance flows |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed safe external links | Inline image preview, OS universal-link association, device scrolling/sharing and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |

@@ -1,5 +1,6 @@
 "use client";
 
+import { isAppearanceMode } from "@clawdi/shared/consts";
 import { UserCog } from "lucide-react";
 import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
 import { SettingsSection } from "@/components/settings-section";
@@ -21,12 +22,6 @@ const THEME_ITEMS = [
 	{ label: "Dark", value: "dark" },
 	{ label: "System", value: "system" },
 ] as const;
-
-type ThemeItemValue = (typeof THEME_ITEMS)[number]["value"];
-
-function isThemeItemValue(value: string | null): value is ThemeItemValue {
-	return value === "light" || value === "dark" || value === "system";
-}
 
 /** General settings — account identity and app-wide preferences. */
 export function GeneralPanel() {
@@ -74,7 +69,7 @@ export function GeneralPanel() {
 						items={THEME_ITEMS}
 						value={theme ?? "system"}
 						onValueChange={(value) => {
-							if (isThemeItemValue(value)) setTheme(value);
+							if (isAppearanceMode(value)) setTheme(value);
 						}}
 					>
 						<SelectTrigger

@@ -12,6 +12,15 @@ import { skillArchiveEn } from "../features/skill-archive-en";
 import { vaultEn } from "../features/vault/en";
 
 export const en = {
+	appearance: {
+		title: "Appearance",
+		description: "Choose light, dark, or follow your device. Saved only on this device.",
+		light: "Light",
+		dark: "Dark",
+		system: "System",
+		failed: "Could not read or save your appearance preference. Please retry.",
+		retry: "Retry loading appearance",
+	},
 	publicSession: {
 		exportJson: "Share JSON export",
 		open: "Open a shared Session",
