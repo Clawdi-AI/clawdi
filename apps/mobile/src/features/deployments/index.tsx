@@ -1,4 +1,5 @@
-import { focusManager, onlineManager, useQuery } from "@tanstack/react-query";
+import type { HostedDeployOperation } from "@clawdi/shared/api";
+import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
@@ -10,6 +11,7 @@ import { ReadScreen } from "../../ui/read-screen";
 import { BackButton, isNotFound } from "../cloud-inventory";
 import { InventoryList } from "../inventory-list";
 import { ResourceError } from "../resource-error";
+import { DeploymentControls } from "./controls";
 import {
 	canPollDeployment,
 	DEPLOYMENT_POLL_WINDOW_MS,
@@ -96,6 +98,8 @@ export function DeploymentDetailScreen({ deploymentId }: { deploymentId: string 
 }
 
 function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }) {
+	const cache = useQueryClient();
+	const [accepted, setAccepted] = useState<HostedDeployOperation | null>(null);
 	const { hosted } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -144,7 +148,17 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 		refetchOnReconnect: false,
 	});
 	const deployment = query.data;
-	const operationName = deployment?.accepted_operation?.name;
+	useEffect(() => {
+		if (
+			accepted &&
+			deployment?.accepted_operation &&
+			(deployment.accepted_operation.name === accepted.name ||
+				deployment.accepted_operation.metadata.targetGeneration >
+					accepted.metadata.targetGeneration)
+		)
+			setAccepted(null);
+	}, [accepted, deployment?.accepted_operation]);
+	const operationName = accepted?.name ?? deployment?.accepted_operation?.name;
 	const operationId = operationIdFromName(operationName);
 	const operation = useQuery({
 		queryKey: accountQueryKey(scope, "deployment-operation", operationName ?? "missing"),
@@ -229,6 +243,26 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 								) : null}
 								<AppText>{t("deployments.paused")}</AppText>
 								<AppText>{t("deployments.noSessions")}</AppText>
+								<DeploymentControls
+									deployment={deployment}
+									blocked={
+										query.isError ||
+										Boolean(
+											(operation.data ?? accepted ?? deployment.accepted_operation) &&
+												!(operation.data ?? accepted ?? deployment.accepted_operation)?.done,
+										)
+									}
+									onAccepted={async (result) => {
+										setAccepted(result);
+										setStartedAt(Date.now());
+										await cache.invalidateQueries({
+											queryKey: accountQueryKey(scope, "deployment", deploymentId ?? "missing"),
+										});
+										await cache.invalidateQueries({
+											queryKey: accountQueryKey(scope, "deployments"),
+										});
+									}}
+								/>
 								{deployment.agent_id ? (
 									<NativeButton
 										label={t("deployments.agent")}

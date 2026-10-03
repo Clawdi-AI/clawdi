@@ -349,18 +349,30 @@ range. Native scroll-to-match recovery is bounded and cancelled on retirement;
 real-device variable-height scroll behavior remains an acceptance gate. Tool output
 is expandable plain text, never executable, and long payloads reveal incrementally.
 
+Native deployment detail now supports confirmed start/stop/restart, dashboard-access
+reset, language/timezone updates and AI provider/model binding. Web/native share
+lifecycle availability and strong ETag validation; binding construction reuses the
+existing Shared provider rules. Mutations pin the displayed version, original body
+and idempotency key, never automatically refresh/retry writes, and reject unrelated
+operation receipts. The first explicit version rejection permits review; uncertainty
+remains sticky on later errors. An accepted receipt starts bounded operation polling
+and yields to the matching or a higher-generation server receipt. Stopping compute does not
+cancel billing. Current runtime attempts are in memory only: durable cross-restart
+recovery remains outstanding, and the UI warns against replacement actions after
+an uncertain outcome. No real lifecycle or provider mutation was used for validation.
+
 Source implementation is not native acceptance. Keep the complete v2 Web scope
 until each surface has implementation, focused verification and device evidence:
 
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
 | Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings | Remaining general/profile settings and real Clerk flows |
-| Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation | Agent settings and runtime controls, device navigation/permission acceptance |
+| Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset, language/timezone and provider/model settings | Durable runtime-attempt recovery, remaining Agent settings/migration/deletion and device navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing and text export | Rich-text/link presentation, public/universal-link entrypoints, device scrolling/sharing and visual acceptance |
 | Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport | Universal-link intake and device acceptance |
-| v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity, Custom deletion and WhatsApp device onboarding/repair | Agent model binding, native/live provider and channel acceptance |
+| v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal and Agent model binding; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity, Custom deletion and WhatsApp device onboarding/repair | Native/live provider and channel acceptance |
 | Deployment/billing | Basic eligibility/creation/recovery and read-only billing/deployment views | Paid creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |
 

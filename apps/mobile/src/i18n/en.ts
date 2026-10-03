@@ -3,11 +3,13 @@ import { channelsEn } from "../features/channels/en";
 import { whatsappEn } from "../features/channels/whatsapp-en";
 import { connectorsEn } from "../features/connectors/en";
 import { creationEn } from "../features/creation/en";
+import { runtimeEn } from "../features/deployments/controls-en";
 import { deploymentsEn } from "../features/deployments/en";
 
 import { vaultEn } from "../features/vault/en";
 
 export const en = {
+	runtime: runtimeEn,
 	channels: channelsEn,
 	whatsapp: whatsappEn,
 	providers: {

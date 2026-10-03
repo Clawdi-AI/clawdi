@@ -13,6 +13,7 @@ import {
 	createChannelClient,
 	createCloudApiClient,
 	createConnectorClient,
+	createDeploymentMutationClient,
 	createHostedApiClient,
 	createHostedComputeClient,
 	createProjectSharingClient,
@@ -22,6 +23,7 @@ import {
 	createVaultClient,
 	createVaultSupplyClient,
 	createWhatsAppClient,
+	type DeploymentMutationClient,
 	type HostedApiClient,
 	type HostedComputeClient,
 	type ProjectSharingClient,
@@ -39,6 +41,7 @@ import { useAccountScope } from "../platform/account-lifecycle";
 export type MobileApiClients = Readonly<{
 	cloud: CloudApiClient;
 	channels: ChannelClient;
+	deploymentMutations: DeploymentMutationClient | null;
 	whatsapp: WhatsAppClient;
 	account: AccountApiClient;
 	aiProviders: AiProviderClient;
@@ -87,6 +90,13 @@ export function MobileApiProvider({
 	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
+			deploymentMutations: config.computeApiUrl
+				? createDeploymentMutationClient({
+						baseUrl: config.computeApiUrl,
+						getToken: readToken,
+						fetch: fetcher,
+					})
+				: null,
 			whatsapp: createWhatsAppClient({
 				baseUrl: config.cloudApiUrl,
 				getToken: readToken,

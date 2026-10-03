@@ -50,6 +50,7 @@ export {
 	unwrapDeploymentList,
 } from "./deploy";
 export * from "./deploy-wizard";
+export * from "./deployment-mutation-client";
 export { extractApiDetail } from "./error-detail";
 export * from "./hosted-ai-binding";
 export * from "./project-scope";

@@ -1,3 +1,4 @@
+import { deploymentLifecycleAvailable } from "@clawdi/shared/api";
 import type {
 	DeploymentOperation,
 	HostedDeployment,
@@ -395,63 +396,15 @@ export function isTransitionalStatus(status: DeploymentStatus): boolean {
 }
 
 export function canStart(status: DeploymentStatus): boolean {
-	switch (status.kind) {
-		case "stopped":
-		case "failed":
-			return true;
-		case "creating":
-		case "starting":
-		case "running":
-		case "stopping":
-		case "restarting":
-		case "updating":
-		case "deleting":
-		case "deleted":
-		case "unknown":
-			return false;
-		default:
-			return exhaustive(status);
-	}
+	return deploymentLifecycleAvailable("start", status.kind);
 }
 
 export function canStop(status: DeploymentStatus): boolean {
-	switch (status.kind) {
-		case "running":
-		case "starting":
-			return true;
-		case "creating":
-		case "stopping":
-		case "stopped":
-		case "restarting":
-		case "updating":
-		case "failed":
-		case "deleting":
-		case "deleted":
-		case "unknown":
-			return false;
-		default:
-			return exhaustive(status);
-	}
+	return deploymentLifecycleAvailable("stop", status.kind);
 }
 
 export function canRestart(status: DeploymentStatus): boolean {
-	switch (status.kind) {
-		case "running":
-		case "failed":
-			return true;
-		case "creating":
-		case "starting":
-		case "stopping":
-		case "stopped":
-		case "restarting":
-		case "updating":
-		case "deleting":
-		case "deleted":
-		case "unknown":
-			return false;
-		default:
-			return exhaustive(status);
-	}
+	return deploymentLifecycleAvailable("restart", status.kind);
 }
 
 export function canDelete(status: DeploymentStatus): boolean {
