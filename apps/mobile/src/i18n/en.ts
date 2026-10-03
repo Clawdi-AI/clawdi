@@ -27,6 +27,22 @@ export const en = {
 		reconnecting: "Reconnecting…",
 		disconnected: "Disconnected",
 	},
+	devices: {
+		title: "Signed-in devices",
+		description:
+			"Review active account sessions and sign out other devices. Use Account to sign out this device. Device and approximate location information is reported by the sign-in service.",
+		refresh: "Load or refresh devices",
+		loadHint: "Load the current device list. It is cleared when you leave or background the app.",
+		unknown: "Unknown device or activity",
+		lastActive: "Last active:",
+		current: "This session",
+		revoke: "Sign out this session",
+		warning:
+			"Sign out the selected session? That device will need to sign in again. This does not delete your account or cancel subscriptions.",
+		revoked: "The selected session is no longer active.",
+		failed:
+			"Could not confirm the device list or session change. Refresh and try again. An empty or stale response is not treated as a successful security check.",
+	},
 	reverification: {
 		title: "Verify your identity",
 		description:

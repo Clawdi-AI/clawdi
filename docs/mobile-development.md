@@ -570,9 +570,17 @@ and retire late verification responses. A repeated assurance hint is not success
 Passkey/enterprise-only verification currently fails closed with an explicit
 unsupported message. Real factor delivery, reverification and device acceptance
 are not established by static types or exports.
-Device-session management remains open: Clerk JS 6.34.1 `getSessions()` caches its
-first response and `SessionWithActivities.retrieve()` converts failures to an empty
-array, so those methods alone cannot prove a refreshed security inventory.
+`/device-sessions` explicitly loads active sessions through the public Clerk Client
+reload and the captured Session's rebuilt User. Clerk JS 6.34.1 `getSessions()` caches
+its first response and `SessionWithActivities.retrieve()` converts failures to an
+empty array. The adapter therefore rejects unchanged User instances, mismatched
+account/session ownership, duplicates and inventories without the current active
+session; failed reads never become a misleading empty security inventory. Native
+confirmation revokes only another session after a fresh ownership read, supports the
+shared reverification UI and confirms absence in a second fresh inventory. It cannot
+revoke the current session, delete the account or cancel billing. Device/activity
+metadata stays in memory and clears on blur/background. Real cross-device revocation
+and native acceptance remain unverified; focused tests cover freshness and late reads.
 
 Public Session routes (`/s/[shareId]`, `/open-share`) support anonymous snapshots,
 legacy live links with optional account authentication, explicit pagination and
@@ -624,7 +632,7 @@ until each surface has implementation, focused verification and device evidence:
 
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
-| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and email-address management, shared native password/code reverification | Remaining security/device-session management, passkey/enterprise reverification and real Clerk/device acceptance |
+| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and email-address management, shared native password/code reverification, active-device review/revocation | Remaining security management, passkey/enterprise reverification and real Clerk/device acceptance |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |
