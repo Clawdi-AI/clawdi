@@ -11,11 +11,16 @@ export const runtimeEn = {
 	paymentRequired:
 		"Starting requires a server-approved subscription or payment action. No payment is made by these controls.",
 	uncertain:
-		"The operation may already have been accepted. Keep this screen open and retry its exact request to recover. Do not issue a replacement action from another device. If you leave, refresh status before making another change.",
+		"The operation may already have been accepted. Its original request is saved on this device for this account and Agent. Retry that exact request to recover, even after reopening the app. Do not issue a replacement action from another device.",
+	prepared:
+		"The confirmed request was saved before sending. Retry it or discard this unsent request.",
+	storageError:
+		"The saved operation could not be read. Runtime changes are disabled. Retry loading it; do not clear app data to bypass an uncertain operation.",
+	reloadAttempt: "Reload saved operation",
 	retry: "Retry original operation",
 	conflict:
 		"The server rejected the first request because the Agent version changed. Refresh and explicitly review a new change; no automatic overwrite occurs.",
-	review: "Discard rejected request and review again",
+	review: "Discard unsent or rejected request",
 	failed:
 		"The action was not confirmed. Refresh status and review permissions, provider readiness or the original request before retrying.",
 	locale: "Language and timezone",

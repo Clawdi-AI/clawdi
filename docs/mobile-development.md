@@ -357,9 +357,14 @@ and idempotency key, never automatically refresh/retry writes, and reject unrela
 operation receipts. The first explicit version rejection permits review; uncertainty
 remains sticky on later errors. An accepted receipt starts bounded operation polling
 and yields to the matching or a higher-generation server receipt. Stopping compute does not
-cancel billing. Current runtime attempts are in memory only: durable cross-restart
-recovery remains outstanding, and the UI warns against replacement actions after
-an uncertain outcome. No real lifecycle or provider mutation was used for validation.
+cancel billing. Runtime attempts use SecureStore keys derived from account and Agent
+identity, sharing the creation journal's serialized compare-and-set implementation.
+The original key/version/body is saved before sending; an uncertain marker is durable
+before network dispatch. Reopening restores that exact request without consulting a
+changed provider/model catalog. Only unsent or first-proven version-rejected attempts
+can be discarded. Corrupt/unreadable storage disables new runtime changes; an explicit
+reload recovers concurrent-screen conflicts. No real lifecycle or provider mutation
+was used for validation; device persistence/kill-and-relaunch acceptance remains open.
 
 Source implementation is not native acceptance. Keep the complete v2 Web scope
 until each surface has implementation, focused verification and device evidence:
@@ -367,7 +372,7 @@ until each surface has implementation, focused verification and device evidence:
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
 | Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings | Remaining general/profile settings and real Clerk flows |
-| Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset, language/timezone and provider/model settings | Durable runtime-attempt recovery, remaining Agent settings/migration/deletion and device navigation/permission acceptance |
+| Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, language/timezone and provider/model settings | Remaining Agent settings/migration/deletion and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing and text export | Rich-text/link presentation, public/universal-link entrypoints, device scrolling/sharing and visual acceptance |
 | Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |

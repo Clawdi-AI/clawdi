@@ -13,8 +13,8 @@ import {
 	normalizeHostedDeployLanguage,
 } from "@clawdi/shared/api";
 import { useQuery } from "@tanstack/react-query";
-import { randomUUID } from "expo-crypto";
-import { useRef, useState } from "react";
+import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypto";
+import { useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
 import { useI18n } from "../../i18n";
@@ -24,7 +24,8 @@ import { useMobileApi } from "../../providers/api-provider";
 import { NativeButton, NativePicker } from "../../ui/native-controls";
 import { AppText, AppTextInput, AppView } from "../../ui/primitives";
 
-type Attempt = { key: string; version: string; mutation: DeploymentMutation; uncertain: boolean };
+import type { RuntimeAttempt } from "./attempt";
+import { runtimeAttempts } from "./attempt-storage";
 
 export function DeploymentControls({
 	deployment,
@@ -41,8 +42,39 @@ export function DeploymentControls({
 	const capture = useForegroundLease();
 	const { deploymentMutations } = useMobileApi();
 	const action = useAuthAction(scope.identity);
-	const [attempt, setAttempt] = useState<Attempt | null>(null);
-	const [rejected, setRejected] = useState(false);
+	const [attempt, setAttempt] = useState<RuntimeAttempt | null>(null);
+	const [storageKey, setStorageKey] = useState<string | null>(null);
+	const [storageError, setStorageError] = useState(false);
+	const [restoreEpoch, setRestoreEpoch] = useState(0);
+	const rejected = attempt?.status === "rejected";
+	useEffect(() => {
+		let mounted = true;
+		const current = () => mounted && scope.isCurrent() && !scope.signal.aborted;
+		setStorageKey(null);
+		setStorageError(false);
+		void (async () => {
+			if (!scope.accountKey || !scope.isReady) return;
+			try {
+				const digest = await digestStringAsync(
+					CryptoDigestAlgorithm.SHA256,
+					JSON.stringify([scope.accountKey, deployment.resource.id]),
+				);
+				if (!current()) return;
+				const key = `clawdi.runtime.v1.${digest}`;
+				const saved = await runtimeAttempts.readSavedAttempt(key);
+				if (!current()) return;
+				if (saved && saved.deploymentId !== deployment.resource.id)
+					throw new Error("Wrong runtime journal");
+				setAttempt(saved);
+				setStorageKey(key);
+			} catch {
+				if (current()) setStorageError(true);
+			}
+		})();
+		return () => {
+			mounted = false;
+		};
+	}, [scope, deployment.resource.id, restoreEpoch]);
 	const confirmation = useRef(0);
 	const state = deployment.resource.status?.summary_state;
 	const busy =
@@ -50,46 +82,67 @@ export function DeploymentControls({
 		blocked ||
 		Boolean(attempt) ||
 		!scope.isReady ||
+		!storageKey ||
+		storageError ||
 		Boolean(deployment.accepted_operation && !deployment.accepted_operation.done);
-	const submit = (saved: Attempt) =>
+	const submit = (saved: RuntimeAttempt, fresh = false) =>
 		action.run(async (current) => {
 			const visible = capture();
-			if (!deploymentMutations || !visible()) return;
-			setAttempt({ ...saved, uncertain: true });
-			setRejected(false);
+			const owns = () => current() && scope.isCurrent() && !scope.signal.aborted;
+			if (!deploymentMutations || !storageKey || !visible() || saved.status === "rejected") return;
+			if (fresh) await runtimeAttempts.saveAttempt(storageKey, saved, owns);
+			if (!owns()) return;
+			setAttempt(saved);
+			const submitting: RuntimeAttempt = { ...saved, status: "uncertain" };
+			await runtimeAttempts.replaceAttempt(
+				storageKey,
+				saved,
+				submitting,
+				() => owns() && visible(),
+			);
+			if (!owns()) return;
+			setAttempt(submitting);
+			if (!visible()) return;
 			try {
 				const operation = await read((signal) =>
 					deploymentMutations.apply(
-						deployment.resource.id,
+						saved.deploymentId,
 						saved.version,
 						saved.key,
 						saved.mutation,
 						signal,
 					),
 				);
-				if (!current()) return;
+				if (!owns()) return;
+				await runtimeAttempts.clearAttempt(storageKey, submitting, owns);
+				if (!owns()) return;
 				setAttempt(null);
 				await onAccepted(operation);
 			} catch (error) {
 				if (
-					current() &&
-					!saved.uncertain &&
+					owns() &&
+					saved.status === "prepared" &&
 					error instanceof ApiClientError &&
 					error.status === 412 &&
 					error.code === "resource_version_mismatch"
-				)
-					setRejected(true);
+				) {
+					const refused: RuntimeAttempt = { ...saved, status: "rejected" };
+					await runtimeAttempts.replaceAttempt(storageKey, submitting, refused, owns);
+					if (owns()) setAttempt(refused);
+				}
 				throw error;
 			}
 		});
 	const confirm = (mutation: DeploymentMutation) => {
 		if (busy || !deploymentMutations) return;
 		const visible = capture();
-		const saved: Attempt = {
+		const saved: RuntimeAttempt = {
+			format: 1,
+			deploymentId: deployment.resource.id,
 			key: randomUUID(),
 			version: deployment.resource.metadata.resourceVersion,
 			mutation,
-			uncertain: false,
+			status: "prepared",
 		};
 		const ticket = ++confirmation.current;
 		Alert.alert(t("runtime.confirm"), t("runtime.warning"), [
@@ -104,7 +157,7 @@ export function DeploymentControls({
 						visible()
 					) {
 						confirmation.current++;
-						void submit(saved);
+						void submit(saved, true);
 					}
 				},
 			},
@@ -117,24 +170,45 @@ export function DeploymentControls({
 				{t("runtime.title")}
 			</AppText>
 			<AppText>{t("runtime.warning")}</AppText>
+			{storageError ? (
+				<AppText accessibilityRole="alert">{t("runtime.storageError")}</AppText>
+			) : null}
+			<NativeButton
+				label={t("runtime.reloadAttempt")}
+				disabled={action.busy}
+				onPress={() => setRestoreEpoch((value) => value + 1)}
+			/>
 			{attempt ? (
 				<>
 					<AppText accessibilityRole="alert">
-						{t(rejected ? "runtime.conflict" : "runtime.uncertain")}
+						{t(
+							rejected
+								? "runtime.conflict"
+								: attempt.status === "prepared"
+									? "runtime.prepared"
+									: "runtime.uncertain",
+						)}
 					</AppText>
 					<NativeButton
 						label={t("runtime.retry")}
-						disabled={action.busy || rejected}
+						disabled={action.busy || rejected || !storageKey || storageError}
 						onPress={() => void submit(attempt)}
 					/>
-					{rejected ? (
+					{attempt.status !== "uncertain" ? (
 						<NativeButton
 							label={t("runtime.review")}
-							disabled={action.busy}
-							onPress={() => {
-								setAttempt(null);
-								setRejected(false);
-							}}
+							disabled={action.busy || !storageKey || storageError}
+							onPress={() =>
+								void action.run(async (current) => {
+									if (!storageKey) return;
+									await runtimeAttempts.clearAttempt(
+										storageKey,
+										attempt,
+										() => current() && scope.isCurrent() && !scope.signal.aborted,
+									);
+									if (current()) setAttempt(null);
+								})
+							}
 						/>
 					) : null}
 				</>
