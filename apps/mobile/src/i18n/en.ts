@@ -342,6 +342,20 @@ export const en = {
 		missing: "Required configuration is missing.",
 		invalid: "The mobile configuration is invalid.",
 	},
+	signupDetails: {
+		first_name: "First name",
+		last_name: "Last name",
+		username: "Username",
+		email_address: "Email address",
+		phone_number: "Phone number with +country code",
+		password: "New password",
+		email_address_or_phone_number: "Email or international phone number",
+		description: "Your sign-in service requires these details to finish creating your account.",
+		continue: "Continue registration",
+		phoneCode: "Enter the verification code sent to your phone.",
+		unsupported:
+			"This registration requires a policy agreement, security challenge or verification method not yet supported here. No agreement has been accepted on your behalf.",
+	},
 	auth: {
 		signInTitle: "Sign in to Clawdi",
 		signInSubtitle: "Use your Clawdi account to continue.",

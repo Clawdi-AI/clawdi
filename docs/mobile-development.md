@@ -80,8 +80,16 @@ not enable providers in Clerk: configure those and the native redirect separatel
 Malformed explicit lists fail configuration validation. Never include credentials.
 The same list supplies social sign-in/sign-up buttons. Public SignIn OAuth creation,
 nonce reload and transferable SignUp creation follow the installed SDK flow; MFA,
-email verification and final session activation reuse the existing forms. Required
-signup fields beyond the supported form still show an unsupported-step notice.
+email verification and final session activation reuse the existing forms. Signup
+collects server-required names, username, email, E.164 phone and password, including
+an email-or-phone identifier, then continues email/SMS verification. Updates send
+only missing fields and pin continuation to the same SignUp resource. Verification
+delivery failures keep the code screen available for explicit resend. Passwords
+are not persisted and are cleared on background. Legal consent, Protect challenges
+and other unsupported requirements remain explicit blockers; the app never accepts
+policy agreements on the user's behalf. Run the Shared/Mobile tests and Mobile
+typechecks in the isolated runner; actual signup/delivery still requires device
+acceptance with the owner's configured Clerk instance.
 Login/register use separate `clawdi://sign-in-oauth` and `clawdi://sign-up-oauth`
 callbacks. Shared callback validation binds the flow, attempt and optional public
 Session return; native-intent routing preserves only a validated public share ID.
