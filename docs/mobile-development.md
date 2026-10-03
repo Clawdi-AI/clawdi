@@ -238,9 +238,8 @@ with the same slug. Existing legacy create-or-attach semantics stay unchanged.
 Ship the backend route before these clients: older servers fail closed at the
 new route, and clients never fall back to the legacy endpoint. Missing identities,
 foreign owners and out-of-bound Agent keys are rejected; exact attachment does
-not rename or create Vaults. Credential profiles, automatic capability-link intake,
-Project
-scope filtering and device interaction verification remain open; this is not
+not rename or create Vaults. Automatic capability-link intake and device
+interaction verification remain open; this is not
 full Vault parity. Existing-key skipping uses the fetched key-name snapshot,
 not a server-side compare-and-set guarantee against concurrent writes.
 
@@ -264,6 +263,17 @@ Automatic universal-link intake and device networking, input, lifecycle and
 share-sheet acceptance remain outstanding; Metro exports do not prove these behaviors.
 
 ### Full-parity completion scope
+
+Native Project detail is readable by accessible members; sharing management has
+its own owner-gated route. Agent, Skill and Vault catalogs reuse their existing
+list UI with explicit Project scope and account/Project/search cache keys. A
+malformed, duplicate, missing or inaccessible explicit Project never falls back
+to an unscoped resource request; clearing the filter is an explicit user action.
+Scoped Agent lists show only the caller's linked Agents, not other members' Agents.
+Skill creation preserves the selected writable Project and never picks a different
+one after permission loss. Scoped Vault creation uses strict `create_only` with
+`project_id`, creating and attaching in one server operation; global creation stays
+unattached. Shared/archived/Agent-managed scopes do not expose creation controls.
 
 Web and native use `transferVaultKeys` for deduplicated, section-grouped batches
 of at most 150 names. Native selection supports individual keys and whole sections.
@@ -291,11 +301,11 @@ until each surface has implementation, focused verification and device evidence:
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
 | Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings | Remaining general/profile settings and real Clerk flows |
-| Agents/Projects | Inventories, context bindings, Project CRUD/sharing | Agent settings and runtime controls, Project-scoped resource navigation |
+| Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation | Agent settings and runtime controls, device navigation/permission acceptance |
 | Sessions | Inventory, pinned message history, snapshot/live sharing and text export | Search/filter parity, tool timeline, public/universal-link entrypoints, device sharing |
 | Skills/Memory | Skill text CRUD/import; Memory CRUD/search | Skill bundle upload/download/send, managed runtime Skill/plugin actions, remaining detail views |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
-| Vault | Search/pagination, create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public native request supply | Credential profiles, universal-link intake, Project filters and device acceptance |
+| Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public native request supply | Credential profiles, universal-link intake and device acceptance |
 | v2 AI providers/channels | Not implemented | BYOK, provider OAuth/model bindings, channel connection/pairing/repair |
 | Deployment/billing | Basic eligibility/creation/recovery and read-only billing/deployment views | Paid creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
 | Platform acceptance | Typechecks, isolated suites and Metro exports | Native compilation/signing, real devices, accessibility/visual interaction, store sandbox purchases |

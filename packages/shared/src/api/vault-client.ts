@@ -60,6 +60,21 @@ export function createVaultClient(options: ApiClientOptions) {
 					api.POST("/v1/vault", { ...init, params: { query: { create_only: true } }, body }),
 				signal,
 			),
+		/** Strict creation and attachment to the caller-selected Project in one server operation. */
+		createInProject: (
+			projectId: string,
+			body: components["schemas"]["VaultCreate"],
+			signal?: AbortSignal,
+		) =>
+			transport.read(
+				(init) =>
+					api.POST("/v1/vault", {
+						...init,
+						params: { query: { create_only: true, project_id: readResourceId(projectId) } },
+						body,
+					}),
+				signal,
+			),
 		sections: (vault: VaultIdentity, signal?: AbortSignal) =>
 			transport.read(
 				(init) => api.GET("/v1/vault/{slug}/items", { ...init, params: params(vault) }),

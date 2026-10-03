@@ -1,4 +1,4 @@
-import { slugFromVaultName } from "@clawdi/shared/api";
+import { type Project, slugFromVaultName } from "@clawdi/shared/api";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { useState } from "react";
@@ -10,17 +10,22 @@ import { useMobileApi } from "../../providers/api-provider";
 import { NativeButton } from "../../ui/native-controls";
 import { AppText, AppTextInput, AppView } from "../../ui/primitives";
 import { InventoryList } from "../inventory-list";
+import { ProjectResourceBoundary, ProjectScopeHeader } from "../project-scope";
 
-export function useVaultCatalog(search = "") {
+export function useVaultCatalog(search = "", projectId?: string) {
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { vault } = useMobileApi();
 	return useInfiniteQuery({
-		queryKey: accountQueryKey(scope, "vault-catalog", search),
+		queryKey: accountQueryKey(scope, "vault-catalog", search, projectId ?? "all"),
 		initialPageParam: 1,
 		queryFn: ({ signal, pageParam }) =>
 			read(
-				(s) => vault.list({ q: search || undefined, page: pageParam, page_size: 25 }, s),
+				(s) =>
+					vault.list(
+						{ q: search || undefined, project_id: projectId, page: pageParam, page_size: 25 },
+						s,
+					),
 				signal,
 			),
 		getNextPageParam: (page) =>
@@ -31,11 +36,14 @@ export function useVaultCatalog(search = "") {
 }
 
 export function VaultCatalogScreen() {
-	const scope = useAccountScope();
-	return <VaultCatalog key={`${scope.identity}:${scope.generation}`} />;
+	return (
+		<ProjectResourceBoundary>
+			{(project) => <VaultCatalog project={project} />}
+		</ProjectResourceBoundary>
+	);
 }
 
-function VaultCatalog() {
+function VaultCatalog({ project }: { project?: Project }) {
 	const t = useI18n();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -47,7 +55,9 @@ function VaultCatalog() {
 	const [query, setQuery] = useState("");
 	const [name, setName] = useState("");
 	const [slug, setSlug] = useState("");
-	const catalog = useVaultCatalog(query);
+	const catalog = useVaultCatalog(query, project?.id);
+	const canCreate =
+		!project || (project.is_owner && project.kind !== "environment" && !project.archived_at);
 	const items = [
 		...new Map((catalog.data?.pages.flatMap((p) => p.items) ?? []).map((v) => [v.id, v])).values(),
 	];
@@ -55,8 +65,11 @@ function VaultCatalog() {
 		const visible = capture();
 		return action.run(async (isCurrent) => {
 			if (!visible()) return;
-			if (!name.trim() || !slug) return;
-			const result = await read((signal) => vault.create({ name: name.trim(), slug }, signal));
+			if (!canCreate || !name.trim() || !slug) return;
+			const body = { name: name.trim(), slug };
+			const result = await read((signal) =>
+				project ? vault.createInProject(project.id, body, signal) : vault.create(body, signal),
+			);
 			if (!isCurrent()) return;
 			setName("");
 			setSlug("");
@@ -76,6 +89,7 @@ function VaultCatalog() {
 			empty={t(catalog.isPending ? "loading.app" : "vault.empty")}
 			header={
 				<AppView className="gap-3">
+					<ProjectScopeHeader project={project} />
 					<AppTextInput
 						accessibilityLabel={t("vault.search")}
 						placeholder={t("vault.search")}
@@ -85,35 +99,41 @@ function VaultCatalog() {
 						className="rounded-xl bg-surface p-3 text-foreground"
 					/>
 					<NativeButton label={t("vault.searchAction")} onPress={() => setQuery(search.trim())} />
-					<AppTextInput
-						accessibilityLabel={t("vault.name")}
-						placeholder={t("vault.name")}
-						value={name}
-						onChangeText={(value) => {
-							setName(value);
-							setSlug(slugFromVaultName(value));
-						}}
-						maxLength={200}
-						editable={!action.busy}
-						className="rounded-xl bg-surface p-3 text-foreground"
-					/>
-					<AppTextInput
-						accessibilityLabel={t("vault.slug")}
-						placeholder={t("vault.slug")}
-						value={slug}
-						onChangeText={(value) => setSlug(slugFromVaultName(value))}
-						maxLength={200}
-						autoCapitalize="none"
-						autoCorrect={false}
-						editable={!action.busy}
-						className="rounded-xl bg-surface p-3 text-foreground"
-					/>
-					<NativeButton
-						label={t("vault.create")}
-						disabled={action.busy || !name.trim() || !slug}
-						onPress={() => void create()}
-					/>
-					{action.error ? <AppText accessibilityRole="alert">{t("vault.failed")}</AppText> : null}
+					{canCreate ? (
+						<>
+							<AppTextInput
+								accessibilityLabel={t("vault.name")}
+								placeholder={t("vault.name")}
+								value={name}
+								onChangeText={(value) => {
+									setName(value);
+									setSlug(slugFromVaultName(value));
+								}}
+								maxLength={200}
+								editable={!action.busy}
+								className="rounded-xl bg-surface p-3 text-foreground"
+							/>
+							<AppTextInput
+								accessibilityLabel={t("vault.slug")}
+								placeholder={t("vault.slug")}
+								value={slug}
+								onChangeText={(value) => setSlug(slugFromVaultName(value))}
+								maxLength={200}
+								autoCapitalize="none"
+								autoCorrect={false}
+								editable={!action.busy}
+								className="rounded-xl bg-surface p-3 text-foreground"
+							/>
+							<NativeButton
+								label={t("vault.create")}
+								disabled={action.busy || !name.trim() || !slug}
+								onPress={() => void create()}
+							/>
+							{action.error ? (
+								<AppText accessibilityRole="alert">{t("vault.failed")}</AppText>
+							) : null}
+						</>
+					) : null}
 				</AppView>
 			}
 			renderItem={(item) => (

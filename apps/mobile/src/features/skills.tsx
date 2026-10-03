@@ -1,29 +1,35 @@
-import type { components } from "@clawdi/shared/api";
+import { type components, isWritableSkillProject, type Project } from "@clawdi/shared/api";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
+import { useState } from "react";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
 import { NativeButton } from "../ui/native-controls";
-import { AppText, AppView } from "../ui/primitives";
+import { AppText, AppTextInput, AppView } from "../ui/primitives";
 import { InventoryList } from "./inventory-list";
+import { ProjectResourceBoundary, ProjectScopeHeader } from "./project-scope";
 
 type Skill = components["schemas"]["SkillSummaryResponse"];
 
-export function useCloudSkills() {
+export function useCloudSkills(projectId?: string, search = "") {
 	const { cloud } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	return useInfiniteQuery({
-		queryKey: accountQueryKey(scope, "cloud-skills"),
+		queryKey: accountQueryKey(scope, "cloud-skills", projectId ?? "all", search),
 		initialPageParam: 1,
 		queryFn: ({ signal, pageParam }) =>
 			read(
-				(readSignal) => cloud.listSkills({ page: pageParam, page_size: 25 }, readSignal),
+				(readSignal) =>
+					cloud.listSkills(
+						{ page: pageParam, page_size: 25, project_id: projectId, q: search || undefined },
+						readSignal,
+					),
 				signal,
 			),
 		getNextPageParam: (page) =>
-			page.page * page.page_size < page.total ? page.page + 1 : undefined,
+			page.items.length && page.page * page.page_size < page.total ? page.page + 1 : undefined,
 		enabled: scope.isReady,
 		retry: false,
 	});
@@ -56,14 +62,45 @@ export function SkillRow({ skill }: { skill: Skill }) {
 }
 
 export function SkillsScreen() {
+	return (
+		<ProjectResourceBoundary>
+			{(project) => <SkillsView project={project} />}
+		</ProjectResourceBoundary>
+	);
+}
+function SkillsView({ project }: { project?: Project }) {
 	const t = useI18n();
-	const skills = useCloudSkills();
+	const [search, setSearch] = useState("");
+	const [query, setQuery] = useState("");
+	const skills = useCloudSkills(project?.id, query);
 	const items = skills.data?.pages.flatMap((page) => page.items) ?? [];
 	return (
 		<InventoryList
 			items={items}
 			header={
-				<NativeButton label={t("skills.create")} onPress={() => router.push("/skills/new")} />
+				<AppView className="gap-3">
+					<ProjectScopeHeader project={project} />
+					<AppTextInput
+						accessibilityLabel={t("skills.search")}
+						placeholder={t("skills.search")}
+						value={search}
+						onChangeText={setSearch}
+						maxLength={200}
+						className="rounded-xl bg-surface p-3 text-foreground"
+					/>
+					<NativeButton label={t("vault.searchAction")} onPress={() => setQuery(search.trim())} />
+					{!project || (isWritableSkillProject(project) && !project.archived_at) ? (
+						<NativeButton
+							label={t("skills.create")}
+							onPress={() =>
+								router.push({
+									pathname: "/skills/new",
+									params: project ? { projectId: project.id } : {},
+								})
+							}
+						/>
+					) : null}
+				</AppView>
 			}
 			title={t("skills.title")}
 			description={t("skills.summary")}

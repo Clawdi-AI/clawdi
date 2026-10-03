@@ -1,1 +1,1 @@
-export { ProjectSharingScreen as default } from "../../src/features/project-sharing";
+export { ProjectDetailScreen as default } from "../../src/features/project-detail";

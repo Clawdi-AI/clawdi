@@ -7,6 +7,15 @@ export function routeParam(value: string | string[] | undefined): string | undef
 		: undefined;
 }
 
+/** An invalid explicit Project filter must never become an unscoped request. */
+export function projectRouteFilter(
+	value: string | string[] | undefined,
+): { kind: "all" } | { kind: "project"; id: string } | { kind: "invalid" } {
+	if (value === undefined) return { kind: "all" };
+	const id = typeof value === "string" ? routeParam(value) : undefined;
+	return id ? { kind: "project", id } : { kind: "invalid" };
+}
+
 export function nextSessionPage(page: components["schemas"]["Paginated_SessionListItemResponse_"]) {
 	return page.items.length > 0 && page.page * page.page_size < page.total
 		? page.page + 1

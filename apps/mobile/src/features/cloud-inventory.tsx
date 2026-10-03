@@ -17,13 +17,18 @@ const sessionListQuery = {
 	order: "desc",
 } satisfies SessionListQuery;
 
-export function useCloudAgents() {
+export function useCloudAgents(projectId?: string) {
 	const { cloud } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	return useQuery({
-		queryKey: accountQueryKey(scope, "cloud-agents"),
-		queryFn: ({ signal }) => read((readSignal) => cloud.listAgents(undefined, readSignal), signal),
+		queryKey: accountQueryKey(scope, "cloud-agents", projectId ?? "all"),
+		queryFn: ({ signal }) =>
+			read(
+				(readSignal) =>
+					cloud.listAgents(projectId ? { project_id: projectId } : undefined, readSignal),
+				signal,
+			),
 		enabled: scope.isReady,
 		retry: false,
 	});

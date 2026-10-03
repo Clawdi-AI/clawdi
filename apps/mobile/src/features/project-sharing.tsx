@@ -13,8 +13,9 @@ import { AppText, AppTextInput, AppView } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
 import { BackButton, formatDate } from "./cloud-inventory";
 import { InventoryList } from "./inventory-list";
+import { useProject } from "./project-scope";
 import { canManageSharing, linkIsActive, safeShareUrl } from "./project-sharing-state";
-import { routeParam } from "./read-helpers";
+import { projectRouteFilter } from "./read-helpers";
 
 type Row =
 	| { id: string; kind: "link"; value: components["schemas"]["ShareLinkResponse"] }
@@ -24,7 +25,8 @@ type Row =
 export function ProjectSharingScreen() {
 	const scope = useAccountScope();
 	const params = useLocalSearchParams<{ projectId?: string | string[] }>();
-	const projectId = routeParam(params.projectId);
+	const filter = projectRouteFilter(params.projectId);
+	const projectId = filter.kind === "project" ? filter.id : undefined;
 	return (
 		<ProjectGate key={`${scope.identity}:${scope.generation}:${projectId}`} projectId={projectId} />
 	);
@@ -32,17 +34,13 @@ export function ProjectSharingScreen() {
 
 function ProjectGate({ projectId }: { projectId?: string }) {
 	const t = useI18n();
-	const scope = useAccountScope();
-	const read = useAccountRead();
-	const { sharing } = useMobileApi();
-	const project = useQuery({
-		queryKey: accountQueryKey(scope, "project-sharing-access", projectId),
-		queryFn: ({ signal }) =>
-			read((requestSignal) => sharing.getProject(projectId ?? "", requestSignal), signal),
-		enabled: scope.isReady && Boolean(projectId),
-		retry: false,
-	});
-	if (!project.isError && project.data && canManageSharing(project.data))
+	const project = useProject(projectId);
+	if (
+		!project.isError &&
+		project.data?.id === projectId &&
+		project.data &&
+		canManageSharing(project.data)
+	)
 		return <SharingView project={project.data} />;
 	return (
 		<ReadScreen>

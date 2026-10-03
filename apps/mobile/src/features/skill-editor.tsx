@@ -21,6 +21,7 @@ import { NativeButton, NativePicker } from "../ui/native-controls";
 import { AppScrollView, AppText, AppTextInput, AppView } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
 import { BackButton } from "./cloud-inventory";
+import { ProjectResourceBoundary } from "./project-scope";
 import { useCloudProjects } from "./projects";
 import { routeParam } from "./read-helpers";
 
@@ -33,6 +34,18 @@ export function SkillEditorScreen({ create = false }: { create?: boolean }) {
 	}>();
 	const projectId = routeParam(params.projectId);
 	const skillKey = routeParam(params.skillKey);
+	if (create)
+		return (
+			<ProjectResourceBoundary>
+				{(project) => (
+					<SkillEditor
+						key={`${scope.identity}:${scope.generation}:${project?.id ?? "all"}:create`}
+						create
+						projectId={project?.id}
+					/>
+				)}
+			</ProjectResourceBoundary>
+		);
 	return (
 		<SkillEditor
 			key={`${scope.identity}:${scope.generation}:${projectId}:${skillKey}:${create}`}
@@ -58,11 +71,9 @@ function SkillEditor({
 	const cache = useQueryClient();
 	const action = useAuthAction(scope);
 	const projects = useCloudProjects();
-	const [selection, setSelection] = useState("");
+	const [selection, setSelection] = useState(projectId ?? "");
 	const writable = (projects.data ?? []).filter((p) => isWritableSkillProject(p) && !p.archived_at);
-	const selectedId = create
-		? (writable.find((p) => p.id === selection)?.id ?? writable[0]?.id)
-		: projectId;
+	const selectedId = create ? writable.find((p) => p.id === selection)?.id : projectId;
 	const project = projects.data?.find((p) => p.id === selectedId);
 	const detail = useQuery({
 		queryKey: accountQueryKey(scope, "skill-detail", projectId, skillKey),
@@ -169,7 +180,10 @@ function SkillEditor({
 					<NativePicker
 						disabled={action.busy}
 						value={selectedId ?? ""}
-						options={writable.map((p) => ({ value: p.id, label: p.name }))}
+						options={[
+							{ value: "", label: t("projects.choose") },
+							...writable.map((p) => ({ value: p.id, label: p.name })),
+						]}
 						onValueChange={setSelection}
 					/>
 				) : null}

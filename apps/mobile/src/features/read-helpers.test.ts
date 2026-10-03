@@ -5,6 +5,7 @@ import {
 	messagePage,
 	nextMessageOffset,
 	nextSessionPage,
+	projectRouteFilter,
 	routeParam,
 	uniqueSessions,
 } from "./read-helpers";
@@ -49,6 +50,19 @@ const page = {
 } satisfies components["schemas"]["SessionTimelinePage"];
 
 describe("read-only pagination boundaries", () => {
+	test("explicit invalid Project scope never becomes an all-project request", () => {
+		expect(projectRouteFilter(undefined)).toEqual({ kind: "all" });
+		expect(projectRouteFilter("project-a")).toEqual({ kind: "project", id: "project-a" });
+		for (const value of [
+			"",
+			" ",
+			" project-a",
+			"x".repeat(257),
+			["project-a"],
+			["project-a", "project-b"],
+		])
+			expect(projectRouteFilter(value)).toEqual({ kind: "invalid" });
+	});
 	test("continues by actual returned message count and stops on empty/final/unpinned pages", () => {
 		expect(nextMessageOffset(page)).toBe(1);
 		expect(nextMessageOffset({ ...page, items: [] })).toBeUndefined();

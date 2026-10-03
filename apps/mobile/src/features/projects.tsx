@@ -161,6 +161,13 @@ function ProjectsView() {
 			renderItem={(project) => (
 				<AppView className="gap-2">
 					<ProjectRow project={project} />
+					<NativeButton
+						label={t("projects.open")}
+						disabled={action.busy}
+						onPress={() =>
+							router.push({ pathname: "/projects/[projectId]", params: { projectId: project.id } })
+						}
+					/>
 					{!project.is_owner && !project.archived_at ? (
 						<NativeButton
 							label={t("projects.leave")}
@@ -175,7 +182,7 @@ function ProjectsView() {
 								disabled={action.busy}
 								onPress={() =>
 									router.push({
-										pathname: "/projects/[projectId]",
+										pathname: "/projects/[projectId]/sharing",
 										params: { projectId: project.id },
 									})
 								}

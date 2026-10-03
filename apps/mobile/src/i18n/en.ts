@@ -172,6 +172,7 @@ export const en = {
 		failed: "The action could not be confirmed. Refresh the links before retrying.",
 	},
 	skills: {
+		search: "Search Skills",
 		open: "Open Skill",
 		create: "Create or import a Skill",
 		edit: "Edit Skill",
@@ -236,6 +237,12 @@ export const en = {
 		failed: "The change could not be confirmed. Refresh the bindings before trying again.",
 	},
 	projects: {
+		open: "Open Project",
+		filter: "Project scope",
+		agentsScope: "Your Agents linked to this Project. Other members' Agents are not listed.",
+		all: "All Projects",
+		choose: "Choose a Project",
+		archived: "Archived Project · resource creation is disabled",
 		sharing: "Manage sharing",
 		leave: "Leave project",
 		leaveWarning:
