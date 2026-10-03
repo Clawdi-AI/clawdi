@@ -1,8 +1,10 @@
 // The custom forms use Clerk's legacy resource API (`create` + `setActive`).
 // The root export in @clerk/expo 4.8 exposes the newer signal API instead.
+
+import { publicSessionId } from "@clawdi/shared/api";
 import { useSignIn, useSignUp } from "@clerk/expo/legacy";
 import type { SignInResource } from "@clerk/expo/types";
-import { Link, useRouter } from "expo-router";
+import { Link, useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import { useI18n } from "../i18n";
 import { LoadingScreen } from "../ui/feedback";
@@ -96,6 +98,9 @@ type AuthStep =
 function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 	const t = useI18n();
 	const router = useRouter();
+	const params = useLocalSearchParams<{ publicShareId?: string }>();
+	const returnShare =
+		typeof params.publicShareId === "string" ? publicSessionId(params.publicShareId) : null;
 	const signInHook = useSignIn();
 	const signUpHook = useSignUp();
 	const { busy, error, run, clearError } = useAuthAction(mode);
@@ -124,7 +129,9 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 					setNotice(t("auth.sessionTaskRequired"));
 					return;
 				}
-				router.replace("/(tabs)");
+				router.replace(
+					returnShare ? { pathname: "/s/[shareId]", params: { shareId: returnShare } } : "/(tabs)",
+				);
 			},
 		});
 	};
@@ -443,12 +450,23 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 				<AppText className="text-base text-muted">
 					{signingUp ? t("auth.haveAccount") : t("auth.noAccount")}
 				</AppText>
-				<Link href={signingUp ? "/(auth)/sign-in" : "/(auth)/sign-up"} replace>
+				<Link
+					href={{
+						pathname: signingUp ? "/(auth)/sign-in" : "/(auth)/sign-up",
+						params: returnShare ? { publicShareId: returnShare } : {},
+					}}
+					replace
+				>
 					<AppText className="text-base font-semibold text-primary">
 						{signingUp ? t("auth.returnToSignIn") : t("auth.createAccount")}
 					</AppText>
 				</Link>
 			</AppView>
+			<NativeButton
+				label={t("publicSession.open")}
+				disabled={busy}
+				onPress={() => router.push("/open-share")}
+			/>
 		</AuthFrame>
 	);
 }

@@ -12,6 +12,27 @@ import { skillArchiveEn } from "../features/skill-archive-en";
 import { vaultEn } from "../features/vault/en";
 
 export const en = {
+	publicSession: {
+		exportJson: "Share JSON export",
+		open: "Open a shared Session",
+		link: "Share link or ID",
+		inputHelp:
+			"Paste a Session share link or UUID. It is read only from this app's configured Cloud API, never from a pasted host.",
+		title: "Shared Session",
+		snapshot: "This share exposes only the conversation scope selected by its owner.",
+		live: "This is a live link. Content can change; refresh to reload the whole conversation.",
+		empty: "No readable messages.",
+		missing: "This share was not found.",
+		revoked: "The owner turned off this share. Ask them for a new link.",
+		signIn: "Sign in to view this Session",
+		forbidden: "This account does not have access.",
+		changed: "The conversation changed while loading. Refresh to start again.",
+		failed: "Could not read this share. Refresh to try again.",
+		refresh: "Refresh share",
+		session: "Shared conversation",
+		through: "Shared conversation excerpt",
+		response: "Shared response",
+	},
 	markdown: {
 		openLink: "Open external link",
 		openFailed: "Could not open this link. Try again when this screen is active.",

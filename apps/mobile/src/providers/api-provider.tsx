@@ -22,6 +22,7 @@ import {
 	createHostedComputeClient,
 	createProjectSharingClient,
 	createProviderRemovalClient,
+	createPublicSessionClient,
 	createSessionSharingClient,
 	createSkillClient,
 	createVaultClient,
@@ -33,6 +34,7 @@ import {
 	type HostedComputeClient,
 	type ProjectSharingClient,
 	type ProviderRemovalClient,
+	type PublicSessionClient,
 	type SessionSharingClient,
 	type SkillClient,
 	type VaultClient,
@@ -46,6 +48,7 @@ import { useAccountScope } from "../platform/account-lifecycle";
 
 export type MobileApiClients = Readonly<{
 	cloud: CloudApiClient;
+	publicSessions: PublicSessionClient;
 	agentExtensions: AgentExtensionsClient;
 	agentSettings: AgentSettingsClient;
 	channels: ChannelClient;
@@ -99,6 +102,11 @@ export function MobileApiProvider({
 	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
+			publicSessions: createPublicSessionClient({
+				baseUrl: config.cloudApiUrl,
+				fetch: fetcher,
+				getToken: scope.isReady ? readToken : undefined,
+			}),
 			agentExtensions: createAgentExtensionsClient({
 				baseUrl: config.cloudApiUrl,
 				getToken: readToken,

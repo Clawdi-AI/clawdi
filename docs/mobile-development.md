@@ -519,6 +519,19 @@ independent iOS/Android exports and post-export Mobile typechecks. Frozen instal
 preserved the lock and manifests; exact implementation files matched the tested
 container. These results do not establish native compilation or live mutations.
 
+Public Session routes (`/s/[shareId]`, `/open-share`) support anonymous snapshots,
+legacy live links with optional account authentication, explicit pagination and
+native Markdown/JSON sharing. Web's initial metadata/message reads reuse the same
+generated Shared client. Only a snapshot metadata 404 enables legacy fallback;
+revocation (410) never does. Snapshot requests omit account tokens and cookies.
+The native view clears content on blur/background and revalidates on return.
+Pagination rejects changed totals or revisions; when the public API omits a
+revision, same-count live edits cannot be detected. Live links are not snapshots.
+Sign-in continuation accepts only a validated share UUID, not arbitrary redirects.
+Manual HTTPS/custom-scheme input extracts the ID and uses the configured Cloud
+API; it never fetches a pasted hostname. OS HTTPS domain association and real-device
+link intake remain unverified and are not configured by this implementation.
+
 Source implementation is not native acceptance. Keep the complete v2 Web scope
 until each surface has implementation, focused verification and device evidence:
 
@@ -526,7 +539,7 @@ until each surface has implementation, focused verification and device evidence:
 | --- | --- | --- |
 | Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings | Remaining general/profile settings and real Clerk flows |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
-| Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing and text export, native Markdown with confirmed safe external links | Inline image preview, public/universal-link entrypoints, device scrolling/sharing and visual acceptance |
+| Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed safe external links | Inline image preview, OS universal-link association, device scrolling/sharing and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport | Universal-link intake and device acceptance |

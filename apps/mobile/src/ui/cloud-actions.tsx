@@ -8,6 +8,7 @@ export function CloudActions() {
 	const t = useI18n();
 	return (
 		<AppView className="gap-3">
+			<NativeButton label={t("publicSession.open")} onPress={() => router.push("/open-share")} />
 			<NativeButton
 				label={t("navigation.createAgent")}
 				onPress={() => router.push("/agents/new")}

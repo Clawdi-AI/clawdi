@@ -64,6 +64,7 @@ export * from "./provider-oauth";
 export * from "./provider-presets";
 export * from "./provider-removal-client";
 export * from "./provider-types";
+export * from "./public-session-client";
 export {
 	type AgentListQuery,
 	type CloudApiClient,
