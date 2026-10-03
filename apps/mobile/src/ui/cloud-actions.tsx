@@ -18,6 +18,7 @@ export function CloudActions() {
 			/>
 			<NativeButton label={t("navigation.billing")} onPress={() => router.push("/billing")} />
 			<NativeButton label={t("navigation.skills")} onPress={() => router.push("/skills")} />
+			<NativeButton label={t("navigation.memories")} onPress={() => router.push("/memories")} />
 		</AppView>
 	);
 }

@@ -12,6 +12,7 @@ import {
 
 export type AgentListQuery = paths["/v1/agents"]["get"]["parameters"]["query"];
 export type SkillListQuery = paths["/v1/skills"]["get"]["parameters"]["query"];
+export type MemoryListQuery = paths["/v1/memories"]["get"]["parameters"]["query"];
 export type SessionListQuery = paths["/v1/sessions"]["get"]["parameters"]["query"];
 export type SessionMessagesQuery =
 	paths["/v1/sessions/{session_id}/messages"]["get"]["parameters"]["query"];
@@ -27,6 +28,8 @@ export function createCloudApiClient(options: ApiClientOptions) {
 			transport.read((init) => api.GET("/v1/agents", { ...init, params: { query } }), signal),
 		listSkills: (query?: SkillListQuery, signal?: AbortSignal) =>
 			transport.read((init) => api.GET("/v1/skills", { ...init, params: { query } }), signal),
+		listMemories: (query?: MemoryListQuery, signal?: AbortSignal) =>
+			transport.read((init) => api.GET("/v1/memories", { ...init, params: { query } }), signal),
 		getAgent: (agentId: string, signal?: AbortSignal) =>
 			transport.read(
 				(init) =>

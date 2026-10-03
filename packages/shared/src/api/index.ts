@@ -40,6 +40,7 @@ export {
 	type SessionListQuery,
 	type SessionMessagesQuery,
 	type SkillListQuery,
+	type MemoryListQuery,
 } from "./read-clients";
 export {
 	ApiClientError,
