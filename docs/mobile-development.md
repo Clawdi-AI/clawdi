@@ -606,6 +606,23 @@ and retire late verification responses. A repeated assurance hint is not success
 Passkey/enterprise-only verification currently fails closed with an explicit
 unsupported message. Real factor delivery, reverification and device acceptance
 are not established by static types or exports.
+
+`/passkeys` lists the current User's registered passkeys, names and last-use dates.
+Rename and confirmed removal use published `Passkey.update({ name })` and
+`Passkey.delete()` resources, with the same native reverification UI. Every action
+reloads the captured User before locating the credential; explicit retries reconcile
+an already-applied rename/removal. A second reload must confirm the requested
+result before displaying success. Account generation, captured cancellation signal
+and foreground leases retire stale results. Removal revokes the server registration,
+not the private credential in the device/password manager. No automatic mutation
+retry, credential persistence, or native registration occurs.
+Run Mobile app/test typechecks and Shared/Mobile tests in the isolated runner;
+real-device mutation/reverification remains an acceptance gate.
+Native creation/sign-in remain separate unfinished work: `@clerk/expo` 4.8.0
+documents its `__experimental_passkeys` adapter as a limited-rollout API, requiring
+the optional native module and correctly associated application/domain configuration.
+This management screen neither installs that module nor claims to enable passkeys.
+
 `/device-sessions` explicitly loads active sessions through the public Clerk Client
 reload and the captured Session's rebuilt User. Clerk JS 6.34.1 `getSessions()` caches
 its first response and `SessionWithActivities.retrieve()` converts failures to an
@@ -722,7 +739,7 @@ until each surface has implementation, focused verification and device evidence:
 
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
-| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and shared email/phone contact management, shared native password/code reverification, active-device review/revocation, password management, authenticator/SMS factor management and backup codes, linked-account inventory/unlink and configured-provider browser linking/reauthorization | Passkey management, remaining security management, passkey/enterprise reverification and real Clerk/browser/device acceptance |
+| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/picture and shared email/phone contact management, shared native password/code reverification, active-device review/revocation, password management, authenticator/SMS factor management and backup codes, linked-account inventory/unlink and configured-provider browser linking/reauthorization, Passkey inventory/rename/removal | Native Passkey creation/sign-in, remaining security management, passkey/enterprise reverification and real Clerk/browser/device acceptance |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |

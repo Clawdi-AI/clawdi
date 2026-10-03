@@ -123,6 +123,7 @@ function AccountView() {
 			<NativeButton label={t("devices.title")} onPress={() => router.push("/device-sessions")} />
 			<NativeButton label={t("password.title")} onPress={() => router.push("/password")} />
 			<NativeButton label={t("mfa.title")} onPress={() => router.push("/mfa")} />
+			<NativeButton label={t("passkeys.title")} onPress={() => router.push("/passkeys")} />
 			<AppView className="gap-2 rounded-3xl bg-surface p-5">
 				<AppText accessibilityRole="header">{t("appearance.title")}</AppText>
 				<AppText>{t("appearance.description")}</AppText>

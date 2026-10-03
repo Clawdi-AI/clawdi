@@ -342,6 +342,24 @@ export const en = {
 		missing: "Required configuration is missing.",
 		invalid: "The mobile configuration is invalid.",
 	},
+	passkeys: {
+		title: "Passkeys",
+		description: "Manage passkeys registered with your Clawdi account.",
+		empty: "No registered passkeys.",
+		unnamed: "Unnamed passkey",
+		lastUsed: "Last used:",
+		neverUsed: "Not available",
+		name: "Passkey name",
+		rename: "Rename",
+		save: "Save name",
+		remove: "Remove passkey",
+		removeWarning:
+			"This passkey will no longer sign in to your account. Make sure you have another sign-in method. This does not delete the credential from your device or password manager.",
+		nativeUnavailable:
+			"Creating a passkey and signing in with one are not available in this build yet. Existing passkeys can still be used on the web.",
+		failed: "The passkey change could not be confirmed. Refresh and try again.",
+		saved: "Passkey change confirmed.",
+	},
 	signupDetails: {
 		first_name: "First name",
 		last_name: "Last name",
