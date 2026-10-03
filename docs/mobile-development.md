@@ -361,8 +361,17 @@ not accidental Web hoists. Native text supports headings, emphasis, lists/tasks,
 reference links, quotes, horizontally scrollable tables/code and footnote text.
 Raw HTML remains literal text. Source view and progressive text expansion remain
 available; oversized or overly deep syntax falls back to readable plain text.
-Remote images remain explicit external links, not automatic tracking requests;
-inline image preview and device/accessibility acceptance remain outstanding.
+Remote images require explicit confirmation before native preview. The shared
+Session/Skill renderer offers HTTPS PNG/JPEG/WebP previews, with a 4 MiB streamed
+download ceiling, a 20-second network deadline, no account/cookie credentials or
+redirects, and raster signature validation. Expo fetch ignores the standard cache
+option, so requests also carry `Cache-Control: no-store`; the app writes no image
+files. Previews clear on blur/background or account/content replacement. A
+30-second presentation deadline fences late native metadata results; native
+decoding itself cannot be cancelled. Images exceeding 4096 per dimension or
+8 million pixels are not displayed. Original browser links remain available for
+unsupported formats. Native codec memory, rendering and accessibility acceptance
+remain device gates, not established by parser/network tests or Metro exports.
 Native HTTP(S) links show their full target for confirmation, reject credentials,
 ambiguous control characters and app/file/data schemes, and respect captured
 account/focus leases. Relative URLs have no invented base and remain text.
@@ -554,7 +563,7 @@ until each surface has implementation, focused verification and device evidence:
 | --- | --- | --- |
 | Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name editing | Remaining avatar/email/security management and real Clerk/device appearance flows |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
-| Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed safe external links | Inline image preview, OS universal-link association, device scrolling/sharing and visual acceptance |
+| Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search | Remaining detail views and native file/share/managed-runtime acceptance |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools | Device/provider OAuth verification and MCP setup presentation |
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport | Universal-link intake and device acceptance |

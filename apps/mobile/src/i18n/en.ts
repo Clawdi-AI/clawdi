@@ -57,6 +57,13 @@ export const en = {
 		response: "Shared response",
 	},
 	markdown: {
+		previewImage: "Preview image",
+		imagePrivacy:
+			"Download this external image without account credentials? The image host will receive your network request. Only PNG, JPEG and WebP up to 4 MiB are supported.",
+		imageLoading: "Loading image…",
+		imageFailed:
+			"Could not preview this image. It may be unavailable, too large or unsupported. Close it to retry or open the original link.",
+		closeImage: "Close image",
 		openLink: "Open external link",
 		openFailed: "Could not open this link. Try again when this screen is active.",
 		image: "Image",

@@ -6,13 +6,15 @@ import {
 	markdownReferenceUrls,
 	parseDisplayMarkdown,
 } from "@clawdi/shared/markdown";
+import { useFocusEffect } from "expo-router";
 import { openBrowserAsync } from "expo-web-browser";
-import { type ReactNode, useMemo, useState } from "react";
-import { Alert } from "react-native";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { Alert, AppState } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
+import { ImagePreview } from "./image-preview";
 import { NativeButton } from "./native-controls";
 import { AppScrollView, AppText, AppView } from "./primitives";
 
@@ -34,6 +36,20 @@ export function Markdown({ content, query = "" }: { content: string; query?: str
 	const action = useAuthAction(scope.identity);
 	const [limit, setLimit] = useState(12000);
 	const [raw, setRaw] = useState(false);
+	const [image, setImage] = useState<{
+		url: string;
+		alt: string;
+		owner: typeof scope;
+		content: string;
+	} | null>(null);
+	useFocusEffect(useCallback(() => () => setImage(null), []));
+	useEffect(() => {
+		setImage(null);
+		const listener = AppState.addEventListener("change", (state) => {
+			if (state !== "active") setImage(null);
+		});
+		return () => listener.remove();
+	}, [scope, content]);
 	const shown = content.slice(0, limit);
 	const tree = useMemo(() => (raw ? null : parseDisplayMarkdown(shown)), [raw, shown]);
 	const open = (value: string) => {
@@ -54,14 +70,48 @@ export function Markdown({ content, query = "" }: { content: string; query?: str
 			},
 		]);
 	};
+	const preview = (value: string, alt: string) => {
+		const url = markdownExternalUrl(value);
+		if (!url?.startsWith("https:")) {
+			open(value);
+			return;
+		}
+		const foreground = capture();
+		const signal = scope.signal;
+		Alert.alert(t("markdown.previewImage"), `${t("markdown.imagePrivacy")}\n${url}`, [
+			{ text: t("account.cancel"), style: "cancel" },
+			{
+				text: t("markdown.previewImage"),
+				onPress: () => {
+					if (foreground() && !signal.aborted && scope.isCurrent())
+						setImage({ url, alt, owner: scope, content });
+				},
+			},
+			{
+				text: t("markdown.openLink"),
+				onPress: () => {
+					if (foreground() && !signal.aborted && scope.isCurrent()) open(url);
+				},
+			},
+		]);
+	};
 	return (
 		<AppView className="gap-3">
 			<NativeButton
 				label={t(raw ? "markdown.formatted" : "markdown.source")}
-				onPress={() => setRaw(!raw)}
+				onPress={() => {
+					setRaw(!raw);
+					setImage(null);
+				}}
 			/>
 			{tree ? (
-				<MarkdownTree tree={tree} query={query} open={open} imageLabel={t("markdown.image")} />
+				<MarkdownTree
+					tree={tree}
+					query={query}
+					open={open}
+					preview={preview}
+					imageLabel={t("markdown.image")}
+				/>
 			) : (
 				<>
 					{!raw ? <AppText>{t("markdown.plainFallback")}</AppText> : null}
@@ -70,6 +120,14 @@ export function Markdown({ content, query = "" }: { content: string; query?: str
 					</AppText>
 				</>
 			)}
+			{image && image.owner === scope && image.content === content ? (
+				<ImagePreview
+					key={image.url}
+					url={image.url}
+					alt={image.alt}
+					close={() => setImage(null)}
+				/>
+			) : null}
 			{action.error ? (
 				<AppText accessibilityRole="alert">{t("markdown.openFailed")}</AppText>
 			) : null}
@@ -87,11 +145,13 @@ function MarkdownTree({
 	tree,
 	query,
 	open,
+	preview,
 	imageLabel,
 }: {
 	tree: MarkdownRoot;
 	query: string;
 	open: (url: string) => void;
+	preview: (url: string, alt: string) => void;
 	imageLabel: string;
 }) {
 	const definitions = markdownReferenceUrls(tree);
@@ -134,18 +194,27 @@ function MarkdownTree({
 			case "linkReference":
 				return link(children, definitions.get(node.identifier.toLowerCase()));
 			case "image":
-				return link(`[${imageLabel}: ${node.alt ?? ""}]`, node.url);
+				return imageLink(node.alt ?? "", node.url);
 			case "imageReference":
-				return link(
-					`[${imageLabel}: ${node.alt ?? ""}]`,
-					definitions.get(node.identifier.toLowerCase()),
-				);
+				return imageLink(node.alt ?? "", definitions.get(node.identifier.toLowerCase()));
 			case "footnoteReference":
 				return `[${node.label ?? node.identifier}]`;
 			default:
 				return "value" in node ? text(node.value) : children;
 		}
 	};
+	const imageLink = (alt: string, target: string | undefined) =>
+		target && markdownExternalUrl(target) ? (
+			<AppText
+				accessibilityRole="button"
+				className="text-primary underline"
+				onPress={() => preview(target, alt)}
+			>
+				[{imageLabel}: {alt}]
+			</AppText>
+		) : (
+			link(`[${imageLabel}: ${alt}]`, target)
+		);
 	const blocks = (nodes: readonly MarkdownNode[]) =>
 		nodes.map((node, index) => (
 			<AppView key={node.position?.start.offset ?? index}>{block(node)}</AppView>
