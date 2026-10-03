@@ -81,6 +81,11 @@ export const en = {
 			"Your mobile foundation is ready. Agent inventory and sessions will appear here.",
 		emptyTitle: "No Agents to show",
 		emptyMessage: "When an Agent is available for this account, its status will appear here.",
+		statsTitle: "Workspace activity",
+		statsSessions: "Sessions",
+		statsMessages: "Messages",
+		statsProjects: "Projects",
+		statsSkills: "Skills",
 	},
 	inventory: {
 		loadMore: "Load more",

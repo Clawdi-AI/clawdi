@@ -33,6 +33,8 @@ export function createCloudApiClient(options: ApiClientOptions) {
 			transport.read((init) => api.GET("/v1/memories", { ...init, params: { query } }), signal),
 		listProjects: (signal?: AbortSignal) =>
 			transport.read((init) => api.GET("/v1/projects", init), signal),
+		getDashboardStats: (signal?: AbortSignal) =>
+			transport.read((init) => api.GET("/v1/dashboard/stats", init), signal),
 		getAgent: (agentId: string, signal?: AbortSignal) =>
 			transport.read(
 				(init) =>
