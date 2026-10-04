@@ -4,7 +4,6 @@ import type { CheckoutOperationResult } from "@/hosted/billing/billing-client";
 export { checkoutSessionClientSecret } from "@/hosted/billing/stripe-client-secret";
 
 export const CHECKOUT_ELEMENTS_UI_MODE = "custom";
-export const EMBEDDED_CHECKOUT_UI_MODE = "embedded";
 export const HOSTED_CHECKOUT_UI_MODE = "hosted";
 
 export type StripeCheckoutPaymentStatus = Extract<
@@ -20,14 +19,8 @@ export function completedCheckoutPaymentStatus(
 
 export function checkoutUiModeForPublishableKey(
 	publishableKey: string | undefined,
-	cardlessTrial = false,
-):
-	| typeof CHECKOUT_ELEMENTS_UI_MODE
-	| typeof EMBEDDED_CHECKOUT_UI_MODE
-	| typeof HOSTED_CHECKOUT_UI_MODE {
-	if (!publishableKey) return HOSTED_CHECKOUT_UI_MODE;
-	// Stripe's embedded Checkout completes a $0 if_required trial without payment details.
-	return cardlessTrial ? EMBEDDED_CHECKOUT_UI_MODE : CHECKOUT_ELEMENTS_UI_MODE;
+): typeof CHECKOUT_ELEMENTS_UI_MODE | typeof HOSTED_CHECKOUT_UI_MODE {
+	return publishableKey ? CHECKOUT_ELEMENTS_UI_MODE : HOSTED_CHECKOUT_UI_MODE;
 }
 
 export function checkoutRedirectUrl(result: CheckoutOperationResult): string | null {
