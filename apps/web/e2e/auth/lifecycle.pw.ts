@@ -293,6 +293,8 @@ test("401 account admission is denied; resource 403 and refresh/network failures
 	page,
 }) => {
 	await start(page);
+	const destination = "/private/a?deploy_profile=sui#reauth";
+	await page.evaluate((to) => window.authTest.navigate(to), destination);
 	await page.route("**/private-data", (route) => route.fulfill({ status: 403, body: "Forbidden" }));
 	await page.evaluate(() => window.authTest.refetch());
 	await expect(page.getByRole("alert")).toBeVisible();
@@ -324,6 +326,9 @@ test("401 account admission is denied; resource 403 and refresh/network failures
 	await page.getByRole("button", { name: "Sign in again", exact: true }).click();
 	await expect(page.getByRole("heading", { level: 1 })).toHaveText("Sign in");
 	expect(await page.evaluate(() => window.authTest.signOutCalls)).toBe(1);
+	expect(await page.evaluate(() => window.authTest.lastSignOutRedirectUrl)).toBe(
+		`/sign-in?redirect_url=${encodeURIComponent(destination)}`,
+	);
 });
 
 // Simulated SDK resource/cookie events, real production layout and Router.

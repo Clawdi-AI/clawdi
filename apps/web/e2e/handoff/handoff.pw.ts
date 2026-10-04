@@ -34,6 +34,14 @@ for (const signup of [false, true]) {
 			cookie?.value,
 		);
 		await page.locator('a[href="/api/cloud-handoff?target=deploy"]').first().click();
+		await expect(page.getByRole("dialog", { name: "Clerk fixture sign in" })).toBeVisible();
+		await expect(page).toHaveURL(`${marketing}/openclaw`);
+		await page
+			.getByRole("button", {
+				name: `Complete modal ${signup ? "sign up" : "sign in"}`,
+				exact: true,
+			})
+			.click();
 		await page.waitForURL(`${cloud}/sign-in?**`);
 		expect(new URL(page.url()).searchParams.get("redirect_url")).toBe("/deploy?deploy_profile=sui");
 		if (signup) await page.getByRole("link", { name: "Sign up instead" }).click();

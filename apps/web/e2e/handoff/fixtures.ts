@@ -12,6 +12,14 @@ export const test = base.extend<{ offerRequests: OfferRequest[] }, { offerApi: u
 	offerApi: [
 		// biome-ignore lint/correctness/noEmptyPattern: Playwright requires destructuring for fixture dependencies.
 		async ({}, use) => {
+			const shares = createServer((request, response) => {
+				const path = request.url?.split("?")[0] ?? "";
+				const expired = path === "/v1/public/session-shares/11111111-1111-4111-8111-111111111111";
+				const legacy = path === "/v1/public/sessions/22222222-2222-4222-8222-222222222222";
+				const status = expired ? 410 : legacy ? (request.headers.authorization ? 403 : 401) : 404;
+				response.writeHead(status, { "Content-Type": "application/json" });
+				response.end(JSON.stringify({ detail: "Unavailable share" }));
+			});
 			const server = createServer(async (request, response) => {
 				if (request.url !== "/v2/subscription/trial-offer" || request.method !== "POST") {
 					response.writeHead(404).end();
@@ -32,17 +40,29 @@ export const test = base.extend<{ offerRequests: OfferRequest[] }, { offerApi: u
 					response.writeHead(400).end();
 				}
 			});
-			await new Promise<void>((resolve, reject) => {
-				server.once("error", reject);
-				server.listen(8001, "127.0.0.1", resolve);
-			});
+			let cleanup: PromiseSettledResult<void>[] = [];
 			try {
+				await new Promise<void>((resolve, reject) => {
+					server.once("error", reject);
+					server.listen(8001, "127.0.0.1", resolve);
+				});
+				await new Promise<void>((resolve, reject) => {
+					shares.once("error", reject);
+					shares.listen(8000, "127.0.0.1", resolve);
+				});
 				await use(undefined);
 			} finally {
-				await new Promise<void>((resolve, reject) => {
-					server.close((error) => (error ? reject(error) : resolve()));
-				});
+				cleanup = await Promise.allSettled(
+					[server, shares].map((service) =>
+						service.listening
+							? new Promise<void>((resolve, reject) => {
+									service.close((error) => (error ? reject(error) : resolve()));
+								})
+							: Promise.resolve(),
+					),
+				);
 			}
+			for (const result of cleanup) if (result.status === "rejected") throw result.reason;
 		},
 		{ scope: "worker", auto: true },
 	],

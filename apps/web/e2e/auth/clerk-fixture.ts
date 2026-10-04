@@ -56,6 +56,7 @@ let state = initial;
 const resources = new Set<() => void>();
 const statuses = new Set<() => void>();
 export let signOutCalls = 0;
+export let lastSignOutRedirectUrl: string | undefined;
 const heldTokens = new Map<string, ReturnType<typeof Promise.withResolvers<void>>>();
 export let heldTokenCalls = 0;
 export function holdSessionToken(sessionId: string) {
@@ -149,7 +150,8 @@ const clerk = {
 	get status() {
 		return state.status;
 	},
-	signOut: async () => {
+	signOut: async (options?: { redirectUrl?: string }) => {
+		lastSignOutRedirectUrl = options?.redirectUrl;
 		signOutCalls += 1;
 		emitSdk({ userId: null, sessionId: null });
 	},

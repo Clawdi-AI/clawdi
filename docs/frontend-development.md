@@ -92,6 +92,29 @@ public roots. Marketing `/home` stays public in both auth states. The paired Doc
 browser harness exercises independent site session states and cookie transfer with
 isolated SDK fixtures; live Clerk configuration still needs deployment verification.
 
+Interactive web sign-in actions use
+[`AuthActionLink`](../apps/web/src/components/auth-action-link.tsx) and Clerk's
+built-in `openSignIn` modal. The installed SDK's `SignInModalProps` uses
+`forceRedirectUrl` and `signUpForceRedirectUrl`; both point to the same sanitized
+same-origin intent, including query and hash. Guest clicks and dismissal stay on
+the page. Signed-in clicks, modified clicks, and no-JS links use normal navigation
+with protected admission still enforced. The public session header, private
+session sign-in gate, Project invitation sign-in, and default signed-out
+`AuthStatus` all use this adapter. Dashboard controls are already behind admission
+and continue to their existing destinations.
+
+Two API reauthentication surfaces deliberately retain dedicated sign-in:
+`AccountAccessDeniedState` must retire the stale Clerk identity before the auth
+bridge revalidates protected admission; `ApiErrorPanel` also uses the secure
+recovery route. Both preserve a sanitized current path, query, and hash through
+`signInActionHref`. Suspended-account and ordinary account sign-out remain exit
+actions. Direct protected deep links, OAuth/CLI callbacks, dedicated sign-in/up,
+and the desktop shell's external browser flow remain compatible fallbacks; they
+do not render private data for guests. The paired harness's `modal.pw.ts` covers
+SDK intent, dismissal, both auth completions, anonymous sharing, marketing
+handoff and trial/channel transfer. It simulates the SDK boundary, not a live
+Clerk modal or tenant OAuth configuration.
+
 Done: `bun run --cwd apps/web test src/lib/route-auth.test.ts` passes the
 admission tests and production SSR checks in the Docker clean runner.
 

@@ -4,6 +4,9 @@ import appConfig from "../../vite.config";
 export default defineConfig((env) =>
 	mergeConfig(appConfig(env), {
 		server: { allowedHosts: ["cloud"] },
+		// Sharing routes load this dependency lazily. Prebundle it before the
+		// browser starts so first navigation cannot use an outdated optimizer URL.
+		optimizeDeps: { include: ["react-virtuoso"] },
 		resolve: {
 			alias: [
 				{
