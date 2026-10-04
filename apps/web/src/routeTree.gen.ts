@@ -13,6 +13,7 @@ import { Route as ProtectedRouteImport } from './routes/_protected'
 import { Route as DesktopAuthRouteImport } from './routes/desktop-auth'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as SignUpRouteImport } from './routes/sign-up'
+import { Route as TrialOfferRouteImport } from './routes/trial-offer'
 import { Route as VaultRequestRouteImport } from './routes/vault-request'
 import { Route as ProtectedDashboardRouteImport } from './routes/_protected/_dashboard'
 import { Route as ProtectedCliAuthorizeRouteImport } from './routes/_protected/cli-authorize'
@@ -78,6 +79,11 @@ const SignInRoute = SignInRouteImport.update({
 const SignUpRoute = SignUpRouteImport.update({
   id: '/sign-up',
   path: '/sign-up',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TrialOfferRoute = TrialOfferRouteImport.update({
+  id: '/trial-offer',
+  path: '/trial-offer',
   getParentRoute: () => rootRouteImport,
 } as any)
 const VaultRequestRoute = VaultRequestRouteImport.update({
@@ -356,6 +362,7 @@ export interface FileRoutesByFullPath {
   '/desktop-auth': typeof DesktopAuthRoute
   '/sign-in': typeof SignInRouteWithChildren
   '/sign-up': typeof SignUpRouteWithChildren
+  '/trial-offer': typeof TrialOfferRoute
   '/vault-request': typeof VaultRequestRoute
   '/cli-authorize': typeof ProtectedCliAuthorizeRoute
   '/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
@@ -407,6 +414,7 @@ export interface FileRoutesByTo {
   '/desktop-auth': typeof DesktopAuthRoute
   '/sign-in': typeof SignInRouteWithChildren
   '/sign-up': typeof SignUpRouteWithChildren
+  '/trial-offer': typeof TrialOfferRoute
   '/vault-request': typeof VaultRequestRoute
   '/cli-authorize': typeof ProtectedCliAuthorizeRoute
   '/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
@@ -457,6 +465,7 @@ export interface FileRoutesById {
   '/desktop-auth': typeof DesktopAuthRoute
   '/sign-in': typeof SignInRouteWithChildren
   '/sign-up': typeof SignUpRouteWithChildren
+  '/trial-offer': typeof TrialOfferRoute
   '/vault-request': typeof VaultRequestRoute
   '/_protected/_dashboard': typeof ProtectedDashboardRouteWithChildren
   '/_protected/cli-authorize': typeof ProtectedCliAuthorizeRoute
@@ -512,6 +521,7 @@ export interface FileRouteTypes {
     | '/desktop-auth'
     | '/sign-in'
     | '/sign-up'
+    | '/trial-offer'
     | '/vault-request'
     | '/cli-authorize'
     | '/runtime-handoff'
@@ -563,6 +573,7 @@ export interface FileRouteTypes {
     | '/desktop-auth'
     | '/sign-in'
     | '/sign-up'
+    | '/trial-offer'
     | '/vault-request'
     | '/cli-authorize'
     | '/runtime-handoff'
@@ -612,6 +623,7 @@ export interface FileRouteTypes {
     | '/desktop-auth'
     | '/sign-in'
     | '/sign-up'
+    | '/trial-offer'
     | '/vault-request'
     | '/_protected/_dashboard'
     | '/_protected/cli-authorize'
@@ -666,6 +678,7 @@ export interface RootRouteChildren {
   DesktopAuthRoute: typeof DesktopAuthRoute
   SignInRoute: typeof SignInRouteWithChildren
   SignUpRoute: typeof SignUpRouteWithChildren
+  TrialOfferRoute: typeof TrialOfferRoute
   VaultRequestRoute: typeof VaultRequestRoute
   SIdRoute: typeof SIdRoute
   SChar123idChar125DotjsonRoute: typeof SChar123idChar125DotjsonRoute
@@ -701,6 +714,13 @@ declare module '@tanstack/react-router' {
       path: '/sign-up'
       fullPath: '/sign-up'
       preLoaderRoute: typeof SignUpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/trial-offer': {
+      id: '/trial-offer'
+      path: '/trial-offer'
+      fullPath: '/trial-offer'
+      preLoaderRoute: typeof TrialOfferRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/vault-request': {
@@ -1198,6 +1218,7 @@ const rootRouteChildren: RootRouteChildren = {
   DesktopAuthRoute: DesktopAuthRoute,
   SignInRoute: SignInRouteWithChildren,
   SignUpRoute: SignUpRouteWithChildren,
+  TrialOfferRoute: TrialOfferRoute,
   VaultRequestRoute: VaultRequestRoute,
   SIdRoute: SIdRoute,
   SChar123idChar125DotjsonRoute: SChar123idChar125DotjsonRoute,

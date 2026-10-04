@@ -42,11 +42,14 @@ for (const signup of [false, true]) {
 			if (new URL(request.url()).pathname === "/v1/settings" && request.method() === "PATCH")
 				settingsWrites.push(request.postData() ?? "");
 		});
-		await page.goto(`${marketing}/sui`);
+		const landing = await page.goto(`${marketing}/sui`);
+		expect(landing?.status()).toBe(200);
+		await expect(page).toHaveURL(`${marketing}/?deploy_profile=sui`);
 		const cookie = (await context.cookies()).find((item) => item.name === "clawdi-deploy-intent");
 		expect(cookie?.httpOnly).toBe(true);
 		expect(cookie?.sameSite).toBe("Lax");
-		await page.goto(`${marketing}/zh/openclaw`);
+		await page.goto(`${marketing}/openclaw`);
+		await expect(page).toHaveURL(`${marketing}/openclaw`);
 		expect((await context.cookies()).find((item) => item.name === cookie?.name)?.value).toBe(
 			cookie?.value,
 		);
@@ -77,6 +80,9 @@ test("server capture and handoff need no JavaScript and reject expired cookies",
 	browser,
 }) => {
 	const context = await browser.newContext({ javaScriptEnabled: false });
+	const entry = await context.request.get(`${marketing}/sui`, { maxRedirects: 0 });
+	expect(entry.status()).toBe(303);
+	expect(entry.headers().location).toBe("/?deploy_profile=sui");
 	await context.request.get(`${marketing}/sui?deploy_profile=sui&deploy_profile=sui`);
 	const cookie = (await context.cookies()).find((item) => item.name === "clawdi-deploy-intent");
 	expect(cookie?.httpOnly).toBe(true);
