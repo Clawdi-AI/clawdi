@@ -753,6 +753,22 @@ const runtimeCmd = program
 	.description("Managed Hosted runtime control plane");
 
 runtimeCmd
+	.command("prepare", { hidden: true })
+	.description("Prepare anonymous software-only runtime data without Cloud identity")
+	.requiredOption("--spec <path>", "Strict preinstallation specification")
+	.requiredOption("--installer <path>", "SHA256-verified official installer")
+	.action(async (opts: { spec: string; installer: string }) => {
+		const { readFileSync } = await import("node:fs");
+		const { prepareRuntimePreinstallation } = await import("./runtime/preinstallation.js");
+		if (process.getuid?.() !== 0) throw new Error("anonymous preparation requires root");
+		console.log(
+			JSON.stringify(
+				prepareRuntimePreinstallation(JSON.parse(readFileSync(opts.spec, "utf8")), opts.installer),
+			),
+		);
+	});
+
+runtimeCmd
 	.command("init", { hidden: true })
 	.description("Converge a hosted runtime from controller desired state")
 	.option("--non-interactive", "Required for hosted boot; never prompt")

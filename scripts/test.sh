@@ -14,7 +14,7 @@ if [[ -z "${TEST_RUNNER_IMAGE:-}" ]]; then
 fi
 
 usage() {
-	echo "Usage: scripts/test.sh [all|ci|js|cli|cli-native|desktop|shared|sidecar|web|backend|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory] [suite args...]"
+	echo "Usage: scripts/test.sh [all|ci|js|cli|cli-native|preinstallation-artifact|desktop|shared|sidecar|web|backend|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory] [suite args...]"
 }
 
 compose() {
@@ -23,7 +23,7 @@ compose() {
 
 validate_suite() {
 	case "$1" in
-		all|backend|ci|js|cli|cli-native|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory)
+		all|backend|ci|js|cli|cli-native|preinstallation-artifact|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory)
 			;;
 		*)
 			echo "Unknown test suite: $1" >&2
@@ -58,6 +58,12 @@ run_on_host() {
 		fi
 		bash "$script_dir/test-systemd-command.sh"
 		return
+	fi
+	local prewarm_output=""
+	if [[ "$suite" == preinstallation-artifact ]]; then
+		prewarm_output="$(realpath "${1:?Provide an existing empty output directory inside this checkout}")"
+		case "$prewarm_output/" in "$repo_root/"*) ;; *) echo "Artifact output must be inside this checkout" >&2; return 2;; esac
+		if [[ -n "$(ls -A "$prewarm_output")" ]]; then echo "Artifact output must be empty" >&2; return 2; fi
 	fi
 	local provider_output=""
 	if [[ "$suite" == provider-recovery-fixture ]]; then
@@ -102,6 +108,7 @@ run_on_host() {
 	fi
 
 	local run_args=(run --rm)
+	if [[ "$suite" == preinstallation-artifact ]]; then run_args+=(--volume "$prewarm_output:/prewarm-artifacts"); fi
 	if [[ "$suite" == provider-recovery-fixture ]]; then
 		run_args+=(--volume "$provider_baseline_dir:/provider-baseline:ro" --volume "$provider_output:/provider-artifacts")
 	fi
@@ -352,6 +359,13 @@ run_in_container() {
 			;;
 		cli)
 			run_cli "$@"
+			;;
+		preinstallation-artifact)
+			install_js
+			cli_typecheck
+			bun run --cwd packages/cli build:dev
+			(cd packages/cli && bun pm pack --destination /prewarm-artifacts)
+			bun build packages/cli/tests/fixtures/preinstallation-observe.ts --target=node --outfile=/prewarm-artifacts/observe-install.mjs
 			;;
 		cli-native)
 			install_js
