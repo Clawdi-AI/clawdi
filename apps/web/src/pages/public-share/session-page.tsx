@@ -16,7 +16,7 @@ import type { PublicShareResult } from "./session-page.functions";
 
 type PublicSharePageResult = Exclude<PublicShareResult, { kind: "not-found" }>;
 
-export default function PublicSharePage({ result }: { id: string; result: PublicSharePageResult }) {
+export default function PublicSharePage({ result }: { result: PublicSharePageResult }) {
 	if (result.kind === "unauthorized") return <SignInToView />;
 	if (result.kind === "forbidden") return <NoAccess />;
 	if (result.kind === "expired") {
