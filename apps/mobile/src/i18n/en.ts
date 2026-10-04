@@ -347,6 +347,17 @@ export const en = {
 	},
 	preview: {
 		badge: "Clawdi preview",
+		greeting: "Good morning, Alex",
+		agents: "Agents",
+		viewAll: "View all",
+		connected: "Connected",
+		attention: "Needs attention",
+		open: "Open",
+		activity: "Activity",
+		last7Days: "Last 7 days",
+		sessionsThisWeek: "Your sessions this week",
+		library: "Library",
+		recentSessions: "Recent sessions",
 		heroTitle: "Your Agents, in one place",
 		heroDescription:
 			"Open a Session, manage Projects, or create a new Agent from the shortcuts below.",
