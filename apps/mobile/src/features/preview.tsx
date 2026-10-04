@@ -1,4 +1,4 @@
-import { useRouter } from "expo-router";
+import { Alert } from "react-native";
 import { useI18n } from "../i18n";
 import { NativeButton } from "../ui/native-controls";
 import { AppScrollView, AppText, AppView } from "../ui/primitives";
@@ -12,7 +12,7 @@ const previewStats = [
 
 export function PreviewHome() {
 	const t = useI18n();
-	const router = useRouter();
+	const showPreviewNotice = () => Alert.alert(t("preview.badge"), t("preview.navigationNotice"));
 	return (
 		<AppScrollView className="flex-1 bg-background" contentContainerStyle={{ flexGrow: 1 }}>
 			<AppView className="gap-6 px-6 pb-10 pt-8">
@@ -28,10 +28,7 @@ export function PreviewHome() {
 					<AppText className="text-base leading-6 text-white/80">
 						{t("preview.heroDescription")}
 					</AppText>
-					<NativeButton
-						label={t("navigation.createAgent")}
-						onPress={() => router.push("/agents/new")}
-					/>
+					<NativeButton label={t("navigation.createAgent")} onPress={showPreviewNotice} />
 				</AppView>
 				<AppView className="flex-row flex-wrap gap-3 rounded-3xl bg-surface p-5">
 					{previewStats.map(([label, value]) => (
@@ -45,15 +42,9 @@ export function PreviewHome() {
 					<AppText className="text-xl font-semibold text-foreground">
 						{t("preview.quickActions")}
 					</AppText>
-					<NativeButton
-						label={t("navigation.createAgent")}
-						onPress={() => router.push("/agents")}
-					/>
-					<NativeButton
-						label={t("navigation.deployments")}
-						onPress={() => router.push("/sessions")}
-					/>
-					<NativeButton label={t("navigation.billing")} onPress={() => router.push("/billing")} />
+					<NativeButton label={t("navigation.createAgent")} onPress={showPreviewNotice} />
+					<NativeButton label={t("navigation.deployments")} onPress={showPreviewNotice} />
+					<NativeButton label={t("navigation.billing")} onPress={showPreviewNotice} />
 				</AppView>
 				<AppView className="gap-3">
 					<AppText className="text-xl font-semibold text-foreground">

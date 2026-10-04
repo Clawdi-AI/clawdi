@@ -358,6 +358,7 @@ export const en = {
 		accountName: "Alex Morgan",
 		accountEmail: "alex@example.com",
 		bypassNotice: "Preview mode bypasses authentication and never calls the Cloud or Hosted APIs.",
+		navigationNotice: "Navigation to live Cloud features is disabled in preview mode.",
 	},
 	loading: {
 		app: "Loading Clawdi",
