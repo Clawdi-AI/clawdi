@@ -2452,6 +2452,8 @@ export interface components {
              * @enum {string}
              */
             compute_plan_slug: "compute_basic" | "compute_performance";
+            /** Trial Offer Token */
+            trial_offer_token?: string | null;
             /** Plugin Bundle */
             plugin_bundle?: "sui" | null;
             /** Primary Model */
