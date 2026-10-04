@@ -1,5 +1,6 @@
 "use client";
 
+import { EmbeddedCheckout, EmbeddedCheckoutProvider } from "@stripe/react-stripe-js";
 import {
 	CheckoutElementsProvider,
 	ExpressCheckoutElement,
@@ -12,7 +13,6 @@ import type {
 	StripeCheckoutStatus,
 	StripeExpressCheckoutElementConfirmEvent,
 } from "@stripe/stripe-js";
-import { EmbeddedCheckout, EmbeddedCheckoutProvider } from "@stripe/react-stripe-js";
 import { AlertCircle, CreditCard, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
