@@ -362,10 +362,11 @@ run_in_container() {
 			;;
 		preinstallation-artifact)
 			install_js
-			cli_typecheck
+			bunx tsc --noEmit -p packages/cli/tests/fixtures/tsconfig.preinstallation.json
 			bun run --cwd packages/cli build:dev
 			(cd packages/cli && bun pm pack --destination /prewarm-artifacts)
 			bun build packages/cli/tests/fixtures/preinstallation-observe.ts --target=node --outfile=/prewarm-artifacts/observe-install.mjs
+			bun build packages/cli/tests/fixtures/preinstallation-converge.ts --target=node --outfile=/prewarm-artifacts/converge-runtime.mjs
 			;;
 		cli-native)
 			install_js

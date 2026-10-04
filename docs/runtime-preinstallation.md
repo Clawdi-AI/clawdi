@@ -20,10 +20,13 @@ official installer URL at that commit. Unknown fields, tenant identifiers,
 mutable versions and architecture/CLI mismatches are rejected.
 
 Preparation requires empty `/home/clawdi` and `/var/lib/clawdi`. It verifies the
-installer hash, runs as the runtime user with a clean environment and disabled
+installer hash, uses the CLI's shared numeric privilege-drop implementation to
+run as the runtime user with a clean environment and disabled
 ambient npm/git/uv/pip configuration, and uses the upstream installers.
 OpenClaw receives a checksum-verified local npm archive plus `--runtime-only`
-and `--no-onboard`; Hermes receives `--commit`, `--force-commit` and `--skip-setup`.
+and `--no-onboard`; Hermes receives `--commit`, `--force-commit`,
+`--skip-setup`, `--skip-browser` and `--non-interactive`. The latter three
+match normal installation; optional browser setup remains tenant-owned.
 The trusted official installer runs only in the fresh anonymous home, with no
 tenant/Cloud inputs or credentials. Upstream-generated default configuration,
 persona and bundled skills are preserved. Existing tenant homes cannot be used
@@ -48,7 +51,7 @@ and health checks still run. Existing tenant runtime versions are unaffected.
 Verify through the repository's hermetic entrypoint:
 
 ```bash
-bash scripts/test.sh cli src/runtime/preinstallation.test.ts
+bash scripts/test.sh cli src/runtime/preinstallation.test.ts tests/runtime-privilege-drop-contract.test.ts tests/clean-test-runner.test.ts
 ```
 
 For a paired disposable native fixture, produce the actual current CLI archive
@@ -58,7 +61,8 @@ inside a task-owned empty directory in this checkout:
 bash scripts/test.sh preinstallation-artifact /path/to/checkout/task-artifacts
 ```
 
-The archive is built in the isolated Docker runner. The caller owns output
+The archive and typed observation/convergence fixtures are built in the isolated
+Docker runner. The caller owns output
 cleanup. Enabling and rollback of any remote pool belong to its provisioning
 owner; publishing this CLI alone does not enable prewarming.
 
