@@ -73,6 +73,15 @@ a server round trip to protected navigation. Clerk's default SPA navigation is
 unchanged: its session cookie is updated before navigation, while its client
 session resource is published after navigation completes.
 
+In hosted browser builds, signed-out visits to the bare `/` entry redirect to
+`VITE_CLAWDI_MARKETING_URL` (default `https://clawdi.ai/`). Signed-in visitors
+keep the dashboard. Query/hash destinations and protected paths retain the
+sign-in redirect with their original return URL, including CLI authorization
+and OAuth callbacks. OSS and desktop admission stay unchanged.
+
+Done: `bun run --cwd apps/web test src/lib/route-auth.test.ts` passes the
+admission tests and production SSR checks in the Docker clean runner.
+
 `ProtectedAuthBoundary` supplies account-data readiness without replacing the
 layout. The actual dashboard frame and navigation remain visible; private page
 content, account actions, notifications, prefetches, and hosted sensors wait for

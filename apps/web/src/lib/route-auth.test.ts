@@ -41,3 +41,47 @@ test("signed-out server admission redirects with the destination", () => {
 			});
 	}
 });
+
+test("signed-out hosted homepage reloads the configured marketing URL", () => {
+	for (const marketingUrl of ["https://clawdi.ai/", "https://marketing.example.test/"]) {
+		try {
+			requireRouteIdentity({ userId: null, sessionId: null }, "/", marketingUrl);
+			throw new Error("Expected a redirect");
+		} catch (error) {
+			expect(isRedirect(error)).toBe(true);
+			if (isRedirect(error)) {
+				expect(error.options).toMatchObject({ href: marketingUrl, reloadDocument: true });
+			}
+		}
+	}
+});
+
+test("hosted deep links and OSS homepage keep their sign-in return destination", () => {
+	for (const [href, marketingUrl] of [
+		["/", undefined],
+		["/?settings=billing-wallet", "https://clawdi.ai/"],
+		["/#billing", "https://clawdi.ai/"],
+		["/agents?view=all", "https://clawdi.ai/"],
+		["/cli-authorize?user_code=ABCD", "https://clawdi.ai/"],
+		["/oauth/codex/callback?code=opaque&state=state", "https://clawdi.ai/"],
+	] as const) {
+		try {
+			requireRouteIdentity({ userId: null, sessionId: null }, href, marketingUrl);
+			throw new Error("Expected a redirect");
+		} catch (error) {
+			expect(isRedirect(error)).toBe(true);
+			if (isRedirect(error)) {
+				expect(error.options).toMatchObject({
+					to: "/sign-in",
+					search: { redirect_url: href },
+				});
+			}
+		}
+	}
+});
+
+test("signed-in hosted homepage keeps the dashboard identity", () => {
+	expect(requireRouteIdentity(signedIn, "/", "https://clawdi.ai/")).toBe(
+		JSON.stringify(["user-a", "session-a"]),
+	);
+});

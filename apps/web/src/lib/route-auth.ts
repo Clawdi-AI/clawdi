@@ -23,8 +23,13 @@ export function resolveRouteAuth(
 export function requireRouteIdentity(
 	{ userId, sessionId }: Pick<Awaited<ReturnType<typeof auth>>, "userId" | "sessionId">,
 	href: string,
+	marketingUrl?: string,
 ): string {
 	if (!userId || !sessionId) {
+		// Query/hash destinations can be dashboard or auth-return deep links.
+		if (href === "/" && marketingUrl) {
+			throw redirect({ href: marketingUrl, reloadDocument: true });
+		}
 		throw redirect({ to: "/sign-in", search: { redirect_url: href } });
 	}
 	return JSON.stringify([userId, sessionId]);

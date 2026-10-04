@@ -111,7 +111,21 @@ for (const path of ["/", "/agents"]) {
 		assert.match(html, /data-testid="dashboard-page-content"/);
 		assert.doesNotMatch(html, /Loading session/);
 	});
+}
 
+test("production SSR redirects the signed-out hosted homepage to marketing", async () => {
+	const response = await server.fetch(request("/"));
+	assert.equal(response.status, 307);
+	assert.equal(response.headers.get("location"), "https://clawdi.ai/");
+	assert.equal(await response.text(), "");
+});
+
+for (const path of [
+	"/agents",
+	"/?settings=billing-wallet",
+	"/cli-authorize?user_code=ABCD",
+	"/oauth/codex/callback?code=opaque&state=state",
+]) {
 	test(`production SSR protects ${path} without auth bypass`, async () => {
 		const response = await server.fetch(request(path));
 		assert.equal(response.status, 307);

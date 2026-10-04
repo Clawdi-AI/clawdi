@@ -61,6 +61,10 @@ export const env = createEnv({
 		// exposes the localhost default during local development.
 		VITE_CLAWDI_LEGACY_DASHBOARD_URL: httpsOrHttp().default("http://localhost:3000/dashboard"),
 
+		// Signed-out hosted homepage destination. OSS and desktop keep their
+		// existing auth entry points.
+		VITE_CLAWDI_MARKETING_URL: httpsOrHttp().default("https://clawdi.ai/"),
+
 		// Clerk publishable key. Local auth bypass can run without
 		// Clerk; every normal dashboard run still requires a real key.
 		VITE_CLERK_PUBLISHABLE_KEY: isLocalDevAuthBypass

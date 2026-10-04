@@ -71,6 +71,21 @@ describe("notification center logic", () => {
 		expect(
 			resolveNotificationUrl("https://www.clawdi.ai/dashboard", "https://cloud.clawdi.ai")?.kind,
 		).toBe("external");
+		const apex = resolveNotificationUrl(
+			"https://clawdi.ai/dashboard?settings=billing",
+			"https://cloud.clawdi.ai",
+		);
+		expect(apex?.kind).toBe("external");
+		expect(apex?.url.href).toBe("https://clawdi.ai/dashboard?settings=billing");
+		for (const url of [
+			"https://clawdi.ai.evil.test/dashboard",
+			"https://clawdi.ai@evil.test/dashboard",
+			"https://evil.clawdi.ai/dashboard",
+			"http://clawdi.ai/dashboard",
+			"https://clawdi.ai:444/dashboard",
+		]) {
+			expect(resolveNotificationUrl(url, "https://cloud.clawdi.ai")).toBeNull();
+		}
 		expect(resolveNotificationUrl("https://example.com", "https://cloud.clawdi.ai")).toBeNull();
 		expect(resolveNotificationUrl("http://example.com", "https://cloud.clawdi.ai")).toBeNull();
 		expect(resolveNotificationUrl("javascript:alert(1)", "https://cloud.clawdi.ai")).toBeNull();
