@@ -1,5 +1,58 @@
 import { expect, test } from "bun:test";
+import type { components } from "./api.generated";
 import { createSkillClient } from "./skill-client";
+
+test("Library Skill resolution is authenticated, encoded and identity-checked without Project fallback", async () => {
+	const skill: components["schemas"]["SkillDetailResponse"] = {
+		id: "skill",
+		skill_key: "group/demo",
+		name: "Demo",
+		description: null,
+		version: 1,
+		source: "local",
+		authority: "cloud",
+		source_repo: null,
+		file_count: 1,
+		content: "Instructions",
+		agent_types: null,
+		created_at: "2026-10-03T00:00:00Z",
+		content_hash: "a".repeat(64),
+		project_id: "resolved-project",
+	};
+	const requests: string[] = [];
+	const server = Bun.serve({
+		hostname: "127.0.0.1",
+		port: 0,
+		fetch(request) {
+			expect(request.headers.get("Authorization")).toBe("Bearer test-token");
+			expect(request.method).toBe("GET");
+			const path = new URL(request.url).pathname;
+			requests.push(path);
+			return path.startsWith("/v1/projects/")
+				? Response.json({ detail: "Not found" }, { status: 404 })
+				: Response.json(skill);
+		},
+	});
+	try {
+		const client = createSkillClient({
+			baseUrl: server.url.toString(),
+			getToken: async () => "test-token",
+			fetch,
+		});
+		expect(await client.getLibrary("group/demo")).toEqual(skill);
+		await expect(client.getLibrary("other")).rejects.toThrow();
+		await expect(client.get("explicit-project", "group/demo")).rejects.toMatchObject({
+			status: 404,
+		});
+		expect(requests).toEqual([
+			"/v1/skills/group%2Fdemo",
+			"/v1/skills/other",
+			"/v1/projects/explicit-project/skills/group%2Fdemo",
+		]);
+	} finally {
+		await server.stop(true);
+	}
+});
 
 test("project Skill writes preserve explicit scope and edit/delete revisions", async () => {
 	const requests: { method: string; path: string; query: string; body: unknown }[] = [];

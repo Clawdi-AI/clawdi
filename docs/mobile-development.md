@@ -941,6 +941,12 @@ captured draft baseline, not a background-refreshed revision. Discard callbacks
 are account/foreground fenced; uncertain writes retain the draft. Gesture/back
 confirmation and background completion still require real-device acceptance.
 
+Library Skill links without a Project now use the existing read-only compatibility
+resolver through Shared. The returned Skill key must match; explicit Project reads
+never fall back to another Project. Editing, deletion and archive management still
+require an explicit Project route, even when the compatibility response names a
+Project. Open that Project's Skills list to manage its exact copy.
+
 The source reference is `apps/web/src/pages/dashboard`, its settings components,
 and `apps/web/src/hosted/v2`; exclude Hosted v1 product surfaces, not v2 features
 whose implementation happens to live under a legacy directory name.

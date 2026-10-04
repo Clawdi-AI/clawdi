@@ -583,6 +583,8 @@ export const en = {
 		failed: "The action could not be confirmed. Refresh the links before retrying.",
 	},
 	skills: {
+		chooseProject:
+			"This Library link is read-only. Open the Skill from its Project to edit or manage that exact copy.",
 		saved: "Skill saved. You can return to the Skills list.",
 		project: "Project",
 		version: "Version",

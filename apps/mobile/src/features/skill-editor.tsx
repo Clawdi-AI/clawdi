@@ -86,8 +86,15 @@ function SkillEditor({
 	const project = projects.data?.find((p) => p.id === selectedId);
 	const detail = useQuery({
 		queryKey: accountQueryKey(scope, "skill-detail", projectId, skillKey),
-		queryFn: ({ signal }) => read((s) => skills.get(projectId ?? "", skillKey ?? "", s), signal),
-		enabled: !create && scope.isReady && Boolean(projectId && skillKey),
+		queryFn: ({ signal }) =>
+			read(
+				(s) =>
+					projectId
+						? skills.get(projectId, skillKey ?? "", s)
+						: skills.getLibrary(skillKey ?? "", s),
+				signal,
+			),
+		enabled: !create && scope.isReady && Boolean(skillKey),
 		retry: false,
 	});
 	const [draft, setDraft] = useState<EditDraft | null>(
@@ -124,11 +131,13 @@ function SkillEditor({
 			},
 		]);
 	});
-	const matches = detail.data?.project_id === projectId && detail.data?.skill_key === skillKey;
+	const matches =
+		detail.data?.skill_key === skillKey && (!projectId || detail.data?.project_id === projectId);
 	const canWrite = create
 		? Boolean(project && isWritableSkillProject(project))
 		: Boolean(
-				matches &&
+				projectId &&
+					matches &&
 					detail.data &&
 					!project?.archived_at &&
 					skillCapabilities(detail.data, project).canUpdate,
@@ -242,19 +251,22 @@ function SkillEditor({
 						onValueChange={setSelection}
 					/>
 				) : null}
-				{projects.isError || (!create && (detail.isError || !projectId || !skillKey)) ? (
+				{projects.isError ||
+				(!create && (detail.isError || !skillKey || (detail.data && !matches))) ? (
 					<ErrorState
 						onRetry={() => {
 							void projects.refetch();
-							if (projectId && skillKey) void detail.refetch();
+							if (skillKey) void detail.refetch();
 						}}
 					/>
 				) : null}
-				{!create && detail.isPending ? (
+				{!create && skillKey && detail.isPending ? (
 					<AppText className="text-muted">{t("loading.app")}</AppText>
 				) : null}
 				{!canWrite && !projects.isPending && (create || detail.data) ? (
-					<AppText className="text-muted">{t("skills.readOnly")}</AppText>
+					<AppText className="text-muted">
+						{t(!create && !projectId ? "skills.chooseProject" : "skills.readOnly")}
+					</AppText>
 				) : null}
 				{draft ? (
 					<AppView className="gap-3">
@@ -317,7 +329,11 @@ function SkillEditor({
 						<AppText className="text-xl text-foreground">{detail.data.name}</AppText>
 						<AppText className="text-muted">{detail.data.description}</AppText>
 						<AppText selectable className="text-muted">
-							{t("skills.project")}: {project?.name ?? detail.data.project_id}
+							{t("skills.project")}:{" "}
+							{project?.name ??
+								detail.data.project_name ??
+								detail.data.project_id ??
+								t("projects.choose")}
 						</AppText>
 						<AppText className="text-muted">
 							{t("skills.version")}: {detail.data.version}
@@ -343,16 +359,18 @@ function SkillEditor({
 							onPress={startEdit}
 						/>
 						<NativeButton label={t("skills.remove")} disabled={disabled} onPress={remove} />
-						<NativeButton
-							label={t("skillArchive.open")}
-							disabled={action.busy || detail.isError}
-							onPress={() =>
-								router.push({
-									pathname: "/skills/archive",
-									params: { projectId: projectId ?? "", skillKey: skillKey ?? "" },
-								})
-							}
-						/>
+						{projectId ? (
+							<NativeButton
+								label={t("skillArchive.open")}
+								disabled={action.busy || detail.isError}
+								onPress={() =>
+									router.push({
+										pathname: "/skills/archive",
+										params: { projectId: projectId ?? "", skillKey: skillKey ?? "" },
+									})
+								}
+							/>
+						) : null}
 					</AppView>
 				) : null}
 				{create ? (

@@ -46,17 +46,15 @@ export function SkillRow({ skill }: { skill: Skill }) {
 			<AppText className="text-xs text-muted">
 				{skill.source} · v{skill.version}
 			</AppText>
-			{skill.project_id ? (
-				<NativeButton
-					label={t("skills.open")}
-					onPress={() =>
-						router.push({
-							pathname: "/skills/detail",
-							params: { projectId: skill.project_id ?? "", skillKey: skill.skill_key },
-						})
-					}
-				/>
-			) : null}
+			<NativeButton
+				label={t("skills.open")}
+				onPress={() =>
+					router.push({
+						pathname: "/skills/detail",
+						params: { projectId: skill.project_id ?? "", skillKey: skill.skill_key },
+					})
+				}
+			/>
 		</AppView>
 	);
 }

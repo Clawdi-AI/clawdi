@@ -48,6 +48,20 @@ export function createSkillClient(options: ApiClientOptions) {
 		skill_key: readResourceId(skillKey),
 	});
 	return {
+		/** Read-only compatibility resolver. Never infer a mutation target from this result. */
+		getLibrary: async (skillKey: string, signal?: AbortSignal) => {
+			const key = readResourceId(skillKey);
+			const skill = await transport.read(
+				(init) =>
+					api.GET("/v1/skills/{skill_key}", {
+						...init,
+						params: { path: { skill_key: key } },
+					}),
+				signal,
+			);
+			if (!skill || skill.skill_key !== key) throw new ApiClientResponseError();
+			return skill;
+		},
 		download: async (projectId: string, skillKey: string, signal?: AbortSignal): Promise<Blob> => {
 			const archive = await transport.read(
 				(init) =>
