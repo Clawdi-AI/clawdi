@@ -947,6 +947,11 @@ never fall back to another Project. Editing, deletion and archive management sti
 require an explicit Project route, even when the compatibility response names a
 Project. Open that Project's Skills list to manage its exact copy.
 
+Subscription details reuse Web's Shared recovery presentation for payment state,
+pending commands, blocked recovery and retry schedules. Native also shows scheduled
+cancellation and the server's pending plan. Copy uses native i18n; no invoice link,
+purchase, top-up or subscription mutation is enabled by this read-only surface.
+
 The source reference is `apps/web/src/pages/dashboard`, its settings components,
 and `apps/web/src/hosted/v2`; exclude Hosted v1 product surfaces, not v2 features
 whose implementation happens to live under a legacy directory name.

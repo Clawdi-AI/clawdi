@@ -182,6 +182,56 @@ function SubscriptionRow({ item }: { item: Subscription }) {
 	);
 }
 
+function SubscriptionRecovery({ item }: { item: Subscription }) {
+	const t = useI18n();
+	const recovery = computeSubscriptionRecoveryPresentation(
+		item,
+		{ label: item.status, tone: "neutral" },
+		{
+			updating: t("billing.updating"),
+			processing: t("billing.processing"),
+			unpaid: t("billing.unpaid"),
+			actionRequired: t("billing.actionRequired"),
+			pastDue: t("billing.pastDue"),
+			paymentProcessing: t("billing.paymentProcessing"),
+			attention: t("billing.attention"),
+			awaitingPayment: t("billing.awaitingPayment"),
+			support: t("billing.support"),
+			ended: t("billing.ended"),
+			paymentAttention: t("billing.paymentAttention"),
+		},
+	);
+	return (
+		<AppView className="gap-2">
+			{recovery.status.label !== item.status ? (
+				<AppText
+					accessibilityRole={recovery.hasPaymentIssue ? "alert" : undefined}
+					className="text-foreground"
+				>
+					{recovery.status.label}
+				</AppText>
+			) : null}
+			{recovery.schedule?.at ? (
+				<DetailRow
+					label={t("billing.retries")}
+					value={formatDate(recovery.schedule.at) ?? t("billing.unknown")}
+				/>
+			) : recovery.schedule?.fallback ? (
+				<AppText className="text-muted">{recovery.schedule.fallback}</AppText>
+			) : null}
+			{item.cancel_at_period_end ? (
+				<AppText className="text-muted">{t("billing.cancellation")}</AppText>
+			) : null}
+			{item.pending_plan_slug ? (
+				<DetailRow label={t("billing.pendingPlan")} value={item.pending_plan_slug} />
+			) : null}
+			{recovery.recoveryTarget ? (
+				<AppText className="text-muted">{t("billing.providerRecovery")}</AppText>
+			) : null}
+		</AppView>
+	);
+}
+
 function TransactionRow({ item }: { item: Transaction }) {
 	const t = useI18n();
 	return (
@@ -253,6 +303,7 @@ export function SubscriptionDetailScreen({
 						<DetailRow label={t("billing.agent")} value={item.agent_name ?? t("billing.unknown")} />
 						<DetailRow label={t("billing.plan")} value={item.plan_slug} />
 						<DetailRow label={t("billing.status")} value={item.status} />
+						<SubscriptionRecovery item={item} />
 						<DetailRow
 							label={t("billing.price")}
 							value={subscriptionPrice(item) ?? t("billing.unknown")}
@@ -308,3 +359,5 @@ export function SubscriptionDetailScreen({
 		</ReadScreen>
 	);
 }
+
+import { computeSubscriptionRecoveryPresentation } from "@clawdi/shared/api";

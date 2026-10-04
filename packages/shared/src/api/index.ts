@@ -24,6 +24,7 @@ export {
 	createHostedComputeClient,
 	type HostedComputeClient,
 } from "./compute-client";
+export * from "./compute-recovery";
 export {
 	type ConnectorCatalogQuery,
 	type ConnectorClient,
