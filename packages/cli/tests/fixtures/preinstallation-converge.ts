@@ -1,6 +1,9 @@
 // Execute production v2 configuration and service activation in a disposable
 // native guest. The manifest and credentials belong only to this fixture.
+import childProcess from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { basename } from "node:path";
 import { applyRuntimeManifestLoad } from "../../src/commands/runtime";
 import { officialInstallArgs, type RuntimeManifest } from "../../src/runtime/manifest-contract";
 import type { RuntimeManifestLoad } from "../../src/runtime/manifest-source";
@@ -117,7 +120,69 @@ const load: RuntimeManifestLoad = {
 		},
 	},
 };
+// Fixture-only subprocess profiling. Record command names/known verbs, never
+// environment, command payloads, credentials, or subprocess output.
+const subprocesses: { command: string; milliseconds: number }[] = [];
+function commandLabel(args: unknown[]): string {
+	let command = typeof args[0] === "string" ? basename(args[0]) : "unknown";
+	let argv = Array.isArray(args[1])
+		? args[1].filter((v): v is string => typeof v === "string")
+		: [];
+	if (command === "setpriv" || command === "runuser") {
+		const separator = argv.indexOf("--");
+		command = basename(argv[separator + 1] ?? command);
+		argv = argv.slice(separator + 2);
+	}
+	if (command === "env") {
+		const index = argv.findIndex((arg) => !arg.includes("=") && !arg.startsWith("-"));
+		if (index >= 0) {
+			command = basename(argv[index] ?? command);
+			argv = argv.slice(index + 1);
+		}
+	}
+	const verb = argv[0];
+	const known = new Set([
+		"--version",
+		"--help",
+		"-c",
+		"gateway",
+		"config",
+		"dashboard",
+		"show",
+		"start",
+		"restart",
+		"daemon-reload",
+		"is-active",
+		"install",
+		"ci",
+		"run",
+	]);
+	return known.has(verb ?? "") ? `${command} ${verb}` : command;
+}
+function instrument<T extends (...args: never[]) => unknown>(command: T): T {
+	return new Proxy(command, {
+		apply(target, thisArg, args) {
+			const started = performance.now();
+			try {
+				return Reflect.apply(target, thisArg, args);
+			} finally {
+				subprocesses.push({
+					command: commandLabel(args),
+					milliseconds: performance.now() - started,
+				});
+			}
+		},
+	});
+}
+childProcess.spawnSync = instrument(childProcess.spawnSync);
+childProcess.execFileSync = instrument(childProcess.execFileSync);
+syncBuiltinESMExports();
+const started = performance.now();
 const result = await applyRuntimeManifestLoad(load, paths);
+writeFileSync(
+	"/opt/prewarm-profile.json",
+	JSON.stringify({ milliseconds: performance.now() - started, subprocesses }),
+);
 writeFileSync("/opt/prewarm-convergence.json", JSON.stringify(result));
 if (result.kind !== "converged") throw new Error(`unexpected apply result: ${result.kind}`);
 if (result.convergence.installErrors.length) {
