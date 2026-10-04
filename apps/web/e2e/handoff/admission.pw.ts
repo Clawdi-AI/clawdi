@@ -23,9 +23,7 @@ for (const signedIn of [false, true]) {
 			"https://clawdi.ai",
 		);
 		await expect(
-			page
-				.getByRole("banner")
-				.locator(`a[href="/api/cloud-handoff?target=${signedIn ? "dashboard" : "sign-in"}"]`),
+			page.getByRole("banner").locator('a[href="/api/cloud-handoff?target=dashboard"]'),
 		).toBeVisible();
 	});
 }

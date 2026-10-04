@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouterState } from "@tanstack/react-router";
 import { createContext, Fragment, useContext, useState, useSyncExternalStore } from "react";
 import { AccountSuspendedPage } from "@/components/account-suspended-page";
 import { AuthStatus } from "@/components/auth-status";
@@ -8,6 +9,7 @@ import { useAccountSuspension } from "@/lib/account-suspension";
 import { useOpenApi } from "@/lib/api";
 import { isAccountSuspendedError, isApiAuthError } from "@/lib/api-errors";
 import { useAuthActions } from "@/lib/auth-client";
+import { signInActionHref } from "@/lib/auth-redirect";
 
 const AccountDataContext = createContext<{
 	identity: string | null;
@@ -66,6 +68,7 @@ export function AccountSuspensionBoundary({
 }
 
 function AccountAccessDeniedState({ suspended }: { suspended: boolean }) {
+	const href = useRouterState({ select: (state) => state.location.href });
 	const { signOut } = useAuthActions();
 	const [signingOut, setSigningOut] = useState(false);
 	const [signOutError, setSignOutError] = useState<string | null>(null);
@@ -74,7 +77,9 @@ function AccountAccessDeniedState({ suspended }: { suspended: boolean }) {
 		setSigningOut(true);
 		setSignOutError(null);
 		try {
-			await signOut({ redirectUrl: "/sign-in" });
+			// API reauthentication must retire the stale identity. The auth bridge
+			// then re-runs protected admission; use its secure dedicated login fallback.
+			await signOut({ redirectUrl: suspended ? "/sign-in" : signInActionHref(href) });
 		} catch {
 			setSignOutError("We couldn't sign you out. Please try again.");
 			setSigningOut(false);

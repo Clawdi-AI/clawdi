@@ -1,9 +1,10 @@
 "use client";
 
-import { Link, useRouter } from "@tanstack/react-router";
+import { useRouter, useRouterState } from "@tanstack/react-router";
 import { AlertCircle, CheckCircle2, KeyRound, LogIn, ShieldCheck, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { AuthActionLink } from "@/components/auth-action-link";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -65,6 +66,7 @@ function hasStructuredDetailError(error: unknown, code: string): boolean {
 export default function SharePage({ token }: { token: string }) {
 	const api = useApi();
 	const router = useRouter();
+	const href = useRouterState({ select: (state) => state.location.href });
 	const { isSignedIn, getToken } = useDashboardAuth();
 	const { user } = useCurrentUser();
 	const sessionIdentity = useSessionIdentity();
@@ -132,7 +134,7 @@ export default function SharePage({ token }: { token: string }) {
 		(user?.publicMetadata?.project_owner_handle as string | undefined) ??
 		(user?.publicMetadata?.owner_handle as string | undefined);
 	const isOwner =
-		profileOwnerHandle === data.owner_handle ||
+		(Boolean(profileOwnerHandle) && profileOwnerHandle === data.owner_handle) ||
 		(upgrade.error instanceof ShareError && upgrade.error.code === "already_owner");
 
 	return (
@@ -201,7 +203,7 @@ export default function SharePage({ token }: { token: string }) {
 					) : (
 						<div className="space-y-4">
 							<Button
-								render={<Link to="/sign-in" search={{ redirect_url: `/share/${token}` }} />}
+								render={<AuthActionLink href={href} />}
 								nativeButton={false}
 								className="w-full"
 								size="lg"

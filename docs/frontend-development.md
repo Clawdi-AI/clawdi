@@ -92,6 +92,14 @@ public roots. Marketing `/home` stays public in both auth states. The paired Doc
 browser harness exercises independent site session states and cookie transfer with
 isolated SDK fixtures; live Clerk configuration still needs deployment verification.
 
+Interactive web sign-in actions use
+[`AuthActionLink`](../apps/web/src/components/auth-action-link.tsx): guests get
+Clerk's `openSignIn` modal with `forceRedirectUrl` and `signUpForceRedirectUrl`
+set to the same sanitized same-origin path, query and hash. Signed-in, modified
+and no-JS clicks follow the link, and protected admission still applies. API
+reauthentication (`AccountAccessDeniedState`, `ApiErrorPanel`) keeps the dedicated
+sign-in route via `signInActionHref`.
+
 Done: `bun run --cwd apps/web test src/lib/route-auth.test.ts` passes the
 admission tests and production SSR checks in the Docker clean runner.
 

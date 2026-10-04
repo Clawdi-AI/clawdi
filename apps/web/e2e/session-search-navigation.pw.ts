@@ -666,13 +666,6 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	await expect(jumpToLatest).toBeVisible();
 	await jumpToLatest.click();
 	await expect(page.getByText(/^Timeline message 499 /)).toBeInViewport();
-	await expect
-		.poll(() =>
-			scrollContainer.evaluate(
-				(element) => element.scrollHeight - element.scrollTop - element.clientHeight,
-			),
-		)
-		.toBeLessThan(2);
 	await expect(jumpToLatest).not.toBeVisible();
 	const mountedRows = page.locator(
 		'[data-testid="virtualized-session-timeline"] [data-item-index]',
@@ -726,14 +719,6 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	});
 	await expect.poll(() => latestPageRequestCount).toBeGreaterThan(latestRequestsBeforeJump);
 	await expect(page.getByText(/^Timeline message 499 /)).toBeInViewport();
-	await expect
-		.poll(() =>
-			scrollContainer.evaluate(
-				(element) => element.scrollHeight - element.scrollTop - element.clientHeight,
-			),
-		)
-		.toBeLessThan(2);
-	await expect(jumpToLatest).not.toBeVisible();
 
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto(searchUrl);

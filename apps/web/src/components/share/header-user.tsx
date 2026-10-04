@@ -1,6 +1,7 @@
 "use client";
 
-import { SignInButton } from "@clerk/tanstack-react-start";
+import { useRouterState } from "@tanstack/react-router";
+import { AuthActionLink } from "@/components/auth-action-link";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,16 +25,20 @@ import { useCurrentUser } from "@/lib/auth-client";
  */
 export function ShareHeaderUser() {
 	const { isLoaded, isSignedIn, user } = useCurrentUser();
+	const href = useRouterState({ select: (state) => state.location.href });
 	if (!isLoaded) {
 		return <div className="size-8" />;
 	}
 	if (!isSignedIn) {
 		return (
-			<SignInButton mode="modal">
-				<Button variant="ghost" size="sm">
-					Sign in
-				</Button>
-			</SignInButton>
+			<Button
+				variant="ghost"
+				size="sm"
+				nativeButton={false}
+				render={<AuthActionLink href={href} />}
+			>
+				Sign in
+			</Button>
 		);
 	}
 	return (
