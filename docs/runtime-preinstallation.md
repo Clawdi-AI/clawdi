@@ -32,6 +32,14 @@ tenant/Cloud inputs or credentials. Upstream-generated default configuration,
 persona and bundled skills are preserved. Existing tenant homes cannot be used
 as preparation inputs. This capability does not change legacy provisioning.
 
+Hermes preparation also runs the normal dashboard dependency installation and
+frontend build, using the same commands and build-revision marker as ordinary
+service preparation. The build runs in the clean anonymous environment; no
+services or tenant settings are created. Matching revisions reuse the copied
+frontend; missing output or changed revisions follow the normal rebuild path.
+The existing revision includes executable identity and complete version output,
+so upstream update notices can conservatively invalidate this cache.
+
 Executable health and installed package/commit identity are checked. A root-only
 mode `0400` JSON receipt under
 `/var/lib/clawdi/preinstallation/receipt.json` records the exact spec, health and

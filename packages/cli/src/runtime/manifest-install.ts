@@ -470,6 +470,9 @@ export function runtimeCommandCurrentRevision(
 	if (!runtimeCommandVersion(command, home, cwd)) return null;
 	return runtimeCommandRevisions.get(cacheKey)?.commandRevision ?? null;
 }
+export function runtimeCommandVersionRevision(executableRevision: string, version: string): string {
+	return runtimeContentSha256({ executableRevision, version });
+}
 export function runtimeCommandVersion(command: string, home: string, cwd: string): string | null {
 	const executableRevision = runtimeFileCurrentRevision(command);
 	if (!executableRevision) return null;
@@ -499,10 +502,7 @@ export function runtimeCommandVersion(command: string, home: string, cwd: string
 			: versionResult.stderr;
 		const version = [stdout, stderr].filter(Boolean).join("\n").trim();
 		if (!version) return null;
-		const commandRevision = runtimeContentSha256({
-			executableRevision,
-			version,
-		});
+		const commandRevision = runtimeCommandVersionRevision(executableRevision, version);
 		runtimeCommandRevisions.set(cacheKey, { executableRevision, commandRevision, version });
 		return version;
 	} catch (error) {

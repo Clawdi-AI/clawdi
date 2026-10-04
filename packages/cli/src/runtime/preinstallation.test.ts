@@ -1,11 +1,15 @@
 import { afterEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getCliVersion } from "../lib/version";
-import { observeRuntimeInstall } from "./manifest-install";
+import {
+	HERMES_DASHBOARD_BUILD_REVISION_FILE,
+	prepareHermesDashboardBuild,
+} from "./hermes-dashboard-build";
+import { observeRuntimeInstall, runtimeCommandCurrentRevision } from "./manifest-install";
 import { getRuntimePaths } from "./paths";
 import {
 	anonymousInstallerEnvironment,
@@ -158,36 +162,40 @@ test("content fingerprint detects package drift", () => {
 	expect(preinstallationTreeSha256(f.home)).not.toBe(before);
 });
 
-test("Hermes prepares exact software while preserving trusted upstream defaults", () => {
-	const f = fixture();
-	const seed = join(f.home, "..", "upstream");
-	mkdirSync(seed);
-	writeFileSync(join(seed, ".env.example"), "EXAMPLE_API_KEY=\n");
-	writeFileSync(join(seed, "config.yaml"), "model:\n  provider: auto\n");
-	writeFileSync(join(seed, "SOUL.md"), "Upstream persona.\n");
-	for (const args of [
-		["init", "-q"],
-		["add", "."],
-		[
-			"-c",
-			"user.name=Anonymous",
-			"-c",
-			"user.email=anonymous@example.invalid",
-			"commit",
-			"-qm",
-			"fixture",
-		],
-	]) {
-		const result = spawnSync("git", ["-C", seed, ...args], {
+test.each([false, true])(
+	"Hermes prebuild preserves defaults and rejects failure=%s",
+	(failBuild) => {
+		const f = fixture();
+		const seed = join(f.home, "..", "upstream");
+		mkdirSync(seed);
+		mkdirSync(join(seed, "web"));
+		writeFileSync(join(seed, "web", "package.json"), "{}\n");
+		writeFileSync(join(seed, ".env.example"), "EXAMPLE_API_KEY=\n");
+		writeFileSync(join(seed, "config.yaml"), "model:\n  provider: auto\n");
+		writeFileSync(join(seed, "SOUL.md"), "Upstream persona.\n");
+		for (const args of [
+			["init", "-q"],
+			["add", "."],
+			[
+				"-c",
+				"user.name=Anonymous",
+				"-c",
+				"user.email=anonymous@example.invalid",
+				"commit",
+				"-qm",
+				"fixture",
+			],
+		]) {
+			const result = spawnSync("git", ["-C", seed, ...args], {
+				env: anonymousInstallerEnvironment(f.home),
+			});
+			expect(result.status).toBe(0);
+		}
+		const commit = spawnSync("git", ["-C", seed, "rev-parse", "HEAD"], {
 			env: anonymousInstallerEnvironment(f.home),
-		});
-		expect(result.status).toBe(0);
-	}
-	const commit = spawnSync("git", ["-C", seed, "rev-parse", "HEAD"], {
-		env: anonymousInstallerEnvironment(f.home),
-		encoding: "utf8",
-	}).stdout.trim();
-	const installer = `#!/bin/bash
+			encoding: "utf8",
+		}).stdout.trim();
+		const installer = `#!/bin/bash
 set -eu
 test "$#" = 6
 test "$1" = --commit
@@ -203,25 +211,80 @@ cp '${seed}/.env.example' "$HOME/.hermes/.env"
 cp '${seed}/config.yaml' "$HOME/.hermes/config.yaml"
 printf '#!/bin/sh\\necho Hermes-fixture\\n' > "$HOME/.local/bin/hermes"
 chmod 755 "$HOME/.local/bin/hermes"
+cat > "$HOME/.local/bin/npm" <<'NPM'
+#!/bin/sh
+set -eu
+${failBuild ? "exit 1" : ":"}
+printf '%s\\n' "$*" >> "$HOME/npm-build.log"
+if [ "$*" = 'run build' ]; then
+  mkdir -p ../hermes_cli/web_dist
+  echo '<html>dashboard</html>' > ../hermes_cli/web_dist/index.html
+fi
+NPM
+chmod 755 "$HOME/.local/bin/npm"
 `;
-	writeFileSync(f.installer, installer);
-	const { runtimeIntegrity: _integrity, runtimeTarballUrl: _url, ...base } = f.spec;
-	const receipt = prepareRuntimePreinstallation(
-		{
-			...base,
-			runtime: "hermes",
-			runtimeVersion: commit,
-			installerUrl: `https://raw.githubusercontent.com/NousResearch/hermes-agent/${commit}/scripts/install.sh`,
-			installerSha256: createHash("sha256").update(installer).digest("hex"),
-		},
-		f.installer,
-		{ ...f, uid: process.getuid?.(), gid: process.getgid?.() },
-	);
-	expect(receipt.health).toBe("Hermes-fixture");
-	for (const [name, example] of [
-		["SOUL.md", "SOUL.md"],
-		[".env", ".env.example"],
-		["config.yaml", "config.yaml"],
-	])
-		expect(readFileSync(join(f.home, ".hermes", name))).toEqual(readFileSync(join(seed, example)));
-});
+		writeFileSync(f.installer, installer);
+		const { runtimeIntegrity: _integrity, runtimeTarballUrl: _url, ...base } = f.spec;
+		const prepare = () =>
+			prepareRuntimePreinstallation(
+				{
+					...base,
+					runtime: "hermes",
+					runtimeVersion: commit,
+					installerUrl: `https://raw.githubusercontent.com/NousResearch/hermes-agent/${commit}/scripts/install.sh`,
+					installerSha256: createHash("sha256").update(installer).digest("hex"),
+				},
+				f.installer,
+				{ ...f, uid: process.getuid?.(), gid: process.getgid?.() },
+			);
+		if (failBuild) {
+			expect(prepare).toThrow(
+				"anonymous runtime installation or health check failed (npm, exit 1)",
+			);
+			expect(existsSync(join(f.state, "preinstallation/receipt.json"))).toBe(false);
+			expect(
+				existsSync(
+					join(
+						f.home,
+						".hermes/hermes-agent/hermes_cli/web_dist",
+						HERMES_DASHBOARD_BUILD_REVISION_FILE,
+					),
+				),
+			).toBe(false);
+			return;
+		}
+		const receipt = prepare();
+		expect(receipt.health).toBe("Hermes-fixture");
+		const command = join(f.home, ".local/bin/hermes");
+		const revision = runtimeCommandCurrentRevision(command, f.home, f.home);
+		const marker = join(
+			f.home,
+			".hermes/hermes-agent/hermes_cli/web_dist",
+			HERMES_DASHBOARD_BUILD_REVISION_FILE,
+		);
+		if (!revision) throw new Error("Hermes revision is missing");
+		expect(readFileSync(marker, "utf8").trim()).toBe(revision);
+		expect(readFileSync(join(f.home, "npm-build.log"), "utf8").trim().split("\n")).toEqual([
+			"ci --include=dev --workspace web",
+			"run build",
+		]);
+		prepareHermesDashboardBuild({
+			home: f.home,
+			revision,
+			run() {
+				throw new Error("prebuilt dashboard must not rebuild");
+			},
+			writeRevision() {
+				throw new Error("prebuilt dashboard must not rewrite marker");
+			},
+		});
+		for (const [name, example] of [
+			["SOUL.md", "SOUL.md"],
+			[".env", ".env.example"],
+			["config.yaml", "config.yaml"],
+		])
+			expect(readFileSync(join(f.home, ".hermes", name))).toEqual(
+				readFileSync(join(seed, example)),
+			);
+	},
+);

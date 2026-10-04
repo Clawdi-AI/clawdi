@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	chmodSync,
+	chownSync,
 	lstatSync,
 	mkdirSync,
 	mkdtempSync,
@@ -15,7 +16,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { writePrivateFileAtomic } from "../lib/private-file";
 import { getCliVersion } from "../lib/version";
+import { prepareHermesDashboardBuild } from "./hermes-dashboard-build";
+import { runtimeCommandVersionRevision, runtimeFileCurrentRevision } from "./manifest-install";
 import { buildNumericUserCommand } from "./runtime-user-command";
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
@@ -205,13 +209,18 @@ export function prepareRuntimePreinstallation(
 					];
 		const env = anonymousInstallerEnvironment(home);
 		const identity = { uid: options.uid ?? 10001, gid: options.gid ?? 10001 };
-		function run(command: string, commandArgs: string[], timeout: number) {
+		function run(
+			command: string,
+			commandArgs: string[],
+			timeout: number,
+			options: { cwd?: string; includeStderr?: boolean } = {},
+		) {
 			const child =
 				identity.uid === process.getuid?.() && identity.gid === process.getgid?.()
 					? { command, args: commandArgs }
 					: buildNumericUserCommand(identity.uid, identity.gid, command, commandArgs);
 			const result = spawnSync(child.command, child.args, {
-				cwd: home,
+				cwd: options.cwd ?? home,
 				env,
 				encoding: "utf8",
 				timeout,
@@ -225,11 +234,13 @@ export function prepareRuntimePreinstallation(
 					`anonymous runtime installation or health check failed (${command}, exit ${result.status ?? "timeout"})`,
 				);
 			}
-			return result.stdout.trim();
+			return options.includeStderr
+				? [result.stdout, result.stderr].filter(Boolean).join("\n").trim()
+				: result.stdout.trim();
 		}
 		run("bash", ["--noprofile", "--norc", installer, ...args], 30 * 60 * 1000);
 		const command = join(home, ".local/bin", spec.runtime);
-		const health = run(command, ["--version"], 30_000);
+		const health = run(command, ["--version"], 30_000, { includeStderr: true });
 		if (!health) throw new Error("anonymous runtime health check returned no version");
 		const installedIdentity =
 			spec.runtime === "openclaw"
@@ -246,6 +257,22 @@ export function prepareRuntimePreinstallation(
 				: run("git", ["-C", join(home, ".hermes/hermes-agent"), "rev-parse", "HEAD"], 10_000);
 		if (installedIdentity !== spec.runtimeVersion)
 			throw new Error("installed runtime identity mismatch");
+		if (spec.runtime === "hermes") {
+			const executableRevision = runtimeFileCurrentRevision(command);
+			if (!executableRevision)
+				throw new Error("installed runtime executable identity is unavailable");
+			prepareHermesDashboardBuild({
+				home,
+				revision: runtimeCommandVersionRevision(executableRevision, health),
+				run: (args, cwd, timeout) => {
+					run("npm", args, timeout, { cwd });
+				},
+				writeRevision(path, contents) {
+					writePrivateFileAtomic(path, contents, { mode: 0o600 });
+					chownSync(path, identity.uid, identity.gid);
+				},
+			});
+		}
 		// Only caches explicitly redirected by this command are disposable.
 		// Keep upstream-generated runtime defaults and bundled software unchanged.
 		for (const cache of ["npm", "uv"])

@@ -14,6 +14,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
+import { prepareHermesDashboardBuild } from "./hermes-dashboard-build";
 import type { RuntimeManifest } from "./manifest-contract";
 import {
 	runtimeCommandCurrentRevision,
@@ -64,6 +65,8 @@ import {
 	isGeneratedRuntimeSystemdFile,
 } from "./systemd-user";
 import { TRANSPARENT_EGRESS_PORT } from "./transparent-egress";
+
+export { HERMES_DASHBOARD_BUILD_REVISION_FILE } from "./hermes-dashboard-build";
 
 export interface RuntimeSystemdUserProgram {
 	programKind: "runtime" | "file-browser";
@@ -467,9 +470,6 @@ export function planOfficialRuntimeServices(
 
 const OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS = 600_000;
 const OFFICIAL_SERVICE_UNINSTALL_TIMEOUT_MS = 120_000;
-const HERMES_DASHBOARD_INSTALL_TIMEOUT_MS = 600_000;
-const HERMES_DASHBOARD_BUILD_TIMEOUT_MS = 900_000;
-export const HERMES_DASHBOARD_BUILD_REVISION_FILE = ".clawdi-runtime-revision";
 
 function writeSystemdEnvironmentFile(input: {
 	paths: RuntimePaths;
@@ -749,9 +749,6 @@ export function prepareOfficialRuntimeServiceDependencies(
 	);
 	if (!preparesHermesGateway || !hasHermesDashboard) return null;
 
-	const appRoot = join(paths.userHome, ".hermes", "hermes-agent");
-	const index = join(appRoot, "hermes_cli", "web_dist", "index.html");
-	const revisionFile = join(dirname(index), HERMES_DASHBOARD_BUILD_REVISION_FILE);
 	const descriptor = OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS.find(
 		(candidate) => candidate.runtime === "hermes" && candidate.service === "gateway",
 	);
@@ -762,48 +759,35 @@ export function prepareOfficialRuntimeServiceDependencies(
 				paths.userHome,
 			)
 		: null;
-	if (
-		commandRevision &&
-		existsSync(index) &&
-		existsSync(revisionFile) &&
-		readFileSync(revisionFile, "utf8").trim() === commandRevision
-	) {
-		return null;
-	}
-	const commands = [
-		{
-			args: ["ci", "--include=dev", "--workspace", "web"],
-			cwd: appRoot,
-			timeoutMs: HERMES_DASHBOARD_INSTALL_TIMEOUT_MS,
-		},
-		{
-			args: ["run", "build"],
-			cwd: join(appRoot, "web"),
-			timeoutMs: HERMES_DASHBOARD_BUILD_TIMEOUT_MS,
-		},
-	] as const;
-	for (const command of commands) {
-		let result: ReturnType<typeof spawnRuntimeUserCommand>;
-		try {
-			result = spawnRuntimeUserCommand("npm", [...command.args], paths.userHome, command.cwd, {
-				egressSystemCaFile,
-				maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
-				timeoutMs: command.timeoutMs,
-			});
-		} catch (error) {
-			const logPath = writeRuntimeInstallerLog(paths, "hermes-dashboard-prerequisite", { error });
-			return `Hermes dashboard prerequisite failed; see ${logPath}`;
-		}
-		if (result.status !== 0 || result.error) {
-			const logPath = writeRuntimeInstallerLog(paths, "hermes-dashboard-prerequisite", result);
-			return `Hermes dashboard prerequisite failed; see ${logPath}`;
-		}
-	}
-	if (!existsSync(index)) return `Hermes dashboard prerequisite did not produce ${index}`;
-	if (commandRevision) {
-		withRuntimeUserFileAccess(() =>
-			writePrivateFileAtomic(revisionFile, `${commandRevision}\n`, { mode: 0o600 }),
-		);
+	try {
+		prepareHermesDashboardBuild({
+			home: paths.userHome,
+			revision: commandRevision,
+			run(args, cwd, timeoutMs) {
+				let result: ReturnType<typeof spawnRuntimeUserCommand>;
+				try {
+					result = spawnRuntimeUserCommand("npm", args, paths.userHome, cwd, {
+						egressSystemCaFile,
+						maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
+						timeoutMs,
+					});
+				} catch (error) {
+					const logPath = writeRuntimeInstallerLog(paths, "hermes-dashboard-prerequisite", {
+						error,
+					});
+					throw new Error(`Hermes dashboard prerequisite failed; see ${logPath}`);
+				}
+				if (result.status !== 0 || result.error) {
+					const logPath = writeRuntimeInstallerLog(paths, "hermes-dashboard-prerequisite", result);
+					throw new Error(`Hermes dashboard prerequisite failed; see ${logPath}`);
+				}
+			},
+			writeRevision(path, contents) {
+				withRuntimeUserFileAccess(() => writePrivateFileAtomic(path, contents, { mode: 0o600 }));
+			},
+		});
+	} catch (error) {
+		return error instanceof Error ? error.message : "Hermes dashboard prerequisite failed";
 	}
 	return null;
 }
