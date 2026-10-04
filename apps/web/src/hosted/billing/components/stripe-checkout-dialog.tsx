@@ -1,5 +1,6 @@
 "use client";
 
+import { EmbeddedCheckout, EmbeddedCheckoutProvider } from "@stripe/react-stripe-js";
 import {
 	CheckoutElementsProvider,
 	ExpressCheckoutElement,
@@ -31,10 +32,7 @@ import { getStripe, resetStripeCache } from "@/hosted/billing/stripe";
 import { useStripeAppearance } from "@/hosted/billing/stripe-appearance";
 import type { CheckoutSessionClientSecret } from "@/hosted/billing/stripe-client-secret";
 import { env } from "@/lib/env";
-import {
-	completedCheckoutPaymentStatus,
-	type StripeCheckoutPaymentStatus,
-} from "./stripe-checkout.logic";
+import { completedCheckoutPaymentStatus } from "./stripe-checkout.logic";
 
 export type StripeCheckoutSummary = {
 	detail: string;
@@ -47,7 +45,9 @@ export type StripeCheckoutSummary = {
 type StripeCheckoutDialogProps = {
 	clientSecret: CheckoutSessionClientSecret | null;
 	description: string;
-	onComplete: (paymentStatus: StripeCheckoutPaymentStatus) => void;
+	// Stripe's embedded Checkout decides which details to collect, e.g. none for a cardless trial.
+	embedded?: boolean;
+	onComplete: () => void;
 	onExpired: () => void;
 	onOpenChange: (open: boolean) => void;
 	open: boolean;
@@ -60,7 +60,7 @@ type StripeCheckoutDialogProps = {
 type DialogState = "loading" | "ready" | "error";
 type RetainedCheckout = Pick<
 	StripeCheckoutDialogProps,
-	"clientSecret" | "description" | "summary" | "title"
+	"clientSecret" | "description" | "embedded" | "summary" | "title"
 >;
 
 function CheckoutSummaryPanel({ summary }: { summary: StripeCheckoutSummary | null }) {
@@ -101,7 +101,7 @@ function CheckoutElementForm({
 	onSubmittingChange,
 }: {
 	submitLabel: string;
-	onComplete: (paymentStatus: StripeCheckoutPaymentStatus) => void;
+	onComplete: () => void;
 	onExpired: () => void;
 	onLoadError: (message: string) => void;
 	onSubmittingChange: (submitting: boolean) => void;
@@ -120,7 +120,7 @@ function CheckoutElementForm({
 			const paymentStatus = completedCheckoutPaymentStatus(status);
 			if (!paymentStatus && status.type !== "expired") return false;
 			settledRef.current = true;
-			if (paymentStatus) onComplete(paymentStatus);
+			if (paymentStatus) onComplete();
 			else onExpired();
 			return true;
 		},
@@ -262,6 +262,7 @@ export function StripeCheckoutDialog({
 	onSubmittingChange,
 	clientSecret,
 	description,
+	embedded = false,
 	onComplete,
 	onExpired,
 	onOpenChange,
@@ -275,24 +276,27 @@ export function StripeCheckoutDialog({
 	const [message, setMessage] = useState<string | null>(null);
 	const [attempt, setAttempt] = useState(0);
 	const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
-	const checkout = { clientSecret, description, summary, title } satisfies RetainedCheckout;
+	const checkout = {
+		clientSecret,
+		description,
+		embedded,
+		summary,
+		title,
+	} satisfies RetainedCheckout;
 	const exit = useDialogExitLifecycle({
 		open,
 		value: checkout,
-		emptyValue: { clientSecret: null, description: "", summary: null, title: "" },
+		emptyValue: { clientSecret: null, description: "", embedded: false, summary: null, title: "" },
 	});
 	const appearance = useStripeAppearance(open);
 
 	const renderedCheckout = exit.renderedValue;
 	const renderedClientSecret = renderedCheckout.clientSecret;
 
-	const completeCheckout = useCallback(
-		(paymentStatus: StripeCheckoutPaymentStatus) => {
-			exit.beginClose();
-			onComplete(paymentStatus);
-		},
-		[exit.beginClose, onComplete],
-	);
+	const completeCheckout = useCallback(() => {
+		exit.beginClose();
+		onComplete();
+	}, [exit.beginClose, onComplete]);
 	const expireCheckout = useCallback(() => {
 		exit.beginClose();
 		onExpired();
@@ -382,7 +386,15 @@ export function StripeCheckoutDialog({
 				</DialogHeader>
 				<CheckoutSummaryPanel summary={renderedCheckout.summary} />
 				<Separator />
-				{state === "ready" && stripe && providerOptions ? (
+				{state === "ready" && stripe && renderedClientSecret && renderedCheckout.embedded ? (
+					<EmbeddedCheckoutProvider
+						key={`${renderedClientSecret}:${attempt}`}
+						stripe={stripe}
+						options={{ clientSecret: renderedClientSecret, onComplete: completeCheckout }}
+					>
+						<EmbeddedCheckout />
+					</EmbeddedCheckoutProvider>
+				) : state === "ready" && stripe && providerOptions ? (
 					<CheckoutElementsProvider
 						key={`${renderedClientSecret}:${attempt}`}
 						stripe={stripe}

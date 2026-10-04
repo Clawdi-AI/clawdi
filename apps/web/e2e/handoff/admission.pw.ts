@@ -117,6 +117,7 @@ for (const channel of [null, "sui"] as const) {
 		await expect.poll(() => checkoutRequests.length).toBe(1);
 		const checkout = JSON.parse(checkoutRequests[0] ?? "{}");
 		expect(checkout.deploy_config.plugin_bundle).toBe("sui");
+		expect(checkout.ui_mode).toBe("embedded");
 	});
 }
 
