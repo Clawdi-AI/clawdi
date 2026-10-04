@@ -836,6 +836,56 @@ Expo's template comparison still reports `catalog:expo57` rather than a numeric
 manifest version; this does not change the frozen resolved Expo/RN versions.
 Neither Gradle, CocoaPods nor Xcode compilation ran in this probe.
 
+### Android compiler follow-up
+
+The follow-up uses real Node 24.21.0, Bun 1.4.2, Temurin JDK 25.0.4.1,
+the generated Gradle 9.3.1 wrapper, SDK 36, NDK 27.1.12297006 and CMake 3.22.1.
+Toolchain downloads are confined to the disposable container; no host JDK/SDK
+installation or signing configuration is required. Node/JDK downloads were
+checked against publisher SHA-256 metadata and Android Command-line Tools 23
+against Google's repository checksum. The current Android CLI uses `android sdk`
+in place of the deprecated `sdkmanager` compatibility entry point.
+
+The first compiler run reached 231 tasks but failed in Worklets' Prefab/CMake
+configuration, not C++ compilation. AGP 8.12.0's `GeneratePrefabPackages`
+parser treated JDK 25's JNA native-access warning as an error. Supplying
+`JAVA_TOOL_OPTIONS=--enable-native-access=ALL-UNNAMED` to the build command and
+its child JVMs made that exact CMake task pass. This is the JDK's explicit
+native-access opt-in; do not filter stderr, patch vendor binaries or disable
+compiler checks. AGP recognizes the `JAVA_TOOL_OPTIONS` startup message as
+informational. SDK XML-version and third-party deprecation warnings remain.
+
+The attempted unsigned ARM64 Debug compiler gate ran these tasks (not `assemble` or
+`bundle`, so it does not produce or sign an installable artifact):
+
+```sh
+JAVA_TOOL_OPTIONS=--enable-native-access=ALL-UNNAMED \
+  ./gradlew :app:compileDebugKotlin :app:compileDebugJavaWithJavac \
+  :app:externalNativeBuildDebug --no-daemon --max-workers=2 \
+  -Dorg.gradle.parallel=false \
+  '-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m' \
+  -Pkotlin.compiler.execution.strategy=in-process \
+  -PreactNativeArchitectures=arm64-v8a
+```
+
+Run from the isolated generated Android directory with `JAVA_HOME`, SDK paths
+and a task-local `GRADLE_USER_HOME` configured; bound the command with a timeout.
+This does not validate Release/R8, other ABIs, iOS compilation, installation,
+device UI/authentication or purchases.
+
+The corrected full invocation did **not pass**: its 900-second limit expired
+with exit 124 during `:app:buildCMakeDebug[arm64-v8a]`. Application Kotlin/Java
+tasks and Worklets/Reanimated native-library tasks had progressed successfully,
+but the final application native build was unfinished. The 2-CPU/8-GiB container
+hit sustained memory pressure; observed cgroup counters had `oom_kill=0`.
+`--max-workers=2` does not constrain AGP's direct Ninja invocation, which had
+no `-j` argument and spawned many concurrent Clang processes. Before repeating
+this gate on a constrained runner, configure CMake/Ninja compile/link job pools
+and verify the generated Ninja rules honor them. Do not treat this timeout as a
+source compiler failure, a passing native build, or permission to suppress errors.
+The dedicated container and its remaining compiler children were stopped and
+removed after the attempt; no native artifacts or SDK caches were kept on the host.
+
 Source implementation is not native acceptance. Keep the complete v2 Web scope
 until each surface has implementation, focused verification and device evidence:
 
