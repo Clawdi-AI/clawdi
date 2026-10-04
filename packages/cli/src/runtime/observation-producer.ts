@@ -14,7 +14,8 @@ import {
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 
 const OBSERVATION_INTERVAL_MS = 60_000;
-const CONVERGENCE_OBSERVATION_INTERVAL_MS = 5_000;
+// Until the first healthy sample, readiness latency is user-visible deploy time.
+const CONVERGENCE_OBSERVATION_INTERVAL_MS = 1_000;
 const CONVERGENCE_OBSERVATION_WINDOW_MS = 90_000;
 const IDLE_RETRY_INTERVAL_MS = 1_000;
 const FAILURE_RETRY_INTERVAL_MS = 5_000;

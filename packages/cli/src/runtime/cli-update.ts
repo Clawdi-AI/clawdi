@@ -580,7 +580,29 @@ function exactNpmPackageVersion(packageSpec: string): string | null {
 	return packageSpec.slice("clawdi@".length);
 }
 
-function installCliPackage(paths: RuntimePaths, packageSpec: string): VerifiedCliTarget {
+/**
+ * Install one exact CLI release from an integrity-verified local npm archive into
+ * the managed layout. Used only by anonymous preinstallation; tenant convergence
+ * then observes the same receipt as a registry install and performs no npm work.
+ */
+export function installRuntimeCliArchive(
+	paths: RuntimePaths,
+	packageSpec: string,
+	archivePath: string,
+): void {
+	if (readCliState(paths) || activeLinkTarget(paths.cliManagedBin)) {
+		throw new Error("managed clawdi CLI archive install requires an empty managed CLI root");
+	}
+	const installed = installCliPackage(paths, packageSpec, archivePath);
+	swapActiveCli(paths.cliManagedBin, installed.activeTarget);
+	writeCliState(paths, installed, null, null);
+}
+
+function installCliPackage(
+	paths: RuntimePaths,
+	packageSpec: string,
+	source: string = packageSpec,
+): VerifiedCliTarget {
 	const version = exactNpmPackageVersion(packageSpec);
 	if (!version) throw new Error(`clawdi CLI packageSpec must be exact: ${packageSpec}`);
 	const npmPrefix = cliPackagePrefix(paths, version);
@@ -612,7 +634,7 @@ function installCliPackage(paths: RuntimePaths, packageSpec: string): VerifiedCl
 		"--no-update-notifier",
 		"--registry",
 		NPM_REGISTRY,
-		packageSpec,
+		source,
 	];
 	// npm's umask config does not cover Arborist's intermediate mkdir calls.
 	const result = spawnSync("/bin/sh", ["-c", 'umask 077; exec npm "$@"', "npm", ...args], {

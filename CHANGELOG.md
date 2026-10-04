@@ -14,6 +14,11 @@ database migration, CI, and implementation details.
 
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
+### CLI (next release)
+
+- Newly deployed hosted agents report readiness within about a second of
+  becoming healthy, and hosted runtimes prepared ahead of time start without
+  reinstalling software.
 
 ### CLI 0.15.5
 

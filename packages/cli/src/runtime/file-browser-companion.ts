@@ -225,7 +225,7 @@ function defaultDownload(url: string, destination: string, paths: RuntimePaths):
 }
 
 function installCandidate(
-	companion: NonNullable<FileBrowserCompanion>,
+	companion: NonNullable<FileBrowserCompanion> | null,
 	paths: RuntimePaths,
 	asset: FileBrowserAsset,
 	options: FileBrowserCompanionInstallOptions,
@@ -247,7 +247,7 @@ function installCandidate(
 		chmodSync(binary, 0o755);
 		chownSync(binary, managedRootIdentity().uid, managedRootIdentity().gid);
 		chmodSync(staging, 0o755);
-		if (options.versionProbe) {
+		if (companion && options.versionProbe) {
 			const version = options.versionProbe(binary);
 			if (!version.includes(companion.version) || !version.includes(companion.commit.slice(0, 7))) {
 				throw new Error("Files companion version probe did not match the pinned release");
@@ -358,6 +358,18 @@ export function ensureFileBrowserCompanion(
 		activeBinary: candidateBinary(paths, asset.sha256),
 		installed: !candidateWasValid,
 	};
+}
+
+/**
+ * Place one pinned, SHA256-verified release binary where tenant convergence looks
+ * for its content-addressed candidate. Anonymous preinstallation only.
+ */
+export function prefetchFileBrowserAsset(paths: RuntimePaths, asset: FileBrowserAsset): void {
+	ensureOwnedDirectory(paths.fileBrowserInstallRoot, managedRootIdentity(), 0o755);
+	ensureOwnedDirectory(candidatesRoot(paths), managedRootIdentity(), 0o755);
+	installCandidate(null, paths, asset, {});
+	if (!candidateIsValid(paths, asset.sha256))
+		throw new Error("Files companion candidate did not pass verification");
 }
 
 export function fileBrowserCompanionProgram(
