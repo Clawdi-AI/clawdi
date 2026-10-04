@@ -1852,7 +1852,7 @@ export interface components {
              * @default custom
              * @enum {string}
              */
-            ui_mode: "custom" | "hosted";
+            ui_mode: "custom" | "embedded" | "hosted";
             /** Locale */
             locale?: string | null;
             quote?: components["schemas"]["V2ComputeSubscriptionQuoteResponse-Input"] | null;
