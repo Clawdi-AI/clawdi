@@ -33,6 +33,7 @@
 			"@tailwindcss/postcss": "^4.3.3",
 			"@tailwindcss/vite": "^4.3.3",
 			"@tanstack/react-query": "^5.102.8",
+			"react-native-purchases": "10.11.0",
 			"lucide-react": "^1.39.0",
 			"viem": "2.56.9",
 			"yaml": "^2.9.1"

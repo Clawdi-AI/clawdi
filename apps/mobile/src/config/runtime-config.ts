@@ -7,6 +7,8 @@ export type MobileRuntimeConfig = Readonly<{
 	cloudApiUrl: string;
 	clerkPublishableKey: string;
 	computeApiUrl?: string;
+	revenueCatAppleKey?: string;
+	revenueCatGoogleKey?: string;
 	clerkOauthProviders?: readonly OAuthProvider[];
 	linkHosts?: readonly string[];
 }>;
@@ -19,6 +21,8 @@ type RuntimeConfigValues = Readonly<{
 	cloudApiUrl: unknown;
 	clerkPublishableKey: unknown;
 	computeApiUrl?: unknown;
+	revenueCatAppleKey?: unknown;
+	revenueCatGoogleKey?: unknown;
 	clerkOauthProviders?: unknown;
 	linkHosts?: unknown;
 }>;
@@ -35,6 +39,8 @@ export function parseMobileRuntimeConfig(values: RuntimeConfigValues): MobileRun
 	const cloudApiUrl = requiredString(values.cloudApiUrl);
 	const clerkPublishableKey = requiredString(values.clerkPublishableKey);
 	const computeApiUrl = requiredString(values.computeApiUrl);
+	const revenueCatAppleKey = requiredString(values.revenueCatAppleKey);
+	const revenueCatGoogleKey = requiredString(values.revenueCatGoogleKey);
 	if (!cloudApiUrl || !clerkPublishableKey) {
 		return { ok: false, reason: "missing" };
 	}
@@ -53,6 +59,8 @@ export function parseMobileRuntimeConfig(values: RuntimeConfigValues): MobileRun
 				...(clerkOauthProviders.length ? { clerkOauthProviders } : {}),
 				...(linkHosts.length ? { linkHosts } : {}),
 				...(computeApiUrl ? { computeApiUrl: readApiBaseUrl(computeApiUrl, true) } : {}),
+				...(revenueCatAppleKey ? { revenueCatAppleKey } : {}),
+				...(revenueCatGoogleKey ? { revenueCatGoogleKey } : {}),
 			},
 		};
 	} catch {

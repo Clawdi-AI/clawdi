@@ -2,14 +2,15 @@
 
 The Wave3 mobile surface intentionally exposes billing inventory and server-owned
 admission against existing Basic/Performance entitlements only. It does not start
-a store purchase, restore purchases, or claim a client-side entitlement. No store
-SDK or purchase action is wired into the product. The unused injected-SDK
-placeholder and its six mock-only tests were removed: a local SDK result is not
-proof of server entitlement or financial settlement.
+a store purchase, restore purchases, or claim a client-side entitlement. No
+purchase action is wired into the product yet. The native adapter is deliberately
+isolated: a local SDK result is not proof of server entitlement or financial
+settlement.
 
-No RevenueCat SDK dependency or public key is committed here. A future native
-integration must use a real native SDK, configure only the platform's public key,
-and obtain the customer identity from the authenticated server. Purchase attempts
+The native RevenueCat SDK is now isolated in `revenuecat.ts`; it configures only
+the platform's public key and a server-selected customer identity. It does not
+grant entitlement from `CustomerInfo`. A future server route must still reconcile
+the store transaction before the app enables compute. Purchase attempts must
 must be durable before opening the store sheet, account-generation fenced, and
 recoverable after app termination. The following routes are illustrative contract
 requirements, not implemented endpoints or an approved schema:
