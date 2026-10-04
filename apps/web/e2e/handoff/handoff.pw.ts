@@ -1,21 +1,10 @@
-import { type BrowserContext, expect, type Page, test } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { basicPlan, stubHostedApi } from "../hosted-stub-api";
-
-const marketing = "http://marketing:3000";
-const cloud = "http://localhost:3200";
+import { cloud, isolateNetwork, marketing, observeCloudHandoff, test } from "./fixtures";
 
 async function expectDeploymentEnabled(page: Page) {
 	await page.getByRole("button", { name: /^Configure inside agent/ }).click();
 	await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeEnabled();
-}
-
-async function isolateNetwork(context: BrowserContext) {
-	await context.route("**/*", (route) => {
-		const host = new URL(route.request().url()).hostname;
-		return ["marketing", "localhost", "127.0.0.1"].includes(host)
-			? route.continue()
-			: route.abort();
-	});
 }
 
 for (const signup of [false, true]) {
@@ -24,16 +13,7 @@ for (const signup of [false, true]) {
 	}) => {
 		const context = await browser.newContext();
 		await isolateNetwork(context);
-		// Keep the real fixed handoff response, routing only its Cloud origin locally.
-		await context.route(`${marketing}/api/cloud-handoff?**`, async (route) => {
-			const response = await route.fetch({ maxRedirects: 0 });
-			const target = new URL(response.headers().location);
-			expect(target.origin).toBe("https://cloud.clawdi.ai");
-			await route.fulfill({
-				status: 303,
-				headers: { location: `${cloud}${target.pathname}${target.search}` },
-			});
-		});
+		observeCloudHandoff(context);
 		const page = await context.newPage();
 		const checkoutRequests: string[] = [];
 		await stubHostedApi(page, { plans: [basicPlan], checkoutRequests });
@@ -89,7 +69,13 @@ test("server capture and handoff need no JavaScript and reject expired cookies",
 	const handoff = await context.request.get(`${marketing}/api/cloud-handoff?target=deploy`, {
 		maxRedirects: 0,
 	});
-	expect(handoff.headers().location).toBe("https://cloud.clawdi.ai/deploy?deploy_profile=sui");
+	const trial = new URL(handoff.headers()["x-fixture-cloud-location"]);
+	expect(trial.pathname).toBe("/trial-offer");
+	expect(trial.searchParams.get("target")).toBe("deploy");
+	expect(trial.searchParams.get("deploy_profile")).toBe("sui");
+	expect(trial.searchParams.get("token")).toBe(
+		(await context.cookies()).find((item) => item.name === "clawdi-trial-offer")?.value,
+	);
 	expect(handoff.headers()["set-cookie"]).toBeUndefined();
 	const authRedirect = await context.request.get(`${cloud}/deploy?deploy_profile=sui`, {
 		maxRedirects: 0,
@@ -106,15 +92,16 @@ test("server capture and handoff need no JavaScript and reject expired cookies",
 			httpOnly: true,
 		},
 	]);
+	await context.clearCookies({ name: "clawdi-trial-offer" });
 	const expired = await context.request.get(`${marketing}/api/cloud-handoff?target=deploy`, {
 		maxRedirects: 0,
 	});
-	expect(expired.headers().location).toBe("https://cloud.clawdi.ai/deploy");
+	expect(expired.headers()["x-fixture-cloud-location"]).toBe("https://cloud.clawdi.ai/deploy");
 	await context.clearCookies();
 	const unavailable = await context.request.get(`${marketing}/api/cloud-handoff?target=deploy`, {
 		maxRedirects: 0,
 	});
-	expect(unavailable.headers().location).toBe("https://cloud.clawdi.ai/deploy");
+	expect(unavailable.headers()["x-fixture-cloud-location"]).toBe("https://cloud.clawdi.ai/deploy");
 	await context.close();
 });
 

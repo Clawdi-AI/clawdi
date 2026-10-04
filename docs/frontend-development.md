@@ -82,9 +82,15 @@ Query/hash destinations and protected paths retain the
 sign-in redirect with their original return URL, including CLI authorization
 and OAuth callbacks. OSS and desktop admission stay unchanged.
 
-Marketing `/` redirects signed-in visitors back to cloud; `/home` stays public.
-The root flow requires consistent cross-domain session recognition. The Docker
-runner checks cloud admission and SSR, not browser session consistency across sites.
+Marketing `/` redirects signed-in visitors through its same-origin
+`/api/cloud-handoff?target=dashboard`, so newly captured channel/trial cookies
+are available to the handoff request. Cloud `/dashboard` uses the protected
+parent's admission before redirecting to overview `/`, retaining query and hash.
+If Cloud does not recognize the marketing session, it sends the visitor to native
+sign-in with `/dashboard` as the return destination; the flow cannot bounce between
+public roots. Marketing `/home` stays public in both auth states. The paired Docker
+browser harness exercises independent site session states and cookie transfer with
+isolated SDK fixtures; live Clerk configuration still needs deployment verification.
 
 Done: `bun run --cwd apps/web test src/lib/route-auth.test.ts` passes the
 admission tests and production SSR checks in the Docker clean runner.

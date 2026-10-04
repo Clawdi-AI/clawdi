@@ -4,7 +4,7 @@ export const TRIAL_OFFER_COOKIE = "clawdi-trial-offer";
 const DESTINATIONS: Record<string, string> = {
 	deploy: "/deploy",
 	"sign-in": "/sign-in?redirect_url=%2Fdeploy",
-	dashboard: "/",
+	dashboard: "/dashboard",
 };
 
 // The hosted service owns credential validation and offer policy.

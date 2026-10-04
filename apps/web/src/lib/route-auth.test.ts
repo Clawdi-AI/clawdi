@@ -38,6 +38,7 @@ test("signed-out server admission redirects with the destination", () => {
 			expect(error.options).toMatchObject({
 				to: "/sign-in",
 				search: { redirect_url: "/agents?view=all" },
+				headers: { "Cache-Control": "private, no-store" },
 			});
 	}
 });
@@ -54,7 +55,11 @@ test("signed-out hosted homepage reloads the marketing root while public links u
 		} catch (error) {
 			expect(isRedirect(error)).toBe(true);
 			if (isRedirect(error)) {
-				expect(error.options).toMatchObject({ href: marketingRoot, reloadDocument: true });
+				expect(error.options).toMatchObject({
+					href: marketingRoot,
+					reloadDocument: true,
+					headers: { "Cache-Control": "private, no-store" },
+				});
 			}
 		}
 	}
@@ -63,6 +68,8 @@ test("signed-out hosted homepage reloads the marketing root while public links u
 test("hosted deep links and OSS homepage keep their sign-in return destination", () => {
 	for (const [href, marketingUrl] of [
 		["/", undefined],
+		["/dashboard", "https://clawdi.ai/home"],
+		["/dashboard?deploy_profile=sui#overview", "https://clawdi.ai/home"],
 		["/?settings=billing-wallet", "https://clawdi.ai/home"],
 		["/#billing", "https://clawdi.ai/home"],
 		["/agents?view=all", "https://clawdi.ai/home"],

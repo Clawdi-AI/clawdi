@@ -1,31 +1,6 @@
-import { createServer } from "node:http";
-import { expect, test } from "@playwright/test";
+import { expect } from "@playwright/test";
 import { basicPlan, stubHostedApi } from "../hosted-stub-api";
-
-// Only the private service boundary is simulated. Auth return, cookies, server
-// functions, the wizard, and checkout request construction use the real app.
-const offerApi = createServer((request, response) => {
-	if (request.url !== "/v2/subscription/trial-offer") {
-		response.writeHead(404).end();
-		return;
-	}
-	response.writeHead(200, { "Content-Type": "application/json" });
-	response.end(JSON.stringify({ available: true, expires_at: "2099-01-01T00:00:00Z" }));
-});
-
-test.beforeAll(
-	() =>
-		new Promise<void>((resolve, reject) => {
-			offerApi.once("error", reject);
-			offerApi.listen(8001, "127.0.0.1", resolve);
-		}),
-);
-test.afterAll(
-	() =>
-		new Promise<void>((resolve, reject) => {
-			offerApi.close((error) => (error ? reject(error) : resolve()));
-		}),
-);
+import { test } from "./fixtures";
 
 test("trial offer survives login and uses checkout without asking for a card", async ({
 	page,
