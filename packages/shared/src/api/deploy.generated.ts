@@ -425,10 +425,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Get V2 Trial Offer */
+        get: operations["get_v2_trial_offer_v2_subscription_trial_offer_get"];
         put?: never;
-        /** Resolve V2 Trial Offer */
-        post: operations["resolve_v2_trial_offer_v2_subscription_trial_offer_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2468,8 +2468,6 @@ export interface components {
              * @enum {string}
              */
             compute_plan_slug: "compute_basic" | "compute_performance";
-            /** Trial Offer Token */
-            trial_offer_token?: string | null;
             /** Plugin Bundle */
             plugin_bundle?: "sui" | null;
             /** Primary Model */
@@ -2917,19 +2915,10 @@ export interface components {
             /** Entitled Until */
             entitled_until: string | null;
         };
-        /** V2TrialOfferRequest */
-        V2TrialOfferRequest: {
-            /** Token */
-            token: string;
-        };
         /** V2TrialOfferResponse */
         V2TrialOfferResponse: {
-            /** Available */
-            available: boolean;
-            /** Expires At */
-            expires_at?: string | null;
-            /** Plugin Bundle */
-            plugin_bundle?: "sui" | null;
+            /** Cardless Trial */
+            cardless_trial: boolean;
         };
         /** V2UpdateDeploymentRequest */
         V2UpdateDeploymentRequest: {
@@ -4718,18 +4707,16 @@ export interface operations {
             };
         };
     };
-    resolve_v2_trial_offer_v2_subscription_trial_offer_post: {
+    get_v2_trial_offer_v2_subscription_trial_offer_get: {
         parameters: {
-            query?: never;
+            query?: {
+                channel?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["V2TrialOfferRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

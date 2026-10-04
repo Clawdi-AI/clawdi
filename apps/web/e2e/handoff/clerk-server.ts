@@ -5,5 +5,5 @@ export function clerkMiddleware() {
 }
 export async function auth() {
 	const userId = getCookie("test-user") ?? null;
-	return { userId, sessionId: userId ? `session-${userId}` : null, getToken: async () => userId };
+	return { userId, sessionId: userId ? `session-${userId}` : null };
 }

@@ -69,12 +69,8 @@ test("server capture and handoff need no JavaScript and reject expired cookies",
 	const handoff = await context.request.get(`${marketing}/api/cloud-handoff?target=deploy`, {
 		maxRedirects: 0,
 	});
-	const trial = new URL(handoff.headers()["x-fixture-cloud-location"]);
-	expect(trial.pathname).toBe("/trial-offer");
-	expect(trial.searchParams.get("target")).toBe("deploy");
-	expect(trial.searchParams.get("deploy_profile")).toBe("sui");
-	expect(trial.searchParams.get("token")).toBe(
-		(await context.cookies()).find((item) => item.name === "clawdi-trial-offer")?.value,
+	expect(handoff.headers()["x-fixture-cloud-location"]).toBe(
+		"https://cloud.clawdi.ai/deploy?deploy_profile=sui",
 	);
 	expect(handoff.headers()["set-cookie"]).toBeUndefined();
 	const authRedirect = await context.request.get(`${cloud}/deploy?deploy_profile=sui`, {
@@ -92,7 +88,6 @@ test("server capture and handoff need no JavaScript and reject expired cookies",
 			httpOnly: true,
 		},
 	]);
-	await context.clearCookies({ name: "clawdi-trial-offer" });
 	const expired = await context.request.get(`${marketing}/api/cloud-handoff?target=deploy`, {
 		maxRedirects: 0,
 	});
