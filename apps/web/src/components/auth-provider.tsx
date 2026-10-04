@@ -1,5 +1,5 @@
 import { ClerkProvider } from "@clerk/tanstack-react-start";
-import { shadcn } from "@clerk/themes";
+import { shadcn } from "@clerk/ui/themes";
 import { useRouter } from "@tanstack/react-router";
 import { lazy, Suspense } from "react";
 import { env } from "@/lib/env";
@@ -28,7 +28,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 	return (
 		<ClerkProvider
 			nonce={nonce}
-			appearance={shadcn}
+			appearance={{ theme: shadcn }}
 			publishableKey={env.VITE_CLERK_PUBLISHABLE_KEY}
 			signInFallbackRedirectUrl="/"
 			signInUrl="/sign-in"
