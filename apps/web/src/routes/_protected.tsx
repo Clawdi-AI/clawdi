@@ -29,7 +29,13 @@ const loadProtectedRoute = async ({ location }: { location: { href: string } }) 
 				throw new ApiNetworkError("offline", { cause });
 			}),
 	});
-	return { authIdentity: requireRouteIdentity(authState, location.href) };
+	return {
+		authIdentity: requireRouteIdentity(
+			authState,
+			location.href,
+			env.VITE_CLAWDI_HOSTED ? env.VITE_CLAWDI_MARKETING_URL : undefined,
+		),
+	};
 };
 
 export const Route = createFileRoute("/_protected")({

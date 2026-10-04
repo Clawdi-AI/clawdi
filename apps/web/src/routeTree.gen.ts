@@ -26,6 +26,7 @@ import { Route as SignInSplatRouteImport } from './routes/sign-in/$'
 import { Route as SignUpSplatRouteImport } from './routes/sign-up/$'
 import { Route as ProtectedDashboardIndexRouteImport } from './routes/_protected/_dashboard/index'
 import { Route as ProtectedDashboardAiProvidersRouteImport } from './routes/_protected/_dashboard/ai-providers'
+import { Route as ProtectedDashboardDashboardRouteImport } from './routes/_protected/_dashboard/dashboard'
 import { Route as ProtectedDashboardDeployRouteImport } from './routes/_protected/_dashboard/deploy'
 import { Route as ProtectedTerminalIdRouteImport } from './routes/_protected/terminal/$id'
 import { Route as ProtectedDashboardAgentsIndexRouteImport } from './routes/_protected/_dashboard/agents/index'
@@ -145,6 +146,12 @@ const ProtectedDashboardAiProvidersRoute =
   ProtectedDashboardAiProvidersRouteImport.update({
     id: '/ai-providers',
     path: '/ai-providers',
+    getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
+const ProtectedDashboardDashboardRoute =
+  ProtectedDashboardDashboardRouteImport.update({
+    id: '/dashboard',
+    path: '/dashboard',
     getParentRoute: () => ProtectedDashboardRoute,
   } as any)
 const ProtectedDashboardDeployRoute =
@@ -373,6 +380,7 @@ export interface FileRoutesByFullPath {
   '/sign-in/$': typeof SignInSplatRoute
   '/sign-up/$': typeof SignUpSplatRoute
   '/ai-providers': typeof ProtectedDashboardAiProvidersRoute
+  '/dashboard': typeof ProtectedDashboardDashboardRoute
   '/deploy': typeof ProtectedDashboardDeployRoute
   '/terminal/$id': typeof ProtectedTerminalIdRoute
   '/agents/$id': typeof ProtectedDashboardAgentsIdRouteWithChildren
@@ -425,6 +433,7 @@ export interface FileRoutesByTo {
   '/sign-in/$': typeof SignInSplatRoute
   '/sign-up/$': typeof SignUpSplatRoute
   '/ai-providers': typeof ProtectedDashboardAiProvidersRoute
+  '/dashboard': typeof ProtectedDashboardDashboardRoute
   '/deploy': typeof ProtectedDashboardDeployRoute
   '/terminal/$id': typeof ProtectedTerminalIdRoute
   '/channels/$id': typeof ProtectedDashboardChannelsIdRoute
@@ -477,6 +486,7 @@ export interface FileRoutesById {
   '/sign-in/$': typeof SignInSplatRoute
   '/sign-up/$': typeof SignUpSplatRoute
   '/_protected/_dashboard/ai-providers': typeof ProtectedDashboardAiProvidersRoute
+  '/_protected/_dashboard/dashboard': typeof ProtectedDashboardDashboardRoute
   '/_protected/_dashboard/deploy': typeof ProtectedDashboardDeployRoute
   '/_protected/terminal/$id': typeof ProtectedTerminalIdRoute
   '/_protected/_dashboard/': typeof ProtectedDashboardIndexRoute
@@ -532,6 +542,7 @@ export interface FileRouteTypes {
     | '/sign-in/$'
     | '/sign-up/$'
     | '/ai-providers'
+    | '/dashboard'
     | '/deploy'
     | '/terminal/$id'
     | '/agents/$id'
@@ -584,6 +595,7 @@ export interface FileRouteTypes {
     | '/sign-in/$'
     | '/sign-up/$'
     | '/ai-providers'
+    | '/dashboard'
     | '/deploy'
     | '/terminal/$id'
     | '/channels/$id'
@@ -635,6 +647,7 @@ export interface FileRouteTypes {
     | '/sign-in/$'
     | '/sign-up/$'
     | '/_protected/_dashboard/ai-providers'
+    | '/_protected/_dashboard/dashboard'
     | '/_protected/_dashboard/deploy'
     | '/_protected/terminal/$id'
     | '/_protected/_dashboard/'
@@ -805,6 +818,13 @@ declare module '@tanstack/react-router' {
       path: '/ai-providers'
       fullPath: '/ai-providers'
       preLoaderRoute: typeof ProtectedDashboardAiProvidersRouteImport
+      parentRoute: typeof ProtectedDashboardRoute
+    }
+    '/_protected/_dashboard/dashboard': {
+      id: '/_protected/_dashboard/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof ProtectedDashboardDashboardRouteImport
       parentRoute: typeof ProtectedDashboardRoute
     }
     '/_protected/_dashboard/deploy': {
@@ -1119,6 +1139,7 @@ const ProtectedDashboardAgentsIdRouteWithChildren =
 
 interface ProtectedDashboardRouteChildren {
   ProtectedDashboardAiProvidersRoute: typeof ProtectedDashboardAiProvidersRoute
+  ProtectedDashboardDashboardRoute: typeof ProtectedDashboardDashboardRoute
   ProtectedDashboardDeployRoute: typeof ProtectedDashboardDeployRoute
   ProtectedDashboardIndexRoute: typeof ProtectedDashboardIndexRoute
   ProtectedDashboardAgentsIdRoute: typeof ProtectedDashboardAgentsIdRouteWithChildren
@@ -1144,6 +1165,7 @@ interface ProtectedDashboardRouteChildren {
 
 const ProtectedDashboardRouteChildren: ProtectedDashboardRouteChildren = {
   ProtectedDashboardAiProvidersRoute: ProtectedDashboardAiProvidersRoute,
+  ProtectedDashboardDashboardRoute: ProtectedDashboardDashboardRoute,
   ProtectedDashboardDeployRoute: ProtectedDashboardDeployRoute,
   ProtectedDashboardIndexRoute: ProtectedDashboardIndexRoute,
   ProtectedDashboardAgentsIdRoute: ProtectedDashboardAgentsIdRouteWithChildren,

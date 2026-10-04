@@ -19,7 +19,11 @@ export type AccountNotification = {
 
 export type NotificationCenterView = "all" | "unread";
 
-const NOTIFICATION_ACTION_ORIGINS = new Set(["https://cloud.clawdi.ai", "https://www.clawdi.ai"]);
+const NOTIFICATION_ACTION_ORIGINS = new Set([
+	"https://cloud.clawdi.ai",
+	"https://clawdi.ai",
+	"https://www.clawdi.ai",
+]);
 
 // Project invitations are the first notification source. Keep the shell named
 // generically so future notification types (agent health, billing, access

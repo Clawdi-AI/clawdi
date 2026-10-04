@@ -2,6 +2,18 @@ import { describe, expect, it } from "bun:test";
 import { receiveTrialOffer } from "./trial-offer.server";
 
 describe("trial offer handoff", () => {
+	it("sends dashboard offers to authenticated admission instead of the public root", () => {
+		for (const profile of ["", "&deploy_profile=sui"]) {
+			const response = receiveTrialOffer(
+				new Request(`https://cloud.example/trial-offer?token=opaque&target=dashboard${profile}`),
+			);
+			expect(response.status).toBe(303);
+			expect(response.headers.get("location")).toBe(
+				`/dashboard${profile ? "?deploy_profile=sui" : ""}`,
+			);
+		}
+	});
+
 	it("stores an opaque credential without reflecting it into the destination", () => {
 		const response = receiveTrialOffer(
 			new Request("https://cloud.example/trial-offer?token=opaque_credential&target=sign-in"),
