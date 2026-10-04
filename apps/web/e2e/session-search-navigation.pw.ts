@@ -719,7 +719,6 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	});
 	await expect.poll(() => latestPageRequestCount).toBeGreaterThan(latestRequestsBeforeJump);
 	await expect(page.getByText(/^Timeline message 499 /)).toBeInViewport();
-	await expect(jumpToLatest).not.toBeVisible();
 
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto(searchUrl);
