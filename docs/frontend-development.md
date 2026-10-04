@@ -74,11 +74,17 @@ unchanged: its session cookie is updated before navigation, while its client
 session resource is published after navigation completes.
 
 In hosted browser builds, signed-out visits to the bare `/` entry redirect to
-`VITE_CLAWDI_MARKETING_URL` (default `https://clawdi.ai/home`). The shell's public
-website links use the same destination. Signed-in visitors keep the dashboard.
+the root of `VITE_CLAWDI_MARKETING_URL` (`https://clawdi.ai/` by default). The
+shell's public website links use the full configured URL (default
+`https://clawdi.ai/home`) so marketing stays reachable while signed in.
+Signed-in visitors keep the dashboard.
 Query/hash destinations and protected paths retain the
 sign-in redirect with their original return URL, including CLI authorization
 and OAuth callbacks. OSS and desktop admission stay unchanged.
+
+Marketing `/` redirects signed-in visitors back to cloud; `/home` stays public.
+The root flow requires consistent cross-domain session recognition. The Docker
+runner checks cloud admission and SSR, not browser session consistency across sites.
 
 Done: `bun run --cwd apps/web test src/lib/route-auth.test.ts` passes the
 admission tests and production SSR checks in the Docker clean runner.

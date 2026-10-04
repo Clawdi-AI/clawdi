@@ -42,15 +42,19 @@ test("signed-out server admission redirects with the destination", () => {
 	}
 });
 
-test("signed-out hosted homepage reloads the configured marketing URL", () => {
-	for (const marketingUrl of ["https://clawdi.ai/home", "https://marketing.example.test/"]) {
+test("signed-out hosted homepage reloads the marketing root while public links use /home", () => {
+	for (const [marketingUrl, marketingRoot] of [
+		["https://clawdi.ai/home", "https://clawdi.ai/"],
+		["https://marketing.example.test/home?from=cloud#public", "https://marketing.example.test/"],
+		["https://marketing.example.test/", "https://marketing.example.test/"],
+	]) {
 		try {
 			requireRouteIdentity({ userId: null, sessionId: null }, "/", marketingUrl);
 			throw new Error("Expected a redirect");
 		} catch (error) {
 			expect(isRedirect(error)).toBe(true);
 			if (isRedirect(error)) {
-				expect(error.options).toMatchObject({ href: marketingUrl, reloadDocument: true });
+				expect(error.options).toMatchObject({ href: marketingRoot, reloadDocument: true });
 			}
 		}
 	}

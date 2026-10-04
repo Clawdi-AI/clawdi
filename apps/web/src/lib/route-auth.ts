@@ -28,7 +28,8 @@ export function requireRouteIdentity(
 	if (!userId || !sessionId) {
 		// Query/hash destinations can be dashboard or auth-return deep links.
 		if (href === "/" && marketingUrl) {
-			throw redirect({ href: marketingUrl, reloadDocument: true });
+			// Root admission uses the marketing root; public links can still use /home.
+			throw redirect({ href: new URL("/", marketingUrl).href, reloadDocument: true });
 		}
 		throw redirect({ to: "/sign-in", search: { redirect_url: href } });
 	}
