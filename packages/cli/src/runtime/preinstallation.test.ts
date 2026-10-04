@@ -189,11 +189,13 @@ test("Hermes prepares exact software while preserving trusted upstream defaults"
 	}).stdout.trim();
 	const installer = `#!/bin/bash
 set -eu
-test "$#" = 4
+test "$#" = 6
 test "$1" = --commit
 test "$2" = '${commit}'
 test "$3" = --force-commit
 test "$4" = --skip-setup
+test "$5" = --skip-browser
+test "$6" = --non-interactive
 mkdir -p "$HOME/.hermes/hermes-agent" "$HOME/.local/bin" "$HOME/.hermes/installs/generation/lib"
 cp -a '${seed}/.' "$HOME/.hermes/hermes-agent"
 cp '${seed}/SOUL.md' "$HOME/.hermes/SOUL.md"

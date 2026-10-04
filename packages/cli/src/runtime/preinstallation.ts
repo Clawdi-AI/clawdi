@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { getCliVersion } from "../lib/version";
+import { buildNumericUserCommand } from "./runtime-user-command";
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 const semver = z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
@@ -194,26 +195,28 @@ export function prepareRuntimePreinstallation(
 						"--runtime-only",
 						"--no-onboard",
 					]
-				: ["--commit", spec.runtimeVersion, "--force-commit", "--skip-setup"];
+				: [
+						"--commit",
+						spec.runtimeVersion,
+						"--force-commit",
+						"--skip-setup",
+						"--skip-browser",
+						"--non-interactive",
+					];
 		const env = anonymousInstallerEnvironment(home);
 		const identity = { uid: options.uid ?? 10001, gid: options.gid ?? 10001 };
 		function run(command: string, commandArgs: string[], timeout: number) {
-			const drop = process.getuid?.() === 0;
-			const result = spawnSync(
-				drop ? "setpriv" : command,
-				drop
-					? [
-							"--reuid",
-							String(identity.uid),
-							"--regid",
-							String(identity.gid),
-							"--clear-groups",
-							command,
-							...commandArgs,
-						]
-					: commandArgs,
-				{ cwd: home, env, encoding: "utf8", timeout, maxBuffer: 1024 * 1024 },
-			);
+			const child =
+				identity.uid === process.getuid?.() && identity.gid === process.getgid?.()
+					? { command, args: commandArgs }
+					: buildNumericUserCommand(identity.uid, identity.gid, command, commandArgs);
+			const result = spawnSync(child.command, child.args, {
+				cwd: home,
+				env,
+				encoding: "utf8",
+				timeout,
+				maxBuffer: 1024 * 1024,
+			});
 			if (result.error || result.status !== 0) {
 				// Anonymous build diagnostics contain no inherited credentials.
 				if (result.stdout) process.stderr.write(result.stdout.slice(-8192));
