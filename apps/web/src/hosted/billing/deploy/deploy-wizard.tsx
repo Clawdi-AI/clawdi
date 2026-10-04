@@ -54,8 +54,6 @@ import {
 	checkoutRedirectUrl,
 	checkoutSessionClientSecret,
 	checkoutUiModeForPublishableKey,
-	EMBEDDED_CHECKOUT_UI_MODE,
-	HOSTED_CHECKOUT_UI_MODE,
 } from "@/hosted/billing/components/stripe-checkout.logic";
 import {
 	StripeCheckoutDialog,
@@ -195,7 +193,6 @@ type Compute = "basic" | "performance";
 type DeployPaymentMethod = "card" | "wallet";
 type NativeDeployCheckout = {
 	clientSecret: CheckoutSessionClientSecret;
-	embedded: boolean;
 	requestKey: string;
 	summary: StripeCheckoutSummary;
 	tierLabel: "Basic" | "Performance";
@@ -897,10 +894,7 @@ export function DeployWizard() {
 					fundingSource: paymentMethod === "wallet" ? "wallet" : "stripe",
 				};
 				const subscriptionSelection = { mode: "new" } as const;
-				const cardCheckoutUiMode = checkoutUiModeForPublishableKey(
-					env.VITE_STRIPE_PUBLISHABLE_KEY,
-					cardlessTrial,
-				);
+				const cardCheckoutUiMode = checkoutUiModeForPublishableKey(env.VITE_STRIPE_PUBLISHABLE_KEY);
 				const target = { kind: "new_deployment", deployConfig } as const;
 				if (paymentMethod === "wallet") {
 					const fingerprint = idempotencyFingerprint({
@@ -945,7 +939,6 @@ export function DeployWizard() {
 					selection,
 					subscriptionSelection,
 					target,
-					uiMode: cardCheckoutUiMode,
 				});
 				checkoutAttemptRef.current = idempotencyAttemptFor(
 					checkoutAttemptRef.current,
@@ -977,10 +970,9 @@ export function DeployWizard() {
 				}
 				const result = outcome.checkout;
 				const clientSecret = checkoutSessionClientSecret(result);
-				if (cardCheckoutUiMode !== HOSTED_CHECKOUT_UI_MODE && clientSecret) {
+				if (cardCheckoutUiMode === CHECKOUT_ELEMENTS_UI_MODE && clientSecret) {
 					setCheckoutSession({
 						clientSecret,
-						embedded: cardCheckoutUiMode === EMBEDDED_CHECKOUT_UI_MODE,
 						requestKey: checkoutAttemptRef.current.key,
 						summary: computeCheckoutSummary({
 							offer: paidSelection.offer,
@@ -1704,11 +1696,10 @@ export function DeployWizard() {
 					if (!next) setCheckoutSession(null);
 				}}
 				clientSecret={checkoutSession?.clientSecret ?? null}
-				embedded={checkoutSession?.embedded}
 				title={`Complete ${checkoutSession?.tierLabel ?? "compute"} checkout`}
 				description={
-					checkoutSession?.embedded
-						? "Start your free trial without leaving this page."
+					cardlessTrial
+						? "Review your free trial. No card required."
 						: "Enter payment details without leaving this page. Redirect-based payment methods return here after confirmation."
 				}
 				summary={checkoutSession?.summary ?? null}
