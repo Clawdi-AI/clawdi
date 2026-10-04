@@ -5,6 +5,8 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, AppState } from "react-native";
 import { useAuthAction } from "../../src/auth/use-auth-action";
+import { isMobilePreview } from "../../src/config/preview";
+import { PreviewAccount } from "../../src/features/preview";
 import { useI18n } from "../../src/i18n";
 import {
 	accountQueryKey,
@@ -20,6 +22,7 @@ import { NativeButton, NativePicker } from "../../src/ui/native-controls";
 import { AppScrollView, AppText, AppTextInput, AppView } from "../../src/ui/primitives";
 
 export default function AccountRoute() {
+	if (isMobilePreview()) return <PreviewAccount />;
 	const scope = useAccountScope();
 	return <AccountView key={`${scope.accountKey}:${scope.generation}`} />;
 }

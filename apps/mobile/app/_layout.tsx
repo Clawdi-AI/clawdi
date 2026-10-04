@@ -5,6 +5,7 @@ import { type ErrorBoundaryProps, Stack } from "expo-router";
 import { HeroUINativeProvider } from "heroui-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { isMobilePreview } from "../src/config/preview";
 import { loadMobileRuntimeConfig, RuntimeConfigProvider } from "../src/config/runtime";
 import { I18nProvider } from "../src/i18n";
 import { AppearanceProvider } from "../src/providers/appearance-provider";
@@ -33,6 +34,21 @@ function Navigation() {
 }
 
 export default function RootLayout() {
+	if (isMobilePreview()) {
+		return (
+			<I18nProvider>
+				<GestureHandlerRootView style={{ flex: 1 }}>
+					<SafeAreaProvider>
+						<AppearanceProvider>
+							<HeroUINativeProvider>
+								<Navigation />
+							</HeroUINativeProvider>
+						</AppearanceProvider>
+					</SafeAreaProvider>
+				</GestureHandlerRootView>
+			</I18nProvider>
+		);
+	}
 	const runtime = loadMobileRuntimeConfig();
 	return (
 		<RuntimeConfigProvider value={runtime}>

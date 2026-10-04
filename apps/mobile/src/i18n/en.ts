@@ -345,6 +345,20 @@ export const en = {
 		projects: "Projects",
 		connectors: "Connectors",
 	},
+	preview: {
+		badge: "Clawdi preview",
+		heroTitle: "Your Agents, in one place",
+		heroDescription:
+			"Open a Session, manage Projects, or create a new Agent from the shortcuts below.",
+		quickActions: "Quick actions",
+		recentActivity: "Recent activity",
+		activityRunning: "Hermes · Running",
+		activityAttention: "OpenClaw · Needs attention",
+		activitySession: "Session · 2 minutes ago",
+		accountName: "Alex Morgan",
+		accountEmail: "alex@example.com",
+		bypassNotice: "Preview mode bypasses authentication and never calls the Cloud or Hosted APIs.",
+	},
 	loading: {
 		app: "Loading Clawdi",
 		authentication: "Checking your account",
