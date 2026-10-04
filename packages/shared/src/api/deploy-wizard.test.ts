@@ -20,7 +20,9 @@ type Equal<Left, Right> =
 		? true
 		: false;
 type Assert<Condition extends true> = Condition;
-type CheckoutModeIsExact = Assert<Equal<HostedDeployCheckoutUiMode, "custom" | "embedded" | "hosted">>;
+type CheckoutModeIsExact = Assert<
+	Equal<HostedDeployCheckoutUiMode, "custom" | "embedded" | "hosted">
+>;
 
 void (true satisfies CheckoutModeIsExact);
 // @ts-expect-error Stripe Checkout UI mode must stay on the backend's narrow generated union.
