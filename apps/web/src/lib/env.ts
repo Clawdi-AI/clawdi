@@ -63,7 +63,7 @@ export const env = createEnv({
 
 		// Signed-out hosted homepage destination. OSS and desktop keep their
 		// existing auth entry points.
-		VITE_CLAWDI_MARKETING_URL: httpsOrHttp().default("https://clawdi.ai/"),
+		VITE_CLAWDI_MARKETING_URL: httpsOrHttp().default("https://clawdi.ai/home"),
 
 		// Clerk publishable key. Local auth bypass can run without
 		// Clerk; every normal dashboard run still requires a real key.

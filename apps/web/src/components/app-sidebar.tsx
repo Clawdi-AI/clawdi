@@ -111,6 +111,7 @@ import {
 	CONNECTOR_CATALOG_PAGE_SIZE,
 	connectionsQueryOptions,
 } from "@/lib/connectors-data";
+import { env } from "@/lib/env";
 import { IS_HOSTED } from "@/lib/hosted";
 import type { AgentNavigationVariant } from "@/lib/navigation-model";
 import {
@@ -1054,7 +1055,7 @@ function FocusRailContent({
 				<SidebarMenu className="items-center">
 					<SidebarMenuItem>
 						<a
-							href="https://clawdi.ai"
+							href={env.VITE_CLAWDI_MARKETING_URL}
 							target="_blank"
 							rel="noopener noreferrer"
 							aria-label="Open Clawdi homepage"

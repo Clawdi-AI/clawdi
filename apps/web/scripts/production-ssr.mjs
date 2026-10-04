@@ -116,7 +116,7 @@ for (const path of ["/", "/agents"]) {
 test("production SSR redirects the signed-out hosted homepage to marketing", async () => {
 	const response = await server.fetch(request("/"));
 	assert.equal(response.status, 307);
-	assert.equal(response.headers.get("location"), "https://clawdi.ai/");
+	assert.equal(response.headers.get("location"), "https://clawdi.ai/home");
 	assert.equal(await response.text(), "");
 });
 

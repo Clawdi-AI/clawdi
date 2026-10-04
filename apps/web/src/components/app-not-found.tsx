@@ -1,5 +1,6 @@
 import { ExternalLink, LayoutDashboard } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
+import { env } from "@/lib/env";
 import { cn } from "@/lib/utils";
 
 export function AppNotFound() {
@@ -14,7 +15,10 @@ export function AppNotFound() {
 						<LayoutDashboard data-icon="inline-start" />
 						Back to dashboard
 					</a>
-					<a href="https://clawdi.ai" className={cn(buttonVariants({ variant: "outline" }))}>
+					<a
+						href={env.VITE_CLAWDI_MARKETING_URL}
+						className={cn(buttonVariants({ variant: "outline" }))}
+					>
 						Go to Clawdi website
 						<ExternalLink data-icon="inline-end" />
 					</a>

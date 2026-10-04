@@ -43,7 +43,7 @@ test("signed-out server admission redirects with the destination", () => {
 });
 
 test("signed-out hosted homepage reloads the configured marketing URL", () => {
-	for (const marketingUrl of ["https://clawdi.ai/", "https://marketing.example.test/"]) {
+	for (const marketingUrl of ["https://clawdi.ai/home", "https://marketing.example.test/"]) {
 		try {
 			requireRouteIdentity({ userId: null, sessionId: null }, "/", marketingUrl);
 			throw new Error("Expected a redirect");
@@ -59,11 +59,11 @@ test("signed-out hosted homepage reloads the configured marketing URL", () => {
 test("hosted deep links and OSS homepage keep their sign-in return destination", () => {
 	for (const [href, marketingUrl] of [
 		["/", undefined],
-		["/?settings=billing-wallet", "https://clawdi.ai/"],
-		["/#billing", "https://clawdi.ai/"],
-		["/agents?view=all", "https://clawdi.ai/"],
-		["/cli-authorize?user_code=ABCD", "https://clawdi.ai/"],
-		["/oauth/codex/callback?code=opaque&state=state", "https://clawdi.ai/"],
+		["/?settings=billing-wallet", "https://clawdi.ai/home"],
+		["/#billing", "https://clawdi.ai/home"],
+		["/agents?view=all", "https://clawdi.ai/home"],
+		["/cli-authorize?user_code=ABCD", "https://clawdi.ai/home"],
+		["/oauth/codex/callback?code=opaque&state=state", "https://clawdi.ai/home"],
 	] as const) {
 		try {
 			requireRouteIdentity({ userId: null, sessionId: null }, href, marketingUrl);
@@ -81,7 +81,7 @@ test("hosted deep links and OSS homepage keep their sign-in return destination",
 });
 
 test("signed-in hosted homepage keeps the dashboard identity", () => {
-	expect(requireRouteIdentity(signedIn, "/", "https://clawdi.ai/")).toBe(
+	expect(requireRouteIdentity(signedIn, "/", "https://clawdi.ai/home")).toBe(
 		JSON.stringify(["user-a", "session-a"]),
 	);
 });
