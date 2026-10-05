@@ -230,6 +230,11 @@ class ClawdiEgressAddon:
             self.profiles, self.secrets, self.profile_hosts = [], {}, set()
             self.snapshot_claimed = False
             self.snapshot_digest = None
+            if self.snapshot_ack:
+                try:
+                    self.snapshot_ack.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 def merged_config(environ: dict[str, str | None]) -> dict[str, str]:

@@ -35,6 +35,7 @@ import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
 import {
 	adoptableWarmEgress,
 	consumeWarmEgress,
+	egressSnapshotEnabled,
 	waitForEgressSnapshot,
 } from "../runtime/egress-snapshot";
 import { readHostPolicy } from "../runtime/host-policy";
@@ -1676,7 +1677,14 @@ async function applyRuntimeDesiredState(
 						if (activation.applied && adoptUserUnits.length > 0) {
 							consumeWarmOpenClawGateway(paths);
 						}
-						if (activation.applied) consumeWarmEgress(paths);
+						if (
+							activation.applied &&
+							activationTarget.system.has(RUNTIME_SIDECAR_SYSTEM_UNIT) &&
+							egressSnapshotEnabled(paths)
+						) {
+							waitForEgressSnapshot(paths);
+							consumeWarmEgress(paths);
+						}
 						systemdApply = {
 							applied: activation.applied && (egressPrerequisiteApply?.applied ?? true),
 							systemUnitsChanged: [

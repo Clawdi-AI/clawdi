@@ -96,7 +96,7 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                 pending.chmod(0o640)
                 pending.replace(input_path)
             def acknowledged():
-                return ack.read_text() == hashlib.sha256(input_path.read_bytes()).hexdigest() + "\n"
+                return ack.exists() and ack.read_text() == hashlib.sha256(input_path.read_bytes()).hexdigest() + "\n"
             profiles = [{"id": "claim", "kind": "http", "match": {"host": "service.test"},
                 "rewrite": {"upstreamBaseUrl": "https://relay.test", "setHeaders": {
                     "authorization": {"type": "secretRef", "secretRef": "secret://key"}}}}]
@@ -121,12 +121,13 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                 publish(True, profiles, {"secret://key": "repaired"})
                 self.assertEqual(engine.apply_to_flow(Flow()).action, "http")
                 self.assertTrue(acknowledged())
+                self.assertEqual(ack.stat().st_mode & 0o777, 0o600)
                 input_path.chmod(0o660)
                 self.assertEqual(engine.apply_to_flow(Flow()).action, "deny")
+                self.assertFalse(ack.exists())
                 input_path.unlink()
                 input_path.symlink_to(ack)
                 self.assertEqual(engine.apply_to_flow(Flow()).action, "deny")
-            self.assertEqual(ack.stat().st_mode & 0o777, 0o600)
 
     def test_generic_engine_source_contains_no_channel_product_constants(self):
         source = ADDON_PATH.read_text(encoding="utf-8").lower()
