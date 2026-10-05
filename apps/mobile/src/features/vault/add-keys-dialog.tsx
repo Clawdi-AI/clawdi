@@ -211,7 +211,7 @@ export function AddKeysDialog({
 							<Alert variant="destructive" icon={AlertCircle} title={ADD_KEYS_COPY.invalid}>
 								<WebView recipe={addKeysDialogClasses.errors}>
 									{preview.parsed.errors.map((error, index) => (
-										<Text key={`${index}:${error}`}>{error}</Text>
+										<Text key={`${index}:${error}`}>• {error}</Text>
 									))}
 								</WebView>
 							</Alert>
