@@ -236,6 +236,10 @@ jobs:
           enable-cache: true
           prune-cache: true
           cache-dependency-glob: backend/uv.lock
+      # Cross-language events-v1 fixtures execute the CLI mapper directly in Bun.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
       - run: uv sync --frozen --no-install-project
       - name: Verify PostgreSQL runtime contract
         run: uv run python scripts/check_postgres_runtime.py

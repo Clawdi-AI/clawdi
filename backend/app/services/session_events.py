@@ -101,7 +101,7 @@ def validate_event_chunk(
             event = EVENT_ADAPTER.validate_json(line, strict=True)
         except ValidationError as exc:
             errors = exc.errors(include_input=False, include_context=False, include_url=False)
-            issues = []
+            issues: list[str] = []
             for error in errors[:5]:
                 path = ".".join(
                     str(part)
