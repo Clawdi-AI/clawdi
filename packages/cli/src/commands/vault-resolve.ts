@@ -78,7 +78,7 @@ export async function vaultResolveCommand(
 	const r = await new ApiClient({ baseUrl: apiUrl, authToken: accessToken }).request(
 		`/v1/vault/resolve?${params.toString()}`,
 		{
-		method: "POST",
+			method: "POST",
 		},
 	);
 	let body: VaultResolveHit | { detail?: unknown };

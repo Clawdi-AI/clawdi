@@ -45,11 +45,11 @@ export async function projectInviteCommand(
 	const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
 		`/v1/projects/${projectId}/invitations`,
 		{
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify({ email: opts.email }),
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ email: opts.email }),
 		},
 	);
 

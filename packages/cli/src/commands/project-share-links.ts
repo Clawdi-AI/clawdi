@@ -84,7 +84,7 @@ export async function projectShareLinksCommand(
 		const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
 			`/v1/projects/${projectId}/share-links/${linkId}`,
 			{
-			method: "DELETE",
+				method: "DELETE",
 			},
 		);
 		if (r.status === 404) {

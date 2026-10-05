@@ -443,12 +443,12 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 		response = await new ApiClient({ baseUrl: apiOrigin, authToken: bearer }).request(
 			`/v1/share/${encodeURIComponent(ticket.token)}/upgrade`,
 			{
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"Idempotency-Key": upgradeIdempotencyKey(ticket.token),
-			},
-			body: JSON.stringify(reqBody),
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"Idempotency-Key": upgradeIdempotencyKey(ticket.token),
+				},
+				body: JSON.stringify(reqBody),
 			},
 		);
 	} catch {
@@ -568,7 +568,7 @@ export async function inboxDeclineCommand(invitationId: string): Promise<void> {
 	const r = await new ApiClient({ baseUrl: apiUrl, authToken: accessToken }).request(
 		`/v1/me/invitations/${invitationId}/decline`,
 		{
-		method: "POST",
+			method: "POST",
 		},
 	);
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
@@ -703,7 +703,7 @@ async function acceptAnonymousUrl(
 	const r = await new ApiClient({ baseUrl: apiOrigin, requireAuth: false }).request(
 		`/v1/share/${token}/redeem`,
 		{
-		method: "POST",
+			method: "POST",
 			headers: { "Idempotency-Key": redeemIdempotencyKey(token) },
 		},
 	);
@@ -795,12 +795,12 @@ async function acceptUrl(
 	const r = await new ApiClient({ baseUrl: apiOrigin, authToken: bearer }).request(
 		`/v1/share/${token}/upgrade`,
 		{
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"Idempotency-Key": upgradeIdempotencyKey(token),
-		},
-		body: JSON.stringify(reqBody),
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"Idempotency-Key": upgradeIdempotencyKey(token),
+			},
+			body: JSON.stringify(reqBody),
 		},
 	);
 
@@ -876,9 +876,9 @@ async function acceptInvitation(
 	const r = await new ApiClient({ baseUrl: apiUrl, authToken: bearer }).request(
 		`/v1/me/invitations/${invitationId}/accept`,
 		{
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(reqBody),
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(reqBody),
 		},
 	);
 

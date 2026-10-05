@@ -55,11 +55,11 @@ export async function projectShareCommand(
 	const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
 		`/v1/projects/${projectId}/share-links`,
 		{
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify({ label: opts.label ?? null }),
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ label: opts.label ?? null }),
 		},
 	);
 	if (r.status === 409) {
