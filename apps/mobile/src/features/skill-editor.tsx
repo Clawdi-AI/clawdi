@@ -11,12 +11,14 @@ import {
 import {
 	createSkillDialogClasses,
 	detailLayoutClasses,
+	projectIdentityClasses,
 	skillDetailClasses,
 } from "@clawdi/shared/ui";
 import {
 	skillFormCopy as copy,
 	createSkillDescription,
 	identityFor,
+	isProjectOwner,
 	ownedProjectKindText,
 	projectPickerAccessText,
 	projectSupportingText,
@@ -31,6 +33,7 @@ import { router, useLocalSearchParams, useNavigation } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import {
 	BookOpen,
+	Bot,
 	Copy,
 	FileText,
 	FolderKanban,
@@ -60,7 +63,6 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "../ui/dialog";
-import { EntityHeader } from "../ui/entity-card";
 import { ErrorState } from "../ui/feedback";
 import { Icon } from "../ui/icon";
 import { IconChip } from "../ui/icon-chip";
@@ -71,7 +73,7 @@ import { AppScrollView, AppText, AppView } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
 import { Text } from "../ui/text";
 import { useConfirmation } from "../ui/use-confirmation";
-import { WebText, WebView, webText, webView } from "../ui/web-layout";
+import { WebText, WebView, webBoth, webText, webView } from "../ui/web-layout";
 
 import { ProjectResourceBoundary } from "./project-scope";
 import { useCloudProjects } from "./projects";
@@ -347,26 +349,44 @@ function SkillEditor({
 				<Text>{canWrite ? "Editable" : "Read-only"}</Text>
 			</Badge>
 			{project ? (
-				<EntityHeader
-					icon={
-						<IconChip size="xs" tint={identityFor(project.name).colorClasses}>
-							{identityFor(project.name).emoji}
-						</IconChip>
-					}
-					title={project.name}
-					titleAdornment={
-						<>
-							<Badge variant="outline">
-								<Icon as={FolderKanban} />
+				<WebView recipe={projectIdentityClasses.root}>
+					<WebView
+						recipe={projectIdentityClasses.icon}
+						className={webView(identityFor(project.name).colorClasses)}
+					>
+						<Text>{identityFor(project.name).emoji}</Text>
+					</WebView>
+					<WebView recipe={projectIdentityClasses.body}>
+						<WebView recipe={projectIdentityClasses.titleRow}>
+							<WebText recipe={projectIdentityClasses.title} numberOfLines={1}>
+								{project.name}
+							</WebText>
+							<Badge
+								variant="outline"
+								className={webBoth(
+									`${projectIdentityClasses.kind} ${["workspace", "environment", "personal"].includes(project.kind ?? "") ? projectIdentityClasses.kindSurface : projectIdentityClasses.kindFallback}`,
+								)}
+							>
+								<Icon
+									as={project.kind === "environment" ? Bot : FolderKanban}
+									className={webBoth(projectIdentityClasses.kindIcon)}
+								/>
 								<Text>{ownedProjectKindText(project, "badge")}</Text>
 							</Badge>
-							<Badge variant="outline">
+							<Badge
+								variant="outline"
+								className={webBoth(
+									`${projectIdentityClasses.access} ${isProjectOwner(project) ? "" : projectIdentityClasses.viewer}`,
+								)}
+							>
 								<Text>{projectPickerAccessText(project)}</Text>
 							</Badge>
-						</>
-					}
-					meta={projectSupportingText(project)}
-				/>
+						</WebView>
+						<WebText recipe={projectIdentityClasses.supporting} numberOfLines={1}>
+							{projectSupportingText(project)}
+						</WebText>
+					</WebView>
+				</WebView>
 			) : null}
 		</DetailPanel>
 	);

@@ -1,3 +1,4 @@
+import { projectIdentityClasses as styles } from "@clawdi/shared/ui";
 import {
 	displayProjectName,
 	identityFor,
@@ -53,14 +54,11 @@ export function ProjectIdentity({
 	const agentLine = projectAgent ? projectAgentLabel(projectAgent) : null;
 	const supportingText = projectSupportingText(project);
 	return (
-		<div className={cn("flex min-w-0 items-start gap-3", className)}>
+		<div className={cn(styles.root, className)}>
 			{showIcon ? <ProjectIcon project={project} agent={agent} /> : null}
-			<div className="min-w-0 flex-1">
-				<div className="flex min-w-0 flex-wrap items-center gap-2">
-					<span
-						className={cn("min-w-0 max-w-full truncate text-sm font-semibold", titleClassName)}
-						title={displayProjectName(project)}
-					>
+			<div className={styles.body}>
+				<div className={styles.titleRow}>
+					<span className={cn(styles.title, titleClassName)} title={displayProjectName(project)}>
 						{displayProjectName(project)}
 					</span>
 					{showKind && project.kind ? <ProjectKindBadge kind={project.kind} /> : null}
@@ -68,7 +66,7 @@ export function ProjectIdentity({
 					{showAccess ? <ProjectAccessBadge project={project} /> : null}
 				</div>
 				{supportingText || projectAgent ? (
-					<div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+					<div className={styles.supporting}>
 						<TruncatedText className="min-w-0">{supportingText}</TruncatedText>
 						{agentLine ? (
 							<TruncatedText className="min-w-0" translate="no" title={`Agent: ${agentLine}`}>
@@ -95,14 +93,7 @@ function ProjectIcon({
 	// of 100 projects reads as 100 different objects, not 100 folders.
 	const id = identityFor(project.name ?? project.slug);
 	return (
-		<span
-			className={cn(
-				"mt-0.5 flex size-6 shrink-0 select-none items-center justify-center rounded-md text-xs leading-none",
-				id.colorClasses,
-				className,
-			)}
-			title={meta.label}
-		>
+		<span className={cn(styles.icon, id.colorClasses, className)} title={meta.label}>
 			{id.emoji}
 		</span>
 	);
@@ -117,14 +108,7 @@ function ProjectAccessBadge({
 }) {
 	const owner = isProjectOwner(project);
 	return (
-		<Badge
-			variant="outline"
-			className={cn(
-				"border-border/70 bg-background/50 text-xs text-muted-foreground",
-				!owner && "bg-muted/60 text-foreground",
-				className,
-			)}
-		>
+		<Badge variant="outline" className={cn(styles.access, !owner && styles.viewer, className)}>
 			{owner ? "Owner" : "Viewer"}
 		</Badge>
 	);
@@ -136,10 +120,10 @@ export function ProjectKindBadge({ kind, className }: { kind: string; className?
 	return (
 		<Badge
 			variant="outline"
-			className={cn("gap-1 border text-xs", meta.badgeClassName, className)}
+			className={cn(styles.kind, meta.badgeClassName, className)}
 			title={meta.description}
 		>
-			<Icon className="size-3" />
+			<Icon className={styles.kindIcon} />
 			{meta.label}
 		</Badge>
 	);
@@ -492,8 +476,8 @@ export function projectKindMeta(kind: string): {
 			groupLabel: "Projects",
 			description: "Project you create for a workflow, team, or shareable resources.",
 			icon: FolderKanban,
-			iconClassName: "border-border bg-muted/50 text-muted-foreground",
-			badgeClassName: "border-border bg-muted/50 text-muted-foreground",
+			iconClassName: styles.kindSurface,
+			badgeClassName: styles.kindSurface,
 		};
 	}
 	if (kind === "environment") {
@@ -502,8 +486,8 @@ export function projectKindMeta(kind: string): {
 			groupLabel: "Agent Workspaces",
 			description: "Private Workspace permanently used by one Agent.",
 			icon: Bot,
-			iconClassName: "border-border bg-muted/50 text-muted-foreground",
-			badgeClassName: "border-border bg-muted/50 text-muted-foreground",
+			iconClassName: styles.kindSurface,
+			badgeClassName: styles.kindSurface,
 		};
 	}
 	if (kind === "personal") {
@@ -512,8 +496,8 @@ export function projectKindMeta(kind: string): {
 			groupLabel: "Private resources",
 			description: "Private library item.",
 			icon: FolderKanban,
-			iconClassName: "border-border bg-muted/50 text-muted-foreground",
-			badgeClassName: "border-border bg-muted/50 text-muted-foreground",
+			iconClassName: styles.kindSurface,
+			badgeClassName: styles.kindSurface,
 		};
 	}
 	return {
@@ -521,7 +505,7 @@ export function projectKindMeta(kind: string): {
 		groupLabel: "Projects",
 		description: "Resource bundle.",
 		icon: FolderKanban,
-		iconClassName: "border-border bg-muted/30 text-muted-foreground",
-		badgeClassName: "border-border bg-muted/30 text-muted-foreground",
+		iconClassName: styles.kindFallback,
+		badgeClassName: styles.kindFallback,
 	};
 }

@@ -287,6 +287,7 @@ export * from "./page-header";
 export * from "./page-width";
 export * from "./payment-methods-section";
 export * from "./plan-comparison";
+export * from "./project-metadata";
 export * from "./project-share-page";
 export * from "./provider-chooser";
 export * from "./provider-dialog";
