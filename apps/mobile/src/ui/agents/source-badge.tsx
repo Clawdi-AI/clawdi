@@ -11,13 +11,16 @@ import { webBoth, webView } from "../web-layout";
 export function AgentSourceBadge({
 	agentId,
 	ownership,
+	showConnected = true,
 }: {
 	agentId?: string;
 	ownership: AgentOwnership | null;
+	showConnected?: boolean;
 }) {
 	const kind = agentOwnershipKindFromId(agentId, ownership);
 	if (kind === "unresolved") return <Skeleton className={webView(styles.skeleton)} />;
 	const source = kind === "cloud" ? "hosted" : "connected";
+	if (kind === "connected" && !showConnected) return null;
 	return (
 		<StatusBadge
 			status="neutral"

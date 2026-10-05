@@ -3,12 +3,7 @@ import {
 	normalizeAgentDisplayName,
 	syncAgentNameDraft,
 } from "@clawdi/shared/api";
-import {
-	type AgentOwnership,
-	agentDisconnectEligibility,
-	EMPTY_AGENT_OWNERSHIP,
-	normalizeAgentId,
-} from "@clawdi/shared/client";
+import { agentDisconnectEligibility } from "@clawdi/shared/client";
 import { agentsIndexClasses, agentSettingsPanelClasses as styles } from "@clawdi/shared/ui";
 import {
 	agentDisconnectConfirmationCopy,
@@ -16,7 +11,7 @@ import {
 	agentSurfaceCopy,
 	agentTypeLabel,
 } from "@clawdi/shared/view";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { File } from "expo-file-system";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
@@ -43,6 +38,7 @@ import { WebText, WebView, webView } from "../ui/web-layout";
 import { type CloudAgent, isNotFound, useCloudAgent } from "./cloud-inventory";
 import { routeParam } from "./read-helpers";
 import { ResourceError } from "./resource-error";
+import { useAgentOwnership } from "./use-agent-ownership";
 
 export function AgentSettingsScreen() {
 	const params = useLocalSearchParams<{ agentId?: string | string[] }>();
@@ -62,7 +58,7 @@ function Settings({ id }: { id: string | undefined }) {
 	const router = useRouter();
 	const navigation = useNavigation();
 	const cache = useQueryClient();
-	const { cloud, agentSettings, hosted, compute } = useMobileApi();
+	const { cloud, agentSettings } = useMobileApi();
 	const agent = useCloudAgent(id);
 	const [draft, setDraft] = useState("");
 	const [disconnected, setDisconnected] = useState(false);
@@ -94,33 +90,7 @@ function Settings({ id }: { id: string | undefined }) {
 		setDraft((current) => syncAgentNameDraft(current, previousName, serverName));
 		previous.current = serverName;
 	}, [serverName, agent.data]);
-	const ownership = useQuery({
-		queryKey: accountQueryKey(scope, "agent-ownership"),
-		enabled: scope.isReady,
-		retry: false,
-		queryFn: ({ signal }) =>
-			read(async (lease): Promise<AgentOwnership> => {
-				if (!hosted || !compute) return EMPTY_AGENT_OWNERSHIP;
-				const [deployments, capabilities] = await Promise.all([
-					hosted.listDeployments(lease),
-					compute.getProductCapabilities(lease),
-				]);
-				const legacyIds = capabilities.can_use_v1 ? await compute.getLegacyAgentIds(lease) : [];
-				if (
-					deployments.some(
-						(deployment) => typeof deployment.agent_id !== "string" || !deployment.agent_id.trim(),
-					)
-				)
-					throw new Error("Incomplete Agent ownership");
-				const ids = (values: string[]) =>
-					new Set(values.map(normalizeAgentId).filter((value): value is string => value !== null));
-				return {
-					cloudAgentIds: ids(deployments.map((deployment) => deployment.agent_id)),
-					legacyAgentIds: ids(legacyIds),
-					isResolved: true,
-				};
-			}, signal),
-	});
+	const ownership = useAgentOwnership();
 	const resolvedOwnership =
 		ownership.isError || ownership.isPending ? null : (ownership.data ?? null);
 	const canDisconnect = agentDisconnectEligibility({

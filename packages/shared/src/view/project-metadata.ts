@@ -1,5 +1,6 @@
 import { literalSearchRank, searchExcerpt, searchTerms } from "../api/search-highlight";
 import { agentIdentity } from "./agent-label";
+import { formatShortDate } from "./format";
 
 export interface ProjectMetadata {
 	id?: string;
@@ -186,4 +187,10 @@ export function projectPickerGroups(projects: ProjectMetadata[]) {
 		},
 	];
 	return groups.filter((group) => group.projects.length > 0);
+}
+
+export function projectAgentSyncLabel(lastSyncAt: string | null | undefined) {
+	return lastSyncAt
+		? `synced ${formatShortDate(lastSyncAt, { includeYear: false })}`
+		: "not synced yet";
 }

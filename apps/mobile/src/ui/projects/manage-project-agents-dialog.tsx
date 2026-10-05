@@ -1,19 +1,26 @@
 import type { Project } from "@clawdi/shared/api";
-import { projectDetailClasses } from "@clawdi/shared/ui";
-import { agentIdentity, compareAgentEnvironments } from "@clawdi/shared/view";
+import { agentLabelClasses, projectDetailClasses } from "@clawdi/shared/ui";
+import {
+	agentIdentity,
+	compareAgentEnvironments,
+	projectAgentSyncLabel,
+} from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { Bot, Save } from "lucide-react-native";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useAuthAction } from "../../auth/use-auth-action";
 import { type CloudAgent, useCloudAgents } from "../../features/cloud-inventory";
+import { useAgentOwnership } from "../../features/use-agent-ownership";
 import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
+import { AgentSourceBadge } from "../agents/source-badge";
 import { Alert } from "../alert";
 import { ApiErrorPanel } from "../api-error-panel";
 import { Button } from "../button";
 import { Checkbox } from "../checkbox";
+import { AgentIcon } from "../dashboard/agent-icon";
 import {
 	Dialog,
 	DialogContent,
@@ -22,13 +29,12 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "../dialog";
-import { EntityHeader } from "../entity-card";
 import { Icon } from "../icon";
-import { IconChip } from "../icon-chip";
+import { Separator } from "../separator";
 import { Skeleton } from "../skeleton";
 import { Text } from "../text";
 import { AppScrollView } from "../view";
-import { WebView, webView } from "../web-layout";
+import { WebText, WebView, webView } from "../web-layout";
 
 export function ManageProjectAgentsDialog({
 	project,
@@ -47,6 +53,7 @@ export function ManageProjectAgentsDialog({
 }) {
 	const t = useI18n();
 	const allAgents = useCloudAgents();
+	const ownership = useAgentOwnership();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const capture = useForegroundLease();
@@ -121,34 +128,65 @@ export function ManageProjectAgentsDialog({
 				) : (
 					<WebView recipe={projectDetailClasses.form}>
 						<AppScrollView className={webView(projectDetailClasses.agentChoices)}>
-							{ordered.map((agent) => {
+							{ordered.map((agent, index) => {
 								const identity = agentIdentity(agent);
 								return (
-									<WebView key={agent.id} recipe={projectDetailClasses.agentChoice}>
-										<Checkbox
-											checked={selected.has(agent.id)}
-											disabled={disabled}
-											accessibilityLabel={`${identity.primaryLabel} access`}
-											onCheckedChange={(checked) =>
-												setSelected((current) => {
-													const next = new Set(current);
-													if (checked) next.add(agent.id);
-													else next.delete(agent.id);
-													return next;
-												})
-											}
-										/>
-										<EntityHeader
-											icon={
-												<IconChip>
-													<Icon as={Bot} />
-												</IconChip>
-											}
-											title={identity.primaryLabel}
-											meta={identity.secondaryLabel}
-											className={webView(projectDetailClasses.agentIdentity)}
-										/>
-									</WebView>
+									<Fragment key={agent.id}>
+										<WebView recipe={projectDetailClasses.agentChoice}>
+											<Checkbox
+												checked={selected.has(agent.id)}
+												disabled={disabled}
+												accessibilityLabel={`${identity.primaryLabel} access`}
+												onCheckedChange={(checked) =>
+													setSelected((current) => {
+														const next = new Set(current);
+														if (checked) next.add(agent.id);
+														else next.delete(agent.id);
+														return next;
+													})
+												}
+											/>
+											<WebView
+												recipe={`${agentLabelClasses.root} ${projectDetailClasses.agentIdentity}`}
+											>
+												<AgentIcon
+													agent={agent.agent_type}
+													avatarUrl={agent.avatar_url}
+													size="sm"
+												/>
+												<WebView recipe={agentLabelClasses.copy}>
+													<WebView recipe={agentLabelClasses.heading}>
+														<WebText
+															recipe={`${agentLabelClasses.name} ${agentLabelClasses.nameBySize.sm}`}
+															numberOfLines={1}
+														>
+															{identity.primaryLabel}
+														</WebText>
+														<WebView recipe={agentLabelClasses.adornment}>
+															<AgentSourceBadge
+																agentId={agent.id}
+																ownership={ownership.isError ? null : (ownership.data ?? null)}
+																showConnected={false}
+															/>
+														</WebView>
+													</WebView>
+													<WebView
+														recipe={`${agentLabelClasses.subtitle} ${agentLabelClasses.subtitleGapBySize.sm}`}
+													>
+														{identity.secondaryLabel ? (
+															<WebText recipe={agentLabelClasses.subtitleSegment}>
+																{identity.secondaryLabel}
+															</WebText>
+														) : null}
+														<WebText recipe={agentLabelClasses.subtitleSegment}>
+															{projectAgentSyncLabel(agent.last_sync_at)}
+														</WebText>
+													</WebView>
+												</WebView>
+											</WebView>
+										</WebView>
+										{index < ordered.length - 1 ? <Separator /> : null}
+									</Fragment>
 								);
 							})}
 						</AppScrollView>

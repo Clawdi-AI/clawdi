@@ -11,13 +11,13 @@ import {
 	agentDisplayName,
 	compareAgentEnvironments,
 	displayProjectName,
-	formatShortDate,
 	identityFor,
 	isCustomProject,
 	LIBRARY_COPY,
 	PROJECT_LOCAL_TABS,
 	type ProjectAgentMetadata,
 	projectAgentFor,
+	projectAgentSyncLabel,
 	projectDetailDescription,
 	projectResourceHref,
 } from "@clawdi/shared/view";
@@ -1387,11 +1387,7 @@ function ManageProjectAgentsDialog({
 											size="sm"
 											primary="machine"
 											titleAdornment={<AgentSourceBadgeForEnvironment env={environment} compact />}
-											meta={[
-												environment.last_sync_at
-													? `synced ${formatShortDate(environment.last_sync_at, { includeYear: false })}`
-													: "not synced yet",
-											]}
+											meta={[projectAgentSyncLabel(environment.last_sync_at)]}
 											className={projectDetailClasses.agentIdentity}
 										/>
 									</label>
