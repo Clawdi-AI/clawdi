@@ -1,11 +1,3 @@
-/** Verbatim recipes from apps/web/src/components/detail/layout.tsx. */
-export const sessionMetaClasses = {
-	title: "font-semibold text-lg tracking-tight",
-	meta: "flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground",
-	stats: "flex flex-wrap items-center gap-x-4 gap-y-2",
-	panel: "rounded-lg border bg-card/60 p-4",
-} as const;
-
 export const sessionAgentIconSizes = {
 	xs: "size-4",
 	sm: "size-5",

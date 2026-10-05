@@ -6,7 +6,7 @@ import {
 	publicSessionId,
 	publicSessionInput,
 } from "@clawdi/shared/api";
-import { sessionMetaClasses, publicSessionClasses as styles } from "@clawdi/shared/ui";
+import { detailLayoutClasses, publicSessionClasses as styles } from "@clawdi/shared/ui";
 import { publicSessionScopeLabel, relativeTime } from "@clawdi/shared/view";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
@@ -307,19 +307,19 @@ function PublicSession({ id }: { id: string | null }) {
 						<WebView recipe={styles.page} className="px-0 py-0">
 							<WebView recipe={styles.heading}>
 								<WebView recipe={styles.body}>
-									<WebText recipe={sessionMetaClasses.title}>
+									<WebText recipe={detailLayoutClasses.title}>
 										{title || t("publicSession.title")}
 									</WebText>
 									<DetailMeta>
 										<AgentInline
 											identity={{ agent_type: currentView.metadata.detail.agent_type }}
 										/>
-										<WebText recipe={sessionMetaClasses.meta}>·</WebText>
-										<WebText recipe={sessionMetaClasses.meta}>
+										<WebText recipe={detailLayoutClasses.meta}>·</WebText>
+										<WebText recipe={detailLayoutClasses.meta}>
 											Started {relativeTime(currentView.metadata.detail.started_at)}
 										</WebText>
-										<WebText recipe={sessionMetaClasses.meta}>·</WebText>
-										<WebText recipe={sessionMetaClasses.meta}>
+										<WebText recipe={detailLayoutClasses.meta}>·</WebText>
+										<WebText recipe={detailLayoutClasses.meta}>
 											{publicSessionScopeLabel(
 												currentView.metadata.source === "snapshot"
 													? currentView.metadata.detail.scope

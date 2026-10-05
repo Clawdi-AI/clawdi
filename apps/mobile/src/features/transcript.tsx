@@ -11,7 +11,7 @@ import {
 	sessionTimelineViewFromCategories,
 } from "@clawdi/shared/api";
 import { isSearchQueryReady, SEARCH_QUERY_MAX_LENGTH } from "@clawdi/shared/consts";
-import { sessionCheckboxClassName, sessionDetailClasses as styles } from "@clawdi/shared/ui";
+import { checkboxClasses, sessionDetailClasses as styles } from "@clawdi/shared/ui";
 import { sessionEmptyDescription, sessionTimelineFilters } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp } from "lucide-react-native";
@@ -258,7 +258,7 @@ function TranscriptView({
 													}}
 												>
 													<WebView
-														recipe={sessionCheckboxClassName}
+														recipe={checkboxClasses.root}
 														state={{ "data-checked": checked }}
 													>
 														{checked ? <Icon as={Check} /> : null}

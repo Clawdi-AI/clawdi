@@ -1,6 +1,6 @@
 "use client"
 
-import { sessionCheckboxClassName } from "@clawdi/shared/ui"
+import { checkboxClasses } from "@clawdi/shared/ui"
 import { Checkbox as CheckboxPrimitive } from "@base-ui/react/checkbox"
 
 import { cn } from "@/lib/utils"
@@ -11,14 +11,14 @@ function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
     <CheckboxPrimitive.Root
       data-slot="checkbox"
       className={cn(
-        sessionCheckboxClassName,
+        checkboxClasses.root,
         className
       )}
       {...props}
     >
       <CheckboxPrimitive.Indicator
         data-slot="checkbox-indicator"
-        className="grid place-content-center text-current transition-none [&>svg]:size-3.5"
+        className={checkboxClasses.indicator}
       >
         <CheckIcon
         />

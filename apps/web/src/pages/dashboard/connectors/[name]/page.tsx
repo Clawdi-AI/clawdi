@@ -1,6 +1,9 @@
 "use client";
 
 import { type components, filterConnectorTools } from "@clawdi/shared/api";
+
+import { connectorDetailClasses } from "@clawdi/shared/ui";
+import { LIBRARY_COPY } from "@clawdi/shared/view";
 import { AlertCircle, Check, Link2Off, Plug, Wrench } from "lucide-react";
 import { parseAsString, useQueryStates } from "nuqs";
 import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -149,19 +152,19 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 	const isLoading = isAppLoading || appQ.isPending;
 
 	const renderAccount = (c: components["schemas"]["ConnectorConnectionResponse"]) => (
-		<div key={c.id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5">
-			<div className="min-w-0">
-				<p className="truncate text-sm font-medium" title={c.alias || c.account_display || c.id}>
+		<div key={c.id} className={connectorDetailClasses.accountHeader}>
+			<div className={connectorDetailClasses.shrinkContent}>
+				<p className={connectorDetailClasses.title} title={c.alias || c.account_display || c.id}>
 					{c.alias || c.account_display || `Account ${c.id.slice(-6)}`}
 				</p>
 				{c.alias && c.account_display && c.account_display !== c.alias ? (
-					<p className="truncate text-xs text-muted-foreground" title={c.account_display}>
+					<p className={connectorDetailClasses.subtitle} title={c.account_display}>
 						{c.account_display}
 					</p>
 				) : null}
-				<p className="mt-0.5 text-xs text-muted-foreground">Connected</p>
+				<p className={connectorDetailClasses.hint}>Connected</p>
 			</div>
-			<div className="flex flex-wrap items-center gap-2">
+			<div className={connectorDetailClasses.actions}>
 				<Button
 					variant="ghost"
 					size="xs"
@@ -183,12 +186,12 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 						variant="ghost"
 						size="xs"
 						disabled={isDisconnecting(c.id)}
-						className="shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+						className={connectorDetailClasses.disconnectAction}
 					>
 						{isDisconnecting(c.id) ? (
-							<Spinner className="size-3.5" />
+							<Spinner className={connectorDetailClasses.smallIcon} />
 						) : (
-							<Link2Off className="size-3.5" />
+							<Link2Off className={connectorDetailClasses.smallIcon} />
 						)}
 						Disconnect
 					</Button>
@@ -274,7 +277,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 			<DashboardSection priority="primary">
 				<DashboardSectionHeader
 					icon={Plug}
-					title="Accounts"
+					title={LIBRARY_COPY.accounts}
 					count={
 						usesNoAuth
 							? "No account required"
@@ -293,7 +296,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 						!isSetupBlocked &&
 						!isConnectionsLoading &&
 						appConnections.length > 0 ? (
-							<ConnectorConnectAction app={app} label="Connect account" />
+							<ConnectorConnectAction app={app} label={LIBRARY_COPY.connectAccount} />
 						) : null
 					}
 				/>
@@ -311,12 +314,12 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 							title="Couldn't load connections"
 						/>
 					) : !usesNoAuth && isConnectionsLoading ? (
-						<div className="p-4">
-							<div className="flex items-center gap-3">
-								<Skeleton className="size-9 shrink-0 rounded-lg" />
-								<div className="min-w-0 flex-1 space-y-2">
-									<Skeleton className="h-3.5 w-40" />
-									<Skeleton className="h-3 w-28" />
+						<div className={connectorDetailClasses.skeletonPadding}>
+							<div className={connectorDetailClasses.identityRow}>
+								<Skeleton className={connectorDetailClasses.iconSkeleton} />
+								<div className={connectorDetailClasses.identitySkeleton}>
+									<Skeleton className={connectorDetailClasses.titleSkeleton} />
+									<Skeleton className={connectorDetailClasses.subtitleSkeleton} />
 								</div>
 							</div>
 						</div>
@@ -345,13 +348,19 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 								description="No connected accounts yet."
 								action={
 									app ? (
-										<ConnectorConnectAction app={app} label="Connect account" emphasis="primary" />
+										<ConnectorConnectAction
+											app={app}
+											label={LIBRARY_COPY.connectAccount}
+											emphasis="primary"
+										/>
 									) : null
 								}
 							/>
 						)
 					) : (
-						<div className="divide-y">{appConnections.map(renderAccount)}</div>
+						<div className={connectorDetailClasses.divided}>
+							{appConnections.map(renderAccount)}
+						</div>
 					)}
 				</div>
 			</DashboardSection>
@@ -384,24 +393,24 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 
 function DetailSkeleton() {
 	return (
-		<div className="flex flex-col gap-4">
+		<div className={connectorDetailClasses.stack}>
 			<PageHeaderSkeleton icon iconClassName="size-14 rounded-xl" />
 			{/* Connection section */}
-			<div className="space-y-3">
-				<Skeleton className="h-3.5 w-32" />
-				<Skeleton className="h-3 w-20" />
-				<div className="rounded-lg border border-dashed p-6">
-					<Skeleton className="mx-auto h-9 w-28 rounded-lg" />
+			<div className={connectorDetailClasses.section}>
+				<Skeleton className={connectorDetailClasses.accountTitleSkeleton} />
+				<Skeleton className={connectorDetailClasses.accountSubtitleSkeleton} />
+				<div className={connectorDetailClasses.emptyAccount}>
+					<Skeleton className={connectorDetailClasses.connectSkeleton} />
 				</div>
 			</div>
 			{/* Tools */}
-			<div className="space-y-3">
-				<Skeleton className="h-3.5 w-32" />
-				<div className="rounded-lg border">
+			<div className={connectorDetailClasses.section}>
+				<Skeleton className={connectorDetailClasses.accountTitleSkeleton} />
+				<div className={connectorDetailClasses.bordered}>
 					{Array.from({ length: 5 }).map((_, i) => (
 						<div key={i} className={cn("px-3 py-2.5 space-y-1.5", i > 0 && "border-t")}>
-							<Skeleton className="h-3.5 w-32" />
-							<Skeleton className="h-3 w-56" />
+							<Skeleton className={connectorDetailClasses.accountTitleSkeleton} />
+							<Skeleton className={connectorDetailClasses.toolSkeleton} />
 						</div>
 					))}
 				</div>
@@ -436,15 +445,15 @@ function ConnectorToolsList({
 			<DashboardSection>
 				<DashboardSectionHeader
 					icon={Wrench}
-					title="Available tools"
+					title={LIBRARY_COPY.tools}
 					description={
 						requiresConnection
 							? "Tools available once an account is connected."
 							: "Tools this connector exposes."
 					}
 				/>
-				<div className="flex items-center justify-center py-6">
-					<Spinner className="size-5 text-muted-foreground" />
+				<div className={connectorDetailClasses.loading}>
+					<Spinner className={connectorDetailClasses.spinner} />
 				</div>
 			</DashboardSection>
 		);
@@ -457,14 +466,14 @@ function ConnectorToolsList({
 			<DashboardSection>
 				<DashboardSectionHeader
 					icon={Wrench}
-					title="Available tools"
+					title={LIBRARY_COPY.tools}
 					description={
 						requiresConnection
 							? "Tools available once an account is connected."
 							: "Tools this connector exposes."
 					}
 				/>
-				<div className="p-4">
+				<div className={connectorDetailClasses.skeletonPadding}>
 					<ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load tools" />
 				</div>
 			</DashboardSection>
@@ -476,7 +485,7 @@ function ConnectorToolsList({
 			<DashboardSection>
 				<DashboardSectionHeader
 					icon={Wrench}
-					title="Available tools"
+					title={LIBRARY_COPY.tools}
 					count="0 tools"
 					description={
 						requiresConnection
@@ -493,7 +502,7 @@ function ConnectorToolsList({
 		<DashboardSection>
 			<DashboardSectionHeader
 				icon={Wrench}
-				title="Available tools"
+				title={LIBRARY_COPY.tools}
 				count={`${tools.length} tools`}
 				description={
 					requiresConnection
@@ -506,41 +515,31 @@ function ConnectorToolsList({
 							value={search}
 							onChange={setSearch}
 							placeholder="Search…"
-							className="w-full sm:w-56"
+							className={connectorDetailClasses.search}
 						/>
 					) : null
 				}
 			/>
-			<div className="max-h-[32rem] overflow-y-auto">
+			<div className={connectorDetailClasses.toolList}>
 				{filtered.map((tool, i) => (
-					<div
-						key={tool.name}
-						className={cn(
-							"flex items-start justify-between gap-3 px-3 py-2.5",
-							i > 0 && "border-t",
-						)}
-					>
-						<div className="min-w-0 flex-1">
-							<div className="flex items-center gap-2">
-								<span className="truncate text-sm font-medium">{tool.display_name}</span>
+					<div key={tool.name} className={cn(connectorDetailClasses.toolRow, i > 0 && "border-t")}>
+						<div className={connectorDetailClasses.grow}>
+							<div className={connectorDetailClasses.toolHeading}>
+								<span className={connectorDetailClasses.title}>{tool.display_name}</span>
 								{tool.is_deprecated && (
-									<Badge variant="outline" className="shrink-0">
+									<Badge variant="outline" className={connectorDetailClasses.badge}>
 										Deprecated
 									</Badge>
 								)}
 							</div>
 							{tool.description && (
-								<p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-									{tool.description}
-								</p>
+								<p className={connectorDetailClasses.toolDescription}>{tool.description}</p>
 							)}
 						</div>
 					</div>
 				))}
 				{filtered.length === 0 && (
-					<p className="py-4 text-center text-sm text-muted-foreground">
-						No tools match your search.
-					</p>
+					<p className={connectorDetailClasses.emptyTools}>No tools match your search.</p>
 				)}
 			</div>
 		</DashboardSection>

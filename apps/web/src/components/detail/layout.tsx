@@ -1,3 +1,4 @@
+import { detailLayoutClasses } from "@clawdi/shared/ui";
 /**
  * Layout primitives shared by detail pages (sessions, agents, skills,
  * memories). The pattern: an action row at top-right, an h1, a small
@@ -14,7 +15,6 @@
  * detail page reads the same," not "build a detail-page DSL."
  */
 
-import { sessionMetaClasses } from "@clawdi/shared/ui";
 import { AlertCircle } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -25,23 +25,23 @@ import { cn } from "@/lib/utils";
  * truncation pass `className="truncate"` (skills detail does, memories
  * pass `whitespace-pre-wrap` for multi-line content). */
 export function DetailTitle({ children, className }: { children: ReactNode; className?: string }) {
-	return <h1 className={cn(sessionMetaClasses.title, className)}>{children}</h1>;
+	return <h1 className={cn(detailLayoutClasses.title, className)}>{children}</h1>;
 }
 
 /** Subtitle row — small muted meta below the h1. The standard separator
  * between items is `·` (middle dot). Pages compose their own children. */
 export function DetailMeta({ children }: { children: ReactNode }) {
-	return <div className={sessionMetaClasses.meta}>{children}</div>;
+	return <div className={detailLayoutClasses.meta}>{children}</div>;
 }
 
 /** Stats row — Stat icons + ModelBadge, slightly bigger gaps than DetailMeta. */
 export function DetailStats({ children }: { children: ReactNode }) {
-	return <div className={sessionMetaClasses.stats}>{children}</div>;
+	return <div className={detailLayoutClasses.stats}>{children}</div>;
 }
 
 /** Standard framed panel for detail pages. */
 export function DetailPanel({ children, className }: { children: ReactNode; className?: string }) {
-	return <section className={cn(sessionMetaClasses.panel, className)}>{children}</section>;
+	return <section className={cn(detailLayoutClasses.panel, className)}>{children}</section>;
 }
 
 export type DetailSectionMeta = {

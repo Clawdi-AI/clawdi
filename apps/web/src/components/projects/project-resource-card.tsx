@@ -1,3 +1,4 @@
+import { projectResourceCardClasses } from "@clawdi/shared/ui";
 import {
 	displayProjectName,
 	identityFor,
@@ -55,7 +56,7 @@ export function ProjectResourceCard({
 	return (
 		<HeroCard
 			icon={
-				<IconChip tint={identity.colorClasses} className="text-xl">
+				<IconChip tint={identity.colorClasses} className={projectResourceCardClasses.emoji}>
 					{identity.emoji}
 				</IconChip>
 			}

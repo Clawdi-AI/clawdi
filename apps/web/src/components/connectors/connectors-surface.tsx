@@ -1,6 +1,7 @@
 "use client";
 
-import { getProjectResourceDefinition } from "@clawdi/shared/view";
+import { connectorsSurfaceClasses } from "@clawdi/shared/ui";
+import { getProjectResourceDefinition, LIBRARY_COPY } from "@clawdi/shared/view";
 import { ChevronLeft, ChevronRight, Plug } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, Suspense, useEffect, useMemo } from "react";
@@ -75,8 +76,8 @@ function ConnectorsListSkeleton({ embedded }: { embedded: boolean }) {
 			{embedded ? null : (
 				<PageHeader title="Connectors" description={CONNECTORS_RESOURCE.managementDescription} />
 			)}
-			<Skeleton className="h-10 w-full max-w-xl" />
-			<section className="space-y-3">
+			<Skeleton className={connectorsSurfaceClasses.search} />
+			<section className={connectorsSurfaceClasses.section}>
 				<SectionLabel>Your connections</SectionLabel>
 				<div className={CONNECTOR_GRID_CLASS}>
 					{Array.from({ length: 4 }).map((_, i) => (
@@ -84,7 +85,7 @@ function ConnectorsListSkeleton({ embedded }: { embedded: boolean }) {
 					))}
 				</div>
 			</section>
-			<section className="space-y-3">
+			<section className={connectorsSurfaceClasses.section}>
 				<SectionLabel>All Connectors</SectionLabel>
 				<div className={CONNECTOR_GRID_CLASS}>
 					{Array.from({ length: 16 }).map((_, i) => (
@@ -176,7 +177,7 @@ function ConnectorsList({
 		(connected.isLoading || connected.connections.length > 0 || !!connectedError);
 	const headerStatus =
 		total > 0 || connected.activeConnections.length > 0 ? (
-			<div className="flex flex-wrap items-center gap-2">
+			<div className={connectorsSurfaceClasses.filters}>
 				{total > 0 ? <Badge variant="secondary">{total.toLocaleString()} available</Badge> : null}
 				{connected.activeConnections.length > 0 ? (
 					<Badge>{connected.activeConnections.length} active</Badge>
@@ -208,7 +209,7 @@ function ConnectorsList({
 					<SearchInput
 						value={query}
 						onChange={handleQueryChange}
-						placeholder="Search connectors…"
+						placeholder={LIBRARY_COPY.searchConnectors}
 					/>
 				}
 			/>
@@ -265,7 +266,7 @@ function ConnectedRail({
 	const byName = new Map(apps.map((app) => [app.name, app]));
 	const appCount = appNames.length;
 	return (
-		<section className="space-y-3">
+		<section className={connectorsSurfaceClasses.section}>
 			<SectionLabel
 				count={appCount > 0 ? `${appCount} ${appCount === 1 ? "app" : "apps"}` : undefined}
 			>
@@ -372,7 +373,7 @@ function CatalogSection({
 					))}
 				</div>
 				{totalPages > 1 ? (
-					<div className="flex items-center justify-center gap-2 pt-3">
+					<div className={connectorsSurfaceClasses.pagination}>
 						<Button
 							variant="outline"
 							size="icon-sm"
@@ -380,9 +381,9 @@ function CatalogSection({
 							disabled={page <= 1}
 							aria-label="Previous page"
 						>
-							<ChevronLeft className="size-4" />
+							<ChevronLeft className={connectorsSurfaceClasses.icon} />
 						</Button>
-						<span className="px-3 text-xs tabular-nums text-muted-foreground">
+						<span className={connectorsSurfaceClasses.pageCount}>
 							{(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, total)} of{" "}
 							{total.toLocaleString()}
 						</span>
@@ -393,7 +394,7 @@ function CatalogSection({
 							disabled={page >= totalPages}
 							aria-label="Next page"
 						>
-							<ChevronRight className="size-4" />
+							<ChevronRight className={connectorsSurfaceClasses.icon} />
 						</Button>
 					</div>
 				) : null}
@@ -401,7 +402,7 @@ function CatalogSection({
 		);
 	}
 	return (
-		<section className="space-y-3">
+		<section className={connectorsSurfaceClasses.section}>
 			<SectionLabel count={count}>All Connectors</SectionLabel>
 			{content}
 		</section>

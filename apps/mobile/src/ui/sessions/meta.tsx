@@ -1,5 +1,5 @@
 import {
-	sessionMetaClasses as detail,
+	detailLayoutClasses as detail,
 	sessionModelBadgeClasses as model,
 	sessionAgentFallbackSizes,
 	sessionAgentIconRadius,

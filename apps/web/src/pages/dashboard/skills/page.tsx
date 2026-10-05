@@ -1,6 +1,8 @@
 "use client";
 
 import { parseProjectSkillGitHubInput } from "@clawdi/shared/api";
+
+import { detailLayoutClasses } from "@clawdi/shared/ui";
 import {
 	canManageCustomProject,
 	displayProjectName,
@@ -8,6 +10,7 @@ import {
 	getProjectResourceDefinition,
 	isCustomProject,
 	isProjectOwner,
+	LIBRARY_COPY,
 } from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -73,7 +76,7 @@ export default function SkillsPage() {
 
 function SkillsPageSkeleton() {
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.page)}>
 			<PageHeader title="Skills" description={SKILLS_RESOURCE.managementDescription} />
 			<div className={HERO_GRID_CLASS}>
 				{Array.from({ length: 3 }).map((_, index) => (
@@ -201,7 +204,7 @@ function SkillsPageInner() {
 	});
 
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.page)}>
 			<PageHeader
 				title="Skills"
 				description={
@@ -303,7 +306,7 @@ function SkillsPageInner() {
 								projects={projects}
 								value={selectedProject.id}
 								onValueChange={selectProject}
-								placeholder="Choose a Project"
+								placeholder={LIBRARY_COPY.chooseProject}
 								ariaLabel="Choose Project"
 								className="w-full sm:w-72"
 							/>

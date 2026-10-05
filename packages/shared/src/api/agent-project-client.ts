@@ -14,6 +14,20 @@ export function createAgentProjectClient(options: ApiClientOptions) {
 		fetch: transport.fetch,
 	});
 	return {
+		updateProjectAgents: (
+			projectId: string,
+			body: paths["/v1/projects/{project_id}/agents"]["patch"]["requestBody"]["content"]["application/json"],
+			signal?: AbortSignal,
+		) =>
+			transport.read(
+				(init) =>
+					api.PATCH("/v1/projects/{project_id}/agents", {
+						...init,
+						params: { path: { project_id: readResourceId(projectId) } },
+						body,
+					}),
+				signal,
+			),
 		listBindings: (agentId: string, signal?: AbortSignal) =>
 			transport.read(
 				(init) =>

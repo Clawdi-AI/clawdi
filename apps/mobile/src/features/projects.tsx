@@ -1,15 +1,50 @@
 import type { Project } from "@clawdi/shared/api";
+import { HERO_GRID_CLASS, vaultsSurfaceClasses } from "@clawdi/shared/ui";
+import {
+	canManageCustomProject,
+	compareProjectsForUse,
+	formatResourceCount,
+	getProjectResourceDefinition,
+	isCustomProject,
+	projectMatchesSearch,
+	projectSearchRank,
+} from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import { useRef, useState } from "react";
-import { Alert, type FlatList } from "react-native";
+import { MoreHorizontal, Plus } from "lucide-react-native";
+import { useState } from "react";
+import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
-import { NativeButton } from "../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../ui/primitives";
-import { InventoryList } from "./inventory-list";
+import { ApiErrorPanel } from "../ui/api-error-panel";
+import { Button } from "../ui/button";
+import { LibraryPage } from "../ui/detail/layout";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "../ui/dialog";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
+import { EmptyState } from "../ui/empty-state";
+import { HeroCardSkeleton } from "../ui/entity-card";
+import { Icon } from "../ui/icon";
+import { Input, Label } from "../ui/input";
+import { ListToolbar } from "../ui/list-toolbar";
+import { PageHeader } from "../ui/page-header";
+import { ProjectResourceCard } from "../ui/projects/project-resource-card";
+import { SearchInput } from "../ui/search-input";
+import { Text } from "../ui/text";
+import { WebView } from "../ui/web-layout";
 
 export function useCloudProjects() {
 	const { cloud } = useMobileApi();
@@ -24,19 +59,14 @@ export function useCloudProjects() {
 }
 
 export function ProjectRow({ project }: { project: Project }) {
-	const t = useI18n();
 	return (
-		<AppView className="gap-2 rounded-2xl bg-card p-4">
-			<AppText className="text-lg font-semibold text-foreground">
-				{project.name || project.slug || t("projects.unknown")}
-			</AppText>
-			<AppText className="text-sm text-muted-foreground">
-				{project.description ?? project.kind}
-			</AppText>
-			<AppText className="text-xs text-muted-foreground">
-				{project.is_owner ? t("projects.owner") : (project.owner_display ?? t("projects.shared"))}
-			</AppText>
-		</AppView>
+		<ProjectResourceCard
+			project={project}
+			footer={[
+				formatResourceCount(project.skill_count, "skill"),
+				formatResourceCount(project.vault_count, "vault"),
+			]}
+		/>
 	);
 }
 
@@ -57,11 +87,13 @@ function ProjectsView() {
 	const [name, setName] = useState("");
 	const [description, setDescription] = useState("");
 	const [editing, setEditing] = useState<string | null>(null);
-	const listRef = useRef<FlatList<Project>>(null);
+	const [open, setOpen] = useState(false);
+	const [search, setSearch] = useState("");
 	const reset = () => {
 		setName("");
 		setDescription("");
 		setEditing(null);
+		setOpen(false);
 	};
 	const save = () =>
 		action.run(async (isCurrent) => {
@@ -110,111 +142,173 @@ function ProjectsView() {
 			},
 		]);
 	};
+	const rows = (projects.data ?? [])
+		.filter(isCustomProject)
+		.filter((p) => projectMatchesSearch(p, search))
+		.sort(
+			(a, b) =>
+				(projectSearchRank(a, search) ?? 0) - (projectSearchRank(b, search) ?? 0) ||
+				compareProjectsForUse(a, b),
+		);
 	return (
-		<InventoryList
-			listRef={listRef}
-			header={
-				<AppView className="gap-3">
-					<NativeButton
-						label={t("sharing.joinLink")}
-						onPress={() => router.push("/projects/join")}
-					/>
-					<NativeButton
-						label={t("sharing.received")}
-						onPress={() => router.push("/projects/invitations")}
-					/>
-					<AppText>{t(editing ? "projects.edit" : "projects.create")}</AppText>
-					<AppTextInput
-						accessibilityLabel={t("projects.name")}
-						placeholder={t("projects.name")}
-						value={name}
-						onChangeText={setName}
-						maxLength={200}
-						editable={!action.busy}
-						className="rounded-xl bg-card p-3 text-foreground"
-					/>
-					<AppTextInput
-						accessibilityLabel={t("projects.summary")}
-						placeholder={t("projects.summary")}
-						multiline
-						value={description}
-						onChangeText={setDescription}
-						maxLength={2000}
-						editable={!action.busy}
-						className="rounded-xl bg-card p-3 text-foreground"
-					/>
-					<NativeButton
-						label={t("projects.save")}
-						disabled={action.busy || !name.trim()}
-						onPress={() => void save()}
-					/>
-					{editing ? (
-						<NativeButton label={t("account.cancel")} disabled={action.busy} onPress={reset} />
-					) : null}
-					{action.error ? (
-						<AppText accessibilityRole="alert">{t("projects.mutationFailed")}</AppText>
-					) : null}
-				</AppView>
-			}
-			items={projects.data ?? []}
-			title={t("projects.title")}
-			description={t("projects.description")}
-			empty={t(projects.isPending ? "loading.app" : "projects.empty")}
-			renderItem={(project) => (
-				<AppView className="gap-2">
-					<ProjectRow project={project} />
-					<NativeButton
-						label={t("projects.open")}
+		<LibraryPage>
+			<PageHeader
+				title={t("projects.title")}
+				description={getProjectResourceDefinition("projects").managementDescription}
+				actions={
+					<Button
+						size="sm"
 						disabled={action.busy}
-						onPress={() =>
-							router.push({ pathname: "/projects/[projectId]", params: { projectId: project.id } })
-						}
+						onPress={() => {
+							reset();
+							setOpen(true);
+						}}
+					>
+						<Icon as={Plus} />
+						<Text>{t("libraryPort.createProject")}</Text>
+					</Button>
+				}
+			/>
+			<ListToolbar
+				search={
+					<SearchInput
+						value={search}
+						onChange={setSearch}
+						placeholder={t("libraryPort.searchProjects")}
 					/>
-					{!project.is_owner && !project.archived_at ? (
-						<NativeButton
-							label={t("projects.leave")}
-							disabled={action.busy}
-							onPress={() => leave(project)}
+				}
+				actions={
+					<DropdownMenu>
+						<DropdownMenuTrigger
+							render={
+								<Button variant="ghost" size="icon-sm" accessibilityLabel={t("projects.title")}>
+									<Icon as={MoreHorizontal} />
+								</Button>
+							}
 						/>
-					) : null}
-					{project.is_owner && project.kind === "workspace" && !project.archived_at ? (
-						<>
-							<NativeButton
-								label={t("projects.sharing")}
-								disabled={action.busy}
-								onPress={() =>
-									router.push({
-										pathname: "/projects/[projectId]/sharing",
-										params: { projectId: project.id },
-									})
-								}
+						<DropdownMenuContent>
+							<DropdownMenuItem
+								label={t("sharing.joinLink")}
+								onSelect={() => router.push("/projects/join")}
 							/>
-							<NativeButton
-								label={t("projects.edit")}
-								disabled={action.busy}
-								onPress={() => {
-									setEditing(project.id);
-									setName(project.name);
-									setDescription(project.description ?? "");
-									listRef.current?.scrollToOffset({ offset: 0, animated: true });
-								}}
+							<DropdownMenuItem
+								label={t("sharing.received")}
+								onSelect={() => router.push("/projects/invitations")}
 							/>
-							<NativeButton
-								label={t("projects.archive")}
-								disabled={action.busy}
-								onPress={() => archive(project)}
-							/>
-						</>
-					) : null}
-				</AppView>
-			)}
-			refreshing={projects.isRefetching}
-			onRefresh={() => {
-				if (!projects.isFetching) void projects.refetch();
-			}}
-			error={projects.isError}
-			onRetry={() => void projects.refetch()}
-			busy={projects.isFetching}
-		/>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				}
+			/>
+			{projects.error ? (
+				<ApiErrorPanel error={projects.error} onRetry={() => void projects.refetch()} />
+			) : null}
+			<WebView recipe={HERO_GRID_CLASS}>
+				{projects.isPending ? (
+					[0, 1, 2].map((i) => <HeroCardSkeleton key={i} />)
+				) : rows.length === 0 && !projects.error ? (
+					<EmptyState
+						title={t(search.trim() ? "libraryPort.noProjectMatches" : "libraryPort.noProjects")}
+						description={t("libraryPort.emptyProjects")}
+					/>
+				) : (
+					rows.map((project) => (
+						<ProjectResourceCard
+							key={project.id}
+							project={project}
+							searchQuery={search}
+							footer={[
+								formatResourceCount(project.skill_count, "skill"),
+								formatResourceCount(project.vault_count, "vault"),
+								project.is_owner === false && (project.owner_display || project.owner_handle)
+									? `by ${project.owner_display || project.owner_handle}`
+									: null,
+							]}
+							actions={
+								<DropdownMenu>
+									<DropdownMenuTrigger
+										disabled={action.busy}
+										render={
+											<Button variant="ghost" size="icon-sm" accessibilityLabel={project.name}>
+												<Icon as={MoreHorizontal} />
+											</Button>
+										}
+									/>
+									<DropdownMenuContent>
+										{canManageCustomProject(project) ? (
+											<>
+												<DropdownMenuItem
+													label={t("projects.sharing")}
+													onSelect={() =>
+														router.push({
+															pathname: "/projects/[projectId]/sharing",
+															params: { projectId: project.id },
+														})
+													}
+												/>
+												<DropdownMenuItem
+													label={t("libraryPort.edit")}
+													onSelect={() => {
+														setEditing(project.id);
+														setName(project.name);
+														setDescription(project.description ?? "");
+														setOpen(true);
+													}}
+												/>
+												<DropdownMenuItem
+													label={t("projects.archive")}
+													variant="destructive"
+													onSelect={() => archive(project)}
+												/>
+											</>
+										) : (
+											<DropdownMenuItem
+												label={t("projects.leave")}
+												onSelect={() => leave(project)}
+											/>
+										)}
+									</DropdownMenuContent>
+								</DropdownMenu>
+							}
+						/>
+					))
+				)}
+			</WebView>
+			<Dialog
+				open={open}
+				onOpenChange={(v) => {
+					if (!action.busy) setOpen(v);
+				}}
+			>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>
+							{t(editing ? "libraryPort.editProject" : "libraryPort.createProject")}
+						</DialogTitle>
+						<DialogDescription>{t("libraryPort.projectFormDescription")}</DialogDescription>
+					</DialogHeader>
+					<WebView recipe={vaultsSurfaceClasses.form}>
+						<Label>{t("libraryPort.name")}</Label>
+						<Input value={name} onChangeText={setName} maxLength={200} editable={!action.busy} />
+						<Label>{t("libraryPort.description")}</Label>
+						<Input
+							multiline
+							value={description}
+							onChangeText={setDescription}
+							maxLength={2000}
+							editable={!action.busy}
+						/>
+					</WebView>
+					{action.error ? <ApiErrorPanel error={action.error} /> : null}
+					<DialogFooter>
+						<Button variant="ghost" disabled={action.busy} onPress={reset}>
+							<Text>{t("libraryPort.cancel")}</Text>
+						</Button>
+						<Button disabled={action.busy || !name.trim()} onPress={() => void save()}>
+							<Text>{t(editing ? "libraryPort.save" : "libraryPort.createProject")}</Text>
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+		</LibraryPage>
 	);
 }

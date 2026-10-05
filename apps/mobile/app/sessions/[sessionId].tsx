@@ -1,5 +1,5 @@
 import { validateSessionDetailSearch } from "@clawdi/shared/api";
-import { sessionMetaClasses, sessionDetailClasses as styles } from "@clawdi/shared/ui";
+import { detailLayoutClasses, sessionDetailClasses as styles } from "@clawdi/shared/ui";
 import {
 	formatDuration,
 	formatNumber,
@@ -78,18 +78,18 @@ export default function SessionDetailRoute() {
 						<AgentInline identity={sessionAgentIdentityInput(session)} />
 						{session.project_path ? (
 							<>
-								<WebText recipe={sessionMetaClasses.meta}>·</WebText>
+								<WebText recipe={detailLayoutClasses.meta}>·</WebText>
 								<WebText recipe={styles.project}>{session.project_path}</WebText>
 							</>
 						) : null}
-						<WebText recipe={sessionMetaClasses.meta}>·</WebText>
-						<WebText recipe={sessionMetaClasses.meta}>
+						<WebText recipe={detailLayoutClasses.meta}>·</WebText>
+						<WebText recipe={detailLayoutClasses.meta}>
 							Started {relativeTime(session.started_at)}
 						</WebText>
 						{sessionHasLaterActivity(session.started_at, session.last_activity_at) ? (
 							<>
-								<WebText recipe={sessionMetaClasses.meta}>·</WebText>
-								<WebText recipe={sessionMetaClasses.meta}>
+								<WebText recipe={detailLayoutClasses.meta}>·</WebText>
+								<WebText recipe={detailLayoutClasses.meta}>
 									Last activity {relativeTime(session.last_activity_at)}
 								</WebText>
 							</>

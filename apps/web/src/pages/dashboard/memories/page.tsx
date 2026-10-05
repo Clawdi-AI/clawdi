@@ -1,5 +1,7 @@
 "use client";
 
+import { detailLayoutClasses } from "@clawdi/shared/ui";
+
 import { getProjectResourceDefinition } from "@clawdi/shared/view";
 import { MemoriesPageActions, MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
@@ -10,7 +12,7 @@ const MEMORIES_RESOURCE = getProjectResourceDefinition("memories");
 
 export default function MemoriesPage() {
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.page)}>
 			<PageHeader
 				title="Memories"
 				description={MEMORIES_RESOURCE.managementDescription}

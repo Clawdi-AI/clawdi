@@ -1,4 +1,4 @@
-import { sessionDetailCopy } from "@clawdi/shared/view";
+import { LIBRARY_COPY, sessionDetailCopy } from "@clawdi/shared/view";
 import { agentExtensionsEn } from "../features/agent-extensions-en";
 import { billingEn } from "../features/billing/en";
 import { channelsEn } from "../features/channels/en";
@@ -14,6 +14,7 @@ import { vaultEn } from "../features/vault/en";
 
 export const en = {
 	sessionDetail: sessionDetailCopy,
+	libraryPort: LIBRARY_COPY,
 	composite: {
 		open: "Open",
 		close: "Close",
