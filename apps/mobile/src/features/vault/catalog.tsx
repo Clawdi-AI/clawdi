@@ -99,6 +99,7 @@ export function VaultCatalogScreen() {
 }
 
 function AgentVaultCatalog({ agentId, projectId }: { agentId: string; projectId?: string }) {
+	const t = useI18n();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { agentProjects } = useMobileApi();
@@ -132,7 +133,7 @@ function AgentVaultCatalog({ agentId, projectId }: { agentId: string; projectId?
 				{error ? (
 					<ApiErrorPanel
 						error={error}
-						title="Couldn't load Agent Vault access"
+						title={t("libraryPort.agentVaultsError")}
 						onRetry={() => {
 							void bindings.refetch();
 							void agent.refetch();

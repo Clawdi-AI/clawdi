@@ -1,5 +1,6 @@
 "use client";
 
+import { LIBRARY_COPY } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
@@ -50,7 +51,7 @@ function AgentVaultInventory({ agentId }: { agentId: string }) {
 				<div className={`${CENTERED_PAGE_WIDTH_CLASS.page} px-4 lg:px-6`}>
 					<ApiErrorPanel
 						error={scopeError ?? bindings.error}
-						title="Couldn't load Agent Vault access"
+						title={LIBRARY_COPY.agentVaultsError}
 						onRetry={() => {
 							void bindings.refetch();
 							void agent.refetch();

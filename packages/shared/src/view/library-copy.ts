@@ -31,6 +31,7 @@ export const LIBRARY_COPY = {
 	removeFromProject: "Remove from project",
 	agentVaultsDescription:
 		"Vaults available through this Agent’s Workspace and linked Projects. Configure Vaults in the source Project.",
+	agentVaultsError: "Couldn't load Agent Vault access",
 	manageAgents: "Manage agents",
 	chooseAgents: "Choose which Agents can use this Project.",
 	noAgentsAvailable: "No Agents available",
