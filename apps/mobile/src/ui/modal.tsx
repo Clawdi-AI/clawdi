@@ -1,3 +1,4 @@
+import { cn } from "cn";
 import {
 	cloneElement,
 	createContext,
@@ -137,7 +138,7 @@ export function ModalSurface({
 						<AppScrollView
 							accessibilityViewIsModal
 							keyboardShouldPersistTaps="handled"
-							className={`${surface} ${className ?? ""}`}
+							className={cn(surface, className)}
 							style={[{ flexGrow: 0, flexShrink: 1 }, style]}
 							contentContainerStyle={{ flexGrow: 1 }}
 						>

@@ -1,4 +1,7 @@
 export const projectSharingFormCopy = {
+	leave: "Leave project",
+	leaveDescription:
+		"This removes your access and unlinks the Project from your Agents. Those Agents will stop using its Skills and Vaults.",
 	archiveDescription:
 		"Agents will stop using this Project's Skills and Vaults. The Project will disappear from your library.",
 	archive: "Archive project",
@@ -36,6 +39,10 @@ export function formatMembershipToken(value: string) {
 
 export function archiveProjectTitle(name: string) {
 	return `Archive ${name}?`;
+}
+
+export function leaveProjectTitle(name: string) {
+	return `Leave ${name}?`;
 }
 
 export const projectInvitationCopy = {

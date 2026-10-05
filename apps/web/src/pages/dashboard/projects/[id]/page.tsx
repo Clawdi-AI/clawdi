@@ -1,4 +1,6 @@
-"use client";
+import { leaveProjectTitle, projectSharingFormCopy } from "@clawdi/shared/view";
+
+("use client");
 
 import {
 	detailLayoutClasses,
@@ -1199,10 +1201,9 @@ function SharedAccessPanel({
 				</AlertDialogTrigger>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Leave {displayProjectName(project)}?</AlertDialogTitle>
+						<AlertDialogTitle>{leaveProjectTitle(displayProjectName(project))}</AlertDialogTitle>
 						<AlertDialogDescription>
-							This removes your access and unlinks the Project from your Agents. Those Agents will
-							stop using its Skills and Vaults.
+							{projectSharingFormCopy.leaveDescription}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>

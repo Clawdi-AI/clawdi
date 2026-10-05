@@ -1,4 +1,5 @@
 import { dialogClasses as styles } from "@clawdi/shared/ui";
+import { cn } from "cn";
 import { X } from "lucide-react-native";
 import { type ReactNode, useContext } from "react";
 import type { ScrollViewProps } from "react-native";
@@ -48,7 +49,7 @@ export function DialogContent({
 			style={style}
 		>
 			<WebView
-				recipe={styles.content
+				recipe={cn(styles.content, className)
 					.split(/\s+/)
 					.filter((token) => token.startsWith("gap-"))
 					.join(" ")}

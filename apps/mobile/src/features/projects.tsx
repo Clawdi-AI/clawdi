@@ -1,5 +1,9 @@
 import type { Project } from "@clawdi/shared/api";
-import { createProjectDialogClasses, HERO_GRID_CLASS } from "@clawdi/shared/ui";
+import {
+	createProjectDialogClasses,
+	HERO_GRID_CLASS,
+	projectDetailClasses,
+} from "@clawdi/shared/ui";
 import {
 	archiveProjectTitle,
 	canManageCustomProject,
@@ -8,6 +12,7 @@ import {
 	createProjectDialogCopy as formCopy,
 	getProjectResourceDefinition,
 	isCustomProject,
+	leaveProjectTitle,
 	projectMatchesSearch,
 	projectSearchRank,
 	projectSharingFormCopy,
@@ -136,20 +141,28 @@ function ProjectsView() {
 	};
 	const leave = (project: Project) => {
 		const signal = scope.signal;
-		confirmationDialog.show(t("projects.leave"), t("projects.leaveWarning"), [
-			{ text: t("account.cancel"), style: "cancel" },
-			{
-				text: t("projects.leave"),
-				style: "destructive",
-				onPress: () => {
-					if (signal.aborted || !scope.isCurrent()) return;
-					return action.run(async (isCurrent) => {
-						await read((requestSignal) => sharing.leaveProject(project.id, requestSignal), signal);
-						if (isCurrent()) await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
-					});
+		confirmationDialog.show(
+			leaveProjectTitle(project.name),
+			projectSharingFormCopy.leaveDescription,
+			[
+				{ text: t("account.cancel"), style: "cancel" },
+				{
+					text: projectSharingFormCopy.leave,
+					style: "destructive",
+					className: projectDetailClasses.destructiveButton,
+					onPress: () => {
+						if (signal.aborted || !scope.isCurrent()) return;
+						return action.run(async (isCurrent) => {
+							await read(
+								(requestSignal) => sharing.leaveProject(project.id, requestSignal),
+								signal,
+							);
+							if (isCurrent()) await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
+						});
+					},
 				},
-			},
-		]);
+			],
+		);
 	};
 	const rows = (projects.data ?? [])
 		.filter(isCustomProject)

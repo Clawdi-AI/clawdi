@@ -241,7 +241,7 @@ export function ProviderCreate({
 								<>
 									<ProviderFieldsForm
 										label={label}
-										placeholder="ChatGPT"
+										placeholder={identity.label ?? PROVIDER_TYPE_META.openai.label}
 										onLabel={setLabel}
 										showRouting={false}
 										baseUrl={baseUrl}
@@ -278,7 +278,7 @@ export function ProviderCreate({
 									) : null}
 									<ProviderFieldsForm
 										label={label}
-										placeholder={preset?.label ?? PROVIDER_TYPE_META[type].label}
+										placeholder={identity.label ?? preset?.label ?? PROVIDER_TYPE_META[type].label}
 										onLabel={setLabel}
 										showRouting={custom}
 										baseUrl={baseUrl}

@@ -17,6 +17,7 @@ export const providerFieldsFormCopy = {
 } as const;
 
 export const providerRemovalCopy = {
+	impactError: "Couldn’t check affected agents",
 	description: "This provider will be removed from your account and cannot be restored.",
 	revocation:
 		"Local access is removed immediately. Upstream ChatGPT revocation may finish asynchronously.",

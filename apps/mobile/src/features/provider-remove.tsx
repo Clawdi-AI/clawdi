@@ -20,11 +20,13 @@ import {
 	AlertDialogHeader,
 	AlertDialogTitle,
 } from "../ui/alert-dialog";
+import { ApiErrorPanel } from "../ui/api-error-panel";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Icon } from "../ui/icon";
 import { Label } from "../ui/input";
 import { AppText, AppView } from "../ui/primitives";
+import { Text } from "../ui/text";
 import { WebView, webView } from "../ui/web-layout";
 
 export function ProviderRemove({
@@ -129,8 +131,8 @@ export function ProviderRemove({
 					<AlertDialogContent>
 						<AlertDialogHeader>
 							<AlertDialogTitle>{`Remove ${providerLabel}?`}</AlertDialogTitle>
+							<AlertDialogDescription>{copy.description}</AlertDialogDescription>
 						</AlertDialogHeader>
-						<AlertDialogDescription>{copy.description}</AlertDialogDescription>
 						{uncertain ? (
 							<AppText accessibilityRole="alert">{t("providers.removalUncertain")}</AppText>
 						) : null}
@@ -141,11 +143,13 @@ export function ProviderRemove({
 								onPress={() => void remove(true)}
 							/>
 						) : null}
-						<ActionButton
-							label={t("providers.reviewCurrentImpact")}
-							disabled={action.busy}
-							onPress={() => void review()}
-						/>
+						{impact || attempt.current || uncertain ? (
+							<ActionButton
+								label={t("providers.reviewCurrentImpact")}
+								disabled={action.busy}
+								onPress={() => void review()}
+							/>
+						) : null}
 						{impact ? (
 							<>
 								<AppText>{impact.agents.length ? copy.affected : copy.noAgents}</AppText>
@@ -164,7 +168,13 @@ export function ProviderRemove({
 								</WebView>
 							</>
 						) : null}
-						{action.error ? (
+						{action.error && !attempt.current && !uncertain ? (
+							<ApiErrorPanel
+								error={action.error}
+								title={copy.impactError}
+								onRetry={() => void review()}
+							/>
+						) : action.error ? (
 							<AppText accessibilityRole="alert">{t("providers.removalFailed")}</AppText>
 						) : null}
 						<AlertDialogFooter>
@@ -174,7 +184,7 @@ export function ProviderRemove({
 								disabled={action.busy || !impact || !acknowledged}
 								onPress={() => void remove(false)}
 							>
-								{copy.remove}
+								<Text>{copy.remove}</Text>
 							</AlertDialogAction>
 						</AlertDialogFooter>
 					</AlertDialogContent>

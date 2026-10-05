@@ -301,7 +301,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 							<ApiErrorPanel
 								error={impactError}
 								onRetry={() => impact.refetch()}
-								title="Couldn’t check affected agents"
+								title={removalCopy.impactError}
 							/>
 						) : affectedAgents.length > 0 ? (
 							<>
