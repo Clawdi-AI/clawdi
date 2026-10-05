@@ -1803,6 +1803,43 @@ for (const [template, handler] of Object.entries(computeGetRoutes)) {
 }
 // No live hosted stream or runtime infrastructure is simulated.
 on("GET", "/v2/events", () => new Reply(204, null));
+on("POST", "/v2/subscription/quote", async ({ request }) => {
+	let body: unknown;
+	try {
+		body = await request.json();
+	} catch {
+		return new Reply(400, { detail: "Invalid quote request" });
+	}
+	if (typeof body !== "object" || body === null)
+		return new Reply(400, { detail: "Invalid quote request" });
+	const planSlug: unknown = Reflect.get(body, "plan_slug");
+	const term: unknown = Reflect.get(body, "billing_term_months");
+	const funding: unknown = Reflect.get(body, "funding_source");
+	if (
+		(planSlug !== "compute_basic" && planSlug !== "compute_performance") ||
+		(term !== 1 && term !== 12) ||
+		(funding !== "stripe" && funding !== "wallet")
+	)
+		return new Reply(400, { detail: "Invalid quote request" });
+	const offer = computePlans
+		.find((plan) => plan.slug === planSlug)
+		?.offers.find((item) => item.billing_term_months === term);
+	if (!offer) return new Reply(400, { detail: "Plan offer unavailable" });
+	const debit = offer.price_cents / 100;
+	return {
+		plan_slug: planSlug,
+		billing_term_months: term,
+		funding_source: funding,
+		currency: "usd",
+		term_price_cents: offer.price_cents,
+		expires_at: new Date(NOW + 15 * MINUTE).toISOString(),
+		preview_invoice_id: funding === "stripe" ? "preview_parity" : null,
+		debit_amount_usd: funding === "wallet" ? debit.toFixed(2) : null,
+		balance_before_usd: funding === "wallet" ? wallet.balance_usd : null,
+		balance_after_usd:
+			funding === "wallet" ? (Number(wallet.balance_usd) - debit).toFixed(2) : null,
+	} satisfies DeploySchemas["V2ComputeSubscriptionQuoteResponse-Output"];
+});
 
 // ---------------------------------------------------------------------------
 // Routes: identity + settings
