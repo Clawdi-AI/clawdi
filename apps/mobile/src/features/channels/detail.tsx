@@ -2,6 +2,7 @@ import {
 	agentProviderLinkReplacementRequired,
 	agentProviderLinkStatusUnknown,
 	type ChannelPairing,
+	type components,
 	pairCodeExpired,
 	telegramPairDeepLink,
 	verifiedDiscordInstallUrl,
@@ -18,12 +19,15 @@ import {
 	agentSurfaceCopy,
 	channelHealthSummary,
 	channelDetailCopy as copy,
+	pairingCommandsDescription,
 	providerMeta,
+	publishedCommandsLabel,
 	relativeTime,
+	supportsPairingCommands,
 } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { Trash2, TriangleAlert, Unplug } from "lucide-react-native";
+import { KeyRound, RefreshCw, Trash2, TriangleAlert, Unplug } from "lucide-react-native";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, AppState, Linking } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
@@ -32,6 +36,7 @@ import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
 import { AgentIcon } from "../../ui/agents/agent-icon";
+import { ChannelInfoCard } from "../../ui/agents/channel-info-card";
 import {
 	ActionButton as NativeButton,
 	ChoiceSelect as NativePicker,
@@ -77,6 +82,9 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 	const action = useAuthAction(scope.identity);
 	const [agentId, setAgentId] = useState(initialAgentId ?? "");
 	const [replace, setReplace] = useState(false);
+	const [commands, setCommands] = useState<
+		components["schemas"]["ChannelCommandSyncResponse"] | null
+	>(null);
 	const [pairing, setPairing] = useState<ChannelPairing | null>(null);
 	const [notice, setNotice] = useState<"done" | "cleanupWarning" | "unpairNotConfirmed" | null>(
 		null,
@@ -87,6 +95,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 	const bot = Object.values(pool.data?.providers ?? {})
 		.flat()
 		.find((item) => item.id === id);
+	const provider = bot?.provider ?? ownedBot?.provider ?? "";
 	const links = useChannelQuery(
 		[id ?? "missing", "links"],
 		(api, signal) => api.links(id ?? "", signal),
@@ -508,13 +517,54 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 						)}
 					</TabsContent>
 					<TabsContent value="commands">
-						{bot?.capabilities.sync_commands ? (
-							<NativeButton
-								label={t("channels.sync")}
-								disabled={disabled}
-								onPress={() => void perform((signal) => channels.syncCommands(id ?? "", signal))}
-							/>
-						) : null}
+						<WebView recipe={styles.flexFlexColGap}>
+							<ChannelInfoCard icon={KeyRound} title={copy.pairingCommands}>
+								{pairingCommandsDescription(
+									providerMeta(provider).label,
+									supportsPairingCommands(provider),
+								)}
+							</ChannelInfoCard>
+							{supportsPairingCommands(provider) ? (
+								<NativeButton
+									label={action.busy ? copy.publishing : copy.publishCommands}
+									variant="default"
+									icon={<Icon as={RefreshCw} />}
+									disabled={disabled || !bot?.capabilities.sync_commands}
+									onPress={() => {
+										let published: components["schemas"]["ChannelCommandSyncResponse"] | null =
+											null;
+										void perform(
+											async (signal) => {
+												published = await channels.syncCommands(id ?? "", signal);
+												return published;
+											},
+											() => setCommands(published),
+										);
+									}}
+								/>
+							) : null}
+							{commands?.commands.length ? (
+								<WebView recipe={`${ENTITY_CARD_BASE} ${styles.flexFlexColGap3}`}>
+									<WebText recipe={styles.textXsFontMediumTextSuccessMutedForeground}>
+										{publishedCommandsLabel(commands.commands.length)}
+									</WebText>
+									{commands.commands.map((command) => (
+										<WebView
+											key={String(command.name)}
+											recipe={styles.flexItemsBaselineGapTextSm}
+											className="flex-row"
+										>
+											<WebText recipe={styles.fontMonoTextXs}>/{String(command.name)}</WebText>
+											<WebText recipe={styles.textMutedForeground}>
+												{String(command.description)}
+											</WebText>
+										</WebView>
+									))}
+								</WebView>
+							) : commands ? (
+								<EmptyState variant="inset" description={copy.noCommands} />
+							) : null}
+						</WebView>
 					</TabsContent>
 				</Tabs>
 			</AppScrollView>

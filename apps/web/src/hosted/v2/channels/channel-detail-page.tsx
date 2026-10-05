@@ -1,7 +1,14 @@
 "use client";
 
 import { channelDetailPageClasses } from "@clawdi/shared/ui";
-import { agentSurfaceCopy, channelDetailCopy as copy, relativeTime } from "@clawdi/shared/view";
+import {
+	agentSurfaceCopy,
+	channelDetailCopy as copy,
+	pairingCommandsDescription,
+	publishedCommandsLabel,
+	relativeTime,
+	supportsPairingCommands,
+} from "@clawdi/shared/view";
 import { Link, useRouter } from "@tanstack/react-router";
 import {
 	ArrowDownLeft,
@@ -645,7 +652,7 @@ function HealthTab({ accountId }: { accountId: string }) {
 function CommandsTab({ accountId, provider }: { accountId: string; provider: string }) {
 	const sync = useSyncCommands(accountId);
 	const meta = providerMeta(provider);
-	const supportsCommands = provider === "telegram" || provider === "discord";
+	const supportsCommands = supportsPairingCommands(provider);
 	const commands = sync.data?.commands ?? [];
 	const [syncing, setSyncing] = useState(false);
 	const syncLockedRef = useRef(false);
@@ -668,10 +675,8 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 
 	return (
 		<div className={channelDetailPageClasses.flexFlexColGap}>
-			<InfoCard icon={KeyRound} title="Pairing commands">
-				{supportsCommands
-					? `Publish Clawdi’s pairing commands to ${meta.label}.`
-					: `${meta.label} does not support pairing commands.`}
+			<InfoCard icon={KeyRound} title={copy.pairingCommands}>
+				{pairingCommandsDescription(meta.label, supportsCommands)}
 			</InfoCard>
 
 			{supportsCommands ? (
@@ -682,12 +687,12 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 						) : (
 							<RefreshCw className={channelDetailPageClasses.size} />
 						)}
-						{syncing ? "Publishing…" : "Publish commands"}
+						{syncing ? copy.publishing : copy.publishCommands}
 					</Button>
 					{commands.length > 0 ? (
-						<div className={cn(ENTITY_CARD_BASE, "flex flex-col gap-2")}>
+						<div className={cn(ENTITY_CARD_BASE, channelDetailPageClasses.flexFlexColGap3)}>
 							<div className={channelDetailPageClasses.textXsFontMediumTextSuccessMutedForeground}>
-								Published {commands.length} command{commands.length === 1 ? "" : "s"}
+								{publishedCommandsLabel(commands.length)}
 							</div>
 							{commands.map((c) => (
 								<div
@@ -702,10 +707,7 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 							))}
 						</div>
 					) : sync.data ? (
-						<EmptyState
-							variant="inset"
-							description="No pairing commands are available to publish."
-						/>
+						<EmptyState variant="inset" description={copy.noCommands} />
 					) : null}
 				</>
 			) : null}
