@@ -2,6 +2,7 @@
 
 import { buildSkillUpdateRequest, stripFrontmatter } from "@clawdi/shared/api";
 import { detailLayoutClasses, skillDetailClasses } from "@clawdi/shared/ui";
+import { skillFormCopy } from "@clawdi/shared/view";
 
 export { stripFrontmatter } from "@clawdi/shared/api";
 
@@ -660,10 +661,9 @@ export function SkillDetailContent({
 					{isEditing ? (
 						<DetailPanel className={skillDetailClasses.instructionPanel}>
 							<div>
-								<h2 className={skillDetailClasses.heading}>Edit skill</h2>
+								<h2 className={skillDetailClasses.heading}>{skillFormCopy.editTitle}</h2>
 								<p className={skillDetailClasses.projectDescription}>
-									Saving updates this Project Skill. Linked Agents receive the new version
-									automatically, and imported support files stay attached.
+									{skillFormCopy.editDescription}
 								</p>
 							</div>
 							<div className={skillDetailClasses.field}>

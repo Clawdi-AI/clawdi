@@ -1,7 +1,9 @@
 "use client";
 
 import { transferVaultKeys } from "@clawdi/shared/api";
-import { errorMessage, identityFor } from "@clawdi/shared/view";
+
+import { copyKeysDialogClasses } from "@clawdi/shared/ui";
+import { errorMessage, vaultKeyFormCopy as formCopy, identityFor } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Plus } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
@@ -201,7 +203,7 @@ export function CopyKeysDialog({
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger render={children} />
-			<DialogContent className="sm:max-w-md">
+			<DialogContent className={copyKeysDialogClasses.dialog}>
 				<DialogHeader>
 					<DialogTitle>
 						{verb} {keys.length} {keys.length === 1 ? "key" : "keys"} to…
@@ -213,14 +215,12 @@ export function CopyKeysDialog({
 					    (add this vault to that Project) is the right tool, so
 					    offer it right here. */}
 					<DialogDescription>
-						{mode === "move"
-							? "Values stay server-side. Move is a non-atomic copy followed by deletion; partial results are possible. Avoid editing these keys concurrently."
-							: "Each key becomes an independent copy — changing a value later updates only one vault, not both."}
+						{mode === "move" ? formCopy.moveDescription : formCopy.copyDescription}
 					</DialogDescription>
 				</DialogHeader>
-				<div className="space-y-4">
-					<div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-						<div className="space-y-1.5">
+				<div className={copyKeysDialogClasses.body}>
+					<div className={copyKeysDialogClasses.destinationRow}>
+						<div className={copyKeysDialogClasses.field}>
 							<Label htmlFor="copy-keys-target">Destination vault</Label>
 							<Select
 								items={targetVaultItems}
@@ -229,36 +229,36 @@ export function CopyKeysDialog({
 									if (value !== null) setTargetChoice(value);
 								}}
 							>
-								<SelectTrigger id="copy-keys-target" className="w-full">
+								<SelectTrigger id="copy-keys-target" className={copyKeysDialogClasses.trigger}>
 									<SelectValue placeholder="Choose a vault…" />
 								</SelectTrigger>
-								<SelectContent className="max-h-80">
+								<SelectContent className={copyKeysDialogClasses.menu}>
 									{targetVaults.map((v) => (
 										<SelectItem key={v.id} value={v.id}>
-											<span aria-hidden className="select-none">
+											<span aria-hidden className={copyKeysDialogClasses.emoji}>
 												{identityFor(v.name).emoji}
 											</span>
 											{v.name}
 										</SelectItem>
 									))}
 									<SelectItem value={NEW_VAULT}>
-										<Plus className="size-3.5" />
+										<Plus className={copyKeysDialogClasses.icon} />
 										Create vault…
 									</SelectItem>
 								</SelectContent>
 							</Select>
 						</div>
 						{effectiveChoice === NEW_VAULT ? (
-							<div className="space-y-1">
+							<div className={copyKeysDialogClasses.newField}>
 								<Input
 									value={newVaultName}
 									onChange={(e) => setNewVaultName(e.target.value)}
 									placeholder="Vault name…"
 									aria-label="Vault name"
-									className="sm:w-44"
+									className={copyKeysDialogClasses.newInput}
 								/>
 								{newVaultSlugTaken ? (
-									<p className="max-w-44 text-xs text-destructive">
+									<p className={copyKeysDialogClasses.newError}>
 										That vault already exists. Choose it from the list or use a different name.
 									</p>
 								) : null}
@@ -275,24 +275,24 @@ export function CopyKeysDialog({
 						/>
 					) : null}
 					{mode === "move" && attachedCount > 1 ? (
-						<p className="text-xs font-medium text-warning-muted-foreground">
+						<p className={copyKeysDialogClasses.warning}>
 							{vault.name} is used by {attachedCount} Projects — moving these keys removes them from
 							all of those Projects.
 						</p>
 					) : null}
 					{mode === "copy" ? (
-						<p className="text-xs text-muted-foreground">
+						<p className={copyKeysDialogClasses.hint}>
 							Just want these keys available in another Project? Use{" "}
-							<span className="font-medium text-foreground">Link vault</span> on this vault instead
-							— one source of truth, changes apply everywhere.
+							<span className={copyKeysDialogClasses.emphasis}>Link vault</span> on this vault
+							instead — one source of truth, changes apply everywhere.
 						</p>
 					) : null}
 					<Button
-						className="w-full"
+						className={copyKeysDialogClasses.trigger}
 						disabled={run.isPending || !canRun}
 						onClick={() => run.mutate()}
 					>
-						{run.isPending ? <Spinner /> : <ArrowRight className="size-3.5" />}
+						{run.isPending ? <Spinner /> : <ArrowRight className={copyKeysDialogClasses.icon} />}
 						{verb} {keys.length} {keys.length === 1 ? "key" : "keys"}
 					</Button>
 				</div>

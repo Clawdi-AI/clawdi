@@ -10,3 +10,13 @@ export const connectBotDialogClasses = {
 	hint: "min-w-0 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]",
 	action: "min-w-0 whitespace-normal",
 } as const;
+
+export const channelFormClasses = {
+	content: "sm:max-w-md",
+	field: "space-y-1.5",
+	trigger: "w-full",
+	pairingContent:
+		"h-[min(40rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)] gap-4 overflow-hidden sm:h-auto sm:max-w-md",
+	pairingBody:
+		"min-h-0 min-w-0 break-words overflow-y-auto overscroll-contain pr-1 [overflow-wrap:anywhere]",
+};

@@ -3,7 +3,14 @@
 import { linkIsExpired } from "@clawdi/shared/api";
 import { buildShareAgentHandoffPrompt } from "@clawdi/shared/sharing";
 import { shareProjectClasses } from "@clawdi/shared/ui";
-import { isCustomProject, SHARING_COPY } from "@clawdi/shared/view";
+import {
+	canceledInvitationDescription,
+	formatMembershipToken,
+	projectSharingFormCopy as formCopy,
+	isCustomProject,
+	removedMemberDescription,
+	SHARING_COPY,
+} from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, CheckCircle2, Copy, Link2, Share2, Trash2, UserMinus } from "lucide-react";
 import { type ReactElement, useEffect, useRef, useState } from "react";
@@ -273,11 +280,8 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Turn off this invite link?</AlertDialogTitle>
-						<AlertDialogDescription>
-							People will no longer be able to join from this link. Existing members retain access
-							until removed from People.
-						</AlertDialogDescription>
+						<AlertDialogTitle>{formCopy.revokeTitle}</AlertDialogTitle>
+						<AlertDialogDescription>{formCopy.revokeDescription}</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
 						<AlertDialogCancel disabled={revoke.isPending}>Cancel</AlertDialogCancel>
@@ -290,7 +294,7 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 							disabled={!renderedRevokeTarget || revoke.isPending}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
-							{revoke.isPending ? "Turning off…" : "Turn off link"}
+							{revoke.isPending ? "Turning off…" : formCopy.revoke}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -580,14 +584,15 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Cancel this invitation?</AlertDialogTitle>
+						<AlertDialogTitle>{formCopy.cancelTitle}</AlertDialogTitle>
 						<AlertDialogDescription>
-							{renderedCancelTarget?.invitee_email ?? "This person"} will no longer see this
-							invitation in their dashboard.
+							{canceledInvitationDescription(renderedCancelTarget?.invitee_email ?? "This person")}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
-						<AlertDialogCancel disabled={cancel.isPending}>Keep invitation</AlertDialogCancel>
+						<AlertDialogCancel disabled={cancel.isPending}>
+							{formCopy.keepInvitation}
+						</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={(event) => {
 								event.preventDefault();
@@ -597,7 +602,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 							disabled={!renderedCancelTarget || cancel.isPending}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
-							{cancel.isPending ? "Canceling…" : "Cancel invitation"}
+							{cancel.isPending ? "Canceling…" : formCopy.cancelInvitation}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -721,14 +726,15 @@ function MembersPanel({ projectId }: { projectId: string }) {
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Remove this member?</AlertDialogTitle>
+						<AlertDialogTitle>{formCopy.removeTitle}</AlertDialogTitle>
 						<AlertDialogDescription>
-							{renderedRemoveTarget
-								? (renderedRemoveTarget.user_email ??
-									renderedRemoveTarget.user_display ??
-									renderedRemoveTarget.user_id)
-								: "This member"}{" "}
-							will lose access to this Project.
+							{removedMemberDescription(
+								renderedRemoveTarget
+									? (renderedRemoveTarget.user_email ??
+											renderedRemoveTarget.user_display ??
+											renderedRemoveTarget.user_id)
+									: "This member",
+							)}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -742,7 +748,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 							disabled={!renderedRemoveTarget || remove.isPending}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
-							{remove.isPending ? "Removing…" : "Remove member"}
+							{remove.isPending ? "Removing…" : formCopy.removeMember}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -806,14 +812,13 @@ function StopSharingPanel({ projectId }: { projectId: string }) {
 				</AlertDialogTrigger>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Stop all sharing?</AlertDialogTitle>
-						<AlertDialogDescription>
-							All invite links and pending invitations will stop working. Members will lose access.
-							Your Project content stays unchanged.
-						</AlertDialogDescription>
+						<AlertDialogTitle>{formCopy.stopTitle}</AlertDialogTitle>
+						<AlertDialogDescription>{formCopy.stopDescription}</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
-						<AlertDialogCancel disabled={unshare.isPending}>Keep sharing</AlertDialogCancel>
+						<AlertDialogCancel disabled={unshare.isPending}>
+							{formCopy.keepSharing}
+						</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={(event) => {
 								event.preventDefault();
@@ -838,12 +843,4 @@ function EmptyHint({ message, variant }: { message: string; variant?: "default" 
 			<AlertDescription>{message}</AlertDescription>
 		</Alert>
 	);
-}
-
-function formatMembershipToken(value: string) {
-	return value
-		.split(/[_-]+/g)
-		.filter(Boolean)
-		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-		.join(" ");
 }

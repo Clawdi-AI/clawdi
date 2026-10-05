@@ -5,7 +5,15 @@ import {
 	splitVaultKeys,
 	validVaultSplit,
 } from "@clawdi/shared/api";
-import { errorMessage, identityFor } from "@clawdi/shared/view";
+import { splitVaultDialogClasses } from "@clawdi/shared/ui";
+import {
+	splitVaultCopy as copy,
+	errorMessage,
+	identityFor,
+	splitVaultRemoveLabel,
+	splitVaultSubmit,
+	splitVaultTitle,
+} from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Scissors } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -119,28 +127,26 @@ export function SplitVaultDialog({
 			}}
 		>
 			<DialogTrigger render={<Button variant="outline" size="sm" />}>
-				<Scissors className="size-3.5" />
+				<Scissors className={splitVaultDialogClasses.icon} />
 				Split into vaults…
 			</DialogTrigger>
-			<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
+			<DialogContent className={splitVaultDialogClasses.dialog}>
 				<DialogHeader>
-					<DialogTitle>Split {vault.name} by app prefix</DialogTitle>
+					<DialogTitle>{splitVaultTitle(vault.name)}</DialogTitle>
 					<DialogDescription>
-						Keys named <span className="font-mono">app/KEY</span> become a vault per app, renamed to
-						their clean <span className="font-mono">KEY</span>. Values stay server-side. New Vaults
-						are not automatically linked to Projects. Copy and deletion are non-atomic; avoid
+						Keys named <span className={splitVaultDialogClasses.mono}>app/KEY</span> become a vault
+						per app, renamed to their clean{" "}
+						<span className={splitVaultDialogClasses.mono}>KEY</span>. Values stay server-side. New
+						Vaults are not automatically linked to Projects. Copy and deletion are non-atomic; avoid
 						concurrent edits. Failed destinations may remain; inspect them before retrying.
 					</DialogDescription>
 				</DialogHeader>
-				<div className="space-y-4">
-					<div className="max-h-72 space-y-1 overflow-y-auto rounded-lg border p-2">
+				<div className={splitVaultDialogClasses.body}>
+					<div className={splitVaultDialogClasses.groups}>
 						{groups.map((g) => {
 							const checked = !excluded.has(g.prefix);
 							return (
-								<div
-									key={g.prefix}
-									className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/50"
-								>
+								<div key={g.prefix} className={splitVaultDialogClasses.group}>
 									<Checkbox
 										aria-label={`Select ${g.prefix}`}
 										disabled={run.isPending || !!run.data}
@@ -154,13 +160,11 @@ export function SplitVaultDialog({
 											});
 										}}
 									/>
-									<span aria-hidden className="select-none text-sm leading-none">
+									<span aria-hidden className={splitVaultDialogClasses.emoji}>
 										{identityFor(g.slug).emoji}
 									</span>
-									<span className="min-w-0 flex-1 truncate font-mono text-xs">{g.prefix}</span>
-									<span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-										{g.keys.length} keys →
-									</span>
+									<span className={splitVaultDialogClasses.prefix}>{g.prefix}</span>
+									<span className={splitVaultDialogClasses.count}>{g.keys.length} keys →</span>
 									<Input
 										aria-label={`Destination slug for ${g.prefix}`}
 										value={slugs[g.prefix] ?? g.slug}
@@ -172,37 +176,32 @@ export function SplitVaultDialog({
 							);
 						})}
 					</div>
-					<div className="flex items-center gap-2">
+					<div className={splitVaultDialogClasses.checkRow}>
 						<Checkbox
 							id="split-remove-originals"
 							checked={removeOriginals}
 							disabled={run.isPending || !!run.data}
 							onCheckedChange={(v) => setRemoveOriginals(v === true)}
 						/>
-						<Label htmlFor="split-remove-originals" className="text-sm font-normal">
-							Remove the originals from {vault.name} (move)
+						<Label htmlFor="split-remove-originals" className={splitVaultDialogClasses.checkLabel}>
+							{splitVaultRemoveLabel(vault.name)}
 						</Label>
 					</div>
 					{removeOriginals && (vault.project_ids?.length ?? 0) > 1 ? (
-						<p className="text-xs font-medium text-warning-muted-foreground">
+						<p className={splitVaultDialogClasses.warning}>
 							{vault.name} is used by {vault.project_ids?.length} Projects — moved keys leave all of
 							them. Link the new Vaults to those Projects afterwards.
 						</p>
 					) : null}
-					{!valid && !run.data ? (
-						<p role="alert">
-							Choose distinct destination slugs using lowercase letters, numbers and hyphens,
-							different from the source Vault.
-						</p>
-					) : null}
+					{!valid && !run.data ? <p role="alert">{copy.invalid}</p> : null}
 					{run.data ? (
-						<div role="status" className="space-y-2">
+						<div role="status" className={splitVaultDialogClasses.result}>
 							{run.data.groups.map((g) => (
 								<p key={g.prefix}>
 									{g.prefix} →{" "}
 									{g.target ? (
 										<a
-											className="underline"
+											className={splitVaultDialogClasses.link}
 											href={`/vaults/${encodeURIComponent(g.target.slug)}?vault=${encodeURIComponent(g.target.id)}`}
 										>
 											vault://{g.slug}
@@ -216,22 +215,17 @@ export function SplitVaultDialog({
 										: ""}
 								</p>
 							))}
-							<p>
-								Inspect created Vaults before starting another split. Existing Vaults are never
-								reused automatically.
-							</p>
+							<p>{copy.inspect}</p>
 							<Button onClick={() => setOpen(false)}>Close</Button>
 						</div>
 					) : null}
 					<Button
-						className="w-full"
+						className={splitVaultDialogClasses.submit}
 						disabled={!valid || run.isPending || !!run.data}
 						onClick={() => run.mutate()}
 					>
-						{run.isPending ? <Spinner /> : <Scissors className="size-3.5" />}
-						{run.isPending
-							? "Splitting…"
-							: `Split ${selectedKeyCount} keys into ${selected.length} ${selected.length === 1 ? "vault" : "vaults"}`}
+						{run.isPending ? <Spinner /> : <Scissors className={splitVaultDialogClasses.icon} />}
+						{run.isPending ? "Splitting…" : splitVaultSubmit(selectedKeyCount, selected.length)}
 					</Button>
 				</div>
 			</DialogContent>

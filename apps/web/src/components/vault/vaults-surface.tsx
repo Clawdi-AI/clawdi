@@ -5,6 +5,7 @@ import {
 	compareVaultsForCatalog,
 	displayProjectName,
 	formatResourceCount,
+	vaultFormCopy as formCopy,
 	getProjectResourceDefinition,
 	identityFor,
 	LIBRARY_COPY,
@@ -543,9 +544,7 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 			<DialogContent className={vaultsSurfaceClasses.dialog}>
 				<DialogHeader>
 					<DialogTitle>Create vault</DialogTitle>
-					<DialogDescription>
-						A bundle of API keys your Agents can use. Add it to Projects to control access.
-					</DialogDescription>
+					<DialogDescription>{formCopy.description}</DialogDescription>
 				</DialogHeader>
 				{vaultsQuery.error ? (
 					<ApiErrorPanel
@@ -567,16 +566,12 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 							id="vault-name"
 							value={name}
 							onChange={(e) => setName(e.target.value)}
-							placeholder="GitHub, OpenAI, Production…"
+							placeholder={formCopy.placeholder}
 							maxLength={200}
 							autoComplete="off"
 							autoFocus
 						/>
-						{slugTaken ? (
-							<p className={vaultsSurfaceClasses.error}>
-								That vault already exists. Open it from the vault list or use a different name.
-							</p>
-						) : null}
+						{slugTaken ? <p className={vaultsSurfaceClasses.error}>{formCopy.nameTaken}</p> : null}
 					</div>
 					<DialogFooter>
 						<Button type="button" variant="ghost" onClick={() => setOpen(false)}>

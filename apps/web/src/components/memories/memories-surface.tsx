@@ -10,6 +10,7 @@ import {
 import { memoriesSurfaceClasses } from "@clawdi/shared/ui";
 import {
 	MEMORY_CATEGORIES as CATEGORIES,
+	memoryFormCopy as formCopy,
 	LIBRARY_COPY,
 	MEMORY_CATEGORY_COLORS,
 	memoryDisplayName,
@@ -441,9 +442,9 @@ export function MemoryCard({
 			/>
 			<EntityCardActions className={memoriesSurfaceClasses.actions}>
 				<ConfirmAction
-					title="Delete this memory?"
-					description={<p>Deleting removes this memory from all agents.</p>}
-					confirmLabel="Delete memory"
+					title={formCopy.deleteTitle}
+					description={<p>{formCopy.deleteDescription}</p>}
+					confirmLabel={formCopy.delete}
 					destructive
 					onConfirm={() => onDelete(memory.id)}
 				>
@@ -519,15 +520,13 @@ function Mem0KeyForm({
 			<CardHeader>
 				<CardTitle className={memoriesSurfaceClasses.loadingRow}>
 					<Key className={memoriesSurfaceClasses.loadingIcon} />
-					Mem0 Configuration
+					{formCopy.mem0Title}
 				</CardTitle>
 			</CardHeader>
 			<CardContent className={memoriesSurfaceClasses.section}>
-				<p className={memoriesSurfaceClasses.emptyHint}>
-					Enter your Mem0 API key to use semantic memory search.
-				</p>
+				<p className={memoriesSurfaceClasses.emptyHint}>{formCopy.mem0Description}</p>
 				<Label htmlFor="mem0-api-key" className={memoriesSurfaceClasses.keyInput}>
-					Mem0 API key
+					{formCopy.mem0Label}
 				</Label>
 				<div className={memoriesSurfaceClasses.keyHelp}>
 					<Input
@@ -536,7 +535,7 @@ function Mem0KeyForm({
 						type="password"
 						value={apiKey}
 						onChange={(e) => setApiKey(e.target.value)}
-						placeholder="m0-…"
+						placeholder={formCopy.mem0Placeholder}
 						className={memoriesSurfaceClasses.fieldStack}
 						autoComplete="off"
 						spellCheck={false}
@@ -597,10 +596,8 @@ function AddMemoryForm({ scope }: { scope: ResourceNavigationScope }) {
 			</DialogTrigger>
 			<DialogContent className={memoriesSurfaceClasses.dialog}>
 				<DialogHeader>
-					<DialogTitle>Create memory</DialogTitle>
-					<DialogDescription>
-						A note your AI recalls across all agents and machines.
-					</DialogDescription>
+					<DialogTitle>{formCopy.title}</DialogTitle>
+					<DialogDescription>{formCopy.description}</DialogDescription>
 				</DialogHeader>
 				<form
 					className={memoriesSurfaceClasses.section}
@@ -622,7 +619,7 @@ function AddMemoryForm({ scope }: { scope: ResourceNavigationScope }) {
 							name="memory-content"
 							value={content}
 							onChange={(e) => setContent(e.target.value)}
-							placeholder="Prefer concise PR summaries…"
+							placeholder={formCopy.placeholder}
 							rows={5}
 							autoFocus
 							className={memoriesSurfaceClasses.textarea}
@@ -631,7 +628,7 @@ function AddMemoryForm({ scope }: { scope: ResourceNavigationScope }) {
 					{secretFinding ? (
 						<ApiErrorPanel
 							error={formatSecretMemoryWarning(secretFinding)}
-							title="Use Vault for secrets"
+							title={formCopy.secrets}
 						/>
 					) : null}
 					<div className={memoriesSurfaceClasses.field}>
@@ -665,14 +662,14 @@ function AddMemoryForm({ scope }: { scope: ResourceNavigationScope }) {
 					</div>
 					<DialogFooter>
 						<Button type="button" variant="ghost" onClick={() => setOpen(false)}>
-							Cancel
+							{formCopy.cancel}
 						</Button>
 						<Button
 							type="submit"
 							disabled={!content.trim() || !!secretFinding || createMemory.isPending}
 						>
 							{createMemory.isPending ? <Spinner /> : <Plus />}
-							Save memory
+							{formCopy.save}
 						</Button>
 					</DialogFooter>
 				</form>

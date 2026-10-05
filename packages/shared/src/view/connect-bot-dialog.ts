@@ -12,3 +12,12 @@ export const connectBotDialogCopy = {
 	telegramSetup: "Create a bot with @BotFather",
 	discordSetup: "Open Discord Developer Portal",
 } as const;
+
+export const channelFormCopy = {
+	linkTitle: "Link Agent",
+	linkDescription: "Choose an Agent, then pair one of its chats without leaving this channel.",
+	agent: "Agent",
+	chooseAgent: "Choose an Agent…",
+	whatsappTitle: "Connect WhatsApp",
+	repairTitle: "Repair WhatsApp before linking",
+};

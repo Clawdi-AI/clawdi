@@ -1,5 +1,8 @@
 "use client";
 
+import { credentialsDialogClasses } from "@clawdi/shared/ui";
+import { connectorConnectTitle, connectorFormCopy as copy } from "@clawdi/shared/view";
+
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -130,19 +133,16 @@ export function ConnectorCredentialsDialog({
 				}
 			}}
 		>
-			<DialogContent className="sm:max-w-md">
+			<DialogContent className={credentialsDialogClasses.dialog}>
 				<DialogHeader>
-					<DialogTitle>Connect {displayName}</DialogTitle>
-					<DialogDescription>
-						Enter the credentials this app expects. They are stored in Composio and used when
-						connector tools run.
-					</DialogDescription>
+					<DialogTitle>{connectorConnectTitle(displayName)}</DialogTitle>
+					<DialogDescription>{copy.credentialsDescription}</DialogDescription>
 				</DialogHeader>
 
 				<DialogBody>
 					{fields.isLoading ? (
-						<div className="flex items-center justify-center py-6">
-							<Spinner className="size-5 text-muted-foreground" />
+						<div className={credentialsDialogClasses.loading}>
+							<Spinner className={credentialsDialogClasses.spinner} />
 						</div>
 					) : shouldBlockQueryError(fields.error, fields.data) ? (
 						<ApiErrorPanel
@@ -153,14 +153,14 @@ export function ConnectorCredentialsDialog({
 							title="Couldn't load credential fields"
 						/>
 					) : visibleFields.length === 0 ? (
-						<p className="text-sm text-muted-foreground">
+						<p className={credentialsDialogClasses.empty}>
 							This connector doesn't need any credentials configured here. Try OAuth from the
 							connector page.
 						</p>
 					) : (
 						<form
 							id={formId}
-							className="flex flex-col gap-3"
+							className={credentialsDialogClasses.form}
 							onSubmit={(e) => {
 								e.preventDefault();
 								if (canSubmit && !submit.isPending) void handleSubmit();
@@ -169,10 +169,12 @@ export function ConnectorCredentialsDialog({
 							{visibleFields.map((f) => {
 								const id = `cred-${f.name}`;
 								return (
-									<div key={f.name} className="flex flex-col gap-1.5">
+									<div key={f.name} className={credentialsDialogClasses.field}>
 										<Label htmlFor={id}>
 											{f.display_name || f.name}
-											{f.required ? <span className="ml-0.5 text-destructive">*</span> : null}
+											{f.required ? (
+												<span className={credentialsDialogClasses.required}>*</span>
+											) : null}
 										</Label>
 										<Input
 											id={id}
@@ -186,14 +188,14 @@ export function ConnectorCredentialsDialog({
 											spellCheck={false}
 										/>
 										{f.description ? (
-											<p className="text-xs text-muted-foreground">{f.description}</p>
+											<p className={credentialsDialogClasses.hint}>{f.description}</p>
 										) : null}
 									</div>
 								);
 							})}
 							<AccountAliasField value={alias} onChange={setAlias} disabled={submit.isPending} />
 							{submitError ? (
-								<p role="alert" className="text-sm text-destructive">
+								<p role="alert" className={credentialsDialogClasses.error}>
 									{submitError}
 								</p>
 							) : null}
@@ -212,7 +214,7 @@ export function ConnectorCredentialsDialog({
 						Cancel
 					</Button>
 					<Button type="submit" form={formId} disabled={!canSubmit || submit.isPending}>
-						{submit.isPending ? <Spinner className="size-3.5" /> : null}
+						{submit.isPending ? <Spinner className={credentialsDialogClasses.icon} /> : null}
 						Connect
 					</Button>
 				</DialogFooter>
@@ -222,5 +224,5 @@ export function ConnectorCredentialsDialog({
 }
 
 function DialogBody({ children }: { children: ReactNode }) {
-	return <div className="py-2">{children}</div>;
+	return <div className={credentialsDialogClasses.body}>{children}</div>;
 }

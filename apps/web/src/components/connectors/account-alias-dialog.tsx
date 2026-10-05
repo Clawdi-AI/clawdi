@@ -1,6 +1,9 @@
-"use client";
+import { connectorFormCopy as copy } from "@clawdi/shared/view";
+
+("use client");
 
 import type { components } from "@clawdi/shared/api";
+import { accountAliasDialogClasses } from "@clawdi/shared/ui";
 import { useEffect, useRef, useState } from "react";
 import { AccountAliasField } from "@/components/connectors/account-alias-field";
 import { Button } from "@/components/ui/button";
@@ -60,17 +63,17 @@ export function AccountAliasDialog({
 				if (!open && !inflightRef.current) onClose();
 			}}
 		>
-			<DialogContent className="sm:max-w-md">
+			<DialogContent className={accountAliasDialogClasses.dialog}>
 				<DialogHeader>
-					<DialogTitle>Rename account</DialogTitle>
-					<DialogDescription className="break-all">
+					<DialogTitle>{copy.renameTitle}</DialogTitle>
+					<DialogDescription className={accountAliasDialogClasses.description}>
 						{connection.account_display && connection.account_display !== connection.alias
 							? connection.account_display
 							: `Account ${connection.id}`}
 					</DialogDescription>
 				</DialogHeader>
 				<form
-					className="flex flex-col gap-4"
+					className={accountAliasDialogClasses.form}
 					onSubmit={(event) => {
 						event.preventDefault();
 						void save();
@@ -78,7 +81,7 @@ export function AccountAliasDialog({
 				>
 					<AccountAliasField value={alias} onChange={setAlias} disabled={mutation.isPending} />
 					{error ? (
-						<p role="alert" className="text-sm text-destructive">
+						<p role="alert" className={accountAliasDialogClasses.error}>
 							{error}
 						</p>
 					) : null}
@@ -90,8 +93,8 @@ export function AccountAliasDialog({
 							type="submit"
 							disabled={mutation.isPending || alias.trim() === (connection.alias ?? "")}
 						>
-							{mutation.isPending ? <Spinner className="size-3.5" /> : null}
-							Rename
+							{mutation.isPending ? <Spinner className={accountAliasDialogClasses.icon} /> : null}
+							{copy.rename}
 						</Button>
 					</DialogFooter>
 				</form>

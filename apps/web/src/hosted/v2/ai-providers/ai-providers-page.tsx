@@ -1,6 +1,7 @@
 "use client";
+
 import { aiProvidersPageClasses } from "@clawdi/shared/ui";
-import { agentSurfaceCopy } from "@clawdi/shared/view";
+import { agentSurfaceCopy, providerRemovalCopy as removalCopy } from "@clawdi/shared/view";
 
 import { CircleAlert, Pencil, Plus, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
@@ -289,13 +290,8 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 					<AlertDialogDescription
 						render={<div className={aiProvidersPageClasses.removalDescription} />}
 					>
-						<p>This provider will be removed from your account and cannot be restored.</p>
-						{revokesChatGpt ? (
-							<p>
-								Local access is removed immediately. Upstream ChatGPT revocation may finish
-								asynchronously.
-							</p>
-						) : null}
+						<p>{removalCopy.description}</p>
+						{revokesChatGpt ? <p>{removalCopy.revocation}</p> : null}
 						{impact.isFetching ? (
 							<p className={aiProvidersPageClasses.impactLoading}>
 								<Spinner />
@@ -309,11 +305,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 							/>
 						) : affectedAgents.length > 0 ? (
 							<>
-								<p>
-									These agents will be set to Provider unset with no primary model. They will keep
-									running, but model features will remain unavailable until reconfigured. There is
-									no automatic fallback to Clawdi AI.
-								</p>
+								<p>{removalCopy.affected}</p>
 								<ul className={aiProvidersPageClasses.affectedAgents}>
 									{affectedAgents.map((agent) => (
 										<li key={agent.deployment_id}>{agent.name}</li>
@@ -321,7 +313,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 								</ul>
 							</>
 						) : (
-							<p>No hosted agents currently use this provider.</p>
+							<p>{removalCopy.noAgents}</p>
 						)}
 					</AlertDialogDescription>
 				</AlertDialogHeader>
@@ -336,7 +328,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 							htmlFor={acknowledgementId}
 							className={aiProvidersPageClasses.acknowledgementLabel}
 						>
-							I understand that affected agents will lose model access until reconfigured.
+							{removalCopy.acknowledge}
 						</Label>
 					</div>
 				) : null}
@@ -357,7 +349,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 						variant="destructive"
 					>
 						{del.isPending ? <Spinner /> : null}
-						Remove provider
+						{removalCopy.remove}
 					</AlertDialogAction>
 				</AlertDialogFooter>
 			</AlertDialogContent>

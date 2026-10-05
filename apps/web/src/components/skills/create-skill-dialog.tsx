@@ -1,7 +1,8 @@
 "use client";
 
 import { buildSkillCreateRequest } from "@clawdi/shared/api";
-import { displayProjectName } from "@clawdi/shared/view";
+import { createSkillDialogClasses } from "@clawdi/shared/ui";
+import { skillFormCopy as copy, createSkillDescription } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { type ReactElement, useRef, useState } from "react";
@@ -92,16 +93,13 @@ export function CreateSkillDialog({
 			}}
 		>
 			{children ? <DialogTrigger render={children} /> : null}
-			<DialogContent className="sm:max-w-xl">
+			<DialogContent className={createSkillDialogClasses.dialog}>
 				<DialogHeader>
-					<DialogTitle>Add skill</DialogTitle>
-					<DialogDescription>
-						Add instructions to {displayProjectName(project)}. Linked Agents receive the Skill
-						automatically.
-					</DialogDescription>
+					<DialogTitle>{copy.title}</DialogTitle>
+					<DialogDescription>{createSkillDescription(project)}</DialogDescription>
 				</DialogHeader>
 				<form
-					className="space-y-4"
+					className={createSkillDialogClasses.form}
 					onSubmit={(event) => {
 						event.preventDefault();
 						if (!name || !description.trim() || !instructions.trim() || submitLockedRef.current)
@@ -110,8 +108,8 @@ export function CreateSkillDialog({
 						create.mutate();
 					}}
 				>
-					<div className="space-y-1.5">
-						<Label htmlFor="skill-name">Skill name</Label>
+					<div className={createSkillDialogClasses.field}>
+						<Label htmlFor="skill-name">{copy.name}</Label>
 						<Input
 							id="skill-name"
 							value={name}
@@ -121,32 +119,32 @@ export function CreateSkillDialog({
 							aria-describedby="skill-name-help"
 							autoFocus
 							onChange={(event) => setName(event.target.value)}
-							placeholder="review-pull-requests"
+							placeholder={copy.namePlaceholder}
 						/>
-						<p id="skill-name-help" className="text-xs text-muted-foreground">
-							Use lowercase letters, numbers, and single hyphens, such as review-pull-requests.
+						<p id="skill-name-help" className={createSkillDialogClasses.help}>
+							{copy.nameHelp}
 						</p>
 					</div>
-					<div className="space-y-1.5">
-						<Label htmlFor="skill-description">Description</Label>
+					<div className={createSkillDialogClasses.field}>
+						<Label htmlFor="skill-description">{copy.description}</Label>
 						<Input
 							id="skill-description"
 							value={description}
 							maxLength={1024}
 							required
 							onChange={(event) => setDescription(event.target.value)}
-							placeholder="When and why an Agent should use this Skill"
+							placeholder={copy.descriptionPlaceholder}
 						/>
 					</div>
-					<div className="space-y-1.5">
-						<Label htmlFor="skill-instructions">Instructions</Label>
+					<div className={createSkillDialogClasses.field}>
+						<Label htmlFor="skill-instructions">{copy.instructions}</Label>
 						<Textarea
 							id="skill-instructions"
 							value={instructions}
 							maxLength={200 * 1024}
 							onChange={(event) => setInstructions(event.target.value)}
-							placeholder="Explain what the Agent should do, including constraints and examples."
-							className="min-h-48"
+							placeholder={copy.instructionsPlaceholder}
+							className={createSkillDialogClasses.textarea}
 						/>
 					</div>
 					<DialogFooter>
@@ -158,7 +156,7 @@ export function CreateSkillDialog({
 							disabled={!name || !description.trim() || !instructions.trim() || create.isPending}
 						>
 							{create.isPending ? <Spinner /> : <Plus />}
-							{create.isPending ? "Adding…" : "Add skill"}
+							{create.isPending ? copy.adding : copy.title}
 						</Button>
 					</DialogFooter>
 				</form>

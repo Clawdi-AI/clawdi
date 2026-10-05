@@ -1,5 +1,8 @@
 "use client";
 
+import { providerOAuthFlowClasses } from "@clawdi/shared/ui";
+import { providerOAuthCopy as copy } from "@clawdi/shared/view";
+
 import { Check, CircleAlert, Copy, ExternalLink } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -36,15 +39,11 @@ export function ProviderOAuthFlow({
 	}
 
 	return (
-		<div data-hosted="true" data-v2="true" className="flex flex-col gap-4">
-			<div className="rounded-lg border bg-muted/20 p-4 text-center">
-				<p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-					One-time code
-				</p>
-				<div className="mt-2 flex items-center justify-center gap-2">
-					<code className="rounded-md bg-background px-3 py-2 font-mono text-xl font-semibold tracking-widest">
-						{userCode}
-					</code>
+		<div data-hosted="true" data-v2="true" className={providerOAuthFlowClasses.root}>
+			<div className={providerOAuthFlowClasses.tile}>
+				<p className={providerOAuthFlowClasses.label}>{copy.code}</p>
+				<div className={providerOAuthFlowClasses.codeRow}>
+					<code className={providerOAuthFlowClasses.code}>{userCode}</code>
 					<Button
 						variant="ghost"
 						size="icon"
@@ -62,22 +61,21 @@ export function ProviderOAuthFlow({
 				rel="noopener noreferrer"
 				className={buttonVariants({ className: "w-full" })}
 			>
-				Open ChatGPT and enter code <ExternalLink />
+				{copy.open} <ExternalLink />
 			</a>
 
 			<div aria-live="polite">
 				{issue === "expired" ? (
-					<p className="flex items-center gap-2 text-xs text-destructive">
-						<CircleAlert className="size-3.5" /> This code expired. Start again for a new code.
+					<p className={providerOAuthFlowClasses.error}>
+						<CircleAlert className={providerOAuthFlowClasses.icon} /> {copy.expired}
 					</p>
 				) : issue === "failed" ? (
-					<p className="flex items-center gap-2 text-xs text-destructive">
-						<CircleAlert className="size-3.5" /> Sign-in could not be completed. Start again and
-						retry.
+					<p className={providerOAuthFlowClasses.error}>
+						<CircleAlert className={providerOAuthFlowClasses.icon} /> {copy.failed}
 					</p>
 				) : (
-					<p className="flex items-center gap-2 text-xs text-muted-foreground">
-						{polling ? <Spinner className="size-3.5" /> : null} Waiting for ChatGPT authorization…
+					<p className={providerOAuthFlowClasses.waiting}>
+						{polling ? <Spinner className={providerOAuthFlowClasses.icon} /> : null} {copy.waiting}
 					</p>
 				)}
 			</div>
@@ -85,7 +83,7 @@ export function ProviderOAuthFlow({
 			{issue ? (
 				<Button variant="outline" onClick={onRestart} disabled={starting}>
 					{starting ? <Spinner /> : null}
-					Get a new code
+					{copy.restart}
 				</Button>
 			) : null}
 		</div>

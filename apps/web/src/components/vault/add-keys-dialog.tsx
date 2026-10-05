@@ -1,6 +1,7 @@
 "use client";
 
-import { errorMessage, identityFor } from "@clawdi/shared/view";
+import { addKeysDialogClasses } from "@clawdi/shared/ui";
+import { errorMessage, vaultKeyFormCopy as formCopy, identityFor } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Plus } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
@@ -208,7 +209,7 @@ export function AddKeysDialog({
 
 	const trigger = children ?? (
 		<Button size="sm">
-			<Plus className="size-3.5" />
+			<Plus className={addKeysDialogClasses.icon} />
 			Add keys
 		</Button>
 	);
@@ -227,26 +228,28 @@ export function AddKeysDialog({
 			}}
 		>
 			<DialogTrigger render={trigger} />
-			<DialogContent className="sm:max-w-lg">
+			<DialogContent className={addKeysDialogClasses.dialog}>
 				<DialogHeader>
 					<DialogTitle>Add keys</DialogTitle>
 					<DialogDescription>
-						Paste <span className="font-mono">KEY=value</span> lines or a flat JSON object.
+						{formCopy.addDescriptionBefore}
+						<span className={addKeysDialogClasses.mono}>{formCopy.format}</span>
+						{formCopy.addDescriptionAfter}
 					</DialogDescription>
 				</DialogHeader>
-				<div className="space-y-3">
+				<div className={addKeysDialogClasses.body}>
 					<Textarea
 						value={text}
 						onChange={(e) => setText(e.target.value)}
-						placeholder={"OPENAI_API_KEY=sk-…\nGITHUB_TOKEN=ghp_…"}
+						placeholder={formCopy.placeholder}
 						rows={7}
 						autoFocus
 						spellCheck={false}
-						className="resize-none font-mono text-xs"
+						className={addKeysDialogClasses.textarea}
 					/>
 					{!vaultSlug ? (
-						<div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-							<div className="space-y-1.5">
+						<div className={addKeysDialogClasses.destinationRow}>
+							<div className={addKeysDialogClasses.field}>
 								<Label htmlFor="add-keys-vault">Into vault</Label>
 								<Select
 									items={vaultItems}
@@ -255,36 +258,36 @@ export function AddKeysDialog({
 										if (value !== null) setVaultChoice(value);
 									}}
 								>
-									<SelectTrigger id="add-keys-vault" className="w-full">
+									<SelectTrigger id="add-keys-vault" className={addKeysDialogClasses.trigger}>
 										<SelectValue placeholder="Choose a vault…" />
 									</SelectTrigger>
 									<SelectContent>
 										{ownVaults.map((v) => (
 											<SelectItem key={v.id} value={v.id}>
-												<span aria-hidden className="select-none">
+												<span aria-hidden className={addKeysDialogClasses.emoji}>
 													{identityFor(v.name).emoji}
 												</span>
 												{v.name}
 											</SelectItem>
 										))}
 										<SelectItem value={NEW_VAULT}>
-											<Plus className="size-3.5" />
+											<Plus className={addKeysDialogClasses.icon} />
 											Create vault…
 										</SelectItem>
 									</SelectContent>
 								</Select>
 							</div>
 							{effectiveChoice === NEW_VAULT ? (
-								<div className="space-y-1">
+								<div className={addKeysDialogClasses.newField}>
 									<Input
 										value={newVaultName}
 										onChange={(e) => setNewVaultName(e.target.value)}
 										placeholder="Vault name…"
 										aria-label="Vault name"
-										className="sm:w-44"
+										className={addKeysDialogClasses.newInput}
 									/>
 									{newVaultSlugTaken ? (
-										<p className="max-w-44 text-xs text-destructive">
+										<p className={addKeysDialogClasses.newError}>
 											That vault already exists. Choose it from the list or use a different name.
 										</p>
 									) : null}
@@ -303,10 +306,10 @@ export function AddKeysDialog({
 					) : null}
 					{importPlan.parsed.errors.length > 0 ? (
 						<Alert variant="destructive">
-							<AlertCircle className="size-4" />
+							<AlertCircle className={addKeysDialogClasses.alertIcon} />
 							<AlertTitle>Fix import text</AlertTitle>
 							<AlertDescription>
-								<ul className="max-h-32 list-disc space-y-1 overflow-auto pl-4">
+								<ul className={addKeysDialogClasses.errors}>
 									{importPlan.parsed.errors.map((error, index) => (
 										<li key={`${index}-${error}`}>{error}</li>
 									))}
@@ -324,18 +327,21 @@ export function AddKeysDialog({
 						/>
 					) : null}
 					{importPlan.conflicts.length > 0 && importPlan.parsed.errors.length === 0 ? (
-						<div className="flex items-start gap-3 rounded-md border bg-muted/30 p-3">
+						<div className={addKeysDialogClasses.overwrite}>
 							<Checkbox
 								id="add-keys-update-existing"
 								checked={updateExisting}
 								onCheckedChange={(checked) => setUpdateExisting(checked === true)}
-								className="mt-0.5"
+								className={addKeysDialogClasses.checkbox}
 							/>
-							<div className="space-y-1">
-								<Label htmlFor="add-keys-update-existing" className="text-sm font-medium">
+							<div className={addKeysDialogClasses.newField}>
+								<Label
+									htmlFor="add-keys-update-existing"
+									className={addKeysDialogClasses.overwriteLabel}
+								>
 									Overwrite existing keys
 								</Label>
-								<p className="text-xs text-muted-foreground">
+								<p className={addKeysDialogClasses.hint}>
 									{importPlan.conflicts.length} key
 									{importPlan.conflicts.length === 1 ? "" : "s"} already exist. By default, they are
 									skipped.
@@ -344,10 +350,10 @@ export function AddKeysDialog({
 						</div>
 					) : null}
 					{importPlan.preview.length > 0 && importPlan.parsed.errors.length === 0 ? (
-						<div className="rounded-md border">
-							<div className="flex items-center justify-between gap-2 border-b px-3 py-2">
-								<p className="text-xs font-medium">Preview</p>
-								<div className="flex flex-wrap gap-1.5">
+						<div className={addKeysDialogClasses.preview}>
+							<div className={addKeysDialogClasses.previewHeader}>
+								<p className={addKeysDialogClasses.previewLabel}>Preview</p>
+								<div className={addKeysDialogClasses.badges}>
 									<Badge variant="secondary">{importPlan.summary.created} new</Badge>
 									{importPlan.conflicts.length > 0 ? (
 										<Badge variant="outline">
@@ -358,20 +364,20 @@ export function AddKeysDialog({
 									) : null}
 								</div>
 							</div>
-							<div className="max-h-44 divide-y overflow-auto">
+							<div className={addKeysDialogClasses.previewList}>
 								{importPlan.preview.slice(0, 10).map((entry) => (
 									<div
 										key={`${entry.line ?? "json"}-${entry.key}`}
-										className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 text-sm"
+										className={addKeysDialogClasses.previewRow}
 									>
-										<span className="truncate font-mono text-xs" translate="no">
+										<span className={addKeysDialogClasses.keyName} translate="no">
 											{entry.key}
 										</span>
 										<KeyImportActionBadge action={entry.action} />
 									</div>
 								))}
 								{importPlan.preview.length > 10 ? (
-									<p className="px-3 py-2 text-xs text-muted-foreground">
+									<p className={addKeysDialogClasses.more}>
 										{importPlan.preview.length - 10} more key
 										{importPlan.preview.length - 10 === 1 ? "" : "s"} ready.
 									</p>
@@ -379,12 +385,12 @@ export function AddKeysDialog({
 							</div>
 						</div>
 					) : null}
-					<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-						<span className="text-xs text-muted-foreground tabular-nums">
+					<div className={addKeysDialogClasses.footerRow}>
+						<span className={addKeysDialogClasses.count}>
 							{count} {count === 1 ? "key" : "keys"} detected
 							{importPlan.summary.skipped > 0 ? ` · ${importPlan.summary.skipped} skipped` : ""}
 						</span>
-						<DialogFooter className="sm:ml-auto">
+						<DialogFooter className={addKeysDialogClasses.footer}>
 							<Button type="button" variant="ghost" onClick={() => setOpen(false)}>
 								Cancel
 							</Button>
@@ -392,8 +398,8 @@ export function AddKeysDialog({
 								onClick={() => void save.execute().catch(() => undefined)}
 								disabled={!canSave || save.isPending}
 							>
-								{save.isPending ? <Spinner /> : <Check className="size-3.5" />}
-								Save {importableCount > 0 ? importableCount : ""}
+								{save.isPending ? <Spinner /> : <Check className={addKeysDialogClasses.icon} />}
+								{formCopy.save} {importableCount > 0 ? importableCount : ""}
 							</Button>
 						</DialogFooter>
 					</div>

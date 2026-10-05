@@ -484,11 +484,7 @@ export function AddProviderDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={requestClose} onOpenChangeComplete={completeOpenChange}>
-			<DialogContent
-				data-hosted="true"
-				data-v2="true"
-				className="flex max-h-[min(36rem,calc(100dvh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl"
-			>
+			<DialogContent data-hosted="true" data-v2="true" className={dialogStyles.content}>
 				<DialogHeader className={dialogStyles.header}>
 					<div className={dialogStyles.headerRow}>
 						{canGoBack ? (
@@ -536,10 +532,7 @@ export function AddProviderDialog({
 					</div>
 				</DialogHeader>
 
-				<div
-					data-testid="provider-dialog-body"
-					className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6"
-				>
+				<div data-testid="provider-dialog-body" className={dialogStyles.body}>
 					{renderedOAuth ? (
 						<ProviderOAuthFlow
 							issue={renderedOAuthIssue}
@@ -599,7 +592,7 @@ export function AddProviderDialog({
 				</div>
 
 				{step === "choose" && !isEdit && !renderedOAuth ? null : (
-					<DialogFooter className="shrink-0 border-t bg-popover px-5 py-3 sm:px-6 sm:py-4">
+					<DialogFooter className={dialogStyles.footer}>
 						{renderedOAuth ? (
 							<Button variant="outline" onClick={() => requestClose(false)} disabled={busy}>
 								Cancel
