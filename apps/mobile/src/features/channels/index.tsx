@@ -1,9 +1,12 @@
 import {
 	agentsIndexClasses,
 	ENTITY_GRID_CLASS,
+	agentChannelSectionClasses as scopedStyles,
 	channelsPageClasses as styles,
 } from "@clawdi/shared/ui";
 import {
+	agentChannelLinkUnavailableReason,
+	agentChannelPairedChatsLabel,
 	agentSurfaceCopy,
 	buildAgentChannelCardGroups,
 	type ChannelProviderFilter,
@@ -13,18 +16,22 @@ import {
 	providerCounts,
 	providerMeta,
 	providersWithBots,
+	agentChannelSectionCopy as scopedCopy,
 	sharedBotsFromPool,
 } from "@clawdi/shared/view";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { Link2, Link2Off, QrCode, Trash2 } from "lucide-react-native";
 import { useState } from "react";
 import { useAccountScope } from "../../platform/account-lifecycle";
 import { ChannelCard } from "../../ui/agents/channel-card";
 import { ActionButton } from "../../ui/agents/controls";
 import { AgentSectionNavigation } from "../../ui/agents/navigation";
 import { ApiErrorPanel } from "../../ui/api-error-panel";
+import { Button } from "../../ui/button";
 import { EmptyState } from "../../ui/empty-state";
 import { EntityCardSkeleton } from "../../ui/entity-card";
 import { FilterChip } from "../../ui/filter-chip";
+import { Icon } from "../../ui/icon";
 import { ListToolbar } from "../../ui/list-toolbar";
 import { PageHeader } from "../../ui/page-header";
 import { AppScrollView } from "../../ui/primitives";
@@ -32,6 +39,7 @@ import { ReadScreen } from "../../ui/read-screen";
 import { SectionLabel } from "../../ui/section-label";
 import { Text } from "../../ui/text";
 import { WebText, WebView, webView } from "../../ui/web-layout";
+import { useCloudAgent } from "../cloud-inventory";
 import { routeParam } from "../read-helpers";
 import { ChannelCreate } from "./create";
 import { useChannelQuery } from "./queries";
@@ -42,6 +50,7 @@ export function ChannelsScreen() {
 function ChannelsView() {
 	const params = useLocalSearchParams<{ agentId?: string | string[] }>(),
 		agentId = routeParam(params.agentId);
+	const agent = useCloudAgent(agentId);
 	const linked = useChannelQuery(
 		["agent", agentId ?? "missing"],
 		(api, signal) => api.agentLinks(agentId ?? "", signal),
@@ -64,6 +73,134 @@ function ChannelsView() {
 	const total = (owned.data?.length ?? 0) + shared.length;
 	const custom = orderedChannelsForFilter(owned.data ?? [], filter),
 		bots = orderedChannelsForFilter(shared, filter);
+	const refresh = async () => {
+		const results = await Promise.all([pool.refetch(), owned.refetch(), linked.refetch()]);
+		if (results.some((r) => r.isError)) throw new Error("Channel inventory unavailable");
+	};
+	if (agentId && groups)
+		return (
+			<ReadScreen>
+				<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
+					<AgentSectionNavigation agentId={agentId} section="channels" />
+					<PageHeader title={agentSurfaceCopy.channels} description={scopedCopy.description} />
+					{(["clawdi", "custom"] as const).map((kind) => {
+						const items = kind === "clawdi" ? groups.clawdiBots : groups.customBots;
+						const query = kind === "clawdi" ? pool : owned;
+						return (
+							<WebView key={kind} recipe={scopedStyles.section}>
+								<WebView recipe={scopedStyles.header} className="flex-row">
+									<WebView recipe={scopedStyles.copy}>
+										<SectionLabel count={items.length}>
+											{kind === "clawdi"
+												? agentSurfaceCopy.clawdiBots
+												: agentSurfaceCopy.customBots}
+										</SectionLabel>
+										<WebText recipe={scopedStyles.description}>
+											{kind === "clawdi"
+												? scopedCopy.clawdiDescription
+												: scopedCopy.customDescription}
+										</WebText>
+									</WebView>
+									{kind === "custom" ? <ChannelCreate refresh={refresh} scoped /> : null}
+								</WebView>
+								{query.isError ? (
+									<ApiErrorPanel error={query.error} onRetry={() => void query.refetch()} />
+								) : null}
+								{query.isPending ? (
+									<EntityCardSkeleton trailingBadge />
+								) : items.length ? (
+									<WebView recipe={ENTITY_GRID_CLASS}>
+										{items.map((bot) => {
+											const open = () =>
+												router.push({
+													pathname: "/channels/[id]",
+													params: { id: bot.id, agentId },
+												});
+											const runtime = agent.data?.agent_type;
+											const issue =
+												runtime === "hermes" || runtime === "openclaw"
+													? agentChannelLinkUnavailableReason({
+															bot,
+															agentType: runtime,
+															linkedProviders: linked.data
+																? new Set(linked.data.map((item) => item.account.provider))
+																: undefined,
+														})
+													: bot.available
+														? null
+														: "Unavailable";
+											return (
+												<ChannelCard
+													key={bot.id}
+													provider={bot.provider}
+													title={bot.name}
+													state={[
+														bot.link ? (
+															<Button
+																variant="link"
+																size="xs"
+																className={webView(scopedStyles.pairedChatsTrigger)}
+																onPress={open}
+															>
+																<Text>
+																	{agentChannelPairedChatsLabel(bot.link.binding_count ?? 0)}
+																</Text>
+															</Button>
+														) : (
+															(issue ?? "Available")
+														),
+													]}
+													actions={
+														bot.link ? (
+															<>
+																<Button variant="outline" size="sm" onPress={open}>
+																	<Icon as={QrCode} />
+																	<Text>Pair</Text>
+																</Button>
+																<Button variant="ghost" size="sm" onPress={open}>
+																	<Icon as={Link2Off} />
+																	<Text>Unlink</Text>
+																</Button>
+															</>
+														) : (
+															<>
+																{bot.visibility === "private" ? (
+																	<Button variant="ghost" size="sm" onPress={open}>
+																		<Icon as={Trash2} />
+																		<Text>Delete</Text>
+																	</Button>
+																) : null}
+																<Button
+																	size="sm"
+																	disabled={Boolean(issue) || linked.isError || linked.isPending}
+																	onPress={open}
+																>
+																	<Icon as={Link2} />
+																	<Text>Link</Text>
+																</Button>
+															</>
+														)
+													}
+												/>
+											);
+										})}
+									</WebView>
+								) : !query.isError ? (
+									<WebView recipe={scopedStyles.empty}>
+										<Text>
+											{kind === "clawdi" ? scopedCopy.clawdiEmpty : scopedCopy.customEmpty}
+										</Text>
+									</WebView>
+								) : null}
+							</WebView>
+						);
+					})}
+					{linked.isError ? (
+						<ApiErrorPanel error={linked.error} onRetry={() => void linked.refetch()} />
+					) : null}
+				</AppScrollView>
+			</ReadScreen>
+		);
 	return (
 		<ReadScreen>
 			<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
@@ -147,22 +284,28 @@ function ChannelsView() {
 														.map((item) => channelHealthSummary(item).label) ?? []),
 												]}
 												actions={
-													<ActionButton
-														label={
-															groups &&
-															[...groups.customBots, ...groups.clawdiBots].some(
-																(item) => item.id === bot.id && item.link,
-															)
-																? "Paired chats"
-																: "Link Agent"
-														}
-														onPress={() =>
-															router.push({
-																pathname: "/channels/[id]",
-																params: { id: bot.id, ...(agentId ? { agentId } : {}) },
-															})
-														}
-													/>
+													<>
+														<Button
+															variant="outline"
+															size="sm"
+															onPress={() =>
+																router.push({ pathname: "/channels/[id]", params: { id: bot.id } })
+															}
+														>
+															<Icon as={Link2} />
+															<Text>Link Agent</Text>
+														</Button>
+														<Button
+															variant="ghost"
+															size="icon-sm"
+															accessibilityLabel="Delete channel"
+															onPress={() =>
+																router.push({ pathname: "/channels/[id]", params: { id: bot.id } })
+															}
+														>
+															<Icon as={Trash2} />
+														</Button>
+													</>
 												}
 											/>
 										))}

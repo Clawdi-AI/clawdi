@@ -17,7 +17,7 @@ import {
 import { randomUUID } from "expo-crypto";
 import { useFocusEffect } from "expo-router";
 import { Plus } from "lucide-react-native";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
@@ -37,9 +37,11 @@ type AcceptRequest = components["schemas"]["AiProviderAcceptRequest"];
 export function ProviderCreate({
 	providers,
 	refresh,
+	renderTrigger,
 }: {
 	providers: SavedAiProvider[] | undefined;
 	refresh: () => Promise<void>;
+	renderTrigger?: (open: () => void) => ReactNode;
 }) {
 	const t = useI18n();
 	const scope = useAccountScope();
@@ -134,23 +136,29 @@ export function ProviderCreate({
 			setLabel("");
 			await refresh();
 		});
+	const begin = () => {
+		if (action.busy || !providers || !scope.isReady) return;
+		action.clearError();
+		setStep("choose");
+		setGroup(null);
+		setOAuth(false);
+		setOpen(true);
+	};
 	return (
 		<AppView className="gap-3">
 			{uncertain ? <AppText accessibilityRole="alert">{t("providers.uncertain")}</AppText> : null}
 			{!open ? (
-				<ActionButton
-					label={copy.add}
-					variant="default"
-					icon={<Icon as={Plus} />}
-					disabled={action.busy || !providers || !scope.isReady}
-					onPress={() => {
-						action.clearError();
-						setStep("choose");
-						setGroup(null);
-						setOAuth(false);
-						setOpen(true);
-					}}
-				/>
+				renderTrigger ? (
+					renderTrigger(begin)
+				) : (
+					<ActionButton
+						label={copy.add}
+						variant="default"
+						icon={<Icon as={Plus} />}
+						disabled={action.busy || !providers || !scope.isReady}
+						onPress={begin}
+					/>
+				)
 			) : (
 				<Dialog
 					open={open}
