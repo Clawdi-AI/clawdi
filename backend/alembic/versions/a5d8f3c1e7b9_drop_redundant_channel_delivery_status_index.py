@@ -1,7 +1,7 @@
 """Drop the redundant channel delivery status index.
 
 Revision ID: a5d8f3c1e7b9
-Revises: fca5e43eb29d
+Revises: a7d3f1c9b2e4
 """
 
 from collections.abc import Sequence
@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "a5d8f3c1e7b9"
-down_revision: str | Sequence[str] | None = "fca5e43eb29d"
+down_revision: str | Sequence[str] | None = "a7d3f1c9b2e4"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
