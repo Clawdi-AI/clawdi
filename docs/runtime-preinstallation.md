@@ -81,8 +81,8 @@ The provisioning owner controls when and where this command runs.
 `clawdi runtime warm --runtime hermes` uses the same unclaimed-state guard. It
 refreshes the copied managed CLI verification, installs the official gateway
 unit without starting it, prepares the instance's egress CA, byte-compiles the
-application and dependency tree, then starts the
-official dashboard in a transient user unit on loopback to complete first-use
+application and dependency tree, then starts the official dashboard in a
+transient user unit on loopback to complete first-use
 local work. Warm-up stops that unit and any gateway it started before returning.
 The first tenant apply starts fresh services with the tenant's environment and
 OAuth gate; Hermes authentication is resolved at process startup and is not
@@ -122,7 +122,15 @@ snapshot's source config; success does not prove it has adopted the latest file
 path from disk. Retention cleanup needs a separate live snapshot acknowledgement
 and is deferred rather than deleting credentials a running gateway may still use.
 
+Verify Hermes warm safety through the same hermetic runner:
+
+```bash
+bash scripts/test.sh cli tests/runtime-warm-hermes.test.ts
+```
+
 Done: Docker CLI tests and changed-file Biome pass; the paired native fixture
-proves authenticated tenant adoption, unchanged gateway PID on hot claim and
-stop/start preservation. Production enablement and Hosted pool lifecycle belong
-to the provisioning owner.
+proves tenant-free state and stopped anonymous Hermes services before claim,
+authenticated OpenClaw adoption with unchanged gateway PID, and stop/start
+preservation. Warm-up does not qualify model calls or a production latency
+bound. Production enablement and Hosted pool lifecycle belong to the
+provisioning owner.
