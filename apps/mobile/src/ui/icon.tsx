@@ -2,7 +2,7 @@ import { cn } from "cn";
 import type { LucideIcon } from "lucide-react-native";
 import { useContext } from "react";
 import { useResolveClassNames } from "uniwind";
-import { TextClassContext } from "./text";
+import { TextClassContext, TextColorContext } from "./text";
 
 /**
  * Lucide icon sized and colored by Tailwind classes, inheriting the
@@ -19,8 +19,9 @@ export function Icon({
 	strokeWidth?: number;
 }) {
 	const inherited = useContext(TextClassContext);
+	const inheritedColor = useContext(TextColorContext);
 	const style = useResolveClassNames(cn("size-4 text-foreground", inherited, className));
 	const size = typeof style.width === "number" ? style.width : 16;
-	const color = typeof style.color === "string" ? style.color : undefined;
+	const color = inheritedColor ?? (typeof style.color === "string" ? style.color : undefined);
 	return <Component size={size} color={color} strokeWidth={strokeWidth} />;
 }

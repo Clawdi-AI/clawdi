@@ -1,4 +1,4 @@
-import { splitSearchHighlight } from "@clawdi/shared/api";
+import { SEARCH_MARK_CLASS, splitSearchHighlight } from "@clawdi/shared/api";
 import {
 	type MarkdownNode,
 	type MarkdownRoot,
@@ -6,6 +6,7 @@ import {
 	markdownReferenceUrls,
 	parseDisplayMarkdown,
 } from "@clawdi/shared/markdown";
+import { cardClassName, markdownClasses as styles } from "@clawdi/shared/ui";
 import { useFocusEffect } from "expo-router";
 import { openBrowserAsync } from "expo-web-browser";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
@@ -17,25 +18,36 @@ import { useForegroundLease } from "../platform/use-foreground-lease";
 import { ImagePreview } from "./image-preview";
 import { NativeButton } from "./native-controls";
 import { AppScrollView, AppText, AppView } from "./primitives";
+import { Separator } from "./separator";
+import { TextClassContext } from "./text";
+import { WebView, webBoth, webText, webView } from "./web-layout";
 
 function Highlight({ text, query }: { text: string; query: string }) {
 	return splitSearchHighlight(text, query).map((part, index) => (
 		<AppText
 			key={`${index}:${part.highlighted}`}
-			className={part.highlighted ? "bg-warning text-foreground" : undefined}
+			className={part.highlighted ? webBoth(SEARCH_MARK_CLASS) : undefined}
 		>
 			{part.text}
 		</AppText>
 	));
 }
 
-export function Markdown({ content, query = "" }: { content: string; query?: string }) {
+export function Markdown({
+	content,
+	query: legacyQuery = "",
+	highlightQuery,
+}: {
+	content: string;
+	query?: string;
+	highlightQuery?: string;
+}) {
+	const query = highlightQuery ?? legacyQuery;
 	const t = useI18n();
 	const scope = useAccountScope();
 	const capture = useForegroundLease();
 	const action = useAuthAction(scope.identity);
 	const [limit, setLimit] = useState(12000);
-	const [raw, setRaw] = useState(false);
 	const [image, setImage] = useState<{
 		url: string;
 		alt: string;
@@ -51,7 +63,7 @@ export function Markdown({ content, query = "" }: { content: string; query?: str
 		return () => listener.remove();
 	}, [scope, content]);
 	const shown = content.slice(0, limit);
-	const tree = useMemo(() => (raw ? null : parseDisplayMarkdown(shown)), [raw, shown]);
+	const tree = useMemo(() => parseDisplayMarkdown(shown), [shown]);
 	const open = (value: string) => {
 		const url = markdownExternalUrl(value);
 		if (!url || action.busy) return;
@@ -96,14 +108,7 @@ export function Markdown({ content, query = "" }: { content: string; query?: str
 		]);
 	};
 	return (
-		<AppView className="gap-3">
-			<NativeButton
-				label={t(raw ? "markdown.formatted" : "markdown.source")}
-				onPress={() => {
-					setRaw(!raw);
-					setImage(null);
-				}}
-			/>
+		<WebView recipe={webText(cardClassName)}>
 			{tree ? (
 				<MarkdownTree
 					tree={tree}
@@ -114,8 +119,8 @@ export function Markdown({ content, query = "" }: { content: string; query?: str
 				/>
 			) : (
 				<>
-					{!raw ? <AppText>{t("markdown.plainFallback")}</AppText> : null}
-					<AppText selectable className="text-base leading-6 text-foreground">
+					<AppText>{t("markdown.plainFallback")}</AppText>
+					<AppText selectable className={webBoth(styles.paragraph)}>
 						<Highlight text={shown} query={query} />
 					</AppText>
 				</>
@@ -137,11 +142,11 @@ export function Markdown({ content, query = "" }: { content: string; query?: str
 					onPress={() => setLimit((value) => value + 12000)}
 				/>
 			) : null}
-		</AppView>
+		</WebView>
 	);
 }
 
-function MarkdownTree({
+export function MarkdownTree({
 	tree,
 	query,
 	open,
@@ -154,13 +159,14 @@ function MarkdownTree({
 	preview: (url: string, alt: string) => void;
 	imageLabel: string;
 }) {
+	const t = useI18n();
 	const definitions = markdownReferenceUrls(tree);
 	const text = (value: string) => <Highlight text={value} query={query} />;
 	const link = (label: ReactNode, target: string | undefined): ReactNode =>
 		target && markdownExternalUrl(target) ? (
 			<AppText
 				accessibilityRole="link"
-				className="text-primary underline"
+				className={webBoth(styles.link)}
 				onPress={() => open(target)}
 			>
 				{label}
@@ -182,13 +188,14 @@ function MarkdownTree({
 			case "break":
 				return "\n";
 			case "strong":
+				// Native equivalent of the browser's implicit <strong> weight.
 				return <AppText className="font-bold">{children}</AppText>;
 			case "emphasis":
 				return <AppText className="italic">{children}</AppText>;
 			case "delete":
 				return <AppText className="line-through">{children}</AppText>;
 			case "inlineCode":
-				return <AppText className="font-mono bg-background">{text(node.value)}</AppText>;
+				return <AppText className={webBoth(styles.inlineCode)}>{text(node.value)}</AppText>;
 			case "link":
 				return link(children, node.url);
 			case "linkReference":
@@ -207,7 +214,7 @@ function MarkdownTree({
 		target && markdownExternalUrl(target) ? (
 			<AppText
 				accessibilityRole="button"
-				className="text-primary underline"
+				className={webBoth(styles.link)}
 				onPress={() => preview(target, alt)}
 			>
 				[{imageLabel}: {alt}]
@@ -224,50 +231,50 @@ function MarkdownTree({
 			case "definition":
 				return null;
 			case "root":
-				return <AppView className="gap-3">{blocks(node.children)}</AppView>;
+				return <AppView className="flex-col">{blocks(node.children)}</AppView>;
 			case "heading":
 				return (
 					<AppText
 						selectable
 						accessibilityRole="header"
-						className={
-							node.depth <= 2
-								? "text-xl font-bold text-foreground"
-								: "text-lg font-semibold text-foreground"
-						}
+						className={webBoth(
+							node.depth === 1 ? styles.h1 : node.depth === 2 ? styles.h2 : styles.h3,
+						)}
 					>
 						{inline(node)}
 					</AppText>
 				);
 			case "paragraph":
 				return (
-					<AppText selectable className="text-base leading-6 text-foreground">
+					<AppText selectable className={webBoth(styles.paragraph)}>
 						{inline(node)}
 					</AppText>
 				);
 			case "code":
 				return (
-					<AppView className="gap-2 rounded-xl bg-background p-3">
-						<AppText className="text-sm text-muted-foreground">{node.lang ?? ""}</AppText>
-						<AppScrollView horizontal>
-							<AppText selectable className="font-mono text-foreground">
+					<AppView className={webView(styles.codeFrame)}>
+						<AppView className={webView(styles.codeHeader)}>
+							<AppText className={webText(styles.codeLanguage)}>
+								{node.lang ?? t("composite.codeText")}
+							</AppText>
+						</AppView>
+						<AppScrollView horizontal className={webView(styles.codeBody)}>
+							<AppText selectable className={webText(styles.codeBody)}>
 								{text(node.value)}
 							</AppText>
 						</AppScrollView>
 					</AppView>
 				);
 			case "blockquote":
-				return (
-					<AppView className="gap-2 border-l-2 border-muted pl-3">{blocks(node.children)}</AppView>
-				);
+				return <WebView recipe={styles.blockquote}>{blocks(node.children)}</WebView>;
 			case "thematicBreak":
-				return <AppView className="h-px bg-muted" />;
+				return <Separator />;
 			case "list":
 				return (
-					<AppView className="gap-2">
+					<AppView className={webView(node.ordered ? styles.orderedList : styles.unorderedList)}>
 						{node.children.map((item, index) => (
-							<AppView key={index} className="flex-row gap-2">
-								<AppText className="text-foreground">
+							<AppView key={index} className="flex-row">
+								<AppText className={webText(cardClassName)}>
 									{item.checked !== null && item.checked !== undefined
 										? item.checked
 											? "☑"
@@ -276,7 +283,7 @@ function MarkdownTree({
 											? `${(node.start ?? 1) + index}.`
 											: "•"}
 								</AppText>
-								<AppView className="flex-1 gap-2">{blocks(item.children)}</AppView>
+								<AppView className="flex-1">{blocks(item.children)}</AppView>
 							</AppView>
 						))}
 					</AppView>
@@ -288,10 +295,14 @@ function MarkdownTree({
 							{node.children.map((row, index) => (
 								<AppView key={index} className="flex-row">
 									{row.children.map((cell, column) => (
-										<AppView key={column} className="w-48 border border-muted p-2">
+										<AppView
+											key={column}
+											className={webView(index === 0 ? styles.tableHeader : styles.tableCell)}
+											style={{ width: 192 }}
+										>
 											<AppText
 												selectable
-												className={index === 0 ? "font-bold text-foreground" : "text-foreground"}
+												className={webText(index === 0 ? styles.tableHeader : styles.tableCell)}
 												style={{ textAlign: node.align?.[column] ?? "left" }}
 											>
 												{inline(cell)}
@@ -305,20 +316,49 @@ function MarkdownTree({
 				);
 			case "footnoteDefinition":
 				return (
-					<AppView className="gap-2">
-						<AppText className="font-semibold text-foreground">
-							[{node.label ?? node.identifier}]
-						</AppText>
+					<AppView className="flex-col">
+						<AppText className={webText(styles.h2)}>[{node.label ?? node.identifier}]</AppText>
 						{blocks(node.children)}
 					</AppView>
 				);
 			default:
 				return (
-					<AppText selectable className="text-foreground">
+					<AppText selectable className={webText(cardClassName)}>
 						{inline(node)}
 					</AppText>
 				);
 		}
 	};
 	return block(tree);
+}
+
+/** Stateless typography surface; link/image actions are owned by the caller. */
+export function MarkdownBody({
+	content,
+	highlightQuery = "",
+	onLink = () => {},
+	onImage = () => {},
+}: {
+	content: string;
+	highlightQuery?: string;
+	onLink?: (url: string) => void;
+	onImage?: (url: string, alt: string) => void;
+}) {
+	const t = useI18n();
+	const tree = useMemo(() => parseDisplayMarkdown(content), [content]);
+	return (
+		<TextClassContext.Provider value={webText(cardClassName)}>
+			{tree ? (
+				<MarkdownTree
+					tree={tree}
+					query={highlightQuery}
+					open={onLink}
+					preview={onImage}
+					imageLabel={t("markdown.image")}
+				/>
+			) : (
+				<AppText selectable>{content}</AppText>
+			)}
+		</TextClassContext.Provider>
+	);
 }

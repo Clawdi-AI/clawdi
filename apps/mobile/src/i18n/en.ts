@@ -12,6 +12,27 @@ import { skillArchiveEn } from "../features/skill-archive-en";
 import { vaultEn } from "../features/vault/en";
 
 export const en = {
+	composite: {
+		open: "Open",
+		close: "Close",
+		confirm: "Confirm",
+		cancel: "Cancel",
+		search: "Search",
+		searchPlaceholder: "Search…",
+		clearSearch: "Clear search",
+		errorTitle: "Couldn't load this",
+		expiredTitle: "Your session expired",
+		signInAgain: "Sign in again",
+		retry: "Retry",
+		expired: "Your session has expired. Please sign in again to continue.",
+		suspended: "Your account has been deactivated and can no longer access Clawdi.",
+		timeout: "This is taking longer than usual. Check your connection and try again.",
+		offline: "We couldn't reach the service. Check your connection and try again.",
+		serviceError: "The service is having trouble right now. Please try again in a moment.",
+		requestError: "The request could not be completed. Review the details and try again.",
+		genericError: "Something went wrong. Please try again.",
+		codeText: "text",
+	},
 	terminal: {
 		unavailable:
 			"Terminal access requires a configured compute API and an eligible running deployment. Reload to check its current state.",

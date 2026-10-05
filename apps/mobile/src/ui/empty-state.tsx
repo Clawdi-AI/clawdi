@@ -1,14 +1,16 @@
+import {
+	emptyClassName,
+	emptyContentClassName,
+	emptyDescriptionClassName,
+	emptyHeaderClassName,
+	emptyMediaVariants,
+	emptyStateClasses as styles,
+} from "@clawdi/shared/ui";
 import { cn } from "cn";
 import { Inbox, type LucideIcon } from "lucide-react-native";
-import type { ReactNode } from "react";
-import { Icon } from "./icon";
-import { Text } from "./text";
-import { AppView } from "./view";
-
-/**
- * Mirrors apps/web/src/components/empty-state.tsx.
- * Page: flat centered panel with an icon tile. Inset: compact muted tile.
- */
+import { isValidElement, type ReactNode } from "react";
+import { WebContent, WebIcon, WebView } from "./web-layout";
+export type EmptyStateVariant = "page" | "inset";
 export function EmptyState({
 	icon = Inbox,
 	title,
@@ -17,39 +19,35 @@ export function EmptyState({
 	variant = "page",
 	className,
 }: {
-	icon?: LucideIcon;
+	icon?: LucideIcon | ReactNode;
 	title?: string;
 	description?: ReactNode;
 	action?: ReactNode;
-	variant?: "page" | "inset";
+	variant?: EmptyStateVariant;
 	className?: string;
 }) {
+	const mark = !icon ? null : typeof icon === "string" ||
+		typeof icon === "number" ||
+		isValidElement(icon) ? (
+		<WebContent recipe={styles.icon}>{icon}</WebContent>
+	) : (
+		<WebIcon as={icon as LucideIcon} recipe={styles.icon} />
+	);
 	return (
-		<AppView
-			className={cn(
-				"w-full min-w-0 items-center justify-center rounded-lg",
-				variant === "page"
-					? "min-h-80 flex-1 gap-4"
-					: "gap-3 border border-border bg-muted/30 px-4 py-6",
-				className,
-			)}
+		<WebView
+			recipe={cn(emptyClassName, variant === "page" ? styles.page : styles.inset)}
+			className={className}
 		>
-			<AppView className={cn("max-w-sm items-center", variant === "inset" ? "gap-1" : "gap-2")}>
-				{variant === "page" ? (
-					<AppView className="mb-2 size-10 items-center justify-center rounded-lg bg-muted">
-						<Icon as={icon} className="size-5 text-foreground" />
-					</AppView>
+			<WebView recipe={cn(emptyHeaderClassName, variant === "inset" && styles.insetHeader)}>
+				{variant === "page" && mark ? (
+					<WebView recipe={emptyMediaVariants({ variant: "icon" })}>{mark}</WebView>
 				) : null}
-				{title ? <Text className="text-center text-sm font-medium">{title}</Text> : null}
-				{typeof description === "string" ? (
-					<Text className="text-center text-sm leading-relaxed text-muted-foreground">
-						{description}
-					</Text>
-				) : (
-					description
-				)}
-			</AppView>
-			{action ? <AppView className="w-full max-w-sm items-center gap-4">{action}</AppView> : null}
-		</AppView>
+				{title ? <WebContent recipe={styles.title}>{title}</WebContent> : null}
+				{description ? (
+					<WebContent recipe={emptyDescriptionClassName}>{description}</WebContent>
+				) : null}
+			</WebView>
+			{action ? <WebView recipe={emptyContentClassName}>{action}</WebView> : null}
+		</WebView>
 	);
 }

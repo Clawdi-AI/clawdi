@@ -1,10 +1,7 @@
-import { AlertCircle, RefreshCw } from "lucide-react-native";
 import { ActivityIndicator } from "react-native";
 import { useCSSVariable } from "uniwind";
 import { useI18n } from "../i18n";
-import { Alert } from "./alert";
-import { Button } from "./button";
-import { Icon } from "./icon";
+import { ApiErrorPanel } from "./api-error-panel";
 import { Text } from "./text";
 import { AppView } from "./view";
 
@@ -29,22 +26,17 @@ export function LoadingScreen({ label }: { label?: string }) {
 	);
 }
 
-/** Mirrors apps/web/src/components/api-error-panel.tsx. */
-export function ErrorState({ onRetry, title }: { onRetry?: () => void; title?: string }) {
-	const t = useI18n();
-	return (
-		<Alert variant="destructive" icon={AlertCircle} title={title ?? t("error.genericTitle")}>
-			<AppView className="items-start gap-3">
-				<Text>{t("error.genericMessage")}</Text>
-				{onRetry ? (
-					<Button size="sm" variant="outline" onPress={onRetry}>
-						<Icon as={RefreshCw} />
-						<Text>{t("error.tryAgain")}</Text>
-					</Button>
-				) : null}
-			</AppView>
-		</Alert>
-	);
+/** Compatibility adapter for existing feature screens. */
+export function ErrorState({
+	onRetry,
+	title,
+	error,
+}: {
+	onRetry?: () => void;
+	title?: string;
+	error?: unknown;
+}) {
+	return <ApiErrorPanel error={error} onRetry={onRetry} title={title} />;
 }
 
 export function ConfigurationErrorScreen({ reason }: { reason: "missing" | "invalid" }) {

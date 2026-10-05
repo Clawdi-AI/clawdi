@@ -36,6 +36,15 @@ const DROPPED_UTILITY =
 const TEXT_UTILITY =
 	/^(?:text-|font-|leading-|tracking-|italic$|not-italic$|underline$|line-through$|no-underline$|uppercase$|lowercase$|capitalize$|normal-case$|tabular-nums$|proportional-nums$|line-clamp-)/;
 
+const BORDER_WIDTH = /^border(?:-[xytrblse])?(?:-\d+)?$/;
+
+/** Mirrors `* { @apply border-border }` in shared/style/theme.css. */
+function withBaseBorder(classes: string[]): string[] {
+	return classes.some((token) => BORDER_WIDTH.test(splitVariants(token).utility))
+		? ["border-border", ...classes]
+		: classes;
+}
+
 /** Splits on whitespace while keeping bracketed arbitrary values intact. */
 function tokens(className: string): string[] {
 	return className.split(/\s+/).filter(Boolean);
@@ -120,7 +129,7 @@ export function resolveWebClasses(
 		if (!resolved) continue;
 		(isTextToken(resolved) ? text : view).push(resolved);
 	}
-	const result = { view: cn(view), text: cn(text) };
+	const result = { view: cn(withBaseBorder(view)), text: cn(text) };
 	cache.set(key, result);
 	return result;
 }
@@ -138,5 +147,5 @@ export function possibleNativeClasses(className: string): string[] {
 		const mapped = mapUtility(utility, hasColumn);
 		if (mapped) result.add(mapped);
 	}
-	return [...result];
+	return withBaseBorder([...result]);
 }
