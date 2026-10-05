@@ -177,12 +177,32 @@ function effectiveUnitMatches(paths: RuntimePaths, unit: string): boolean {
 		timeout: 5000,
 		maxBuffer: 64 * 1024,
 	});
-	const normalize = (value: string) =>
+	const normalize = (value: string, inherited = false) =>
 		value
 			.split("\n")
-			.filter((line) => line.trim() && !line.startsWith("#"))
+			.filter((line) => line.trim() && !line.startsWith("#") && line !== "[Service]")
+			// Stock systemd/LXC drop-ins set these container-safe defaults. None
+			// changes this service's SDK identity, numeric UID or entrypoint.
+			// The complete effective configuration still binds the receipt.
+			.filter(
+				(line) =>
+					!inherited ||
+					!new Set([
+						"TimeoutStopFailureMode=abort",
+						"ProcSubset=all",
+						"ProtectProc=default",
+						"ProtectControlGroups=no",
+						"ProtectKernelTunables=no",
+						"NoNewPrivileges=no",
+						"LoadCredential=",
+						"PrivateNetwork=no",
+						"ImportCredential=",
+					]).has(line),
+			)
 			.join("\n");
-	return result.status === 0 && normalize(result.stdout) === normalize(readFileSync(path, "utf8"));
+	return (
+		result.status === 0 && normalize(result.stdout, true) === normalize(readFileSync(path, "utf8"))
+	);
 }
 
 function identity(paths: RuntimePaths, sdkPath: string): string | null {

@@ -1,13 +1,24 @@
 import { afterEach, expect, test } from "bun:test";
-import { execFile } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFile, spawnSync } from "node:child_process";
+import {
+	chmodSync,
+	chownSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import {
 	assertFirstWriterUnclaimed,
 	FIRST_WRITER_SCRIPT,
 	firstWriterPaths,
+	tryFirstOpenClawWrite,
+	warmFirstOpenClawWriter,
 } from "../src/runtime/openclaw-first-writer";
 import { getRuntimePaths } from "../src/runtime/paths";
 import { warmHostedOpenClawRuntime } from "../src/runtime/runtime-warm";
@@ -124,3 +135,110 @@ test("OpenClaw warm rejects a supplied context or submitted write before service
 	writeFileSync(firstWriterPaths(paths).used, "submitted\n", { mode: 0o600 });
 	await expect(warmHostedOpenClawRuntime(paths)).rejects.toThrow("submitted tenant config write");
 });
+
+test.skipIf(process.env.CLAWDI_TEST_SYSTEMD_COMMAND !== "1")(
+	"native writer socket notifies readiness, enforces UID isolation, and consumes one batch",
+	() => {
+		scratch = mkdtempSync(join(tmpdir(), "native-first-writer-"));
+		chmodSync(scratch, 0o755);
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_HOME = join(scratch, "home");
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(scratch, "state");
+		process.env.CLAWDI_RUN_DIR = join(scratch, "run");
+		process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = "/etc/systemd/system";
+		const paths = getRuntimePaths();
+		const sdk = join(scratch, "sdk");
+		mkdirSync(sdk, { mode: 0o755 });
+		mkdirSync(paths.userHome, { mode: 0o755 });
+		chownSync(paths.userHome, 10001, 10001);
+		mkdirSync(join(paths.userHome, ".openclaw"), { mode: 0o700 });
+		chownSync(join(paths.userHome, ".openclaw"), 10001, 10001);
+		mkdirSync(paths.statusRoot, { recursive: true });
+		mkdirSync(paths.runRoot, { mode: 0o711 });
+		const config = join(paths.userHome, ".openclaw", "openclaw.json");
+		writeFileSync(config, '{"unrelated":"preserved"}', { mode: 0o600 });
+		chownSync(config, 10001, 10001);
+		writeFileSync(join(sdk, "package.json"), '{"type":"module"}');
+		const entry = join(sdk, "mutation.mjs");
+		writeFileSync(
+			entry,
+			`
+ import {readFileSync,writeFileSync} from "node:fs";
+ const path=process.env.OPENCLAW_CONFIG_PATH;
+ export async function readConfigFileSnapshotForWrite(){
+  if(process.getuid()!==10001)throw new Error("wrong writer UID");
+  return {snapshot:{valid:true,sourceConfig:JSON.parse(readFileSync(path,"utf8"))}};
+ }
+ export async function mutateConfigFile(options){
+  if(options.base!=="source"||options.afterWrite.mode!=="auto")throw new Error("wrong native mutation");
+  const config=JSON.parse(readFileSync(path,"utf8"));options.mutate(config);
+  writeFileSync(path,JSON.stringify(config));
+ }
+ `,
+		);
+		const units = ["openclaw-first-writer.socket", "openclaw-first-writer.service"];
+		const policy = join(paths.systemdSystemRoot, units[1] + ".d", "10-fixture-policy.conf");
+		mkdirSync(dirname(policy), { recursive: true });
+		writeFileSync(policy, "[Service]\nUser=0\n");
+
+		try {
+			expect(() => warmFirstOpenClawWriter(paths, entry, 10001, 10001)).toThrow(
+				"refuses overridden units",
+			);
+			writeFileSync(
+				policy,
+				"[Service]\nTimeoutStopFailureMode=abort\nProcSubset=all\nProtectProc=default\nProtectControlGroups=no\nProtectKernelTunables=no\nNoNewPrivileges=no\nLoadCredential=\nPrivateNetwork=no\nImportCredential=\n",
+			);
+			warmFirstOpenClawWriter(paths, entry, 10001, 10001);
+			const denied = spawnSync(
+				"runuser",
+				[
+					"-u",
+					"clawdi",
+					"--",
+					"node",
+					"--input-type=module",
+					"--eval",
+					'import {createConnection} from "node:net"; const c=createConnection(process.argv[1]); c.on("error",e=>process.exit(e.code==="EACCES"?0:1)); c.on("connect",()=>process.exit(1));',
+					firstWriterPaths(paths).socket,
+				],
+				{ timeout: 5000 },
+			);
+			expect(denied.status).toBe(0);
+			expect(
+				tryFirstOpenClawWrite(entry, paths.userHome, [
+					{ kind: "provider", input: { tenant: "claimed" } },
+				]),
+			).toBe(true);
+			expect(JSON.parse(readFileSync(config, "utf8"))).toEqual({
+				unrelated: "preserved",
+				tenant: "claimed",
+			});
+			expect(existsSync(firstWriterPaths(paths).socket)).toBe(false);
+			expect(existsSync(firstWriterPaths(paths).receipt)).toBe(false);
+			expect(existsSync(firstWriterPaths(paths).used)).toBe(true);
+			expect(
+				tryFirstOpenClawWrite(entry, paths.userHome, [
+					{ kind: "provider", input: { tenant: "replayed" } },
+				]),
+			).toBe(false);
+		} catch (error) {
+			const journal = spawnSync(
+				"journalctl",
+				["-u", units[1], "--no-pager", "-o", "cat", "-n", "60"],
+				{ encoding: "utf8" },
+			);
+			console.error(journal.stdout);
+			console.error(
+				spawnSync("systemctl", ["cat", "--no-pager", ...units], { encoding: "utf8" }).stdout,
+			);
+			throw error;
+		} finally {
+			spawnSync("systemctl", ["stop", ...units], { timeout: 10_000 });
+			rmSync(dirname(policy), { recursive: true, force: true });
+			for (const unit of units) rmSync(join(paths.systemdSystemRoot, unit), { force: true });
+			spawnSync("systemctl", ["daemon-reload"], { timeout: 10_000 });
+		}
+	},
+	15_000,
+);
