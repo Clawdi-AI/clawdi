@@ -25,9 +25,11 @@ import {
 	deployComputeResourceLabels,
 	deployConfigurationSummary,
 	deployFormCopy,
+	explicitPlanOffers,
 	firstModelForProvider,
 	modelDisplayName,
 	modelOptionsForProvider,
+	planOffers,
 	providerDisplayLabel,
 	runtimeBlurb,
 	subscriptionSourceCopy,
@@ -357,6 +359,13 @@ function CreationForm() {
 	const locked = action.busy || Boolean(attempt) || !storageReady;
 
 	const comparison = computePlanComparisonView(inventory.data?.plans ?? [], previewTerm);
+	const previewPlan =
+		draft.computePlanSlug === "compute_performance" ? comparison.performance : comparison.basic;
+	const billingOffers = previewPlan
+		? draft.computePlanSlug === "compute_performance"
+			? planOffers(previewPlan)
+			: explicitPlanOffers(previewPlan)
+		: [];
 	const selectedOffer =
 		draft.computePlanSlug === "compute_performance"
 			? comparison.performanceOffer
@@ -579,13 +588,18 @@ function CreationForm() {
 												}}
 											>
 												<TabsList variant="default">
-													{[1, 12].map((term) => (
+													{billingOffers.map((offer) => (
 														<TabsTrigger
-															key={term}
-															value={String(term)}
+															key={offer.billing_term_months}
+															value={String(offer.billing_term_months)}
 															className={webView(termSwitcherClasses.item)}
 														>
-															{billingTermLabel(term)}
+															{billingTermLabel(offer.billing_term_months)}
+															{offer.discount_percent > 0 ? (
+																<WebText recipe={termSwitcherClasses.discount}>
+																	−{offer.discount_percent}%
+																</WebText>
+															) : null}
 														</TabsTrigger>
 													))}
 												</TabsList>
@@ -616,6 +630,7 @@ function CreationForm() {
 													title={slug === "compute_basic" ? "Basic" : agentSurfaceCopy.performance}
 													icon={
 														<IconChip
+															size="sm"
 															tint={
 																slug === "compute_basic"
 																	? hostedAgentOverviewClasses.includedTint
@@ -626,14 +641,17 @@ function CreationForm() {
 														</IconChip>
 													}
 													description={
-														plan
-															? deployComputeResourceLabels(
-																	plan.vcpu,
-																	plan.ram_gb,
-																	plan.disk_size,
-																).join(" · ")
-															: agentSurfaceCopy.unavailable
+														<WebText recipe={styles.specs}>
+															{plan
+																? deployComputeResourceLabels(
+																		plan.vcpu,
+																		plan.ram_gb,
+																		plan.disk_size,
+																	).join(" · ")
+																: agentSurfaceCopy.unavailable}
+														</WebText>
 													}
+													detailsPlacement="trailing"
 													details={
 														price ? (
 															<WebView recipe={styles.planPrice}>
