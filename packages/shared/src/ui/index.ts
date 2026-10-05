@@ -247,6 +247,7 @@ export * from "./channels-page";
 export * from "./checkbox";
 export * from "./confirm-action";
 export * from "./connected-agent-detail";
+export * from "./create-project-dialog";
 export * from "./deploy-wizard";
 export * from "./dialog";
 export * from "./dropdown-menu";

@@ -14,6 +14,20 @@ export function createAgentProjectClient(options: ApiClientOptions) {
 		fetch: transport.fetch,
 	});
 	return {
+		createProject: (
+			agentId: string,
+			body: paths["/v1/projects/for-agent/{agent_id}"]["post"]["requestBody"]["content"]["application/json"],
+			signal?: AbortSignal,
+		) =>
+			transport.read(
+				(init) =>
+					api.POST("/v1/projects/for-agent/{agent_id}", {
+						...init,
+						params: { path: { agent_id: readResourceId(agentId) } },
+						body,
+					}),
+				signal,
+			),
 		updateProjectAgents: (
 			projectId: string,
 			body: paths["/v1/projects/{project_id}/agents"]["patch"]["requestBody"]["content"]["application/json"],

@@ -7,17 +7,14 @@ import {
 import {
 	agentSurfaceCopy,
 	compareProjectsForUse,
-	displayProjectName,
 	formatResourceCount,
-	identityFor,
 	isCustomProject,
 	projectMatchesSearch,
 	projectSearchRank,
-	projectSupportingText,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { router, useLocalSearchParams } from "expo-router";
-import { FolderKanban, Plus } from "lucide-react-native";
+import { useLocalSearchParams } from "expo-router";
+import { FolderKanban } from "lucide-react-native";
 import { useState } from "react";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
@@ -26,9 +23,9 @@ import { useMobileApi } from "../providers/api-provider";
 import { AgentCollection } from "../ui/agents/collection";
 import { useAgentConfirmation } from "../ui/agents/confirmation";
 import { ActionButton } from "../ui/agents/controls";
+import { AgentCreateProjectDialog } from "../ui/agents/create-project-dialog";
 import { AgentSectionNavigation } from "../ui/agents/navigation";
 import { ApiErrorPanel } from "../ui/api-error-panel";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
 	DropdownMenu,
@@ -36,10 +33,9 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
-import { HERO_GRID_CLASS, HeroCard, HeroCardSkeleton } from "../ui/entity-card";
-import { Icon } from "../ui/icon";
-import { IconChip } from "../ui/icon-chip";
+import { HERO_GRID_CLASS, HeroCardSkeleton } from "../ui/entity-card";
 import { ListToolbar } from "../ui/list-toolbar";
+import { ProjectResourceCard } from "../ui/projects/project-resource-card";
 import { SearchInput } from "../ui/search-input";
 import { SectionLabel } from "../ui/section-label";
 import { Text } from "../ui/text";
@@ -129,12 +125,13 @@ function BindingsView({ agentId }: { agentId?: string }) {
 			title="Projects"
 			description="Choose the Projects this Agent can use."
 			actions={
-				<ActionButton
-					label="Create project"
-					variant="default"
-					icon={<Icon as={Plus} />}
-					onPress={() => router.push("/projects")}
-				/>
+				agentId ? (
+					<AgentCreateProjectDialog
+						key={`${scope.accountKey}:${scope.generation}`}
+						agentId={agentId}
+						disabled={disabled}
+					/>
+				) : null
 			}
 		>
 			<ListToolbar
@@ -164,34 +161,19 @@ function BindingsView({ agentId }: { agentId?: string }) {
 								{linked ? "Linked" : agentSurfaceCopy.available}
 							</SectionLabel>
 							{group.map((project) => {
-								const name = displayProjectName(project),
-									identity = identityFor(name),
-									binding = context.find((item) => item.project_id === project.id);
+								const binding = context.find((item) => item.project_id === project.id);
 								return (
-									<HeroCard
+									<ProjectResourceCard
 										key={project.id}
-										icon={
-											<IconChip tint={identity.colorClasses}>
-												<Text>{identity.emoji}</Text>
-											</IconChip>
-										}
-										title={name}
-										link={{
-											to: { pathname: "/projects/[projectId]", params: { projectId: project.id } },
-										}}
-										description={projectSupportingText(project)}
-										badges={
-											!project.is_owner ? (
-												<Badge variant="outline">
-													<Text>Viewer</Text>
-												</Badge>
-											) : undefined
-										}
+										project={project}
+										searchQuery={search.trim() || undefined}
 										footer={[
 											formatResourceCount(project.skill_count, "skill"),
 											formatResourceCount(project.vault_count, "vault"),
+											project.is_owner === false && (project.owner_display || project.owner_handle)
+												? `by ${project.owner_display || project.owner_handle}`
+												: null,
 										]}
-										actionsVisibility="always"
 										actions={
 											<>
 												<ActionButton

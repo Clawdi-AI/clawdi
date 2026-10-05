@@ -16,6 +16,7 @@ export * from "./channels-page";
 export * from "./connector-search";
 export * from "./console-navigation";
 export * from "./contribution-graph";
+export * from "./create-project-dialog";
 export * from "./daemon-status";
 export * from "./dashboard";
 export * from "./entity-brand-icon-ids";

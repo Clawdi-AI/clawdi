@@ -54,6 +54,7 @@ test("Agent Project client keeps authentication, escaped paths and generated mut
 			return Response.json({});
 		},
 	});
+	await client.createProject("agent/a", { name: "Research", description: null });
 	await client.listBindings("agent/a");
 	await client.link("agent/a", "project");
 	await client.unlink("agent/a", "binding/b");
@@ -62,6 +63,11 @@ test("Agent Project client keeps authentication, escaped paths and generated mut
 	const access = { add_agent_ids: ["a"], remove_agent_ids: ["b"] };
 	await client.updateProjectAgents("project/a", access);
 	expect(requests).toEqual([
+		{
+			method: "POST",
+			path: "/v1/projects/for-agent/agent%2Fa",
+			body: { name: "Research", description: null },
+		},
 		{ method: "GET", path: "/v1/agents/agent%2Fa/project-bindings", body: null },
 		{
 			method: "POST",
