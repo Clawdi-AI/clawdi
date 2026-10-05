@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import uuid
 from pathlib import Path
 
@@ -12,6 +11,8 @@ from alembic.operations import Operations
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
+
+from tests.migration_harness import load_migration
 
 REVISION = "d8f2a1c4b6e9"
 APP_SETTINGS_REVISION = "3e7a9c1d5b82"
@@ -25,18 +26,6 @@ RUNTIME_OBSERVATION_DOWN_REVISION = "c7e4a9b2d6f1"
 WORKLOAD_OAUTH_DOWN_REVISION = "f1a7c3d9e2b4"
 CONFIG_OBSERVATION_REVISION = "f3a1c7d9e2b4"
 MIGRATION_FILENAME = f"{REVISION}_finalize_agent_v2_runtime_contract.py"
-
-
-def _load_migration():
-    migration_path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
-    spec = importlib.util.spec_from_file_location(
-        "agent_v2_runtime_contract_migration",
-        migration_path,
-    )
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
 
 
 def test_agent_v2_runtime_contract_migration_precedes_config_observation_migration() -> None:
@@ -79,7 +68,7 @@ def test_agent_v2_runtime_contract_migration_precedes_config_observation_migrati
 def test_agent_v2_runtime_contract_migration_upgrades_and_downgrades_empty_state(
     engine: AsyncEngine,
 ) -> None:
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "agent_v2_runtime_contract_migration")
     schema = f"agent_v2_runtime_contract_migration_{uuid.uuid4().hex}"
 
     def run_migration(sync_conn: sa.Connection) -> None:
@@ -341,7 +330,7 @@ def test_agent_v2_runtime_contract_migration_upgrades_and_downgrades_empty_state
 def test_agent_v2_runtime_contract_migration_rejects_existing_state_before_schema_changes(
     engine: AsyncEngine,
 ) -> None:
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "agent_v2_runtime_contract_migration")
     schema = f"agent_v2_runtime_contract_migration_guard_{uuid.uuid4().hex}"
     environment_id = uuid.uuid4()
 
@@ -458,7 +447,7 @@ def test_agent_v2_runtime_contract_migration_rejects_existing_state_before_schem
 def test_agent_v2_runtime_contract_migration_rejects_nonempty_downgrade_before_schema_changes(
     engine: AsyncEngine,
 ) -> None:
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "agent_v2_runtime_contract_migration")
     schema = f"agent_v2_runtime_contract_downgrade_guard_{uuid.uuid4().hex}"
     environment_id = uuid.uuid4()
 

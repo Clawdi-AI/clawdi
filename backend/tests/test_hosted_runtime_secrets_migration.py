@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
 import uuid
-from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -11,17 +9,9 @@ from alembic.operations import Operations
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.models.hosted_runtime import HostedRuntimeSecret
+from tests.migration_harness import load_migration
 
 MIGRATION_FILENAME = "a9c4e7d2f1b6_hosted_runtime_secret_values.py"
-
-
-def _load_migration():
-    path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
-    spec = importlib.util.spec_from_file_location("hosted_runtime_secret_values_migration", path)
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
 
 
 def test_hosted_runtime_secret_model_matches_encrypted_owner_schema() -> None:
@@ -47,7 +37,7 @@ def test_hosted_runtime_secret_model_matches_encrypted_owner_schema() -> None:
 async def test_hosted_runtime_secret_migration_creates_encrypted_cascade_owner(
     engine: AsyncEngine,
 ) -> None:
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "hosted_runtime_secret_values_migration")
     schema = f"hosted_runtime_secret_values_{uuid.uuid4().hex}"
     environment_id = uuid.uuid4()
 

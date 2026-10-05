@@ -1,31 +1,19 @@
 from __future__ import annotations
 
-import importlib.util
 import uuid
-from pathlib import Path
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import inspect, text
 
+from tests.migration_harness import load_migration
+
 MIGRATION_FILENAME = "c7e4a9b2d6f1_platform_workload_oauth.py"
-
-
-def _load_migration():
-    migration_path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
-    spec = importlib.util.spec_from_file_location(
-        "platform_workload_oauth_migration",
-        migration_path,
-    )
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
 
 
 async def test_platform_workload_oauth_migration_upgrades_and_downgrades(engine):
     schema = f"platform_workload_oauth_{uuid.uuid4().hex}"
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "platform_workload_oauth_migration")
 
     async with engine.begin() as connection:
         await connection.execute(text(f'CREATE SCHEMA "{schema}"'))

@@ -35,6 +35,7 @@ from app.services.session_search import (
     rebuild_session_search_index,
     replace_snapshot_search_index,
 )
+from tests.db_lock_helpers import wait_for_lock_wait
 
 
 async def _register_env(client: httpx.AsyncClient) -> str:
@@ -486,17 +487,14 @@ async def test_cancelled_snapshot_search_insert_restores_committed_revision(
                     await started.wait()
                     # Prove cancellation reaches the INSERT's FK wait, after the
                     # old documents were deleted, rather than an earlier checkout.
-                    while not await observer.scalar(
-                        text(
-                            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
-                            "WHERE pid = :pid AND wait_event_type = 'Lock' "
-                            "AND query LIKE 'INSERT INTO session_message_search%unnest(%' "
-                            "AND :blocker = ANY(pg_blocking_pids(pid)))"
-                        ),
-                        {"pid": writer_pid, "blocker": blocker_pid},
-                    ):
-                        await observer.rollback()
-                        await asyncio.sleep(0.01)
+                    assert isinstance(writer_pid, int)
+                    assert isinstance(blocker_pid, int)
+                    await wait_for_lock_wait(
+                        async_sessionmaker(engine),
+                        writer_pid,
+                        query_pattern="INSERT INTO session_message_search%unnest(%",
+                        blocker_pid=blocker_pid,
+                    )
                     task.cancel()
                     with pytest.raises(asyncio.CancelledError):
                         await task

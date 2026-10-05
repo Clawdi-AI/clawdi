@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
 import uuid
-from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -11,6 +9,8 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
+
+from tests.migration_harness import load_migration
 
 MIGRATION_FILENAME = "6a9d2c4e8f10_add_environment_memory_provenance.py"
 STRICT_PREVIOUS_SCOPES = [
@@ -48,15 +48,6 @@ PLATFORM_SCOPES = [
     "skills:write",
     "vault:read",
 ]
-
-
-def _load_migration():
-    migration_path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
-    spec = importlib.util.spec_from_file_location("environment_memory_provenance", migration_path)
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
 
 
 def _create_previous_schema(connection: sa.Connection) -> None:
@@ -124,7 +115,7 @@ def _scopes(connection: sa.Connection, key_id: uuid.UUID) -> list[str] | None:
 def test_environment_memory_provenance_migration_backfills_only_hosted_defaults(
     engine: AsyncEngine,
 ) -> None:
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "environment_memory_provenance")
     schema = f"environment_memory_provenance_{uuid.uuid4().hex}"
     environment_id = uuid.uuid4()
     sync_engine = create_engine(engine.url.set(drivername="postgresql+psycopg2"))

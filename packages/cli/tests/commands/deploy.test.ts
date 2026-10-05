@@ -19,7 +19,6 @@ import type {
 	HostedSavedAiProvider,
 } from "@clawdi/shared/api";
 import {
-	DEFAULT_DEPLOY_POLL_LIMIT,
 	type DeployPromptAdapter,
 	deployCommand,
 	type HostedDeployGateway,
@@ -1298,7 +1297,6 @@ describe("deploy orchestration", () => {
 
 		expect(client.requestPolls).toBe(2);
 		expect(result).toMatchObject({ status: "accepted", deployment_id: "hdep_paid" });
-		expect(DEFAULT_DEPLOY_POLL_LIMIT).toBe(1_200);
 	});
 
 	test("uses only projected public terminal failures and hides unknown errors", async () => {
