@@ -8915,6 +8915,8 @@ export interface components {
             query: string;
             /** Results */
             results: components["schemas"]["SearchHit"][];
+            /** Failed Sources */
+            failed_sources?: string[];
         };
         /** SessionAttachmentPart */
         SessionAttachmentPart: {
