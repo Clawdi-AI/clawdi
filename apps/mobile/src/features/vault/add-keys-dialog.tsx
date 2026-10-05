@@ -219,7 +219,7 @@ export function AddKeysDialog({
 						{preview.conflicts.length && !preview.parsed.errors.length ? (
 							<WebView recipe={addKeysDialogClasses.conflicts} className="flex-row">
 								<Switch checked={overwrite} onCheckedChange={setOverwrite} disabled={saving} />
-								<WebView recipe={addKeysDialogClasses.newField}>
+								<WebView recipe={addKeysDialogClasses.newField} className="flex-1">
 									<Label>{ADD_KEYS_COPY.overwrite}</Label>
 									<WebText recipe={addKeysDialogClasses.meta}>
 										{addKeysConflictCopy(preview.conflicts.length)}
