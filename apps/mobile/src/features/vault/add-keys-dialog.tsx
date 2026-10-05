@@ -2,13 +2,16 @@ import { buildKeyImportPreview, slugFromVaultName, type VaultIdentity } from "@c
 import { addKeysDialogClasses } from "@clawdi/shared/ui";
 import {
 	ADD_KEYS_COPY,
+	addKeysActionCopy,
 	addKeysConflictCopy,
 	addKeysDetectedCopy,
+	addKeysReadyCopy,
+	addKeysSummaryCopy,
 	identityFor,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect } from "expo-router";
-import { AlertCircle } from "lucide-react-native";
+import { AlertCircle, Check } from "lucide-react-native";
 import { useCallback, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { useI18n } from "../../i18n";
@@ -29,9 +32,11 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "../../ui/dialog";
+import { Icon } from "../../ui/icon";
 import { Input, Label } from "../../ui/input";
 import { Switch } from "../../ui/switch";
 import { Text } from "../../ui/text";
+import { AppScrollView } from "../../ui/view";
 import { WebText, WebView, webBoth } from "../../ui/web-layout";
 import { useCompleteVaultCatalog } from "./project-catalog";
 
@@ -129,7 +134,13 @@ export function AddKeysDialog({
 				<DialogContent>
 					<DialogHeader>
 						<DialogTitle>{t("libraryPort.addKeys")}</DialogTitle>
-						<DialogDescription>{ADD_KEYS_COPY.description}</DialogDescription>
+						<DialogDescription>
+							<Text>
+								{ADD_KEYS_COPY.pasteBefore}{" "}
+								<WebText recipe={addKeysDialogClasses.mono}>{ADD_KEYS_COPY.assignment}</WebText>{" "}
+								{ADD_KEYS_COPY.pasteAfter}
+							</Text>
+						</DialogDescription>
 					</DialogHeader>
 					<WebView recipe={addKeysDialogClasses.body}>
 						<Input
@@ -138,9 +149,7 @@ export function AddKeysDialog({
 							placeholder={ADD_KEYS_COPY.placeholder}
 							accessibilityLabel={t("vault.importText")}
 							multiline
-							numberOfLines={7}
 							className={webBoth(addKeysDialogClasses.paste)}
-							style={{ minHeight: 150 }}
 							editable={!saving}
 							maxLength={1048576}
 							autoCapitalize="none"
@@ -152,6 +161,7 @@ export function AddKeysDialog({
 							<WebView recipe={addKeysDialogClasses.field}>
 								<Label>{ADD_KEYS_COPY.into}</Label>
 								<ChoiceSelect
+									className={webBoth(addKeysDialogClasses.trigger)}
 									value={effectiveChoice}
 									onValueChange={(next) => {
 										setChoice(next);
@@ -199,8 +209,8 @@ export function AddKeysDialog({
 						{preview.parsed.errors.length ? (
 							<Alert variant="destructive" icon={AlertCircle} title={ADD_KEYS_COPY.invalid}>
 								<WebView recipe={addKeysDialogClasses.errors}>
-									{preview.parsed.errors.map((error) => (
-										<Text key={error}>{error}</Text>
+									{preview.parsed.errors.map((error, index) => (
+										<Text key={`${index}:${error}`}>{error}</Text>
 									))}
 								</WebView>
 							</Alert>
@@ -222,28 +232,46 @@ export function AddKeysDialog({
 									<WebText recipe={addKeysDialogClasses.previewTitle}>
 										{ADD_KEYS_COPY.preview}
 									</WebText>
-									<Badge variant="secondary">
-										<Text>{preview.summary.created} new</Text>
-									</Badge>
-								</WebView>
-								{preview.preview.slice(0, 10).map((row) => (
-									<WebView
-										key={row.key}
-										recipe={addKeysDialogClasses.previewRow}
-										className="flex-row"
-									>
-										<WebText recipe={addKeysDialogClasses.key}>{row.key}</WebText>
-										<Badge variant={row.action === "create" ? "secondary" : "outline"}>
-											<Text>
-												{row.action === "create"
-													? "New"
-													: row.action === "update"
-														? "Update"
-														: "Skip"}
-											</Text>
+									<WebView recipe={addKeysDialogClasses.badges} className="flex-row">
+										<Badge variant="secondary">
+											<Text>{addKeysSummaryCopy(preview.summary.created, "create")}</Text>
 										</Badge>
+										{preview.conflicts.length > 0 ? (
+											<Badge variant="outline">
+												<Text>
+													{overwrite
+														? addKeysSummaryCopy(preview.summary.updated, "update")
+														: addKeysSummaryCopy(preview.summary.skipped, "skip")}
+												</Text>
+											</Badge>
+										) : null}
 									</WebView>
-								))}
+								</WebView>
+								<AppScrollView className={webBoth(addKeysDialogClasses.previewList)}>
+									{preview.preview.slice(0, 10).map((row) => (
+										<WebView
+											key={row.key}
+											recipe={addKeysDialogClasses.previewRow}
+											className="flex-row"
+										>
+											<WebText
+												recipe={addKeysDialogClasses.key}
+												className="flex-1"
+												numberOfLines={1}
+											>
+												{row.key}
+											</WebText>
+											<Badge variant={row.action === "create" ? "secondary" : "outline"}>
+												<Text>{addKeysActionCopy(row.action)}</Text>
+											</Badge>
+										</WebView>
+									))}
+									{preview.preview.length > 10 ? (
+										<WebText recipe={addKeysDialogClasses.more}>
+											{addKeysReadyCopy(preview.preview.length - 10)}
+										</WebText>
+									) : null}
+								</AppScrollView>
 							</WebView>
 						) : null}
 
@@ -262,6 +290,7 @@ export function AddKeysDialog({
 										setConfirmOpen(true);
 									}}
 								>
+									<Icon as={Check} className={webBoth(addKeysDialogClasses.iconSmall)} />
 									<Text>
 										{ADD_KEYS_COPY.save} {preview.importableRows.length || ""}
 									</Text>

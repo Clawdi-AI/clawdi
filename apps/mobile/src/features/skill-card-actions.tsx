@@ -43,7 +43,7 @@ import {
 import { Icon } from "../ui/icon";
 import { Label } from "../ui/input";
 import { Text } from "../ui/text";
-import { WebView } from "../ui/web-layout";
+import { WebView, webBoth } from "../ui/web-layout";
 import { useCloudProjects } from "./projects";
 
 type Skill = components["schemas"]["SkillSummaryResponse"];
@@ -153,6 +153,7 @@ export function SkillCardActions({ skill, project }: { skill: Skill; project: Pr
 					<WebView recipe={skillTransferDialogClasses.field}>
 						<Label>{SKILL_TRANSFER_COPY.destination}</Label>
 						<ChoiceSelect
+							className={webBoth(skillTransferDialogClasses.trigger)}
 							value={targetId}
 							onValueChange={setTargetId}
 							disabled={action.busy || partial}

@@ -9,6 +9,7 @@ import { Button } from "../button";
 import { HeroCard } from "../entity-card";
 import { Icon } from "../icon";
 import { IconChip } from "../icon-chip";
+import { SearchHighlightedText } from "../search-highlighted-text";
 import { Text } from "../text";
 import { WebView, webBoth } from "../web-layout";
 export function VaultCard({
@@ -26,6 +27,7 @@ export function VaultCard({
 }) {
 	const t = useI18n();
 	const identity = identityFor(vault.name);
+	const supportingText = searchQuery ? vaultSearchSupportingText(vault, searchQuery) : null;
 	const usedBy = vault.project_ids.map((id) => names.get(id)).filter(Boolean);
 	const open = () =>
 		router.push({
@@ -44,8 +46,20 @@ export function VaultCard({
 					) : null}
 				</IconChip>
 			}
-			title={vault.name}
-			description={searchQuery ? vaultSearchSupportingText(vault, searchQuery) : undefined}
+			title={
+				searchQuery ? (
+					<Text numberOfLines={1}>
+						<SearchHighlightedText text={vault.name} query={searchQuery} />
+					</Text>
+				) : (
+					vault.name
+				)
+			}
+			description={
+				supportingText ? (
+					<SearchHighlightedText text={supportingText} query={searchQuery ?? ""} />
+				) : undefined
+			}
 			footer={[
 				formatResourceCount(vault.item_count, "key"),
 				usedBy.length

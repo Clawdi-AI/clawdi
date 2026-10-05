@@ -8,7 +8,7 @@ import {
 } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
-import { MoreHorizontal } from "lucide-react-native";
+import { MoreHorizontal, Pencil } from "lucide-react-native";
 import { useRef, useState } from "react";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
@@ -155,6 +155,7 @@ export function ProjectCardActions({ project }: { project: Project }) {
 								});
 							}}
 						>
+							<Icon as={Pencil} />
 							<Text>{t("libraryPort.save")}</Text>
 						</Button>
 					</DialogFooter>

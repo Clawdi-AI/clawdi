@@ -3,8 +3,11 @@
 import { addKeysDialogClasses } from "@clawdi/shared/ui";
 import {
 	ADD_KEYS_COPY,
+	addKeysActionCopy,
 	addKeysConflictCopy,
 	addKeysDetectedCopy,
+	addKeysReadyCopy,
+	addKeysSummaryCopy,
 	errorMessage,
 	identityFor,
 } from "@clawdi/shared/view";
@@ -353,12 +356,14 @@ export function AddKeysDialog({
 							<div className={addKeysDialogClasses.previewHeader}>
 								<p className={addKeysDialogClasses.previewTitle}>{ADD_KEYS_COPY.preview}</p>
 								<div className={addKeysDialogClasses.badges}>
-									<Badge variant="secondary">{importPlan.summary.created} new</Badge>
+									<Badge variant="secondary">
+										{addKeysSummaryCopy(importPlan.summary.created, "create")}
+									</Badge>
 									{importPlan.conflicts.length > 0 ? (
 										<Badge variant="outline">
 											{updateExisting
-												? `${importPlan.summary.updated} update`
-												: `${importPlan.summary.skipped} skip`}
+												? addKeysSummaryCopy(importPlan.summary.updated, "update")
+												: addKeysSummaryCopy(importPlan.summary.skipped, "skip")}
 										</Badge>
 									) : null}
 								</div>
@@ -377,8 +382,7 @@ export function AddKeysDialog({
 								))}
 								{importPlan.preview.length > 10 ? (
 									<p className={addKeysDialogClasses.more}>
-										{importPlan.preview.length - 10} more key
-										{importPlan.preview.length - 10 === 1 ? "" : "s"} ready.
+										{addKeysReadyCopy(importPlan.preview.length - 10)}
 									</p>
 								) : null}
 							</div>
@@ -423,7 +427,7 @@ function saveDisabledForNewVault(
 function KeyImportActionBadge({ action }: { action: "create" | "update" | "skip" }) {
 	return (
 		<Badge variant={action === "create" ? "secondary" : "outline"}>
-			{action === "create" ? "New" : action === "update" ? "Update" : "Skip"}
+			{addKeysActionCopy(action)}
 		</Badge>
 	);
 }

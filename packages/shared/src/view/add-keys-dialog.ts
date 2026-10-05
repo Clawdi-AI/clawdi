@@ -20,3 +20,13 @@ export function addKeysDetectedCopy(count: number, skipped: number) {
 export function addKeysConflictCopy(count: number) {
 	return `${count} key${count === 1 ? "" : "s"} already exist. By default, they are skipped.`;
 }
+
+export function addKeysSummaryCopy(count: number, action: "create" | "update" | "skip") {
+	return `${count} ${action === "create" ? "new" : action}`;
+}
+export function addKeysActionCopy(action: "create" | "update" | "skip") {
+	return action === "create" ? "New" : action === "update" ? "Update" : "Skip";
+}
+export function addKeysReadyCopy(count: number) {
+	return `${count} more key${count === 1 ? "" : "s"} ready.`;
+}

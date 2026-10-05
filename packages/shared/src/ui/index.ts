@@ -291,6 +291,7 @@ export * from "./public-session";
 export * from "./resource-identity";
 export * from "./resources-card";
 export * from "./route-loading-skeleton";
+export * from "./search-highlighted-text";
 export * from "./section";
 export * from "./section-label";
 export * from "./select";

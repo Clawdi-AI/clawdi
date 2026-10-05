@@ -7,8 +7,7 @@ type SearchField = string | null | undefined;
 
 const WEBSEARCH_TOKEN_PATTERN = /(-?)"([^"]+)"|(\S+)/gu;
 
-export const SEARCH_MARK_CLASS =
-	"box-decoration-clone rounded-sm bg-primary/20 px-px text-foreground";
+export { SEARCH_MARK_CLASS } from "../ui/search-highlighted-text";
 
 export function searchTerms(query: string): string[] {
 	const terms: string[] = [];

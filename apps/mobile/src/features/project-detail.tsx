@@ -186,12 +186,15 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 						<WebView recipe={projectDetailClasses.section}>
 							<WebView recipe={projectDetailClasses.sectionHeader}>
 								<WebView recipe={projectDetailClasses.sectionHeading}>
-									<WebText recipe={projectDetailClasses.heading}>
-										{t("skills.title")}{" "}
-										<WebText recipe={projectDetailClasses.resourceCount}>
-											{project.skill_count}
-										</WebText>
-									</WebText>
+									<WebView recipe={projectDetailClasses.paginationActions}>
+										<WebText recipe={projectDetailClasses.heading}>{t("skills.title")}</WebText>
+										<Badge
+											variant="secondary"
+											className={webBoth(projectDetailClasses.resourceCount)}
+										>
+											<Text>{project.skill_count}</Text>
+										</Badge>
+									</WebView>
 									<WebText recipe={projectDetailClasses.subtitle}>
 										{t("libraryPort.projectSkillsDescription")}
 									</WebText>
