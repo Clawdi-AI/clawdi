@@ -7,6 +7,7 @@ import {
 import { HERO_GRID_CLASS, vaultsSurfaceClasses } from "@clawdi/shared/ui";
 import {
 	compareVaultsForCatalog,
+	vaultFormCopy as copy,
 	fetchAgentProjectVaults,
 	getProjectResourceDefinition,
 	identityFor,
@@ -25,19 +26,26 @@ import { AgentSectionNavigation } from "../../ui/agents/navigation";
 import { ApiErrorPanel } from "../../ui/api-error-panel";
 import { Button } from "../../ui/button";
 import { LibraryPage } from "../../ui/detail/layout";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../../ui/dialog";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "../../ui/dialog";
 import { EmptyState } from "../../ui/empty-state";
 import { HeroCardSkeleton } from "../../ui/entity-card";
 import { FilterChip } from "../../ui/filter-chip";
 import { Icon } from "../../ui/icon";
-import { Input } from "../../ui/input";
+import { Input, Label } from "../../ui/input";
 import { ListToolbar } from "../../ui/list-toolbar";
 import { PageHeader } from "../../ui/page-header";
 import { SearchInput } from "../../ui/search-input";
 import { SectionLabel } from "../../ui/section-label";
 import { Text } from "../../ui/text";
 import { VaultCard } from "../../ui/vault/vault-card";
-import { WebText, WebView } from "../../ui/web-layout";
+import { WebText, WebView, webView } from "../../ui/web-layout";
 import { useCloudAgent } from "../cloud-inventory";
 import { ProjectResourceBoundary } from "../project-scope";
 import { useCloudProjects } from "../projects";
@@ -182,6 +190,9 @@ function VaultCatalog({
 	const items = [
 		...new Map((catalog.data?.pages.flatMap((p) => p.items) ?? []).map((v) => [v.id, v])).values(),
 	].sort((a, b) => compareVaultsForCatalog(a, b, search));
+	const slugTaken = Boolean(
+		slug && items.some((item) => item.is_owner !== false && item.slug === slug),
+	);
 	const defaultVault = catalog.data?.pages
 		.flatMap((page) => page.items)
 		.find((item) => item.is_owner !== false);
@@ -189,7 +200,8 @@ function VaultCatalog({
 		const visible = capture();
 		return action.run(async (isCurrent) => {
 			if (!visible()) return;
-			if (!canCreate || !name.trim() || !slug) return;
+			if (!canCreate || !name.trim() || !slug || slugTaken || catalog.isFetching || catalog.isError)
+				return;
 			const body = { name: name.trim(), slug };
 			const result = await read((signal) =>
 				project ? vault.createInProject(project.id, body, signal) : vault.create(body, signal),
@@ -197,6 +209,7 @@ function VaultCatalog({
 			if (!isCurrent()) return;
 			setName("");
 			setSlug("");
+			setOpen(false);
 			await cache.invalidateQueries({ queryKey: accountQueryKey(scope, "vault-catalog") });
 			if (isCurrent() && visible())
 				router.push({
@@ -320,33 +333,53 @@ function VaultCatalog({
 					if (!action.busy) setOpen(v);
 				}}
 			>
-				<DialogContent>
+				<DialogContent
+					className={webView(vaultsSurfaceClasses.dialog)}
+					showCloseButton={!action.busy}
+				>
 					<DialogHeader>
-						<DialogTitle>{t("libraryPort.createVault")}</DialogTitle>
+						<DialogTitle>{copy.title}</DialogTitle>
+						<DialogDescription>{copy.description}</DialogDescription>
 					</DialogHeader>
-					<Input
-						value={name}
-						onChangeText={(v) => {
-							setName(v);
-							setSlug(slugFromVaultName(v));
-						}}
-						maxLength={200}
-						editable={!action.busy}
-						placeholder={t("vault.name")}
-					/>
-					<Input
-						value={slug}
-						onChangeText={(v) => setSlug(slugFromVaultName(v))}
-						maxLength={200}
-						editable={!action.busy}
-						placeholder={t("vault.slug")}
-					/>
-					{action.error ? <ApiErrorPanel error={action.error} /> : null}
-					<DialogFooter>
-						<Button disabled={action.busy || !name.trim() || !slug} onPress={() => void create()}>
-							<Text>{t("libraryPort.createVault")}</Text>
-						</Button>
-					</DialogFooter>
+					<WebView recipe={vaultsSurfaceClasses.form}>
+						<WebView recipe={vaultsSurfaceClasses.field}>
+							<Label>{copy.name}</Label>
+							<Input
+								value={name}
+								onChangeText={(v) => {
+									setName(v);
+									setSlug(slugFromVaultName(v));
+								}}
+								maxLength={200}
+								editable={!action.busy}
+								placeholder={copy.placeholder}
+								accessibilityLabel={copy.name}
+							/>
+							{slugTaken ? (
+								<WebText recipe={vaultsSurfaceClasses.error}>{copy.nameTaken}</WebText>
+							) : null}
+						</WebView>
+						{action.error ? <ApiErrorPanel error={action.error} /> : null}
+						<DialogFooter>
+							<Button variant="ghost" disabled={action.busy} onPress={() => setOpen(false)}>
+								<Text>{copy.cancel}</Text>
+							</Button>
+							<Button
+								disabled={
+									action.busy ||
+									!name.trim() ||
+									!slug ||
+									slugTaken ||
+									catalog.isFetching ||
+									catalog.isError
+								}
+								onPress={() => void create()}
+							>
+								<Icon as={Plus} />
+								<Text>{copy.title}</Text>
+							</Button>
+						</DialogFooter>
+					</WebView>
 				</DialogContent>
 			</Dialog>
 		</LibraryPage>

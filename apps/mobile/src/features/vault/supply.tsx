@@ -11,7 +11,7 @@ import { vaultRequestClasses } from "@clawdi/shared/ui";
 import { buildVaultSupplyAgentMessage, VAULT_REQUEST_COPY } from "@clawdi/shared/view";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useRef, useState } from "react";
-import { Alert, AppState, Share } from "react-native";
+import { AppState, Share } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
 import { useI18n } from "../../i18n";
 import { useAccountScope } from "../../platform/account-lifecycle";
@@ -24,6 +24,7 @@ import { Input, Label } from "../../ui/input";
 import { AppScrollView, AppText, AppView } from "../../ui/primitives";
 import { ReadScreen } from "../../ui/read-screen";
 import { Text } from "../../ui/text";
+import { useConfirmation } from "../../ui/use-confirmation";
 import { SecretInput } from "../../ui/vault/secret-input";
 import { WebText, WebView, webBoth, webView } from "../../ui/web-layout";
 import { BackButton } from "../cloud-inventory";
@@ -37,6 +38,7 @@ export function VaultSupplyScreen() {
 }
 function VaultSupply({ intake }: { intake: string | null }) {
 	const t = useI18n();
+	const confirmationDialog = useConfirmation();
 	const scope = useAccountScope();
 	const { vaultSupply: api } = useMobileApi();
 	const action = useAuthAction(scope);
@@ -167,7 +169,7 @@ function VaultSupply({ intake }: { intake: string | null }) {
 				}
 				const warning = `${t("vault.supplyWarning")}\n${inspected.update_fields.join(", ") || t("vault.supplyNoUpdates")}`;
 				pendingSupply.current = { token: value, fields, id: initialContext.id };
-				Alert.alert(t("vault.supplySave"), warning, [
+				confirmationDialog.show(t("vault.supplySave"), warning, [
 					{
 						text: t("account.cancel"),
 						style: "cancel",
@@ -179,7 +181,7 @@ function VaultSupply({ intake }: { intake: string | null }) {
 						text: t("vault.supplySave"),
 						onPress: () => {
 							if (!visible() || !pendingSupply.current) return;
-							void action.run(async (stillCurrent) => {
+							return action.run(async (stillCurrent) => {
 								const pending = pendingSupply.current;
 								if (!visible() || !pending || token.current !== pending.token) return;
 								pendingSupply.current = null;
@@ -414,6 +416,7 @@ function VaultSupply({ intake }: { intake: string | null }) {
 					</CardContent>
 				</Card>
 			</AppScrollView>
+			{confirmationDialog.dialog}
 		</ReadScreen>
 	);
 }

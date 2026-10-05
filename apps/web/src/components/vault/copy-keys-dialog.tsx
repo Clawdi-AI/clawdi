@@ -3,7 +3,14 @@
 import { transferVaultKeys } from "@clawdi/shared/api";
 
 import { copyKeysDialogClasses } from "@clawdi/shared/ui";
-import { errorMessage, vaultKeyFormCopy as formCopy, identityFor } from "@clawdi/shared/view";
+import {
+	errorMessage,
+	vaultKeyFormCopy as formCopy,
+	identityFor,
+	transferVaultKeysLabel,
+	transferVaultKeysTitle,
+	vaultMoveWarning,
+} from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Plus } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
@@ -63,7 +70,6 @@ export function CopyKeysDialog({
 	const [newVaultName, setNewVaultName] = useState("");
 
 	const attachedCount = vault.project_ids?.length ?? 0;
-	const verb = mode === "move" ? "Move" : "Copy";
 
 	const vaultsQuery = $api.useQuery(
 		"get",
@@ -89,7 +95,7 @@ export function CopyKeysDialog({
 				value: targetVault.id,
 				label: targetVault.name,
 			})),
-			{ value: NEW_VAULT, label: "Create vault…" },
+			{ value: NEW_VAULT, label: formCopy.createVault },
 		],
 		[targetVaults],
 	);
@@ -205,9 +211,7 @@ export function CopyKeysDialog({
 			<DialogTrigger render={children} />
 			<DialogContent className={copyKeysDialogClasses.dialog}>
 				<DialogHeader>
-					<DialogTitle>
-						{verb} {keys.length} {keys.length === 1 ? "key" : "keys"} to…
-					</DialogTitle>
+					<DialogTitle>{transferVaultKeysTitle(mode, keys.length)}</DialogTitle>
 					{/* Copy-vs-reference semantics must be explicit (Kingsley's
 					    review): a copied key is an independent secret — rotating
 					    one later does NOT update the other. When the user's real
@@ -243,7 +247,7 @@ export function CopyKeysDialog({
 									))}
 									<SelectItem value={NEW_VAULT}>
 										<Plus className={copyKeysDialogClasses.icon} />
-										Create vault…
+										{formCopy.createVault}
 									</SelectItem>
 								</SelectContent>
 							</Select>
@@ -253,14 +257,12 @@ export function CopyKeysDialog({
 								<Input
 									value={newVaultName}
 									onChange={(e) => setNewVaultName(e.target.value)}
-									placeholder="Vault name…"
+									placeholder={formCopy.newVaultPlaceholder}
 									aria-label="Vault name"
 									className={copyKeysDialogClasses.newInput}
 								/>
 								{newVaultSlugTaken ? (
-									<p className={copyKeysDialogClasses.newError}>
-										That vault already exists. Choose it from the list or use a different name.
-									</p>
+									<p className={copyKeysDialogClasses.newError}>{formCopy.newVaultTaken}</p>
 								) : null}
 							</div>
 						) : null}
@@ -276,8 +278,7 @@ export function CopyKeysDialog({
 					) : null}
 					{mode === "move" && attachedCount > 1 ? (
 						<p className={copyKeysDialogClasses.warning}>
-							{vault.name} is used by {attachedCount} Projects — moving these keys removes them from
-							all of those Projects.
+							{vaultMoveWarning(vault.name, attachedCount)}
 						</p>
 					) : null}
 					{mode === "copy" ? (
@@ -293,7 +294,7 @@ export function CopyKeysDialog({
 						onClick={() => run.mutate()}
 					>
 						{run.isPending ? <Spinner /> : <ArrowRight className={copyKeysDialogClasses.icon} />}
-						{verb} {keys.length} {keys.length === 1 ? "key" : "keys"}
+						{transferVaultKeysLabel(mode, keys.length)}
 					</Button>
 				</div>
 			</DialogContent>

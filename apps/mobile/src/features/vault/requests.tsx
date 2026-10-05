@@ -2,7 +2,7 @@ import { buildVaultSecretRequest, type components, safeVaultRequestUrl } from "@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useRef, useState } from "react";
-import { Alert, AppState, Share } from "react-native";
+import { AppState, Share } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
 import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
@@ -13,11 +13,13 @@ import { ChoiceSelect } from "../../ui/detail/choice-select";
 import { Input } from "../../ui/input";
 import { AppText, AppView } from "../../ui/primitives";
 import { Text } from "../../ui/text";
+import { useConfirmation } from "../../ui/use-confirmation";
 import { useCloudProjects } from "../projects";
 import { ResourceError } from "../resource-error";
 
 export function VaultRequests({ current }: { current: components["schemas"]["VaultResponse"] }) {
 	const t = useI18n();
+	const confirmationDialog = useConfirmation();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { vault } = useMobileApi();
@@ -87,13 +89,13 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 		const request = body;
 		const signal = scope.signal;
 		if (!request || !visible() || !current.is_owner || projects.isError || action.busy) return;
-		Alert.alert(t("vault.requestCreate"), t("vault.requestWarning"), [
+		confirmationDialog.show(t("vault.requestCreate"), t("vault.requestWarning"), [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
 				text: t("vault.requestCreate"),
 				onPress: () => {
 					if (!visible() || signal.aborted || !scope.isCurrent()) return;
-					void action.run(async (isCurrent) => {
+					return action.run(async (isCurrent) => {
 						// Keep the capability only in a foreground ref, never persisted or cached.
 						const result = await read((s) => vault.createRequest(request, s));
 						if (!isCurrent() || !visible()) return;
@@ -125,7 +127,7 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 					disabled={action.busy}
 					onPress={() => {
 						const visible = capture();
-						void action.run(async () => {
+						return action.run(async () => {
 							const link = lastLink.current;
 							if (!scope.isCurrent() || !visible()) return;
 							if (!link || link.expiresAt <= Date.now()) {
@@ -231,6 +233,7 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 				<Text>{t("vault.requestCreate")}</Text>
 			</Button>
 			{action.error ? <AppText accessibilityRole="alert">{t("vault.failed")}</AppText> : null}
+			{confirmationDialog.dialog}
 		</AppView>
 	);
 }

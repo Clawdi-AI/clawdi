@@ -134,11 +134,11 @@ export function SplitVaultDialog({
 				<DialogHeader>
 					<DialogTitle>{splitVaultTitle(vault.name)}</DialogTitle>
 					<DialogDescription>
-						Keys named <span className={splitVaultDialogClasses.mono}>app/KEY</span> become a vault
-						per app, renamed to their clean{" "}
-						<span className={splitVaultDialogClasses.mono}>KEY</span>. Values stay server-side. New
-						Vaults are not automatically linked to Projects. Copy and deletion are non-atomic; avoid
-						concurrent edits. Failed destinations may remain; inspect them before retrying.
+						{copy.descriptionBefore}
+						<span className={splitVaultDialogClasses.mono}>{copy.prefixExample}</span>
+						{copy.descriptionBetween}
+						<span className={splitVaultDialogClasses.mono}>{copy.keyExample}</span>
+						{copy.descriptionAfter}
 					</DialogDescription>
 				</DialogHeader>
 				<div className={splitVaultDialogClasses.body}>

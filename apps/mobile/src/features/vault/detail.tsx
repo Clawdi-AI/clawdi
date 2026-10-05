@@ -1,6 +1,7 @@
 import {
 	ApiClientError,
 	buildKeyImportPreview,
+	slugFromVaultName,
 	splitVaultKeys,
 	transferVaultKeys,
 	type VaultIdentity,
@@ -9,13 +10,26 @@ import {
 	type VaultSplitResult,
 	validVaultSplit,
 } from "@clawdi/shared/api";
-import { projectDetailClasses, vaultDetailClasses } from "@clawdi/shared/ui";
-import { getProjectResourceDefinition, identityFor } from "@clawdi/shared/view";
+import {
+	addKeysDialogClasses,
+	copyKeysDialogClasses,
+	projectDetailClasses,
+	splitVaultDialogClasses,
+	vaultDetailClasses,
+} from "@clawdi/shared/ui";
+import {
+	vaultKeyFormCopy as formCopy,
+	getProjectResourceDefinition,
+	identityFor,
+	transferVaultKeysLabel,
+	transferVaultKeysTitle,
+	vaultMoveWarning,
+} from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { ListChecks, Plus, Trash2 } from "lucide-react-native";
 import { useCallback, useState } from "react";
-import { Alert, AppState } from "react-native";
+import { AppState } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
 import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
@@ -26,17 +40,25 @@ import { Badge } from "../../ui/badge";
 import { Button } from "../../ui/button";
 import { ChoiceSelect } from "../../ui/detail/choice-select";
 import { DetailBackLink, LibraryPage } from "../../ui/detail/layout";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../ui/dialog";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "../../ui/dialog";
 import { EntityCardSkeleton } from "../../ui/entity-card";
 import { Icon } from "../../ui/icon";
 import { IconChip } from "../../ui/icon-chip";
-import { Input } from "../../ui/input";
+import { Input, Label } from "../../ui/input";
 import { PageHeader, PageHeaderSkeleton } from "../../ui/page-header";
 import { AppText, AppView } from "../../ui/primitives";
 import { SearchInput } from "../../ui/search-input";
 import { Switch } from "../../ui/switch";
 import { Text } from "../../ui/text";
-import { WebText, WebView, webBoth, webText } from "../../ui/web-layout";
+import { useConfirmation } from "../../ui/use-confirmation";
+import { WebText, WebView, webBoth, webText, webView } from "../../ui/web-layout";
 import { useCloudProjects } from "../projects";
 import { routeParam } from "../read-helpers";
 import { ResourceError } from "../resource-error";
@@ -76,6 +98,7 @@ function VaultDetail({
 	const [requestOpen, setRequestOpen] = useState(false);
 	const [splitOpen, setSplitOpen] = useState(false);
 	const t = useI18n();
+	const confirmationDialog = useConfirmation();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { vault } = useMobileApi();
@@ -86,7 +109,10 @@ function VaultDetail({
 	const [section, setSection] = useState("");
 	const [draft, setDraft] = useState("");
 	const [replace, setReplace] = useState(false);
+	const [showSection, setShowSection] = useState(false);
 	const [targetId, setTargetId] = useState("");
+	const [transferMode, setTransferMode] = useState<"copy" | "move">("copy");
+	const [newVaultName, setNewVaultName] = useState("");
 	const [projectTargetId, setProjectTargetId] = useState("");
 	const [saved, setSaved] = useState(false);
 	const [selected, setSelected] = useState<VaultKeySelection[]>([]);
@@ -159,6 +185,20 @@ function VaultDetail({
 		).values(),
 	];
 	const destination = destinations.find((v) => v.id === targetId);
+	const newVaultSlug = slugFromVaultName(newVaultName);
+	const newVaultTaken = (targets.data?.pages.flatMap((page) => page.items) ?? []).some(
+		(item) => item.slug === newVaultSlug,
+	);
+	const creatingDestination = targetId === "__new__";
+	const canTransfer = Boolean(
+		destination ||
+			(creatingDestination &&
+				newVaultName.trim() &&
+				newVaultSlug &&
+				!newVaultTaken &&
+				!targets.hasNextPage &&
+				!targets.isFetching),
+	);
 	const refresh = async () => {
 		await Promise.all([
 			cache.invalidateQueries({ queryKey: accountQueryKey(scope, "vault-catalog") }),
@@ -172,18 +212,19 @@ function VaultDetail({
 		perform: (isCurrent: () => boolean) => Promise<void>,
 		destructive = false,
 		reportSuccess = true,
+		confirmLabel = title,
 	) => {
 		const visible = capture();
 		if (!writable || action.busy || !visible()) return;
 		const signal = scope.signal;
-		Alert.alert(title, warning, [
+		confirmationDialog.show(title, warning, [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
-				text: title,
+				text: confirmLabel,
 				style: destructive ? "destructive" : "default",
 				onPress: () => {
 					if (signal.aborted || !scope.isCurrent() || !visible()) return;
-					void action.run(async (isCurrent) => {
+					return action.run(async (isCurrent) => {
 						setSaved(false);
 						setTransferResult(undefined);
 						await perform(() => isCurrent() && visible());
@@ -206,8 +247,8 @@ function VaultDetail({
 	const remove = () => {
 		if (!identity) return;
 		confirm(
-			t("vault.remove"),
-			t("vault.removeWarning"),
+			`Delete ${current?.name ?? identity.slug}?`,
+			formCopy.deleteVaultDescription,
 			async (isCurrent) => {
 				await read((s) => vault.remove(identity, s));
 				if (!isCurrent()) return;
@@ -215,32 +256,46 @@ function VaultDetail({
 				if (isCurrent()) router.replace("/vault");
 			},
 			true,
+			true,
+			formCopy.deleteVault,
 		);
 	};
 	const transfer = (mode: "copy" | "move") => {
-		if (!identity || !destination || !selected.length || targets.isError) return;
+		if (!identity || !canTransfer || !selected.length || targets.isError) return;
 		const source = identity;
 		const target = destination;
+		const targetName = creatingDestination ? newVaultName.trim() : target?.name;
+		const targetSlug = newVaultSlug;
 		const keys = selected.filter((key) => sections.data?.[key.section]?.includes(key.name));
 		if (keys.length !== selected.length) return;
 		confirm(
 			t(mode === "move" ? "vault.moveSelected" : "vault.copySelected"),
-			`${keys.length} → ${target.name}\n\n${t(mode === "move" ? "vault.moveWarning" : "vault.selectedCopyWarning")}`,
+			`${keys.length} → ${targetName}\n\n${t(mode === "move" ? "vault.moveWarning" : "vault.selectedCopyWarning")}`,
 			async (isCurrent) => {
+				const resolvedTarget =
+					target ??
+					(await read((signal) =>
+						vault.create({ name: targetName ?? "", slug: targetSlug }, signal),
+					));
+				if (!isCurrent()) return;
+				if (!resolvedTarget.id || !resolvedTarget.slug || resolvedTarget.id === source.id)
+					throw new Error("Invalid destination");
 				const result = await transferVaultKeys(keys, mode, {
 					copy: (section, fields) =>
-						read((signal) => vault.copyItems(source, target, { section, fields }, signal)),
+						read((signal) => vault.copyItems(source, resolvedTarget, { section, fields }, signal)),
 					remove: (section, fields) =>
 						read((signal) => vault.deleteItems(source, { section, fields }, true, signal)),
 					isCurrent,
 				});
 				if (!isCurrent()) return;
 				setTransferResult(result);
+				setTransferOpen(false);
+				setNewVaultName("");
 				setSelected([]);
 				await Promise.all([
 					refresh(),
 					cache.invalidateQueries({
-						queryKey: accountQueryKey(scope, "vault-sections", target.id),
+						queryKey: accountQueryKey(scope, "vault-sections", resolvedTarget.id),
 					}),
 				]);
 			},
@@ -368,16 +423,24 @@ function VaultDetail({
 										<Icon as={Plus} />
 										<Text>{t("libraryPort.addKeys")}</Text>
 									</Button>
-									{selected.length ? (
-										<Button
-											className={webBoth(vaultDetailClasses.control)}
-											variant="outline"
-											size="sm"
-											onPress={() => setTransferOpen(true)}
-										>
-											<Text>Copy or move {selected.length}</Text>
-										</Button>
-									) : null}
+									{selected.length
+										? (["copy", "move"] as const).map((mode) => (
+												<Button
+													key={mode}
+													className={webBoth(vaultDetailClasses.control)}
+													variant="outline"
+													size="sm"
+													onPress={() => {
+														setTransferMode(mode);
+														setTargetId(destinations[0]?.id ?? "__new__");
+														setNewVaultName("");
+														setTransferOpen(true);
+													}}
+												>
+													<Text>{transferVaultKeysLabel(mode, selected.length)}</Text>
+												</Button>
+											))
+										: null}
 								</>
 							) : null}
 						</WebView>
@@ -419,8 +482,8 @@ function VaultDetail({
 														onPress={() => {
 															if (!identity) return;
 															confirm(
-																t("vault.deleteKey"),
-																`${key}\n\n${t("vault.deleteWarning")}`,
+																`Delete ${key}?`,
+																formCopy.deleteKeyDescription,
 																async (isCurrent) => {
 																	await read((s) =>
 																		vault.deleteItems(
@@ -544,24 +607,22 @@ function VaultDetail({
 							}
 						}}
 					>
-						<DialogContent>
+						<DialogContent
+							className={webView(addKeysDialogClasses.dialog)}
+							showCloseButton={!action.busy}
+						>
 							<DialogHeader>
-								<DialogTitle>{t("libraryPort.addKeys")}</DialogTitle>
+								<DialogTitle>{formCopy.addTitle}</DialogTitle>
+								<DialogDescription>
+									{`${formCopy.addDescriptionBefore}${formCopy.format}${formCopy.addDescriptionAfter}`}
+								</DialogDescription>
 							</DialogHeader>
 							<WebView recipe={vaultDetailClasses.section}>
 								<Input
-									accessibilityLabel={t("vault.section")}
-									placeholder={t("vault.section")}
-									value={section}
-									maxLength={200}
-									onChangeText={setSection}
-									editable={!action.busy}
-									autoCapitalize="none"
-									autoCorrect={false}
-								/>
-								<Input
 									accessibilityLabel={t("vault.importText")}
-									placeholder={t("vault.importText")}
+									placeholder={formCopy.placeholder}
+									className={webBoth(addKeysDialogClasses.textarea)}
+									style={{ minHeight: 168 }}
 									value={draft}
 									onChangeText={setDraft}
 									editable={!action.busy}
@@ -572,13 +633,30 @@ function VaultDetail({
 									autoComplete="off"
 									textContentType="none"
 								/>
-								<AppView className="flex-row items-center gap-2">
-									<Switch checked={replace} onCheckedChange={setReplace} disabled={action.busy} />
-									<Text>{t("vault.replace")}</Text>
-								</AppView>
+								<Button variant="ghost" size="sm" onPress={() => setShowSection(!showSection)}>
+									<Text>{t("vault.section")}</Text>
+								</Button>
+								{showSection ? (
+									<Input
+										accessibilityLabel={t("vault.section")}
+										placeholder={t("vault.section")}
+										value={section}
+										maxLength={200}
+										onChangeText={setSection}
+										editable={!action.busy}
+										autoCapitalize="none"
+										autoCorrect={false}
+									/>
+								) : null}
+								{preview.conflicts.length > 0 ? (
+									<AppView className="flex-row items-center gap-2">
+										<Switch checked={replace} onCheckedChange={setReplace} disabled={action.busy} />
+										<Label>{formCopy.overwrite}</Label>
+									</AppView>
+								) : null}
 								{draft ? (
 									<>
-										<AppText>{t("vault.preview")}</AppText>
+										<WebText recipe={addKeysDialogClasses.previewLabel}>{formCopy.preview}</WebText>
 										{preview.parsed.errors.length ||
 										!validSection ||
 										preview.importableRows.length > 200 ||
@@ -608,14 +686,21 @@ function VaultDetail({
 										</Button>
 									</>
 								) : null}
-								<Button
-									variant="default"
-									size="sm"
-									disabled={action.busy || !validImport}
-									onPress={importKeys}
-								>
-									<Text>{t("vault.import")}</Text>
-								</Button>
+								<DialogFooter>
+									<Button variant="ghost" disabled={action.busy} onPress={() => setAddOpen(false)}>
+										<Text>{t("account.cancel")}</Text>
+									</Button>
+									<Button
+										variant="default"
+										size="sm"
+										disabled={action.busy || !validImport}
+										onPress={importKeys}
+									>
+										<Text>
+											{formCopy.save} {preview.importableRows.length || ""}
+										</Text>
+									</Button>
+								</DialogFooter>
 								<Button variant="outline" onPress={() => setRequestOpen(true)}>
 									<Text>{t("vault.requestCreate")}</Text>
 								</Button>
@@ -628,21 +713,42 @@ function VaultDetail({
 							if (!action.busy) setTransferOpen(v);
 						}}
 					>
-						<DialogContent>
+						<DialogContent className={webView(copyKeysDialogClasses.dialog)}>
 							<DialogHeader>
-								<DialogTitle>{t("libraryPort.transferKeys")}</DialogTitle>
+								<DialogTitle>{transferVaultKeysTitle(transferMode, selected.length)}</DialogTitle>
+								<DialogDescription>
+									{transferMode === "move" ? formCopy.moveDescription : formCopy.copyDescription}
+								</DialogDescription>
 							</DialogHeader>
-							<WebView recipe={vaultDetailClasses.section}>
-								<AppText>{t("vault.copyTarget")}</AppText>
+							<WebView recipe={copyKeysDialogClasses.body}>
+								<Label>{formCopy.destination}</Label>
 								<ChoiceSelect
 									value={targetId}
 									onValueChange={setTargetId}
 									disabled={action.busy}
 									options={[
-										{ value: "", label: t("vault.chooseTarget") },
-										...destinations.map((v) => ({ value: v.id, label: `${v.name} (${v.slug})` })),
+										{ value: "", label: formCopy.chooseVault },
+										...destinations.map((v) => ({ value: v.id, label: v.name })),
+										{ value: "__new__", label: formCopy.createVault },
 									]}
 								/>
+								{creatingDestination ? (
+									<WebView recipe={copyKeysDialogClasses.newField}>
+										<Input
+											accessibilityLabel={formCopy.newVaultPlaceholder}
+											placeholder={formCopy.newVaultPlaceholder}
+											value={newVaultName}
+											onChangeText={setNewVaultName}
+											editable={!action.busy}
+											maxLength={200}
+										/>
+										{newVaultTaken ? (
+											<WebText recipe={copyKeysDialogClasses.newError}>
+												{formCopy.newVaultTaken}
+											</WebText>
+										) : null}
+									</WebView>
+								) : null}
 								{targets.isError ? (
 									<ResourceError missing={false} onRetry={() => void targets.refetch()} />
 								) : null}
@@ -656,34 +762,29 @@ function VaultDetail({
 										<Text>{t("vault.loadTargets")}</Text>
 									</Button>
 								) : null}
-								<AppText>
-									{t("vault.selectedCount")}: {selected.length}
-								</AppText>
+								{transferMode === "move" && current.project_ids.length > 1 ? (
+									<WebText recipe={copyKeysDialogClasses.warning}>
+										{vaultMoveWarning(current.name, current.project_ids.length)}
+									</WebText>
+								) : null}
+								{transferMode === "copy" ? (
+									<WebText
+										recipe={copyKeysDialogClasses.hint}
+									>{`${formCopy.referenceBefore}${formCopy.referenceAction}${formCopy.referenceAfter}`}</WebText>
+								) : null}
 								<Button
-									variant="outline"
-									size="sm"
-									disabled={action.busy || !selected.length}
-									onPress={() => setSelected([])}
+									className={webView(copyKeysDialogClasses.trigger)}
+									disabled={
+										action.busy ||
+										!canTransfer ||
+										targets.isError ||
+										!selected.length ||
+										selected.some((key) => !sections.data?.[key.section]?.includes(key.name))
+									}
+									onPress={() => transfer(transferMode)}
 								>
-									<Text>{t("vault.clearSelection")}</Text>
+									<Text>{transferVaultKeysLabel(transferMode, selected.length)}</Text>
 								</Button>
-								{(["copy", "move"] as const).map((mode) => (
-									<Button
-										variant="outline"
-										size="sm"
-										key={mode}
-										disabled={
-											action.busy ||
-											!destination ||
-											targets.isError ||
-											!selected.length ||
-											selected.some((key) => !sections.data?.[key.section]?.includes(key.name))
-										}
-										onPress={() => transfer(mode)}
-									>
-										<Text>{t(mode === "copy" ? "vault.copySelected" : "vault.moveSelected")}</Text>
-									</Button>
-								))}
 							</WebView>
 						</DialogContent>
 					</Dialog>
@@ -702,9 +803,10 @@ function VaultDetail({
 							<Button variant="outline" size="sm" onPress={() => setSplitOpen(true)}>
 								<Text>{t("vault.splitTitle")}</Text>
 							</Button>
-							<DialogContent>
+							<DialogContent className={webView(splitVaultDialogClasses.dialog)}>
 								<VaultSplit
 									source={identity}
+									sourceName={current.name}
 									keys={keyRows}
 									disabled={action.busy}
 									result={splitResult}
@@ -729,6 +831,7 @@ function VaultDetail({
 						: ""}
 				</Text>
 			) : null}
+			{confirmationDialog.dialog}
 		</LibraryPage>
 	);
 }

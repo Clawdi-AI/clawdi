@@ -6,17 +6,27 @@ import {
 	type VaultSplitResult,
 	validVaultSplit,
 } from "@clawdi/shared/api";
+import { splitVaultDialogClasses as styles } from "@clawdi/shared/ui";
+import {
+	splitVaultCopy as copy,
+	splitVaultRemoveLabel,
+	splitVaultSubmit,
+	splitVaultTitle,
+} from "@clawdi/shared/view";
 import { router } from "expo-router";
 import { useState } from "react";
 import { useI18n } from "../../i18n";
 import { Button } from "../../ui/button";
+import { Checkbox } from "../../ui/checkbox";
+import { DialogDescription, DialogHeader, DialogTitle } from "../../ui/dialog";
 import { Input } from "../../ui/input";
-import { AppText, AppView } from "../../ui/primitives";
-import { Switch } from "../../ui/switch";
+import { AppText } from "../../ui/primitives";
 import { Text } from "../../ui/text";
+import { WebText, WebView, webView } from "../../ui/web-layout";
 
 export function VaultSplit({
 	source,
+	sourceName = source.slug,
 	keys,
 	disabled,
 	result,
@@ -24,6 +34,7 @@ export function VaultSplit({
 	onReset,
 }: {
 	source: VaultIdentity;
+	sourceName?: string;
 	keys: VaultKeySelection[];
 	disabled: boolean;
 	result?: VaultSplitResult;
@@ -41,13 +52,23 @@ export function VaultSplit({
 	const valid = validVaultSplit(source, selected);
 	if (!groups.length && !result) return null;
 	return (
-		<AppView className="gap-3 rounded-xl bg-card p-4">
-			<AppText className="text-lg font-semibold text-foreground">{t("vault.splitTitle")}</AppText>
-			<AppText>{t("vault.splitDescription")}</AppText>
+		<WebView recipe={styles.body}>
+			<DialogHeader>
+				<DialogTitle>{splitVaultTitle(sourceName)}</DialogTitle>
+				<DialogDescription>
+					<Text>
+						{copy.descriptionBefore}
+						<WebText recipe={styles.mono}>{copy.prefixExample}</WebText>
+						{copy.descriptionBetween}
+						<WebText recipe={styles.mono}>{copy.keyExample}</WebText>
+						{copy.descriptionAfter}
+					</Text>
+				</DialogDescription>
+			</DialogHeader>
 			{result ? (
-				<AppView accessibilityRole="alert" className="gap-3">
+				<WebView recipe={styles.result} accessibilityRole="alert">
 					{result.groups.map((g) => (
-						<AppView key={g.prefix} className="gap-2">
+						<WebView key={g.prefix} recipe={styles.group}>
 							<AppText>
 								{g.prefix} → {g.slug} ·{" "}
 								{t(g.status === "complete" ? "vault.splitComplete" : "vault.splitIncomplete")}
@@ -81,9 +102,9 @@ export function VaultSplit({
 									<Text>{`${t("vault.open")}: ${g.slug}`}</Text>
 								</Button>
 							) : null}
-						</AppView>
+						</WebView>
 					))}
-					<AppText>{t("vault.splitInspect")}</AppText>
+					<AppText>{copy.inspect}</AppText>
 					<Button
 						variant="outline"
 						size="sm"
@@ -96,13 +117,13 @@ export function VaultSplit({
 					>
 						<Text>{t("vault.splitReset")}</Text>
 					</Button>
-				</AppView>
+				</WebView>
 			) : (
 				<>
 					{groups.map((g) => (
-						<AppView key={g.prefix} className="gap-2">
-							<AppView className="flex-row items-center gap-2">
-								<Switch
+						<WebView key={g.prefix} recipe={styles.group} className="flex-row">
+							<WebView recipe={styles.checkRow} className="flex-row flex-1">
+								<Checkbox
 									checked={!excluded.has(g.prefix)}
 									disabled={disabled}
 									onCheckedChange={(value) =>
@@ -114,9 +135,11 @@ export function VaultSplit({
 										})
 									}
 								/>
-								<Text>{`${g.prefix} · ${g.keys.length}`}</Text>
-							</AppView>
+								<WebText recipe={styles.prefix}>{g.prefix}</WebText>
+								<WebText recipe={styles.count}>{`${g.keys.length} keys →`}</WebText>
+							</WebView>
 							<Input
+								className="flex-1"
 								accessibilityLabel={`${t("vault.splitSlug")}: ${g.prefix}`}
 								value={slugs[g.prefix] ?? g.slug}
 								onChangeText={(slug) => setSlugs({ ...slugs, [g.prefix]: slug })}
@@ -125,27 +148,31 @@ export function VaultSplit({
 								autoCapitalize="none"
 								autoCorrect={false}
 							/>
-						</AppView>
+						</WebView>
 					))}
-					<AppView className="flex-row items-center gap-2">
-						<Switch
+					<WebView recipe={styles.checkRow} className="flex-row">
+						<Checkbox
 							checked={removeOriginals}
 							onCheckedChange={setRemoveOriginals}
 							disabled={disabled}
 						/>
-						<Text>{t("vault.splitRemove")}</Text>
-					</AppView>
-					{!valid ? <AppText accessibilityRole="alert">{t("vault.splitInvalid")}</AppText> : null}
+						<Text>{splitVaultRemoveLabel(sourceName)}</Text>
+					</WebView>
+					{!valid ? <AppText accessibilityRole="alert">{copy.invalid}</AppText> : null}
 					<Button
-						variant="outline"
-						size="sm"
+						className={webView(styles.submit)}
 						disabled={disabled || !valid}
 						onPress={() => onSubmit(selected, removeOriginals)}
 					>
-						<Text>{t("vault.splitTitle")}</Text>
+						<Text>
+							{splitVaultSubmit(
+								selected.reduce((sum, group) => sum + group.keys.length, 0),
+								selected.length,
+							)}
+						</Text>
 					</Button>
 				</>
 			)}
-		</AppView>
+		</WebView>
 	);
 }
