@@ -13,16 +13,26 @@ import { signInActionHref } from "@/lib/auth-redirect";
 
 const AccountDataContext = createContext<{
 	identity: string | null;
+	loading: boolean;
 	fallback: React.ReactNode;
-}>({ identity: null, fallback: <RouteLoadingSkeleton /> });
+}>({ identity: null, loading: true, fallback: <RouteLoadingSkeleton /> });
 
 export function useAccountDataIdentity() {
 	return useContext(AccountDataContext).identity;
 }
 
-export function AccountDataBoundary({ children }: { children: React.ReactNode }) {
-	const { identity, fallback } = useContext(AccountDataContext);
-	return identity ? <Fragment key={identity}>{children}</Fragment> : fallback;
+/** `loadingFallback` lets a route show its own skeleton while auth resolves,
+ * so the generic placeholder doesn't precede the page's skeleton. */
+export function AccountDataBoundary({
+	children,
+	loadingFallback,
+}: {
+	children: React.ReactNode;
+	loadingFallback?: React.ReactNode;
+}) {
+	const { identity, loading, fallback } = useContext(AccountDataContext);
+	if (identity) return <Fragment key={identity}>{children}</Fragment>;
+	return loading && loadingFallback ? loadingFallback : fallback;
 }
 
 // The admission result controls private regions, not the surrounding layout.
@@ -52,18 +62,24 @@ export function AccountSuspensionBoundary({
 	let fallback: React.ReactNode =
 		status === "loading" ? <RouteLoadingSkeleton /> : <AuthStatus status={status} />;
 	let admitted = identity;
+	let loading = status === "loading";
 	if (identity && (suspended || isAccountSuspendedError(access.error))) {
 		admitted = null;
+		loading = false;
 		fallback = <AccountAccessDeniedState suspended />;
 	} else if (identity && isApiAuthError(access.error)) {
 		admitted = null;
+		loading = false;
 		fallback = <AccountAccessDeniedState suspended={false} />;
 	} else if (identity && access.isError) {
 		admitted = null;
+		loading = false;
 		fallback = <AuthStatus status="unavailable" />;
 	}
 	return (
-		<AccountDataContext value={{ identity: admitted, fallback }}>{children}</AccountDataContext>
+		<AccountDataContext value={{ identity: admitted, loading, fallback }}>
+			{children}
+		</AccountDataContext>
 	);
 }
 
