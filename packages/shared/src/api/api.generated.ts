@@ -8233,9 +8233,16 @@ export interface components {
             /** Activecliversion */
             activeCliVersion: string | null;
             applied: components["schemas"]["HostedRuntimeObservedAppliedV2"] | null;
+            components?: components["schemas"]["HostedRuntimeObservedComponentsV1"] | null;
+            /** Truncated */
+            truncated?: boolean | null;
             skills?: components["schemas"]["HostedRuntimeObservedSkillsV1"] | null;
             agentPlugins: components["schemas"]["HostedRuntimeObservedAgentPluginsV1"] | null;
             userActivity: components["schemas"]["HostedRuntimeObservedUserActivityV1"] | null;
+            /** Error */
+            error?: string | null;
+            /** Convergeerror */
+            convergeError?: string | null;
             providerConflicts?: components["schemas"]["HostedRuntimeObservedProviderConflictsV1"] | null;
             serviceWithdrawals?: components["schemas"]["HostedRuntimeObservedServiceWithdrawalsV1"] | null;
         };

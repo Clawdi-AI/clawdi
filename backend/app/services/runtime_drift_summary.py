@@ -190,9 +190,13 @@ async def read_runtime_drift_summaries(
                         "active_cli_version"
                     ),
                     V2RuntimeObservationInbox.diagnostics["applied"].label("applied_diagnostics"),
+                    V2RuntimeObservationInbox.diagnostics["components"].label("components"),
+                    V2RuntimeObservationInbox.diagnostics["truncated"].label("truncated"),
                     V2RuntimeObservationInbox.diagnostics["skills"].label("skills"),
                     V2RuntimeObservationInbox.diagnostics["agentPlugins"].label("agent_plugins"),
                     V2RuntimeObservationInbox.diagnostics["userActivity"].label("user_activity"),
+                    V2RuntimeObservationInbox.diagnostics["error"].label("error"),
+                    V2RuntimeObservationInbox.diagnostics["convergeError"].label("converge_error"),
                     V2RuntimeObservationInbox.diagnostics["providerConflicts"].label(
                         "provider_conflicts"
                     ),
@@ -236,9 +240,13 @@ async def read_runtime_drift_summaries(
                         "diagnostics": {
                             "activeCliVersion": row.active_cli_version,
                             "applied": row.applied_diagnostics,
+                            "components": row.components,
+                            "truncated": row.truncated,
                             "skills": row.skills,
                             "agentPlugins": row.agent_plugins,
                             "userActivity": row.user_activity,
+                            "error": row.error,
+                            "convergeError": row.converge_error,
                             "providerConflicts": row.provider_conflicts,
                             "serviceWithdrawals": row.service_withdrawals,
                         },
