@@ -390,14 +390,21 @@ function Detail({ name }: { name?: string }) {
 					<EntityCardSkeleton />
 				) : (
 					<WebView recipe={connectorDetailClasses.toolList}>
-						{filteredTools.map((tool) => (
-							<WebView key={tool.name} recipe={connectorDetailClasses.toolRow}>
-								<WebText recipe={connectorDetailClasses.title}>
-									{tool.display_name || tool.name}
-								</WebText>
-								<WebText recipe={connectorDetailClasses.toolDescription}>
-									{tool.description}
-								</WebText>
+						{filteredTools.map((tool, index) => (
+							<WebView
+								key={tool.name}
+								recipe={`${connectorDetailClasses.toolRow} ${index ? "border-t" : ""}`}
+							>
+								<WebView recipe={connectorDetailClasses.toolBody}>
+									<WebView recipe={connectorDetailClasses.toolHeading}>
+										<WebText recipe={connectorDetailClasses.title}>
+											{tool.display_name || tool.name}
+										</WebText>
+									</WebView>
+									<WebText recipe={connectorDetailClasses.toolDescription}>
+										{tool.description}
+									</WebText>
+								</WebView>
 							</WebView>
 						))}
 					</WebView>
