@@ -15,35 +15,34 @@ wins unless the difference is a deliberate platform adaptation listed below.
   `@clawdi/shared/view`. Reuse them; do not re-derive Web logic in mobile.
   User-facing English copy must match the Web page verbatim.
 
-## Components
+## Components: reuse Web classes, do not retype them
 
-`src/ui/*` mirrors `apps/web/src/components/ui/*` with the same names, props
-and variant classes: `Card*`, `Button`, `Badge`, `StatusBadge`/`StatusDot`,
-`Separator`, `Skeleton`, `Alert`, `EmptyState`, `Input`/`Label`, `Avatar`,
-`Icon`. App-level Web components (`page-header`, `section-label`,
-`entity-card`, ...) are ported under `src/ui/` with the Web file name.
+Web class strings live once in `@clawdi/shared/ui` (`packages/shared/src/ui`).
+Web components import them; mobile renders the same strings through
+`resolveWebClasses` (`src/ui/web-classes.ts`):
 
-Porting a Web component or page:
+- state variants (`data-active:`, `group-data-[size=sm]/card:`, ...) resolve
+  against an explicit state map; `hover:` becomes `active:`; responsive
+  variants drop (the phone layout is the base layout);
+- utilities React Native cannot express drop; `ring` becomes `border`;
+- the result splits into view and text classes, because RN text does not
+  inherit (`TextClassContext` carries text classes to nested `Text`/`Icon`).
 
-1. Keep the JSX structure, order, copy and class names. Translate only what
-   React Native cannot express:
-   - `div`/`section` → `AppView`; text nodes → `Text` (every string must be
-     inside `Text`).
-   - Text styles do not cascade in RN. Containers that style text on Web
-     provide `TextClassContext` (see `Button`, `Card`, `Badge`).
-   - Default flex direction is `column`; add `flex-row` where Web relies on
-     `flex` being a row.
-   - `grid` → flex rows/wraps; `space-y-N` → `gap-N`; `hover:` → `active:`;
-     `ring-*` → `border`; drop `focus-visible:`, `group-*`, `has-*`, `[&_svg]`.
-   - Responsive prefixes: use the base (mobile) value. The phone layout of the
-     Web page at 390px is the reference.
-   - Icons: `<Icon as={LucideName} className="size-4 text-muted-foreground" />`
-     with the same lucide icon as Web.
-   - Links → `expo-router` navigation; dialogs/sheets/menus → native
-     equivalents (`Alert`, native menus, `@expo/ui`, modal routes).
-2. Put every string through the mobile i18n file, copying the Web English text.
-3. Lists use `FlatList`; screens use `ScrollView` + `RefreshControl` like the
-   existing read screens.
+`bun run theme` safelists every class reachable from `packages/shared/src/ui`
+so Uniwind compiles them; `scripts/theme.test.ts` fails when it is stale.
+
+Porting a Web component:
+
+1. Move its class strings / cva variants out of the Web file into
+   `packages/shared/src/ui/<web-file>.ts`; the Web component imports them and
+   renders byte-identical classes.
+2. Write the mobile wrapper with the same name and props, rendering those
+   shared strings via `resolveWebClasses`. Add only RN-structural classes
+   (e.g. `flex-row` for what DOM inline layout gives Web).
+3. Reuse view models and copy from `@clawdi/shared/view`; never re-derive.
+
+Pages follow the same rule: same JSX structure, order and copy as the Web
+page; class strings shared where the page defines its own.
 
 ## Platform adaptations (allowed differences)
 

@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "uniwind";
 @import "./theme.generated.css";
+@import "./web-classes.generated.css";
 
 /* Geist matches the Web font stack. React Native needs one family per weight. */
 @theme {

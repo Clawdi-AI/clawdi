@@ -1,3 +1,4 @@
+import { skeletonClassName } from "@clawdi/shared/ui";
 import { cn } from "cn";
 import { useEffect } from "react";
 import Animated, {
@@ -8,10 +9,11 @@ import Animated, {
 	withTiming,
 } from "react-native-reanimated";
 import { withUniwind } from "uniwind";
+import { resolveWebClasses } from "./web-classes";
 
 const AnimatedView = withUniwind(Animated.View);
 
-/** Mirrors apps/web/src/components/ui/skeleton.tsx (`animate-pulse`). */
+/** apps/web/src/components/ui/skeleton.tsx; Reanimated stands in for `animate-pulse`. */
 export function Skeleton({ className }: { className?: string }) {
 	const opacity = useSharedValue(1);
 	useEffect(() => {
@@ -23,7 +25,7 @@ export function Skeleton({ className }: { className?: string }) {
 		<AnimatedView
 			accessibilityElementsHidden
 			importantForAccessibility="no"
-			className={cn("rounded-md bg-muted", className)}
+			className={cn(resolveWebClasses(skeletonClassName).view, className)}
 			style={style}
 		/>
 	);

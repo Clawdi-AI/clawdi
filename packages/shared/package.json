@@ -14,7 +14,8 @@
 		"./x402": "./src/x402/index.ts",
 		"./api": "./src/api/index.ts",
 		"./qr": "./src/qr.ts",
-		"./style/theme.css": "./src/style/theme.css"
+		"./style/theme.css": "./src/style/theme.css",
+		"./ui": "./src/ui/index.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit",
@@ -35,7 +36,8 @@
 		"@x402/fetch": "2.27.0",
 		"openapi-fetch": "catalog:",
 		"uqr": "catalog:",
-		"viem": "catalog:"
+		"viem": "catalog:",
+		"class-variance-authority": "^0.7.1"
 	},
 	"devDependencies": {
 		"@types/bun": "catalog:",

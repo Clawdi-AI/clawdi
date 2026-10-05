@@ -1,11 +1,16 @@
+import { alertDescriptionClassName, alertTitleClassName, alertVariants } from "@clawdi/shared/ui";
 import { cn } from "cn";
 import type { LucideIcon } from "lucide-react-native";
 import type { ReactNode } from "react";
 import { Icon } from "./icon";
 import { Text, TextClassContext } from "./text";
 import { AppView } from "./view";
+import { resolveWebClasses } from "./web-classes";
 
-/** Mirrors apps/web/src/components/ui/alert.tsx (icon column + title/description). */
+/**
+ * apps/web/src/components/ui/alert.tsx from the same classes. Web lays the
+ * optional icon out as a grid column; here it is a row.
+ */
 export function Alert({
 	variant = "default",
 	icon,
@@ -19,29 +24,23 @@ export function Alert({
 	children?: ReactNode;
 	className?: string;
 }) {
-	const tone = variant === "destructive" ? "text-destructive" : "text-card-foreground";
+	const root = resolveWebClasses(alertVariants({ variant }));
+	const description = resolveWebClasses(alertDescriptionClassName).text;
 	return (
-		<TextClassContext.Provider value={cn("text-sm", tone)}>
-			<AppView
-				accessibilityRole="alert"
-				className={cn(
-					"w-full flex-row gap-2.5 rounded-lg border border-border bg-card px-4 py-3",
-					className,
-				)}
-			>
+		<TextClassContext.Provider value={root.text}>
+			<AppView accessibilityRole="alert" className={cn(root.view, "flex-row gap-2.5", className)}>
 				{icon ? (
 					<AppView className="pt-0.5">
-						<Icon as={icon} className={tone} />
+						<Icon as={icon} />
 					</AppView>
 				) : null}
 				<AppView className="min-w-0 flex-1 gap-0.5">
-					{title ? <Text className="font-medium">{title}</Text> : null}
+					{title ? (
+						<Text className={resolveWebClasses(alertTitleClassName).text}>{title}</Text>
+					) : null}
 					{children ? (
 						<TextClassContext.Provider
-							value={cn(
-								"text-sm",
-								variant === "destructive" ? "text-destructive/90" : "text-muted-foreground",
-							)}
+							value={cn(description, variant === "destructive" && "text-destructive/90")}
 						>
 							{typeof children === "string" ? <Text>{children}</Text> : children}
 						</TextClassContext.Provider>

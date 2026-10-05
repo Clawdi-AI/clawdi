@@ -191,6 +191,7 @@
         "@xterm/addon-fit": "catalog:",
         "@xterm/addon-web-links": "catalog:",
         "@xterm/xterm": "catalog:",
+        "class-variance-authority": "^0.7.1",
         "openapi-fetch": "catalog:",
         "remark-breaks": "catalog:",
         "remark-gfm": "catalog:",

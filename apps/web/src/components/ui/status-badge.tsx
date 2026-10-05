@@ -1,59 +1,15 @@
-import { cva, type VariantProps } from "class-variance-authority";
+import type { VariantProps } from "class-variance-authority"
 import type * as React from "react";
 
 import { cn } from "@/lib/utils";
+import { statusBadgeVariants, statusDotVariants as dotVariants, statusTextVariants } from "@clawdi/shared/ui";
 
 /* The one way to render a status chip. Maps to the semantic tokens in
  * packages/shared/src/style/theme.css — never hand-roll emerald/amber/rose
  * utilities for status colors (see DESIGN.md). */
 
-const statusBadgeVariants = cva(
-	"inline-flex w-fit shrink-0 items-center gap-1.5 rounded-sm px-1.5 py-0.5 text-xs font-medium whitespace-nowrap [&>svg]:pointer-events-none [&>svg]:size-3",
-	{
-		variants: {
-			status: {
-				success: "bg-success-muted text-success-muted-foreground",
-				warning: "bg-warning-muted text-warning-muted-foreground",
-				destructive: "bg-destructive-muted text-destructive-muted-foreground",
-				info: "bg-info-muted text-info-muted-foreground",
-				neutral: "bg-muted text-muted-foreground",
-			},
-		},
-		defaultVariants: {
-			status: "neutral",
-		},
-	},
-);
 
-const dotVariants = cva("size-1.5 shrink-0 rounded-full", {
-	variants: {
-		status: {
-			success: "bg-success",
-			warning: "bg-warning",
-			destructive: "bg-destructive",
-			info: "bg-info",
-			neutral: "bg-muted-foreground",
-		},
-	},
-	defaultVariants: {
-		status: "neutral",
-	},
-});
 
-const statusTextVariants = cva("", {
-	variants: {
-		status: {
-			success: "text-muted-foreground",
-			warning: "text-warning-muted-foreground font-medium",
-			destructive: "text-destructive-muted-foreground font-medium",
-			info: "text-info-muted-foreground",
-			neutral: "text-muted-foreground",
-		},
-	},
-	defaultVariants: {
-		status: "neutral",
-	},
-});
 
 type StatusTone = NonNullable<VariantProps<typeof statusBadgeVariants>["status"]>;
 

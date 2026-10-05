@@ -1,33 +1,33 @@
+import { inputClassName, labelClassName, textareaClassName } from "@clawdi/shared/ui";
 import { cn } from "cn";
 import { forwardRef } from "react";
 import type { TextInput, TextInputProps } from "react-native";
 import { useCSSVariable } from "uniwind";
 import { Text } from "./text";
 import { AppTextInput } from "./view";
+import { resolveWebClasses } from "./web-classes";
 
 type InputProps = TextInputProps & { className?: string };
 
-/** Mirrors apps/web/src/components/ui/input.tsx. */
+/** apps/web/src/components/ui/input.tsx and textarea.tsx, from the same classes. */
 export const Input = forwardRef<TextInput, InputProps>(function Input(
 	{ className, ...props },
 	ref,
 ) {
 	const placeholder = useCSSVariable("--color-muted-foreground");
+	const classes = resolveWebClasses(props.multiline ? textareaClassName : inputClassName);
 	return (
 		<AppTextInput
 			ref={ref}
 			placeholderTextColor={typeof placeholder === "string" ? placeholder : undefined}
-			className={cn(
-				"h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-2.5 py-1 font-normal text-base text-foreground shadow-xs focus:border-ring disabled:opacity-50 dark:bg-input/30",
-				props.multiline && "h-auto min-h-16 py-2",
-				className,
-			)}
+			textAlignVertical={props.multiline ? "top" : "center"}
+			className={cn(classes.view, "font-normal text-foreground", classes.text, className)}
 			{...props}
 		/>
 	);
 });
 
-/** Mirrors apps/web/src/components/ui/label.tsx. */
+/** apps/web/src/components/ui/label.tsx. */
 export function Label({ className, ...props }: React.ComponentProps<typeof Text>) {
-	return <Text className={cn("text-sm leading-none font-medium", className)} {...props} />;
+	return <Text className={cn(resolveWebClasses(labelClassName).text, className)} {...props} />;
 }
