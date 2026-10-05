@@ -739,7 +739,14 @@ function VaultDetail({
 									{vaultImportDetectedCount(preview.parsed.entries.length, preview.summary.skipped)}
 								</WebText>
 								<DialogFooter>
-									<Button variant="ghost" disabled={action.busy} onPress={() => setAddOpen(false)}>
+									<Button
+										variant="ghost"
+										disabled={action.busy}
+										onPress={() => {
+											setAddOpen(false);
+											setDraft("");
+										}}
+									>
 										<Text>{t("account.cancel")}</Text>
 									</Button>
 									<Button
