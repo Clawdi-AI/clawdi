@@ -14,6 +14,7 @@ import type { ReactNode } from "react";
 import type { Subscription } from "../../features/billing/helpers";
 import { useI18n } from "../../i18n";
 import { AgentFrameworkIcon } from "../agent-framework-icon";
+import { useDashboardAgents } from "../dashboard/use-dashboard-agents";
 import { EntityCardChassis } from "../entity-card";
 import { StatusBadge } from "../status-badge";
 import { Text } from "../text";
@@ -29,7 +30,12 @@ export function ComputeSubscriptionCard({
 	notice?: ReactNode;
 }) {
 	const t = useI18n();
-	const identity = agentIdentity({ name: item.agent_name, agent_type: null });
+	const inventory = useDashboardAgents();
+	const deployment = inventory.inventory.data?.find(
+		(entry) => entry.resource.id === item.deployment_id,
+	);
+	const agent = inventory.tiles.find((tile) => tile.id === deployment?.agent_id);
+	const identity = agentIdentity({ name: item.agent_name, agent_type: agent?.agentType ?? null });
 	const lifecycle = computeSubscriptionLifecycle(item);
 	const view = computeSubscriptionCardView({
 		status: { label: lifecycle.badgeLabel, tone: lifecycle.badgeTone },
@@ -69,7 +75,7 @@ export function ComputeSubscriptionCard({
 					<WebView recipe={styles.identity}>
 						<WebView recipe={agentLabelClasses.root}>
 							<AgentFrameworkIcon
-								agent={null}
+								agent={agent?.agentType}
 								pixelSize={24}
 								boxClassName={webView(
 									`${agentIconSizeClasses.md} ${agentIconRadiusClasses.rounded}`,

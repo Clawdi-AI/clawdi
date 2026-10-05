@@ -13,7 +13,7 @@ export function Icon({
 	as: Component,
 	className,
 	strokeWidth = 1.75,
-	fill,
+	fill = "none",
 }: {
 	as: LucideIcon;
 	className?: string;
