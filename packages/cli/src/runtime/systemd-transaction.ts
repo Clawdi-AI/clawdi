@@ -102,6 +102,17 @@ function systemdUnitFingerprint(
 		.digest("hex");
 }
 
+function systemdEffectiveDirectives(contents: string): string {
+	// Systemd ignores blank lines and full-line comments. Compare the parsed
+	// section/directive stream so a renderer-only comment change is repaired by
+	// daemon-reload without turning a management handoff into a restart.
+	return contents
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0 && !line.startsWith("#"))
+		.join("\n");
+}
+
 function readManagedSystemdUnits(
 	paths: ReturnType<typeof getRuntimePaths>,
 	root: string,
@@ -126,7 +137,11 @@ function readManagedSystemdUnits(
 			systemdUnitFingerprint(
 				paths,
 				entry.unitName,
-				`${base}\n${entry.generatedContents}`,
+				`${base}\n${systemdEffectiveDirectives(
+					includeOomProtection
+						? entry.generatedContents
+						: withoutOomProtection(entry.generatedContents),
+				)}`,
 				includeOomProtection,
 			),
 		);

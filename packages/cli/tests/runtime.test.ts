@@ -8453,7 +8453,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			},
 		});
 	});
-	it("hands off a CLI update and restarts changed daemon and tenant unit bytes", async () => {
+	it("hands off a CLI update without restarting a tenant for repaired unit drift", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -8664,7 +8664,7 @@ chmod +x "$prefix/bin/clawdi"
 			expect(completedEvent.systemdApply).toEqual({
 				applied: true,
 				systemUnitsChanged: ["clawdi-daemon.service"],
-				userUnitsChanged: ["openclaw-gateway.service"],
+				userUnitsChanged: [],
 			});
 			const completedAppliedState = readRuntimeAppliedState(paths);
 			expect(completedAppliedState).toMatchObject({
@@ -8683,12 +8683,7 @@ chmod +x "$prefix/bin/clawdi"
 						call,
 					),
 				);
-			expect(activationCalls).toEqual([
-				"daemon-reload",
-				"--user daemon-reload",
-				"restart clawdi-daemon.service",
-				"--user restart openclaw-gateway.service",
-			]);
+			expect(activationCalls).toEqual(["daemon-reload", "restart clawdi-daemon.service"]);
 			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
 				"restart clawdi-runtime-watch.service",
 			);
