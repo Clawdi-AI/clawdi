@@ -9,12 +9,19 @@ interface WorkflowDocument {
 }
 
 interface WorkflowStep {
+	id?: string;
 	name?: string;
 	uses?: string;
 	with?: Record<string, unknown>;
 }
 
 const workflowsDirectory = resolve(import.meta.dir, "../../../.github/workflows");
+const workflows = readdirSync(workflowsDirectory)
+	.filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
+	.map((name) => ({
+		name,
+		workflow: parse(readFileSync(resolve(workflowsDirectory, name), "utf8")) as WorkflowDocument,
+	}));
 const clientWorkflow = parse(
 	readFileSync(resolve(workflowsDirectory, "client-ci.yml"), "utf8"),
 ) as WorkflowDocument;
@@ -39,22 +46,56 @@ function isDockerBuildAction(step: WorkflowStep): boolean {
 
 describe("Docker build workflow contract", () => {
 	test("disables build record artifact uploads for every Docker build action", () => {
-		const buildWorkflows = readdirSync(workflowsDirectory)
-			.filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
-			.map((name) => ({
-				name,
-				workflow: parse(
-					readFileSync(resolve(workflowsDirectory, name), "utf8"),
-				) as WorkflowDocument,
-			}))
-			.filter(({ workflow }) =>
-				Object.values(workflow.jobs ?? {}).some((job) => job.steps?.some(isDockerBuildAction)),
-			);
+		const buildWorkflows = workflows.filter(({ workflow }) =>
+			Object.values(workflow.jobs ?? {}).some((job) => job.steps?.some(isDockerBuildAction)),
+		);
 
 		expect(buildWorkflows.length).toBeGreaterThan(0);
 		for (const { name, workflow } of buildWorkflows) {
 			expect(workflow.env?.DOCKER_BUILD_RECORD_UPLOAD, name).toBe("false");
 		}
+	});
+
+	test("passes the shared mirror configuration to every Buildx builder before builds", () => {
+		for (const { name, workflow } of workflows) {
+			for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
+				const steps = job.steps ?? [];
+				for (const [index, step] of steps.entries()) {
+					if (!step.uses?.startsWith("docker/setup-buildx-action@")) continue;
+					const mirror = steps.findIndex(
+						(candidate) => candidate.uses === "./.github/actions/setup-docker-hub-mirror",
+					);
+					const context = `${name}:${jobName}`;
+					expect(mirror, context).toBeGreaterThanOrEqual(0);
+					expect(mirror, context).toBeLessThan(index);
+					expect(step.with?.["buildkitd-config-inline"], context).toBe(
+						`\${{ steps.${steps[mirror]?.id}.outputs.buildkitd-config-inline }}`,
+					);
+					const build = steps.findIndex(isDockerBuildAction);
+					if (build >= 0) expect(index, context).toBeLessThan(build);
+				}
+			}
+		}
+	});
+
+	test.each([
+		["backend-ci.yml", "sidecar", "Kamal 2.12 render contract"],
+		["clean-test-runner-ci.yml", "docker-runner", "Clean runner CI profile"],
+		["client-ci.yml", "whatsapp-native-e2e", "Test stock OpenClaw and Hermes WhatsApp plugins"],
+		["cli-systemd-e2e.yml", "privileged-systemd-e2e", "Test systemd command failure boundaries"],
+		[
+			"hermes-upstream-contract.yml",
+			"contract",
+			"Run adapter contract against the latest official Hermes install",
+		],
+	])("configures the daemon before container scripts in %s:%s", (name, jobName, containerStep) => {
+		const workflow = workflows.find((entry) => entry.name === name)?.workflow;
+		const steps = workflow?.jobs?.[jobName]?.steps ?? [];
+		const mirror = steps.findIndex(
+			(step) => step.uses === "./.github/actions/setup-docker-hub-mirror",
+		);
+		expect(mirror).toBeGreaterThanOrEqual(0);
+		expect(mirror).toBeLessThan(steps.findIndex((step) => step.name === containerStep));
 	});
 
 	test("builds and loads the production sidecar through cached Buildx", () => {

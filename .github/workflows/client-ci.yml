@@ -33,6 +33,7 @@ on:
       - "tsconfig.base.json"
       - "biome.json"
       - ".github/actions/setup-bun-ci/**"
+      - ".github/actions/setup-docker-hub-mirror/**"
       - ".github/workflows/client-ci.yml"
   push:
     branches: [main]
@@ -67,6 +68,7 @@ on:
       - "tsconfig.base.json"
       - "biome.json"
       - ".github/actions/setup-bun-ci/**"
+      - ".github/actions/setup-docker-hub-mirror/**"
       - ".github/workflows/client-ci.yml"
   schedule:
     - cron: "17 6 * * *"
@@ -171,6 +173,7 @@ jobs:
               - "bun.lock"
               - "patches/libsignal@6.0.0.patch"
               - ".github/workflows/client-ci.yml"
+              - ".github/actions/setup-docker-hub-mirror/**"
 
   # Keep one stable client check while routing package work through the actual
   # workspace dependency edges. Shared changes fan out to Web and CLI.
@@ -339,6 +342,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      - name: Set up Docker Hub mirror
+        id: docker-hub-mirror
+        uses: ./.github/actions/setup-docker-hub-mirror
       - name: Check Docker availability
         run: docker version
       - name: Restore pinned upstream artifacts
@@ -360,11 +366,7 @@ jobs:
           key: managed-whatsapp-native-e2e-artifacts-v1-${{ hashFiles('packages/cli/tests/fixtures/managed-whatsapp-native-e2e/versions.env') }}
       - uses: docker/setup-buildx-action@v4
         with:
-          # Docker Hub rate-limits anonymous CI pulls; mirror.gcr.io serves cached
-          # Docker Hub images and BuildKit falls back to Docker Hub on a miss.
-          buildkitd-config-inline: |
-            [registry."docker.io"]
-              mirrors = ["mirror.gcr.io"]
+          buildkitd-config-inline: ${{ steps.docker-hub-mirror.outputs.buildkitd-config-inline }}
       - name: Build stock OpenClaw and Hermes WhatsApp E2E images
         uses: docker/bake-action@v7
         env:

@@ -1,0 +1,58 @@
+name: Setup Docker Hub mirror
+description: Use mirror.gcr.io for CI Docker Hub pulls, with Docker Hub fallback on cache misses
+
+outputs:
+  buildkitd-config-inline:
+    description: Registry mirror configuration for docker/setup-buildx-action
+    value: ${{ steps.buildkit.outputs.config }}
+
+runs:
+  using: composite
+  steps:
+    - name: Configure Docker Hub mirror on Linux
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo install -d /etc/docker
+        sudo python3 - <<'PY'
+        import json
+        from pathlib import Path
+
+        path = Path("/etc/docker/daemon.json")
+        config = json.loads(path.read_text()) if path.exists() else {}
+        if not isinstance(config, dict):
+            raise SystemExit("Docker daemon configuration must be a JSON object")
+        mirrors = config.get("registry-mirrors", [])
+        if not isinstance(mirrors, list) or any(not isinstance(item, str) for item in mirrors):
+            raise SystemExit("Docker registry-mirrors must be an array of strings")
+        mirror = "https://mirror.gcr.io"
+        config["registry-mirrors"] = [mirror, *(item for item in mirrors if item != mirror)]
+        path.write_text(json.dumps(config, indent=2) + "\n")
+        PY
+
+        timeout 60s sudo systemctl restart docker
+        for attempt in {1..30}; do
+          if mirrors=$(timeout 5s docker info --format '{{json .RegistryConfig.Mirrors}}' 2>/dev/null) &&
+            python3 -c 'import json, sys; sys.exit(0 if "https://mirror.gcr.io" in [item.rstrip("/") for item in json.loads(sys.argv[1])] else 1)' "$mirrors"; then
+            echo "Docker Hub mirror is active"
+            break
+          fi
+          if [[ "$attempt" == 30 ]]; then
+            echo "Docker did not report https://mirror.gcr.io after restart" >&2
+            exit 1
+          fi
+          sleep 2
+        done
+
+    - name: Export BuildKit mirror configuration
+      id: buildkit
+      shell: bash
+      run: |
+        set -euo pipefail
+        cat >> "$GITHUB_OUTPUT" <<'CONFIG'
+        config<<BUILDKIT_CONFIG
+        [registry."docker.io"]
+          mirrors = ["mirror.gcr.io"]
+        BUILDKIT_CONFIG
+        CONFIG

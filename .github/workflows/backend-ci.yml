@@ -27,6 +27,7 @@ on:
       - "scripts/check_postgres_image_parity.py"
       - "tools/openapi-typescript/**"
       - ".github/actions/setup-bun-ci/**"
+      - ".github/actions/setup-docker-hub-mirror/**"
       - ".github/workflows/backend-ci.yml"
       - ".github/workflows/clawdi-image-release.yml"
   push:
@@ -56,6 +57,7 @@ on:
       - "scripts/check_postgres_image_parity.py"
       - "tools/openapi-typescript/**"
       - ".github/actions/setup-bun-ci/**"
+      - ".github/actions/setup-docker-hub-mirror/**"
       - ".github/workflows/backend-ci.yml"
       - ".github/workflows/clawdi-image-release.yml"
 
@@ -137,6 +139,7 @@ jobs:
               - "patches/libsignal@6.0.0.patch"
               - ".dockerignore"
               - ".github/actions/setup-bun-ci/**"
+              - ".github/actions/setup-docker-hub-mirror/**"
               - ".github/workflows/backend-ci.yml"
               - ".github/workflows/clawdi-image-release.yml"
   lint-and-typecheck:
@@ -255,6 +258,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - name: Set up Docker Hub mirror
+        id: docker-hub-mirror
+        uses: ./.github/actions/setup-docker-hub-mirror
       - uses: ./.github/actions/setup-bun-ci
       - name: Sidecar typecheck and tests
         run: |
@@ -285,11 +291,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
         with:
-          # Docker Hub rate-limits anonymous CI pulls; mirror.gcr.io serves cached
-          # Docker Hub images and BuildKit falls back to Docker Hub on a miss.
-          buildkitd-config-inline: |
-            [registry."docker.io"]
-              mirrors = ["mirror.gcr.io"]
+          buildkitd-config-inline: ${{ steps.docker-hub-mirror.outputs.buildkitd-config-inline }}
       - name: Build production sidecar image
         uses: docker/build-push-action@v7
         with:

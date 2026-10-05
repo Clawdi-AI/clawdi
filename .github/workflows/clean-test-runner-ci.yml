@@ -80,6 +80,7 @@ on:
       - "backend/tests/test_smoke.py"
       - "backend/scripts/check_postgres_runtime.py"
       - ".github/workflows/clean-test-runner-ci.yml"
+      - ".github/actions/setup-docker-hub-mirror/**"
   push:
     branches: [main]
     paths:
@@ -150,6 +151,7 @@ on:
       - "backend/tests/test_smoke.py"
       - "backend/scripts/check_postgres_runtime.py"
       - ".github/workflows/clean-test-runner-ci.yml"
+      - ".github/actions/setup-docker-hub-mirror/**"
 
 permissions:
   contents: read
@@ -171,6 +173,9 @@ jobs:
       CLAWDI_TEST_RUNNER_SKIP_BUILD: "1"
     steps:
       - uses: actions/checkout@v7
+      - name: Set up Docker Hub mirror
+        id: docker-hub-mirror
+        uses: ./.github/actions/setup-docker-hub-mirror
       - name: Check Docker availability
         run: |
           docker version
@@ -180,11 +185,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
         with:
-          # Docker Hub rate-limits anonymous CI pulls; mirror.gcr.io serves cached
-          # Docker Hub images and BuildKit falls back to Docker Hub on a miss.
-          buildkitd-config-inline: |
-            [registry."docker.io"]
-              mirrors = ["mirror.gcr.io"]
+          buildkitd-config-inline: ${{ steps.docker-hub-mirror.outputs.buildkitd-config-inline }}
       - name: Build cached test runner image
         uses: docker/build-push-action@v7
         with:
