@@ -164,7 +164,7 @@ are the preserved A boundary or the narrow C naming described above.
 ```text
 backend/tests/test_channel_debug_events.py
 backend/tests/test_channel_inbox.py
-backend/tests/test_channels.py
+backend/tests/test_channels_*.py
 backend/tests/test_whatsapp_baileys.py
 backend/tests/test_whatsapp_native_transport.py
 backend/tests/test_whatsapp_noise.py

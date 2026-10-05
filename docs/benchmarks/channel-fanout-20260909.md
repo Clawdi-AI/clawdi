@@ -18,7 +18,7 @@ It builds no image and does not remove shared images.
 
 The measurement reuses the committed PostgreSQL lane, paired Discord account,
 strict runtime state, real Uvicorn TCP WebSockets and shared advisory session
-from `tests/test_channels.py`. External Discord metadata is a synthetic provider
+from `tests/test_channels_*.py`. External Discord metadata is a synthetic provider
 fixture. No HTTP/TLS/provider latency is included. Authorization, dequeue SQL,
 Link filters and sequence acknowledgements are real. No mocked global scan or
 altered dequeue results are used.
