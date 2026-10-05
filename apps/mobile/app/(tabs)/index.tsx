@@ -55,7 +55,7 @@ export default function HomeRoute() {
 		>
 			<AppView className="flex-1 gap-6 px-6 pb-10 pt-8">
 				<AppView className="gap-1">
-					<AppText className="text-base text-muted">{t("home.greeting")}</AppText>
+					<AppText className="text-base text-muted-foreground">{t("home.greeting")}</AppText>
 					<AppText className="text-3xl font-semibold text-foreground">
 						{isLoaded && displayName ? displayName : t("app.name")}
 					</AppText>
@@ -66,7 +66,7 @@ export default function HomeRoute() {
 					<ErrorState onRetry={stats.isFetching ? undefined : () => void stats.refetch()} />
 				) : null}
 				{stats.data ? (
-					<AppView className="gap-3 rounded-3xl bg-surface p-5">
+					<AppView className="gap-3 rounded-3xl bg-card p-5">
 						<AppText className="text-lg font-semibold text-foreground">
 							{t("home.statsTitle")}
 						</AppText>
@@ -87,8 +87,10 @@ export default function HomeRoute() {
 					) : agents.data?.length ? (
 						agents.data.slice(0, 3).map((agent) => <AgentRow agent={agent} key={agent.id} />)
 					) : (
-						<AppView className="rounded-3xl bg-surface p-5">
-							<AppText className="text-base leading-6 text-muted">{t("agents.empty")}</AppText>
+						<AppView className="rounded-3xl bg-card p-5">
+							<AppText className="text-base leading-6 text-muted-foreground">
+								{t("agents.empty")}
+							</AppText>
 						</AppView>
 					)}
 				</AppView>
@@ -103,8 +105,10 @@ export default function HomeRoute() {
 							.slice(0, 3)
 							.map((session) => <SessionRow key={session.id} session={session} />)
 					) : (
-						<AppView className="rounded-3xl bg-surface p-5">
-							<AppText className="text-base leading-6 text-muted">{t("sessions.empty")}</AppText>
+						<AppView className="rounded-3xl bg-card p-5">
+							<AppText className="text-base leading-6 text-muted-foreground">
+								{t("sessions.empty")}
+							</AppText>
 						</AppView>
 					)}
 				</AppView>
@@ -117,7 +121,7 @@ function Stat({ label, value }: { label: string; value: number }) {
 	return (
 		<AppView className="flex-1 gap-1">
 			<AppText className="text-2xl font-semibold text-foreground">{value}</AppText>
-			<AppText className="text-sm text-muted">{label}</AppText>
+			<AppText className="text-sm text-muted-foreground">{label}</AppText>
 		</AppView>
 	);
 }

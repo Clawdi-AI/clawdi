@@ -225,7 +225,7 @@ function WorkspaceSkills({ id }: { id: string }) {
 						maxLength={2048}
 						accessibilityLabel={t("workspaceSkills.source")}
 						placeholder={t("workspaceSkills.source")}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 					/>
 					<NativeButton
 						label={t("workspaceSkills.install")}
@@ -350,7 +350,7 @@ function WorkspaceSkillItem({
 			}, signal),
 	});
 	return (
-		<AppView className="gap-3 rounded-xl bg-surface p-4">
+		<AppView className="gap-3 rounded-xl bg-card p-4">
 			<AppText>{item.skill_key}</AppText>
 			<AppText>{t(`workspaceSkills.${item.status}`)}</AppText>
 			<AppText selectable>

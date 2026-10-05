@@ -118,7 +118,7 @@ function DeviceSessions() {
 				<NativeButton label={t("devices.refresh")} disabled={action.busy} onPress={refresh} />
 				{sessions === null ? <AppText>{t("devices.loadHint")}</AppText> : null}
 				{sessions?.map((session) => (
-					<AppView key={session.id} className="gap-2 rounded-xl bg-surface p-4">
+					<AppView key={session.id} className="gap-2 rounded-xl bg-card p-4">
 						<AppText>
 							{[
 								session.latestActivity.deviceType,

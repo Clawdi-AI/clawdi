@@ -198,7 +198,7 @@ function SharingView({ project }: { project: Project }) {
 						autoCorrect={false}
 						keyboardType="email-address"
 						editable={!action.busy}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 					/>
 					<NativeButton
 						label={t("sharing.invite")}
@@ -212,7 +212,7 @@ function SharingView({ project }: { project: Project }) {
 						onChangeText={setLabel}
 						maxLength={200}
 						editable={!action.busy}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 					/>
 					<NativeButton
 						label={t("sharing.createLink")}
@@ -255,7 +255,7 @@ function SharingView({ project }: { project: Project }) {
 				</AppView>
 			}
 			renderItem={(row) => (
-				<AppView className="gap-2 rounded-2xl bg-surface p-4">
+				<AppView className="gap-2 rounded-2xl bg-card p-4">
 					{row.kind === "link" ? (
 						<>
 							<AppText>

@@ -43,7 +43,7 @@ export function SignupDetailsForm({
 								? "phone-pad"
 								: "default"
 					}
-					className="rounded-2xl bg-surface px-4 py-4 text-base text-foreground"
+					className="rounded-2xl bg-card px-4 py-4 text-base text-foreground"
 				/>
 			))}
 		</AppView>

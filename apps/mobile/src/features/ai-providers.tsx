@@ -103,14 +103,14 @@ function ProviderRow({
 	const action = useAuthAction(scope.identity);
 	const [valid, setValid] = useState<{ revision: string; value: boolean } | null>(null);
 	return (
-		<AppView className="gap-3 rounded-2xl bg-surface p-4">
+		<AppView className="gap-3 rounded-2xl bg-card p-4">
 			<AppText className="text-lg font-semibold text-foreground">
 				{provider.label || provider.provider_id}
 			</AppText>
-			<AppText selectable className="text-sm text-muted">
+			<AppText selectable className="text-sm text-muted-foreground">
 				{provider.provider_id} · {provider.native_provider ?? provider.type}
 			</AppText>
-			<AppText className="text-sm text-muted">
+			<AppText className="text-sm text-muted-foreground">
 				{t(provider.usable ? "providers.credentialPresent" : "providers.credentialMissing")}
 			</AppText>
 			<ProviderEdit key={provider.updated_at} provider={provider} refresh={refresh} />

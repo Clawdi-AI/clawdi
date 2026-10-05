@@ -227,7 +227,7 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 							accessibilityLabel={t("skillArchive.key")}
 							placeholder={t("skillArchive.key")}
 							maxLength={200}
-							className="rounded-xl bg-surface p-3 text-foreground"
+							className="rounded-xl bg-card p-3 text-foreground"
 						/>
 					</>
 				) : (

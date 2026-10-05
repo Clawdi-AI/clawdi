@@ -49,7 +49,7 @@ export function TimelineRow({
 		row.kind === "message" && "position" in row.message ? row.message.position : undefined;
 	return (
 		<AppView
-			className={`gap-2 rounded-2xl p-4 ${highlighted ? "border-2 border-primary bg-surface" : "bg-surface"}`}
+			className={`gap-2 rounded-2xl p-4 ${highlighted ? "border-2 border-primary bg-card" : "bg-card"}`}
 		>
 			{highlighted ? <AppText accessibilityRole="header">{t("timeline.current")}</AppText> : null}
 			<AppText className="text-base font-semibold text-foreground">
@@ -58,7 +58,7 @@ export function TimelineRow({
 					: (row.call?.name ?? row.result?.name ?? t("timeline.tool"))}
 			</AppText>
 			{formatDate(timestamp) ? (
-				<AppText className="text-sm text-muted">{formatDate(timestamp)}</AppText>
+				<AppText className="text-sm text-muted-foreground">{formatDate(timestamp)}</AppText>
 			) : null}
 			{row.kind === "message" ? (
 				<>

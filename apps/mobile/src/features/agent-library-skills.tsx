@@ -133,7 +133,7 @@ function AgentLibrarySkills({ id }: { id: string }) {
 				more={library.hasNextPage}
 				onMore={() => void library.fetchNextPage()}
 				renderItem={(item) => (
-					<AppView className="gap-3 rounded-2xl bg-surface p-4">
+					<AppView className="gap-3 rounded-2xl bg-card p-4">
 						<AppText className="text-lg text-foreground">{item.name}</AppText>
 						<AppText>{item.description}</AppText>
 						<NativeButton
@@ -158,7 +158,7 @@ function AgentLibrarySkills({ id }: { id: string }) {
 			error={!id || inventory.isError}
 			busy={inventory.isFetching}
 			renderItem={(item) => (
-				<AppView className="gap-3 rounded-2xl bg-surface p-4">
+				<AppView className="gap-3 rounded-2xl bg-card p-4">
 					<AppText className="text-lg text-foreground">{item.name}</AppText>
 					<AppText>
 						{item.source} ·{" "}

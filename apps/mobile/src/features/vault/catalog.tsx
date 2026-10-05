@@ -96,7 +96,7 @@ function VaultCatalog({ project }: { project?: Project }) {
 						value={search}
 						onChangeText={setSearch}
 						maxLength={200}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 					/>
 					<NativeButton label={t("vault.searchAction")} onPress={() => setQuery(search.trim())} />
 					{canCreate ? (
@@ -111,7 +111,7 @@ function VaultCatalog({ project }: { project?: Project }) {
 								}}
 								maxLength={200}
 								editable={!action.busy}
-								className="rounded-xl bg-surface p-3 text-foreground"
+								className="rounded-xl bg-card p-3 text-foreground"
 							/>
 							<AppTextInput
 								accessibilityLabel={t("vault.slug")}
@@ -122,7 +122,7 @@ function VaultCatalog({ project }: { project?: Project }) {
 								autoCapitalize="none"
 								autoCorrect={false}
 								editable={!action.busy}
-								className="rounded-xl bg-surface p-3 text-foreground"
+								className="rounded-xl bg-card p-3 text-foreground"
 							/>
 							<NativeButton
 								label={t("vault.create")}
@@ -137,12 +137,12 @@ function VaultCatalog({ project }: { project?: Project }) {
 				</AppView>
 			}
 			renderItem={(item) => (
-				<AppView className="gap-2 rounded-xl bg-surface p-4">
+				<AppView className="gap-2 rounded-xl bg-card p-4">
 					<AppText className="text-lg font-semibold text-foreground">{item.name}</AppText>
-					<AppText className="text-muted">
+					<AppText className="text-muted-foreground">
 						{item.slug} · {item.item_count} {t("vault.keys")}
 					</AppText>
-					<AppText className="text-muted">
+					<AppText className="text-muted-foreground">
 						{t(item.is_owner ? "vault.owner" : "vault.shared")}
 					</AppText>
 					<NativeButton

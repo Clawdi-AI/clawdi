@@ -70,7 +70,7 @@ function MemorySettingsView() {
 	if (settings.isPending) return <LoadingScreen />;
 	if (settings.isError) return <ErrorState onRetry={() => void settings.refetch()} />;
 	return (
-		<AppView className="gap-3 rounded-2xl bg-surface p-4">
+		<AppView className="gap-3 rounded-2xl bg-card p-4">
 			<AppText accessibilityRole="header">{t("memories.settingsTitle")}</AppText>
 			<AppText>{t("memories.settingsScope")}</AppText>
 			<NativePicker

@@ -210,7 +210,7 @@ function Settings({ id }: { id: string | undefined }) {
 							onChangeText={setDraft}
 							maxLength={240}
 							editable={!unavailable}
-							className="rounded-xl bg-surface p-3 text-foreground"
+							className="rounded-xl bg-card p-3 text-foreground"
 						/>
 						<AppText>{t("agentSettings.nameHint")}</AppText>
 						<NativeButton

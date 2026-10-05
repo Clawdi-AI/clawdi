@@ -57,7 +57,7 @@ export function SessionShareActions({
 				onPress={exportMarkdown}
 			/>
 			{action.error ? (
-				<AppText accessibilityRole="alert" className="text-danger">
+				<AppText accessibilityRole="alert" className="text-destructive">
 					{t("sessionShares.failed")}
 				</AppText>
 			) : null}
@@ -253,16 +253,16 @@ function SharesView({
 						</>
 					) : null}
 					{action.error ? (
-						<AppText accessibilityRole="alert" className="text-danger">
+						<AppText accessibilityRole="alert" className="text-destructive">
 							{t("sessionShares.failed")}
 						</AppText>
 					) : null}
 				</AppView>
 			}
 			renderItem={({ share }) => (
-				<AppView className="gap-3 rounded-2xl bg-surface p-4">
+				<AppView className="gap-3 rounded-2xl bg-card p-4">
 					<AppText className="text-lg text-foreground">{share.session_title}</AppText>
-					<AppText className="text-muted">
+					<AppText className="text-muted-foreground">
 						{t(`sessionShares.${sessionShareScope(share)}`)} · {share.message_count} ·{" "}
 						{formatDate(share.created_at)}
 					</AppText>

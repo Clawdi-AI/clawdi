@@ -88,7 +88,7 @@ export function ChannelCreate({ refresh }: { refresh: () => Promise<void> }) {
 						onChangeText={setName}
 						maxLength={120}
 						editable={!action.busy && !uncertain}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 					/>
 					<AppTextInput
 						accessibilityLabel={t("channels.token")}
@@ -100,7 +100,7 @@ export function ChannelCreate({ refresh }: { refresh: () => Promise<void> }) {
 						autoCapitalize="none"
 						autoCorrect={false}
 						editable={!action.busy && !uncertain}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 					/>
 					{provider === "discord" ? (
 						<>
@@ -113,7 +113,7 @@ export function ChannelCreate({ refresh }: { refresh: () => Promise<void> }) {
 								autoCapitalize="none"
 								autoCorrect={false}
 								editable={!action.busy && !uncertain}
-								className="rounded-xl bg-surface p-3 text-foreground"
+								className="rounded-xl bg-card p-3 text-foreground"
 							/>
 							<AppTextInput
 								accessibilityLabel={t("channels.publicKey")}
@@ -124,7 +124,7 @@ export function ChannelCreate({ refresh }: { refresh: () => Promise<void> }) {
 								autoCapitalize="none"
 								autoCorrect={false}
 								editable={!action.busy && !uncertain}
-								className="rounded-xl bg-surface p-3 text-foreground"
+								className="rounded-xl bg-card p-3 text-foreground"
 							/>
 						</>
 					) : null}

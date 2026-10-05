@@ -169,7 +169,7 @@ function ConnectedAccounts({ user }: { user: UserResource }) {
 				<NativeButton label={t("inventory.refresh")} disabled={action.busy} onPress={() => run()} />
 				{accounts.length === 0 ? <AppText>{t("connections.empty")}</AppText> : null}
 				{accounts.map((account) => (
-					<AppView key={account.id} className="gap-2 rounded-xl bg-surface p-4">
+					<AppView key={account.id} className="gap-2 rounded-xl bg-card p-4">
 						<AppText>{account.providerTitle()}</AppText>
 						<AppText selectable>{account.accountIdentifier()}</AppText>
 						<AppText>

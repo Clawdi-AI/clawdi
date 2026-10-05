@@ -231,7 +231,7 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 								onChangeText={setName}
 								editable={!started && !action.busy}
 								maxLength={120}
-								className="rounded-xl bg-surface p-3 text-foreground"
+								className="rounded-xl bg-card p-3 text-foreground"
 							/>
 						) : null}
 						<NativeSwitch
@@ -304,7 +304,7 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 											autoComplete="off"
 											autoCorrect={false}
 											editable={!action.busy}
-											className="rounded-xl bg-surface p-3 text-foreground"
+											className="rounded-xl bg-card p-3 text-foreground"
 										/>
 										<NativeButton
 											label={t("whatsapp.requestCode")}

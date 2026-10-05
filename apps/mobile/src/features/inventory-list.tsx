@@ -57,12 +57,14 @@ export function InventoryList<Item extends { id: string }>({
 						<AppText accessibilityRole="header" className="text-3xl font-semibold text-foreground">
 							{title}
 						</AppText>
-						<AppText className="text-base text-muted">{description}</AppText>
+						<AppText className="text-base text-muted-foreground">{description}</AppText>
 						{header}
 					</AppView>
 				}
 				ListEmptyComponent={
-					!error ? <AppText className="text-base text-muted">{empty}</AppText> : undefined
+					!error ? (
+						<AppText className="text-base text-muted-foreground">{empty}</AppText>
+					) : undefined
 				}
 				ListFooterComponent={
 					<AppView className="gap-3 py-4">

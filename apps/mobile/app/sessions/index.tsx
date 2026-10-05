@@ -88,7 +88,7 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 						maxLength={SEARCH_QUERY_MAX_LENGTH}
 						autoCapitalize="none"
 						autoCorrect={false}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 						onChangeText={(q) =>
 							update({
 								q,

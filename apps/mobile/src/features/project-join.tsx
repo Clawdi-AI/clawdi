@@ -106,7 +106,7 @@ function JoinView() {
 						setJoined(false);
 						action.clearError();
 					}}
-					className="rounded-xl bg-surface p-3 text-foreground"
+					className="rounded-xl bg-card p-3 text-foreground"
 				/>
 				{input.trim() && !token ? (
 					<AppText accessibilityRole="alert">{t("sharing.invalidLink")}</AppText>
@@ -117,7 +117,7 @@ function JoinView() {
 					onPress={() => void load()}
 				/>
 				{preview ? (
-					<AppView className="gap-3 rounded-2xl bg-surface p-4">
+					<AppView className="gap-3 rounded-2xl bg-card p-4">
 						<AppText className="text-xl text-foreground">{preview.data.project_name}</AppText>
 						<AppText>
 							{preview.data.owner_display} · {preview.data.owner_handle}

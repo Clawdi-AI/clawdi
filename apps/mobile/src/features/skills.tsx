@@ -38,12 +38,14 @@ export function useCloudSkills(projectId?: string, search = "") {
 export function SkillRow({ skill }: { skill: Skill }) {
 	const t = useI18n();
 	return (
-		<AppView className="gap-2 rounded-2xl bg-surface p-4">
+		<AppView className="gap-2 rounded-2xl bg-card p-4">
 			<AppText className="text-lg font-semibold text-foreground">
 				{skill.name || skill.skill_key || t("skills.unknown")}
 			</AppText>
-			<AppText className="text-sm text-muted">{skill.description ?? skill.skill_key}</AppText>
-			<AppText className="text-xs text-muted">
+			<AppText className="text-sm text-muted-foreground">
+				{skill.description ?? skill.skill_key}
+			</AppText>
+			<AppText className="text-xs text-muted-foreground">
 				{skill.source} · v{skill.version}
 			</AppText>
 			<NativeButton
@@ -84,7 +86,7 @@ function SkillsView({ project }: { project?: Project }) {
 						value={search}
 						onChangeText={setSearch}
 						maxLength={200}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 					/>
 					<NativeButton label={t("vault.searchAction")} onPress={() => setQuery(search.trim())} />
 					{!project || (isWritableSkillProject(project) && !project.archived_at) ? (

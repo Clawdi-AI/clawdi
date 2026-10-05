@@ -197,7 +197,7 @@ function TranscriptView({ sessionId, header, search }: Props) {
 									maxLength={SEARCH_QUERY_MAX_LENGTH}
 									autoCapitalize="none"
 									autoCorrect={false}
-									className="rounded-xl bg-surface p-3 text-foreground"
+									className="rounded-xl bg-card p-3 text-foreground"
 								/>
 								{draft.trim() && !isSearchQueryReady(draft) ? (
 									<AppText accessibilityRole="alert">{t("sessionFilters.searchInvalid")}</AppText>

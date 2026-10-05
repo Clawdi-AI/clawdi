@@ -261,10 +261,10 @@ function SkillEditor({
 					/>
 				) : null}
 				{!create && skillKey && detail.isPending ? (
-					<AppText className="text-muted">{t("loading.app")}</AppText>
+					<AppText className="text-muted-foreground">{t("loading.app")}</AppText>
 				) : null}
 				{!canWrite && !projects.isPending && (create || detail.data) ? (
-					<AppText className="text-muted">
+					<AppText className="text-muted-foreground">
 						{t(!create && !projectId ? "skills.chooseProject" : "skills.readOnly")}
 					</AppText>
 				) : null}
@@ -327,24 +327,24 @@ function SkillEditor({
 				) : detail.data && matches ? (
 					<AppView className="gap-3">
 						<AppText className="text-xl text-foreground">{detail.data.name}</AppText>
-						<AppText className="text-muted">{detail.data.description}</AppText>
-						<AppText selectable className="text-muted">
+						<AppText className="text-muted-foreground">{detail.data.description}</AppText>
+						<AppText selectable className="text-muted-foreground">
 							{t("skills.project")}:{" "}
 							{project?.name ??
 								detail.data.project_name ??
 								detail.data.project_id ??
 								t("projects.choose")}
 						</AppText>
-						<AppText className="text-muted">
+						<AppText className="text-muted-foreground">
 							{t("skills.version")}: {detail.data.version}
 						</AppText>
 						{detail.data.file_count !== null ? (
-							<AppText className="text-muted">
+							<AppText className="text-muted-foreground">
 								{t("skills.files")}: {detail.data.file_count}
 							</AppText>
 						) : null}
 						{detail.data.source_repo ? (
-							<AppText selectable className="text-muted">
+							<AppText selectable className="text-muted-foreground">
 								{t("skills.source")}: {detail.data.source_repo}
 							</AppText>
 						) : null}
@@ -396,12 +396,12 @@ function SkillEditor({
 					</AppView>
 				) : null}
 				{conflict ? (
-					<AppText accessibilityRole="alert" className="text-danger">
+					<AppText accessibilityRole="alert" className="text-destructive">
 						{t("skills.conflict")}
 					</AppText>
 				) : null}
 				{action.error ? (
-					<AppText accessibilityRole="alert" className="text-danger">
+					<AppText accessibilityRole="alert" className="text-destructive">
 						{t("skills.failed")}
 					</AppText>
 				) : null}

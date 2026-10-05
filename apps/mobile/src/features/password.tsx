@@ -126,7 +126,7 @@ function PasswordForm({ user }: { user: UserResource }) {
 						autoComplete="current-password"
 						autoCapitalize="none"
 						autoCorrect={false}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 					/>
 				) : null}
 				<AppTextInput
@@ -139,7 +139,7 @@ function PasswordForm({ user }: { user: UserResource }) {
 					autoComplete="new-password"
 					autoCapitalize="none"
 					autoCorrect={false}
-					className="rounded-xl bg-surface p-3 text-foreground"
+					className="rounded-xl bg-card p-3 text-foreground"
 				/>
 				<AppTextInput
 					accessibilityLabel={t("password.confirm")}
@@ -151,7 +151,7 @@ function PasswordForm({ user }: { user: UserResource }) {
 					autoComplete="new-password"
 					autoCapitalize="none"
 					autoCorrect={false}
-					className="rounded-xl bg-surface p-3 text-foreground"
+					className="rounded-xl bg-card p-3 text-foreground"
 				/>
 				<NativeSwitch
 					label={t("password.otherSessions")}

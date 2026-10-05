@@ -171,7 +171,7 @@ function Plugins({ id }: { id: string }) {
 				const label =
 					kind === "installed" ? "pluginInstalled" : kind === "failed" ? "pluginFailed" : kind;
 				return (
-					<AppView className="gap-3 rounded-2xl bg-surface p-4">
+					<AppView className="gap-3 rounded-2xl bg-card p-4">
 						<AppText className="text-lg text-foreground">{pluginDisplayName(item)}</AppText>
 						<AppText>{state?.version ?? item.desired?.version ?? item.catalog?.version}</AppText>
 						<AppText>{item.catalog?.description}</AppText>

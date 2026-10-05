@@ -130,7 +130,7 @@ function BindingsView({ agentId }: { agentId?: string }) {
 				</AppView>
 			}
 			renderItem={(binding) => (
-				<AppView className="gap-3 rounded-2xl bg-surface p-4">
+				<AppView className="gap-3 rounded-2xl bg-card p-4">
 					<AppText className="text-lg text-foreground">
 						{projects.data?.find((project) => project.id === binding.project_id)?.name ??
 							t("projects.unknown")}

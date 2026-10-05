@@ -2,7 +2,6 @@ import "../global.css";
 import { ClerkProvider } from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
 import { type ErrorBoundaryProps, Stack } from "expo-router";
-import { HeroUINativeProvider } from "heroui-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { isMobilePreview } from "../src/config/preview";
@@ -11,6 +10,7 @@ import { I18nProvider } from "../src/i18n";
 import { AppearanceProvider } from "../src/providers/appearance-provider";
 import { MobileProviders } from "../src/providers/mobile-providers";
 import { ConfigurationErrorScreen, ErrorState } from "../src/ui/feedback";
+import { useAppFonts } from "../src/ui/fonts";
 import { AppView } from "../src/ui/primitives";
 
 export function ErrorBoundary({ retry }: ErrorBoundaryProps) {
@@ -34,15 +34,15 @@ function Navigation() {
 }
 
 export default function RootLayout() {
+	const fontsReady = useAppFonts();
+	if (!fontsReady) return null;
 	if (isMobilePreview()) {
 		return (
 			<I18nProvider>
 				<GestureHandlerRootView style={{ flex: 1 }}>
 					<SafeAreaProvider>
 						<AppearanceProvider>
-							<HeroUINativeProvider>
-								<Navigation />
-							</HeroUINativeProvider>
+							<Navigation />
 						</AppearanceProvider>
 					</SafeAreaProvider>
 				</GestureHandlerRootView>
@@ -56,21 +56,19 @@ export default function RootLayout() {
 				<GestureHandlerRootView style={{ flex: 1 }}>
 					<SafeAreaProvider>
 						<AppearanceProvider>
-							<HeroUINativeProvider>
-								{runtime.ok ? (
-									<ClerkProvider
-										publishableKey={runtime.value.clerkPublishableKey}
-										tokenCache={tokenCache}
-										experimental={{ rethrowOfflineNetworkErrors: true }}
-									>
-										<MobileProviders config={runtime.value}>
-											<Navigation />
-										</MobileProviders>
-									</ClerkProvider>
-								) : (
-									<ConfigurationErrorScreen reason={runtime.reason} />
-								)}
-							</HeroUINativeProvider>
+							{runtime.ok ? (
+								<ClerkProvider
+									publishableKey={runtime.value.clerkPublishableKey}
+									tokenCache={tokenCache}
+									experimental={{ rethrowOfflineNetworkErrors: true }}
+								>
+									<MobileProviders config={runtime.value}>
+										<Navigation />
+									</MobileProviders>
+								</ClerkProvider>
+							) : (
+								<ConfigurationErrorScreen reason={runtime.reason} />
+							)}
 						</AppearanceProvider>
 					</SafeAreaProvider>
 				</GestureHandlerRootView>

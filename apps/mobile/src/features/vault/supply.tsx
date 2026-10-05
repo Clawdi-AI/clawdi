@@ -222,7 +222,7 @@ function VaultSupply({ intake }: { intake: string | null }) {
 				<AppText accessibilityRole="header" className="text-2xl font-semibold text-foreground">
 					{t("vault.supplyTitle")}
 				</AppText>
-				<AppText className="text-muted">{t("vault.supplyPrivacy")}</AppText>
+				<AppText className="text-muted-foreground">{t("vault.supplyPrivacy")}</AppText>
 				{phase === "link" ? (
 					<>
 						{incoming ? (
@@ -240,7 +240,7 @@ function VaultSupply({ intake }: { intake: string | null }) {
 								autoComplete="off"
 								textContentType="none"
 								editable={!action.busy}
-								className="rounded-xl bg-surface p-3 text-foreground"
+								className="rounded-xl bg-card p-3 text-foreground"
 							/>
 						)}
 						<NativeButton
@@ -277,7 +277,7 @@ function VaultSupply({ intake }: { intake: string | null }) {
 									}
 									autoCorrect={false}
 									autoCapitalize="none"
-									className="rounded-xl bg-surface p-3 text-foreground"
+									className="rounded-xl bg-card p-3 text-foreground"
 								/>
 								<AppTextInput
 									accessibilityLabel={`${t("vault.supplyValue")}: ${row.name}`}
@@ -298,7 +298,7 @@ function VaultSupply({ intake }: { intake: string | null }) {
 									autoComplete="off"
 									textContentType="none"
 									maxLength={131072}
-									className="rounded-xl bg-surface p-3 text-foreground"
+									className="rounded-xl bg-card p-3 text-foreground"
 								/>
 								{!row.required ? (
 									<NativeButton
@@ -326,7 +326,7 @@ function VaultSupply({ intake }: { intake: string | null }) {
 							autoComplete="off"
 							textContentType="none"
 							editable={!action.busy}
-							className="rounded-xl bg-surface p-3 text-foreground"
+							className="rounded-xl bg-card p-3 text-foreground"
 						/>
 						<NativeButton
 							label={t("vault.supplyImport")}

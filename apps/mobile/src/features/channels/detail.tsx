@@ -240,7 +240,7 @@ function ChannelDetail({ id }: { id?: string }) {
 				{links.data
 					?.filter((link) => link.status === "active")
 					.map((link) => (
-						<AppView key={link.id} className="gap-3 rounded-2xl bg-surface p-4">
+						<AppView key={link.id} className="gap-3 rounded-2xl bg-card p-4">
 							<AppText selectable>
 								{agents.data?.find((agent) => agent.id === link.agent_id)?.name ?? link.agent_id} ·{" "}
 								{link.runtime_status}
@@ -280,7 +280,7 @@ function ChannelDetail({ id }: { id?: string }) {
 						</AppView>
 					))}
 				{pairing ? (
-					<AppView className="gap-3 rounded-2xl bg-surface p-4">
+					<AppView className="gap-3 rounded-2xl bg-card p-4">
 						<AppText>{t("channels.pairInstructions")}</AppText>
 						{verifiedDiscordPairingCommand(pairing.pairing_command, pairing.code) ? (
 							<AppText selectable>{pairing.pairing_command}</AppText>
@@ -322,7 +322,7 @@ function ChannelDetail({ id }: { id?: string }) {
 				</AppText>
 				{bindings.data?.length === 0 ? <AppText>{t("channels.noBindings")}</AppText> : null}
 				{bindings.data?.map((binding) => (
-					<AppView key={binding.id} className="gap-3 rounded-2xl bg-surface p-4">
+					<AppView key={binding.id} className="gap-3 rounded-2xl bg-card p-4">
 						<AppText selectable>
 							{binding.external_chat_name ?? binding.external_chat_id} · {binding.status}
 						</AppText>
@@ -395,7 +395,7 @@ function ChannelDetail({ id }: { id?: string }) {
 					{t("channels.activity")}
 				</AppText>
 				{activity.data?.items.map((event) => (
-					<AppView key={event.id} className="gap-2 rounded-xl bg-surface p-3">
+					<AppView key={event.id} className="gap-2 rounded-xl bg-card p-3">
 						<AppText>
 							{event.created_at} · {event.direction ?? event.kind} ·{" "}
 							{event.delivery_status ?? event.outcome}

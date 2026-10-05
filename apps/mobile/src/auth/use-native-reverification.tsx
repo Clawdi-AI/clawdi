@@ -186,7 +186,7 @@ export function useNativeReverification() {
 			: attempt?.supportedSecondFactors
 		)?.filter(supported) ?? [];
 	const prompt = request ? (
-		<AppView className="gap-3 rounded-xl bg-surface p-4">
+		<AppView className="gap-3 rounded-xl bg-card p-4">
 			<AppText accessibilityRole="header">{t("reverification.title")}</AppText>
 			<AppText>{t("reverification.description")}</AppText>
 			{!attempt ? (

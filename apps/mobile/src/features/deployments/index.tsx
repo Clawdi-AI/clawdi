@@ -66,7 +66,7 @@ export function DeploymentListScreen() {
 			renderItem={({ deployment }) => (
 				<AppPressable
 					accessibilityRole="button"
-					className="gap-2 rounded-2xl bg-surface p-4"
+					className="gap-2 rounded-2xl bg-card p-4"
 					onPress={() => {
 						if (scope.isCurrent() && !scope.signal.aborted)
 							router.push(`/deployments/${encodeURIComponent(deployment.resource.id)}`);
@@ -241,7 +241,7 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 							/>
 						)}
 						{deployment ? (
-							<AppView className="gap-3 rounded-2xl bg-surface p-4">
+							<AppView className="gap-3 rounded-2xl bg-card p-4">
 								<RuntimeBrowser deployment={deployment} />
 								<NativeButton
 									label={t("terminal.title")}
@@ -280,7 +280,7 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 									</AppText>
 								))}
 								{deployment.resource.status?.failure ? (
-									<AppText className="text-danger">{t("deployments.failed")}</AppText>
+									<AppText className="text-destructive">{t("deployments.failed")}</AppText>
 								) : null}
 								{operation.data ? (
 									<AppText>
@@ -289,7 +289,7 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 									</AppText>
 								) : null}
 								{operation.data?.error ? (
-									<AppText className="text-danger">
+									<AppText className="text-destructive">
 										{t(
 											operation.data.error.code === 1
 												? "deployments.operationCancelled"

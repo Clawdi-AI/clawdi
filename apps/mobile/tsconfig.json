@@ -6,5 +6,5 @@
 		"types": ["react", "react-native"]
 	},
 	"include": ["**/*.ts", "**/*.tsx", "uniwind-types.d.ts", ".expo/types/**/*.ts", "expo-env.d.ts"],
-	"exclude": ["compatibility", "**/*.test.ts", "**/*.test.tsx"]
+	"exclude": ["compatibility", "scripts", "**/*.test.ts", "**/*.test.tsx"]
 }

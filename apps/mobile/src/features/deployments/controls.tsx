@@ -343,7 +343,7 @@ function LocaleSettings({
 				autoCorrect={false}
 				maxLength={100}
 				editable={!disabled}
-				className="rounded-xl bg-surface p-3 text-foreground"
+				className="rounded-xl bg-card p-3 text-foreground"
 			/>
 			{!valid ? <AppText>{t("runtime.invalidLocale")}</AppText> : null}
 			<NativeButton
@@ -465,7 +465,7 @@ function ModelSettings({
 					editable={!disabled}
 					autoCapitalize="none"
 					autoCorrect={false}
-					className="rounded-xl bg-surface p-3 text-foreground"
+					className="rounded-xl bg-card p-3 text-foreground"
 				/>
 			) : agentOwnsModels ? (
 				<AppText>{t("runtime.modelsInAgent")}</AppText>

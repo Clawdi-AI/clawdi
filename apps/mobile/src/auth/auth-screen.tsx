@@ -50,7 +50,7 @@ function AuthFrame({
 			<AppView className="flex-1 justify-center gap-8 px-6 py-12">
 				<AppView className="gap-2">
 					<AppText className="text-4xl font-semibold text-foreground">{title}</AppText>
-					<AppText className="text-base leading-6 text-muted">{subtitle}</AppText>
+					<AppText className="text-base leading-6 text-muted-foreground">{subtitle}</AppText>
 				</AppView>
 				{children}
 			</AppView>
@@ -81,7 +81,7 @@ function AuthFields({
 				accessibilityLabel={t("auth.email")}
 				editable={!busy}
 				autoComplete="email"
-				className="rounded-2xl bg-surface px-4 py-4 text-base text-foreground"
+				className="rounded-2xl bg-card px-4 py-4 text-base text-foreground"
 				keyboardType="email-address"
 				onChangeText={onEmailChange}
 				placeholder={t("auth.email")}
@@ -94,7 +94,7 @@ function AuthFields({
 				accessibilityLabel={t("auth.password")}
 				editable={!busy}
 				autoComplete={newPassword ? "new-password" : "current-password"}
-				className="rounded-2xl bg-surface px-4 py-4 text-base text-foreground"
+				className="rounded-2xl bg-card px-4 py-4 text-base text-foreground"
 				onChangeText={onPasswordChange}
 				placeholder={t("auth.password")}
 				placeholderTextColor="#64748b"
@@ -489,7 +489,7 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 						autoComplete="email"
 						keyboardType="email-address"
 						textContentType="emailAddress"
-						className="rounded-2xl bg-surface px-4 py-4 text-base text-foreground"
+						className="rounded-2xl bg-card px-4 py-4 text-base text-foreground"
 						placeholder={t("auth.email")}
 						onChangeText={setEmail}
 						value={email}
@@ -503,7 +503,7 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 						autoComplete={factor?.strategy === "backup_code" ? "off" : "one-time-code"}
 						keyboardType={factor?.strategy === "backup_code" ? "default" : "number-pad"}
 						textContentType="oneTimeCode"
-						className="rounded-2xl bg-surface px-4 py-4 text-base text-foreground"
+						className="rounded-2xl bg-card px-4 py-4 text-base text-foreground"
 						placeholder={codeLabel}
 						onChangeText={setCode}
 						value={code}
@@ -517,7 +517,7 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 						autoComplete="new-password"
 						textContentType="newPassword"
 						secureTextEntry
-						className="rounded-2xl bg-surface px-4 py-4 text-base text-foreground"
+						className="rounded-2xl bg-card px-4 py-4 text-base text-foreground"
 						placeholder={t("auth.newPassword")}
 						onChangeText={setPassword}
 						value={password}
@@ -526,14 +526,14 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 				{verifying &&
 				factor &&
 				(factor.strategy === "email_code" || factor.strategy === "phone_code") ? (
-					<AppText className="text-base text-muted">
+					<AppText className="text-base text-muted-foreground">
 						{t("auth.codeSentTo")} {factor.safeIdentifier}
 					</AppText>
 				) : null}
 				{error || notice ? (
 					<AppText
 						accessibilityRole={error ? "alert" : "text"}
-						className={error ? "text-base text-danger" : "text-base text-muted"}
+						className={error ? "text-base text-destructive" : "text-base text-muted-foreground"}
 					>
 						{error ? t("auth.failed") : notice}
 					</AppText>
@@ -636,7 +636,7 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 				className="flex-row flex-wrap justify-center gap-1"
 				pointerEvents={busy ? "none" : "auto"}
 			>
-				<AppText className="text-base text-muted">
+				<AppText className="text-base text-muted-foreground">
 					{signingUp ? t("auth.haveAccount") : t("auth.noAccount")}
 				</AppText>
 				<Link

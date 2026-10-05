@@ -38,7 +38,7 @@ export default function AgentDetailRoute() {
 								<AppText className="text-3xl font-semibold text-foreground">
 									{agentDisplayName(agent.data)}
 								</AppText>
-								<AppText className="text-base leading-6 text-muted">
+								<AppText className="text-base leading-6 text-muted-foreground">
 									{t("agents.detailDescription")}
 								</AppText>
 							</AppView>

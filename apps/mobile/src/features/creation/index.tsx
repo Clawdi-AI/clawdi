@@ -284,9 +284,11 @@ function CreationForm() {
 				) : (
 					<>
 						{storageError ? (
-							<AppText className="text-danger">{t("creation.storageError")}</AppText>
+							<AppText className="text-destructive">{t("creation.storageError")}</AppText>
 						) : null}
-						{action.error ? <AppText className="text-danger">{t("creation.error")}</AppText> : null}
+						{action.error ? (
+							<AppText className="text-destructive">{t("creation.error")}</AppText>
+						) : null}
 						{inventory.isError ? <ResourceError missing={false} /> : null}
 						<NativeButton
 							label={t("creation.refresh")}
@@ -316,7 +318,7 @@ function CreationForm() {
 							editable={!locked}
 							maxLength={64}
 							onChangeText={(agentName) => update({ agentName })}
-							className="rounded-xl bg-surface p-3 text-foreground"
+							className="rounded-xl bg-card p-3 text-foreground"
 						/>
 						<AppText>{t("creation.language")}</AppText>
 						<NativePicker
@@ -338,7 +340,7 @@ function CreationForm() {
 							editable={!locked}
 							autoCapitalize="none"
 							onChangeText={(timezone) => update({ timezone })}
-							className="rounded-xl bg-surface p-3 text-foreground"
+							className="rounded-xl bg-card p-3 text-foreground"
 						/>
 						<NativeSwitch
 							label={t("creation.managed")}
@@ -395,7 +397,7 @@ function CreationForm() {
 						/>
 						<AppText>{t("creation.selectionNotice")}</AppText>
 						{inventory.data?.plans.map((plan) => (
-							<AppView key={plan.slug} className="gap-2 rounded-xl bg-surface p-3">
+							<AppView key={plan.slug} className="gap-2 rounded-xl bg-card p-3">
 								<AppText>
 									{plan.name} · {plan.vcpu} vCPU · {plan.ram_gb} GB · {plan.disk_size} GB
 								</AppText>
@@ -426,10 +428,7 @@ function CreationForm() {
 							/>
 						) : null}
 						{reusableItems.map((subscription) => (
-							<AppView
-								key={subscription.subscription_id}
-								className="gap-2 rounded-xl bg-surface p-3"
-							>
+							<AppView key={subscription.subscription_id} className="gap-2 rounded-xl bg-card p-3">
 								<AppText>
 									{subscription.plan_slug} · {subscription.billing_term_months}{" "}
 									{t("creation.months")} · {subscription.status}

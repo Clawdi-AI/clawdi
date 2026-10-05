@@ -38,7 +38,7 @@ export function VaultSplit({
 	const valid = validVaultSplit(source, selected);
 	if (!groups.length && !result) return null;
 	return (
-		<AppView className="gap-3 rounded-xl bg-surface p-4">
+		<AppView className="gap-3 rounded-xl bg-card p-4">
 			<AppText className="text-lg font-semibold text-foreground">{t("vault.splitTitle")}</AppText>
 			<AppText>{t("vault.splitDescription")}</AppText>
 			{result ? (

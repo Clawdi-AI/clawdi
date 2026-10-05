@@ -117,7 +117,7 @@ function BillingView() {
 			empty={active.isPending ? t("loading.app") : t("billing.empty")}
 			header={
 				<AppView className="gap-3">
-					<AppText className="text-sm text-muted">{t("billing.balance")}</AppText>
+					<AppText className="text-sm text-muted-foreground">{t("billing.balance")}</AppText>
 					<AppText className="text-2xl font-semibold text-foreground">
 						{wallet.isPending
 							? t("loading.app")
@@ -126,7 +126,7 @@ function BillingView() {
 					{wallet.isError ? (
 						<ErrorState onRetry={wallet.isFetching ? undefined : () => void wallet.refetch()} />
 					) : null}
-					<AppText className="text-sm text-muted">{t("billing.noStore")}</AppText>
+					<AppText className="text-sm text-muted-foreground">{t("billing.noStore")}</AppText>
 					<AppText>{t("billing.section")}</AppText>
 					<NativePicker
 						value={section}
@@ -165,7 +165,7 @@ function SubscriptionRow({ item }: { item: Subscription }) {
 	return (
 		<AppPressable
 			accessibilityRole="button"
-			className="gap-2 rounded-2xl bg-surface p-4"
+			className="gap-2 rounded-2xl bg-card p-4"
 			onPress={() => {
 				if (scope.isCurrent() && !scope.signal.aborted)
 					router.push(`/billing/subscriptions/${encodeURIComponent(item.subscription_id)}`);
@@ -174,7 +174,7 @@ function SubscriptionRow({ item }: { item: Subscription }) {
 			<AppText className="text-lg font-semibold text-foreground">
 				{item.agent_name ?? item.plan_slug}
 			</AppText>
-			<AppText className="text-muted">
+			<AppText className="text-muted-foreground">
 				{item.status} · {subscriptionPrice(item) ?? t("billing.unknown")}
 			</AppText>
 			<AppText className="text-primary">{t("inventory.viewDetails")}</AppText>
@@ -217,16 +217,16 @@ function SubscriptionRecovery({ item }: { item: Subscription }) {
 					value={formatDate(recovery.schedule.at) ?? t("billing.unknown")}
 				/>
 			) : recovery.schedule?.fallback ? (
-				<AppText className="text-muted">{recovery.schedule.fallback}</AppText>
+				<AppText className="text-muted-foreground">{recovery.schedule.fallback}</AppText>
 			) : null}
 			{item.cancel_at_period_end ? (
-				<AppText className="text-muted">{t("billing.cancellation")}</AppText>
+				<AppText className="text-muted-foreground">{t("billing.cancellation")}</AppText>
 			) : null}
 			{item.pending_plan_slug ? (
 				<DetailRow label={t("billing.pendingPlan")} value={item.pending_plan_slug} />
 			) : null}
 			{recovery.recoveryTarget ? (
-				<AppText className="text-muted">{t("billing.providerRecovery")}</AppText>
+				<AppText className="text-muted-foreground">{t("billing.providerRecovery")}</AppText>
 			) : null}
 		</AppView>
 	);
@@ -235,15 +235,15 @@ function SubscriptionRecovery({ item }: { item: Subscription }) {
 function TransactionRow({ item }: { item: Transaction }) {
 	const t = useI18n();
 	return (
-		<AppView className="gap-2 rounded-2xl bg-surface p-4">
+		<AppView className="gap-2 rounded-2xl bg-card p-4">
 			<AppText className="font-semibold text-foreground">
 				{item.direction === "credit" ? "+" : "−"}
 				{exactUsd(item.amount) ?? t("billing.unknown")}
 			</AppText>
-			<AppText className="text-muted">
+			<AppText className="text-muted-foreground">
 				{item.kind} · {item.status}
 			</AppText>
-			<AppText className="text-muted">
+			<AppText className="text-muted-foreground">
 				{formatDate(item.occurred_at) ?? t("billing.unknown")}
 			</AppText>
 		</AppView>
@@ -299,7 +299,7 @@ export function SubscriptionDetailScreen({
 					<ErrorState onRetry={query.isFetching ? undefined : () => void query.refetch()} />
 				) : null}
 				{item ? (
-					<AppView className="gap-3 rounded-2xl bg-surface p-5">
+					<AppView className="gap-3 rounded-2xl bg-card p-5">
 						<DetailRow label={t("billing.agent")} value={item.agent_name ?? t("billing.unknown")} />
 						<DetailRow label={t("billing.plan")} value={item.plan_slug} />
 						<DetailRow label={t("billing.status")} value={item.status} />
@@ -328,7 +328,7 @@ export function SubscriptionDetailScreen({
 						{item.funding_source === "wallet" ? (
 							<AppText>{t("billing.walletNotice")}</AppText>
 						) : null}
-						<AppText className="text-muted">{t("billing.management")}</AppText>
+						<AppText className="text-muted-foreground">{t("billing.management")}</AppText>
 						{item.deployment_id ? (
 							<NativeButton
 								label={t("billing.deployment")}

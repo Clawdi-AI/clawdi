@@ -192,7 +192,7 @@ function ContactAddresses({ user, kind }: { user: UserResource; kind: Kind }) {
 				{reverification.prompt}
 				<NativeButton label={t("inventory.refresh")} disabled={action.busy} onPress={refresh} />
 				{contacts.map((contact) => (
-					<AppView key={contact.id} className="gap-2 rounded-xl bg-surface p-4">
+					<AppView key={contact.id} className="gap-2 rounded-xl bg-card p-4">
 						<AppText selectable>{contactValue(contact)}</AppText>
 						<AppText>
 							{t(
@@ -255,7 +255,7 @@ function ContactAddresses({ user, kind }: { user: UserResource; kind: Kind }) {
 					keyboardType={kind === "emails" ? "email-address" : "phone-pad"}
 					autoCapitalize="none"
 					autoCorrect={false}
-					className="rounded-xl bg-surface p-3 text-foreground"
+					className="rounded-xl bg-card p-3 text-foreground"
 				/>
 				<NativeButton
 					label={t(`${kind}.add`)}

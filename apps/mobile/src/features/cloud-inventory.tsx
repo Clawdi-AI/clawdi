@@ -115,7 +115,7 @@ export function AgentRow({ agent }: { agent: CloudAgent }) {
 	return (
 		<AppPressable
 			accessibilityRole="button"
-			className="gap-2 rounded-2xl bg-surface px-4 py-4"
+			className="gap-2 rounded-2xl bg-card px-4 py-4"
 			onPress={() => router.push(`/agents/${encodeURIComponent(agent.id)}`)}
 		>
 			<AppView className="flex-row items-center justify-between gap-3">
@@ -126,10 +126,10 @@ export function AgentRow({ agent }: { agent: CloudAgent }) {
 					{t("inventory.viewDetails")}
 				</AppText>
 			</AppView>
-			<AppText className="text-sm text-muted">
+			<AppText className="text-sm text-muted-foreground">
 				{agent.agent_type} · {agent.machine_name}
 			</AppText>
-			<AppText className="text-sm text-muted">
+			<AppText className="text-sm text-muted-foreground">
 				{agent.last_seen_at
 					? `${t("agents.lastSeen")}: ${formatDate(agent.last_seen_at) ?? t("agents.unknown")}`
 					: t("agents.neverSeen")}
@@ -150,7 +150,7 @@ export function SessionRow({
 	return (
 		<AppPressable
 			accessibilityRole="button"
-			className="gap-2 rounded-2xl bg-surface px-4 py-4"
+			className="gap-2 rounded-2xl bg-card px-4 py-4"
 			onPress={() => {
 				const { search } = sessionDetailLink(session, { searchQuery });
 				router.push({
@@ -175,13 +175,13 @@ export function SessionRow({
 					{t("inventory.viewDetails")}
 				</AppText>
 			</AppView>
-			<AppText className="text-sm text-muted">
+			<AppText className="text-sm text-muted-foreground">
 				{session.agent_display_name ??
 					session.agent_name ??
 					session.agent_type ??
 					t("sessions.unknownAgent")}
 			</AppText>
-			<AppText className="text-sm text-muted">
+			<AppText className="text-sm text-muted-foreground">
 				{session.status} · {formatDate(session.last_activity_at) ?? t("sessions.unknownActivity")}
 			</AppText>
 			{session.search_match ? (

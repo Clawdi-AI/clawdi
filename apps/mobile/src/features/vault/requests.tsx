@@ -110,11 +110,11 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 		]);
 	};
 	return (
-		<AppView className="gap-3 rounded-xl bg-surface p-4">
+		<AppView className="gap-3 rounded-xl bg-card p-4">
 			<AppText accessibilityRole="header" className="text-lg font-semibold text-foreground">
 				{t("vault.requests")}
 			</AppText>
-			<AppText className="text-muted">{t("vault.requestsDescription")}</AppText>
+			<AppText className="text-muted-foreground">{t("vault.requestsDescription")}</AppText>
 			{canReshare ? (
 				<NativeButton
 					label={t("vault.requestReshare")}
@@ -155,7 +155,7 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 			{requests.data?.map((row) => (
 				<AppView key={row.id} className="gap-1">
 					<AppText className="text-foreground">{row.fields.join(", ")}</AppText>
-					<AppText className="text-muted">
+					<AppText className="text-muted-foreground">
 						{row.project_name} · {row.section || t("vault.defaultSection")}
 					</AppText>
 					<AppText>

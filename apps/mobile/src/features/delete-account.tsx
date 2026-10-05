@@ -103,7 +103,7 @@ function DeleteAccount({ email }: { email: string }) {
 								autoCapitalize="characters"
 								autoCorrect={false}
 								editable={!action.busy}
-								className="rounded-xl bg-surface p-3 text-foreground"
+								className="rounded-xl bg-card p-3 text-foreground"
 							/>
 							<NativeButton
 								label={t("deletion.confirm")}

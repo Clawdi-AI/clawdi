@@ -104,8 +104,8 @@ function AccountView() {
 			contentContainerClassName="gap-8 px-6 pb-10 pt-8"
 		>
 			<AppText className="text-3xl font-semibold text-foreground">{t("account.title")}</AppText>
-			<AppView className="gap-2 rounded-3xl bg-surface p-5">
-				<AppText className="text-sm text-muted">{t("account.signedInAs")}</AppText>
+			<AppView className="gap-2 rounded-3xl bg-card p-5">
+				<AppText className="text-sm text-muted-foreground">{t("account.signedInAs")}</AppText>
 				<AppText className="text-lg font-semibold text-foreground">
 					{isLoaded && email ? email : t("account.accountUnavailable")}
 				</AppText>
@@ -123,7 +123,7 @@ function AccountView() {
 			<NativeButton label={t("mfa.title")} onPress={() => router.push("/mfa")} />
 			<NativeButton label={t("passkeys.title")} onPress={() => router.push("/passkeys")} />
 			<NativeButton label={t("deletion.title")} onPress={() => router.push("/delete-account")} />
-			<AppView className="gap-2 rounded-3xl bg-surface p-5">
+			<AppView className="gap-2 rounded-3xl bg-card p-5">
 				<AppText accessibilityRole="header">{t("appearance.title")}</AppText>
 				<AppText>{t("appearance.description")}</AppText>
 				<NativePicker
@@ -141,8 +141,8 @@ function AccountView() {
 			</AppView>
 			<NativeButton label={t("providers.title")} onPress={() => router.push("/ai-providers")} />
 			<NativeButton label={t("channels.title")} onPress={() => router.push("/channels")} />
-			<AppView className="gap-2 rounded-3xl bg-surface p-5">
-				<AppText className="text-sm text-muted">{t("account.apiKeys")}</AppText>
+			<AppView className="gap-2 rounded-3xl bg-card p-5">
+				<AppText className="text-sm text-muted-foreground">{t("account.apiKeys")}</AppText>
 				<AppTextInput
 					accessibilityLabel={t("account.apiKeyLabel")}
 					className="rounded-xl bg-background px-3 py-2 text-foreground"
@@ -182,11 +182,11 @@ function AccountView() {
 						</AppView>
 					))
 				) : (
-					<AppText className="text-sm text-muted">{t("account.noApiKeys")}</AppText>
+					<AppText className="text-sm text-muted-foreground">{t("account.noApiKeys")}</AppText>
 				)}
 			</AppView>
 			{error ? (
-				<AppText accessibilityRole="alert" className="text-base text-danger">
+				<AppText accessibilityRole="alert" className="text-base text-destructive">
 					{t("account.actionFailed")}
 				</AppText>
 			) : null}

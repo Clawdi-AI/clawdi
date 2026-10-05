@@ -254,7 +254,7 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 				<AppText accessibilityRole="header" className="text-3xl font-semibold text-foreground">
 					{current?.name ?? t("vault.title")}
 				</AppText>
-				<AppText className="text-muted">{t("vault.description")}</AppText>
+				<AppText className="text-muted-foreground">{t("vault.description")}</AppText>
 				{!identity || detail.isError ? (
 					<ResourceError
 						missing={
@@ -266,7 +266,7 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 				{detail.isPending && identity ? <AppText>{t("loading.app")}</AppText> : null}
 				{current && !detail.isError ? (
 					<>
-						<AppText className="text-muted">
+						<AppText className="text-muted-foreground">
 							{current.slug} · {t(current.is_owner ? "vault.owner" : "vault.shared")}
 						</AppText>
 						{current.is_owner ? <VaultRequests current={current} /> : null}
@@ -287,7 +287,7 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 						) : null}
 						{sections.isSuccess
 							? Object.entries(sections.data).map(([group, keys]) => (
-									<AppView key={group} className="gap-2 rounded-xl bg-surface p-4">
+									<AppView key={group} className="gap-2 rounded-xl bg-card p-4">
 										<AppText className="font-semibold text-foreground">
 											{group === "(default)" ? t("vault.defaultSection") : group}
 										</AppText>
@@ -437,7 +437,7 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 									editable={!action.busy}
 									autoCapitalize="none"
 									autoCorrect={false}
-									className="rounded-xl bg-surface p-3 text-foreground"
+									className="rounded-xl bg-card p-3 text-foreground"
 								/>
 								<AppTextInput
 									accessibilityLabel={t("vault.importText")}
@@ -451,7 +451,7 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 									autoCorrect={false}
 									autoComplete="off"
 									textContentType="none"
-									className="min-h-32 rounded-xl bg-surface p-3 text-foreground"
+									className="min-h-32 rounded-xl bg-card p-3 text-foreground"
 								/>
 								<NativeSwitch
 									label={t("vault.replace")}

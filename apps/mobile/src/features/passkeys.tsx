@@ -109,7 +109,7 @@ function Passkeys({ user }: { user: UserResource }) {
 				<NativeButton label={t("inventory.refresh")} disabled={action.busy} onPress={() => run()} />
 				{passkeys.length === 0 ? <AppText>{t("passkeys.empty")}</AppText> : null}
 				{passkeys.map((passkey) => (
-					<AppView key={passkey.id} className="gap-3 rounded-xl bg-surface p-4">
+					<AppView key={passkey.id} className="gap-3 rounded-xl bg-card p-4">
 						<AppText className="text-lg font-semibold text-foreground">
 							{passkey.name || t("passkeys.unnamed")}
 						</AppText>

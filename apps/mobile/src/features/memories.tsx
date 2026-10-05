@@ -40,15 +40,15 @@ export function useCloudMemories(search = "") {
 export function MemoryRow({ memory, onOpen }: { memory: Memory; onOpen?: () => void }) {
 	const t = useI18n();
 	return (
-		<AppView className="gap-2 rounded-2xl bg-surface p-4">
+		<AppView className="gap-2 rounded-2xl bg-card p-4">
 			<AppText selectable className="text-base leading-6 text-foreground">
 				{memory.content}
 			</AppText>
-			<AppText className="text-xs text-muted">
+			<AppText className="text-xs text-muted-foreground">
 				{memory.category || t("memories.unknown")} · {memory.source}
 			</AppText>
 			{memory.tags?.length ? (
-				<AppText className="text-xs text-muted">{memory.tags.join(" · ")}</AppText>
+				<AppText className="text-xs text-muted-foreground">{memory.tags.join(" · ")}</AppText>
 			) : null}
 			{onOpen ? <NativeButton label={t("memories.detail")} onPress={onOpen} /> : null}
 		</AppView>
@@ -130,7 +130,7 @@ function MemoriesView() {
 						value={searchDraft}
 						onChangeText={setSearchDraft}
 						onSubmitEditing={() => setSearch(searchDraft.trim())}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 					/>
 					<NativeButton
 						label={t("memories.search")}
@@ -144,7 +144,7 @@ function MemoriesView() {
 						value={content}
 						onChangeText={setContent}
 						editable={!action.busy}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 					/>
 					<NativeButton
 						label={t("memories.saveContent")}

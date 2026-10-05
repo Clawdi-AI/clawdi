@@ -61,9 +61,9 @@ function ChannelsView() {
 			renderItem={(bot) => {
 				const status = health.data?.items.find((item) => item.account_id === bot.id)?.health_status;
 				return (
-					<AppView className="gap-3 rounded-2xl bg-surface p-4">
+					<AppView className="gap-3 rounded-2xl bg-card p-4">
 						<AppText className="text-lg font-semibold text-foreground">{bot.name}</AppText>
-						<AppText className="text-muted">
+						<AppText className="text-muted-foreground">
 							{bot.provider} ·{" "}
 							{t(bot.visibility === "private" ? "channels.custom" : "channels.shared")} ·{" "}
 							{bot.status}

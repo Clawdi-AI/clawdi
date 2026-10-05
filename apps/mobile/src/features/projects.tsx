@@ -26,12 +26,14 @@ export function useCloudProjects() {
 export function ProjectRow({ project }: { project: Project }) {
 	const t = useI18n();
 	return (
-		<AppView className="gap-2 rounded-2xl bg-surface p-4">
+		<AppView className="gap-2 rounded-2xl bg-card p-4">
 			<AppText className="text-lg font-semibold text-foreground">
 				{project.name || project.slug || t("projects.unknown")}
 			</AppText>
-			<AppText className="text-sm text-muted">{project.description ?? project.kind}</AppText>
-			<AppText className="text-xs text-muted">
+			<AppText className="text-sm text-muted-foreground">
+				{project.description ?? project.kind}
+			</AppText>
+			<AppText className="text-xs text-muted-foreground">
 				{project.is_owner ? t("projects.owner") : (project.owner_display ?? t("projects.shared"))}
 			</AppText>
 		</AppView>
@@ -129,7 +131,7 @@ function ProjectsView() {
 						onChangeText={setName}
 						maxLength={200}
 						editable={!action.busy}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 					/>
 					<AppTextInput
 						accessibilityLabel={t("projects.summary")}
@@ -139,7 +141,7 @@ function ProjectsView() {
 						onChangeText={setDescription}
 						maxLength={2000}
 						editable={!action.busy}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 					/>
 					<NativeButton
 						label={t("projects.save")}

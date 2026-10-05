@@ -187,7 +187,7 @@ function ProfileForm({ user }: { user: UserResource }) {
 						value={firstName}
 						editable={!action.busy}
 						maxLength={256}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 						onChangeText={(value) => {
 							setFirstName(value);
 							setSuccess(false);
@@ -202,7 +202,7 @@ function ProfileForm({ user }: { user: UserResource }) {
 						value={lastName}
 						editable={!action.busy}
 						maxLength={256}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 						onChangeText={(value) => {
 							setLastName(value);
 							setSuccess(false);
@@ -219,13 +219,13 @@ function ProfileForm({ user }: { user: UserResource }) {
 						value={username}
 						editable={!action.busy}
 						maxLength={256}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 						onChangeText={(value) => {
 							setUsername(value);
 							setSuccess(false);
 						}}
 					/>
-					<AppText className="text-muted">{t("profile.usernameHint")}</AppText>
+					<AppText className="text-muted-foreground">{t("profile.usernameHint")}</AppText>
 				</AppView>
 				{action.error ? <AppText accessibilityRole="alert">{t("profile.failed")}</AppText> : null}
 				{success ? (

@@ -250,7 +250,7 @@ function MfaForm({ user }: { user: UserResource }) {
 							onPress={() => run("create")}
 						/>
 						{setup ? (
-							<AppView className="gap-3 rounded-xl bg-surface p-4">
+							<AppView className="gap-3 rounded-xl bg-card p-4">
 								<AppText>{t("mfa.setupInstructions")}</AppText>
 								{qr ? <QrImage matrix={qr} label={t("mfa.qr")} /> : null}
 								<AppText selectable>{setup.secret}</AppText>
@@ -267,7 +267,7 @@ function MfaForm({ user }: { user: UserResource }) {
 							autoComplete="one-time-code"
 							keyboardType="number-pad"
 							autoCorrect={false}
-							className="rounded-xl bg-surface p-3 text-foreground"
+							className="rounded-xl bg-card p-3 text-foreground"
 						/>
 						<NativeButton
 							label={t("mfa.verify")}
@@ -287,7 +287,7 @@ function MfaForm({ user }: { user: UserResource }) {
 					onPress={() => confirm("backup")}
 				/>
 				{codes ? (
-					<AppView className="gap-2 rounded-xl bg-surface p-4">
+					<AppView className="gap-2 rounded-xl bg-card p-4">
 						<AppText>{t("mfa.saveCodes")}</AppText>
 						<AppText selectable>{codes.join("\n")}</AppText>
 						<NativeButton label={t("mfa.hide")} onPress={clear} />
@@ -303,7 +303,7 @@ function MfaForm({ user }: { user: UserResource }) {
 				{phones
 					.filter((phone) => phone.verification.status === "verified")
 					.map((phone) => (
-						<AppView key={phone.id} className="gap-2 rounded-xl bg-surface p-4">
+						<AppView key={phone.id} className="gap-2 rounded-xl bg-card p-4">
 							<AppText selectable>{phone.phoneNumber}</AppText>
 							<AppText>
 								{t(phone.reservedForSecondFactor ? "mfa.smsEnabled" : "mfa.smsDisabled")}

@@ -70,7 +70,11 @@ export function ProviderRemove({
 			await onRemoved(result);
 		});
 	if (!providerRemoval)
-		return <AppText className="text-sm text-muted">{t("providers.removalUnavailable")}</AppText>;
+		return (
+			<AppText className="text-sm text-muted-foreground">
+				{t("providers.removalUnavailable")}
+			</AppText>
+		);
 	return (
 		<AppView className="gap-3">
 			<NativeButton

@@ -1,48 +1,49 @@
+import { AlertCircle, RefreshCw } from "lucide-react-native";
 import { ActivityIndicator } from "react-native";
+import { useCSSVariable } from "uniwind";
 import { useI18n } from "../i18n";
-import { AppPressable, AppText, AppView } from "./primitives";
+import { Alert } from "./alert";
+import { Button } from "./button";
+import { Icon } from "./icon";
+import { Text } from "./text";
+import { AppView } from "./view";
+
+export function Spinner({ label }: { label?: string }) {
+	const color = useCSSVariable("--color-muted-foreground");
+	return (
+		<ActivityIndicator
+			accessibilityLabel={label}
+			accessibilityRole="progressbar"
+			color={typeof color === "string" ? color : undefined}
+		/>
+	);
+}
 
 export function LoadingScreen({ label }: { label?: string }) {
 	const t = useI18n();
 	return (
-		<AppView className="flex-1 items-center justify-center gap-4 bg-background px-6">
-			<ActivityIndicator
-				accessibilityLabel={label ?? t("loading.app")}
-				accessibilityRole="progressbar"
-				color="#2454d9"
-				size="large"
-			/>
-			<AppText className="text-center text-base text-muted">{label ?? t("loading.app")}</AppText>
+		<AppView className="flex-1 items-center justify-center gap-3 bg-background px-6">
+			<Spinner label={label ?? t("loading.app")} />
+			<Text className="text-center text-sm text-muted-foreground">{label ?? t("loading.app")}</Text>
 		</AppView>
 	);
 }
 
-export function ErrorState({ onRetry }: { onRetry?: () => void }) {
+/** Mirrors apps/web/src/components/api-error-panel.tsx. */
+export function ErrorState({ onRetry, title }: { onRetry?: () => void; title?: string }) {
 	const t = useI18n();
 	return (
-		<AppView
-			accessibilityLiveRegion="polite"
-			accessibilityRole="alert"
-			className="items-center gap-3 rounded-3xl bg-surface p-6"
-		>
-			<AppText
-				accessibilityRole="header"
-				className="text-center text-xl font-semibold text-foreground"
-			>
-				{t("error.genericTitle")}
-			</AppText>
-			<AppText className="text-center text-base text-muted">{t("error.genericMessage")}</AppText>
-			{onRetry ? (
-				<AppPressable
-					accessibilityRole="button"
-					accessibilityLabel={t("error.tryAgain")}
-					onPress={onRetry}
-					className="rounded-xl px-3 py-2"
-				>
-					<AppText className="text-base font-semibold text-primary">{t("error.tryAgain")}</AppText>
-				</AppPressable>
-			) : null}
-		</AppView>
+		<Alert variant="destructive" icon={AlertCircle} title={title ?? t("error.genericTitle")}>
+			<AppView className="items-start gap-3">
+				<Text>{t("error.genericMessage")}</Text>
+				{onRetry ? (
+					<Button size="sm" variant="outline" onPress={onRetry}>
+						<Icon as={RefreshCw} />
+						<Text>{t("error.tryAgain")}</Text>
+					</Button>
+				) : null}
+			</AppView>
+		</Alert>
 	);
 }
 
@@ -50,13 +51,13 @@ export function ConfigurationErrorScreen({ reason }: { reason: "missing" | "inva
 	const t = useI18n();
 	return (
 		<AppView className="flex-1 justify-center gap-4 bg-background px-6">
-			<AppText accessibilityRole="header" className="text-3xl font-semibold text-foreground">
+			<Text accessibilityRole="header" className="text-2xl font-semibold tracking-tight">
 				{t("configuration.title")}
-			</AppText>
-			<AppText className="text-base leading-6 text-muted">{t("configuration.message")}</AppText>
-			<AppText className="text-sm text-danger">
+			</Text>
+			<Text className="text-sm text-muted-foreground">{t("configuration.message")}</Text>
+			<Text className="text-sm text-destructive">
 				{reason === "missing" ? t("configuration.missing") : t("configuration.invalid")}
-			</AppText>
+			</Text>
 		</AppView>
 	);
 }

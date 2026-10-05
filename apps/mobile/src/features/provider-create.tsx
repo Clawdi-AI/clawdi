@@ -180,7 +180,7 @@ export function ProviderCreate({
 						onChangeText={setLabel}
 						maxLength={200}
 						editable={!locked && !action.busy}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 					/>
 					{custom ? (
 						<>
@@ -193,7 +193,7 @@ export function ProviderCreate({
 								autoCorrect={false}
 								maxLength={1000}
 								editable={!locked && !action.busy}
-								className="rounded-xl bg-surface p-3 text-foreground"
+								className="rounded-xl bg-card p-3 text-foreground"
 							/>
 							<NativePicker
 								value={apiMode}
@@ -206,7 +206,7 @@ export function ProviderCreate({
 							/>
 						</>
 					) : (
-						<AppText selectable className="text-sm text-muted">
+						<AppText selectable className="text-sm text-muted-foreground">
 							{route?.base_url}
 						</AppText>
 					)}
@@ -219,7 +219,7 @@ export function ProviderCreate({
 						autoCapitalize="none"
 						autoCorrect={false}
 						editable={!locked && !action.busy}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 					/>
 					<NativeButton
 						label={t(locked ? "providers.retrySame" : "projects.save")}

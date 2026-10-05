@@ -42,7 +42,7 @@ export function OpenShareScreen() {
 					autoCapitalize="none"
 					autoCorrect={false}
 					maxLength={2048}
-					className="rounded-xl bg-surface p-3 text-foreground"
+					className="rounded-xl bg-card p-3 text-foreground"
 				/>
 				<NativeButton
 					label={t("publicSession.open")}
@@ -243,11 +243,11 @@ function PublicSession({ id }: { id: string | null }) {
 				</AppView>
 			}
 			renderItem={(item) => (
-				<AppView className="gap-2 rounded-2xl bg-surface p-4">
+				<AppView className="gap-2 rounded-2xl bg-card p-4">
 					<AppText className="font-semibold text-foreground">
 						{t(item.role === "user" ? "sessions.user" : "sessions.assistant")}
 					</AppText>
-					<AppText className="text-muted">{formatDate(item.timestamp)}</AppText>
+					<AppText className="text-muted-foreground">{formatDate(item.timestamp)}</AppText>
 					<Markdown content={item.content} />
 				</AppView>
 			)}

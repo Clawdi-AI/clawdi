@@ -121,7 +121,7 @@ function Catalog() {
 					{!showAccounts ? (
 						<>
 							<AppTextInput
-								className="rounded-xl bg-surface p-3 text-foreground"
+								className="rounded-xl bg-card p-3 text-foreground"
 								accessibilityLabel={t("connectors.search")}
 								placeholder={t("connectors.search")}
 								value={draft}
@@ -138,9 +138,9 @@ function Catalog() {
 				</AppView>
 			}
 			renderItem={(item) => (
-				<AppView className="gap-2 rounded-2xl bg-surface p-4">
+				<AppView className="gap-2 rounded-2xl bg-card p-4">
 					<AppText className="text-lg font-semibold text-foreground">{item.title}</AppText>
-					<AppText className="text-muted">{item.description}</AppText>
+					<AppText className="text-muted-foreground">{item.description}</AppText>
 					<NativeButton
 						label={t("inventory.viewAll")}
 						onPress={() =>
@@ -282,18 +282,18 @@ function Detail({ name }: { name?: string }) {
 				<AppView className="gap-4">
 					{app.isPending && name ? <LoadingScreen /> : null}
 					{flow === "no_auth" ? (
-						<AppText className="text-muted">{t("connectors.ready")}</AppText>
+						<AppText className="text-muted-foreground">{t("connectors.ready")}</AppText>
 					) : app.data && (!flow || app.data.connect_disabled) ? (
-						<AppText className="text-muted">{t("connectors.unavailable")}</AppText>
+						<AppText className="text-muted-foreground">{t("connectors.unavailable")}</AppText>
 					) : app.data ? (
 						<AppView className="gap-3">
-							<AppText className="text-muted">
+							<AppText className="text-muted-foreground">
 								{t(flow === "redirect" ? "connectors.oauth" : "connectors.credentials")}
 							</AppText>
 							<AppTextInput
 								accessibilityLabel={t("connectors.alias")}
 								placeholder={t("connectors.alias")}
-								className="rounded-xl bg-surface p-3 text-foreground"
+								className="rounded-xl bg-card p-3 text-foreground"
 								value={alias}
 								onChangeText={setAlias}
 								maxLength={256}
@@ -313,7 +313,7 @@ function Detail({ name }: { name?: string }) {
 											</AppText>
 											<AppTextInput
 												accessibilityLabel={field.display_name || field.name}
-												className="rounded-xl bg-surface p-3 text-foreground"
+												className="rounded-xl bg-card p-3 text-foreground"
 												secureTextEntry={field.is_secret}
 												autoCorrect={false}
 												autoCapitalize="none"
@@ -326,7 +326,7 @@ function Detail({ name }: { name?: string }) {
 												editable={!action.busy}
 											/>
 											{field.description ? (
-												<AppText className="text-muted">{field.description}</AppText>
+												<AppText className="text-muted-foreground">{field.description}</AppText>
 											) : null}
 										</AppView>
 									))
@@ -340,7 +340,7 @@ function Detail({ name }: { name?: string }) {
 						</AppView>
 					) : null}
 					{action.error ? (
-						<AppText accessibilityRole="alert" className="text-danger">
+						<AppText accessibilityRole="alert" className="text-destructive">
 							{t("connectors.failed")}
 						</AppText>
 					) : null}
@@ -361,7 +361,7 @@ function Detail({ name }: { name?: string }) {
 							.filter((c) => c.app_name === name)
 							.map((connection) => <Account key={connection.id} connection={connection} />)
 					) : (
-						<AppText className="text-muted">{t("connectors.noAccounts")}</AppText>
+						<AppText className="text-muted-foreground">{t("connectors.noAccounts")}</AppText>
 					)}
 					<AppText className="text-xl font-semibold text-foreground">
 						{t("connectors.tools")}
@@ -374,22 +374,22 @@ function Detail({ name }: { name?: string }) {
 						maxLength={256}
 						autoCapitalize="none"
 						autoCorrect={false}
-						className="rounded-xl bg-surface p-3 text-foreground"
+						className="rounded-xl bg-card p-3 text-foreground"
 					/>
 				</AppView>
 			}
 			renderItem={(tool) => (
-				<AppView className="gap-2 rounded-2xl bg-surface p-4">
+				<AppView className="gap-2 rounded-2xl bg-card p-4">
 					<AppText className="text-lg text-foreground">{tool.display_name || tool.name}</AppText>
-					<AppText selectable className="text-muted">
+					<AppText selectable className="text-muted-foreground">
 						{tool.name}
 					</AppText>
 					<AppText className="text-foreground">{tool.description}</AppText>
 					{tool.is_deprecated ? (
-						<AppText className="text-muted">{t("connectors.deprecated")}</AppText>
+						<AppText className="text-muted-foreground">{t("connectors.deprecated")}</AppText>
 					) : null}
 					{tool.parameters ? (
-						<AppText selectable className="text-muted">
+						<AppText selectable className="text-muted-foreground">
 							{JSON.stringify(tool.parameters, null, 2)}
 						</AppText>
 					) : null}
@@ -427,11 +427,11 @@ function Account({ connection }: { connection: Connection }) {
 			]);
 	};
 	return (
-		<AppView className="gap-2 rounded-2xl bg-surface p-4">
+		<AppView className="gap-2 rounded-2xl bg-card p-4">
 			<AppText className="text-foreground">
 				{connection.account_display || connection.alias || connection.id} · {connection.status}
 			</AppText>
-			<AppText className="text-muted">
+			<AppText className="text-muted-foreground">
 				{t(isActiveConnection(connection) ? "connectors.active" : "connectors.inactive")}
 			</AppText>
 			<AppTextInput
@@ -453,7 +453,7 @@ function Account({ connection }: { connection: Connection }) {
 				onPress={() => update(true)}
 			/>
 			{action.error ? (
-				<AppText accessibilityRole="alert" className="text-danger">
+				<AppText accessibilityRole="alert" className="text-destructive">
 					{t("connectors.failed")}
 				</AppText>
 			) : null}

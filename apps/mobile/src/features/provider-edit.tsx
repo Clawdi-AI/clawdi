@@ -186,7 +186,9 @@ export function ProviderEdit({
 					) : null}
 					{!oauth ? (
 						<>
-							<AppText className="text-sm text-muted">{t("providers.keepCredential")}</AppText>
+							<AppText className="text-sm text-muted-foreground">
+								{t("providers.keepCredential")}
+							</AppText>
 							<AppTextInput
 								accessibilityLabel={t("providers.apiKey")}
 								placeholder={t("providers.apiKey")}

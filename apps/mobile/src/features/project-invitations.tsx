@@ -67,7 +67,7 @@ function InvitationsView() {
 				) : undefined
 			}
 			renderItem={(invitation) => (
-				<AppView className="gap-3 rounded-2xl bg-surface p-4">
+				<AppView className="gap-3 rounded-2xl bg-card p-4">
 					<AppText className="text-lg text-foreground">{invitation.project_name}</AppText>
 					<AppText>{invitation.owner_display}</AppText>
 					<NativeButton

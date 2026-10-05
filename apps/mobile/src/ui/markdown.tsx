@@ -248,7 +248,7 @@ function MarkdownTree({
 			case "code":
 				return (
 					<AppView className="gap-2 rounded-xl bg-background p-3">
-						<AppText className="text-sm text-muted">{node.lang ?? ""}</AppText>
+						<AppText className="text-sm text-muted-foreground">{node.lang ?? ""}</AppText>
 						<AppScrollView horizontal>
 							<AppText selectable className="font-mono text-foreground">
 								{text(node.value)}
