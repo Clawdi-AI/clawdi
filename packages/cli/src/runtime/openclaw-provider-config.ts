@@ -276,6 +276,15 @@ function adaptOpenClawMemorySearchPatch(
 	return `${JSON.stringify(patch, null, 2)}\n`;
 }
 
+/** Anonymous preinstallation: record the version-only schema layout probe. */
+export function seedOpenClawMemorySearchLayout(
+	commandPath: string,
+	home: string,
+	sdkPath: string,
+): void {
+	openClawMemorySearchLayout(commandPath, home, home, sdkPath);
+}
+
 function openClawMemorySearchLayout(
 	commandPath: string,
 	home: string,

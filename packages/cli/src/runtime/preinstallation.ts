@@ -16,16 +16,26 @@ import {
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
+import {
+	OPENCLAW_SDK_EXPORT_PATHS,
+	resolveOpenClawSdkExport,
+} from "../lib/codex-oauth-native-store";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { getCliVersion } from "../lib/version";
 import { installRuntimeCliArchive } from "./cli-update";
 import { egressEngineSchema } from "./egress-engine";
 import { prefetchFileBrowserAsset } from "./file-browser-companion";
 import { prepareHermesDashboardBuild } from "./hermes-dashboard-build";
+import { resolveHostedOpenClawWorkspace } from "./hosted-openclaw-context";
 import { ensureHostedCodexCli } from "./managed-codex-provider";
 import { runtimeCommandVersionRevision, runtimeFileCurrentRevision } from "./manifest-install";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
+import { seedOpenClawMemorySearchLayout } from "./openclaw-provider-config";
 import type { RuntimePaths } from "./paths";
+import {
+	flushPersistedStepRevisions,
+	loadPersistedStepRevisions,
+} from "./persisted-step-revisions";
 import { type PreinstalledProbes, preinstalledSourceIdentity } from "./preinstalled-probes";
 import { buildNumericUserCommand } from "./runtime-user-command";
 
@@ -130,6 +140,24 @@ export function preinstallationTreeSha256(root: string): string {
 	}
 	visit("");
 	return digest.digest("hex");
+}
+
+/**
+ * Version-only OpenClaw probe results that first-boot convergence would
+ * otherwise compute: the official workspace roster for the untouched default
+ * config and the config-schema memory-search layout. Keys are the exact
+ * executable/SDK/config revisions, so any tenant change recomputes them.
+ */
+function prepareOpenClawProbeResults(paths: RuntimePaths, command: string): void {
+	loadPersistedStepRevisions(paths);
+	resolveHostedOpenClawWorkspace(paths.userHome);
+	const configMutation = resolveOpenClawSdkExport(
+		paths.userHome,
+		[command],
+		OPENCLAW_SDK_EXPORT_PATHS.configMutation,
+	);
+	if (configMutation) seedOpenClawMemorySearchLayout(command, paths.userHome, configMutation);
+	flushPersistedStepRevisions(paths);
 }
 
 export function prepareRuntimePreinstallation(
@@ -333,6 +361,7 @@ export function prepareRuntimePreinstallation(
 			}
 			if (spec.fileBrowserAsset) prefetchFileBrowserAsset(paths, spec.fileBrowserAsset);
 			if (!ensureHostedCodexCli(paths)) throw new Error("Codex preparation is disabled");
+			if (spec.runtime === "openclaw") prepareOpenClawProbeResults(paths, command);
 			installRuntimeCliArchive(paths, spec.cliPackageSpec, cliArchive);
 		}
 		// Only caches explicitly redirected by this command are disposable.
