@@ -1,14 +1,14 @@
 "use client";
 
+import {
+	parseWorkspaceSkillGitHubInput,
+	workspaceSkillMutationsAvailable,
+} from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import {
-	parseWorkspaceSkillGitHubInput,
-	workspaceSkillMutationsAvailable,
-} from "@/components/dashboard/workspace-skills.logic";
 import { ConnectedWorkspaceSkillsPanel } from "@/components/dashboard/workspace-skills-panel";
 import { useWorkspaceSkills } from "@/components/dashboard/workspace-skills-query";
 import { EmptyState } from "@/components/empty-state";

@@ -1,12 +1,13 @@
 "use client";
 
+import { selfManagedAgentTiles } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
-import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
+import { AgentsCard } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { ResourcesCard } from "@/components/dashboard/resources-card";

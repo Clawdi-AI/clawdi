@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { components } from "@clawdi/shared/api";
-import { agentRegistrationDescription } from "@/components/dashboard/agent-registration-status";
+import { agentRegistrationDescription } from "@clawdi/shared/view";
 
 type Env = components["schemas"]["AgentResponse"];
 

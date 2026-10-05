@@ -5,10 +5,11 @@ export {
 	workspaceSkillMutationsAvailable,
 } from "@clawdi/shared/api";
 
-import type { SkillCardEntity } from "@/components/skills/skill-card";
-import type { components } from "@/lib/api-schemas";
+import type { components } from "../api";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
+export type SkillCardEntity = Pick<SkillSummary, "skill_key" | "name" | "description"> &
+	Partial<Pick<SkillSummary, "source" | "source_repo" | "version" | "updated_at">>;
 type HostedWorkspaceSkillDesiredItem = DeployComponents["schemas"]["V2WorkspaceSkillDesiredItem"];
 export type WorkspaceRuntimeSkill = {
 	entity: SkillCardEntity;

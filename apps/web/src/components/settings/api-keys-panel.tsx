@@ -1,5 +1,6 @@
 "use client";
 
+import { formatShortDate } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, KeyRound, Laptop, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
@@ -51,7 +52,6 @@ import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycl
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { ApiKey } from "@/lib/api-schemas";
-import { formatShortDate } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 

@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { components } from "@/lib/api-schemas";
 import {
 	mergeWorkspaceRuntimeSkills,
 	parseWorkspaceSkillGitHubInput,
 	workspaceSkillInstallCommand,
 	workspaceSkillMutationsAvailable,
 	workspaceSkillRemoveCommand,
-} from "./workspace-skills.logic";
+} from "@clawdi/shared/view";
+import type { components } from "../api";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 

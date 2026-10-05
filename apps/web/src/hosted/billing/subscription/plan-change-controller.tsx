@@ -1,5 +1,6 @@
 "use client";
 
+import { formatShortDate } from "@clawdi/shared/view";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import type {
@@ -34,7 +35,6 @@ import {
 	type WalletFundingErrorCopy,
 } from "@/hosted/billing/wallet/wallet-funding";
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
-import { formatShortDate } from "@/lib/format";
 import { useProductAccess } from "@/lib/product-access";
 
 const PLAN_CHANGE_WALLET_FUNDING_ERROR_COPY = {

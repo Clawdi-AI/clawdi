@@ -5,7 +5,7 @@ import {
 	agentTypeLabel,
 	cleanMachineName,
 	compareAgentEnvironments,
-} from "@/components/dashboard/agent-label";
+} from "@clawdi/shared/view";
 
 describe("cleanMachineName", () => {
 	test("strips local network suffixes", () => {

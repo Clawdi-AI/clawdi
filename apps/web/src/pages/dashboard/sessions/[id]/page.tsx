@@ -2,6 +2,14 @@
 
 import { isSearchQueryReady, SEARCH_QUERY_MAX_LENGTH } from "@clawdi/shared/consts";
 import {
+	formatDuration,
+	formatNumber,
+	formatSessionSummary,
+	relativeTime,
+	sessionAgentIdentityInput,
+	sessionDetailQueryKey,
+} from "@clawdi/shared/view";
+import {
 	type InfiniteData,
 	keepPreviousData,
 	useInfiniteQuery,
@@ -22,7 +30,6 @@ import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
 import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
 import { SessionSearchNavigation } from "@/components/sessions/session-search-navigation";
 import { SessionSidebar } from "@/components/sessions/session-sidebar";
 import {
@@ -49,7 +56,6 @@ import type {
 	SessionTimelinePage,
 } from "@/lib/api-schemas";
 import { useCurrentUser } from "@/lib/auth-client";
-import { formatDuration } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { sessionContentRevision } from "@/lib/session-content-events";
 import {
@@ -57,7 +63,6 @@ import {
 	SESSION_DETAIL_STALE_MS,
 	SESSION_MESSAGES_GC_MS,
 	SESSION_MESSAGES_STALE_MS,
-	sessionDetailQueryKey,
 } from "@/lib/session-queries";
 import {
 	DEFAULT_SESSION_TIMELINE_VIEW,
@@ -71,7 +76,7 @@ import {
 } from "@/lib/session-search-anchor";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { useSessionContentEvents } from "@/lib/use-session-content-events";
-import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 const SESSION_MESSAGE_PAGE_SIZE = 100;
 const SESSION_MESSAGE_API_DIRECTION = "desc" as const;

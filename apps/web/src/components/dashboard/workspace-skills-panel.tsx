@@ -1,12 +1,9 @@
 "use client";
 
+import { workspaceSkillInstallCommand, workspaceSkillRemoveCommand } from "@clawdi/shared/view";
 import { Check, Copy, Plus, TerminalSquare, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import {
-	workspaceSkillInstallCommand,
-	workspaceSkillRemoveCommand,
-} from "@/components/dashboard/workspace-skills.logic";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { PageHeader, type PageHeaderProps } from "@/components/page-header";

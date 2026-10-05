@@ -1,4 +1,4 @@
-import { searchExcerpt, searchTerms } from "@/lib/search-highlight";
+import { searchExcerpt, searchTerms } from "../api/search-highlight";
 
 interface SearchableConnector {
 	name: string;

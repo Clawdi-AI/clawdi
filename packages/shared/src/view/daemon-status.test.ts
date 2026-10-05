@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
+import { daemonStatusVisual } from "@clawdi/shared/view";
 
 function evidence(ageMs: number) {
 	return {

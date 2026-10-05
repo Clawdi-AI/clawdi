@@ -1,10 +1,10 @@
 "use client";
 
+import { connectorSearchSupportingText } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { Check } from "lucide-react";
 import { type ReactNode, useCallback } from "react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
-import { connectorSearchSupportingText } from "@/components/connectors/connector-search";
 import { ENTITY_GRID_CLASS, EntityCardSkeleton, EntityRow } from "@/components/entity-card";
 import { SearchHighlightedText } from "@/components/search-highlighted-text";
 import { useOpenApi } from "@/lib/api";

@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage, identityFor } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Plus } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
@@ -32,10 +33,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { buildKeyImportPreview } from "@/components/vault/key-import-logic";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
-import { identityFor } from "@/lib/identity";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
-import { errorMessage } from "@/lib/utils";
 
 /* The #2 job of this dashboard: get keys in, fast. Paste-first composer —
  * a .env blob or a single KEY=value line, straight into any vault (with

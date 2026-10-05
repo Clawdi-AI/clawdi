@@ -1,7 +1,7 @@
+import { formatShortDate } from "@clawdi/shared/view";
 import type { WalletTransaction } from "@/hosted/billing/contracts";
 import { formatUsdExact } from "@/hosted/billing/format";
 import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
-import { formatShortDate } from "@/lib/format";
 
 const KIND_LABELS: Record<string, string> = {
 	topup: "Top-up",

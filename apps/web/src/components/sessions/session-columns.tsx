@@ -1,5 +1,6 @@
 "use client";
 
+import { formatAbsoluteTooltip, formatSessionSummary, relativeTime } from "@clawdi/shared/view";
 import { Link } from "@tanstack/react-router";
 import { SessionSearchMatchExcerpt } from "@/components/sessions/search-match-excerpt";
 import { SessionAgentLabel } from "@/components/sessions/session-agent-label";
@@ -7,7 +8,6 @@ import type { DataTableColumnDef } from "@/components/ui/data-table";
 import { DataTableColumnHeader } from "@/components/ui/data-table-column-header";
 import type { SessionListItem } from "@/lib/api-schemas";
 import type { sessionDetailLink } from "@/lib/session-search-anchor";
-import { formatAbsoluteTooltip, formatSessionSummary, relativeTime } from "@/lib/utils";
 
 function summaryColumn({
 	sessionLink,

@@ -1,4 +1,4 @@
-import { searchExcerpt, searchTerms } from "@/lib/search-highlight";
+import { searchExcerpt, searchTerms } from "../api/search-highlight";
 
 interface SearchableSkill {
 	skill_key: string;

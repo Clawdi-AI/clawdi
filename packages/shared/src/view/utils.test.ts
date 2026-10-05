@@ -5,7 +5,7 @@ import {
 	formatSessionSummary,
 	recencyBucketFor,
 	relativeTime,
-} from "./utils";
+} from "@clawdi/shared/view";
 
 describe("relativeTime", () => {
 	test('returns "just now" for recent timestamps', () => {

@@ -1,5 +1,14 @@
 "use client";
 
+import {
+	compareVaultsForCatalog,
+	displayProjectName,
+	formatResourceCount,
+	getProjectResourceDefinition,
+	identityFor,
+	vaultSearchRank,
+	vaultSearchSupportingText,
+} from "@clawdi/shared/view";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { Lock, Plus } from "lucide-react";
@@ -14,7 +23,6 @@ import { IconChip } from "@/components/icon-chip";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { displayProjectName } from "@/components/projects/project-metadata";
 import { SearchHighlightedText } from "@/components/search-highlighted-text";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
@@ -37,17 +45,10 @@ import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { useAgentProjectVaults } from "@/components/vault/agent-vaults-query";
 import { useVaultCatalog } from "@/components/vault/vault-catalog-query";
 import { vaultsForSelectedProject } from "@/components/vault/vault-scope";
-import {
-	compareVaultsForCatalog,
-	vaultSearchRank,
-	vaultSearchSupportingText,
-} from "@/components/vault/vault-search";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
-import { identityFor } from "@/lib/identity";
-import { formatResourceCount, getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	agentResourceScope,

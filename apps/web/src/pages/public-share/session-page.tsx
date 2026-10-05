@@ -1,3 +1,4 @@
+import { relativeTime } from "@clawdi/shared/view";
 import { Link } from "@tanstack/react-router";
 import { Clock, MessageSquare } from "lucide-react";
 import { AgentInline } from "@/components/dashboard/agent-label";
@@ -11,7 +12,6 @@ import { NoAccess } from "@/components/share/no-access";
 import { PublicShareControls } from "@/components/share/public-share-controls";
 import { SignInToView } from "@/components/share/sign-in-to-view";
 import { TimeTooltip } from "@/components/time-tooltip";
-import { relativeTime } from "@/lib/utils";
 import type { PublicShareResult } from "./session-page.functions";
 
 type PublicSharePageResult = Exclude<PublicShareResult, { kind: "not-found" }>;

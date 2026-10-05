@@ -1,15 +1,18 @@
 "use client";
 
+import {
+	agentDisplayName,
+	daemonStatusVisual,
+	errorMessage,
+	relativeTime,
+} from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, Cpu, ExternalLink, Laptop } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
-import {
-	AgentSourceBadgeForEnvironment,
-	agentDisplayName,
-} from "@/components/dashboard/agent-label";
+import { AgentSourceBadgeForEnvironment } from "@/components/dashboard/agent-label";
 import {
 	AgentOverviewCapabilities,
 	AgentOverviewCapabilitiesSkeleton,
@@ -38,7 +41,6 @@ import {
 } from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
-import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { OverviewComputeBody } from "@/components/dashboard/overview-compute-body";
 import { DetailNotFound } from "@/components/detail/layout";
 import { MemoriesPageActions, MemoriesSurface } from "@/components/memories/memories-surface";
@@ -70,7 +72,7 @@ import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { agentResourceScope } from "@/lib/resource-navigation";
 import { sessionListQueryOptions } from "@/lib/session-queries";
-import { cn, errorMessage, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type AgentTab = "overview" | "sessions" | "memories" | "connectors" | "projects" | "settings";
 

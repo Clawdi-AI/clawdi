@@ -1,10 +1,10 @@
 "use client";
 
+import { displayProjectName } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Ellipsis, Pencil, Share2, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
-import { displayProjectName } from "@/components/projects/project-metadata";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";

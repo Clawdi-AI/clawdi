@@ -1,11 +1,10 @@
 "use client";
 
+import { DASHBOARD_COPY, formatNumber, thisWeekModel } from "@clawdi/shared/view";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { DashboardStats } from "@/lib/api-schemas";
-import { formatModelLabel } from "@/lib/format";
-import { formatNumber } from "@/lib/utils";
 
 export function ThisWeekCard({
 	stats,
@@ -16,27 +15,24 @@ export function ThisWeekCard({
 	error?: unknown;
 	onRetry?: () => void;
 }) {
-	const ready = !!stats;
-	const todaySessions = stats?.sessions_today;
-	const topModel = formatModelLabel(stats?.top_model_last_7_days) || null;
-	const manualWeek = stats?.manual_sessions_last_7_days;
-	const automatedWeek = stats?.automated_sessions_last_7_days;
+	const { ready, todaySessions, topModel, manualWeek, automatedWeek, streakLabel } =
+		thisWeekModel(stats);
 
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle>Last 7 days</CardTitle>
-				<CardDescription>Agent activity, measured in UTC.</CardDescription>
+				<CardTitle>{DASHBOARD_COPY.weeklyTitle}</CardTitle>
+				<CardDescription>{DASHBOARD_COPY.weeklyDescription}</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-5">
 				{error ? (
-					<ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load weekly activity" />
+					<ApiErrorPanel error={error} onRetry={onRetry} title={DASHBOARD_COPY.weeklyError} />
 				) : (
 					<>
 						{/* Hero — the user's own sessions. Fleet automation is the quiet
 				    sub-line, not the headline. */}
 						<div>
-							<div className="text-xs text-muted-foreground">Your sessions</div>
+							<div className="text-xs text-muted-foreground">{DASHBOARD_COPY.yourSessions}</div>
 							{ready && manualWeek !== undefined ? (
 								<>
 									<div className="text-3xl font-semibold tabular-nums leading-none">
@@ -56,11 +52,15 @@ export function ThisWeekCard({
 						{/* Secondary stats — smaller, grouped. */}
 						<dl className="grid grid-cols-3 gap-3 text-sm">
 							<SecondaryStat
-								label="Today"
+								label={DASHBOARD_COPY.today}
 								value={ready && todaySessions !== undefined ? formatNumber(todaySessions) : null}
 							/>
-							<SecondaryStat label="Streak" value={ready ? `${stats.current_streak}d` : null} />
-							<SecondaryStat label="Top model" value={ready ? (topModel ?? "—") : null} small />
+							<SecondaryStat label={DASHBOARD_COPY.streak} value={streakLabel} />
+							<SecondaryStat
+								label={DASHBOARD_COPY.topModel}
+								value={ready ? (topModel ?? "—") : null}
+								small
+							/>
 						</dl>
 					</>
 				)}

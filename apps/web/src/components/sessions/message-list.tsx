@@ -4,6 +4,7 @@ import { buildSessionTimelineRows, type SessionTimelineRow } from "@clawdi/share
 
 export { buildSessionTimelineRows, type SessionTimelineRow } from "@clawdi/shared/api";
 
+import { agentTypeLabel, formatAbsoluteTooltip } from "@clawdi/shared/view";
 import {
 	CheckCircle2,
 	ChevronRight,
@@ -16,7 +17,6 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
-import { agentTypeLabel } from "@/components/dashboard/agent-label";
 import { Markdown } from "@/components/markdown";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Button } from "@/components/ui/button";
@@ -30,7 +30,7 @@ import type {
 	SessionToolResult,
 } from "@/lib/api-schemas";
 import { splitSearchHighlight } from "@/lib/search-highlight";
-import { cn, formatAbsoluteTooltip } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 const OFFSCREEN_RENDERING_CLASS = "[content-visibility:auto] [contain-intrinsic-size:auto_160px]";
 type TimelineMessage = SessionMessage | Extract<SessionTimelineItem, { kind: "message" }>;

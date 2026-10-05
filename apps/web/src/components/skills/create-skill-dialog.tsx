@@ -1,12 +1,11 @@
 "use client";
 
 import { buildSkillCreateRequest } from "@clawdi/shared/api";
-
+import { displayProjectName } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { type ReactElement, useRef, useState } from "react";
 import { toast } from "sonner";
-import { displayProjectName } from "@/components/projects/project-metadata";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { NATIVE_AI_PROVIDERS } from "@clawdi/shared";
+import { PROVIDER_BRAND_ICON_IDS } from "@clawdi/shared/view";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { PROVIDER_BRAND_ICON_IDS } from "@/components/entity-brand-icon-ids";
 import { providerBrandIcon } from "@/components/entity-brand-icons";
 import { EntityIcon } from "@/components/entity-icon";
 

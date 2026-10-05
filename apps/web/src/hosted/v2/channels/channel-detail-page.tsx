@@ -1,5 +1,6 @@
 "use client";
 
+import { relativeTime } from "@clawdi/shared/view";
 import { Link, useRouter } from "@tanstack/react-router";
 import {
 	ArrowDownLeft,
@@ -66,7 +67,7 @@ import { LinkChannelAgentAction } from "@/hosted/v2/channels/link-channel-agent-
 import { agentSectionLink } from "@/lib/agent-routes";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { cn, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const LIST_TAB_CLASS = "mt-4 min-w-0";

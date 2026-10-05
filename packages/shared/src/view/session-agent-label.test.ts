@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { agentDisplayName } from "@/components/dashboard/agent-label";
-import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
+import { agentDisplayName, sessionAgentIdentityInput } from "@clawdi/shared/view";
 
 describe("sessionAgentIdentityInput", () => {
 	test("preserves canonical agent identity fields from session payloads", () => {

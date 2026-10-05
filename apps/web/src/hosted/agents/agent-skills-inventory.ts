@@ -1,8 +1,5 @@
 import type { components, DeployComponents } from "@clawdi/shared/api";
-import {
-	mergeWorkspaceRuntimeSkills,
-	type WorkspaceRuntimeSkill,
-} from "@/components/dashboard/workspace-skills.logic";
+import { mergeWorkspaceRuntimeSkills, type WorkspaceRuntimeSkill } from "@clawdi/shared/view";
 
 type ManagedSkill = components["schemas"]["AgentSkillDesiredResponse"];
 type Projection = components["schemas"]["SkillSummaryResponse"];

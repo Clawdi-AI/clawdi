@@ -27,3 +27,12 @@ export function memoryDisplayName(content: string, maxLength = 80): string {
 	if (compact.length <= maxLength) return compact;
 	return `${compact.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`;
 }
+
+export const MEMORY_CATEGORIES = [
+	{ value: "all", label: "All" },
+	{ value: "fact", label: "Fact" },
+	{ value: "preference", label: "Preference" },
+	{ value: "pattern", label: "Pattern" },
+	{ value: "decision", label: "Decision" },
+	{ value: "context", label: "Context" },
+] as const;

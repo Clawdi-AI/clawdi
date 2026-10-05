@@ -6,17 +6,14 @@ import {
 	MAX_AGENT_AVATAR_BYTES,
 } from "@clawdi/shared/api";
 import { agentDisconnectEligibility } from "@clawdi/shared/client";
+import { agentDisplayName, agentTypeLabel, errorMessage } from "@clawdi/shared/view";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { ExternalLink, RotateCcw, Save, Trash2, Unplug, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
-import {
-	AgentSourceBadgeForEnvironment,
-	agentDisplayName,
-	agentTypeLabel,
-} from "@/components/dashboard/agent-label";
+import { AgentSourceBadgeForEnvironment } from "@/components/dashboard/agent-label";
 import { syncAgentNameDraft } from "@/components/dashboard/agent-settings-panel.logic";
 import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
@@ -32,7 +29,7 @@ import { agentDetailQueryKey, agentDetailQueryOptions, agentsQueryKey } from "@/
 import { toastApiError, unwrap, useAgentAvatarUploader, useApi, useOpenApi } from "@/lib/api";
 import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type Environment = components["schemas"]["AgentResponse"];
 type EnvironmentUpdate = components["schemas"]["EnvironmentUpdate"];

@@ -1,6 +1,7 @@
 "use client";
 
 import type { components, RuntimeUiCredentials } from "@clawdi/shared/api";
+import { agentDisplayName, formatShortDate } from "@clawdi/shared/view";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import {
@@ -39,7 +40,7 @@ import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
-import { AgentSourceBadge, agentDisplayName } from "@/components/dashboard/agent-label";
+import { AgentSourceBadge } from "@/components/dashboard/agent-label";
 import {
 	AgentOverviewCapabilities,
 	AgentOverviewStatusCard,
@@ -313,7 +314,6 @@ import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { useDesktopBridge } from "@/lib/desktop";
 import { eventStreamFallbackInterval } from "@/lib/event-stream-refresh";
-import { formatShortDate } from "@/lib/format";
 import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
 	agentSectionNavigationItem,

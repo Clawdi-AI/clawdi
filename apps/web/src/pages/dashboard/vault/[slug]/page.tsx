@@ -1,5 +1,13 @@
 "use client";
 
+import {
+	decodeResourceRouteParam,
+	displayProjectName,
+	errorMessage,
+	identityFor,
+	isCustomProject,
+	projectSupportingText,
+} from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import { Copy as CopyIcon, FolderInput, ListChecks, Plus, Trash2 } from "lucide-react";
@@ -16,11 +24,6 @@ import { EmptyState } from "@/components/empty-state";
 import { IconChip } from "@/components/icon-chip";
 import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import {
-	displayProjectName,
-	isCustomProject,
-	projectSupportingText,
-} from "@/components/projects/project-metadata";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -44,8 +47,6 @@ import { agentProjectDetailHref } from "@/lib/agent-routes";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
-import { identityFor } from "@/lib/identity";
-import { decodeResourceRouteParam } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	projectDetailLink,
@@ -54,7 +55,7 @@ import {
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
 import { useCommittedLocation } from "@/lib/use-committed-location";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
 type ProjectRow = components["schemas"]["ProjectResponse"];

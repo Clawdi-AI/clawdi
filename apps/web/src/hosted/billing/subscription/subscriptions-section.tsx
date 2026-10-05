@@ -1,9 +1,10 @@
 "use client";
 
+import type { AgentTile } from "@clawdi/shared/view";
+import { formatShortDate } from "@clawdi/shared/view";
 import { CreditCard, History } from "lucide-react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import type { AgentTile } from "@/components/dashboard/agents-card";
 import { EmptyState } from "@/components/empty-state";
 import { entityCardChassisClass } from "@/components/entity-card";
 import { SettingsSection } from "@/components/settings-section";
@@ -39,7 +40,6 @@ import {
 	resolvePerformancePlan,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { agentSectionHref } from "@/lib/agent-routes";
-import { formatShortDate } from "@/lib/format";
 import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 

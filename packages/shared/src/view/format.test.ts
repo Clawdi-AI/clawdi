@@ -7,7 +7,12 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { formatDuration, formatMemoryMib, formatModelLabel, formatShortDate } from "./format";
+import {
+	formatDuration,
+	formatMemoryMib,
+	formatModelLabel,
+	formatShortDate,
+} from "@clawdi/shared/view";
 
 describe("formatModelLabel", () => {
 	it.each([

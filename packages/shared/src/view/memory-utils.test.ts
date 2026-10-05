@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { memoryDisplayName } from "@/lib/memory-utils";
+import { memoryDisplayName } from "@clawdi/shared/view";
 
 describe("memoryDisplayName", () => {
 	test("uses readable content identity without exposing storage ids", () => {

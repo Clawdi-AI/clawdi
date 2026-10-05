@@ -1,5 +1,6 @@
 "use client";
 
+import { formatShortDate } from "@clawdi/shared/view";
 import { Link } from "@tanstack/react-router";
 import { History, Info, LifeBuoy, TriangleAlert } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -10,7 +11,6 @@ import { resolveComputeSubscriptionActions } from "@/hosted/billing/subscription
 import { activePlanChangeOperationName } from "@/hosted/billing/subscription/plan-change.logic";
 import { pendingComputePlanSlug } from "@/hosted/billing/subscription/subscription-utils";
 import { agentSectionHref } from "@/lib/agent-routes";
-import { formatShortDate } from "@/lib/format";
 import { useProductAccess } from "@/lib/product-access";
 import { computeDunningState, fallbackReasonSentence } from "./compute-dunning.logic";
 

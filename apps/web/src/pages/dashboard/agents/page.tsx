@@ -1,7 +1,8 @@
 "use client";
 
+import { selfManagedAgentTiles } from "@clawdi/shared/view";
 import { lazy, Suspense, useMemo, useState } from "react";
-import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
+import { AgentsCard } from "@/components/dashboard/agents-card";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { useOpenApi } from "@/lib/api";

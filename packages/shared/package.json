@@ -4,6 +4,7 @@
 	"private": true,
 	"type": "module",
 	"exports": {
+		"./view": "./src/view/index.ts",
 		"./terminal": "./src/terminal-dom.ts",
 		"./markdown": "./src/markdown.ts",
 		".": "./src/index.ts",

@@ -5,6 +5,7 @@ import {
 	splitVaultKeys,
 	validVaultSplit,
 } from "@clawdi/shared/api";
+import { errorMessage, identityFor } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Scissors } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -24,8 +25,6 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
-import { identityFor } from "@/lib/identity";
-import { errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
 

@@ -1,4 +1,4 @@
-import { literalSearchRank, searchTerms } from "@/lib/search-highlight";
+import { literalSearchRank, searchTerms } from "../api/search-highlight";
 
 interface SearchableVault {
 	name: string;

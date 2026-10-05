@@ -13,7 +13,7 @@ import {
 	sessionDetailHref,
 	skillDetailHref,
 	vaultDetailHref,
-} from "./project-resource-model";
+} from "@clawdi/shared/view";
 
 describe("project resource model", () => {
 	it("builds Project-scoped links only for managed resources", () => {

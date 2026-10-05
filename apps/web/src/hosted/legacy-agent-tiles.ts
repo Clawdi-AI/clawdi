@@ -1,6 +1,6 @@
 import type { components } from "@clawdi/shared/api";
-import { agentDisplayName } from "@/components/dashboard/agent-label";
-import type { AgentTile } from "@/components/dashboard/agents-card";
+import type { AgentTile } from "@clawdi/shared/view";
+import { agentDisplayName } from "@clawdi/shared/view";
 import { legacyHostedDashboardUrl } from "@/hosted/access/legacy-dashboard-url";
 import { normalizeAgentId } from "@/lib/agent-ownership";
 import { agentSectionHref } from "@/lib/agent-routes";

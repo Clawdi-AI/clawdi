@@ -1,18 +1,18 @@
+import {
+	displayProjectName,
+	identityFor,
+	isProjectOwner,
+	type ProjectMetadata,
+	projectSearchSupportingText,
+	projectSupportingText,
+} from "@clawdi/shared/view";
 import { FolderKanban } from "lucide-react";
 import type { ReactNode } from "react";
 import { type EntityCardLinkOptions, HeroCard, HeroCardSkeleton } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
-import {
-	displayProjectName,
-	isProjectOwner,
-	ProjectKindBadge,
-	type ProjectMetadata,
-	projectSearchSupportingText,
-	projectSupportingText,
-} from "@/components/projects/project-metadata";
+import { ProjectKindBadge } from "@/components/projects/project-metadata";
 import { SearchHighlightedText } from "@/components/search-highlighted-text";
 import { Badge } from "@/components/ui/badge";
-import { identityFor } from "@/lib/identity";
 import {
 	LIBRARY_RESOURCE_SCOPE,
 	projectDetailLink,

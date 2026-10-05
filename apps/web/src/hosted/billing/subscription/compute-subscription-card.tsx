@@ -1,3 +1,4 @@
+import { formatShortDate } from "@clawdi/shared/view";
 import { Link } from "@tanstack/react-router";
 import { ArrowUp, CircleCheck, Settings, UserRoundX } from "lucide-react";
 import type { ReactNode } from "react";
@@ -7,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import { billingTermSuffix, formatCurrencyCents } from "@/hosted/billing/format";
 import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
-import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export type ComputeSubscriptionIdentity =

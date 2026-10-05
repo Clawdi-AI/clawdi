@@ -1,5 +1,7 @@
 "use client";
 
+import type { SkillCardEntity } from "@clawdi/shared/view";
+import { identityFor, relativeTime, skillSearchSupportingText } from "@clawdi/shared/view";
 import { Sparkles, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { EmptyState, type EmptyStateVariant } from "@/components/empty-state";
@@ -13,19 +15,14 @@ import { IconChip } from "@/components/icon-chip";
 import { SearchHighlightedText } from "@/components/search-highlighted-text";
 import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
 import { SkillRemovalDescription } from "@/components/skills/skill-removal-description";
-import { skillSearchSupportingText } from "@/components/skills/skill-search";
 import { TruncatedText } from "@/components/truncated-text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import type { components } from "@/lib/api-schemas";
-import { identityFor } from "@/lib/identity";
 import type { SkillCapabilities } from "@/lib/skill-authority";
-import { relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
-export type SkillCardEntity = Pick<SkillSummary, "skill_key" | "name" | "description"> &
-	Partial<Pick<SkillSummary, "source" | "source_repo" | "version" | "updated_at">>;
 type SkillLinkBuilder = (skill: SkillSummary) => EntityCardLinkOptions | null;
 
 /* Skills are objects, not spreadsheet rows — they get the same card
