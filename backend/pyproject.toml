@@ -6,7 +6,7 @@ dependencies = [
     "anyio>=4.15.1",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.54.0",
-    "sqlalchemy[asyncio]>=2.0",
+    "sqlalchemy[asyncio]>=2.1.2",
     "asyncpg==0.31.0",
     "alembic>=1.20.0",
     "pydantic-settings>=2.14.0",
