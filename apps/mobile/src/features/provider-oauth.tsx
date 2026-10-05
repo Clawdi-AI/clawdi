@@ -6,6 +6,8 @@ import {
 	providerFormIdentity,
 	type SavedAiProvider,
 } from "@clawdi/shared/api";
+import { providerOAuthFlowClasses as styles } from "@clawdi/shared/ui";
+import { providerOAuthCopy as copy } from "@clawdi/shared/view";
 import { onlineManager } from "@tanstack/react-query";
 import { randomUUID } from "expo-crypto";
 import { useFocusEffect } from "expo-router";
@@ -17,7 +19,8 @@ import { useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
 import { ActionButton } from "../ui/agents/controls";
-import { AppText, AppView } from "../ui/primitives";
+import { AppText } from "../ui/primitives";
+import { WebText, WebView } from "../ui/web-layout";
 
 type Authorization = components["schemas"]["AiProviderOAuthDeviceStartResponse"];
 type AcceptBody = components["schemas"]["AiProviderAcceptRequest"];
@@ -245,7 +248,7 @@ export function ProviderOAuth({
 		scope,
 	]);
 	return (
-		<AppView className="gap-3">
+		<WebView recipe={styles.root}>
 			{!authorization ? (
 				<ActionButton
 					label={t(provider ? "providers.reconnectOAuth" : "providers.connectOAuth")}
@@ -254,12 +257,16 @@ export function ProviderOAuth({
 				/>
 			) : (
 				<>
-					<AppText>{t("providers.deviceInstructions")}</AppText>
-					<AppText selectable className="text-lg font-semibold text-foreground">
-						{authorization.user_code}
-					</AppText>
+					<WebView recipe={styles.tile}>
+						<WebText recipe={styles.label}>{copy.code}</WebText>
+						<WebView recipe={styles.codeRow}>
+							<WebText recipe={styles.code} selectable>
+								{authorization.user_code}
+							</WebText>
+						</WebView>
+					</WebView>
 					<ActionButton
-						label={t("providers.openAuthorization")}
+						label={copy.open}
 						disabled={action.busy || issue === "expired"}
 						onPress={() =>
 							void action.run(async () => {
@@ -270,7 +277,7 @@ export function ProviderOAuth({
 					/>
 					{issue === "failed" ? (
 						<ActionButton
-							label={t("providers.resumeOAuth")}
+							label={copy.restart}
 							disabled={!online}
 							onPress={() => {
 								setIssue(null);
@@ -279,16 +286,18 @@ export function ProviderOAuth({
 						/>
 					) : null}
 					{issue ? (
-						<AppText accessibilityRole="alert">
-							{t(issue === "expired" ? "providers.oauthExpired" : "providers.failed")}
-						</AppText>
-					) : null}
+						<WebText recipe={styles.error} accessibilityRole="alert">
+							{issue === "expired" ? copy.expired : copy.failed}
+						</WebText>
+					) : (
+						<WebText recipe={styles.waiting}>{copy.waiting}</WebText>
+					)}
 					{!online ? <AppText>{t("providers.oauthOffline")}</AppText> : null}
 					<ActionButton label={t("providers.stopOAuth")} onPress={stop} />
 				</>
 			)}
 			{ready ? <AppText accessibilityRole="alert">{t("providers.oauthReady")}</AppText> : null}
 			{action.error ? <AppText accessibilityRole="alert">{t("providers.failed")}</AppText> : null}
-		</AppView>
+		</WebView>
 	);
 }

@@ -20,7 +20,7 @@ export function ProviderDialogHeader({
 	disabled?: boolean;
 }) {
 	return (
-		<DialogHeader>
+		<DialogHeader className={webView(styles.header)}>
 			<WebView recipe={styles.headerRow} className="flex-row">
 				{onBack ? (
 					<Button

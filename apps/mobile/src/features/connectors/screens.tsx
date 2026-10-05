@@ -8,18 +8,26 @@ import {
 	safeShareUrl,
 } from "@clawdi/shared/api";
 import {
+	accountAliasDialogClasses,
+	accountAliasFieldClasses,
 	connectorDetailClasses,
 	connectorsSurfaceClasses,
+	credentialsDialogClasses,
 	ENTITY_GRID_CLASS,
 	memoryDetailClasses,
 } from "@clawdi/shared/ui";
-import { getProjectResourceDefinition } from "@clawdi/shared/view";
+import {
+	connectorConnectTitle,
+	connectorDisconnectTitle,
+	connectorFormCopy as copy,
+	getProjectResourceDefinition,
+} from "@clawdi/shared/view";
 import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { openBrowserAsync } from "expo-web-browser";
 import { Check, Plug, Unplug, Wrench } from "lucide-react-native";
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { Alert, AppState } from "react-native";
+import { AppState } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
 import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
@@ -32,12 +40,19 @@ import { ConnectorCard } from "../../ui/connectors/connector-card";
 import { ConnectorIcon } from "../../ui/connectors/connector-icon";
 import { DashboardSection, DashboardSectionHeader } from "../../ui/dashboard/section";
 import { DetailBackLink, LibraryPage } from "../../ui/detail/layout";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../../ui/dialog";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "../../ui/dialog";
 import { EmptyState } from "../../ui/empty-state";
 import { EntityCardSkeleton } from "../../ui/entity-card";
 import { ErrorState } from "../../ui/feedback";
 import { Icon } from "../../ui/icon";
-import { Input } from "../../ui/input";
+import { Input, Label } from "../../ui/input";
 import { ListToolbar } from "../../ui/list-toolbar";
 import { PageHeader } from "../../ui/page-header";
 import { AppText, AppView } from "../../ui/primitives";
@@ -45,8 +60,8 @@ import { SearchInput } from "../../ui/search-input";
 import { SectionLabel } from "../../ui/section-label";
 import { Skeleton } from "../../ui/skeleton";
 import { Text } from "../../ui/text";
+import { useConfirmation } from "../../ui/use-confirmation";
 import { WebText, WebView, webText, webView } from "../../ui/web-layout";
-
 import { routeParam } from "../read-helpers";
 
 type Connection = components["schemas"]["ConnectorConnectionResponse"];
@@ -421,7 +436,10 @@ function Detail({ name }: { name?: string }) {
 			>
 				<DialogContent>
 					<DialogHeader>
-						<DialogTitle>{t("libraryPort.connectAccount")}</DialogTitle>
+						<DialogTitle>{connectorConnectTitle(app.data?.display_name ?? name ?? "")}</DialogTitle>
+						{flow === "credentials" ? (
+							<DialogDescription>{copy.credentialsDescription}</DialogDescription>
+						) : null}
 					</DialogHeader>
 					<WebView recipe={connectorDetailClasses.stack}>
 						{flow === "no_auth" ? (
@@ -433,14 +451,6 @@ function Detail({ name }: { name?: string }) {
 								<AppText className="text-muted-foreground">
 									{t(flow === "redirect" ? "connectors.oauth" : "connectors.credentials")}
 								</AppText>
-								<Input
-									accessibilityLabel={t("connectors.alias")}
-									placeholder={t("connectors.alias")}
-									value={alias}
-									onChangeText={setAlias}
-									maxLength={256}
-									editable={!action.busy}
-								/>
 								{flow === "credentials" ? (
 									fields.isPending ? (
 										<Skeleton className={webView(connectorDetailClasses.accountTitleSkeleton)} />
@@ -448,11 +458,13 @@ function Detail({ name }: { name?: string }) {
 										<ErrorState onRetry={() => void fields.refetch()} />
 									) : (
 										visibleFields.map((field) => (
-											<AppView key={field.name} className="gap-1">
-												<AppText className="text-foreground">
+											<WebView key={field.name} recipe={credentialsDialogClasses.field}>
+												<Label>
 													{field.display_name || field.name}
-													{field.required ? ` · ${t("connectors.required")}` : ""}
-												</AppText>
+													{field.required ? (
+														<WebText recipe={credentialsDialogClasses.required}>*</WebText>
+													) : null}
+												</Label>
 												<Input
 													accessibilityLabel={field.display_name || field.name}
 													secureTextEntry={field.is_secret}
@@ -467,20 +479,32 @@ function Detail({ name }: { name?: string }) {
 													editable={!action.busy}
 												/>
 												{field.description ? (
-													<AppText className="text-muted-foreground">{field.description}</AppText>
+													<WebText recipe={credentialsDialogClasses.hint}>
+														{field.description}
+													</WebText>
 												) : null}
-											</AppView>
+											</WebView>
 										))
 									)
 								) : null}
-								<Button
-									variant="default"
-									size="sm"
-									disabled={action.busy || !canConnect}
-									onPress={connect}
-								>
-									<Text>{t("connectors.connect")}</Text>
-								</Button>
+								<ConnectorAliasField value={alias} onChange={setAlias} disabled={action.busy} />
+								<DialogFooter>
+									<Button
+										variant="outline"
+										disabled={action.busy}
+										onPress={() => setAuthOpen(false)}
+									>
+										<Text>{copy.cancel}</Text>
+									</Button>
+									<Button
+										variant="default"
+										size="sm"
+										disabled={action.busy || !canConnect}
+										onPress={connect}
+									>
+										<Text>{copy.connect}</Text>
+									</Button>
+								</DialogFooter>
 							</AppView>
 						) : null}
 						{action.error ? <ApiErrorPanel error={action.error} /> : null}
@@ -493,6 +517,7 @@ function Detail({ name }: { name?: string }) {
 
 function Account({ connection }: { connection: Connection }) {
 	const t = useI18n();
+	const confirmationDialog = useConfirmation();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const cache = useQueryClient();
@@ -505,19 +530,26 @@ function Account({ connection }: { connection: Connection }) {
 		const visible = capture();
 		const perform = () => {
 			if (!visible() || !scope.isCurrent()) return;
-			void action.run(async (isCurrent) => {
+			return action.run(async (isCurrent) => {
 				if (disconnect) await read((s) => connectors.disconnect(connection.id, s));
 				else await read((s) => connectors.update(connection.id, { alias: alias.trim() }, s));
+				if (isCurrent()) {
+					setEditing(false);
+				}
 				if (isCurrent())
 					await cache.invalidateQueries({ queryKey: accountQueryKey(scope, "connectors") });
 			});
 		};
 		if (!disconnect) perform();
 		else
-			Alert.alert(t("connectors.disconnect"), t("connectors.disconnectWarning"), [
-				{ text: t("account.cancel"), style: "cancel" },
-				{ text: t("connectors.disconnect"), style: "destructive", onPress: perform },
-			]);
+			confirmationDialog.show(
+				connectorDisconnectTitle(connection.alias || connection.account_display || "this account"),
+				copy.disconnectDescription,
+				[
+					{ text: t("account.cancel"), style: "cancel" },
+					{ text: t("connectors.disconnect"), style: "destructive", onPress: perform },
+				],
+			);
 	};
 	return (
 		<WebView recipe={connectorDetailClasses.accountRow}>
@@ -546,22 +578,66 @@ function Account({ connection }: { connection: Connection }) {
 				</Button>
 			</WebView>
 			{action.error ? <ApiErrorPanel error={action.error} /> : null}
-			<Dialog open={editing} onOpenChange={setEditing}>
-				<DialogContent>
+			<Dialog
+				open={editing}
+				onOpenChange={(next) => {
+					if (!action.busy) setEditing(next);
+				}}
+			>
+				<DialogContent
+					className={webView(accountAliasDialogClasses.dialog)}
+					showCloseButton={!action.busy}
+				>
 					<DialogHeader>
-						<DialogTitle>{t("connectors.alias")}</DialogTitle>
+						<DialogTitle>{copy.renameTitle}</DialogTitle>
+						<DialogDescription>
+							{connection.account_display && connection.account_display !== connection.alias
+								? connection.account_display
+								: `Account ${connection.id}`}
+						</DialogDescription>
 					</DialogHeader>
-					<Input value={alias} onChangeText={setAlias} editable={!action.busy} maxLength={256} />
+					<ConnectorAliasField value={alias} onChange={setAlias} disabled={action.busy} />
 					<DialogFooter>
+						<Button variant="outline" disabled={action.busy} onPress={() => setEditing(false)}>
+							<Text>{copy.cancel}</Text>
+						</Button>
 						<Button
 							disabled={action.busy || alias.trim() === (connection.alias ?? "")}
 							onPress={() => update(false)}
 						>
-							<Text>{t("connectors.saveAlias")}</Text>
+							<Text>{copy.rename}</Text>
 						</Button>
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
+			{confirmationDialog.dialog}
+		</WebView>
+	);
+}
+
+function ConnectorAliasField({
+	value,
+	onChange,
+	disabled,
+}: {
+	value: string;
+	onChange: (value: string) => void;
+	disabled: boolean;
+}) {
+	return (
+		<WebView recipe={accountAliasFieldClasses.field}>
+			<Label>{copy.name}</Label>
+			<Input
+				accessibilityLabel={copy.name}
+				placeholder={copy.namePlaceholder}
+				value={value}
+				onChangeText={onChange}
+				editable={!disabled}
+				maxLength={256}
+				autoCapitalize="none"
+				autoCorrect={false}
+			/>
+			<WebText recipe={accountAliasFieldClasses.hint}>{copy.nameHint}</WebText>
 		</WebView>
 	);
 }

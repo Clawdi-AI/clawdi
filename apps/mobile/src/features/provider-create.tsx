@@ -9,6 +9,7 @@ import {
 	providerPresetById,
 	type SavedAiProvider,
 } from "@clawdi/shared/api";
+import { providerDialogClasses as dialogStyles } from "@clawdi/shared/ui";
 import {
 	providerFieldsFormCopy as copy,
 	type ProviderChoice,
@@ -31,6 +32,7 @@ import { ProviderFieldsForm } from "../ui/agents/provider-fields-form";
 import { Dialog, DialogContent, DialogFooter } from "../ui/dialog";
 import { Icon } from "../ui/icon";
 import { AppText, AppView } from "../ui/primitives";
+import { WebView, webView } from "../ui/web-layout";
 import { ProviderOAuth } from "./provider-oauth";
 
 type AcceptRequest = components["schemas"]["AiProviderAcceptRequest"];
@@ -66,6 +68,8 @@ export function ProviderCreate({
 		attempt.current = null;
 		setLocked(false);
 		setOpen(false);
+		setStep("choose");
+		setGroup(null);
 	}, []);
 	useFocusEffect(useCallback(() => clearSensitive, [clearSensitive]));
 	useEffect(() => {
@@ -158,7 +162,7 @@ export function ProviderCreate({
 						if (!next && !action.busy) clearSensitive();
 					}}
 				>
-					<DialogContent>
+					<DialogContent className={webView(dialogStyles.content)} showCloseButton={!action.busy}>
 						<ProviderDialogHeader
 							title={
 								step === "choose"
@@ -183,76 +187,81 @@ export function ProviderCreate({
 									: undefined
 							}
 						/>
-						{step === "choose" ? (
-							<ProviderChooser
-								selected={group}
-								onGroupChange={setGroup}
-								onSelect={(selected: ProviderChoice) => {
-									setSecret("");
-									setOAuth(selected.kind === "oauth");
-									if (selected.kind !== "oauth") {
-										const id = selected.kind === "preset" ? selected.preset.id : selected.type;
-										setChoice(id);
-										setType(
-											selected.kind === "preset" ? selected.preset.provider_type : selected.type,
-										);
-										setRegion(selected.kind === "preset" ? (selected.regionId ?? null) : null);
-									}
-									setStep("configure");
-								}}
-							/>
-						) : oauth ? (
-							<ProviderOAuth providers={providers} refresh={refresh} />
-						) : (
-							<>
-								{preset?.region_variants?.length ? (
-									<ChoiceSelect
-										value={region ?? preset.region_variants[0]?.id ?? ""}
-										options={preset.region_variants.map((variant) => ({
-											value: variant.id,
-											label: variant.label,
-										}))}
-										disabled={locked || action.busy}
-										onValueChange={(value) => {
-											setRegion(value);
-											setSecret("");
-										}}
-									/>
-								) : null}
-								<ProviderFieldsForm
-									label={label}
-									placeholder={preset?.label ?? PROVIDER_TYPE_META[type].label}
-									onLabel={setLabel}
-									showRouting={custom}
-									baseUrl={baseUrl}
-									onBaseUrl={setBaseUrl}
-									apiMode={apiMode}
-									onApiMode={setApiMode}
-									secret={secret}
-									onSecret={setSecret}
-									credentialLabel={preset?.credential_label ?? copy.apiKey}
-									disabled={locked || action.busy}
-								/>
-								<DialogFooter>
-									<ActionButton
-										label={locked ? t("providers.retrySame") : copy.add}
-										variant="default"
-										disabled={
-											action.busy ||
-											!providers ||
-											!secret.trim() ||
-											(custom && (!baseUrl.trim() || !label.trim()))
+						<WebView
+							recipe={dialogStyles.body}
+							style={{ flexGrow: 0, flexShrink: 0, flexBasis: "auto" }}
+						>
+							{step === "choose" ? (
+								<ProviderChooser
+									selected={group}
+									onGroupChange={setGroup}
+									onSelect={(selected: ProviderChoice) => {
+										setSecret("");
+										setOAuth(selected.kind === "oauth");
+										if (selected.kind !== "oauth") {
+											const id = selected.kind === "preset" ? selected.preset.id : selected.type;
+											setChoice(id);
+											setType(
+												selected.kind === "preset" ? selected.preset.provider_type : selected.type,
+											);
+											setRegion(selected.kind === "preset" ? (selected.regionId ?? null) : null);
 										}
-										onPress={() => void submit()}
+										setStep("configure");
+									}}
+								/>
+							) : oauth ? (
+								<ProviderOAuth providers={providers} refresh={refresh} />
+							) : (
+								<>
+									{preset?.region_variants?.length ? (
+										<ChoiceSelect
+											value={region ?? preset.region_variants[0]?.id ?? ""}
+											options={preset.region_variants.map((variant) => ({
+												value: variant.id,
+												label: variant.label,
+											}))}
+											disabled={locked || action.busy}
+											onValueChange={(value) => {
+												setRegion(value);
+												setSecret("");
+											}}
+										/>
+									) : null}
+									<ProviderFieldsForm
+										label={label}
+										placeholder={preset?.label ?? PROVIDER_TYPE_META[type].label}
+										onLabel={setLabel}
+										showRouting={custom}
+										baseUrl={baseUrl}
+										onBaseUrl={setBaseUrl}
+										apiMode={apiMode}
+										onApiMode={setApiMode}
+										secret={secret}
+										onSecret={setSecret}
+										credentialLabel={preset?.credential_label ?? copy.apiKey}
+										disabled={locked || action.busy}
 									/>
-									<ActionButton
-										label={t("account.cancel")}
-										disabled={action.busy}
-										onPress={clearSensitive}
-									/>
-								</DialogFooter>
-							</>
-						)}
+									<DialogFooter className={webView(dialogStyles.footer)}>
+										<ActionButton
+											label={t("account.cancel")}
+											disabled={action.busy}
+											onPress={clearSensitive}
+										/>
+										<ActionButton
+											label={locked ? t("providers.retrySame") : copy.add}
+											variant="default"
+											disabled={
+												action.busy ||
+												!providers ||
+												!secret.trim() ||
+												(custom && (!baseUrl.trim() || !label.trim()))
+											}
+											onPress={() => void submit()}
+										/>
+									</DialogFooter>
+								</>
+							)}
+						</WebView>
 						{action.error ? (
 							<AppText accessibilityRole="alert">{t("providers.failed")}</AppText>
 						) : null}

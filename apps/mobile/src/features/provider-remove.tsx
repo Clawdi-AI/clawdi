@@ -1,5 +1,6 @@
 import type { AiProviderRemovalImpact, AiProviderRemovalResult } from "@clawdi/shared/api";
 import { aiProvidersPageClasses } from "@clawdi/shared/ui";
+import { providerRemovalCopy as copy } from "@clawdi/shared/view";
 import { randomUUID } from "expo-crypto";
 import { Trash2 } from "lucide-react-native";
 import { useRef, useState } from "react";
@@ -8,18 +9,31 @@ import { useI18n } from "../i18n";
 import { useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
-import { ActionButton, NativeSwitch } from "../ui/agents/controls";
+import { ActionButton } from "../ui/agents/controls";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Button } from "../ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Checkbox } from "../ui/checkbox";
 import { Icon } from "../ui/icon";
+import { Label } from "../ui/input";
 import { AppText, AppView } from "../ui/primitives";
-import { webView } from "../ui/web-layout";
+import { WebView, webView } from "../ui/web-layout";
 
 export function ProviderRemove({
 	providerId,
+	providerLabel = providerId,
 	onRemoved,
 }: {
 	providerId: string;
+	providerLabel?: string;
 	onRemoved: (result: AiProviderRemovalResult) => Promise<void>;
 }) {
 	const t = useI18n();
@@ -103,7 +117,7 @@ export function ProviderRemove({
 				<Icon as={Trash2} />
 			</Button>
 			{open ? (
-				<Dialog
+				<AlertDialog
 					open={open}
 					onOpenChange={(next) => {
 						if (!next && !action.busy) {
@@ -112,11 +126,11 @@ export function ProviderRemove({
 						}
 					}}
 				>
-					<DialogContent>
-						<DialogHeader>
-							<DialogTitle>{t("providers.reviewRemoval")}</DialogTitle>
-						</DialogHeader>
-						<AppText>{t("providers.removeWarning")}</AppText>
+					<AlertDialogContent>
+						<AlertDialogHeader>
+							<AlertDialogTitle>{`Remove ${providerLabel}?`}</AlertDialogTitle>
+						</AlertDialogHeader>
+						<AlertDialogDescription>{copy.description}</AlertDialogDescription>
 						{uncertain ? (
 							<AppText accessibilityRole="alert">{t("providers.removalUncertain")}</AppText>
 						) : null}
@@ -134,45 +148,37 @@ export function ProviderRemove({
 						/>
 						{impact ? (
 							<>
-								<AppText>
-									{t(
-										impact.agents.length
-											? "providers.affectedAgents"
-											: "providers.noAffectedAgents",
-									)}
-								</AppText>
+								<AppText>{impact.agents.length ? copy.affected : copy.noAgents}</AppText>
 								{impact.agents.map((agent) => (
 									<AppText selectable key={agent.deployment_id}>
-										{agent.name} · {agent.deployment_id}
+										{agent.name}
 									</AppText>
 								))}
-								<NativeSwitch
-									label={t("providers.acknowledgeRemoval")}
-									value={acknowledged}
-									disabled={action.busy}
-									onValueChange={setAcknowledged}
-								/>
-								<ActionButton
-									label={t("providers.removePermanently")}
-									variant="destructive"
-									disabled={action.busy || !acknowledged}
-									onPress={() => void remove(false)}
-								/>
+								<WebView recipe={aiProvidersPageClasses.acknowledgement} className="flex-row">
+									<Checkbox
+										checked={acknowledged}
+										disabled={action.busy}
+										onCheckedChange={setAcknowledged}
+									/>
+									<Label className="flex-1">{copy.acknowledge}</Label>
+								</WebView>
 							</>
 						) : null}
 						{action.error ? (
 							<AppText accessibilityRole="alert">{t("providers.removalFailed")}</AppText>
 						) : null}
-						<ActionButton
-							label={t("account.cancel")}
-							disabled={action.busy}
-							onPress={() => {
-								setOpen(false);
-								setAcknowledged(false);
-							}}
-						/>
-					</DialogContent>
-				</Dialog>
+						<AlertDialogFooter>
+							<AlertDialogCancel disabled={action.busy}>{copy.cancel}</AlertDialogCancel>
+							<AlertDialogAction
+								variant="destructive"
+								disabled={action.busy || !impact || !acknowledged}
+								onPress={() => void remove(false)}
+							>
+								{copy.remove}
+							</AlertDialogAction>
+						</AlertDialogFooter>
+					</AlertDialogContent>
+				</AlertDialog>
 			) : null}
 		</AppView>
 	);

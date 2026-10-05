@@ -8,6 +8,7 @@ import {
 	providerPresetForSavedProvider,
 	type SavedAiProvider,
 } from "@clawdi/shared/api";
+import { providerDialogClasses as dialogStyles } from "@clawdi/shared/ui";
 import { providerFieldsFormCopy as copy, providerPresentation } from "@clawdi/shared/view";
 import { randomUUID } from "expo-crypto";
 import { useFocusEffect } from "expo-router";
@@ -25,6 +26,7 @@ import { ProviderFieldsForm } from "../ui/agents/provider-fields-form";
 import { Dialog, DialogContent, DialogFooter } from "../ui/dialog";
 import { Icon } from "../ui/icon";
 import { AppText, AppView } from "../ui/primitives";
+import { WebView, webView } from "../ui/web-layout";
 
 export function ProviderEdit({
 	provider,
@@ -153,49 +155,54 @@ export function ProviderEdit({
 						if (!next && !action.busy) clear();
 					}}
 				>
-					<DialogContent>
+					<DialogContent className={webView(dialogStyles.content)} showCloseButton={!action.busy}>
 						<ProviderDialogHeader
 							title={`Edit ${providerPresentation(provider).label}`}
 							providerId={provider.native_provider ?? provider.type}
 							providerLabel={providerPresentation(provider).label}
 						/>
-						{!oauth && native && preset?.region_variants?.length ? (
-							<ChoiceSelect
-								value={region ?? preset.region_variants[0]?.id ?? ""}
-								options={preset.region_variants.map((variant) => ({
-									value: variant.id,
-									label: variant.label,
-								}))}
+						<WebView
+							recipe={dialogStyles.body}
+							style={{ flexGrow: 0, flexShrink: 0, flexBasis: "auto" }}
+						>
+							{!oauth && native && preset?.region_variants?.length ? (
+								<ChoiceSelect
+									value={region ?? preset.region_variants[0]?.id ?? ""}
+									options={preset.region_variants.map((variant) => ({
+										value: variant.id,
+										label: variant.label,
+									}))}
+									disabled={locked || action.busy}
+									onValueChange={setRegion}
+								/>
+							) : null}
+							<ProviderFieldsForm
+								label={label}
+								placeholder={providerPresentation(provider).label}
+								onLabel={setLabel}
+								showRouting={!oauth && !native}
+								baseUrl={baseUrl}
+								onBaseUrl={setBaseUrl}
+								apiMode={apiMode}
+								onApiMode={setApiMode}
+								secret={secret}
+								onSecret={setSecret}
+								credentialLabel={preset?.credential_label ?? copy.apiKey}
+								credentialPlaceholder={
+									provider.auth.type === "none" ? copy.apiKeyPlaceholder : copy.keepCredential
+								}
 								disabled={locked || action.busy}
-								onValueChange={setRegion}
+								oauth={oauth}
 							/>
-						) : null}
-						<ProviderFieldsForm
-							label={label}
-							placeholder={providerPresentation(provider).label}
-							onLabel={setLabel}
-							showRouting={!oauth && !native}
-							baseUrl={baseUrl}
-							onBaseUrl={setBaseUrl}
-							apiMode={apiMode}
-							onApiMode={setApiMode}
-							secret={secret}
-							onSecret={setSecret}
-							credentialLabel={preset?.credential_label ?? copy.apiKey}
-							credentialPlaceholder={
-								provider.auth.type === "none" ? copy.apiKeyPlaceholder : copy.keepCredential
-							}
-							disabled={locked || action.busy}
-							oauth={oauth}
-						/>
-						<DialogFooter>
+						</WebView>
+						<DialogFooter className={webView(dialogStyles.footer)}>
+							<ActionButton label={t("account.cancel")} disabled={action.busy} onPress={clear} />
 							<ActionButton
 								label={locked ? t("providers.retrySame") : copy.save}
 								variant="default"
 								disabled={action.busy || !scope.isReady || !baseUrl.trim()}
 								onPress={() => void save()}
 							/>
-							<ActionButton label={t("account.cancel")} disabled={action.busy} onPress={clear} />
 						</DialogFooter>
 						{action.error ? (
 							<AppText accessibilityRole="alert">{t("providers.failed")}</AppText>

@@ -198,7 +198,11 @@ function ProviderCard({
 			/>
 			<WebView recipe={styles.actions} className="flex-row">
 				<ProviderEdit provider={provider} refresh={refresh} />
-				<ProviderRemove providerId={provider.provider_id} onRemoved={onRemoved} />
+				<ProviderRemove
+					providerId={provider.provider_id}
+					providerLabel={presentation.label}
+					onRemoved={onRemoved}
+				/>
 				{provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile" ? (
 					<ProviderOAuth provider={provider} refresh={refresh} />
 				) : null}
@@ -208,7 +212,7 @@ function ProviderCard({
 					accessibilityLabel={t("providers.validate")}
 					disabled={action.busy || !scope.isReady}
 					onPress={() =>
-						void action.run(async (current) => {
+						action.run(async (current) => {
 							setValid(null);
 							const result = await read((signal) =>
 								aiProviders.validate(provider.provider_id, signal),
