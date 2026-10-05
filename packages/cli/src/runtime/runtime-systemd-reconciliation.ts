@@ -25,6 +25,11 @@ import {
 } from "./manifest-install";
 import { runtimeRecoverableSecretValues } from "./manifest-secrets";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
+import {
+	gatewayOomProtectionLines,
+	platformOomProtectionLines,
+	runtimeMemoryBudget,
+} from "./oom-protection";
 import { openClawFileSecretEnvironmentKeys } from "./openclaw-file-secrets";
 import {
 	forgetOpenClawPreinstalledService,
@@ -32,11 +37,6 @@ import {
 	recordOpenClawPreinstalledService,
 } from "./openclaw-preinstalled-service";
 import { openClawConfigCanHotReload, openClawHotApplyEnabled } from "./openclaw-warm-gateway";
-import {
-	gatewayOomProtectionLines,
-	platformOomProtectionLines,
-	runtimeMemoryBudget,
-} from "./oom-protection";
 import {
 	DEFAULT_RUN_ROOT,
 	DEFAULT_SERVICE_STATE_ROOT,
