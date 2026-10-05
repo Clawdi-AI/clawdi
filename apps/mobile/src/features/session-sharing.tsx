@@ -56,12 +56,13 @@ import {
 } from "../ui/dropdown-menu";
 import { EmptyState } from "../ui/empty-state";
 import { Icon } from "../ui/icon";
+import { Input } from "../ui/input";
 import { PageHeader } from "../ui/page-header";
 import { AppScrollView } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
 import { Skeleton } from "../ui/skeleton";
 import { Text } from "../ui/text";
-import { WebText, WebView, webView } from "../ui/web-layout";
+import { WebText, WebView, webBoth, webView } from "../ui/web-layout";
 import { useCloudSession } from "./cloud-inventory";
 import { routeParam } from "./read-helpers";
 
@@ -340,15 +341,20 @@ function SharesView({
 					</ConfirmAction>
 				) : null}
 			</WebView>
-			{compact ? (
-				<WebText recipe={dialogStyles.url} selectable numberOfLines={1}>
-					{share.share_url}
-				</WebText>
-			) : null}
-			<WebView recipe={styles.actions}>
+			<WebView recipe={compact ? dialogStyles.linkActions : styles.actions}>
+				{compact ? (
+					<Input
+						value={share.share_url}
+						editable={false}
+						selectTextOnFocus
+						accessibilityLabel={t("sessionDetail.link")}
+						className={`${webBoth(dialogStyles.url)} flex-1`}
+					/>
+				) : null}
 				<Button
 					variant="outline"
 					size="sm"
+					className={compact ? webView(dialogStyles.copy) : undefined}
 					disabled={action.busy || !safeShareUrl(share.share_url)}
 					onPress={() => present(share.share_url)}
 				>
@@ -387,28 +393,30 @@ function SharesView({
 						</Button>
 					</ConfirmAction>
 				) : null}
-				<DropdownMenu>
-					<DropdownMenuTrigger
-						render={
-							<Button variant="ghost" size="icon-sm" accessibilityLabel={t("sessionDetail.more")}>
-								<Icon as={MoreHorizontal} />
-							</Button>
-						}
-					/>
-					<DropdownMenuContent>
-						{(["md", "json"] as const).map((format) => (
-							<DropdownMenuItem
-								key={format}
-								label={t(format === "md" ? "sessionDetail.export" : "sessionDetail.exportJson")}
-								disabled={action.busy || !sessionShareExportUrl(share.share_url, format)}
-								onSelect={() => {
-									const url = sessionShareExportUrl(share.share_url, format);
-									if (url) present(url);
-								}}
-							/>
-						))}
-					</DropdownMenuContent>
-				</DropdownMenu>
+				{!compact ? (
+					<DropdownMenu>
+						<DropdownMenuTrigger
+							render={
+								<Button variant="ghost" size="icon-sm" accessibilityLabel={t("sessionDetail.more")}>
+									<Icon as={MoreHorizontal} />
+								</Button>
+							}
+						/>
+						<DropdownMenuContent>
+							{(["md", "json"] as const).map((format) => (
+								<DropdownMenuItem
+									key={format}
+									label={t(format === "md" ? "sessionDetail.export" : "sessionDetail.exportJson")}
+									disabled={action.busy || !sessionShareExportUrl(share.share_url, format)}
+									onSelect={() => {
+										const url = sessionShareExportUrl(share.share_url, format);
+										if (url) present(url);
+									}}
+								/>
+							))}
+						</DropdownMenuContent>
+					</DropdownMenu>
+				) : null}
 			</WebView>
 		</WebView>
 	);
