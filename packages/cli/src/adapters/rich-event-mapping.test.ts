@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import inlineImage from "../../tests/fixtures/hermes-inline-image.json";
 import {
 	completeJsonlRecords,
 	reasoningContent,
@@ -78,6 +79,24 @@ describe("rich event mapping", () => {
 		);
 		expect(JSON.stringify(mapped)).not.toContain("hidden reasoning");
 		expect(JSON.stringify(mapped)).not.toContain("opaque continuation");
+	});
+
+	test("maps inline image URLs without treating their payload as an attachment name", () => {
+		const result = toolResultContent(inlineImage.content);
+		expect(result.parts).toEqual([
+			{ type: "text", text: "Synthetic image input" },
+			{
+				type: "attachment",
+				attachment_id: `sha256:${createHash("sha256")
+					.update(inlineImage.content[1]?.image_url?.url ?? "")
+					.digest("hex")}`,
+				availability: "metadata_only",
+			},
+		]);
+		expect(JSON.stringify(result)).not.toContain("base64");
+		expect(
+			visibleContentParts({ type: "file", url: "https://cdn.example.com/report%20one.pdf" })[0],
+		).toMatchObject({ name: "report one.pdf" });
 	});
 
 	test("maps reasoning text and provider continuation without retaining its source envelope", () => {

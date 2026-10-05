@@ -227,6 +227,86 @@ describe("session upload negotiation and integrity", () => {
 });
 
 describe("events-v1 incremental upload", () => {
+	it.each(["append", "rewrite"] as const)(
+		"persists a %s validation rejection, skips unchanged content and recovers after re-mapping",
+		async (kind) => {
+			const api = eventApi();
+			const generation = "11111111-1111-4111-8111-111111111111";
+			const session = rawSession(events(["one", "first"], ["two", "before fix"]), true);
+			const fence = sessionFence(api, {
+				environmentId: "agent-pi",
+				adapter: "pi",
+				sourceSessionKey: session.localSessionId,
+			});
+			const plan = await prepareSessionUpload(session, "events-v1");
+			let reads = 0;
+			let uploads = 0;
+			api.getSessionEventHead = async () => {
+				reads++;
+				return {
+					protocol: "events-v1",
+					generation: kind === "append" ? generation : null,
+					revision: 0,
+					count: 0,
+					head_hash: EMPTY_EVENT_HEAD,
+				};
+			};
+			api.stageSessionEventGeneration = async (_id, body) => ({
+				generation: body.generation,
+				status: "staging",
+			});
+			const reject = async () => {
+				uploads++;
+				throw new ApiError({
+					status: 422,
+					body: '{"detail":"event does not match events-v1 at seq 1: message.parts.1.attachment.name (string_too_long)"}',
+					hint: "validation failed",
+				});
+			};
+			api.appendSessionEvents = reject;
+			api.uploadSessionEventGenerationChunk = reject;
+			const input = { api, fence, session, plan, needsSnapshotContent: false };
+			const result = await syncSessionContent(input);
+			expect(result.status).toBe("blocked");
+			expect(readFencedSessionEntry(readSessionsLock(), fence)).toMatchObject({
+				local_hash: plan.localHash,
+				blocked: { code: "event_schema_invalid", content_hash: plan.localHash },
+			});
+			expect(readFencedSessionEntry(readSessionsLock(), fence)?.event_head_hash).toBeUndefined();
+			// A fresh lock read represents the next daemon cycle or process restart.
+			expect(sessionPlanIsDurablyBlocked(fence, plan)).toContain("attachment.name");
+			expect(await syncSessionContent(input)).toEqual(result);
+			expect({ reads, uploads }).toEqual({ reads: 1, uploads: 1 });
+			const fixed = rawSession(events(["one", "first"], ["two", "after fix"]), true);
+			const fixedPlan = await prepareSessionUpload(fixed, "events-v1");
+			expect(sessionPlanIsDurablyBlocked(fence, fixedPlan)).toBeNull();
+			api.getSessionEventHead = async () => ({
+				protocol: "events-v1",
+				generation,
+				revision: 1,
+				count: 0,
+				head_hash: EMPTY_EVENT_HEAD,
+			});
+			api.appendSessionEvents = async (chunk) => {
+				const rows = chunk.file
+					.toString()
+					.trim()
+					.split("\n")
+					.map((line) => JSON.parse(line));
+				expect(rows.map((row) => row.parts[0].text)).toEqual(["first", "after fix"]);
+				return {
+					generation,
+					revision: 2,
+					count: fixedPlan.eventCount ?? 0,
+					head_hash: fixedPlan.localHash,
+				};
+			};
+			expect((await syncSessionContent({ ...input, session: fixed, plan: fixedPlan })).status).toBe(
+				"synced",
+			);
+			expect(readFencedSessionEntry(readSessionsLock(), fence)?.blocked).toBeUndefined();
+		},
+	);
 	it.each([-1, 0, 1])(
 		"preserves canonical Unicode bytes at chunk budget boundary %i",
 		async (boundary) => {
