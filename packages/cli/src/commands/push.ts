@@ -498,7 +498,8 @@ async function scanOneAgent(
 				!(
 					cached?.protocol === plan.protocol &&
 					cached.local_hash === plan.localHash &&
-					cached.pending === undefined
+					cached.pending === undefined &&
+					cached.blocked === undefined
 				)
 			)
 				retained.push(s);

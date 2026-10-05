@@ -69,6 +69,7 @@ import {
 import {
 	type FencedSessionLockEntry,
 	type FencedSessionSourceRevisionUpdate,
+	isSessionBlockCurrent,
 	persistFencedSessionSourceRevisions,
 	readSessionsLock,
 	type SessionFence,
@@ -1079,7 +1080,7 @@ async function prepareSessionSync(
 	const protocol = await negotiateSessionProtocol(api, sessions, { signal: opts.abort });
 	const lastPushedSessionHash = loadFencedSessionHashes(api, opts);
 	for (const entry of currentFencedSessionEntries(api, opts)) {
-		if (entry.blocked) {
+		if (entry.blocked && isSessionBlockCurrent(entry.blocked)) {
 			health.set(
 				"push",
 				`session:${entry.source_session_key}`,
@@ -1122,9 +1123,8 @@ async function prepareSessionSync(
 							adapter: opts.adapter.agentType,
 							sourceSessionKey: session.localSessionId,
 						}),
-					onBlocked: (session, message, hash) => {
+					onBlocked: (session, message) => {
 						health.set("push", `session:${session.localSessionId}`, `permanent: ${message}`);
-						lastPushedSessionHash.set(session.localSessionId, hash);
 					},
 				});
 				enqueued += result.enqueued;
@@ -1205,7 +1205,7 @@ async function prepareSessionSync(
 function loadFencedSessionHashes(api: ApiClient, opts: EngineOpts): Map<string, string> {
 	const hashes = new Map<string, string>();
 	for (const value of currentFencedSessionEntries(api, opts)) {
-		if (value.pending === undefined) {
+		if (value.pending === undefined && (!value.blocked || isSessionBlockCurrent(value.blocked))) {
 			hashes.set(value.source_session_key, value.local_hash);
 		}
 	}
@@ -1219,7 +1219,12 @@ function loadFencedSessionSourceRevisions(
 ): Map<string, string> {
 	const revisions = new Map<string, string>();
 	for (const value of currentFencedSessionEntries(api, opts)) {
-		if (value.protocol === protocol && value.pending === undefined && value.source_revision) {
+		if (
+			value.protocol === protocol &&
+			value.pending === undefined &&
+			value.source_revision &&
+			(!value.blocked || isSessionBlockCurrent(value.blocked))
+		) {
 			revisions.set(value.source_session_key, value.source_revision);
 		}
 	}
@@ -1901,7 +1906,7 @@ export async function processQueueItem(
 		// Leave the in-memory state untouched so the next watcher
 		// tick can decide.
 		opts.abort.throwIfAborted();
-		if (result.outcome === "applied" || result.outcome === "blocked") {
+		if (result.outcome === "applied") {
 			lastPushedSessionHash.set(item.local_session_id, result.actualHash);
 		}
 		const cur = inFlightSessionHash.get(item.local_session_id);

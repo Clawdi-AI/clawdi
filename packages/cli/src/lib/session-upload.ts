@@ -9,6 +9,7 @@ import {
 	projectEventsToMessages,
 } from "./session-events";
 import {
+	isSessionBlockCurrent,
 	type PendingEventUpload,
 	persistFencedSessionEntry,
 	readFencedSessionEntry,
@@ -16,6 +17,8 @@ import {
 	type SessionFence,
 	type SessionsLock,
 } from "./sessions-lock";
+
+import { getCliVersion } from "./version";
 
 export type SelectedSessionProtocol = "snapshot-v1" | "events-v1";
 
@@ -209,7 +212,11 @@ export function sessionPlanIsDurablyBlocked(
 	lock: SessionsLock = readSessionsLock(),
 ): string | null {
 	const entry = readFencedSessionEntry(lock, fence);
-	return entry?.local_hash === plan.localHash ? (entry.blocked?.message ?? null) : null;
+	return entry?.local_hash === plan.localHash &&
+		entry.blocked &&
+		isSessionBlockCurrent(entry.blocked)
+		? entry.blocked.message
+		: null;
 }
 
 function sourceRevisionEntry(session: RawSession): { source_revision?: string } {
@@ -359,7 +366,7 @@ async function syncEventSession(input: {
 					message: error.message,
 				});
 			}
-			if (error instanceof ApiError && error.status === 422) {
+			if (error instanceof EventSchemaInvalidError) {
 				return persistBlocked(input, {
 					code: "event_schema_invalid",
 					message: `${input.session.localSessionId} events-v1 upload rejected: ${error.message}`,
@@ -382,14 +389,15 @@ async function appendEvents(
 	limits: { targetBytes: number; maxBytes: number },
 ): Promise<{ head: EventHead; uploaded: boolean }> {
 	if (!initialHead.generation) throw new Error("cannot append without a generation");
+	const generation = initialHead.generation;
 	let head = initialHead;
 	let uploaded = false;
 	for await (const chunk of chunkEvents(input.plan, initialHead.count, limits)) {
 		const finalCount = chunk.startSeq + chunk.count;
 		const pendingShape = {
 			kind: "append" as const,
-			generation: initialHead.generation,
-			base_generation: initialHead.generation,
+			generation,
+			base_generation: generation,
 			base_revision: head.revision,
 			base_count: chunk.startSeq,
 			base_head_hash: chunk.baseHead,
@@ -398,21 +406,23 @@ async function appendEvents(
 		};
 		const appendId = reusableAppendId(input.fence, pendingShape) ?? randomUUID();
 		persistPending(input, { ...pendingShape, append_id: appendId });
-		const response = await input.api.appendSessionEvents({
-			localSessionId: input.session.localSessionId,
-			environmentId: input.fence.environmentId,
-			appendId,
-			generation: initialHead.generation,
-			baseRevision: head.revision,
-			baseCount: chunk.startSeq,
-			baseHeadHash: chunk.baseHead,
-			finalCount,
-			finalHeadHash: chunk.resultHead,
-			contentHash: chunk.contentHash,
-			file: chunk.bytes,
-		});
+		const response = await validateEventUpload(() =>
+			input.api.appendSessionEvents({
+				localSessionId: input.session.localSessionId,
+				environmentId: input.fence.environmentId,
+				appendId,
+				generation,
+				baseRevision: head.revision,
+				baseCount: chunk.startSeq,
+				baseHeadHash: chunk.baseHead,
+				finalCount,
+				finalHeadHash: chunk.resultHead,
+				contentHash: chunk.contentHash,
+				file: chunk.bytes,
+			}),
+		);
 		assertEventResponse(response, {
-			generation: initialHead.generation,
+			generation,
 			revision: head.revision + 1,
 			count: finalCount,
 			headHash: chunk.resultHead,
@@ -508,14 +518,16 @@ async function replaceEventGeneration(
 	}
 	let uploaded = false;
 	for await (const chunk of chunkEvents(input.plan, 0, limits)) {
-		const response = await input.api.uploadSessionEventGenerationChunk({
-			localSessionId: input.session.localSessionId,
-			generation: pending.generation,
-			startSeq: chunk.startSeq,
-			baseHeadHash: chunk.baseHead,
-			contentHash: chunk.contentHash,
-			file: chunk.bytes,
-		});
+		const response = await validateEventUpload(() =>
+			input.api.uploadSessionEventGenerationChunk({
+				localSessionId: input.session.localSessionId,
+				generation: pending.generation,
+				startSeq: chunk.startSeq,
+				baseHeadHash: chunk.baseHead,
+				contentHash: chunk.contentHash,
+				file: chunk.bytes,
+			}),
+		);
 		if (
 			response.generation !== pending.generation ||
 			response.start_seq !== chunk.startSeq ||
@@ -720,6 +732,7 @@ function persistBlocked(
 			...(block.sizeBytes === undefined ? {} : { size_bytes: block.sizeBytes }),
 			message: block.message,
 			blocked_at: new Date().toISOString(),
+			cli_version: getCliVersion(),
 		},
 	});
 	return {
@@ -781,5 +794,17 @@ class EventTooLargeError extends Error {
 			`events-v1 event ${seq} is ${sizeBytes} bytes and exceeds the ${maxBytes} byte chunk limit`,
 		);
 		this.name = "EventTooLargeError";
+	}
+}
+
+class EventSchemaInvalidError extends Error {}
+
+async function validateEventUpload<T>(upload: () => Promise<T>): Promise<T> {
+	try {
+		return await upload();
+	} catch (error) {
+		if (error instanceof ApiError && error.status === 422)
+			throw new EventSchemaInvalidError(error.message);
+		throw error;
 	}
 }

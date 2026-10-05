@@ -14,6 +14,7 @@ import {
 	readSessionsLock,
 } from "../../src/lib/sessions-lock";
 import { recordProjectSkillMaterialization } from "../../src/lib/skills-lock";
+import { getCliVersion } from "../../src/lib/version";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
 import {
 	type AgentHomeOverrideSnapshot,
@@ -106,6 +107,7 @@ describe("push — scan snapshot", () => {
 					size_bytes: 100,
 					message: "scan block",
 					blocked_at: new Date().toISOString(),
+					cli_version: getCliVersion(),
 				},
 			},
 		};

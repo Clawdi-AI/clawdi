@@ -30,6 +30,7 @@ import {
 	recordSkillProjectionClaim,
 } from "../lib/skills-lock";
 import { computeSkillArchiveHash } from "../lib/tar";
+import { getCliVersion } from "../lib/version";
 import { releaseManagedSkill, reserveManagedSkill } from "../runtime/managed-skill-reservation";
 import { RetryQueue } from "./queue";
 import {
@@ -133,6 +134,7 @@ describe("stable session enqueue abort fence", () => {
 					content_hash: plan.localHash,
 					message: "schema rejected",
 					blocked_at: new Date().toISOString(),
+					cli_version: getCliVersion(),
 				},
 			});
 			const queued: unknown[] = [];
@@ -1688,6 +1690,95 @@ describe("daemon startup Agent lookup", () => {
 			rmSync(root, { recursive: true, force: true });
 		}
 	}
+
+	it("requeues an expired block with the same source revision", async () => {
+		await withStartupCase(
+			async () => Response.json({ id: "agent-isolated" }),
+			async ({ abortController }) => {
+				const session: RawSession = {
+					localSessionId: "expired",
+					projectPath: null,
+					startedAt: new Date(0),
+					endedAt: null,
+					messageCount: 1,
+					inputTokens: 0,
+					outputTokens: 0,
+					cacheReadTokens: 0,
+					model: null,
+					modelsUsed: [],
+					durationSeconds: null,
+					summary: null,
+					messages: [{ role: "user", content: "unchanged" }],
+					rawFilePath: "/sessions/expired",
+					sourceRevision: "same-revision",
+				};
+				const api = new ApiClient();
+				const plan = planSessionUpload(session, "snapshot-v1");
+				persistFencedSessionEntry(
+					sessionFence(api, {
+						environmentId: "agent-isolated",
+						adapter: "hermes",
+						sourceSessionKey: session.localSessionId,
+					}),
+					{
+						protocol: plan.protocol,
+						local_hash: plan.localHash,
+						source_revision: session.sourceRevision,
+						blocked: {
+							code: "legacy_session_too_large",
+							content_hash: plan.localHash,
+							message: "old rejection",
+							cli_version: getCliVersion(),
+							blocked_at: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+						},
+					},
+				);
+				let resolved = false;
+				const adapter: AgentAdapter = {
+					agentType: "hermes",
+					detect: async () => true,
+					getVersion: async () => null,
+					sessions: {
+						contentProtocol: async () => "snapshot-v1",
+						watchPaths: () => [],
+						collect: async () => ({ sessions: [session], coverage: "complete", dedupedCount: 0 }),
+						scan: async (_request, known) => {
+							expect(known.has(session.localSessionId)).toBe(false);
+							return {
+								coverage: "complete",
+								batches: (async function* () {
+									yield {
+										sessions: [session],
+										observedLocalSessionIds: [session.localSessionId],
+										dedupedCount: 0,
+									};
+								})(),
+							};
+						},
+						resolve: async () => {
+							resolved = true;
+							abortController.abort();
+							return null;
+						},
+					},
+				};
+				const deadline = setTimeout(() => abortController.abort(), 5000);
+				try {
+					await runSyncEngine({
+						environmentId: "agent-isolated",
+						adapter,
+						abort: abortController.signal,
+						abortController,
+						forcePollWatcher: true,
+					});
+					expect(resolved).toBe(true);
+				} finally {
+					clearTimeout(deadline);
+					abortController.abort();
+				}
+			},
+		);
+	});
 
 	it("retains a preparing session while Skills and heartbeats progress, then recovers without restart", async () => {
 		let heartbeats = 0;
