@@ -17,7 +17,6 @@ import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import { RotateCcw, Save, Settings as SettingsIcon, Trash2, Upload } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
-import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
@@ -34,6 +33,7 @@ import { Input } from "../ui/input";
 import { PageHeader } from "../ui/page-header";
 import { AppScrollView, AppText } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
+import { useConfirmation } from "../ui/use-confirmation";
 import { WebText, WebView, webView } from "../ui/web-layout";
 import { type CloudAgent, isNotFound, useCloudAgent } from "./cloud-inventory";
 import { routeParam } from "./read-helpers";
@@ -48,6 +48,7 @@ export function AgentSettingsScreen() {
 
 function Settings({ id }: { id: string | undefined }) {
 	const t = useI18n();
+	const unsavedDialog = useConfirmation();
 	const confirmationDialog = useAgentConfirmation();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -68,7 +69,7 @@ function Settings({ id }: { id: string | undefined }) {
 		({ data }) => {
 			const visible = capture();
 			const ticket = ++confirmation.current;
-			Alert.alert(t("agentSettings.unsavedTitle"), t("agentSettings.unsavedMessage"), [
+			unsavedDialog.show(t("agentSettings.unsavedTitle"), t("agentSettings.unsavedMessage"), [
 				{ text: t("account.cancel"), style: "cancel" },
 				{
 					text: t("agentSettings.discard"),
@@ -357,6 +358,7 @@ function Settings({ id }: { id: string | undefined }) {
 				) : null}
 			</AppScrollView>
 			{confirmationDialog.dialog}
+			{unsavedDialog.dialog}
 		</ReadScreen>
 	);
 }

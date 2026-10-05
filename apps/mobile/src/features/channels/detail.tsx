@@ -11,13 +11,17 @@ import {
 } from "@clawdi/shared/api";
 import {
 	agentsIndexClasses,
+	channelFormClasses,
 	ENTITY_CARD_BASE,
 	channelDetailPageClasses as styles,
 } from "@clawdi/shared/ui";
 import {
 	agentDisplayName,
 	agentSurfaceCopy,
+	channelFormCopy,
 	channelHealthSummary,
+	channelRemovalCopy,
+	channelRemovalTitle,
 	channelDetailCopy as copy,
 	pairingCommandsDescription,
 	providerMeta,
@@ -29,7 +33,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { KeyRound, RefreshCw, Trash2, TriangleAlert, Unplug } from "lucide-react-native";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, AppState, Linking } from "react-native";
+import { AppState, Linking } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
 import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
@@ -43,16 +47,26 @@ import {
 	NativeSwitch,
 } from "../../ui/agents/controls";
 import { ApiErrorPanel } from "../../ui/api-error-panel";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "../../ui/dialog";
 import { EmptyState } from "../../ui/empty-state";
 import { EntityHeader } from "../../ui/entity-card";
 import { EntityIcon } from "../../ui/entity-icon";
 import { Icon } from "../../ui/icon";
 import { IconChip } from "../../ui/icon-chip";
+import { Label } from "../../ui/input";
 import { PageHeader } from "../../ui/page-header";
 import { AppScrollView, AppText, AppView } from "../../ui/primitives";
 import { ReadScreen } from "../../ui/read-screen";
 import { SectionLabel } from "../../ui/section-label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../ui/tabs";
+import { useConfirmation } from "../../ui/use-confirmation";
 import { WebText, WebView, webView } from "../../ui/web-layout";
 import { BackButton, useCloudAgents } from "../cloud-inventory";
 import { routeParam } from "../read-helpers";
@@ -73,6 +87,7 @@ export function ChannelDetailScreen() {
 
 function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: string }) {
 	const t = useI18n();
+	const confirmationDialog = useConfirmation();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { channels } = useMobileApi();
@@ -81,6 +96,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 	const capture = useForegroundLease();
 	const action = useAuthAction(scope.identity);
 	const [agentId, setAgentId] = useState(initialAgentId ?? "");
+	const [linkOpen, setLinkOpen] = useState(false);
 	const [replace, setReplace] = useState(false);
 	const [commands, setCommands] = useState<
 		components["schemas"]["ChannelCommandSyncResponse"] | null
@@ -172,15 +188,20 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 			await refresh();
 			if (current() && visible()) after?.();
 		});
-	const confirm = (title: string, warning: string, operation: () => void) => {
+	const confirm = (
+		title: string,
+		warning: string,
+		operation: () => unknown,
+		confirmLabel = title,
+	) => {
 		const visible = capture();
-		Alert.alert(title, warning, [
+		confirmationDialog.show(title, warning, [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
-				text: title,
+				text: confirmLabel,
 				style: "destructive",
 				onPress: () => {
-					if (scope.isCurrent() && !scope.signal.aborted && visible()) operation();
+					if (scope.isCurrent() && !scope.signal.aborted && visible()) return operation();
 				},
 			},
 		]);
@@ -224,13 +245,21 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 								disabled={disabled}
 								onPress={() =>
 									confirm(
-										t("channels.remove"),
-										t("channels.removeWarning"),
+										channelRemovalTitle(
+											ownedBot?.name ?? bot?.name ?? "Channel",
+											ownedBot?.provider === "whatsapp",
+										),
+										ownedBot?.provider === "whatsapp"
+											? channelRemovalCopy.whatsappDescription
+											: channelRemovalCopy.description,
 										() =>
-											void perform(
+											perform(
 												(signal) => channels.remove(id ?? "", signal),
 												() => router.replace("/channels"),
 											),
+										ownedBot?.provider === "whatsapp"
+											? channelRemovalCopy.disconnect
+											: channelRemovalCopy.remove,
 									)
 								}
 							/>
@@ -248,7 +277,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 				<NativeButton
 					label={t("channels.refresh")}
 					onPress={() =>
-						void action.run(async () => {
+						action.run(async () => {
 							await refresh();
 							await agents.refetch();
 						})
@@ -300,41 +329,80 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 					/>
 				) : null}
 				{bot?.capabilities.link_agent && bot.available ? (
-					<AppView className="gap-3">
-						<NativePicker
-							value={agentId}
-							options={[
-								{ value: "", label: t("channels.selectAgent") },
-								...(agents.data ?? []).map((agent) => ({ value: agent.id, label: agent.name })),
-							]}
-							disabled={disabled || agents.isError}
-							onValueChange={(value) => {
-								setAgentId(value);
-								setReplace(false);
-							}}
-						/>
-						{replacement ? (
-							<>
-								<AppText>{t("channels.replaceWarning")}</AppText>
-								<NativeSwitch
-									label={t("channels.replace")}
-									value={replace}
-									onValueChange={setReplace}
-									disabled={disabled}
-								/>
-							</>
-						) : null}
+					<>
 						<NativeButton
-							label={t("channels.link")}
-							disabled={disabled || !selected || unknown || (replacement && !replace)}
-							onPress={() =>
-								void perform(
-									(signal) => channels.link(id ?? "", agentId, replacement && replace, signal),
-									() => setReplace(false),
-								)
-							}
+							label={channelFormCopy.linkTitle}
+							disabled={disabled}
+							onPress={() => setLinkOpen(true)}
 						/>
-					</AppView>
+						<Dialog
+							open={linkOpen}
+							onOpenChange={(next) => {
+								if (!action.busy) setLinkOpen(next);
+							}}
+						>
+							<DialogContent
+								className={webView(channelFormClasses.content)}
+								showCloseButton={!action.busy}
+							>
+								<DialogHeader>
+									<DialogTitle>{channelFormCopy.linkTitle}</DialogTitle>
+									<DialogDescription>{channelFormCopy.linkDescription}</DialogDescription>
+								</DialogHeader>
+								<WebView recipe={channelFormClasses.field}>
+									<Label>{channelFormCopy.agent}</Label>
+									<NativePicker
+										value={agentId}
+										options={[
+											{ value: "", label: channelFormCopy.chooseAgent },
+											...(agents.data ?? []).map((agent) => ({
+												value: agent.id,
+												label: agent.name,
+											})),
+										]}
+										disabled={disabled || agents.isError}
+										onValueChange={(value) => {
+											setAgentId(value);
+											setReplace(false);
+										}}
+									/>
+								</WebView>
+								{replacement ? (
+									<>
+										<AppText>{t("channels.replaceWarning")}</AppText>
+										<NativeSwitch
+											label={t("channels.replace")}
+											value={replace}
+											onValueChange={setReplace}
+											disabled={disabled}
+										/>
+									</>
+								) : null}
+								<DialogFooter>
+									<NativeButton
+										label={t("account.cancel")}
+										disabled={action.busy}
+										onPress={() => setLinkOpen(false)}
+									/>
+									<NativeButton
+										label={t("channels.link")}
+										disabled={disabled || !selected || unknown || (replacement && !replace)}
+										onPress={() =>
+											perform(
+												(signal) =>
+													channels.link(id ?? "", agentId, replacement && replace, signal),
+												() => {
+													setReplace(false);
+													setLinkOpen(false);
+												},
+											)
+										}
+									/>
+								</DialogFooter>
+								{action.error ? <ApiErrorPanel error={t("channels.failed")} /> : null}
+							</DialogContent>
+						</Dialog>
+					</>
 				) : null}
 				{links.data
 					?.filter((link) => link.status === "active")
@@ -382,10 +450,8 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 									variant="ghost"
 									disabled={disabled}
 									onPress={() =>
-										confirm(
-											t("channels.unlink"),
-											t("channels.unlinkWarning"),
-											() => void perform((signal) => channels.unlink(id ?? "", link.id, signal)),
+										confirm(t("channels.unlink"), t("channels.unlinkWarning"), () =>
+											perform((signal) => channels.unlink(id ?? "", link.id, signal)),
 										)
 									}
 								/>
@@ -393,42 +459,52 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 						);
 					})}
 				{pairing ? (
-					<AppView className={webView(ENTITY_CARD_BASE)}>
-						<AppText>{t("channels.pairInstructions")}</AppText>
-						{verifiedDiscordPairingCommand(pairing.pairing_command, pairing.code) ? (
-							<AppText selectable>{pairing.pairing_command}</AppText>
-						) : null}
-						<AppText>{pairing.expires_at}</AppText>
-						{pairingLink ? (
-							<NativeButton
-								label={t("channels.openPair")}
-								onPress={() => open(pairingLink)}
-								disabled={action.busy}
-							/>
-						) : null}
-						{bot?.provider === "discord"
-							? [
-									{
-										value: verifiedDiscordInstallUrl(pairing.discord_install_url),
-										label: t("channels.install"),
-									},
-									{
-										value: verifiedDiscordInstallUrl(pairing.discord_user_install_url),
-										label: t("channels.installUser"),
-									},
-								].map(({ value, label }) =>
-									value ? (
-										<NativeButton
-											key={label}
-											label={label}
-											onPress={() => open(value)}
-											disabled={action.busy}
-										/>
-									) : null,
-								)
-							: null}
-						<NativeButton label={t("account.cancel")} onPress={clearPairing} />
-					</AppView>
+					<Dialog
+						open
+						onOpenChange={(next) => {
+							if (!next) clearPairing();
+						}}
+					>
+						<DialogContent className={webView(channelFormClasses.pairingContent)}>
+							<DialogHeader>
+								<DialogTitle>{`Pair ${providerMeta(bot?.provider ?? "telegram").label}`}</DialogTitle>
+							</DialogHeader>
+							<AppText>{t("channels.pairInstructions")}</AppText>
+							{verifiedDiscordPairingCommand(pairing.pairing_command, pairing.code) ? (
+								<AppText selectable>{pairing.pairing_command}</AppText>
+							) : null}
+							<AppText>{pairing.expires_at}</AppText>
+							{pairingLink ? (
+								<NativeButton
+									label={t("channels.openPair")}
+									onPress={() => open(pairingLink)}
+									disabled={action.busy}
+								/>
+							) : null}
+							{bot?.provider === "discord"
+								? [
+										{
+											value: verifiedDiscordInstallUrl(pairing.discord_install_url),
+											label: t("channels.install"),
+										},
+										{
+											value: verifiedDiscordInstallUrl(pairing.discord_user_install_url),
+											label: t("channels.installUser"),
+										},
+									].map(({ value, label }) =>
+										value ? (
+											<NativeButton
+												key={label}
+												label={label}
+												onPress={() => open(value)}
+												disabled={action.busy}
+											/>
+										) : null,
+									)
+								: null}
+							<NativeButton label={t("account.cancel")} onPress={clearPairing} />
+						</DialogContent>
+					</Dialog>
 				) : null}
 				<SectionLabel>Paired chats</SectionLabel>
 				{bindings.data?.length === 0 ? <AppText>{t("channels.noBindings")}</AppText> : null}
@@ -531,7 +607,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 									onPress={() => {
 										let published: components["schemas"]["ChannelCommandSyncResponse"] | null =
 											null;
-										void perform(
+										perform(
 											async (signal) => {
 												published = await channels.syncCommands(id ?? "", signal);
 												return published;
@@ -566,6 +642,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 					</TabsContent>
 				</Tabs>
 			</AppScrollView>
+			{confirmationDialog.dialog}
 		</ReadScreen>
 	);
 }

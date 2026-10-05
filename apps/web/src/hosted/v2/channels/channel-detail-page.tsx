@@ -3,6 +3,8 @@
 import { channelDetailPageClasses } from "@clawdi/shared/ui";
 import {
 	agentSurfaceCopy,
+	channelRemovalCopy,
+	channelRemovalTitle,
 	channelDetailCopy as copy,
 	pairingCommandsDescription,
 	publishedCommandsLabel,
@@ -260,13 +262,15 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				}
 				actions={
 					<ConfirmAction
-						title={`${disconnectsWhatsApp ? agentSurfaceCopy.disconnect : "Delete"} ${ch.name}?`}
+						title={channelRemovalTitle(ch.name, disconnectsWhatsApp)}
 						description={
 							disconnectsWhatsApp
-								? "This logs out Clawdi as a linked device and removes the Custom bot. Linked Agents will stop sending and receiving."
-								: "This deletes the Custom bot, its Agent links, and its paired chats. This can't be undone."
+								? channelRemovalCopy.whatsappDescription
+								: channelRemovalCopy.description
 						}
-						confirmLabel={disconnectsWhatsApp ? "Disconnect and remove" : "Delete custom bot"}
+						confirmLabel={
+							disconnectsWhatsApp ? channelRemovalCopy.disconnect : channelRemovalCopy.remove
+						}
 						destructive
 						onConfirm={removeChannel}
 					>

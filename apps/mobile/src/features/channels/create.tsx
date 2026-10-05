@@ -204,6 +204,11 @@ export function ChannelCreate({ refresh }: { refresh: () => Promise<void> }) {
 								) : null}
 								<DialogFooter>
 									<ActionButton
+										label={t("account.cancel")}
+										disabled={action.busy}
+										onPress={clear}
+									/>
+									<ActionButton
 										label={copy.add}
 										variant="default"
 										disabled={action.busy || uncertain || invalid}
@@ -238,11 +243,6 @@ export function ChannelCreate({ refresh }: { refresh: () => Promise<void> }) {
 												await refresh();
 											})
 										}
-									/>
-									<ActionButton
-										label={t("account.cancel")}
-										disabled={action.busy}
-										onPress={clear}
 									/>
 								</DialogFooter>
 							</WebView>

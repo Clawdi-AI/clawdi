@@ -21,3 +21,15 @@ export const channelFormCopy = {
 	whatsappTitle: "Connect WhatsApp",
 	repairTitle: "Repair WhatsApp before linking",
 };
+
+export const channelRemovalCopy = {
+	description:
+		"This deletes the Custom bot, its Agent links, and its paired chats. This can't be undone.",
+	whatsappDescription:
+		"This logs out Clawdi as a linked device and removes the Custom bot. Linked Agents will stop sending and receiving.",
+	remove: "Delete custom bot",
+	disconnect: "Disconnect and remove",
+};
+export function channelRemovalTitle(name: string, whatsapp: boolean) {
+	return `${whatsapp ? "Disconnect" : "Delete"} ${name}?`;
+}
