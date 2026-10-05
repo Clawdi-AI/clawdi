@@ -32,6 +32,11 @@ import {
 } from "../runtime/cli-update";
 import { persistComponentActivations } from "../runtime/component-observation";
 import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
+import {
+	adoptableWarmEgress,
+	consumeWarmEgress,
+	waitForEgressSnapshot,
+} from "../runtime/egress-snapshot";
 import { readHostPolicy } from "../runtime/host-policy";
 import { failedHostedAgentPluginsObservation } from "../runtime/hosted-agent-plugin-observation";
 import {
@@ -1596,7 +1601,9 @@ async function applyRuntimeDesiredState(
 					finishEarlyEgress = beginFirstApplyEgress(paths, previousSystemdUnits);
 				},
 				activateEgressPrerequisite: () => {
-					const earlyEgress = finishEarlyEgress !== null;
+					const warmEgress = adoptableWarmEgress(paths);
+					if (warmEgress) waitForEgressSnapshot(paths);
+					const earlyEgress = finishEarlyEgress !== null || warmEgress;
 					finishEarlyEgress?.();
 					finishEarlyEgress = null;
 					const candidateSystemdUnits = readSystemdUnitSnapshot(paths);
@@ -1629,6 +1636,11 @@ async function applyRuntimeDesiredState(
 					}
 				},
 				activate: ({ staleSystemUnits, staleUserUnits, invalidatedUserUnits }) => {
+					if (adoptableWarmEgress(paths)) {
+						waitForEgressSnapshot(paths);
+						egressPrerequisiteActivated = true;
+						assertRuntimeUserCanRead(paths.egressSystemCaFile, paths.userHome);
+					}
 					if (finishEarlyEgress) {
 						finishEarlyEgress();
 						finishEarlyEgress = null;
@@ -1664,6 +1676,7 @@ async function applyRuntimeDesiredState(
 						if (activation.applied && adoptUserUnits.length > 0) {
 							consumeWarmOpenClawGateway(paths);
 						}
+						if (activation.applied) consumeWarmEgress(paths);
 						systemdApply = {
 							applied: activation.applied && (egressPrerequisiteApply?.applied ?? true),
 							systemUnitsChanged: [

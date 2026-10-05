@@ -16,6 +16,7 @@ import {
 	validateConnectionProviderEnvironments,
 } from "./connection-provider-config";
 import { buildEgressProfileBundle, hasEnabledEgressProfiles } from "./egress-profiles";
+import { publishClaimedEgressSnapshot } from "./egress-snapshot";
 import {
 	ensureFileBrowserCompanion,
 	gcFileBrowserCompanionCandidates,
@@ -1244,6 +1245,7 @@ function prepareRuntimeActivation(
 		.filter((item) => item.program.runtime === "openclaw")
 		.map((item) => item.unitName);
 	const systemdUnits = publishSystemdUnits(deferredUnitNames);
+	if (egressProjection.egressSystemdProgram) publishClaimedEgressSnapshot(paths);
 	state.staleSystemdFiles = systemdUnits.staleFiles;
 	const staleSystemdFileErrors = removeStaleRuntimeSystemdFiles(state.staleSystemdFiles);
 	if (staleSystemdFileErrors.length > 0) throw new Error(staleSystemdFileErrors.join("; "));

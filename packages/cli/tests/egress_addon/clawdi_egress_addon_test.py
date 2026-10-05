@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import importlib.util
 import json
+import os
 import runpy
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 from urllib.parse import quote
 
 
@@ -75,6 +79,55 @@ def bundle(profiles):
 
 
 class AddonProfileInterpreterTest(unittest.TestCase):
+    def test_anonymous_snapshot_denies_then_atomically_adopts_and_rotates_credentials(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path, ack = root / "snapshot.json", root / "ack"
+            engine = addon.ClawdiEgressAddon()
+            native_fstat = os.fstat
+            def root_owned(fd):
+                node = native_fstat(fd)
+                return SimpleNamespace(st_mode=node.st_mode, st_size=node.st_size, st_uid=0)
+            def publish(claimed, profiles, secrets):
+                pending = root / "pending"
+                pending.write_text(json.dumps({"schemaVersion": "clawdi.egressSnapshot.v1",
+                    "claimed": claimed, "profiles": {"schemaVersion": addon.SCHEMA_VERSION,
+                    "profiles": profiles}, "secrets": secrets}))
+                pending.chmod(0o640)
+                pending.replace(input_path)
+            def acknowledged():
+                return ack.read_text() == hashlib.sha256(input_path.read_bytes()).hexdigest() + "\n"
+            profiles = [{"id": "claim", "kind": "http", "match": {"host": "service.test"},
+                "rewrite": {"upstreamBaseUrl": "https://relay.test", "setHeaders": {
+                    "authorization": {"type": "secretRef", "secretRef": "secret://key"}}}}]
+            with patch.object(addon.os, "fstat", side_effect=root_owned):
+                publish(False, [], {})
+                engine.reload_from_environment({"CLAWDI_EGRESS_SNAPSHOT_FILE": str(input_path),
+                    "CLAWDI_EGRESS_SNAPSHOT_ACK": str(ack)})
+                flow = Flow()
+                self.assertEqual(engine.apply_to_flow(flow).action, "deny")
+                self.assertTrue(engine.should_intercept_sni("any.test"))
+                self.assertTrue(acknowledged())
+                for key in ["first", "rotated"]:
+                    publish(True, profiles, {"secret://key": key})
+                    flow = Flow()
+                    self.assertEqual(engine.apply_to_flow(flow).action, "http")
+                    self.assertEqual(flow.request.headers["authorization"], key)
+                    self.assertTrue(acknowledged())
+                publish(True, profiles, {})
+                self.assertEqual(engine.apply_to_flow(Flow()).action, "deny")
+                self.assertFalse(acknowledged())
+                self.assertEqual(engine.secrets, {})
+                publish(True, profiles, {"secret://key": "repaired"})
+                self.assertEqual(engine.apply_to_flow(Flow()).action, "http")
+                self.assertTrue(acknowledged())
+                input_path.chmod(0o660)
+                self.assertEqual(engine.apply_to_flow(Flow()).action, "deny")
+                input_path.unlink()
+                input_path.symlink_to(ack)
+                self.assertEqual(engine.apply_to_flow(Flow()).action, "deny")
+            self.assertEqual(ack.stat().st_mode & 0o777, 0o600)
+
     def test_generic_engine_source_contains_no_channel_product_constants(self):
         source = ADDON_PATH.read_text(encoding="utf-8").lower()
 
@@ -1198,6 +1251,53 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             addon.redact_url("https://example.test/path?token=secret&x=1", profile),
             "https://example.test/path?[redacted]&x=1",
         )
+
+
+class AddonSnapshotWatchTest(unittest.IsolatedAsyncioTestCase):
+    async def test_background_watch_acknowledges_claim_without_traffic_and_stops(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, ack = root / "snapshot.json", root / "ack"
+            source.write_text(json.dumps({
+                "schemaVersion": "clawdi.egressSnapshot.v1", "claimed": False,
+                "profiles": {"schemaVersion": addon.SCHEMA_VERSION, "profiles": []},
+                "secrets": {},
+            }))
+            source.chmod(0o640)
+            engine = addon.ClawdiEgressAddon()
+            native_fstat = os.fstat
+
+            def root_owned(fd):
+                node = native_fstat(fd)
+                return SimpleNamespace(st_mode=node.st_mode, st_size=node.st_size, st_uid=0)
+
+            with patch.object(addon.os, "fstat", side_effect=root_owned):
+                engine.reload_from_environment({
+                    "CLAWDI_EGRESS_SNAPSHOT_FILE": str(source),
+                    "CLAWDI_EGRESS_SNAPSHOT_ACK": str(ack),
+                })
+                await engine.running()
+                task = engine.snapshot_task
+                self.assertIsNotNone(task)
+                try:
+                    candidate = root / "pending"
+                    candidate.write_text(json.dumps({
+                        "schemaVersion": "clawdi.egressSnapshot.v1", "claimed": True,
+                        "profiles": {"schemaVersion": addon.SCHEMA_VERSION, "profiles": []},
+                        "secrets": {"secret://rotation": "tenant-key"},
+                    }))
+                    candidate.chmod(0o640)
+                    candidate.replace(source)
+                    expected = hashlib.sha256(source.read_bytes()).hexdigest() + "\n"
+                    async with asyncio.timeout(2):
+                        while ack.read_text() != expected:
+                            await asyncio.sleep(0.01)
+                    self.assertTrue(engine.snapshot_claimed)
+                    self.assertEqual(engine.secrets, {"secret://rotation": "tenant-key"})
+                finally:
+                    engine.done()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await task
 
 
 if __name__ == "__main__":

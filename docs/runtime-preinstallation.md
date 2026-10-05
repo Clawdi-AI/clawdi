@@ -149,5 +149,21 @@ inventories retain their startup order. An observation invalidated while boot or
 watch health settles is re-attested and recaptured once immediately; network
 failure backoff and steady heartbeat cadence are unchanged.
 
+Anonymous warm-up also starts the prepared root-managed egress sidecar. It has
+no tenant identity, policy or credentials and denies managed traffic until
+claim. A root-owned atomic snapshot binds the complete policy and credential
+set; the engine validates it, clears stale credentials on an invalid replacement,
+and privately acknowledges its SHA-256. A background watcher acknowledges
+replacement without requiring a request. Snapshot paths are tenant-independent.
+Existing tenants without the warm-created private enablement marker retain
+the legacy sidecar inputs and normal restart behavior.
+
+First apply reuses that engine only while its active, idle invocation, effective
+systemd configuration, unit, environment and CA match the private warm receipt.
+The exact claimed snapshot must be acknowledged before activation succeeds;
+normal fresh systemd proof still runs. Changed engine or platform inputs keep
+the normal restart boundary. The single-use warm receipt is consumed after
+successful activation. Neither warm command's CLI interface changes.
+
 Done: Docker CLI typecheck, focused systemd/producer regressions and Biome pass;
 latency qualification belongs to the paired provisioning fixture.

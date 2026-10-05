@@ -21,7 +21,7 @@ import {
 } from "./persisted-step-revisions";
 import { installAnonymousOpenClawGatewayService } from "./runtime-systemd-reconciliation";
 import { runtimeUserGid, runtimeUserUid } from "./runtime-user-command";
-import { generateAnonymousEgressCa } from "./runtime-warm-egress";
+import { generateAnonymousEgressCa, warmAnonymousEgressSidecar } from "./runtime-warm-egress";
 
 const GATEWAY_READY_TIMEOUT_MS = 180_000;
 
@@ -77,6 +77,7 @@ export async function warmHostedOpenClawRuntime(
 	});
 	if (start.status !== 0) throw new Error("anonymous OpenClaw gateway did not start");
 	await waitForGatewayHealth();
+	warmAnonymousEgressSidecar(paths, identity);
 
 	// The gateway has created its state; seed what the first apply would probe.
 	resolveHostedOpenClawWorkspace(paths.userHome);

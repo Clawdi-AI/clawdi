@@ -1344,11 +1344,13 @@ function officialRuntimeSystemdPrograms(
 export function writeRuntimeSidecarSystemdUnit(input: {
 	program: RuntimeEgressSystemdProgram;
 	identity: RuntimeEgressIdentity;
-	manifest: RuntimeManifest;
+	manifest?: RuntimeManifest;
 	paths: RuntimePaths;
 	workspaceRoot: string;
 	commonEnvironment: Record<string, string>;
 }): string {
+	const environment = { ...input.commonEnvironment };
+	delete environment.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY;
 	return writeSystemdSystemUnit({
 		paths: input.paths,
 		name: "clawdi-runtime-sidecar",
@@ -1357,11 +1359,13 @@ export function writeRuntimeSidecarSystemdUnit(input: {
 		args: ["runtime", "sidecar"],
 		cwd: input.workspaceRoot,
 		env: {
-			...input.commonEnvironment,
+			...environment,
 			CLAWDI_AUTH_TOKEN: "",
 			CLAWDI_EGRESS_ENV_FILE: input.program.envFilePath,
 			CLAWDI_MANAGED_CONTENT_DIGEST: runtimeImpactRevision({
-				program: runtimeSidecarProgramRevision(input.manifest, input.program, input.identity),
+				program: input.manifest
+					? runtimeSidecarProgramRevision(input.manifest, input.program, input.identity)
+					: runtimeImpactRevision({ program: input.program, identity: input.identity }),
 				secretFile: input.program.secretFilePath
 					? readFileSync(input.program.secretFilePath, "utf8")
 					: null,

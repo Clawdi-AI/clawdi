@@ -9,7 +9,7 @@ import { runtimeCommandPath } from "./manifest-install";
 import type { RuntimePaths } from "./paths";
 import { installAnonymousHermesGatewayService } from "./runtime-systemd-reconciliation";
 import { runtimeUserGid, runtimeUserUid, spawnRuntimeUserCommand } from "./runtime-user-command";
-import { generateAnonymousEgressCa } from "./runtime-warm-egress";
+import { generateAnonymousEgressCa, warmAnonymousEgressSidecar } from "./runtime-warm-egress";
 import { writeRuntimePlatformFileAtomic } from "./state";
 
 const COMPILE_TIMEOUT_MS = 600_000;
@@ -61,6 +61,7 @@ export async function warmHostedHermesRuntime(
 	// valid for every interpreter, so only a failure to run is an error.
 	if (compiled.error) throw new Error("Hermes byte-compilation did not run");
 	await warmAnonymousDashboard(paths, runtimeUser, gatewayUnit);
+	warmAnonymousEgressSidecar(paths, identity);
 	writeRuntimePlatformFileAtomic(paths, hermesWarmMarker(paths), "warmed\n", { mode: 0o600 });
 }
 
