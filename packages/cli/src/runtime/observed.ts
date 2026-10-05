@@ -32,6 +32,7 @@ import { readHostedSkillsObservation } from "./hosted-skill-observation";
 import { providerHealthReasons } from "./manifest-providers";
 import { hostedRuntimeBundleV2Schema, loadCommittedRuntimeManifest } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
+import { profileRuntimeStepAsync } from "./profile";
 import { execRuntimeUserCommand, spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
 import { type RuntimeBootStatus, readRuntimeBootStatus } from "./state";
@@ -88,11 +89,8 @@ export async function readHostedRuntimeObserved(
 	const activeCliVersion = getCliVersion();
 	const cliBootstrap = readRuntimeCliBootstrapStatus(paths);
 	const servingSamples = observationServingSamples(paths, appliedState);
-	const systemd = await readSystemdObserved(
-		paths,
-		appliedState,
-		boot.status?.enabledRuntimes ?? [],
-		servingSamples,
+	const systemd = await profileRuntimeStepAsync("observation.systemd", () =>
+		readSystemdObserved(paths, appliedState, boot.status?.enabledRuntimes ?? [], servingSamples),
 	);
 	const providers = readProviderObserved(paths);
 	const appliedAuthority = appliedState
@@ -152,20 +150,22 @@ export async function readHostedRuntimeObserved(
 		if (userActivity) observed.userActivity = userActivity;
 	}
 	if (appliedState && options.includeComponents) {
-		const proof = await observeComponents(
-			paths,
-			appliedState,
-			(scope, unit) => readComponentServiceState(paths, scope, unit),
-			(component) =>
-				component === "files"
-					? runtimeComponentIsReady(component, paths)
-					: servingSamples
-							.read(
-								component === "hermes-ui"
-									? "clawdi-hermes-dashboard.service"
-									: "openclaw-gateway.service",
-							)
-							.then((sample) => sample.componentReady),
+		const proof = await profileRuntimeStepAsync("observation.components", () =>
+			observeComponents(
+				paths,
+				appliedState,
+				(scope, unit) => readComponentServiceState(paths, scope, unit),
+				(component) =>
+					component === "files"
+						? runtimeComponentIsReady(component, paths)
+						: servingSamples
+								.read(
+									component === "hermes-ui"
+										? "clawdi-hermes-dashboard.service"
+										: "openclaw-gateway.service",
+								)
+								.then((sample) => sample.componentReady),
+			),
 		);
 		if (proof) {
 			observed.components = proof;

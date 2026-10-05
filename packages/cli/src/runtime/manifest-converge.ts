@@ -125,6 +125,7 @@ import {
 	flushPersistedStepRevisions,
 	loadPersistedStepRevisions,
 } from "./persisted-step-revisions";
+import { profileRuntimeStep } from "./profile";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import {
 	commitProviderTransfers,
@@ -147,6 +148,7 @@ import {
 	runtimeSystemdUserUnitName,
 	uninstallStaleOfficialRuntimeServices,
 	validateRuntimeSystemdPlan,
+	writeRuntimeSidecarSystemdUnit,
 	writeRuntimeSystemdState,
 } from "./runtime-systemd-reconciliation";
 import { executableExists, withRuntimeUserFileAccess } from "./runtime-user-command";
@@ -1499,7 +1501,9 @@ export function convergeRuntimeManifest(
 	paths: RuntimePaths,
 	opts: RuntimeConvergenceOptions = {},
 ): RuntimeConvergenceResult {
-	const { context, state } = initializeRuntimeConvergence(load, paths, opts);
+	const { context, state } = profileRuntimeStep("converge.initialize", () =>
+		initializeRuntimeConvergence(load, paths, opts),
+	);
 	loadPersistedStepRevisions(paths);
 	try {
 		if (load.manifest.providerHandoffs?.length)
@@ -1541,23 +1545,49 @@ export function convergeRuntimeManifest(
 		}, context.hostedRuntimeContract.identity);
 	}
 	removeHostedCliPathExposure(paths);
-	const installResult = prepareRuntimeInstallStage(context, state);
+	const installResult = profileRuntimeStep("converge.install", () =>
+		prepareRuntimeInstallStage(context, state),
+	);
 	if (installResult) return installResult.result;
-	context.hermesConfig = beginRuntimeHermesConfig(context, state);
-	const planResult = prepareRuntimeConvergencePlan(context, state);
+	context.hermesConfig = profileRuntimeStep("converge.hermes-config", () =>
+		beginRuntimeHermesConfig(context, state),
+	);
+	const planResult = profileRuntimeStep("converge.plan", () =>
+		prepareRuntimeConvergencePlan(context, state),
+	);
 	if ("result" in planResult) return planResult.result;
 	const plan = planResult.plan;
 	try {
-		const codexCli = prepareRuntimeApplyDependencies(context, state);
-		const egressProjection = prepareRuntimeEgressProjection(context, state);
-		const providerProjectionRevisions = applyRuntimeResourceProjections(
-			context,
-			state,
-			plan,
-			codexCli,
+		const codexCli = profileRuntimeStep("converge.dependencies", () =>
+			prepareRuntimeApplyDependencies(context, state),
+		);
+		const egressProjection = profileRuntimeStep("converge.egress", () =>
+			prepareRuntimeEgressProjection(context, state),
+		);
+		if (
+			opts.systemdApply?.beginEgressPrerequisite &&
+			!readRuntimeAppliedState(paths) &&
+			egressProjection.egressSystemdProgram &&
+			egressProjection.egressIdentity &&
+			state.runtimeSystemdUserPrograms.length > 0
+		) {
+			writeRuntimeSidecarSystemdUnit({
+				program: egressProjection.egressSystemdProgram,
+				identity: egressProjection.egressIdentity,
+				manifest: context.manifest,
+				paths,
+				workspaceRoot: context.workspaceRoot,
+				commonEnvironment: egressProjection.commonSystemdEnvironment,
+			});
+			opts.systemdApply.beginEgressPrerequisite();
+		}
+		const providerProjectionRevisions = profileRuntimeStep("converge.resources", () =>
+			applyRuntimeResourceProjections(context, state, plan, codexCli),
 		);
 
-		applyRuntimeEntryProjections(context, state, plan, egressProjection);
+		profileRuntimeStep("converge.entries", () =>
+			applyRuntimeEntryProjections(context, state, plan, egressProjection),
+		);
 		if (context.hermesConfig) {
 			const hermesConfig = context.hermesConfig;
 			const commitResult = withRuntimeUserFileAccess(
@@ -1571,13 +1601,12 @@ export function convergeRuntimeManifest(
 				};
 			}
 		}
-		const activationPlan = prepareRuntimeActivation(
-			context,
-			state,
-			egressProjection,
-			providerProjectionRevisions,
+		const activationPlan = profileRuntimeStep("converge.activation-plan", () =>
+			prepareRuntimeActivation(context, state, egressProjection, providerProjectionRevisions),
 		);
-		const activationOutputs = activateRuntimeServices(context, state, activationPlan);
+		const activationOutputs = profileRuntimeStep("converge.activate", () =>
+			activateRuntimeServices(context, state, activationPlan),
+		);
 		const convergence = buildRuntimeConvergenceResult(
 			context,
 			state,
@@ -1585,7 +1614,9 @@ export function convergeRuntimeManifest(
 			activationPlan,
 			activationOutputs,
 		);
-		commitRuntimeConvergence(context, state, egressProjection, convergence);
+		profileRuntimeStep("converge.commit", () =>
+			commitRuntimeConvergence(context, state, egressProjection, convergence),
+		);
 		flushPersistedStepRevisions(paths);
 		return convergence;
 	} catch (error) {

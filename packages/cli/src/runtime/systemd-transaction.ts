@@ -7,6 +7,7 @@ import { readRuntimeAppliedState } from "./applied-state";
 import { withoutOomProtection } from "./oom-protection";
 import { hermesWasWarmed } from "./hermes-warm-state";
 import type { getRuntimePaths } from "./paths";
+import { profileRuntimeStep } from "./profile";
 import { buildRuntimeUserCommand, runtimeUserUid } from "./runtime-user-command";
 import { managedRuntimeSystemdUnitEntries, parseSystemctlShow, systemctlPath } from "./systemd";
 import { runtimeUserName, runtimeUserSystemdEnvironment } from "./systemd-user";
@@ -215,6 +216,39 @@ export function withoutStaleSystemdUnits(
 	for (const unit of staleSystemUnits) reloadSystem.delete(unit);
 	for (const unit of staleUserUnits) reloadUser.delete(unit);
 	return { system, user, reload: { system: reloadSystem, user: reloadUser } };
+}
+
+/** Submit only a new first-apply sidecar job; final activation still proves it. */
+export function beginFirstApplyEgress(
+	paths: ReturnType<typeof getRuntimePaths>,
+	before: SystemdUnitSnapshot,
+): (() => void) | null {
+	if (
+		!shouldApplySystemdRuntimeUpdate(paths) ||
+		readRuntimeAppliedState(paths) ||
+		before.system.has(RUNTIME_SIDECAR_SYSTEM_UNIT)
+	)
+		return null;
+	const unit = RUNTIME_SIDECAR_SYSTEM_UNIT;
+	const candidate = readSystemdUnitSnapshot(paths).system.get(unit);
+	if (!candidate) return null;
+	const state = requiredSystemdUnitState(
+		readSystemdRuntimeUnits(paths, "system", [unit]),
+		"system",
+		unit,
+	);
+	if (state.activeState !== "inactive") return null;
+	systemctl(["daemon-reload"]);
+	systemctl(systemUnitFileMutationArgs(paths, "enable", [unit]));
+	systemctl(["start", "--no-block", unit]);
+	return () => {
+		if (readSystemdUnitSnapshot(paths).system.get(unit) !== candidate)
+			throw new SystemdReobservationRequiredError(
+				"early egress candidate changed; fresh observation is required",
+			);
+		// Joining the same job preserves Type=notify readiness and command failures.
+		systemctl(["start", unit]);
+	};
 }
 
 export function applySystemdRuntimeUpdate(
@@ -457,7 +491,7 @@ export function applySystemdRuntimeUpdate(
 			// same CPUs. Establish the interactive dashboard first; gateway and
 			// channel readiness still pass the normal observation proof afterward.
 			runtimeUserSystemctl(paths, ["start", dashboard]);
-			waitForHermesDashboard();
+			profileRuntimeStep("systemd.hermes-dashboard-ready", waitForHermesDashboard);
 			runtimeUserSystemctl(paths, [
 				"start",
 				...startUserUnits.filter((unit) => unit !== dashboard),
@@ -747,11 +781,31 @@ function systemUnitFileMutationArgs(
 }
 
 function systemctl(args: string[]): string {
-	return runCommand(systemctlPath(), args);
+	const result = systemctlResult(args);
+	assertCommandSucceeded(systemctlPath(), args, result);
+	return [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
 }
 
 function systemctlResult(args: string[]): CommandResult {
-	return runCommandResult(systemctlPath(), args);
+	return profileRuntimeStep(systemdProfileLabel("system", args), () =>
+		runCommandResult(systemctlPath(), args),
+	);
+}
+
+function systemdProfileLabel(scope: SystemdRuntimeScope, args: string[]): string {
+	const verb = args[0] ?? "";
+	const actions = [
+		"show",
+		"is-enabled",
+		"enable",
+		"disable",
+		"start",
+		"restart",
+		"stop",
+		"daemon-reload",
+		"reset-failed",
+	];
+	return `systemd.${scope}.${actions.includes(verb) ? verb : "command"}`;
 }
 
 function runtimeUserSystemctl(paths: ReturnType<typeof getRuntimePaths>, args: string[]): string {
@@ -774,9 +828,13 @@ function runtimeUserSystemctlResult(
 			["--user", ...args],
 			{ environment: runtimeUserSystemdEnvironment(uid), preserveSession: true },
 		);
-		return runCommandResult(child.command, child.args, child.env);
+		return profileRuntimeStep(systemdProfileLabel("user", args), () =>
+			runCommandResult(child.command, child.args, child.env),
+		);
 	}
-	return runCommandResult(systemctlPath(), ["--user", ...args]);
+	return profileRuntimeStep(systemdProfileLabel("user", args), () =>
+		runCommandResult(systemctlPath(), ["--user", ...args]),
+	);
 }
 
 export function assertRuntimeUserCanRead(path: string, home: string): void {

@@ -9,6 +9,7 @@ import { managedRuntimeSystemdUnitEntries, RUNTIME_SYSTEMD_DROP_IN_FILE } from "
 import {
 	applySystemdRuntimeUpdate,
 	assertSystemdRuntimeIdle,
+	beginFirstApplyEgress,
 	runCommandResult,
 	SystemdReobservationRequiredError,
 	shouldRecoverFailedSystemdUnit,
@@ -57,6 +58,66 @@ describe("managed runtime systemd unit classification", () => {
 });
 
 describe("failed runtime systemd unit recovery", () => {
+	test("joins early egress readiness and refuses a changed candidate or an existing job", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-egress-overlap-"));
+		roots.push(root);
+		const previous = { ...process.env };
+		try {
+			const command = join(root, "systemctl");
+			const log = join(root, "commands");
+			const paths = {
+				...getRuntimePaths({ mode: "hosted" }),
+				appliedState: join(root, "applied.json"),
+				systemdSystemRoot: join(root, "units"),
+				systemdUserRoot: join(root, "user-units"),
+				systemdEnvRoot: join(root, "env"),
+			};
+			const unit = "clawdi-runtime-sidecar.service";
+			writeFixture(
+				root,
+				`units/${unit}`,
+				`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\nExecStart=/sidecar\n`,
+			);
+			const writeManager = (job = "", failJoin = false) =>
+				writeFileSync(
+					command,
+					`#!/bin/sh
+echo "$*" >> '${log}'
+case "$1" in
+show) printf 'LoadState=loaded\\nActiveState=inactive\\nNeedDaemonReload=no\\nJob=${job}\\n' ;;
+is-enabled) printf 'disabled\\n'; exit 1 ;;
+start) [ "$2" = --no-block ] || exit ${failJoin ? 1 : 0} ;;
+esac
+`,
+					{ mode: 0o755 },
+				);
+			process.env.CLAWDI_SYSTEMD_APPLY = "1";
+			process.env.CLAWDI_SYSTEMCTL_PATH = command;
+			const before = { system: new Map<string, string>(), user: new Map<string, string>() };
+			writeManager();
+			const finish = beginFirstApplyEgress(paths, before);
+			expect(finish).not.toBeNull();
+			expect(readFileSync(log, "utf8")).toContain(`start --no-block ${unit}`);
+			finish?.();
+			expect(readFileSync(log, "utf8")).toContain(`start ${unit}`);
+			writeManager("", true);
+			expect(finish).toThrow("failed (1)");
+			writeFixture(
+				root,
+				`units/${unit}`,
+				`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\nExecStart=/changed\n`,
+			);
+			expect(finish).toThrow(SystemdReobservationRequiredError);
+			writeManager("42");
+			expect(() => beginFirstApplyEgress(paths, before)).toThrow(SystemdReobservationRequiredError);
+			expect(
+				beginFirstApplyEgress(paths, { ...before, system: new Map([[unit, "previous"]]) }),
+			).toBeNull();
+		} finally {
+			process.env = previous;
+		}
+	});
+
 	test("reobserves an existing job before issuing mutations", () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-systemd-pending-"));
 		roots.push(root);

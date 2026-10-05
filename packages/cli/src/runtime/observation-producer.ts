@@ -12,6 +12,7 @@ import {
 	type HostedRuntimeObservedEvent,
 } from "./heartbeat-observation";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
+import { profileRuntimeStepAsync } from "./profile";
 
 const OBSERVATION_INTERVAL_MS = 60_000;
 // Until the first healthy sample, readiness latency is user-visible deploy time.
@@ -99,12 +100,24 @@ export class HostedRuntimeObservationProducer {
 				this.session.refreshAppliedState();
 			}
 
-			buffered = await this.session.nextEvent();
+			const session = this.session;
+			buffered = await profileRuntimeStepAsync("observation.capture", () => session.nextEvent());
+			if (!buffered && this.currentAttestedIdentityKey() === context.identityKey) {
+				// Boot/watch health can settle during the first probe. Re-capture once
+				// immediately, with the same attested apply identity and all proofs intact.
+				session.refreshAppliedState();
+				buffered = await profileRuntimeStepAsync("observation.recapture", () =>
+					session.nextEvent(),
+				);
+			}
 			if (!buffered) return { outcome: "idle" };
 			if (!runtimeApplyIdentitiesEqual(buffered.event, expectedApplyIdentity)) {
 				return { outcome: "idle" };
 			}
-			const result = await this.submit(environmentId, buffered.event);
+			const event = buffered.event;
+			const result = await profileRuntimeStepAsync("observation.submit", () =>
+				this.submit(environmentId, event),
+			);
 			if (this.currentAttestedIdentityKey() !== context.identityKey) {
 				return { outcome: "sent" };
 			}

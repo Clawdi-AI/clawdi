@@ -134,3 +134,20 @@ authenticated OpenClaw adoption with unchanged gateway PID, and stop/start
 preservation. Warm-up does not qualify model calls or a production latency
 bound. Production enablement and Hosted pool lifecycle belong to the
 provisioning owner.
+
+## Startup diagnostics
+
+`CLAWDI_RUNTIME_PROFILE=1` records static step/command labels, process IDs,
+start timestamps and durations on stderr. It emits no argv, payload, environment
+or error text. The default has no diagnostic output. The provisioning owner's
+native fixture collects these spans only after readiness.
+
+A new first-apply egress sidecar may start while native config projection runs.
+Activation joins that same systemd job, checks its candidate identity, then keeps
+the normal fresh manager/enablement and service-readiness proof. Existing sidecar
+inventories retain their startup order. An observation invalidated while boot or
+watch health settles is re-attested and recaptured once immediately; network
+failure backoff and steady heartbeat cadence are unchanged.
+
+Done: Docker CLI typecheck, focused systemd/producer regressions and Biome pass;
+latency qualification belongs to the paired provisioning fixture.

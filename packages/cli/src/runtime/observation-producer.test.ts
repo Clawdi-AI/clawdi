@@ -158,6 +158,42 @@ async function observationSchedule(
 }
 
 describe("hosted runtime observation producer", () => {
+	test.each([false, true])(
+		"bounds immediate recapture and fences a changed identity (%s)",
+		async (changeIdentity) => {
+			const paths = tempRuntimePaths();
+			writeApplyIdentityFile(paths, 1);
+			writeRuntimeAppliedState(appliedState(1), paths);
+			writeObservationHealth(paths, "ok");
+			let captures = 0;
+			let submits = 0;
+			class SettlingSession extends HostedRuntimeHeartbeatSession {
+				override async nextEvent() {
+					captures += 1;
+					if (captures === 1) {
+						if (changeIdentity) writeApplyIdentityFile(paths, 2);
+						return null;
+					}
+					return super.nextEvent();
+				}
+			}
+			const producer = new HostedRuntimeObservationProducer({
+				abort: new AbortController().signal,
+				paths,
+				contextPath: runtimeContextPath(paths),
+				sessionFactory: (environmentId, sessionPaths) =>
+					new SettlingSession({ environmentId, paths: sessionPaths }),
+				submit: async () => {
+					submits += 1;
+					return "accepted";
+				},
+			});
+			expect((await producer.sendOnce()).outcome).toBe(changeIdentity ? "idle" : "accepted");
+			expect(captures).toBe(changeIdentity ? 1 : 2);
+			expect(submits).toBe(changeIdentity ? 0 : 1);
+		},
+	);
+
 	test("keeps permanent rejections at the normal observation interval", async () => {
 		const attempts = await observationSchedule("ok", 181_000, false, true);
 		expect(attempts.map((attempt) => attempt.at)).toEqual([0, 60_000, 120_000, 180_000]);

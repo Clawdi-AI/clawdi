@@ -78,6 +78,7 @@ import {
 	consumeWarmOpenClawGateway,
 } from "../runtime/openclaw-warm-gateway";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
+import { profileRuntimeStepAsync } from "../runtime/profile";
 import { captureRuntimeRunConfigs } from "../runtime/run-config";
 import {
 	buildRuntimeBootStatus,
@@ -93,6 +94,7 @@ import {
 	applySystemdRuntimeUpdate,
 	assertRuntimeUserCanRead,
 	assertSystemdRuntimeIdle,
+	beginFirstApplyEgress,
 	RUNTIME_SIDECAR_SYSTEM_UNIT,
 	readSystemdUnitSnapshot,
 	SystemdReobservationRequiredError,
@@ -750,7 +752,11 @@ function finishRuntimeInitCliHandoff(input: {
 	});
 }
 
-export async function runtimeInit(opts: RuntimeInitOptions = {}) {
+export function runtimeInit(opts: RuntimeInitOptions = {}) {
+	return profileRuntimeStepAsync("runtime.init", () => runtimeInitImpl(opts));
+}
+
+async function runtimeInitImpl(opts: RuntimeInitOptions) {
 	const paths = getRuntimePaths();
 	const mode = detectRuntimeMode();
 	const bootId = randomUUID();
@@ -1056,7 +1062,7 @@ async function convergeOnce(
 		return { kind: "cli_handoff", detail: { kind: "reconciliation", reconciliation } };
 	}
 
-	const requested = await load();
+	const requested = await profileRuntimeStepAsync("runtime.manifest", load);
 	if (requested.kind === "idle") return requested;
 	if (requested.kind === "cli_preparation") return requested;
 	if (requested.kind === "failed") {
@@ -1557,6 +1563,7 @@ async function applyRuntimeDesiredState(
 		};
 		let egressPrerequisiteApply: typeof systemdApply | null = null;
 		let egressPrerequisiteActivated = false;
+		let finishEarlyEgress: (() => void) | null = null;
 		const previousCommitted = load.applyContext
 			? loadCommittedRuntimeManifest(paths, load.applyContext)
 			: null;
@@ -1585,7 +1592,13 @@ async function applyRuntimeDesiredState(
 			},
 			systemdApply: {
 				assertIdle: () => assertSystemdRuntimeIdle(paths, previousSystemdUnits),
+				beginEgressPrerequisite: () => {
+					finishEarlyEgress = beginFirstApplyEgress(paths, previousSystemdUnits);
+				},
 				activateEgressPrerequisite: () => {
+					const earlyEgress = finishEarlyEgress !== null;
+					finishEarlyEgress?.();
+					finishEarlyEgress = null;
 					const candidateSystemdUnits = readSystemdUnitSnapshot(paths);
 					try {
 						const prerequisite = applySystemdRuntimeUpdate(
@@ -1599,6 +1612,7 @@ async function applyRuntimeDesiredState(
 								},
 								recoverFailedUnits: opts.recoverFailedSystemdUnits,
 								restartChangedUnits: load.source === "last-good-cache",
+								skipActivatedSystemUnits: earlyEgress ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
 							},
 						);
 						if (prerequisite.applied) {
@@ -1615,6 +1629,12 @@ async function applyRuntimeDesiredState(
 					}
 				},
 				activate: ({ staleSystemUnits, staleUserUnits, invalidatedUserUnits }) => {
+					if (finishEarlyEgress) {
+						finishEarlyEgress();
+						finishEarlyEgress = null;
+						egressPrerequisiteActivated = true;
+						assertRuntimeUserCanRead(paths.egressSystemCaFile, paths.userHome);
+					}
 					// Official installers run after the prerequisite phase and add their
 					// base units, so final reconciliation must observe a fresh rendered state.
 					const candidateSystemdUnits = readSystemdUnitSnapshot(paths);
