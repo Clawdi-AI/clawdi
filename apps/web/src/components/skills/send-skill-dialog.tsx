@@ -192,8 +192,7 @@ export function SendSkillDialog({
 					    review): skills duplicate per Project, so the destination's
 					    copy will NOT follow future changes to the source. */}
 					<DialogDescription>
-						{copy.transferDescription}
-						{copy.transferAlternativeBefore}
+						{copy.transferDescription} {copy.transferAlternativeBefore}
 						<em className={sendSkillDialogClasses.emphasis}>{copy.transferAlternativeEmphasis}</em>
 						{copy.transferAlternativeAfter}
 					</DialogDescription>

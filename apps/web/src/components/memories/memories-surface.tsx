@@ -549,7 +549,7 @@ function Mem0KeyForm({
 						disabled={!apiKey || isPending}
 					>
 						{isPending ? <Spinner /> : <Key />}
-						Save API Key
+						{formCopy.mem0Save}
 					</Button>
 				</div>
 			</CardContent>

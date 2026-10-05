@@ -17,8 +17,12 @@ import {
 	skillFormCopy as copy,
 	createSkillDescription,
 	identityFor,
+	ownedProjectKindText,
+	projectPickerAccessText,
+	projectSupportingText,
 	RESOURCE_TINT_CLASSES,
 	relativeTime,
+	skillDraftUnchanged,
 	skillRemovalDescription,
 	skillRemovalTitle,
 } from "@clawdi/shared/view";
@@ -36,6 +40,7 @@ import {
 	Sparkles,
 	Tag,
 	Trash2,
+	X,
 } from "lucide-react-native";
 import { useRef, useState } from "react";
 import { useAuthAction } from "../auth/use-auth-action";
@@ -280,7 +285,7 @@ function SkillEditor({
 		action.clearError();
 	};
 	const fields = draft ? (
-		<WebView recipe={create ? createSkillDialogClasses.form : skillDetailClasses.headingStack}>
+		<WebView recipe={create ? createSkillDialogClasses.form : skillDetailClasses.instructionPanel}>
 			{(["name", "description", "instructions"] as const).map((field) => (
 				<WebView
 					key={field}
@@ -314,6 +319,7 @@ function SkillEditor({
 			disabled={
 				disabled ||
 				conflict ||
+				(!create && Boolean(baseline && skillDraftUnchanged(draft, baseline))) ||
 				!draft.name.trim() ||
 				!draft.description.trim() ||
 				!draft.instructions.trim()
@@ -348,7 +354,18 @@ function SkillEditor({
 						</IconChip>
 					}
 					title={project.name}
-					meta={project.description ?? ""}
+					titleAdornment={
+						<>
+							<Badge variant="outline">
+								<Icon as={FolderKanban} />
+								<Text>{ownedProjectKindText(project, "badge")}</Text>
+							</Badge>
+							<Badge variant="outline">
+								<Text>{projectPickerAccessText(project)}</Text>
+							</Badge>
+						</>
+					}
+					meta={projectSupportingText(project)}
 				/>
 			) : null}
 		</DetailPanel>
@@ -446,6 +463,16 @@ function SkillEditor({
 						<PageHeader
 							title={detail.data?.name ?? draft.name}
 							description={detail.data?.description}
+							icon={
+								<IconChip tint={RESOURCE_TINT_CLASSES.skills}>
+									<Icon as={Sparkles} />
+								</IconChip>
+							}
+							status={
+								<DetailMeta>
+									<Text>{`Project Skill · in ${project?.name ?? detail.data?.project_name} · added ${detail.data ? relativeTime(detail.data.created_at) : ""}`}</Text>
+								</DetailMeta>
+							}
 							actions={
 								<>
 									<Button
@@ -472,12 +499,19 @@ function SkillEditor({
 											]);
 										}}
 									>
+										<Icon as={X} />
 										<Text>{copy.cancel}</Text>
 									</Button>
 									{saveButton}
 								</>
 							}
 						/>
+						<DetailMeta>
+							<Icon as={Tag} />
+							<Text>v{detail.data?.version}</Text>
+							<Icon as={FileText} />
+							<Text>{detail.data?.file_count} files</Text>
+						</DetailMeta>
 						{projectPanel}
 						<DetailPanel className={webView(skillDetailClasses.instructionPanel)}>
 							<WebView recipe={skillDetailClasses.headingStack}>

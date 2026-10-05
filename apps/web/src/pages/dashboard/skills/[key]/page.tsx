@@ -2,7 +2,7 @@
 
 import { buildSkillUpdateRequest, stripFrontmatter } from "@clawdi/shared/api";
 import { detailLayoutClasses, skillDetailClasses } from "@clawdi/shared/ui";
-import { skillFormCopy, skillRemovalTitle } from "@clawdi/shared/view";
+import { skillDraftUnchanged, skillFormCopy, skillRemovalTitle } from "@clawdi/shared/view";
 
 export { stripFrontmatter } from "@clawdi/shared/api";
 
@@ -567,9 +567,18 @@ export function SkillDetailContent({
 											!draftName.trim() ||
 											!draftDescription.trim() ||
 											!draftInstructions.trim() ||
-											(draftName === skill.name &&
-												draftDescription === (skill.description ?? "") &&
-												draftInstructions.trim() === stripFrontmatter(skill.content ?? "").trim())
+											skillDraftUnchanged(
+												{
+													name: draftName,
+													description: draftDescription,
+													instructions: draftInstructions,
+												},
+												{
+													name: skill.name,
+													description: skill.description ?? "",
+													instructions: stripFrontmatter(skill.content ?? ""),
+												},
+											)
 										}
 									>
 										<Save />

@@ -248,54 +248,61 @@ function MemoriesView() {
 						<DialogTitle>{editing ? t("memories.edit") : copy.title}</DialogTitle>
 						<DialogDescription>{copy.description}</DialogDescription>
 					</DialogHeader>
-					<Input
-						multiline
-						value={content}
-						onChangeText={setContent}
-						editable={!action.busy}
-						accessibilityLabel={copy.content}
-						placeholder={copy.placeholder}
-						style={{ minHeight: 120 }}
-					/>
-					{secretFinding ? (
-						<ApiErrorPanel error={formatSecretMemoryWarning(secretFinding)} title={copy.secrets} />
-					) : null}
-					{!editing ? (
-						<WebView recipe={memoriesSurfaceClasses.fieldRow} className="flex-row">
-							<Label>{copy.category}</Label>
-							<Select
-								value={addCategory}
-								onValueChange={(value) => {
-									if (value) setAddCategory(value);
-								}}
-								disabled={action.busy}
+					<WebView recipe={memoriesSurfaceClasses.section}>
+						<Input
+							multiline
+							value={content}
+							onChangeText={setContent}
+							editable={!action.busy}
+							accessibilityLabel={copy.content}
+							placeholder={copy.placeholder}
+						/>
+						{secretFinding ? (
+							<ApiErrorPanel
+								error={formatSecretMemoryWarning(secretFinding)}
+								title={copy.secrets}
+							/>
+						) : null}
+						{!editing ? (
+							<WebView recipe={memoriesSurfaceClasses.fieldRow} className="flex-row">
+								<Label>{copy.category}</Label>
+								<Select
+									value={addCategory}
+									onValueChange={(value) => {
+										if (value) setAddCategory(value);
+									}}
+									disabled={action.busy}
+								>
+									<SelectTrigger
+										size="sm"
+										className={webView(memoriesSurfaceClasses.categorySelect)}
+									>
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{MEMORY_CATEGORIES.filter((c) => c.value !== "all").map((c) => (
+											<SelectItem key={c.value} value={c.value}>
+												{c.label}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</WebView>
+						) : null}
+						{action.error ? <ApiErrorPanel error={action.error} /> : null}
+						<DialogFooter>
+							<Button variant="ghost" disabled={action.busy} onPress={() => setOpen(false)}>
+								<Text>{copy.cancel}</Text>
+							</Button>
+							<Button
+								disabled={action.busy || !content.trim() || Boolean(secretFinding)}
+								onPress={() => void save()}
 							>
-								<SelectTrigger size="sm" className={webView(memoriesSurfaceClasses.categorySelect)}>
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									{MEMORY_CATEGORIES.filter((c) => c.value !== "all").map((c) => (
-										<SelectItem key={c.value} value={c.value}>
-											{c.label}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-						</WebView>
-					) : null}
-					{action.error ? <ApiErrorPanel error={action.error} /> : null}
-					<DialogFooter>
-						<Button variant="ghost" disabled={action.busy} onPress={() => setOpen(false)}>
-							<Text>{copy.cancel}</Text>
-						</Button>
-						<Button
-							disabled={action.busy || !content.trim() || Boolean(secretFinding)}
-							onPress={() => void save()}
-						>
-							{!editing ? <Icon as={Plus} /> : null}
-							<Text>{editing ? t("libraryPort.save") : copy.save}</Text>
-						</Button>
-					</DialogFooter>
+								{!editing ? <Icon as={Plus} /> : null}
+								<Text>{editing ? t("libraryPort.save") : copy.save}</Text>
+							</Button>
+						</DialogFooter>
+					</WebView>
 				</DialogContent>
 			</Dialog>
 			{confirmationDialog.dialog}

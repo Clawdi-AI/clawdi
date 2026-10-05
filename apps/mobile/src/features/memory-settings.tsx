@@ -1,7 +1,7 @@
 import { memoriesSurfaceClasses } from "@clawdi/shared/ui";
 import { memoryFormCopy as copy } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Brain, Database } from "lucide-react-native";
+import { Brain, Database, Key } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { AppState } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
@@ -9,21 +9,14 @@ import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
 import { Button } from "../ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "../ui/dialog";
+import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { ErrorState } from "../ui/feedback";
 import { Icon } from "../ui/icon";
 import { Input, Label } from "../ui/input";
 import { Skeleton } from "../ui/skeleton";
 import { Text } from "../ui/text";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
-import { webView } from "../ui/web-layout";
+import { WebText, WebView, webBoth, webView } from "../ui/web-layout";
 
 export function MemorySettings() {
 	const scope = useAccountScope();
@@ -37,7 +30,6 @@ function MemorySettingsView() {
 	const { account } = useMobileApi();
 	const cache = useQueryClient();
 	const action = useAuthAction(scope);
-	const [open, setOpen] = useState(false);
 	const [secret, setSecret] = useState("");
 
 	useEffect(() => {
@@ -78,7 +70,6 @@ function MemorySettingsView() {
 			);
 			if (!isCurrent()) return;
 			setSecret("");
-			setOpen(false);
 
 			await cache.invalidateQueries({ queryKey: accountQueryKey(scope, "memory-settings") });
 			await cache.invalidateQueries({ queryKey: accountQueryKey(scope, "cloud-memories") });
@@ -108,53 +99,41 @@ function MemorySettingsView() {
 				</ToggleGroupItem>
 			</ToggleGroup>
 			{settings.data.provider === "mem0" && !settings.data.configured ? (
-				<Button variant="outline" size="sm" onPress={() => setOpen(true)}>
-					<Text>{t("memories.mem0Key")}</Text>
-				</Button>
+				<Card>
+					<CardHeader>
+						<WebView recipe={memoriesSurfaceClasses.loadingRow}>
+							<Icon as={Key} className={webBoth(memoriesSurfaceClasses.loadingIcon)} />
+							<CardTitle>{copy.mem0Title}</CardTitle>
+						</WebView>
+					</CardHeader>
+					<CardContent className={webView(memoriesSurfaceClasses.section)}>
+						<WebText recipe={memoriesSurfaceClasses.emptyHint}>{copy.mem0Description}</WebText>
+						<Label className={webBoth(memoriesSurfaceClasses.keyInput)}>{copy.mem0Label}</Label>
+						<WebView recipe={memoriesSurfaceClasses.keyHelp}>
+							<Input
+								accessibilityLabel={copy.mem0Label}
+								placeholder={copy.mem0Placeholder}
+								className={webBoth(memoriesSurfaceClasses.fieldStack)}
+								secureTextEntry
+								autoCapitalize="none"
+								autoCorrect={false}
+								value={secret}
+								onChangeText={setSecret}
+								editable={!action.busy}
+							/>
+							<Button
+								className={webView(memoriesSurfaceClasses.inputLabel)}
+								disabled={action.busy || !secret.trim()}
+								onPress={() => void save()}
+							>
+								<Icon as={Key} />
+								<Text>{copy.mem0Save}</Text>
+							</Button>
+						</WebView>
+						{action.error ? <ErrorState /> : null}
+					</CardContent>
+				</Card>
 			) : null}
-			<Dialog
-				open={open}
-				onOpenChange={(next) => {
-					if (!action.busy) {
-						setOpen(next);
-						if (!next) setSecret("");
-					}
-				}}
-			>
-				<DialogContent>
-					<DialogHeader>
-						<DialogTitle>{copy.mem0Title}</DialogTitle>
-						<DialogDescription>{copy.mem0Description}</DialogDescription>
-					</DialogHeader>
-					<Label>{copy.mem0Label}</Label>
-					<Input
-						accessibilityLabel={copy.mem0Label}
-						placeholder={copy.mem0Placeholder}
-						secureTextEntry
-						autoCapitalize="none"
-						autoCorrect={false}
-						value={secret}
-						onChangeText={setSecret}
-						editable={!action.busy}
-					/>
-					{action.error ? <ErrorState /> : null}
-					<DialogFooter>
-						<Button
-							variant="ghost"
-							disabled={action.busy}
-							onPress={() => {
-								setOpen(false);
-								setSecret("");
-							}}
-						>
-							<Text>{copy.cancel}</Text>
-						</Button>
-						<Button disabled={action.busy || !secret.trim()} onPress={() => void save()}>
-							<Text>{copy.mem0Save}</Text>
-						</Button>
-					</DialogFooter>
-				</DialogContent>
-			</Dialog>
 		</>
 	);
 }

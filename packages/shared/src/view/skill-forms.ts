@@ -1,3 +1,4 @@
+import type { SkillTextDraft } from "../api/skill-content";
 import { displayProjectName, type ProjectMetadata } from "./project-metadata";
 
 export const skillFormCopy = {
@@ -41,4 +42,12 @@ export function skillRemovalDescription(projectName?: string | null) {
 
 export function skillRemovalTitle(name: string) {
 	return `Remove ${name} from Project?`;
+}
+
+export function skillDraftUnchanged(draft: SkillTextDraft, original: SkillTextDraft) {
+	return (
+		draft.name === original.name &&
+		draft.description === original.description &&
+		draft.instructions.trim() === original.instructions.trim()
+	);
 }

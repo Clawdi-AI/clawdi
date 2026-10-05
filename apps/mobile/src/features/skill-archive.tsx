@@ -12,6 +12,7 @@ import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypt
 import { Directory, File, Paths } from "expo-file-system";
 import { router, useLocalSearchParams } from "expo-router";
 import { isAvailableAsync, shareAsync } from "expo-sharing";
+import { ArrowRight, Copy } from "lucide-react-native";
 import { useRef, useState } from "react";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
@@ -28,13 +29,14 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "../ui/dialog";
+import { Icon } from "../ui/icon";
 import { Input, Label } from "../ui/input";
 import { PageHeader } from "../ui/page-header";
 import { AppScrollView, AppText } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
 import { Text } from "../ui/text";
 import { useConfirmation } from "../ui/use-confirmation";
-import { WebView, webView } from "../ui/web-layout";
+import { WebText, WebView, webView } from "../ui/web-layout";
 import { BackButton } from "./cloud-inventory";
 import { useCloudProjects } from "./projects";
 import { routeParam } from "./read-helpers";
@@ -222,13 +224,20 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 						<DialogHeader>
 							<DialogTitle>{sendSkillTitle(detail.data?.name ?? skillKey ?? "")}</DialogTitle>
 							<DialogDescription>
-								{`${copy.transferDescription} ${copy.transferAlternativeBefore}${copy.transferAlternativeEmphasis}${copy.transferAlternativeAfter}`}
+								<Text>
+									{copy.transferDescription} {copy.transferAlternativeBefore}
+									<WebText recipe={sendSkillDialogClasses.emphasis}>
+										{copy.transferAlternativeEmphasis}
+									</WebText>
+									{copy.transferAlternativeAfter}
+								</Text>
 							</DialogDescription>
 						</DialogHeader>
 						<WebView recipe={sendSkillDialogClasses.body}>
 							<WebView recipe={sendSkillDialogClasses.field}>
 								<Label>{copy.destination}</Label>
 								<ChoiceSelect
+									triggerClassName={webView(sendSkillDialogClasses.trigger)}
 									value={targetId}
 									onValueChange={setTargetId}
 									disabled={action.busy}
@@ -245,6 +254,7 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 									disabled={!ready || !writable || !targets.some((p) => p.id === targetId)}
 									onPress={() => transfer(false)}
 								>
+									<Icon as={Copy} />
 									<Text>{copy.copy}</Text>
 								</Button>
 								<Button
@@ -253,6 +263,7 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 										confirm(copy.move, t("skillArchive.moveWarning"), () => transfer(true))
 									}
 								>
+									<Icon as={ArrowRight} />
 									<Text>{copy.move}</Text>
 								</Button>
 							</DialogFooter>
