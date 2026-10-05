@@ -37,6 +37,7 @@ import {
 } from "../ui/dropdown-menu";
 import { EmptyState } from "../ui/empty-state";
 import { HeroCardSkeleton } from "../ui/entity-card";
+import { HeaderActionGroup } from "../ui/header-action-group";
 import { Icon } from "../ui/icon";
 import { Input, Label } from "../ui/input";
 import { ListToolbar } from "../ui/list-toolbar";
@@ -156,17 +157,38 @@ function ProjectsView() {
 				title={t("projects.title")}
 				description={getProjectResourceDefinition("projects").managementDescription}
 				actions={
-					<Button
-						size="sm"
-						disabled={action.busy}
-						onPress={() => {
-							reset();
-							setOpen(true);
-						}}
-					>
-						<Icon as={Plus} />
-						<Text>{t("libraryPort.createProject")}</Text>
-					</Button>
+					<HeaderActionGroup>
+						<Button
+							size="sm"
+							disabled={action.busy}
+							onPress={() => {
+								reset();
+								setOpen(true);
+							}}
+						>
+							<Icon as={Plus} />
+							<Text>{t("libraryPort.createProject")}</Text>
+						</Button>
+						<DropdownMenu>
+							<DropdownMenuTrigger
+								render={
+									<Button variant="ghost" size="icon-sm" accessibilityLabel={t("projects.title")}>
+										<Icon as={MoreHorizontal} />
+									</Button>
+								}
+							/>
+							<DropdownMenuContent>
+								<DropdownMenuItem
+									label={t("sharing.joinLink")}
+									onSelect={() => router.push("/projects/join")}
+								/>
+								<DropdownMenuItem
+									label={t("sharing.received")}
+									onSelect={() => router.push("/projects/invitations")}
+								/>
+							</DropdownMenuContent>
+						</DropdownMenu>
+					</HeaderActionGroup>
 				}
 			/>
 			<ListToolbar
@@ -176,27 +198,6 @@ function ProjectsView() {
 						onChange={setSearch}
 						placeholder={t("libraryPort.searchProjects")}
 					/>
-				}
-				actions={
-					<DropdownMenu>
-						<DropdownMenuTrigger
-							render={
-								<Button variant="ghost" size="icon-sm" accessibilityLabel={t("projects.title")}>
-									<Icon as={MoreHorizontal} />
-								</Button>
-							}
-						/>
-						<DropdownMenuContent>
-							<DropdownMenuItem
-								label={t("sharing.joinLink")}
-								onSelect={() => router.push("/projects/join")}
-							/>
-							<DropdownMenuItem
-								label={t("sharing.received")}
-								onSelect={() => router.push("/projects/invitations")}
-							/>
-						</DropdownMenuContent>
-					</DropdownMenu>
 				}
 			/>
 			{projects.error ? (

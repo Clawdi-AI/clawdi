@@ -49,7 +49,7 @@ export function SettingsShell({
 			: []),
 	] as const;
 	return (
-		<AppSafeAreaView edges={["top", "left", "right"]} className="flex-1 bg-background">
+		<AppSafeAreaView edges={["top", "left", "right"]} className="flex-1 bg-popover">
 			<WebView recipe={styles.header} className={back ? "justify-start" : undefined}>
 				{back ? (
 					<Button
@@ -73,7 +73,7 @@ export function SettingsShell({
 						<Button
 							key={item.id}
 							variant="ghost"
-							className={webView(`${styles.navigationButton} ${styles.navigationActive}`, {
+							className={webBoth(`${styles.navigationButton} ${styles.navigationActive}`, {
 								"data-[active=true]": item.id === active,
 							})}
 							onPress={() => {
