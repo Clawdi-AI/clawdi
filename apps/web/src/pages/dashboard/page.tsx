@@ -135,7 +135,7 @@ export default function DashboardPage() {
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 			<Greeting />
 
-			<div className="grid gap-4 lg:grid-cols-3">
+			<div className="grid gap-4 lg:grid-cols-3 lg:grid-rows-[auto_auto_1fr]">
 				<div className="min-w-0 lg:col-span-2 lg:row-start-1">
 					{hostedAccessLoading ? (
 						<AgentsCard agents={selfManagedTiles} isLoading />
@@ -221,7 +221,7 @@ export default function DashboardPage() {
 				</div>
 
 				<section className="min-w-0 space-y-2 lg:col-span-2 lg:row-start-3">
-					<div className="flex items-end justify-between">
+					<div className="flex items-center justify-between">
 						<h2 className="text-base font-semibold">Recent sessions</h2>
 						<Button
 							render={<Link to="/sessions" />}
