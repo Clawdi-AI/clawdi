@@ -1,3 +1,4 @@
+import { resourceIdentityClasses } from "@clawdi/shared/ui";
 import type { ProjectResourceId } from "@clawdi/shared/view";
 import { RESOURCE_TINT_TOKENS } from "@clawdi/shared/view";
 
@@ -10,13 +11,13 @@ import { RESOURCE_TINT_TOKENS } from "@clawdi/shared/view";
  * the same hue everywhere it appears.
  */
 const TINT_CLASSES = {
-	"identity-1": "bg-identity-1-bg text-identity-1-fg",
-	"identity-2": "bg-identity-2-bg text-identity-2-fg",
-	"identity-3": "bg-identity-3-bg text-identity-3-fg",
-	"identity-4": "bg-identity-4-bg text-identity-4-fg",
-	"identity-6": "bg-identity-6-bg text-identity-6-fg",
-	"identity-7": "bg-identity-7-bg text-identity-7-fg",
-	"identity-8": "bg-identity-8-bg text-identity-8-fg",
+	"identity-1": resourceIdentityClasses.bgIdentity1BgText,
+	"identity-2": resourceIdentityClasses.bgIdentity2BgText,
+	"identity-3": resourceIdentityClasses.bgIdentity3BgText,
+	"identity-4": resourceIdentityClasses.bgIdentity4BgText,
+	"identity-6": resourceIdentityClasses.bgIdentity6BgText,
+	"identity-7": resourceIdentityClasses.bgIdentity7BgText,
+	"identity-8": resourceIdentityClasses.bgIdentity8BgText,
 } as const;
 
 export const RESOURCE_TINT_CLASSES: Record<ProjectResourceId | "overview", string> = {

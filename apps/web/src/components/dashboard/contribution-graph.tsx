@@ -1,5 +1,7 @@
 "use client";
 
+import { contributionGraphClasses } from "@clawdi/shared/ui";
+
 import { buildWeeks, clampLevel, computeMonthLabels, DASHBOARD_COPY } from "@clawdi/shared/view";
 
 import { useEffect, useRef, useState } from "react";
@@ -10,11 +12,11 @@ import { cn } from "@/lib/utils";
 // so the heatmap reads the same way across light/dark modes regardless of
 // what role `--secondary` or `--muted` happen to play in any given palette.
 const LEVEL_COLORS = [
-	"bg-primary/10",
-	"bg-primary/30",
-	"bg-primary/50",
-	"bg-primary/75",
-	"bg-primary",
+	contributionGraphClasses.bgPrimary10,
+	contributionGraphClasses.bgPrimary30,
+	contributionGraphClasses.bgPrimary50,
+	contributionGraphClasses.bgPrimary75,
+	contributionGraphClasses.bgPrimary,
 ];
 
 const CELL = 11; // px, matches GitHub's ~11px heatmap cell
@@ -41,7 +43,11 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 	}, []);
 
 	if (!data.length) {
-		return <div className="text-sm text-muted-foreground">{DASHBOARD_COPY.noActivity}</div>;
+		return (
+			<div className={contributionGraphClasses.textSmTextMutedForeground}>
+				{DASHBOARD_COPY.noActivity}
+			</div>
+		);
 	}
 
 	const allWeeks = buildWeeks(data);
@@ -49,11 +55,11 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 	const monthLabels = computeMonthLabels(weeks);
 
 	return (
-		<div ref={containerRef} className="w-full">
-			<div className="mx-auto flex w-fit gap-1.5">
+		<div ref={containerRef} className={contributionGraphClasses.wFull}>
+			<div className={contributionGraphClasses.mxAutoFlexWFit}>
 				{/* Weekday labels align with the Sunday-first rows. */}
 				<div
-					className="flex shrink-0 flex-col gap-[3px] text-center text-3xs text-muted-foreground tabular-nums"
+					className={contributionGraphClasses.flexShrink0FlexCol}
 					style={{ width: DAY_LABEL_W - 6 }}
 					aria-hidden
 				>
@@ -66,15 +72,17 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 
 				<div style={{ width: weeks.length * WEEK_STRIDE - GAP }}>
 					{/* Week columns grid. */}
-					<div className="flex gap-[3px]">
+					<div className={contributionGraphClasses.flexGap3Px}>
 						{weeks.map((week, wi) => (
-							<div key={wi} className="flex flex-col gap-[3px]">
+							<div key={wi} className={contributionGraphClasses.flexFlexColGap3Px}>
 								{week.map((day, di) => (
 									<div
 										key={di}
 										className={cn(
-											"rounded-[3px]",
-											day.date ? LEVEL_COLORS[clampLevel(day.level)] : "bg-transparent",
+											contributionGraphClasses.rounded3Px,
+											day.date
+												? LEVEL_COLORS[clampLevel(day.level)]
+												: contributionGraphClasses.bgTransparent,
 										)}
 										style={{ width: CELL, height: CELL }}
 										title={day.date ? `${day.count} sessions on ${day.date}` : undefined}
@@ -84,12 +92,12 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 						))}
 					</div>
 					{/* Keep the final month inside the row; omit a partial first month if its label would overlap the next. */}
-					<div className="relative mt-1 h-4 text-3xs leading-4 text-muted-foreground">
+					<div className={contributionGraphClasses.relativeMt1H4}>
 						{monthLabels.map((m, i) =>
 							m && !monthLabels[i + 1] ? (
 								<span
 									key={i}
-									className="absolute whitespace-nowrap"
+									className={contributionGraphClasses.absoluteWhitespaceNowrap}
 									style={{ left: `min(${i * WEEK_STRIDE}px, calc(100% - 3ch))` }}
 								>
 									{m}

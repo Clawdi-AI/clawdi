@@ -1,0 +1,15 @@
+export const dataTableFacetedFilterClasses = {
+	h8BorderDashed: "h-8 border-dashed",
+	size4: "size-4",
+	mx2H4: "mx-2 h-4",
+	roundedSmPx1Font: "rounded-sm px-1 font-normal lg:hidden",
+	hiddenGap1LgFlex: "hidden gap-1 lg:flex",
+	roundedSmPx1Font2: "rounded-sm px-1 font-normal",
+	w200PxP0: "w-[200px] p-0",
+	mr2FlexSize4: "mr-2 flex size-4 items-center justify-center rounded-sm border border-primary",
+	bgPrimaryTextPrimaryForeground: "bg-primary text-primary-foreground",
+	opacity50SvgInvisible: "opacity-50 [&_svg]:invisible",
+	size3: "size-3",
+	mr2Size4Text: "mr-2 size-4 text-muted-foreground",
+	justifyCenterTextCenter: "justify-center text-center",
+} as const;

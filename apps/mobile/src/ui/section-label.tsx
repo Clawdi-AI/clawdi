@@ -1,6 +1,6 @@
 import { sectionLabelClasses as styles } from "@clawdi/shared/ui";
 import type { ReactNode } from "react";
-import { WebContent, WebView } from "./web-layout";
+import { WebContent, WebText, WebView } from "./web-layout";
 export function SectionLabel({
 	children,
 	count,
@@ -19,7 +19,13 @@ export function SectionLabel({
 					<WebContent recipe={styles.leading}>{leading}</WebContent>
 				</WebView>
 			) : null}
-			<WebContent recipe={styles.label}>{children}</WebContent>
+			{typeof children === "string" || typeof children === "number" ? (
+				<WebText recipe={styles.label} style={{ paddingRight: 1 }}>
+					{children}
+				</WebText>
+			) : (
+				<WebContent recipe={styles.label}>{children}</WebContent>
+			)}
 			{count !== undefined ? <WebContent recipe={styles.count}>{count}</WebContent> : null}
 		</WebView>
 	);

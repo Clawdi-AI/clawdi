@@ -1,3 +1,4 @@
+import { agentLabelClasses } from "@clawdi/shared/ui";
 import {
 	type AgentSourceKind,
 	agentIdentity,
@@ -53,9 +54,9 @@ export function AgentInline({
 	const title = identity.primaryLabel;
 	if (!hasIdentity) return null;
 	return (
-		<span className={cn("inline-flex items-center gap-1.5", className)}>
+		<span className={cn(agentLabelClasses.inlineFlexItemsCenterGap, className)}>
 			<AgentIcon agent={type} size="xs" />
-			<span className="font-medium text-foreground">{title}</span>
+			<span className={agentLabelClasses.fontMediumTextForeground}>{title}</span>
 		</span>
 	);
 }
@@ -110,7 +111,10 @@ export function AgentSourceBadge({
 	const Icon = source === "hosted" ? Cloud : Laptop;
 	const label = agentSourceLabel(source);
 	const title = agentSourceDescription(source);
-	const iconClass = source === "hosted" ? "text-info-muted-foreground" : "text-muted-foreground";
+	const iconClass =
+		source === "hosted"
+			? agentLabelClasses.textInfoMutedForeground
+			: agentLabelClasses.textMutedForeground;
 	// Solid silhouette at badge sizes: the outline cloud dissolves under ~16px.
 	const iconFill = source === "hosted" ? "currentColor" : "none";
 	return (
@@ -118,20 +122,23 @@ export function AgentSourceBadge({
 			status="neutral"
 			title={title}
 			className={cn(
-				"shrink-0 whitespace-nowrap border font-medium leading-none shadow-sm",
+				agentLabelClasses.shrink0WhitespaceNowrapBorder,
 				iconOnly
-					? "size-5 justify-center rounded-full p-0"
+					? agentLabelClasses.size5JustifyCenterRounded
 					: compact
-						? "h-5 gap-1 rounded-full px-1.5 text-2xs"
-						: "h-5 gap-1.5 rounded-full px-2 text-2xs",
+						? agentLabelClasses.h5Gap1Rounded
+						: agentLabelClasses.h5Gap15,
 				source === "hosted"
-					? "border-info-muted bg-info-muted text-info-muted-foreground"
-					: "border-border bg-background text-muted-foreground",
+					? agentLabelClasses.borderInfoMutedBgInfo
+					: agentLabelClasses.borderBorderBgBackgroundText,
 				className,
 			)}
 		>
-			<Icon className={cn(iconOnly ? "!size-3.5" : "size-3.5", iconClass)} fill={iconFill} />
-			{iconOnly ? <span className="sr-only">{label}</span> : label}
+			<Icon
+				className={cn(iconOnly ? agentLabelClasses.size35 : agentLabelClasses.size352, iconClass)}
+				fill={iconFill}
+			/>
+			{iconOnly ? <span className={agentLabelClasses.srOnly}>{label}</span> : label}
 		</StatusBadge>
 	);
 }
@@ -150,19 +157,22 @@ export function LegacyAgentBadge({
 			status="neutral"
 			title="Managed in the legacy hosted dashboard"
 			className={cn(
-				"shrink-0 whitespace-nowrap border border-warning-muted bg-warning-muted font-medium leading-none text-warning-muted-foreground shadow-sm",
+				agentLabelClasses.shrink0WhitespaceNowrapBorder2,
 				iconOnly
-					? "size-5 justify-center rounded-full p-0"
+					? agentLabelClasses.size5JustifyCenterRounded
 					: compact
-						? "h-5 gap-1 rounded-full px-1.5 text-2xs"
-						: "h-5 gap-1.5 rounded-full px-2 text-2xs",
+						? agentLabelClasses.h5Gap1Rounded
+						: agentLabelClasses.h5Gap15,
 				className,
 			)}
 		>
 			<History
-				className={cn(iconOnly ? "!size-3.5" : "size-3.5", "text-warning-muted-foreground")}
+				className={cn(
+					iconOnly ? agentLabelClasses.size35 : agentLabelClasses.size352,
+					agentLabelClasses.textWarningMutedForeground,
+				)}
 			/>
-			{iconOnly ? <span className="sr-only">Legacy</span> : "Legacy"}
+			{iconOnly ? <span className={agentLabelClasses.srOnly}>Legacy</span> : "Legacy"}
 		</StatusBadge>
 	);
 }
@@ -187,7 +197,9 @@ export function AgentSourceBadgeForEnvironment({
 	const ownership = useAgentOwnership();
 	const kind = ownershipKind ?? agentOwnershipKindFromId(env.id, ownership);
 	if (kind === "unresolved") {
-		return <Skeleton aria-label="Agent source loading" className="h-5 w-14 rounded-full" />;
+		return (
+			<Skeleton aria-label="Agent source loading" className={agentLabelClasses.h5W14Rounded} />
+		);
 	}
 	if (kind === "legacy") {
 		if (iconOnly) return null;
@@ -202,24 +214,24 @@ export function AgentSourceBadgeForEnvironment({
 }
 
 const NAME_CLASS: Record<AgentIconSize, string> = {
-	xs: "text-xs font-medium",
-	sm: "text-sm font-medium",
-	md: "text-sm font-medium",
-	lg: "text-base font-medium",
-	rail: "text-base font-medium",
-	xl: "text-2xl font-semibold tracking-tight",
+	xs: agentLabelClasses.textXsFontMedium,
+	sm: agentLabelClasses.textSmFontMedium,
+	md: agentLabelClasses.textSmFontMedium,
+	lg: agentLabelClasses.textBaseFontMedium,
+	rail: agentLabelClasses.textBaseFontMedium,
+	xl: agentLabelClasses.text2XlFontSemiboldTracking,
 };
 
 // Tighter line-height + smaller subtitle gap on hero size so the
 // icon and the text block balance optically — `text-2xl` titles
 // against a default `leading-normal` left a too-loose stack.
 const SUBTITLE_GAP: Record<AgentIconSize, string> = {
-	xs: "mt-0",
-	sm: "mt-0.5",
-	md: "mt-0.5",
-	lg: "mt-0.5",
-	rail: "mt-0.5",
-	xl: "mt-1",
+	xs: agentLabelClasses.mt0,
+	sm: agentLabelClasses.mt05,
+	md: agentLabelClasses.mt05,
+	lg: agentLabelClasses.mt05,
+	rail: agentLabelClasses.mt05,
+	xl: agentLabelClasses.mt1,
 };
 
 export function AgentLabel({
@@ -284,24 +296,24 @@ export function AgentLabel({
 	for (const m of filteredMeta) subtitleSegments.push(m);
 
 	return (
-		<div className={cn("flex min-w-0 items-center gap-3", className)}>
+		<div className={cn(agentLabelClasses.flexMinW0Items, className)}>
 			<AgentIcon agent={type} size={size} avatarUrl={avatarUrl} />
-			<div className="min-w-0 flex-1">
-				<div className="flex min-w-0 items-center gap-2">
-					<span className={cn("truncate leading-tight", NAME_CLASS[size])} title={titleText}>
+			<div className={agentLabelClasses.minW0Flex1}>
+				<div className={agentLabelClasses.flexMinW0Items2}>
+					<span
+						className={cn(agentLabelClasses.truncateLeadingTight, NAME_CLASS[size])}
+						title={titleText}
+					>
 						{titleText}
 					</span>
-					{titleAdornment ? <span className="shrink-0">{titleAdornment}</span> : null}
+					{titleAdornment ? (
+						<span className={agentLabelClasses.shrink0}>{titleAdornment}</span>
+					) : null}
 				</div>
 				{subtitleSegments.length > 0 ? (
-					<div
-						className={cn(
-							"flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground",
-							SUBTITLE_GAP[size],
-						)}
-					>
+					<div className={cn(agentLabelClasses.flexFlexWrapItemsCenter, SUBTITLE_GAP[size])}>
 						{subtitleSegments.map((seg, i) => (
-							<span key={`seg-${i}`} className="inline-flex items-center whitespace-nowrap">
+							<span key={`seg-${i}`} className={agentLabelClasses.inlineFlexItemsCenterWhitespace}>
 								{seg}
 							</span>
 						))}

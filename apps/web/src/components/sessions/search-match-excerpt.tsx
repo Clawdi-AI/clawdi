@@ -1,3 +1,4 @@
+import { sessionFeedClasses } from "@clawdi/shared/ui";
 import { SearchHighlightedText } from "@/components/search-highlighted-text";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { cn } from "@/lib/utils";
@@ -15,7 +16,7 @@ export function SessionSearchMatchExcerpt({
 }) {
 	return (
 		<span className={cn(className)} title={match.excerpt}>
-			<span className="font-medium capitalize">{match.role}</span>
+			<span className={sessionFeedClasses.searchRole}>{match.role}</span>
 			{": "}
 			<SearchHighlightedText text={match.excerpt} query={query} />
 		</span>

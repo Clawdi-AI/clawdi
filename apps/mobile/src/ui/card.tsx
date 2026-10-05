@@ -46,7 +46,17 @@ function Card({
 function CardHeader({ className, ...props }: ViewProps & ClassName) {
 	const size = useContext(CardSizeContext);
 	const classes = resolveWebClasses(cardHeaderClassName, sizeState(size));
-	return <AppView className={cn(classes.view, spacing[size].inset, className)} {...props} />;
+	const borderPadding = /(^|\s)border-b(\s|$)/.test(className ?? "")
+		? size === "sm"
+			? "pb-4"
+			: "pb-6"
+		: undefined;
+	return (
+		<AppView
+			className={cn(classes.view, spacing[size].inset, borderPadding, className)}
+			{...props}
+		/>
+	);
 }
 
 function CardTitle({ className, ...props }: React.ComponentProps<typeof Text>) {

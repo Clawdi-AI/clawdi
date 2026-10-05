@@ -1,13 +1,10 @@
+import { dashboardPageClasses as styles } from "@clawdi/shared/ui";
+import { currentDaypart, dashboardGreeting, OVERVIEW_COPY } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
-import { RefreshControl } from "react-native";
+import { router } from "expo-router";
+import { ArrowRight, MoreHorizontal } from "lucide-react-native";
 import { useCurrentUser } from "../../src/auth/auth-client";
-import {
-	AgentRow,
-	SessionRow,
-	useCloudAgents,
-	useCloudSessions,
-} from "../../src/features/cloud-inventory";
+import { useCloudSessions } from "../../src/features/cloud-inventory";
 import { useI18n } from "../../src/i18n";
 import {
 	accountQueryKey,
@@ -15,126 +12,186 @@ import {
 	useAccountScope,
 } from "../../src/platform/account-lifecycle";
 import { useMobileApi } from "../../src/providers/api-provider";
-import { CloudActions } from "../../src/ui/cloud-actions";
-import { ErrorState, LoadingScreen } from "../../src/ui/feedback";
-import { AppScrollView, AppText, AppView } from "../../src/ui/primitives";
-
+import { ApiErrorPanel } from "../../src/ui/api-error-panel";
+import { Button } from "../../src/ui/button";
+import { Card, CardContent } from "../../src/ui/card";
+import { AgentsCard } from "../../src/ui/dashboard/agents-card";
+import {
+	ActivityGraphSkeleton,
+	ContributionGraph,
+} from "../../src/ui/dashboard/contribution-graph";
+import { ConnectAnotherCard, OnboardingCard } from "../../src/ui/dashboard/onboarding-card";
+import { ResourcesCard } from "../../src/ui/dashboard/resources-card";
+import { TabPage } from "../../src/ui/dashboard/tab-page";
+import { ThisWeekCard } from "../../src/ui/dashboard/this-week-card";
+import { useDashboardAgents } from "../../src/ui/dashboard/use-dashboard-agents";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "../../src/ui/dropdown-menu";
+import { SessionFeed } from "../../src/ui/sessions/session-feed";
+import { Skeleton } from "../../src/ui/skeleton";
+import { Text } from "../../src/ui/text";
+import { WebIcon, WebText, WebView, webView } from "../../src/ui/web-layout";
 export default function HomeRoute() {
-	const t = useI18n();
 	const { isLoaded, user } = useCurrentUser();
-	const router = useRouter();
-	const agents = useCloudAgents();
-	const sessions = useCloudSessions();
-	const { cloud } = useMobileApi();
-	const scope = useAccountScope();
-	const read = useAccountRead();
+	const t = useI18n();
+	const { agents, inventory, hasHosted, tiles, canDeploy, hostedStatus } = useDashboardAgents();
+	const sessions = useCloudSessions(undefined, true, { automated: false, page_size: 25 });
+	const { cloud } = useMobileApi(),
+		scope = useAccountScope(),
+		read = useAccountRead();
 	const stats = useQuery({
 		queryKey: accountQueryKey(scope, "dashboard-stats"),
-		queryFn: ({ signal }) => read((readSignal) => cloud.getDashboardStats(readSignal), signal),
+		queryFn: ({ signal }) => read((lease) => cloud.getDashboardStats(lease), signal),
 		enabled: scope.isReady,
 		retry: false,
+		staleTime: 0,
+		refetchOnMount: "always",
 	});
-	const displayName = user?.firstName ?? user?.primaryEmailAddress?.emailAddress;
+	const statsError = stats.data ? undefined : stats.error;
+	const agentsError = agents.data ? undefined : agents.error;
+	const sessionsError = sessions.data ? undefined : sessions.error;
+	const empty =
+		!agents.isPending &&
+		!agentsError &&
+		!hostedStatus?.isLoading &&
+		!hostedStatus?.error &&
+		tiles.length === 0;
 	return (
-		<AppScrollView
-			className="flex-1 bg-background"
-			contentContainerStyle={{ flexGrow: 1 }}
-			refreshControl={
-				<RefreshControl
-					refreshing={agents.isRefetching || sessions.isRefetching || stats.isRefetching}
-					onRefresh={() => {
-						if (!agents.isFetching) void agents.refetch();
-						if (!sessions.isFetching) void sessions.refetch();
-						if (!stats.isFetching) void stats.refetch();
-					}}
-				/>
+		<TabPage
+			title={OVERVIEW_COPY.title}
+			actions={
+				<DropdownMenu>
+					<DropdownMenuTrigger
+						render={
+							<Button
+								variant="ghost"
+								size="icon-sm"
+								accessibilityLabel={t("sessionFilters.options")}
+							>
+								<WebIcon as={MoreHorizontal} recipe={styles.textMutedForeground} />
+							</Button>
+						}
+					/>
+					<DropdownMenuContent>
+						<DropdownMenuItem
+							label={t("navigation.deployments")}
+							onSelect={() => router.push("/deployments")}
+						/>
+						<DropdownMenuItem
+							label={t("publicSession.open")}
+							onSelect={() => router.push("/open-share")}
+						/>
+						<DropdownMenuItem
+							label={t("vault.supplyTitle")}
+							onSelect={() => router.push("/vault-supply")}
+						/>
+					</DropdownMenuContent>
+				</DropdownMenu>
 			}
+			refreshing={
+				agents.isRefetching ||
+				sessions.isRefetching ||
+				stats.isRefetching ||
+				(hasHosted && inventory.isRefetching)
+			}
+			onRefresh={() => {
+				if (!agents.isFetching) void agents.refetch();
+				if (!sessions.isFetching) void sessions.refetch();
+				if (!stats.isFetching) void stats.refetch();
+				if (hasHosted && !inventory.isFetching) void inventory.refetch();
+			}}
 		>
-			<AppView className="flex-1 gap-6 px-6 pb-10 pt-8">
-				<AppView className="gap-1">
-					<AppText className="text-base text-muted-foreground">{t("home.greeting")}</AppText>
-					<AppText className="text-3xl font-semibold text-foreground">
-						{isLoaded && displayName ? displayName : t("app.name")}
-					</AppText>
-				</AppView>
-				<CloudActions />
-				{stats.isPending ? <LoadingScreen /> : null}
-				{stats.isError ? (
-					<ErrorState onRetry={stats.isFetching ? undefined : () => void stats.refetch()} />
-				) : null}
-				{stats.data ? (
-					<AppView className="gap-3 rounded-3xl bg-card p-5">
-						<AppText className="text-lg font-semibold text-foreground">
-							{t("home.statsTitle")}
-						</AppText>
-						<AppView className="flex-row flex-wrap gap-4">
-							<Stat label={t("home.statsSessions")} value={stats.data.total_sessions} />
-							<Stat label={t("home.statsMessages")} value={stats.data.total_messages} />
-							<Stat label={t("home.statsProjects")} value={stats.data.projects_count} />
-							<Stat label={t("home.statsSkills")} value={stats.data.skills_count} />
-						</AppView>
-					</AppView>
-				) : null}
-				<AppView className="gap-3">
-					<SectionHeader title={t("home.agentsTitle")} onPress={() => router.push("/agents")} />
-					{agents.isPending ? (
-						<LoadingScreen label={t("loading.agents")} />
-					) : agents.isError ? (
-						<ErrorState onRetry={agents.isFetching ? undefined : () => void agents.refetch()} />
-					) : agents.data?.length ? (
-						agents.data.slice(0, 3).map((agent) => <AgentRow agent={agent} key={agent.id} />)
+			{isLoaded ? (
+				<WebText recipe={styles.text2XlFontSemiboldTracking} accessibilityRole="header">
+					{dashboardGreeting(currentDaypart(), user?.fullName?.split(" ")[0] ?? user?.firstName)}
+				</WebText>
+			) : (
+				<Skeleton className={webView(styles.h8W64Max)} />
+			)}
+			<WebView recipe={styles.gridGap4LgGrid}>
+				{empty ? (
+					<OnboardingCard canDeployOnClawdi={canDeploy} />
+				) : (
+					<AgentsCard
+						agents={tiles}
+						isLoading={agents.isPending}
+						error={agentsError}
+						onRetry={() => void agents.refetch()}
+						hostedStatus={hostedStatus}
+					/>
+				)}
+				<WebView recipe={styles.minW0SpaceY}>
+					<WebText recipe={styles.textBaseFontSemibold}>{OVERVIEW_COPY.activity}</WebText>
+					<Card>
+						<CardContent>
+							{statsError ? (
+								<ApiErrorPanel
+									error={statsError}
+									onRetry={() => void stats.refetch()}
+									title={OVERVIEW_COPY.activityError}
+								/>
+							) : stats.isPending ? (
+								<ActivityGraphSkeleton />
+							) : stats.data?.contribution ? (
+								<ContributionGraph data={stats.data.contribution} />
+							) : null}
+						</CardContent>
+					</Card>
+				</WebView>
+				<WebView recipe={styles.minW0SpaceY2}>
+					{tiles.length > 0 ? (
+						hasHosted ? (
+							<OnboardingCard variant="additional-agent" canDeployOnClawdi={canDeploy} />
+						) : (
+							<ConnectAnotherCard />
+						)
+					) : null}
+					<ResourcesCard
+						stats={stats.data}
+						statsError={statsError}
+						onRetryStats={() => void stats.refetch()}
+					/>
+					<ThisWeekCard
+						stats={stats.data}
+						error={statsError}
+						onRetry={() => void stats.refetch()}
+					/>
+				</WebView>
+				<WebView recipe={styles.minW0SpaceY3}>
+					<WebView recipe={styles.flexItemsEndJustifyBetween} className="flex-row">
+						<WebText recipe={styles.textBaseFontSemibold}>{OVERVIEW_COPY.recentSessions}</WebText>
+						<Button
+							variant="ghost"
+							size="sm"
+							textClassName={styles.textMutedForeground}
+							style={{ flexShrink: 0 }}
+							onPress={() => router.push("/sessions")}
+						>
+							<Text numberOfLines={1}>{OVERVIEW_COPY.viewAll}</Text>
+							<WebIcon as={ArrowRight} recipe={styles.textMutedForeground} />
+						</Button>
+					</WebView>
+					{sessionsError ? (
+						<ApiErrorPanel
+							error={sessionsError}
+							onRetry={() => void sessions.refetch()}
+							title={OVERVIEW_COPY.recentSessionsError}
+						/>
 					) : (
-						<AppView className="rounded-3xl bg-card p-5">
-							<AppText className="text-base leading-6 text-muted-foreground">
-								{t("agents.empty")}
-							</AppText>
-						</AppView>
+						<SessionFeed
+							sessions={sessions.data?.pages[0]?.items.slice(0, 15) ?? []}
+							isLoading={sessions.isPending}
+							grouped={false}
+							emptyVariant="inset"
+							emptyMessage={OVERVIEW_COPY.manualSessionsEmpty}
+						/>
 					)}
-				</AppView>
-				<AppView className="gap-3">
-					<SectionHeader title={t("home.sessionsTitle")} onPress={() => router.push("/sessions")} />
-					{sessions.isPending ? (
-						<LoadingScreen label={t("loading.sessions")} />
-					) : sessions.isError ? (
-						<ErrorState onRetry={sessions.isFetching ? undefined : () => void sessions.refetch()} />
-					) : sessions.data?.pages[0]?.items.length ? (
-						sessions.data.pages[0]?.items
-							.slice(0, 3)
-							.map((session) => <SessionRow key={session.id} session={session} />)
-					) : (
-						<AppView className="rounded-3xl bg-card p-5">
-							<AppText className="text-base leading-6 text-muted-foreground">
-								{t("sessions.empty")}
-							</AppText>
-						</AppView>
-					)}
-				</AppView>
-			</AppView>
-		</AppScrollView>
-	);
-}
-
-function Stat({ label, value }: { label: string; value: number }) {
-	return (
-		<AppView className="flex-1 gap-1">
-			<AppText className="text-2xl font-semibold text-foreground">{value}</AppText>
-			<AppText className="text-sm text-muted-foreground">{label}</AppText>
-		</AppView>
-	);
-}
-
-function SectionHeader({ title, onPress }: { title: string; onPress: () => void }) {
-	const t = useI18n();
-	return (
-		<AppView className="flex-row items-center justify-between gap-3">
-			<AppText className="text-xl font-semibold text-foreground">{title}</AppText>
-			<AppText
-				accessibilityRole="button"
-				onPress={onPress}
-				className="text-sm font-semibold text-primary"
-			>
-				{t("inventory.viewAll")}
-			</AppText>
-		</AppView>
+				</WebView>
+			</WebView>
+		</TabPage>
 	);
 }
