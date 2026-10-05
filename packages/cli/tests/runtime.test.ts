@@ -8683,10 +8683,7 @@ chmod +x "$prefix/bin/clawdi"
 						call,
 					),
 				);
-			expect(activationCalls).toEqual([
-				"daemon-reload",
-				"restart clawdi-daemon.service",
-			]);
+			expect(activationCalls).toEqual(["daemon-reload", "restart clawdi-daemon.service"]);
 			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
 				"restart clawdi-runtime-watch.service",
 			);

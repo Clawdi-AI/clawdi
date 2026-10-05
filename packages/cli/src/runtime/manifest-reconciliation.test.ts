@@ -2919,13 +2919,12 @@ fi
 			);
 		const first = converge(manifestFor("https://provider-one.example.test/v1", 1));
 		expect(first.installErrors).toEqual([]);
-		writeFileSync(
-			envPath,
-			readFileSync(envPath, "utf8").replace(/^CLAWDI_AI_API_KEY=.*\n/m, ""),
-		);
+		writeFileSync(envPath, readFileSync(envPath, "utf8").replace(/^CLAWDI_AI_API_KEY=.*\n/m, ""));
 		const second = converge(manifestFor("https://provider-two.example.test/v1", 2));
 		expect(second.installErrors).toEqual([]);
-		expect(readFileSync(probeLog, "utf8")).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
+		expect(readFileSync(probeLog, "utf8")).toContain(
+			'CLAWDI_AI_API_KEY="clawdi-egress-placeholder"',
+		);
 	});
 
 	test("reuses OpenClaw probes until the provider revision changes", () => {
