@@ -17,10 +17,12 @@ from app.models.user import User
 from app.services.session_events import (
     EMPTY_EVENT_HEAD,
     EVENT_ADAPTER,
+    SessionEventChunkInvalid,
     ValidatedEventChunk,
     advance_event_head,
     canonical_event_json,
     project_safe_messages,
+    validate_event_chunk,
 )
 from app.services.session_search import rebuild_session_search_index, stage_event_search_messages
 
@@ -114,6 +116,34 @@ def test_hermes_event_semantics_are_strict_and_normalized() -> None:
     assert validated.semantics.lifecycle == "inactive"
     assert validated.semantics.display_metadata is not None
     assert validated.semantics.display_metadata.attempt == 2
+
+
+def test_event_schema_diagnostics_identify_the_field_without_content() -> None:
+    event = _event(
+        7,
+        "message",
+        "sanitized",
+        role="user",
+        parts=[
+            {
+                "type": "attachment",
+                "attachment_id": "sha256:" + "a" * 64,
+                "availability": "metadata_only",
+                "name": "x" * 728,
+            }
+        ],
+    )
+    event["private_extra_field"] = "private value"
+    data, _ = _chunk([event])
+    with pytest.raises(SessionEventChunkInvalid) as caught:
+        validate_event_chunk(data, start_seq=7, base_head_hash=EMPTY_EVENT_HEAD)
+    diagnostic = str(caught.value)
+    assert "seq 7" in diagnostic
+    assert "message.parts.0.attachment.name (string_too_long)" in diagnostic
+    assert "<field> (extra_forbidden)" in diagnostic
+    assert "private_extra_field" not in diagnostic
+    assert "private value" not in diagnostic
+    assert "x" * 728 not in diagnostic
 
 
 def test_reasoning_event_requires_private_content() -> None:
@@ -511,6 +541,8 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
         files={"file": ("5.ndjson", invalid_data, "application/x-ndjson")},
     )
     assert rejected.status_code == 422
+    assert "seq 5" in rejected.json()["detail"]
+    assert "<field> (extra_forbidden)" in rejected.json()["detail"]
 
     class NoReadStore:
         def __init__(self, delegate: Any) -> None:

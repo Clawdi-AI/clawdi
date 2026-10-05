@@ -15,6 +15,7 @@ import type { AgentAdapter, RawSession, SkillModule } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError } from "../lib/api-client";
 import { setAuth } from "../lib/config";
+import { sequenceSessionEvents } from "../lib/session-events";
 import { planSessionUpload, sessionFence } from "../lib/session-upload";
 import {
 	persistFencedSessionEntry,
@@ -86,6 +87,88 @@ function sessionQueueFence(
 }
 
 describe("stable session enqueue abort fence", () => {
+	it("keeps a validation-blocked projection out of later scans while changed content is queued", async () => {
+		const root = mkdtempSync(join(tmpdir(), "session-schema-block-"));
+		const originalHome = process.env.HOME;
+		try {
+			process.env.HOME = root;
+			const session: RawSession = {
+				localSessionId: "session-1",
+				projectPath: null,
+				startedAt: new Date(0),
+				endedAt: null,
+				messageCount: 1,
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				model: null,
+				modelsUsed: [],
+				durationSeconds: null,
+				summary: null,
+				messages: [],
+				rawFilePath: "/sessions/1.jsonl",
+				sourceRevision: "source-r1",
+				events: sequenceSessionEvents([
+					{
+						type: "message",
+						role: "user",
+						source: { adapter: "hermes", session_key: "session-1", record_id: "1" },
+						parts: [{ type: "text", text: "before fix" }],
+					},
+				]),
+			};
+			const plan = planSessionUpload(session, "events-v1");
+			const fence = {
+				apiOrigin: "https://cloud.example.test",
+				environmentId: "agent-1",
+				adapter: "hermes" as const,
+				sourceSessionKey: session.localSessionId,
+			};
+			persistFencedSessionEntry(fence, {
+				protocol: plan.protocol,
+				local_hash: plan.localHash,
+				source_revision: session.sourceRevision,
+				blocked: {
+					code: "event_schema_invalid",
+					content_hash: plan.localHash,
+					message: "schema rejected",
+					blocked_at: new Date().toISOString(),
+				},
+			});
+			const queued: unknown[] = [];
+			const blocked: string[] = [];
+			const options = {
+				abort: new AbortController().signal,
+				sessions: [session],
+				queue: {
+					enqueueWhenAvailable: async (item: unknown) => {
+						queued.push(item);
+						return 1;
+					},
+				},
+				lastPushedHash: new Map<string, string>(),
+				inFlightHash: new Map<string, string>(),
+				protocol: plan.protocol,
+				fenceFor: () => fence,
+				onBlocked: (_session: RawSession, message: string) => {
+					blocked.push(message);
+				},
+			};
+			expect((await enqueueChangedSessionsAfterStability(options)).enqueued).toBe(0);
+			expect((await enqueueChangedSessionsAfterStability(options)).enqueued).toBe(0);
+			expect(blocked).toEqual(["schema rejected", "schema rejected"]);
+			expect(queued).toEqual([]);
+			const first = session.events?.[0];
+			if (first?.type !== "message") throw new Error("expected message fixture");
+			session.events = [{ ...first, parts: [{ type: "text", text: "after fix" }] }];
+			expect((await enqueueChangedSessionsAfterStability(options)).enqueued).toBe(1);
+			expect(queued).toHaveLength(1);
+		} finally {
+			if (originalHome === undefined) delete process.env.HOME;
+			else process.env.HOME = originalHome;
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
 	it("does not enqueue after collection finishes into an abort", async () => {
 		const abort = new AbortController();
 		const queued: unknown[] = [];

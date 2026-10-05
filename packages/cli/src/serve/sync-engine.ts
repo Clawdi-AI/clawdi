@@ -1083,7 +1083,7 @@ async function prepareSessionSync(
 			health.set(
 				"push",
 				`session:${entry.source_session_key}`,
-				`blocked: ${entry.blocked.message}`,
+				`permanent: ${entry.blocked.message}`,
 			);
 		}
 	}
@@ -1123,7 +1123,7 @@ async function prepareSessionSync(
 							sourceSessionKey: session.localSessionId,
 						}),
 					onBlocked: (session, message, hash) => {
-						health.set("push", `session:${session.localSessionId}`, `blocked: ${message}`);
+						health.set("push", `session:${session.localSessionId}`, `permanent: ${message}`);
 						lastPushedSessionHash.set(session.localSessionId, hash);
 					},
 				});
@@ -1517,7 +1517,7 @@ async function drainQueueLoop(
 				health.set(
 					"push",
 					healthResource(item),
-					`blocked: ${item.kind === "session_push" ? `session ${item.local_session_id}` : `skill ${item.skill_key}`} exceeds an upload limit`,
+					`permanent: ${item.kind === "session_push" ? `session ${item.local_session_id}` : `skill ${item.skill_key}`} upload requires a source or client fix`,
 				);
 			} else {
 				health.setIfAbsent(
