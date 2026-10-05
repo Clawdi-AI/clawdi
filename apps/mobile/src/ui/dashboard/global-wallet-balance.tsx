@@ -44,7 +44,7 @@ export function GlobalWalletBalance() {
 			{state === "loading" ? (
 				<Skeleton className={webView(styles.skeleton)} />
 			) : displayedBalance ? (
-				<WebText recipe={styles.balance}>{displayedBalance}</WebText>
+				<WebText recipe={styles.balance.replace(/\bflex-1\b/g, "")}>{displayedBalance}</WebText>
 			) : null}
 		</Button>
 	);
