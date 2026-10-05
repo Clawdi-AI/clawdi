@@ -1,4 +1,4 @@
-import type { components } from "@clawdi/shared/api";
+import { type components, searchExcerpt } from "@clawdi/shared/api";
 import { memoriesSurfaceClasses } from "@clawdi/shared/ui";
 import { MEMORY_CATEGORY_COLORS, memoryDisplayName, relativeTime } from "@clawdi/shared/view";
 import { Laptop, Trash2 } from "lucide-react-native";
@@ -6,17 +6,23 @@ import { Badge } from "../badge";
 import { Button } from "../button";
 import { EntityCardActions, EntityCardChassis, EntityCardLink, EntityMeta } from "../entity-card";
 import { Icon } from "../icon";
+import { SearchHighlightedText } from "../search-highlighted-text";
 import { Text } from "../text";
 import { WebText, WebView, webBoth, webView } from "../web-layout";
 export function MemoryCard({
 	memory,
 	onDelete,
 	onEdit,
+	searchQuery = "",
 }: {
 	memory: components["schemas"]["MemoryResponse"];
 	onDelete?: () => void;
 	onEdit?: () => void;
+	searchQuery?: string;
 }) {
+	const visibleContent = searchQuery
+		? searchExcerpt(memory.content, searchQuery, 320)
+		: memory.content;
 	return (
 		<EntityCardChassis variant="resource" interactive>
 			<EntityCardLink
@@ -26,7 +32,7 @@ export function MemoryCard({
 			/>
 			<WebView recipe="">
 				<WebText recipe={memoriesSurfaceClasses.content} numberOfLines={8}>
-					{memory.content}
+					<SearchHighlightedText text={visibleContent} query={searchQuery} />
 				</WebText>
 				<EntityMeta
 					className={webBoth(memoriesSurfaceClasses.footer)}

@@ -3,7 +3,6 @@ import { isSearchQueryReady } from "@clawdi/shared/consts";
 import { ENTITY_CARD_MASONRY_CLASS, memoriesSurfaceClasses } from "@clawdi/shared/ui";
 import { getProjectResourceDefinition, MEMORY_CATEGORIES } from "@clawdi/shared/view";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
 import { Plus } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { Alert } from "react-native";
@@ -69,7 +68,6 @@ export function MemoriesScreen() {
 
 function MemoriesView() {
 	const t = useI18n();
-	const _router = useRouter();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { cloud } = useMobileApi();
@@ -194,6 +192,7 @@ function MemoriesView() {
 							<MemoryCard
 								key={memory.id}
 								memory={memory}
+								searchQuery={searchQuery}
 								onDelete={() => remove(memory)}
 								onEdit={() => {
 									setEditing(memory.id);
