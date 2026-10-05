@@ -1,1 +1,1 @@
-export { RESOURCE_TINT_CLASSES } from "@clawdi/shared/ui";
+export { RESOURCE_TINT_CLASSES } from "@clawdi/shared/view";

@@ -57,6 +57,7 @@ export function DialogContent({
 					variant="ghost"
 					size="icon-sm"
 					className={webView(styles.dialogContent2)}
+					style={{ top: 0, right: 0 }}
 					accessibilityLabel={t("composite.close")}
 					onPress={() => modal.setOpen(false)}
 				>

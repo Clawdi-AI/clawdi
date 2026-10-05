@@ -8,9 +8,20 @@ import {
 	skillCapabilities,
 	stripFrontmatter,
 } from "@clawdi/shared/api";
+import { detailLayoutClasses, skillDetailClasses } from "@clawdi/shared/ui";
+import { identityFor, RESOURCE_TINT_CLASSES, relativeTime } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useLocalSearchParams, useNavigation } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
+import {
+	BookOpen,
+	FileText,
+	FolderKanban,
+	Pencil,
+	Sparkles,
+	Tag,
+	Trash2,
+} from "lucide-react-native";
 import { useRef, useState } from "react";
 import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
@@ -18,12 +29,22 @@ import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
+import { ChoiceSelect } from "../ui/detail/choice-select";
+import { DetailBackLink, DetailMeta, DetailPanel } from "../ui/detail/layout";
+import { EntityHeader } from "../ui/entity-card";
 import { ErrorState } from "../ui/feedback";
+import { Icon } from "../ui/icon";
+import { IconChip } from "../ui/icon-chip";
+import { Input } from "../ui/input";
 import { Markdown } from "../ui/markdown";
-import { NativeButton, NativePicker } from "../ui/native-controls";
-import { AppScrollView, AppText, AppTextInput, AppView } from "../ui/primitives";
+import { PageHeader, PageHeaderSkeleton } from "../ui/page-header";
+import { AppScrollView, AppText, AppView } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
-import { BackButton } from "./cloud-inventory";
+import { Text } from "../ui/text";
+import { WebText, WebView, webText, webView } from "../ui/web-layout";
+
 import { ProjectResourceBoundary } from "./project-scope";
 import { useCloudProjects } from "./projects";
 import { routeParam } from "./read-helpers";
@@ -233,15 +254,13 @@ function SkillEditor({
 		<ReadScreen>
 			<AppScrollView
 				keyboardShouldPersistTaps="handled"
-				contentContainerStyle={{ padding: 24, gap: 16 }}
+				contentContainerClassName={webView(detailLayoutClasses.detailPage)}
 			>
-				<BackButton />
+				<DetailBackLink href="/skills" label={t("skills.title")} />
 				{completed ? <AppText className="text-foreground">{t("skills.saved")}</AppText> : null}
-				<AppText accessibilityRole="header" className="text-3xl font-semibold text-foreground">
-					{t(create ? "skills.create" : "skills.title")}
-				</AppText>
+				{create ? <PageHeader title={t("libraryPort.createSkill")} /> : null}
 				{create ? (
-					<NativePicker
+					<ChoiceSelect
 						disabled={action.busy}
 						value={selectedId ?? ""}
 						options={[
@@ -260,9 +279,7 @@ function SkillEditor({
 						}}
 					/>
 				) : null}
-				{!create && skillKey && detail.isPending ? (
-					<AppText className="text-muted-foreground">{t("loading.app")}</AppText>
-				) : null}
+				{!create && skillKey && detail.isPending ? <PageHeaderSkeleton icon actions /> : null}
 				{!canWrite && !projects.isPending && (create || detail.data) ? (
 					<AppText className="text-muted-foreground">
 						{t(!create && !projectId ? "skills.chooseProject" : "skills.readOnly")}
@@ -273,19 +290,19 @@ function SkillEditor({
 						{(["name", "description", "instructions"] as const).map((field) => (
 							<AppView key={field} className="gap-2">
 								<AppText className="text-foreground">{t(`skills.${field}`)}</AppText>
-								<AppTextInput
+								<Input
 									accessibilityLabel={t(`skills.${field}`)}
 									value={draft[field]}
 									editable={!disabled}
 									multiline={field !== "name"}
 									maxLength={field === "name" ? 64 : field === "description" ? 1024 : 204800}
 									onChangeText={(value) => setDraft({ ...draft, [field]: value })}
-									className="rounded-xl border border-muted p-3 text-foreground"
 								/>
 							</AppView>
 						))}
-						<NativeButton
-							label={t("skills.save")}
+						<Button
+							variant="default"
+							size="sm"
 							disabled={
 								disabled ||
 								conflict ||
@@ -296,11 +313,14 @@ function SkillEditor({
 							onPress={() => {
 								void save();
 							}}
-						/>
+						>
+							<Text>{t("skills.save")}</Text>
+						</Button>
 						{!create ? (
-							<NativeButton
+							<Button
+								variant="outline"
+								size="sm"
 								disabled={action.busy}
-								label={t("skills.discard")}
 								onPress={() => {
 									const visible = capture();
 									const ticket = ++confirmation.current;
@@ -321,62 +341,129 @@ function SkillEditor({
 										},
 									]);
 								}}
-							/>
+							>
+								<Text>{t("skills.discard")}</Text>
+							</Button>
 						) : null}
 					</AppView>
 				) : detail.data && matches ? (
-					<AppView className="gap-3">
-						<AppText className="text-xl text-foreground">{detail.data.name}</AppText>
-						<AppText className="text-muted-foreground">{detail.data.description}</AppText>
-						<AppText selectable className="text-muted-foreground">
-							{t("skills.project")}:{" "}
-							{project?.name ??
-								detail.data.project_name ??
-								detail.data.project_id ??
-								t("projects.choose")}
-						</AppText>
-						<AppText className="text-muted-foreground">
-							{t("skills.version")}: {detail.data.version}
-						</AppText>
-						{detail.data.file_count !== null ? (
-							<AppText className="text-muted-foreground">
-								{t("skills.files")}: {detail.data.file_count}
-							</AppText>
-						) : null}
-						{detail.data.source_repo ? (
-							<AppText selectable className="text-muted-foreground">
-								{t("skills.source")}: {detail.data.source_repo}
-							</AppText>
-						) : null}
-						{detail.data.content !== null ? (
-							<Markdown content={stripFrontmatter(detail.data.content)} />
-						) : (
-							<AppText>{t("skills.noContent")}</AppText>
-						)}
-						<NativeButton
-							label={t("skills.edit")}
-							disabled={disabled || detail.data.content === null}
-							onPress={startEdit}
+					<>
+						<PageHeader
+							title={detail.data.name}
+							description={detail.data.description}
+							icon={
+								<IconChip tint={RESOURCE_TINT_CLASSES.skills}>
+									<Icon as={Sparkles} />
+								</IconChip>
+							}
+							status={
+								<DetailMeta>
+									<Text>
+										Project Skill · in {project?.name ?? detail.data.project_name} · added{" "}
+										{relativeTime(detail.data.created_at)}
+									</Text>
+								</DetailMeta>
+							}
+							actions={
+								canWrite ? (
+									<>
+										<Button
+											variant="outline"
+											size="sm"
+											disabled={disabled || detail.data.content === null}
+											onPress={startEdit}
+										>
+											<Icon as={Pencil} />
+											<Text>{t("libraryPort.edit")}</Text>
+										</Button>
+										<Button
+											variant="outline"
+											size="sm"
+											disabled={disabled}
+											textClassName={webText(skillDetailClasses.removeAction)}
+											onPress={remove}
+										>
+											<Icon as={Trash2} />
+											<Text>{t("skills.remove")}</Text>
+										</Button>
+										{projectId ? (
+											<Button
+												variant="outline"
+												size="sm"
+												disabled={action.busy || detail.isError}
+												onPress={() =>
+													router.push({
+														pathname: "/skills/archive",
+														params: { projectId, skillKey: skillKey ?? "" },
+													})
+												}
+											>
+												<Text>{t("skillArchive.open")}</Text>
+											</Button>
+										) : null}
+									</>
+								) : undefined
+							}
 						/>
-						<NativeButton label={t("skills.remove")} disabled={disabled} onPress={remove} />
-						{projectId ? (
-							<NativeButton
-								label={t("skillArchive.open")}
-								disabled={action.busy || detail.isError}
-								onPress={() =>
-									router.push({
-										pathname: "/skills/archive",
-										params: { projectId: projectId ?? "", skillKey: skillKey ?? "" },
-									})
-								}
-							/>
-						) : null}
-					</AppView>
+						<DetailMeta>
+							<Icon as={Tag} />
+							<Text>v{detail.data.version}</Text>
+							<Icon as={FileText} />
+							<Text>{detail.data.file_count} files</Text>
+						</DetailMeta>
+						<DetailPanel className={webView(skillDetailClasses.panel)}>
+							<WebView recipe={skillDetailClasses.headingStack}>
+								<WebView recipe={skillDetailClasses.headingRow}>
+									<Icon as={FolderKanban} />
+									<WebText recipe={skillDetailClasses.heading}>{t("skills.project")}</WebText>
+								</WebView>
+								<WebText recipe={skillDetailClasses.subtitle}>
+									{t("libraryPort.projectSkillDescription")}
+								</WebText>
+							</WebView>
+							<Badge variant="outline">
+								<Text>{canWrite ? "Editable" : "Read-only"}</Text>
+							</Badge>
+							{project ? (
+								<EntityHeader
+									icon={
+										<IconChip size="xs" tint={identityFor(project.name).colorClasses}>
+											{identityFor(project.name).emoji}
+										</IconChip>
+									}
+									title={project.name}
+									meta={project.description ?? ""}
+								/>
+							) : null}
+						</DetailPanel>
+						<DetailPanel className={webView(skillDetailClasses.instructionPanel)}>
+							<WebView recipe={skillDetailClasses.headingStack}>
+								<WebView recipe={skillDetailClasses.headingRow}>
+									<Icon as={BookOpen} />
+									<WebText recipe={skillDetailClasses.heading}>
+										{t("libraryPort.instructionFile")}
+									</WebText>
+								</WebView>
+								<WebText recipe={skillDetailClasses.subtitle}>
+									{t("libraryPort.instructionDescription")}
+								</WebText>
+							</WebView>
+							<Badge variant="secondary">
+								<Text>{detail.data.file_count} files</Text>
+							</Badge>
+							{detail.data.content !== null ? (
+								<Markdown content={stripFrontmatter(detail.data.content)} />
+							) : (
+								<Text>{t("skills.noContent")}</Text>
+							)}
+						</DetailPanel>
+					</>
 				) : null}
+
 				{create ? (
 					<AppView className="gap-3">
 						<AppText className="text-foreground">{t("skills.import")}</AppText>
-						<AppTextInput
+						<Input
 							accessibilityLabel={t("skills.github")}
 							placeholder={t("skills.github")}
 							autoCapitalize="none"
@@ -384,15 +471,17 @@ function SkillEditor({
 							editable={!disabled}
 							value={source}
 							onChangeText={setSource}
-							className="rounded-xl border border-muted p-3 text-foreground"
 						/>
-						<NativeButton
-							label={t("skills.import")}
+						<Button
+							variant="default"
+							size="sm"
 							disabled={disabled || !source.trim()}
 							onPress={() => {
 								void save(true);
 							}}
-						/>
+						>
+							<Text>{t("skills.import")}</Text>
+						</Button>
 					</AppView>
 				) : null}
 				{conflict ? (

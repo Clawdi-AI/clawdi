@@ -5,9 +5,12 @@ import { Fragment, type ReactNode } from "react";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
-import { NativeButton, NativePicker } from "../ui/native-controls";
+import { Button } from "../ui/button";
+import { ChoiceSelect } from "../ui/detail/choice-select";
+import { PageHeaderSkeleton } from "../ui/page-header";
 import { AppText, AppView } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
+import { Text } from "../ui/text";
 import { BackButton, isNotFound } from "./cloud-inventory";
 import { useCloudProjects } from "./projects";
 import { projectRouteFilter } from "./read-helpers";
@@ -45,7 +48,7 @@ export function ProjectResourceBoundary({
 				<AppView className="gap-4 p-6">
 					<BackButton />
 					{id && project.isPending ? (
-						<AppText>{t("loading.app")}</AppText>
+						<PageHeaderSkeleton />
 					) : (
 						<ResourceError
 							missing={
@@ -56,10 +59,13 @@ export function ProjectResourceBoundary({
 							onRetry={project.isFetching ? undefined : () => void project.refetch()}
 						/>
 					)}
-					<NativeButton
-						label={t("projects.all")}
+					<Button
+						variant="outline"
+						size="sm"
 						onPress={() => router.setParams({ projectId: undefined })}
-					/>
+					>
+						<Text>{t("projects.all")}</Text>
+					</Button>
 				</AppView>
 			</ReadScreen>
 		);
@@ -82,7 +88,7 @@ export function ProjectScopeHeader({ project }: { project?: Project }) {
 	return (
 		<AppView className="gap-2">
 			<AppText>{t("projects.filter")}</AppText>
-			<NativePicker
+			<ChoiceSelect
 				value={project?.id ?? ""}
 				disabled={projects.isFetching || projects.isError}
 				options={[
@@ -92,12 +98,15 @@ export function ProjectScopeHeader({ project }: { project?: Project }) {
 				onValueChange={(id) => router.setParams({ projectId: id || undefined })}
 			/>
 			{project ? (
-				<NativeButton
-					label={`${t("projects.open")}: ${project.name}`}
+				<Button
+					variant="outline"
+					size="sm"
 					onPress={() =>
 						router.push({ pathname: "/projects/[projectId]", params: { projectId: project.id } })
 					}
-				/>
+				>
+					<Text>{`${t("projects.open")}: ${project.name}`}</Text>
+				</Button>
 			) : null}
 			{projects.isError ? (
 				<ResourceError missing={false} onRetry={() => void projects.refetch()} />

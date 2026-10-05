@@ -5,6 +5,7 @@ import {
 	skillTransferTargets,
 	transferSkill,
 } from "@clawdi/shared/api";
+import { detailLayoutClasses } from "@clawdi/shared/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypto";
 import { Directory, File, Paths } from "expo-file-system";
@@ -17,9 +18,14 @@ import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
-import { NativeButton, NativePicker } from "../ui/native-controls";
-import { AppScrollView, AppText, AppTextInput, AppView } from "../ui/primitives";
+import { Button } from "../ui/button";
+import { ChoiceSelect } from "../ui/detail/choice-select";
+import { Input } from "../ui/input";
+import { PageHeader } from "../ui/page-header";
+import { AppScrollView, AppText, AppView } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
+import { Text } from "../ui/text";
+import { webView } from "../ui/web-layout";
 import { BackButton } from "./cloud-inventory";
 import { useCloudProjects } from "./projects";
 import { routeParam } from "./read-helpers";
@@ -191,25 +197,26 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 		});
 	return (
 		<ReadScreen>
-			<AppScrollView contentContainerClassName="gap-4 p-5">
+			<AppScrollView contentContainerClassName={webView(detailLayoutClasses.detailPage)}>
 				<BackButton />
-				<AppText accessibilityRole="header" className="text-2xl font-semibold text-foreground">
-					{t("skillArchive.title")}
-				</AppText>
-				<NativeButton
-					label={t("inventory.refresh")}
+				<PageHeader title={t("skillArchive.title")} />
+				<Button
+					variant="outline"
+					size="sm"
 					disabled={action.busy}
 					onPress={() => {
 						void projects.refetch();
 						if (existing) void detail.refetch();
 					}}
-				/>
+				>
+					<Text>{t("inventory.refresh")}</Text>
+				</Button>
 				{projects.isError || (existing && detail.isError) ? (
 					<ResourceError missing={false} />
 				) : null}
 				{!existing ? (
 					<>
-						<NativePicker
+						<ChoiceSelect
 							disabled={action.busy}
 							value={sourceId}
 							onValueChange={setSourceId}
@@ -220,34 +227,38 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 									.map((p) => ({ value: p.id, label: p.name })),
 							]}
 						/>
-						<AppTextInput
+						<Input
 							value={key}
 							onChangeText={setKey}
 							editable={!action.busy}
 							accessibilityLabel={t("skillArchive.key")}
 							placeholder={t("skillArchive.key")}
 							maxLength={200}
-							className="rounded-xl bg-card p-3 text-foreground"
 						/>
 					</>
 				) : (
 					<AppText>{skillKey}</AppText>
 				)}
 				<AppText>{t("skillArchive.hint")}</AppText>
-				<NativeButton
-					label={t(existing ? "skillArchive.replace" : "skillArchive.upload")}
+				<Button
+					variant="outline"
+					size="sm"
 					disabled={!ready || !writable || !key.trim()}
 					onPress={() =>
 						existing
 							? confirm(t("skillArchive.replace"), t("skillArchive.replaceWarning"), upload)
 							: upload()
 					}
-				/>
+				>
+					<Text>{t(existing ? "skillArchive.replace" : "skillArchive.upload")}</Text>
+				</Button>
 				{existing ? (
 					<AppView className="gap-3">
-						<NativeButton label={t("skillArchive.download")} disabled={!ready} onPress={download} />
+						<Button variant="outline" size="sm" disabled={!ready} onPress={download}>
+							<Text>{t("skillArchive.download")}</Text>
+						</Button>
 						<AppText>{t("skillArchive.target")}</AppText>
-						<NativePicker
+						<ChoiceSelect
 							value={targetId}
 							onValueChange={setTargetId}
 							disabled={action.busy}
@@ -256,23 +267,30 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 								...targets.map((p) => ({ value: p.id, label: p.name })),
 							]}
 						/>
-						<NativeButton
-							label={t("skillArchive.copy")}
+						<Button
+							variant="outline"
+							size="sm"
 							disabled={!ready || !writable || !targets.some((p) => p.id === targetId)}
 							onPress={() => transfer(false)}
-						/>
-						<NativeButton
-							label={t("skillArchive.move")}
+						>
+							<Text>{t("skillArchive.copy")}</Text>
+						</Button>
+						<Button
+							variant="outline"
+							size="sm"
 							disabled={!ready || !writable || !targets.some((p) => p.id === targetId)}
 							onPress={() =>
 								confirm(t("skillArchive.move"), t("skillArchive.moveWarning"), () => transfer(true))
 							}
-						/>
+						>
+							<Text>{t("skillArchive.move")}</Text>
+						</Button>
 					</AppView>
 				) : null}
 				<AppText>{t("skillArchive.cacheHint")}</AppText>
-				<NativeButton
-					label={t("skillArchive.clear")}
+				<Button
+					variant="outline"
+					size="sm"
 					disabled={action.busy || !scope.isReady}
 					onPress={() =>
 						confirm(
@@ -288,7 +306,9 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 								}),
 						)
 					}
-				/>
+				>
+					<Text>{t("skillArchive.clear")}</Text>
+				</Button>
 				{result ? <AppText accessibilityRole="alert">{t(`skillArchive.${result}`)}</AppText> : null}
 				{action.error ? (
 					<AppText accessibilityRole="alert">{t("skillArchive.failed")}</AppText>

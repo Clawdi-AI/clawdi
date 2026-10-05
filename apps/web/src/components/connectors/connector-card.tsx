@@ -1,5 +1,7 @@
 "use client";
 
+import { connectorCardClasses } from "@clawdi/shared/ui";
+
 import { connectorSearchSupportingText } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { Check } from "lucide-react";
@@ -47,7 +49,7 @@ export function ConnectorCard({
 
 	return (
 		<EntityRow
-			className="min-h-19"
+			className={connectorCardClasses.rowHeight}
 			ariaLabel={app.display_name}
 			icon={<ConnectorIcon logo={app.logo} name={app.display_name} size="md" />}
 			title={
@@ -59,7 +61,7 @@ export function ConnectorCard({
 			}
 			titleAdornment={
 				isConnected ? (
-					<Check className="size-3.5 shrink-0 text-success" aria-label="Connected" />
+					<Check className={connectorCardClasses.connectedIcon} aria-label="Connected" />
 				) : undefined
 			}
 			meta={
@@ -83,7 +85,7 @@ export function ConnectorCard({
 }
 
 export function ConnectorCardSkeleton() {
-	return <EntityCardSkeleton className="min-h-19" />;
+	return <EntityCardSkeleton className={connectorCardClasses.rowHeight} />;
 }
 
 export const CONNECTOR_GRID_CLASS = ENTITY_GRID_CLASS;

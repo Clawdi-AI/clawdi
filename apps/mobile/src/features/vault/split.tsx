@@ -9,8 +9,11 @@ import {
 import { router } from "expo-router";
 import { useState } from "react";
 import { useI18n } from "../../i18n";
-import { NativeButton, NativeSwitch } from "../../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../../ui/primitives";
+import { Button } from "../../ui/button";
+import { Input } from "../../ui/input";
+import { AppText, AppView } from "../../ui/primitives";
+import { Switch } from "../../ui/switch";
+import { Text } from "../../ui/text";
 
 export function VaultSplit({
 	source,
@@ -63,8 +66,9 @@ export function VaultSplit({
 								</AppText>
 							) : null}
 							{g.target ? (
-								<NativeButton
-									label={`${t("vault.open")}: ${g.slug}`}
+								<Button
+									variant="outline"
+									size="sm"
 									disabled={disabled}
 									onPress={() => {
 										if (g.target)
@@ -73,39 +77,46 @@ export function VaultSplit({
 												params: { vaultId: g.target.id, slug: g.target.slug },
 											});
 									}}
-								/>
+								>
+									<Text>{`${t("vault.open")}: ${g.slug}`}</Text>
+								</Button>
 							) : null}
 						</AppView>
 					))}
 					<AppText>{t("vault.splitInspect")}</AppText>
-					<NativeButton
-						label={t("vault.splitReset")}
+					<Button
+						variant="outline"
+						size="sm"
 						disabled={disabled}
 						onPress={() => {
 							setSlugs({});
 							setExcluded(new Set());
 							onReset();
 						}}
-					/>
+					>
+						<Text>{t("vault.splitReset")}</Text>
+					</Button>
 				</AppView>
 			) : (
 				<>
 					{groups.map((g) => (
 						<AppView key={g.prefix} className="gap-2">
-							<NativeSwitch
-								label={`${g.prefix} · ${g.keys.length}`}
-								value={!excluded.has(g.prefix)}
-								disabled={disabled}
-								onValueChange={(value) =>
-									setExcluded((current) => {
-										const next = new Set(current);
-										if (value) next.delete(g.prefix);
-										else next.add(g.prefix);
-										return next;
-									})
-								}
-							/>
-							<AppTextInput
+							<AppView className="flex-row items-center gap-2">
+								<Switch
+									checked={!excluded.has(g.prefix)}
+									disabled={disabled}
+									onCheckedChange={(value) =>
+										setExcluded((current) => {
+											const next = new Set(current);
+											if (value) next.delete(g.prefix);
+											else next.add(g.prefix);
+											return next;
+										})
+									}
+								/>
+								<Text>{`${g.prefix} · ${g.keys.length}`}</Text>
+							</AppView>
+							<Input
 								accessibilityLabel={`${t("vault.splitSlug")}: ${g.prefix}`}
 								value={slugs[g.prefix] ?? g.slug}
 								onChangeText={(slug) => setSlugs({ ...slugs, [g.prefix]: slug })}
@@ -113,22 +124,26 @@ export function VaultSplit({
 								maxLength={200}
 								autoCapitalize="none"
 								autoCorrect={false}
-								className="rounded-xl bg-background p-3 text-foreground"
 							/>
 						</AppView>
 					))}
-					<NativeSwitch
-						label={t("vault.splitRemove")}
-						value={removeOriginals}
-						onValueChange={setRemoveOriginals}
-						disabled={disabled}
-					/>
+					<AppView className="flex-row items-center gap-2">
+						<Switch
+							checked={removeOriginals}
+							onCheckedChange={setRemoveOriginals}
+							disabled={disabled}
+						/>
+						<Text>{t("vault.splitRemove")}</Text>
+					</AppView>
 					{!valid ? <AppText accessibilityRole="alert">{t("vault.splitInvalid")}</AppText> : null}
-					<NativeButton
-						label={t("vault.splitTitle")}
+					<Button
+						variant="outline"
+						size="sm"
 						disabled={disabled || !valid}
 						onPress={() => onSubmit(selected, removeOriginals)}
-					/>
+					>
+						<Text>{t("vault.splitTitle")}</Text>
+					</Button>
 				</>
 			)}
 		</AppView>

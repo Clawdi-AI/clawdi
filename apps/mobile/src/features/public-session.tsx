@@ -1,26 +1,46 @@
 import {
 	ApiClientError,
+	buildSessionTimelineRows,
 	type components,
 	type PublicSessionView,
 	publicSessionId,
 	publicSessionInput,
 } from "@clawdi/shared/api";
+import { detailLayoutClasses, publicSessionClasses as styles } from "@clawdi/shared/ui";
+import { publicSessionScopeLabel, relativeTime } from "@clawdi/shared/view";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
+import { ArrowLeft, Clock, Link2, MessageSquare, MoreHorizontal } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
-import { AppState, Share } from "react-native";
+import { AppState, FlatList, Image, Share } from "react-native";
+import { withUniwind } from "uniwind";
 import { useAuthAction } from "../auth/use-auth-action";
+import { useMobileRuntimeConfig } from "../config/runtime";
 import { useI18n } from "../i18n";
 import { useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
-import { Markdown } from "../ui/markdown";
-import { NativeButton } from "../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../ui/primitives";
+import { ApiErrorPanel } from "../ui/api-error-panel";
+import { Button } from "../ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
+import { Icon } from "../ui/icon";
+import { Input } from "../ui/input";
+import { PageHeader } from "../ui/page-header";
+import { AppScrollView } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
-import { BackButton, formatDate } from "./cloud-inventory";
-import { InventoryList } from "./inventory-list";
+import { SessionTimelineRowView } from "../ui/sessions/message-list";
+import { AgentInline, DetailMeta, DetailStats, ModelBadge, Stat } from "../ui/sessions/meta";
+import { MessagesSkeleton } from "../ui/sessions/skeleton";
+import { Text } from "../ui/text";
+import { WebText, WebView, webView } from "../ui/web-layout";
 import { routeParam } from "./read-helpers";
+
+const BrandImage = withUniwind(Image);
 
 export function OpenShareScreen() {
 	const t = useI18n();
@@ -29,29 +49,41 @@ export function OpenShareScreen() {
 	const id = publicSessionInput(value);
 	return (
 		<ReadScreen>
-			<AppView className="gap-4 p-6">
-				<BackButton />
-				<AppText accessibilityRole="header" className="text-2xl text-foreground">
-					{t("publicSession.open")}
-				</AppText>
-				<AppText>{t("publicSession.inputHelp")}</AppText>
-				<AppTextInput
-					accessibilityLabel={t("publicSession.link")}
-					value={value}
-					onChangeText={setValue}
-					autoCapitalize="none"
-					autoCorrect={false}
-					maxLength={2048}
-					className="rounded-xl bg-card p-3 text-foreground"
-				/>
-				<NativeButton
-					label={t("publicSession.open")}
-					disabled={!id}
-					onPress={() => {
-						if (id) router.push({ pathname: "/s/[shareId]", params: { shareId: id } });
-					}}
-				/>
-			</AppView>
+			<AppScrollView contentContainerStyle={{ padding: 16 }}>
+				<WebView recipe={styles.page} className="px-0">
+					<Button
+						variant="ghost"
+						size="sm"
+						onPress={() =>
+							router.canGoBack() ? router.back() : router.replace("/(tabs)/sessions")
+						}
+					>
+						<Icon as={ArrowLeft} />
+						<Text>{t("sessionDetail.back")}</Text>
+					</Button>
+					<PageHeader
+						title={t("sessionDetail.openShare")}
+						description={t("sessionDetail.inputHelp")}
+					/>
+					<Input
+						accessibilityLabel={t("sessionDetail.link")}
+						value={value}
+						onChangeText={setValue}
+						autoCapitalize="none"
+						autoCorrect={false}
+						maxLength={2048}
+						placeholder="clawdi://s/…"
+					/>
+					<Button
+						disabled={!id}
+						onPress={() => {
+							if (id) router.push({ pathname: "/s/[shareId]", params: { shareId: id } });
+						}}
+					>
+						<Text>{t("sessionDetail.openShare")}</Text>
+					</Button>
+				</WebView>
+			</AppScrollView>
 		</ReadScreen>
 	);
 }
@@ -157,10 +189,11 @@ function PublicSession({ id }: { id: string | null }) {
 				}
 			}
 		});
-	const items = (currentView?.pages.flatMap((page) => page.items) ?? []).map((item, index) => ({
-		...item,
-		id: String(index),
-	}));
+	const items = currentView?.pages.flatMap((page) => page.items) ?? [];
+	const rows = buildSessionTimelineRows(
+		items,
+		items.map((_, index) => String(index)),
+	);
 	const last = currentView?.pages.at(-1);
 	const more = Boolean(last?.items.length && items.length < last.total);
 	const status = error instanceof ApiClientError ? error.status : 0;
@@ -168,89 +201,220 @@ function PublicSession({ id }: { id: string | null }) {
 		currentView?.metadata.source === "snapshot"
 			? currentView.metadata.detail.title
 			: currentView?.metadata.detail.summary;
+	const runtime = useMobileRuntimeConfig();
+	const shareLink = () => {
+		const visible = capture();
+		void action.run(async (current) => {
+			if (id && current() && visible() && scope.isCurrent())
+				await Share.share({
+					message:
+						runtime.ok && runtime.value.linkHosts?.[0]
+							? `https://${runtime.value.linkHosts[0]}/s/${id}`
+							: `clawdi://s/${id}`,
+				});
+		});
+	};
+	const brand = (
+		<WebView recipe={styles.header}>
+			<WebView recipe={styles.headerRow}>
+				<WebView recipe={styles.brand}>
+					<BrandImage
+						source={require("../../../web/public/clawdi-logo-transparent.png")}
+						className={webView(styles.brandImage)}
+					/>
+					<WebText recipe={styles.brandName} onPress={() => router.replace("/(tabs)/sessions")}>
+						{t("sessionDetail.brand")}
+					</WebText>
+				</WebView>
+			</WebView>
+		</WebView>
+	);
+	const gate =
+		error && ![401, 403, 404, 409, 410].includes(status) ? (
+			<ApiErrorPanel error={error} onRetry={refresh} />
+		) : !id || error ? (
+			<WebView recipe={styles.gate} style={{ minHeight: 480 }}>
+				<WebText recipe={styles.gateLabel}>
+					{t(
+						status === 401
+							? "sessionDetail.gatePrivate"
+							: status === 403
+								? "sessionDetail.gateForbidden"
+								: status === 410
+									? "sessionDetail.gateExpired"
+									: "sessionDetail.notFound",
+					)}
+				</WebText>
+				<WebText recipe={styles.gateTitle}>
+					{t(
+						status === 401
+							? "sessionDetail.gateSignIn"
+							: status === 403
+								? "sessionDetail.gateForbiddenTitle"
+								: status === 410
+									? "sessionDetail.gateExpiredTitle"
+									: "sessionDetail.notFound",
+					)}
+				</WebText>
+				<WebText recipe={styles.gateBody}>
+					{t(
+						status === 401
+							? "sessionDetail.gatePrivateBody"
+							: status === 403
+								? "sessionDetail.gateForbiddenBody"
+								: status === 410
+									? "sessionDetail.gateExpiredBody"
+									: status === 409
+										? "publicSession.changed"
+										: "sessionDetail.notFoundDescription",
+					)}
+				</WebText>
+				{status === 401 && id ? (
+					<Button
+						onPress={() =>
+							router.push({ pathname: "/(auth)/sign-in", params: { publicShareId: id } })
+						}
+					>
+						<Text>{t("sessionDetail.signIn")}</Text>
+					</Button>
+				) : null}
+				<WebText recipe={styles.gateLink} onPress={() => router.replace("/(tabs)/sessions")}>
+					{t("sessionDetail.goHome")}
+				</WebText>
+				{id && [401, 403, 409, 410].includes(status) ? (
+					<Button variant="ghost" size="sm" disabled={loading || action.busy} onPress={refresh}>
+						<Text>{t("sessionDetail.refresh")}</Text>
+					</Button>
+				) : null}
+				{error && ![401, 403, 404, 409, 410].includes(status) ? (
+					<ApiErrorPanel error={error} onRetry={refresh} />
+				) : null}
+			</WebView>
+		) : null;
 	return (
-		<InventoryList
-			title={title || t("publicSession.title")}
-			description={t(
-				currentView?.metadata.source === "live" ? "publicSession.live" : "publicSession.snapshot",
-			)}
-			items={items}
-			empty={t(loading ? "loading.session" : "publicSession.empty")}
-			refreshing={loading}
-			onRefresh={refresh}
-			onRetry={refresh}
-			busy={loading || action.busy}
-			error={Boolean(error && ![401, 403, 404, 409, 410].includes(status))}
-			more={more}
-			onMore={next}
-			header={
-				<AppView className="gap-3">
-					{!id || error ? (
-						<AppText accessibilityRole="alert">
-							{t(
-								!id || status === 404
-									? "publicSession.missing"
-									: status === 410
-										? "publicSession.revoked"
-										: status === 401
-											? "publicSession.signIn"
-											: status === 403
-												? "publicSession.forbidden"
-												: status === 409
-													? "publicSession.changed"
-													: "publicSession.failed",
-							)}
-						</AppText>
-					) : null}
-					{status === 401 && id ? (
-						<NativeButton
-							label={t("publicSession.signIn")}
-							onPress={() =>
-								router.push({ pathname: "/(auth)/sign-in", params: { publicShareId: id } })
-							}
-						/>
-					) : null}
-					{[401, 403, 404, 409, 410].includes(status) ? (
-						<NativeButton
-							label={t("publicSession.refresh")}
-							disabled={loading || action.busy}
-							onPress={refresh}
-						/>
-					) : null}
-					{currentView ? (
-						<>
-							<AppText>
-								{currentView.metadata.detail.agent_type} · {currentView.metadata.detail.model} ·{" "}
-								{formatDate(currentView.metadata.detail.started_at)}
-							</AppText>
-							<AppText>
-								{currentView.metadata.source === "snapshot"
-									? t(`publicSession.${currentView.metadata.detail.scope}`)
-									: t("publicSession.session")}
-							</AppText>
-							<NativeButton
-								label={t("sessionShares.export")}
-								disabled={action.busy}
-								onPress={() => exportText("md")}
-							/>
-							<NativeButton
-								label={t("publicSession.exportJson")}
-								disabled={action.busy}
-								onPress={() => exportText("json")}
-							/>
-						</>
-					) : null}
-				</AppView>
-			}
-			renderItem={(item) => (
-				<AppView className="gap-2 rounded-2xl bg-card p-4">
-					<AppText className="font-semibold text-foreground">
-						{t(item.role === "user" ? "sessions.user" : "sessions.assistant")}
-					</AppText>
-					<AppText className="text-muted-foreground">{formatDate(item.timestamp)}</AppText>
-					<Markdown content={item.content} />
-				</AppView>
-			)}
-		/>
+		<ReadScreen>
+			{brand}
+			{action.error ? <ApiErrorPanel error={null} title={t("sessionDetail.failed")} /> : null}
+			<FlatList
+				data={rows}
+				keyExtractor={(row) => String(row.rowKey)}
+				contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 24, flexGrow: 1 }}
+				refreshing={loading}
+				onRefresh={refresh}
+				ListHeaderComponent={
+					gate ??
+					(currentView ? (
+						<WebView recipe={styles.page} className="px-0 py-0">
+							<WebView recipe={styles.heading}>
+								<WebView recipe={styles.body}>
+									<WebText recipe={detailLayoutClasses.title}>
+										{title || t("publicSession.title")}
+									</WebText>
+									<DetailMeta>
+										<AgentInline
+											identity={{ agent_type: currentView.metadata.detail.agent_type }}
+										/>
+										<WebText recipe={detailLayoutClasses.meta}>·</WebText>
+										<WebText recipe={detailLayoutClasses.meta}>
+											Started {relativeTime(currentView.metadata.detail.started_at)}
+										</WebText>
+										<WebText recipe={detailLayoutClasses.meta}>·</WebText>
+										<WebText recipe={detailLayoutClasses.meta}>
+											{publicSessionScopeLabel(
+												currentView.metadata.source === "snapshot"
+													? currentView.metadata.detail.scope
+													: "session",
+											)}
+										</WebText>
+									</DetailMeta>
+								</WebView>
+								<WebView recipe={styles.brand}>
+									<Button
+										variant="outline"
+										size="icon"
+										accessibilityLabel={t("sessionDetail.share")}
+										onPress={shareLink}
+										disabled={action.busy}
+									>
+										<Icon as={Link2} />
+									</Button>
+									<DropdownMenu>
+										<DropdownMenuTrigger
+											render={
+												<Button
+													variant="outline"
+													size="icon"
+													accessibilityLabel={t("sessionDetail.more")}
+												>
+													<Icon as={MoreHorizontal} />
+												</Button>
+											}
+										/>
+										<DropdownMenuContent>
+											<DropdownMenuItem
+												label={t("sessionDetail.export")}
+												disabled={action.busy}
+												onSelect={() => exportText("md")}
+											/>
+											<DropdownMenuItem
+												label={t("sessionDetail.exportJson")}
+												disabled={action.busy}
+												onSelect={() => exportText("json")}
+											/>
+										</DropdownMenuContent>
+									</DropdownMenu>
+								</WebView>
+							</WebView>
+							<DetailStats>
+								<ModelBadge modelId={currentView.metadata.detail.model} />
+								<Stat
+									icon={MessageSquare}
+									label={`${currentView.metadata.detail.message_count} messages`}
+								/>
+								{currentView.metadata.source === "snapshot" ? (
+									<Stat
+										icon={Clock}
+										label={`Shared ${relativeTime(currentView.metadata.detail.created_at)}`}
+									/>
+								) : null}
+							</DetailStats>
+						</WebView>
+					) : loading ? (
+						<MessagesSkeleton />
+					) : null)
+				}
+				renderItem={({ item }) => (
+					<SessionTimelineRowView
+						row={item}
+						agentType={currentView?.metadata.detail.agent_type}
+						userName="User"
+						onShareText={(content) => {
+							const visible = capture();
+							void action.run(async (current) => {
+								if (current() && visible() && scope.isCurrent())
+									await Share.share({ message: content });
+							});
+						}}
+					/>
+				)}
+				ListEmptyComponent={
+					!loading && currentView ? (
+						<WebText recipe={styles.empty}>{t("sessionDetail.emptyShare")}</WebText>
+					) : undefined
+				}
+				ListFooterComponent={
+					currentView ? (
+						<WebView recipe={styles.page} className="px-0 py-0">
+							{more ? (
+								<Button variant="ghost" size="sm" disabled={loading || action.busy} onPress={next}>
+									<Text>{t("inventory.loadMore")}</Text>
+								</Button>
+							) : null}
+							<WebText recipe={styles.footer}>{t("sessionDetail.footer")}</WebText>
+						</WebView>
+					) : null
+				}
+			/>
+		</ReadScreen>
 	);
 }

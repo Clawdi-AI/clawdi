@@ -6,7 +6,15 @@ import {
 	type SessionShareTarget,
 	sessionShareMatchesTarget,
 } from "@clawdi/shared/api";
-import { errorMessage, relativeTime, sessionDetailQueryKey } from "@clawdi/shared/view";
+import { shareControlsClasses } from "@clawdi/shared/ui";
+import {
+	errorMessage,
+	relativeTime,
+	sessionDetailQueryKey,
+	sessionShareDialogCopy,
+	shareDetail,
+	shareLabel,
+} from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, Link2, Share2, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -44,7 +52,7 @@ type SessionPermission = components["schemas"]["SessionPermissionResponse"];
 
 export function SessionShareButton({ onClick }: { onClick: () => void }) {
 	return (
-		<Button variant="outline" size="sm" className="h-8" onClick={onClick}>
+		<Button variant="outline" size="sm" className={shareControlsClasses.button} onClick={onClick}>
 			<Share2 />
 			Share
 		</Button>
@@ -129,18 +137,7 @@ function SessionShareDialogContent({
 		onError: (error) => toast.error(errorMessage(error)),
 	});
 
-	const title =
-		target.scope === "response"
-			? "Share this response"
-			: target.scope === "through"
-				? "Share conversation to here"
-				: "Share session";
-	const description =
-		target.scope === "response"
-			? "Anyone with the link can view this Agent response."
-			: target.scope === "through"
-				? "Anyone with the link can view the conversation through this message."
-				: "Anyone with the link can view this conversation. Future messages won’t be added.";
+	const { title, description } = sessionShareDialogCopy(target);
 	const shares = sharesQuery.data?.shares ?? [];
 	const matchingShares = shares.filter((share) => sessionShareMatchesTarget(share, target));
 	const latestShare =
@@ -193,7 +190,7 @@ function SessionShareDialogContent({
 					<DialogDescription>{description}</DialogDescription>
 				</DialogHeader>
 
-				<div className="space-y-3">
+				<div className={shareControlsClasses.body}>
 					{isLoading ? (
 						<div className="flex min-h-16 items-center justify-center text-muted-foreground">
 							<Spinner className="size-4" />
@@ -222,8 +219,8 @@ function SessionShareDialogContent({
 					) : null}
 
 					{previousShares.length + otherShares.length + (legacyLink ? 1 : 0) > 0 ? (
-						<details className="space-y-3">
-							<summary className="cursor-pointer text-sm text-muted-foreground">
+						<details className={shareControlsClasses.body}>
+							<summary className={shareControlsClasses.older}>
 								Other active links (
 								{previousShares.length + otherShares.length + (legacyLink ? 1 : 0)})
 							</summary>
@@ -268,16 +265,6 @@ function SessionShareDialogContent({
 	);
 }
 
-function shareLabel(share: SessionShareItem): string {
-	if (share.scope === "session") return "Full Session snapshot";
-	if (share.scope === "response") return "Single response snapshot";
-	return `Conversation through message ${share.message_count}`;
-}
-
-function shareDetail(share: SessionShareItem): string {
-	return `Created ${relativeTime(share.created_at)} · ${share.message_count} message${share.message_count === 1 ? "" : "s"}`;
-}
-
 function ShareLinkRow({
 	url,
 	label,
@@ -306,34 +293,34 @@ function ShareLinkRow({
 		onError: (error) => toast.error(errorMessage(error)),
 	});
 	return (
-		<div className="rounded-lg border p-3">
-			<div className="mb-2 flex items-center justify-between gap-3">
+		<div className={shareControlsClasses.link}>
+			<div className={shareControlsClasses.linkHeader}>
 				<div className="min-w-0">
-					<p className="truncate text-sm font-medium">{label}</p>
-					<p className="text-xs text-muted-foreground">{detail}</p>
+					<p className={shareControlsClasses.linkTitle}>{label}</p>
+					<p className={shareControlsClasses.linkMeta}>{detail}</p>
 				</div>
 				<Button
 					variant="ghost"
 					size="icon-sm"
-					className="text-muted-foreground hover:text-destructive"
+					className={shareControlsClasses.revoke}
 					onClick={() => setConfirmOpen(true)}
 					aria-label="Turn off share link"
 				>
 					<Trash2 />
 				</Button>
 			</div>
-			<div className="flex gap-2">
+			<div className={shareControlsClasses.linkActions}>
 				<Input
 					readOnly
 					value={url}
 					aria-label="Session share URL"
-					className="h-8 min-w-0 font-mono text-xs"
+					className={shareControlsClasses.url}
 					onFocus={(event) => event.currentTarget.select()}
 				/>
 				<Button
 					variant="outline"
 					size="sm"
-					className={cn("h-8 shrink-0", copied && "text-success")}
+					className={cn(shareControlsClasses.copy, copied && "text-success")}
 					onClick={() => copy(url)}
 					autoFocus={autoFocus}
 				>

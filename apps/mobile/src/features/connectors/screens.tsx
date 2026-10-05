@@ -7,9 +7,17 @@ import {
 	isActiveConnection,
 	safeShareUrl,
 } from "@clawdi/shared/api";
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	connectorDetailClasses,
+	connectorsSurfaceClasses,
+	ENTITY_GRID_CLASS,
+	memoryDetailClasses,
+} from "@clawdi/shared/ui";
+import { getProjectResourceDefinition } from "@clawdi/shared/view";
+import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { openBrowserAsync } from "expo-web-browser";
+import { Check, Plug, Unplug, Wrench } from "lucide-react-native";
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Alert, AppState } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
@@ -17,10 +25,28 @@ import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
-import { ErrorState, LoadingScreen } from "../../ui/feedback";
-import { NativeButton } from "../../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../../ui/primitives";
-import { InventoryList } from "../inventory-list";
+import { ApiErrorPanel } from "../../ui/api-error-panel";
+import { Badge } from "../../ui/badge";
+import { Button } from "../../ui/button";
+import { ConnectorCard } from "../../ui/connectors/connector-card";
+import { ConnectorIcon } from "../../ui/connectors/connector-icon";
+import { DashboardSection, DashboardSectionHeader } from "../../ui/dashboard/section";
+import { DetailBackLink, LibraryPage } from "../../ui/detail/layout";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../../ui/dialog";
+import { EmptyState } from "../../ui/empty-state";
+import { EntityCardSkeleton } from "../../ui/entity-card";
+import { ErrorState } from "../../ui/feedback";
+import { Icon } from "../../ui/icon";
+import { Input } from "../../ui/input";
+import { ListToolbar } from "../../ui/list-toolbar";
+import { PageHeader } from "../../ui/page-header";
+import { AppText, AppView } from "../../ui/primitives";
+import { SearchInput } from "../../ui/search-input";
+import { SectionLabel } from "../../ui/section-label";
+import { Skeleton } from "../../ui/skeleton";
+import { Text } from "../../ui/text";
+import { WebText, WebView, webText, webView } from "../../ui/web-layout";
+
 import { routeParam } from "../read-helpers";
 
 type Connection = components["schemas"]["ConnectorConnectionResponse"];
@@ -58,9 +84,9 @@ function Catalog() {
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { connectors } = useMobileApi();
-	const [draft, setDraft] = useState("");
+
 	const [search, setSearch] = useState("");
-	const [showAccounts, setShowAccounts] = useState(false);
+
 	const connections = useConnections();
 	const catalog = useInfiniteQuery({
 		queryKey: accountQueryKey(scope, "connector-catalog", search),
@@ -73,7 +99,7 @@ function Catalog() {
 			),
 		getNextPageParam: (page) =>
 			page.items.length && page.page * page.page_size < page.total ? page.page + 1 : undefined,
-		enabled: scope.isReady && !showAccounts,
+		enabled: scope.isReady,
 		retry: false,
 	});
 	const apps = Array.from(
@@ -81,75 +107,113 @@ function Catalog() {
 			(catalog.data?.pages.flatMap((page) => page.items) ?? []).map((app) => [app.name, app]),
 		).values(),
 	);
-	const query = showAccounts ? connections : catalog;
-	const rows = showAccounts
-		? (connections.data ?? []).map((c) => ({
-				id: c.id,
-				name: c.app_name,
-				title: c.alias || c.account_display || c.app_name,
-				description: `${c.status} · ${t(isActiveConnection(c) ? "connectors.active" : "connectors.inactive")}`,
-			}))
-		: apps.map((app) => ({
-				id: app.name,
-				name: app.name,
-				title: app.display_name,
-				description: app.description,
-			}));
+	const connectedNames = [
+		...new Set((connections.data ?? []).filter(isActiveConnection).map((c) => c.app_name)),
+	];
+	const metadata = useQueries({
+		queries: connectedNames.map((name) => ({
+			queryKey: accountQueryKey(scope, "connector-app", name),
+			queryFn: ({ signal }: { signal: AbortSignal }) =>
+				read((s) => connectors.getApp(name, s), signal),
+			enabled: scope.isReady,
+			retry: false,
+		})),
+	});
+	const total = catalog.data?.pages[0]?.total ?? 0;
+	const open = (name: string) =>
+		router.push({ pathname: "/connectors/[appName]", params: { appName: name } });
 	return (
-		<InventoryList
-			title={t("connectors.title")}
-			description={t("connectors.description")}
-			items={rows}
-			empty={t(query.isPending ? "loading.app" : "connectors.empty")}
-			refreshing={query.isRefetching}
-			onRefresh={() => {
-				if (!query.isFetching) void query.refetch();
-			}}
-			error={query.isError}
-			onRetry={() => void query.refetch()}
-			busy={query.isFetching}
-			more={!showAccounts && catalog.hasNextPage}
-			onMore={() => {
-				if (!catalog.isFetching) void catalog.fetchNextPage();
-			}}
-			header={
-				<AppView className="gap-3">
-					<NativeButton
-						label={t(showAccounts ? "connectors.catalog" : "connectors.accounts")}
-						onPress={() => setShowAccounts(!showAccounts)}
+		<LibraryPage>
+			<PageHeader
+				title={t("connectors.title")}
+				description={getProjectResourceDefinition("connectors").managementDescription}
+				status={
+					<WebView recipe={connectorsSurfaceClasses.filters}>
+						<Badge variant="secondary">
+							<Text>{total} available</Text>
+						</Badge>
+						<Badge>
+							<Text>{connectedNames.length} active</Text>
+						</Badge>
+					</WebView>
+				}
+			/>
+			<ListToolbar
+				search={
+					<SearchInput
+						value={search}
+						onChange={setSearch}
+						placeholder={t("libraryPort.searchConnectors")}
 					/>
-					{!showAccounts ? (
-						<>
-							<AppTextInput
-								className="rounded-xl bg-card p-3 text-foreground"
-								accessibilityLabel={t("connectors.search")}
-								placeholder={t("connectors.search")}
-								value={draft}
-								onChangeText={setDraft}
-								maxLength={200}
-								onSubmitEditing={() => setSearch(draft.trim())}
-							/>
-							<NativeButton
-								label={t("connectors.search")}
-								onPress={() => setSearch(draft.trim())}
-							/>
-						</>
-					) : null}
-				</AppView>
-			}
-			renderItem={(item) => (
-				<AppView className="gap-2 rounded-2xl bg-card p-4">
-					<AppText className="text-lg font-semibold text-foreground">{item.title}</AppText>
-					<AppText className="text-muted-foreground">{item.description}</AppText>
-					<NativeButton
-						label={t("inventory.viewAll")}
-						onPress={() =>
-							router.push({ pathname: "/connectors/[appName]", params: { appName: item.name } })
-						}
-					/>
-				</AppView>
-			)}
-		/>
+				}
+			/>
+			{!search && (connectedNames.length || connections.error) ? (
+				<WebView recipe={connectorsSurfaceClasses.section}>
+					<SectionLabel count={`${connectedNames.length} apps`}>
+						{t("libraryPort.yourConnections")}
+					</SectionLabel>
+					{connections.error ? (
+						<ApiErrorPanel error={connections.error} onRetry={() => void connections.refetch()} />
+					) : (
+						<WebView recipe={ENTITY_GRID_CLASS}>
+							{connectedNames.map((name, i) => {
+								const app = metadata[i]?.data ?? apps.find((app) => app.name === name);
+								return app ? (
+									<ConnectorCard key={name} app={app} isConnected />
+								) : metadata[i]?.error ? (
+									<ApiErrorPanel
+										key={name}
+										error={metadata[i]?.error}
+										onRetry={() => void metadata[i]?.refetch()}
+									/>
+								) : (
+									<EntityCardSkeleton key={name} />
+								);
+							})}
+						</WebView>
+					)}
+				</WebView>
+			) : null}
+			<WebView recipe={connectorsSurfaceClasses.section}>
+				<SectionLabel count={`${total} available`}>{t("libraryPort.allConnectors")}</SectionLabel>
+				{catalog.error ? (
+					<ApiErrorPanel error={catalog.error} onRetry={() => void catalog.refetch()} />
+				) : (
+					<WebView recipe={ENTITY_GRID_CLASS}>
+						{catalog.isPending
+							? [0, 1, 2, 3].map((i) => <EntityCardSkeleton key={i} />)
+							: apps.map((app) => (
+									<ConnectorCard
+										key={app.name}
+										app={app}
+										isConnected={connectedNames.includes(app.name)}
+										searchQuery={search}
+										actions={
+											!connectedNames.includes(app.name) ? (
+												<Button size="sm" variant="outline" onPress={() => open(app.name)}>
+													<Icon as={Plug} />
+													<Text>{t("libraryPort.connect")}</Text>
+												</Button>
+											) : undefined
+										}
+									/>
+								))}
+					</WebView>
+				)}
+			</WebView>
+			{!catalog.isPending && !catalog.error && !apps.length ? (
+				<EmptyState title={t("libraryPort.noConnectors")} />
+			) : null}
+			{catalog.hasNextPage ? (
+				<Button
+					variant="outline"
+					disabled={catalog.isFetching}
+					onPress={() => void catalog.fetchNextPage()}
+				>
+					<Text>{t("inventory.loadMore")}</Text>
+				</Button>
+			) : null}
+		</LibraryPage>
 	);
 }
 
@@ -170,6 +234,7 @@ function Detail({ name }: { name?: string }) {
 	const capture = useForegroundLease();
 	const [values, setValues] = useState<Record<string, string>>({});
 	const [alias, setAlias] = useState("");
+	const [authOpen, setAuthOpen] = useState(false);
 	const [toolSearch, setToolSearch] = useState("");
 	const deferredToolSearch = useDeferredValue(toolSearch);
 	useFocusEffect(useCallback(() => () => setValues({}), []));
@@ -251,151 +316,171 @@ function Detail({ name }: { name?: string }) {
 			}
 		});
 	};
+	const appAccounts = (accounts.data ?? []).filter((c) => c.app_name === name);
+	const connected = appAccounts.some(isActiveConnection);
+	const ready = connected || flow === "no_auth";
 	return (
-		<InventoryList
-			title={app.data?.display_name || name || t("connectors.title")}
-			description={app.data?.description || t("connectors.description")}
-			items={filteredTools}
-			empty={t(
-				tools.isPending
-					? "loading.app"
-					: deferredToolSearch.trim()
-						? "connectors.noMatchingTools"
-						: "connectors.noTools",
-			)}
-			refreshing={tools.isRefetching || accounts.isRefetching || app.isRefetching}
-			onRefresh={() => {
-				if (name) {
-					void tools.refetch();
-					void app.refetch();
-					void accounts.refetch();
-				}
-			}}
-			error={!name || app.isError || tools.isError}
-			onRetry={() => {
-				if (name) {
-					void app.refetch();
-					void tools.refetch();
-				}
-			}}
-			header={
-				<AppView className="gap-4">
-					{app.isPending && name ? <LoadingScreen /> : null}
-					{flow === "no_auth" ? (
-						<AppText className="text-muted-foreground">{t("connectors.ready")}</AppText>
-					) : app.data && (!flow || app.data.connect_disabled) ? (
-						<AppText className="text-muted-foreground">{t("connectors.unavailable")}</AppText>
-					) : app.data ? (
-						<AppView className="gap-3">
-							<AppText className="text-muted-foreground">
-								{t(flow === "redirect" ? "connectors.oauth" : "connectors.credentials")}
-							</AppText>
-							<AppTextInput
-								accessibilityLabel={t("connectors.alias")}
-								placeholder={t("connectors.alias")}
-								className="rounded-xl bg-card p-3 text-foreground"
-								value={alias}
-								onChangeText={setAlias}
-								maxLength={256}
-								editable={!action.busy}
-							/>
-							{flow === "credentials" ? (
-								fields.isPending ? (
-									<LoadingScreen />
-								) : fields.isError ? (
-									<ErrorState onRetry={() => void fields.refetch()} />
-								) : (
-									visibleFields.map((field) => (
-										<AppView key={field.name} className="gap-1">
-											<AppText className="text-foreground">
-												{field.display_name || field.name}
-												{field.required ? ` · ${t("connectors.required")}` : ""}
-											</AppText>
-											<AppTextInput
-												accessibilityLabel={field.display_name || field.name}
-												className="rounded-xl bg-card p-3 text-foreground"
-												secureTextEntry={field.is_secret}
-												autoCorrect={false}
-												autoCapitalize="none"
-												autoComplete="off"
-												maxLength={8192}
-												value={fieldValue(field.name)}
-												onChangeText={(value) =>
-													setValues((old) => ({ ...old, [field.name]: value }))
-												}
-												editable={!action.busy}
-											/>
-											{field.description ? (
-												<AppText className="text-muted-foreground">{field.description}</AppText>
-											) : null}
-										</AppView>
-									))
-								)
-							) : null}
-							<NativeButton
-								label={t("connectors.connect")}
-								disabled={action.busy || !canConnect}
-								onPress={connect}
-							/>
-						</AppView>
-					) : null}
-					{action.error ? (
-						<AppText accessibilityRole="alert" className="text-destructive">
-							{t("connectors.failed")}
-						</AppText>
-					) : null}
-					<AppText className="text-xl font-semibold text-foreground">
-						{t("connectors.accounts")}
-					</AppText>
-					<NativeButton
-						label={t("connectors.refresh")}
-						disabled={accounts.isFetching}
-						onPress={() => void accounts.refetch()}
+		<LibraryPage>
+			<DetailBackLink href="/connectors" label={t("connectors.title")} />
+			<PageHeader
+				title={app.data?.display_name || name || t("connectors.title")}
+				icon={
+					<ConnectorIcon
+						name={app.data?.display_name || name || ""}
+						logo={app.data?.logo}
+						size="lg"
 					/>
-					{accounts.isPending ? (
-						<LoadingScreen />
-					) : accounts.isError ? (
-						<ErrorState onRetry={() => void accounts.refetch()} />
-					) : accounts.data?.some((c) => c.app_name === name) ? (
-						accounts.data
-							.filter((c) => c.app_name === name)
-							.map((connection) => <Account key={connection.id} connection={connection} />)
-					) : (
-						<AppText className="text-muted-foreground">{t("connectors.noAccounts")}</AppText>
-					)}
-					<AppText className="text-xl font-semibold text-foreground">
-						{t("connectors.tools")}
-					</AppText>
-					<AppTextInput
-						accessibilityLabel={t("connectors.searchTools")}
-						placeholder={t("connectors.searchTools")}
-						value={toolSearch}
-						onChangeText={setToolSearch}
-						maxLength={256}
-						autoCapitalize="none"
-						autoCorrect={false}
-						className="rounded-xl bg-card p-3 text-foreground"
-					/>
-				</AppView>
-			}
-			renderItem={(tool) => (
-				<AppView className="gap-2 rounded-2xl bg-card p-4">
-					<AppText className="text-lg text-foreground">{tool.display_name || tool.name}</AppText>
-					<AppText selectable className="text-muted-foreground">
-						{tool.name}
-					</AppText>
-					<AppText className="text-foreground">{tool.description}</AppText>
-					{tool.is_deprecated ? (
-						<AppText className="text-muted-foreground">{t("connectors.deprecated")}</AppText>
-					) : null}
-					{tool.parameters ? (
-						<AppText selectable className="text-muted-foreground">
-							{JSON.stringify(tool.parameters, null, 2)}
-						</AppText>
-					) : null}
-				</AppView>
-			)}
-		/>
+				}
+				titleAdornment={
+					ready ? (
+						<Badge variant="secondary">
+							<Icon as={Check} />
+							<Text>{flow === "no_auth" ? "Ready" : "Connected"}</Text>
+						</Badge>
+					) : undefined
+				}
+				description={app.data?.description}
+			/>
+			{app.error ? <ApiErrorPanel error={app.error} onRetry={() => void app.refetch()} /> : null}
+			<DashboardSection priority="primary">
+				<DashboardSectionHeader
+					icon={Plug}
+					title={t("libraryPort.accounts")}
+					count={`${appAccounts.length} connected`}
+					description={t("libraryPort.accountsDescription")}
+					actions={
+						flow !== "no_auth" ? (
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={!app.data || app.data.connect_disabled || !flow || action.busy}
+								onPress={() => setAuthOpen(true)}
+							>
+								<Icon as={Plug} />
+								<Text>{t("libraryPort.connectAccount")}</Text>
+							</Button>
+						) : undefined
+					}
+				/>
+				{accounts.error ? (
+					<ApiErrorPanel error={accounts.error} onRetry={() => void accounts.refetch()} />
+				) : accounts.isPending ? (
+					<EntityCardSkeleton />
+				) : appAccounts.length ? (
+					appAccounts.map((c) => <Account key={c.id} connection={c} />)
+				) : (
+					<EmptyState variant="inset" description={t("connectors.noAccounts")} />
+				)}
+			</DashboardSection>
+			<DashboardSection>
+				<DashboardSectionHeader
+					icon={Wrench}
+					title={t("libraryPort.tools")}
+					count={`${tools.data?.length ?? 0} tools`}
+					description={t("libraryPort.toolsDescription")}
+					actions={
+						(tools.data?.length ?? 0) > 8 ? (
+							<SearchInput value={toolSearch} onChange={setToolSearch} />
+						) : undefined
+					}
+				/>
+				{tools.error ? (
+					<ApiErrorPanel error={tools.error} onRetry={() => void tools.refetch()} />
+				) : tools.isPending ? (
+					<EntityCardSkeleton />
+				) : (
+					<WebView recipe={connectorDetailClasses.toolList}>
+						{filteredTools.map((tool) => (
+							<WebView key={tool.name} recipe={connectorDetailClasses.toolRow}>
+								<WebText recipe={connectorDetailClasses.title}>
+									{tool.display_name || tool.name}
+								</WebText>
+								<WebText recipe={connectorDetailClasses.toolDescription}>
+									{tool.description}
+								</WebText>
+							</WebView>
+						))}
+					</WebView>
+				)}
+			</DashboardSection>
+			<Dialog
+				open={authOpen}
+				onOpenChange={(v) => {
+					if (!action.busy) {
+						setAuthOpen(v);
+						if (!v) setValues({});
+					}
+				}}
+			>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>{t("libraryPort.connectAccount")}</DialogTitle>
+					</DialogHeader>
+					<WebView recipe={connectorDetailClasses.stack}>
+						{flow === "no_auth" ? (
+							<AppText className="text-muted-foreground">{t("connectors.ready")}</AppText>
+						) : app.data && (!flow || app.data.connect_disabled) ? (
+							<AppText className="text-muted-foreground">{t("connectors.unavailable")}</AppText>
+						) : app.data ? (
+							<AppView className="gap-3">
+								<AppText className="text-muted-foreground">
+									{t(flow === "redirect" ? "connectors.oauth" : "connectors.credentials")}
+								</AppText>
+								<Input
+									accessibilityLabel={t("connectors.alias")}
+									placeholder={t("connectors.alias")}
+									value={alias}
+									onChangeText={setAlias}
+									maxLength={256}
+									editable={!action.busy}
+								/>
+								{flow === "credentials" ? (
+									fields.isPending ? (
+										<Skeleton className={webView(connectorDetailClasses.accountTitleSkeleton)} />
+									) : fields.isError ? (
+										<ErrorState onRetry={() => void fields.refetch()} />
+									) : (
+										visibleFields.map((field) => (
+											<AppView key={field.name} className="gap-1">
+												<AppText className="text-foreground">
+													{field.display_name || field.name}
+													{field.required ? ` · ${t("connectors.required")}` : ""}
+												</AppText>
+												<Input
+													accessibilityLabel={field.display_name || field.name}
+													secureTextEntry={field.is_secret}
+													autoCorrect={false}
+													autoCapitalize="none"
+													autoComplete="off"
+													maxLength={8192}
+													value={fieldValue(field.name)}
+													onChangeText={(value) =>
+														setValues((old) => ({ ...old, [field.name]: value }))
+													}
+													editable={!action.busy}
+												/>
+												{field.description ? (
+													<AppText className="text-muted-foreground">{field.description}</AppText>
+												) : null}
+											</AppView>
+										))
+									)
+								) : null}
+								<Button
+									variant="default"
+									size="sm"
+									disabled={action.busy || !canConnect}
+									onPress={connect}
+								>
+									<Text>{t("connectors.connect")}</Text>
+								</Button>
+							</AppView>
+						) : null}
+						{action.error ? <ApiErrorPanel error={action.error} /> : null}
+					</WebView>
+				</DialogContent>
+			</Dialog>
+		</LibraryPage>
 	);
 }
 
@@ -408,6 +493,7 @@ function Account({ connection }: { connection: Connection }) {
 	const action = useAuthAction(scope);
 	const capture = useForegroundLease();
 	const [alias, setAlias] = useState(connection.alias ?? "");
+	const [editing, setEditing] = useState(false);
 	const update = (disconnect: boolean) => {
 		const visible = capture();
 		const perform = () => {
@@ -427,36 +513,48 @@ function Account({ connection }: { connection: Connection }) {
 			]);
 	};
 	return (
-		<AppView className="gap-2 rounded-2xl bg-card p-4">
-			<AppText className="text-foreground">
-				{connection.account_display || connection.alias || connection.id} · {connection.status}
-			</AppText>
-			<AppText className="text-muted-foreground">
-				{t(isActiveConnection(connection) ? "connectors.active" : "connectors.inactive")}
-			</AppText>
-			<AppTextInput
-				accessibilityLabel={t("connectors.alias")}
-				className="rounded-xl bg-background p-3 text-foreground"
-				value={alias}
-				onChangeText={setAlias}
-				maxLength={256}
-				editable={!action.busy}
-			/>
-			<NativeButton
-				label={t("connectors.saveAlias")}
-				disabled={action.busy || alias.trim() === (connection.alias ?? "")}
-				onPress={() => update(false)}
-			/>
-			<NativeButton
-				label={t("connectors.disconnect")}
-				disabled={action.busy}
-				onPress={() => update(true)}
-			/>
-			{action.error ? (
-				<AppText accessibilityRole="alert" className="text-destructive">
-					{t("connectors.failed")}
-				</AppText>
-			) : null}
-		</AppView>
+		<WebView recipe={connectorDetailClasses.accountRow}>
+			<WebView recipe={connectorDetailClasses.identitySkeleton}>
+				<WebText recipe={connectorDetailClasses.title}>
+					{connection.alias || connection.account_display || connection.id}
+				</WebText>
+				<WebText recipe={connectorDetailClasses.subtitle}>
+					{isActiveConnection(connection) ? "Connected" : connection.status}
+				</WebText>
+			</WebView>
+			<WebView recipe={connectorDetailClasses.hint}>
+				<Button variant="ghost" size="sm" onPress={() => setEditing(true)}>
+					<Text>Rename</Text>
+				</Button>
+				<Button
+					variant="ghost"
+					size="sm"
+					className={webView(memoryDetailClasses.deleteAction)}
+					textClassName={webText(memoryDetailClasses.deleteAction)}
+					disabled={action.busy}
+					onPress={() => update(true)}
+				>
+					<Icon as={Unplug} />
+					<Text>{t("connectors.disconnect")}</Text>
+				</Button>
+			</WebView>
+			{action.error ? <ApiErrorPanel error={action.error} /> : null}
+			<Dialog open={editing} onOpenChange={setEditing}>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>{t("connectors.alias")}</DialogTitle>
+					</DialogHeader>
+					<Input value={alias} onChangeText={setAlias} editable={!action.busy} maxLength={256} />
+					<DialogFooter>
+						<Button
+							disabled={action.busy || alias.trim() === (connection.alias ?? "")}
+							onPress={() => update(false)}
+						>
+							<Text>{t("connectors.saveAlias")}</Text>
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+		</WebView>
 	);
 }

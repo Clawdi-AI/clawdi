@@ -1,9 +1,13 @@
 import {
 	AGENT_NAVIGATION_GROUPS,
 	agentSectionCopy,
+	type ConsoleNavigationItemId,
 	getProjectResourceDefinition,
-	projectResourcePathLabel,
-	projectResourceScopeLabel,
+	CONSOLE_NAVIGATION_ITEMS as SHARED_CONSOLE_NAVIGATION_ITEMS,
+	type ConsoleNavigationGroup as SharedConsoleNavigationGroup,
+	type ConsoleNavigationItemMetadata as SharedConsoleNavigationItemMetadata,
+	consoleCommandPaletteItems as sharedConsoleCommandPaletteItems,
+	consoleNavigationGroups as sharedConsoleNavigationGroups,
 } from "@clawdi/shared/view";
 import {
 	Blocks,
@@ -54,38 +58,6 @@ export type NavigationGroupMetadata<GroupId extends string, ItemId extends strin
 	items: readonly NavigationItemMetadata<ItemId>[];
 };
 
-type ConsoleNavigationItemId =
-	| "overview"
-	| "agents"
-	| "projects"
-	| "skills"
-	| "vaults"
-	| "sessions"
-	| "memories"
-	| "connectors"
-	| "channels"
-	| "ai-providers";
-
-type ConsoleNavigationGroupId = "primary" | "library";
-
-type ConsoleCommandPaletteMetadata = {
-	subtitle: string;
-	searchText: string;
-};
-
-export type ConsoleNavigationItemMetadata = NavigationItemMetadata<ConsoleNavigationItemId> & {
-	availability: "all" | "cloud";
-	commandPalette?: ConsoleCommandPaletteMetadata;
-};
-
-export type ConsoleNavigationGroup = Omit<
-	NavigationGroupMetadata<ConsoleNavigationGroupId, ConsoleNavigationItemId>,
-	"items"
-> & {
-	items: readonly ConsoleNavigationItemMetadata[];
-	separated: boolean;
-};
-
 type CanonicalNavigationConceptId =
 	| "overview"
 	| "sessions"
@@ -130,140 +102,42 @@ export const CANONICAL_NAVIGATION_IDENTITIES = {
 	settings: { label: "Settings", icon: Settings },
 } satisfies Record<CanonicalNavigationConceptId, { label: string; icon: LucideIcon }>;
 
-function projectResourceNavigationItem(
-	id: "projects" | "skills" | "vaults" | "sessions" | "memories" | "connectors",
-): ConsoleNavigationItemMetadata {
-	const definition = getProjectResourceDefinition(id);
-	const commandGroupLabel =
-		id === "projects"
-			? "Projects"
-			: id === "skills" || id === "vaults" || id === "connectors"
-				? "Library"
-				: "Account activity";
-	return {
+type ConsoleNavigationItemMetadata = SharedConsoleNavigationItemMetadata & { icon: LucideIcon };
+
+export type { ConsoleNavigationItemMetadata };
+export type ConsoleNavigationGroup = Omit<SharedConsoleNavigationGroup, "items"> & {
+	items: readonly ConsoleNavigationItemMetadata[];
+};
+const CONSOLE_ICONS = {
+	overview: LayoutDashboard,
+	agents: MonitorPlay,
+	projects: PROJECT_RESOURCE_ICONS.projects,
+	skills: PROJECT_RESOURCE_ICONS.skills,
+	vaults: PROJECT_RESOURCE_ICONS.vaults,
+	sessions: PROJECT_RESOURCE_ICONS.sessions,
+	memories: PROJECT_RESOURCE_ICONS.memories,
+	connectors: PROJECT_RESOURCE_ICONS.connectors,
+	channels: MessagesSquare,
+	"ai-providers": BrainCircuit,
+};
+export const CONSOLE_NAVIGATION_ITEMS = Object.fromEntries(
+	Object.entries(SHARED_CONSOLE_NAVIGATION_ITEMS).map(([id, item]) => [
 		id,
-		...CANONICAL_NAVIGATION_IDENTITIES[id],
-		href: definition.href,
-		tint: RESOURCE_TINT_CLASSES[id],
-		description: definition.managementDescription,
-		tooltip: `${definition.navLabel} — ${projectResourceScopeLabel(definition.projectScope)}`,
-		availability: "all",
-		commandPalette: {
-			subtitle: projectResourcePathLabel(definition),
-			searchText: `${definition.navLabel} ${definition.label} ${commandGroupLabel} ${projectResourceScopeLabel(definition.projectScope)} ${projectResourcePathLabel(definition)}`,
-		},
-	};
-}
-
-export const CONSOLE_NAVIGATION_ITEMS: Record<
-	ConsoleNavigationItemId,
-	ConsoleNavigationItemMetadata
-> = {
-	overview: {
-		id: "overview",
-		...CANONICAL_NAVIGATION_IDENTITIES.overview,
-		href: "/",
-		tint: RESOURCE_TINT_CLASSES.overview,
-		description: "Account inventory and recent activity.",
-		tooltip: "Console overview",
-		availability: "all",
-		commandPalette: {
-			subtitle: "Dashboard",
-			searchText: "overview dashboard",
-		},
-	},
-	agents: {
-		id: "agents",
-		label: "Agents",
-		href: "/agents",
-		icon: MonitorPlay,
-		tint: "bg-identity-6-bg text-identity-6-fg",
-		description: "Every Agent in this account.",
-		tooltip: "All agents",
-		availability: "all",
-	},
-	projects: projectResourceNavigationItem("projects"),
-	skills: projectResourceNavigationItem("skills"),
-	vaults: projectResourceNavigationItem("vaults"),
-	sessions: projectResourceNavigationItem("sessions"),
-	memories: projectResourceNavigationItem("memories"),
-	connectors: projectResourceNavigationItem("connectors"),
-	channels: {
-		id: "channels",
-		...CANONICAL_NAVIGATION_IDENTITIES.channels,
-		href: "/channels",
-		tint: "bg-identity-5-bg text-identity-5-fg",
-		description: "Account channel inventory and connections.",
-		tooltip: "Channels — Account integrations",
-		availability: "cloud",
-		commandPalette: {
-			subtitle: "Library",
-			searchText: "channels telegram discord whatsapp bots messaging",
-		},
-	},
-	"ai-providers": {
-		id: "ai-providers",
-		...CANONICAL_NAVIGATION_IDENTITIES["ai-providers"],
-		href: "/ai-providers",
-		tint: "bg-identity-2-bg text-identity-2-fg",
-		description: "Account AI provider connections and credentials.",
-		tooltip: "AI Providers — Account integrations",
-		availability: "cloud",
-		commandPalette: {
-			subtitle: "Library",
-			searchText:
-				"model providers ai providers models openai anthropic openrouter gemini mistral byok api key",
-		},
-	},
-} satisfies Record<ConsoleNavigationItemId, ConsoleNavigationItemMetadata>;
-
-const CONSOLE_NAVIGATION_GROUPS = [
-	{
-		id: "primary",
-		label: null,
-		itemIds: ["overview", "agents", "sessions", "memories"],
-		separated: false,
-	},
-	{
-		id: "library",
-		label: "Library",
-		// Assets first (mirrors the dashboard Library card), integrations last;
-		// cloud-gated items drop out in OSS without disturbing the order.
-		itemIds: ["projects", "skills", "vaults", "connectors", "channels", "ai-providers"],
-		separated: false,
-	},
-] as const satisfies readonly {
-	id: ConsoleNavigationGroupId;
-	label: string | null;
-	itemIds: readonly ConsoleNavigationItemId[];
-	separated: boolean;
-}[];
-
+		{ ...item, icon: CONSOLE_ICONS[item.id] },
+	]),
+) as Record<ConsoleNavigationItemId, ConsoleNavigationItemMetadata>;
 export function consoleNavigationGroups(showCloudFeatures: boolean): ConsoleNavigationGroup[] {
-	return CONSOLE_NAVIGATION_GROUPS.map((group) => ({
-		id: group.id,
-		label: group.label,
-		separated: group.separated,
-		items: group.itemIds
-			.map((id) => CONSOLE_NAVIGATION_ITEMS[id])
-			.filter((item) => item.availability === "all" || showCloudFeatures),
+	return sharedConsoleNavigationGroups(showCloudFeatures).map((group) => ({
+		...group,
+		items: group.items.map((item) => CONSOLE_NAVIGATION_ITEMS[item.id]),
 	}));
 }
-
-export function consoleCommandPaletteItems(
-	showCloudFeatures: boolean,
-): Array<ConsoleNavigationItemMetadata & { commandPalette: ConsoleCommandPaletteMetadata }> {
-	return consoleNavigationGroups(showCloudFeatures)
-		.flatMap((group) => group.items)
-		.filter(
-			(
-				item,
-			): item is ConsoleNavigationItemMetadata & {
-				commandPalette: ConsoleCommandPaletteMetadata;
-			} => Boolean(item.commandPalette),
-		);
+export function consoleCommandPaletteItems(showCloudFeatures: boolean) {
+	return sharedConsoleCommandPaletteItems(showCloudFeatures).map((item) => ({
+		...item,
+		icon: CONSOLE_ICONS[item.id],
+	}));
 }
-
 type AgentNavigationGroupId = "primary" | "workspace" | "shared" | "operate" | "settings";
 
 export type AgentNavigationItemMetadata = Omit<NavigationItemMetadata<AgentSectionId>, "href"> & {

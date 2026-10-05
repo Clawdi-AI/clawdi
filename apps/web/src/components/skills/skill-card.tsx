@@ -1,11 +1,13 @@
-import { agentSurfaceCopy } from "@clawdi/shared/view";
+"use client";
 
-("use client");
-
-import { agentSkillCardClasses } from "@clawdi/shared/ui";
-
+import { skillCardClasses } from "@clawdi/shared/ui";
 import type { SkillCardEntity } from "@clawdi/shared/view";
-import { identityFor, relativeTime, skillSearchSupportingText } from "@clawdi/shared/view";
+import {
+	agentSurfaceCopy,
+	identityFor,
+	relativeTime,
+	skillSearchSupportingText,
+} from "@clawdi/shared/view";
 import { Sparkles, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { EmptyState, type EmptyStateVariant } from "@/components/empty-state";
@@ -103,10 +105,10 @@ export function SkillCard({
 							variant="ghost"
 							size="icon-sm"
 							disabled={uninstallPending}
-							className="text-muted-foreground hover:text-destructive"
+							className={skillCardClasses.removeAction}
 							aria-label={`Remove ${skill.name} from Project`}
 						>
-							<Trash2 className="size-3.5" />
+							<Trash2 className={skillCardClasses.smallIcon} />
 						</Button>
 					</ConfirmAction>
 				) : null}
@@ -114,9 +116,9 @@ export function SkillCard({
 		) : undefined;
 	return (
 		<HeroCard
-			className={agentSkillCardClasses.card}
+			className={skillCardClasses.body}
 			icon={
-				<IconChip size="sm" tint={id.colorClasses} className={agentSkillCardClasses.icon}>
+				<IconChip size="sm" tint={id.colorClasses} className={skillCardClasses.iconTile}>
 					{id.emoji}
 				</IconChip>
 			}
@@ -126,12 +128,12 @@ export function SkillCard({
 			badges={
 				<>
 					{showVersion && skill.version !== undefined ? (
-						<Badge variant="outline" className="shrink-0">
+						<Badge variant="outline" className={skillCardClasses.badge}>
 							v{skill.version}
 						</Badge>
 					) : null}
 					{readOnly && readOnlyLabel ? (
-						<Badge variant="secondary" className="shrink-0">
+						<Badge variant="secondary" className={skillCardClasses.badge}>
 							{readOnlyLabel}
 						</Badge>
 					) : null}
@@ -150,18 +152,15 @@ export function SkillCard({
 			footer={[
 				provenanceLabel ? <span key="provenance">{provenanceLabel}</span> : null,
 				sourceLabel ? (
-					<span
-						key="source-label"
-						className="inline-flex max-w-44 items-center gap-1 rounded-md bg-muted px-1.5 py-0.5"
-					>
-						<span aria-hidden className="select-none">
+					<span key="source-label" className={skillCardClasses.projectChip}>
+						<span aria-hidden className={skillCardClasses.unselectable}>
 							{sourceLabel.emoji}
 						</span>
 						<TruncatedText>{sourceLabel.name}</TruncatedText>
 					</span>
 				) : null,
 				skill.source_repo ? (
-					<span key="source" className="font-mono" translate="no">
+					<span key="source" className={skillCardClasses.version} translate="no">
 						{skill.source_repo}
 					</span>
 				) : null,

@@ -1,5 +1,7 @@
 "use client";
 
+import { detailLayoutClasses, memoryDetailClasses } from "@clawdi/shared/ui";
+
 import { MEMORY_CATEGORY_COLORS, memoryDisplayName, relativeTime } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
@@ -71,7 +73,7 @@ export default function MemoryDetailPage({
 	const onDelete = () => deleteMemory.mutateAsync({ params: { path: { memory_id: memoryId } } });
 
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.detailPage)}>
 			<DetailBackLink href={collectionTarget.href} label={collectionTarget.label} />
 			{scope.kind === "agent" ? (
 				<Alert>
@@ -93,10 +95,10 @@ export default function MemoryDetailPage({
 					title="Couldn't load memory"
 				/>
 			) : isLoading ? (
-				<div className="space-y-4 py-2">
+				<div className={memoryDetailClasses.loading}>
 					<PageHeaderSkeleton icon actions description={false} />
-					<Skeleton className="h-24 w-full" />
-					<Skeleton className="h-4 w-48" />
+					<Skeleton className={memoryDetailClasses.contentSkeleton} />
+					<Skeleton className={memoryDetailClasses.metaSkeleton} />
 				</div>
 			) : memory ? (
 				<>
@@ -127,7 +129,7 @@ export default function MemoryDetailPage({
 								{/* Whether agents actually USE a memory is the
 								    fact that decides keep-vs-delete — surface it. */}
 								<span>·</span>
-								<span className="tabular-nums">
+								<span className={memoryDetailClasses.tabular}>
 									{(memory.access_count ?? 0) > 0
 										? `Recalled ${memory.access_count} ${memory.access_count === 1 ? "time" : "times"}`
 										: "Never recalled yet"}
@@ -151,7 +153,7 @@ export default function MemoryDetailPage({
 									variant="outline"
 									size="sm"
 									disabled={deleteMemory.isPending}
-									className="w-fit shrink-0 text-destructive hover:text-destructive"
+									className={memoryDetailClasses.deleteAction}
 								>
 									<Trash2 />
 									Delete
@@ -160,32 +162,32 @@ export default function MemoryDetailPage({
 						}
 					/>
 
-					<DetailPanel className="space-y-4">
-						<div className="space-y-1">
-							<h2 className="text-sm font-semibold">Recall Scope</h2>
-							<p className="text-xs text-muted-foreground">
+					<DetailPanel className={memoryDetailClasses.panel}>
+						<div className={memoryDetailClasses.headingStack}>
+							<h2 className={memoryDetailClasses.heading}>Recall Scope</h2>
+							<p className={memoryDetailClasses.subtitle}>
 								This is account-level context. Agents can recall it across runs; it is not shared
 								through Projects.
 							</p>
 						</div>
 						{memory.tags?.length ? (
-							<div className="flex flex-wrap items-center gap-1.5">
-								<span className="text-xs text-muted-foreground">Tags:</span>
+							<div className={memoryDetailClasses.tags}>
+								<span className={memoryDetailClasses.subtitle}>Tags:</span>
 								{memory.tags.map((t) => (
-									<Badge key={t} variant="outline" className="font-normal">
+									<Badge key={t} variant="outline" className={memoryDetailClasses.tag}>
 										#{t}
 									</Badge>
 								))}
 							</div>
 						) : (
-							<p className="text-xs text-muted-foreground">No tags saved for this memory.</p>
+							<p className={memoryDetailClasses.subtitle}>No tags saved for this memory.</p>
 						)}
 
 						{/* Provenance renders whenever ANY of it is known — machine
 						    name alone is still useful without a session link. */}
 						{memory.source_session_id || memory.source_machine_name ? (
-							<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-								<Laptop className="size-3" />
+							<div className={memoryDetailClasses.provenance}>
+								<Laptop className={memoryDetailClasses.smallIcon} />
 								<span>
 									{memory.source_machine_name
 										? `Learned on ${memory.source_machine_name}`
@@ -198,7 +200,7 @@ export default function MemoryDetailPage({
 											{...(scope.kind === "agent"
 												? agentSessionDetailLink(scope.agentId, memory.source_session_id)
 												: { to: "/sessions/$id", params: { id: memory.source_session_id } })}
-											className="underline hover:text-foreground"
+											className={memoryDetailClasses.sessionLink}
 										>
 											View session
 										</Link>

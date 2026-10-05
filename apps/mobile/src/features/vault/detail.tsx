@@ -9,8 +9,11 @@ import {
 	type VaultSplitResult,
 	validVaultSplit,
 } from "@clawdi/shared/api";
+import { projectDetailClasses, vaultDetailClasses } from "@clawdi/shared/ui";
+import { identityFor } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { ListChecks, Plus, Trash2 } from "lucide-react-native";
 import { useCallback, useState } from "react";
 import { Alert, AppState } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
@@ -18,10 +21,23 @@ import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
-import { NativeButton, NativePicker, NativeSwitch } from "../../ui/native-controls";
-import { AppScrollView, AppText, AppTextInput, AppView } from "../../ui/primitives";
-import { ReadScreen } from "../../ui/read-screen";
-import { BackButton } from "../cloud-inventory";
+import { ApiErrorPanel } from "../../ui/api-error-panel";
+import { Badge } from "../../ui/badge";
+import { Button } from "../../ui/button";
+import { ChoiceSelect } from "../../ui/detail/choice-select";
+import { DetailBackLink, LibraryPage } from "../../ui/detail/layout";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../ui/dialog";
+import { EntityCardSkeleton } from "../../ui/entity-card";
+import { Icon } from "../../ui/icon";
+import { IconChip } from "../../ui/icon-chip";
+import { Input } from "../../ui/input";
+import { ListToolbar } from "../../ui/list-toolbar";
+import { PageHeader, PageHeaderSkeleton } from "../../ui/page-header";
+import { AppText, AppView } from "../../ui/primitives";
+import { SearchInput } from "../../ui/search-input";
+import { Switch } from "../../ui/switch";
+import { Text } from "../../ui/text";
+import { WebText, WebView, webBoth, webText } from "../../ui/web-layout";
 import { useCloudProjects } from "../projects";
 import { routeParam } from "../read-helpers";
 import { ResourceError } from "../resource-error";
@@ -31,18 +47,35 @@ import { VaultSplit } from "./split";
 
 export function VaultDetailScreen() {
 	const scope = useAccountScope();
-	const params = useLocalSearchParams<{ vaultId?: string | string[]; slug?: string | string[] }>();
+	const params = useLocalSearchParams<{
+		vaultId?: string | string[];
+		slug?: string | string[];
+		add?: string;
+	}>();
 	const id = routeParam(params.vaultId);
 	const slug = routeParam(params.slug);
 	return (
 		<VaultDetail
 			key={`${scope.identity}:${scope.generation}:${id}:${slug}`}
 			identity={id && slug ? { id, slug } : undefined}
+			initialAdd={params.add === "1"}
 		/>
 	);
 }
 
-function VaultDetail({ identity }: { identity?: VaultIdentity }) {
+function VaultDetail({
+	identity,
+	initialAdd = false,
+}: {
+	identity?: VaultIdentity;
+	initialAdd?: boolean;
+}) {
+	const [keySearch, setKeySearch] = useState("");
+	const [selectMode, setSelectMode] = useState(false);
+	const [addOpen, setAddOpen] = useState(initialAdd);
+	const [transferOpen, setTransferOpen] = useState(false);
+	const [requestOpen, setRequestOpen] = useState(false);
+	const [splitOpen, setSplitOpen] = useState(false);
 	const t = useI18n();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -244,94 +277,138 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 			false,
 		);
 	};
+	const keyRows = Object.entries(sections.data ?? {}).flatMap(([group, names]) =>
+		names.map((name) => ({ section: group, name })),
+	);
+	const filteredKeys = keyRows.filter((k) =>
+		`${k.section}/${k.name}`.toLowerCase().includes(keySearch.trim().toLowerCase()),
+	);
 	return (
-		<ReadScreen>
-			<AppScrollView
-				contentContainerStyle={{ padding: 24, gap: 16 }}
-				keyboardShouldPersistTaps="handled"
-			>
-				<BackButton />
-				<AppText accessibilityRole="header" className="text-3xl font-semibold text-foreground">
-					{current?.name ?? t("vault.title")}
-				</AppText>
-				<AppText className="text-muted-foreground">{t("vault.description")}</AppText>
-				{!identity || detail.isError ? (
-					<ResourceError
-						missing={
-							!identity || (detail.error instanceof ApiClientError && detail.error.status === 404)
+		<LibraryPage detail>
+			<DetailBackLink href="/vault" label={t("vault.title")} />
+			{!identity || detail.isError ? (
+				<ResourceError
+					missing={
+						!identity || (detail.error instanceof ApiClientError && detail.error.status === 404)
+					}
+					onRetry={() => void detail.refetch()}
+				/>
+			) : detail.isPending ? (
+				<PageHeaderSkeleton icon actions />
+			) : null}
+			{current && !detail.isError ? (
+				<>
+					<PageHeader
+						title={current.name}
+						icon={
+							<IconChip
+								tint={identityFor(current.name).colorClasses}
+								className={webBoth(vaultDetailClasses.emoji)}
+							>
+								{identityFor(current.name).emoji}
+							</IconChip>
 						}
-						onRetry={detail.isFetching ? undefined : () => void detail.refetch()}
+						description={t(
+							current.is_owner
+								? "libraryPort.vaultDescription"
+								: "libraryPort.sharedVaultDescription",
+						)}
+						actions={
+							writable ? (
+								<Button
+									variant="outline"
+									size="sm"
+									textClassName={webText(vaultDetailClasses.destructive)}
+									onPress={remove}
+									disabled={action.busy}
+								>
+									<Icon as={Trash2} />
+									<Text>{t("libraryPort.delete")}</Text>
+								</Button>
+							) : undefined
+						}
 					/>
-				) : null}
-				{detail.isPending && identity ? <AppText>{t("loading.app")}</AppText> : null}
-				{current && !detail.isError ? (
-					<>
-						<AppText className="text-muted-foreground">
-							{current.slug} · {t(current.is_owner ? "vault.owner" : "vault.shared")}
-						</AppText>
-						{current.is_owner ? <VaultRequests current={current} /> : null}
-						<NativeButton
-							label={t("vault.refresh")}
-							disabled={detail.isFetching || sections.isFetching || action.busy}
-							onPress={() => void refresh()}
-						/>
-						{sections.isPending ? <AppText>{t("loading.app")}</AppText> : null}
-						{sections.isError ? (
-							<ResourceError
-								missing={sections.error instanceof ApiClientError && sections.error.status === 404}
-								onRetry={sections.isFetching ? undefined : () => void sections.refetch()}
-							/>
-						) : null}
-						{sections.isSuccess && !Object.keys(sections.data).length ? (
-							<AppText>{t("vault.noKeys")}</AppText>
-						) : null}
-						{sections.isSuccess
-							? Object.entries(sections.data).map(([group, keys]) => (
-									<AppView key={group} className="gap-2 rounded-xl bg-card p-4">
-										<AppText className="font-semibold text-foreground">
-											{group === "(default)" ? t("vault.defaultSection") : group}
-										</AppText>
-										{writable ? (
-											<NativeSwitch
-												label={t("vault.selectSection")}
-												value={
-													keys.length > 0 &&
-													keys.every((name) =>
-														selected.some((key) => key.section === group && key.name === name),
-													)
-												}
-												disabled={action.busy || !keys.length}
-												onValueChange={(checked) =>
-													setSelected((current) => [
-														...current.filter((key) => key.section !== group),
-														...(checked ? keys.map((name) => ({ section: group, name })) : []),
-													])
-												}
-											/>
+					<WebView recipe={vaultDetailClasses.section}>
+						<WebView recipe={vaultDetailClasses.shrinkContent}>
+							<WebView recipe={vaultDetailClasses.headingRow}>
+								<WebText recipe={vaultDetailClasses.heading}>{t("vault.keys")}</WebText>
+								<Badge variant="secondary">
+									<Text>{keyRows.length}</Text>
+								</Badge>
+							</WebView>
+							<WebText recipe={vaultDetailClasses.subtitle}>
+								{t("libraryPort.keysDescription")}
+							</WebText>
+						</WebView>
+						<ListToolbar
+							search={
+								<SearchInput
+									value={keySearch}
+									onChange={setKeySearch}
+									placeholder={t("libraryPort.searchKeys")}
+								/>
+							}
+							actions={
+								writable ? (
+									<>
+										<Button
+											variant="outline"
+											size="sm"
+											onPress={() => {
+												setSelectMode(!selectMode);
+												setSelected([]);
+											}}
+										>
+											<Icon as={ListChecks} />
+											<Text>{t(selectMode ? "libraryPort.done" : "libraryPort.select")}</Text>
+										</Button>
+										<Button variant="outline" size="sm" onPress={() => setAddOpen(true)}>
+											<Icon as={Plus} />
+											<Text>{t("libraryPort.addKeys")}</Text>
+										</Button>
+										{selected.length ? (
+											<Button variant="outline" size="sm" onPress={() => setTransferOpen(true)}>
+												<Text>Copy or move {selected.length}</Text>
+											</Button>
 										) : null}
-										{keys.map((key) => (
-											<AppView key={key} className="gap-1">
-												<AppText className="text-foreground">{key}</AppText>
+									</>
+								) : undefined
+							}
+						/>
+						{sections.error ? (
+							<ApiErrorPanel error={sections.error} onRetry={() => void sections.refetch()} />
+						) : sections.isPending ? (
+							<EntityCardSkeleton />
+						) : (
+							<WebView recipe={vaultDetailClasses.keyGrid}>
+								{filteredKeys.map(({ section: group, name: key }) => (
+									<WebView key={`${group}/${key}`} recipe={vaultDetailClasses.keyCard}>
+										{selectMode ? (
+											<AppView className="flex-row items-center gap-2">
+												<Switch
+													checked={selected.some((k) => k.section === group && k.name === key)}
+													disabled={action.busy}
+													onCheckedChange={(checked) =>
+														setSelected((old) => [
+															...old.filter((k) => k.section !== group || k.name !== key),
+															...(checked ? [{ section: group, name: key }] : []),
+														])
+													}
+												/>
+												<Text>{key}</Text>
+											</AppView>
+										) : (
+											<>
+												<WebText recipe={vaultDetailClasses.keyName} numberOfLines={1}>
+													{group && group !== "(default)" ? `${group}/` : ""}
+													{key}
+												</WebText>
+												<WebText recipe={vaultDetailClasses.protectedValue}>••••••</WebText>
 												{writable ? (
-													<NativeSwitch
-														label={`${t("vault.selectKey")}: ${key}`}
-														value={selected.some(
-															(item) => item.section === group && item.name === key,
-														)}
-														disabled={action.busy}
-														onValueChange={(checked) =>
-															setSelected((current) => [
-																...current.filter(
-																	(item) => item.section !== group || item.name !== key,
-																),
-																...(checked ? [{ section: group, name: key }] : []),
-															])
-														}
-													/>
-												) : null}
-												{writable ? (
-													<NativeButton
-														label={`${t("vault.deleteKey")}: ${key}`}
+													<Button
+														variant="ghost"
+														size="icon-sm"
+														accessibilityLabel={`${t("vault.deleteKey")}: ${key}`}
 														disabled={action.busy}
 														onPress={() => {
 															if (!identity) return;
@@ -355,45 +432,30 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 																true,
 															);
 														}}
-													/>
+													>
+														<Icon as={Trash2} />
+													</Button>
 												) : null}
-											</AppView>
-										))}
-									</AppView>
-								))
-							: null}
-						<AppText className="text-lg font-semibold text-foreground">
-							{t("vault.projects")}
-						</AppText>
-						{!current.project_ids.length ? <AppText>{t("vault.unattached")}</AppText> : null}
-						{current.project_ids.map((projectId) => (
-							<AppView key={projectId} className="gap-2">
-								<AppText className="text-foreground">
-									{projects.data?.find((p) => p.id === projectId)?.name ?? projectId}
-								</AppText>
-								{writable ? (
-									<NativeButton
-										label={t("vault.detach")}
-										disabled={action.busy}
-										onPress={() => {
-											if (!identity) return;
-											confirm(
-												t("vault.detach"),
-												t("vault.detachWarning"),
-												async (isCurrent) => {
-													await read((s) => vault.detach(identity, projectId, s));
-													if (isCurrent()) await refresh();
-												},
-												true,
-											);
-										}}
-									/>
-								) : null}
-							</AppView>
-						))}
+											</>
+										)}
+									</WebView>
+								))}
+							</WebView>
+						)}
+					</WebView>
+					<WebView recipe={vaultDetailClasses.section}>
+						<WebView recipe={vaultDetailClasses.headingRow}>
+							<WebText recipe={vaultDetailClasses.heading}>{t("vault.projects")}</WebText>
+							<Badge variant="secondary">
+								<Text>{current.project_ids.length}</Text>
+							</Badge>
+						</WebView>
+						<WebText recipe={vaultDetailClasses.subtitle}>
+							{t("libraryPort.vaultProjectsDescription")}
+						</WebText>
 						{writable ? (
-							<AppView className="gap-3">
-								<NativePicker
+							<WebView recipe={vaultDetailClasses.section}>
+								<ChoiceSelect
 									value={projectTargetId}
 									onValueChange={setProjectTargetId}
 									disabled={action.busy || projects.isError || projects.isFetching}
@@ -408,8 +470,9 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 								{projects.isError ? (
 									<ResourceError missing={false} onRetry={() => void projects.refetch()} />
 								) : null}
-								<NativeButton
-									label={t("vault.attach")}
+								<Button
+									variant="outline"
+									size="sm"
 									disabled={
 										action.busy || projects.isError || projects.isFetching || !projectTarget
 									}
@@ -427,8 +490,60 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 											},
 										);
 									}}
-								/>
-								<AppTextInput
+								>
+									<Text>{t("vault.attach")}</Text>
+								</Button>
+							</WebView>
+						) : null}
+						{current.project_ids.map((projectId) => (
+							<WebView key={projectId} recipe={vaultDetailClasses.projectCard}>
+								<WebView recipe={projectDetailClasses.grow}>
+									<WebText recipe={projectDetailClasses.heading}>
+										{projects.data?.find((p) => p.id === projectId)?.name ?? projectId}
+									</WebText>
+									<WebText recipe={projectDetailClasses.description} numberOfLines={1}>
+										{projects.data?.find((p) => p.id === projectId)?.description}
+									</WebText>
+								</WebView>
+								{writable ? (
+									<Button
+										variant="outline"
+										size="sm"
+										disabled={action.busy}
+										onPress={() => {
+											if (!identity) return;
+											confirm(
+												t("vault.detach"),
+												t("vault.detachWarning"),
+												async (isCurrent) => {
+													await read((s) => vault.detach(identity, projectId, s));
+													if (isCurrent()) await refresh();
+												},
+												true,
+											);
+										}}
+									>
+										<Text>{t("vault.detach")}</Text>
+									</Button>
+								) : null}
+							</WebView>
+						))}
+					</WebView>
+					<Dialog
+						open={addOpen}
+						onOpenChange={(v) => {
+							if (!action.busy) {
+								setAddOpen(v);
+								if (!v) setDraft("");
+							}
+						}}
+					>
+						<DialogContent>
+							<DialogHeader>
+								<DialogTitle>{t("libraryPort.addKeys")}</DialogTitle>
+							</DialogHeader>
+							<WebView recipe={vaultDetailClasses.section}>
+								<Input
 									accessibilityLabel={t("vault.section")}
 									placeholder={t("vault.section")}
 									value={section}
@@ -437,9 +552,8 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 									editable={!action.busy}
 									autoCapitalize="none"
 									autoCorrect={false}
-									className="rounded-xl bg-card p-3 text-foreground"
 								/>
-								<AppTextInput
+								<Input
 									accessibilityLabel={t("vault.importText")}
 									placeholder={t("vault.importText")}
 									value={draft}
@@ -451,14 +565,11 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 									autoCorrect={false}
 									autoComplete="off"
 									textContentType="none"
-									className="min-h-32 rounded-xl bg-card p-3 text-foreground"
 								/>
-								<NativeSwitch
-									label={t("vault.replace")}
-									value={replace}
-									onValueChange={setReplace}
-									disabled={action.busy}
-								/>
+								<AppView className="flex-row items-center gap-2">
+									<Switch checked={replace} onCheckedChange={setReplace} disabled={action.busy} />
+									<Text>{t("vault.replace")}</Text>
+								</AppView>
 								{draft ? (
 									<>
 										<AppText>{t("vault.preview")}</AppText>
@@ -481,20 +592,43 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 												</AppText>
 											))
 										)}
-										<NativeButton
-											label={t("vault.clear")}
+										<Button
+											variant="outline"
+											size="sm"
 											onPress={() => setDraft("")}
 											disabled={action.busy}
-										/>
+										>
+											<Text>{t("vault.clear")}</Text>
+										</Button>
 									</>
 								) : null}
-								<NativeButton
-									label={t("vault.import")}
+								<Button
+									variant="default"
+									size="sm"
 									disabled={action.busy || !validImport}
 									onPress={importKeys}
-								/>
+								>
+									<Text>{t("vault.import")}</Text>
+								</Button>
+								<Button variant="outline" onPress={() => setRequestOpen(true)}>
+									<Text>{t("vault.requestCreate")}</Text>
+								</Button>
+							</WebView>
+						</DialogContent>
+					</Dialog>
+					<Dialog
+						open={transferOpen}
+						onOpenChange={(v) => {
+							if (!action.busy) setTransferOpen(v);
+						}}
+					>
+						<DialogContent>
+							<DialogHeader>
+								<DialogTitle>{t("libraryPort.transferKeys")}</DialogTitle>
+							</DialogHeader>
+							<WebView recipe={vaultDetailClasses.section}>
 								<AppText>{t("vault.copyTarget")}</AppText>
-								<NativePicker
+								<ChoiceSelect
 									value={targetId}
 									onValueChange={setTargetId}
 									disabled={action.busy}
@@ -507,24 +641,31 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 									<ResourceError missing={false} onRetry={() => void targets.refetch()} />
 								) : null}
 								{targets.hasNextPage ? (
-									<NativeButton
-										label={t("vault.loadTargets")}
+									<Button
+										variant="outline"
+										size="sm"
 										disabled={targets.isFetching}
 										onPress={() => void targets.fetchNextPage()}
-									/>
+									>
+										<Text>{t("vault.loadTargets")}</Text>
+									</Button>
 								) : null}
 								<AppText>
 									{t("vault.selectedCount")}: {selected.length}
 								</AppText>
-								<NativeButton
-									label={t("vault.clearSelection")}
+								<Button
+									variant="outline"
+									size="sm"
 									disabled={action.busy || !selected.length}
 									onPress={() => setSelected([])}
-								/>
+								>
+									<Text>{t("vault.clearSelection")}</Text>
+								</Button>
 								{(["copy", "move"] as const).map((mode) => (
-									<NativeButton
+									<Button
+										variant="outline"
+										size="sm"
 										key={mode}
-										label={t(mode === "copy" ? "vault.copySelected" : "vault.moveSelected")}
 										disabled={
 											action.busy ||
 											!destination ||
@@ -533,52 +674,55 @@ function VaultDetail({ identity }: { identity?: VaultIdentity }) {
 											selected.some((key) => !sections.data?.[key.section]?.includes(key.name))
 										}
 										onPress={() => transfer(mode)}
-									/>
+									>
+										<Text>{t(mode === "copy" ? "vault.copySelected" : "vault.moveSelected")}</Text>
+									</Button>
 								))}
-								<NativeButton label={t("vault.remove")} disabled={action.busy} onPress={remove} />
-							</AppView>
-						) : null}
-					</>
-				) : null}
-				{identity && (writable || splitResult) ? (
-					<VaultSplit
-						source={identity}
-						keys={Object.entries(sections.data ?? {}).flatMap(([section, names]) =>
-							names.map((name) => ({ section, name })),
-						)}
-						disabled={action.busy}
-						result={splitResult}
-						onSubmit={split}
-						onReset={() => setSplitResult(undefined)}
-					/>
-				) : null}
-				{action.error ? <AppText accessibilityRole="alert">{t("vault.failed")}</AppText> : null}
-				{saved ? <AppText accessibilityRole="alert">{t("vault.saved")}</AppText> : null}
-				{transferResult ? (
-					<AppView accessibilityRole="alert" className="gap-2">
-						<AppText>
-							{t("vault.copiedCount")}: {transferResult.copied}
-						</AppText>
-						{transferResult.failed.length > 0 ? (
-							<AppText>
-								{t("vault.copyUnconfirmed")}: {transferResult.failed.join(", ")}
-							</AppText>
-						) : null}
-						{transferResult.sourceRemoveFailed.length > 0 ? (
-							<AppText>
-								{t("vault.cleanupUnconfirmed")}: {transferResult.sourceRemoveFailed.join(", ")}
-							</AppText>
-						) : null}
-						{!transferResult.failed.length &&
-						!transferResult.sourceRemoveFailed.length &&
-						!transferResult.interrupted ? (
-							<AppText>{t("vault.saved")}</AppText>
-						) : (
-							<AppText>{t("vault.failed")}</AppText>
-						)}
-					</AppView>
-				) : null}
-			</AppScrollView>
-		</ReadScreen>
+							</WebView>
+						</DialogContent>
+					</Dialog>
+					<Dialog open={requestOpen} onOpenChange={setRequestOpen}>
+						<DialogContent>
+							<VaultRequests current={current} />
+						</DialogContent>
+					</Dialog>
+					{identity && (writable || splitResult) ? (
+						<Dialog
+							open={splitOpen}
+							onOpenChange={(v) => {
+								if (!action.busy) setSplitOpen(v);
+							}}
+						>
+							<Button variant="outline" size="sm" onPress={() => setSplitOpen(true)}>
+								<Text>{t("vault.splitTitle")}</Text>
+							</Button>
+							<DialogContent>
+								<VaultSplit
+									source={identity}
+									keys={keyRows}
+									disabled={action.busy}
+									result={splitResult}
+									onSubmit={split}
+									onReset={() => setSplitResult(undefined)}
+								/>
+							</DialogContent>
+						</Dialog>
+					) : null}
+				</>
+			) : null}
+			{action.error ? <ApiErrorPanel error={action.error} /> : null}
+			{saved ? <Text>{t("vault.saved")}</Text> : null}
+			{transferResult ? (
+				<Text>
+					{t("vault.copiedCount")}: {transferResult.copied}
+					{transferResult.failed.length
+						? ` · ${t("vault.copyUnconfirmed")}: ${transferResult.failed.join(", ")}`
+						: ""}
+					{transferResult.sourceRemoveFailed.length
+						? ` · ${t("vault.cleanupUnconfirmed")}: ${transferResult.sourceRemoveFailed.join(", ")}`
+						: ""}
+				</Text>
+			) : null}
+		</LibraryPage>
 	);
 }

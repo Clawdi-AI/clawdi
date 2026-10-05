@@ -1,138 +1,58 @@
-import { type SessionTimelineRow, splitSearchHighlight } from "@clawdi/shared/api";
+import type { SessionTimelineRow } from "@clawdi/shared/api";
 import { router } from "expo-router";
-import { useState } from "react";
+import { Share } from "react-native";
+import { useCurrentUser } from "../auth/auth-client";
+import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
-import { Markdown } from "../ui/markdown";
-import { NativeButton } from "../ui/native-controls";
-import { AppText, AppView } from "../ui/primitives";
-import { formatDate } from "./cloud-inventory";
-
-function Payload({ value, query }: { value: string; query?: string }) {
-	const t = useI18n();
-	const [limit, setLimit] = useState(12000);
-	return (
-		<>
-			<AppText selectable className="text-base leading-6 text-foreground">
-				{splitSearchHighlight(value.slice(0, limit), query ?? "").map((part, index) => (
-					<AppText
-						key={`${index}:${part.highlighted}`}
-						className={part.highlighted ? "bg-warning text-foreground" : "text-foreground"}
-					>
-						{part.text}
-					</AppText>
-				))}
-			</AppText>
-			{value.length > limit ? (
-				<NativeButton label={t("timeline.moreText")} onPress={() => setLimit(limit + 12000)} />
-			) : null}
-		</>
-	);
-}
-
+import { useAccountScope } from "../platform/account-lifecycle";
+import { useForegroundLease } from "../platform/use-foreground-lease";
+import { ApiErrorPanel } from "../ui/api-error-panel";
+import { SessionTimelineRowView } from "../ui/sessions/message-list";
 export function TimelineRow({
 	row,
 	sessionId,
 	highlighted,
 	query,
 	disabled,
+	agentType,
 }: {
 	row: SessionTimelineRow;
 	sessionId: string;
 	highlighted: boolean;
 	query?: string;
 	disabled: boolean;
+	agentType?: string | null;
 }) {
 	const t = useI18n();
-	const [expanded, setExpanded] = useState(false);
-	const timestamp = row.kind === "message" ? row.message.timestamp : row.firstTimestamp;
-	const position =
-		row.kind === "message" && "position" in row.message ? row.message.position : undefined;
+	const scope = useAccountScope();
+	const capture = useForegroundLease();
+	const action = useAuthAction(scope);
+	const { user } = useCurrentUser();
 	return (
-		<AppView
-			className={`gap-2 rounded-2xl p-4 ${highlighted ? "border-2 border-primary bg-card" : "bg-card"}`}
-		>
-			{highlighted ? <AppText accessibilityRole="header">{t("timeline.current")}</AppText> : null}
-			<AppText className="text-base font-semibold text-foreground">
-				{row.kind === "message"
-					? t(row.message.role === "user" ? "sessions.user" : "sessions.assistant")
-					: (row.call?.name ?? row.result?.name ?? t("timeline.tool"))}
-			</AppText>
-			{formatDate(timestamp) ? (
-				<AppText className="text-sm text-muted-foreground">{formatDate(timestamp)}</AppText>
-			) : null}
-			{row.kind === "message" ? (
-				<>
-					<Markdown content={row.message.content} query={query} />
-					{position !== undefined ? (
-						<>
-							<NativeButton
-								label={t("sessionShares.through")}
-								disabled={disabled}
-								onPress={() =>
-									router.push({
-										pathname: "/sessions/shared",
-										params: { sessionId, scope: "through", position: String(position) },
-									})
-								}
-							/>
-							{row.message.role === "assistant" ? (
-								<NativeButton
-									label={t("sessionShares.response")}
-									disabled={disabled}
-									onPress={() =>
-										router.push({
-											pathname: "/sessions/shared",
-											params: {
-												sessionId,
-												scope: "response",
-												position: String(position),
-											},
-										})
-									}
-								/>
-							) : null}
-						</>
-					) : null}
-				</>
-			) : (
-				<>
-					<AppText>
-						{t(
-							row.result?.status === "error"
-								? "timeline.failed"
-								: row.result
-									? "timeline.completed"
-									: "timeline.pending",
-						)}
-					</AppText>
-					<NativeButton
-						label={t(expanded ? "timeline.hide" : "timeline.details")}
-						onPress={() => setExpanded(!expanded)}
-					/>
-					{expanded ? (
-						<>
-							{row.call?.arguments_json ? (
-								<>
-									<AppText>{t("timeline.arguments")}</AppText>
-									<Payload value={row.call.arguments_json} />
-								</>
-							) : null}
-							{row.result?.content ? (
-								<>
-									<AppText>{t("timeline.output")}</AppText>
-									<Payload value={row.result.content} />
-								</>
-							) : null}
-							{row.result?.result_json ? (
-								<>
-									<AppText>{t("timeline.result")}</AppText>
-									<Payload value={row.result.result_json} />
-								</>
-							) : null}
-						</>
-					) : null}
-				</>
-			)}
-		</AppView>
+		<>
+			<SessionTimelineRowView
+				row={row}
+				agentType={agentType}
+				userName={user?.fullName || "You"}
+				highlighted={highlighted}
+				query={query}
+				disabled={disabled || action.busy}
+				onShareText={(content) => {
+					const visible = capture();
+					void action.run(async (current) => {
+						if (current() && visible() && scope.isCurrent())
+							await Share.share({ message: content });
+					});
+				}}
+				onShareMessage={(target) => {
+					if (scope.isCurrent())
+						router.push({
+							pathname: "/sessions/shared",
+							params: { sessionId, scope: target.scope, position: String(target.position) },
+						});
+				}}
+			/>
+			{action.error ? <ApiErrorPanel error={null} title={t("sessionDetail.failed")} /> : null}
+		</>
 	);
 }

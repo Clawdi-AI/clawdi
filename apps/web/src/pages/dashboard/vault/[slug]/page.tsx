@@ -1,11 +1,13 @@
 "use client";
 
+import { detailLayoutClasses, vaultDetailClasses } from "@clawdi/shared/ui";
 import {
 	decodeResourceRouteParam,
 	displayProjectName,
 	errorMessage,
 	identityFor,
 	isCustomProject,
+	LIBRARY_COPY,
 	projectSupportingText,
 } from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -384,11 +386,11 @@ export default function VaultDetailPage({
 
 	if (vaultDetail.isLoading || (isAgentScope && browseAccess.isLoading)) {
 		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.detailPage)}>
 				<DetailBackLink href={backTarget.href} label={backTarget.label} mobileOnly={false} />
 				<PageHeaderSkeleton icon actions />
-				<Skeleton className="h-36 w-full rounded-lg" />
-				<Skeleton className="h-24 w-full rounded-lg" />
+				<Skeleton className={vaultDetailClasses.keysSkeleton} />
+				<Skeleton className={vaultDetailClasses.projectsSkeleton} />
 			</div>
 		);
 	}
@@ -396,7 +398,7 @@ export default function VaultDetailPage({
 	if (blockingVaultDetailError || blockingScopeError) {
 		const blockingError = blockingVaultDetailError ?? blockingScopeError;
 		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.detailPage)}>
 				<DetailBackLink href={backTarget.href} label={backTarget.label} mobileOnly={false} />
 				{isApiNotFoundError(blockingError) ? (
 					<DetailNotFound
@@ -419,7 +421,7 @@ export default function VaultDetailPage({
 
 	if (requestedProjectUnavailable) {
 		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.detailPage)}>
 				<DetailBackLink href={backTarget.href} label={backTarget.label} mobileOnly={false} />
 				<DetailNotFound
 					title="Project not available to this Agent"
@@ -435,7 +437,7 @@ export default function VaultDetailPage({
 
 	if (!vault) {
 		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.detailPage)}>
 				<DetailBackLink href={backTarget.href} label={backTarget.label} mobileOnly={false} />
 				<DetailNotFound
 					title="Vault not found"
@@ -449,7 +451,7 @@ export default function VaultDetailPage({
 		!isAgentScope || Boolean(requestedProjectId && vault.project_ids?.includes(requestedProjectId));
 	if (!isAvailableToAgent) {
 		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.detailPage)}>
 				<DetailBackLink href={backTarget.href} label={backTarget.label} mobileOnly={false} />
 				<DetailNotFound
 					title="Vault not available to this Agent"
@@ -465,7 +467,7 @@ export default function VaultDetailPage({
 		.filter((p): p is ProjectRow => !!p);
 
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.page)}>
 			<DetailBackLink
 				href={backTarget.href}
 				label={backTarget.label}
@@ -475,7 +477,10 @@ export default function VaultDetailPage({
 			<PageHeader
 				title={vault.name}
 				icon={
-					<IconChip tint={identityFor(vault.name).colorClasses} className="text-xl">
+					<IconChip
+						tint={identityFor(vault.name).colorClasses}
+						className={vaultDetailClasses.emoji}
+					>
 						{identityFor(vault.name).emoji}
 					</IconChip>
 				}
@@ -506,9 +511,9 @@ export default function VaultDetailPage({
 								variant="outline"
 								size="sm"
 								disabled={deleteVault.isPending}
-								className="text-destructive"
+								className={vaultDetailClasses.destructive}
 							>
-								<Trash2 className="mr-1.5 size-3.5" />
+								<Trash2 className={vaultDetailClasses.smallButtonIcon} />
 								Delete
 							</Button>
 						</ConfirmAction>
@@ -519,36 +524,36 @@ export default function VaultDetailPage({
 			{isOwner && <VaultSecretRequests slug={slug} vaultId={vault.id} projectId={anyProjectId} />}
 
 			{/* Keys */}
-			<section className="space-y-3">
-				<div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-					<div className="min-w-0">
-						<div className="flex items-center gap-2">
-							<h2 className="text-sm font-semibold">Keys</h2>
+			<section className={vaultDetailClasses.section}>
+				<div className={vaultDetailClasses.sectionHeader}>
+					<div className={vaultDetailClasses.shrinkContent}>
+						<div className={vaultDetailClasses.headingRow}>
+							<h2 className={vaultDetailClasses.heading}>Keys</h2>
 							{blockingKeysError ? (
-								<Badge variant="secondary" className="tabular-nums">
+								<Badge variant="secondary" className={vaultDetailClasses.count}>
 									—
 								</Badge>
 							) : keys.data ? (
-								<Badge variant="secondary" className="tabular-nums">
+								<Badge variant="secondary" className={vaultDetailClasses.count}>
 									{keyNames.length}
 								</Badge>
 							) : null}
 						</div>
-						<p className="mt-0.5 text-xs text-muted-foreground">
+						<p className={vaultDetailClasses.subtitle}>
 							{canManageVault
 								? "Values are write-only here. Changes apply everywhere this Vault is linked."
 								: "Key names are read-only. Key values stay protected, and this Agent can use them through the link."}
 						</p>
 					</div>
-					<div className="flex w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:items-center">
+					<div className={vaultDetailClasses.actions}>
 						{keyNames.length > 0 ? (
 							<>
 								<SearchInput
 									value={search}
 									onChange={setSearch}
-									placeholder="Search keys…"
+									placeholder={LIBRARY_COPY.searchKeys}
 									ariaLabel="Search keys"
-									className="h-8 w-full sm:w-52"
+									className={vaultDetailClasses.search}
 								/>
 								{canManageVault ? (
 									<Button
@@ -561,9 +566,9 @@ export default function VaultDetailPage({
 											});
 										}}
 										aria-pressed={selectMode}
-										className="w-full sm:w-auto"
+										className={vaultDetailClasses.control}
 									>
-										<ListChecks className="size-3.5" />
+										<ListChecks className={vaultDetailClasses.smallIcon} />
 										{selectMode ? "Done" : "Select"}
 									</Button>
 								) : null}
@@ -582,9 +587,9 @@ export default function VaultDetailPage({
 									variant="outline"
 									size="sm"
 									disabled={!vault.id}
-									className="w-full sm:w-auto"
+									className={vaultDetailClasses.control}
 								>
-									<Plus className="size-3.5" />
+									<Plus className={vaultDetailClasses.smallIcon} />
 									Add keys
 								</Button>
 							</AddKeysDialog>
@@ -595,7 +600,7 @@ export default function VaultDetailPage({
 					<Button
 						variant="ghost"
 						size="sm"
-						className="h-6 w-fit px-2 text-xs"
+						className={vaultDetailClasses.selectedCount}
 						onClick={() => {
 							setSelectedKeys((prev) => {
 								const next = new Set(prev);
@@ -614,7 +619,7 @@ export default function VaultDetailPage({
 				) : null}
 
 				{keys.isLoading ? (
-					<Skeleton className="h-32 w-full rounded-lg" />
+					<Skeleton className={vaultDetailClasses.gridSkeleton} />
 				) : blockingKeysError ? (
 					<ApiErrorPanel
 						error={blockingKeysError}
@@ -642,14 +647,14 @@ export default function VaultDetailPage({
 				) : (
 					/* Keys as compact cards: a 200-key vault scans far better in a
 				   multi-column grid than a one-column ledger. */
-					<div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+					<div className={vaultDetailClasses.keyGrid}>
 						{filteredKeyNames.map(({ section, name }) => {
 							const isSelected = selectedKeys.has(keyId({ section, name }));
 							return (
 								<div
 									key={`${section}/${name}`}
 									className={cn(
-										"group relative flex items-center gap-2 rounded-lg border bg-card px-3 py-2.5 transition-colors duration-150",
+										vaultDetailClasses.keyCard,
 										selectMode && isSelected
 											? "border-foreground/40 bg-accent/50"
 											: "hover:border-foreground/20",
@@ -660,22 +665,18 @@ export default function VaultDetailPage({
 											checked={isSelected}
 											tabIndex={-1}
 											aria-hidden
-											className="pointer-events-none shrink-0"
+											className={vaultDetailClasses.checkbox}
 										/>
 									) : null}
 									<Tooltip>
-										<TooltipTrigger
-											render={<span className="min-w-0 flex-1 truncate font-mono text-xs" />}
-										>
+										<TooltipTrigger render={<span className={vaultDetailClasses.keyName} />}>
 											{/* "(default)" is the backend's implicit section — noise, hide it. */}
 											{section && section !== "(default)" ? `${section}/` : ""}
 											{name}
 										</TooltipTrigger>
 										<TooltipContent>{name}</TooltipContent>
 									</Tooltip>
-									<span className="shrink-0 font-mono text-3xs text-muted-foreground select-none">
-										••••••
-									</span>
+									<span className={vaultDetailClasses.protectedValue}>••••••</span>
 									{selectMode ? (
 										<button
 											type="button"
@@ -689,9 +690,9 @@ export default function VaultDetailPage({
 												});
 											}}
 											aria-pressed={isSelected}
-											className="absolute inset-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+											className={vaultDetailClasses.stretchedLink}
 										>
-											<span className="sr-only">
+											<span className={vaultDetailClasses.screenReaderOnly}>
 												{isSelected ? "Deselect" : "Select"} {name}
 											</span>
 										</button>
@@ -706,10 +707,10 @@ export default function VaultDetailPage({
 											<Button
 												variant="ghost"
 												size="icon-xs"
-												className="text-muted-foreground opacity-100 transition-opacity duration-150 hover:text-destructive sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100"
+												className={vaultDetailClasses.removeKey}
 												aria-label={`Delete ${name}`}
 											>
-												<Trash2 className="size-3" />
+												<Trash2 className={vaultDetailClasses.tinyIcon} />
 											</Button>
 										</ConfirmAction>
 									) : null}
@@ -724,13 +725,13 @@ export default function VaultDetailPage({
 				<BulkActionBar count={selectedKeys.size} noun="key" onClear={clearSelection}>
 					<CopyKeysDialog vault={vault} keys={selectedList} mode="copy" onDone={clearSelection}>
 						<Button size="sm" variant="outline">
-							<CopyIcon className="size-3.5" />
+							<CopyIcon className={vaultDetailClasses.smallIcon} />
 							Copy to vault…
 						</Button>
 					</CopyKeysDialog>
 					<CopyKeysDialog vault={vault} keys={selectedList} mode="move" onDone={clearSelection}>
 						<Button size="sm">
-							<FolderInput className="size-3.5" />
+							<FolderInput className={vaultDetailClasses.smallIcon} />
 							Move to vault…
 						</Button>
 					</CopyKeysDialog>
@@ -745,9 +746,9 @@ export default function VaultDetailPage({
 							size="sm"
 							variant="outline"
 							disabled={bulkDeleteKeys.isPending}
-							className="text-destructive"
+							className={vaultDetailClasses.destructive}
 						>
-							<Trash2 className="size-3.5" />
+							<Trash2 className={vaultDetailClasses.smallIcon} />
 							Delete
 						</Button>
 					</ConfirmAction>
@@ -755,20 +756,20 @@ export default function VaultDetailPage({
 			) : null}
 
 			{/* Projects */}
-			<section className="space-y-3">
-				<div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-					<div className="min-w-0">
-						<div className="flex items-center gap-2">
-							<h2 className="text-sm font-semibold">
+			<section className={vaultDetailClasses.section}>
+				<div className={vaultDetailClasses.sectionHeader}>
+					<div className={vaultDetailClasses.shrinkContent}>
+						<div className={vaultDetailClasses.headingRow}>
+							<h2 className={vaultDetailClasses.heading}>
 								{isAgentScope ? requestedAttachmentLabel : "Projects"}
 							</h2>
 							{projects.isLoading ? null : (
-								<Badge variant="secondary" className="tabular-nums">
+								<Badge variant="secondary" className={vaultDetailClasses.count}>
 									{blockingProjectsError ? "—" : attachedProjects.length}
 								</Badge>
 							)}
 						</div>
-						<p className="mt-0.5 text-xs text-muted-foreground">
+						<p className={vaultDetailClasses.subtitle}>
 							{isAgentScope
 								? `Available through this ${requestedAttachmentLabel}. Open the source below to configure its Vaults.`
 								: "Same Vault everywhere — key changes apply to every linked Project. Key values stay protected, and linked Projects and Agents can use them."}
@@ -788,7 +789,7 @@ export default function VaultDetailPage({
 					) : null}
 				</div>
 				{projects.isLoading ? (
-					<Skeleton className="h-16 w-full" />
+					<Skeleton className={vaultDetailClasses.projectSkeleton} />
 				) : blockingProjectsError ? (
 					<ApiErrorPanel
 						error={blockingProjectsError}
@@ -804,27 +805,27 @@ export default function VaultDetailPage({
 						description="Add this Vault to a Project so its Agents can use the key values."
 					/>
 				) : (
-					<div className="divide-y overflow-hidden rounded-lg border bg-card">
+					<div className={vaultDetailClasses.projectList}>
 						{attachedProjects.map((project) => {
 							const isWorkspaceAttachment = project.kind === "environment";
 							const attachmentLabel = isWorkspaceAttachment ? "Workspace" : "Project";
 							return (
-								<div key={project.id} className="flex items-center gap-3 px-4 py-2.5">
-									<div className="min-w-0 flex-1">
+								<div key={project.id} className={vaultDetailClasses.projectRow}>
+									<div className={vaultDetailClasses.projectIdentity}>
 										{(isWorkspaceAttachment && isAgentScope) || isCustomProject(project) ? (
 											<Link
 												{...projectDetailLink(scope, project.id)}
 												search={{ tab: "vaults" }}
-												className="block truncate text-sm font-medium hover:underline"
+												className={vaultDetailClasses.projectLink}
 											>
 												{isWorkspaceAttachment ? "Workspace" : displayProjectName(project)}
 											</Link>
 										) : (
-											<span className="block text-sm font-medium">
+											<span className={vaultDetailClasses.projectName}>
 												{isWorkspaceAttachment ? "Workspace" : displayProjectName(project)}
 											</span>
 										)}
-										<p className="truncate text-xs text-muted-foreground">
+										<p className={vaultDetailClasses.projectDescription}>
 											{projectSupportingText(project)}
 										</p>
 									</div>
@@ -843,10 +844,10 @@ export default function VaultDetailPage({
 											<Button
 												variant="ghost"
 												size="icon-sm"
-												className="text-muted-foreground hover:text-destructive"
+												className={vaultDetailClasses.detachAction}
 												aria-label={`Remove from ${attachmentLabel}`}
 											>
-												<Trash2 className="size-3.5" />
+												<Trash2 className={vaultDetailClasses.smallIcon} />
 											</Button>
 										</ConfirmAction>
 									) : null}
@@ -876,7 +877,7 @@ function AttachProjectPicker({
 	}));
 	if (projects.length === 0) return null;
 	return (
-		<div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+		<div className={vaultDetailClasses.projectActions}>
 			<Select
 				items={projectItems}
 				value={value}
@@ -886,7 +887,7 @@ function AttachProjectPicker({
 			>
 				<SelectTrigger
 					size="sm"
-					className="w-full sm:w-44"
+					className={vaultDetailClasses.projectSelect}
 					aria-label="Project to add this Vault to"
 				>
 					<SelectValue placeholder="Choose a Project…" />
@@ -903,13 +904,13 @@ function AttachProjectPicker({
 				size="sm"
 				variant="outline"
 				disabled={!value || isPending}
-				className="w-full sm:w-auto"
+				className={vaultDetailClasses.control}
 				onClick={() => {
 					onAttach(value);
 					setValue("");
 				}}
 			>
-				{isPending ? <Spinner /> : <Plus className="size-3.5" />}
+				{isPending ? <Spinner /> : <Plus className={vaultDetailClasses.smallIcon} />}
 				Add to Project
 			</Button>
 		</div>

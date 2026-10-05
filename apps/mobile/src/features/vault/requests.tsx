@@ -8,8 +8,11 @@ import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
-import { NativeButton, NativePicker } from "../../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../../ui/primitives";
+import { Button } from "../../ui/button";
+import { ChoiceSelect } from "../../ui/detail/choice-select";
+import { Input } from "../../ui/input";
+import { AppText, AppView } from "../../ui/primitives";
+import { Text } from "../../ui/text";
 import { useCloudProjects } from "../projects";
 import { ResourceError } from "../resource-error";
 
@@ -116,8 +119,9 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 			</AppText>
 			<AppText className="text-muted-foreground">{t("vault.requestsDescription")}</AppText>
 			{canReshare ? (
-				<NativeButton
-					label={t("vault.requestReshare")}
+				<Button
+					variant="outline"
+					size="sm"
 					disabled={action.busy}
 					onPress={() => {
 						const visible = capture();
@@ -132,16 +136,21 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 							await Share.share({ title: t("vault.requestShare"), message: link.url });
 						});
 					}}
-				/>
+				>
+					<Text>{t("vault.requestReshare")}</Text>
+				</Button>
 			) : null}
-			<NativeButton
-				label={t("vault.refresh")}
+			<Button
+				variant="outline"
+				size="sm"
 				disabled={requests.isFetching || action.busy}
 				onPress={() => {
 					started.current = Date.now();
 					void requests.refetch();
 				}}
-			/>
+			>
+				<Text>{t("vault.refresh")}</Text>
+			</Button>
 			{requests.isPending ? <AppText>{t("loading.app")}</AppText> : null}
 			{requests.isError ? (
 				<ResourceError missing={false} onRetry={() => void requests.refetch()} />
@@ -172,7 +181,7 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 					</AppText>
 				</AppView>
 			))}
-			<NativePicker
+			<ChoiceSelect
 				value={projectId}
 				onValueChange={setProjectId}
 				disabled={action.busy || projects.isError}
@@ -181,7 +190,7 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 					...attached.map((p) => ({ value: p.id, label: p.name })),
 				]}
 			/>
-			<AppTextInput
+			<Input
 				accessibilityLabel={t("vault.section")}
 				placeholder={t("vault.section")}
 				value={section}
@@ -190,9 +199,8 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 				editable={!action.busy}
 				autoCapitalize="none"
 				autoCorrect={false}
-				className="rounded-xl bg-background p-3 text-foreground"
 			/>
-			<AppTextInput
+			<Input
 				accessibilityLabel={t("vault.requestFields")}
 				placeholder={t("vault.requestFields")}
 				value={fields}
@@ -202,9 +210,8 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 				editable={!action.busy}
 				autoCapitalize="none"
 				autoCorrect={false}
-				className="rounded-xl bg-background p-3 text-foreground"
 			/>
-			<NativePicker
+			<ChoiceSelect
 				value={expiry}
 				onValueChange={setExpiry}
 				disabled={action.busy}
@@ -215,11 +222,14 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 				]}
 			/>
 			{fields && !body ? <AppText>{t("vault.requestInvalid")}</AppText> : null}
-			<NativeButton
-				label={t("vault.requestCreate")}
+			<Button
+				variant="outline"
+				size="sm"
 				onPress={create}
 				disabled={!body || action.busy || projects.isError || projects.isFetching}
-			/>
+			>
+				<Text>{t("vault.requestCreate")}</Text>
+			</Button>
 			{action.error ? <AppText accessibilityRole="alert">{t("vault.failed")}</AppText> : null}
 		</AppView>
 	);

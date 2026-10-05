@@ -1,13 +1,19 @@
 import type { components } from "@clawdi/shared/api";
+import { identityFor } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
-import { NativeButton } from "../ui/native-controls";
-import { AppText, AppView } from "../ui/primitives";
-import { InventoryList } from "./inventory-list";
+import { ApiErrorPanel } from "../ui/api-error-panel";
+import { Button } from "../ui/button";
+import { DetailBackLink, LibraryPage } from "../ui/detail/layout";
+import { EmptyState } from "../ui/empty-state";
+import { HeroCard, HeroCardSkeleton } from "../ui/entity-card";
+import { IconChip } from "../ui/icon-chip";
+import { PageHeader } from "../ui/page-header";
+import { Text } from "../ui/text";
 
 export function ProjectInvitationsScreen() {
 	const scope = useAccountScope();
@@ -48,40 +54,50 @@ function InvitationsView() {
 			},
 		]);
 	};
+
 	return (
-		<InventoryList
-			title={t("sharing.received")}
-			description={t("sharing.receivedDescription")}
-			items={invitations.data ?? []}
-			empty={t(invitations.isPending ? "loading.app" : "sharing.noInvitations")}
-			refreshing={invitations.isRefetching}
-			onRefresh={() => {
-				if (!invitations.isFetching) void invitations.refetch();
-			}}
-			error={invitations.isError}
-			onRetry={() => void invitations.refetch()}
-			busy={invitations.isFetching}
-			header={
-				action.error ? (
-					<AppText accessibilityRole="alert">{t("sharing.responseFailed")}</AppText>
-				) : undefined
-			}
-			renderItem={(invitation) => (
-				<AppView className="gap-3 rounded-2xl bg-card p-4">
-					<AppText className="text-lg text-foreground">{invitation.project_name}</AppText>
-					<AppText>{invitation.owner_display}</AppText>
-					<NativeButton
-						label={t("sharing.accept")}
-						disabled={action.busy}
-						onPress={() => respond(invitation, true)}
+		<LibraryPage>
+			<DetailBackLink href="/projects" label={t("projects.title")} />
+			<PageHeader title={t("sharing.received")} description={t("sharing.receivedDescription")} />
+			{invitations.error ? (
+				<ApiErrorPanel error={invitations.error} onRetry={() => void invitations.refetch()} />
+			) : null}
+			{action.error ? <ApiErrorPanel error={t("sharing.responseFailed")} /> : null}
+			{invitations.isPending ? (
+				<HeroCardSkeleton />
+			) : (
+				invitations.data?.map((invitation) => (
+					<HeroCard
+						key={invitation.id}
+						title={invitation.project_name}
+						icon={
+							<IconChip tint={identityFor(invitation.project_name).colorClasses}>
+								{identityFor(invitation.project_name).emoji}
+							</IconChip>
+						}
+						description={invitation.owner_display}
+						actionsVisibility="always"
+						actions={
+							<>
+								<Button size="sm" disabled={action.busy} onPress={() => respond(invitation, true)}>
+									<Text>{t("sharing.accept")}</Text>
+								</Button>
+								<Button
+									variant="outline"
+									size="sm"
+									disabled={action.busy}
+									onPress={() => respond(invitation, false)}
+								>
+									<Text>{t("sharing.decline")}</Text>
+								</Button>
+							</>
+						}
 					/>
-					<NativeButton
-						label={t("sharing.decline")}
-						disabled={action.busy}
-						onPress={() => respond(invitation, false)}
-					/>
-				</AppView>
+				))
 			)}
-		/>
+			{invitations.isSuccess && !invitations.data.length ? (
+				<EmptyState description={t("sharing.noInvitations")} />
+			) : null}
+		</LibraryPage>
 	);
 }

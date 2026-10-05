@@ -1,11 +1,13 @@
 "use client";
 
+import { projectsSurfaceClasses } from "@clawdi/shared/ui";
 import {
 	canManageCustomProject,
 	compareProjectsForUse,
 	formatResourceCount,
 	getProjectResourceDefinition,
 	isCustomProject,
+	LIBRARY_COPY,
 	projectMatchesSearch,
 	projectSearchRank,
 } from "@clawdi/shared/view";
@@ -158,7 +160,10 @@ export function ProjectsSurface({
 	const from = `${returnHref}${search ? `?q=${encodeURIComponent(search)}` : ""}`;
 
 	return (
-		<div className="space-y-6" data-testid={agentId ? "agent-project-stack" : "projects-surface"}>
+		<div
+			className={projectsSurfaceClasses.page}
+			data-testid={agentId ? "agent-project-stack" : "projects-surface"}
+		>
 			<PageHeader
 				title="Projects"
 				icon={headerIcon}
@@ -188,14 +193,20 @@ export function ProjectsSurface({
 						}}
 					>
 						<Button size="sm" disabled={actionsDisabled}>
-							<Plus className="size-3.5" />
+							<Plus className={projectsSurfaceClasses.smallIcon} />
 							Create project
 						</Button>
 					</CreateProjectDialog>
 				}
 			/>
 			<ListToolbar
-				search={<SearchInput value={search} onChange={setSearch} placeholder="Search projects…" />}
+				search={
+					<SearchInput
+						value={search}
+						onChange={setSearch}
+						placeholder={LIBRARY_COPY.searchProjects}
+					/>
+				}
 			/>
 			{agentId && bindings.error ? (
 				<ApiErrorPanel
@@ -238,7 +249,7 @@ export function ProjectsSurface({
 					group.rows.length + group.missingBindings.length > 0 ? (
 						<section
 							key={group.label ?? "catalog"}
-							className="space-y-3"
+							className={projectsSurfaceClasses.section}
 							aria-label={group.label ? `${group.label} Projects` : undefined}
 						>
 							{group.label ? (
@@ -263,11 +274,11 @@ export function ProjectsSurface({
 									return (
 										<li
 											key={project.id}
-											className="min-w-0"
+											className={projectsSurfaceClasses.shrinkContent}
 											data-testid={agentId ? "agent-project-card" : "project-card"}
 										>
 											<ProjectResourceCard
-												className="h-full"
+												className={projectsSurfaceClasses.fullHeight}
 												project={project}
 												searchQuery={search.trim() || undefined}
 												link={projectDetailLink(scope, project.id, search ? from : undefined)}

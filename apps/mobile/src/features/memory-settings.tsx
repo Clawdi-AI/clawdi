@@ -1,13 +1,21 @@
+import { memoriesSurfaceClasses } from "@clawdi/shared/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Brain, Database } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { AppState } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
-import { ErrorState, LoadingScreen } from "../ui/feedback";
-import { NativeButton, NativePicker } from "../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../ui/primitives";
+import { Button } from "../ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
+import { ErrorState } from "../ui/feedback";
+import { Icon } from "../ui/icon";
+import { Input } from "../ui/input";
+import { Skeleton } from "../ui/skeleton";
+import { Text } from "../ui/text";
+import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
+import { webView } from "../ui/web-layout";
 
 export function MemorySettings() {
 	const scope = useAccountScope();
@@ -21,9 +29,9 @@ function MemorySettingsView() {
 	const { account } = useMobileApi();
 	const cache = useQueryClient();
 	const action = useAuthAction(scope);
-	const [provider, setProvider] = useState<"builtin" | "mem0" | null>(null);
+	const [open, setOpen] = useState(false);
 	const [secret, setSecret] = useState("");
-	const [saved, setSaved] = useState(false);
+
 	useEffect(() => {
 		const listener = AppState.addEventListener("change", (state) => {
 			if (state !== "active") setSecret("");
@@ -37,13 +45,13 @@ function MemorySettingsView() {
 				const result = await account.getSettings(requestSignal);
 				return {
 					provider: result.memory_provider === "mem0" ? ("mem0" as const) : ("builtin" as const),
-					configured: typeof result.mem0_api_key === "string" && result.mem0_api_key.length > 0,
+					configured: result.mem0_api_key_configured === true,
 				};
 			}, signal),
 		enabled: scope.isReady,
 		retry: false,
 	});
-	const save = () =>
+	const save = (provider?: "builtin" | "mem0") =>
 		action.run(async (isCurrent) => {
 			if (!settings.data) return;
 			const memoryProvider = provider ?? settings.data.provider;
@@ -62,55 +70,61 @@ function MemorySettingsView() {
 			);
 			if (!isCurrent()) return;
 			setSecret("");
-			setProvider(null);
-			setSaved(true);
+			setOpen(false);
+
 			await cache.invalidateQueries({ queryKey: accountQueryKey(scope, "memory-settings") });
 			await cache.invalidateQueries({ queryKey: accountQueryKey(scope, "cloud-memories") });
 		});
-	if (settings.isPending) return <LoadingScreen />;
+	if (settings.isPending)
+		return <Skeleton className={webView(memoriesSurfaceClasses.providerSkeleton)} />;
 	if (settings.isError) return <ErrorState onRetry={() => void settings.refetch()} />;
 	return (
-		<AppView className="gap-3 rounded-2xl bg-card p-4">
-			<AppText accessibilityRole="header">{t("memories.settingsTitle")}</AppText>
-			<AppText>{t("memories.settingsScope")}</AppText>
-			<NativePicker
-				value={provider ?? settings.data.provider}
+		<>
+			<ToggleGroup
+				value={[settings.data.provider]}
+				variant="outline"
+				size="sm"
 				disabled={action.busy}
-				options={[
-					{ value: "builtin", label: t("memories.builtin") },
-					{ value: "mem0", label: "Mem0" },
-				]}
-				onValueChange={(value) => {
-					setProvider(value);
-					setSaved(false);
+				onValueChange={(v) => {
+					const p = v[0];
+					if (p === "builtin" || p === "mem0") void save(p);
 				}}
-			/>
-			<AppText>
-				{t(settings.data.configured ? "memories.keyConfigured" : "memories.keyMissing")}
-			</AppText>
-			<AppTextInput
-				secureTextEntry
-				autoCapitalize="none"
-				autoCorrect={false}
-				value={secret}
-				accessibilityLabel={t("memories.mem0Key")}
-				placeholder={t("memories.mem0Key")}
-				editable={!action.busy}
-				onChangeText={(value) => {
-					setSecret(value);
-					setSaved(false);
-				}}
-				className="rounded-xl bg-background p-3 text-foreground"
-			/>
-			{action.error ? (
-				<AppText accessibilityRole="alert">{t("error.genericMessage")}</AppText>
+			>
+				<ToggleGroupItem value="builtin">
+					<Icon as={Database} />
+					<Text>{t("memories.builtin")}</Text>
+				</ToggleGroupItem>
+				<ToggleGroupItem value="mem0">
+					<Icon as={Brain} />
+					<Text>Mem0</Text>
+				</ToggleGroupItem>
+			</ToggleGroup>
+			{settings.data.provider === "mem0" && !settings.data.configured ? (
+				<Button variant="outline" size="sm" onPress={() => setOpen(true)}>
+					<Text>{t("memories.mem0Key")}</Text>
+				</Button>
 			) : null}
-			{saved ? <AppText accessibilityLiveRegion="polite">{t("memories.saved")}</AppText> : null}
-			<NativeButton
-				label={t("memories.save")}
-				disabled={action.busy || (!provider && !secret.trim())}
-				onPress={() => void save()}
-			/>
-		</AppView>
+			<Dialog open={open} onOpenChange={setOpen}>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>{t("memories.settingsTitle")}</DialogTitle>
+					</DialogHeader>
+					<Input
+						secureTextEntry
+						autoCapitalize="none"
+						autoCorrect={false}
+						value={secret}
+						onChangeText={setSecret}
+						editable={!action.busy}
+					/>
+					{action.error ? <ErrorState /> : null}
+					<DialogFooter>
+						<Button disabled={action.busy || !secret.trim()} onPress={() => void save()}>
+							<Text>{t("memories.save")}</Text>
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+		</>
 	);
 }
