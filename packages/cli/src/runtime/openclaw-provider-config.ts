@@ -3,6 +3,7 @@ import type { OpenClawHostedContext } from "./hosted-openclaw-context";
 import type { RuntimeManifest } from "./manifest-contract";
 import { runtimeFileCurrentRevision } from "./manifest-install";
 import { canonicalJsonEqual, isPlainRecord, recordValue } from "./manifest-shared";
+import { projectOpenClawProviderFileSecrets } from "./openclaw-file-secrets";
 import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import {
 	persistedStepRevision,
@@ -41,13 +42,16 @@ if (
   throw new Error("required public config-mutation export is missing");
 }
 const input = JSON.parse(readFileSync(0, "utf8"));
-const channelMutation = process.argv[2] === "channels";
+const explicitSetPaths = [];
+const unsetPaths = [];
+const makeMutator = (operation) => {
+const input = operation.input;
+const channelMutation = operation.kind === "channels";
 const patch = channelMutation ? input.patch : input;
+const exactProviderIds = operation.exactProviderIds ?? null;
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 if (!isRecord(patch)) throw new Error("OpenClaw provider patch must be an object");
 const blockedKeys = new Set(["__proto__", "constructor", "prototype"]);
-const explicitSetPaths = [];
-const unsetPaths = [];
 const applyMergePatch = (target, source, path = []) => {
   for (const [key, value] of Object.entries(source)) {
     if (blockedKeys.has(key)) throw new Error("OpenClaw provider patch contains a blocked key");
@@ -55,7 +59,8 @@ const applyMergePatch = (target, source, path = []) => {
     if (value === null) {
       delete target[key];
       unsetPaths.push(nextPath);
-    } else if (path.length === 2 && path[0] === "models" && path[1] === "providers") {
+    } else if (path.length === 2 && path[0] === "models" && path[1] === "providers" &&
+      (exactProviderIds === null || exactProviderIds.includes(key))) {
       target[key] = structuredClone(value);
       explicitSetPaths.push(nextPath);
     } else if (isRecord(value)) {
@@ -68,35 +73,12 @@ const applyMergePatch = (target, source, path = []) => {
     }
   }
 };
-const configRead = await sdk.readConfigFileSnapshotForWrite({ skipPluginValidation: true });
-const snapshot = configRead?.snapshot;
-const sourceConfig = snapshot?.sourceConfig;
-const sourceAgents = isRecord(sourceConfig) ? sourceConfig.agents : undefined;
-const sourceDefaults = isRecord(sourceAgents) ? sourceAgents.defaults : undefined;
-const sourceMemory = isRecord(sourceConfig) ? sourceConfig.memory : undefined;
-const patchAgents = patch.agents;
-const patchDefaults = isRecord(patchAgents) ? patchAgents.defaults : undefined;
-const patchMemory = patch.memory;
-const repairsUnsupportedMemorySearch =
-  (isRecord(sourceDefaults) &&
-    Object.hasOwn(sourceDefaults, "memorySearch") &&
-    isRecord(patchDefaults) &&
-    patchDefaults.memorySearch === null) ||
-  (isRecord(sourceMemory) &&
-    Object.hasOwn(sourceMemory, "search") &&
-    isRecord(patchMemory) &&
-    patchMemory.search === null &&
-    isRecord(patchDefaults?.memorySearch));
-if (
-  !snapshot ||
-  !isRecord(sourceConfig) ||
-  (snapshot.valid !== true && !repairsUnsupportedMemorySearch && !channelMutation)
-) {
-  throw new Error("OpenClaw config snapshot is unavailable for provider projection");
-}
 const applyChannelPatch = (draft) => {
   const desired = structuredClone(patch);
   const channels = {};
+  const logicalCredential = (ref) => ref?.source === "file" && ref.provider === "clawdi-runtime" &&
+    typeof ref.id === "string" && ref.id.startsWith("/") && /^[A-Za-z_][A-Za-z0-9_]*$/.test(ref.id.slice(1))
+    ? { source: "env", provider: "default", id: ref.id.slice(1) } : ref;
   for (const provider of ["telegram", "discord", "whatsapp"]) {
     const selected = desired.channels?.[provider];
     const selectedAccounts = selected?.accounts ?? {};
@@ -106,7 +88,7 @@ const applyChannelPatch = (draft) => {
     const previousAccounts = previous?.accounts ?? {};
     const credential = provider === "telegram" ? "botToken" : provider === "discord" ? "token" : "authDir";
     const matches = (actual, owned) => isRecord(actual) && isRecord(owned) &&
-      Object.hasOwn(owned, credential) && isDeepStrictEqual(actual[credential], owned[credential]);
+      Object.hasOwn(owned, credential) && isDeepStrictEqual(logicalCredential(actual[credential]), logicalCredential(owned[credential]));
     const accounts = {};
     for (const [id, owned] of Object.entries(previousAccounts)) {
       if (!Object.hasOwn(selectedAccounts, id) && matches(currentAccounts[id], owned)) accounts[id] = null;
@@ -137,9 +119,10 @@ const applyChannelPatch = (draft) => {
     const credential = provider === "telegram" ? "botToken" : "token";
     for (const account of [channel, ...Object.values(channel?.accounts ?? {})]) {
       const ref = account?.[credential];
-      if (ref?.source === "env" && ref.provider === "default" && typeof ref.id === "string" &&
-          ref.id.startsWith("CLAWDI_CHANNEL_") && ref.id.endsWith("_AGENT_TOKEN") &&
-          !input.availableChannelEnv.includes(ref.id)) {
+      const logical = logicalCredential(ref);
+      if (logical?.source === "env" && logical.provider === "default" && typeof logical.id === "string" &&
+          logical.id.startsWith("CLAWDI_CHANNEL_") && logical.id.endsWith("_AGENT_TOKEN") &&
+          !input.availableChannelEnv.includes(logical.id)) {
         throw new Error("Retained channel references a withdrawn managed credential; ownership repair required");
       }
     }
@@ -171,7 +154,26 @@ const applyProviderPatch = (draft) => {
   }
   applyMergePatch(draft, desired);
 };
-const mutate = channelMutation ? applyChannelPatch : applyProviderPatch;
+return { patch, channelMutation, mutate: channelMutation ? applyChannelPatch : applyProviderPatch };
+};
+const isRootRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const operations = process.argv[2] === "batch" ? input.operations : [{
+  kind: process.argv[2] === "channels" ? "channels" : "provider", input,
+}];
+const mutators = operations.map(makeMutator);
+const configRead = await sdk.readConfigFileSnapshotForWrite({ skipPluginValidation: true });
+const snapshot = configRead?.snapshot;
+const sourceConfig = snapshot?.sourceConfig;
+const sourceDefaults = sourceConfig?.agents?.defaults;
+const repairsUnsupportedMemorySearch = mutators.some(({ patch }) =>
+  (Object.hasOwn(sourceDefaults ?? {}, "memorySearch") && patch.agents?.defaults?.memorySearch === null) ||
+  (Object.hasOwn(sourceConfig?.memory ?? {}, "search") && patch.memory?.search === null &&
+    typeof patch.agents?.defaults?.memorySearch === "object"));
+if (!snapshot || !isRootRecord(sourceConfig) ||
+    (snapshot.valid !== true && !repairsUnsupportedMemorySearch && !mutators.some((op) => op.channelMutation))) {
+  throw new Error("OpenClaw config snapshot is unavailable for projection");
+}
+const mutate = (draft) => { for (const op of mutators) op.mutate(draft); };
 const projected = structuredClone(sourceConfig);
 mutate(projected);
 if (snapshot.valid === true && isDeepStrictEqual(projected, sourceConfig)) process.exit(0);
@@ -184,6 +186,80 @@ await sdk.mutateConfigFile({
   mutate,
 });
 `;
+export interface OpenClawConfigTransaction {
+	operations: Array<{
+		kind: "provider" | "channels";
+		input: Record<string, unknown>;
+		exactProviderIds?: readonly string[];
+	}>;
+	afterCommit: Array<() => void>;
+	environment: Record<string, string>;
+}
+
+export function beginOpenClawConfigTransaction(
+	context: OpenClawHostedContext,
+	environment: Record<string, string>,
+): void {
+	if (context.configMutationState.transaction)
+		throw new Error("OpenClaw config transaction is already active");
+	context.configMutationState.transaction = { operations: [], afterCommit: [], environment };
+}
+
+export function commitOpenClawConfigTransaction(
+	context: OpenClawHostedContext,
+	workspaceRoot: string,
+): void {
+	const transaction = context.configMutationState.transaction;
+	if (!transaction) return;
+	try {
+		if (transaction.operations.length > 0) {
+			runRuntimeUserCommand(
+				"node",
+				[
+					"--input-type=module",
+					"--eval",
+					OPENCLAW_CONFIG_MUTATION_HELPER,
+					context.requireSdkExport("configMutation"),
+					"batch",
+					"hot-apply",
+				],
+				JSON.stringify({ operations: transaction.operations }),
+				context.home,
+				workspaceRoot,
+			);
+		}
+		for (const record of transaction.afterCommit) record();
+	} finally {
+		context.configMutationState.transaction = null;
+	}
+}
+
+/** Merge owned native fields, preserving unrelated provider fields. */
+export function applyOpenClawContextMergePatch(
+	context: OpenClawHostedContext,
+	patch: Record<string, unknown>,
+	workspaceRoot: string,
+): void {
+	const transaction = context.configMutationState.transaction;
+	if (transaction) {
+		const input = JSON.parse(
+			projectOpenClawProviderFileSecrets(
+				JSON.stringify(patch),
+				transaction.environment,
+				context.home,
+			),
+		);
+		transaction.operations.push({ kind: "provider", input, exactProviderIds: [] });
+		return;
+	}
+	applyOpenClawConfigMergePatch(
+		context.requireSdkExport("configMutation"),
+		JSON.stringify(patch),
+		context.home,
+		workspaceRoot,
+	);
+}
+
 export function applyOpenClawHostedProviderPatch(
 	patch: OpenClawHostedProviderPatch,
 	commandPath: string,
@@ -192,8 +268,12 @@ export function applyOpenClawHostedProviderPatch(
 	providerRevision: string,
 ): void {
 	const sdkPath = context.requireSdkExport("configMutation");
+	const transaction = context.configMutationState.transaction;
+	const desiredContent = transaction
+		? projectOpenClawProviderFileSecrets(patch.content, transaction.environment, context.home)
+		: patch.content;
 	const content = adaptOpenClawMemorySearchPatch(
-		patch.content,
+		desiredContent,
 		commandPath,
 		context.home,
 		workspaceRoot,
@@ -219,6 +299,18 @@ export function applyOpenClawHostedProviderPatch(
 		const expected = recordValue(JSON.parse(content) as unknown);
 		if (!expected) throw new Error("OpenClaw provider projection patch must be an object");
 		if (openClawConfigPatchIsApplied(context, expected, patch.providerIds)) return;
+	}
+	if (transaction) {
+		transaction.operations.push({
+			kind: "provider",
+			input: JSON.parse(content),
+			exactProviderIds: patch.providerIds,
+		});
+		transaction.afterCommit.push(() => {
+			openClawProviderPatchRevisions.set(context.configPath, patchRevision);
+			recordPersistedStepRevision(persistedKey, persistedRevision);
+		});
+		return;
 	}
 	runRuntimeUserCommand(
 		"node",
@@ -266,6 +358,15 @@ export function applyOpenClawHostedChannelPatch(
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
 ): void {
+	const transaction = context.configMutationState.transaction;
+	if (transaction)
+		patch = JSON.parse(
+			projectOpenClawProviderFileSecrets(
+				JSON.stringify(patch),
+				transaction.environment,
+				context.home,
+			),
+		);
 	if (openClawChannelPatchIsNoop(patch, previousChannels, context.configPath)) return;
 	const sdkPath = context.requireSdkExport("configMutation");
 	const input = JSON.stringify({ patch, previousChannels, availableChannelEnv });
@@ -275,6 +376,11 @@ export function applyOpenClawHostedChannelPatch(
 	const appliedState = () =>
 		`${inputRevision}\n${runtimeFilesContentRevision([context.configPath])}`;
 	if (persistedStepRevision(persistedKey) === appliedState()) return;
+	if (transaction) {
+		transaction.operations.push({ kind: "channels", input: JSON.parse(input) });
+		transaction.afterCommit.push(() => recordPersistedStepRevision(persistedKey, appliedState()));
+		return;
+	}
 	// No custom IO: the official writer owns its cross-process lock, snapshot and commit checks.
 	runRuntimeUserCommand(
 		"node",
@@ -552,6 +658,10 @@ export function applyOpenClawGatewayHostedProjection(
 ): void {
 	const patch = openClawGatewayHostedPatch(manifest, secretValues, ownerBrowserBootstrapSupported);
 	if (!patch || openClawConfigPatchIsApplied(context, patch)) return;
+	if (context.configMutationState.transaction) {
+		applyOpenClawContextMergePatch(context, patch, workspaceRoot);
+		return;
+	}
 	runRuntimeUserCommand(
 		command,
 		["config", "patch", "--stdin"],

@@ -1033,6 +1033,7 @@ export function runtimeSystemdCommonEnvironment(paths: RuntimePaths): Record<str
 		CLAWDI_HOME: paths.clawdiHome,
 		CLAWDI_RUNTIME_MODE: "hosted",
 		CLAWDI_RUNTIME_USER: "clawdi",
+		...(openClawHotApplyEnabled() ? { CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY: "1" } : {}),
 		PATH: runtimeSystemdPath(paths),
 		...(paths.serviceStateRoot === DEFAULT_SERVICE_STATE_ROOT
 			? {}

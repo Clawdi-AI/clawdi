@@ -19,8 +19,13 @@ export function projectOpenClawProviderFileSecrets(
 ): string {
 	const patch = recordValue(JSON.parse(content) as unknown);
 	if (!patch) throw new Error("OpenClaw provider patch must be an object");
-	const values: Record<string, string> = {};
+	const values: Record<string, string> = { ...environment };
+	let projected = false;
 	const project = (value: unknown): void => {
+		if (Array.isArray(value)) {
+			for (const child of value) project(child);
+			return;
+		}
 		if (!isPlainRecord(value)) return;
 		for (const [key, child] of Object.entries(value)) {
 			if (
@@ -29,7 +34,7 @@ export function projectOpenClawProviderFileSecrets(
 				typeof child.id === "string" &&
 				Object.hasOwn(environment, child.id)
 			) {
-				values[child.id] = environment[child.id];
+				projected = true;
 				value[key] = {
 					source: "file",
 					provider: OPENCLAW_FILE_SECRET_PROVIDER,
@@ -39,7 +44,7 @@ export function projectOpenClawProviderFileSecrets(
 		}
 	};
 	project(patch);
-	if (Object.keys(values).length === 0) return content;
+	if (!projected) return content;
 	const payload = `${JSON.stringify(Object.fromEntries(Object.entries(values).sort()))}\n`;
 	const digest = createHash("sha256").update(payload).digest("hex");
 	const path = join(home, ".clawdi", "runtime-credentials", `openclaw-${digest}.json`);

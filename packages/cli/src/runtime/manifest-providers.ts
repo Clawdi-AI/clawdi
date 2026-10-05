@@ -172,7 +172,8 @@ export function applyHostedAiProviderProjection(
 			openClawContext.home,
 			workspaceRoot,
 			environment,
-		) || connectionChanged;
+		) ||
+		(!openClawContext.configMutationState.transaction && connectionChanged);
 	// Hot apply: one official-writer run commits the gateway and catalog patches
 	// together, so the watching gateway reloads one complete config.
 	const singleWriter =
@@ -185,7 +186,8 @@ export function applyHostedAiProviderProjection(
 		);
 		if (gatewayPatch)
 			patch.content = JSON.stringify(mergeJsonPatches(gatewayPatch, JSON.parse(patch.content)));
-		patch.content = projectOpenClawProviderFileSecrets(patch.content, environment, home);
+		if (!openClawContext.configMutationState.transaction)
+			patch.content = projectOpenClawProviderFileSecrets(patch.content, environment, home);
 	} else {
 		applyOpenClawGatewayHostedProjection(
 			observation.commandPath,

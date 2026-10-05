@@ -41,7 +41,10 @@ import {
 	repairHostedOpenClawWorkspace,
 	resolveHostedOpenClawWorkspace,
 } from "./hosted-openclaw-context";
-import { hostedProviderConfiguration } from "./hosted-provider-resolution";
+import {
+	hostedProviderConfiguration,
+	hostedProviderEnvironment,
+} from "./hosted-provider-resolution";
 import { assertHostedRuntimeContract } from "./hosted-runtime-contract";
 import type { HostedSkillEvidence } from "./hosted-skill-evidence";
 import { reconcileManagedBaileysCompatibility } from "./managed-baileys-compat";
@@ -112,6 +115,11 @@ import { reconcileHostedSkillProjection } from "./manifest-skills-apply";
 import { loadCommittedRuntimeManifest, type RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
 import { removeLegacyManagedOpenClawProviderPlugin } from "./openclaw-legacy-provider-plugin";
+import {
+	beginOpenClawConfigTransaction,
+	commitOpenClawConfigTransaction,
+} from "./openclaw-provider-config";
+import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import type { RuntimePaths } from "./paths";
 import {
 	flushPersistedStepRevisions,
@@ -142,6 +150,7 @@ import {
 	writeRuntimeSystemdState,
 } from "./runtime-systemd-reconciliation";
 import { executableExists, withRuntimeUserFileAccess } from "./runtime-user-command";
+import { runtimeSecretValue } from "./secret-values";
 import { ensureRuntimePlatformDirectory } from "./state";
 import { SystemdReobservationRequiredError } from "./systemd-transaction";
 
@@ -1059,6 +1068,19 @@ function applyRuntimeEntryProjections(
 			}
 		}
 		const resolved = withRuntimeUserFileAccess(() => {
+			if (name === "openclaw" && runtime.enabled && openClawHotApplyEnabled()) {
+				const providerEnv = hostedProviderEnvironment(manifest, name);
+				const environment = { ...providerEnv.placeholderEnv, ...providerEnv.configEnv };
+				for (const [key, ref] of Object.entries({
+					...providerEnv.secretEnv,
+					...runtime.run?.secretEnv,
+				})) {
+					const value = runtimeSecretValue(secretValues ?? {}, ref);
+					if (!value) throw new Error("OpenClaw credential is unavailable");
+					environment[key] = value;
+				}
+				beginOpenClawConfigTransaction(openClawContext, environment);
+			}
 			try {
 				const localeFile = applyHostedRuntimeConfigProjection(
 					name,
@@ -1127,7 +1149,11 @@ function applyRuntimeEntryProjections(
 					}`,
 				);
 			}
-			if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
+			if (state.installErrors.length > 0) {
+				openClawContext.configMutationState.transaction = null;
+				throw new Error(state.installErrors.join("; "));
+			}
+			if (name === "openclaw") commitOpenClawConfigTransaction(openClawContext, workspaceRoot);
 			return resolveRuntimeRunConfigs({
 				manifest,
 				paths,

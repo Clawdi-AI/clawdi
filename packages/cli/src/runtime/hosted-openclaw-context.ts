@@ -16,6 +16,7 @@ import {
 import { agentTargetProjectionInput, hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { RuntimeManifest } from "./manifest-contract";
 import { runtimeFileCurrentRevision } from "./manifest-install";
+import type { OpenClawConfigTransaction } from "./openclaw-provider-config";
 import { persistedStepRevision, recordPersistedStepRevision } from "./persisted-step-revisions";
 import { runtimeImpactRevision } from "./runtime-impact-revision";
 import { executableExists, spawnRuntimeUserCommand } from "./runtime-user-command";
@@ -268,7 +269,11 @@ export function createOpenClawHostedContextForHome(home: string, managedApiKeyPr
 	const statePath = (...parts: string[]) => join(stateRoot, ...parts);
 	const configPath = statePath("openclaw.json");
 	const sdk = resolveSdkExports(home);
+	const configMutationState: { transaction: OpenClawConfigTransaction | null } = {
+		transaction: null,
+	};
 	return {
+		configMutationState,
 		home,
 		managedApiKeyProjection,
 		stateRoot,

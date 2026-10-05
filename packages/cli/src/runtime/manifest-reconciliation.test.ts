@@ -75,10 +75,19 @@ import {
 	type HostedSkillSource,
 } from "./manifest-resources";
 import { parseHostedRuntimeBundleV2, type RuntimeManifestLoad } from "./manifest-source";
-import { applyOpenClawHostedChannelPatch } from "./openclaw-provider-config";
+import {
+	applyOpenClawContextMergePatch,
+	applyOpenClawHostedChannelPatch,
+	applyOpenClawHostedProviderPatch,
+	beginOpenClawConfigTransaction,
+	commitOpenClawConfigTransaction,
+} from "./openclaw-provider-config";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
-import { HERMES_DASHBOARD_BUILD_REVISION_FILE } from "./runtime-systemd-reconciliation";
+import {
+	HERMES_DASHBOARD_BUILD_REVISION_FILE,
+	runtimeSystemdCommonEnvironment,
+} from "./runtime-systemd-reconciliation";
 import {
 	canonicalSecretRefSchema,
 	normalizeSecretValues,
@@ -2931,6 +2940,149 @@ fi
 		expect(readFileSync(probeLog, "utf8")).toContain(
 			'CLAWDI_AI_API_KEY="clawdi-egress-placeholder"',
 		);
+	});
+
+	test("batches hot provider, gateway, agent and channel changes with the native writer", () => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
+		const importLog = join(paths.userHome, "sdk.log");
+		const writeLog = join(paths.userHome, "writes.log");
+		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, {
+			importLog,
+			writeLog,
+			initialConfig: { models: { providers: { google: { timeoutSeconds: 45 } } } },
+		});
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		writeFakeGatewayCli({
+			path: command,
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
+		const context = createOpenClawHostedContext(baseManifest(paths, {}), paths.userHome);
+		const env = {
+			GEMINI_API_KEY: "native-key",
+			CLAWDI_AI_API_KEY: "managed-key",
+			CLAWDI_CHANNEL_TEST_AGENT_TOKEN: "channel-key",
+		};
+		beginOpenClawConfigTransaction(context, env);
+		applyOpenClawHostedProviderPatch(
+			{
+				apply: true,
+				providerIds: ["clawdi"],
+				content: JSON.stringify({
+					models: {
+						providers: {
+							clawdi: {
+								apiKey: { source: "env", provider: "default", id: "CLAWDI_AI_API_KEY" },
+								models: [{ id: "model-one" }],
+							},
+						},
+					},
+					agents: { defaults: { model: { primary: "clawdi/model-one" } } },
+				}),
+			},
+			command,
+			context,
+			paths.userHome,
+			"revision-one",
+		);
+		applyOpenClawContextMergePatch(
+			context,
+			{
+				models: {
+					providers: {
+						google: { apiKey: { source: "env", provider: "clawdi-native", id: "GEMINI_API_KEY" } },
+					},
+				},
+				gateway: { auth: { token: "tenant-token" } },
+			},
+			paths.userHome,
+		);
+		const channels = {
+			telegram: {
+				accounts: {
+					managed: {
+						enabled: true,
+						botToken: { source: "env", provider: "default", id: "CLAWDI_CHANNEL_TEST_AGENT_TOKEN" },
+					},
+				},
+			},
+		};
+		applyOpenClawHostedChannelPatch(
+			openClawManagedChannelsPatch(channels),
+			null,
+			Object.keys(env),
+			context,
+			paths.userHome,
+		);
+		commitOpenClawConfigTransaction(context, paths.userHome);
+		expect(
+			readFileSync(importLog, "utf8")
+				.trim()
+				.split("\n")
+				.filter((name) => name === "config-mutation"),
+		).toHaveLength(1);
+		expect(
+			readFileSync(writeLog, "utf8")
+				.trim()
+				.split("\n")
+				.map((line) => JSON.parse(line)),
+		).toEqual([{ mode: "auto" }]);
+		const config = JSON.parse(readFileSync(configPath, "utf8"));
+		expect(config.models.providers.google.timeoutSeconds).toBe(45);
+		expect(config.models.providers.google.apiKey.id).toBe("/GEMINI_API_KEY");
+		expect(config.channels.telegram.accounts.managed.botToken.id).toBe(
+			"/CLAWDI_CHANNEL_TEST_AGENT_TOKEN",
+		);
+		expect(config.gateway.auth.token).toBe("tenant-token");
+		expect(config.agents.defaults.model.primary).toBe("clawdi/model-one");
+		expect(
+			JSON.parse(readFileSync(config.secrets.providers["clawdi-runtime"].path, "utf8")),
+		).toEqual(env);
+		expect(runtimeSystemdCommonEnvironment(paths).CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY).toBe("1");
+	});
+
+	test("failed hot config commits preserve native edits and do not acknowledge the candidate", () => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
+		const account = {
+			enabled: true,
+			botToken: { source: "env", provider: "default", id: "CLAWDI_CHANNEL_TEST_AGENT_TOKEN" },
+		};
+		const previous = { telegram: { accounts: { managed: account } } };
+		const edited = {
+			channels: { telegram: { accounts: { managed: { botToken: "native-edit" } } } },
+		};
+		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome, {
+			initialConfig: { channels: previous },
+			beforeMutation: edited,
+		});
+		const context = createOpenClawHostedContext(baseManifest(paths, {}), paths.userHome);
+		beginOpenClawConfigTransaction(context, {
+			CLAWDI_CHANNEL_TEST_AGENT_TOKEN: "tenant-channel-key",
+		});
+		applyOpenClawContextMergePatch(
+			context,
+			{ gateway: { auth: { token: "candidate" } } },
+			paths.userHome,
+		);
+		applyOpenClawHostedChannelPatch(
+			openClawManagedChannelsPatch(previous),
+			previous,
+			[account.botToken.id],
+			context,
+			paths.userHome,
+		);
+		let acknowledged = false;
+		context.configMutationState.transaction?.afterCommit.push(() => {
+			acknowledged = true;
+		});
+		expect(() => commitOpenClawConfigTransaction(context, paths.userHome)).toThrow(
+			"ownership changed",
+		);
+		expect(acknowledged).toBe(false);
+		expect(context.configMutationState.transaction).toBeNull();
+		expect(JSON.parse(readFileSync(configPath, "utf8"))).toEqual(edited);
 	});
 
 	test("reuses version-only OpenClaw probes and invalidates live provider and roster state", () => {
