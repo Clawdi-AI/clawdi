@@ -19,7 +19,7 @@ import time
 from datetime import UTC, datetime
 from typing import Literal
 
-import httpx
+import httpx  # noqa: F401 - retained as a patch seam for Clerk transport tests
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import select
@@ -28,7 +28,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_session
 from app.models.principal_lifecycle import PrincipalLifecycle
-from app.services.clerk_backend import clerk_backend_headers, clerk_user_url
+from app.services.clerk_backend import (
+    ClerkBackendError,
+    clerk_backend_headers,
+    clerk_user_url,
+    get_clerk_backend_client,
+)
 from app.services.principal_lifecycle import (
     PrincipalLifecycleConfigurationError,
     PrincipalWebhookConflictError,
@@ -164,13 +169,12 @@ async def _fetch_clerk_authority(subject: str) -> tuple[bool, datetime]:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "Clerk Backend API is not configured",
-        )
+    )
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(
-                clerk_user_url(subject),
-                headers=clerk_backend_headers(),
-            )
+        response = await get_clerk_backend_client().get(
+            clerk_user_url(subject),
+            headers=clerk_backend_headers(),
+        )
         if response.status_code != 200:
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -182,7 +186,7 @@ async def _fetch_clerk_authority(subject: str) -> tuple[bool, datetime]:
         authority_updated_at = datetime.fromtimestamp(authority.updated_at / 1000, tz=UTC)
     except HTTPException:
         raise
-    except (httpx.HTTPError, ValidationError, ValueError, OverflowError, OSError):
+    except (ClerkBackendError, ValidationError, ValueError, OverflowError, OSError):
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "Clerk authority retrieval is pending retry",

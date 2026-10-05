@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-import httpx
+import httpx  # noqa: F401 - retained as a patch seam for Clerk transport tests
 import jwt
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -27,7 +27,12 @@ from app.models.user import PRINCIPAL_KIND_CLERK, USER_AVATAR_URL_MAX_LENGTH, Us
 from app.schemas.problem import ACCOUNT_SUSPENDED_DETAIL, AccountSuspendedProblem
 from app.services.app_setting_registry import CLERK_CLI_OAUTH_SPEC
 from app.services.app_settings import AppSettingUnavailable, resolve_app_setting
-from app.services.clerk_backend import clerk_backend_headers, clerk_user_url
+from app.services.clerk_backend import (
+    ClerkBackendError,
+    clerk_backend_headers,
+    clerk_user_url,
+    get_clerk_backend_client,
+)
 from app.services.clerk_cli_oauth_settings import ClerkCliOAuthSetting
 from app.services.principal_lifecycle import (
     PrincipalIdentityConflictError,
@@ -345,8 +350,7 @@ async def _fetch_clerk_primary_email(clerk_user_id: str) -> str | None:
     # default. Set an explicit one.
     headers = clerk_backend_headers()
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(url, headers=headers)
+        resp = await get_clerk_backend_client().get(url, headers=headers)
         if resp.status_code != 200:
             logger.warning(
                 "clerk backend api returned %s for user %s",
@@ -355,7 +359,7 @@ async def _fetch_clerk_primary_email(clerk_user_id: str) -> str | None:
             )
             return None
         data = ClerkUserResponse.model_validate_json(resp.content)
-    except (httpx.HTTPError, ValidationError) as e:
+    except (ClerkBackendError, ValidationError) as e:
         logger.warning("clerk backend api lookup failed for %s: %s", clerk_user_id, e)
         return None
 

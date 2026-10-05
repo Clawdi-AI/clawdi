@@ -81,6 +81,7 @@ from app.routes.vault import router as vault_router
 from app.routes.vault_requests import router as vault_requests_router
 from app.services.ai_provider_auth_transition import OAuthCredentialPayloadCorruptError
 from app.services.channels import close_channel_provider_http_client
+from app.services.clerk_backend import close_clerk_backend_client, start_clerk_backend_client
 from app.services.composio import close_composio_client, run_tool_router_mcp_session_reaper
 from app.services.discord_advisory_session import DiscordAdvisorySession
 from app.services.embedding import LocalEmbedder, LocalServiceEmbedder
@@ -131,6 +132,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     await start_postgres_listener()
     try:
         await whatsapp_sidecars.start()
+        await start_clerk_backend_client()
     except Exception:
         await whatsapp_sidecars.stop()
         await stop_postgres_listener()
@@ -190,15 +192,18 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
                         await close_channel_provider_http_client()
                     finally:
                         try:
-                            await close_composio_client()
+                            await close_clerk_backend_client()
                         finally:
                             try:
-                                await LocalServiceEmbedder.close_shared()
+                                await close_composio_client()
                             finally:
                                 try:
-                                    await control_engine.dispose()
+                                    await LocalServiceEmbedder.close_shared()
                                 finally:
-                                    await control_snapshot_engine.dispose()
+                                    try:
+                                        await control_engine.dispose()
+                                    finally:
+                                        await control_snapshot_engine.dispose()
 
 
 app = FastAPI(
