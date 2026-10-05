@@ -1,0 +1,1784 @@
+#!/usr/bin/env bun
+/**
+ * Deterministic fixture server that impersonates the Clawdi cloud API so the
+ * web dashboard and the mobile app can be rendered side by side on identical
+ * data. Fixtures are typed against the generated OpenAPI contract, so schema
+ * drift fails `tsc` instead of silently rendering stale shapes.
+ *
+ * Usage: bun scripts/ui-parity/fixture-api.ts [--port 8787] [--host 0.0.0.0]
+ */
+import type { components, paths } from "../../packages/shared/src/api/api.generated";
+
+type Schemas = components["schemas"];
+type JsonBody<R> = R extends { content: { "application/json": infer B } } ? B : never;
+type GetPath = {
+	[P in keyof paths]: paths[P] extends { get: { responses: { 200: unknown } } } ? P : never;
+}[keyof paths];
+type PostOk<P extends keyof paths> = paths[P] extends { post: { responses: { 200: infer R } } }
+	? JsonBody<R>
+	: never;
+type GetOk<P extends GetPath> = paths[P] extends { get: { responses: { 200: infer R } } }
+	? JsonBody<R>
+	: never;
+
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
+
+function readFlag(name: string, fallback: string): string {
+	const args = process.argv.slice(2);
+	const index = args.indexOf(`--${name}`);
+	if (index >= 0 && args[index + 1]) return args[index + 1] ?? fallback;
+	const inline = args.find((arg) => arg.startsWith(`--${name}=`));
+	return inline ? inline.slice(name.length + 3) : fallback;
+}
+
+const port = Number(readFlag("port", "8787"));
+const hostname = readFlag("host", "0.0.0.0");
+if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+	console.error(`Invalid --port value: ${readFlag("port", "")}`);
+	process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// Time + deterministic randomness
+// ---------------------------------------------------------------------------
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+/**
+ * Fixtures are built relative to boot time; `json()` shifts every ISO
+ * timestamp by the elapsed time so a long-running server still looks live.
+ */
+const NOW = Date.now();
+const ago = (ms: number) => new Date(NOW - ms).toISOString();
+const dateKey = (ms: number) => new Date(NOW - ms).toISOString().slice(0, 10);
+
+function seededRandom(seed: number) {
+	let state = seed >>> 0;
+	return () => {
+		state = (state * 1664525 + 1013904223) >>> 0;
+		return state / 0x1_0000_0000;
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+const USER_ID = "7d3c1a52-0b8e-4f61-9a2d-5c4e8f1b2a90";
+
+const currentUser = {
+	id: USER_ID,
+	email: "avery@clawdi.dev",
+	name: "Avery Chen",
+	auth_type: "clerk",
+} satisfies GetOk<"/v1/auth/me">;
+
+// ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+const PROJECT = {
+	personal: "a0f1c2d3-0001-4a00-8000-000000000001",
+	webapp: "a0f1c2d3-0002-4a00-8000-000000000002",
+	research: "a0f1c2d3-0003-4a00-8000-000000000003",
+	infra: "a0f1c2d3-0004-4a00-8000-000000000004",
+	mbp: "a0f1c2d3-0005-4a00-8000-000000000005",
+};
+
+const projects = [
+	{
+		id: PROJECT.personal,
+		name: "Personal",
+		slug: "personal",
+		kind: "personal",
+		description: "Account-wide context shared with every agent.",
+		origin_environment_id: null,
+		archived_at: null,
+		created_at: ago(120 * DAY),
+		is_owner: true,
+		owner_display: "Avery Chen",
+		owner_handle: "avery",
+		skill_count: 3,
+		vault_count: 1,
+		agent_count: 4,
+		member_count: 1,
+	},
+	{
+		id: PROJECT.webapp,
+		name: "Acme Web App",
+		slug: "acme-web-app",
+		kind: "workspace",
+		description: "Customer-facing dashboard, marketing site and design system.",
+		origin_environment_id: null,
+		archived_at: null,
+		created_at: ago(64 * DAY),
+		is_owner: true,
+		owner_display: "Avery Chen",
+		owner_handle: "avery",
+		skill_count: 4,
+		vault_count: 2,
+		agent_count: 3,
+		member_count: 3,
+	},
+	{
+		id: PROJECT.research,
+		name: "Market Research",
+		slug: "market-research",
+		kind: "workspace",
+		description: "Competitive analysis notes and weekly digests.",
+		origin_environment_id: null,
+		archived_at: null,
+		created_at: ago(41 * DAY),
+		is_owner: false,
+		owner_display: "Jordan Lee",
+		owner_handle: "jordan",
+		skill_count: 2,
+		vault_count: 1,
+		agent_count: 2,
+		member_count: 4,
+	},
+	{
+		id: PROJECT.infra,
+		name: "Infra Runbooks",
+		slug: "infra-runbooks",
+		kind: "workspace",
+		description: "On-call procedures, deploy scripts and incident templates.",
+		origin_environment_id: null,
+		archived_at: null,
+		created_at: ago(23 * DAY),
+		is_owner: true,
+		owner_display: "Avery Chen",
+		owner_handle: "avery",
+		skill_count: 2,
+		vault_count: 1,
+		agent_count: 2,
+		member_count: 2,
+	},
+	{
+		id: PROJECT.mbp,
+		name: "MacBook Pro",
+		slug: "macbook-pro",
+		kind: "environment",
+		description: null,
+		origin_environment_id: "c1a0de00-0001-4c00-8000-000000000001",
+		archived_at: null,
+		created_at: ago(90 * DAY),
+		is_owner: true,
+		owner_display: "Avery Chen",
+		owner_handle: "avery",
+		skill_count: 2,
+		vault_count: 0,
+		agent_count: 1,
+		member_count: 1,
+	},
+] satisfies GetOk<"/v1/projects">;
+
+// ---------------------------------------------------------------------------
+// Agents
+// ---------------------------------------------------------------------------
+
+const AGENT = {
+	claude: "c1a0de00-0001-4c00-8000-000000000001",
+	codex: "c0de0000-0002-4c00-8000-000000000002",
+	hermes: "4e2e5000-0003-4c00-8000-000000000003",
+	openclaw: "0c1a3000-0004-4c00-8000-000000000004",
+};
+
+const agents = [
+	{
+		id: AGENT.claude,
+		name: "avery-mbp-claude",
+		default_name: "Claude Code",
+		machine_id: "machine-mbp",
+		machine_name: "Averys-MacBook-Pro.local",
+		display_name: "Claude Code",
+		avatar_url: null,
+		sort_order: 0,
+		agent_type: "claude_code",
+		agent_version: "2.1.4",
+		os: "darwin",
+		last_seen_at: ago(20_000),
+		last_sync_at: ago(30_000),
+		last_sync_error: null,
+		last_revision_seen: 482,
+		queue_depth_high_water: 3,
+		dropped_count: 0,
+		sync_enabled: true,
+		explicit_identity: true,
+		default_project_id: PROJECT.mbp,
+		adapter_modules: ["sessions", "skills"],
+	},
+	{
+		id: AGENT.codex,
+		name: "devbox-codex",
+		default_name: "Codex",
+		machine_id: "machine-devbox",
+		machine_name: "devbox-01",
+		display_name: "Codex",
+		avatar_url: null,
+		sort_order: 1,
+		agent_type: "codex",
+		agent_version: "0.48.0",
+		os: "linux",
+		last_seen_at: ago(40_000),
+		last_sync_at: ago(MINUTE),
+		last_sync_error: null,
+		last_revision_seen: 219,
+		queue_depth_high_water: 1,
+		dropped_count: 0,
+		sync_enabled: true,
+		explicit_identity: true,
+		default_project_id: PROJECT.webapp,
+		adapter_modules: ["sessions", "skills"],
+	},
+	{
+		id: AGENT.hermes,
+		name: "research-hermes",
+		default_name: "Hermes",
+		machine_id: "machine-research",
+		machine_name: "research-vm",
+		display_name: "Research Hermes",
+		avatar_url: null,
+		sort_order: 2,
+		agent_type: "hermes",
+		agent_version: "0.9.2",
+		os: "linux",
+		last_seen_at: ago(5 * HOUR),
+		last_sync_at: ago(5 * HOUR),
+		last_sync_error: null,
+		last_revision_seen: 97,
+		queue_depth_high_water: 0,
+		dropped_count: 0,
+		sync_enabled: true,
+		explicit_identity: true,
+		default_project_id: PROJECT.research,
+		adapter_modules: ["sessions"],
+	},
+	{
+		id: AGENT.openclaw,
+		name: "homelab-openclaw",
+		default_name: "OpenClaw",
+		machine_id: "machine-homelab",
+		machine_name: "homelab-nuc",
+		display_name: "OpenClaw",
+		avatar_url: null,
+		sort_order: 3,
+		agent_type: "openclaw",
+		agent_version: "2026.9.1",
+		os: "linux",
+		last_seen_at: ago(4 * DAY),
+		last_sync_at: ago(4 * DAY),
+		last_sync_error: "Sync paused: daemon offline",
+		last_revision_seen: 33,
+		queue_depth_high_water: 0,
+		dropped_count: 2,
+		sync_enabled: true,
+		explicit_identity: true,
+		default_project_id: PROJECT.infra,
+		adapter_modules: ["sessions"],
+	},
+] satisfies GetOk<"/v1/agents">;
+
+type Agent = (typeof agents)[number];
+
+const projectBindingsByAgent: Record<string, GetOk<"/v1/agents/{agent_id}/project-bindings">> = {
+	[AGENT.claude]: [
+		binding(AGENT.claude, PROJECT.mbp, "primary", 0, true),
+		binding(AGENT.claude, PROJECT.personal, "context", 1, false),
+		binding(AGENT.claude, PROJECT.webapp, "context", 2, false),
+	],
+	[AGENT.codex]: [
+		binding(AGENT.codex, PROJECT.webapp, "primary", 0, true),
+		binding(AGENT.codex, PROJECT.personal, "context", 1, false),
+		binding(AGENT.codex, PROJECT.infra, "context", 2, false),
+	],
+	[AGENT.hermes]: [
+		binding(AGENT.hermes, PROJECT.research, "primary", 0, true),
+		binding(AGENT.hermes, PROJECT.personal, "context", 1, false),
+	],
+	[AGENT.openclaw]: [
+		binding(AGENT.openclaw, PROJECT.infra, "primary", 0, true),
+		binding(AGENT.openclaw, PROJECT.personal, "context", 1, false),
+	],
+};
+
+function binding(
+	agentId: string,
+	projectId: string,
+	type: "primary" | "context",
+	priority: number,
+	write: boolean,
+): Schemas["AgentProjectBindingResponse"] {
+	return {
+		id: `binding-${agentId.slice(0, 8)}-${projectId.slice(-4)}`,
+		agent_id: agentId,
+		project_id: projectId,
+		binding_type: type,
+		priority,
+		default_write_enabled: write,
+		created_at: ago(30 * DAY),
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Sessions
+// ---------------------------------------------------------------------------
+
+type SessionSeed = {
+	agent: Agent;
+	summary: string;
+	model: string;
+	ageMs: number;
+	minutes: number;
+	messages: number;
+	project: string;
+	tags?: string[];
+	automated?: boolean;
+};
+
+const claude = agents[0];
+const codex = agents[1];
+const hermes = agents[2];
+const openclaw = agents[3];
+
+const sessionSeeds: SessionSeed[] = [
+	{
+		agent: claude,
+		summary: "Refactor billing webhooks into an idempotent queue",
+		model: "claude-opus-4-5",
+		ageMs: 25 * MINUTE,
+		minutes: 42,
+		messages: 38,
+		project: "~/code/acme/api",
+		tags: ["billing"],
+	},
+	{
+		agent: codex,
+		summary: "Fix flaky checkout e2e test on Safari",
+		model: "gpt-5-codex",
+		ageMs: 2 * HOUR,
+		minutes: 18,
+		messages: 14,
+		project: "~/code/acme/web",
+		tags: ["tests"],
+	},
+	{
+		agent: claude,
+		summary: "Design system: migrate buttons to new tokens",
+		model: "claude-sonnet-4-5",
+		ageMs: 5 * HOUR,
+		minutes: 65,
+		messages: 52,
+		project: "~/code/acme/web",
+	},
+	{
+		agent: hermes,
+		summary: "Weekly competitor pricing digest",
+		model: "claude-sonnet-4-5",
+		ageMs: 9 * HOUR,
+		minutes: 12,
+		messages: 9,
+		project: "~/research",
+		tags: ["digest"],
+	},
+	{
+		agent: codex,
+		summary: "Add pagination to the invoices API",
+		model: "gpt-5-codex",
+		ageMs: 1 * DAY + 3 * HOUR,
+		minutes: 31,
+		messages: 22,
+		project: "~/code/acme/api",
+	},
+	{
+		agent: claude,
+		summary: "Investigate memory leak in the websocket gateway",
+		model: "claude-opus-4-5",
+		ageMs: 1 * DAY + 8 * HOUR,
+		minutes: 88,
+		messages: 71,
+		project: "~/code/acme/gateway",
+		tags: ["perf", "incident"],
+	},
+	{
+		agent: openclaw,
+		summary: "Rotate staging TLS certificates",
+		model: "gpt-5",
+		ageMs: 2 * DAY + 1 * HOUR,
+		minutes: 9,
+		messages: 7,
+		project: "~/infra",
+		tags: ["ops"],
+	},
+	{
+		agent: claude,
+		summary: "Write onboarding guide for new contributors",
+		model: "claude-sonnet-4-5",
+		ageMs: 2 * DAY + 6 * HOUR,
+		minutes: 27,
+		messages: 19,
+		project: "~/code/acme/docs",
+	},
+	{
+		agent: codex,
+		summary: "Upgrade React Router and fix type errors",
+		model: "gpt-5-codex",
+		ageMs: 3 * DAY + 2 * HOUR,
+		minutes: 54,
+		messages: 40,
+		project: "~/code/acme/web",
+	},
+	{
+		agent: hermes,
+		summary: "Summarize customer interview transcripts",
+		model: "claude-sonnet-4-5",
+		ageMs: 3 * DAY + 10 * HOUR,
+		minutes: 21,
+		messages: 16,
+		project: "~/research",
+	},
+	{
+		agent: claude,
+		summary: "Plan Q4 roadmap milestones",
+		model: "claude-opus-4-5",
+		ageMs: 4 * DAY + 4 * HOUR,
+		minutes: 35,
+		messages: 24,
+		project: "~/notes",
+	},
+	{
+		agent: claude,
+		summary: "Add dark mode to the marketing site",
+		model: "claude-sonnet-4-5",
+		ageMs: 5 * DAY + 1 * HOUR,
+		minutes: 47,
+		messages: 33,
+		project: "~/code/acme/site",
+	},
+	{
+		agent: codex,
+		summary: "Speed up CI by caching the Bun install",
+		model: "gpt-5-codex",
+		ageMs: 6 * DAY + 2 * HOUR,
+		minutes: 16,
+		messages: 11,
+		project: "~/code/acme/web",
+		tags: ["ci"],
+	},
+	{
+		agent: openclaw,
+		summary: "Nightly backup verification",
+		model: "gpt-5",
+		ageMs: 6 * DAY + 20 * HOUR,
+		minutes: 4,
+		messages: 5,
+		project: "~/infra",
+		automated: true,
+	},
+	{
+		agent: claude,
+		summary: "Migrate cron jobs to the new scheduler",
+		model: "claude-opus-4-5",
+		ageMs: 8 * DAY,
+		minutes: 59,
+		messages: 45,
+		project: "~/code/acme/api",
+	},
+	{
+		agent: hermes,
+		summary: "Draft blog post on agent memory",
+		model: "claude-sonnet-4-5",
+		ageMs: 9 * DAY + 5 * HOUR,
+		minutes: 38,
+		messages: 26,
+		project: "~/research",
+	},
+	{
+		agent: codex,
+		summary: "Implement CSV export for reports",
+		model: "gpt-5-codex",
+		ageMs: 11 * DAY,
+		minutes: 29,
+		messages: 20,
+		project: "~/code/acme/api",
+	},
+	{
+		agent: claude,
+		summary: "Review pull request #482: search filters",
+		model: "claude-sonnet-4-5",
+		ageMs: 13 * DAY + 3 * HOUR,
+		minutes: 14,
+		messages: 10,
+		project: "~/code/acme/web",
+		tags: ["review"],
+	},
+	{
+		agent: claude,
+		summary: "Debug Stripe tax calculation mismatch",
+		model: "claude-opus-4-5",
+		ageMs: 16 * DAY,
+		minutes: 73,
+		messages: 58,
+		project: "~/code/acme/api",
+		tags: ["billing"],
+	},
+	{
+		agent: codex,
+		summary: "Set up Playwright visual regression tests",
+		model: "gpt-5-codex",
+		ageMs: 19 * DAY,
+		minutes: 44,
+		messages: 31,
+		project: "~/code/acme/web",
+		tags: ["tests"],
+	},
+	{
+		agent: hermes,
+		summary: "Collect pricing pages for 12 competitors",
+		model: "claude-sonnet-4-5",
+		ageMs: 22 * DAY,
+		minutes: 25,
+		messages: 18,
+		project: "~/research",
+	},
+	{
+		agent: claude,
+		summary: "Prototype offline sync for mobile app",
+		model: "claude-opus-4-5",
+		ageMs: 26 * DAY,
+		minutes: 96,
+		messages: 80,
+		project: "~/code/acme/mobile",
+	},
+];
+
+const sessions = sessionSeeds.map((seed, index) => {
+	const number = String(index + 1).padStart(4, "0");
+	const startedMs = seed.ageMs + seed.minutes * MINUTE;
+	const input = seed.messages * 2_350 + index * 911;
+	const output = seed.messages * 640 + index * 173;
+	const isActive = index === 0;
+	return {
+		id: `5e550000-${number}-4000-8000-00000000${number}`,
+		local_session_id: `local-${seed.agent.agent_type}-${number}`,
+		project_path: seed.project,
+		agent_name: seed.agent.name,
+		agent_display_name: seed.agent.display_name,
+		agent_default_name: seed.agent.default_name,
+		agent_type: seed.agent.agent_type,
+		machine_name: seed.agent.machine_name,
+		started_at: ago(startedMs),
+		ended_at: isActive ? null : ago(seed.ageMs),
+		updated_at: ago(seed.ageMs),
+		last_activity_at: ago(seed.ageMs),
+		duration_seconds: seed.minutes * 60,
+		message_count: seed.messages,
+		input_tokens: input,
+		output_tokens: output,
+		cache_read_tokens: Math.round(input * 3.2),
+		model: seed.model,
+		models_used: [seed.model],
+		summary: seed.summary,
+		tags: seed.tags ?? [],
+		status: isActive ? "active" : "completed",
+		content_hash: `sha256-fixture-${number}`,
+		content_protocol: "snapshot-v1",
+		event_head_hash: null,
+		is_shared: index === 2,
+		related_refs: null,
+		automated: seed.automated ?? false,
+		agent_id: seed.agent.id,
+	};
+}) satisfies (Schemas["SessionListItemResponse"] & { automated: boolean; agent_id: string })[];
+
+type Session = (typeof sessions)[number];
+
+function toSessionListItem(session: Session): Schemas["SessionListItemResponse"] {
+	const { automated: _automated, agent_id: _agentId, ...item } = session;
+	return item;
+}
+
+function sessionDetail(session: Session): GetOk<"/v1/sessions/{session_id}"> {
+	return { ...toSessionListItem(session), has_content: true };
+}
+
+function sessionTimeline(session: Session): Schemas["SessionTimelinePage"]["items"] {
+	const start = Date.parse(session.started_at);
+	const at = (offsetMinutes: number) => new Date(start + offsetMinutes * MINUTE).toISOString();
+	const model = session.model;
+	return [
+		{
+			kind: "message",
+			position: 0,
+			role: "user",
+			content: `${session.summary}. Start by looking at the relevant files and propose a plan before changing anything.`,
+			timestamp: at(0),
+		},
+		{
+			kind: "message",
+			position: 1,
+			role: "assistant",
+			model,
+			content:
+				"I'll start by mapping the current implementation.\n\n1. Read the entry points and tests\n2. Identify the smallest safe change\n3. Implement it and run the focused test suite",
+			timestamp: at(1),
+		},
+		{
+			kind: "tool_call",
+			position: 2,
+			call_id: "call-1",
+			name: "Bash",
+			arguments_json: JSON.stringify({ command: "rg -n 'TODO|FIXME' src | head -20" }),
+			model,
+			timestamp: at(2),
+		},
+		{
+			kind: "tool_result",
+			position: 3,
+			call_id: "call-1",
+			name: "Bash",
+			status: "completed",
+			content:
+				"src/queue/worker.ts:42: // TODO: retry with backoff\nsrc/webhooks/handler.ts:118: // FIXME: not idempotent",
+			timestamp: at(2),
+		},
+		{
+			kind: "message",
+			position: 4,
+			role: "assistant",
+			model,
+			content:
+				"Found two hotspots. The webhook handler re-processes duplicate deliveries, and the worker has no retry policy. I'll add an idempotency key table and exponential backoff.\n\n```ts\nawait queue.enqueue(event, { idempotencyKey: event.id });\n```",
+			timestamp: at(4),
+		},
+		{
+			kind: "message",
+			position: 5,
+			role: "user",
+			content: "Looks good. Please also add a regression test.",
+			timestamp: at(9),
+		},
+		{
+			kind: "message",
+			position: 6,
+			role: "assistant",
+			model,
+			content:
+				"Added `handler.test.ts` covering duplicate deliveries and transient failures. All 24 tests pass locally.",
+			timestamp: at(14),
+		},
+	];
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard stats + contribution graph
+// ---------------------------------------------------------------------------
+
+function contributionDays(days: number): Schemas["ContributionDayResponse"][] {
+	const random = seededRandom(20261005);
+	const result: Schemas["ContributionDayResponse"][] = [];
+	for (let offset = days - 1; offset >= 0; offset -= 1) {
+		const weekday = new Date(NOW - offset * DAY).getUTCDay();
+		const weekend = weekday === 0 || weekday === 6;
+		const recencyBoost = offset < 60 ? 1.6 : offset < 180 ? 1 : 0.55;
+		const roll = random();
+		const quiet = roll < (weekend ? 0.55 : 0.18) / recencyBoost;
+		const count = quiet ? 0 : Math.round((1 + random() * (weekend ? 4 : 11)) * recencyBoost);
+		const level = count === 0 ? 0 : count < 3 ? 1 : count < 7 ? 2 : count < 11 ? 3 : 4;
+		result.push({ date: dateKey(offset * DAY), count, level });
+	}
+	return result;
+}
+
+const contribution = contributionDays(365);
+
+function dashboardStats(): GetOk<"/v1/dashboard/stats"> {
+	const totalSessions = contribution.reduce((sum, day) => sum + day.count, 0);
+	const activeDays = contribution.filter((day) => day.count > 0).length;
+	let current = 0;
+	for (let i = contribution.length - 1; i >= 0 && (contribution[i]?.count ?? 0) > 0; i -= 1) {
+		current += 1;
+	}
+	let longest = 0;
+	let run = 0;
+	for (const day of contribution) {
+		run = day.count > 0 ? run + 1 : 0;
+		longest = Math.max(longest, run);
+	}
+	const lastWeek = sessions.filter(
+		(session) => NOW - Date.parse(session.last_activity_at) < 7 * DAY,
+	);
+	return {
+		total_sessions: totalSessions,
+		total_messages: totalSessions * 27,
+		total_tokens: totalSessions * 61_400,
+		active_days: activeDays,
+		current_streak: current,
+		longest_streak: longest,
+		peak_hour: 14,
+		favorite_model: "claude-opus-4-5",
+		projects_count: projects.length,
+		skills_count: skills.length,
+		memories_count: memories.length,
+		vault_count: vaults.length,
+		vault_keys_count: vaults.reduce((sum, vault) => sum + vault.item_count, 0),
+		connectors_count: connectorConnections.length,
+		manual_sessions_last_7_days: lastWeek.filter((session) => !session.automated).length,
+		automated_sessions_last_7_days: lastWeek.filter((session) => session.automated).length,
+		top_model_last_7_days: "claude-opus-4-5",
+		sessions_today: sessions.filter((session) => NOW - Date.parse(session.last_activity_at) < DAY)
+			.length,
+		contribution,
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Skills
+// ---------------------------------------------------------------------------
+
+type SkillSeed = {
+	key: string;
+	name: string;
+	description: string;
+	project: string;
+	authority: "agent_sync" | "cloud";
+	source: string;
+	agentTypes: string[];
+	files: number;
+	ageMs: number;
+	machine?: string;
+};
+
+const skillSeeds: SkillSeed[] = [
+	{
+		key: "code-review",
+		name: "Code Review",
+		description: "Review diffs for bugs, regressions and missing tests before merge.",
+		project: PROJECT.personal,
+		authority: "cloud",
+		source: "library",
+		agentTypes: ["claude_code", "codex"],
+		files: 3,
+		ageMs: 2 * DAY,
+	},
+	{
+		key: "release-notes",
+		name: "Release Notes",
+		description: "Draft user-facing release notes from merged pull requests.",
+		project: PROJECT.webapp,
+		authority: "cloud",
+		source: "github",
+		agentTypes: ["claude_code"],
+		files: 2,
+		ageMs: 6 * DAY,
+	},
+	{
+		key: "design-tokens",
+		name: "Design Tokens",
+		description: "Apply the Acme design token scale when editing UI components.",
+		project: PROJECT.webapp,
+		authority: "cloud",
+		source: "library",
+		agentTypes: ["claude_code", "codex"],
+		files: 4,
+		ageMs: 11 * DAY,
+	},
+	{
+		key: "api-conventions",
+		name: "API Conventions",
+		description: "Follow Acme REST naming, pagination and error envelope rules.",
+		project: PROJECT.webapp,
+		authority: "cloud",
+		source: "github",
+		agentTypes: ["claude_code", "codex"],
+		files: 2,
+		ageMs: 4 * DAY,
+	},
+	{
+		key: "deploy-checklist",
+		name: "Deploy Checklist",
+		description: "Run pre-deploy checks, tag the release and watch error rates.",
+		project: PROJECT.infra,
+		authority: "cloud",
+		source: "library",
+		agentTypes: ["openclaw", "codex"],
+		files: 1,
+		ageMs: 7 * DAY,
+	},
+	{
+		key: "interview-synthesis",
+		name: "Interview Synthesis",
+		description: "Turn customer interview transcripts into themes and quotes.",
+		project: PROJECT.research,
+		authority: "cloud",
+		source: "library",
+		agentTypes: ["hermes"],
+		files: 2,
+		ageMs: 12 * DAY,
+	},
+	{
+		key: "incident-triage",
+		name: "Incident Triage",
+		description: "Collect logs, summarize impact and open an incident doc.",
+		project: PROJECT.infra,
+		authority: "cloud",
+		source: "library",
+		agentTypes: ["openclaw", "codex"],
+		files: 2,
+		ageMs: 9 * DAY,
+	},
+	{
+		key: "competitor-digest",
+		name: "Competitor Digest",
+		description: "Summarize competitor pricing and feature changes into a weekly digest.",
+		project: PROJECT.research,
+		authority: "cloud",
+		source: "library",
+		agentTypes: ["hermes"],
+		files: 1,
+		ageMs: 15 * DAY,
+	},
+	{
+		key: "git-commit",
+		name: "Git Commit",
+		description: "Write conventional commit messages that explain the why.",
+		project: PROJECT.mbp,
+		authority: "agent_sync",
+		source: "local",
+		agentTypes: ["claude_code"],
+		files: 1,
+		ageMs: 3 * DAY,
+		machine: "Averys-MacBook-Pro.local",
+	},
+	{
+		key: "pdf-extract",
+		name: "PDF Extract",
+		description: "Extract tables and text from PDF documents into Markdown.",
+		project: PROJECT.mbp,
+		authority: "agent_sync",
+		source: "local",
+		agentTypes: ["claude_code"],
+		files: 5,
+		ageMs: 20 * DAY,
+		machine: "Averys-MacBook-Pro.local",
+	},
+];
+
+const projectById = new Map(projects.map((project) => [project.id, project]));
+
+function skillProjectFields(
+	seed: SkillSeed,
+): Pick<
+	Schemas["SkillSummaryResponse"],
+	"project_id" | "project_name" | "project_kind" | "machine_name" | "environment_id"
+> {
+	const project = projectById.get(seed.project);
+	const kind = project?.kind;
+	return {
+		project_id: seed.project,
+		project_name: project?.name ?? null,
+		project_kind:
+			kind === "environment" || kind === "personal" || kind === "workspace" ? kind : null,
+		machine_name: seed.machine ?? null,
+		environment_id: seed.machine ? AGENT.claude : null,
+	};
+}
+
+const skills = skillSeeds.map((seed, index) => ({
+	id: `5c111000-${String(index).padStart(4, "0")}-4000-8000-${String(index).padStart(12, "0")}`,
+	skill_key: seed.key,
+	name: seed.name,
+	description: seed.description,
+	version: 1 + (index % 3),
+	source: seed.source,
+	authority: seed.authority,
+	source_repo: seed.source === "github" ? "acme/agent-skills" : null,
+	agent_types: seed.agentTypes,
+	file_count: seed.files,
+	content_hash: `sha256-skill-${seed.key}`,
+	is_active: true,
+	created_at: ago(seed.ageMs + 10 * DAY),
+	updated_at: ago(seed.ageMs),
+	...skillProjectFields(seed),
+})) satisfies Schemas["SkillSummaryResponse"][];
+
+function skillContent(name: string, description: string) {
+	return `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n\n${description}\n\n## Steps\n\n1. Read the relevant context first.\n2. Make the smallest correct change.\n3. Verify with focused checks and report results.\n`;
+}
+
+function skillDetail(skill: (typeof skills)[number]): GetOk<"/v1/skills/{skill_key}"> {
+	return {
+		id: skill.id,
+		skill_key: skill.skill_key,
+		name: skill.name,
+		description: skill.description,
+		version: skill.version,
+		source: skill.source,
+		authority: skill.authority,
+		source_repo: skill.source_repo,
+		file_count: skill.file_count,
+		content: skillContent(skill.name, skill.description),
+		agent_types: skill.agent_types,
+		created_at: skill.created_at,
+		content_hash: skill.content_hash,
+		updated_at: skill.updated_at,
+		project_id: skill.project_id,
+		project_name: skill.project_name,
+		project_kind: skill.project_kind,
+		machine_name: skill.machine_name,
+		environment_id: skill.environment_id,
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Memories
+// ---------------------------------------------------------------------------
+
+const memorySeeds: [string, string, string[], number][] = [
+	["Avery prefers TypeScript strict mode and Biome for formatting.", "preference", ["tooling"], 1],
+	[
+		"The Acme API deploys via GitHub Actions to Fly.io; staging auto-deploys from main.",
+		"fact",
+		["deploy", "acme"],
+		3,
+	],
+	[
+		"Billing webhooks must be idempotent; Stripe retries deliveries for up to 3 days.",
+		"decision",
+		["billing"],
+		5,
+	],
+	["Use pnpm in the legacy monorepo and Bun everywhere else.", "preference", ["tooling"], 8],
+	["Weekly competitor digest goes out Monday 9 AM PT to #research.", "context", ["research"], 10],
+	["The design system uses an 8px spacing grid and Geist Sans.", "fact", ["design"], 13],
+	["On-call rotation hands off every Wednesday at noon.", "context", ["ops"], 17],
+	[
+		"Avoid adding new dependencies to the web app without a bundle-size check.",
+		"decision",
+		["web"],
+		21,
+	],
+];
+
+const memories = memorySeeds.map(([content, category, tags, days], index) => {
+	const source = sessions[index % sessions.length];
+	return {
+		id: `3e3e0000-000${index}-4000-8000-00000000000${index}`,
+		content,
+		category,
+		source: index % 3 === 0 ? "web" : "agent",
+		tags,
+		access_count: 4 + index * 3,
+		created_at: ago(days * DAY),
+		source_session_id: index % 3 === 0 ? null : (source?.id ?? null),
+		source_environment_id: index % 3 === 0 ? null : (source?.agent_id ?? null),
+		source_machine_name: index % 3 === 0 ? null : (source?.machine_name ?? null),
+	};
+}) satisfies Schemas["MemoryResponse"][];
+
+// ---------------------------------------------------------------------------
+// Vaults
+// ---------------------------------------------------------------------------
+
+const vaults = [
+	{
+		id: "7a017000-0001-4000-8000-000000000001",
+		slug: "personal",
+		name: "Personal",
+		project_id: PROJECT.personal,
+		project_ids: [PROJECT.personal],
+		is_owner: true,
+		item_count: 4,
+		created_at: ago(110 * DAY),
+	},
+	{
+		id: "7a017000-0002-4000-8000-000000000002",
+		slug: "acme-prod",
+		name: "Acme Production",
+		project_id: PROJECT.webapp,
+		project_ids: [PROJECT.webapp],
+		is_owner: true,
+		item_count: 6,
+		created_at: ago(60 * DAY),
+	},
+	{
+		id: "7a017000-0003-4000-8000-000000000003",
+		slug: "acme-staging",
+		name: "Acme Staging",
+		project_id: PROJECT.webapp,
+		project_ids: [PROJECT.webapp, PROJECT.infra],
+		is_owner: true,
+		item_count: 5,
+		created_at: ago(58 * DAY),
+	},
+	{
+		id: "7a017000-0004-4000-8000-000000000004",
+		slug: "research-apis",
+		name: "Research APIs",
+		project_id: PROJECT.research,
+		project_ids: [PROJECT.research],
+		is_owner: false,
+		item_count: 2,
+		created_at: ago(40 * DAY),
+	},
+] satisfies Schemas["VaultResponse"][];
+
+const vaultSections: Record<string, GetOk<"/v1/vault/{slug}/items">> = {
+	personal: {
+		"(default)": ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
+		github: ["GITHUB_TOKEN"],
+		npm: ["NPM_TOKEN"],
+	},
+	"acme-prod": {
+		"(default)": ["DATABASE_URL", "REDIS_URL"],
+		stripe: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
+		sentry: ["SENTRY_DSN", "SENTRY_AUTH_TOKEN"],
+	},
+	"acme-staging": {
+		"(default)": ["DATABASE_URL", "REDIS_URL"],
+		stripe: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
+		fly: ["FLY_API_TOKEN"],
+	},
+	"research-apis": { "(default)": ["SERPAPI_KEY", "FIRECRAWL_API_KEY"] },
+};
+
+// ---------------------------------------------------------------------------
+// Connectors
+// ---------------------------------------------------------------------------
+
+const connectorCatalog = [
+	["gmail", "Gmail", "Read, search and draft email.", "oauth"],
+	["github", "GitHub", "Issues, pull requests and repository contents.", "oauth"],
+	["slack", "Slack", "Send messages and read channels.", "oauth"],
+	["notion", "Notion", "Search and edit pages and databases.", "oauth"],
+	["linear", "Linear", "Create and triage issues.", "oauth"],
+	["googlecalendar", "Google Calendar", "Read and schedule events.", "oauth"],
+	["googledrive", "Google Drive", "Search and read files.", "oauth"],
+	["jira", "Jira", "Track issues and sprints.", "oauth"],
+	["figma", "Figma", "Inspect design files and comments.", "oauth"],
+	["stripe", "Stripe", "Look up customers, invoices and payments.", "api_key"],
+	["hubspot", "HubSpot", "CRM contacts, deals and companies.", "oauth"],
+	["airtable", "Airtable", "Read and write bases and records.", "api_key"],
+].map(([name, display, description, auth]) => ({
+	name: name ?? "",
+	display_name: display ?? "",
+	logo: `https://logos.composio.dev/api/${name}`,
+	description: description ?? "",
+	auth_type: auth ?? "oauth",
+	connect_disabled: false,
+	connect_disabled_reason: null,
+})) satisfies Schemas["ConnectorAvailableAppResponse"][];
+
+const connectorConnections = [
+	{
+		id: "c0cc0000-0001-4000-8000-000000000001",
+		app_name: "gmail",
+		status: "ACTIVE",
+		created_at: ago(45 * DAY),
+		is_disabled: false,
+		alias: null,
+		account_display: "avery@clawdi.dev",
+	},
+	{
+		id: "c0cc0000-0002-4000-8000-000000000002",
+		app_name: "github",
+		status: "ACTIVE",
+		created_at: ago(80 * DAY),
+		is_disabled: false,
+		alias: null,
+		account_display: "averychen",
+	},
+	{
+		id: "c0cc0000-0003-4000-8000-000000000003",
+		app_name: "slack",
+		status: "ACTIVE",
+		created_at: ago(30 * DAY),
+		is_disabled: false,
+		alias: "Acme workspace",
+		account_display: "acme.slack.com",
+	},
+	{
+		id: "c0cc0000-0004-4000-8000-000000000004",
+		app_name: "notion",
+		status: "ACTIVE",
+		created_at: ago(12 * DAY),
+		is_disabled: false,
+		alias: null,
+		account_display: "Acme Notion",
+	},
+	{
+		id: "c0cc0000-0005-4000-8000-000000000005",
+		app_name: "linear",
+		status: "EXPIRED",
+		created_at: ago(70 * DAY),
+		is_disabled: false,
+		alias: null,
+		account_display: "acme",
+	},
+] satisfies GetOk<"/v1/connectors">;
+
+const connectorTools = [
+	{
+		name: "SEARCH",
+		display_name: "Search",
+		description: "Search items in the connected account.",
+		is_deprecated: false,
+	},
+	{
+		name: "READ",
+		display_name: "Read item",
+		description: "Read a single item by identifier.",
+		is_deprecated: false,
+	},
+	{
+		name: "CREATE",
+		display_name: "Create item",
+		description: "Create a new item in the connected account.",
+		is_deprecated: false,
+	},
+] satisfies GetOk<"/v1/connectors/{app_name}/tools">;
+
+// ---------------------------------------------------------------------------
+// AI providers, channels, settings, misc
+// ---------------------------------------------------------------------------
+
+const readiness = {
+	credential_material: "available",
+	runtime_compatibility: { openclaw: true, hermes: true, codex: true },
+	deployable: true,
+	endpoint_reachability: "verified",
+	inference_verification: "verified",
+} satisfies Schemas["AiProviderReadiness"];
+
+const aiProviders = {
+	providers: [
+		{
+			configuration_mode: "native",
+			native_provider: "anthropic",
+			type: "anthropic",
+			label: "Anthropic",
+			base_url: "https://api.anthropic.com",
+			api_mode: "anthropic_messages",
+			managed_by: "user",
+			models: [
+				{ id: "claude-opus-4-5", label: "Claude Opus 4.5" },
+				{ id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
+			],
+			id: "a1a1a1a1-0001-4000-8000-000000000001",
+			provider_id: "anthropic",
+			scope: "user",
+			auth: { type: "api_key", source: "vault", ref: "vault://personal/ANTHROPIC_API_KEY" },
+			usable: true,
+			readiness,
+			created_at: ago(90 * DAY),
+			updated_at: ago(4 * DAY),
+		},
+		{
+			configuration_mode: "native",
+			native_provider: "openai",
+			type: "openai",
+			label: "OpenAI",
+			base_url: "https://api.openai.com/v1",
+			api_mode: "openai_responses",
+			managed_by: "user",
+			models: [
+				{ id: "gpt-5", label: "GPT-5" },
+				{ id: "gpt-5-codex", label: "GPT-5 Codex" },
+			],
+			id: "a1a1a1a1-0002-4000-8000-000000000002",
+			provider_id: "openai",
+			scope: "user",
+			auth: { type: "oauth_profile", provider: "openai-codex", profile: "default" },
+			usable: true,
+			readiness,
+			created_at: ago(60 * DAY),
+			updated_at: ago(9 * DAY),
+		},
+		{
+			configuration_mode: "catalog",
+			native_provider: "openrouter",
+			type: "openrouter",
+			label: "OpenRouter",
+			base_url: "https://openrouter.ai/api/v1",
+			api_mode: "openai_chat",
+			managed_by: "user",
+			models: [{ id: "deepseek/deepseek-chat", label: "DeepSeek V3" }],
+			id: "a1a1a1a1-0003-4000-8000-000000000003",
+			provider_id: "openrouter",
+			scope: "user",
+			auth: { type: "api_key", source: "env", ref: "OPENROUTER_API_KEY" },
+			usable: true,
+			readiness: { ...readiness, inference_verification: "not_tested" },
+			created_at: ago(20 * DAY),
+			updated_at: ago(20 * DAY),
+		},
+	],
+} satisfies GetOk<"/v1/ai-providers">;
+
+const channelAccounts = [
+	{
+		id: "c4a00000-0001-4000-8000-000000000001",
+		provider: "telegram",
+		name: "@acme_ops_bot",
+		status: "active",
+		visibility: "private",
+		has_provider_token: true,
+		webhook_url: "https://cloud-api.clawdi.ai/v1/channels/webhooks/telegram/c4a00000",
+		created_at: ago(35 * DAY),
+	},
+	{
+		id: "c4a00000-0002-4000-8000-000000000002",
+		provider: "discord",
+		name: "Acme Discord",
+		status: "active",
+		visibility: "private",
+		has_provider_token: true,
+		webhook_url: "https://cloud-api.clawdi.ai/v1/channels/webhooks/discord/c4a00000",
+		created_at: ago(18 * DAY),
+	},
+] satisfies GetOk<"/v1/channels">;
+
+const channelAgentLinks = channelAccounts.map((account, index) => ({
+	id: `11c00000-000${index}-4000-8000-00000000000${index}`,
+	account_id: account.id,
+	agent_id: index === 0 ? AGENT.openclaw : AGENT.hermes,
+	status: "active",
+	runtime_status: "connected",
+	created_at: account.created_at,
+	agent_token: null,
+	account,
+	binding_count: 2 - index,
+})) satisfies GetOk<"/v1/channels/agent-links">;
+
+const apiKeys = [
+	{
+		id: "a9100000-0001-4000-8000-000000000001",
+		label: "MacBook Pro CLI",
+		key_prefix: "clawdi_mbp4",
+		created_at: ago(90 * DAY),
+		last_used_at: ago(3 * MINUTE),
+		expires_at: null,
+		revoked_at: null,
+	},
+	{
+		id: "a9100000-0002-4000-8000-000000000002",
+		label: "devbox-01",
+		key_prefix: "clawdi_dvb1",
+		created_at: ago(40 * DAY),
+		last_used_at: ago(47 * MINUTE),
+		expires_at: null,
+		revoked_at: null,
+	},
+] satisfies GetOk<"/v1/auth/keys">;
+
+const members = [
+	{
+		id: "3e3be000-0001-4000-8000-000000000001",
+		user_id: USER_ID,
+		user_email: currentUser.email,
+		user_display: currentUser.name,
+		role: "owner",
+		joined_via: "owner",
+		joined_at: ago(64 * DAY),
+		resolved_owner_handle: "avery",
+	},
+	{
+		id: "3e3be000-0002-4000-8000-000000000002",
+		user_id: "8a1b2c3d-0000-4000-8000-000000000002",
+		user_email: "jordan@acme.dev",
+		user_display: "Jordan Lee",
+		role: "member",
+		joined_via: "invitation",
+		joined_at: ago(30 * DAY),
+		resolved_owner_handle: "avery",
+	},
+] satisfies GetOk<"/v1/projects/{project_id}/members">;
+
+function agentSkills(agentId: string): GetOk<"/v1/agents/{agent_id}/skills"> {
+	const projectIds = new Set((projectBindingsByAgent[agentId] ?? []).map((b) => b.project_id));
+	return {
+		agent_id: agentId,
+		skills: skills
+			.filter((skill) => projectIds.has(skill.project_id ?? ""))
+			.map((skill) => ({
+				skill_key: skill.skill_key,
+				name: skill.name,
+				description: skill.description,
+				source: "project",
+				authority: "cloud",
+				read_only: skill.authority === "agent_sync",
+				skill_id: skill.id,
+				project_id: skill.project_id,
+				content_hash: skill.content_hash,
+				source_identity: `project:${skill.project_id}:${skill.skill_key}`,
+				source_skill_key: skill.skill_key,
+				desired_state: "present",
+				convergence: "installed",
+				observed_at: ago(10 * MINUTE),
+			})),
+	};
+}
+
+// ---------------------------------------------------------------------------
+// HTTP plumbing
+// ---------------------------------------------------------------------------
+
+/** Non-200 reply; field names avoid overlapping any response schema. */
+class Reply {
+	constructor(
+		readonly httpStatus: number,
+		readonly payload: unknown,
+	) {}
+}
+
+const notFound = (detail: string) => new Reply(404, { detail });
+
+type Ctx = { params: Record<string, string>; url: URL; request: Request };
+type Route = {
+	method: string;
+	pattern: RegExp;
+	keys: string[];
+	template: string;
+	handler: (ctx: Ctx) => unknown;
+};
+
+const routes: Route[] = [];
+
+function compile(template: string) {
+	const keys: string[] = [];
+	const source = template
+		.split("/")
+		.map((segment) => {
+			const match = segment.match(/^\{(\w+)\}$/);
+			if (!match?.[1]) return segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+			keys.push(match[1]);
+			// Skill keys may contain slashes; let the last param be greedy.
+			return match[1] === "skill_key" ? "(.+)" : "([^/]+)";
+		})
+		.join("/");
+	return { pattern: new RegExp(`^${source}$`), keys };
+}
+
+/** Untyped route for mutations and endpoints outside the generated contract. */
+function on(method: string, template: string, handler: (ctx: Ctx) => unknown) {
+	routes.push({ method, template, handler, ...compile(template) });
+}
+
+function paginate<T>(items: readonly T[], url: URL, defaultSize = 25) {
+	const page = Math.max(1, Number(url.searchParams.get("page") ?? "1") || 1);
+	const pageSize = Math.max(
+		1,
+		Number(url.searchParams.get("page_size") ?? defaultSize) || defaultSize,
+	);
+	const start = (page - 1) * pageSize;
+	return {
+		items: items.slice(start, start + pageSize),
+		total: items.length,
+		page,
+		page_size: pageSize,
+	};
+}
+
+function matchesQuery(text: string | null | undefined, query: string | null) {
+	if (!query) return true;
+	return (text ?? "").toLowerCase().includes(query.toLowerCase());
+}
+
+async function readStringArray(request: Request, field: string): Promise<string[]> {
+	try {
+		const body: unknown = await request.json();
+		if (typeof body !== "object" || body === null || !(field in body)) return [];
+		const value: unknown = Reflect.get(body, field);
+		return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+	} catch {
+		return [];
+	}
+}
+
+function connectorMetadata(names: string[]): PostOk<"/v1/connectors/metadata:batchRead"> {
+	const known = connectorCatalog.filter((app) => names.includes(app.name));
+	return {
+		items: known.map(({ name, display_name, logo, description }) => ({
+			name,
+			display_name,
+			logo,
+			description,
+		})),
+		missing: names.filter((name) => !known.some((app) => app.name === name)),
+	};
+}
+
+/** Keep project counters consistent with the skill/vault/agent fixtures. */
+function withResourceCounts(project: Schemas["ProjectResponse"]): Schemas["ProjectResponse"] {
+	return {
+		...project,
+		skill_count: skills.filter((skill) => skill.project_id === project.id).length,
+		vault_count: vaults.filter((vault) => vault.project_ids.includes(project.id)).length,
+		agent_count: agents.filter((agent) =>
+			(projectBindingsByAgent[agent.id] ?? []).some((b) => b.project_id === project.id),
+		).length,
+	};
+}
+
+function findAgent(id: string | undefined) {
+	return agents.find((agent) => agent.id === id);
+}
+
+// ---------------------------------------------------------------------------
+// Routes: identity + settings
+// ---------------------------------------------------------------------------
+
+const getRoutes: { [P in GetPath]?: (ctx: Ctx) => GetOk<P> | Reply } = {
+	"/health": () => ({ status: "ok" }),
+	"/ready": () => ({ status: "ok" }),
+	"/v1/auth/me": () => currentUser,
+	"/v1/auth/keys": () => apiKeys,
+	"/v1/settings": () => ({ memory_provider: "builtin", mem0_api_key: null }),
+	"/v1/capabilities": () => ({ memory_providers: ["builtin", "mem0"] }),
+	"/v1/me/invitations": () => [],
+
+	// Agents ---------------------------------------------------------------------
+
+	"/v1/agents": ({ url }) => {
+		const projectId = url.searchParams.get("project_id");
+		if (!projectId) return agents;
+		return agents.filter((agent) =>
+			(projectBindingsByAgent[agent.id] ?? []).some((b) => b.project_id === projectId),
+		);
+	},
+	"/v1/agents/{agent_id}": ({ params }) =>
+		findAgent(params.agent_id) ?? notFound("Agent not found"),
+	"/v1/agents/{agent_id}/project-bindings": ({ params }) =>
+		findAgent(params.agent_id)
+			? (projectBindingsByAgent[params.agent_id ?? ""] ?? [])
+			: notFound("Agent not found"),
+	"/v1/agents/{agent_id}/skills": ({ params }) =>
+		findAgent(params.agent_id) ? agentSkills(params.agent_id ?? "") : notFound("Agent not found"),
+	"/v1/agents/{agent_id}/skill-references/{skill_id}": ({ params }) => {
+		const skill = skills.find((s) => s.id === params.skill_id || s.skill_key === params.skill_id);
+		return skill ? skillDetail(skill) : notFound("Skill not found");
+	},
+	"/v1/agents/{agent_id}/agent-plugins": () => ({ plugins: [] }),
+	"/v1/agents/{agent_id}/mcp": ({ params }) => ({
+		agent_id: params.agent_id ?? "",
+		availability: "unavailable",
+		servers: [],
+	}),
+	"/v1/plugin-catalog": () => ({ revision: "fixture-1", synced_at: ago(DAY), plugins: [] }),
+
+	// Sessions -------------------------------------------------------------------
+
+	"/v1/sessions": ({ url }) => {
+		const q = url.searchParams.get("q");
+		const agent = url.searchParams.get("agent");
+		const environmentId = url.searchParams.get("environment_id");
+		const automated = url.searchParams.get("automated");
+		const filtered = sessions.filter(
+			(session) =>
+				matchesQuery(session.summary, q) &&
+				(!agent || session.agent_name === agent || session.agent_id === agent) &&
+				(!environmentId || session.agent_id === environmentId) &&
+				(automated === null || String(session.automated) === automated),
+		);
+		return paginate(filtered.map(toSessionListItem), url);
+	},
+	"/v1/sessions/{session_id}": ({ params }) => {
+		const session = sessions.find(
+			(s) => s.id === params.session_id || s.local_session_id === params.session_id,
+		);
+		return session ? sessionDetail(session) : notFound("Session not found");
+	},
+	"/v1/sessions/{session_id}/messages": ({ params, url }) => {
+		const session = sessions.find((s) => s.id === params.session_id);
+		if (!session) return notFound("Session not found");
+		const view = url.searchParams.get("view") ?? "messages";
+		const include = new Set(url.searchParams.getAll("include"));
+		const items = sessionTimeline(session).filter((item) => {
+			const category = item.kind === "message" ? item.role : "tools";
+			if (view === "messages") return item.kind === "message";
+			if (view === "user" || view === "assistant" || view === "tools") return category === view;
+			return include.size === 0 || include.has(category);
+		});
+		const offset = Math.max(0, Number(url.searchParams.get("offset") ?? "0") || 0);
+		const limit = Math.max(1, Number(url.searchParams.get("limit") ?? "100") || 100);
+		const direction = url.searchParams.get("direction");
+		const ordered = direction === "desc" ? [...items].reverse() : items;
+		return {
+			// Must match the web client's `snapshot:<content_hash>` revision fence.
+			content_revision: `snapshot:${session.content_hash}`,
+			items: ordered.slice(offset, offset + limit),
+			total: items.length,
+			offset,
+			limit,
+		};
+	},
+	"/v1/sessions/{session_id}/shares": () => ({ shares: [] }),
+	"/v1/sessions/{session_id}/permissions": () => ({ permissions: [] }),
+	"/v1/session-shares": ({ url }) => paginate([], url),
+
+	// Dashboard ------------------------------------------------------------------
+
+	"/v1/dashboard/stats": () => dashboardStats(),
+	"/v1/dashboard/contribution": ({ url }) => {
+		const days = Number(url.searchParams.get("days") ?? "365") || 365;
+		return contribution.slice(-days);
+	},
+
+	// Projects -------------------------------------------------------------------
+
+	"/v1/projects": () => projects.map(withResourceCounts),
+	"/v1/projects/default": () => ({ project_id: PROJECT.personal }),
+	"/v1/projects/{project_id}": ({ params }) => {
+		const project = projectById.get(params.project_id ?? "");
+		return project ? withResourceCounts(project) : notFound("Project not found");
+	},
+	"/v1/projects/{project_id}/members": () => members,
+	"/v1/projects/{project_id}/invitations": () => [],
+	"/v1/projects/{project_id}/share-links": () => [],
+	"/v1/projects/{project_id}/skills/{skill_key}": ({ params }) => {
+		const skill = skills.find(
+			(s) =>
+				s.skill_key === params.skill_key &&
+				(s.project_id === params.project_id || !params.project_id),
+		);
+		return skill ? skillDetail(skill) : notFound("Skill not found");
+	},
+
+	// Skills ---------------------------------------------------------------------
+
+	"/v1/skills": ({ url }) => {
+		const q = url.searchParams.get("q");
+		const projectId = url.searchParams.get("project_id");
+		const includeContent = url.searchParams.get("include_content") === "true";
+		const filtered = skills
+			.filter((skill) => matchesQuery(`${skill.name} ${skill.description}`, q))
+			.filter((skill) => !projectId || skill.project_id === projectId)
+			.map((skill) =>
+				includeContent ? { ...skill, content: skillContent(skill.name, skill.description) } : skill,
+			);
+		return paginate(filtered, url);
+	},
+	"/v1/skills/{skill_key}": ({ params }) => {
+		const skill = skills.find((s) => s.skill_key === params.skill_key);
+		return skill ? skillDetail(skill) : notFound("Skill not found");
+	},
+
+	// Memories -------------------------------------------------------------------
+
+	"/v1/memories": ({ url }) => {
+		const q = url.searchParams.get("q");
+		const category = url.searchParams.get("category");
+		return paginate(
+			memories.filter((m) => matchesQuery(m.content, q) && (!category || m.category === category)),
+			url,
+		);
+	},
+	"/v1/memories/{memory_id}": ({ params }) =>
+		memories.find((m) => m.id === params.memory_id) ?? notFound("Memory not found"),
+
+	// Vaults ---------------------------------------------------------------------
+
+	"/v1/vault": ({ url }) => {
+		const q = url.searchParams.get("q");
+		const projectId = url.searchParams.get("project_id");
+		return paginate(
+			vaults.filter(
+				(vault) =>
+					matchesQuery(vault.name, q) && (!projectId || vault.project_ids.includes(projectId)),
+			),
+			url,
+		);
+	},
+	"/v1/vault/detail": ({ url }) => {
+		const vaultId = url.searchParams.get("vault_id");
+		const slug = url.searchParams.get("slug");
+		const vault = vaults.find(
+			(candidate) =>
+				(slug || vaultId) &&
+				(!slug || candidate.slug === slug) &&
+				(!vaultId || candidate.id === vaultId),
+		);
+		return vault ?? notFound("Vault not found");
+	},
+	"/v1/vault/requests": () => [],
+	"/v1/vault/{slug}/items": ({ params }) =>
+		vaultSections[params.slug ?? ""] ?? notFound("Vault not found"),
+
+	// Connectors -----------------------------------------------------------------
+
+	"/v1/connectors": () => connectorConnections,
+	"/v1/connectors/available": ({ url }) => {
+		const search = url.searchParams.get("search");
+		return paginate(
+			connectorCatalog.filter((app) => matchesQuery(`${app.display_name} ${app.name}`, search)),
+			url,
+			24,
+		);
+	},
+	"/v1/connectors/available/{app_name}": ({ params }) =>
+		connectorCatalog.find((app) => app.name === params.app_name) ?? notFound("App not found"),
+	"/v1/connectors/{app_name}/tools": () => connectorTools,
+	"/v1/connectors/{app_name}/auth-fields": () => ({
+		auth_scheme: "OAUTH2",
+		expected_input_fields: [],
+	}),
+
+	// AI providers + channels -----------------------------------------------------
+
+	"/v1/ai-providers": () => aiProviders,
+	"/v1/ai-providers/{provider_id}": ({ params }) =>
+		aiProviders.providers.find(
+			(p) => p.provider_id === params.provider_id || p.id === params.provider_id,
+		) ?? notFound("Provider not found"),
+	"/v1/channels": () => channelAccounts,
+	"/v1/channels/agent-links": () => channelAgentLinks,
+	"/v1/channels/{account_id}": ({ params }) =>
+		channelAccounts.find((account) => account.id === params.account_id) ??
+		notFound("Channel not found"),
+	"/v1/channels/{account_id}/agent-links": ({ params }) =>
+		channelAgentLinks
+			.filter((link) => link.account_id === params.account_id)
+			.map(({ account: _account, binding_count: _count, ...link }) => link),
+	"/v1/channels/{account_id}/bindings": () => [],
+	"/v1/channels/{account_id}/activity": () => ({ items: [] }),
+	"/v1/channels/health": () => ({
+		items: channelAccounts.map((account) => ({
+			account_id: account.id,
+			provider: account.provider,
+			name: account.name,
+			visibility: account.visibility,
+			channel_status: account.status,
+			health_status: "ok",
+			pending_inbox: 0,
+			pending_deliveries: 0,
+			in_progress_deliveries: 0,
+			failed_deliveries: 0,
+			last_message_at: ago(3 * HOUR),
+		})),
+	}),
+	"/v1/channels/bot-pool": () => ({ providers: {} }),
+};
+
+for (const [template, handler] of Object.entries(getRoutes)) {
+	routes.push({ method: "GET", template, handler, ...compile(template) });
+}
+
+on("PATCH", "/v1/agents/order", () => agents);
+on("POST", "/v1/connectors/metadata:batchRead", async ({ request }) =>
+	connectorMetadata(await readStringArray(request, "names")),
+);
+on(
+	"PATCH",
+	"/v1/agents/{agent_id}",
+	({ params }) => findAgent(params.agent_id) ?? notFound("Agent not found"),
+);
+
+// Live session streaming is not simulated; the web client treats 404 as terminal.
+on(
+	"GET",
+	"/v1/sessions/{session_id}/content-events",
+	() => new Reply(404, { detail: "Not streamed" }),
+);
+
+// Generic mutation fallbacks: plausible success, nothing persisted.
+for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+	on(method, "/v1/{rest}", ({ request }) =>
+		request.method === "DELETE" ? new Reply(204, null) : { ok: true },
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Server
+// ---------------------------------------------------------------------------
+
+function corsHeaders(request: Request): Record<string, string> {
+	return {
+		"Access-Control-Allow-Origin": request.headers.get("origin") ?? "*",
+		"Access-Control-Allow-Credentials": "true",
+		"Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+		"Access-Control-Allow-Headers":
+			request.headers.get("access-control-request-headers") ?? "authorization, content-type",
+		"Access-Control-Max-Age": "600",
+		Vary: "Origin",
+	};
+}
+
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+
+function json(request: Request, status: number, body: unknown) {
+	const headers = corsHeaders(request);
+	if (status === 204) return new Response(null, { status, headers });
+	const elapsed = Date.now() - NOW;
+	const text = JSON.stringify(body, (_key, value: unknown) =>
+		typeof value === "string" && ISO_TIMESTAMP.test(value)
+			? new Date(Date.parse(value) + elapsed).toISOString()
+			: value,
+	);
+	return new Response(text, {
+		status,
+		headers: { ...headers, "Content-Type": "application/json" },
+	});
+}
+
+const PUBLIC_PATHS = new Set(["/health", "/ready"]);
+
+function resolve(method: string, pathname: string) {
+	for (const route of routes) {
+		if (route.method !== method) continue;
+		// The generic `/v1/{rest}` fallback should accept nested paths.
+		const match =
+			route.template === "/v1/{rest}"
+				? pathname.match(/^\/v1\/(.+)$/)
+				: pathname.match(route.pattern);
+		if (!match) continue;
+		const params: Record<string, string> = {};
+		route.keys.forEach((key, index) => {
+			params[key] = decodeURIComponent(match[index + 1] ?? "");
+		});
+		return { route, params };
+	}
+	return null;
+}
+
+const server = Bun.serve({
+	port,
+	hostname,
+	async fetch(request) {
+		const url = new URL(request.url);
+		if (request.method === "OPTIONS") {
+			return new Response(null, { status: 204, headers: corsHeaders(request) });
+		}
+		const authorization = request.headers.get("authorization") ?? "";
+		if (!PUBLIC_PATHS.has(url.pathname) && !/^Bearer\s+\S+/i.test(authorization)) {
+			return json(request, 401, { detail: "Missing bearer token" });
+		}
+		const resolved = resolve(request.method, url.pathname);
+		if (!resolved) {
+			console.error(`[fixture-api] UNHANDLED ${request.method} ${url.pathname}${url.search}`);
+			return json(request, 404, { detail: `No fixture for ${request.method} ${url.pathname}` });
+		}
+		try {
+			const result = await resolved.route.handler({ params: resolved.params, url, request });
+			if (result instanceof Reply) {
+				if (result.httpStatus >= 400) {
+					console.error(
+						`[fixture-api] fixture ${result.httpStatus} ${request.method} ${url.pathname}`,
+					);
+				}
+				return json(request, result.httpStatus, result.payload);
+			}
+			return json(request, 200, result);
+		} catch (error) {
+			console.error(`[fixture-api] 500 ${request.method} ${url.pathname}`, error);
+			return json(request, 500, { detail: "Fixture handler failed" });
+		}
+	},
+});
+
+console.log(`[fixture-api] listening on http://${hostname}:${server.port}`);
+console.log(
+	`[fixture-api] ${agents.length} agents, ${sessions.length} sessions, ${projects.length} projects, ${skills.length} skills`,
+);
