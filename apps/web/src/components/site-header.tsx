@@ -1,5 +1,7 @@
 "use client";
 
+import { siteHeaderClasses } from "@clawdi/shared/ui";
+
 import { lazy, type ReactNode, Suspense } from "react";
 import { useAccountDataIdentity } from "@/components/account-suspension-boundary";
 import { AppBreadcrumb } from "@/components/app-breadcrumb";
@@ -28,20 +30,17 @@ export function SiteHeader({ actions }: { actions?: ReactNode }) {
 	return (
 		<header
 			data-clawdi-window-drag-region
-			className="sticky top-0 z-20 flex h-(--header-height) shrink-0 items-center gap-2 border-b bg-background"
+			className={`${siteHeaderClasses.stickyTop0Z20} ${siteHeaderClasses.pageSurface}`}
 		>
-			<div className="flex w-full min-w-0 items-center gap-1 px-4 lg:gap-2 lg:px-6">
-				<SidebarTrigger className="-ml-1 md:hidden" />
-				<Separator
-					orientation="vertical"
-					className="mx-2 h-4 data-vertical:self-center md:hidden"
-				/>
-				<div className="min-w-8 flex-1 overflow-hidden">
+			<div className={siteHeaderClasses.flexWFullMinW}>
+				<SidebarTrigger className={siteHeaderClasses.ml1MdHidden} />
+				<Separator orientation="vertical" className={siteHeaderClasses.mx2H4Data} />
+				<div className={siteHeaderClasses.minW8Flex1}>
 					<AppBreadcrumb />
 				</div>
 				{actions}
 				{!ready ? (
-					<Skeleton className="size-8 rounded-md" />
+					<Skeleton className={siteHeaderClasses.size8RoundedMd} />
 				) : HostedNotificationCenter ? (
 					<Suspense fallback={<NotificationCenter />}>
 						<HostedNotificationCenter />

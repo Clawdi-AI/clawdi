@@ -6,7 +6,6 @@ import {
 } from "@clawdi/shared/api";
 import {
 	connectedAgentDetailClasses as detail,
-	RESOURCE_TINT_CLASSES,
 	agentOverviewCapabilitiesClasses as styles,
 } from "@clawdi/shared/ui";
 import {
@@ -16,6 +15,7 @@ import {
 	daemonStatusVisual,
 	fetchAgentProjectSkills,
 	fetchAgentProjectVaults,
+	RESOURCE_TINT_CLASSES,
 	relativeTime,
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";

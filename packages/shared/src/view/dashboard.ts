@@ -18,7 +18,7 @@ export const LIBRARY_ROW_IDS = ["projects", "skills", "vaults", "connectors"] as
 export function dashboardResources(stats: DashboardStats) {
 	return LIBRARY_ROW_IDS.map((id) => {
 		const definition = getProjectResourceDefinition(id);
-		return { definition, count: projectResourceCount(definition, stats, stats.projects_count) };
+		return { id, definition, count: projectResourceCount(definition, stats, stats.projects_count) };
 	});
 }
 
@@ -33,4 +33,34 @@ export const DASHBOARD_COPY = {
 	libraryTitle: "Library",
 	libraryError: "Couldn't load resources",
 	noActivity: "No activity data yet.",
+} as const;
+
+export function currentDaypart(now = new Date()): "morning" | "afternoon" | "evening" {
+	const hour = now.getHours();
+	return hour < 5 ? "evening" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
+}
+
+export function dashboardGreeting(
+	daypart: ReturnType<typeof currentDaypart>,
+	firstName?: string | null,
+) {
+	return `Good ${daypart}${firstName ? `, ${firstName}` : ""}`;
+}
+
+export const OVERVIEW_COPY = {
+	title: "Overview",
+	activity: "Activity",
+	activityError: "Couldn't load activity",
+	recentSessions: "Recent sessions",
+	recentSessionsError: "Couldn't load recent sessions",
+	manualSessionsEmpty: "No manual sessions yet. Once you start a conversation, it'll show up here.",
+	viewAll: "View all",
+	connectAnother: "Connect another machine",
+	addAgent: "Add agent",
+	agentsError: "Couldn't load agents",
+	cloudInventoryError: "Clawdi Cloud inventory unavailable",
+	agentsEmpty: "No Agents yet",
+	agentsEmptyDescription: "Connect an Agent to see it here.",
+	deploy: "Deploy on Clawdi",
+	connect: "Connect an Agent on your machine",
 } as const;

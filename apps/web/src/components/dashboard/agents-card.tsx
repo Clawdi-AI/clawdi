@@ -1,11 +1,12 @@
 "use client";
+
 import { agentsCardClasses } from "@clawdi/shared/ui";
 import {
 	type AgentCardStatusVisual,
 	type AgentTile,
-	agentSurfaceCopy,
 	agentTileCardProjection,
 	compareAgentTiles,
+	OVERVIEW_COPY,
 } from "@clawdi/shared/view";
 
 import { Link } from "@tanstack/react-router";
@@ -58,14 +59,10 @@ export function AgentsCard({
 
 	// Tiles start flush with the column, level with the cards on the right.
 	return (
-		<section className={agentsCardClasses.spaceY}>
-			<div className={agentsCardClasses.spaceY}>
+		<section className={agentsCardClasses.spaceY3}>
+			<div className={agentsCardClasses.spaceY3}>
 				{error ? (
-					<ApiErrorPanel
-						error={error}
-						onRetry={onRetry}
-						title={agentSurfaceCopy.couldnTLoadAgents}
-					/>
+					<ApiErrorPanel error={error} onRetry={onRetry} title={OVERVIEW_COPY.agentsError} />
 				) : isLoading ? (
 					<div className={ENTITY_GRID_CLASS}>
 						{Array.from({ length: 4 }).map((_, i) => (
@@ -86,8 +83,8 @@ export function AgentsCard({
 					// the message — render no empty state to avoid contradicting it.
 					<EmptyState
 						variant="inset"
-						title={agentSurfaceCopy.noAgentsYet}
-						description={agentSurfaceCopy.connectAnAgentToSeeItHere}
+						title={OVERVIEW_COPY.agentsEmpty}
+						description={OVERVIEW_COPY.agentsEmptyDescription}
 					/>
 				)}
 				{hostedStatus?.error ? (
@@ -122,7 +119,7 @@ export function HostedUnavailableBanner({
 			error={error}
 			onRetry={onRetry}
 			normalizer={normalizer}
-			title="Clawdi Cloud inventory unavailable"
+			title={OVERVIEW_COPY.cloudInventoryError}
 		/>
 	);
 }
@@ -160,25 +157,25 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 
 	return (
 		<div
-			className={cn(ENTITY_CARD_BASE, agentsCardClasses.tile)}
+			className={cn(ENTITY_CARD_BASE, agentsCardClasses.groupRelativeZ0H)}
 			title={tile.href ? undefined : tile.name}
 		>
 			<EntityHeader
 				icon={<AgentIcon agent={tile.agentType} size="lg" avatarUrl={tile.avatarUrl} />}
 				title={
-					<span className={agentsCardClasses.flexMinWItems}>
+					<span className={agentsCardClasses.flexMinW0Items}>
 						{statusVisual ? <AgentStatusDot visual={statusVisual} /> : null}
-						<span className={agentsCardClasses.minWTruncate} title={tile.name}>
+						<span className={agentsCardClasses.minW0Truncate} title={tile.name}>
 							{tile.name}
 						</span>
 					</span>
 				}
 				meta={meta.length > 0 ? meta : undefined}
 				titleAdornment={sourcePill}
-				className={agentsCardClasses.minWFlex}
+				className={agentsCardClasses.minW0Flex1}
 			/>
 			{tile.external ? (
-				<ArrowUpRight aria-hidden className={agentsCardClasses.pointerEventsNoneAbsolute} />
+				<ArrowUpRight aria-hidden className={agentsCardClasses.pointerEventsNoneAbsoluteRight} />
 			) : null}
 			{tile.href ? (
 				tile.external ? (
@@ -212,9 +209,9 @@ function AgentStatusDot({ visual }: { visual: AgentCardStatusVisual }) {
 	return (
 		<span
 			title={`Status: ${visual.label}. ${visual.tooltip}`}
-			className={agentsCardClasses.inlineFlexShrinkItems}
+			className={agentsCardClasses.inlineFlexShrink0Items}
 		>
-			<span aria-hidden className={cn(agentsCardClasses.dot, visual.dotClass)} />
+			<span aria-hidden className={cn(agentsCardClasses.size15RoundedFull, visual.dotClass)} />
 			<span className={agentsCardClasses.srOnly}>{visual.label}</span>
 		</span>
 	);

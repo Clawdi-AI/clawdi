@@ -1,5 +1,7 @@
+import { apiKeysPanelClasses } from "@clawdi/shared/ui";
 import { useI18n } from "../i18n";
-import { AppTextInput, AppView } from "../ui/primitives";
+import { ClerkInput } from "../ui/auth/clerk-form";
+import { WebView } from "../ui/web-layout";
 import type { SignupDetailField, SignupDetails } from "./signup-details";
 
 export function SignupDetailsForm({
@@ -15,9 +17,9 @@ export function SignupDetailsForm({
 }) {
 	const t = useI18n();
 	return (
-		<AppView className="gap-4">
+		<WebView recipe={apiKeysPanelClasses.form}>
 			{fields.map((field) => (
-				<AppTextInput
+				<ClerkInput
 					key={field}
 					accessibilityLabel={t(`signupDetails.${field}`)}
 					placeholder={t(`signupDetails.${field}`)}
@@ -43,9 +45,8 @@ export function SignupDetailsForm({
 								? "phone-pad"
 								: "default"
 					}
-					className="rounded-2xl bg-card px-4 py-4 text-base text-foreground"
 				/>
 			))}
-		</AppView>
+		</WebView>
 	);
 }

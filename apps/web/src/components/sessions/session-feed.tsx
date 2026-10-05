@@ -1,5 +1,6 @@
 "use client";
-import { agentRecentSessionClasses } from "@clawdi/shared/ui";
+
+import { sessionFeedClasses } from "@clawdi/shared/ui";
 
 import {
 	agentIdentity,
@@ -33,10 +34,9 @@ type SessionMetadataItem = {
 
 // Title, metadata, padding and borders occupy 80px on narrow layouts; wide
 // layouts use one metadata line and the established 66px minimum.
-const SESSION_ROW_HEIGHT_CLASS =
-	"[--session-row-height:--spacing(20)] @3xl/main:[--session-row-height:--spacing(16.5)]";
-const SESSION_CARD_CLASS = cn(SESSION_ROW_HEIGHT_CLASS, agentRecentSessionClasses.card);
-const OVERVIEW_SESSION_LIST_CLASS = cn(SESSION_ROW_HEIGHT_CLASS, agentRecentSessionClasses.list);
+const SESSION_ROW_HEIGHT_CLASS = sessionFeedClasses.sessionRowHeightSpacing20;
+const SESSION_CARD_CLASS = cn(SESSION_ROW_HEIGHT_CLASS, sessionFeedClasses.flexMinHSessionRow);
+const OVERVIEW_SESSION_LIST_CLASS = cn(SESSION_ROW_HEIGHT_CLASS, sessionFeedClasses.gridGap2);
 
 function SessionCardSkeleton({ testId }: { testId?: string }) {
 	return (
@@ -45,14 +45,14 @@ function SessionCardSkeleton({ testId }: { testId?: string }) {
 			aria-hidden="true"
 			className={cn(ENTITY_CARD_BASE, SESSION_CARD_CLASS)}
 		>
-			<Skeleton className="size-8 shrink-0 rounded-md" />
-			<div className="min-w-0 flex-1">
-				<div className="text-sm leading-5 font-semibold">
-					<Skeleton className="h-lh w-4/5" />
+			<Skeleton className={sessionFeedClasses.size8Shrink0Rounded} />
+			<div className={sessionFeedClasses.minW0Flex1}>
+				<div className={sessionFeedClasses.textSmLeading5Font}>
+					<Skeleton className={sessionFeedClasses.hLhW45} />
 				</div>
-				<div className="mt-0.5 min-h-8 text-xs leading-4 @3xl/main:min-h-4">
-					<Skeleton className="h-lh w-1/2" />
-					<Skeleton className="h-lh w-1/3 @3xl/main:hidden" />
+				<div className={sessionFeedClasses.mt05MinH}>
+					<Skeleton className={sessionFeedClasses.hLhW12} />
+					<Skeleton className={sessionFeedClasses.hLhW13} />
 				</div>
 			</div>
 		</div>
@@ -108,7 +108,7 @@ export function OverviewSessionList({
 					className={cn(
 						ENTITY_CARD_BASE,
 						SESSION_CARD_CLASS,
-						agentRecentSessionClasses.placeholder,
+						sessionFeedClasses.justifyCenterBorderDashedBg,
 					)}
 				>
 					{visibleSessions.length === 0 && index === 0 ? emptyMessage : null}
@@ -152,7 +152,7 @@ export function SessionFeed({
 }) {
 	if (isLoading) {
 		return (
-			<div className="flex flex-col gap-2">
+			<div className={sessionFeedClasses.flexFlexColGap2}>
 				{Array.from({ length: 5 }).map((_, index) => (
 					<SessionCardSkeleton key={index} />
 				))}
@@ -166,7 +166,7 @@ export function SessionFeed({
 
 	if (!grouped) {
 		return (
-			<div className="flex flex-col gap-2">
+			<div className={sessionFeedClasses.flexFlexColGap2}>
 				{sessions.map((session) => (
 					<SessionCard
 						key={session.id}
@@ -184,11 +184,11 @@ export function SessionFeed({
 	const groups = groupSessionsByRecency(sessions, groupBy);
 
 	return (
-		<div className="flex flex-col gap-5">
+		<div className={sessionFeedClasses.flexFlexColGap5}>
 			{groups.map((group) => (
-				<section key={group.key} className="flex flex-col gap-2">
+				<section key={group.key} className={sessionFeedClasses.flexFlexColGap2}>
 					<SectionLabel>{group.label}</SectionLabel>
-					<div className="flex flex-col gap-2">
+					<div className={sessionFeedClasses.flexFlexColGap2}>
 						{group.items.map((session) => (
 							<SessionCard
 								key={session.id}
@@ -231,7 +231,7 @@ export function SessionCard({
 					key: "project",
 					value: projectFolder,
 					title: session.project_path ?? undefined,
-					className: "font-mono",
+					className: String(sessionFeedClasses.fontMono),
 				}
 			: null,
 		{
@@ -246,24 +246,24 @@ export function SessionCard({
 		},
 	].filter((item): item is SessionMetadataItem => item !== null);
 	return (
-		<article data-testid="session-card" className="min-w-0">
+		<article data-testid="session-card" className={sessionFeedClasses.minW0}>
 			<Link
 				{...link}
 				aria-label={`Open session ${title}`}
 				className={cn(
 					ENTITY_CARD_BASE,
 					SESSION_CARD_CLASS,
-					"group hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-					isAutomated && "bg-muted/30",
+					sessionFeedClasses.groupHoverBgMuted50,
+					isAutomated && sessionFeedClasses.bgMuted30,
 				)}
 			>
-				<span data-testid="session-card-avatar" className="flex shrink-0">
+				<span data-testid="session-card-avatar" className={sessionFeedClasses.flexShrink0}>
 					<AgentIcon agent={session.agent_type} size="lg" />
 				</span>
-				<span data-testid="session-card-text" className={agentRecentSessionClasses.body}>
+				<span data-testid="session-card-text" className={sessionFeedClasses.w0MinW0}>
 					<span
 						data-testid="session-card-title"
-						className={agentRecentSessionClasses.title}
+						className={sessionFeedClasses.blockTruncateTextSmLeading}
 						title={title}
 					>
 						{title}
@@ -272,18 +272,21 @@ export function SessionCard({
 						<SessionSearchMatchExcerpt
 							match={session.search_match}
 							query={searchQuery}
-							className="mt-0.5 line-clamp-2 text-xs leading-4 text-foreground/75"
+							className={sessionFeedClasses.mt05LineClamp}
 						/>
 					) : null}
-					<span data-testid="session-card-meta" className={agentRecentSessionClasses.meta}>
+					<span data-testid="session-card-meta" className={sessionFeedClasses.mt05FlexMin}>
 						{metadata.map((item, index) => (
-							<span key={item.key} className="inline-flex min-w-0 max-w-full items-center">
+							<span key={item.key} className={sessionFeedClasses.inlineFlexMinW0}>
 								{index > 0 ? (
-									<span className="mx-1.5 shrink-0 text-muted-foreground/40" aria-hidden="true">
+									<span className={sessionFeedClasses.mx15Shrink0} aria-hidden="true">
 										·
 									</span>
 								) : null}
-								<span className={cn("min-w-0 truncate", item.className)} title={item.title}>
+								<span
+									className={cn(sessionFeedClasses.minW0Truncate, item.className)}
+									title={item.title}
+								>
 									{item.value}
 								</span>
 							</span>

@@ -34,10 +34,11 @@ function Card({
 	...props
 }: ViewProps & ClassName & { size?: CardSize }) {
 	const classes = resolveWebClasses(cardClassName, { "data-[size=sm]": size === "sm" });
+	const own = resolveWebClasses(className ?? "");
 	return (
 		<CardSizeContext.Provider value={size}>
-			<TextClassContext.Provider value={classes.text}>
-				<AppView className={cn(classes.view, spacing[size].root, className)} {...props} />
+			<TextClassContext.Provider value={cn(classes.text, own.text)}>
+				<AppView className={cn(classes.view, spacing[size].root, own.view)} {...props} />
 			</TextClassContext.Provider>
 		</CardSizeContext.Provider>
 	);
@@ -46,7 +47,17 @@ function Card({
 function CardHeader({ className, ...props }: ViewProps & ClassName) {
 	const size = useContext(CardSizeContext);
 	const classes = resolveWebClasses(cardHeaderClassName, sizeState(size));
-	return <AppView className={cn(classes.view, spacing[size].inset, className)} {...props} />;
+	const borderPadding = /(^|\s)border-b(\s|$)/.test(className ?? "")
+		? size === "sm"
+			? "pb-4"
+			: "pb-6"
+		: undefined;
+	return (
+		<AppView
+			className={cn(classes.view, spacing[size].inset, borderPadding, className)}
+			{...props}
+		/>
+	);
 }
 
 function CardTitle({ className, ...props }: React.ComponentProps<typeof Text>) {

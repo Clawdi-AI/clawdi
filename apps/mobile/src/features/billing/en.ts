@@ -1,4 +1,7 @@
 export const billingEn = {
+	paymentMethodsUnavailable: "Payment method management is not available in this build.",
+	autoReloadEnabled: "Enabled",
+	autoReloadDisabled: "Disabled",
 	updating: "Updating subscription",
 	processing: "Your request is still processing",
 	unpaid: "Unpaid",

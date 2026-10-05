@@ -1,12 +1,9 @@
 import { resolveAgentWorkspaceProjectId } from "@clawdi/shared/api";
-import {
-	HERO_GRID_CLASS,
-	workspaceSkillsPanelClasses as panel,
-	RESOURCE_TINT_CLASSES,
-} from "@clawdi/shared/ui";
+import { HERO_GRID_CLASS, workspaceSkillsPanelClasses as panel } from "@clawdi/shared/ui";
 import {
 	agentSurfaceCopy,
 	fetchAgentProjectSkills,
+	RESOURCE_TINT_CLASSES,
 	workspaceSkillInstallCommand,
 	workspaceSkillRemoveCommand,
 } from "@clawdi/shared/view";

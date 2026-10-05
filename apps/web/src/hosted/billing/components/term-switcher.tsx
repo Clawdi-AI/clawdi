@@ -1,5 +1,6 @@
 "use client";
 
+import { termSwitcherClasses } from "@clawdi/shared/ui";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { BillingOffer } from "@/hosted/billing/contracts";
 import { billingTermLabel } from "@/hosted/billing/format";
@@ -32,20 +33,18 @@ export function TermSwitcher({
 				const offer = sorted.find((item) => String(item.billing_term_months) === next);
 				if (offer) onChange(offer.billing_term_months);
 			}}
-			className="w-full"
+			className={termSwitcherClasses.group}
 		>
-			<TabsList className="w-full" aria-label={ariaLabel}>
+			<TabsList className={termSwitcherClasses.group} aria-label={ariaLabel}>
 				{sorted.map((offer) => (
 					<TabsTrigger
 						key={offer.billing_term_months}
 						value={String(offer.billing_term_months)}
-						className="flex-1 gap-1.5"
+						className={termSwitcherClasses.item}
 					>
 						{billingTermLabel(offer.billing_term_months)}
 						{showDiscount && offer.discount_percent > 0 ? (
-							<span className="text-xs text-success-muted-foreground">
-								−{offer.discount_percent}%
-							</span>
+							<span className={termSwitcherClasses.discount}>−{offer.discount_percent}%</span>
 						) : null}
 					</TabsTrigger>
 				))}

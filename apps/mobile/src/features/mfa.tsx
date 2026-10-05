@@ -1,7 +1,7 @@
 import { pairingQr } from "@clawdi/shared/qr";
 import { useUser } from "@clerk/expo";
 import type { TOTPResource, UserResource } from "@clerk/expo/types";
-import { Redirect, router, useFocusEffect } from "expo-router";
+import { Redirect, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AppState } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
@@ -10,11 +10,7 @@ import { useI18n } from "../i18n";
 import { useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { LoadingScreen } from "../ui/feedback";
-import { NativeButton } from "../ui/native-controls";
-import { AppScrollView, AppText, AppTextInput, AppView } from "../ui/primitives";
-import { QrImage } from "../ui/qr-image";
-import { ReadScreen } from "../ui/read-screen";
-import { BackButton } from "./cloud-inventory";
+import { MfaFormView } from "../ui/settings/account-forms";
 
 export function MfaScreen() {
 	const { isLoaded, user } = useUser();
@@ -228,108 +224,22 @@ function MfaForm({ user }: { user: UserResource }) {
 		);
 	};
 	return (
-		<ReadScreen>
-			<AppScrollView contentContainerClassName="gap-4 p-6">
-				<BackButton />
-				<AppText accessibilityRole="header" className="text-2xl font-semibold text-foreground">
-					{t("mfa.title")}
-				</AppText>
-				<AppText>{t("mfa.description")}</AppText>
-				<AppText>{t(enabled ? "mfa.enabled" : "mfa.disabled")}</AppText>
-				{reverification.prompt}
-				<NativeButton
-					label={t("inventory.refresh")}
-					disabled={action.busy}
-					onPress={() => run("refresh")}
-				/>
-				{!enabled ? (
-					<>
-						<NativeButton
-							label={t("mfa.setup")}
-							disabled={action.busy || Boolean(setup)}
-							onPress={() => run("create")}
-						/>
-						{setup ? (
-							<AppView className="gap-3 rounded-xl bg-card p-4">
-								<AppText>{t("mfa.setupInstructions")}</AppText>
-								{qr ? <QrImage matrix={qr} label={t("mfa.qr")} /> : null}
-								<AppText selectable>{setup.secret}</AppText>
-							</AppView>
-						) : null}
-						<AppText>{t("mfa.codeHint")}</AppText>
-						<AppTextInput
-							accessibilityLabel={t("mfa.code")}
-							placeholder={t("mfa.code")}
-							value={code}
-							onChangeText={setCode}
-							editable={!action.busy}
-							secureTextEntry
-							autoComplete="one-time-code"
-							keyboardType="number-pad"
-							autoCorrect={false}
-							className="rounded-xl bg-card p-3 text-foreground"
-						/>
-						<NativeButton
-							label={t("mfa.verify")}
-							disabled={action.busy || !code.trim()}
-							onPress={() => run("verify")}
-						/>
-					</>
-				) : null}
-				<NativeButton
-					label={t(enabled ? "mfa.disable" : "mfa.discard")}
-					disabled={action.busy}
-					onPress={() => confirm("disable")}
-				/>
-				<NativeButton
-					label={t("mfa.backup")}
-					disabled={action.busy || !mfaEnabled}
-					onPress={() => confirm("backup")}
-				/>
-				{codes ? (
-					<AppView className="gap-2 rounded-xl bg-card p-4">
-						<AppText>{t("mfa.saveCodes")}</AppText>
-						<AppText selectable>{codes.join("\n")}</AppText>
-						<NativeButton label={t("mfa.hide")} onPress={clear} />
-					</AppView>
-				) : null}
-				<AppText accessibilityRole="header">{t("mfa.smsTitle")}</AppText>
-				<AppText>{t("mfa.smsDescription")}</AppText>
-				<NativeButton
-					label={t("phones.title")}
-					disabled={action.busy}
-					onPress={() => router.push("/phone-numbers")}
-				/>
-				{phones
-					.filter((phone) => phone.verification.status === "verified")
-					.map((phone) => (
-						<AppView key={phone.id} className="gap-2 rounded-xl bg-card p-4">
-							<AppText selectable>{phone.phoneNumber}</AppText>
-							<AppText>
-								{t(phone.reservedForSecondFactor ? "mfa.smsEnabled" : "mfa.smsDisabled")}
-							</AppText>
-							{phone.reservedForSecondFactor && phone.defaultSecondFactor ? (
-								<AppText>{t("mfa.smsPreferred")}</AppText>
-							) : null}
-							<NativeButton
-								label={t(phone.reservedForSecondFactor ? "mfa.smsDisable" : "mfa.smsEnable")}
-								disabled={action.busy}
-								onPress={() =>
-									confirmSms(phone.id, phone.reservedForSecondFactor ? "sms-disable" : "sms-enable")
-								}
-							/>
-							{phone.reservedForSecondFactor && !phone.defaultSecondFactor ? (
-								<NativeButton
-									label={t("mfa.smsDefault")}
-									disabled={action.busy}
-									onPress={() => confirmSms(phone.id, "sms-default")}
-								/>
-							) : null}
-						</AppView>
-					))}
-				{action.error ? <AppText accessibilityRole="alert">{t("mfa.failed")}</AppText> : null}
-				{success ? <AppText accessibilityRole="alert">{t("mfa.saved")}</AppText> : null}
-			</AppScrollView>
-		</ReadScreen>
+		<MfaFormView
+			action={action}
+			reverification={reverification}
+			enabled={enabled}
+			mfaEnabled={mfaEnabled}
+			setup={setup}
+			qr={qr}
+			code={code}
+			codes={codes}
+			phones={phones}
+			success={success}
+			setCode={setCode}
+			clear={clear}
+			run={run}
+			confirm={confirm}
+			confirmSms={confirmSms}
+		/>
 	);
 }

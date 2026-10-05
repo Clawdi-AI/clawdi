@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { ApiKey } from "@/lib/api-schemas";
-import { activeApiKeys, removeApiKeyFromList, restoreApiKeyToList } from "./api-keys-panel.logic";
+import type { components } from "../api/api.generated";
+
+type ApiKey = components["schemas"]["ApiKeyResponse"];
+
+import { activeApiKeys, removeApiKeyFromList, restoreApiKeyToList } from "./api-keys";
 
 function apiKey(id: string, overrides: Partial<ApiKey> = {}): ApiKey {
 	return {

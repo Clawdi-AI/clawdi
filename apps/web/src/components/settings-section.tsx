@@ -1,4 +1,4 @@
-import { settingsSectionClasses as styles } from "@clawdi/shared/ui";
+import { settingsSectionClasses } from "@clawdi/shared/ui";
 import { useId } from "react";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -32,23 +32,28 @@ export function SettingsSection({
 		<section
 			{...sectionProps}
 			aria-labelledby={generatedTitleId}
-			className={cn(styles.root, className)}
+			className={cn(settingsSectionClasses.section, className)}
 		>
 			<Separator />
-			<div className={styles.header}>
-				<div className={styles.body}>
+			<div className={settingsSectionClasses.header}>
+				<div className={settingsSectionClasses.copy}>
 					<Heading
 						id={generatedTitleId}
-						className={cn(styles.title, variant === "destructive" && styles.destructive)}
+						className={cn(
+							settingsSectionClasses.title,
+							variant === "destructive" && "text-destructive",
+						)}
 					>
 						{title}
 					</Heading>
-					{description ? <div className={styles.description}>{description}</div> : null}
+					{description ? (
+						<div className={settingsSectionClasses.description}>{description}</div>
+					) : null}
 				</div>
-				{actions ? <div className={styles.actions}>{actions}</div> : null}
+				{actions ? <div className={settingsSectionClasses.actions}>{actions}</div> : null}
 			</div>
 			{children !== undefined && children !== null ? (
-				<div className={styles.content}>{children}</div>
+				<div className={settingsSectionClasses.content}>{children}</div>
 			) : null}
 		</section>
 	);

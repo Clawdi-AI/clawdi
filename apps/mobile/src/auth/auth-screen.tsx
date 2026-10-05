@@ -1,3 +1,13 @@
+import { apiKeysPanelClasses } from "@clawdi/shared/ui";
+import { AuthFields } from "../ui/auth/auth-fields";
+import { AuthFrame } from "../ui/auth/auth-frame";
+import {
+	ClerkAction as FormAction,
+	ClerkInput as FormInput,
+	ClerkText as FormText,
+} from "../ui/auth/clerk-form";
+import { AuthCredentialSecondaryActions } from "../ui/auth/credential-options";
+import { webView } from "../ui/web-layout";
 // The custom forms use Clerk's legacy resource API (`create` + `setActive`).
 // The root export in @clerk/expo 4.8 exposes the newer signal API instead.
 
@@ -14,8 +24,7 @@ import { useI18n } from "../i18n";
 import { useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { LoadingScreen } from "../ui/feedback";
-import { NativeButton } from "../ui/native-controls";
-import { AppScrollView, AppText, AppTextInput, AppView } from "../ui/primitives";
+import { AppView } from "../ui/view";
 import {
 	accountOAuthAuthorizationUrl,
 	accountOAuthNonce,
@@ -31,80 +40,6 @@ import {
 } from "./signup-details";
 import { SignupDetailsForm } from "./signup-details-form";
 import { useAuthAction } from "./use-auth-action";
-
-function AuthFrame({
-	children,
-	subtitle,
-	title,
-}: {
-	children: React.ReactNode;
-	subtitle: string;
-	title: string;
-}) {
-	return (
-		<AppScrollView
-			className="flex-1 bg-background"
-			contentContainerStyle={{ flexGrow: 1 }}
-			keyboardShouldPersistTaps="handled"
-		>
-			<AppView className="flex-1 justify-center gap-8 px-6 py-12">
-				<AppView className="gap-2">
-					<AppText className="text-4xl font-semibold text-foreground">{title}</AppText>
-					<AppText className="text-base leading-6 text-muted-foreground">{subtitle}</AppText>
-				</AppView>
-				{children}
-			</AppView>
-		</AppScrollView>
-	);
-}
-
-function AuthFields({
-	email,
-	onEmailChange,
-	onPasswordChange,
-	password,
-	busy,
-	newPassword,
-}: {
-	email: string;
-	onEmailChange: (value: string) => void;
-	onPasswordChange: (value: string) => void;
-	password: string;
-	busy: boolean;
-	newPassword: boolean;
-}) {
-	const t = useI18n();
-	return (
-		<AppView className="gap-4">
-			<AppTextInput
-				autoCapitalize="none"
-				accessibilityLabel={t("auth.email")}
-				editable={!busy}
-				autoComplete="email"
-				className="rounded-2xl bg-card px-4 py-4 text-base text-foreground"
-				keyboardType="email-address"
-				onChangeText={onEmailChange}
-				placeholder={t("auth.email")}
-				placeholderTextColor="#64748b"
-				textContentType="emailAddress"
-				value={email}
-			/>
-			<AppTextInput
-				autoCapitalize="none"
-				accessibilityLabel={t("auth.password")}
-				editable={!busy}
-				autoComplete={newPassword ? "new-password" : "current-password"}
-				className="rounded-2xl bg-card px-4 py-4 text-base text-foreground"
-				onChangeText={onPasswordChange}
-				placeholder={t("auth.password")}
-				placeholderTextColor="#64748b"
-				secureTextEntry
-				textContentType={newPassword ? "newPassword" : "password"}
-				value={password}
-			/>
-		</AppView>
-	);
-}
 
 type AuthStep =
 	| "credentials"
@@ -456,10 +391,10 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 							: t("auth.signInSubtitle")
 			}
 		>
-			<AppView className="gap-5">
+			<AppView className={webView(apiKeysPanelClasses.form)}>
 				{step === "sign-up-details" ? (
 					<>
-						<AppText>{t("signupDetails.description")}</AppText>
+						<FormText>{t("signupDetails.description")}</FormText>
 						<SignupDetailsForm
 							fields={missing}
 							values={details}
@@ -470,7 +405,17 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 						/>
 					</>
 				) : null}
-				{step === "sign-up-phone-code" ? <AppText>{t("signupDetails.phoneCode")}</AppText> : null}
+				{step === "sign-up-phone-code" ? <FormText>{t("signupDetails.phoneCode")}</FormText> : null}
+				{step === "credentials"
+					? providers.map((provider) => (
+							<FormAction
+								key={provider}
+								label={`${t("auth.continueWith")} · ${provider}`}
+								disabled={busy || !signInHook.isLoaded || !signUpHook.isLoaded}
+								onPress={() => void startSocial(provider)}
+							/>
+						))
+					: null}
 				{step === "credentials" ? (
 					<AuthFields
 						email={email}
@@ -482,42 +427,39 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 					/>
 				) : null}
 				{step === "recovery-email" ? (
-					<AppTextInput
+					<FormInput
 						accessibilityLabel={t("auth.email")}
 						editable={!busy}
 						autoCapitalize="none"
 						autoComplete="email"
 						keyboardType="email-address"
 						textContentType="emailAddress"
-						className="rounded-2xl bg-card px-4 py-4 text-base text-foreground"
 						placeholder={t("auth.email")}
 						onChangeText={setEmail}
 						value={email}
 					/>
 				) : null}
 				{verifying ? (
-					<AppTextInput
+					<FormInput
 						accessibilityLabel={codeLabel}
 						editable={!busy}
 						autoCapitalize="none"
 						autoComplete={factor?.strategy === "backup_code" ? "off" : "one-time-code"}
 						keyboardType={factor?.strategy === "backup_code" ? "default" : "number-pad"}
 						textContentType="oneTimeCode"
-						className="rounded-2xl bg-card px-4 py-4 text-base text-foreground"
 						placeholder={codeLabel}
 						onChangeText={setCode}
 						value={code}
 					/>
 				) : null}
 				{step === "recovery-code" ? (
-					<AppTextInput
+					<FormInput
 						accessibilityLabel={t("auth.newPassword")}
 						editable={!busy}
 						autoCapitalize="none"
 						autoComplete="new-password"
 						textContentType="newPassword"
 						secureTextEntry
-						className="rounded-2xl bg-card px-4 py-4 text-base text-foreground"
 						placeholder={t("auth.newPassword")}
 						onChangeText={setPassword}
 						value={password}
@@ -526,19 +468,20 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 				{verifying &&
 				factor &&
 				(factor.strategy === "email_code" || factor.strategy === "phone_code") ? (
-					<AppText className="text-base text-muted-foreground">
+					<FormText className="text-sm text-muted-foreground">
 						{t("auth.codeSentTo")} {factor.safeIdentifier}
-					</AppText>
+					</FormText>
 				) : null}
 				{error || notice ? (
-					<AppText
+					<FormText
 						accessibilityRole={error ? "alert" : "text"}
-						className={error ? "text-base text-destructive" : "text-base text-muted-foreground"}
+						className={error ? "text-sm text-destructive" : "text-sm text-muted-foreground"}
 					>
 						{error ? t("auth.failed") : notice}
-					</AppText>
+					</FormText>
 				) : null}
-				<NativeButton
+				<FormAction
+					variant="default"
 					label={
 						busy
 							? t("auth.working")
@@ -557,34 +500,14 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 					onPress={() => void submit()}
 					disabled={disabled}
 				/>
-				{step === "credentials" ? (
-					<NativeButton
-						label={t("vault.supplyTitle")}
-						disabled={busy}
-						onPress={() => router.replace("/vault-supply")}
-					/>
-				) : null}
-				{step === "credentials"
-					? providers.map((provider) => (
-							<NativeButton
-								key={provider}
-								label={`${t("auth.continueWith")} · ${provider}`}
-								disabled={busy || !signInHook.isLoaded || !signUpHook.isLoaded}
-								onPress={() => void startSocial(provider)}
-							/>
-						))
-					: null}
+
 				{verifying && factor?.strategy !== "totp" && factor?.strategy !== "backup_code" ? (
-					<NativeButton
-						label={t("auth.resendCode")}
-						onPress={() => void resend()}
-						disabled={busy}
-					/>
+					<FormAction label={t("auth.resendCode")} onPress={() => void resend()} disabled={busy} />
 				) : null}
 				{step === "second-code" &&
 				factor?.strategy !== "backup_code" &&
 				backupFactor?.strategy === "backup_code" ? (
-					<NativeButton
+					<FormAction
 						label={t("auth.useBackupCode")}
 						onPress={() =>
 							void run(async (isCurrent) => {
@@ -595,18 +518,14 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 						disabled={busy}
 					/>
 				) : null}
-				{!signingUp && step === "credentials" ? (
-					<NativeButton
-						label={t("auth.signInWithEmailCode")}
-						disabled={busy || !validEmail}
-						onPress={() => void startEmailCode()}
-					/>
-				) : null}
-				{!signingUp && step === "credentials" ? (
-					<NativeButton
-						label={t("auth.forgotPassword")}
-						disabled={busy}
-						onPress={() => {
+				{step === "credentials" ? (
+					<AuthCredentialSecondaryActions
+						signingUp={signingUp}
+						busy={busy}
+						validEmail={validEmail}
+						onVault={() => router.replace("/vault-supply")}
+						onEmailCode={() => void startEmailCode()}
+						onForgotPassword={() => {
 							clearError();
 							setNotice(null);
 							setPassword("");
@@ -614,8 +533,9 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 						}}
 					/>
 				) : null}
+
 				{step !== "credentials" ? (
-					<NativeButton
+					<FormAction
 						label={t("auth.startOver")}
 						disabled={busy}
 						onPress={() => {
@@ -636,9 +556,9 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 				className="flex-row flex-wrap justify-center gap-1"
 				pointerEvents={busy ? "none" : "auto"}
 			>
-				<AppText className="text-base text-muted-foreground">
+				<FormText className="text-sm text-muted-foreground">
 					{signingUp ? t("auth.haveAccount") : t("auth.noAccount")}
-				</AppText>
+				</FormText>
 				<Link
 					href={{
 						pathname: signingUp ? "/(auth)/sign-in" : "/(auth)/sign-up",
@@ -646,12 +566,12 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 					}}
 					replace
 				>
-					<AppText className="text-base font-semibold text-primary">
+					<FormText className="text-sm font-semibold text-primary">
 						{signingUp ? t("auth.returnToSignIn") : t("auth.createAccount")}
-					</AppText>
+					</FormText>
 				</Link>
 			</AppView>
-			<NativeButton
+			<FormAction
 				label={t("publicSession.open")}
 				disabled={busy}
 				onPress={() => router.push("/open-share")}

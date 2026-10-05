@@ -9,10 +9,7 @@ import { useI18n } from "../i18n";
 import { useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { LoadingScreen } from "../ui/feedback";
-import { NativeButton } from "../ui/native-controls";
-import { AppScrollView, AppText, AppTextInput, AppView } from "../ui/primitives";
-import { ReadScreen } from "../ui/read-screen";
-import { BackButton } from "./cloud-inventory";
+import { PasskeysFormView } from "../ui/settings/account-forms";
 
 export function PasskeysScreen() {
 	const { isLoaded, user } = useUser();
@@ -98,70 +95,16 @@ function Passkeys({ user }: { user: UserResource }) {
 		]);
 	};
 	return (
-		<ReadScreen>
-			<AppScrollView contentContainerClassName="gap-4 p-6">
-				<BackButton />
-				<AppText accessibilityRole="header" className="text-2xl font-semibold text-foreground">
-					{t("passkeys.title")}
-				</AppText>
-				<AppText>{t("passkeys.description")}</AppText>
-				{reverification.prompt}
-				<NativeButton label={t("inventory.refresh")} disabled={action.busy} onPress={() => run()} />
-				{passkeys.length === 0 ? <AppText>{t("passkeys.empty")}</AppText> : null}
-				{passkeys.map((passkey) => (
-					<AppView key={passkey.id} className="gap-3 rounded-xl bg-card p-4">
-						<AppText className="text-lg font-semibold text-foreground">
-							{passkey.name || t("passkeys.unnamed")}
-						</AppText>
-						<AppText>
-							{t("passkeys.lastUsed")}{" "}
-							{passkey.lastUsedAt && Number.isFinite(passkey.lastUsedAt.getTime())
-								? passkey.lastUsedAt.toLocaleString()
-								: t("passkeys.neverUsed")}
-						</AppText>
-						{edit?.id === passkey.id ? (
-							<>
-								<AppTextInput
-									accessibilityLabel={t("passkeys.name")}
-									value={edit.name}
-									onChangeText={(name) => setEdit({ id: passkey.id, name })}
-									editable={!action.busy}
-									autoCorrect={false}
-									className="rounded-xl bg-background p-3 text-foreground"
-								/>
-								<NativeButton
-									label={t("passkeys.save")}
-									disabled={action.busy || !edit.name.trim()}
-									onPress={() => run({ kind: "rename", ...edit })}
-								/>
-								<NativeButton
-									label={t("account.cancel")}
-									disabled={action.busy}
-									onPress={() => setEdit(null)}
-								/>
-							</>
-						) : (
-							<NativeButton
-								label={t("passkeys.rename")}
-								disabled={action.busy}
-								onPress={() => {
-									setSaved(false);
-									action.clearError();
-									setEdit({ id: passkey.id, name: passkey.name ?? "" });
-								}}
-							/>
-						)}
-						<NativeButton
-							label={t("passkeys.remove")}
-							disabled={action.busy}
-							onPress={() => confirmRemove(passkey.id)}
-						/>
-					</AppView>
-				))}
-				<AppText>{t("passkeys.nativeUnavailable")}</AppText>
-				{action.error ? <AppText accessibilityRole="alert">{t("passkeys.failed")}</AppText> : null}
-				{saved ? <AppText accessibilityRole="alert">{t("passkeys.saved")}</AppText> : null}
-			</AppScrollView>
-		</ReadScreen>
+		<PasskeysFormView
+			action={action}
+			reverification={reverification}
+			passkeys={passkeys}
+			edit={edit}
+			saved={saved}
+			setEdit={setEdit}
+			setSaved={setSaved}
+			run={run}
+			confirmRemove={confirmRemove}
+		/>
 	);
 }

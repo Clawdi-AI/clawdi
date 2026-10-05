@@ -1,5 +1,7 @@
 "use client";
 
+import { onboardingCardClasses } from "@clawdi/shared/ui";
+
 import { onboardingCardModel } from "@clawdi/shared/view";
 
 import { Link } from "@tanstack/react-router";
@@ -41,8 +43,8 @@ export function OnboardingCard({
 		<>
 			<Card>
 				<CardHeader>
-					<CardTitle className="flex items-center gap-2">
-						<Rocket className="size-5 text-primary" />
+					<CardTitle className={onboardingCardClasses.flexItemsCenterGap2}>
+						<Rocket className={onboardingCardClasses.size5TextPrimary} />
 						{title}
 					</CardTitle>
 					<CardDescription>{description}</CardDescription>
@@ -50,7 +52,9 @@ export function OnboardingCard({
 				<CardContent>
 					<div
 						className={
-							canDeployOnClawdi && !isAdditionalAgent ? "grid gap-2 xl:grid-cols-2" : "grid gap-2"
+							canDeployOnClawdi && !isAdditionalAgent
+								? onboardingCardClasses.gridGap2XlGrid
+								: onboardingCardClasses.gridGap2
 						}
 					>
 						{canDeployOnClawdi ? (
@@ -58,7 +62,7 @@ export function OnboardingCard({
 								render={<Link to="/deploy" />}
 								nativeButton={false}
 								size="lg"
-								className="w-full"
+								className={onboardingCardClasses.wFull}
 							>
 								<Rocket data-icon="inline-start" /> Deploy on Clawdi
 							</Button>
@@ -67,7 +71,7 @@ export function OnboardingCard({
 							type="button"
 							variant={canDeployOnClawdi ? "outline" : "default"}
 							size="lg"
-							className="h-auto min-h-10 w-full whitespace-normal py-2"
+							className={onboardingCardClasses.hAutoMinH10}
 							onClick={connectAgent}
 						>
 							<TerminalSquare data-icon="inline-start" /> Connect an Agent on your machine

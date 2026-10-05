@@ -1,3 +1,4 @@
+import { apiKeysPanelClasses } from "@clawdi/shared/ui";
 import { useReverification, useSession } from "@clerk/expo";
 import type { SessionVerificationResource } from "@clerk/expo/types";
 import { useFocusEffect } from "expo-router";
@@ -6,8 +7,8 @@ import { AppState } from "react-native";
 import { useI18n } from "../i18n";
 import { useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
-import { NativeButton } from "../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../ui/primitives";
+import { ClerkAction, ClerkInput, ClerkText } from "../ui/auth/clerk-form";
+import { WebView } from "../ui/web-layout";
 import { useAuthAction } from "./use-auth-action";
 
 type Options = NonNullable<Parameters<typeof useReverification>[1]>;
@@ -186,49 +187,50 @@ export function useNativeReverification() {
 			: attempt?.supportedSecondFactors
 		)?.filter(supported) ?? [];
 	const prompt = request ? (
-		<AppView className="gap-3 rounded-xl bg-card p-4">
-			<AppText accessibilityRole="header">{t("reverification.title")}</AppText>
-			<AppText>{t("reverification.description")}</AppText>
-			{!attempt ? (
-				<NativeButton label={t("reverification.start")} disabled={action.busy} onPress={start} />
-			) : null}
-			{attempt && factors.length === 0 ? (
-				<AppText accessibilityRole="alert">{t("reverification.unsupported")}</AppText>
-			) : null}
-			{factors.map((item, index) => (
-				<NativeButton
-					key={`${item.strategy}:${index}`}
-					label={`${t(`reverification.${item.strategy}`)}${"safeIdentifier" in item ? ` · ${item.safeIdentifier}` : ""}`}
-					disabled={action.busy}
-					onPress={() => choose(item)}
-				/>
-			))}
-			{factor ? (
-				<>
-					<AppText>{t("reverification.inputHint")}</AppText>
-					<AppTextInput
-						accessibilityLabel={t(`reverification.${factor.strategy}`)}
-						value={secret}
-						onChangeText={setSecret}
-						editable={!action.busy}
-						secureTextEntry
-						autoCapitalize="none"
-						autoCorrect={false}
-						autoComplete={factor.strategy === "password" ? "current-password" : "one-time-code"}
-						className="rounded-xl bg-background p-3 text-foreground"
+		<WebView recipe={apiKeysPanelClasses.card}>
+			<WebView recipe={apiKeysPanelClasses.form}>
+				<ClerkText accessibilityRole="header">{t("reverification.title")}</ClerkText>
+				<ClerkText>{t("reverification.description")}</ClerkText>
+				{!attempt ? (
+					<ClerkAction label={t("reverification.start")} disabled={action.busy} onPress={start} />
+				) : null}
+				{attempt && factors.length === 0 ? (
+					<ClerkText accessibilityRole="alert">{t("reverification.unsupported")}</ClerkText>
+				) : null}
+				{factors.map((item, index) => (
+					<ClerkAction
+						key={`${item.strategy}:${index}`}
+						label={`${t(`reverification.${item.strategy}`)}${"safeIdentifier" in item ? ` · ${item.safeIdentifier}` : ""}`}
+						disabled={action.busy}
+						onPress={() => choose(item)}
 					/>
-					<NativeButton
-						label={t("reverification.verify")}
-						disabled={action.busy || !secret}
-						onPress={submit}
-					/>
-				</>
-			) : null}
-			{action.error ? (
-				<AppText accessibilityRole="alert">{t("reverification.failed")}</AppText>
-			) : null}
-			<NativeButton label={t("account.cancel")} onPress={cancel} />
-		</AppView>
+				))}
+				{factor ? (
+					<>
+						<ClerkText>{t("reverification.inputHint")}</ClerkText>
+						<ClerkInput
+							accessibilityLabel={t(`reverification.${factor.strategy}`)}
+							value={secret}
+							onChangeText={setSecret}
+							editable={!action.busy}
+							secureTextEntry
+							autoCapitalize="none"
+							autoCorrect={false}
+							autoComplete={factor.strategy === "password" ? "current-password" : "one-time-code"}
+						/>
+						<ClerkAction
+							label={t("reverification.verify")}
+							disabled={action.busy || !secret}
+							onPress={submit}
+						/>
+					</>
+				) : null}
+				{action.error ? (
+					<ClerkText accessibilityRole="alert">{t("reverification.failed")}</ClerkText>
+				) : null}
+				<ClerkAction label={t("account.cancel")} onPress={cancel} />
+			</WebView>
+		</WebView>
 	) : null;
 	return {
 		execute: async (work: () => Promise<void>) => {

@@ -4,25 +4,45 @@ import {
 	type SessionListQuery,
 } from "@clawdi/shared/api";
 import { isSearchQueryReady, SEARCH_QUERY_MAX_LENGTH } from "@clawdi/shared/consts";
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { useState } from "react";
 import {
-	type CloudSession,
-	SessionRow,
-	useCloudAgents,
-	useCloudSessions,
-} from "../../src/features/cloud-inventory";
-import { InventoryList } from "../../src/features/inventory-list";
+	buttonVariants,
+	dataTableFacetedFilterClasses as filterStyles,
+	dataTablePaginationClasses as paginationStyles,
+	sessionsPageClasses as styles,
+} from "@clawdi/shared/ui";
+import {
+	agentTypeLabel,
+	SESSION_LIST_COPY as copy,
+	getProjectResourceDefinition,
+	sessionListEmptyMessage,
+} from "@clawdi/shared/view";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { ChevronLeft, ChevronRight, Link2, PlusCircle } from "lucide-react-native";
+import { useEffect, useRef, useState } from "react";
+import { useCloudAgents, useCloudSessions } from "../../src/features/cloud-inventory";
 import { routeParam, uniqueSessions } from "../../src/features/read-helpers";
 import { useI18n } from "../../src/i18n";
 import { useAccountScope } from "../../src/platform/account-lifecycle";
-import { ErrorState } from "../../src/ui/feedback";
-import { NativeButton, NativePicker } from "../../src/ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../../src/ui/primitives";
-
+import { ApiErrorPanel } from "../../src/ui/api-error-panel";
+import { Button } from "../../src/ui/button";
+import { TabPage } from "../../src/ui/dashboard/tab-page";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "../../src/ui/dropdown-menu";
+import { FilterChip } from "../../src/ui/filter-chip";
+import { ListToolbar } from "../../src/ui/list-toolbar";
+import { PageHeader } from "../../src/ui/page-header";
+import { SearchInput } from "../../src/ui/search-input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../src/ui/select";
+import { SessionFeed } from "../../src/ui/sessions/session-feed";
+import { Text } from "../../src/ui/text";
+import { WebIcon, WebText, WebView, webView } from "../../src/ui/web-layout";
 export default function SessionsRoute() {
-	const scope = useAccountScope();
-	const params = useLocalSearchParams<{ agentId?: string | string[] }>();
+	const scope = useAccountScope(),
+		params = useLocalSearchParams<{ agentId?: string | string[] }>();
 	const agentId = typeof params.agentId === "string" ? routeParam(params.agentId) : undefined;
 	return (
 		<SessionsView
@@ -32,183 +52,321 @@ export default function SessionsRoute() {
 		/>
 	);
 }
-
 function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean }) {
-	const t = useI18n();
-	const router = useRouter();
-	const [draft, setDraft] = useState(() => normalizeSessionListQuery());
-	const [applied, setApplied] = useState(() => normalizeSessionListQuery());
-	const [expanded, setExpanded] = useState(false);
-	const sessions = useCloudSessions(agentId, !invalid, applied);
-	const agents = useCloudAgents();
+	const scope = useAccountScope();
+	const requestRevision = useRef(0);
+	const [paginationError, setPaginationError] = useState<unknown>();
+	const t = useI18n(),
+		router = useRouter();
+	const [draft, setDraft] = useState(() => normalizeSessionListQuery()),
+		[applied, setApplied] = useState(() => normalizeSessionListQuery()),
+		[page, setPage] = useState(1);
+	const sessions = useCloudSessions(agentId, !invalid, applied),
+		agents = useCloudAgents();
+	const searchValid = !draft.q?.trim() || isSearchQueryReady(draft.q);
+	useEffect(() => {
+		if (!searchValid) return;
+		const timeout = setTimeout(() => {
+			requestRevision.current++;
+			setPaginationError(undefined);
+			setApplied(normalizeSessionListQuery(draft));
+			setPage(1);
+		}, 250);
+		return () => clearTimeout(timeout);
+	}, [draft, searchValid]);
+	const update = (values: SessionListQuery) => setDraft((current) => ({ ...current, ...values }));
+	const reset = () => {
+		requestRevision.current++;
+		setPaginationError(undefined);
+		setDraft(normalizeSessionListQuery());
+		setApplied(normalizeSessionListQuery());
+		setPage(1);
+	};
 	const agentTypes = [
 		...new Set([
 			...(agents.data ?? []).map((agent) => agent.agent_type),
 			...(draft.agent ? [draft.agent] : []),
 		]),
 	].sort();
-	const searchValid = !draft.q?.trim() || isSearchQueryReady(draft.q);
-	const update = (values: SessionListQuery) => setDraft((current) => ({ ...current, ...values }));
-	const reset = () => {
-		setDraft(normalizeSessionListQuery());
-		setApplied(normalizeSessionListQuery());
-	};
-	if (invalid)
-		return (
-			<InventoryList<CloudSession>
-				items={[]}
-				title={t("sessions.title")}
-				description={t("sessions.filterInvalid")}
-				empty={t("sessions.empty")}
-				renderItem={(item) => <SessionRow session={item} />}
-				refreshing={false}
-				onRefresh={() => {}}
-				error={false}
-				onRetry={() => {}}
-				header={
-					<NativeButton
-						label={t("sessions.clearFilter")}
-						onPress={() => router.replace("/sessions")}
-					/>
-				}
-			/>
-		);
-	return (
-		<InventoryList
-			items={uniqueSessions(sessions.data?.pages ?? [])}
-			title={t("sessions.title")}
-			description={t(agentId ? "sessions.filter" : "sessions.description")}
-			empty={t(sessions.isPending ? "loading.sessions" : "sessionFilters.empty")}
-			header={
-				<AppView className="gap-3">
-					<AppTextInput
-						accessibilityLabel={t("sessionFilters.search")}
-						placeholder={t("sessionFilters.search")}
-						value={draft.q ?? ""}
-						maxLength={SEARCH_QUERY_MAX_LENGTH}
-						autoCapitalize="none"
-						autoCorrect={false}
-						className="rounded-xl bg-card p-3 text-foreground"
-						onChangeText={(q) =>
-							update({
-								q,
-								sort:
-									isSearchQueryReady(q) && draft.sort === "last_activity_at"
-										? "relevance"
-										: !isSearchQueryReady(q) && draft.sort === "relevance"
-											? "last_activity_at"
-											: draft.sort,
-							})
-						}
-					/>
-					{!searchValid ? (
-						<AppText accessibilityRole="alert">{t("sessionFilters.searchInvalid")}</AppText>
-					) : null}
-					<NativeButton
-						label={t("sessionFilters.options")}
-						onPress={() => setExpanded(!expanded)}
-					/>
-					{expanded ? (
-						<>
-							<AppText>{t("sessionFilters.agent")}</AppText>
-							<NativePicker
-								value={draft.agent ?? ""}
-								disabled={agents.isFetching}
-								options={[
-									{ value: "", label: t("sessionFilters.all") },
-									...agentTypes.map((value) => ({ value, label: value })),
-								]}
-								onValueChange={(agent) => update({ agent })}
-							/>
-							{agents.isError ? <ErrorState onRetry={() => void agents.refetch()} /> : null}
-							<AppText>{t("sessionFilters.type")}</AppText>
-							<NativePicker
-								value={draft.automated === undefined ? "all" : String(draft.automated)}
-								options={[
-									{ value: "all", label: t("sessionFilters.all") },
-									{ value: "false", label: t("sessionFilters.manual") },
-									{ value: "true", label: t("sessionFilters.automated") },
-								]}
-								onValueChange={(value) =>
-									update({ automated: value === "all" ? undefined : value === "true" })
-								}
-							/>
-							<AppText>{t("sessionFilters.pr")}</AppText>
-							<NativePicker
-								value={draft.has_pr === undefined ? "all" : String(draft.has_pr)}
-								options={[
-									{ value: "all", label: t("sessionFilters.all") },
-									{ value: "true", label: t("sessionFilters.hasPr") },
-									{ value: "false", label: t("sessionFilters.noPr") },
-								]}
-								onValueChange={(value) =>
-									update({ has_pr: value === "all" ? undefined : value === "true" })
-								}
-							/>
-							<AppText>{t("sessionFilters.sort")}</AppText>
-							<NativePicker
-								value={draft.sort ?? "last_activity_at"}
-								options={SESSION_SORT_KEYS.filter(
-									(key) => key !== "relevance" || (!!draft.q && isSearchQueryReady(draft.q)),
-								).map((value) => ({ value, label: t(`sessionFilters.${value}`) }))}
-								onValueChange={(sort) => update({ sort })}
-							/>
-							<AppText>{t("sessionFilters.order")}</AppText>
-							<NativePicker
-								value={draft.order ?? "desc"}
-								options={[
-									{ value: "desc", label: t("sessionFilters.desc") },
-									{ value: "asc", label: t("sessionFilters.asc") },
-								]}
-								onValueChange={(order) => update({ order })}
-							/>
-							<AppText>{t("sessionFilters.pageSize")}</AppText>
-							<NativePicker
-								value={draft.page_size ?? 25}
-								options={[25, 50, 100].map((value) => ({ value, label: String(value) }))}
-								onValueChange={(page_size) => update({ page_size })}
-							/>
-						</>
-					) : null}
-					<NativeButton
-						label={t("sessionFilters.apply")}
-						disabled={!searchValid}
-						onPress={() => setApplied(normalizeSessionListQuery(draft))}
-					/>
-					<NativeButton label={t("sessionFilters.reset")} onPress={reset} />
-					<AppText accessibilityLiveRegion="polite">
-						{sessions.isFetching
-							? t("loading.sessions")
-							: `${t("sessionFilters.total")}: ${sessions.data?.pages[0]?.total ?? 0}`}
-					</AppText>
-					<NativeButton
-						label={t("sessionShares.title")}
-						onPress={() => router.push("/sessions/shared")}
-					/>
-					{agentId ? (
-						<NativeButton
-							label={t("sessions.clearFilter")}
-							onPress={() => router.replace("/sessions")}
-						/>
-					) : null}
-				</AppView>
+	const filtered = Boolean(
+		draft.q?.trim() || draft.agent || draft.has_pr != null || draft.automated != null,
+	);
+	const total = sessions.data?.pages[0]?.total ?? 0,
+		pageSize = applied.page_size ?? 25,
+		pageCount = Math.max(1, Math.ceil(total / pageSize));
+	const rows = uniqueSessions(sessions.data?.pages ?? []).slice(
+		(page - 1) * pageSize,
+		page * pageSize,
+	);
+	const next = async () => {
+		if (sessions.isFetching || !scope.isCurrent()) return;
+		const revision = requestRevision.current;
+		try {
+			if (page >= (sessions.data?.pages.length ?? 0)) {
+				const result = await sessions.fetchNextPage();
+				if (result.isError) return;
 			}
-			renderItem={(session) => (
-				<SessionRow session={session} searchQuery={applied.q ?? undefined} />
-			)}
+			if (!scope.isCurrent() || revision !== requestRevision.current) return;
+			setPaginationError(undefined);
+			setPage((current) => current + 1);
+		} catch (error) {
+			if (scope.isCurrent() && revision === requestRevision.current) setPaginationError(error);
+		}
+	};
+	useEffect(() => {
+		if (sessions.data && !sessions.isFetching) setPage((current) => Math.min(current, pageCount));
+	}, [sessions.data, sessions.isFetching, pageCount]);
+
+	const tri = (value: string) => (value === "all" ? undefined : value === "true");
+	return (
+		<TabPage
+			title={copy.title}
 			refreshing={sessions.isRefetching && !sessions.isFetchingNextPage}
 			onRefresh={() => {
 				if (!sessions.isFetching) void sessions.refetch();
 			}}
-			error={sessions.isError}
-			busy={sessions.isFetching}
-			onRetry={() =>
-				void (sessions.isFetchNextPageError ? sessions.fetchNextPage() : sessions.refetch())
-			}
-			more={sessions.hasNextPage}
-			onMore={() => {
-				if (!sessions.isFetching) void sessions.fetchNextPage();
-			}}
-		/>
+		>
+			<PageHeader
+				title={copy.title}
+				description={
+					invalid
+						? t("sessions.filterInvalid")
+						: getProjectResourceDefinition("sessions").managementDescription
+				}
+				actions={
+					<Button variant="outline" size="sm" onPress={() => router.push("/sessions/shared")}>
+						<WebIcon as={Link2} recipe={filterStyles.size4} />
+						<Text>{copy.sharedLinks}</Text>
+					</Button>
+				}
+			/>
+			{invalid ? (
+				<Button variant="outline" onPress={() => router.replace("/sessions")}>
+					<Text>{t("sessions.clearFilter")}</Text>
+				</Button>
+			) : (
+				<WebView recipe={styles.spaceY4}>
+					<ListToolbar
+						search={
+							<SearchInput
+								value={draft.q ?? ""}
+								placeholder={copy.searchPlaceholder}
+								maxLength={SEARCH_QUERY_MAX_LENGTH}
+								onChange={(q) =>
+									update({
+										q,
+										sort:
+											isSearchQueryReady(q) && draft.sort === "last_activity_at"
+												? "relevance"
+												: !isSearchQueryReady(q) && draft.sort === "relevance"
+													? "last_activity_at"
+													: draft.sort,
+									})
+								}
+							/>
+						}
+						filters={
+							<>
+								{agentTypes.length > 0 ? (
+									<SessionFilter
+										title={copy.agent}
+										value={draft.agent ?? "all"}
+										options={agentTypes.map((value) => ({ value, label: agentTypeLabel(value) }))}
+										onChange={(agent) => update({ agent: agent === "all" ? undefined : agent })}
+									/>
+								) : null}
+								<SessionFilter
+									title={copy.type}
+									value={draft.automated == null ? "all" : String(draft.automated)}
+									options={[
+										{ value: "false", label: copy.manual },
+										{ value: "true", label: copy.automated },
+									]}
+									onChange={(value) => update({ automated: tri(value) })}
+								/>
+								<SessionFilter
+									title={copy.prLinks}
+									value={draft.has_pr == null ? "all" : String(draft.has_pr)}
+									options={[
+										{ value: "true", label: copy.hasPr },
+										{ value: "false", label: copy.noPr },
+									]}
+									onChange={(value) => update({ has_pr: tri(value) })}
+								/>
+							</>
+						}
+						actions={
+							filtered ? (
+								<Button size="sm" variant="ghost" className={webView(styles.h8Px2)} onPress={reset}>
+									<Text>{copy.reset}</Text>
+								</Button>
+							) : undefined
+						}
+					/>
+					{!searchValid ? (
+						<WebText recipe={styles.textXsTextMutedForeground} accessibilityRole="alert">
+							{t("sessionFilters.searchInvalid")}
+						</WebText>
+					) : null}
+					{agentId ? (
+						<FilterChip active onClick={() => router.replace("/sessions")}>
+							{t("sessions.clearFilter")}
+						</FilterChip>
+					) : null}
+					{agents.isError ? (
+						<ApiErrorPanel
+							error={agents.error}
+							onRetry={() => void agents.refetch()}
+							title={t("sessionFilters.agent")}
+						/>
+					) : null}
+					{sessions.isError || paginationError ? (
+						<ApiErrorPanel
+							error={paginationError ?? sessions.error}
+							title={copy.error}
+							onRetry={() =>
+								void (paginationError
+									? next()
+									: sessions.isFetchNextPageError
+										? sessions.fetchNextPage()
+										: sessions.refetch())
+							}
+						/>
+					) : null}
+					{!sessions.isError || sessions.data ? (
+						<SessionFeed
+							sessions={rows}
+							isLoading={sessions.isPending}
+							grouped={applied.sort === "last_activity_at" || applied.sort === "started_at"}
+							groupBy={applied.sort === "started_at" ? "started_at" : "last_activity_at"}
+							quietAutomated={!applied.q}
+							searchQuery={applied.q ?? ""}
+							emptyMessage={sessionListEmptyMessage(applied.q ?? "", filtered)}
+						/>
+					) : null}
+					<WebView recipe={paginationStyles.flexFlexColReverseItems}>
+						<WebText recipe={paginationStyles.textSmTextMutedForeground}>
+							{total === 0
+								? "0 results"
+								: `${(page - 1) * pageSize + 1}–${Math.min(total, page * pageSize)} of ${total}`}
+						</WebText>
+						<WebView recipe={paginationStyles.flexWFullFlexCol}>
+							<WebView recipe={paginationStyles.flexItemsCenterGap2} className="flex-row">
+								<WebText recipe={paginationStyles.textSmTextMutedForeground}>{copy.rows}</WebText>
+								<Select
+									value={String(draft.page_size ?? 25)}
+									onValueChange={(value) => update({ page_size: Number(value) })}
+								>
+									<SelectTrigger size="sm" className={webView(paginationStyles.w72Px)}>
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{[25, 50, 100].map((value) => (
+											<SelectItem key={value} value={String(value)}>
+												{value}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</WebView>
+							<WebView recipe={paginationStyles.flexItemsCenterGap1} className="flex-row">
+								<Button
+									variant="outline"
+									size="icon-sm"
+									accessibilityLabel="Previous page"
+									disabled={page <= 1 || sessions.isFetching}
+									onPress={() => setPage((current) => current - 1)}
+								>
+									<WebIcon as={ChevronLeft} recipe={paginationStyles.size4} />
+								</Button>
+								<WebText recipe={paginationStyles.minW12Px2}>
+									{page} / {pageCount}
+								</WebText>
+								<Button
+									variant="outline"
+									size="icon-sm"
+									accessibilityLabel="Next page"
+									disabled={page >= pageCount || sessions.isFetching}
+									onPress={() => void next()}
+								>
+									<WebIcon as={ChevronRight} recipe={paginationStyles.size4} />
+								</Button>
+							</WebView>
+						</WebView>
+					</WebView>
+					<DropdownMenu>
+						<DropdownMenuTrigger
+							render={
+								<Button variant="ghost" size="sm">
+									<Text>{t("sessionFilters.options")}</Text>
+								</Button>
+							}
+						/>
+						<DropdownMenuContent>
+							<DropdownMenuItem label={t("sessionFilters.sort")} />
+							{SESSION_SORT_KEYS.filter(
+								(key) => key !== "relevance" || (!!draft.q && isSearchQueryReady(draft.q)),
+							).map((sort) => (
+								<DropdownMenuItem
+									key={sort}
+									label={t(`sessionFilters.${sort}`)}
+									onSelect={() => update({ sort })}
+								/>
+							))}
+							<DropdownMenuItem
+								label={t("sessionFilters.asc")}
+								onSelect={() => update({ order: "asc" })}
+							/>
+							<DropdownMenuItem
+								label={t("sessionFilters.desc")}
+								onSelect={() => update({ order: "desc" })}
+							/>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</WebView>
+			)}
+		</TabPage>
+	);
+}
+function SessionFilter({
+	title,
+	value,
+	options,
+	onChange,
+}: {
+	title: string;
+	value: string;
+	options: { value: string; label: string }[];
+	onChange: (value: string) => void;
+}) {
+	const t = useI18n();
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger
+				render={
+					<FilterChip
+						active={value !== "all"}
+						onClick={() => {}}
+						className={`${buttonVariants({ variant: "outline", size: "sm" })} ${filterStyles.h8BorderDashed}`}
+					>
+						<WebIcon as={PlusCircle} recipe={filterStyles.size4} />
+						<Text>
+							{title}
+							{value !== "all" ? " · 1" : ""}
+						</Text>
+					</FilterChip>
+				}
+			/>
+			<DropdownMenuContent>
+				<DropdownMenuItem label={t("sessionFilters.all")} onSelect={() => onChange("all")} />
+				{options.map((option) => (
+					<DropdownMenuItem
+						key={option.value}
+						label={option.label}
+						onSelect={() => onChange(option.value)}
+					/>
+				))}
+			</DropdownMenuContent>
+		</DropdownMenu>
 	);
 }

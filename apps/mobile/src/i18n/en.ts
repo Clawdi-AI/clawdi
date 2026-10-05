@@ -1,4 +1,4 @@
-import { LIBRARY_COPY, sessionDetailCopy } from "@clawdi/shared/view";
+import { billingCopy, LIBRARY_COPY, sessionDetailCopy, settingsCopy } from "@clawdi/shared/view";
 import { agentExtensionsEn } from "../features/agent-extensions-en";
 import { billingEn } from "../features/billing/en";
 import { channelsEn } from "../features/channels/en";
@@ -13,6 +13,8 @@ import { skillArchiveEn } from "../features/skill-archive-en";
 import { vaultEn } from "../features/vault/en";
 
 export const en = {
+	settingsParity: settingsCopy,
+	billingParity: billingCopy,
 	sessionDetail: sessionDetailCopy,
 	libraryPort: LIBRARY_COPY,
 	composite: {
@@ -53,8 +55,7 @@ export const en = {
 	},
 	connections: {
 		title: "Connected accounts",
-		description:
-			"Review the third-party accounts linked to your sign-in. Removing a connection does not delete the account at that provider.",
+		description: "Manage accounts connected to your profile.",
 		empty: "No third-party accounts are connected.",
 		verified: "Verified connection",
 		unverified: "Connection is not verified",
@@ -65,8 +66,7 @@ export const en = {
 		reauthorized: "Connection authorization confirmed.",
 		connect: "Connect account",
 		notConfigured: "No new sign-in providers are configured for this app build.",
-		browserHint:
-			"Connecting and reauthorizing use the system browser and require the app callback to be allowed by your sign-in service. Listed providers must also be enabled there. If interrupted, refresh before retrying.",
+		browserHint: "Connect an account to use it for sign-in.",
 		failed:
 			"Could not confirm this change. Refresh before retrying. Your sign-in service may require additional verification, deny this provider or restrict changing connections.",
 		saved: "Connection removed.",
@@ -74,8 +74,7 @@ export const en = {
 	mfa: {
 		title: "Two-factor authentication",
 		smsTitle: "SMS verification",
-		smsDescription:
-			"Add and verify a phone number first, then explicitly enable it for two-factor sign-in. An authenticator takes priority over the preferred SMS number. SMS availability and required security factors depend on your account policy.",
+		smsDescription: "Use a verified phone number to receive sign-in codes.",
 		smsEnable: "Enable SMS two-factor verification",
 		smsDisable: "Disable SMS two-factor verification",
 		smsDefault: "Use as preferred SMS number",
@@ -86,16 +85,14 @@ export const en = {
 			"Use this verified number for two-factor sign-in? Ensure you can receive SMS at this number. An authenticator remains the preferred method when enabled. Save any returned backup codes before leaving this screen.",
 		smsDisableWarning:
 			"Stop using this number as a second factor? This does not delete the phone number. The account service may prevent removal of a required security factor.",
-		description:
-			"Manage authenticator and SMS two-factor sign-in. Account policy and fresh identity verification may be required. Secrets are shown only on this screen and never saved by the app.",
+		description: "Add an extra layer of security to your account.",
 		enabled: "Authenticator enabled.",
 		disabled: "Authenticator not enabled.",
 		setup: "Set up authenticator",
 		setupInstructions:
 			"Scan this QR code with an authenticator, or enter the secret manually. Switching apps hides the secret; return here to enter the generated code.",
 		qr: "Authenticator setup QR code",
-		codeHint:
-			"Enter the code from your configured authenticator. You can finish an existing pending setup after reopening this page. If the setup secret was lost, discard the pending setup before starting again.",
+		codeHint: "Enter the code from your authenticator app.",
 		code: "Authenticator code",
 		verify: "Verify and enable authenticator",
 		disable: "Disable authenticator",
@@ -114,8 +111,7 @@ export const en = {
 	},
 	password: {
 		title: "Password",
-		description:
-			"Manage your account password. Strength, compromised-password and account sign-in policies are checked by the sign-in service. Passwords are not stored by this app.",
+		description: "Update the password you use to sign in.",
 		enabled: "This account has a password.",
 		absent: "This account does not currently have a password.",
 		current: "Current password",
@@ -133,8 +129,7 @@ export const en = {
 	},
 	devices: {
 		title: "Signed-in devices",
-		description:
-			"Review active account sessions and sign out other devices. Use Account to sign out this device. Device and approximate location information is reported by the sign-in service.",
+		description: "Manage devices signed in to your account.",
 		refresh: "Load or refresh devices",
 		loadHint: "Load the current device list. It is cleared when you leave or background the app.",
 		unknown: "Unknown device or activity",
@@ -234,13 +229,11 @@ export const en = {
 		unsavedMessage: "Your profile changes have not been saved.",
 		discard: "Discard changes",
 		title: "Edit profile",
-		description:
-			"Update your account name, username and picture. Your sign-in email and security settings are not changed here.",
+		description: "Manage your profile information.",
 		firstName: "First name",
 		lastName: "Last name",
 		username: "Username",
-		usernameHint:
-			"Username changes must be enabled for this account. Availability and format are checked by the account service; if usernames are used for sign-in, your new username applies there too.",
+		usernameHint: "Your username must be unique.",
 		save: "Save profile",
 		saved: "Profile saved.",
 		failed:
@@ -433,7 +426,9 @@ export const en = {
 			"This registration requires a policy agreement, security challenge or verification method not yet supported here. No agreement has been accepted on your behalf.",
 	},
 	auth: {
-		devBypassUnavailable: "Not available in dev auth bypass",
+		devBypassUnavailable: "Account management unavailable",
+		devBypassDescription:
+			"Sign in with your Clerk account to manage your profile and security settings.",
 		signInTitle: "Sign in to Clawdi",
 		signInSubtitle: "Use your Clawdi account to continue.",
 		signUpTitle: "Create your Clawdi account",
@@ -474,18 +469,6 @@ export const en = {
 			"Your account has a required setup step. Complete it on the web before using the mobile app.",
 	},
 	home: {
-		greeting: "Welcome back",
-		agentsTitle: "Cloud Agents",
-		sessionsTitle: "Recent Sessions",
-		workspaceTitle: "Your Agent workspace",
-		workspaceMessage:
-			"Your mobile foundation is ready. Agent inventory and sessions will appear here.",
-		emptyTitle: "No Agents to show",
-		emptyMessage: "When an Agent is available for this account, its status will appear here.",
-		statsTitle: "Workspace activity",
-		statsSessions: "Sessions",
-		statsMessages: "Messages",
-		statsProjects: "Projects",
 		statsSkills: "Skills",
 	},
 	inventory: {
@@ -789,6 +772,9 @@ export const en = {
 		no: "No",
 	},
 	account: {
+		profile: "Profile",
+		security: "Security",
+		settings: "Settings",
 		title: "Account",
 		signedInAs: "Signed in as",
 		signOut: "Sign out",

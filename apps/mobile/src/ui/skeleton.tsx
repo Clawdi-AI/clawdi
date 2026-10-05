@@ -1,6 +1,7 @@
 import { skeletonClassName } from "@clawdi/shared/ui";
 import { cn } from "cn";
-import { useEffect } from "react";
+import { type ReactNode, useEffect } from "react";
+import type { ViewProps } from "react-native";
 import Animated, {
 	cancelAnimation,
 	useAnimatedStyle,
@@ -14,7 +15,15 @@ import { resolveWebClasses } from "./web-classes";
 const AnimatedView = withUniwind(Animated.View);
 
 /** apps/web/src/components/ui/skeleton.tsx; Reanimated stands in for `animate-pulse`. */
-export function Skeleton({ className }: { className?: string }) {
+export function Skeleton({
+	className,
+	style: layoutStyle,
+	children,
+}: {
+	className?: string;
+	style?: ViewProps["style"];
+	children?: ReactNode;
+}) {
 	const opacity = useSharedValue(1);
 	useEffect(() => {
 		opacity.value = withRepeat(withTiming(0.5, { duration: 1000 }), -1, true);
@@ -26,7 +35,9 @@ export function Skeleton({ className }: { className?: string }) {
 			accessibilityElementsHidden
 			importantForAccessibility="no"
 			className={cn(resolveWebClasses(skeletonClassName).view, className)}
-			style={style}
-		/>
+			style={[layoutStyle, style]}
+		>
+			{children}
+		</AnimatedView>
 	);
 }

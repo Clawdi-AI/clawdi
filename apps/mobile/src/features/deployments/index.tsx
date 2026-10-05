@@ -1,11 +1,6 @@
 import type { HostedDeployOperation } from "@clawdi/shared/api";
-import {
-	agentsIndexClasses,
-	ENTITY_CARD_BASE,
-	ENTITY_GRID_CLASS,
-	RESOURCE_TINT_CLASSES,
-} from "@clawdi/shared/ui";
-import { agentSurfaceCopy, overviewComputeState } from "@clawdi/shared/view";
+import { agentsIndexClasses, ENTITY_CARD_BASE, ENTITY_GRID_CLASS } from "@clawdi/shared/ui";
+import { agentSurfaceCopy, overviewComputeState, RESOURCE_TINT_CLASSES } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { Cpu, Laptop } from "lucide-react-native";

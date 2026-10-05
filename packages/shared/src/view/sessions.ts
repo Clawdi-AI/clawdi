@@ -31,3 +31,29 @@ export function sessionCardModel(session: SessionListItem, quietAutomated = true
 	const isAutomated = quietAutomated && /^(Cron:|\[)/.test(title);
 	return { title, projectFolder, totalTokens, isAutomated };
 }
+
+export const SESSION_LIST_COPY = {
+	title: "Sessions",
+	sharedLinks: "Shared links",
+	searchPlaceholder: "Search sessions and messages…",
+	agent: "Agent",
+	type: "Type",
+	prLinks: "PR links",
+	hasPr: "Has PR links",
+	noPr: "No PR links",
+	manual: "Manual",
+	automated: "Automated (cron, heartbeat)",
+	reset: "Reset",
+	rows: "Rows",
+	error: "Couldn't load sessions",
+	empty: "No sessions yet. Once your agent has a conversation, it'll show up here.",
+	filteredEmpty: "No sessions match your filters.",
+} as const;
+
+export function sessionListEmptyMessage(query: string, filtered: boolean, displayQuery = query) {
+	return query
+		? `No sessions found for “${displayQuery}”.`
+		: filtered
+			? SESSION_LIST_COPY.filteredEmpty
+			: SESSION_LIST_COPY.empty;
+}

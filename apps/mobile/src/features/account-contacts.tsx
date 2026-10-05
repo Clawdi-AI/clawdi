@@ -9,10 +9,7 @@ import { useI18n } from "../i18n";
 import { useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { LoadingScreen } from "../ui/feedback";
-import { NativeButton } from "../ui/native-controls";
-import { AppScrollView, AppText, AppTextInput, AppView } from "../ui/primitives";
-import { ReadScreen } from "../ui/read-screen";
-import { BackButton } from "./cloud-inventory";
+import { AccountContactsFormView } from "../ui/settings/account-forms";
 
 type Contact = EmailAddressResource | PhoneNumberResource;
 type Kind = "emails" | "phones";
@@ -182,89 +179,23 @@ function ContactAddresses({ user, kind }: { user: UserResource; kind: Kind }) {
 		]);
 	};
 	return (
-		<ReadScreen>
-			<AppScrollView contentContainerClassName="gap-4 p-6">
-				<BackButton />
-				<AppText accessibilityRole="header" className="text-2xl font-semibold text-foreground">
-					{t(`${kind}.title`)}
-				</AppText>
-				<AppText>{t(`${kind}.description`)}</AppText>
-				{reverification.prompt}
-				<NativeButton label={t("inventory.refresh")} disabled={action.busy} onPress={refresh} />
-				{contacts.map((contact) => (
-					<AppView key={contact.id} className="gap-2 rounded-xl bg-card p-4">
-						<AppText selectable>{contactValue(contact)}</AppText>
-						<AppText>
-							{t(
-								contact.id === primary
-									? `${kind}.primary`
-									: contact.verification.status === "verified"
-										? `${kind}.verified`
-										: `${kind}.unverified`,
-							)}
-						</AppText>
-						{contact.verification.status !== "verified" ? (
-							<NativeButton
-								label={t(`${kind}.sendCode`)}
-								disabled={action.busy}
-								onPress={() => sendCode(contact.id)}
-							/>
-						) : null}
-						{contact.id !== primary ? (
-							<>
-								<NativeButton
-									label={t(`${kind}.makePrimary`)}
-									disabled={action.busy || contact.verification.status !== "verified"}
-									onPress={() => confirm(contact.id, false)}
-								/>
-								<NativeButton
-									label={t(`${kind}.remove`)}
-									disabled={action.busy}
-									onPress={() => confirm(contact.id, true)}
-								/>
-							</>
-						) : null}
-						{verifying === contact.id ? (
-							<>
-								<AppText>{t(`${kind}.codeSent`)}</AppText>
-								<AppTextInput
-									accessibilityLabel={t(`${kind}.code`)}
-									value={code}
-									onChangeText={setCode}
-									editable={!action.busy}
-									autoComplete="one-time-code"
-									keyboardType="number-pad"
-									className="rounded-xl bg-background p-3 text-foreground"
-								/>
-								<NativeButton
-									label={t(`${kind}.verify`)}
-									disabled={action.busy || !code.trim()}
-									onPress={verify}
-								/>
-							</>
-						) : null}
-					</AppView>
-				))}
-				<AppTextInput
-					accessibilityLabel={t(`${kind}.input`)}
-					placeholder={t(`${kind}.input`)}
-					value={draft}
-					onChangeText={setDraft}
-					editable={!action.busy}
-					autoComplete={kind === "emails" ? "email" : "tel"}
-					keyboardType={kind === "emails" ? "email-address" : "phone-pad"}
-					autoCapitalize="none"
-					autoCorrect={false}
-					className="rounded-xl bg-card p-3 text-foreground"
-				/>
-				<NativeButton
-					label={t(`${kind}.add`)}
-					disabled={action.busy || !draft.trim()}
-					onPress={add}
-				/>
-				{action.error ? <AppText accessibilityRole="alert">{t(`${kind}.failed`)}</AppText> : null}
-				{saved ? <AppText accessibilityRole="alert">{t(`${kind}.saved`)}</AppText> : null}
-			</AppScrollView>
-		</ReadScreen>
+		<AccountContactsFormView
+			action={action}
+			reverification={reverification}
+			kind={kind}
+			contacts={contacts}
+			primary={primary}
+			draft={draft}
+			verifying={verifying}
+			code={code}
+			saved={saved}
+			refresh={refresh}
+			sendCode={sendCode}
+			confirm={confirm}
+			verify={verify}
+			setCode={setCode}
+			setDraft={setDraft}
+			add={add}
+		/>
 	);
 }

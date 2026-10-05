@@ -1,5 +1,7 @@
 "use client";
 
+import { resourcesCardClasses } from "@clawdi/shared/ui";
+
 import {
 	DASHBOARD_COPY,
 	dashboardResources,
@@ -33,13 +35,13 @@ export function ResourcesCard({
 }) {
 	const ready = stats && !statsError;
 	return (
-		<Card className="gap-0 pb-0">
-			<CardHeader className="border-b">
+		<Card className={resourcesCardClasses.gap0Pb0}>
+			<CardHeader className={resourcesCardClasses.borderB}>
 				<CardTitle>{DASHBOARD_COPY.libraryTitle}</CardTitle>
 			</CardHeader>
-			<CardContent className="p-0">
+			<CardContent className={resourcesCardClasses.p0}>
 				{statsError ? (
-					<div className="p-6">
+					<div className={resourcesCardClasses.p6}>
 						<ApiErrorPanel
 							error={statsError}
 							onRetry={onRetryStats}
@@ -62,10 +64,10 @@ export function ResourcesCard({
 
 function ResourceRowSkeleton() {
 	return (
-		<div className="flex items-center gap-3 px-6 py-3">
-			<Skeleton className="size-4" />
-			<Skeleton className="h-4 flex-1" />
-			<Skeleton className="h-4 w-8" />
+		<div className={resourcesCardClasses.flexItemsCenterGap3}>
+			<Skeleton className={resourcesCardClasses.size4} />
+			<Skeleton className={resourcesCardClasses.h4Flex1} />
+			<Skeleton className={resourcesCardClasses.h4W8} />
 		</div>
 	);
 }
@@ -79,8 +81,10 @@ function ResourceRow({ resource }: { resource: Resource }) {
 	const count = (
 		<span
 			className={cn(
-				"text-sm tabular-nums",
-				empty || countUnavailable ? "text-muted-foreground" : "font-semibold",
+				resourcesCardClasses.textSmTabularNums,
+				empty || countUnavailable
+					? resourcesCardClasses.textMutedForeground
+					: resourcesCardClasses.fontSemibold,
 			)}
 			title={scopeLabel}
 		>
@@ -88,22 +92,16 @@ function ResourceRow({ resource }: { resource: Resource }) {
 		</span>
 	);
 	return (
-		<Link
-			to={definition.href}
-			className="group flex items-center gap-3 px-6 py-3 transition-colors hover:bg-muted/50"
-		>
+		<Link to={definition.href} className={resourcesCardClasses.groupFlexItemsCenterGap}>
 			{/* Same identity hue as this resource's sidebar chip — the rail
 			    and the nav read as one system. */}
 			<span
-				className={cn(
-					"flex size-7 shrink-0 items-center justify-center rounded-lg",
-					RESOURCE_TINT_CLASSES[definition.id],
-				)}
+				className={cn(resourcesCardClasses.flexSize7Shrink0, RESOURCE_TINT_CLASSES[definition.id])}
 			>
-				<Icon className="size-3.5" />
+				<Icon className={resourcesCardClasses.size35} />
 			</span>
-			<div className="min-w-0 flex-1">
-				<div className="text-sm font-medium">{definition.label}</div>
+			<div className={resourcesCardClasses.minW0Flex1}>
+				<div className={resourcesCardClasses.textSmFontMedium}>{definition.label}</div>
 			</div>
 			{count}
 		</Link>

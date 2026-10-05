@@ -1,102 +1,23 @@
 "use client";
+import { deploymentToTiles } from "@clawdi/shared/view";
+
+export {
+	deploymentToTiles,
+	type HostedRuntimeStatusView,
+	hostedRuntimeStatusView,
+} from "@clawdi/shared/view";
 
 import type { components } from "@clawdi/shared/api";
-import type { AgentCardStatusProjection, AgentTile } from "@clawdi/shared/view";
-import { agentDisplayName, type DaemonStatusVisual, daemonStatusVisual } from "@clawdi/shared/view";
+import type { AgentTile } from "@clawdi/shared/view";
 import { useMemo } from "react";
-import { statusDotVariants, statusTextVariants } from "@/components/ui/status-badge";
-import type { HostedDeployment, HostedDeploymentStatus } from "@/hosted/billing/contracts";
+import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { hasExistingCloudDeployments } from "@/hosted/cloud-deployment-management";
-import {
-	compactDeploymentFailureReason,
-	type DeploymentFailurePresentation,
-	deploymentFailurePresentation,
-	deploymentFailureReason,
-} from "@/hosted/deployment-failure";
-import {
-	type DeploymentStatus,
-	type DeploymentStatusTone,
-	deploymentRuntimeStatusPresentation,
-	isRunningStatus,
-} from "@/hosted/deployment-status";
-import {
-	claimedEnvIdsFromDeployments,
-	isHostedDeploymentVisible,
-} from "@/hosted/hosted-agent-resolution";
-import { deploymentFilesUrl, deploymentRuntime } from "@/hosted/runtimes";
+import { claimedEnvIdsFromDeployments } from "@/hosted/hosted-agent-resolution";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
-import { agentSectionHref } from "@/lib/agent-routes";
 
 type Env = components["schemas"]["AgentResponse"];
-type DeploymentStatusInput = HostedDeploymentStatus | null;
 
 const EMPTY_DEPLOYMENTS: HostedDeployment[] = [];
-
-export interface HostedRuntimeStatusView {
-	compute: DeploymentStatus;
-	sync: DaemonStatusVisual | null;
-	primary: {
-		label: string;
-		tone: DeploymentStatusTone;
-		textClass: string;
-	};
-	secondary: {
-		kind: DaemonStatusVisual["kind"] | "failure_reason";
-		label: string;
-		tooltip: string;
-		textClass: string;
-	} | null;
-	active: boolean;
-}
-
-export function hostedRuntimeStatusView(
-	deployment: DeploymentStatusInput,
-	env: Env | null | undefined,
-	failurePresentation?: DeploymentFailurePresentation | null,
-): HostedRuntimeStatusView {
-	const computePresentation = deploymentRuntimeStatusPresentation(deployment);
-	const compute = computePresentation.status;
-	const failureStatus = compute.kind === "failed" ? failurePresentation?.status : null;
-	const computeLabel = failureStatus?.label ?? computePresentation.label;
-	const computeTone = failureStatus?.tone ?? computePresentation.tone;
-	const sync = env === undefined ? null : daemonStatusVisual(env, "on-clawdi");
-	const computeIsRunning = isRunningStatus(compute);
-	const failureReason =
-		failurePresentation?.reason ??
-		(compute.kind === "failed" ? deploymentFailureReason(deployment) : null);
-	let secondary: HostedRuntimeStatusView["secondary"] = null;
-	if (failureReason && failureStatus?.kind !== "runtime_unavailable") {
-		secondary = {
-			kind: "failure_reason",
-			label: failurePresentation
-				? compactDeploymentFailureReason(failurePresentation.title)
-				: `Failure: ${compactDeploymentFailureReason(failureReason)}`,
-			tooltip: failurePresentation
-				? `${failurePresentation.title}. ${failurePresentation.reason}`
-				: failureReason,
-			textClass: statusTextVariants({ status: "destructive" }),
-		};
-	} else if (computeIsRunning && sync && sync.kind !== "live") {
-		secondary = {
-			kind: sync.kind,
-			label: sync.badgeLabel,
-			tooltip: sync.tooltip,
-			textClass: sync.textClass,
-		};
-	}
-
-	return {
-		compute,
-		sync,
-		primary: {
-			label: computeLabel,
-			tone: computeTone,
-			textClass: statusTextVariants({ status: computeTone }),
-		},
-		secondary,
-		active: computeIsRunning,
-	};
-}
 
 /**
  * Bridges hosted deploy API `Deployment` records to the unified `AgentTile`
@@ -174,40 +95,3 @@ export function useHostedAgentTiles({
  * One deployment renders as one Hosted Agent tile. The authoritative Agent UUID
  * owns the detail route; deployment identity stays attached to compute actions.
  */
-export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
-	if (!isHostedDeploymentVisible(d)) return [];
-	const runtime = deploymentRuntime(d);
-	const matchedEnv = envById.get(d.agent_id.toLowerCase());
-	const name = agentDisplayName(
-		matchedEnv ?? { default_name: d.resource.name, agent_type: runtime },
-	);
-	const detailHref = agentSectionHref(d.agent_id);
-	const failure = deploymentFailurePresentation(d);
-	const runtimeStatus = hostedRuntimeStatusView(d.resource.status, matchedEnv, failure);
-	const cardStatus: AgentCardStatusProjection = {
-		visual: {
-			label: runtimeStatus.primary.label,
-			tooltip: `Compute status: ${runtimeStatus.primary.label}.`,
-			dotClass: statusDotVariants({ status: runtimeStatus.primary.tone }),
-		},
-		labels: [
-			runtimeStatus.primary.label,
-			...(runtimeStatus.secondary ? [runtimeStatus.secondary.label] : []),
-		],
-	};
-	return [
-		{
-			id: d.agent_id,
-			source: "on-clawdi" as const,
-			name,
-			avatarUrl: matchedEnv?.avatar_url ?? null,
-			sortOrder: matchedEnv?.sort_order ?? null,
-			agentType: runtime,
-			href: detailHref,
-			external: false,
-			cardStatus,
-			filesAvailable: deploymentFilesUrl(d) !== null,
-			env: matchedEnv ?? null,
-		},
-	];
-}

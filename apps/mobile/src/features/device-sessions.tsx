@@ -10,10 +10,7 @@ import { useI18n } from "../i18n";
 import { useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { LoadingScreen } from "../ui/feedback";
-import { NativeButton } from "../ui/native-controls";
-import { AppScrollView, AppText, AppView } from "../ui/primitives";
-import { ReadScreen } from "../ui/read-screen";
-import { BackButton } from "./cloud-inventory";
+import { DeviceSessionsFormView } from "../ui/settings/account-forms";
 
 export function DeviceSessionsScreen() {
 	const { isLoaded, user } = useUser();
@@ -107,56 +104,14 @@ function DeviceSessions() {
 		]);
 	};
 	return (
-		<ReadScreen>
-			<AppScrollView contentContainerClassName="gap-4 p-6">
-				<BackButton />
-				<AppText accessibilityRole="header" className="text-2xl font-semibold text-foreground">
-					{t("devices.title")}
-				</AppText>
-				<AppText>{t("devices.description")}</AppText>
-				{reverification.prompt}
-				<NativeButton label={t("devices.refresh")} disabled={action.busy} onPress={refresh} />
-				{sessions === null ? <AppText>{t("devices.loadHint")}</AppText> : null}
-				{sessions?.map((session) => (
-					<AppView key={session.id} className="gap-2 rounded-xl bg-card p-4">
-						<AppText>
-							{[
-								session.latestActivity.deviceType,
-								session.latestActivity.browserName,
-								session.latestActivity.browserVersion,
-							]
-								.filter(Boolean)
-								.join(" · ") || t("devices.unknown")}
-						</AppText>
-						<AppText selectable>
-							{[
-								session.latestActivity.city,
-								session.latestActivity.country,
-								session.latestActivity.ipAddress,
-							]
-								.filter(Boolean)
-								.join(" · ")}
-						</AppText>
-						<AppText>
-							{t("devices.lastActive")}{" "}
-							{Number.isFinite(session.lastActiveAt.getTime())
-								? session.lastActiveAt.toLocaleString()
-								: t("devices.unknown")}
-						</AppText>
-						{session.id === scope.sessionId ? (
-							<AppText>{t("devices.current")}</AppText>
-						) : (
-							<NativeButton
-								label={t("devices.revoke")}
-								disabled={action.busy}
-								onPress={() => revoke(session.id)}
-							/>
-						)}
-					</AppView>
-				))}
-				{action.error ? <AppText accessibilityRole="alert">{t("devices.failed")}</AppText> : null}
-				{revoked ? <AppText accessibilityRole="alert">{t("devices.revoked")}</AppText> : null}
-			</AppScrollView>
-		</ReadScreen>
+		<DeviceSessionsFormView
+			action={action}
+			reverification={reverification}
+			sessions={sessions}
+			scope={scope}
+			revoked={revoked}
+			refresh={refresh}
+			revoke={revoke}
+		/>
 	);
 }

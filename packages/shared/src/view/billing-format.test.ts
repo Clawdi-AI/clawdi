@@ -11,7 +11,7 @@ import {
 	persistedUsdToCents,
 	subtractDecimals,
 	wholeDollarTopUpCents,
-} from "@/hosted/billing/format";
+} from "./billing-format";
 
 describe("USD formatting", () => {
 	test("formats normal numeric USD with exactly two decimal places", () => {

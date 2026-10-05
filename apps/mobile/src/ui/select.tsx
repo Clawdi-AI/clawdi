@@ -10,7 +10,7 @@ import {
 	NativeMenu,
 	type NativeMenuEntry,
 } from "./native-menu";
-import { WebContent, WebIcon, WebView, webText } from "./web-layout";
+import { WebContent, WebIcon, WebView, webText, webView } from "./web-layout";
 
 const SelectContext = createContext({ value: "", label: "", disabled: false });
 type SlotProps = { children?: ReactNode; className?: string };
@@ -80,7 +80,14 @@ export function Select({
 	const menuDisabled = disabled || trigger?.props.disabled === true;
 	return (
 		<SelectContext.Provider value={{ value: selected, label, disabled: menuDisabled }}>
-			<NativeMenu entries={entries} disabled={menuDisabled} onOpenChange={onOpenChange}>
+			<NativeMenu
+				entries={entries}
+				disabled={menuDisabled}
+				onOpenChange={onOpenChange}
+				fullWidth={webView(trigger?.props.className ?? "")
+					.split(" ")
+					.includes("w-full")}
+			>
 				{trigger}
 			</NativeMenu>
 		</SelectContext.Provider>
@@ -105,6 +112,7 @@ export function SelectTrigger({
 			accessibilityRole="button"
 			accessibilityState={{ disabled: disabled || select.disabled }}
 			className={className}
+			style={{ paddingVertical: 0 }}
 		>
 			{children}
 			<WebIcon as={ChevronDown} recipe={styles.selectTrigger2} />

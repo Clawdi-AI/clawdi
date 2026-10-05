@@ -1,6 +1,13 @@
 "use client";
 
-import { formatShortDate } from "@clawdi/shared/view";
+import { transactionsSectionClasses } from "@clawdi/shared/ui";
+import {
+	billingCopy,
+	formatShortDate,
+	transactionStatusLabel as statusLabel,
+	transactionStatusTone as statusTone,
+	transactionDocumentAction,
+} from "@clawdi/shared/view";
 import { ExternalLink, Receipt } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -9,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
+import { StatusBadge } from "@/components/ui/status-badge";
 import {
 	Table,
 	TableBody,
@@ -30,46 +37,16 @@ import {
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
-const STATUS_LABELS: Record<string, string> = {
-	applied: "Completed",
-	paid: "Paid",
-	succeeded: "Completed",
-	pending: "Pending",
-	processing: "Processing",
-	failed: "Failed",
-	refunded: "Refunded",
-	waived: "Waived",
-	void: "Void",
-	open: "Open",
-	draft: "Draft",
-	uncollectible: "Uncollectible",
-};
-
-function statusLabel(status: string): string {
-	return STATUS_LABELS[status] ?? "Processing";
-}
-
-function statusTone(status: string): StatusTone {
-	if (["applied", "paid", "succeeded"].includes(status)) return "success";
-	if (["pending", "processing", "open", "draft"].includes(status)) return "warning";
-	if (["failed", "uncollectible"].includes(status)) return "destructive";
-	return "neutral";
-}
-
 function TransactionAction({ transaction }: { transaction: WalletTransaction }) {
-	const action = transaction.receipt_url
-		? { label: "Receipt", url: transaction.receipt_url }
-		: transaction.hosted_invoice_url
-			? { label: "Invoice", url: transaction.hosted_invoice_url }
-			: null;
-	if (!action) return <span className="text-muted-foreground">—</span>;
+	const action = transactionDocumentAction(transaction);
+	if (!action) return <span className={transactionsSectionClasses.muted}>—</span>;
 	return (
 		<Button
 			render={<a href={action.url} target="_blank" rel="noopener noreferrer" />}
 			nativeButton={false}
 			variant="link"
 			size="xs"
-			className="h-auto px-0"
+			className={transactionsSectionClasses.inlineAction}
 		>
 			{action.label} <ExternalLink data-icon="inline-end" />
 		</Button>
@@ -79,10 +56,12 @@ function TransactionAction({ transaction }: { transaction: WalletTransaction }) 
 function TransactionDescription({ transaction }: { transaction: WalletTransaction }) {
 	const details = transactionComputeDetails(transaction);
 	return (
-		<div className="min-w-0">
-			<div className="font-medium">{transactionKindLabel(transaction.kind)}</div>
+		<div className={transactionsSectionClasses.minWidth}>
+			<div className={transactionsSectionClasses.label}>
+				{transactionKindLabel(transaction.kind)}
+			</div>
 			{details.map((detail) => (
-				<div key={detail} className="truncate text-xs text-muted-foreground">
+				<div key={detail} className={transactionsSectionClasses.reference}>
 					{detail}
 				</div>
 			))}
@@ -94,7 +73,7 @@ function TransactionAmount({ transaction }: { transaction: WalletTransaction }) 
 	return (
 		<span
 			className={cn(
-				"shrink-0 font-medium tabular-nums",
+				transactionsSectionClasses.amount,
 				transaction.direction === "credit" && "text-success-muted-foreground",
 			)}
 		>
@@ -108,7 +87,7 @@ export function TransactionsSection() {
 	const rows = transactions.data?.pages.flatMap((page) => page.items) ?? [];
 	const loadMore =
 		transactions.hasNextPage && !transactions.isError ? (
-			<div className="flex justify-center">
+			<div className={transactionsSectionClasses.pagination}>
 				<Button
 					size="sm"
 					variant="outline"
@@ -133,16 +112,16 @@ export function TransactionsSection() {
 			id="transactions"
 			data-hosted="true"
 			headingLevel={3}
-			title="Transactions"
-			description="Top-ups, compute payments, credits, and adjustments."
+			title={billingCopy.transactions}
+			description={billingCopy.transactionsDescription}
 		>
-			<div className="flex flex-col gap-4">
+			<div className={transactionsSectionClasses.section}>
 				{transactions.isLoading ? (
-					<div className="space-y-px overflow-hidden rounded-lg border">
+					<div className={transactionsSectionClasses.skeletons}>
 						{Array.from({ length: 5 }, (_, index) => `transaction-${index}`).map((key) => (
-							<div key={key} className="flex items-center justify-between gap-4 px-3 py-3">
-								<Skeleton className="h-4 w-40" />
-								<Skeleton className="h-4 w-16" />
+							<div key={key} className={transactionsSectionClasses.skeletonRow}>
+								<Skeleton className={transactionsSectionClasses.skeletonLabel} />
+								<Skeleton className={transactionsSectionClasses.skeletonAmount} />
 							</div>
 						))}
 					</div>
@@ -157,24 +136,24 @@ export function TransactionsSection() {
 					<EmptyState
 						variant="inset"
 						icon={Receipt}
-						title="No transactions yet"
-						description="Top-ups, grants, compute charges, and other money movements will appear here."
+						title={billingCopy.emptyTransactions}
+						description={billingCopy.emptyTransactionsDescription}
 					/>
 				) : (
 					<>
-						<ul className="divide-y overflow-hidden rounded-lg border md:hidden">
+						<ul className={transactionsSectionClasses.mobileRows}>
 							{rows.map((transaction) => (
-								<li key={transaction.id} className="flex items-start justify-between gap-3 p-3">
-									<div className="min-w-0 space-y-1.5">
+								<li key={transaction.id} className={transactionsSectionClasses.mobileRow}>
+									<div className={transactionsSectionClasses.mobileCopy}>
 										<TransactionDescription transaction={transaction} />
-										<div className="flex flex-wrap items-center gap-2">
+										<div className={transactionsSectionClasses.mobileHeading}>
 											<Badge variant="outline">
 												{transactionPaymentSourceLabel(transaction.funding)}
 											</Badge>
 											<StatusBadge status={statusTone(transaction.status)}>
 												{statusLabel(transaction.status)}
 											</StatusBadge>
-											<span className="text-xs text-muted-foreground">
+											<span className={transactionsSectionClasses.description}>
 												{formatShortDate(transaction.occurred_at)}
 											</span>
 										</div>
@@ -185,22 +164,26 @@ export function TransactionsSection() {
 							))}
 						</ul>
 
-						<div className="hidden overflow-x-auto rounded-lg border md:block">
+						<div className={transactionsSectionClasses.desktopTable}>
 							<Table>
 								<TableHeader>
 									<TableRow>
 										<TableHead>Type</TableHead>
 										<TableHead>Payment source</TableHead>
 										<TableHead>Status</TableHead>
-										<TableHead className="text-right">Amount</TableHead>
-										<TableHead className="text-right">Date</TableHead>
-										<TableHead className="text-right">Receipt / invoice</TableHead>
+										<TableHead className={transactionsSectionClasses.amountColumn}>
+											Amount
+										</TableHead>
+										<TableHead className={transactionsSectionClasses.amountColumn}>Date</TableHead>
+										<TableHead className={transactionsSectionClasses.amountColumn}>
+											Receipt / invoice
+										</TableHead>
 									</TableRow>
 								</TableHeader>
 								<TableBody>
 									{rows.map((transaction) => (
 										<TableRow key={transaction.id}>
-											<TableCell className="max-w-[18rem]">
+											<TableCell className={transactionsSectionClasses.referenceColumn}>
 												<TransactionDescription transaction={transaction} />
 											</TableCell>
 											<TableCell>
@@ -213,13 +196,13 @@ export function TransactionsSection() {
 													{statusLabel(transaction.status)}
 												</StatusBadge>
 											</TableCell>
-											<TableCell className="text-right">
+											<TableCell className={transactionsSectionClasses.amountColumn}>
 												<TransactionAmount transaction={transaction} />
 											</TableCell>
-											<TableCell className="whitespace-nowrap text-right text-sm text-muted-foreground">
+											<TableCell className={transactionsSectionClasses.desktopAmount}>
 												{formatShortDate(transaction.occurred_at)}
 											</TableCell>
-											<TableCell className="text-right">
+											<TableCell className={transactionsSectionClasses.amountColumn}>
 												<TransactionAction transaction={transaction} />
 											</TableCell>
 										</TableRow>
@@ -227,7 +210,9 @@ export function TransactionsSection() {
 								</TableBody>
 							</Table>
 						</div>
-						<p className="text-xs text-muted-foreground">Showing {rows.length} transactions</p>
+						<p className={transactionsSectionClasses.description}>
+							{billingCopy.transactionsCount.replace("{count}", String(rows.length))}
+						</p>
 						{loadMore}
 					</>
 				)}
