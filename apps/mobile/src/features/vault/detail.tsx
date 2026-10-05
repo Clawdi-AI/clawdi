@@ -23,11 +23,16 @@ import {
 	identityFor,
 	transferVaultKeysLabel,
 	transferVaultKeysTitle,
+	vaultImportActionLabel,
+	vaultImportConflictHint,
+	vaultImportDetectedCount,
+	vaultImportMore,
+	vaultImportSummaryLabel,
 	vaultMoveWarning,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { ListChecks, Plus, Trash2 } from "lucide-react-native";
+import { AlertCircle, Check, ListChecks, Plus, Trash2 } from "lucide-react-native";
 import { useCallback, useState } from "react";
 import { AppState } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
@@ -35,6 +40,7 @@ import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
+import { Alert } from "../../ui/alert";
 import { ApiErrorPanel } from "../../ui/api-error-panel";
 import { Badge } from "../../ui/badge";
 import { Button } from "../../ui/button";
@@ -53,7 +59,7 @@ import { Icon } from "../../ui/icon";
 import { IconChip } from "../../ui/icon-chip";
 import { Input, Label } from "../../ui/input";
 import { PageHeader, PageHeaderSkeleton } from "../../ui/page-header";
-import { AppText, AppView } from "../../ui/primitives";
+import { AppView } from "../../ui/primitives";
 import { SearchInput } from "../../ui/search-input";
 import { Switch } from "../../ui/switch";
 import { Text } from "../../ui/text";
@@ -617,12 +623,11 @@ function VaultDetail({
 									{`${formCopy.addDescriptionBefore}${formCopy.format}${formCopy.addDescriptionAfter}`}
 								</DialogDescription>
 							</DialogHeader>
-							<WebView recipe={vaultDetailClasses.section}>
+							<WebView recipe={addKeysDialogClasses.body}>
 								<Input
 									accessibilityLabel={t("vault.importText")}
 									placeholder={formCopy.placeholder}
 									className={webBoth(addKeysDialogClasses.textarea)}
-									style={{ minHeight: 168 }}
 									value={draft}
 									onChangeText={setDraft}
 									editable={!action.busy}
@@ -648,44 +653,89 @@ function VaultDetail({
 										autoCorrect={false}
 									/>
 								) : null}
-								{preview.conflicts.length > 0 ? (
-									<AppView className="flex-row items-center gap-2">
+								{preview.parsed.errors.length ? (
+									<Alert variant="destructive" icon={AlertCircle} title={formCopy.invalid}>
+										<WebView recipe={addKeysDialogClasses.errors}>
+											{preview.parsed.errors.map((error, index) => (
+												<Text key={`${index}-${error}`}>{error}</Text>
+											))}
+										</WebView>
+									</Alert>
+								) : null}
+								{preview.conflicts.length > 0 && !preview.parsed.errors.length ? (
+									<WebView recipe={addKeysDialogClasses.overwrite} className="flex-row">
 										<Switch checked={replace} onCheckedChange={setReplace} disabled={action.busy} />
-										<Label>{formCopy.overwrite}</Label>
-									</AppView>
+										<WebView recipe={addKeysDialogClasses.newField} className="flex-1">
+											<Label className={webBoth(addKeysDialogClasses.overwriteLabel)}>
+												{formCopy.overwrite}
+											</Label>
+											<WebText recipe={addKeysDialogClasses.hint}>
+												{vaultImportConflictHint(preview.conflicts.length)}
+											</WebText>
+										</WebView>
+									</WebView>
+								) : null}
+								{draft &&
+								(!validSection ||
+									preview.importableRows.length > 200 ||
+									preview.importableRows.some((row) => row.key.length > 200)) ? (
+									<Text accessibilityRole="alert">{t("vault.invalidImport")}</Text>
+								) : null}
+								{preview.preview.length > 0 && !preview.parsed.errors.length ? (
+									<WebView recipe={addKeysDialogClasses.preview}>
+										<WebView recipe={addKeysDialogClasses.previewHeader} className="flex-row">
+											<WebText recipe={addKeysDialogClasses.previewLabel}>
+												{formCopy.preview}
+											</WebText>
+											<WebView recipe={addKeysDialogClasses.badges} className="flex-row">
+												<Badge variant="secondary">
+													<Text>{vaultImportSummaryLabel("new", preview.summary.created)}</Text>
+												</Badge>
+												{preview.conflicts.length ? (
+													<Badge variant="outline">
+														<Text>
+															{replace
+																? vaultImportSummaryLabel("update", preview.summary.updated)
+																: vaultImportSummaryLabel("skip", preview.summary.skipped)}
+														</Text>
+													</Badge>
+												) : null}
+											</WebView>
+										</WebView>
+										<WebView recipe={addKeysDialogClasses.previewList}>
+											{preview.preview.slice(0, 10).map((row) => (
+												<WebView
+													key={row.key}
+													recipe={addKeysDialogClasses.previewRow}
+													className="flex-row justify-between"
+												>
+													<WebText recipe={addKeysDialogClasses.keyName}>{row.key}</WebText>
+													<Badge variant={row.action === "create" ? "secondary" : "outline"}>
+														<Text>{vaultImportActionLabel(row.action)}</Text>
+													</Badge>
+												</WebView>
+											))}
+											{preview.preview.length > 10 ? (
+												<WebText recipe={addKeysDialogClasses.more}>
+													{vaultImportMore(preview.preview.length - 10)}
+												</WebText>
+											) : null}
+										</WebView>
+									</WebView>
 								) : null}
 								{draft ? (
-									<>
-										<WebText recipe={addKeysDialogClasses.previewLabel}>{formCopy.preview}</WebText>
-										{preview.parsed.errors.length ||
-										!validSection ||
-										preview.importableRows.length > 200 ||
-										preview.importableRows.some((row) => row.key.length > 200) ? (
-											<AppText accessibilityRole="alert">{t("vault.invalidImport")}</AppText>
-										) : (
-											preview.preview.map((row) => (
-												<AppText key={row.key}>
-													{row.key} ·{" "}
-													{t(
-														row.action === "create"
-															? "vault.createKey"
-															: row.action === "update"
-																? "vault.updateKey"
-																: "vault.skipKey",
-													)}
-												</AppText>
-											))
-										)}
-										<Button
-											variant="outline"
-											size="sm"
-											onPress={() => setDraft("")}
-											disabled={action.busy}
-										>
-											<Text>{t("vault.clear")}</Text>
-										</Button>
-									</>
+									<Button
+										variant="ghost"
+										size="sm"
+										disabled={action.busy}
+										onPress={() => setDraft("")}
+									>
+										<Text>{t("vault.clear")}</Text>
+									</Button>
 								) : null}
+								<WebText recipe={addKeysDialogClasses.count}>
+									{vaultImportDetectedCount(preview.parsed.entries.length, preview.summary.skipped)}
+								</WebText>
 								<DialogFooter>
 									<Button variant="ghost" disabled={action.busy} onPress={() => setAddOpen(false)}>
 										<Text>{t("account.cancel")}</Text>
@@ -696,6 +746,7 @@ function VaultDetail({
 										disabled={action.busy || !validImport}
 										onPress={importKeys}
 									>
+										<Icon as={Check} className={webBoth(addKeysDialogClasses.icon)} />
 										<Text>
 											{formCopy.save} {preview.importableRows.length || ""}
 										</Text>
@@ -723,6 +774,7 @@ function VaultDetail({
 							<WebView recipe={copyKeysDialogClasses.body}>
 								<Label>{formCopy.destination}</Label>
 								<ChoiceSelect
+									triggerClassName={webView(copyKeysDialogClasses.trigger)}
 									value={targetId}
 									onValueChange={setTargetId}
 									disabled={action.busy}

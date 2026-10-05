@@ -21,7 +21,7 @@ import { useMobileApi } from "../../providers/api-provider";
 import { Button } from "../../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../ui/card";
 import { Input, Label } from "../../ui/input";
-import { AppScrollView, AppText, AppView } from "../../ui/primitives";
+import { AppScrollView, AppText } from "../../ui/primitives";
 import { ReadScreen } from "../../ui/read-screen";
 import { Text } from "../../ui/text";
 import { useConfirmation } from "../../ui/use-confirmation";
@@ -270,20 +270,30 @@ function VaultSupply({ intake }: { intake: string | null }) {
 							) : null}
 							{phase === "ready" && context ? (
 								<>
-									<AppText className="text-lg font-semibold text-foreground">
-										{context.vault_name} · {context.project_name}
-									</AppText>
-									<AppText>
-										{context.section || t("vault.defaultSection")} · {context.expires_at}
-									</AppText>
+									<WebView recipe={vaultRequestClasses.context}>
+										<WebText recipe={vaultRequestClasses.contextTitle}>
+											{context.vault_name} · {context.project_name}
+										</WebText>
+										{context.section ? (
+											<WebText recipe={vaultRequestClasses.wrap}>
+												Section: {context.section}
+											</WebText>
+										) : null}
+										<WebText recipe={vaultRequestClasses.muted}>
+											Expires {new Date(context.expires_at).toLocaleString()}
+										</WebText>
+									</WebView>
+									<WebText recipe={vaultRequestClasses.loading}>
+										{VAULT_REQUEST_COPY.privacy}
+									</WebText>
 									{rows.map((row, index) => (
-										<AppView key={`${index}:${row.required}`} className="gap-2">
+										<WebView key={`${index}:${row.required}`} recipe={vaultRequestClasses.field}>
 											{row.required ? (
 												<Label>{row.name}</Label>
 											) : (
 												<Input
 													accessibilityLabel={t("vault.supplyName")}
-													placeholder={t("vault.supplyName")}
+													className={webBoth(vaultRequestClasses.mono)}
 													value={row.name}
 													maxLength={200}
 													editable={!row.required && !action.busy}
@@ -305,7 +315,7 @@ function VaultSupply({ intake }: { intake: string | null }) {
 											/>
 											{!row.required ? (
 												<Button
-													variant="outline"
+													variant="ghost"
 													size="sm"
 													disabled={action.busy}
 													onPress={() => setRows(rows.filter((_, i) => i !== index))}
@@ -313,7 +323,7 @@ function VaultSupply({ intake }: { intake: string | null }) {
 													<Text>{t("vault.supplyRemove")}</Text>
 												</Button>
 											) : null}
-										</AppView>
+										</WebView>
 									))}
 									<Button
 										variant="outline"

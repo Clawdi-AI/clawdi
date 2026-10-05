@@ -89,3 +89,20 @@ export function transferVaultKeysLabel(mode: "copy" | "move", count: number) {
 export function vaultMoveWarning(name: string, count: number) {
 	return `${name} is used by ${count} Projects — moving these keys removes them from all of those Projects.`;
 }
+
+export function vaultImportDetectedCount(count: number, skipped: number) {
+	return `${count} ${count === 1 ? "key" : "keys"} detected${skipped > 0 ? ` · ${skipped} skipped` : ""}`;
+}
+export function vaultImportConflictHint(count: number) {
+	return `${count} key${count === 1 ? "" : "s"} already exist. By default, they are skipped.`;
+}
+export function vaultImportMore(count: number) {
+	return `${count} more key${count === 1 ? "" : "s"} ready.`;
+}
+export function vaultImportActionLabel(action: "create" | "update" | "skip") {
+	return action === "create" ? "New" : action === "update" ? "Update" : "Skip";
+}
+
+export function vaultImportSummaryLabel(kind: "new" | "update" | "skip", count: number) {
+	return `${count} ${kind}`;
+}

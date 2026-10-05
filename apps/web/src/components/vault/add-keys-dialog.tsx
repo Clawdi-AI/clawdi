@@ -1,7 +1,16 @@
 "use client";
 
 import { addKeysDialogClasses } from "@clawdi/shared/ui";
-import { errorMessage, vaultKeyFormCopy as formCopy, identityFor } from "@clawdi/shared/view";
+import {
+	errorMessage,
+	vaultKeyFormCopy as formCopy,
+	identityFor,
+	vaultImportActionLabel,
+	vaultImportConflictHint,
+	vaultImportDetectedCount,
+	vaultImportMore,
+	vaultImportSummaryLabel,
+} from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Plus } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
@@ -342,9 +351,7 @@ export function AddKeysDialog({
 									Overwrite existing keys
 								</Label>
 								<p className={addKeysDialogClasses.hint}>
-									{importPlan.conflicts.length} key
-									{importPlan.conflicts.length === 1 ? "" : "s"} already exist. By default, they are
-									skipped.
+									{vaultImportConflictHint(importPlan.conflicts.length)}
 								</p>
 							</div>
 						</div>
@@ -354,12 +361,14 @@ export function AddKeysDialog({
 							<div className={addKeysDialogClasses.previewHeader}>
 								<p className={addKeysDialogClasses.previewLabel}>Preview</p>
 								<div className={addKeysDialogClasses.badges}>
-									<Badge variant="secondary">{importPlan.summary.created} new</Badge>
+									<Badge variant="secondary">
+										{vaultImportSummaryLabel("new", importPlan.summary.created)}
+									</Badge>
 									{importPlan.conflicts.length > 0 ? (
 										<Badge variant="outline">
 											{updateExisting
-												? `${importPlan.summary.updated} update`
-												: `${importPlan.summary.skipped} skip`}
+												? vaultImportSummaryLabel("update", importPlan.summary.updated)
+												: vaultImportSummaryLabel("skip", importPlan.summary.skipped)}
 										</Badge>
 									) : null}
 								</div>
@@ -378,8 +387,7 @@ export function AddKeysDialog({
 								))}
 								{importPlan.preview.length > 10 ? (
 									<p className={addKeysDialogClasses.more}>
-										{importPlan.preview.length - 10} more key
-										{importPlan.preview.length - 10 === 1 ? "" : "s"} ready.
+										{vaultImportMore(importPlan.preview.length - 10)}
 									</p>
 								) : null}
 							</div>
@@ -387,8 +395,7 @@ export function AddKeysDialog({
 					) : null}
 					<div className={addKeysDialogClasses.footerRow}>
 						<span className={addKeysDialogClasses.count}>
-							{count} {count === 1 ? "key" : "keys"} detected
-							{importPlan.summary.skipped > 0 ? ` · ${importPlan.summary.skipped} skipped` : ""}
+							{vaultImportDetectedCount(count, importPlan.summary.skipped)}
 						</span>
 						<DialogFooter className={addKeysDialogClasses.footer}>
 							<Button type="button" variant="ghost" onClick={() => setOpen(false)}>
@@ -421,7 +428,7 @@ function saveDisabledForNewVault(
 function KeyImportActionBadge({ action }: { action: "create" | "update" | "skip" }) {
 	return (
 		<Badge variant={action === "create" ? "secondary" : "outline"}>
-			{action === "create" ? "New" : action === "update" ? "Update" : "Skip"}
+			{vaultImportActionLabel(action)}
 		</Badge>
 	);
 }
