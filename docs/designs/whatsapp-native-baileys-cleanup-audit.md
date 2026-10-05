@@ -192,7 +192,7 @@ packages/cli/tests/commands/runtime.test.ts
 packages/cli/tests/egress_addon/clawdi_egress_addon_test.py
 packages/cli/tests/runtime-egress-profiles.test.ts
 packages/cli/tests/runtime-whatsapp-egress.test.ts
-packages/cli/tests/runtime.test.ts
+packages/cli/tests/runtime-*.test.ts
 ```
 
 The command/manifest files retain only stock native-plugin auth
