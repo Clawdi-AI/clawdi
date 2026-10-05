@@ -32,9 +32,9 @@ export function PageHeader({
 			importantForAccessibility={hidden ? "no-hide-descendants" : "auto"}
 			className={className}
 		>
-			<WebView recipe={styles.lockup}>
+			<WebView recipe={styles.lockup} className="w-full">
 				{icon ? <WebView recipe={styles.icon}>{icon}</WebView> : null}
-				<WebView recipe={styles.body} className="flex-1">
+				<WebView recipe={styles.body} style={{ flex: 1, minWidth: 0 }}>
 					<WebView recipe={styles.titleRow}>
 						{typeof title === "string" || typeof title === "number" ? (
 							<WebText recipe={styles.title} accessibilityRole="header">

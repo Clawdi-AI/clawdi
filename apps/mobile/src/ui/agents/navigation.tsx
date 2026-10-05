@@ -90,7 +90,9 @@ export function AgentSectionNavigation({
 					<DialogHeader>
 						<DialogTitle>Agent sections</DialogTitle>
 					</DialogHeader>
-					{AGENT_NAVIGATION_GROUPS.map((group) => (
+					{AGENT_NAVIGATION_GROUPS.filter((group) =>
+						group.itemIds.some((id) => id in agentSectionCopy),
+					).map((group) => (
 						<AppView key={group.id}>
 							{group.label ? <SectionLabel>{group.label}</SectionLabel> : null}
 							{(group.id === "workspace"
