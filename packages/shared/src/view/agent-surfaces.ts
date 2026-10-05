@@ -93,3 +93,10 @@ export const agentSurfaceCopy = {
 	noSetupRequired: "No setup required",
 	walletBilled: "Wallet billed",
 } as const;
+
+export const agentDisconnectConfirmationCopy = {
+	title: "Disconnect this agent?",
+	beforeCommand: "Disconnect stops this installation and removes it from active views. Run ",
+	command: "clawdi setup",
+	afterCommand: " on it to reconnect with the same retained data.",
+} as const;

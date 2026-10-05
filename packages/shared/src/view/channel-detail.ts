@@ -1,4 +1,7 @@
 export const channelDetailCopy = {
+	unlinkTitle: "Unlink Agent?",
+	unlinkDescription: "Its paired chats will stop using this channel.",
+	unlink: "Unlink Agent",
 	pairingCommands: "Pairing commands",
 	publishCommands: "Publish commands",
 	publishing: "Publishing…",

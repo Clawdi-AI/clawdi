@@ -22,7 +22,6 @@ export const channelsEn = {
 		"Replacement disconnects the previous bot for this provider. Paired chats may lose access.",
 	selectAgent: "Select an Agent",
 	unlink: "Unlink Agent",
-	unlinkWarning: "This Agent will lose access to the bot and its paired chats.",
 	pair: "Generate chat pairing code",
 	pairInstructions:
 		"Use this command in the intended chat. Codes expire after five minutes. Refresh paired chats to confirm; opening a link is not proof of pairing.",

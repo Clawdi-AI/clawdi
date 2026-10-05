@@ -10,7 +10,12 @@ import {
 	normalizeAgentId,
 } from "@clawdi/shared/client";
 import { agentsIndexClasses, agentSettingsPanelClasses as styles } from "@clawdi/shared/ui";
-import { agentDisplayName, agentSurfaceCopy, agentTypeLabel } from "@clawdi/shared/view";
+import {
+	agentDisconnectConfirmationCopy,
+	agentDisplayName,
+	agentSurfaceCopy,
+	agentTypeLabel,
+} from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { File } from "expo-file-system";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
@@ -147,9 +152,9 @@ function Settings({ id }: { id: string | undefined }) {
 		const visible = capture();
 		const ticket = ++confirmation.current;
 		confirmationDialog.request({
-			title: t("agentSettings.disconnect"),
-			description: t("agentSettings.disconnectWarning"),
-			confirmLabel: t("agentSettings.disconnect"),
+			title: agentDisconnectConfirmationCopy.title,
+			description: `${agentDisconnectConfirmationCopy.beforeCommand}${agentDisconnectConfirmationCopy.command}${agentDisconnectConfirmationCopy.afterCommand}`,
+			confirmLabel: agentSurfaceCopy.disconnectAgent,
 			onConfirm: () => {
 				if (
 					ticket !== confirmation.current ||

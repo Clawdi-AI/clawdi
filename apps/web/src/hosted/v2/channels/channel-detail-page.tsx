@@ -451,9 +451,9 @@ function AgentsTab({
 								</Button>
 								{canManage ? (
 									<ConfirmAction
-										title="Unlink Agent?"
-										description={<p>Its paired chats will stop using this channel.</p>}
-										confirmLabel="Unlink Agent"
+										title={copy.unlinkTitle}
+										description={<p>{copy.unlinkDescription}</p>}
+										confirmLabel={copy.unlink}
 										destructive
 										onConfirm={() =>
 											unlinkAgent.execute({ agentId: link.agent_id, linkId: link.id })

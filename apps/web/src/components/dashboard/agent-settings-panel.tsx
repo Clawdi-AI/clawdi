@@ -8,6 +8,7 @@ import {
 import { agentDisconnectEligibility } from "@clawdi/shared/client";
 import { agentSettingsPanelClasses } from "@clawdi/shared/ui";
 import {
+	agentDisconnectConfirmationCopy,
 	agentDisplayName,
 	agentSurfaceCopy,
 	agentTypeLabel,
@@ -393,11 +394,12 @@ export function AgentSettingsPanel({
 							{agentSurfaceCopy.syncStopsAndRetainedSessionsSkillsFilesAndProjects}
 						</p>
 						<ConfirmAction
-							title="Disconnect this agent?"
+							title={agentDisconnectConfirmationCopy.title}
 							description={
 								<p>
-									Disconnect stops this installation and removes it from active views. Run{" "}
-									<code>clawdi setup</code> on it to reconnect with the same retained data.
+									{agentDisconnectConfirmationCopy.beforeCommand}
+									<code>{agentDisconnectConfirmationCopy.command}</code>
+									{agentDisconnectConfirmationCopy.afterCommand}
 								</p>
 							}
 							confirmLabel={agentSurfaceCopy.disconnectAgent}

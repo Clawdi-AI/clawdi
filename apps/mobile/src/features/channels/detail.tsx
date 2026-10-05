@@ -450,8 +450,11 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 									variant="ghost"
 									disabled={disabled}
 									onPress={() =>
-										confirm(t("channels.unlink"), t("channels.unlinkWarning"), () =>
-											perform((signal) => channels.unlink(id ?? "", link.id, signal)),
+										confirm(
+											copy.unlinkTitle,
+											copy.unlinkDescription,
+											() => perform((signal) => channels.unlink(id ?? "", link.id, signal)),
+											copy.unlink,
 										)
 									}
 								/>
