@@ -1660,7 +1660,7 @@ export function DeployWizard() {
 						<p
 							id="deploy-blocking-reason"
 							className={cn(
-								"mt-1 max-w-sm text-xs @2xl/main:ml-auto @2xl/main:text-right",
+								deployWizardClasses.blockingReason,
 								nameError ? "text-destructive" : "text-muted-foreground",
 							)}
 							role="status"

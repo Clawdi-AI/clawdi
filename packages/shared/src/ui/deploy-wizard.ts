@@ -42,4 +42,5 @@ export const deployWizardClasses = {
 	amountError: "whitespace-nowrap text-xs font-medium text-destructive",
 	submitGroup: "flex min-w-0 flex-col gap-1 @2xl/main:w-40 @2xl/main:items-end",
 	submit: "w-full shrink-0",
+	blockingReason: "mt-1 max-w-sm text-xs @2xl/main:ml-auto @2xl/main:text-right",
 } as const;
