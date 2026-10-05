@@ -68,7 +68,9 @@ export function ClerkSwitch({
 	return (
 		<WebView recipe={generalPanelClasses.identity} className="flex-row">
 			<Switch checked={value} onCheckedChange={onValueChange} disabled={disabled} />
-			<Text className={webBoth(apiKeysPanelClasses.acknowledgementLabel)}>{label}</Text>
+			<Text className={`${webBoth(apiKeysPanelClasses.acknowledgementLabel)} flex-1 min-w-0`}>
+				{label}
+			</Text>
 		</WebView>
 	);
 }
