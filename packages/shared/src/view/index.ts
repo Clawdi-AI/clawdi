@@ -41,6 +41,7 @@ export * from "./memory-utils";
 export * from "./onboarding";
 export * from "./overview-compute";
 export * from "./plan-comparison";
+export * from "./project-actions";
 export * from "./project-metadata";
 export * from "./project-resource-model";
 export * from "./project-vault-catalog";

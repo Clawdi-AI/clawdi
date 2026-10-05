@@ -31,6 +31,7 @@ import { SearchInput } from "../ui/search-input";
 import { SkillCard } from "../ui/skills/skill-card";
 import { Text } from "../ui/text";
 import { WebText, WebView } from "../ui/web-layout";
+import { ProjectCardActions } from "./project-card-actions";
 import { ProjectResourceBoundary, ProjectScopeHeader } from "./project-scope";
 import { useCloudProjects } from "./projects";
 import { SkillCardActions } from "./skill-card-actions";
@@ -127,6 +128,7 @@ function SkillsView({ project }: { project?: Project }) {
 									<ProjectResourceCard
 										key={p.id}
 										project={p}
+										actions={<ProjectCardActions project={p} />}
 										footer={[
 											formatResourceCount(p.skill_count, "skill"),
 											formatResourceCount(p.vault_count, "vault"),

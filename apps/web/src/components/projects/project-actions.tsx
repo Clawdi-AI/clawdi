@@ -1,6 +1,7 @@
 "use client";
 
-import { displayProjectName } from "@clawdi/shared/view";
+import { projectActionsClasses } from "@clawdi/shared/ui";
+import { displayProjectName, PROJECT_ACTION_COPY, projectArchiveTitle } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Ellipsis, Pencil, Share2, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
@@ -107,7 +108,7 @@ export function ProjectActions({
 						</Button>
 					}
 				/>
-				<DropdownMenuContent align="end" className="min-w-40">
+				<DropdownMenuContent align="end" className={projectActionsClasses.menu}>
 					<DropdownMenuItem
 						onClick={() => {
 							setName(project.name);
@@ -146,15 +147,13 @@ export function ProjectActions({
 					}
 				}}
 			>
-				<DialogContent className="sm:max-w-md">
+				<DialogContent className={projectActionsClasses.dialog}>
 					<DialogHeader>
 						<DialogTitle>Edit project</DialogTitle>
-						<DialogDescription>
-							Update its name and description without leaving this page.
-						</DialogDescription>
+						<DialogDescription>{PROJECT_ACTION_COPY.editDescription}</DialogDescription>
 					</DialogHeader>
 					<form
-						className="space-y-4"
+						className={projectActionsClasses.form}
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (!name.trim() || editLockedRef.current) return;
@@ -162,7 +161,7 @@ export function ProjectActions({
 							update.mutate();
 						}}
 					>
-						<div className="space-y-1.5">
+						<div className={projectActionsClasses.field}>
 							<Label htmlFor={`project-name-${project.id}`}>Name</Label>
 							<Input
 								id={`project-name-${project.id}`}
@@ -171,14 +170,14 @@ export function ProjectActions({
 								onChange={(event) => setName(event.target.value)}
 							/>
 						</div>
-						<div className="space-y-1.5">
+						<div className={projectActionsClasses.field}>
 							<Label htmlFor={`project-description-${project.id}`}>Description</Label>
 							<Textarea
 								id={`project-description-${project.id}`}
 								value={description}
 								maxLength={2000}
 								onChange={(event) => setDescription(event.target.value)}
-								className="min-h-24"
+								className={projectActionsClasses.textarea}
 							/>
 						</div>
 						<DialogFooter>
@@ -186,7 +185,7 @@ export function ProjectActions({
 								Cancel
 							</Button>
 							<Button type="submit" disabled={!name.trim() || update.isPending}>
-								{update.isPending ? <Spinner className="size-3.5" /> : <Pencil />}
+								{update.isPending ? <Spinner className={projectActionsClasses.icon} /> : <Pencil />}
 								Save changes
 							</Button>
 						</DialogFooter>
@@ -205,14 +204,9 @@ export function ProjectActions({
 			</ShareProjectDialog>
 
 			<ConfirmAction
-				title={`Archive ${projectName}?`}
-				description={
-					<p>
-						Agents will stop using this Project's Skills and Vaults. The Project will disappear from
-						your library.
-					</p>
-				}
-				confirmLabel="Archive project"
+				title={projectArchiveTitle(projectName)}
+				description={<p>{PROJECT_ACTION_COPY.archiveDescription}</p>}
+				confirmLabel={PROJECT_ACTION_COPY.archiveConfirm}
 				destructive
 				onConfirm={() => archive.mutateAsync()}
 				open={archiveOpen}
