@@ -46,7 +46,6 @@ import {
 	OVERVIEW_CHANNELS_DESCRIPTION,
 	OverviewDescriptionSkeleton,
 	OverviewModuleError,
-	OVERVIEW_CHANNELS_ACTION,
 	OverviewNavigationCard,
 } from "@/components/dashboard/agent-overview-capabilities";
 import {
@@ -1421,7 +1420,7 @@ function OverviewTab({
 					icon={AGENT_SECTION_NAVIGATION_ITEMS.channels.icon}
 					tint={AGENT_SECTION_NAVIGATION_ITEMS.channels.tint}
 					link={agentSectionLink(agentId, "channels")}
-					actionLabel={OVERVIEW_CHANNELS_ACTION}
+					prominent
 				/>
 				<OverviewNavigationCard
 					id="model-provider"

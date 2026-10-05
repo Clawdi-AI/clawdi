@@ -1,7 +1,4 @@
-import {
-	OVERVIEW_WEB_CHAT_ACTION,
-	OverviewNavigationCard,
-} from "@/components/dashboard/agent-overview-capabilities";
+import { OverviewNavigationCard } from "@/components/dashboard/agent-overview-capabilities";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import {
 	deploymentRuntimeUiIsReady,
@@ -35,7 +32,7 @@ export function AgentDashboardOverview({
 				tint={item.tint}
 				link={available ? agentSectionLink(agentId, "console") : null}
 				disabled={!available}
-				actionLabel={OVERVIEW_WEB_CHAT_ACTION}
+				prominent
 			/>
 		</div>
 	);

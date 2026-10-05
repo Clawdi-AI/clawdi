@@ -6,13 +6,13 @@ import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
 import { type AgentOverviewModuleId, agentOverviewGroups } from "@/lib/agent-capabilities";
 import { agentSectionLink } from "@/lib/agent-routes";
 import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
 	type AgentNavigationVariant,
 } from "@/lib/navigation-model";
+import { cn } from "@/lib/utils";
 
 export type AgentOverviewModuleContent = {
 	description: ReactNode;
@@ -23,8 +23,6 @@ export type AgentOverviewModuleContent = {
 type OverviewLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
 
 export const OVERVIEW_CHANNELS_DESCRIPTION = "Telegram, Discord, or WhatsApp";
-export const OVERVIEW_WEB_CHAT_ACTION = "Open";
-export const OVERVIEW_CHANNELS_ACTION = "Connect";
 
 export function AgentOverviewStatusCard({
 	agentId,
@@ -121,7 +119,6 @@ function OverviewCardHeading({
 	tint,
 	loading,
 	arrow = true,
-	actionLabel,
 	prominent = false,
 }: {
 	title: string;
@@ -130,7 +127,6 @@ function OverviewCardHeading({
 	tint: string;
 	loading: boolean;
 	arrow?: boolean;
-	actionLabel?: string;
 	prominent?: boolean;
 }) {
 	return (
@@ -151,19 +147,14 @@ function OverviewCardHeading({
 				</CardDescription>
 			</div>
 			{arrow && loading ? (
-				<Skeleton className={actionLabel ? "h-7 w-16 shrink-0" : "size-4 shrink-0"} />
-			) : arrow && actionLabel ? (
-				<span
-					aria-hidden="true"
-					className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground transition-colors group-hover:bg-primary/85"
-				>
-					{actionLabel}
-					<ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
-				</span>
+				<Skeleton className="size-4 shrink-0" />
 			) : arrow ? (
 				<ArrowRight
 					aria-hidden="true"
-					className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+					className={cn(
+						"size-4 shrink-0 transition-transform group-hover:translate-x-0.5",
+						prominent ? "text-foreground" : "text-muted-foreground",
+					)}
 				/>
 			) : null}
 		</>
@@ -261,7 +252,7 @@ export function OverviewNavigationCard({
 	link,
 	disabled = false,
 	loading = false,
-	actionLabel,
+	prominent = false,
 }: {
 	id: string;
 	title: string;
@@ -271,10 +262,9 @@ export function OverviewNavigationCard({
 	link: OverviewLinkOptions | null;
 	disabled?: boolean;
 	loading?: boolean;
-	/** Renders a primary call-to-action and visually emphasizes the card as a main entry point. */
-	actionLabel?: string;
+	/** Visually emphasizes the card as a primary entry point. */
+	prominent?: boolean;
 }) {
-	const prominent = Boolean(actionLabel);
 	const content = (
 		<OverviewCardHeading
 			title={title}
@@ -283,7 +273,6 @@ export function OverviewNavigationCard({
 			tint={tint}
 			loading={loading}
 			arrow={Boolean(link || disabled || loading)}
-			actionLabel={actionLabel}
 			prominent={prominent}
 		/>
 	);
@@ -298,7 +287,7 @@ export function OverviewNavigationCard({
 			className={cn(
 				"h-full min-w-0 border py-3 ring-0",
 				prominent
-					? "border-foreground/20 bg-linear-to-br from-primary/[0.07] to-transparent py-4 transition-colors has-[a:hover]:border-foreground/30"
+					? "border-primary/30 bg-linear-to-br from-primary/15 via-primary/5 to-transparent py-4 transition-colors has-[a:hover]:border-primary/50 has-[a:hover]:from-primary/20"
 					: "border-foreground/10",
 			)}
 		>
