@@ -5,7 +5,6 @@ import {
 } from "@clawdi/shared/api";
 import { isSearchQueryReady, SEARCH_QUERY_MAX_LENGTH } from "@clawdi/shared/consts";
 import {
-	buttonVariants,
 	dataTableFacetedFilterClasses as filterStyles,
 	dataTablePaginationClasses as paginationStyles,
 	sessionsPageClasses as styles,
@@ -349,17 +348,18 @@ function SessionFilter({
 		<DropdownMenu>
 			<DropdownMenuTrigger
 				render={
-					<FilterChip
-						active={value !== "all"}
-						onClick={() => {}}
-						className={`${buttonVariants({ variant: "outline", size: "sm" })} ${filterStyles.trigger}`}
+					<Button
+						variant="outline"
+						size="sm"
+						accessibilityState={{ selected: value !== "all" }}
+						className={webView(filterStyles.trigger)}
 					>
 						<WebIcon as={PlusCircle} recipe={filterStyles.triggerIcon} />
 						<Text>
 							{title}
 							{value !== "all" ? " · 1" : ""}
 						</Text>
-					</FilterChip>
+					</Button>
 				}
 			/>
 			<DropdownMenuContent>
