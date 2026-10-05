@@ -238,12 +238,12 @@ export class SyncHealth {
 	};
 
 	set(area: SyncHealthArea, resource: string, message: string, transient = false): void {
-		this.errors[area].set(resource, { message, transient });
+		this.errors[area].set(resource, { message: message.slice(0, 500), transient });
 	}
 
 	setIfAbsent(area: SyncHealthArea, resource: string, message: string, transient = false): void {
 		if (!this.errors[area].has(resource)) {
-			this.errors[area].set(resource, { message, transient });
+			this.errors[area].set(resource, { message: message.slice(0, 500), transient });
 		}
 	}
 
@@ -2582,7 +2582,7 @@ export async function heartbeatLoop(
 						queue_depth: queue.highWaterMark,
 						dropped_count_delta: dropped,
 						last_revision_seen: fields.last_revision_seen,
-						last_sync_error: fields.last_sync_error,
+						last_sync_error: fields.last_sync_error?.slice(0, 1000) ?? null,
 						...(runtimeObserved ? { runtime_observed: runtimeObserved } : {}),
 					},
 				}),

@@ -1691,6 +1691,43 @@ describe("daemon startup Agent lookup", () => {
 		}
 	}
 
+	it("bounds individual health errors and the reported heartbeat text", async () => {
+		const health = new SyncHealth();
+		health.set("push", "one", "x".repeat(10_000));
+		expect(health.project()).toBe("x".repeat(500));
+		health.clear("push", "one");
+		health.setIfAbsent("push", "two", "y".repeat(10_000));
+		expect(health.project()).toBe("y".repeat(500));
+		let reported: string | undefined;
+		await withStartupCase(
+			async (request) => {
+				const payload = (await request.json()) as { last_sync_error: string };
+				reported = payload.last_sync_error;
+				return new Response(null, { status: 204 });
+			},
+			async ({ abortController }) => {
+				const opts = {
+					environmentId: "agent-isolated",
+					adapter: adapterRegistry.pi.create(),
+					abort: abortController.signal,
+					abortController,
+				};
+				await heartbeatLoop(
+					opts,
+					new ApiClient({ requireAuth: false }),
+					new RetryQueue({ agentType: "pi" }),
+					abortController.signal,
+					() => {
+						abortController.abort();
+						return { last_revision_seen: null, last_sync_error: "z".repeat(10_000) };
+					},
+					() => {},
+				);
+			},
+		);
+		expect(reported).toBe("z".repeat(1000));
+	});
+
 	it("reloads a hash replaced by another process on the next scan", async () => {
 		await withStartupCase(
 			async () => Response.json({ id: "agent-isolated" }),
