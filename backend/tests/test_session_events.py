@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import threading
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -285,6 +285,61 @@ async def _commit_generation(
     )
     assert committed.status_code == 200, committed.text
     return generation, final_head, append_id
+
+
+@pytest.mark.asyncio
+async def test_staging_uploads_and_retries_refresh_retention_activity(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    local_id = "codex.retention-heartbeat"
+    environment_id, _ = await _register_session(client, db_session, local_session_id=local_id)
+    events = [
+        _event(0, "message", "user", role="user", parts=[{"type": "text", "text": "fixture"}])
+    ]
+    generation_id = uuid.uuid4()
+    staged = await client.post(
+        f"/v1/sessions/{local_id}/events/generations",
+        json={
+            "environment_id": environment_id,
+            "generation": str(generation_id),
+            "append_id": str(uuid.uuid4()),
+            "base_generation": None,
+            "base_revision": 0,
+            "base_count": 0,
+            "base_head_hash": EMPTY_EVENT_HEAD,
+            "final_count": 1,
+            "final_head_hash": advance_event_head(EMPTY_EVENT_HEAD, events),
+        },
+    )
+    assert staged.status_code == 200, staged.text
+    generation = await db_session.get(SessionEventGeneration, generation_id)
+    assert generation is not None
+    data, content_hash = _chunk(events)
+    old_activity = datetime.now(UTC) - timedelta(days=2)
+    for _ in range(2):
+        generation.updated_at = old_activity
+        await db_session.flush()
+        before_upload = datetime.now(UTC)
+        uploaded = await client.put(
+            f"/v1/sessions/{local_id}/events/generations/{generation_id}/chunks/0",
+            data={"base_head_hash": EMPTY_EVENT_HEAD, "content_hash": content_hash},
+            files={"file": ("0.ndjson", data, "application/x-ndjson")},
+        )
+        assert uploaded.status_code == 200, uploaded.text
+        await db_session.refresh(generation)
+        assert generation.updated_at >= before_upload
+        assert generation.status == "staging"
+
+    last_activity = generation.updated_at
+    invalid = await client.put(
+        f"/v1/sessions/{local_id}/events/generations/{generation_id}/chunks/0",
+        data={"base_head_hash": EMPTY_EVENT_HEAD, "content_hash": "f" * 64},
+        files={"file": ("0.ndjson", data, "application/x-ndjson")},
+    )
+    assert invalid.status_code == 409
+    await db_session.refresh(generation)
+    assert generation.updated_at == last_activity
 
 
 @pytest.mark.asyncio
