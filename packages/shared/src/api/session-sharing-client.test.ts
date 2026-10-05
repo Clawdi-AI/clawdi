@@ -31,7 +31,7 @@ test("Session deletion preserves rejection and snapshots retain exact message ra
 			{
 				id: "share-a",
 				session_id: "session-a",
-				scope: "response",
+				scope: "response" as const,
 				start_position: 7,
 				end_position: 7,
 				message_count: 1,
