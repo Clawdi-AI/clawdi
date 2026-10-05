@@ -51,7 +51,7 @@ import { LinkChannelAgentAction } from "@/hosted/v2/channels/link-channel-agent-
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
-const DESCRIPTION = "Manage Custom bots and discover Clawdi bots for your Agents.";
+const DESCRIPTION = agentSurfaceCopy.manageCustomBotsAndDiscoverClawdiBotsForYour;
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 
 export function ChannelsPage() {
@@ -203,7 +203,9 @@ function OwnedBotsSection({
 
 	return (
 		<section data-owned-bots-section className={channelsPageClasses.flexFlexColGap}>
-			<SectionLabel count={!isLoading ? visibleCount : undefined}>Custom bots</SectionLabel>
+			<SectionLabel count={!isLoading ? visibleCount : undefined}>
+				{agentSurfaceCopy.customBots}
+			</SectionLabel>
 			{healthError ? (
 				<ApiErrorPanel
 					error={healthError}
@@ -260,9 +262,11 @@ function SharedBotsSection({
 	return (
 		<section data-shared-bots-section className={channelsPageClasses.flexMinWFlex}>
 			<div>
-				<SectionLabel count={!isLoading ? visibleBots.length : undefined}>Clawdi bots</SectionLabel>
+				<SectionLabel count={!isLoading ? visibleBots.length : undefined}>
+					{agentSurfaceCopy.clawdiBots}
+				</SectionLabel>
 				<p className={channelsPageClasses.mtTextXsText}>
-					Link an Agent and pair a chat without leaving this page.
+					{agentSurfaceCopy.linkAnAgentAndPairAChatWithoutLeaving}
 				</p>
 			</div>
 			{content}

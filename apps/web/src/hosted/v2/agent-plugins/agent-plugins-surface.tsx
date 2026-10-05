@@ -117,7 +117,7 @@ export function AgentPluginsSurface({
 			await refreshDesired();
 			toast.success(updating ? "Plugin updated" : "Plugin installed");
 		} catch (error) {
-			toast.error(updating ? "Couldn't update plugin" : "Couldn't install plugin", {
+			toast.error(updating ? agentSurfaceCopy.couldnTUpdatePlugin : "Couldn't install plugin", {
 				description: normalizeApiError(error),
 			});
 			throw error;
@@ -346,12 +346,12 @@ function AgentPluginCatalog({
 	const groups = [
 		{
 			id: "installed" as const,
-			label: "Installed",
+			label: agentSurfaceCopy.installed,
 			items: items.filter((item) => groupAssignments.get(item.name) === "installed"),
 		},
 		{
 			id: "available" as const,
-			label: "Available",
+			label: agentSurfaceCopy.available,
 			items: items.filter((item) => groupAssignments.get(item.name) === "available"),
 		},
 	];

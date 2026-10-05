@@ -74,10 +74,7 @@ export function ConnectedWorkspaceSkillsPanel({
 							: "flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between"
 					}
 				>
-					<span>
-						This Agent manages its files locally. Run the command on its host; Skills appear here
-						after the next sync.
-					</span>
+					<span>{agentSurfaceCopy.thisAgentManagesItsFilesLocallyRunTheCommand}</span>
 					{pageHeader ? null : (
 						<Button
 							size="sm"
@@ -117,8 +114,8 @@ export function ConnectedWorkspaceSkillsPanel({
 							skill={skill}
 							cloudSkill={skill}
 							readOnly
-							readOnlyLabel="Read-only"
-							provenanceLabel="Synced from Agent"
+							readOnlyLabel={agentSurfaceCopy.readOnly}
+							provenanceLabel={agentSurfaceCopy.syncedFromAgent}
 							actions={<ConnectedSkillRemoveAction skill={skill} agentType={agentType} />}
 							skillLink={(cloudSkill) =>
 								agentSkillDetailLink(agentId, cloudSkill.skill_key, projectId)
@@ -193,7 +190,7 @@ function ConnectedSkillRemoveAction({
 					<DialogHeader>
 						<DialogTitle>{agentSurfaceCopy.uninstallSkill}</DialogTitle>
 						<DialogDescription>
-							Run this command on the Agent machine. The Skill belongs to that Workspace.
+							{agentSurfaceCopy.runThisCommandOnTheAgentMachineTheSkill}
 						</DialogDescription>
 					</DialogHeader>
 					<CliCommand command={workspaceSkillRemoveCommand(skill.skill_key, agentType)} />

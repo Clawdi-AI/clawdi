@@ -237,6 +237,7 @@ export * from "./agent-skill-card";
 export * from "./agents-card";
 export * from "./agents-index";
 export * from "./ai-providers-page";
+export * from "./ai-providers-ui";
 export * from "./alert-dialog";
 export * from "./api-error-panel";
 export * from "./brand-icon-tile";

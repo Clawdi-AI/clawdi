@@ -1,4 +1,7 @@
-"use client";
+import { agentSurfaceCopy } from "@clawdi/shared/view";
+
+("use client");
+
 import { agentSkillCardClasses } from "@clawdi/shared/ui";
 
 import type { SkillCardEntity } from "@clawdi/shared/view";
@@ -35,7 +38,7 @@ export function SkillCard({
 	skill,
 	cloudSkill,
 	readOnly = false,
-	readOnlyLabel = "Read-only",
+	readOnlyLabel = agentSurfaceCopy.readOnly,
 	showVersion = true,
 	actions,
 	onUninstall,

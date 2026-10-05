@@ -49,7 +49,7 @@ import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
-const DESCRIPTION = "Choose how your agents reach a model.";
+const DESCRIPTION = agentSurfaceCopy.chooseHowYourAgentsReachAModel;
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const PROVIDER_GRID_CLASS = ENTITY_GRID_CLASS;
 
@@ -92,7 +92,7 @@ export function AiProvidersPage() {
 				<SectionLabel
 					count={!providers.isLoading && !blockingProvidersError ? list.length : undefined}
 				>
-					Your providers
+					{agentSurfaceCopy.yourProviders}
 				</SectionLabel>
 				{blockingProvidersError ? (
 					<ApiErrorPanel
@@ -169,12 +169,12 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 				meta={[
 					presentation.summary,
 					provider.auth.type === "none"
-						? "Add a credential before assigning this provider to an agent."
+						? agentSurfaceCopy.addACredentialBeforeAssigningThisProviderToAn
 						: deployable
 							? null
 							: provider.usable
 								? "This setup isn't available for hosted agents. Review the provider settings."
-								: "Finish setup before assigning this provider to an agent.",
+								: agentSurfaceCopy.finishSetupBeforeAssigningThisProviderToAnAgent,
 				]}
 			/>
 			<div className={aiProvidersPageClasses.mtAutoFlexFlex}>

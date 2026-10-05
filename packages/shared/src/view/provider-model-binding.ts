@@ -298,3 +298,14 @@ export function firstModelForProvider(
 	}
 	return models[0]?.id ?? "";
 }
+
+const PROVIDER_AUTH_LABEL: Record<string, string> = {
+	api_key: "API key",
+	agent_profile: "ChatGPT",
+	oauth_profile: "ChatGPT",
+	secret_ref: "Vault key",
+	none: "No credential",
+};
+export function providerAuthLabel(type: string): string {
+	return PROVIDER_AUTH_LABEL[type] ?? type;
+}

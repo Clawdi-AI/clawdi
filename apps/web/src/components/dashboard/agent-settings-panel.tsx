@@ -211,7 +211,9 @@ export function AgentSettingsPanel({
 	const displayName = agentDisplayName(agent);
 	const defaultDisplayName = agentDisplayName({ ...agent, display_name: null });
 	const runtimeLabel = agentTypeLabel(agent.agent_type);
-	const currentAvatarLabel = hasCustomAvatar ? "Custom upload" : `${runtimeLabel} default`;
+	const currentAvatarLabel = hasCustomAvatar
+		? agentSurfaceCopy.customUpload
+		: `${runtimeLabel} default`;
 	const legacyDashboardUrl = ownershipKind === "legacy" ? projectedLegacyDashboardUrl : null;
 
 	return (
@@ -387,7 +389,7 @@ export function AgentSettingsPanel({
 				>
 					<div className={agentSettingsPanelClasses.flexFlexColGap4}>
 						<p className={agentSettingsPanelClasses.maxWMdText}>
-							Sync stops and retained Sessions, Skills, files, and Projects stay in your account.
+							{agentSurfaceCopy.syncStopsAndRetainedSessionsSkillsFilesAndProjects}
 						</p>
 						<ConfirmAction
 							title="Disconnect this agent?"
@@ -397,7 +399,7 @@ export function AgentSettingsPanel({
 									<code>clawdi setup</code> on it to reconnect with the same retained data.
 								</p>
 							}
-							confirmLabel="Disconnect agent"
+							confirmLabel={agentSurfaceCopy.disconnectAgent}
 							destructive
 							onConfirm={() => disconnect.mutateAsync()}
 						>

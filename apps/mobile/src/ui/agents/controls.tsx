@@ -1,14 +1,17 @@
+import type { ReactNode } from "react";
 import { Button } from "../button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../select";
 import { Text } from "../text";
 export function ActionButton({
 	label,
+	icon,
 	onPress,
 	disabled,
 	variant = "outline",
 	className,
 }: {
 	label: string;
+	icon?: ReactNode;
 	onPress: () => void;
 	disabled?: boolean;
 	variant?: "default" | "outline" | "ghost" | "destructive";
@@ -16,6 +19,7 @@ export function ActionButton({
 }) {
 	return (
 		<Button size="sm" variant={variant} onPress={onPress} disabled={disabled} className={className}>
+			{icon}
 			<Text>{label}</Text>
 		</Button>
 	);

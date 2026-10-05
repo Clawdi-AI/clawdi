@@ -84,6 +84,7 @@ function mapUtility(utility: string, hasColumn: boolean): string | null {
 	if (/^divide-/.test(important)) return null;
 	if (important.includes("var(") || important.includes("(--") || important.includes("calc("))
 		return null;
+	if (/^-?(?:translate|rotate|scale|skew|origin)-/.test(important)) return null;
 	if (DROPPED_UTILITY.test(important)) return null;
 	return important;
 }

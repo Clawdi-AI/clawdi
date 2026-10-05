@@ -1,4 +1,7 @@
-"use client";
+import { agentSurfaceCopy } from "@clawdi/shared/view";
+
+("use client");
+
 import { agentPluginCardClasses } from "@clawdi/shared/ui";
 
 import { identityFor } from "@clawdi/shared/view";
@@ -55,7 +58,7 @@ export function AgentPluginCard({
 				}
 				title={title}
 				description={
-					item.catalog?.description ?? "This plugin is no longer available in the Store."
+					item.catalog?.description ?? agentSurfaceCopy.thisPluginIsNoLongerAvailableInTheStore
 				}
 				footer={[
 					item.catalog?.publisher,

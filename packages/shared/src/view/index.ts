@@ -34,4 +34,5 @@ export * from "./sessions";
 export * from "./skill-search";
 export * from "./utils";
 export * from "./vault-search";
+export * from "./whatsapp-onboarding";
 export * from "./workspace-skills";

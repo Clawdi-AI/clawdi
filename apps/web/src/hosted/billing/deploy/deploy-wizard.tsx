@@ -520,7 +520,7 @@ export function DeployWizard() {
 					computePlanSlug: COMPUTE_PERFORMANCE_SLUG,
 					offer: perfOfferSelection.offer,
 					plan: perfPlan,
-					tierLabel: "Performance",
+					tierLabel: agentSurfaceCopy.performance,
 				}
 			: subscriptionSource?.mode === "new" &&
 					compute === "basic" &&
@@ -1085,12 +1085,12 @@ export function DeployWizard() {
 	const visibleSubmitBlockingReason = amountExplainsBlocking ? null : submitBlockingReason;
 	const selectedComputeLabel = selectedReusableSubscription
 		? selectedReusableSubscription.plan_slug === COMPUTE_PERFORMANCE_SLUG
-			? "Performance"
+			? agentSurfaceCopy.performance
 			: "Basic"
 		: subscriptionSource?.mode === "included"
 			? "Basic"
 			: compute === "performance"
-				? "Performance"
+				? agentSurfaceCopy.performance
 				: "Basic";
 	const summaryLine = [runtimeSummary, aiSummary, `${selectedComputeLabel} compute`]
 		.filter(Boolean)
@@ -1256,7 +1256,7 @@ export function DeployWizard() {
 										description={issue?.message ?? providerCatalogDescription(provider)}
 										badge={
 											issue ? (
-												<Badge variant="secondary">Unavailable</Badge>
+												<Badge variant="secondary">{agentSurfaceCopy.unavailable}</Badge>
 											) : (
 												<AuthBadge auth={provider.auth} />
 											)
@@ -1365,7 +1365,9 @@ export function DeployWizard() {
 												/>
 											) : null
 										}
-										badge={basicPricePresentation ? null : <Badge>Unavailable</Badge>}
+										badge={
+											basicPricePresentation ? null : <Badge>{agentSurfaceCopy.unavailable}</Badge>
+										}
 										disabled={!basicPlan || !basicOfferSelection}
 										className={deployWizardClasses.itemsCenterP}
 									/>
@@ -1381,7 +1383,7 @@ export function DeployWizard() {
 												<Zap />
 											</IconChip>
 										}
-										title="Performance"
+										title={agentSurfaceCopy.performance}
 										description={
 											perfPlan ? (
 												<ComputeResources
@@ -1405,7 +1407,9 @@ export function DeployWizard() {
 												/>
 											) : null
 										}
-										badge={perfPricePresentation ? null : <Badge>Unavailable</Badge>}
+										badge={
+											perfPricePresentation ? null : <Badge>{agentSurfaceCopy.unavailable}</Badge>
+										}
 										disabled={!perfPlan || !perfOfferSelection}
 										className={deployWizardClasses.itemsCenterP}
 									/>

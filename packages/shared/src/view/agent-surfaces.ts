@@ -54,4 +54,42 @@ export const agentSurfaceCopy = {
 	uninstallSkill: "Uninstall skill",
 	useAShortNameThatDistinguishesThis: "Use a short name that distinguishes this agent from others.",
 	ownerRepoOrOwnerRepoPathTo: "owner/repo or owner/repo/path-to-skill\u2026",
+	readOnly: "Read-only",
+	unavailable: "Unavailable",
+	couldnTUpdatePlugin: "Couldn't update plugin",
+	installed: "Installed",
+	available: "Available",
+	thisPluginIsNoLongerAvailableInTheStore: "This plugin is no longer available in the Store.",
+	customUpload: "Custom upload",
+	syncStopsAndRetainedSessionsSkillsFilesAndProjects:
+		"Sync stops and retained Sessions, Skills, files, and Projects stay in your account.",
+	disconnectAgent: "Disconnect agent",
+	chooseHowYourAgentsReachAModel: "Choose how your agents reach a model.",
+	yourProviders: "Your providers",
+	addACredentialBeforeAssigningThisProviderToAn:
+		"Add a credential before assigning this provider to an agent.",
+	finishSetupBeforeAssigningThisProviderToAnAgent:
+		"Finish setup before assigning this provider to an agent.",
+	linkedAgents: "Linked Agents",
+	manageCustomBotsAndDiscoverClawdiBotsForYour:
+		"Manage Custom bots and discover Clawdi bots for your Agents.",
+	customBots: "Custom bots",
+	clawdiBots: "Clawdi bots",
+	linkAnAgentAndPairAChatWithoutLeaving: "Link an Agent and pair a chat without leaving this page.",
+	performance: "Performance",
+	providerUnavailable: "Provider unavailable",
+	runTheseCommandsInOrderOnTheMachine: "Run these commands in order on the machine",
+	preferBunUseBunAddGClawdiLatest: "Prefer Bun? Use: bun add -g clawdi@latest",
+	pasteThisPromptIntoClaudeCodeCodexHermesOpenClaw:
+		"Paste this prompt into Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode on the machine.",
+	agentRegistered: "Agent registered",
+	watchForYourAgent: "Watch for your agent",
+	openAgent: "Open agent",
+	thisAgentManagesItsFilesLocallyRunTheCommand:
+		"This Agent manages its files locally. Run the command on its host; Skills appear here after the next sync.",
+	syncedFromAgent: "Synced from Agent",
+	runThisCommandOnTheAgentMachineTheSkill:
+		"Run this command on the Agent machine. The Skill belongs to that Workspace.",
+	noSetupRequired: "No setup required",
+	walletBilled: "Wallet billed",
 } as const;

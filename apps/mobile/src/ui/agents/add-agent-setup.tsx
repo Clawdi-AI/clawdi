@@ -47,11 +47,11 @@ export function AddAgentSetup() {
 				<TabsContent value="commands" className={webView(styles.mtSpaceY)}>
 					<WebView recipe="">
 						<WebText recipe={styles.textSmFontMedium}>
-							Run these commands in order on the machine
+							{agentSurfaceCopy.runTheseCommandsInOrderOnTheMachine}
 						</WebText>
 						<WebText recipe={styles.mtTextXsText}>{agentSurfaceCopy.nodeJs24IsRequired}</WebText>
 						<WebText recipe={styles.mtTextXsText2}>
-							Prefer Bun? Use: bun add -g clawdi@latest
+							{agentSurfaceCopy.preferBunUseBunAddGClawdiLatest}
 						</WebText>
 					</WebView>
 					<WebView recipe={styles.spaceY2}>
@@ -78,8 +78,7 @@ export function AddAgentSetup() {
 						{agentSurfaceCopy.askYourAgentToSetUpClawdi}
 					</WebText>
 					<WebText recipe={styles.mtTextXsText}>
-						Paste this prompt into Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode on the
-						machine.
+						{agentSurfaceCopy.pasteThisPromptIntoClaudeCodeCodexHermesOpenClaw}
 					</WebText>
 					<WebView recipe={styles.roundedLgBorderBg}>
 						<WebView recipe={styles.flexItemsCenterJustify}>
@@ -96,7 +95,9 @@ export function AddAgentSetup() {
 			</Tabs>
 			<WebView recipe={styles.borderTPt}>
 				<WebText recipe={styles.textSmFontMedium}>
-					{registered.length ? "Agent registered" : "Watch for your agent"}
+					{registered.length
+						? agentSurfaceCopy.agentRegistered
+						: agentSurfaceCopy.watchForYourAgent}
 				</WebText>
 				{registered.length ? (
 					<WebView recipe={styles.mtSpaceYRounded}>
@@ -110,7 +111,7 @@ export function AddAgentSetup() {
 										router.push({ pathname: "/agents/[agentId]", params: { agentId: agent.id } })
 									}
 								>
-									<Text>Open agent</Text>
+									<Text>{agentSurfaceCopy.openAgent}</Text>
 								</Button>
 							</WebView>
 						))}

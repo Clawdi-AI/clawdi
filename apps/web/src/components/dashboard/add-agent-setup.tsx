@@ -120,13 +120,13 @@ export function AddAgentSetup() {
 				<TabsContent value="commands" className={addAgentSetupClasses.mtSpaceY}>
 					<div>
 						<p className={addAgentSetupClasses.textSmFontMedium}>
-							Run these commands in order on the machine
+							{agentSurfaceCopy.runTheseCommandsInOrderOnTheMachine}
 						</p>
 						<p className={addAgentSetupClasses.mtTextXsText}>
 							{agentSurfaceCopy.nodeJs24IsRequired}
 						</p>
 						<p className={addAgentSetupClasses.mtTextXsText2}>
-							Prefer Bun? Use: bun add -g clawdi@latest
+							{agentSurfaceCopy.preferBunUseBunAddGClawdiLatest}
 						</p>
 					</div>
 					<CommandSteps steps={CLI_STEPS} numbered />
@@ -137,8 +137,7 @@ export function AddAgentSetup() {
 							{agentSurfaceCopy.askYourAgentToSetUpClawdi}
 						</p>
 						<p className={addAgentSetupClasses.mtTextXsText}>
-							Paste this prompt into Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode on the
-							machine.
+							{agentSurfaceCopy.pasteThisPromptIntoClaudeCodeCodexHermesOpenClaw}
 						</p>
 					</div>
 					<div className={addAgentSetupClasses.roundedLgBorderBg}>
@@ -161,7 +160,9 @@ export function AddAgentSetup() {
 						</span>
 					) : null}
 					<span className={addAgentSetupClasses.textSmFontMedium}>
-						{newAgents.length > 0 ? "Agent registered" : "Watch for your agent"}
+						{newAgents.length > 0
+							? agentSurfaceCopy.agentRegistered
+							: agentSurfaceCopy.watchForYourAgent}
 					</span>
 				</div>
 				{newAgents.length > 0 ? (
@@ -184,7 +185,7 @@ export function AddAgentSetup() {
 									size="sm"
 									variant="outline"
 								>
-									Open agent
+									{agentSurfaceCopy.openAgent}
 								</Button>
 							</div>
 						))}

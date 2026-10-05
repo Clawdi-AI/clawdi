@@ -253,7 +253,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				}
 				actions={
 					<ConfirmAction
-						title={`${disconnectsWhatsApp ? "Disconnect" : "Delete"} ${ch.name}?`}
+						title={`${disconnectsWhatsApp ? agentSurfaceCopy.disconnect : "Delete"} ${ch.name}?`}
 						description={
 							disconnectsWhatsApp
 								? "This logs out Clawdi as a linked device and removes the Custom bot. Linked Agents will stop sending and receiving."
@@ -280,7 +280,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 									? "Disconnecting…"
 									: "Deleting…"
 								: disconnectsWhatsApp
-									? "Disconnect"
+									? agentSurfaceCopy.disconnect
 									: "Delete"}
 						</Button>
 					</ConfirmAction>
@@ -288,7 +288,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 			/>
 
 			{providerUnavailable ? (
-				<InfoCard icon={TriangleAlert} title="Provider unavailable">
+				<InfoCard icon={TriangleAlert} title={agentSurfaceCopy.providerUnavailable}>
 					This provider is no longer available for new native channels. Existing channel data
 					remains visible, and you can delete the Custom bot.
 				</InfoCard>
@@ -379,7 +379,7 @@ function AgentsTab({
 	return (
 		<div className={channelDetailPageClasses.flexFlexColGap2}>
 			<SectionHeader
-				label="Linked Agents"
+				label={agentSurfaceCopy.linkedAgents}
 				count={items.length}
 				action={
 					canManage ? (
