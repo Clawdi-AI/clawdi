@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { createOpenClawHostedContextForHome } from "../src/runtime/hosted-openclaw-context";
 import {
 	assertFirstWriterUnclaimed,
 	FIRST_WRITER_SCRIPT,
@@ -20,7 +21,13 @@ import {
 	tryFirstOpenClawWrite,
 	warmFirstOpenClawWriter,
 } from "../src/runtime/openclaw-first-writer";
+import {
+	applyOpenClawContextMergePatch,
+	beginOpenClawConfigTransaction,
+	commitOpenClawConfigTransaction,
+} from "../src/runtime/openclaw-provider-config";
 import { getRuntimePaths } from "../src/runtime/paths";
+import { withRuntimeUserFileAccess } from "../src/runtime/runtime-user-command";
 import { warmHostedOpenClawRuntime } from "../src/runtime/runtime-warm";
 import { managedRuntimeSystemdUnitEntries } from "../src/runtime/systemd";
 
@@ -205,11 +212,17 @@ test.skipIf(process.env.CLAWDI_TEST_SYSTEMD_COMMAND !== "1")(
 				{ timeout: 5000 },
 			);
 			expect(denied.status).toBe(0);
-			expect(
-				tryFirstOpenClawWrite(entry, paths.userHome, [
-					{ kind: "provider", input: { tenant: "claimed" } },
-				]),
-			).toBe(true);
+			process.env.CLAWDI_RUNTIME_USER = "clawdi";
+			const context = createOpenClawHostedContextForHome(paths.userHome, false);
+			context.sdk.configMutation = entry;
+			withRuntimeUserFileAccess(
+				() => {
+					beginOpenClawConfigTransaction(context, {});
+					applyOpenClawContextMergePatch(context, { tenant: "claimed" }, paths.userHome);
+				},
+				{ uid: 10001, gid: 10001 },
+			);
+			commitOpenClawConfigTransaction(context, paths.userHome);
 			expect(JSON.parse(readFileSync(config, "utf8"))).toEqual({
 				unrelated: "preserved",
 				tenant: "claimed",

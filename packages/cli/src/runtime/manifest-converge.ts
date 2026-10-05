@@ -1070,7 +1070,7 @@ function applyRuntimeEntryProjections(
 				);
 			}
 		}
-		const resolved = withRuntimeUserFileAccess(() => {
+		withRuntimeUserFileAccess(() => {
 			if (name === "openclaw" && runtime.enabled && openClawHotApplyEnabled()) {
 				const providerEnv = hostedProviderEnvironment(manifest, name);
 				const environment = { ...providerEnv.placeholderEnv, ...providerEnv.configEnv };
@@ -1156,19 +1156,26 @@ function applyRuntimeEntryProjections(
 				openClawContext.configMutationState.transaction = null;
 				throw new Error(state.installErrors.join("; "));
 			}
-			if (name === "openclaw") commitOpenClawConfigTransaction(openClawContext, workspaceRoot);
-			return resolveRuntimeRunConfigs({
-				manifest,
-				paths,
-				name,
-				runtime,
-				observation,
-				workspaceRoot,
-				generatedAt,
-				secretValues,
-				egressProfileBundlePath: egressProjection.egressProfileBundlePath,
-			});
 		}, context.hostedRuntimeContract.identity);
+		// Projection file IO drops filesystem privileges. The root-private
+		// first-writer socket/receipt must be dispatched after restoring them;
+		// both native writer paths still execute the SDK as the runtime UID.
+		if (name === "openclaw") commitOpenClawConfigTransaction(openClawContext, workspaceRoot);
+		const resolved = withRuntimeUserFileAccess(
+			() =>
+				resolveRuntimeRunConfigs({
+					manifest,
+					paths,
+					name,
+					runtime,
+					observation,
+					workspaceRoot,
+					generatedAt,
+					secretValues,
+					egressProfileBundlePath: egressProjection.egressProfileBundlePath,
+				}),
+			context.hostedRuntimeContract.identity,
+		);
 		const runConfigPath = writeRuntimeRunConfig(
 			resolved.runtime,
 			paths,

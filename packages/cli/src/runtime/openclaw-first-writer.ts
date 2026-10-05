@@ -25,6 +25,7 @@ const receiptSchema = z
 		schemaVersion: z.literal("clawdi.openclawFirstWriter.v1"),
 		nonce: z.uuid(),
 		identity: z.string().regex(/^[a-f0-9]{64}$/),
+		checks: z.record(z.string(), z.string()).optional(),
 	})
 	.strict();
 
@@ -205,28 +206,35 @@ function effectiveUnitMatches(paths: RuntimePaths, unit: string): boolean {
 	);
 }
 
-function identity(paths: RuntimePaths, sdkPath: string): string | null {
+function identity(
+	paths: RuntimePaths,
+	sdkPath: string,
+): { revision: string; checks: Record<string, string> } | null {
 	try {
 		const state = readComponentServiceState(paths, "system", SERVICE);
-		if (!state || !effectiveUnitMatches(paths, SERVICE) || !effectiveUnitMatches(paths, SOCKET))
-			return null;
+		if (!state) return profileRuntimeStep("writer.admission.manager-unavailable", () => null);
+		if (!effectiveUnitMatches(paths, SERVICE) || !effectiveUnitMatches(paths, SOCKET))
+			return profileRuntimeStep("writer.admission.overridden-units", () => null);
 		const files = firstWriterPaths(paths);
 		const socket = lstatSync(files.socket);
 		if (!socket.isSocket() || socket.uid !== 0 || (socket.mode & 0o077) !== 0) return null;
-		return hash(
-			JSON.stringify([
-				state,
-				sdkPath,
-				runtimeFileCurrentRevision(sdkPath),
-				sdkSourceRevision(sdkPath),
-				runtimeFileCurrentRevision(nativeNodePath()),
-				readFileSync(files.script, "utf8"),
-				socket.dev,
-				socket.ino,
-				readFileSync(join(paths.systemdSystemRoot, SERVICE), "utf8"),
-				readFileSync(join(paths.systemdSystemRoot, SOCKET), "utf8"),
-			]),
-		);
+
+		const checks = {
+			manager: hash(JSON.stringify(state)),
+			sdk: hash(
+				JSON.stringify([sdkPath, runtimeFileCurrentRevision(sdkPath), sdkSourceRevision(sdkPath)]),
+			),
+			node: hash(JSON.stringify(runtimeFileCurrentRevision(nativeNodePath()))),
+			script: hash(readFileSync(files.script, "utf8")),
+			socket: hash(JSON.stringify([socket.dev, socket.ino])),
+			units: hash(
+				JSON.stringify([
+					readFileSync(join(paths.systemdSystemRoot, SERVICE), "utf8"),
+					readFileSync(join(paths.systemdSystemRoot, SOCKET), "utf8"),
+				]),
+			),
+		};
+		return { revision: hash(JSON.stringify(checks)), checks };
 	} catch {
 		return null;
 	}
@@ -253,7 +261,7 @@ function readReceipt(paths: RuntimePaths) {
 }
 
 function stopMatchingWriter(paths: RuntimePaths, sdkPath: string, expected: string): void {
-	if (identity(paths, sdkPath) !== expected)
+	if (identity(paths, sdkPath)?.revision !== expected)
 		throw new Error("anonymous writer ownership changed before cleanup");
 	systemctl(["stop", SOCKET, SERVICE]);
 }
@@ -305,7 +313,7 @@ export function warmFirstOpenClawWriter(
 	writeRuntimePlatformFileAtomic(
 		paths,
 		files.receipt,
-		`${JSON.stringify({ schemaVersion: "clawdi.openclawFirstWriter.v1", nonce, identity: fingerprint })}\n`,
+		`${JSON.stringify({ schemaVersion: "clawdi.openclawFirstWriter.v1", nonce, identity: fingerprint.revision, checks: fingerprint.checks })}\n`,
 		{ mode: 0o600 },
 	);
 }
@@ -326,10 +334,17 @@ export function tryFirstOpenClawWrite(
 		existsSync(files.used) ||
 		!privateRootFile(files.receipt)
 	)
-		return false;
+		return profileRuntimeStep("writer.admission.ineligible", () => false);
 	const receipt = readReceipt(paths);
-	if (!receipt) return false;
-	if (receipt.identity !== identity(paths, sdkPath)) return false;
+	if (!receipt) return profileRuntimeStep("writer.admission.invalid-receipt", () => false);
+	const candidate = identity(paths, sdkPath);
+	if (receipt.identity !== candidate?.revision) {
+		for (const name of ["manager", "sdk", "node", "script", "socket", "units"]) {
+			if (receipt.checks?.[name] !== candidate?.checks[name])
+				profileRuntimeStep(`writer.admission.changed-${name}`, () => false);
+		}
+		return false;
+	}
 	const requestId = randomUUID();
 	const raw = JSON.stringify({
 		schemaVersion: "clawdi.openclawFirstWrite.v1",
