@@ -27,6 +27,7 @@ import {
 } from "../ui/dropdown-menu";
 import { EmptyState } from "../ui/empty-state";
 import { HeroCardSkeleton } from "../ui/entity-card";
+import { HeaderActionGroup } from "../ui/header-action-group";
 import { Icon } from "../ui/icon";
 import { IconChip } from "../ui/icon-chip";
 import { PageHeader, PageHeaderSkeleton } from "../ui/page-header";
@@ -199,7 +200,7 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 										{t("libraryPort.projectSkillsDescription")}
 									</WebText>
 								</WebView>
-								<WebView recipe={projectDetailClasses.paginationActions}>
+								<HeaderActionGroup>
 									<Button
 										variant="ghost"
 										size="sm"
@@ -223,7 +224,7 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 											<Text>{t("libraryPort.addSkill")}</Text>
 										</Button>
 									) : null}
-								</WebView>
+								</HeaderActionGroup>
 							</WebView>
 							{skills.error ? (
 								<ApiErrorPanel error={skills.error} onRetry={() => void skills.refetch()} />

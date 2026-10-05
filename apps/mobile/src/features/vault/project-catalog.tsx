@@ -34,6 +34,7 @@ import {
 } from "../../ui/dialog";
 import { EmptyState } from "../../ui/empty-state";
 import { HeroCardSkeleton } from "../../ui/entity-card";
+import { HeaderActionGroup } from "../../ui/header-action-group";
 import { Icon } from "../../ui/icon";
 import { Input, Label } from "../../ui/input";
 import { ListToolbar } from "../../ui/list-toolbar";
@@ -134,18 +135,20 @@ export function ProjectVaultCatalog({ project }: { project: Project }) {
 					</WebText>
 				</WebView>
 				{canAttach ? (
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={action.busy}
-						onPress={() => {
-							action.clearError();
-							setCreateOpen(true);
-						}}
-					>
-						<Icon as={Plus} />
-						<Text>{t("libraryPort.createVault")}</Text>
-					</Button>
+					<HeaderActionGroup>
+						<Button
+							variant="outline"
+							size="sm"
+							disabled={action.busy}
+							onPress={() => {
+								action.clearError();
+								setCreateOpen(true);
+							}}
+						>
+							<Icon as={Plus} />
+							<Text>{t("libraryPort.createVault")}</Text>
+						</Button>
+					</HeaderActionGroup>
 				) : null}
 			</WebView>
 			<WebView recipe={projectVaultCatalogClasses.root}>
