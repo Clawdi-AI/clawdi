@@ -1,3 +1,4 @@
+import { pageWidthClasses } from "@clawdi/shared/ui";
 export const CENTERED_PAGE_WIDTH_CLASS = {
-	page: "mx-auto w-full max-w-7xl",
+	page: pageWidthClasses.page,
 } as const;

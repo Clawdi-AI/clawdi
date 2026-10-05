@@ -1,6 +1,7 @@
 "use client";
 
 import { markdownPlugins } from "@clawdi/shared/markdown";
+import { markdownClasses } from "@clawdi/shared/ui";
 import { Check, Copy } from "lucide-react";
 import {
 	Children,
@@ -111,19 +112,23 @@ function CodeBlockFrame({ children }: { children?: ReactNode }) {
 	const { lang, code } = extractCodeMeta(children);
 	return (
 		<InsidePreContext.Provider value={true}>
-			<div className="my-2 overflow-hidden rounded-lg border border-border/50 bg-muted/30">
-				<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5 text-xs">
-					<span className="font-medium text-muted-foreground lowercase">{lang ?? "text"}</span>
+			<div className={markdownClasses.codeFrame}>
+				<div className={markdownClasses.codeHeader}>
+					<span className={markdownClasses.codeLanguage}>{lang ?? "text"}</span>
 					<button
 						type="button"
 						onClick={() => copy(code)}
 						aria-label={`Copy ${lang ?? "code"}`}
-						className="p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+						className={markdownClasses.copyAction}
 					>
-						{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+						{copied ? (
+							<Check className={markdownClasses.copyIcon} />
+						) : (
+							<Copy className={markdownClasses.copyIcon} />
+						)}
 					</button>
 				</div>
-				<pre className="overflow-x-auto p-3 font-mono text-xs leading-relaxed">{children}</pre>
+				<pre className={markdownClasses.codeBody}>{children}</pre>
 			</div>
 		</InsidePreContext.Provider>
 	);
@@ -148,10 +153,7 @@ function InlineCode({ className, children, ...props }: ComponentPropsWithoutRef<
 		);
 	}
 	return (
-		<code
-			className="rounded-md border border-border/50 bg-muted/50 px-1.5 py-0.5 font-mono text-xs"
-			{...props}
-		>
+		<code className={markdownClasses.inlineCode} {...props}>
 			{children}
 		</code>
 	);
@@ -166,62 +168,47 @@ function MarkdownImpl({ content, highlightQuery }: { content: string; highlightQ
 			]}
 			components={{
 				h1: ({ className, ...props }) => (
-					<h1 className={cn("mb-2 font-semibold text-base first:mt-0", className)} {...props} />
+					<h1 className={cn(markdownClasses.h1, className)} {...props} />
 				),
 				h2: ({ className, ...props }) => (
-					<h2 className={cn("mb-2 font-semibold text-sm first:mt-0", className)} {...props} />
+					<h2 className={cn(markdownClasses.h2, className)} {...props} />
 				),
 				h3: ({ className, ...props }) => (
-					<h3 className={cn("mb-1.5 font-semibold text-sm first:mt-0", className)} {...props} />
+					<h3 className={cn(markdownClasses.h3, className)} {...props} />
 				),
 				p: ({ className, ...props }) => (
-					<p className={cn("mb-2 last:mb-0 leading-normal", className)} {...props} />
+					<p className={cn(markdownClasses.paragraph, className)} {...props} />
 				),
 				a: ({ className, ...props }) => (
 					<a
-						className={cn("text-primary underline underline-offset-2", className)}
+						className={cn(markdownClasses.link, className)}
 						target="_blank"
 						rel="noopener noreferrer"
 						{...props}
 					/>
 				),
 				ul: ({ className, ...props }) => (
-					<ul className={cn("mb-2 ml-4 list-disc last:mb-0 [&>li]:mt-1", className)} {...props} />
+					<ul className={cn(markdownClasses.unorderedList, className)} {...props} />
 				),
 				ol: ({ className, ...props }) => (
-					<ol
-						className={cn("mb-2 ml-4 list-decimal last:mb-0 [&>li]:mt-1", className)}
-						{...props}
-					/>
+					<ol className={cn(markdownClasses.orderedList, className)} {...props} />
 				),
 				li: ({ className, ...props }) => (
-					<li className={cn("leading-normal", className)} {...props} />
+					<li className={cn(markdownClasses.listItem, className)} {...props} />
 				),
 				blockquote: ({ className, ...props }) => (
-					<blockquote
-						className={cn(
-							"mb-2 border-l-2 border-border pl-3 italic text-muted-foreground",
-							className,
-						)}
-						{...props}
-					/>
+					<blockquote className={cn(markdownClasses.blockquote, className)} {...props} />
 				),
 				table: ({ className, ...props }) => (
-					<div className="mb-2 overflow-x-auto">
-						<table className={cn("w-full border-collapse text-sm", className)} {...props} />
+					<div className={markdownClasses.tableContainer}>
+						<table className={cn(markdownClasses.table, className)} {...props} />
 					</div>
 				),
 				th: ({ className, ...props }) => (
-					<th
-						className={cn(
-							"border border-border px-3 py-1.5 text-left font-medium bg-muted/50",
-							className,
-						)}
-						{...props}
-					/>
+					<th className={cn(markdownClasses.tableHeader, className)} {...props} />
 				),
 				td: ({ className, ...props }) => (
-					<td className={cn("border border-border px-3 py-1.5", className)} {...props} />
+					<td className={cn(markdownClasses.tableCell, className)} {...props} />
 				),
 				pre: CodeBlockFrame,
 				code: InlineCode,

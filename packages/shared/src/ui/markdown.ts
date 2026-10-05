@@ -1,0 +1,23 @@
+/** Verbatim Web recipes from components/markdown; shared with native wrappers. */
+export const markdownClasses = {
+	codeFrame: "my-2 overflow-hidden rounded-lg border border-border/50 bg-muted/30",
+	codeHeader: "flex items-center justify-between border-b border-border/40 px-3 py-1.5 text-xs",
+	codeLanguage: "font-medium text-muted-foreground lowercase",
+	copyAction: "p-0.5 text-muted-foreground transition-colors hover:text-foreground",
+	copyIcon: "size-3.5",
+	codeBody: "overflow-x-auto p-3 font-mono text-xs leading-relaxed",
+	inlineCode: "rounded-md border border-border/50 bg-muted/50 px-1.5 py-0.5 font-mono text-xs",
+	h1: "mb-2 font-semibold text-base first:mt-0",
+	h2: "mb-2 font-semibold text-sm first:mt-0",
+	h3: "mb-1.5 font-semibold text-sm first:mt-0",
+	paragraph: "mb-2 last:mb-0 leading-normal",
+	link: "text-primary underline underline-offset-2",
+	unorderedList: "mb-2 ml-4 list-disc last:mb-0 [&>li]:mt-1",
+	orderedList: "mb-2 ml-4 list-decimal last:mb-0 [&>li]:mt-1",
+	listItem: "leading-normal",
+	blockquote: "mb-2 border-l-2 border-border pl-3 italic text-muted-foreground",
+	tableContainer: "mb-2 overflow-x-auto",
+	table: "w-full border-collapse text-sm",
+	tableHeader: "border border-border px-3 py-1.5 text-left font-medium bg-muted/50",
+	tableCell: "border border-border px-3 py-1.5",
+} as const;

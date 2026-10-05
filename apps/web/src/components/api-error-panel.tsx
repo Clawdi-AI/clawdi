@@ -1,5 +1,7 @@
 "use client";
 
+import { apiErrorPanelClasses } from "@clawdi/shared/ui";
+
 import { AlertCircle, LogIn, type LucideIcon, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -48,9 +50,9 @@ export function ApiErrorPanel({
 		<Alert variant="destructive">
 			<Icon />
 			<AlertTitle>{expired ? "Your session expired" : title}</AlertTitle>
-			<AlertDescription className="flex flex-col items-start gap-3">
-				<span className="min-w-0 [overflow-wrap:anywhere]">{normalizer.normalizeError(error)}</span>
-				<div className="flex flex-wrap gap-2">
+			<AlertDescription className={apiErrorPanelClasses.description}>
+				<span className={apiErrorPanelClasses.message}>{normalizer.normalizeError(error)}</span>
+				<div className={apiErrorPanelClasses.actions}>
 					{expired ? (
 						<Button size="sm" onClick={reauthenticate}>
 							<LogIn /> {env.VITE_CLAWDI_DESKTOP_BUILD ? "Reconnect" : "Sign in again"}

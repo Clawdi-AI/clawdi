@@ -1,3 +1,4 @@
+import { entityBrandIconClasses } from "@clawdi/shared/ui";
 import type { FrameworkBrandIconId, ProviderBrandIconId } from "@clawdi/shared/view";
 import Anthropic from "@lobehub/icons/es/Anthropic/components/Mono.js";
 import ClaudeCode from "@lobehub/icons/es/ClaudeCode/components/Color.js";
@@ -41,30 +42,35 @@ const FRAMEWORK_BRAND_ICON_DEFINITIONS = {
 	hermes: {
 		icon: HermesAgent,
 		// LobeHub's Hermes avatar is intentionally a black mark on white.
-		iconClassName: "text-black",
+		iconClassName: entityBrandIconClasses.blackGlyph,
 		iconScale: 0.75,
 		label: "Hermes Agent",
-		tileClassName: "bg-white",
+		tileClassName: entityBrandIconClasses.whiteTile,
 	},
 	"claude-code": {
 		icon: ClaudeCode,
 		iconScale: 0.7,
 		label: "Claude Code",
 	},
-	codex: { icon: Codex, iconScale: 0.7, label: "Codex", tileClassName: "bg-white" },
+	codex: {
+		icon: Codex,
+		iconScale: 0.7,
+		label: "Codex",
+		tileClassName: entityBrandIconClasses.whiteTile,
+	},
 	pi: {
 		icon: Pi,
-		iconClassName: "text-white",
+		iconClassName: entityBrandIconClasses.whiteGlyph,
 		iconScale: 0.65,
 		label: "Pi",
-		tileClassName: "bg-black",
+		tileClassName: entityBrandIconClasses.blackTile,
 	},
 	opencode: {
 		icon: OpenCode,
-		iconClassName: "text-white",
+		iconClassName: entityBrandIconClasses.whiteGlyph,
 		iconScale: 0.75,
 		label: "OpenCode",
-		tileClassName: "bg-black",
+		tileClassName: entityBrandIconClasses.blackTile,
 	},
 } satisfies Readonly<Record<FrameworkBrandIconId, BrandIconMetadata>>;
 
@@ -82,7 +88,7 @@ const PROVIDER_BRAND_ICON_DEFINITIONS = {
 	grok: { icon: Grok, label: "Grok" },
 	groq: { icon: Groq, label: "Groq" },
 	huggingface: { icon: HuggingFace, label: "Hugging Face" },
-	kimi: { icon: Kimi, label: "Kimi", tileClassName: "bg-black" },
+	kimi: { icon: Kimi, label: "Kimi", tileClassName: entityBrandIconClasses.blackTile },
 	minimax: { icon: Minimax, label: "MiniMax" },
 	mistral: { icon: Mistral, label: "Mistral AI" },
 	nvidia: { icon: Nvidia, label: "NVIDIA NIM" },
@@ -90,8 +96,8 @@ const PROVIDER_BRAND_ICON_DEFINITIONS = {
 	opencode: {
 		icon: OpenCode,
 		label: "OpenCode",
-		iconClassName: "text-white",
-		tileClassName: "bg-black",
+		iconClassName: entityBrandIconClasses.whiteGlyph,
+		tileClassName: entityBrandIconClasses.blackTile,
 	},
 	openrouter: { icon: OpenRouter, label: "OpenRouter" },
 	qwen: { icon: Qwen, label: "Qwen" },

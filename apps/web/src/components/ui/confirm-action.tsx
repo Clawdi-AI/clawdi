@@ -1,5 +1,7 @@
 "use client";
 
+import { confirmActionClasses } from "@clawdi/shared/ui";
+
 import { type ReactElement, type ReactNode, useRef, useState } from "react";
 import {
 	AlertDialog,
@@ -93,7 +95,7 @@ export function ConfirmAction({
 			<AlertDialogContent>
 				<AlertDialogHeader>
 					<AlertDialogTitle>{title}</AlertDialogTitle>
-					<AlertDialogDescription render={<div className="space-y-2" />}>
+					<AlertDialogDescription render={<div className={confirmActionClasses.description} />}>
 						{description}
 					</AlertDialogDescription>
 				</AlertDialogHeader>
@@ -107,7 +109,7 @@ export function ConfirmAction({
 								void runAction("secondary", secondaryAction.onAction).catch(() => {});
 							}}
 							disabled={pending}
-							className="min-w-0 whitespace-normal"
+							className={confirmActionClasses.action}
 						>
 							{pendingAction === "secondary" ? <Spinner /> : null}
 							{secondaryAction.label}
@@ -125,7 +127,7 @@ export function ConfirmAction({
 						}}
 						disabled={pending}
 						className={cn(
-							"min-w-0 whitespace-normal",
+							confirmActionClasses.action,
 							destructive && buttonVariants({ variant: "destructive" }),
 						)}
 					>

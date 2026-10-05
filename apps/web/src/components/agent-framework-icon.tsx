@@ -1,3 +1,4 @@
+import { agentFrameworkIconClasses } from "@clawdi/shared/ui";
 import { Laptop } from "lucide-react";
 import type { ReactNode } from "react";
 import { BrandIconTile } from "@/components/brand-icon-tile";
@@ -55,7 +56,7 @@ export function AgentFrameworkIcon({
 				width={pixelSize}
 				height={pixelSize}
 				draggable={draggable}
-				className={cn(boxClassName, "shrink-0 bg-muted object-cover", className)}
+				className={cn(boxClassName, agentFrameworkIconClasses.customImage, className)}
 			/>
 		);
 	}
@@ -75,13 +76,7 @@ export function AgentFrameworkIcon({
 	}
 
 	return (
-		<div
-			className={cn(
-				boxClassName,
-				"flex shrink-0 items-center justify-center bg-muted font-semibold text-muted-foreground",
-				className,
-			)}
-		>
+		<div className={cn(boxClassName, agentFrameworkIconClasses.fallback, className)}>
 			{fallbackContent({
 				fallback,
 				label: label ?? agent ?? "",
