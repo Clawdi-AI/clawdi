@@ -1,4 +1,5 @@
 export const connectBotDialogClasses = {
+	body: "flex min-w-0 flex-col gap-4",
 	chooser: "min-w-0 space-y-2 border-0 p-0",
 	chooserTitle: "mb-2 text-sm font-medium",
 	choices: "grid grid-cols-1 gap-2 sm:grid-cols-3",

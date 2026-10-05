@@ -98,161 +98,164 @@ export function ChannelCreate({ refresh }: { refresh: () => Promise<void> }) {
 							<DialogTitle>{copy.title}</DialogTitle>
 							<DialogDescription>{copy.description}</DialogDescription>
 						</DialogHeader>
-						<WebView recipe={styles.chooser}>
-							<WebText recipe={styles.chooserTitle}>{copy.chooseProvider}</WebText>
-							<WebView recipe={styles.choices}>
-								{(["telegram", "discord", "whatsapp"] as const).map((id) => (
-									<EntityChoiceCard
-										key={id}
-										variant="compact"
-										className={webView(styles.choice)}
-										icon={
-											<EntityIcon
-												kind="channel"
-												id={id}
-												label={PROVIDER_META[id].label}
-												size="sm"
-											/>
-										}
-										title={PROVIDER_META[id].label}
-										selected={provider === id}
-										disabled={action.busy || uncertain}
-										onClick={() => {
-											if (id === "whatsapp") {
-												clear();
-												router.push("/channels/whatsapp");
-											} else {
-												setProvider(id);
-												setToken("");
+						<WebView recipe={styles.body}>
+							<WebView recipe={styles.chooser}>
+								<WebText recipe={styles.chooserTitle}>{copy.chooseProvider}</WebText>
+								<WebView recipe={styles.choices}>
+									{(["telegram", "discord", "whatsapp"] as const).map((id) => (
+										<EntityChoiceCard
+											key={id}
+											variant="compact"
+											className={webView(styles.choice)}
+											icon={
+												<EntityIcon
+													kind="channel"
+													id={id}
+													label={PROVIDER_META[id].label}
+													size="sm"
+												/>
 											}
-										}}
-									/>
-								))}
-							</WebView>
-						</WebView>
-						<WebText recipe={styles.unsupported}>
-							{copy.unsupported}
-							{copy.unsupportedInventory}
-						</WebText>
-						<WebView recipe={styles.configuration}>
-							<WebText recipe={styles.configurationTitle}>
-								Configure {PROVIDER_META[provider].label}
-							</WebText>
-							<WebText recipe={styles.hint}>
-								{provider === "telegram" ? copy.telegramSetupPrefix : copy.discordSetupPrefix}
-								<WebText
-									recipe={styles.setupLink}
-									accessibilityRole="link"
-									onPress={() =>
-										void action.run(async () => {
-											const url = PROVIDER_META[provider].setupUrl;
-											if (url && capture()()) await Linking.openURL(url);
-										})
-									}
-								>
-									{provider === "telegram" ? copy.telegramSetup : copy.discordSetup}{" "}
-									<Icon as={ExternalLink} className={webBoth(styles.setupIcon)} />
+											title={PROVIDER_META[id].label}
+											selected={provider === id}
+											disabled={action.busy || uncertain}
+											onClick={() => {
+												if (id === "whatsapp") {
+													clear();
+													router.push("/channels/whatsapp");
+												} else {
+													setProvider(id);
+													setToken("");
+												}
+											}}
+										/>
+									))}
+								</WebView>{" "}
+								<WebText recipe={styles.unsupported}>
+									{copy.unsupported}
+									{copy.unsupportedInventory}
 								</WebText>
-							</WebText>
-							<WebView recipe={styles.form}>
-								<WebView recipe={styles.field}>
-									<Label>{copy.name}</Label>
-									<Input
-										accessibilityLabel={t("channels.name")}
-										placeholder={copy.namePlaceholder}
-										value={name}
-										onChangeText={setName}
-										maxLength={120}
-										editable={!action.busy && !uncertain}
-									/>
-								</WebView>
-								<WebView recipe={styles.field}>
-									<Label>{copy.token}</Label>
-									<Input
-										accessibilityLabel={t("channels.token")}
-										placeholder={PROVIDER_META[provider].tokenPlaceholder}
-										value={token}
-										onChangeText={setToken}
-										maxLength={2000}
-										secureTextEntry
-										autoCapitalize="none"
-										autoCorrect={false}
-										editable={!action.busy && !uncertain}
-									/>
-								</WebView>
-								{provider === "discord" ? (
-									<>
-										<WebView recipe={styles.field}>
-											<Label>{copy.applicationId}</Label>
-											<Input
-												accessibilityLabel={t("channels.applicationId")}
-												placeholder={copy.applicationId}
-												value={applicationId}
-												onChangeText={setApplicationId}
-												maxLength={20}
-												autoCapitalize="none"
-												autoCorrect={false}
-												editable={!action.busy && !uncertain}
-											/>
-										</WebView>
-										<WebView recipe={styles.field}>
-											<Label>{copy.publicKey}</Label>
-											<Input
-												accessibilityLabel={t("channels.publicKey")}
-												placeholder={copy.publicKeyPlaceholder}
-												value={publicKey}
-												onChangeText={setPublicKey}
-												maxLength={64}
-												autoCapitalize="none"
-												autoCorrect={false}
-												editable={!action.busy && !uncertain}
-											/>
-										</WebView>
-									</>
-								) : null}
-								<DialogFooter>
-									<ActionButton
-										label={t("account.cancel")}
-										disabled={action.busy}
-										onPress={clear}
-									/>
-									<ActionButton
-										label={copy.add}
-										variant="default"
-										disabled={action.busy || uncertain || invalid}
+							</WebView>
+
+							<WebView recipe={styles.configuration}>
+								<WebText recipe={styles.configurationTitle}>
+									Configure {PROVIDER_META[provider].label}
+								</WebText>
+								<WebText recipe={styles.hint}>
+									{provider === "telegram" ? copy.telegramSetupPrefix : copy.discordSetupPrefix}
+									<WebText
+										recipe={styles.setupLink}
+										accessibilityRole="link"
 										onPress={() =>
-											void action.run(async (current) => {
-												const visible = capture();
-												if (!visible() || invalid || uncertain) return;
-												setUncertain(true);
-												await read((signal) =>
-													channels.create(
-														{
-															provider,
-															name: name.trim(),
-															provider_token: token.trim(),
-															agent_id: null,
-															...(provider === "discord"
-																? {
-																		config: {
-																			application_id: applicationId.trim(),
-																			public_key: publicKey.trim(),
-																		},
-																	}
-																: {}),
-														},
-														signal,
-													),
-												);
-												if (!current() || !visible()) return;
-												clear();
-												setName("");
-												setUncertain(false);
-												await refresh();
+											void action.run(async () => {
+												const url = PROVIDER_META[provider].setupUrl;
+												if (url && capture()()) await Linking.openURL(url);
 											})
 										}
-									/>
-								</DialogFooter>
+									>
+										{provider === "telegram" ? copy.telegramSetup : copy.discordSetup}{" "}
+										<Icon as={ExternalLink} className={webBoth(styles.setupIcon)} />
+									</WebText>
+								</WebText>
+								<WebView recipe={styles.form}>
+									<WebView recipe={styles.field}>
+										<Label>{copy.name}</Label>
+										<Input
+											accessibilityLabel={t("channels.name")}
+											placeholder={copy.namePlaceholder}
+											value={name}
+											onChangeText={setName}
+											maxLength={120}
+											editable={!action.busy && !uncertain}
+										/>
+									</WebView>
+									<WebView recipe={styles.field}>
+										<Label>{copy.token}</Label>
+										<Input
+											accessibilityLabel={t("channels.token")}
+											placeholder={PROVIDER_META[provider].tokenPlaceholder}
+											value={token}
+											onChangeText={setToken}
+											maxLength={2000}
+											secureTextEntry
+											autoCapitalize="none"
+											autoCorrect={false}
+											editable={!action.busy && !uncertain}
+										/>
+									</WebView>
+									{provider === "discord" ? (
+										<>
+											<WebView recipe={styles.field}>
+												<Label>{copy.applicationId}</Label>
+												<Input
+													accessibilityLabel={t("channels.applicationId")}
+													placeholder={copy.applicationId}
+													value={applicationId}
+													onChangeText={setApplicationId}
+													maxLength={20}
+													autoCapitalize="none"
+													autoCorrect={false}
+													editable={!action.busy && !uncertain}
+												/>
+											</WebView>
+											<WebView recipe={styles.field}>
+												<Label>{copy.publicKey}</Label>
+												<Input
+													accessibilityLabel={t("channels.publicKey")}
+													placeholder={copy.publicKeyPlaceholder}
+													value={publicKey}
+													onChangeText={setPublicKey}
+													maxLength={64}
+													autoCapitalize="none"
+													autoCorrect={false}
+													editable={!action.busy && !uncertain}
+												/>
+											</WebView>
+										</>
+									) : null}
+									<DialogFooter>
+										<ActionButton
+											label={t("account.cancel")}
+											disabled={action.busy}
+											onPress={clear}
+										/>
+										<ActionButton
+											label={copy.add}
+											variant="default"
+											disabled={action.busy || uncertain || invalid}
+											onPress={() =>
+												void action.run(async (current) => {
+													const visible = capture();
+													if (!visible() || invalid || uncertain) return;
+													setUncertain(true);
+													await read((signal) =>
+														channels.create(
+															{
+																provider,
+																name: name.trim(),
+																provider_token: token.trim(),
+																agent_id: null,
+																...(provider === "discord"
+																	? {
+																			config: {
+																				application_id: applicationId.trim(),
+																				public_key: publicKey.trim(),
+																			},
+																		}
+																	: {}),
+															},
+															signal,
+														),
+													);
+													if (!current() || !visible()) return;
+													clear();
+													setName("");
+													setUncertain(false);
+													await refresh();
+												})
+											}
+										/>
+									</DialogFooter>
+								</WebView>
 							</WebView>
 						</WebView>
 					</DialogContent>

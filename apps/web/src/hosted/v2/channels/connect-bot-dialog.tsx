@@ -324,7 +324,7 @@ export function ConnectBotDialog({
 							</DialogDescription>
 						</DialogHeader>
 
-						<div className="flex min-w-0 flex-col gap-4">
+						<div className={styles.body}>
 							{providerChoices}
 							<section
 								className={styles.configuration}
