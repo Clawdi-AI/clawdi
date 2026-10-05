@@ -1,7 +1,7 @@
 "use client";
 
 import type { AgentTile } from "@clawdi/shared/view";
-import { formatShortDate } from "@clawdi/shared/view";
+import { billingCopy, formatShortDate } from "@clawdi/shared/view";
 import { CreditCard, History } from "lucide-react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -458,8 +458,8 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 			<SettingsSection
 				data-hosted="true"
 				headingLevel={3}
-				title="Your subscriptions"
-				description="Manage every compute subscription in one place."
+				title={billingCopy.subscriptions}
+				description={billingCopy.subscriptionsDescription}
 			>
 				{subscriptions.isLoading ? (
 					<SubscriptionListSkeleton />
@@ -559,8 +559,8 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 					<EmptyState
 						variant="inset"
 						icon={CreditCard}
-						title="No compute subscriptions"
-						description="Compute subscriptions will appear here when you start a hosted agent."
+						title={billingCopy.emptySubscriptions}
+						description={billingCopy.emptySubscriptionsDescription}
 						className="py-8 md:p-8"
 					/>
 				)}

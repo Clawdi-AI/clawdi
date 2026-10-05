@@ -4,17 +4,14 @@ import { File } from "expo-file-system";
 import { Redirect, useNavigation } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import { useRef, useState } from "react";
-import { Alert, Image } from "react-native";
+import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useNativeReverification } from "../auth/use-native-reverification";
 import { useI18n } from "../i18n";
 import { useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { LoadingScreen } from "../ui/feedback";
-import { NativeButton } from "../ui/native-controls";
-import { AppScrollView, AppText, AppTextInput, AppView } from "../ui/primitives";
-import { ReadScreen } from "../ui/read-screen";
-import { BackButton } from "./cloud-inventory";
+import { ProfileFormView } from "../ui/settings/account-forms";
 
 export function ProfileScreen() {
 	const { isLoaded, user } = useUser();
@@ -150,91 +147,23 @@ function ProfileForm({ user }: { user: UserResource }) {
 			});
 		});
 	return (
-		<ReadScreen>
-			<AppScrollView contentContainerClassName="gap-5 p-6">
-				<BackButton />
-				<AppText accessibilityRole="header" className="text-2xl font-semibold text-foreground">
-					{t("profile.title")}
-				</AppText>
-				<AppText>{t("profile.description")}</AppText>
-				{reverification.prompt}
-				<AppText>
-					{user.primaryEmailAddress?.emailAddress ?? t("account.accountUnavailable")}
-				</AppText>
-				{avatar.url.startsWith("https://") ? (
-					<Image
-						source={{ uri: avatar.url }}
-						style={{ width: 88, height: 88, borderRadius: 44 }}
-						accessibilityLabel={t("profile.avatar")}
-					/>
-				) : null}
-				<AppText>{t("profile.avatarHint")}</AppText>
-				<NativeButton
-					label={t("profile.uploadAvatar")}
-					disabled={action.busy}
-					onPress={() => updateAvatar(false)}
-				/>
-				<NativeButton
-					label={t("profile.removeAvatar")}
-					disabled={action.busy || !avatar.custom}
-					onPress={removeAvatar}
-				/>
-				<AppView className="gap-2">
-					<AppText>{t("profile.firstName")}</AppText>
-					<AppTextInput
-						accessibilityLabel={t("profile.firstName")}
-						autoComplete="given-name"
-						value={firstName}
-						editable={!action.busy}
-						maxLength={256}
-						className="rounded-xl bg-card p-3 text-foreground"
-						onChangeText={(value) => {
-							setFirstName(value);
-							setSuccess(false);
-						}}
-					/>
-				</AppView>
-				<AppView className="gap-2">
-					<AppText>{t("profile.lastName")}</AppText>
-					<AppTextInput
-						accessibilityLabel={t("profile.lastName")}
-						autoComplete="family-name"
-						value={lastName}
-						editable={!action.busy}
-						maxLength={256}
-						className="rounded-xl bg-card p-3 text-foreground"
-						onChangeText={(value) => {
-							setLastName(value);
-							setSuccess(false);
-						}}
-					/>
-				</AppView>
-				<AppView className="gap-2">
-					<AppText>{t("profile.username")}</AppText>
-					<AppTextInput
-						accessibilityLabel={t("profile.username")}
-						autoComplete="username"
-						autoCapitalize="none"
-						autoCorrect={false}
-						value={username}
-						editable={!action.busy}
-						maxLength={256}
-						className="rounded-xl bg-card p-3 text-foreground"
-						onChangeText={(value) => {
-							setUsername(value);
-							setSuccess(false);
-						}}
-					/>
-					<AppText className="text-muted-foreground">{t("profile.usernameHint")}</AppText>
-				</AppView>
-				{action.error ? <AppText accessibilityRole="alert">{t("profile.failed")}</AppText> : null}
-				{success ? (
-					<AppText accessibilityRole="alert">
-						{t(success === "avatar" ? "profile.avatarSaved" : "profile.saved")}
-					</AppText>
-				) : null}
-				<NativeButton label={t("profile.save")} disabled={!dirty || action.busy} onPress={save} />
-			</AppScrollView>
-		</ReadScreen>
+		<ProfileFormView
+			action={action}
+			reverification={reverification}
+			firstName={firstName}
+			lastName={lastName}
+			username={username}
+			success={success}
+			avatar={avatar}
+			email={user.primaryEmailAddress?.emailAddress}
+			setFirstName={setFirstName}
+			setLastName={setLastName}
+			setUsername={setUsername}
+			setSuccess={setSuccess}
+			updateAvatar={updateAvatar}
+			removeAvatar={removeAvatar}
+			dirty={dirty}
+			save={save}
+		/>
 	);
 }

@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { BillingOffer, HostedComputeSubscription, Plan } from "@/hosted/billing/contracts";
+import type { DeployComponents, DeploymentRead } from "../api";
+
+type BillingOffer = DeployComponents["schemas"]["V2BillingOfferResponse"];
+type Plan = DeployComponents["schemas"]["V2PlanResponse"];
+type HostedComputeSubscription = NonNullable<
+	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
+>;
+
 import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
@@ -22,7 +29,7 @@ import {
 	resolveSubscriptionCreatePlanSlug,
 	selectExplicitOfferForTerm,
 	selectOfferForTerm,
-} from "@/hosted/billing/subscription/subscription-utils";
+} from "./compute-subscriptions";
 
 function offer(term: number, priceCents: number): BillingOffer {
 	return {

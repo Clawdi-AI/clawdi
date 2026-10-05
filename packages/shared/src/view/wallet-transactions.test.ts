@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { formatShortDate } from "@clawdi/shared/view";
-import type { WalletTransaction } from "@/hosted/billing/contracts";
+import type { DeployComponents } from "../api";
+
+type WalletTransaction = DeployComponents["schemas"]["V2WalletTransactionItemResponse"];
+
 import {
 	transactionComputeDetails,
 	transactionKindLabel,
 	transactionSignedAmount,
-} from "./transactions-section.logic";
+} from "./wallet-transactions";
 
 // Period dates render in the viewer's timezone, so the expected strings are
 // built with the same formatter; the assertions cover the assembly, not Intl.

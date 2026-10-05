@@ -9,10 +9,7 @@ import { clearAccountScope, useAccountRead, useAccountScope } from "../platform/
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
 import { LoadingScreen } from "../ui/feedback";
-import { NativeButton } from "../ui/native-controls";
-import { AppScrollView, AppText, AppTextInput } from "../ui/primitives";
-import { ReadScreen } from "../ui/read-screen";
-import { BackButton } from "./cloud-inventory";
+import { DeleteAccountFormView } from "../ui/settings/account-forms";
 
 export function DeleteAccountScreen() {
 	const scope = useAccountScope();
@@ -82,48 +79,15 @@ function DeleteAccount({ email }: { email: string }) {
 		]);
 	};
 	return (
-		<ReadScreen>
-			<AppScrollView contentContainerClassName="gap-5 p-6">
-				<BackButton />
-				<AppText accessibilityRole="header" className="text-2xl font-semibold text-foreground">
-					{t("deletion.title")}
-				</AppText>
-				<AppText>{email}</AppText>
-				<AppText>{t("deletion.warning")}</AppText>
-				{outcome === "idle" ? (
-					!compute ? (
-						<AppText accessibilityRole="alert">{t("deletion.unavailable")}</AppText>
-					) : (
-						<>
-							<AppText>{t("deletion.typePhrase")}</AppText>
-							<AppTextInput
-								accessibilityLabel={t("deletion.typePhrase")}
-								value={phrase}
-								onChangeText={setPhrase}
-								autoCapitalize="characters"
-								autoCorrect={false}
-								editable={!action.busy}
-								className="rounded-xl bg-card p-3 text-foreground"
-							/>
-							<NativeButton
-								label={t("deletion.confirm")}
-								disabled={action.busy || phrase !== t("deletion.phrase")}
-								onPress={confirm}
-							/>
-						</>
-					)
-				) : (
-					<AppText accessibilityRole="alert">
-						{t(outcome === "accepted" ? "deletion.accepted" : "deletion.uncertain")}
-					</AppText>
-				)}
-				{outcome !== "idle" ? (
-					<NativeButton label={t("account.signOut")} disabled={action.busy} onPress={leave} />
-				) : null}
-				{action.error ? (
-					<AppText accessibilityRole="alert">{t("account.signOutFailed")}</AppText>
-				) : null}
-			</AppScrollView>
-		</ReadScreen>
+		<DeleteAccountFormView
+			action={action}
+			email={email}
+			compute={compute}
+			phrase={phrase}
+			outcome={outcome}
+			setPhrase={setPhrase}
+			confirm={confirm}
+			leave={leave}
+		/>
 	);
 }

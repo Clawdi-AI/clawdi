@@ -1,23 +1,31 @@
+import { billingPageClass, transactionsSectionClasses } from "@clawdi/shared/ui";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import { useState } from "react";
 import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useMobileApi } from "../../providers/api-provider";
+import { ApiErrorPanel } from "../../ui/api-error-panel";
+import { ClerkAction as DetailAction } from "../../ui/auth/clerk-form";
+import { ComputeSubscriptionCard } from "../../ui/billing/compute-subscription-card";
+import { PlanComparison } from "../../ui/billing/plan-comparison";
+import { BalanceCard, TransactionRow, WalletSettingsSections } from "../../ui/billing/wallet";
+import { Button } from "../../ui/button";
+import { EmptyState } from "../../ui/empty-state";
 import { ErrorState, LoadingScreen } from "../../ui/feedback";
 import { DetailRow } from "../../ui/metadata-row";
-import { NativeButton, NativePicker } from "../../ui/native-controls";
-import { AppPressable, AppScrollView, AppText, AppView } from "../../ui/primitives";
+import { AppScrollView, AppText, AppView } from "../../ui/primitives";
 import { ReadScreen } from "../../ui/read-screen";
+import { RouteLoadingSkeleton } from "../../ui/route-loading-skeleton";
+import { SettingsPanelHeader, SettingsSection } from "../../ui/settings/section";
+import { SettingsShell } from "../../ui/settings/shell";
+import { Text } from "../../ui/text";
+import { WebText, WebView, webView } from "../../ui/web-layout";
 import { BackButton, formatDate } from "../cloud-inventory";
-import { InventoryList } from "../inventory-list";
 import { ResourceError } from "../resource-error";
 import {
-	exactUsd,
 	nextBillingCursor,
 	type Subscription,
 	subscriptionPrice,
-	type Transaction,
 	uniqueBillingItems,
 	validSubscriptionId,
 } from "./helpers";
@@ -44,22 +52,124 @@ function useSubscriptions(enabled = true) {
 	});
 }
 
-type Section = "subscriptions" | "transactions";
-type BillingRow =
-	| { id: string; kind: "subscription"; item: Subscription }
-	| { id: string; kind: "transaction"; item: Transaction };
-
 export function BillingScreen() {
 	const scope = useAccountScope();
 	return <BillingView key={`${scope.accountKey}:${scope.generation}`} />;
 }
-
 function BillingView() {
+	const t = useI18n();
+	const scope = useAccountScope();
+	const { compute } = useMobileApi();
+	const read = useAccountRead();
+	const router = useRouter();
+	const subscriptions = useSubscriptions();
+	const plans = useQuery({
+		queryKey: accountQueryKey(scope, "billing-plans"),
+		queryFn: ({ signal }) =>
+			read((s) => {
+				if (!compute) throw new Error("Compute API unavailable");
+				return compute.listPlans(s);
+			}, signal),
+		enabled: scope.isReady && Boolean(compute),
+		retry: false,
+	});
+	const items = uniqueBillingItems(
+		subscriptions.data?.pages.flatMap((page) => page.items ?? []) ?? [],
+		(item) => item.subscription_id,
+	);
+	return (
+		<SettingsShell active="compute" back>
+			<WebView recipe={billingPageClass}>
+				<SettingsPanelHeader
+					title={t("billingParity.compute")}
+					description={t("billingParity.computeDescription")}
+				/>
+				{!compute ? (
+					<EmptyState variant="inset" title={t("billing.unavailable")} />
+				) : (
+					<>
+						<SettingsSection
+							title={t("billingParity.subscriptions")}
+							description={t("billingParity.subscriptionsDescription")}
+						>
+							{subscriptions.isPending ? (
+								<RouteLoadingSkeleton />
+							) : subscriptions.isError && !subscriptions.data ? (
+								<ApiErrorPanel
+									error={subscriptions.error}
+									onRetry={() => void subscriptions.refetch()}
+								/>
+							) : items.length ? (
+								<WebView recipe={transactionsSectionClasses.section}>
+									{items.map((item) => (
+										<ComputeSubscriptionCard
+											key={item.subscription_id}
+											item={item}
+											actions={
+												<Button
+													variant="outline"
+													size="sm"
+													onPress={() => {
+														if (scope.isCurrent() && !scope.signal.aborted)
+															router.push(
+																`/billing/subscriptions/${encodeURIComponent(item.subscription_id)}`,
+															);
+													}}
+												>
+													<Text>{t("inventory.viewDetails")}</Text>
+												</Button>
+											}
+										/>
+									))}
+								</WebView>
+							) : (
+								<EmptyState
+									variant="inset"
+									title={t("billingParity.emptySubscriptions")}
+									description={t("billingParity.emptySubscriptionsDescription")}
+								/>
+							)}
+							{subscriptions.hasNextPage ? (
+								<Button
+									variant="outline"
+									disabled={subscriptions.isFetching}
+									onPress={() => void subscriptions.fetchNextPage()}
+								>
+									<Text>{t("inventory.loadMore")}</Text>
+								</Button>
+							) : null}
+							{subscriptions.isError && subscriptions.data ? (
+								<ApiErrorPanel
+									error={subscriptions.error}
+									onRetry={() => void subscriptions.refetch()}
+								/>
+							) : null}
+						</SettingsSection>
+						{plans.isPending ? (
+							<RouteLoadingSkeleton />
+						) : plans.isError ? (
+							<ApiErrorPanel error={plans.error} onRetry={() => void plans.refetch()} />
+						) : (
+							<PlanComparison plans={plans.data ?? []} />
+						)}
+						<WebText recipe={transactionsSectionClasses.description}>
+							{t("billing.noStore")}
+						</WebText>
+					</>
+				)}
+			</WebView>
+		</SettingsShell>
+	);
+}
+export function WalletScreen() {
+	const scope = useAccountScope();
+	return <WalletView key={`${scope.accountKey}:${scope.generation}`} />;
+}
+function WalletView() {
 	const t = useI18n();
 	const { compute } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
-	const [section, setSection] = useState<Section>("subscriptions");
 	const wallet = useQuery({
 		queryKey: accountQueryKey(scope, "billing-wallet"),
 		queryFn: ({ signal }) =>
@@ -70,7 +180,6 @@ function BillingView() {
 		enabled: scope.isReady && Boolean(compute),
 		retry: false,
 	});
-	const subscriptions = useSubscriptions(section === "subscriptions");
 	const transactions = useInfiniteQuery({
 		queryKey: accountQueryKey(scope, "billing-transactions"),
 		initialPageParam: initialCursor(),
@@ -80,108 +189,79 @@ function BillingView() {
 				return compute.getWalletTransactions({ limit: 25, cursor: pageParam }, s);
 			}, signal),
 		getNextPageParam: nextBillingCursor,
-		enabled: scope.isReady && Boolean(compute) && section === "transactions",
+		enabled: scope.isReady && Boolean(compute),
 		retry: false,
 	});
-	if (!compute)
-		return (
-			<ReadScreen>
-				<AppView className="gap-4 p-6">
-					<BackButton />
-					<AppText>{t("billing.unavailable")}</AppText>
-				</AppView>
-			</ReadScreen>
-		);
-	const active = section === "subscriptions" ? subscriptions : transactions;
-	const subscriptionItems = uniqueBillingItems(
-		subscriptions.data?.pages.flatMap((page) => page.items ?? []) ?? [],
-		(item) => item.subscription_id,
-	);
-	const transactionItems = uniqueBillingItems(
+	const rows = uniqueBillingItems(
 		transactions.data?.pages.flatMap((page) => page.items) ?? [],
 		(item) => item.id,
 	);
-	const rows: BillingRow[] =
-		section === "subscriptions"
-			? subscriptionItems.map((item) => ({ id: item.subscription_id, kind: "subscription", item }))
-			: transactionItems.map((item) => ({ id: item.id, kind: "transaction", item }));
-	const refresh = () => {
-		if (!wallet.isFetching) void wallet.refetch();
-		if (!active.isFetching) void active.refetch();
-	};
 	return (
-		<InventoryList
-			items={rows}
-			title={t("billing.title")}
-			description={t("billing.independent")}
-			empty={active.isPending ? t("loading.app") : t("billing.empty")}
-			header={
-				<AppView className="gap-3">
-					<AppText className="text-sm text-muted-foreground">{t("billing.balance")}</AppText>
-					<AppText className="text-2xl font-semibold text-foreground">
-						{wallet.isPending
-							? t("loading.app")
-							: (exactUsd(wallet.data?.balance_usd) ?? t("billing.unknown"))}
-					</AppText>
-					{wallet.isError ? (
-						<ErrorState onRetry={wallet.isFetching ? undefined : () => void wallet.refetch()} />
-					) : null}
-					<AppText className="text-sm text-muted-foreground">{t("billing.noStore")}</AppText>
-					<AppText>{t("billing.section")}</AppText>
-					<NativePicker
-						value={section}
-						options={[
-							{ value: "subscriptions", label: t("billing.subscriptions") },
-							{ value: "transactions", label: t("billing.transactions") },
-						]}
-						onValueChange={setSection}
-					/>
-				</AppView>
-			}
-			renderItem={(row) =>
-				row.kind === "subscription" ? (
-					<SubscriptionRow item={row.item} />
+		<SettingsShell active="wallet" back>
+			<WebView recipe={billingPageClass}>
+				<SettingsPanelHeader
+					title={t("billingParity.wallet")}
+					description={t("billingParity.walletDescription")}
+				/>
+				{!compute ? (
+					<EmptyState variant="inset" title={t("billing.unavailable")} />
+				) : wallet.isPending ? (
+					<RouteLoadingSkeleton />
+				) : wallet.isError || !wallet.data ? (
+					<ApiErrorPanel error={wallet.error} onRetry={() => void wallet.refetch()} />
 				) : (
-					<TransactionRow item={row.item} />
-				)
-			}
-			refreshing={wallet.isRefetching || active.isRefetching}
-			onRefresh={refresh}
-			error={active.isError}
-			onRetry={refresh}
-			busy={active.isFetching}
-			more={active.hasNextPage}
-			onMore={() => {
-				if (!active.isFetching) void active.fetchNextPage();
-			}}
-		/>
+					<>
+						<BalanceCard wallet={wallet.data} />
+						<WalletSettingsSections wallet={wallet.data} />
+						<SettingsSection
+							title={t("billingParity.transactions")}
+							description={t("billingParity.transactionsDescription")}
+						>
+							{transactions.isPending ? (
+								<RouteLoadingSkeleton />
+							) : transactions.isError && !transactions.data ? (
+								<ApiErrorPanel
+									error={transactions.error}
+									onRetry={() => void transactions.refetch()}
+								/>
+							) : rows.length ? (
+								<WebView recipe={transactionsSectionClasses.mobileRows}>
+									{rows.map((item) => (
+										<TransactionRow key={item.id} item={item} />
+									))}
+								</WebView>
+							) : (
+								<EmptyState
+									variant="inset"
+									title={t("billingParity.emptyTransactions")}
+									description={t("billingParity.emptyTransactionsDescription")}
+								/>
+							)}
+							{transactions.hasNextPage ? (
+								<Button
+									variant="outline"
+									disabled={transactions.isFetching}
+									onPress={() => void transactions.fetchNextPage()}
+								>
+									<Text>{t("inventory.loadMore")}</Text>
+								</Button>
+							) : null}
+							{transactions.isError && transactions.data ? (
+								<ApiErrorPanel
+									error={transactions.error}
+									onRetry={() => void transactions.refetch()}
+								/>
+							) : null}
+						</SettingsSection>
+						<WebText recipe={transactionsSectionClasses.description}>
+							{t("billing.noStore")}
+						</WebText>
+					</>
+				)}
+			</WebView>
+		</SettingsShell>
 	);
 }
-
-function SubscriptionRow({ item }: { item: Subscription }) {
-	const t = useI18n();
-	const router = useRouter();
-	const scope = useAccountScope();
-	return (
-		<AppPressable
-			accessibilityRole="button"
-			className="gap-2 rounded-2xl bg-card p-4"
-			onPress={() => {
-				if (scope.isCurrent() && !scope.signal.aborted)
-					router.push(`/billing/subscriptions/${encodeURIComponent(item.subscription_id)}`);
-			}}
-		>
-			<AppText className="text-lg font-semibold text-foreground">
-				{item.agent_name ?? item.plan_slug}
-			</AppText>
-			<AppText className="text-muted-foreground">
-				{item.status} · {subscriptionPrice(item) ?? t("billing.unknown")}
-			</AppText>
-			<AppText className="text-primary">{t("inventory.viewDetails")}</AppText>
-		</AppPressable>
-	);
-}
-
 function SubscriptionRecovery({ item }: { item: Subscription }) {
 	const t = useI18n();
 	const recovery = computeSubscriptionRecoveryPresentation(
@@ -232,24 +312,6 @@ function SubscriptionRecovery({ item }: { item: Subscription }) {
 	);
 }
 
-function TransactionRow({ item }: { item: Transaction }) {
-	const t = useI18n();
-	return (
-		<AppView className="gap-2 rounded-2xl bg-card p-4">
-			<AppText className="font-semibold text-foreground">
-				{item.direction === "credit" ? "+" : "−"}
-				{exactUsd(item.amount) ?? t("billing.unknown")}
-			</AppText>
-			<AppText className="text-muted-foreground">
-				{item.kind} · {item.status}
-			</AppText>
-			<AppText className="text-muted-foreground">
-				{formatDate(item.occurred_at) ?? t("billing.unknown")}
-			</AppText>
-		</AppView>
-	);
-}
-
 export function SubscriptionDetailScreen({
 	subscriptionId,
 }: {
@@ -285,10 +347,10 @@ export function SubscriptionDetailScreen({
 	if (query.isPending) return <LoadingScreen />;
 	return (
 		<ReadScreen>
-			<AppScrollView contentContainerClassName="gap-4 p-6">
+			<AppScrollView contentContainerClassName={webView(billingPageClass)}>
 				<BackButton />
-				<AppText className="text-2xl font-semibold text-foreground">{t("billing.details")}</AppText>
-				<NativeButton
+				<AppText className="text-lg font-semibold text-foreground">{t("billing.details")}</AppText>
+				<DetailAction
 					disabled={query.isFetching}
 					label={t("inventory.refresh")}
 					onPress={() => {
@@ -299,7 +361,8 @@ export function SubscriptionDetailScreen({
 					<ErrorState onRetry={query.isFetching ? undefined : () => void query.refetch()} />
 				) : null}
 				{item ? (
-					<AppView className="gap-3 rounded-2xl bg-card p-5">
+					<AppView className={webView(transactionsSectionClasses.section)}>
+						<ComputeSubscriptionCard item={item} />
 						<DetailRow label={t("billing.agent")} value={item.agent_name ?? t("billing.unknown")} />
 						<DetailRow label={t("billing.plan")} value={item.plan_slug} />
 						<DetailRow label={t("billing.status")} value={item.status} />
@@ -330,7 +393,7 @@ export function SubscriptionDetailScreen({
 						) : null}
 						<AppText className="text-muted-foreground">{t("billing.management")}</AppText>
 						{item.deployment_id ? (
-							<NativeButton
+							<DetailAction
 								label={t("billing.deployment")}
 								onPress={() => {
 									if (scope.isCurrent() && !scope.signal.aborted && item.deployment_id)
@@ -343,7 +406,7 @@ export function SubscriptionDetailScreen({
 					query.hasNextPage ? (
 						<>
 							<AppText>{t("billing.moreToSearch")}</AppText>
-							<NativeButton
+							<DetailAction
 								disabled={query.isFetching}
 								label={t("inventory.loadMore")}
 								onPress={() => {

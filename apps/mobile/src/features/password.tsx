@@ -9,10 +9,7 @@ import { useI18n } from "../i18n";
 import { useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { LoadingScreen } from "../ui/feedback";
-import { NativeButton, NativeSwitch } from "../ui/native-controls";
-import { AppScrollView, AppText, AppTextInput } from "../ui/primitives";
-import { ReadScreen } from "../ui/read-screen";
-import { BackButton } from "./cloud-inventory";
+import { PasswordFormView } from "../ui/settings/account-forms";
 
 export function PasswordScreen() {
 	const { isLoaded, user } = useUser();
@@ -106,79 +103,22 @@ function PasswordForm({ user }: { user: UserResource }) {
 		]);
 	};
 	return (
-		<ReadScreen>
-			<AppScrollView contentContainerClassName="gap-4 p-6">
-				<BackButton />
-				<AppText accessibilityRole="header" className="text-2xl font-semibold text-foreground">
-					{t("password.title")}
-				</AppText>
-				<AppText>{t("password.description")}</AppText>
-				<AppText>{t(enabled ? "password.enabled" : "password.absent")}</AppText>
-				{reverification.prompt}
-				{enabled ? (
-					<AppTextInput
-						accessibilityLabel={t("password.current")}
-						placeholder={t("password.current")}
-						value={oldPassword}
-						onChangeText={edit(setOldPassword)}
-						editable={!action.busy}
-						secureTextEntry
-						autoComplete="current-password"
-						autoCapitalize="none"
-						autoCorrect={false}
-						className="rounded-xl bg-card p-3 text-foreground"
-					/>
-				) : null}
-				<AppTextInput
-					accessibilityLabel={t("password.new")}
-					placeholder={t("password.new")}
-					value={newPassword}
-					onChangeText={edit(setNewPassword)}
-					editable={!action.busy}
-					secureTextEntry
-					autoComplete="new-password"
-					autoCapitalize="none"
-					autoCorrect={false}
-					className="rounded-xl bg-card p-3 text-foreground"
-				/>
-				<AppTextInput
-					accessibilityLabel={t("password.confirm")}
-					placeholder={t("password.confirm")}
-					value={confirmationPassword}
-					onChangeText={edit(setConfirmationPassword)}
-					editable={!action.busy}
-					secureTextEntry
-					autoComplete="new-password"
-					autoCapitalize="none"
-					autoCorrect={false}
-					className="rounded-xl bg-card p-3 text-foreground"
-				/>
-				<NativeSwitch
-					label={t("password.otherSessions")}
-					value={otherSessions}
-					onValueChange={setOtherSessions}
-					disabled={action.busy}
-				/>
-				<NativeButton
-					label={t(enabled ? "password.update" : "password.add")}
-					disabled={
-						action.busy ||
-						!newPassword ||
-						newPassword !== confirmationPassword ||
-						(enabled && !oldPassword)
-					}
-					onPress={() => update(false)}
-				/>
-				{enabled ? (
-					<NativeButton
-						label={t("password.remove")}
-						disabled={action.busy || !oldPassword}
-						onPress={confirmRemove}
-					/>
-				) : null}
-				{action.error ? <AppText accessibilityRole="alert">{t("password.failed")}</AppText> : null}
-				{success ? <AppText accessibilityRole="alert">{t("password.saved")}</AppText> : null}
-			</AppScrollView>
-		</ReadScreen>
+		<PasswordFormView
+			action={action}
+			reverification={reverification}
+			enabled={enabled}
+			oldPassword={oldPassword}
+			newPassword={newPassword}
+			confirmationPassword={confirmationPassword}
+			otherSessions={otherSessions}
+			success={success}
+			setOldPassword={setOldPassword}
+			setNewPassword={setNewPassword}
+			setConfirmationPassword={setConfirmationPassword}
+			setOtherSessions={setOtherSessions}
+			edit={edit}
+			update={update}
+			confirmRemove={confirmRemove}
+		/>
 	);
 }

@@ -1,4 +1,6 @@
 "use client";
+import { autoReloadCardClasses } from "@clawdi/shared/ui";
+import { billingCopy } from "@clawdi/shared/view";
 
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, CreditCard } from "lucide-react";
@@ -317,7 +319,7 @@ export function AutoReloadCard({
 						{draft.enabled || dirty ? (
 							<form
 								id="auto-reload-form"
-								className="flex flex-col gap-5"
+								className={autoReloadCardClasses.form}
 								onSubmit={(event) => {
 									event.preventDefault();
 									setBlurred(ALL_FIELDS_BLURRED);
@@ -325,10 +327,10 @@ export function AutoReloadCard({
 								}}
 							>
 								{draft.enabled ? (
-									<div className="flex flex-col gap-5">
-										<div className="grid gap-5 sm:grid-cols-2">
-											<div className="flex flex-col gap-1.5">
-												<Label htmlFor="ar-threshold">When balance is below (USD)</Label>
+									<div className={autoReloadCardClasses.form}>
+										<div className={autoReloadCardClasses.fields}>
+											<div className={autoReloadCardClasses.field}>
+												<Label htmlFor="ar-threshold">{billingCopy.autoReloadThreshold}</Label>
 												<Input
 													id="ar-threshold"
 													type="number"
@@ -336,7 +338,7 @@ export function AutoReloadCard({
 													autoComplete="off"
 													min={AUTORELOAD_THRESHOLD_MIN_USD}
 													step="0.01"
-													className="tabular-nums [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+													className={autoReloadCardClasses.input}
 													value={draft.threshold}
 													onChange={(event) => updateDraft("threshold", event.target.value)}
 													onBlur={() => markBlurred("threshold")}
@@ -356,8 +358,8 @@ export function AutoReloadCard({
 												</p>
 											</div>
 
-											<div className="flex flex-col gap-1.5">
-												<Label htmlFor="ar-amount">Amount to add (USD)</Label>
+											<div className={autoReloadCardClasses.field}>
+												<Label htmlFor="ar-amount">{billingCopy.autoReloadAmount}</Label>
 												<Input
 													id="ar-amount"
 													type="number"
@@ -366,7 +368,7 @@ export function AutoReloadCard({
 													min={AUTORELOAD_AMOUNT_MIN_CENTS / 100}
 													max={AUTORELOAD_AMOUNT_MAX_CENTS / 100}
 													step="0.01"
-													className="tabular-nums [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+													className={autoReloadCardClasses.input}
 													value={draft.amount}
 													onChange={(event) => updateDraft("amount", event.target.value)}
 													onBlur={() => markBlurred("amount")}
@@ -407,7 +409,7 @@ export function AutoReloadCard({
 
 											{draft.monthlyLimitEnabled ? (
 												<div className="mt-4 flex max-w-sm flex-col gap-1.5">
-													<Label htmlFor="ar-cap">Monthly limit (USD)</Label>
+													<Label htmlFor="ar-cap">{billingCopy.autoReloadMonthlyLimit}</Label>
 													<Input
 														id="ar-cap"
 														type="number"
@@ -416,7 +418,7 @@ export function AutoReloadCard({
 														min={AUTORELOAD_AMOUNT_MIN_CENTS / 100}
 														max={AUTORELOAD_MONTHLY_CAP_MAX_CENTS / 100}
 														step="0.01"
-														className="tabular-nums [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+														className={autoReloadCardClasses.input}
 														value={draft.cap}
 														onChange={(event) => updateDraft("cap", event.target.value)}
 														onBlur={() => markBlurred("cap")}

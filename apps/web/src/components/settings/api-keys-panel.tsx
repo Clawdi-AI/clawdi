@@ -1,6 +1,7 @@
 "use client";
 
-import { formatShortDate } from "@clawdi/shared/view";
+import { apiKeysPanelClasses } from "@clawdi/shared/ui";
+import { formatShortDate, settingsCopy } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, KeyRound, Laptop, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
@@ -180,24 +181,24 @@ export function ApiKeysPanel() {
 	}
 
 	return (
-		<div className="flex flex-col gap-8 px-5 sm:px-6 lg:px-8">
+		<div className={apiKeysPanelClasses.panel}>
 			<SettingsPanelHeader
-				title="API Keys"
-				description="Manage bearer tokens for servers, containers, and other headless environments."
+				title={settingsCopy.apiKeys}
+				description={settingsCopy.apiKeysDescription}
 				actions={
 					<Button type="button" onClick={openCreateDialog}>
 						<Plus data-icon="inline-start" />
-						Create API key
+						{settingsCopy.createKey}
 					</Button>
 				}
 			/>
 
-			<div className="flex items-start gap-3 rounded-lg border bg-muted/20 px-4 py-3 text-sm">
-				<Laptop className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-				<p className="text-muted-foreground">
-					<span className="font-medium text-foreground">Using Clawdi on a laptop?</span> Run{" "}
-					<code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">clawdi auth login</code>{" "}
-					instead; it completes sign-in without a manually managed key.
+			<div className={apiKeysPanelClasses.notice}>
+				<Laptop className={apiKeysPanelClasses.noticeIcon} aria-hidden="true" />
+				<p className={apiKeysPanelClasses.muted}>
+					<span className={apiKeysPanelClasses.strong}>{settingsCopy.laptopTitle}</span> Run{" "}
+					<code className={apiKeysPanelClasses.command}>{settingsCopy.laptopCommand}</code> instead;
+					it completes sign-in without a manually managed key.
 				</p>
 			</div>
 
@@ -206,19 +207,24 @@ export function ApiKeysPanel() {
 			) : isLoading ? (
 				<>
 					<ApiKeysMobileLoading />
-					<DataTable columns={columns} data={[]} isLoading className="hidden md:block" />
+					<DataTable
+						columns={columns}
+						data={[]}
+						isLoading
+						className={apiKeysPanelClasses.desktopOnly}
+					/>
 				</>
 			) : keys.length === 0 ? (
 				<ApiKeysEmptyState onCreate={openCreateDialog} />
 			) : (
 				<>
-					<div className="md:hidden">
+					<div className={apiKeysPanelClasses.mobileOnly}>
 						<ApiKeysMobileList keys={keys} onRevoke={handleRevoke} />
 					</div>
 					<DataTable
 						columns={columns}
 						data={keys}
-						className="hidden md:block"
+						className={apiKeysPanelClasses.desktopOnly}
 						tableContainerClassName="max-w-full"
 					/>
 				</>
@@ -231,7 +237,7 @@ export function ApiKeysPanel() {
 			>
 				<DialogContent
 					showCloseButton={!createKey.isPending && createdKey === null}
-					className="sm:max-w-lg"
+					className={apiKeysPanelClasses.dialog}
 				>
 					<DialogHeader>
 						<DialogTitle>{createdKey ? "Save your API key" : "Create API key"}</DialogTitle>
@@ -243,20 +249,18 @@ export function ApiKeysPanel() {
 					</DialogHeader>
 
 					{createdKey ? (
-						<div className="space-y-5">
-							<Alert className="border-primary/30 bg-primary/5">
+						<div className={apiKeysPanelClasses.form}>
+							<Alert className={apiKeysPanelClasses.createdAlert}>
 								<ShieldCheck aria-hidden="true" />
 								<AlertTitle>Key created</AlertTitle>
 								<AlertDescription>
 									Store it in your secret manager and set it as{" "}
-									<code className="font-mono text-xs">CLAWDI_AUTH_TOKEN</code> on the client.
+									<code className={apiKeysPanelClasses.mono}>CLAWDI_AUTH_TOKEN</code> on the client.
 								</AlertDescription>
 							</Alert>
 
-							<div className="flex min-w-0 items-start gap-2 rounded-lg border bg-muted/30 p-2">
-								<code className="min-w-0 flex-1 select-all break-all px-1 py-1.5 font-mono text-xs leading-relaxed">
-									{createdKey}
-								</code>
+							<div className={apiKeysPanelClasses.secretBox}>
+								<code className={apiKeysPanelClasses.secret}>{createdKey}</code>
 								<Button
 									type="button"
 									variant="outline"
@@ -269,18 +273,18 @@ export function ApiKeysPanel() {
 								</Button>
 							</div>
 
-							<div className="flex items-start gap-2.5">
+							<div className={apiKeysPanelClasses.acknowledgement}>
 								<Checkbox
 									id="api-key-secret-acknowledgement"
 									checked={secretAcknowledged}
 									onCheckedChange={(checked) => setSecretAcknowledged(checked === true)}
-									className="mt-0.5"
+									className={apiKeysPanelClasses.checkbox}
 								/>
 								<Label
 									htmlFor="api-key-secret-acknowledgement"
-									className="text-sm leading-snug font-normal"
+									className={apiKeysPanelClasses.acknowledgementLabel}
 								>
-									I have copied and stored this API key safely.
+									{settingsCopy.acknowledgeKey}
 								</Label>
 							</div>
 
@@ -292,7 +296,7 @@ export function ApiKeysPanel() {
 						</div>
 					) : (
 						<form
-							className="space-y-5"
+							className={apiKeysPanelClasses.form}
 							onSubmit={(event) => {
 								event.preventDefault();
 								if (normalizedNewLabel && !createKey.isPending) {
@@ -300,8 +304,8 @@ export function ApiKeysPanel() {
 								}
 							}}
 						>
-							<div className="space-y-2">
-								<Label htmlFor="new-key-label">Key name</Label>
+							<div className={apiKeysPanelClasses.field}>
+								<Label htmlFor="new-key-label">{settingsCopy.keyName}</Label>
 								<Input
 									id="new-key-label"
 									value={newLabel}
@@ -309,7 +313,7 @@ export function ApiKeysPanel() {
 										setNewLabel(event.target.value);
 										createKey.reset();
 									}}
-									placeholder="Production server"
+									placeholder={settingsCopy.keyPlaceholder}
 									name="new-key-label"
 									autoComplete="off"
 									maxLength={API_KEY_LABEL_MAX_LENGTH}
@@ -317,11 +321,11 @@ export function ApiKeysPanel() {
 									disabled={createKey.isPending}
 									aria-describedby="new-key-label-help"
 								/>
-								<p id="new-key-label-help" className="text-xs text-muted-foreground">
+								<p id="new-key-label-help" className={apiKeysPanelClasses.description}>
 									For example, the server, container, or automation that will use this key.
 								</p>
 								{createKey.error ? (
-									<p role="alert" className="text-xs text-destructive">
+									<p role="alert" className={apiKeysPanelClasses.error}>
 										The key couldn’t be created. Check the name and try again.
 									</p>
 								) : null}
@@ -403,7 +407,7 @@ function apiKeyColumns({
 			accessorKey: "label",
 			header: "Name",
 			cell: ({ row }) => (
-				<span className="block min-w-0 truncate font-medium" title={row.original.label}>
+				<span className={apiKeysPanelClasses.keyName} title={row.original.label}>
 					{row.original.label}
 				</span>
 			),
@@ -424,7 +428,9 @@ function apiKeyColumns({
 		{
 			accessorKey: "last_used_at",
 			header: "Last used",
-			cell: ({ row }) => <ApiKeyDate value={row.original.last_used_at} emptyLabel="Never" />,
+			cell: ({ row }) => (
+				<ApiKeyDate value={row.original.last_used_at} emptyLabel={settingsCopy.never} />
+			),
 			size: 120,
 		},
 	];
@@ -433,7 +439,9 @@ function apiKeyColumns({
 		columns.push({
 			accessorKey: "expires_at",
 			header: "Expires",
-			cell: ({ row }) => <ApiKeyDate value={row.original.expires_at} emptyLabel="Never" />,
+			cell: ({ row }) => (
+				<ApiKeyDate value={row.original.expires_at} emptyLabel={settingsCopy.never} />
+			),
 			size: 120,
 		});
 	}
@@ -452,20 +460,17 @@ function apiKeyColumns({
 
 function KeyIdentifier({ prefix }: { prefix: string }) {
 	return (
-		<code
-			className="block min-w-0 truncate font-mono text-xs text-muted-foreground"
-			title={`Key prefix: ${prefix}`}
-		>
+		<code className={apiKeysPanelClasses.keyPrefix} title={`Key prefix: ${prefix}`}>
 			{prefix}…
 		</code>
 	);
 }
 
 function ApiKeyDate({ value, emptyLabel = "—" }: { value: string | null; emptyLabel?: string }) {
-	if (!value) return <span className="text-xs text-muted-foreground">{emptyLabel}</span>;
+	if (!value) return <span className={apiKeysPanelClasses.description}>{emptyLabel}</span>;
 	return (
 		<TimeTooltip value={value}>
-			<span className="text-xs text-muted-foreground">{formatShortDate(value)}</span>
+			<span className={apiKeysPanelClasses.description}>{formatShortDate(value)}</span>
 		</TimeTooltip>
 	);
 }
@@ -483,24 +488,24 @@ function RevokeApiKeyAction({
 			variant="ghost"
 			size="sm"
 			aria-label={`Revoke ${apiKey.label}`}
-			className="text-muted-foreground hover:text-destructive"
+			className={apiKeysPanelClasses.revoke}
 			onClick={() => onRevoke(apiKey)}
 		>
 			<Trash2 aria-hidden="true" />
-			Revoke
+			{settingsCopy.revoke}
 		</Button>
 	);
 }
 
 function ApiKeysEmptyState({ onCreate }: { onCreate: () => void }) {
 	return (
-		<div className="rounded-lg border bg-card">
-			<Empty className="p-8 sm:p-12">
+		<div className={apiKeysPanelClasses.emptyContainer}>
+			<Empty className={apiKeysPanelClasses.emptyPadding}>
 				<EmptyHeader>
 					<EmptyMedia variant="icon">
 						<KeyRound aria-hidden="true" />
 					</EmptyMedia>
-					<EmptyTitle>No active API keys</EmptyTitle>
+					<EmptyTitle>{settingsCopy.emptyKeys}</EmptyTitle>
 					<EmptyDescription>
 						Create a key to authenticate a server, container, or other client that can’t open a
 						browser.
@@ -509,7 +514,7 @@ function ApiKeysEmptyState({ onCreate }: { onCreate: () => void }) {
 				<EmptyContent>
 					<Button type="button" onClick={onCreate}>
 						<Plus aria-hidden="true" />
-						Create API key
+						{settingsCopy.createKey}
 					</Button>
 				</EmptyContent>
 			</Empty>
@@ -519,13 +524,13 @@ function ApiKeysEmptyState({ onCreate }: { onCreate: () => void }) {
 
 function ApiKeysMobileLoading() {
 	return (
-		<div className="flex flex-col gap-3 md:hidden" role="status">
-			<span className="sr-only">Loading API keys</span>
+		<div className={apiKeysPanelClasses.mobileSkeletons} role="status">
+			<span className={apiKeysPanelClasses.screenReader}>Loading API keys</span>
 			{[0, 1, 2].map((index) => (
-				<div key={index} className="rounded-lg border bg-card p-4">
-					<Skeleton className="h-4 w-2/3" />
-					<Skeleton className="mt-3 h-3 w-1/2" />
-					<Skeleton className="mt-4 h-8 w-full" />
+				<div key={index} className={apiKeysPanelClasses.skeletonCard}>
+					<Skeleton className={apiKeysPanelClasses.skeletonName} />
+					<Skeleton className={apiKeysPanelClasses.skeletonPrefix} />
+					<Skeleton className={apiKeysPanelClasses.skeletonAction} />
 				</div>
 			))}
 		</div>
@@ -540,38 +545,38 @@ function ApiKeysMobileList({
 	onRevoke: (key: ApiKey) => void;
 }) {
 	return (
-		<div className="flex flex-col gap-3">
+		<div className={apiKeysPanelClasses.cards}>
 			{keys.map((key) => (
-				<article key={key.id} className="min-w-0 rounded-lg border bg-card p-4">
-					<div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
-						<div className="min-w-0">
-							<h3 className="line-clamp-2 break-all text-sm font-medium" title={key.label}>
+				<article key={key.id} className={apiKeysPanelClasses.card}>
+					<div className={apiKeysPanelClasses.cardHeader}>
+						<div className={apiKeysPanelClasses.minWidth}>
+							<h3 className={apiKeysPanelClasses.cardName} title={key.label}>
 								{key.label}
 							</h3>
-							<div className="mt-1.5 max-w-full">
+							<div className={apiKeysPanelClasses.cardPrefix}>
 								<KeyIdentifier prefix={key.key_prefix} />
 							</div>
 						</div>
 						<RevokeApiKeyAction apiKey={key} onRevoke={onRevoke} />
 					</div>
 
-					<dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-3 text-xs">
-						<div className="min-w-0">
-							<dt className="text-muted-foreground">Created</dt>
-							<dd className="mt-0.5 font-medium text-foreground">
+					<dl className={apiKeysPanelClasses.facts}>
+						<div className={apiKeysPanelClasses.minWidth}>
+							<dt className={apiKeysPanelClasses.muted}>{settingsCopy.created}</dt>
+							<dd className={apiKeysPanelClasses.factValue}>
 								<ApiKeyDate value={key.created_at} />
 							</dd>
 						</div>
-						<div className="min-w-0">
-							<dt className="text-muted-foreground">Last used</dt>
-							<dd className="mt-0.5 font-medium text-foreground">
-								<ApiKeyDate value={key.last_used_at} emptyLabel="Never" />
+						<div className={apiKeysPanelClasses.minWidth}>
+							<dt className={apiKeysPanelClasses.muted}>{settingsCopy.lastUsed}</dt>
+							<dd className={apiKeysPanelClasses.factValue}>
+								<ApiKeyDate value={key.last_used_at} emptyLabel={settingsCopy.never} />
 							</dd>
 						</div>
 						{key.expires_at ? (
-							<div className="min-w-0">
-								<dt className="text-muted-foreground">Expires</dt>
-								<dd className="mt-0.5 font-medium text-foreground">
+							<div className={apiKeysPanelClasses.minWidth}>
+								<dt className={apiKeysPanelClasses.muted}>{settingsCopy.expires}</dt>
+								<dd className={apiKeysPanelClasses.factValue}>
 									<ApiKeyDate value={key.expires_at} />
 								</dd>
 							</div>

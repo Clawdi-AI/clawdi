@@ -1,5 +1,5 @@
 import { type MenuAction, MenuView } from "@expo/ui/community/menu";
-import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
+import { Children, isValidElement, type ReactElement, type ReactNode, useState } from "react";
 import { useCSSVariable, useUniwind } from "uniwind";
 import { AppView } from "./view";
 
@@ -82,12 +82,15 @@ export function NativeMenu({
 	disabled,
 	onOpenChange,
 	children,
+	fullWidth = false,
 }: {
 	entries: NativeMenuEntry[];
 	disabled?: boolean;
 	onOpenChange?: (open: boolean) => void;
 	children: ReactNode;
+	fullWidth?: boolean;
 }) {
+	const [width, setWidth] = useState<number>();
 	const { theme } = useUniwind();
 	const [foreground, destructive] = useCSSVariable([
 		"--color-popover-foreground",
@@ -104,12 +107,17 @@ export function NativeMenu({
 		}));
 	if (disabled)
 		return (
-			<AppView accessibilityState={{ disabled }} pointerEvents="none">
+			<AppView
+				accessibilityState={{ disabled }}
+				pointerEvents="none"
+				className={fullWidth ? "w-full" : undefined}
+			>
 				{children}
 			</AppView>
 		);
-	return (
+	const menu = (
 		<MenuView
+			style={fullWidth && width ? { width } : undefined}
 			actions={actions(entries)}
 			colorScheme={theme === "dark" ? "dark" : "light"}
 			onOpenMenu={() => onOpenChange?.(true)}
@@ -121,7 +129,17 @@ export function NativeMenu({
 				onOpenChange?.(false);
 			}}
 		>
-			<AppView pointerEvents="none">{children}</AppView>
+			<AppView pointerEvents="none" style={fullWidth && width ? { width } : undefined}>
+				{children}
+			</AppView>
 		</MenuView>
+	);
+	// Compose's matchContents host needs a concrete width for percentage-width triggers.
+	return fullWidth ? (
+		<AppView className="w-full" onLayout={({ nativeEvent }) => setWidth(nativeEvent.layout.width)}>
+			{menu}
+		</AppView>
+	) : (
+		menu
 	);
 }

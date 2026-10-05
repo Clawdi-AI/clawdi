@@ -18,10 +18,7 @@ import { useI18n } from "../i18n";
 import { useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { LoadingScreen } from "../ui/feedback";
-import { NativeButton } from "../ui/native-controls";
-import { AppScrollView, AppText, AppView } from "../ui/primitives";
-import { ReadScreen } from "../ui/read-screen";
-import { BackButton } from "./cloud-inventory";
+import { ConnectedAccountsFormView } from "../ui/settings/account-forms";
 
 export function ConnectedAccountsScreen() {
 	const { isLoaded, user } = useUser();
@@ -158,65 +155,16 @@ function ConnectedAccounts({ user }: { user: UserResource }) {
 		]);
 	};
 	return (
-		<ReadScreen>
-			<AppScrollView contentContainerClassName="gap-4 p-6">
-				<BackButton />
-				<AppText accessibilityRole="header" className="text-2xl font-semibold text-foreground">
-					{t("connections.title")}
-				</AppText>
-				<AppText>{t("connections.description")}</AppText>
-				{reverification.prompt}
-				<NativeButton label={t("inventory.refresh")} disabled={action.busy} onPress={() => run()} />
-				{accounts.length === 0 ? <AppText>{t("connections.empty")}</AppText> : null}
-				{accounts.map((account) => (
-					<AppView key={account.id} className="gap-2 rounded-xl bg-card p-4">
-						<AppText>{account.providerTitle()}</AppText>
-						<AppText selectable>{account.accountIdentifier()}</AppText>
-						<AppText>
-							{t(
-								account.verification?.status === "verified"
-									? "connections.verified"
-									: "connections.unverified",
-							)}
-						</AppText>
-						<NativeButton
-							label={t("connections.reauthorize")}
-							disabled={action.busy}
-							onPress={() => void authorize({ id: account.id })}
-						/>
-						<NativeButton
-							label={t("connections.remove")}
-							disabled={action.busy}
-							onPress={() => confirmRemove(account.id)}
-						/>
-					</AppView>
-				))}
-				<AppText>{t("connections.browserHint")}</AppText>
-				{providers.length === 0 ? <AppText>{t("connections.notConfigured")}</AppText> : null}
-				{providers
-					.filter(
-						(provider) =>
-							!accounts.some(
-								(account) =>
-									account.provider === provider && account.verification?.status === "verified",
-							),
-					)
-					.map((provider) => (
-						<NativeButton
-							key={provider}
-							label={`${t("connections.connect")} · ${provider}`}
-							disabled={action.busy}
-							onPress={() => void authorize({ provider })}
-						/>
-					))}
-				{action.error ? (
-					<AppText accessibilityRole="alert">{t("connections.failed")}</AppText>
-				) : null}
-				{saved ? <AppText accessibilityRole="alert">{t("connections.saved")}</AppText> : null}
-				{reauthorized ? (
-					<AppText accessibilityRole="alert">{t("connections.reauthorized")}</AppText>
-				) : null}
-			</AppScrollView>
-		</ReadScreen>
+		<ConnectedAccountsFormView
+			action={action}
+			reverification={reverification}
+			accounts={accounts}
+			providers={providers}
+			saved={saved}
+			reauthorized={reauthorized}
+			run={run}
+			authorize={authorize}
+			confirmRemove={confirmRemove}
+		/>
 	);
 }

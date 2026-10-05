@@ -1,4 +1,5 @@
 "use client";
+import { x402CardClasses } from "@clawdi/shared/ui";
 
 import {
 	createCredentiallessX402Fetch,
@@ -133,9 +134,9 @@ function ComingSoonX402Card() {
 			headingLevel={3}
 			data-hosted="true"
 			title={
-				<span className="flex flex-wrap items-center gap-2">
-					<span className="inline-flex items-center gap-2">
-						<Link2 className="size-4" aria-hidden /> USDC from a browser wallet
+				<span className={x402CardClasses.title}>
+					<span className={x402CardClasses.label}>
+						<Link2 className={x402CardClasses.icon} aria-hidden /> USDC from a browser wallet
 					</span>
 					<Badge variant="secondary">Coming soon</Badge>
 				</span>
@@ -438,9 +439,9 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 				headingLevel={3}
 				data-hosted="true"
 				title={
-					<span className="flex flex-wrap items-center gap-2">
-						<span className="inline-flex items-center gap-2">
-							<Link2 className="size-4" aria-hidden /> USDC from a browser wallet
+					<span className={x402CardClasses.title}>
+						<span className={x402CardClasses.label}>
+							<Link2 className={x402CardClasses.icon} aria-hidden /> USDC from a browser wallet
 						</span>
 						<Badge variant="outline">Base</Badge>
 					</span>
@@ -541,7 +542,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 					) : null}
 
 					{!binding.isPending && !binding.isError ? (
-						<div className="flex flex-wrap items-center gap-2">
+						<div className={x402CardClasses.title}>
 							{boundAddress ? (
 								<>
 									<Button

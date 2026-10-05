@@ -1,5 +1,7 @@
 "use client";
 
+import { settingsDialogClasses } from "@clawdi/shared/ui";
+
 import type { AgentTile } from "@clawdi/shared/view";
 import type { ShouldBlockFn } from "@tanstack/react-router";
 import {
@@ -226,23 +228,23 @@ export function SettingsDialog({
 					data-testid="settings-dialog"
 					initialFocus={activeButtonRef}
 					showCloseButton={false}
-					className="h-[min(820px,calc(100dvh-2rem))] w-[calc(100vw-2rem)] max-w-6xl gap-0 overflow-hidden p-0 sm:max-w-6xl"
+					className={settingsDialogClasses.dialog}
 				>
-					<div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
-						<DialogHeader className="flex h-14 shrink-0 flex-row items-center justify-between gap-3 border-b px-4 text-left md:px-5">
-							<DialogTitle className="truncate text-sm font-semibold">Settings</DialogTitle>
-							<DialogDescription className="sr-only">
+					<div className={settingsDialogClasses.shell}>
+						<DialogHeader className={settingsDialogClasses.header}>
+							<DialogTitle className={settingsDialogClasses.title}>Settings</DialogTitle>
+							<DialogDescription className={settingsDialogClasses.screenReader}>
 								Account, billing, and application settings.
 							</DialogDescription>
 							{!hasPendingSave ? <SettingsDialogCloseButton /> : null}
 						</DialogHeader>
 
-						<div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] md:grid-cols-[15rem_minmax(0,1fr)] md:grid-rows-1">
-							<aside className="flex min-w-0 flex-col border-b bg-muted/30 md:border-r md:border-b-0">
-								<div className="relative min-w-0 md:min-h-0 md:flex-1">
+						<div className={settingsDialogClasses.layout}>
+							<aside className={settingsDialogClasses.navigation}>
+								<div className={settingsDialogClasses.navigationContainer}>
 									<nav
 										aria-label="Settings sections"
-										className="flex gap-1 overflow-x-auto px-3 py-3 [scrollbar-width:thin] md:min-h-0 md:flex-1 md:flex-col md:overflow-y-auto"
+										className={settingsDialogClasses.navigationItems}
 									>
 										{items.map((item) => {
 											const Icon = item.icon;
@@ -257,8 +259,8 @@ export function SettingsDialog({
 													data-active={active}
 													onClick={() => requestSectionChange(item.id)}
 													className={cn(
-														"h-auto min-w-28 shrink-0 justify-start gap-2 rounded-md px-2.5 py-2 text-left text-sm text-muted-foreground hover:bg-background/70 hover:text-foreground md:min-w-0 md:gap-3 md:px-3",
-														"data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-xs",
+														settingsDialogClasses.navigationButton,
+														settingsDialogClasses.navigationActive,
 													)}
 												>
 													<IconChip
@@ -271,9 +273,11 @@ export function SettingsDialog({
 													>
 														<Icon />
 													</IconChip>
-													<span className="grid min-w-0 flex-1 leading-tight">
-														<span className="truncate font-medium">{item.label}</span>
-														<span className="hidden truncate text-xs text-muted-foreground md:block">
+													<span className={settingsDialogClasses.navigationCopy}>
+														<span className={settingsDialogClasses.navigationLabel}>
+															{item.label}
+														</span>
+														<span className={settingsDialogClasses.navigationDescription}>
 															{item.description}
 														</span>
 													</span>
@@ -281,16 +285,16 @@ export function SettingsDialog({
 											);
 										})}
 									</nav>
-									<div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-linear-to-l from-muted/30 to-transparent md:hidden" />
+									<div className={settingsDialogClasses.navigationFade} />
 								</div>
 							</aside>
 
-							<section className="min-h-0 min-w-0 overflow-y-auto py-6 md:py-8">
-								<div className="mx-auto w-full max-w-4xl">
+							<section className={settingsDialogClasses.panel}>
+								<div className={settingsDialogClasses.panelWidth}>
 									{billingAccessPending ? (
 										<RouteLoadingSkeleton />
 									) : billingAccessError ? (
-										<div className="px-5 sm:px-6 lg:px-8">
+										<div className={settingsDialogClasses.panelPadding}>
 											<ApiErrorPanel
 												error={hostedAccess.error}
 												normalizer={HOSTED_ACCESS_ERROR_NORMALIZER}
@@ -327,7 +331,7 @@ function SettingsDialogCloseButton({ className }: { className?: string }) {
 			render={<Button type="button" variant="ghost" size="icon-sm" />}
 		>
 			<XIcon />
-			<span className="sr-only">Close</span>
+			<span className={settingsDialogClasses.screenReader}>Close</span>
 		</DialogClose>
 	);
 }

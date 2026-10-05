@@ -1,3 +1,4 @@
+import { settingsPanelHeaderClasses } from "@clawdi/shared/ui";
 import type { ReactNode } from "react";
 import { HeaderActionGroup } from "@/components/header-action-group";
 
@@ -11,13 +12,12 @@ export function SettingsPanelHeader({
 	actions?: ReactNode;
 }) {
 	return (
-		<div
-			data-slot="settings-panel-header"
-			className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
-		>
-			<div className="flex min-w-0 flex-col gap-1">
-				<h2 className="text-lg font-semibold tracking-tight">{title}</h2>
-				{description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
+		<div data-slot="settings-panel-header" className={settingsPanelHeaderClasses.header}>
+			<div className={settingsPanelHeaderClasses.copy}>
+				<h2 className={settingsPanelHeaderClasses.title}>{title}</h2>
+				{description ? (
+					<p className={settingsPanelHeaderClasses.description}>{description}</p>
+				) : null}
 			</div>
 			{actions ? <HeaderActionGroup>{actions}</HeaderActionGroup> : null}
 		</div>

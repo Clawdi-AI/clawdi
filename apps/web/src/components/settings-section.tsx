@@ -1,3 +1,4 @@
+import { settingsSectionClasses } from "@clawdi/shared/ui";
 import { useId } from "react";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
@@ -31,25 +32,28 @@ export function SettingsSection({
 		<section
 			{...sectionProps}
 			aria-labelledby={generatedTitleId}
-			className={cn("flex flex-col gap-4", className)}
+			className={cn(settingsSectionClasses.section, className)}
 		>
 			<Separator />
-			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-				<div className="flex max-w-2xl min-w-0 flex-col gap-1.5">
+			<div className={settingsSectionClasses.header}>
+				<div className={settingsSectionClasses.copy}>
 					<Heading
 						id={generatedTitleId}
-						className={cn("text-sm font-semibold", variant === "destructive" && "text-destructive")}
+						className={cn(
+							settingsSectionClasses.title,
+							variant === "destructive" && "text-destructive",
+						)}
 					>
 						{title}
 					</Heading>
 					{description ? (
-						<div className="text-sm leading-5 text-muted-foreground">{description}</div>
+						<div className={settingsSectionClasses.description}>{description}</div>
 					) : null}
 				</div>
-				{actions ? <div className="shrink-0">{actions}</div> : null}
+				{actions ? <div className={settingsSectionClasses.actions}>{actions}</div> : null}
 			</div>
 			{children !== undefined && children !== null ? (
-				<div className="min-w-0">{children}</div>
+				<div className={settingsSectionClasses.content}>{children}</div>
 			) : null}
 		</section>
 	);

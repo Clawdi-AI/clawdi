@@ -1,3 +1,4 @@
+import { agentLabelClasses } from "@clawdi/shared/ui";
 import {
 	type AgentSourceKind,
 	agentIdentity,
@@ -204,7 +205,7 @@ export function AgentSourceBadgeForEnvironment({
 const NAME_CLASS: Record<AgentIconSize, string> = {
 	xs: "text-xs font-medium",
 	sm: "text-sm font-medium",
-	md: "text-sm font-medium",
+	md: agentLabelClasses.mediumName,
 	lg: "text-base font-medium",
 	rail: "text-base font-medium",
 	xl: "text-2xl font-semibold tracking-tight",
@@ -216,7 +217,7 @@ const NAME_CLASS: Record<AgentIconSize, string> = {
 const SUBTITLE_GAP: Record<AgentIconSize, string> = {
 	xs: "mt-0",
 	sm: "mt-0.5",
-	md: "mt-0.5",
+	md: agentLabelClasses.mediumSubtitleGap,
 	lg: "mt-0.5",
 	rail: "mt-0.5",
 	xl: "mt-1",
@@ -284,22 +285,17 @@ export function AgentLabel({
 	for (const m of filteredMeta) subtitleSegments.push(m);
 
 	return (
-		<div className={cn("flex min-w-0 items-center gap-3", className)}>
+		<div className={cn(agentLabelClasses.root, className)}>
 			<AgentIcon agent={type} size={size} avatarUrl={avatarUrl} />
-			<div className="min-w-0 flex-1">
-				<div className="flex min-w-0 items-center gap-2">
-					<span className={cn("truncate leading-tight", NAME_CLASS[size])} title={titleText}>
+			<div className={agentLabelClasses.copy}>
+				<div className={agentLabelClasses.heading}>
+					<span className={cn(agentLabelClasses.name, NAME_CLASS[size])} title={titleText}>
 						{titleText}
 					</span>
 					{titleAdornment ? <span className="shrink-0">{titleAdornment}</span> : null}
 				</div>
 				{subtitleSegments.length > 0 ? (
-					<div
-						className={cn(
-							"flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground",
-							SUBTITLE_GAP[size],
-						)}
-					>
+					<div className={cn(agentLabelClasses.subtitle, SUBTITLE_GAP[size])}>
 						{subtitleSegments.map((seg, i) => (
 							<span key={`seg-${i}`} className="inline-flex items-center whitespace-nowrap">
 								{seg}

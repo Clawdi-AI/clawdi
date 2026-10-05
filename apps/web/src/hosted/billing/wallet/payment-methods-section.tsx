@@ -1,4 +1,6 @@
 "use client";
+import { paymentMethodsSectionClasses } from "@clawdi/shared/ui";
+import { billingCopy } from "@clawdi/shared/view";
 
 import { CreditCard, Pencil } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -38,7 +40,7 @@ export function PaymentMethodsSection({
 				</Button>
 			}
 		>
-			<div className="space-y-3">
+			<div className={paymentMethodsSectionClasses.body}>
 				{methods.isLoading ? (
 					<Skeleton className="h-16 w-full" />
 				) : methods.error ? (
@@ -57,7 +59,7 @@ export function PaymentMethodsSection({
 									<p className="text-sm font-medium capitalize">
 										{method.card.brand} ending in {method.card.last4}
 									</p>
-									<p className="text-xs text-muted-foreground">
+									<p className={paymentMethodsSectionClasses.hint}>
 										Expires {String(method.card.exp_month).padStart(2, "0")}/{method.card.exp_year}
 									</p>
 								</div>
@@ -70,13 +72,11 @@ export function PaymentMethodsSection({
 					<p className="text-sm text-muted-foreground">No saved cards yet.</p>
 				)}
 				{methods.data?.has_more ? (
-					<p className="text-xs text-muted-foreground">
+					<p className={paymentMethodsSectionClasses.hint}>
 						Additional saved cards are not shown here.
 					</p>
 				) : null}
-				<p className="text-xs text-muted-foreground">
-					Auto-reload uses the card selected in Auto-reload below.
-				</p>
+				<p className={paymentMethodsSectionClasses.hint}>{billingCopy.autoReloadCardHint}</p>
 			</div>
 		</SettingsSection>
 	);
