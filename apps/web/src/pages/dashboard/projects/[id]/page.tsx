@@ -1,14 +1,22 @@
 "use client";
 
 import {
+	detailLayoutClasses,
+	PROJECT_STAT_TILE_TINTS,
+	projectDetailClasses,
+} from "@clawdi/shared/ui";
+import {
 	agentDisplayName,
 	compareAgentEnvironments,
 	displayProjectName,
 	formatShortDate,
 	identityFor,
 	isCustomProject,
+	LIBRARY_COPY,
+	PROJECT_LOCAL_TABS,
 	type ProjectAgentMetadata,
 	projectAgentFor,
+	projectDetailDescription,
 	projectResourceHref,
 } from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -122,14 +130,6 @@ type CountValue = number | "unavailable";
 type ProjectLocalTab = "overview" | "skills" | "vaults" | "agents" | "access";
 
 const PROJECT_RESOURCE_PAGE_SIZE = 30;
-
-const PROJECT_LOCAL_TABS: readonly { id: ProjectLocalTab; label: string }[] = [
-	{ id: "overview", label: "Overview" },
-	{ id: "skills", label: "Skills" },
-	{ id: "vaults", label: "Vaults" },
-	{ id: "agents", label: "Agents" },
-	{ id: "access", label: "Access" },
-];
 
 function isProjectLocalTab(value: unknown): value is ProjectLocalTab {
 	return typeof value === "string" && PROJECT_LOCAL_TABS.some((tab) => tab.id === value);
@@ -433,19 +433,19 @@ export default function ProjectDetailPage({
 
 	if (projectQuery.isLoading || (isWorkspaceView && scopedBindings.isLoading)) {
 		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.detailPage)}>
 				<DetailBackLink
 					href={catalogReturnTarget?.href ?? projectsTarget.href}
 					label={catalogReturnTarget?.label ?? projectsTarget.label}
 					mobileOnly={false}
 				/>
 				<PageHeaderSkeleton icon actions />
-				<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+				<div className={projectDetailClasses.statGrid}>
 					{Array.from({ length: 4 }).map((_, i) => (
-						<Skeleton key={i} className="h-24 w-full rounded-xl" />
+						<Skeleton key={i} className={projectDetailClasses.statSkeleton} />
 					))}
 				</div>
-				<Skeleton className="h-40 w-full rounded-lg" />
+				<Skeleton className={projectDetailClasses.panelSkeleton} />
 			</div>
 		);
 	}
@@ -462,7 +462,7 @@ export default function ProjectDetailPage({
 	if (blockingProjectError || blockingScopeError) {
 		const blockingError = blockingProjectError ?? blockingScopeError;
 		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.detailPage)}>
 				<DetailBackLink
 					href={catalogReturnTarget?.href ?? projectsTarget.href}
 					label={catalogReturnTarget?.label ?? projectsTarget.label}
@@ -493,7 +493,7 @@ export default function ProjectDetailPage({
 
 	if (!project) {
 		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.detailPage)}>
 				<DetailBackLink
 					href={catalogReturnTarget?.href ?? projectsTarget.href}
 					label={catalogReturnTarget?.label ?? projectsTarget.label}
@@ -509,7 +509,7 @@ export default function ProjectDetailPage({
 
 	if (!isWorkspaceView && project.kind !== "workspace") {
 		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.detailPage)}>
 				<DetailBackLink
 					href={catalogReturnTarget?.href ?? projectsTarget.href}
 					label={catalogReturnTarget?.label ?? projectsTarget.label}
@@ -599,7 +599,7 @@ export default function ProjectDetailPage({
 		<PageHeader {...focusedWorkspaceSkillsPageHeaderProps} />
 	) : null;
 	const focusedWorkspaceSkillsLoading = focusedWorkspaceSkillsPageHeader ? (
-		<div className="space-y-6">
+		<div className={projectDetailClasses.page}>
 			{focusedWorkspaceSkillsPageHeader}
 			<ProjectSkillsLoadingGrid />
 		</div>
@@ -617,7 +617,7 @@ export default function ProjectDetailPage({
 	) : null;
 
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.page)}>
 			<DetailBackLink
 				href={pageReturnTarget.href}
 				label={pageReturnTarget.label}
@@ -638,7 +638,7 @@ export default function ProjectDetailPage({
 						) : (
 							<IconChip
 								tint={isWorkspace ? workspaceIdentity.colorClasses : projectIdentity.colorClasses}
-								className="text-xl"
+								className={projectDetailClasses.emoji}
 							>
 								{isWorkspace ? workspaceIdentity.emoji : projectIdentity.emoji}
 							</IconChip>
@@ -657,8 +657,8 @@ export default function ProjectDetailPage({
 								{!isWorkspaceView && !joinedFromShare
 									? manageAgentsDialog(
 											<Button size="sm">
-												<Bot className="mr-1.5 size-3.5" />
-												Manage agents
+												<Bot className={projectDetailClasses.smallButtonIcon} />
+												{LIBRARY_COPY.manageAgents}
 											</Button>,
 										)
 									: null}
@@ -677,13 +677,13 @@ export default function ProjectDetailPage({
 
 			{joinedFromShare && isShareableProject ? (
 				<Alert>
-					<CheckCircle2 className="size-4" />
+					<CheckCircle2 className={projectDetailClasses.icon} />
 					<AlertTitle>Project added</AlertTitle>
-					<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+					<AlertDescription className={projectDetailClasses.alertDescription}>
 						<span>Linking lets an Agent use this Project&apos;s Skills and Vaults together.</span>
 						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
-							<Bot className="mr-1.5 size-3.5" />
-							Manage agents
+							<Bot className={projectDetailClasses.smallButtonIcon} />
+							{LIBRARY_COPY.manageAgents}
 						</Button>
 					</AlertDescription>
 				</Alert>
@@ -699,14 +699,10 @@ export default function ProjectDetailPage({
 					<TabsList
 						aria-label="Project pages"
 						activateOnFocus
-						className="grid h-auto w-full grid-cols-5 gap-1 rounded-xl border bg-muted/30 p-1 group-data-horizontal/tabs:h-auto"
+						className={projectDetailClasses.tabs}
 					>
 						{PROJECT_LOCAL_TABS.map((tab) => (
-							<TabsTrigger
-								key={tab.id}
-								value={tab.id}
-								className="min-w-0 px-1 py-2 text-xs sm:px-2 sm:text-sm"
-							>
+							<TabsTrigger key={tab.id} value={tab.id} className={projectDetailClasses.tab}>
 								{tab.label}
 							</TabsTrigger>
 						))}
@@ -715,18 +711,21 @@ export default function ProjectDetailPage({
 			) : null}
 
 			{!isWorkspaceView && localTab === "overview" ? (
-				<DetailPanel className="space-y-5">
-					<div className="space-y-1">
-						<h2 className="text-sm font-semibold">Project bundle</h2>
-						<p className="text-sm text-muted-foreground">
-							{project.description ||
-								"Keep reusable Skills and Vault access together, then link the whole Project to any Agent that needs it."}
+				<DetailPanel className={projectDetailClasses.panel}>
+					<div className={projectDetailClasses.headingStack}>
+						<h2 className={projectDetailClasses.heading}>{LIBRARY_COPY.projectBundle}</h2>
+						<p className={projectDetailClasses.description}>
+							{project.description || LIBRARY_COPY.projectBundleDescription}
 						</p>
 					</div>
-					<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+					<div className={projectDetailClasses.statGrid}>
 						<StatTile label="Skills" value={skillCount} href={localTabHref("skills")} />
 						<StatTile label="Vaults" value={vaultCount} href={localTabHref("vaults")} />
-						<StatTile label="People" value={peopleCount} href={localTabHref("access")} />
+						<StatTile
+							label={LIBRARY_COPY.people}
+							value={peopleCount}
+							href={localTabHref("access")}
+						/>
 						<StatTile label="Agents" value={agentCount} href={localTabHref("agents")} />
 					</div>
 				</DetailPanel>
@@ -746,7 +745,7 @@ export default function ProjectDetailPage({
 						: project.kind === "environment"
 							? "Skills synced from this Agent. Manage them on the Agent."
 							: isOwner
-								? "Reusable instructions that belong to this Project."
+								? LIBRARY_COPY.projectSkillsDescription
 								: "Readable instructions shared by the owner."
 				}
 				action={
@@ -761,8 +760,8 @@ export default function ProjectDetailPage({
 							{canManageProjectSkills ? (
 								<CreateSkillDialog project={project} onCreated={refresh}>
 									<Button variant="outline" size="sm">
-										<Plus className="size-3.5" />
-										Add skill
+										<Plus className={projectDetailClasses.smallIcon} />
+										{LIBRARY_COPY.addSkill}
 									</Button>
 								</CreateSkillDialog>
 							) : null}
@@ -772,7 +771,7 @@ export default function ProjectDetailPage({
 			>
 				{workspaceAgentErrorPanel ? (
 					focusedWorkspaceSkillsPageHeader ? (
-						<div className="space-y-6">
+						<div className={projectDetailClasses.page}>
 							{focusedWorkspaceSkillsPageHeader}
 							{workspaceAgentErrorPanel}
 						</div>
@@ -816,7 +815,7 @@ export default function ProjectDetailPage({
 					<SkillCardGrid
 						skills={skills.data?.items ?? []}
 						isLoading={skills.isLoading}
-						emptyMessage="No skills are visible in this Project yet."
+						emptyMessage={LIBRARY_COPY.emptyProjectSkills}
 						emptyVariant="inset"
 						capabilitiesFor={(skill) => skillCapabilities(skill, project)}
 						onUninstall={
@@ -852,9 +851,9 @@ export default function ProjectDetailPage({
 					isWorkspaceView
 						? isWorkspace
 							? "Vaults available through this Agent’s Workspace."
-							: "Vaults included in this Project."
+							: LIBRARY_COPY.projectVaultsDescription
 						: isOwner
-							? "Vaults included in this Project."
+							? LIBRARY_COPY.projectVaultsDescription
 							: "Read-only vaults shared through this Project."
 				}
 				action={
@@ -893,9 +892,9 @@ export default function ProjectDetailPage({
 			{!isWorkspaceView && localTab === "access" && isOwner && isShareableProject ? (
 				<HubSection
 					id="people"
-					title="People"
+					title={LIBRARY_COPY.people}
 					count={peopleCount}
-					description="Members see Skills and key names. Key values stay protected, and their linked Agents can use them."
+					description={LIBRARY_COPY.peopleDescription}
 					action={
 						<ShareProjectDialog
 							projectId={project.id}
@@ -903,14 +902,14 @@ export default function ProjectDetailPage({
 							projectKind={project.kind}
 						>
 							<Button variant="outline" size="sm">
-								<Share2 className="mr-1.5 size-3.5" />
+								<Share2 className={projectDetailClasses.smallButtonIcon} />
 								Manage sharing
 							</Button>
 						</ShareProjectDialog>
 					}
 				>
 					{members.isLoading ? (
-						<Skeleton className="h-16 w-full" />
+						<Skeleton className={projectDetailClasses.rowSkeleton} />
 					) : blockingMembersError ? (
 						<ApiErrorPanel
 							error={blockingMembersError}
@@ -922,13 +921,10 @@ export default function ProjectDetailPage({
 					) : (members.data?.length ?? 0) === 0 ? (
 						<EmptyLine message="Only you so far. Share this Project to give a teammate viewer access." />
 					) : (
-						<div className="divide-y overflow-hidden rounded-lg border bg-card">
+						<div className={projectDetailClasses.rowList}>
 							{(members.data ?? []).map((member) => (
-								<div
-									key={member.user_id}
-									className="flex items-center justify-between gap-3 px-4 py-3"
-								>
-									<span className="truncate text-sm">
+								<div key={member.user_id} className={projectDetailClasses.row}>
+									<span className={projectDetailClasses.rowName}>
 										{member.user_email ?? member.user_display ?? member.user_id}
 									</span>
 									<Badge variant="secondary">{member.role}</Badge>
@@ -958,18 +954,18 @@ export default function ProjectDetailPage({
 			{!isWorkspaceView && localTab === "agents" ? (
 				<HubSection
 					id="agents"
-					title="Your Agents"
+					title={LIBRARY_COPY.yourAgents}
 					count={agentCount}
 					description={
 						project.kind === "environment"
 							? "Agent that owns this Workspace."
 							: project.kind === "personal"
 								? "Private library items are not linked to individual Agents."
-								: "Agents you own that use this Project's Skills and Vaults."
+								: LIBRARY_COPY.projectAgentsDescription
 					}
 				>
 					{boundAgents.isLoading ? (
-						<Skeleton className="h-16 w-full" />
+						<Skeleton className={projectDetailClasses.rowSkeleton} />
 					) : blockingBoundAgentsError ? (
 						<ApiErrorPanel
 							error={blockingBoundAgentsError}
@@ -985,13 +981,13 @@ export default function ProjectDetailPage({
 									? "The home Agent for this Workspace is unavailable."
 									: project.kind === "personal"
 										? "Private library items have no Agent links."
-										: "None of your Agents are linked yet. Link this Project to let one use its Skills and Vaults."
+										: LIBRARY_COPY.emptyProjectAgents
 							}
 						/>
 					) : (
-						<div className="divide-y overflow-hidden rounded-lg border bg-card">
+						<div className={projectDetailClasses.rowList}>
 							{(boundAgents.data ?? []).map((env) => (
-								<div key={env.id} className="group relative flex items-center gap-3 px-4 py-3">
+								<div key={env.id} className={projectDetailClasses.agentRow}>
 									<AgentLabel
 										machineName={env.machine_name}
 										displayName={env.display_name}
@@ -1000,18 +996,20 @@ export default function ProjectDetailPage({
 										avatarUrl={env.avatar_url}
 										size="sm"
 										titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
-										className="min-w-0 flex-1"
+										className={projectDetailClasses.grow}
 									/>
 									{env.default_project_id === project.id ? (
-										<Badge variant="secondary" className="shrink-0">
+										<Badge variant="secondary" className={projectDetailClasses.badge}>
 											Workspace
 										</Badge>
 									) : null}
 									<Link
 										{...agentSectionLink(env.id, "projects")}
-										className="absolute inset-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+										className={projectDetailClasses.stretchedLink}
 									>
-										<span className="sr-only">Open agent {agentDisplayName(env)}</span>
+										<span className={projectDetailClasses.screenReaderOnly}>
+											Open agent {agentDisplayName(env)}
+										</span>
 									</Link>
 								</div>
 							))}
@@ -1023,28 +1021,22 @@ export default function ProjectDetailPage({
 	);
 }
 
-const STAT_TILE_TINTS: Record<string, string> = {
-	Skills: "bg-identity-2-bg/50",
-	Vaults: "bg-identity-4-bg/50",
-	People: "bg-identity-6-bg/50",
-	Agents: "bg-identity-5-bg/50",
-};
-
 function StatTile({ label, value, href }: { label: string; value?: CountValue; href: string }) {
 	return (
 		<Link
 			to={href}
-			className={cn(
-				"group rounded-xl border border-transparent p-4 transition-all duration-150 hover:-translate-y-px hover:border-foreground/20 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none",
-				STAT_TILE_TINTS[label] ?? "bg-card",
-			)}
+			className={cn(projectDetailClasses.statTile, PROJECT_STAT_TILE_TINTS[label] ?? "bg-card")}
 		>
-			<div className="text-2xl font-semibold tabular-nums">
-				{value === undefined ? <Skeleton className="h-8 w-8" /> : formatCountValue(value)}
+			<div className={projectDetailClasses.statValue}>
+				{value === undefined ? (
+					<Skeleton className={projectDetailClasses.statValueSkeleton} />
+				) : (
+					formatCountValue(value)
+				)}
 			</div>
-			<div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+			<div className={projectDetailClasses.statLabel}>
 				{label}
-				<ChevronRight className="size-3 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
+				<ChevronRight className={projectDetailClasses.statArrow} />
 			</div>
 		</Link>
 	);
@@ -1066,14 +1058,11 @@ function ResourcePageControls({
 	if (total === undefined || total <= pageSize) return null;
 	const pageCount = Math.max(1, Math.ceil(total / pageSize));
 	return (
-		<nav
-			aria-label="Resource pages"
-			className="flex flex-wrap items-center justify-between gap-3 border-t pt-4"
-		>
-			<p className="text-sm text-muted-foreground tabular-nums">
+		<nav aria-label="Resource pages" className={projectDetailClasses.pagination}>
+			<p className={projectDetailClasses.pageCount}>
 				Page {page} of {pageCount}
 			</p>
-			<div className="flex items-center gap-2">
+			<div className={projectDetailClasses.paginationActions}>
 				<Button
 					variant="outline"
 					size="sm"
@@ -1116,19 +1105,19 @@ function HubSection({
 }) {
 	if (!visible) return null;
 	return (
-		<section id={id} className="scroll-mt-20 space-y-3">
+		<section id={id} className={projectDetailClasses.section}>
 			{showHeading ? (
-				<div className="flex flex-col items-start gap-3 sm:flex-row sm:items-end sm:justify-between">
-					<div className="min-w-0">
-						<div className="flex items-center gap-2">
-							<h2 className="text-sm font-semibold">{title}</h2>
+				<div className={projectDetailClasses.sectionHeader}>
+					<div className={projectDetailClasses.shrinkContent}>
+						<div className={projectDetailClasses.paginationActions}>
+							<h2 className={projectDetailClasses.heading}>{title}</h2>
 							{count !== undefined ? (
-								<Badge variant="secondary" className="tabular-nums">
+								<Badge variant="secondary" className={projectDetailClasses.tabular}>
 									{formatCountValue(count)}
 								</Badge>
 							) : null}
 						</div>
-						<p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+						<p className={projectDetailClasses.subtitle}>{description}</p>
 					</div>
 					{action ? <HeaderActionGroup>{action}</HeaderActionGroup> : null}
 				</div>
@@ -1151,28 +1140,12 @@ function ProjectResourceViewAllLink({
 			nativeButton={false}
 			variant="ghost"
 			size="sm"
-			className="text-muted-foreground"
+			className={projectDetailClasses.muted}
 		>
 			View all
 			<ArrowRight />
 		</Button>
 	);
-}
-
-function projectDetailDescription(project: ProjectRow, isOwner: boolean) {
-	const access = isOwner ? "you own" : "shared with you";
-	if (project.kind === "workspace") {
-		return isOwner
-			? "Add Skills and Vaults here, then choose which Agents use this Project."
-			: "Project shared with you. Linked Agents use its Skills and Vaults together.";
-	}
-	if (project.kind === "environment") {
-		return `Workspace ${access}. This private Workspace belongs to one Agent and cannot be shared.`;
-	}
-	if (project.kind === "personal") {
-		return `Private resources ${access}.`;
-	}
-	return `Project ${access}.`;
 }
 
 function SharedAccessPanel({
@@ -1189,20 +1162,25 @@ function SharedAccessPanel({
 	useWithAgentControl: ReactNode;
 }) {
 	return (
-		<DetailPanel className="space-y-4">
-			<div className="space-y-1">
-				<div className="flex items-center gap-2">
-					<Eye className="size-4 text-muted-foreground" />
-					<h2 className="text-sm font-semibold">You have viewer access</h2>
+		<DetailPanel className={projectDetailClasses.form}>
+			<div className={projectDetailClasses.headingStack}>
+				<div className={projectDetailClasses.paginationActions}>
+					<Eye className={projectDetailClasses.mutedIcon} />
+					<h2 className={projectDetailClasses.heading}>You have viewer access</h2>
 				</div>
-				<p className="text-xs text-muted-foreground">
+				<p className={projectDetailClasses.meta}>
 					You can read this Project and link it to an Agent. The Agent then uses the Project&apos;s
 					Skills and Vaults together.
 				</p>
 			</div>
-			<div className="rounded-md border bg-background/60 p-3">
-				<div className="flex items-center justify-between gap-3">
-					<ProjectIdentity project={project} agent={agent} showKind={false} className="flex-1" />
+			<div className={projectDetailClasses.inset}>
+				<div className={projectDetailClasses.actionRow}>
+					<ProjectIdentity
+						project={project}
+						agent={agent}
+						showKind={false}
+						className={projectDetailClasses.control}
+					/>
 				</div>
 			</div>
 			{useWithAgentControl}
@@ -1213,11 +1191,11 @@ function SharedAccessPanel({
 							variant="ghost"
 							size="sm"
 							disabled={isLeaving}
-							className="w-full text-muted-foreground hover:text-destructive"
+							className={projectDetailClasses.destructiveAction}
 						/>
 					}
 				>
-					<LogOut className="mr-1.5 size-3.5" />
+					<LogOut className={projectDetailClasses.smallButtonIcon} />
 					{isLeaving ? "Leaving…" : "Leave project"}
 				</AlertDialogTrigger>
 				<AlertDialogContent>
@@ -1229,11 +1207,8 @@ function SharedAccessPanel({
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
-						<AlertDialogCancel>Cancel</AlertDialogCancel>
-						<AlertDialogAction
-							onClick={onLeave}
-							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-						>
+						<AlertDialogCancel>{LIBRARY_COPY.cancel}</AlertDialogCancel>
+						<AlertDialogAction onClick={onLeave} className={projectDetailClasses.destructiveButton}>
 							Leave project
 						</AlertDialogAction>
 					</AlertDialogFooter>
@@ -1350,19 +1325,19 @@ function ManageProjectAgentsDialog({
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogTrigger render={children} />
-			<DialogContent className="sm:max-w-lg">
+			<DialogContent className={projectDetailClasses.agentsDialog}>
 				<DialogHeader>
-					<DialogTitle>Manage agents</DialogTitle>
+					<DialogTitle>{LIBRARY_COPY.manageAgents}</DialogTitle>
 					<DialogDescription>Choose which Agents can use this Project.</DialogDescription>
 				</DialogHeader>
 
 				{isLoadingAgents ? (
-					<Skeleton className="h-24 w-full" />
+					<Skeleton className={projectDetailClasses.textarea} />
 				) : agentsError ? (
 					<ApiErrorPanel error={agentsError} onRetry={onRetryAgents} title="Couldn't load Agents" />
 				) : orderedEnvironments.length === 0 ? (
 					<Alert>
-						<Bot className="size-4" />
+						<Bot className={projectDetailClasses.icon} />
 						<AlertTitle>No Agents available</AlertTitle>
 						<AlertDescription>
 							Add an Agent from Overview first, then link this Project here or from the Agent&apos;s{" "}
@@ -1371,13 +1346,13 @@ function ManageProjectAgentsDialog({
 					</Alert>
 				) : (
 					<form
-						className="space-y-4"
+						className={projectDetailClasses.form}
 						onSubmit={(event) => {
 							event.preventDefault();
 							submitAgentChanges();
 						}}
 					>
-						<div className="max-h-80 divide-y overflow-y-auto rounded-md border">
+						<div className={projectDetailClasses.agentChoices}>
 							{orderedEnvironments.map((environment) => {
 								const name = agentDisplayName(environment);
 								const checkboxId = `project-agent-${environment.id}`;
@@ -1386,7 +1361,7 @@ function ManageProjectAgentsDialog({
 									<label
 										key={environment.id}
 										htmlFor={checkboxId}
-										className="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-muted/20"
+										className={projectDetailClasses.agentChoice}
 									>
 										<Checkbox
 											id={checkboxId}
@@ -1416,7 +1391,7 @@ function ManageProjectAgentsDialog({
 													? `synced ${formatShortDate(environment.last_sync_at, { includeYear: false })}`
 													: "not synced yet",
 											]}
-											className="min-w-0 flex-1"
+											className={projectDetailClasses.grow}
 										/>
 									</label>
 								);
@@ -1425,10 +1400,14 @@ function ManageProjectAgentsDialog({
 
 						<DialogFooter>
 							<Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-								Cancel
+								{LIBRARY_COPY.cancel}
 							</Button>
 							<Button type="submit" disabled={!hasAgentChanges || updateProjectAgents.isPending}>
-								{updateProjectAgents.isPending ? <Spinner /> : <Save className="size-3.5" />}
+								{updateProjectAgents.isPending ? (
+									<Spinner />
+								) : (
+									<Save className={projectDetailClasses.smallIcon} />
+								)}
 								Save changes
 							</Button>
 						</DialogFooter>
@@ -1479,8 +1458,8 @@ function CreateProjectVaultDialog({
 	return (
 		<>
 			<Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
-				<Plus className="size-3.5" />
-				Create vault
+				<Plus className={projectDetailClasses.smallIcon} />
+				{LIBRARY_COPY.createVault}
 			</Button>
 
 			<Dialog
@@ -1490,16 +1469,16 @@ function CreateProjectVaultDialog({
 					if (!open) setVaultName("");
 				}}
 			>
-				<DialogContent className="sm:max-w-md">
+				<DialogContent className={projectDetailClasses.dialog}>
 					<DialogHeader>
-						<DialogTitle>Create vault</DialogTitle>
+						<DialogTitle>{LIBRARY_COPY.createVault}</DialogTitle>
 						<DialogDescription>
 							Create an account-owned Vault for this {contextLabel}. It will also remain available
 							in your Vault library.
 						</DialogDescription>
 					</DialogHeader>
 					<form
-						className="space-y-4"
+						className={projectDetailClasses.form}
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (vaultName.trim() && newVaultSlug && !create.isPending) {
@@ -1507,7 +1486,7 @@ function CreateProjectVaultDialog({
 							}
 						}}
 					>
-						<div className="grid gap-2">
+						<div className={projectDetailClasses.fieldStack}>
 							<Label htmlFor={`project-vault-name-${projectId}`}>Vault name</Label>
 							<Input
 								id={`project-vault-name-${projectId}`}
@@ -1516,23 +1495,27 @@ function CreateProjectVaultDialog({
 								onChange={(event) => setVaultName(event.target.value)}
 								placeholder="Production credentials…"
 								autoComplete="off"
-								className="min-w-0 flex-1"
+								className={projectDetailClasses.grow}
 							/>
 							{vaultName.trim() && !newVaultSlug ? (
-								<p className="text-xs text-destructive">
+								<p className={projectDetailClasses.error}>
 									Use a name containing letters or numbers.
 								</p>
 							) : null}
 						</div>
 						<DialogFooter>
 							<Button type="button" variant="ghost" onClick={() => setCreateOpen(false)}>
-								Cancel
+								{LIBRARY_COPY.cancel}
 							</Button>
 							<Button
 								type="submit"
 								disabled={!vaultName.trim() || !newVaultSlug || create.isPending}
 							>
-								{create.isPending ? <Spinner /> : <Plus className="size-3.5" />}
+								{create.isPending ? (
+									<Spinner />
+								) : (
+									<Plus className={projectDetailClasses.smallIcon} />
+								)}
 								Create vault
 							</Button>
 						</DialogFooter>

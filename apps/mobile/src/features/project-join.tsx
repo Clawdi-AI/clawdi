@@ -1,4 +1,5 @@
 import type { components } from "@clawdi/shared/api";
+import { detailLayoutClasses } from "@clawdi/shared/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -7,9 +8,13 @@ import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
-import { NativeButton } from "../ui/native-controls";
-import { AppScrollView, AppText, AppTextInput, AppView } from "../ui/primitives";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
+import { PageHeader } from "../ui/page-header";
+import { AppScrollView, AppText, AppView } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
+import { Text } from "../ui/text";
+import { webView } from "../ui/web-layout";
 import { BackButton } from "./cloud-inventory";
 import { shareTokenFromUrl } from "./project-sharing-state";
 
@@ -84,13 +89,11 @@ function JoinView() {
 		});
 	return (
 		<ReadScreen>
-			<AppScrollView contentContainerStyle={{ padding: 24, gap: 16 }}>
+			<AppScrollView contentContainerClassName={webView(detailLayoutClasses.detailPage)}>
 				<BackButton />
-				<AppText accessibilityRole="header" className="text-3xl text-foreground">
-					{t("sharing.joinLink")}
-				</AppText>
+				<PageHeader title={t("sharing.joinLink")} />
 				<AppText>{t("sharing.joinDescription")}</AppText>
-				<AppTextInput
+				<Input
 					accessibilityLabel={t("sharing.pasteLink")}
 					placeholder={t("sharing.pasteLink")}
 					secureTextEntry
@@ -106,16 +109,18 @@ function JoinView() {
 						setJoined(false);
 						action.clearError();
 					}}
-					className="rounded-xl bg-card p-3 text-foreground"
 				/>
 				{input.trim() && !token ? (
 					<AppText accessibilityRole="alert">{t("sharing.invalidLink")}</AppText>
 				) : null}
-				<NativeButton
-					label={t("sharing.preview")}
+				<Button
+					variant="outline"
+					size="sm"
 					disabled={action.busy || !token}
 					onPress={() => void load()}
-				/>
+				>
+					<Text>{t("sharing.preview")}</Text>
+				</Button>
 				{preview ? (
 					<AppView className="gap-3 rounded-2xl bg-card p-4">
 						<AppText className="text-xl text-foreground">{preview.data.project_name}</AppText>
@@ -128,11 +133,9 @@ function JoinView() {
 						<AppText>
 							{t("sharing.vaults")}: {preview.data.vault_count}
 						</AppText>
-						<NativeButton
-							label={t("sharing.join")}
-							disabled={action.busy}
-							onPress={() => void join()}
-						/>
+						<Button variant="default" size="sm" disabled={action.busy} onPress={() => void join()}>
+							<Text>{t("sharing.join")}</Text>
+						</Button>
 					</AppView>
 				) : null}
 				{joined ? <AppText accessibilityLiveRegion="polite">{t("sharing.joined")}</AppText> : null}
