@@ -20,8 +20,9 @@ import { useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
 import { ActionButton, ChoiceSelect } from "../ui/agents/controls";
+import { ProviderDialogHeader } from "../ui/agents/provider-dialog-header";
 import { ProviderFieldsForm } from "../ui/agents/provider-fields-form";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "../ui/dialog";
 import { Icon } from "../ui/icon";
 import { AppText, AppView } from "../ui/primitives";
 
@@ -153,9 +154,11 @@ export function ProviderEdit({
 					}}
 				>
 					<DialogContent>
-						<DialogHeader>
-							<DialogTitle>{`Edit ${providerPresentation(provider).label}`}</DialogTitle>
-						</DialogHeader>
+						<ProviderDialogHeader
+							title={`Edit ${providerPresentation(provider).label}`}
+							providerId={provider.native_provider ?? provider.type}
+							providerLabel={providerPresentation(provider).label}
+						/>
 						{!oauth && native && preset?.region_variants?.length ? (
 							<ChoiceSelect
 								value={region ?? preset.region_variants[0]?.id ?? ""}

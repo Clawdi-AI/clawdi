@@ -16,7 +16,7 @@ import {
 } from "@clawdi/shared/view";
 import { randomUUID } from "expo-crypto";
 import { useFocusEffect } from "expo-router";
-import { ArrowLeft, Plus } from "lucide-react-native";
+import { Plus } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
@@ -26,8 +26,9 @@ import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
 import { ActionButton, ChoiceSelect } from "../ui/agents/controls";
 import { ProviderChooser } from "../ui/agents/provider-chooser";
+import { ProviderDialogHeader } from "../ui/agents/provider-dialog-header";
 import { ProviderFieldsForm } from "../ui/agents/provider-fields-form";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Dialog, DialogContent, DialogFooter } from "../ui/dialog";
 import { Icon } from "../ui/icon";
 import { AppText, AppView } from "../ui/primitives";
 import { ProviderOAuth } from "./provider-oauth";
@@ -158,29 +159,30 @@ export function ProviderCreate({
 					}}
 				>
 					<DialogContent>
-						<DialogHeader>
-							{step === "configure" || group ? (
-								<ActionButton
-									label="Back"
-									icon={<Icon as={ArrowLeft} />}
-									variant="ghost"
-									disabled={locked || action.busy}
-									onPress={() => {
-										if (step === "configure") {
-											setStep("choose");
-											setSecret("");
-										} else setGroup(null);
-									}}
-								/>
-							) : null}
-							<DialogTitle>
-								{step === "choose"
+						<ProviderDialogHeader
+							title={
+								step === "choose"
 									? (group?.label ?? copy.addTitle)
 									: oauth
 										? "Sign in with ChatGPT"
-										: `Set up ${preset?.label ?? PROVIDER_TYPE_META[type].label}`}
-							</DialogTitle>
-						</DialogHeader>
+										: `Set up ${preset?.label ?? PROVIDER_TYPE_META[type].label}`
+							}
+							providerId={
+								step === "configure" ? (oauth ? "openai" : (preset?.id ?? type)) : group?.iconId
+							}
+							providerLabel={group?.label ?? preset?.label ?? PROVIDER_TYPE_META[type].label}
+							disabled={locked || action.busy}
+							onBack={
+								step === "configure" || group
+									? () => {
+											if (step === "configure") {
+												setStep("choose");
+												setSecret("");
+											} else setGroup(null);
+										}
+									: undefined
+							}
+						/>
 						{step === "choose" ? (
 							<ProviderChooser
 								selected={group}

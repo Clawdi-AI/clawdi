@@ -284,6 +284,7 @@ export * from "./page-width";
 export * from "./payment-methods-section";
 export * from "./plan-comparison";
 export * from "./provider-chooser";
+export * from "./provider-dialog";
 export * from "./provider-fields-form";
 export * from "./public-session";
 export * from "./resource-identity";

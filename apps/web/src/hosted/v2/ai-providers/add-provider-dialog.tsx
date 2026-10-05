@@ -1,6 +1,7 @@
 "use client";
 
 import { nativeAiProvider } from "@clawdi/shared";
+import { providerDialogClasses as dialogStyles } from "@clawdi/shared/ui";
 import { providerFieldsFormCopy as copy } from "@clawdi/shared/view";
 
 import { ArrowLeft, CircleAlert } from "lucide-react";
@@ -488,8 +489,8 @@ export function AddProviderDialog({
 				data-v2="true"
 				className="flex max-h-[min(36rem,calc(100dvh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl"
 			>
-				<DialogHeader className="relative shrink-0 px-5 pt-5 pr-14 sm:px-6 sm:pt-6 sm:pr-14">
-					<div className="flex min-w-0 items-center gap-2">
+				<DialogHeader className={dialogStyles.header}>
+					<div className={dialogStyles.headerRow}>
 						{canGoBack ? (
 							<Button
 								variant="ghost"
@@ -497,14 +498,14 @@ export function AddProviderDialog({
 								aria-label="Back"
 								disabled={busy}
 								onClick={goBack}
-								className="shrink-0"
+								className={dialogStyles.icon}
 							>
 								<ArrowLeft />
 							</Button>
 						) : null}
-						<DialogTitle className="flex min-w-0 items-center gap-3">
+						<DialogTitle className={dialogStyles.titleRow}>
 							{step === "configure" || isEdit || renderedOAuth || providerGroup ? (
-								<span aria-hidden="true" className="shrink-0">
+								<span aria-hidden="true" className={dialogStyles.icon}>
 									<EntityIcon
 										kind="provider"
 										id={
@@ -519,7 +520,7 @@ export function AddProviderDialog({
 									/>
 								</span>
 							) : null}
-							<span className="min-w-0 break-words">
+							<span className={dialogStyles.title}>
 								{renderedOAuth
 									? "Sign in with ChatGPT"
 									: isEdit
