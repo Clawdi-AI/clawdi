@@ -34,7 +34,7 @@ export function PageHeader({
 		>
 			<WebView recipe={styles.lockup}>
 				{icon ? <WebView recipe={styles.icon}>{icon}</WebView> : null}
-				<WebView recipe={styles.body} className="flex-shrink">
+				<WebView recipe={styles.body} className="flex-1">
 					<WebView recipe={styles.titleRow}>
 						{typeof title === "string" || typeof title === "number" ? (
 							<WebText recipe={styles.title} accessibilityRole="header">

@@ -1,3 +1,4 @@
+import { overviewComputeBodyClasses } from "@clawdi/shared/ui";
 import { formatMemoryMib } from "@clawdi/shared/view";
 import type { ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -42,21 +43,24 @@ export function OverviewComputeBody({
 		: [subscription, date].filter((fact): fact is ComputeFact => Boolean(fact));
 	return (
 		<div
-			className="space-y-2"
+			className={overviewComputeBodyClasses.spaceY}
 			data-testid="overview-compute-summary"
 			aria-busy={loading || undefined}
 		>
-			<div data-overview-compute-plan className="text-sm text-muted-foreground">
-				{loading ? <Skeleton className="h-lh w-32 max-w-full" /> : planLabel}
+			<div
+				data-overview-compute-plan
+				className={overviewComputeBodyClasses.textSmTextMutedForeground}
+			>
+				{loading ? <Skeleton className={overviewComputeBodyClasses.hLhWMaxWFull} /> : planLabel}
 			</div>
 			<dl
 				aria-label="Compute resources"
-				className="flex flex-wrap gap-x-1.5 gap-y-1 text-xs text-muted-foreground"
+				className={overviewComputeBodyClasses.flexFlexWrapGapXGapY}
 			>
 				{specs.map((item, index) => (
 					<div key={item.label}>
-						<dt className="sr-only">{item.label}</dt>
-						<dd className="flex items-center gap-1.5">
+						<dt className={overviewComputeBodyClasses.srOnly}>{item.label}</dt>
+						<dd className={overviewComputeBodyClasses.flexItemsCenterGap}>
 							{index > 0 && <span aria-hidden="true">·</span>}
 							{loading ? (
 								<Skeleton className={cn("h-lh max-w-full", item.width)} />
@@ -68,7 +72,7 @@ export function OverviewComputeBody({
 				))}
 			</dl>
 			{commercial.length > 0 && (
-				<dl className="space-y-1 text-xs text-muted-foreground">
+				<dl className={overviewComputeBodyClasses.spaceYTextXsTextMutedForeground}>
 					{commercial.map((item, index) => (
 						<div
 							key={item.label ?? "access"}
@@ -80,8 +84,8 @@ export function OverviewComputeBody({
 						>
 							<dt className={item.label ? "min-w-0 break-words" : "sr-only"}>
 								{loading ? (
-									<Skeleton className="relative h-lh max-w-full">
-										<span className="invisible" aria-hidden="true">
+									<Skeleton className={overviewComputeBodyClasses.relativeHLhMaxWFull}>
+										<span className={overviewComputeBodyClasses.invisible} aria-hidden="true">
 											{item.label}
 										</span>
 									</Skeleton>
@@ -98,16 +102,22 @@ export function OverviewComputeBody({
 							>
 								<span
 									data-overview-subscription-status={index === 0 || undefined}
-									className="inline-block max-w-full align-top"
+									className={overviewComputeBodyClasses.inlineBlockMaxWFullAlignTop}
 								>
-									{loading ? <Skeleton className="h-lh w-16 max-w-full" /> : item.value}
+									{loading ? (
+										<Skeleton className={overviewComputeBodyClasses.hLhWMaxWFull2} />
+									) : (
+										item.value
+									)}
 								</span>
 							</dd>
 						</div>
 					))}
 				</dl>
 			)}
-			{action && <div className="flex flex-wrap justify-end gap-2 pt-1">{action}</div>}
+			{action && (
+				<div className={overviewComputeBodyClasses.flexFlexWrapJustifyEndGap}>{action}</div>
+			)}
 		</div>
 	);
 }

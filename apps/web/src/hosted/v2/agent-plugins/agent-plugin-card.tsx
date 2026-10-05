@@ -1,4 +1,5 @@
 "use client";
+import { agentPluginCardClasses } from "@clawdi/shared/ui";
 
 import { identityFor } from "@clawdi/shared/view";
 import { Blocks } from "lucide-react";
@@ -38,13 +39,17 @@ export function AgentPluginCard({
 	const actionState = agentPluginActionState(item, runtime);
 
 	return (
-		<div data-hosted="true" data-v2="true" className="contents">
+		<div data-hosted="true" data-v2="true" className={agentPluginCardClasses.contents}>
 			<HeroCard
-				className="min-h-36"
+				className={agentPluginCardClasses.minH}
 				onClick={() => onOpen(item.name)}
 				ariaLabel={`View ${title} details`}
 				icon={
-					<IconChip size="sm" tint={identityFor(item.name).colorClasses} className="rounded-lg">
+					<IconChip
+						size="sm"
+						tint={identityFor(item.name).colorClasses}
+						className={agentPluginCardClasses.roundedLg}
+					>
 						<Blocks />
 					</IconChip>
 				}

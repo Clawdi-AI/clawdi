@@ -1,17 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import type { ChannelBotPoolItem } from "./channel-types";
+import type { ChannelBot } from "../api";
 import {
 	orderedChannelsForFilter,
 	providerCounts,
 	providersWithBots,
 	sharedBotsFromPool,
-} from "./channels-page.logic";
+} from "./channels-page";
 
-function poolBot(
-	id: string,
-	provider: string,
-	access: ChannelBotPoolItem["access"],
-): ChannelBotPoolItem {
+function poolBot(id: string, provider: string, access: ChannelBot["access"]): ChannelBot {
 	return {
 		id,
 		provider,

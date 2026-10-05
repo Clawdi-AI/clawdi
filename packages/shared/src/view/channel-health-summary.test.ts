@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import type { components } from "../api";
 import { channelHealthSummary } from "./channel-health-summary";
-import type { ChannelHealthItem } from "./channel-types";
+
+type ChannelHealthItem = components["schemas"]["ChannelHealthItemResponse"];
 
 function health(overrides: Partial<ChannelHealthItem> = {}): ChannelHealthItem {
 	return {

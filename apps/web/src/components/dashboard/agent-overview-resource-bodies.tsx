@@ -1,4 +1,5 @@
 "use client";
+import { agentOverviewSummary } from "@clawdi/shared/view";
 
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
@@ -23,7 +24,7 @@ export function overviewWorkspaceSkillsModule(
 ): AgentOverviewModuleContent {
 	const total = new Set(skillKeys).size;
 	return {
-		description: total ? `${total} ${total === 1 ? "skill" : "skills"}` : "No skills installed",
+		description: agentOverviewSummary("skills", total),
 	};
 }
 
@@ -37,9 +38,7 @@ export function overviewProjectsModule({
 	if (shouldBlockQueryError(bindings.error, bindings.count))
 		return { description: "Unavailable right now" };
 	const count = bindings.count ?? 0;
-	const primary = count
-		? `${count} linked ${count === 1 ? "project" : "projects"}`
-		: "No projects linked";
+	const primary = agentOverviewSummary("projects", count);
 	return { description: primary };
 }
 
@@ -101,9 +100,7 @@ export function useOverviewMemoriesModule({
 		return { description: "Unavailable right now" };
 	const total = query.data?.total ?? 0;
 	return {
-		description: total
-			? `${total} ${total === 1 ? "memory" : "memories"} · all agents`
-			: "No memories yet · all agents",
+		description: agentOverviewSummary("memories", total),
 	};
 }
 
@@ -124,9 +121,7 @@ export function useOverviewVaultsModule({
 		return { description: "Unavailable right now" };
 	const vaults = query.data ?? [];
 	return {
-		description: vaults.length
-			? `${vaults.length} ${vaults.length === 1 ? "vault" : "vaults"}`
-			: "No vaults available",
+		description: agentOverviewSummary("vaults", vaults.length),
 	};
 }
 
@@ -149,10 +144,8 @@ export function useOverviewConnectorsModule({
 		<OverviewDescriptionSkeleton label="apps" />
 	) : shouldBlockQueryError(connections.error, connections.data) ? (
 		"Unavailable right now"
-	) : connectedAppCount ? (
-		`${connectedAppCount} ${connectedAppCount === 1 ? "app" : "apps"} · all agents`
 	) : (
-		"No apps available"
+		agentOverviewSummary("connectors", connectedAppCount)
 	);
 	return { description };
 }

@@ -1,36 +1,15 @@
 import type { AiProviderAuthKind, HostedDeployment } from "@/hosted/billing/contracts";
 
-export const HOSTED_RUNTIMES = ["openclaw", "hermes"] as const;
-export type HostedRuntime = (typeof HOSTED_RUNTIMES)[number];
+export {
+	HOSTED_RUNTIMES,
+	isHostedRuntime,
+	runtimeBlurb,
+	runtimeDisplayName,
+} from "@clawdi/shared/view";
 
-const RUNTIME_META = {
-	openclaw: {
-		label: "OpenClaw",
-		blurb: "Choose this if you already use OpenClaw and want its Control UI and workflows.",
-	},
-	hermes: {
-		label: "Hermes",
-		blurb: "Recommended for most people. Chat with and manage your agent in the Hermes Dashboard.",
-	},
-} as const satisfies Record<
-	HostedRuntime,
-	{
-		label: string;
-		blurb: string;
-	}
->;
+import type { HostedRuntime } from "@clawdi/shared/view";
 
-export function isHostedRuntime(value: string): value is HostedRuntime {
-	return (HOSTED_RUNTIMES as readonly string[]).includes(value);
-}
-
-export function runtimeDisplayName(runtime: HostedRuntime): string {
-	return RUNTIME_META[runtime].label;
-}
-
-export function runtimeBlurb(runtime: HostedRuntime): string {
-	return RUNTIME_META[runtime].blurb;
-}
+export type { HostedRuntime } from "@clawdi/shared/view";
 
 export function deploymentRuntime(deployment: HostedDeployment): HostedRuntime {
 	return deployment.resource.spec.runtime;

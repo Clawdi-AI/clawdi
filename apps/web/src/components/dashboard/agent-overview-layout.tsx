@@ -1,9 +1,10 @@
+import { agentOverviewLayoutClasses } from "@clawdi/shared/ui";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 export function AgentOverviewTools({ children }: { children: ReactNode }) {
 	return (
-		<div className="grid auto-rows-fr gap-3 @5xl/main:grid-cols-3" data-overview-section="tools">
+		<div className={agentOverviewLayoutClasses.gridAutoRowsFr} data-overview-section="tools">
 			{children}
 		</div>
 	);
@@ -17,7 +18,7 @@ export function AgentOverviewSectionHeading({
 	action?: ReactNode;
 }) {
 	return (
-		<div className="flex min-h-8 items-center justify-between gap-3" data-overview-heading>
+		<div className={agentOverviewLayoutClasses.flexMinHItems} data-overview-heading>
 			{children}
 			{action}
 		</div>
@@ -36,15 +37,9 @@ export function AgentOverviewActivity({
 	children: ReactNode;
 }) {
 	return (
-		<div
-			className="grid items-stretch gap-4 @3xl/main:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] @3xl/main:gap-y-3"
-			data-overview-section="entry"
-		>
+		<div className={agentOverviewLayoutClasses.gridItemsStretchGap} data-overview-section="entry">
 			{sessions ? (
-				<div
-					className="grid min-w-0 gap-3 @3xl/main:row-span-2 @3xl/main:row-start-1 @3xl/main:grid-rows-subgrid"
-					data-overview-section="activity"
-				>
+				<div className={agentOverviewLayoutClasses.gridMinWGap} data-overview-section="activity">
 					<AgentOverviewSectionHeading action={action}>{heading}</AgentOverviewSectionHeading>
 					{sessions}
 				</div>

@@ -1,6 +1,7 @@
 "use client";
 
-import { relativeTime } from "@clawdi/shared/view";
+import { channelDetailPageClasses } from "@clawdi/shared/ui";
+import { agentSurfaceCopy, relativeTime } from "@clawdi/shared/view";
 import { Link, useRouter } from "@tanstack/react-router";
 import {
 	ArrowDownLeft,
@@ -86,7 +87,7 @@ function AgentName({ env, meta }: { env: Environment | null; meta?: ReactNode[] 
 	if (!env) {
 		return (
 			<EntityHeader
-				className="min-w-0 flex-1"
+				className={channelDetailPageClasses.minWFlex}
 				icon={
 					<IconChip size="sm">
 						<Bot />
@@ -105,7 +106,7 @@ function AgentName({ env, meta }: { env: Environment | null; meta?: ReactNode[] 
 			type={env.agent_type}
 			avatarUrl={env.avatar_url}
 			size="sm"
-			className="min-w-0 flex-1"
+			className={channelDetailPageClasses.minWFlex}
 			meta={meta}
 		/>
 	);
@@ -121,14 +122,18 @@ function InfoCard({
 	children: ReactNode;
 }) {
 	return (
-		<div className="rounded-lg border bg-card p-4">
-			<div className="flex items-start gap-3">
-				<IconChip size="sm" tint="bg-primary/10 text-primary" className="size-9 [&>svg]:size-5">
+		<div className={channelDetailPageClasses.roundedLgBorderBgCardP}>
+			<div className={channelDetailPageClasses.flexItemsStartGap}>
+				<IconChip
+					size="sm"
+					tint="bg-primary/10 text-primary"
+					className={channelDetailPageClasses.sizeSvgSize}
+				>
 					<Icon />
 				</IconChip>
-				<div className="min-w-0 flex-1 space-y-1">
-					<div className="text-sm font-medium">{title}</div>
-					<p className="text-sm text-muted-foreground">{children}</p>
+				<div className={channelDetailPageClasses.minWFlexSpaceY}>
+					<div className={channelDetailPageClasses.textSmFontMedium}>{title}</div>
+					<p className={channelDetailPageClasses.textSmTextMutedForeground}>{children}</p>
 				</div>
 			</div>
 		</div>
@@ -145,9 +150,9 @@ function SectionHeader({
 	action?: ReactNode;
 }) {
 	return (
-		<div className="flex flex-wrap items-center justify-between gap-2">
+		<div className={channelDetailPageClasses.flexFlexWrapItemsCenterJustifyBetween}>
 			<SectionLabel count={count}>{label}</SectionLabel>
-			{action ? <div className="shrink-0">{action}</div> : null}
+			{action ? <div className={channelDetailPageClasses.shrink}>{action}</div> : null}
 		</div>
 	);
 }
@@ -187,11 +192,11 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	if (channel.isLoading) {
 		return (
 			<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
-				<DetailBackLink href="/channels" label="Channels" />
+				<DetailBackLink href="/channels" label={agentSurfaceCopy.channels} />
 				<PageHeaderSkeleton icon iconClassName="size-12 rounded-xl" actions />
-				<div className="flex flex-col gap-4">
-					<Skeleton className="h-9 w-full max-w-xl rounded-lg" />
-					<Skeleton className="h-64 w-full rounded-lg" />
+				<div className={channelDetailPageClasses.flexFlexColGap}>
+					<Skeleton className={channelDetailPageClasses.hWFullMaxWXlRoundedLg} />
+					<Skeleton className={channelDetailPageClasses.hWFullRoundedLg} />
 				</div>
 			</div>
 		);
@@ -200,7 +205,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	if (isApiNotFoundError(channel.error) || shouldBlockQueryError(channel.error, channel.data)) {
 		return (
 			<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
-				<DetailBackLink href="/channels" label="Channels" />
+				<DetailBackLink href="/channels" label={agentSurfaceCopy.channels} />
 				<ApiErrorPanel
 					error={channel.error}
 					onRetry={() => channel.refetch()}
@@ -213,7 +218,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	if (!channel.data) {
 		return (
 			<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
-				<DetailBackLink href="/channels" label="Channels" />
+				<DetailBackLink href="/channels" label={agentSurfaceCopy.channels} />
 				<EmptyState
 					icon={MessageSquareDashed}
 					title="Channel not found"
@@ -230,7 +235,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 
 	return (
 		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
-			<DetailBackLink href="/channels" label="Channels" />
+			<DetailBackLink href="/channels" label={agentSurfaceCopy.channels} />
 			<PageHeader
 				title={ch.name}
 				description={meta.label}
@@ -238,7 +243,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				status={
 					!isNormalChannelStatus(ch.status) ||
 					(healthItem && !isNormalChannelHealth(healthItem.health_status)) ? (
-						<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+						<div className={channelDetailPageClasses.flexFlexWrapItemsCenterGap}>
 							{isNormalChannelStatus(ch.status) ? null : <ChannelStatusBadge status={ch.status} />}
 							{healthItem && !isNormalChannelHealth(healthItem.health_status) ? (
 								<HealthBadge health={healthItem} />
@@ -260,15 +265,15 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 					>
 						<Button
 							variant="outline"
-							className="text-muted-foreground hover:text-destructive"
+							className={channelDetailPageClasses.textMutedForegroundHoverTextDestructive}
 							disabled={removing}
 						>
 							{removing ? (
-								<Spinner className="size-4" />
+								<Spinner className={channelDetailPageClasses.size} />
 							) : disconnectsWhatsApp ? (
-								<Unplug className="size-4" />
+								<Unplug className={channelDetailPageClasses.size} />
 							) : (
-								<Trash2 className="size-4" />
+								<Trash2 className={channelDetailPageClasses.size} />
 							)}
 							{removing
 								? disconnectsWhatsApp
@@ -296,7 +301,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				</InfoCard>
 			) : null}
 
-			<section data-channel-linked-agents className="flex flex-col gap-3">
+			<section data-channel-linked-agents className={channelDetailPageClasses.flexFlexColGap2}>
 				<AgentsTab
 					accountId={id}
 					provider={ch.provider}
@@ -305,11 +310,13 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				/>
 			</section>
 
-			<Tabs defaultValue="activity" className="min-w-0">
-				<TabsList className="h-auto flex-wrap justify-start">
-					<TabsTrigger value="activity">Activity</TabsTrigger>
-					<TabsTrigger value="health">Health</TabsTrigger>
-					{providerUnavailable ? null : <TabsTrigger value="commands">Commands</TabsTrigger>}
+			<Tabs defaultValue="activity" className={channelDetailPageClasses.minW}>
+				<TabsList className={channelDetailPageClasses.hAutoFlexWrapJustifyStart}>
+					<TabsTrigger value="activity">{agentSurfaceCopy.activity}</TabsTrigger>
+					<TabsTrigger value="health">{agentSurfaceCopy.health}</TabsTrigger>
+					{providerUnavailable ? null : (
+						<TabsTrigger value="commands">{agentSurfaceCopy.commands}</TabsTrigger>
+					)}
 				</TabsList>
 
 				<TabsContent value="activity" className={LIST_TAB_CLASS}>
@@ -347,7 +354,7 @@ function AgentsTab({
 	const pairing = useChannelPairingFlow(accountId);
 
 	if (links.isLoading || envs.isLoading) {
-		return <Skeleton className="h-24 w-full rounded-lg" />;
+		return <Skeleton className={channelDetailPageClasses.hWFullRoundedLg2} />;
 	}
 	if (shouldBlockQueryError(links.error, links.data)) {
 		return (
@@ -370,7 +377,7 @@ function AgentsTab({
 	const items = links.data ?? [];
 
 	return (
-		<div className="flex flex-col gap-3">
+		<div className={channelDetailPageClasses.flexFlexColGap2}>
 			<SectionHeader
 				label="Linked Agents"
 				count={items.length}
@@ -408,7 +415,7 @@ function AgentsTab({
 									<span key="linked">Linked {relativeTime(link.created_at)}</span>,
 								]}
 							/>
-							<div className="flex shrink-0 items-center gap-1.5">
+							<div className={channelDetailPageClasses.flexShrinkItemsCenterGap}>
 								{canManage ? (
 									<Button
 										size="sm"
@@ -417,9 +424,9 @@ function AgentsTab({
 										onClick={() => void pairing.openPairing(link)}
 									>
 										{pairing.openingLinkId === link.id ? (
-											<Spinner className="size-3.5" />
+											<Spinner className={channelDetailPageClasses.size2} />
 										) : (
-											<MessageSquarePlus className="size-3.5" />
+											<MessageSquarePlus className={channelDetailPageClasses.size2} />
 										)}
 										Pair chat
 									</Button>
@@ -431,7 +438,7 @@ function AgentsTab({
 									size="icon-sm"
 									aria-label="Open Agent Channels"
 								>
-									<ArrowUpRight className="size-3.5" />
+									<ArrowUpRight className={channelDetailPageClasses.size2} />
 								</Button>
 								{canManage ? (
 									<ConfirmAction
@@ -446,10 +453,10 @@ function AgentsTab({
 										<Button
 											variant="ghost"
 											size="icon-sm"
-											className="text-muted-foreground hover:text-destructive"
+											className={channelDetailPageClasses.textMutedForegroundHoverTextDestructive}
 											aria-label="Unlink Agent"
 										>
-											<Unplug className="size-3.5" />
+											<Unplug className={channelDetailPageClasses.size2} />
 										</Button>
 									</ConfirmAction>
 								) : null}
@@ -473,7 +480,7 @@ function AgentsTab({
 
 function ActivityTab({ accountId }: { accountId: string }) {
 	const activity = useChannelActivity(accountId);
-	if (activity.isLoading) return <Skeleton className="h-32 w-full rounded-lg" />;
+	if (activity.isLoading) return <Skeleton className={channelDetailPageClasses.hWFullRoundedLg3} />;
 	if (shouldBlockQueryError(activity.error, activity.data)) {
 		return (
 			<ApiErrorPanel
@@ -496,7 +503,7 @@ function ActivityTab({ accountId }: { accountId: string }) {
 	}
 
 	return (
-		<div className="flex flex-col gap-2">
+		<div className={channelDetailPageClasses.flexFlexColGap3}>
 			{items.map((item: ChannelActivityItem) => (
 				<ActivityRow key={item.id} item={item} />
 			))}
@@ -514,25 +521,25 @@ function ActivityRow({ item }: { item: ChannelActivityItem }) {
 			<IconChip size="sm">
 				{isEvent ? <TerminalSquare /> : inbound ? <ArrowDownLeft /> : <ArrowUpRight />}
 			</IconChip>
-			<div className="min-w-0 flex-1">
-				<div className="flex flex-wrap items-center gap-2">
-					<span className="text-xs font-medium capitalize">
+			<div className={channelDetailPageClasses.minWFlex}>
+				<div className={channelDetailPageClasses.flexFlexWrapItemsCenterGap2}>
+					<span className={channelDetailPageClasses.textXsFontMediumCapitalize}>
 						{isEvent ? (item.stage ?? "event") : inbound ? "Inbound" : "Outbound"}
 					</span>
 					{item.delivery_status ? <DeliveryBadge status={item.delivery_status} /> : null}
-					<span className="shrink-0 text-xs text-muted-foreground sm:ml-auto">
+					<span className={channelDetailPageClasses.shrinkTextXsTextMutedForegroundSmMlAuto}>
 						{relativeTime(item.created_at)}
 					</span>
 				</div>
-				{item.text ? <p className="mt-1 text-sm">{item.text}</p> : null}
+				{item.text ? <p className={channelDetailPageClasses.mtTextSm}>{item.text}</p> : null}
 				{error ? (
-					<p className="mt-1 flex items-start gap-1 text-xs text-destructive">
-						<TriangleAlert className="mt-0.5 size-3 shrink-0" />
+					<p className={channelDetailPageClasses.mtFlexItemsStartGap}>
+						<TriangleAlert className={channelDetailPageClasses.mtSizeShrink} />
 						{error}
 					</p>
 				) : null}
 				{item.external_chat_id ? (
-					<div className="mt-1">
+					<div className={channelDetailPageClasses.mt}>
 						<CopyInline value={item.external_chat_id} label="external chat ID" />
 					</div>
 				) : null}
@@ -545,13 +552,13 @@ function ActivityRow({ item }: { item: ChannelActivityItem }) {
 
 function HealthTab({ accountId }: { accountId: string }) {
 	const health = useChannelHealth();
-	if (health.isLoading) return <Skeleton className="h-32 w-full rounded-lg" />;
+	if (health.isLoading) return <Skeleton className={channelDetailPageClasses.hWFullRoundedLg3} />;
 	if (shouldBlockQueryError(health.error, health.data)) {
 		return (
 			<ApiErrorPanel
 				error={health.error}
 				onRetry={() => health.refetch()}
-				title="Couldn't load channel health"
+				title={agentSurfaceCopy.couldnTLoadChannelHealth}
 			/>
 		);
 	}
@@ -575,17 +582,17 @@ function HealthTab({ accountId }: { accountId: string }) {
 	const errorSummary = channelHealthErrorSummary(h);
 
 	return (
-		<div className="flex flex-col gap-4">
-			<div className="flex flex-wrap items-center gap-2">
+		<div className={channelDetailPageClasses.flexFlexColGap}>
+			<div className={channelDetailPageClasses.flexFlexWrapItemsCenterGap2}>
 				<HealthBadge health={h} />
-				<span className="text-xs text-muted-foreground">{summary.detail}</span>
+				<span className={channelDetailPageClasses.textXsTextMutedForeground}>{summary.detail}</span>
 			</div>
 
-			<div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+			<div className={channelDetailPageClasses.gridGridColsGapSmGridCols}>
 				{stats.map((s) => (
 					<div key={s.label} className={ENTITY_CARD_BASE}>
-						<div className="text-2xl font-semibold tabular-nums">{s.value}</div>
-						<div className="text-xs text-muted-foreground">{s.label}</div>
+						<div className={channelDetailPageClasses.textXlFontSemiboldTabularNums}>{s.value}</div>
+						<div className={channelDetailPageClasses.textXsTextMutedForeground}>{s.label}</div>
 					</div>
 				))}
 			</div>
@@ -597,30 +604,36 @@ function HealthTab({ accountId }: { accountId: string }) {
 						"flex flex-col gap-1 border-destructive/30 bg-destructive/5",
 					)}
 				>
-					<div className="flex items-center gap-1.5 text-sm font-medium text-destructive">
-						<TriangleAlert className="size-4" />
+					<div className={channelDetailPageClasses.flexItemsCenterGapTextSm}>
+						<TriangleAlert className={channelDetailPageClasses.size} />
 						Last error
 					</div>
-					<p className="text-sm text-destructive/90">{errorSummary}</p>
-					<p className="text-xs text-muted-foreground">Reported {relativeTime(h.last_error_at)}</p>
+					<p className={channelDetailPageClasses.textSmTextDestructive}>{errorSummary}</p>
+					<p className={channelDetailPageClasses.textXsTextMutedForeground}>
+						Reported {relativeTime(h.last_error_at)}
+					</p>
 				</div>
 			) : null}
 
 			{transport ? (
 				<div className={ENTITY_CARD_BASE}>
-					<SectionLabel className="mb-3 px-0">Message transport</SectionLabel>
-					<dl className="grid gap-3 text-sm sm:grid-cols-3">
+					<SectionLabel className={channelDetailPageClasses.mbPx}>Message transport</SectionLabel>
+					<dl className={channelDetailPageClasses.gridGapTextSmSmGridCols}>
 						<div>
-							<dt className="text-xs text-muted-foreground">Status</dt>
-							<dd className="mt-0.5 font-medium">{transport.status}</dd>
+							<dt className={channelDetailPageClasses.textXsTextMutedForeground}>
+								{agentSurfaceCopy.status}
+							</dt>
+							<dd className={channelDetailPageClasses.mtFontMedium}>{transport.status}</dd>
 						</div>
 						<div>
-							<dt className="text-xs text-muted-foreground">Connection</dt>
-							<dd className="mt-0.5 font-medium">{transport.connection}</dd>
+							<dt className={channelDetailPageClasses.textXsTextMutedForeground}>Connection</dt>
+							<dd className={channelDetailPageClasses.mtFontMedium}>{transport.connection}</dd>
 						</div>
 						<div>
-							<dt className="text-xs text-muted-foreground">Message delivery</dt>
-							<dd className="mt-0.5 font-medium">{transport.delivery}</dd>
+							<dt className={channelDetailPageClasses.textXsTextMutedForeground}>
+								Message delivery
+							</dt>
+							<dd className={channelDetailPageClasses.mtFontMedium}>{transport.delivery}</dd>
 						</div>
 					</dl>
 				</div>
@@ -656,7 +669,7 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 	}
 
 	return (
-		<div className="flex flex-col gap-4">
+		<div className={channelDetailPageClasses.flexFlexColGap}>
 			<InfoCard icon={KeyRound} title="Pairing commands">
 				{supportsCommands
 					? `Publish Clawdi’s pairing commands to ${meta.label}.`
@@ -666,18 +679,27 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 			{supportsCommands ? (
 				<>
 					<Button onClick={syncCommands} disabled={syncing}>
-						{syncing ? <Spinner className="size-4" /> : <RefreshCw className="size-4" />}
+						{syncing ? (
+							<Spinner className={channelDetailPageClasses.size} />
+						) : (
+							<RefreshCw className={channelDetailPageClasses.size} />
+						)}
 						{syncing ? "Publishing…" : "Publish commands"}
 					</Button>
 					{commands.length > 0 ? (
 						<div className={cn(ENTITY_CARD_BASE, "flex flex-col gap-2")}>
-							<div className="text-xs font-medium text-success-muted-foreground">
+							<div className={channelDetailPageClasses.textXsFontMediumTextSuccessMutedForeground}>
 								Published {commands.length} command{commands.length === 1 ? "" : "s"}
 							</div>
 							{commands.map((c) => (
-								<div key={String(c.name)} className="flex items-baseline gap-2 text-sm">
-									<code className="font-mono text-xs">/{String(c.name)}</code>
-									<span className="text-muted-foreground">{String(c.description)}</span>
+								<div
+									key={String(c.name)}
+									className={channelDetailPageClasses.flexItemsBaselineGapTextSm}
+								>
+									<code className={channelDetailPageClasses.fontMonoTextXs}>/{String(c.name)}</code>
+									<span className={channelDetailPageClasses.textMutedForeground}>
+										{String(c.description)}
+									</span>
 								</div>
 							))}
 						</div>

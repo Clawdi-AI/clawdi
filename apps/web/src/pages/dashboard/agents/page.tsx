@@ -1,6 +1,7 @@
 "use client";
 
-import { selfManagedAgentTiles } from "@clawdi/shared/view";
+import { agentsIndexClasses } from "@clawdi/shared/ui";
+import { agentSurfaceCopy, selfManagedAgentTiles } from "@clawdi/shared/view";
 import { lazy, Suspense, useMemo, useState } from "react";
 import { AgentsCard } from "@/components/dashboard/agents-card";
 import { PageHeader } from "@/components/page-header";
@@ -64,8 +65,11 @@ export default function AgentsIndexPage() {
 	const hostedSectionEnabled = cloudDeploymentManagementEnabled || legacyHostedAgentsEnabled;
 
 	return (
-		<div className={`${CENTERED_PAGE_WIDTH_CLASS.page} space-y-6 px-4 lg:px-6`}>
-			<PageHeader title="Agents" description="Every Agent in your account." />
+		<div className={`${CENTERED_PAGE_WIDTH_CLASS.page} ${agentsIndexClasses.page}`}>
+			<PageHeader
+				title={agentSurfaceCopy.agents}
+				description={agentSurfaceCopy.everyAgentInYourAccount}
+			/>
 			{hostedAccessLoading ? (
 				<AgentsCard agents={selfManagedTiles} isLoading />
 			) : hostedSectionEnabled && HostedAgentsByCompute ? (

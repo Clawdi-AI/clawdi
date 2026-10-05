@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { nativeAiProvider } from "@clawdi/shared";
+import type { SavedAiProvider as AiProvider } from "../api";
+import { nativeAiProvider } from "../index";
 import {
 	firstModelForProvider,
 	isManagedProviderId,
@@ -13,9 +14,7 @@ import {
 	providerDisplayLabel,
 	providerPresentation,
 	usableProviders,
-} from "@/hosted/v2/ai-providers/model-binding";
-
-import type { AiProvider } from "@/hosted/v2/ai-providers/types";
+} from "./provider-model-binding";
 
 const managedMetadata = {
 	provider_id: "openai-codex",

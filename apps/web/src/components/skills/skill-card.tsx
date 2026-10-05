@@ -1,4 +1,5 @@
 "use client";
+import { agentSkillCardClasses } from "@clawdi/shared/ui";
 
 import type { SkillCardEntity } from "@clawdi/shared/view";
 import { identityFor, relativeTime, skillSearchSupportingText } from "@clawdi/shared/view";
@@ -110,9 +111,9 @@ export function SkillCard({
 		) : undefined;
 	return (
 		<HeroCard
-			className="min-h-28 gap-2"
+			className={agentSkillCardClasses.card}
 			icon={
-				<IconChip size="sm" tint={id.colorClasses} className="rounded-lg text-base">
+				<IconChip size="sm" tint={id.colorClasses} className={agentSkillCardClasses.icon}>
 					{id.emoji}
 				</IconChip>
 			}

@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import type { components } from "@/lib/api-schemas";
+import type { components } from "../api";
 import {
 	effectiveAgentProjectIds,
 	fetchAgentProjectVaults,
 	vaultsForProjectIds,
 	vaultsForSelectedProject,
-} from "./vault-scope";
+} from "./agent-vault-scope";
 
 type Binding = components["schemas"]["AgentProjectBindingResponse"];
 type Vault = components["schemas"]["VaultResponse"];

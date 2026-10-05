@@ -1,4 +1,6 @@
 "use client";
+import { agentPluginsSurfaceClasses } from "@clawdi/shared/ui";
+import { agentSurfaceCopy } from "@clawdi/shared/view";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useRouter } from "@tanstack/react-router";
@@ -239,7 +241,7 @@ export function AgentPluginsSurface({
 	}, [desiredQuery.data, catalogQuery.data]);
 
 	return (
-		<div data-hosted="true" data-v2="true" className="space-y-6">
+		<div data-hosted="true" data-v2="true" className={agentPluginsSurfaceClasses.spaceY}>
 			{selectedItem ? (
 				<AgentPluginDetail
 					item={selectedItem}
@@ -259,7 +261,7 @@ export function AgentPluginsSurface({
 			) : (
 				<>
 					<PageHeader
-						title="Plugins"
+						title={agentSurfaceCopy.plugins}
 						description="Add tools and knowledge to this agent."
 						icon={
 							<IconChip tint="bg-identity-7-bg text-identity-7-fg">
@@ -374,13 +376,13 @@ function AgentPluginCatalog({
 	}
 
 	return (
-		<div className="space-y-6" data-testid="agent-plugins-surface">
+		<div className={agentPluginsSurfaceClasses.spaceY} data-testid="agent-plugins-surface">
 			<ListToolbar
 				search={
 					<SearchInput
 						value={query}
 						onChange={onQueryChange}
-						placeholder="Search plugins…"
+						placeholder={agentSurfaceCopy.searchPlugins}
 						ariaLabel="Search plugins"
 					/>
 				}
@@ -388,7 +390,9 @@ function AgentPluginCatalog({
 					<>
 						<FilterChip active={category === "all"} onClick={() => onCategoryChange("all")}>
 							All
-							<span className="text-muted-foreground tabular-nums">{inventory.length}</span>
+							<span className={agentPluginsSurfaceClasses.textMutedForegroundTabular}>
+								{inventory.length}
+							</span>
 						</FilterChip>
 						{categories.map((value) => (
 							<FilterChip
@@ -397,7 +401,7 @@ function AgentPluginCatalog({
 								onClick={() => onCategoryChange(value)}
 							>
 								{value}
-								<span className="text-muted-foreground tabular-nums">
+								<span className={agentPluginsSurfaceClasses.textMutedForegroundTabular}>
 									{inventory.filter((item) => item.catalog?.category === value).length}
 								</span>
 							</FilterChip>
@@ -417,7 +421,7 @@ function AgentPluginCatalog({
 			) : null}
 			{groups.map((group) =>
 				group.items.length > 0 ? (
-					<section key={group.id} className="space-y-3">
+					<section key={group.id} className={agentPluginsSurfaceClasses.spaceY2}>
 						<SectionLabel count={group.items.length}>{group.label}</SectionLabel>
 						<div className={HERO_GRID_CLASS}>
 							{group.items.map((item) => (
@@ -440,8 +444,8 @@ function AgentPluginCatalog({
 			{noMatches ? (
 				<EmptyState
 					variant="inset"
-					title="No plugins found"
-					description="Try a different search or category."
+					title={agentSurfaceCopy.noPluginsFound}
+					description={agentSurfaceCopy.tryADifferentSearchOrCategory}
 				/>
 			) : null}
 		</div>
@@ -473,7 +477,7 @@ function DesiredStateErrorAlert({
 function AgentPluginGridSkeleton() {
 	return (
 		<div className={HERO_GRID_CLASS}>
-			<span className="sr-only">Loading plugins</span>
+			<span className={agentPluginsSurfaceClasses.srOnly}>Loading plugins</span>
 			{Array.from({ length: 4 }).map((_, index) => (
 				<HeroCardSkeleton key={`plugin-skeleton-${index}`} compact />
 			))}

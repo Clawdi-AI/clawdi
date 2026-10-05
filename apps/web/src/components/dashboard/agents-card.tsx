@@ -1,8 +1,9 @@
 "use client";
-
+import { agentsCardClasses } from "@clawdi/shared/ui";
 import {
 	type AgentCardStatusVisual,
 	type AgentTile,
+	agentSurfaceCopy,
 	agentTileCardProjection,
 	compareAgentTiles,
 } from "@clawdi/shared/view";
@@ -57,10 +58,14 @@ export function AgentsCard({
 
 	// Tiles start flush with the column, level with the cards on the right.
 	return (
-		<section className="space-y-3">
-			<div className="space-y-3">
+		<section className={agentsCardClasses.spaceY}>
+			<div className={agentsCardClasses.spaceY}>
 				{error ? (
-					<ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load agents" />
+					<ApiErrorPanel
+						error={error}
+						onRetry={onRetry}
+						title={agentSurfaceCopy.couldnTLoadAgents}
+					/>
 				) : isLoading ? (
 					<div className={ENTITY_GRID_CLASS}>
 						{Array.from({ length: 4 }).map((_, i) => (
@@ -81,8 +86,8 @@ export function AgentsCard({
 					// the message — render no empty state to avoid contradicting it.
 					<EmptyState
 						variant="inset"
-						title="No Agents yet"
-						description="Connect an Agent to see it here."
+						title={agentSurfaceCopy.noAgentsYet}
+						description={agentSurfaceCopy.connectAnAgentToSeeItHere}
 					/>
 				)}
 				{hostedStatus?.error ? (
@@ -155,31 +160,25 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 
 	return (
 		<div
-			className={cn(
-				ENTITY_CARD_BASE,
-				"group relative z-0 h-full p-3 transition-colors hover:bg-muted/50",
-			)}
+			className={cn(ENTITY_CARD_BASE, agentsCardClasses.tile)}
 			title={tile.href ? undefined : tile.name}
 		>
 			<EntityHeader
 				icon={<AgentIcon agent={tile.agentType} size="lg" avatarUrl={tile.avatarUrl} />}
 				title={
-					<span className="flex min-w-0 items-center gap-1.5">
+					<span className={agentsCardClasses.flexMinWItems}>
 						{statusVisual ? <AgentStatusDot visual={statusVisual} /> : null}
-						<span className="min-w-0 truncate" title={tile.name}>
+						<span className={agentsCardClasses.minWTruncate} title={tile.name}>
 							{tile.name}
 						</span>
 					</span>
 				}
 				meta={meta.length > 0 ? meta : undefined}
 				titleAdornment={sourcePill}
-				className="min-w-0 flex-1"
+				className={agentsCardClasses.minWFlex}
 			/>
 			{tile.external ? (
-				<ArrowUpRight
-					aria-hidden
-					className="pointer-events-none absolute right-3 top-3.5 size-3.5 text-muted-foreground"
-				/>
+				<ArrowUpRight aria-hidden className={agentsCardClasses.pointerEventsNoneAbsolute} />
 			) : null}
 			{tile.href ? (
 				tile.external ? (
@@ -190,7 +189,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 						className={ENTITY_STRETCHED_LINK_CLASS}
 						aria-label={linkLabel}
 					>
-						<span className="sr-only">{linkLabel}</span>
+						<span className={agentsCardClasses.srOnly}>{linkLabel}</span>
 					</a>
 				) : (
 					<Link
@@ -201,7 +200,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 						onFocus={preloadHostedAgentHome}
 						onTouchStartCapture={preloadHostedAgentHome}
 					>
-						<span className="sr-only">{linkLabel}</span>
+						<span className={agentsCardClasses.srOnly}>{linkLabel}</span>
 					</Link>
 				)
 			) : null}
@@ -213,10 +212,10 @@ function AgentStatusDot({ visual }: { visual: AgentCardStatusVisual }) {
 	return (
 		<span
 			title={`Status: ${visual.label}. ${visual.tooltip}`}
-			className="inline-flex shrink-0 items-center"
+			className={agentsCardClasses.inlineFlexShrinkItems}
 		>
-			<span aria-hidden className={cn("size-1.5 rounded-full", visual.dotClass)} />
-			<span className="sr-only">{visual.label}</span>
+			<span aria-hidden className={cn(agentsCardClasses.dot, visual.dotClass)} />
+			<span className={agentsCardClasses.srOnly}>{visual.label}</span>
 		</span>
 	);
 }

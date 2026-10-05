@@ -1,3 +1,4 @@
+import { agentOverviewCapabilitiesClasses } from "@clawdi/shared/ui";
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { ArrowRight, type LucideIcon, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
@@ -58,23 +59,25 @@ export function AgentOverviewStatusCard({
 			data-overview-status={title.toLowerCase().replaceAll(" ", "-")}
 			data-testid={loading ? "overview-status-card-skeleton" : undefined}
 			aria-busy={loading || undefined}
-			className="h-full min-w-0 gap-0 border border-foreground/10 py-0 ring-0"
+			className={agentOverviewCapabilitiesClasses.hFullMinW}
 		>
-			<CardHeader className="p-0">
+			<CardHeader className={agentOverviewCapabilitiesClasses.p}>
 				{loading ? (
-					<div className="flex items-center gap-3 px-4 py-3">{heading}</div>
+					<div className={agentOverviewCapabilitiesClasses.flexItemsCenterGap}>{heading}</div>
 				) : (
 					<Link
 						{...agentSectionLink(agentId, section)}
 						aria-label={title}
-						className="group flex items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+						className={agentOverviewCapabilitiesClasses.groupFlexItemsCenter}
 					>
 						{heading}
 					</Link>
 				)}
 			</CardHeader>
 			{children ? (
-				<CardContent className="flex flex-1 flex-col px-4 pb-4">{children}</CardContent>
+				<CardContent className={agentOverviewCapabilitiesClasses.flexFlexFlexCol}>
+					{children}
+				</CardContent>
 			) : null}
 		</Card>
 	);
@@ -82,10 +85,16 @@ export function AgentOverviewStatusCard({
 
 export function OverviewModuleError({ label, onRetry }: { label: string; onRetry?: () => void }) {
 	return (
-		<div className="space-y-2 text-sm text-muted-foreground" role="status">
+		<div className={agentOverviewCapabilitiesClasses.spaceYTextSm} role="status">
 			<p>Can’t load {label.toLowerCase()}</p>
 			{onRetry ? (
-				<Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={onRetry}>
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					className={agentOverviewCapabilitiesClasses.hPx}
+					onClick={onRetry}
+				>
 					<RefreshCw /> Retry
 				</Button>
 			) : null}
@@ -131,8 +140,10 @@ function OverviewCardHeading({
 			<IconChip size="sm" tint={loading ? "bg-muted animate-pulse" : tint}>
 				{loading ? null : <Icon />}
 			</IconChip>
-			<div className="min-w-0 flex-1">
-				<CardTitle>{loading ? <Skeleton className="h-lh w-24 max-w-full" /> : title}</CardTitle>
+			<div className={agentOverviewCapabilitiesClasses.minWFlex}>
+				<CardTitle>
+					{loading ? <Skeleton className={agentOverviewCapabilitiesClasses.hLhWMax} /> : title}
+				</CardTitle>
 				<CardDescription data-overview-primary-value>
 					{loading ? (
 						<OverviewDescriptionSkeleton label={title}>
@@ -144,11 +155,11 @@ function OverviewCardHeading({
 				</CardDescription>
 			</div>
 			{arrow && loading ? (
-				<Skeleton className="size-4 shrink-0" />
+				<Skeleton className={agentOverviewCapabilitiesClasses.sizeShrink} />
 			) : arrow ? (
 				<ArrowRight
 					aria-hidden="true"
-					className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+					className={agentOverviewCapabilitiesClasses.sizeShrinkTextMuted}
 				/>
 			) : null}
 		</>
@@ -156,7 +167,7 @@ function OverviewCardHeading({
 }
 
 export function OverviewModuleUnavailable() {
-	return <p className="text-sm text-muted-foreground">Unavailable right now</p>;
+	return <p className={agentOverviewCapabilitiesClasses.textSmTextMuted}>Unavailable right now</p>;
 }
 
 export function OverviewMetadata({
@@ -165,11 +176,11 @@ export function OverviewMetadata({
 	items: readonly { label: string; value: ReactNode }[];
 }) {
 	return (
-		<dl className="space-y-2 text-xs text-muted-foreground">
+		<dl className={agentOverviewCapabilitiesClasses.spaceYTextXs}>
 			{items.map((item) => (
-				<div key={item.label} className="flex min-w-0 items-start justify-between gap-3">
+				<div key={item.label} className={agentOverviewCapabilitiesClasses.flexMinWItems}>
 					<dt>{item.label}</dt>
-					<dd className="min-w-0 break-words text-right">{item.value}</dd>
+					<dd className={agentOverviewCapabilitiesClasses.minWBreakWords}>{item.value}</dd>
 				</div>
 			))}
 		</dl>
@@ -190,24 +201,31 @@ export function AgentOverviewCapabilities({
 	const groups = agentOverviewGroups(variant);
 	return (
 		<div
-			className="flex flex-col gap-8"
+			className={agentOverviewCapabilitiesClasses.flexFlexColGap}
 			data-agent-overview={variant}
 			data-agent-overview-skeleton={loading ? variant : undefined}
 		>
 			{groups.map((group) => (
 				<section
 					key={group.id}
-					className="flex flex-col gap-3"
+					className={agentOverviewCapabilitiesClasses.flexFlexColGap2}
 					aria-labelledby={`agent-overview-${group.id}`}
 				>
 					<AgentOverviewSectionHeading>
-						<h2 id={`agent-overview-${group.id}`} className="text-sm font-semibold">
-							{loading ? <Skeleton className="h-lh w-20" /> : group.label}
+						<h2
+							id={`agent-overview-${group.id}`}
+							className={agentOverviewCapabilitiesClasses.textSmFontSemibold}
+						>
+							{loading ? (
+								<Skeleton className={agentOverviewCapabilitiesClasses.hLhW} />
+							) : (
+								group.label
+							)}
 						</h2>
 					</AgentOverviewSectionHeading>
 					<div
 						data-overview-layout="two-column"
-						className="grid auto-rows-fr items-stretch gap-3 @2xl/main:grid-cols-2"
+						className={agentOverviewCapabilitiesClasses.gridAutoRowsFr}
 					>
 						{group.modules.map((module) => {
 							const item = AGENT_SECTION_NAVIGATION_ITEMS[module.section];
@@ -273,17 +291,17 @@ export function OverviewNavigationCard({
 			data-overview-module={id}
 			data-overview-module-skeleton={loading ? id : undefined}
 			aria-busy={loading || undefined}
-			className="h-full min-w-0 border border-foreground/10 py-3 ring-0"
+			className={agentOverviewCapabilitiesClasses.hFullMinW2}
 		>
-			<CardHeader className="h-full grid-rows-1 content-center gap-0">
+			<CardHeader className={agentOverviewCapabilitiesClasses.hFullGridRows}>
 				{loading ? (
-					<div className="flex min-w-0 items-center gap-3">{content}</div>
+					<div className={agentOverviewCapabilitiesClasses.flexMinWItems2}>{content}</div>
 				) : disabled ? (
 					<button
 						type="button"
 						disabled
 						aria-label={title}
-						className="flex min-w-0 items-center gap-3 text-left opacity-50"
+						className={agentOverviewCapabilitiesClasses.flexMinWItems3}
 					>
 						{content}
 					</button>
@@ -291,12 +309,12 @@ export function OverviewNavigationCard({
 					<Link
 						{...link}
 						aria-label={title}
-						className="group flex min-w-0 items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						className={agentOverviewCapabilitiesClasses.groupFlexMinW}
 					>
 						{content}
 					</Link>
 				) : (
-					<div className="flex min-w-0 items-center gap-3">{content}</div>
+					<div className={agentOverviewCapabilitiesClasses.flexMinWItems2}>{content}</div>
 				)}
 			</CardHeader>
 		</Card>

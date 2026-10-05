@@ -1,4 +1,5 @@
 "use client";
+import { agentRecentSessionClasses } from "@clawdi/shared/ui";
 
 import {
 	agentIdentity,
@@ -34,11 +35,8 @@ type SessionMetadataItem = {
 // layouts use one metadata line and the established 66px minimum.
 const SESSION_ROW_HEIGHT_CLASS =
 	"[--session-row-height:--spacing(20)] @3xl/main:[--session-row-height:--spacing(16.5)]";
-const SESSION_CARD_CLASS = cn(
-	SESSION_ROW_HEIGHT_CLASS,
-	"flex min-h-(--session-row-height) min-w-0 items-center gap-3 px-4 py-3 transition-colors",
-);
-const OVERVIEW_SESSION_LIST_CLASS = cn(SESSION_ROW_HEIGHT_CLASS, "grid gap-2");
+const SESSION_CARD_CLASS = cn(SESSION_ROW_HEIGHT_CLASS, agentRecentSessionClasses.card);
+const OVERVIEW_SESSION_LIST_CLASS = cn(SESSION_ROW_HEIGHT_CLASS, agentRecentSessionClasses.list);
 
 function SessionCardSkeleton({ testId }: { testId?: string }) {
 	return (
@@ -110,7 +108,7 @@ export function OverviewSessionList({
 					className={cn(
 						ENTITY_CARD_BASE,
 						SESSION_CARD_CLASS,
-						"justify-center border-dashed bg-muted/30 text-center text-sm text-muted-foreground",
+						agentRecentSessionClasses.placeholder,
 					)}
 				>
 					{visibleSessions.length === 0 && index === 0 ? emptyMessage : null}
@@ -262,10 +260,10 @@ export function SessionCard({
 				<span data-testid="session-card-avatar" className="flex shrink-0">
 					<AgentIcon agent={session.agent_type} size="lg" />
 				</span>
-				<span data-testid="session-card-text" className="w-0 min-w-0 flex-1">
+				<span data-testid="session-card-text" className={agentRecentSessionClasses.body}>
 					<span
 						data-testid="session-card-title"
-						className="block truncate text-sm leading-5 font-semibold"
+						className={agentRecentSessionClasses.title}
 						title={title}
 					>
 						{title}
@@ -277,10 +275,7 @@ export function SessionCard({
 							className="mt-0.5 line-clamp-2 text-xs leading-4 text-foreground/75"
 						/>
 					) : null}
-					<span
-						data-testid="session-card-meta"
-						className="mt-0.5 flex min-h-8 min-w-0 flex-wrap items-center gap-y-0 text-xs leading-4 text-muted-foreground @3xl/main:min-h-4"
-					>
+					<span data-testid="session-card-meta" className={agentRecentSessionClasses.meta}>
 						{metadata.map((item, index) => (
 							<span key={item.key} className="inline-flex min-w-0 max-w-full items-center">
 								{index > 0 ? (

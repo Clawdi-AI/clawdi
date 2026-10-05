@@ -75,6 +75,8 @@ function mapUtility(utility: string, hasColumn: boolean): string | null {
 	if (important === "w-fit") return "self-start";
 	if (important === "h-fit") return null;
 	if (/^space-[xy]-/.test(important)) return important.replace(/^space-[xy]-/, "gap-");
+	// A disabled outline must not erase an explicit Web border.
+	if (important === "ring-0") return null;
 	// Resting rings are hairline outlines; RN has no outline, so use a border.
 	if (important === "ring" || important === "ring-1") return "border";
 	if (/^ring-[0-9]+$/.test(important)) return important.replace(/^ring-/, "border-");

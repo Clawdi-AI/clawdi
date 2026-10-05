@@ -1,6 +1,10 @@
 "use client";
-
-import { workspaceSkillInstallCommand, workspaceSkillRemoveCommand } from "@clawdi/shared/view";
+import { workspaceSkillsPanelClasses } from "@clawdi/shared/ui";
+import {
+	agentSurfaceCopy,
+	workspaceSkillInstallCommand,
+	workspaceSkillRemoveCommand,
+} from "@clawdi/shared/view";
 import { Check, Copy, Plus, TerminalSquare, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -55,14 +59,14 @@ export function ConnectedWorkspaceSkillsPanel({
 					{...pageHeader}
 					actions={
 						<Button size="sm" onClick={() => setInstallOpen(true)}>
-							<Plus className="size-3.5" />
+							<Plus className={workspaceSkillsPanelClasses.size} />
 							Install skill
 						</Button>
 					}
 				/>
 			) : null}
 			<Alert>
-				<AlertTitle>Install on the Agent</AlertTitle>
+				<AlertTitle>{agentSurfaceCopy.installOnTheAgent}</AlertTitle>
 				<AlertDescription
 					className={
 						pageHeader
@@ -77,10 +81,10 @@ export function ConnectedWorkspaceSkillsPanel({
 					{pageHeader ? null : (
 						<Button
 							size="sm"
-							className="min-h-11 w-full shrink-0 sm:min-h-8 sm:w-auto"
+							className={workspaceSkillsPanelClasses.minHWFull}
 							onClick={() => setInstallOpen(true)}
 						>
-							<Plus className="size-3.5" />
+							<Plus className={workspaceSkillsPanelClasses.size} />
 							Install skill
 						</Button>
 					)}
@@ -91,7 +95,7 @@ export function ConnectedWorkspaceSkillsPanel({
 				<ApiErrorPanel
 					error={projectionError}
 					onRetry={onRetryProjections}
-					title="Couldn't load synced Skills"
+					title={agentSurfaceCopy.couldnTLoadSyncedSkills}
 				/>
 			) : isLoading ? (
 				<div className={HERO_GRID_CLASS}>
@@ -103,7 +107,7 @@ export function ConnectedWorkspaceSkillsPanel({
 				<EmptyState
 					variant="inset"
 					icon={TerminalSquare}
-					description="No Skills have synced from this Agent yet. Install one with the CLI, then sync the Agent."
+					description={agentSurfaceCopy.noSkillsHaveSyncedFromThisAgent}
 				/>
 			) : (
 				<div className={HERO_GRID_CLASS}>
@@ -131,22 +135,22 @@ export function ConnectedWorkspaceSkillsPanel({
 					if (!open) setRepo("");
 				}}
 			>
-				<DialogContent className="sm:max-w-xl">
+				<DialogContent className={workspaceSkillsPanelClasses.smMaxWXl}>
 					<DialogHeader>
-						<DialogTitle>Install skill</DialogTitle>
+						<DialogTitle>{agentSurfaceCopy.installSkill}</DialogTitle>
 						<DialogDescription>
 							Enter a GitHub Skill path, then run the generated command on the Agent machine.
 						</DialogDescription>
 					</DialogHeader>
-					<div className="space-y-3">
-						<div className="space-y-1.5">
-							<Label htmlFor="workspace-skill-repo">GitHub Skill repository</Label>
+					<div className={workspaceSkillsPanelClasses.spaceY}>
+						<div className={workspaceSkillsPanelClasses.spaceY2}>
+							<Label htmlFor="workspace-skill-repo">{agentSurfaceCopy.gitHubSkillRepository}</Label>
 							<Input
 								id="workspace-skill-repo"
 								value={repo}
 								autoComplete="off"
 								spellCheck={false}
-								placeholder="owner/repo or owner/repo/path-to-skill…"
+								placeholder={agentSurfaceCopy.ownerRepoOrOwnerRepoPathTo}
 								onChange={(event) => setRepo(event.target.value)}
 							/>
 						</div>
@@ -178,16 +182,16 @@ function ConnectedSkillRemoveAction({
 			<Button
 				variant="ghost"
 				size="icon-sm"
-				className="text-muted-foreground hover:text-destructive"
+				className={workspaceSkillsPanelClasses.textMutedForegroundHover}
 				onClick={() => setOpen(true)}
 				aria-label={`Uninstall ${skill.name} from Agent`}
 			>
-				<Trash2 className="size-3.5" />
+				<Trash2 className={workspaceSkillsPanelClasses.size} />
 			</Button>
 			<Dialog open={open} onOpenChange={setOpen}>
-				<DialogContent className="sm:max-w-xl">
+				<DialogContent className={workspaceSkillsPanelClasses.smMaxWXl}>
 					<DialogHeader>
-						<DialogTitle>Uninstall skill</DialogTitle>
+						<DialogTitle>{agentSurfaceCopy.uninstallSkill}</DialogTitle>
 						<DialogDescription>
 							Run this command on the Agent machine. The Skill belongs to that Workspace.
 						</DialogDescription>
@@ -210,10 +214,8 @@ function CliCommand({ command }: { command: string }) {
 		error: "Couldn't copy command",
 	});
 	return (
-		<div className="flex min-w-0 items-center gap-2 rounded-md border bg-background p-2">
-			<code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap px-1 font-mono text-xs">
-				{command}
-			</code>
+		<div className={workspaceSkillsPanelClasses.flexMinWItems}>
+			<code className={workspaceSkillsPanelClasses.minWFlexOverflow}>{command}</code>
 			<Button
 				type="button"
 				variant="ghost"
@@ -221,7 +223,11 @@ function CliCommand({ command }: { command: string }) {
 				onClick={() => void copy(command)}
 				aria-label="Copy CLI command"
 			>
-				{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+				{copied ? (
+					<Check className={workspaceSkillsPanelClasses.size} />
+				) : (
+					<Copy className={workspaceSkillsPanelClasses.size} />
+				)}
 			</Button>
 		</div>
 	);

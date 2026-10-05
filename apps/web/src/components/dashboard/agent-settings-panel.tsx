@@ -6,7 +6,13 @@ import {
 	MAX_AGENT_AVATAR_BYTES,
 } from "@clawdi/shared/api";
 import { agentDisconnectEligibility } from "@clawdi/shared/client";
-import { agentDisplayName, agentTypeLabel, errorMessage } from "@clawdi/shared/view";
+import { agentSettingsPanelClasses } from "@clawdi/shared/ui";
+import {
+	agentDisplayName,
+	agentSurfaceCopy,
+	agentTypeLabel,
+	errorMessage,
+} from "@clawdi/shared/view";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { ExternalLink, RotateCcw, Save, Trash2, Unplug, Upload } from "lucide-react";
@@ -169,7 +175,7 @@ export function AgentSettingsPanel({
 	if (isLoading) {
 		return (
 			<div className={className}>
-				<Skeleton className="h-[420px] w-full rounded-lg" />
+				<Skeleton className={agentSettingsPanelClasses.hPxWFull} />
 			</div>
 		);
 	}
@@ -177,8 +183,10 @@ export function AgentSettingsPanel({
 	if (shouldBlockQueryError(error, agent) || !agent) {
 		return (
 			<div className={cn("flex flex-col gap-1 rounded-md border p-4", className)}>
-				<div className="text-sm font-semibold">Settings unavailable</div>
-				<p className="text-sm text-muted-foreground">{errorMessage(error ?? "Agent not found")}</p>
+				<div className={agentSettingsPanelClasses.textSmFontSemibold}>Settings unavailable</div>
+				<p className={agentSettingsPanelClasses.textSmTextMuted}>
+					{errorMessage(error ?? "Agent not found")}
+				</p>
 			</div>
 		);
 	}
@@ -220,14 +228,14 @@ export function AgentSettingsPanel({
 				type="file"
 				accept="image/png,image/jpeg,image/webp"
 				aria-label="Upload agent avatar"
-				className="hidden"
+				className={agentSettingsPanelClasses.hidden}
 				onChange={onUploadChange}
 			/>
-			<div className="flex flex-col items-center gap-5 text-center sm:flex-row sm:text-left">
+			<div className={agentSettingsPanelClasses.flexFlexColItems}>
 				<AgentIcon agent={agent.agent_type} size="xl" avatarUrl={agent.avatar_url} />
-				<div className="flex min-w-0 flex-col gap-1">
-					<div className="max-w-full truncate text-lg font-semibold leading-7">{displayName}</div>
-					<div className="flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground sm:justify-start">
+				<div className={agentSettingsPanelClasses.flexMinWFlex}>
+					<div className={agentSettingsPanelClasses.maxWFullTruncate}>{displayName}</div>
+					<div className={agentSettingsPanelClasses.flexFlexWrapItems}>
 						<span>{runtimeLabel}</span>
 						<AgentSourceBadgeForEnvironment
 							env={agent}
@@ -240,12 +248,12 @@ export function AgentSettingsPanel({
 			</div>
 
 			<SettingsSection
-				title="Name"
-				description="Use a short name that distinguishes this agent from others."
+				title={agentSurfaceCopy.name}
+				description={agentSurfaceCopy.useAShortNameThatDistinguishesThis}
 			>
-				<div className="flex w-full flex-col gap-3">
-					<div className="flex flex-col gap-2 lg:flex-row">
-						<Label htmlFor="agent-display-name" className="sr-only">
+				<div className={agentSettingsPanelClasses.flexWFullFlex}>
+					<div className={agentSettingsPanelClasses.flexFlexColGap}>
+						<Label htmlFor="agent-display-name" className={agentSettingsPanelClasses.srOnly}>
 							Agent name
 						</Label>
 						<Input
@@ -261,7 +269,7 @@ export function AgentSettingsPanel({
 							type="button"
 							size="sm"
 							variant={nameChanged ? "default" : "outline"}
-							className="lg:h-9 lg:min-w-20"
+							className={agentSettingsPanelClasses.lgHLgMin}
 							disabled={!nameChanged || updateIdentity.isPending}
 							onClick={() => updateIdentity.mutate({ display_name: normalizedDraftName })}
 						>
@@ -273,13 +281,15 @@ export function AgentSettingsPanel({
 							Save
 						</Button>
 					</div>
-					<div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-						<span className="min-w-0 truncate">Default: {defaultDisplayName}</span>
+					<div className={agentSettingsPanelClasses.flexFlexColGap2}>
+						<span className={agentSettingsPanelClasses.minWTruncate}>
+							Default: {defaultDisplayName}
+						</span>
 						<Button
 							type="button"
 							size="sm"
 							variant="ghost"
-							className="h-7 w-fit px-2 text-xs text-muted-foreground"
+							className={agentSettingsPanelClasses.hWFitPx}
 							disabled={!agent.display_name || updateIdentity.isPending}
 							onClick={() => updateIdentity.mutate({ display_name: null })}
 						>
@@ -290,16 +300,23 @@ export function AgentSettingsPanel({
 				</div>
 			</SettingsSection>
 
-			<SettingsSection title="Avatar" description="Shown in the sidebar, pickers, and agent lists.">
-				<div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-					<div className="flex min-w-0 flex-1 items-center gap-3">
+			<SettingsSection
+				title={agentSurfaceCopy.avatar}
+				description={agentSurfaceCopy.shownInTheSidebarPickersAndAgent}
+			>
+				<div className={agentSettingsPanelClasses.flexFlexColGap3}>
+					<div className={agentSettingsPanelClasses.flexMinWFlex2}>
 						<AgentIcon agent={agent.agent_type} size="lg" avatarUrl={agent.avatar_url} />
-						<div className="min-w-0">
-							<div className="truncate text-sm font-medium">{currentAvatarLabel}</div>
-							<div className="text-xs text-muted-foreground">Image up to 2 MB.</div>
+						<div className={agentSettingsPanelClasses.minW}>
+							<div className={agentSettingsPanelClasses.truncateTextSmFont}>
+								{currentAvatarLabel}
+							</div>
+							<div className={agentSettingsPanelClasses.textXsTextMuted}>
+								{agentSurfaceCopy.imageUpTo2Mb}
+							</div>
 						</div>
 					</div>
-					<div className="flex shrink-0 flex-wrap gap-2 lg:justify-end">
+					<div className={agentSettingsPanelClasses.flexShrinkFlexWrap}>
 						<Button
 							type="button"
 							variant="outline"
@@ -320,7 +337,7 @@ export function AgentSettingsPanel({
 							size="sm"
 							disabled={isBusy || !hasCustomAvatar}
 							onClick={() => clearAvatar.mutate()}
-							className="text-muted-foreground"
+							className={agentSettingsPanelClasses.textMutedForeground}
 						>
 							{clearAvatar.isPending ? (
 								<Spinner data-icon="inline-start" />
@@ -338,8 +355,8 @@ export function AgentSettingsPanel({
 					title="Legacy dashboard"
 					description="Manage this Legacy hosted agent in the legacy dashboard."
 				>
-					<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-						<p className="max-w-md text-sm text-muted-foreground">
+					<div className={agentSettingsPanelClasses.flexFlexColGap4}>
+						<p className={agentSettingsPanelClasses.maxWMdText}>
 							This agent uses the legacy management surface for runtime actions.
 						</p>
 						<Button
@@ -364,12 +381,12 @@ export function AgentSettingsPanel({
 
 			{!disconnectUnavailable ? (
 				<SettingsSection
-					title="Disconnect"
-					description="Stop this installation while keeping its Clawdi data."
+					title={agentSurfaceCopy.disconnect}
+					description={agentSurfaceCopy.stopThisInstallationWhileKeepingItsClawdi}
 					variant="destructive"
 				>
-					<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-						<p className="max-w-md text-sm text-muted-foreground">
+					<div className={agentSettingsPanelClasses.flexFlexColGap4}>
+						<p className={agentSettingsPanelClasses.maxWMdText}>
 							Sync stops and retained Sessions, Skills, files, and Projects stay in your account.
 						</p>
 						<ConfirmAction
@@ -389,7 +406,7 @@ export function AgentSettingsPanel({
 								variant="outline"
 								size="sm"
 								disabled={disconnect.isPending}
-								className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
+								className={agentSettingsPanelClasses.borderDestructiveTextDestructive}
 							>
 								{disconnect.isPending ? (
 									<Spinner data-icon="inline-start" />

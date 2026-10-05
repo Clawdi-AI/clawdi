@@ -1,5 +1,7 @@
 "use client";
 
+import { whatsappDeviceOnboardingClasses } from "@clawdi/shared/ui";
+
 import {
 	Bot,
 	CheckCircle2,
@@ -70,35 +72,43 @@ export function WhatsAppDeviceOnboarding({
 
 	return (
 		<div
-			className="flex min-w-0 flex-col gap-3"
+			className={whatsappDeviceOnboardingClasses.flexMinWFlexColGap}
 			data-hosted="true"
 			data-v2="true"
 			data-whatsapp-account-choice
 		>
-			<p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+			<p className={whatsappDeviceOnboardingClasses.textXsTextMutedForegroundOverflowWrapAnywhere}>
 				Add a WhatsApp account you own by scanning a linked-device QR.
 			</p>
-			<Alert data-whatsapp-account-warning className="border-warning/30 bg-warning-muted py-2.5">
+			<Alert
+				data-whatsapp-account-warning
+				className={whatsappDeviceOnboardingClasses.borderWarningBgWarningMutedPy}
+			>
 				<TriangleAlert aria-hidden />
 				<AlertTitle>Use a dedicated number</AlertTitle>
-				<AlertDescription className="text-xs">
+				<AlertDescription className={whatsappDeviceOnboardingClasses.textXs}>
 					Clawdi uses WhatsApp’s linked-device feature. When linked to an Agent, replies are sent
 					from this account—use a separate number, not your primary personal one.
 				</AlertDescription>
 			</Alert>
-			<p className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" role="status">
+			<p
+				className={
+					whatsappDeviceOnboardingClasses.minWTextXsTextMutedForegroundOverflowWrapAnywhere
+				}
+				role="status"
+			>
 				{readiness.isLoading ? "Checking linked-device availability…" : readinessMessage}
 			</p>
 			<Button
 				type="button"
-				className="w-full min-w-0 whitespace-normal sm:w-fit"
+				className={whatsappDeviceOnboardingClasses.wFullMinWWhitespaceNormalSmWFit}
 				disabled={customUnavailable || readiness.isLoading}
 				onClick={() => setMode("custom")}
 			>
-				<QrCode className="size-4 shrink-0" />
+				<QrCode className={whatsappDeviceOnboardingClasses.sizeShrink} />
 				Connect your account
 			</Button>
-			<p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+			<p className={whatsappDeviceOnboardingClasses.textXsTextMutedForegroundOverflowWrapAnywhere}>
 				This adds the account under Custom bots. Agent Link and chat Pair are separate next steps.
 			</p>
 		</div>
@@ -274,7 +284,10 @@ function YourWhatsAppFlow({
 	if (!session) {
 		if (repairAccountId) {
 			return (
-				<div className="min-w-0 space-y-4" data-whatsapp-onboarding-state="repairing">
+				<div
+					className={whatsappDeviceOnboardingClasses.minWSpaceY}
+					data-whatsapp-onboarding-state="repairing"
+				>
 					{requestError ? (
 						<>
 							<PairingNotice title="Couldn't start WhatsApp repair">
@@ -290,14 +303,14 @@ function YourWhatsAppFlow({
 									disabled={actions.repair.isPending}
 									onClick={retryRepairStart}
 								>
-									<RefreshCw className="size-4" />
+									<RefreshCw className={whatsappDeviceOnboardingClasses.size} />
 									Try again
 								</Button>
 							</PairingDialogActions>
 						</>
 					) : (
 						<CenteredState
-							icon={<Spinner className="size-6" />}
+							icon={<Spinner className={whatsappDeviceOnboardingClasses.size2} />}
 							title="Preparing WhatsApp repair…"
 							description="Checking the saved device session before generating a new QR code."
 						/>
@@ -306,16 +319,19 @@ function YourWhatsAppFlow({
 			);
 		}
 		return (
-			<div className="min-w-0 space-y-4" data-whatsapp-onboarding-state="name">
+			<div
+				className={whatsappDeviceOnboardingClasses.minWSpaceY}
+				data-whatsapp-onboarding-state="name"
+			>
 				<button
 					type="button"
-					className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+					className={whatsappDeviceOnboardingClasses.inlineFlexItemsCenterGapTextSm}
 					onClick={onBack}
 				>
-					<ChevronLeft className="size-4" />
+					<ChevronLeft className={whatsappDeviceOnboardingClasses.size} />
 					WhatsApp setup
 				</button>
-				<div className="space-y-1.5">
+				<div className={whatsappDeviceOnboardingClasses.spaceY}>
 					<Label htmlFor="whatsapp-account-name">Account name</Label>
 					<Input
 						id="whatsapp-account-name"
@@ -326,7 +342,7 @@ function YourWhatsAppFlow({
 						disabled={Boolean(startRequestIdRef.current) || actions.start.isPending}
 						autoComplete="off"
 					/>
-					<p className="text-xs text-muted-foreground">
+					<p className={whatsappDeviceOnboardingClasses.textXsTextMutedForeground}>
 						This names the Custom bot inventory entry. It does not rename your WhatsApp account.
 					</p>
 				</div>
@@ -350,9 +366,9 @@ function YourWhatsAppFlow({
 						onClick={() => void start()}
 					>
 						{actions.start.isPending ? (
-							<Spinner className="size-4" />
+							<Spinner className={whatsappDeviceOnboardingClasses.size} />
 						) : (
-							<QrCode className="size-4" />
+							<QrCode className={whatsappDeviceOnboardingClasses.size} />
 						)}
 						{actions.start.isPending ? "Starting…" : "Generate QR"}
 					</Button>
@@ -363,7 +379,7 @@ function YourWhatsAppFlow({
 
 	return (
 		<div
-			className="min-w-0 space-y-4"
+			className={whatsappDeviceOnboardingClasses.minWSpaceY}
 			data-whatsapp-onboarding-state={session.state}
 			aria-live="polite"
 		>
@@ -377,7 +393,7 @@ function YourWhatsAppFlow({
 				pairingCodePending={actions.pairingCode.isPending}
 			/>
 			{statusCheckFailed ? (
-				<p className="text-xs text-warning">
+				<p className={whatsappDeviceOnboardingClasses.textXsTextWarning}>
 					Connection status is temporarily unavailable. Clawdi is still checking.
 				</p>
 			) : null}
@@ -387,8 +403,12 @@ function YourWhatsAppFlow({
 				</PairingNotice>
 			) : null}
 			{session.state === "connected" ? (
-				<Button type="button" className="w-full min-w-0 whitespace-normal" onClick={onDone}>
-					<Bot className="size-4 shrink-0" />
+				<Button
+					type="button"
+					className={whatsappDeviceOnboardingClasses.wFullMinWWhitespaceNormal}
+					onClick={onDone}
+				>
+					<Bot className={whatsappDeviceOnboardingClasses.sizeShrink} />
 					{repairAccountId ? "Done" : "Review Custom bots"}
 				</Button>
 			) : session.state === "expired" || session.state === "error" ? (
@@ -403,9 +423,9 @@ function YourWhatsAppFlow({
 					</Button>
 					<Button type="button" disabled={actions.retry.isPending} onClick={() => void retry()}>
 						{actions.retry.isPending ? (
-							<Spinner className="size-4" />
+							<Spinner className={whatsappDeviceOnboardingClasses.size} />
 						) : (
-							<RefreshCw className="size-4" />
+							<RefreshCw className={whatsappDeviceOnboardingClasses.size} />
 						)}
 						Retry
 					</Button>
@@ -414,14 +434,14 @@ function YourWhatsAppFlow({
 				<Button
 					type="button"
 					variant="outline"
-					className="w-full"
+					className={whatsappDeviceOnboardingClasses.wFull}
 					disabled={actions.cancel.isPending}
 					onClick={() => void cancelAndBack()}
 				>
 					{actions.cancel.isPending ? (
-						<Spinner className="size-4" />
+						<Spinner className={whatsappDeviceOnboardingClasses.size} />
 					) : (
-						<Unplug className="size-4" />
+						<Unplug className={whatsappDeviceOnboardingClasses.size} />
 					)}
 					{actions.cancel.isPending ? "Canceling…" : "Cancel connection"}
 				</Button>
@@ -448,12 +468,17 @@ export function WhatsAppSessionState({
 	pairingCodePending: boolean;
 }) {
 	if (session.state === "generating") {
-		return <CenteredState icon={<Spinner className="size-6" />} title="Generating QR code…" />;
+		return (
+			<CenteredState
+				icon={<Spinner className={whatsappDeviceOnboardingClasses.size2} />}
+				title="Generating QR code…"
+			/>
+		);
 	}
 	if (session.state === "scanned") {
 		return (
 			<CenteredState
-				icon={<Spinner className="size-6" />}
+				icon={<Spinner className={whatsappDeviceOnboardingClasses.size2} />}
 				title="Device approved"
 				description="Finishing the encrypted WhatsApp connection. Keep this dialog open."
 			/>
@@ -462,7 +487,7 @@ export function WhatsAppSessionState({
 	if (session.state === "connected") {
 		return (
 			<CenteredState
-				icon={<CheckCircle2 className="size-7 text-success" />}
+				icon={<CheckCircle2 className={whatsappDeviceOnboardingClasses.sizeTextSuccess} />}
 				title="WhatsApp connected"
 				description={
 					repairing
@@ -475,7 +500,7 @@ export function WhatsAppSessionState({
 	if (session.state === "expired") {
 		return (
 			<CenteredState
-				icon={<CircleAlert className="size-7 text-warning" />}
+				icon={<CircleAlert className={whatsappDeviceOnboardingClasses.sizeTextWarning} />}
 				title="Connection expired"
 				description="The device session was stopped. Retry to generate a fresh QR code."
 			/>
@@ -484,7 +509,7 @@ export function WhatsAppSessionState({
 	if (session.state === "canceled") {
 		return (
 			<CenteredState
-				icon={<Unplug className="size-7 text-muted-foreground" />}
+				icon={<Unplug className={whatsappDeviceOnboardingClasses.sizeTextMutedForeground} />}
 				title="Connection canceled"
 			/>
 		);
@@ -492,7 +517,7 @@ export function WhatsAppSessionState({
 	if (session.state === "error") {
 		return (
 			<CenteredState
-				icon={<CircleAlert className="size-7 text-destructive" />}
+				icon={<CircleAlert className={whatsappDeviceOnboardingClasses.sizeTextDestructive} />}
 				title="Couldn't connect WhatsApp"
 				description="Clawdi couldn't confirm a safe connection. Retry, or go back to clean it up."
 			/>
@@ -501,16 +526,18 @@ export function WhatsAppSessionState({
 
 	if (session.method === "code" && session.pairing_code) {
 		return (
-			<div className="space-y-3">
+			<div className={whatsappDeviceOnboardingClasses.spaceY2}>
 				<div>
-					<p className="text-sm font-medium">Enter this code in your WhatsApp account</p>
-					<p className="mt-1 text-xs text-muted-foreground">
+					<p className={whatsappDeviceOnboardingClasses.textSmFontMedium}>
+						Enter this code in your WhatsApp account
+					</p>
+					<p className={whatsappDeviceOnboardingClasses.mtTextXsTextMutedForeground}>
 						WhatsApp &gt; Settings/Menu &gt; Linked devices &gt; Link a device &gt; Link with phone
 						number instead.
 					</p>
 				</div>
 				<CopyablePairingCode value={session.pairing_code} label="WhatsApp pairing code" />
-				<p className="text-xs text-muted-foreground">
+				<p className={whatsappDeviceOnboardingClasses.textXsTextMutedForeground}>
 					This links the WhatsApp account for the phone number you entered. Keep this page open
 					until Clawdi confirms the connection.
 				</p>
@@ -519,30 +546,35 @@ export function WhatsAppSessionState({
 	}
 
 	return (
-		<div className="space-y-3">
+		<div className={whatsappDeviceOnboardingClasses.spaceY2}>
 			{session.qr ? (
 				<PairingQrCode value={session.qr} label="WhatsApp linked-device QR code" />
 			) : (
-				<CenteredState icon={<Spinner className="size-6" />} title="Refreshing QR code…" />
+				<CenteredState
+					icon={<Spinner className={whatsappDeviceOnboardingClasses.size2} />}
+					title="Refreshing QR code…"
+				/>
 			)}
 			<PairingExpiry>{whatsappQrExpiryLabel(session.qr_expires_at, nowMs)}</PairingExpiry>
 			<PairingInstructionPanel>
-				<p className="font-medium">On the WhatsApp account you want to link:</p>
-				<p className="text-xs text-muted-foreground">
+				<p className={whatsappDeviceOnboardingClasses.fontMedium}>
+					On the WhatsApp account you want to link:
+				</p>
+				<p className={whatsappDeviceOnboardingClasses.textXsTextMutedForeground}>
 					WhatsApp &gt; Settings/Menu &gt; Linked devices &gt; Link a device &gt; scan.
 				</p>
-				<p className="text-xs text-muted-foreground sm:hidden">
+				<p className={whatsappDeviceOnboardingClasses.textXsTextMutedForegroundSmHidden}>
 					A phone cannot scan a QR shown on the same phone. Open Clawdi on a computer, or use the
 					pairing-code fallback below.
 				</p>
 			</PairingInstructionPanel>
 			{session.manual_pairing_code_supported ? (
-				<details className="rounded-lg border bg-muted/10 p-3">
-					<summary className="cursor-pointer text-sm font-medium">
+				<details className={whatsappDeviceOnboardingClasses.roundedLgBorderBgMutedP}>
+					<summary className={whatsappDeviceOnboardingClasses.cursorPointerTextSmFontMedium}>
 						Can&apos;t scan? Use a pairing code
 					</summary>
-					<div className="mt-3 space-y-2">
-						<p className="text-xs text-muted-foreground">
+					<div className={whatsappDeviceOnboardingClasses.mtSpaceY}>
+						<p className={whatsappDeviceOnboardingClasses.textXsTextMutedForeground}>
 							Enter the phone number for the WhatsApp account you are linking, including country
 							code, using digits only.
 						</p>
@@ -557,18 +589,22 @@ export function WhatsAppSessionState({
 							aria-invalid={Boolean(whatsappPhoneNumberError(phoneNumber))}
 						/>
 						{whatsappPhoneNumberError(phoneNumber) ? (
-							<p className="text-xs text-destructive">{whatsappPhoneNumberError(phoneNumber)}</p>
+							<p className={whatsappDeviceOnboardingClasses.textXsTextDestructive}>
+								{whatsappPhoneNumberError(phoneNumber)}
+							</p>
 						) : null}
 						<Button
 							type="button"
 							variant="outline"
-							className="w-full"
+							className={whatsappDeviceOnboardingClasses.wFull}
 							disabled={
 								!phoneNumber || Boolean(whatsappPhoneNumberError(phoneNumber)) || pairingCodePending
 							}
 							onClick={onRequestPairingCode}
 						>
-							{pairingCodePending ? <Spinner className="size-4" /> : null}
+							{pairingCodePending ? (
+								<Spinner className={whatsappDeviceOnboardingClasses.size} />
+							) : null}
 							{pairingCodePending ? "Requesting…" : "Get pairing code"}
 						</Button>
 					</div>
@@ -588,14 +624,17 @@ function CenteredState({
 	description?: string;
 }) {
 	return (
-		<div
-			role="status"
-			className="flex min-h-40 flex-col items-center justify-center gap-2 text-center"
-		>
+		<div role="status" className={whatsappDeviceOnboardingClasses.flexMinHFlexColItemsCenter}>
 			{icon}
-			<p className="max-w-full font-medium [overflow-wrap:anywhere]">{title}</p>
+			<p className={whatsappDeviceOnboardingClasses.maxWFullFontMediumOverflowWrapAnywhere}>
+				{title}
+			</p>
 			{description ? (
-				<p className="max-w-sm text-xs text-muted-foreground [overflow-wrap:anywhere]">
+				<p
+					className={
+						whatsappDeviceOnboardingClasses.maxWSmTextXsTextMutedForegroundOverflowWrapAnywhere
+					}
+				>
 					{description}
 				</p>
 			) : null}

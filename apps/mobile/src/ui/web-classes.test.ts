@@ -15,3 +15,9 @@ test("explicit and state border colors override the Web base", () => {
 	expect(conditional).toContain("border-border");
 	expect(conditional).toContain("active:border-primary");
 });
+
+test("ring-0 preserves an explicit card border", () => {
+	const classes = resolveWebClasses("border border-foreground/10 ring-0").view;
+	expect(classes).toContain("border");
+	expect(classes).not.toContain("border-0");
+});

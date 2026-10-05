@@ -1,0 +1,64 @@
+import { getProjectResourceDefinition } from "./project-resource-model";
+export const agentSectionCopy = {
+	overview: {
+		label: "Overview",
+		description: "Status, resources, and recent activity for this agent.",
+	},
+	sessions: {
+		label: getProjectResourceDefinition("sessions").navLabel,
+		description: "Conversation history from this agent.",
+	},
+	memories: {
+		label: getProjectResourceDefinition("memories").navLabel,
+		description: "Memories are shared across all agents.",
+	},
+	connectors: {
+		label: getProjectResourceDefinition("connectors").navLabel,
+		description: "Connectors are shared across all agents.",
+	},
+	projects: {
+		label: getProjectResourceDefinition("projects").navLabel,
+		description: "Projects linked to this Agent.",
+	},
+	skills: {
+		label: getProjectResourceDefinition("skills").navLabel,
+		description: "Skills installed in this Agent's Workspace.",
+	},
+	vaults: {
+		label: getProjectResourceDefinition("vaults").navLabel,
+		description: "Vaults attached to this Agent's Workspace.",
+	},
+	ai: { label: "AI Providers", description: "AI provider and primary model used by this agent." },
+	channels: { label: "Channels", description: "Channels linked to this agent." },
+	plugins: { label: "Plugins", description: "Install Skills and MCP servers for this agent." },
+	settings: { label: "Settings", description: "Name, preferences, and agent controls." },
+} as const;
+export type MobileAgentSection = keyof typeof agentSectionCopy;
+
+export const AGENT_NAVIGATION_GROUPS = [
+	{
+		id: "primary",
+		label: null,
+		itemIds: ["overview", "console", "channels", "ai", "sessions"],
+		separated: false,
+	},
+	{
+		id: "workspace",
+		label: "Workspace",
+		itemIds: ["projects", "plugins"],
+		separated: false,
+	},
+	{
+		id: "shared",
+		label: "Shared",
+		itemIds: ["memories", "connectors"],
+		separated: false,
+	},
+	{
+		id: "operate",
+		label: "Tools",
+		itemIds: ["files", "terminal"],
+		separated: false,
+	},
+	{ id: "settings", label: null, itemIds: ["settings"], separated: true },
+] as const;

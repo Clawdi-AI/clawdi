@@ -1,12 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client.logic";
-import type { ChannelAccount, ChannelBotPoolItem } from "@/hosted/v2/channels/channel-types";
+
+type AgentChannelLink = Omit<
+	components["schemas"]["ChannelAgentLinkWithAccountResponse"],
+	"account" | "agent_token"
+> & { account?: ChannelAccount | null };
+
+import type { ChannelAccount, ChannelBot as ChannelBotPoolItem, components } from "../api";
+
 import {
 	activeAgentLinkForAccount,
 	activeLinkedProviders,
 	buildAgentChannelCardGroups,
 	canonicalAgentChannelLinks,
-} from "./agent-channel-cards.logic";
+} from "./agent-channel-cards";
 
 const agentId = "11111111-1111-4111-8111-111111111111";
 

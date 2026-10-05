@@ -1,4 +1,6 @@
 import {
+	AGENT_NAVIGATION_GROUPS,
+	agentSectionCopy,
 	getProjectResourceDefinition,
 	projectResourcePathLabel,
 	projectResourceScopeLabel,
@@ -281,7 +283,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "overview",
 		...CANONICAL_NAVIGATION_IDENTITIES.overview,
 		tint: RESOURCE_TINT_CLASSES.overview,
-		description: "Status, resources, and recent activity for this agent.",
+		description: agentSectionCopy.overview.description,
 		tooltip: "Agent overview",
 		variants: ["connected", "hosted"],
 	},
@@ -316,7 +318,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "sessions",
 		...CANONICAL_NAVIGATION_IDENTITIES.sessions,
 		tint: RESOURCE_TINT_CLASSES.sessions,
-		description: "Conversation history from this agent.",
+		description: agentSectionCopy.sessions.description,
 		tooltip: "Sessions from this agent",
 		variants: ["connected", "hosted"],
 	},
@@ -324,7 +326,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "memories",
 		...CANONICAL_NAVIGATION_IDENTITIES.memories,
 		tint: RESOURCE_TINT_CLASSES.memories,
-		description: "Memories are shared across all agents.",
+		description: agentSectionCopy.memories.description,
 		tooltip: "Shared across all agents",
 		variants: ["connected", "hosted"],
 	},
@@ -332,7 +334,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "skills",
 		...CANONICAL_NAVIGATION_IDENTITIES.skills,
 		tint: RESOURCE_TINT_CLASSES.skills,
-		description: "Skills installed in this Agent's Workspace.",
+		description: agentSectionCopy.skills.description,
 		tooltip: "Skills installed in this Agent's Workspace",
 		variants: ["connected", "hosted"],
 	},
@@ -340,7 +342,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "projects",
 		...CANONICAL_NAVIGATION_IDENTITIES.projects,
 		tint: RESOURCE_TINT_CLASSES.projects,
-		description: "Projects linked to this Agent.",
+		description: agentSectionCopy.projects.description,
 		tooltip: "Projects linked to this Agent",
 		variants: ["connected", "hosted"],
 	},
@@ -348,7 +350,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "vaults",
 		...CANONICAL_NAVIGATION_IDENTITIES.vaults,
 		tint: RESOURCE_TINT_CLASSES.vaults,
-		description: "Vaults attached to this Agent's Workspace.",
+		description: agentSectionCopy.vaults.description,
 		tooltip: "Vaults attached to this Agent's Workspace",
 		variants: ["connected", "hosted"],
 	},
@@ -356,7 +358,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "connectors",
 		...CANONICAL_NAVIGATION_IDENTITIES.connectors,
 		tint: RESOURCE_TINT_CLASSES.connectors,
-		description: "Connectors are shared across all agents.",
+		description: agentSectionCopy.connectors.description,
 		tooltip: "Shared across all agents",
 		variants: ["connected", "hosted"],
 	},
@@ -364,7 +366,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "ai",
 		...CANONICAL_NAVIGATION_IDENTITIES["ai-providers"],
 		tint: "bg-identity-2-bg text-identity-2-fg",
-		description: "AI provider and primary model used by this agent.",
+		description: agentSectionCopy.ai.description,
 		tooltip: "Choose this agent's AI provider and primary model",
 		variants: ["hosted"],
 	},
@@ -372,7 +374,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "channels",
 		...CANONICAL_NAVIGATION_IDENTITIES.channels,
 		tint: "bg-identity-5-bg text-identity-5-fg",
-		description: "Channels linked to this agent.",
+		description: agentSectionCopy.channels.description,
 		tooltip: "Channels linked to this agent",
 		variants: ["hosted"],
 	},
@@ -381,7 +383,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		label: "Plugins",
 		icon: Blocks,
 		tint: "bg-identity-7-bg text-identity-7-fg",
-		description: "Install Skills and MCP servers for this agent.",
+		description: agentSectionCopy.plugins.description,
 		tooltip: "Install plugins for this agent",
 		variants: ["hosted"],
 	},
@@ -389,7 +391,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "settings",
 		...CANONICAL_NAVIGATION_IDENTITIES.settings,
 		tint: "bg-identity-4-bg text-identity-4-fg",
-		description: "Name, preferences, and agent controls.",
+		description: agentSectionCopy.settings.description,
 		tooltip: "Manage this agent",
 		variants: ["connected", "hosted"],
 	},
@@ -417,39 +419,6 @@ export const AGENT_OVERVIEW_WORKSPACE_SECTION_IDS = [
 	"skills",
 	"vaults",
 ] as const satisfies readonly AgentSectionId[];
-
-const AGENT_NAVIGATION_GROUPS = [
-	{
-		id: "primary",
-		label: null,
-		itemIds: ["overview", "console", "channels", "ai", "sessions"],
-		separated: false,
-	},
-	{
-		id: "workspace",
-		label: "Workspace",
-		itemIds: AGENT_WORKSPACE_SECTION_IDS,
-		separated: false,
-	},
-	{
-		id: "shared",
-		label: "Shared",
-		itemIds: AGENT_SHARED_SECTION_IDS,
-		separated: false,
-	},
-	{
-		id: "operate",
-		label: "Tools",
-		itemIds: ["files", "terminal"],
-		separated: false,
-	},
-	{ id: "settings", label: null, itemIds: ["settings"], separated: true },
-] as const satisfies readonly {
-	id: AgentNavigationGroupId;
-	label: string | null;
-	itemIds: readonly AgentSectionId[];
-	separated: boolean;
-}[];
 
 export function agentNavigationSectionIds(variant: AgentNavigationVariant): AgentSectionId[] {
 	return AGENT_NAVIGATION_GROUPS.flatMap((group) =>

@@ -1,4 +1,5 @@
 "use client";
+import { channelCardClasses as styles } from "@clawdi/shared/ui";
 
 import type { ReactNode } from "react";
 import { ENTITY_CARD_BASE, ENTITY_GRID_CLASS, EntityHeader } from "@/components/entity-card";
@@ -6,7 +7,7 @@ import { ProviderChip } from "@/hosted/v2/channels/channel-ui";
 import { cn } from "@/lib/utils";
 
 /** Channel cards in the same grid row share a stable outer height. */
-export const CHANNEL_CARD_GRID_CLASS = cn(ENTITY_GRID_CLASS, "items-stretch xl:grid-cols-2");
+export const CHANNEL_CARD_GRID_CLASS = cn(ENTITY_GRID_CLASS, styles.grid);
 
 /**
  * Shared visual shell for bot inventory and Agent channel cards. Provider
@@ -32,15 +33,9 @@ export function ChannelCard({
 		<article
 			data-hosted="true"
 			data-v2="true"
-			className={cn(ENTITY_CARD_BASE, "flex h-full flex-col overflow-hidden p-0", className)}
+			className={cn(ENTITY_CARD_BASE, styles.card, className)}
 		>
-			<div
-				data-channel-card-header
-				className={cn(
-					"grid min-h-20 min-w-0 flex-1 content-center gap-3 p-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center",
-					headerClassName,
-				)}
-			>
+			<div data-channel-card-header className={cn(styles.header, headerClassName)}>
 				<EntityHeader
 					align="start"
 					icon={<ProviderChip provider={provider} />}
@@ -49,10 +44,7 @@ export function ChannelCard({
 					meta={state}
 				/>
 				{actions ? (
-					<div
-						data-channel-card-actions
-						className="relative z-10 flex min-w-0 items-center justify-end gap-2"
-					>
+					<div data-channel-card-actions className={styles.actions}>
 						{actions}
 					</div>
 				) : null}

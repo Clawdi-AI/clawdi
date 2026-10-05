@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { components } from "@/lib/api-schemas";
+import type { components } from "../api";
 import { fetchAgentProjectSkills } from "./agent-skill-inventory";
 
 type Skill = components["schemas"]["SkillSummaryResponse"];
