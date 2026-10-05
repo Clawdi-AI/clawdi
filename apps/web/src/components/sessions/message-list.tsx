@@ -1,10 +1,19 @@
 "use client";
 
 import { buildSessionTimelineRows, type SessionTimelineRow } from "@clawdi/shared/api";
+import { messageListClasses } from "@clawdi/shared/ui";
 
 export { buildSessionTimelineRows, type SessionTimelineRow } from "@clawdi/shared/api";
 
-import { agentTypeLabel, formatAbsoluteTooltip } from "@clawdi/shared/view";
+import {
+	agentTypeLabel,
+	formatAbsoluteTooltip,
+	formatGroupHeaderTime,
+	formatToolPayload,
+	isSkillExpansion,
+	parseSlashCommand,
+	sessionDateLabel,
+} from "@clawdi/shared/view";
 import {
 	CheckCircle2,
 	ChevronRight,
@@ -55,39 +64,14 @@ type TimelineEntry = SessionMessage | SessionTimelineItem;
  * Group-start header timestamp: short date + 24h time. Mirrors
  * Discord's `M/D/YY, HH:MM` style (e.g. `4/24/26, 20:21`). Locale-aware.
  */
-function formatGroupHeaderTime(timestamp: string): string {
-	const d = new Date(timestamp);
-	if (Number.isNaN(d.getTime())) return "";
-	return d.toLocaleString(undefined, {
-		year: "2-digit",
-		month: "numeric",
-		day: "numeric",
-		hour: "2-digit",
-		minute: "2-digit",
-		hour12: false,
-	});
-}
 
 function DateDivider({ timestamp }: { timestamp: string }) {
-	const d = new Date(timestamp);
-	const today = new Date();
-	const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-	const dayDiff = Math.floor((startOfDay(today) - startOfDay(d)) / 86_400_000);
-	let label: string;
-	if (dayDiff === 0) label = "Today";
-	else if (dayDiff === 1) label = "Yesterday";
-	else
-		label = d.toLocaleDateString(undefined, {
-			weekday: "long",
-			month: "short",
-			day: "numeric",
-			year: d.getFullYear() !== today.getFullYear() ? "numeric" : undefined,
-		});
+	const label = sessionDateLabel(timestamp);
 	return (
-		<div className="my-4 flex items-center gap-3 text-xs uppercase tracking-wide text-muted-foreground">
-			<div className="h-px flex-1 bg-border" />
+		<div className={messageListClasses.dateDivider}>
+			<div className={messageListClasses.hairline} />
 			<span title={formatAbsoluteTooltip(timestamp)}>{label}</span>
-			<div className="h-px flex-1 bg-border" />
+			<div className={messageListClasses.hairline} />
 		</div>
 	);
 }
@@ -131,22 +115,20 @@ function MessageBlock({
 			data-search-match={isHighlighted ? "true" : undefined}
 			aria-current={isHighlighted ? "location" : undefined}
 			className={cn(
-				"group flex scroll-mt-24 gap-3 rounded-md border-l-2 border-transparent p-2",
+				messageListClasses.messageRow,
 				deferOffscreenRendering && OFFSCREEN_RENDERING_CLASS,
-				isHighlighted && "border-primary bg-primary/5",
+				isHighlighted && messageListClasses.highlighted,
 			)}
 		>
 			{/* Avatar column. Group-start: avatar (user image / agent icon).
 			    Continuation: faint HH:MM that reveals on row hover. */}
-			<div className="w-8 shrink-0 pt-0.5">
+			<div className={messageListClasses.avatarColumn}>
 				{isGroupStart ? (
 					isUser ? (
 						userAvatar ? (
 							<img src={userAvatar} alt="" width={32} height={32} className="rounded-full" />
 						) : (
-							<div className="flex size-8 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-medium">
-								{userName[0]}
-							</div>
+							<div className={messageListClasses.userAvatar}>{userName[0]}</div>
 						)
 					) : (
 						<AgentIcon agent={agentType} size="lg" shape="circle" />
@@ -157,7 +139,7 @@ function MessageBlock({
 					// so without this fallback mobile users lose the
 					// timestamp entirely on grouped continuation rows.
 					<div
-						className="hidden h-5 w-8 items-center justify-end pr-1 text-3xs tabular-nums text-muted-foreground/60 group-hover:flex [@media(hover:none)]:flex"
+						className={messageListClasses.continuationTime}
 						title={formatAbsoluteTooltip(message.timestamp)}
 					>
 						{new Date(message.timestamp).toLocaleTimeString([], {
@@ -169,7 +151,7 @@ function MessageBlock({
 			</div>
 
 			{/* Content */}
-			<div className="min-w-0 flex-1">
+			<div className={messageListClasses.content}>
 				{isGroupStart ? (
 					// `flex-wrap` is what keeps long header rows
 					// (`username · Opus 4.7 · 5/13/26, 15:30`) inside a
@@ -177,12 +159,12 @@ function MessageBlock({
 					// the whole page into horizontal scroll. The timestamp
 					// keeps `whitespace-nowrap` so it doesn't split
 					// mid-string when it wraps to its own line.
-					<div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-						<span className="text-sm font-medium">{isUser ? userName : agentName}</span>
+					<div className={messageListClasses.messageHeader}>
+						<span className={messageListClasses.author}>{isUser ? userName : agentName}</span>
 						{isUser ? null : <ModelBadge modelId={message.model} />}
 						{message.timestamp ? (
 							<span
-								className="whitespace-nowrap text-xs text-muted-foreground"
+								className={messageListClasses.timestamp}
 								title={formatAbsoluteTooltip(message.timestamp)}
 							>
 								{formatGroupHeaderTime(message.timestamp)}
@@ -200,12 +182,7 @@ function MessageBlock({
 				    User turns get a quiet tinted bubble: in a long agent
 				    transcript the #1 scan job is "where did I say something" —
 				    name + avatar alone disappear between walls of markdown. */}
-				<div
-					className={cn(
-						"text-sm wrap-anywhere",
-						isUser && "w-fit max-w-full rounded-lg bg-accent/60 px-3 py-2",
-					)}
-				>
+				<div className={cn(messageListClasses.body, isUser && messageListClasses.userBubble)}>
 					{isUser ? (
 						<UserMessageBody
 							content={message.content}
@@ -240,18 +217,14 @@ function MessageActions({
 }) {
 	const { copied, copy } = useCopyToClipboard({ success: false });
 	return (
-		<div
-			role="toolbar"
-			aria-label="Message actions"
-			className="pointer-events-none mt-0.5 flex min-h-6 w-fit items-center gap-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"
-		>
+		<div role="toolbar" aria-label="Message actions" className={messageListClasses.actions}>
 			<Tooltip>
 				<TooltipTrigger
 					render={
 						<Button
 							variant="ghost"
 							size="icon-xs"
-							className="text-muted-foreground pointer-coarse:size-11"
+							className={messageListClasses.actionButton}
 							onClick={() => copy(content)}
 							aria-label="Copy message"
 						/>
@@ -268,7 +241,7 @@ function MessageActions({
 							<Button
 								variant="ghost"
 								size="icon-xs"
-								className="text-muted-foreground pointer-coarse:size-11"
+								className={messageListClasses.actionButton}
 								onClick={() => onShareMessage({ scope: "response", position })}
 								aria-label="Share response"
 							/>
@@ -286,7 +259,7 @@ function MessageActions({
 							<Button
 								variant="ghost"
 								size="icon-xs"
-								className="text-muted-foreground pointer-coarse:size-11"
+								className={messageListClasses.actionButton}
 								onClick={() => onShareMessage({ scope: "through", position })}
 								aria-label="Share conversation to here"
 							/>
@@ -305,29 +278,6 @@ function MessageActions({
 //   <command-message>name</command-message>
 //   <command-name>/name</command-name>
 //   <command-args>…</command-args>
-const COMMAND_TAG_RE = /<command-(?:message|name|args)>[\s\S]*?<\/command-(?:message|name|args)>/g;
-
-function parseSlashCommand(content: string): {
-	name: string;
-	args?: string;
-	remaining: string;
-} | null {
-	const nameMatch = content.match(/<command-name>([\s\S]*?)<\/command-name>/);
-	if (!nameMatch) return null;
-	const argsMatch = content.match(/<command-args>([\s\S]*?)<\/command-args>/);
-	const remaining = content.replace(COMMAND_TAG_RE, "").trim();
-	return {
-		name: nameMatch[1].trim(),
-		args: argsMatch?.[1].trim() || undefined,
-		remaining,
-	};
-}
-
-// Claude Code's slash command expansion arrives as a user message whose body
-// is the skill's SKILL.md content — typically starts with "Base directory for this skill:".
-function isSkillExpansion(content: string): boolean {
-	return /^Base directory for this skill:/i.test(content.trimStart());
-}
 
 function UserMessageBody({
 	content,
@@ -341,7 +291,7 @@ function UserMessageBody({
 	const cmd = parseSlashCommand(content);
 	if (cmd) {
 		return (
-			<div className="space-y-2">
+			<div className={messageListClasses.stack}>
 				<SlashCommandPill name={cmd.name} args={cmd.args} />
 				{cmd.remaining && <Markdown content={cmd.remaining} highlightQuery={highlightQuery} />}
 			</div>
@@ -362,10 +312,10 @@ function UserMessageBody({
 
 function SlashCommandPill({ name, args }: { name: string; args?: string }) {
 	return (
-		<div className="inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-md border border-primary/20 bg-primary/5 px-2 py-1 font-mono text-xs">
-			<Terminal className="size-3 shrink-0 text-primary" />
-			<span className="font-medium text-primary">{name}</span>
-			{args && <span className="break-all text-muted-foreground">{args}</span>}
+		<div className={messageListClasses.command}>
+			<Terminal className={messageListClasses.commandIcon} />
+			<span className={messageListClasses.commandName}>{name}</span>
+			{args && <span className={messageListClasses.commandArgs}>{args}</span>}
 		</div>
 	);
 }
@@ -387,36 +337,28 @@ function CollapsibleBlock({
 		: false;
 	const visible = open || (revealMatch && containsMatch);
 	return (
-		<div className="rounded-md border border-dashed border-border/70 bg-muted/30">
+		<div className={messageListClasses.skill}>
 			<Button
 				variant="ghost"
 				size="sm"
 				onClick={() => setOpen((v) => !v)}
-				className="h-auto w-full justify-start rounded-md px-2.5 py-1.5 text-xs font-normal text-muted-foreground hover:text-foreground"
+				className={messageListClasses.skillTrigger}
 			>
 				<ChevronRight className={cn("size-3.5 transition-transform", visible && "rotate-90")} />
 				<span>{label}</span>
 				{!visible && (
-					<span className="text-xs text-muted-foreground">
+					<span className={messageListClasses.muted}>
 						({content.length.toLocaleString()} chars)
 					</span>
 				)}
 			</Button>
 			{visible && (
-				<div className="border-t border-border/50 px-3 py-2">
+				<div className={messageListClasses.skillBody}>
 					<Markdown content={content} highlightQuery={highlightQuery} />
 				</div>
 			)}
 		</div>
 	);
-}
-
-function formatToolPayload(value: string): string {
-	try {
-		return JSON.stringify(JSON.parse(value), null, 2);
-	} catch {
-		return value;
-	}
 }
 
 function ToolDetails({ call, result }: { call?: SessionToolCall; result?: SessionToolResult }) {
@@ -431,23 +373,21 @@ function ToolDetails({ call, result }: { call?: SessionToolCall; result?: Sessio
 	if (!first) return null;
 
 	return (
-		<Tabs defaultValue={first.key} className="min-w-0 gap-1.5">
+		<Tabs defaultValue={first.key} className={messageListClasses.tabs}>
 			{payloads.length > 1 ? (
-				<TabsList variant="line" className="h-7">
+				<TabsList variant="line" className={messageListClasses.tabList}>
 					{payloads.map((payload) => (
-						<TabsTrigger key={payload.key} value={payload.key} className="h-7 px-1.5 text-xs">
+						<TabsTrigger key={payload.key} value={payload.key} className={messageListClasses.tab}>
 							{payload.label}
 						</TabsTrigger>
 					))}
 				</TabsList>
 			) : (
-				<div className="text-3xs font-medium uppercase text-muted-foreground">{first.label}</div>
+				<div className={messageListClasses.payloadLabel}>{first.label}</div>
 			)}
 			{payloads.map((payload) => (
 				<TabsContent key={payload.key} value={payload.key}>
-					<pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all border-l-2 border-border bg-muted/30 px-3 py-2 font-mono text-xs text-foreground">
-						{formatToolPayload(payload.value)}
-					</pre>
+					<pre className={messageListClasses.payload}>{formatToolPayload(payload.value)}</pre>
 				</TabsContent>
 			))}
 		</Tabs>
@@ -472,35 +412,37 @@ function ToolActivity({
 	const timestamp = firstTimestamp ?? call?.timestamp ?? result?.timestamp;
 
 	return (
-		<div className={cn("flex gap-3 py-1.5", deferOffscreenRendering && OFFSCREEN_RENDERING_CLASS)}>
-			<div className="flex w-8 shrink-0 justify-center pt-2 text-muted-foreground">
-				<Wrench className="size-3.5" />
+		<div
+			className={cn(
+				messageListClasses.toolRow,
+				deferOffscreenRendering && OFFSCREEN_RENDERING_CLASS,
+			)}
+		>
+			<div className={messageListClasses.toolIconColumn}>
+				<Wrench className={messageListClasses.toolIcon} />
 			</div>
-			<div className="min-w-0 flex-1">
+			<div className={messageListClasses.content}>
 				<button
 					type="button"
 					disabled={!hasDetails}
 					onClick={() => setOpen((value) => !value)}
 					aria-expanded={hasDetails ? open : undefined}
-					className="flex min-h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/40 disabled:cursor-default disabled:hover:bg-transparent"
+					className={messageListClasses.toolTrigger}
 				>
-					<code className="truncate font-medium text-foreground">{name}</code>
+					<code className={messageListClasses.toolName}>{name}</code>
 					{isError ? (
-						<span className="inline-flex shrink-0 items-center gap-1 text-destructive">
-							<CircleX className="size-3.5" /> Error
+						<span className={messageListClasses.toolError}>
+							<CircleX className={messageListClasses.toolIcon} /> Error
 						</span>
 					) : result ? (
-						<span className="inline-flex shrink-0 items-center gap-1">
-							<CheckCircle2 className="size-3.5" /> Done
+						<span className={messageListClasses.toolStatus}>
+							<CheckCircle2 className={messageListClasses.toolIcon} /> Done
 						</span>
 					) : (
 						<span className="shrink-0">Called</span>
 					)}
 					{timestamp ? (
-						<span
-							className="ml-auto shrink-0 tabular-nums"
-							title={formatAbsoluteTooltip(timestamp)}
-						>
+						<span className={messageListClasses.toolTime} title={formatAbsoluteTooltip(timestamp)}>
 							{new Date(timestamp).toLocaleTimeString([], {
 								hour: "2-digit",
 								minute: "2-digit",
@@ -517,7 +459,7 @@ function ToolActivity({
 					/>
 				</button>
 				{open ? (
-					<div className="px-2 pb-2 pt-1">
+					<div className={messageListClasses.toolDetails}>
 						<ToolDetails call={call} result={result} />
 					</div>
 				) : null}
@@ -555,7 +497,11 @@ export function SessionTimelineRowView({
 		<>
 			{row.dividerTimestamp ? <DateDivider timestamp={row.dividerTimestamp} /> : null}
 			{row.kind === "message" ? (
-				<div className={row.isGroupStart && !row.dividerTimestamp ? "pt-2" : undefined}>
+				<div
+					className={
+						row.isGroupStart && !row.dividerTimestamp ? messageListClasses.groupStart : undefined
+					}
+				>
 					<MessageBlock
 						message={row.message}
 						userAvatar={userAvatar}

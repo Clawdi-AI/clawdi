@@ -224,9 +224,11 @@ export function MarkdownTree({
 		);
 	const blocks = (nodes: readonly MarkdownNode[]) =>
 		nodes.map((node, index) => (
-			<AppView key={node.position?.start.offset ?? index}>{block(node)}</AppView>
+			<AppView key={node.position?.start.offset ?? index}>
+				{block(node, index === nodes.length - 1)}
+			</AppView>
 		));
-	const block = (node: MarkdownNode): ReactNode => {
+	const block = (node: MarkdownNode, isLast = false): ReactNode => {
 		switch (node.type) {
 			case "definition":
 				return null;
@@ -246,7 +248,7 @@ export function MarkdownTree({
 				);
 			case "paragraph":
 				return (
-					<AppText selectable className={webBoth(styles.paragraph)}>
+					<AppText selectable className={webBoth(styles.paragraph, { last: isLast })}>
 						{inline(node)}
 					</AppText>
 				);
@@ -273,15 +275,15 @@ export function MarkdownTree({
 				return (
 					<AppView className={webView(node.ordered ? styles.orderedList : styles.unorderedList)}>
 						{node.children.map((item, index) => (
-							<AppView key={index} className="flex-row">
+							<AppView key={index} className="flex-row" style={{ marginTop: 4 }}>
 								<AppText className={webText(cardClassName)}>
 									{item.checked !== null && item.checked !== undefined
 										? item.checked
 											? "☑"
 											: "☐"
 										: node.ordered
-											? `${(node.start ?? 1) + index}.`
-											: "•"}
+											? `${(node.start ?? 1) + index}. `
+											: "• "}
 								</AppText>
 								<AppView className="flex-1">{blocks(item.children)}</AppView>
 							</AppView>
