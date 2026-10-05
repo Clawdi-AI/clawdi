@@ -70,7 +70,7 @@ export function platformOomProtectionLines(): string[] {
 /** These settings may wait for a natural start; changing them must not restart a gateway. */
 export function withoutOomProtection(contents: string): string {
 	return contents.replace(
-		/^# ClawdiOOMProtection=v1\r?\n(?:OOMScoreAdjust=-900\r?\n)?OOMPolicy=continue\r?\n(?:Environment=TERMINAL_LOCAL_MEMORY_MAX_MB=[1-9]\d*\r?\n)?# EndClawdiOOMProtection(?:\r?\n|$)/gm,
+		/^# ClawdiOOMProtection=v1\r?\nOOMPolicy=continue\r?\n(?:Environment=TERMINAL_LOCAL_MEMORY_MAX_MB=[1-9]\d*\r?\n)?# EndClawdiOOMProtection(?:\r?\n|$)/gm,
 		"",
 	);
 }

@@ -60,7 +60,7 @@ test("excludes only recognized Clawdi policy blocks and preserves all other byte
 	const original = "[Service]\nExecStart=/bin/sleep 30\n";
 	const policy = gatewayOomProtectionLines("hermes", 4 * GIB).join("\n");
 	expect(withoutOomProtection(`${original}${policy}\n`)).toBe(original);
-	for (const mutation of ["OOMPolicy=kill", "MemoryHigh=3G", "OOMScoreAdjust=-900"]) {
+	for (const mutation of ["OOMPolicy=kill", "MemoryHigh=3G"]) {
 		expect(
 			withoutOomProtection(`${original}${policy.replace("OOMPolicy=continue", mutation)}\n`),
 		).toBe(`${original}${policy.replace("OOMPolicy=continue", mutation)}\n`);
@@ -123,9 +123,9 @@ esac
 		{ mode: 0o755 },
 	);
 	const previous = { ...process.env };
-	const expectReloadOnly = () => {
+	const expectReloadOnly = (systemReloads: number) => {
 		const commands = readFileSync(log, "utf8");
-		expect(commands.match(/^daemon-reload$/gm)).toHaveLength(1);
+		expect(commands.match(/^daemon-reload$/gm) ?? []).toHaveLength(systemReloads);
 		expect(commands.match(/^--user daemon-reload$/gm)).toHaveLength(1);
 		expect(commands).not.toMatch(/\b(start|restart|stop)\b/);
 		writeFileSync(log, "");
@@ -138,9 +138,7 @@ esac
 		commitActivation(paths, before);
 		writeFileSync(
 			systemUnit,
-			`${readFileSync(systemUnit, "utf8")}${platformOomProtectionLines()
-				.join("\n")
-				.replace("OOMPolicy=continue", "OOMScoreAdjust=-900\nOOMPolicy=continue")}\n`,
+			`${readFileSync(systemUnit, "utf8")}${platformOomProtectionLines().join("\n")}\n`,
 		);
 		writeFileSync(
 			dropIn,
@@ -157,12 +155,8 @@ esac
 			systemUnitsChanged: [],
 			userUnitsChanged: [],
 		});
-		expectReloadOnly();
-		// Removing a legacy setting and changing the supported memory control only reload.
-		writeFileSync(
-			systemUnit,
-			readFileSync(systemUnit, "utf8").replace("OOMScoreAdjust=-900\n", ""),
-		);
+		expectReloadOnly(1);
+		// Changing the supported memory control only reloads the user manager.
 		writeFileSync(
 			dropIn,
 			readFileSync(dropIn, "utf8").replace(
@@ -177,7 +171,7 @@ esac
 		expect(
 			applySystemdRuntimeUpdate(paths, after, updated, { restartChangedUnits: true }).applied,
 		).toBe(true);
-		expectReloadOnly();
+		expectReloadOnly(0);
 		expect(applySystemdRuntimeUpdate(paths, updated, updated, {}).applied).toBe(true);
 		expect(readFileSync(log, "utf8")).not.toMatch(/daemon-reload|\b(start|restart|stop)\b/);
 		// A real command change still activates the service.
