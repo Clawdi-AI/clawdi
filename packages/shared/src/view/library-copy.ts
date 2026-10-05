@@ -21,6 +21,12 @@ export const LIBRARY_COPY = {
 	select: "Select",
 	transferKeys: "Copy or move keys",
 	manageAgents: "Manage agents",
+	chooseAgents: "Choose which Agents can use this Project.",
+	noAgentsAvailable: "No Agents available",
+	addAgentFirst:
+		"Add an Agent from Overview first, then link this Project here or from the Agent's Projects section.",
+	loadAgentsFailed: "Couldn't load Agents",
+	updateAgentsFailed: "Couldn't update Agent access",
 	projectBundleDescription:
 		"Keep reusable Skills and Vault access together, then link the whole Project to any Agent that needs it.",
 	projectSkillsDescription: "Reusable instructions that belong to this Project.",

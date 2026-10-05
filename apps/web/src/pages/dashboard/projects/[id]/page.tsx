@@ -165,7 +165,6 @@ function searchRecordToSearchParams(search: Record<string, unknown>): URLSearchP
 	return params;
 }
 
-const AGENT_PROJECTS_SECTION_LABEL = agentSectionLabel("projects");
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 const HostedWorkspaceSkillsPanel = IS_HOSTED_BUILD
 	? lazy(() =>
@@ -1328,21 +1327,22 @@ function ManageProjectAgentsDialog({
 			<DialogContent className={projectDetailClasses.agentsDialog}>
 				<DialogHeader>
 					<DialogTitle>{LIBRARY_COPY.manageAgents}</DialogTitle>
-					<DialogDescription>Choose which Agents can use this Project.</DialogDescription>
+					<DialogDescription>{LIBRARY_COPY.chooseAgents}</DialogDescription>
 				</DialogHeader>
 
 				{isLoadingAgents ? (
 					<Skeleton className={projectDetailClasses.textarea} />
 				) : agentsError ? (
-					<ApiErrorPanel error={agentsError} onRetry={onRetryAgents} title="Couldn't load Agents" />
+					<ApiErrorPanel
+						error={agentsError}
+						onRetry={onRetryAgents}
+						title={LIBRARY_COPY.loadAgentsFailed}
+					/>
 				) : orderedEnvironments.length === 0 ? (
 					<Alert>
 						<Bot className={projectDetailClasses.icon} />
-						<AlertTitle>No Agents available</AlertTitle>
-						<AlertDescription>
-							Add an Agent from Overview first, then link this Project here or from the Agent&apos;s{" "}
-							{AGENT_PROJECTS_SECTION_LABEL} section.
-						</AlertDescription>
+						<AlertTitle>{LIBRARY_COPY.noAgentsAvailable}</AlertTitle>
+						<AlertDescription>{LIBRARY_COPY.addAgentFirst}</AlertDescription>
 					</Alert>
 				) : (
 					<form

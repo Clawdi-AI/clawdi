@@ -27,6 +27,7 @@ import { EntityHeader, HeroCardSkeleton } from "../ui/entity-card";
 import { Icon } from "../ui/icon";
 import { IconChip } from "../ui/icon-chip";
 import { PageHeader, PageHeaderSkeleton } from "../ui/page-header";
+import { ManageProjectAgentsDialog } from "../ui/projects/manage-project-agents-dialog";
 import { Tabs, TabsList, TabsTrigger } from "../ui/tabs";
 import { Text } from "../ui/text";
 import { VaultCard } from "../ui/vault/vault-card";
@@ -55,6 +56,7 @@ export function ProjectDetailScreen() {
 function ProjectHub({ id }: { id?: string }) {
 	const t = useI18n();
 	const [tab, setTab] = useState("overview");
+	const [agentsOpen, setAgentsOpen] = useState(false);
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { sharing } = useMobileApi();
@@ -107,7 +109,7 @@ function ProjectHub({ id }: { id?: string }) {
 						}
 						actions={
 							<>
-								<Button size="sm" onPress={() => navigate("agents")}>
+								<Button size="sm" onPress={() => setAgentsOpen(true)}>
 									<Icon as={Bot} />
 									<Text>{t("libraryPort.manageAgents")}</Text>
 								</Button>
@@ -324,12 +326,22 @@ function ProjectHub({ id }: { id?: string }) {
 							{agents.isSuccess && !agents.data.length ? (
 								<EmptyState variant="inset" description={t("libraryPort.emptyProjectAgents")} />
 							) : null}
-							<Button variant="outline" size="sm" onPress={() => router.push("/agents")}>
+							<Button variant="outline" size="sm" onPress={() => setAgentsOpen(true)}>
 								<Text>{t("libraryPort.manageAgents")}</Text>
 							</Button>
 						</WebView>
 					) : null}
 				</>
+			) : null}
+			{project && agentsOpen ? (
+				<ManageProjectAgentsDialog
+					project={project}
+					linkedAgents={agents.data}
+					linkedError={agents.error}
+					onRetryLinked={() => void agents.refetch()}
+					open={agentsOpen}
+					onOpenChange={setAgentsOpen}
+				/>
 			) : null}
 		</LibraryPage>
 	);

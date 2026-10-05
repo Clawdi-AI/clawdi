@@ -228,6 +228,7 @@ export * from "./agent-framework-icon";
 export * from "./alert-dialog";
 export * from "./api-error-panel";
 export * from "./brand-icon-tile";
+export * from "./checkbox";
 export * from "./confirm-action";
 export * from "./dialog";
 export * from "./dropdown-menu";
