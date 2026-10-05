@@ -79,19 +79,16 @@ export function WhatsAppDeviceOnboarding({
 			data-v2="true"
 			data-whatsapp-account-choice
 		>
-			<p className={whatsappDeviceOnboardingClasses.description}>
-				Add a WhatsApp account you own by scanning a linked-device QR.
-			</p>
+			<p className={whatsappDeviceOnboardingClasses.description}>{copy.accountDescription}</p>
 			<Alert data-whatsapp-account-warning className={whatsappDeviceOnboardingClasses.warning}>
 				<TriangleAlert aria-hidden />
-				<AlertTitle>Use a dedicated number</AlertTitle>
+				<AlertTitle>{copy.warningTitle}</AlertTitle>
 				<AlertDescription className={whatsappDeviceOnboardingClasses.warningDescription}>
-					Clawdi uses WhatsApp’s linked-device feature. When linked to an Agent, replies are sent
-					from this account—use a separate number, not your primary personal one.
+					{copy.warningDescription}
 				</AlertDescription>
 			</Alert>
 			<p className={whatsappDeviceOnboardingClasses.readiness} role="status">
-				{readiness.isLoading ? "Checking linked-device availability…" : readinessMessage}
+				{readiness.isLoading ? copy.checking : readinessMessage}
 			</p>
 			<Button
 				type="button"
@@ -100,11 +97,9 @@ export function WhatsAppDeviceOnboarding({
 				onClick={() => setMode("custom")}
 			>
 				<QrCode className={whatsappDeviceOnboardingClasses.connectIcon} />
-				Connect your account
+				{copy.connectAccount}
 			</Button>
-			<p className={whatsappDeviceOnboardingClasses.description}>
-				This adds the account under Custom bots. Agent Link and chat Pair are separate next steps.
-			</p>
+			<p className={whatsappDeviceOnboardingClasses.description}>{copy.accountNextSteps}</p>
 		</div>
 	);
 }

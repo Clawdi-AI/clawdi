@@ -8,10 +8,15 @@ import {
 } from "@clawdi/shared/api";
 import { pairingQr } from "@clawdi/shared/qr";
 import { channelFormClasses, whatsappDeviceOnboardingClasses as styles } from "@clawdi/shared/ui";
-import { channelFormCopy, whatsappOnboardingCopy as copy } from "@clawdi/shared/view";
+import {
+	channelFormCopy,
+	whatsappOnboardingCopy as copy,
+	whatsappReadinessMessage,
+} from "@clawdi/shared/view";
 import { onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
 import { randomUUID } from "expo-crypto";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { QrCode, TriangleAlert } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
@@ -22,11 +27,12 @@ import { useMobileApi } from "../../providers/api-provider";
 import { ActionButton as NativeButton, NativeSwitch } from "../../ui/agents/controls";
 import { Alert } from "../../ui/alert";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../ui/dialog";
+import { Icon } from "../../ui/icon";
 import { Input as AppTextInput, Label } from "../../ui/input";
 import { AppText, AppView } from "../../ui/primitives";
 import { QrImage } from "../../ui/qr-image";
 import { ReadScreen } from "../../ui/read-screen";
-import { WebText, WebView, webView } from "../../ui/web-layout";
+import { WebText, WebView, webBoth, webView } from "../../ui/web-layout";
 import { routeParam } from "../read-helpers";
 import { useChannelQuery } from "./queries";
 
@@ -56,6 +62,7 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 	const [name, setName] = useState("");
 	const [phone, setPhone] = useState("");
 	const [approved, setApproved] = useState(false);
+	const [configuring, setConfiguring] = useState(false);
 	const [started, setStarted] = useState(false);
 	const attempt = useRef<{ id: string; name: string } | null>(null);
 	const generation = useRef(0);
@@ -229,164 +236,195 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 							{accountId ? channelFormCopy.repairTitle : channelFormCopy.whatsappTitle}
 						</DialogTitle>
 					</DialogHeader>
-					<Alert>
-						<WebText recipe={styles.hint}>
-							{t(accountId ? "whatsapp.repairWarning" : "whatsapp.warning")}
-						</WebText>
-					</Alert>
-					<WebText recipe={styles.hint}>{t("whatsapp.leaving")}</WebText>
-					{!online ? <AppText accessibilityRole="alert">{t("whatsapp.offline")}</AppText> : null}
-					{!session ? (
-						<>
-							{!ready ? <AppText>{t("whatsapp.unavailable")}</AppText> : null}
-							{!accountId ? (
-								<WebView recipe={styles.nameField}>
-									<Label>{copy.accountName}</Label>
-									<AppTextInput
-										accessibilityLabel={copy.accountName}
-										placeholder={copy.accountPlaceholder}
-										value={name}
-										onChangeText={setName}
-										editable={!started && !action.busy}
-										maxLength={120}
-									/>
-									<WebText recipe={styles.hint}>{copy.nameHint}</WebText>
-								</WebView>
-							) : null}
-							<NativeSwitch
-								value={approved}
-								onValueChange={setApproved}
-								disabled={action.busy}
-								label={t("whatsapp.approve")}
-							/>
+					{!accountId && !session && !configuring ? (
+						<WebView recipe={styles.accountChoice}>
+							<WebText recipe={styles.description}>{copy.accountDescription}</WebText>
+							<Alert
+								icon={TriangleAlert}
+								title={copy.warningTitle}
+								className={webView(styles.warning)}
+							>
+								<WebText recipe={styles.warningDescription}>{copy.warningDescription}</WebText>
+							</Alert>
+							<WebText recipe={styles.readiness} accessibilityRole="text">
+								{readiness.isPending
+									? copy.checking
+									: whatsappReadinessMessage(readiness.data, readiness.isError)}
+							</WebText>
 							<NativeButton
-								label={
-									started
-										? t("whatsapp.retryStart")
-										: accountId
-											? t("whatsapp.repair")
-											: copy.generateQr
-								}
-								disabled={!ready || !approved || action.busy || (!accountId && !name.trim())}
-								onPress={() =>
-									void run((signal) => {
-										setStarted(true);
-										if (accountId) return whatsapp.repair(accountId, signal);
-										const saved = attempt.current ?? { id: randomUUID(), name: name.trim() };
-										attempt.current = saved;
-										return whatsapp.start(saved.id, saved.name, signal);
-									})
-								}
+								label={copy.connectAccount}
+								variant="default"
+								className={webView(styles.connectAction)}
+								icon={<Icon as={QrCode} className={webBoth(styles.connectIcon)} />}
+								disabled={!ready || readiness.isPending || action.busy}
+								onPress={() => setConfiguring(true)}
 							/>
-							{started ? <AppText>{t("whatsapp.uncertain")}</AppText> : null}
-							<NativeButton
-								label={t("channels.refresh")}
-								disabled={action.busy}
-								onPress={() =>
-									void action.run(async () => {
-										if (accountId) await owned.refetch();
-										else await readiness.refetch();
-									})
-								}
-							/>
-						</>
+							<WebText recipe={styles.description}>{copy.accountNextSteps}</WebText>
+						</WebView>
 					) : (
 						<>
-							<WebView recipe={styles.centeredState}>
-								<WebText recipe={styles.stateTitle}>
-									{session.state === "ready" ? t("whatsapp.ready") : copy[session.state]}
+							<Alert>
+								<WebText recipe={styles.hint}>
+									{t(accountId ? "whatsapp.repairWarning" : "whatsapp.warning")}
 								</WebText>
-							</WebView>
-							{expired && whatsappOnboardingShouldPoll(session.state) ? (
-								<AppText>{t("whatsapp.expired")}</AppText>
+							</Alert>
+							<WebText recipe={styles.hint}>{t("whatsapp.leaving")}</WebText>
+							{!online ? (
+								<AppText accessibilityRole="alert">{t("whatsapp.offline")}</AppText>
 							) : null}
-							{qr ? (
-								<AppView className="items-center">
-									<QrImage matrix={qr} label={t("whatsapp.qrLabel")} />
-								</AppView>
-							) : null}
-							{session.state === "ready" && !expired ? (
+							{!session ? (
 								<>
-									<WebText recipe={styles.pairingCodeTitle}>{copy.scanInstruction}</WebText>
-									<WebText recipe={styles.hint}>{copy.phoneWarning}</WebText>
-									{!qr && session.method === "qr" ? (
-										<AppText>{t("whatsapp.qrWaiting")}</AppText>
-									) : null}
-									{focused && active && session.method === "code" && session.pairing_code ? (
-										<>
-											<WebText recipe={styles.pairingCodeTitle}>
-												{t("whatsapp.codeInstructions")}
-											</WebText>
-											<AppText selectable className="text-2xl font-semibold text-foreground">
-												{session.pairing_code}
-											</AppText>
-										</>
-									) : null}
-									{session.manual_pairing_code_supported && session.method !== "code" ? (
-										<WebView recipe={styles.fallback}>
-											<WebText recipe={styles.pairingCodeTitle}>{copy.fallback}</WebText>
+									{!ready ? <AppText>{t("whatsapp.unavailable")}</AppText> : null}
+									{!accountId ? (
+										<WebView recipe={styles.nameField}>
+											<Label>{copy.accountName}</Label>
 											<AppTextInput
-												accessibilityLabel={t("whatsapp.phone")}
-												placeholder={t("whatsapp.phone")}
-												value={phone}
-												onChangeText={setPhone}
-												keyboardType="phone-pad"
-												maxLength={15}
-												autoComplete="off"
-												autoCorrect={false}
-												editable={!action.busy}
+												accessibilityLabel={copy.accountName}
+												placeholder={copy.accountPlaceholder}
+												value={name}
+												onChangeText={setName}
+												editable={!started && !action.busy}
+												maxLength={120}
 											/>
-											<NativeButton
-												label={copy.requestCode}
-												disabled={
-													!ready ||
-													action.busy ||
-													!phone ||
-													Boolean(whatsappPhoneNumberError(phone))
-												}
-												onPress={() => {
-													const value = phone;
-													void run((signal) => whatsapp.pairingCode(session.id, value, signal));
-												}}
-											/>
+											<WebText recipe={styles.hint}>{copy.nameHint}</WebText>
 										</WebView>
 									) : null}
+									<NativeSwitch
+										value={approved}
+										onValueChange={setApproved}
+										disabled={action.busy}
+										label={t("whatsapp.approve")}
+									/>
+									<NativeButton
+										label={
+											started
+												? t("whatsapp.retryStart")
+												: accountId
+													? t("whatsapp.repair")
+													: copy.generateQr
+										}
+										disabled={!ready || !approved || action.busy || (!accountId && !name.trim())}
+										onPress={() =>
+											void run((signal) => {
+												setStarted(true);
+												if (accountId) return whatsapp.repair(accountId, signal);
+												const saved = attempt.current ?? { id: randomUUID(), name: name.trim() };
+												attempt.current = saved;
+												return whatsapp.start(saved.id, saved.name, signal);
+											})
+										}
+									/>
+									{started ? <AppText>{t("whatsapp.uncertain")}</AppText> : null}
+									<NativeButton
+										label={t("channels.refresh")}
+										disabled={action.busy}
+										onPress={() =>
+											void action.run(async () => {
+												if (accountId) await owned.refetch();
+												else await readiness.refetch();
+											})
+										}
+									/>
 								</>
-							) : null}
-							{session.state !== "connected" ? (
-								<NativeButton
-									label={t("whatsapp.check")}
-									disabled={!ready || action.busy}
-									onPress={() => void run((signal) => whatsapp.get(session.id, signal))}
-								/>
 							) : (
-								<NativeButton
-									label={t("whatsapp.review")}
-									disabled={action.busy}
-									onPress={() => router.replace("/channels")}
-								/>
+								<>
+									<WebView recipe={styles.centeredState}>
+										<WebText recipe={styles.stateTitle}>
+											{session.state === "ready" ? t("whatsapp.ready") : copy[session.state]}
+										</WebText>
+									</WebView>
+									{expired && whatsappOnboardingShouldPoll(session.state) ? (
+										<AppText>{t("whatsapp.expired")}</AppText>
+									) : null}
+									{qr ? (
+										<AppView className="items-center">
+											<QrImage matrix={qr} label={t("whatsapp.qrLabel")} />
+										</AppView>
+									) : null}
+									{session.state === "ready" && !expired ? (
+										<>
+											<WebText recipe={styles.pairingCodeTitle}>{copy.scanInstruction}</WebText>
+											<WebText recipe={styles.hint}>{copy.phoneWarning}</WebText>
+											{!qr && session.method === "qr" ? (
+												<AppText>{t("whatsapp.qrWaiting")}</AppText>
+											) : null}
+											{focused && active && session.method === "code" && session.pairing_code ? (
+												<>
+													<WebText recipe={styles.pairingCodeTitle}>
+														{t("whatsapp.codeInstructions")}
+													</WebText>
+													<AppText selectable className="text-2xl font-semibold text-foreground">
+														{session.pairing_code}
+													</AppText>
+												</>
+											) : null}
+											{session.manual_pairing_code_supported && session.method !== "code" ? (
+												<WebView recipe={styles.fallback}>
+													<WebText recipe={styles.pairingCodeTitle}>{copy.fallback}</WebText>
+													<AppTextInput
+														accessibilityLabel={t("whatsapp.phone")}
+														placeholder={t("whatsapp.phone")}
+														value={phone}
+														onChangeText={setPhone}
+														keyboardType="phone-pad"
+														maxLength={15}
+														autoComplete="off"
+														autoCorrect={false}
+														editable={!action.busy}
+													/>
+													<NativeButton
+														label={copy.requestCode}
+														disabled={
+															!ready ||
+															action.busy ||
+															!phone ||
+															Boolean(whatsappPhoneNumberError(phone))
+														}
+														onPress={() => {
+															const value = phone;
+															void run((signal) => whatsapp.pairingCode(session.id, value, signal));
+														}}
+													/>
+												</WebView>
+											) : null}
+										</>
+									) : null}
+									{session.state !== "connected" ? (
+										<NativeButton
+											label={t("whatsapp.check")}
+											disabled={!ready || action.busy}
+											onPress={() => void run((signal) => whatsapp.get(session.id, signal))}
+										/>
+									) : (
+										<NativeButton
+											label={t("whatsapp.review")}
+											disabled={action.busy}
+											onPress={() => router.replace("/channels")}
+										/>
+									)}
+									{session.state === "expired" ||
+									session.state === "error" ||
+									session.state === "canceled" ? (
+										<NativeButton
+											label={t("whatsapp.retry")}
+											disabled={!ready || action.busy}
+											onPress={() => void run((signal) => whatsapp.retry(session.id, signal))}
+										/>
+									) : null}
+									{whatsappOnboardingRequiresCleanup(session.state) ? (
+										<NativeButton
+											label={t("whatsapp.cancel")}
+											disabled={!ready || action.busy}
+											onPress={() => void run((signal) => whatsapp.cancel(session.id, signal))}
+										/>
+									) : null}
+								</>
 							)}
-							{session.state === "expired" ||
-							session.state === "error" ||
-							session.state === "canceled" ? (
-								<NativeButton
-									label={t("whatsapp.retry")}
-									disabled={!ready || action.busy}
-									onPress={() => void run((signal) => whatsapp.retry(session.id, signal))}
-								/>
-							) : null}
-							{whatsappOnboardingRequiresCleanup(session.state) ? (
-								<NativeButton
-									label={t("whatsapp.cancel")}
-									disabled={!ready || action.busy}
-									onPress={() => void run((signal) => whatsapp.cancel(session.id, signal))}
-								/>
+							{action.error || pollError ? (
+								<AppText accessibilityRole="alert">{t("whatsapp.failed")}</AppText>
 							) : null}
 						</>
 					)}
-					{action.error || pollError ? (
-						<AppText accessibilityRole="alert">{t("whatsapp.failed")}</AppText>
-					) : null}
 				</DialogContent>
 			</Dialog>
 		</ReadScreen>
