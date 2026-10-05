@@ -1,31 +1,52 @@
 import type { components } from "@clawdi/shared/api";
+import { isSearchQueryReady } from "@clawdi/shared/consts";
+import { ENTITY_CARD_MASONRY_CLASS, memoriesSurfaceClasses } from "@clawdi/shared/ui";
+import { getProjectResourceDefinition, MEMORY_CATEGORIES } from "@clawdi/shared/view";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
-import { useRef, useState } from "react";
-import { Alert, type FlatList } from "react-native";
+import { Plus } from "lucide-react-native";
+import { useEffect, useState } from "react";
+import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
-import { NativeButton } from "../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../ui/primitives";
-import { InventoryList } from "./inventory-list";
+import { ApiErrorPanel } from "../ui/api-error-panel";
+import { Button } from "../ui/button";
+import { LibraryPage } from "../ui/detail/layout";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
+import { EmptyState } from "../ui/empty-state";
+import { HeroCardSkeleton } from "../ui/entity-card";
+import { Icon } from "../ui/icon";
+import { Input } from "../ui/input";
+import { ListToolbar } from "../ui/list-toolbar";
+import { MemoryCard } from "../ui/memories/memory-card";
+import { PageHeader } from "../ui/page-header";
+import { SearchInput } from "../ui/search-input";
+import { Text } from "../ui/text";
+import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
+import { WebView, webView } from "../ui/web-layout";
+
 import { MemorySettings } from "./memory-settings";
 
 type Memory = components["schemas"]["MemoryResponse"];
 
-export function useCloudMemories(search = "") {
+export function useCloudMemories(search = "", category = "all") {
 	const { cloud } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	return useInfiniteQuery({
-		queryKey: [...accountQueryKey(scope, "cloud-memories"), search],
+		queryKey: [...accountQueryKey(scope, "cloud-memories"), search, category],
 		initialPageParam: 1,
 		queryFn: ({ signal, pageParam }) =>
 			read(
 				(readSignal) =>
 					cloud.listMemories(
-						{ page: pageParam, page_size: 25, q: search || undefined },
+						{
+							page: pageParam,
+							page_size: 25,
+							q: search || undefined,
+							category: category === "all" ? undefined : category,
+						},
 						readSignal,
 					),
 				signal,
@@ -37,24 +58,9 @@ export function useCloudMemories(search = "") {
 	});
 }
 
-export function MemoryRow({ memory, onOpen }: { memory: Memory; onOpen?: () => void }) {
-	const t = useI18n();
-	return (
-		<AppView className="gap-2 rounded-2xl bg-card p-4">
-			<AppText selectable className="text-base leading-6 text-foreground">
-				{memory.content}
-			</AppText>
-			<AppText className="text-xs text-muted-foreground">
-				{memory.category || t("memories.unknown")} · {memory.source}
-			</AppText>
-			{memory.tags?.length ? (
-				<AppText className="text-xs text-muted-foreground">{memory.tags.join(" · ")}</AppText>
-			) : null}
-			{onOpen ? <NativeButton label={t("memories.detail")} onPress={onOpen} /> : null}
-		</AppView>
-	);
+export function MemoryRow({ memory }: { memory: Memory; onOpen?: () => void }) {
+	return <MemoryCard memory={memory} />;
 }
-
 export function MemoriesScreen() {
 	const scope = useAccountScope();
 	return <MemoriesView key={`${scope.accountKey}:${scope.generation}`} />;
@@ -62,17 +68,23 @@ export function MemoriesScreen() {
 
 function MemoriesView() {
 	const t = useI18n();
-	const router = useRouter();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { cloud } = useMobileApi();
 	const action = useAuthAction(scope);
 	const [content, setContent] = useState("");
 	const [editing, setEditing] = useState<string | null>(null);
-	const [searchDraft, setSearchDraft] = useState("");
+	const [category, setCategory] = useState("all");
+	const [open, setOpen] = useState(false);
 	const [search, setSearch] = useState("");
-	const listRef = useRef<FlatList<Memory>>(null);
-	const memories = useCloudMemories(search);
+
+	const [debouncedSearch, setDebouncedSearch] = useState(search);
+	useEffect(() => {
+		const timer = setTimeout(() => setDebouncedSearch(search), 250);
+		return () => clearTimeout(timer);
+	}, [search]);
+	const searchQuery = isSearchQueryReady(debouncedSearch.trim()) ? debouncedSearch.trim() : "";
+	const memories = useCloudMemories(searchQuery, category);
 	const items = [
 		...new Map(
 			(memories.data?.pages.flatMap((page) => page.items) ?? []).map((memory) => [
@@ -95,6 +107,7 @@ function MemoriesView() {
 			if (!isCurrent()) return;
 			setContent("");
 			setEditing(null);
+			setOpen(false);
 			await memories.refetch();
 		});
 	const remove = (memory: Memory) => {
@@ -111,6 +124,7 @@ function MemoriesView() {
 						if (!isCurrent()) return;
 						if (editing === memory.id) {
 							setEditing(null);
+							setOpen(false);
 							setContent("");
 						}
 						await memories.refetch();
@@ -120,92 +134,115 @@ function MemoriesView() {
 		]);
 	};
 	return (
-		<InventoryList
-			listRef={listRef}
-			header={
-				<AppView className="gap-3">
-					<MemorySettings />
-					<AppTextInput
-						accessibilityLabel={t("memories.search")}
-						value={searchDraft}
-						onChangeText={setSearchDraft}
-						onSubmitEditing={() => setSearch(searchDraft.trim())}
-						className="rounded-xl bg-card p-3 text-foreground"
-					/>
-					<NativeButton
-						label={t("memories.search")}
-						onPress={() => setSearch(searchDraft.trim())}
-					/>
-					{search ? <AppText>{t("memories.searchLimit")}</AppText> : null}
-					<AppText>{t(editing ? "memories.edit" : "memories.create")}</AppText>
-					<AppTextInput
-						multiline
-						accessibilityLabel={t("memories.content")}
-						value={content}
-						onChangeText={setContent}
-						editable={!action.busy}
-						className="rounded-xl bg-card p-3 text-foreground"
-					/>
-					<NativeButton
-						label={t("memories.saveContent")}
-						disabled={action.busy || !content.trim()}
-						onPress={() => void save()}
-					/>
-					{editing ? (
-						<NativeButton
-							label={t("account.cancel")}
-							disabled={action.busy}
+		<LibraryPage>
+			<PageHeader
+				title={t("memories.title")}
+				description={getProjectResourceDefinition("memories").managementDescription}
+				actions={
+					<>
+						<MemorySettings />
+						<Button
+							size="sm"
 							onPress={() => {
 								setEditing(null);
 								setContent("");
+								setOpen(true);
 							}}
-						/>
-					) : null}
-					{action.error ? (
-						<AppText accessibilityRole="alert">{t("memories.mutationFailed")}</AppText>
-					) : null}
-				</AppView>
-			}
-			items={items}
-			title={t("memories.title")}
-			description={t("memories.description")}
-			empty={t(memories.isPending ? "loading.app" : "memories.empty")}
-			renderItem={(memory) => (
-				<AppView className="gap-2">
-					<MemoryRow
-						memory={memory}
-						onOpen={() => {
-							if (scope.isCurrent() && !scope.signal.aborted)
-								router.push({ pathname: "/memories/[memoryId]", params: { memoryId: memory.id } });
+						>
+							<Icon as={Plus} />
+							<Text>{t("libraryPort.createMemory")}</Text>
+						</Button>
+					</>
+				}
+			/>
+			<ListToolbar
+				search={
+					<SearchInput
+						value={search}
+						onChange={setSearch}
+						placeholder={t("libraryPort.searchMemories")}
+					/>
+				}
+				filters={
+					<ToggleGroup
+						value={[category]}
+						onValueChange={(v) => {
+							if (v[0]) setCategory(v[0]);
 						}}
+						variant="outline"
+						size="sm"
+						spacing={1}
+						className={webView(memoriesSurfaceClasses.filters)}
+					>
+						{MEMORY_CATEGORIES.map((c) => (
+							<ToggleGroupItem key={c.value} value={c.value}>
+								{c.label}
+							</ToggleGroupItem>
+						))}
+					</ToggleGroup>
+				}
+			/>
+			{memories.error ? (
+				<ApiErrorPanel error={memories.error} onRetry={() => void memories.refetch()} />
+			) : null}
+			<WebView recipe={ENTITY_CARD_MASONRY_CLASS}>
+				{memories.isPending
+					? [0, 1, 2].map((i) => <HeroCardSkeleton key={i} />)
+					: items.map((memory) => (
+							<MemoryCard
+								key={memory.id}
+								memory={memory}
+								searchQuery={searchQuery}
+								onDelete={() => remove(memory)}
+								onEdit={() => {
+									setEditing(memory.id);
+									setContent(memory.content);
+									setOpen(true);
+								}}
+							/>
+						))}
+			</WebView>
+			{!memories.isPending && !memories.error && !items.length ? (
+				<EmptyState
+					description={t(
+						search || category !== "all" ? "libraryPort.noMemoryMatches" : "libraryPort.noMemories",
+					)}
+				/>
+			) : null}
+			{memories.hasNextPage ? (
+				<Button
+					variant="outline"
+					disabled={memories.isFetching}
+					onPress={() => void memories.fetchNextPage()}
+				>
+					<Text>{t("inventory.loadMore")}</Text>
+				</Button>
+			) : null}
+			<Dialog
+				open={open}
+				onOpenChange={(v) => {
+					if (!action.busy) setOpen(v);
+				}}
+			>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>{t(editing ? "memories.edit" : "libraryPort.createMemory")}</DialogTitle>
+					</DialogHeader>
+					<Input
+						multiline
+						value={content}
+						onChangeText={setContent}
+						editable={!action.busy}
+						accessibilityLabel={t("libraryPort.content")}
 					/>
-					<NativeButton
-						label={t("memories.edit")}
-						disabled={action.busy}
-						onPress={() => {
-							setEditing(memory.id);
-							setContent(memory.content);
-							listRef.current?.scrollToOffset({ offset: 0, animated: true });
-						}}
-					/>
-					<NativeButton
-						label={t("memories.remove")}
-						disabled={action.busy}
-						onPress={() => remove(memory)}
-					/>
-				</AppView>
-			)}
-			refreshing={memories.isRefetching}
-			onRefresh={() => {
-				if (!memories.isFetching) void memories.refetch();
-			}}
-			error={memories.isError}
-			onRetry={() => void memories.refetch()}
-			busy={memories.isFetching}
-			more={memories.hasNextPage}
-			onMore={() => {
-				if (!memories.isFetching) void memories.fetchNextPage();
-			}}
-		/>
+					{action.error ? <ApiErrorPanel error={action.error} /> : null}
+					<DialogFooter>
+						<Button disabled={action.busy || !content.trim()} onPress={() => void save()}>
+							<Text>{t(editing ? "libraryPort.save" : "libraryPort.createMemory")}</Text>
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+		</LibraryPage>
 	);
 }

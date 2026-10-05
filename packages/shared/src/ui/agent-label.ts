@@ -1,3 +1,9 @@
+import {
+	sessionAgentFallbackSizes,
+	sessionAgentIconRadius,
+	sessionAgentIconSizes,
+} from "./session-meta";
+
 /** AgentLabel's compact billing identity, shared verbatim with Web. */
 export const agentLabelClasses = {
 	root: "flex min-w-0 items-center gap-3",
@@ -9,7 +15,7 @@ export const agentLabelClasses = {
 	mediumSubtitleGap: "mt-0.5",
 } as const;
 export const agentIconClasses = {
-	medium: "size-6",
-	mediumFallback: "size-3.5",
-	rounded: "rounded-md",
+	medium: sessionAgentIconSizes.md,
+	mediumFallback: sessionAgentFallbackSizes.md,
+	rounded: sessionAgentIconRadius.rounded,
 } as const;

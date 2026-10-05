@@ -1,18 +1,37 @@
 import { type components, isWritableSkillProject, type Project } from "@clawdi/shared/api";
+import { HERO_GRID_CLASS, projectDetailClasses } from "@clawdi/shared/ui";
+import {
+	displayProjectName,
+	formatResourceCount,
+	getProjectResourceDefinition,
+	isCustomProject,
+} from "@clawdi/shared/view";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
+import { Plus } from "lucide-react-native";
 import { useState } from "react";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
-import { NativeButton } from "../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../ui/primitives";
-import { InventoryList } from "./inventory-list";
+import { ApiErrorPanel } from "../ui/api-error-panel";
+import { Button } from "../ui/button";
+import { LibraryPage } from "../ui/detail/layout";
+import { EmptyState } from "../ui/empty-state";
+import { HeroCardSkeleton } from "../ui/entity-card";
+import { Icon } from "../ui/icon";
+import { ListToolbar } from "../ui/list-toolbar";
+import { PageHeader } from "../ui/page-header";
+import { ProjectResourceCard } from "../ui/projects/project-resource-card";
+import { SearchInput } from "../ui/search-input";
+import { SkillCard } from "../ui/skills/skill-card";
+import { Text } from "../ui/text";
+import { WebText, WebView } from "../ui/web-layout";
 import { ProjectResourceBoundary, ProjectScopeHeader } from "./project-scope";
+import { useCloudProjects } from "./projects";
 
 type Skill = components["schemas"]["SkillSummaryResponse"];
 
-export function useCloudSkills(projectId?: string, search = "") {
+export function useCloudSkills(projectId?: string, search = "", enabled = true) {
 	const { cloud } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -30,37 +49,22 @@ export function useCloudSkills(projectId?: string, search = "") {
 			),
 		getNextPageParam: (page) =>
 			page.items.length && page.page * page.page_size < page.total ? page.page + 1 : undefined,
-		enabled: scope.isReady,
+		enabled: scope.isReady && enabled,
 		retry: false,
 	});
 }
 
 export function SkillRow({ skill }: { skill: Skill }) {
-	const t = useI18n();
 	return (
-		<AppView className="gap-2 rounded-2xl bg-card p-4">
-			<AppText className="text-lg font-semibold text-foreground">
-				{skill.name || skill.skill_key || t("skills.unknown")}
-			</AppText>
-			<AppText className="text-sm text-muted-foreground">
-				{skill.description ?? skill.skill_key}
-			</AppText>
-			<AppText className="text-xs text-muted-foreground">
-				{skill.source} · v{skill.version}
-			</AppText>
-			<NativeButton
-				label={t("skills.open")}
-				onPress={() =>
-					router.push({
-						pathname: "/skills/detail",
-						params: { projectId: skill.project_id ?? "", skillKey: skill.skill_key },
-					})
-				}
-			/>
-		</AppView>
+		<SkillCard
+			skill={skill}
+			link={{
+				to: "/skills/detail",
+				search: { projectId: skill.project_id ?? "", skillKey: skill.skill_key },
+			}}
+		/>
 	);
 }
-
 export function SkillsScreen() {
 	return (
 		<ProjectResourceBoundary>
@@ -68,66 +72,108 @@ export function SkillsScreen() {
 		</ProjectResourceBoundary>
 	);
 }
+
 function SkillsView({ project }: { project?: Project }) {
 	const t = useI18n();
 	const [search, setSearch] = useState("");
-	const [query, setQuery] = useState("");
-	const skills = useCloudSkills(project?.id, query);
-	const items = skills.data?.pages.flatMap((page) => page.items) ?? [];
+	const projects = useCloudProjects();
+	const skills = useCloudSkills(project?.id, search, Boolean(project));
+	const rows = (projects.data ?? [])
+		.filter(isCustomProject)
+		.sort((a, b) => displayProjectName(a).localeCompare(displayProjectName(b)));
+	const items = skills.data?.pages.flatMap((p) => p.items) ?? [];
+	const writable = !project || (isWritableSkillProject(project) && !project.archived_at);
 	return (
-		<InventoryList
-			items={items}
-			header={
-				<AppView className="gap-3">
+		<LibraryPage>
+			<PageHeader
+				title={t("skills.title")}
+				description={getProjectResourceDefinition("skills").managementDescription}
+				actions={
+					project && writable ? (
+						<Button
+							size="sm"
+							onPress={() =>
+								router.push({ pathname: "/skills/new", params: { projectId: project.id } })
+							}
+						>
+							<Icon as={Plus} />
+							<Text>{t("libraryPort.createSkill")}</Text>
+						</Button>
+					) : undefined
+				}
+			/>
+			{!project ? (
+				<>
+					<WebText recipe={projectDetailClasses.heading}>{t("libraryPort.chooseProject")}</WebText>
+					{projects.error ? (
+						<ApiErrorPanel error={projects.error} onRetry={() => void projects.refetch()} />
+					) : null}
+					<WebView recipe={HERO_GRID_CLASS}>
+						{projects.isPending
+							? [0, 1, 2].map((i) => <HeroCardSkeleton key={i} />)
+							: rows.map((p) => (
+									<ProjectResourceCard
+										key={p.id}
+										project={p}
+										footer={[
+											formatResourceCount(p.skill_count, "skill"),
+											formatResourceCount(p.vault_count, "vault"),
+										]}
+										link={{ to: "/skills", search: { projectId: p.id } }}
+									/>
+								))}
+					</WebView>
+				</>
+			) : (
+				<>
 					<ProjectScopeHeader project={project} />
-					<AppTextInput
-						accessibilityLabel={t("skills.search")}
-						placeholder={t("skills.search")}
-						value={search}
-						onChangeText={setSearch}
-						maxLength={200}
-						className="rounded-xl bg-card p-3 text-foreground"
+					<ListToolbar
+						search={
+							<SearchInput
+								value={search}
+								onChange={setSearch}
+								placeholder={t("libraryPort.searchSkills")}
+							/>
+						}
+						actions={
+							writable ? (
+								<Button
+									variant="outline"
+									size="sm"
+									onPress={() =>
+										router.push({ pathname: "/skills/archive", params: { projectId: project.id } })
+									}
+								>
+									<Text>{t("skillArchive.title")}</Text>
+								</Button>
+							) : undefined
+						}
 					/>
-					<NativeButton label={t("vault.searchAction")} onPress={() => setQuery(search.trim())} />
-					{!project || (isWritableSkillProject(project) && !project.archived_at) ? (
-						<NativeButton
-							label={t("skillArchive.title")}
-							onPress={() =>
-								router.push({
-									pathname: "/skills/archive",
-									params: project ? { projectId: project.id } : {},
-								})
-							}
-						/>
+					{skills.error ? (
+						<ApiErrorPanel error={skills.error} onRetry={() => void skills.refetch()} />
 					) : null}
-					{!project || (isWritableSkillProject(project) && !project.archived_at) ? (
-						<NativeButton
-							label={t("skills.create")}
-							onPress={() =>
-								router.push({
-									pathname: "/skills/new",
-									params: project ? { projectId: project.id } : {},
-								})
-							}
-						/>
+					<WebView recipe={HERO_GRID_CLASS}>
+						{skills.isPending ? (
+							[0, 1, 2].map((i) => <HeroCardSkeleton compact key={i} />)
+						) : items.length ? (
+							items.map((skill) => (
+								<SkillRow key={`${skill.project_id}:${skill.skill_key}`} skill={skill} />
+							))
+						) : !skills.error ? (
+							<EmptyState description={t("skills.empty")} />
+						) : null}
+					</WebView>
+					{skills.hasNextPage ? (
+						<Button
+							variant="outline"
+							disabled={skills.isFetching}
+							onPress={() => void skills.fetchNextPage()}
+						>
+							<Text>{t("inventory.loadMore")}</Text>
+						</Button>
 					) : null}
-				</AppView>
-			}
-			title={t("skills.title")}
-			description={t("skills.summary")}
-			empty={t("skills.empty")}
-			renderItem={(skill) => <SkillRow skill={skill} />}
-			refreshing={skills.isRefetching}
-			onRefresh={() => {
-				if (!skills.isFetching) void skills.refetch();
-			}}
-			error={skills.isError}
-			onRetry={() => void skills.refetch()}
-			busy={skills.isFetching}
-			more={skills.hasNextPage}
-			onMore={() => {
-				if (!skills.isFetching) void skills.fetchNextPage();
-			}}
-		/>
+				</>
+			)}
+		</LibraryPage>
 	);
 }

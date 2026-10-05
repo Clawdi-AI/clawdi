@@ -5,6 +5,7 @@ import {
 	SEARCH_QUERY_MAX_LENGTH,
 	SEARCH_QUERY_MIN_LENGTH,
 } from "@clawdi/shared/consts";
+import { libraryNavigationClasses } from "@clawdi/shared/ui";
 import { keepPreviousData } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
@@ -71,8 +72,8 @@ const TYPE_LABEL: Record<SearchHit["type"], string> = {
 };
 const SEARCH_RESULT_TYPES = ["agent", "session", "memory", "project", "skill", "vault"] as const;
 
-const COMMAND_RESULT_ROW_CLASS = "items-start gap-2 py-2.5";
-const COMMAND_RESULT_TEXT_CLASS = "flex min-w-0 flex-col gap-0.5";
+const COMMAND_RESULT_ROW_CLASS = libraryNavigationClasses.row;
+const COMMAND_RESULT_TEXT_CLASS = libraryNavigationClasses.body;
 
 interface PaletteContextValue {
 	open: boolean;

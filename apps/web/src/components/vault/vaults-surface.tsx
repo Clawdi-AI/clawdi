@@ -1,11 +1,13 @@
 "use client";
 
+import { vaultsSurfaceClasses } from "@clawdi/shared/ui";
 import {
 	compareVaultsForCatalog,
 	displayProjectName,
 	formatResourceCount,
 	getProjectResourceDefinition,
 	identityFor,
+	LIBRARY_COPY,
 	vaultSearchRank,
 	vaultSearchSupportingText,
 } from "@clawdi/shared/view";
@@ -197,7 +199,7 @@ export function VaultsSurface({
 							<>
 								<AddKeysDialog>
 									<Button size="sm" variant="outline">
-										<Plus className="size-3.5" />
+										<Plus className={vaultsSurfaceClasses.smallIcon} />
 										Add keys
 									</Button>
 								</AddKeysDialog>
@@ -209,13 +211,19 @@ export function VaultsSurface({
 			)}
 
 			<ListToolbar
-				search={<SearchInput value={search} onChange={setSearch} placeholder="Search vaults…" />}
+				search={
+					<SearchInput
+						value={search}
+						onChange={setSearch}
+						placeholder={LIBRARY_COPY.searchVaults}
+					/>
+				}
 				filters={
 					filterableProjects.length > 1 ? (
 						<>
 							<FilterChip active={projectFilter === "all"} onClick={() => setProjectFilter("all")}>
 								All Vaults
-								<span className="text-muted-foreground tabular-nums">{items.length}</span>
+								<span className={vaultsSurfaceClasses.count}>{items.length}</span>
 							</FilterChip>
 							{filterableProjects.map((p) => (
 								<FilterChip
@@ -223,11 +231,11 @@ export function VaultsSurface({
 									active={projectFilter === p.id}
 									onClick={() => setProjectFilter(p.id)}
 								>
-									<span aria-hidden className="select-none">
+									<span aria-hidden className={vaultsSurfaceClasses.unselectable}>
 										{identityFor(p.name).emoji}
 									</span>
 									{projectNameById.get(p.id)}
-									<span className="text-muted-foreground tabular-nums">
+									<span className={vaultsSurfaceClasses.count}>
 										{vaultCountByProject.get(p.id) ?? 0}
 									</span>
 								</FilterChip>
@@ -296,9 +304,9 @@ export function VaultsSurface({
 						))}
 					</div>
 					{shared.length > 0 ? (
-						<section className="space-y-2">
+						<section className={vaultsSurfaceClasses.section}>
 							<SectionLabel count={shared.length}>Shared with you</SectionLabel>
-							<p className="text-xs text-muted-foreground">
+							<p className={vaultsSurfaceClasses.description}>
 								Read-only — your agents can use these keys; only the owner can edit them.
 							</p>
 							<div className={HERO_GRID_CLASS}>
@@ -391,7 +399,11 @@ export function VaultCard({
 		listCount === undefined && shouldBlockQueryError(keys.error, keys.data) ? (
 			"Key count unavailable"
 		) : keyCount === null ? (
-			<Skeleton key="key-count" className="h-3 w-12" aria-label="Loading key count" />
+			<Skeleton
+				key="key-count"
+				className={vaultsSurfaceClasses.skeletonCount}
+				aria-label="Loading key count"
+			/>
 		) : (
 			formatResourceCount(keyCount, "key")
 		);
@@ -399,13 +411,13 @@ export function VaultCard({
 
 	return (
 		<HeroCard
-			className="h-full"
+			className={vaultsSurfaceClasses.fullHeight}
 			icon={
-				<IconChip tint={identity.colorClasses} className="relative text-xl">
+				<IconChip tint={identity.colorClasses} className={vaultsSurfaceClasses.identity}>
 					{identity.emoji}
 					{shared ? (
-						<span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full border bg-card">
-							<Lock className="size-2.5 text-muted-foreground" />
+						<span className={vaultsSurfaceClasses.sharedLock}>
+							<Lock className={vaultsSurfaceClasses.lockIcon} />
 						</span>
 					) : null}
 				</IconChip>
@@ -424,7 +436,7 @@ export function VaultCard({
 				keyCountLabel,
 				usedBy.length > 0 ? (
 					<Tooltip>
-						<TooltipTrigger render={<span className="truncate" />}>
+						<TooltipTrigger render={<span className={vaultsSurfaceClasses.truncate} />}>
 							{visibleProjectIds ? "From " : "used by "}
 							{usedBy.slice(0, 2).join(", ")}
 							{usedBy.length > 2 ? ` +${usedBy.length - 2}` : ""}
@@ -527,10 +539,10 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 			}}
 		>
 			<DialogTrigger render={<Button size="sm" />}>
-				<Plus className="size-3.5" />
+				<Plus className={vaultsSurfaceClasses.smallIcon} />
 				Create vault
 			</DialogTrigger>
-			<DialogContent className="sm:max-w-md">
+			<DialogContent className={vaultsSurfaceClasses.dialog}>
 				<DialogHeader>
 					<DialogTitle>Create vault</DialogTitle>
 					<DialogDescription>
@@ -545,13 +557,13 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 					/>
 				) : null}
 				<form
-					className="space-y-4"
+					className={vaultsSurfaceClasses.form}
 					onSubmit={(e) => {
 						e.preventDefault();
 						if (canCreate && !create.isPending) create.mutate();
 					}}
 				>
-					<div className="space-y-1.5">
+					<div className={vaultsSurfaceClasses.field}>
 						<Label htmlFor="vault-name">Name</Label>
 						<Input
 							id="vault-name"
@@ -563,7 +575,7 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 							autoFocus
 						/>
 						{slugTaken ? (
-							<p className="text-xs text-destructive">
+							<p className={vaultsSurfaceClasses.error}>
 								That vault already exists. Open it from the vault list or use a different name.
 							</p>
 						) : null}
@@ -573,7 +585,7 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 							Cancel
 						</Button>
 						<Button type="submit" disabled={!canCreate || create.isPending}>
-							{create.isPending ? <Spinner /> : <Plus className="size-3.5" />}
+							{create.isPending ? <Spinner /> : <Plus className={vaultsSurfaceClasses.smallIcon} />}
 							Create vault
 						</Button>
 					</DialogFooter>

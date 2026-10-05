@@ -1,4 +1,4 @@
-import { billingCopy, settingsCopy } from "@clawdi/shared/view";
+import { billingCopy, LIBRARY_COPY, sessionDetailCopy, settingsCopy } from "@clawdi/shared/view";
 import { agentExtensionsEn } from "../features/agent-extensions-en";
 import { billingEn } from "../features/billing/en";
 import { channelsEn } from "../features/channels/en";
@@ -15,6 +15,8 @@ import { vaultEn } from "../features/vault/en";
 export const en = {
 	settingsParity: settingsCopy,
 	billingParity: billingCopy,
+	sessionDetail: sessionDetailCopy,
+	libraryPort: LIBRARY_COPY,
 	composite: {
 		open: "Open",
 		close: "Close",

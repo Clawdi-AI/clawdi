@@ -22,6 +22,23 @@ export function createSessionSharingClient(options: ApiClientOptions) {
 		fetch: transport.fetch,
 	});
 	return {
+		shares: (sessionId: string, signal?: AbortSignal) =>
+			transport.read(
+				(init) =>
+					api.GET("/v1/sessions/{session_id}/shares", {
+						...init,
+						params: { path: { session_id: readResourceId(sessionId) } },
+					}),
+				signal,
+			),
+		deleteSession: (sessionId: string, signal?: AbortSignal) =>
+			transport.read(async (init) => {
+				const result = await api.DELETE("/v1/sessions/{session_id}", {
+					...init,
+					params: { path: { session_id: readResourceId(sessionId) } },
+				});
+				return { ...result, data: result.response.status === 204 ? null : undefined };
+			}, signal),
 		list: (query?: SessionSharesQuery, signal?: AbortSignal) =>
 			transport.read(
 				(init) => api.GET("/v1/session-shares", { ...init, params: { query } }),

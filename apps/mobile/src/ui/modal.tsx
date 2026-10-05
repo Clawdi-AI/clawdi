@@ -98,9 +98,16 @@ export function ModalSurface({
 	// Native Modal owns viewport positioning; retain recipe size/radius/padding/tokens.
 	const surface = classes.view
 		.split(/\s+/)
-		.filter((token) => !/^(?:fixed|absolute|top-|left-|right-|bottom-|inset-|z-)/.test(token))
+		.filter(
+			(token) =>
+				!/^(?:fixed|absolute|top-|left-|right-|bottom-|inset-|z-|-?translate-)/.test(token),
+		)
 		.join(" ");
-	const overlay = resolveWebClasses(overlayRecipe).view.replace(/\bfixed\b/g, "absolute");
+	const overlay = resolveWebClasses(overlayRecipe)
+		.view.replace(/\bfixed\b/g, "absolute")
+		.split(/\s+/)
+		.filter((token) => !token.startsWith("z-"))
+		.join(" ");
 	const dismiss = () => {
 		if (dismissible) modal.setOpen(false);
 	};

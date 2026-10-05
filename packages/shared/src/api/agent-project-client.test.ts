@@ -59,6 +59,8 @@ test("Agent Project client keeps authentication, escaped paths and generated mut
 	await client.unlink("agent/a", "binding/b");
 	const order = { items: [{ binding_id: "context", priority: 1 }] };
 	await client.reorder("agent/a", order);
+	const access = { add_agent_ids: ["a"], remove_agent_ids: ["b"] };
+	await client.updateProjectAgents("project/a", access);
 	expect(requests).toEqual([
 		{ method: "GET", path: "/v1/agents/agent%2Fa/project-bindings", body: null },
 		{
@@ -68,5 +70,6 @@ test("Agent Project client keeps authentication, escaped paths and generated mut
 		},
 		{ method: "DELETE", path: "/v1/agents/agent%2Fa/project-bindings/binding%2Fb", body: null },
 		{ method: "PATCH", path: "/v1/agents/agent%2Fa/project-bindings/context/reorder", body: order },
+		{ method: "PATCH", path: "/v1/projects/project%2Fa/agents", body: access },
 	]);
 });
