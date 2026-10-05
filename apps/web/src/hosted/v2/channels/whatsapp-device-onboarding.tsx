@@ -82,8 +82,8 @@ export function WhatsAppDeviceOnboarding({
 				<TriangleAlert aria-hidden />
 				<AlertTitle>Use a dedicated number</AlertTitle>
 				<AlertDescription className="text-xs">
-					Clawdi uses WhatsApp’s linked-device feature. When linked to an Agent, replies are sent
-					from this account—use a separate number, not your primary personal one.
+					Clawdi connects as a WhatsApp linked device, and Agent replies come from this account. Use
+					a separate number, not your personal one.
 				</AlertDescription>
 			</Alert>
 			<p className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" role="status">

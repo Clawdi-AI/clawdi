@@ -377,7 +377,7 @@ function SyncHelpDialog({
 									Live sync activates automatically with this Agent&apos;s next update.
 								</p>
 								<p className="text-xs text-muted-foreground">
-									No action is required. This status should change to{" "}
+									No action needed. This should change to{" "}
 									<span className="font-medium">Live sync</span> within a few minutes.
 								</p>
 							</div>
@@ -563,9 +563,9 @@ function SyncSetupSnippet({ env }: { env: Env }) {
 function useSyncAgentPrompt(env: Env): string {
 	const typeLabel = agentTypeLabel(env.agent_type);
 	return [
-		`Turn on Clawdi live sync on this machine for ${typeLabel}.`,
-		"Run `clawdi daemon install` to install one per-user daemon that syncs every Clawdi-registered agent on this machine.",
-		"Then confirm with `clawdi daemon status` and report whether the daemon is live.",
+		`Turn on Clawdi live sync for ${typeLabel} on this machine.`,
+		"Run `clawdi daemon install`; one per-user daemon syncs every Clawdi-registered Agent here.",
+		"Then run `clawdi daemon status` and report whether the daemon is live.",
 	].join(" ");
 }
 
@@ -634,7 +634,7 @@ function PromptBlock({ text }: { text: string }) {
 function AuthLoginHint() {
 	return (
 		<p className="text-xs text-muted-foreground">
-			Token turned off or expired? Log in again with{" "}
+			Token turned off or expired? Sign in again with{" "}
 			<code className="rounded bg-muted px-1 py-0.5 text-2xs">clawdi auth login</code>.
 		</p>
 	);
