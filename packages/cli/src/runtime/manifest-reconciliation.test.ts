@@ -2861,6 +2861,73 @@ fi
 		},
 	);
 
+	test("refreshes an existing OpenClaw environment before provider config mutation", () => {
+		const paths = tempRuntimePaths();
+		const commandLog = join(paths.serviceStateRoot, "openclaw-env-order-commands.log");
+		const probeLog = join(paths.serviceStateRoot, "openclaw-env-order-probe.log");
+		const envPath = join(paths.systemdEnvRoot, "openclaw-gateway.service.env");
+		writeFakeOpenClawConfigMutationSdk(paths.userHome, {
+			mutationProbe: { path: envPath, log: probeLog },
+		});
+		writeFakeGatewayCli({
+			path: join(paths.userHome, ".local", "bin", "openclaw"),
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+			commandLog,
+		});
+		mkdirSync(join(paths.systemdUserRoot, "openclaw-gateway.service.d"), { recursive: true });
+		writeFileSync(
+			join(paths.systemdUserRoot, "openclaw-gateway.service.d", "10-clawdi-hosted.conf"),
+			`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\nEnvironmentFile=${envPath}\n`,
+		);
+		writeFileSync(
+			join(paths.systemdUserRoot, "openclaw-gateway.service"),
+			"[Unit]\nDescription=Official OpenClaw gateway\n[Service]\nExecStart=openclaw gateway run\n",
+		);
+		mkdirSync(dirname(envPath), { recursive: true });
+		writeFileSync(envPath, `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n`);
+		const egressEngine = installCachedTestEgressEngine(paths, "12.2.3-test-env-order");
+		const manifestFor = (baseUrl: string, generation: number): RuntimeManifest =>
+			hostedRuntimeBundleV2ManifestSchema.parse(
+				hostedManifestFixture({
+					generation,
+					issuedAt: `2026-07-11T00:00:0${generation}.000Z`,
+					egressEngine,
+					providers: {
+						default: {
+							kind: "openai-compatible",
+							configurationMode: "catalog",
+							type: "custom_openai_compatible",
+							managed_by: "clawdi",
+							baseUrl,
+							apiMode: "openai_responses",
+							models: [{ id: "gpt-test" }],
+							runtimeEnvName: "CLAWDI_AI_API_KEY",
+							apiKeySecretRef: "secret://providers/default/api-key",
+						},
+					},
+				}),
+			);
+		const secrets = {
+			...TEST_HOSTED_SECRET_VALUES,
+			"secret://providers/default/api-key": "sk-managed",
+		};
+		const converge = (manifest: RuntimeManifest) =>
+			convergeRuntimeManifest(
+				manifestLoad(manifest, `env-order-${manifest.generation}`, secrets),
+				paths,
+			);
+		const first = converge(manifestFor("https://provider-one.example.test/v1", 1));
+		expect(first.installErrors).toEqual([]);
+		writeFileSync(
+			envPath,
+			readFileSync(envPath, "utf8").replace(/^CLAWDI_AI_API_KEY=.*\n/m, ""),
+		);
+		const second = converge(manifestFor("https://provider-two.example.test/v1", 2));
+		expect(second.installErrors).toEqual([]);
+		expect(readFileSync(probeLog, "utf8")).toContain('CLAWDI_AI_API_KEY="clawdi-egress-placeholder"');
+	});
+
 	test("reuses OpenClaw probes until the provider revision changes", () => {
 		const paths = tempRuntimePaths();
 		const commandLog = join(paths.serviceStateRoot, "openclaw-probe-commands.log");

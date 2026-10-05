@@ -1251,6 +1251,7 @@ esac
 				join(paths.systemdUserRoot, `${name}.service.d`, "10-clawdi-hosted.conf"),
 				"utf8",
 			);
+			expect(installerDropIn).toContain("KillMode=control-group");
 			expect(installerDropIn).not.toContain("\nExecStart=");
 			expect(installerDropIn).not.toContain("\nWorkingDirectory=");
 			expect(installerDropIn).toContain(`ConditionPathExists=${envPath}`);

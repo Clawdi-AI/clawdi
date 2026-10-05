@@ -10,6 +10,7 @@ import {
 	rmdirSync,
 	rmSync,
 } from "node:fs";
+import { parseEnv } from "node:util";
 import { dirname, isAbsolute, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
@@ -1075,16 +1076,34 @@ export function publishRetainedOpenClawEnvironment(
 		return;
 	const name = runtimeSystemdProgramName(program);
 	if (!isGeneratedRuntimeSystemdPath(systemdDropInFilePath(paths, name))) return;
-	// Warm updates keep their environment publication in the final apply phase.
-	if (existsSync(systemdEnvironmentFilePath(paths, name))) return;
 	// New/legacy installs retain the normal installer and drop-in publication order.
 	if (planOfficialRuntimeServices([program], paths, true).pending.length !== 0) return;
 	runtimeRecoverableSecretValues(manifest, input.secretValues);
+	const environmentPath = systemdEnvironmentFilePath(paths, name);
+	const desiredEnvironment = runtimeSystemdUserProgramEnvironment(input);
+	if (existsSync(environmentPath)) {
+		const current = parseEnv(readFileSync(environmentPath, "utf8"));
+		const managedCredentialEnvironment = Object.entries(desiredEnvironment).filter(
+			([key]) => key === "CLAWDI_AI_API_KEY" || key.startsWith("CLAWDI_CHANNEL_"),
+		);
+		const desiredManagedEnvironment = Object.fromEntries(managedCredentialEnvironment);
+		const currentManagedEnvironment = Object.fromEntries(
+			Object.entries(current).filter(
+				([key]) => key === "CLAWDI_AI_API_KEY" || key.startsWith("CLAWDI_CHANNEL_"),
+			),
+		);
+		const managedEnvironmentIsConsistent =
+			Object.keys(desiredManagedEnvironment).length === Object.keys(currentManagedEnvironment).length &&
+			Object.entries(desiredManagedEnvironment).every(
+				([key, value]) => currentManagedEnvironment[key] === value,
+			);
+		if (managedEnvironmentIsConsistent) return;
+	}
 	writeSystemdProgramEnvironment({
 		paths,
 		name,
 		owner: "runtime-user",
-		env: runtimeSystemdUserProgramEnvironment(input),
+		env: desiredEnvironment,
 	});
 }
 
