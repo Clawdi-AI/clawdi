@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 from httpx import ASGITransport
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth
@@ -23,6 +23,10 @@ from app.models.skill import SKILL_AUTHORITY_CLOUD, Skill
 from app.models.user import User
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment, VaultProjectSlugAlias
 from app.services import sync_events
+from app.services.agent_environments import (
+    local_machine_registration_key,
+    register_agent_environment,
+)
 from app.services.sharing import generate_share_token, hash_share_token, resolve_owner_handle
 from app.services.vault_crypto import encrypt
 from tests.conftest import create_env_with_project, create_test_hosted_runtime_state
@@ -181,17 +185,24 @@ async def test_inbox_accept_link_and_invitation_create_memberships(
         await db_session.commit()
 
 
-async def test_agent_binding_list_materializes_default_primary_and_blocks_delete(
+async def test_agent_registration_creates_primary_binding_and_blocks_delete(
     client,
     db_session,
     seed_user,
 ):
-    env = await create_env_with_project(
+    machine_id = f"primary-{uuid.uuid4().hex[:8]}"
+    registration = await register_agent_environment(
         db_session,
         user_id=seed_user.id,
-        machine_id=f"primary-{uuid.uuid4().hex[:8]}",
+        machine_id=machine_id,
         machine_name="atlas",
+        agent_type="claude_code",
+        agent_version=None,
+        os_name="darwin",
+        sort_order=0,
+        registration_key=local_machine_registration_key(machine_id, "claude_code"),
     )
+    env = registration.env
 
     listed = await client.get(f"/v1/agents/{env.id}/project-bindings")
     assert listed.status_code == 200, listed.text
@@ -203,46 +214,6 @@ async def test_agent_binding_list_materializes_default_primary_and_blocks_delete
     delete_primary = await client.delete(f"/v1/agents/{env.id}/project-bindings/{rows[0]['id']}")
     assert delete_primary.status_code == 400
     assert delete_primary.json()["detail"] == "Workspace cannot be unlinked"
-
-
-async def test_agent_binding_list_restores_default_primary_and_demotes_stale_primary(
-    client,
-    db_session,
-    seed_user,
-):
-    env = await create_env_with_project(
-        db_session,
-        user_id=seed_user.id,
-        machine_id=f"stale-primary-{uuid.uuid4().hex[:8]}",
-        machine_name="atlas",
-    )
-    workspace = Project(
-        user_id=seed_user.id,
-        name="Old Home",
-        slug=f"old-home-{uuid.uuid4().hex[:8]}",
-        kind=PROJECT_KIND_WORKSPACE,
-    )
-    db_session.add(workspace)
-    await db_session.flush()
-    db_session.add(
-        AgentProjectBinding(
-            agent_id=env.id,
-            project_id=workspace.id,
-            binding_type="primary",
-            priority=0,
-            default_write_enabled=True,
-            created_by_user_id=seed_user.id,
-        )
-    )
-    await db_session.commit()
-
-    listed = await client.get(f"/v1/agents/{env.id}/project-bindings")
-    assert listed.status_code == 200, listed.text
-    rows = listed.json()
-    primary_rows = [row for row in rows if row["binding_type"] == "primary"]
-    context_rows = [row for row in rows if row["binding_type"] == "context"]
-    assert [row["project_id"] for row in primary_rows] == [str(env.default_project_id)]
-    assert str(workspace.id) in {row["project_id"] for row in context_rows}
 
 
 async def test_agent_binding_attach_repairs_stale_primary_before_returning_context(
@@ -643,10 +614,12 @@ async def test_agent_binding_delete_repairs_stale_primary_before_detaching(
     assert [row.project_id for row in primary_rows] == [env.default_project_id]
 
 
-async def test_binding_list_stale_link_cleanup_notifies_managed_agent(
+async def test_binding_list_is_read_only_and_hides_unreadable_links(
     client,
+    engine,
     db_session,
     seed_user,
+    monkeypatch,
 ):
     owner, shared_project = await _owner_with_project(db_session)
     membership = ProjectMembership(
@@ -675,20 +648,49 @@ async def test_binding_list_stale_link_cleanup_notifies_managed_agent(
     )
     db_session.add_all([membership, binding])
     await db_session.commit()
+    # Bypass the membership route, which owns link cleanup, to leave a stale row.
     await db_session.delete(membership)
     await db_session.commit()
-    queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
+    binding_id = binding.id
 
+    statements: list[str] = []
+
+    def record_statement(_conn, _cursor, statement, _params, _context, _executemany):
+        statements.append(statement)
+
+    commits = 0
+    original_commit = db_session.commit
+
+    async def counting_commit() -> None:
+        nonlocal commits
+        commits += 1
+        await original_commit()
+
+    monkeypatch.setattr(db_session, "commit", counting_commit)
+    queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
+    sync_engine = engine.sync_engine
+    event.listen(sync_engine, "before_cursor_execute", record_statement)
     try:
         response = await client.get(f"/v1/agents/{env.id}/project-bindings")
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", record_statement)
+        sync_events.unsubscribe(seed_user.id, queue)
+    monkeypatch.undo()
+
+    try:
         assert response.status_code == 200, response.text
         assert str(shared_project.id) not in {row["project_id"] for row in response.json()}
-        assert queue.get_nowait() == {
-            "type": "runtime_manifest_changed",
-            "environment_id": str(env.id),
-        }
+        assert statements
+        writes = [
+            statement
+            for statement in statements
+            if statement.lstrip().split(None, 1)[0].upper() in {"INSERT", "UPDATE", "DELETE"}
+        ]
+        assert writes == []
+        assert commits == 0
+        assert queue.empty()
+        assert await db_session.get(AgentProjectBinding, binding_id) is not None
     finally:
-        sync_events.unsubscribe(seed_user.id, queue)
         await db_session.delete(shared_project)
         await db_session.delete(owner)
         await db_session.commit()

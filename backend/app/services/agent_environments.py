@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
+from app.services.agent_bindings import ensure_agent_primary_binding
 from app.services.agent_lifecycle import reactivate_agent_and_project
 from app.services.principal_lifecycle import assert_user_authority_active
 from app.services.sync_events import notify_sync_subscriptions_changed
@@ -190,6 +191,7 @@ async def register_agent_environment(
         db.add(env)
         await db.flush()
         project.origin_environment_id = env.id
+        await ensure_agent_primary_binding(db, agent=env, created_by_user_id=user_id)
         await notify_sync_subscriptions_changed(db, [user_id])
         if commit:
             await db.commit()
@@ -314,6 +316,7 @@ async def _refresh_agent_environment(
         db.add(healing_project)
         await db.flush()
         env.default_project_id = healing_project.id
+        await ensure_agent_primary_binding(db, agent=env, created_by_user_id=user_id)
         await notify_sync_subscriptions_changed(db, [user_id])
 
 
