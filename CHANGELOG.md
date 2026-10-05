@@ -12,6 +12,10 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.104
+
+- Codex sessions with oversized or invalid attachment names sync successfully, preserving available filenames and attachment metadata.
+
 ### CLI 0.14.103
 
 - CLI-only updates from 0.14.101 and 0.14.102 keep unchanged gateways running, including updates that add OOM protection and subsequent runtime reconciliations.

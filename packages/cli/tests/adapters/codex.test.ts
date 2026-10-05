@@ -11,6 +11,7 @@ import {
 import { join } from "node:path";
 import { CodexAdapter } from "../../src/adapters/codex";
 import { tarSkillDir } from "../../src/lib/tar";
+import attachmentNameFixtures from "../fixtures/codex-attachment-names.json";
 import { addSkillDirectorySymlinkCases, cleanupTmp, copyFixtureToTmp } from "./helpers";
 
 let tmpHome: string;
@@ -48,6 +49,34 @@ describe("CodexAdapter.detect", () => {
 });
 
 describe("CodexAdapter.collectSessions", () => {
+	it("maps sanitized attachment records to bounded basenames without losing the session", async () => {
+		const adapter = new CodexAdapter();
+		const original = (await adapter.sessions.collect({ kind: "complete" })).sessions[0];
+		if (!original) throw new Error("expected Codex session fixture");
+		appendFileSync(
+			original.rawFilePath,
+			`${attachmentNameFixtures.map((fixture) => JSON.stringify(fixture.record)).join("\n")}\n`,
+		);
+
+		const session = await adapter.sessions.resolve(original.localSessionId);
+		if (!session?.events) throw new Error("expected mapped Codex events");
+		for (const fixture of attachmentNameFixtures) {
+			const attachments = session.events
+				.filter((event) => event.source.record_id === fixture.record.payload.id)
+				.flatMap((event) =>
+					event.type === "message" || event.type === "tool_result" ? event.parts : [],
+				)
+				.filter((part) => part.type === "attachment");
+			expect(attachments.map((part) => part.name ?? null)).toEqual(fixture.names);
+			for (const attachment of attachments) {
+				expect(attachment.name?.length ?? 0).toBeLessThanOrEqual(512);
+				expect(attachment.name ?? "").not.toContain("data:");
+				expect(attachment.name ?? "").not.toContain("/synthetic/");
+			}
+		}
+		expect(session.messages?.[0]).toMatchObject({ content: "hello" });
+	});
+
 	it("keeps fs watching on active sessions when archived_sessions is absent", () => {
 		const adapter = new CodexAdapter();
 		expect(existsSync(join(tmpHome, ".codex", "archived_sessions"))).toBe(false);

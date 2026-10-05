@@ -110,8 +110,17 @@ function safeExternalUri(value: string | null): string | null {
 function localReferenceName(value: string | null): string | null {
 	if (!value) return null;
 	const normalized = value.replaceAll("\\", "/");
+	// URI payloads are never local filenames; preserve Windows drive paths.
+	if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(normalized) && !/^[a-zA-Z]:\//.test(normalized)) return null;
 	const name = basename(normalized);
-	return name && name !== "." && name !== "/" ? name : null;
+	return name &&
+		name !== "." &&
+		name !== ".." &&
+		name !== "/" &&
+		name.length <= 512 &&
+		!/[\p{Cc}]/u.test(name)
+		? name
+		: null;
 }
 
 function uriReferenceName(value: string | null): string | null {
@@ -163,8 +172,8 @@ function attachmentPart(block: JsonObject): Extract<SessionContentPart, { type: 
 		jsonString(block.mimeType) ??
 		jsonString(source?.media_type);
 	const name =
-		jsonString(block.name) ??
-		jsonString(block.filename) ??
+		localReferenceName(jsonString(block.name)) ??
+		localReferenceName(jsonString(block.filename)) ??
 		localReferenceName(localPath) ??
 		uriReferenceName(rawUri);
 	const sizeBytes = nonNegativeInteger(block.size_bytes, block.size, bytes?.length);
