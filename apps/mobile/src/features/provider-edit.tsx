@@ -1,6 +1,5 @@
-import { AI_PROVIDER_API_MODES, nativeAiProvider } from "@clawdi/shared";
+import { nativeAiProvider } from "@clawdi/shared";
 import {
-	API_MODE_LABEL,
 	type ApiMode,
 	authFor,
 	derivedProviderFields,
@@ -9,8 +8,10 @@ import {
 	providerPresetForSavedProvider,
 	type SavedAiProvider,
 } from "@clawdi/shared/api";
+import { providerFieldsFormCopy as copy, providerPresentation } from "@clawdi/shared/view";
 import { randomUUID } from "expo-crypto";
 import { useFocusEffect } from "expo-router";
+import { Pencil } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
@@ -19,8 +20,9 @@ import { useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
 import { ActionButton, ChoiceSelect } from "../ui/agents/controls";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
-import { Input } from "../ui/input";
+import { ProviderFieldsForm } from "../ui/agents/provider-fields-form";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Icon } from "../ui/icon";
 import { AppText, AppView } from "../ui/primitives";
 
 export function ProviderEdit({
@@ -131,7 +133,8 @@ export function ProviderEdit({
 			{uncertain ? <AppText accessibilityRole="alert">{t("providers.uncertain")}</AppText> : null}
 			{!open ? (
 				<ActionButton
-					label={t("providers.edit")}
+					label={copy.edit}
+					icon={<Icon as={Pencil} />}
 					disabled={action.busy || !scope.isReady}
 					onPress={() => {
 						setLabel(provider.label ?? "");
@@ -151,15 +154,8 @@ export function ProviderEdit({
 				>
 					<DialogContent>
 						<DialogHeader>
-							<DialogTitle>{t("providers.edit")}</DialogTitle>
+							<DialogTitle>{`Edit ${providerPresentation(provider).label}`}</DialogTitle>
 						</DialogHeader>
-						<Input
-							accessibilityLabel={t("providers.label")}
-							value={label}
-							onChangeText={setLabel}
-							maxLength={200}
-							editable={!locked && !action.busy}
-						/>
 						{!oauth && native && preset?.region_variants?.length ? (
 							<ChoiceSelect
 								value={region ?? preset.region_variants[0]?.id ?? ""}
@@ -171,51 +167,33 @@ export function ProviderEdit({
 								onValueChange={setRegion}
 							/>
 						) : null}
-						{!oauth && !native ? (
-							<>
-								<Input
-									accessibilityLabel={t("providers.endpoint")}
-									value={baseUrl}
-									onChangeText={setBaseUrl}
-									maxLength={1000}
-									autoCorrect={false}
-									autoCapitalize="none"
-									editable={!locked && !action.busy}
-								/>
-								<ChoiceSelect
-									value={apiMode}
-									options={AI_PROVIDER_API_MODES.map((mode) => ({
-										value: mode,
-										label: API_MODE_LABEL[mode],
-									}))}
-									disabled={locked || action.busy}
-									onValueChange={setApiMode}
-								/>
-							</>
-						) : null}
-						{!oauth ? (
-							<>
-								<AppText className="text-sm text-muted-foreground">
-									{t("providers.keepCredential")}
-								</AppText>
-								<Input
-									accessibilityLabel={t("providers.apiKey")}
-									placeholder={t("providers.apiKey")}
-									value={secret}
-									onChangeText={setSecret}
-									secureTextEntry
-									autoCorrect={false}
-									autoCapitalize="none"
-									editable={!locked && !action.busy}
-								/>
-							</>
-						) : null}
-						<ActionButton
-							label={t(locked ? "providers.retrySame" : "projects.save")}
-							disabled={action.busy || !scope.isReady || !baseUrl.trim()}
-							onPress={() => void save()}
+						<ProviderFieldsForm
+							label={label}
+							placeholder={providerPresentation(provider).label}
+							onLabel={setLabel}
+							showRouting={!oauth && !native}
+							baseUrl={baseUrl}
+							onBaseUrl={setBaseUrl}
+							apiMode={apiMode}
+							onApiMode={setApiMode}
+							secret={secret}
+							onSecret={setSecret}
+							credentialLabel={preset?.credential_label ?? copy.apiKey}
+							credentialPlaceholder={
+								provider.auth.type === "none" ? copy.apiKeyPlaceholder : copy.keepCredential
+							}
+							disabled={locked || action.busy}
+							oauth={oauth}
 						/>
-						<ActionButton label={t("account.cancel")} disabled={action.busy} onPress={clear} />
+						<DialogFooter>
+							<ActionButton
+								label={locked ? t("providers.retrySame") : copy.save}
+								variant="default"
+								disabled={action.busy || !scope.isReady || !baseUrl.trim()}
+								onPress={() => void save()}
+							/>
+							<ActionButton label={t("account.cancel")} disabled={action.busy} onPress={clear} />
+						</DialogFooter>
 						{action.error ? (
 							<AppText accessibilityRole="alert">{t("providers.failed")}</AppText>
 						) : null}

@@ -1,7 +1,7 @@
 "use client";
 
 import { channelDetailPageClasses } from "@clawdi/shared/ui";
-import { agentSurfaceCopy, relativeTime } from "@clawdi/shared/view";
+import { agentSurfaceCopy, channelDetailCopy as copy, relativeTime } from "@clawdi/shared/view";
 import { Link, useRouter } from "@tanstack/react-router";
 import {
 	ArrowDownLeft,
@@ -126,7 +126,7 @@ function InfoCard({
 			<div className={channelDetailPageClasses.flexItemsStartGap}>
 				<IconChip
 					size="sm"
-					tint="bg-primary/10 text-primary"
+					tint={channelDetailPageClasses.infoTint}
 					className={channelDetailPageClasses.sizeSvgSize}
 				>
 					<Icon />
@@ -294,10 +294,8 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				</InfoCard>
 			) : null}
 			{ch.provider === "discord" && !providerUnavailable ? (
-				<InfoCard icon={TriangleAlert} title="Verify Discord credentials">
-					Clawdi stores Discord credentials during setup but does not verify them with Discord. Send
-					a test message and confirm its activity and status before relying on this channel. To
-					replace credentials, remove the channel and reconnect it.
+				<InfoCard icon={TriangleAlert} title={copy.discordTitle}>
+					{copy.discordDescription}
 				</InfoCard>
 			) : null}
 
@@ -395,8 +393,8 @@ function AgentsTab({
 			{items.length === 0 ? (
 				<EmptyState
 					variant="inset"
-					title="No Agents linked"
-					description="Link an Agent here, then pair a chat for it."
+					title={copy.noLinkedAgents}
+					description={copy.noLinkedAgentsDescription}
 				/>
 			) : (
 				<div className={CHANNEL_RELATION_LIST_CLASS}>
@@ -496,8 +494,8 @@ function ActivityTab({ accountId }: { accountId: string }) {
 		return (
 			<EmptyState
 				icon={MessageSquareDashed}
-				title="No activity yet"
-				description="Messages and delivery events will show up here."
+				title={copy.noActivity}
+				description={copy.noActivityDescription}
 			/>
 		);
 	}

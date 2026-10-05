@@ -15,17 +15,17 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams } from "expo-router";
-import { BrainCircuit, ShieldCheck } from "lucide-react-native";
+import { BrainCircuit, CheckCircle2, ShieldCheck } from "lucide-react-native";
 import { useState } from "react";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
 import { AgentCollection } from "../ui/agents/collection";
-import { ActionButton } from "../ui/agents/controls";
 import { AgentSectionNavigation } from "../ui/agents/navigation";
 import { ApiErrorPanel } from "../ui/api-error-panel";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import { EmptyState } from "../ui/empty-state";
 import { EntityCardSkeleton, EntityHeader } from "../ui/entity-card";
 import { EntityIcon } from "../ui/entity-icon";
@@ -148,7 +148,6 @@ function ProvidersView() {
 						</WebView>
 					)}
 				</WebView>
-				<ProviderOAuth providers={providers.data?.providers} refresh={refresh} />
 			</AppScrollView>
 		</ReadScreen>
 	);
@@ -203,8 +202,10 @@ function ProviderCard({
 				{provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile" ? (
 					<ProviderOAuth provider={provider} refresh={refresh} />
 				) : null}
-				<ActionButton
-					label={t("providers.validate")}
+				<Button
+					variant="ghost"
+					size="icon-sm"
+					accessibilityLabel={t("providers.validate")}
 					disabled={action.busy || !scope.isReady}
 					onPress={() =>
 						void action.run(async (current) => {
@@ -215,7 +216,9 @@ function ProviderCard({
 							if (current()) setValid({ revision: provider.updated_at, value: result.valid });
 						})
 					}
-				/>
+				>
+					<Icon as={CheckCircle2} />
+				</Button>
 			</WebView>
 			{valid?.revision === provider.updated_at ? (
 				<Text accessibilityRole="alert">

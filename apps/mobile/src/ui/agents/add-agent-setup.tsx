@@ -2,15 +2,18 @@ import { addAgentSetupClasses as styles } from "@clawdi/shared/ui";
 import {
 	agentDisplayName,
 	agentRegistrationDescription,
+	agentSetupPrompt,
 	agentSurfaceCopy,
 	CLI_STEPS,
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
+import { Bot, Terminal } from "lucide-react-native";
 import { useEffect, useRef } from "react";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useMobileApi } from "../../providers/api-provider";
 import { Button } from "../button";
+import { Icon } from "../icon";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../tabs";
 import { Text } from "../text";
 import { WebText, WebView, webView } from "../web-layout";
@@ -41,8 +44,18 @@ export function AddAgentSetup() {
 		<WebView recipe={styles.spaceY}>
 			<Tabs defaultValue="commands">
 				<TabsList variant="default">
-					<TabsTrigger value="commands">Run commands</TabsTrigger>
-					<TabsTrigger value="prompt">Ask your agent</TabsTrigger>
+					<TabsTrigger value="commands">
+						<WebView recipe={styles.flexItemsCenterGap} className="flex-row">
+							<Icon as={Terminal} />
+							<Text>Run commands</Text>
+						</WebView>
+					</TabsTrigger>
+					<TabsTrigger value="prompt">
+						<WebView recipe={styles.flexItemsCenterGap} className="flex-row">
+							<Icon as={Bot} />
+							<Text>Ask your agent</Text>
+						</WebView>
+					</TabsTrigger>
 				</TabsList>
 				<TabsContent value="commands" className={webView(styles.mtSpaceY)}>
 					<WebView recipe="">
@@ -62,7 +75,7 @@ export function AddAgentSetup() {
 								</WebView>
 								<WebView recipe={styles.minWFlex}>
 									<WebText recipe={styles.textSmFontMedium}>{step.title}</WebText>
-									<WebView recipe={styles.mtFlexItemsCenter2}>
+									<WebView recipe={styles.mtFlexItemsCenter2} className="flex-row">
 										<WebText selectable recipe={styles.minWFlexOverflow}>
 											{step.code}
 										</WebText>
@@ -87,8 +100,7 @@ export function AddAgentSetup() {
 							</WebText>
 						</WebView>
 						<WebText selectable recipe={styles.whitespacePreWrapP}>
-							Set up Clawdi on this machine. Fetch https://cloud.clawdi.ai/skill.md, and follow the
-							skills to set it up. Finally, confirm the installation with `clawdi doctor`.
+							{agentSetupPrompt("https://cloud.clawdi.ai")}
 						</WebText>
 					</WebView>
 				</TabsContent>
@@ -120,7 +132,8 @@ export function AddAgentSetup() {
 						</WebText>
 					</WebView>
 				) : (
-					<WebView recipe={styles.mtFlexItemsCenter}>
+					<WebView recipe={styles.mtFlexItemsCenter} className="flex-row">
+						<WebView recipe={styles.relativeInlineFlexSize} />
 						<Text>Waiting for your agent to connect…</Text>
 					</WebView>
 				)}

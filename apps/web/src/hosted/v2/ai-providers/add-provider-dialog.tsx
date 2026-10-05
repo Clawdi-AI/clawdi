@@ -1,6 +1,7 @@
 "use client";
 
 import { nativeAiProvider } from "@clawdi/shared";
+import { providerFieldsFormCopy as copy } from "@clawdi/shared/view";
 
 import { ArrowLeft, CircleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -527,7 +528,7 @@ export function AddProviderDialog({
 											? `Edit ${providerLabel}`
 											: `Finish ${providerLabel} setup`
 										: step === "choose"
-											? (providerGroup?.label ?? "Add a provider")
+											? (providerGroup?.label ?? copy.addTitle)
 											: `Set up ${providerLabel}`}
 							</span>
 						</DialogTitle>
@@ -618,10 +619,10 @@ export function AddProviderDialog({
 										: isEdit
 											? busy
 												? "Saving settings…"
-												: "Save settings"
+												: copy.save
 											: busy
 												? "Adding provider…"
-												: "Add provider"}
+												: copy.add}
 								</Button>
 							</>
 						)}

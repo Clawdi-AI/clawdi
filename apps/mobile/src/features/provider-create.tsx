@@ -1,18 +1,22 @@
-import { AI_PROVIDER_API_MODES, nativeAiProvider } from "@clawdi/shared";
+import { nativeAiProvider } from "@clawdi/shared";
 import {
-	API_MODE_LABEL,
 	type ApiMode,
 	type components,
 	customProviderRuntimeEnv,
-	PROVIDER_PRESETS,
 	PROVIDER_TYPE_META,
 	type ProviderTypeId,
 	providerFormIdentity,
 	providerPresetById,
 	type SavedAiProvider,
 } from "@clawdi/shared/api";
+import {
+	providerFieldsFormCopy as copy,
+	type ProviderChoice,
+	type ProviderGroup,
+} from "@clawdi/shared/view";
 import { randomUUID } from "expo-crypto";
 import { useFocusEffect } from "expo-router";
+import { ArrowLeft, Plus } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
@@ -21,22 +25,14 @@ import { useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
 import { ActionButton, ChoiceSelect } from "../ui/agents/controls";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
-import { Input } from "../ui/input";
+import { ProviderChooser } from "../ui/agents/provider-chooser";
+import { ProviderFieldsForm } from "../ui/agents/provider-fields-form";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Icon } from "../ui/icon";
 import { AppText, AppView } from "../ui/primitives";
+import { ProviderOAuth } from "./provider-oauth";
 
 type AcceptRequest = components["schemas"]["AiProviderAcceptRequest"];
-const choices = [
-	...Object.values(PROVIDER_TYPE_META)
-		.filter((type) => !PROVIDER_PRESETS.some((preset) => preset.id === type.id))
-		.map((type) => ({ id: type.id, label: type.label, type: type.id })),
-	...PROVIDER_PRESETS.map((preset) => ({
-		id: preset.id,
-		label: preset.label,
-		type: preset.provider_type,
-	})),
-];
-
 export function ProviderCreate({
 	providers,
 	refresh,
@@ -51,6 +47,9 @@ export function ProviderCreate({
 	const action = useAuthAction(scope.identity);
 	const capture = useForegroundLease();
 	const [open, setOpen] = useState(false);
+	const [step, setStep] = useState<"choose" | "configure">("choose");
+	const [group, setGroup] = useState<ProviderGroup | null>(null);
+	const [oauth, setOAuth] = useState(false);
 	const [choice, setChoice] = useState("openai");
 	const [type, setType] = useState<ProviderTypeId>("openai");
 	const [region, setRegion] = useState<string | null>(null);
@@ -139,10 +138,15 @@ export function ProviderCreate({
 			{uncertain ? <AppText accessibilityRole="alert">{t("providers.uncertain")}</AppText> : null}
 			{!open ? (
 				<ActionButton
-					label={t("providers.add")}
+					label={copy.add}
+					variant="default"
+					icon={<Icon as={Plus} />}
 					disabled={action.busy || !providers || !scope.isReady}
 					onPress={() => {
 						action.clearError();
+						setStep("choose");
+						setGroup(null);
+						setOAuth(false);
 						setOpen(true);
 					}}
 				/>
@@ -155,95 +159,98 @@ export function ProviderCreate({
 				>
 					<DialogContent>
 						<DialogHeader>
-							<DialogTitle>{t("providers.add")}</DialogTitle>
+							{step === "configure" || group ? (
+								<ActionButton
+									label="Back"
+									icon={<Icon as={ArrowLeft} />}
+									variant="ghost"
+									disabled={locked || action.busy}
+									onPress={() => {
+										if (step === "configure") {
+											setStep("choose");
+											setSecret("");
+										} else setGroup(null);
+									}}
+								/>
+							) : null}
+							<DialogTitle>
+								{step === "choose"
+									? (group?.label ?? copy.addTitle)
+									: oauth
+										? "Sign in with ChatGPT"
+										: `Set up ${preset?.label ?? PROVIDER_TYPE_META[type].label}`}
+							</DialogTitle>
 						</DialogHeader>
-						<ChoiceSelect
-							value={choice}
-							options={choices.map((item) => ({ value: item.id, label: item.label }))}
-							disabled={locked || action.busy}
-							onValueChange={(value) => {
-								const item = choices.find((entry) => entry.id === value);
-								if (!item) return;
-								setChoice(item.id);
-								setType(item.type);
-								setRegion(null);
-								setSecret("");
-							}}
-						/>
-						{preset?.region_variants?.length ? (
-							<ChoiceSelect
-								value={region ?? preset.region_variants[0]?.id ?? ""}
-								options={preset.region_variants.map((variant) => ({
-									value: variant.id,
-									label: variant.label,
-								}))}
-								disabled={locked || action.busy}
-								onValueChange={(value) => {
-									setRegion(value);
+						{step === "choose" ? (
+							<ProviderChooser
+								selected={group}
+								onGroupChange={setGroup}
+								onSelect={(selected: ProviderChoice) => {
 									setSecret("");
+									setOAuth(selected.kind === "oauth");
+									if (selected.kind !== "oauth") {
+										const id = selected.kind === "preset" ? selected.preset.id : selected.type;
+										setChoice(id);
+										setType(
+											selected.kind === "preset" ? selected.preset.provider_type : selected.type,
+										);
+										setRegion(selected.kind === "preset" ? (selected.regionId ?? null) : null);
+									}
+									setStep("configure");
 								}}
 							/>
-						) : null}
-						<Input
-							accessibilityLabel={t("providers.label")}
-							placeholder={t("providers.label")}
-							value={label}
-							onChangeText={setLabel}
-							maxLength={200}
-							editable={!locked && !action.busy}
-						/>
-						{custom ? (
-							<>
-								<Input
-									accessibilityLabel={t("providers.endpoint")}
-									placeholder="https://"
-									value={baseUrl}
-									onChangeText={setBaseUrl}
-									autoCapitalize="none"
-									autoCorrect={false}
-									maxLength={1000}
-									editable={!locked && !action.busy}
-								/>
-								<ChoiceSelect
-									value={apiMode}
-									options={AI_PROVIDER_API_MODES.map((mode) => ({
-										value: mode,
-										label: API_MODE_LABEL[mode],
-									}))}
-									disabled={locked || action.busy}
-									onValueChange={setApiMode}
-								/>
-							</>
+						) : oauth ? (
+							<ProviderOAuth providers={providers} refresh={refresh} />
 						) : (
-							<AppText selectable className="text-sm text-muted-foreground">
-								{route?.base_url}
-							</AppText>
+							<>
+								{preset?.region_variants?.length ? (
+									<ChoiceSelect
+										value={region ?? preset.region_variants[0]?.id ?? ""}
+										options={preset.region_variants.map((variant) => ({
+											value: variant.id,
+											label: variant.label,
+										}))}
+										disabled={locked || action.busy}
+										onValueChange={(value) => {
+											setRegion(value);
+											setSecret("");
+										}}
+									/>
+								) : null}
+								<ProviderFieldsForm
+									label={label}
+									placeholder={preset?.label ?? PROVIDER_TYPE_META[type].label}
+									onLabel={setLabel}
+									showRouting={custom}
+									baseUrl={baseUrl}
+									onBaseUrl={setBaseUrl}
+									apiMode={apiMode}
+									onApiMode={setApiMode}
+									secret={secret}
+									onSecret={setSecret}
+									credentialLabel={preset?.credential_label ?? copy.apiKey}
+									disabled={locked || action.busy}
+								/>
+								<DialogFooter>
+									<ActionButton
+										label={locked ? t("providers.retrySame") : copy.add}
+										variant="default"
+										disabled={
+											action.busy ||
+											!providers ||
+											!secret.trim() ||
+											(custom && (!baseUrl.trim() || !label.trim()))
+										}
+										onPress={() => void submit()}
+									/>
+									<ActionButton
+										label={t("account.cancel")}
+										disabled={action.busy}
+										onPress={clearSensitive}
+									/>
+								</DialogFooter>
+							</>
 						)}
-						<Input
-							accessibilityLabel={t("providers.apiKey")}
-							placeholder={t("providers.apiKey")}
-							value={secret}
-							onChangeText={setSecret}
-							secureTextEntry
-							autoCapitalize="none"
-							autoCorrect={false}
-							editable={!locked && !action.busy}
-						/>
-						<ActionButton
-							label={t(locked ? "providers.retrySame" : "projects.save")}
-							disabled={
-								action.busy ||
-								!providers ||
-								!secret.trim() ||
-								(custom && (!baseUrl.trim() || !label.trim()))
-							}
-							onPress={() => void submit()}
-						/>
-						<ActionButton
-							label={t("account.cancel")}
-							disabled={action.busy}
-							onPress={clearSensitive}
-						/>
 						{action.error ? (
 							<AppText accessibilityRole="alert">{t("providers.failed")}</AppText>
 						) : null}

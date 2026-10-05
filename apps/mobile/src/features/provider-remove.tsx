@@ -1,5 +1,7 @@
 import type { AiProviderRemovalImpact, AiProviderRemovalResult } from "@clawdi/shared/api";
+import { aiProvidersPageClasses } from "@clawdi/shared/ui";
 import { randomUUID } from "expo-crypto";
+import { Trash2 } from "lucide-react-native";
 import { useRef, useState } from "react";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
@@ -7,8 +9,11 @@ import { useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
 import { ActionButton, NativeSwitch } from "../ui/agents/controls";
+import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Icon } from "../ui/icon";
 import { AppText, AppView } from "../ui/primitives";
+import { webView } from "../ui/web-layout";
 
 export function ProviderRemove({
 	providerId,
@@ -72,20 +77,31 @@ export function ProviderRemove({
 		});
 	if (!providerRemoval)
 		return (
-			<AppText className="text-sm text-muted-foreground">
-				{t("providers.removalUnavailable")}
-			</AppText>
+			<Button
+				variant="ghost"
+				size="icon-sm"
+				accessibilityLabel={t("providers.removalUnavailable")}
+				disabled
+				className={webView(aiProvidersPageClasses.mlAutoTextMuted)}
+			>
+				<Icon as={Trash2} />
+			</Button>
 		);
 	return (
 		<AppView className="gap-3">
-			<ActionButton
-				label={t("providers.reviewRemoval")}
+			<Button
+				accessibilityLabel={t("providers.reviewRemoval")}
+				variant="ghost"
+				size="icon-sm"
+				className={webView(aiProvidersPageClasses.mlAutoTextMuted)}
 				disabled={action.busy || !scope.isReady}
 				onPress={() => {
 					if (attempt.current) setOpen(true);
 					else void review();
 				}}
-			/>
+			>
+				<Icon as={Trash2} />
+			</Button>
 			{open ? (
 				<Dialog
 					open={open}
@@ -138,6 +154,7 @@ export function ProviderRemove({
 								/>
 								<ActionButton
 									label={t("providers.removePermanently")}
+									variant="destructive"
 									disabled={action.busy || !acknowledged}
 									onPress={() => void remove(false)}
 								/>

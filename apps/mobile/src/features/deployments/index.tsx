@@ -22,7 +22,7 @@ import { EmptyState } from "../../ui/empty-state";
 import { EntityCardSkeleton, EntityHeader } from "../../ui/entity-card";
 import { EntityIcon } from "../../ui/entity-icon";
 import { PageHeader } from "../../ui/page-header";
-import { AppPressable, AppScrollView, AppText, AppView } from "../../ui/primitives";
+import { AppPressable, AppScrollView, AppText } from "../../ui/primitives";
 import { ReadScreen } from "../../ui/read-screen";
 import { WebView, webView } from "../../ui/web-layout";
 import { BackButton, isNotFound } from "../cloud-inventory";
@@ -58,12 +58,15 @@ export function DeploymentListScreen() {
 	});
 	if (!hosted)
 		return (
-			<ReadScreen>
-				<AppView className="gap-4 p-5">
-					<BackButton />
-					<AppText>{t("deployments.unavailable")}</AppText>
-				</AppView>
-			</ReadScreen>
+			<AgentCollection
+				title={agentSurfaceCopy.agents}
+				description={agentSurfaceCopy.everyAgentInYourAccount}
+			>
+				<EmptyState
+					title={agentSurfaceCopy.unavailable}
+					description={t("deployments.unavailable")}
+				/>
+			</AgentCollection>
 		);
 	const refresh = () => {
 		if (!query.isFetching) void query.refetch();
@@ -242,7 +245,10 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 					description="Status, resources, and recent activity for this agent."
 				/>
 				{!hosted ? (
-					<AppText>{t("deployments.unavailable")}</AppText>
+					<EmptyState
+						title={agentSurfaceCopy.unavailable}
+						description={t("deployments.unavailable")}
+					/>
 				) : !deploymentId ? (
 					<ResourceError missing />
 				) : (

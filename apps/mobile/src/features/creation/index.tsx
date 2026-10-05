@@ -27,6 +27,7 @@ import {
 } from "../../ui/agents/controls";
 import { SettingsSection } from "../../ui/agents/settings-section";
 import { Badge } from "../../ui/badge";
+import { EmptyState } from "../../ui/empty-state";
 import { ENTITY_CHOICE_GRID_CLASS, EntityChoiceCard } from "../../ui/entity-card";
 import { EntityIcon } from "../../ui/entity-icon";
 import { Input as AppTextInput } from "../../ui/input";
@@ -309,7 +310,7 @@ function CreationForm() {
 		<WebView recipe={styles.flexFlexColGap}>
 			<PageHeader title={agentSurfaceCopy.deployAnAgent} />
 			{!compute || !hosted ? (
-				<AppText>{t("creation.unavailable")}</AppText>
+				<EmptyState title={agentSurfaceCopy.unavailable} description={t("creation.unavailable")} />
 			) : (
 				<>
 					{storageError ? (

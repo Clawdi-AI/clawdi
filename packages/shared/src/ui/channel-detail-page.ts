@@ -1,4 +1,5 @@
 export const channelDetailPageClasses = {
+	infoTint: "bg-primary/10 text-primary",
 	minWFlex: "min-w-0 flex-1",
 	roundedLgBorderBgCardP: "rounded-lg border bg-card p-4",
 	flexItemsStartGap: "flex items-start gap-3",

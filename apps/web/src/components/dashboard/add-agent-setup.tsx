@@ -2,6 +2,7 @@
 import { addAgentSetupClasses } from "@clawdi/shared/ui";
 import {
 	agentRegistrationDescription,
+	agentSetupPrompt,
 	agentSurfaceCopy,
 	CLI_STEPS,
 	errorMessage,
@@ -78,7 +79,7 @@ function CopyButton({
 export function AddAgentSetup() {
 	const api = useOpenApi();
 	const origin = useOrigin();
-	const prompt = `Set up Clawdi on this machine. Fetch ${origin}/skill.md, and follow the skills to set it up. Finally, confirm the installation with \`clawdi doctor\`.`;
+	const prompt = agentSetupPrompt(origin);
 	const baseline = useRef<Set<string> | null>(null);
 
 	// Live success detection: snapshot the env ids on first load, then poll

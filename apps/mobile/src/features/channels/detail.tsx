@@ -8,10 +8,22 @@ import {
 	verifiedDiscordPairingCommand,
 	verifiedWhatsAppPairLink,
 } from "@clawdi/shared/api";
-import { agentsIndexClasses, ENTITY_CARD_BASE } from "@clawdi/shared/ui";
-import { agentSurfaceCopy, channelHealthSummary, providerMeta } from "@clawdi/shared/view";
+import {
+	agentsIndexClasses,
+	ENTITY_CARD_BASE,
+	channelDetailPageClasses as styles,
+} from "@clawdi/shared/ui";
+import {
+	agentDisplayName,
+	agentSurfaceCopy,
+	channelHealthSummary,
+	channelDetailCopy as copy,
+	providerMeta,
+	relativeTime,
+} from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { Trash2, TriangleAlert, Unplug } from "lucide-react-native";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, AppState, Linking } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
@@ -19,19 +31,24 @@ import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
+import { AgentIcon } from "../../ui/agents/agent-icon";
 import {
 	ActionButton as NativeButton,
 	ChoiceSelect as NativePicker,
 	NativeSwitch,
 } from "../../ui/agents/controls";
 import { ApiErrorPanel } from "../../ui/api-error-panel";
+import { EmptyState } from "../../ui/empty-state";
+import { EntityHeader } from "../../ui/entity-card";
 import { EntityIcon } from "../../ui/entity-icon";
+import { Icon } from "../../ui/icon";
+import { IconChip } from "../../ui/icon-chip";
 import { PageHeader } from "../../ui/page-header";
 import { AppScrollView, AppText, AppView } from "../../ui/primitives";
 import { ReadScreen } from "../../ui/read-screen";
 import { SectionLabel } from "../../ui/section-label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../ui/tabs";
-import { WebView, webView } from "../../ui/web-layout";
+import { WebText, WebView, webView } from "../../ui/web-layout";
 import { BackButton, useCloudAgents } from "../cloud-inventory";
 import { routeParam } from "../read-helpers";
 import { useChannelQuery } from "./queries";
@@ -189,6 +206,27 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 				<PageHeader
 					title={bot?.name ?? ownedBot?.name ?? "Channels"}
 					description={providerMeta(bot?.provider ?? ownedBot?.provider ?? "").label}
+					actions={
+						ownedBot ||
+						(bot?.access === "owner" && bot.capabilities.manage_account && !pool.isError) ? (
+							<NativeButton
+								label={ownedBot?.provider === "whatsapp" ? agentSurfaceCopy.disconnect : "Delete"}
+								icon={<Icon as={ownedBot?.provider === "whatsapp" ? Unplug : Trash2} />}
+								disabled={disabled}
+								onPress={() =>
+									confirm(
+										t("channels.remove"),
+										t("channels.removeWarning"),
+										() =>
+											void perform(
+												(signal) => channels.remove(id ?? "", signal),
+												() => router.replace("/channels"),
+											),
+									)
+								}
+							/>
+						) : null
+					}
 					icon={
 						<EntityIcon
 							kind="channel"
@@ -215,10 +253,45 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 				pool.isError ||
 				agents.isError ||
 				agentLinks.isError ? (
-					<AppText accessibilityRole="alert">{t("channels.failed")}</AppText>
+					<ApiErrorPanel
+						error={
+							action.error ??
+							links.error ??
+							bindings.error ??
+							activity.error ??
+							pool.error ??
+							agents.error ??
+							agentLinks.error
+						}
+						title={t("channels.failed")}
+					/>
 				) : null}
 				{notice ? <AppText accessibilityRole="alert">{t(`channels.${notice}`)}</AppText> : null}
-				<SectionLabel>{agentSurfaceCopy.linkedAgents}</SectionLabel>
+				{(bot?.provider ?? ownedBot?.provider) === "discord" ? (
+					<WebView recipe={styles.roundedLgBorderBgCardP}>
+						<WebView recipe={styles.flexItemsStartGap} className="flex-row">
+							<IconChip size="sm" tint={styles.infoTint}>
+								<Icon as={TriangleAlert} />
+							</IconChip>
+							<WebView recipe={styles.minWFlexSpaceY}>
+								<WebText recipe={styles.textSmFontMedium}>{copy.discordTitle}</WebText>
+								<WebText recipe={styles.textSmTextMutedForeground}>
+									{copy.discordDescription}
+								</WebText>
+							</WebView>
+						</WebView>
+					</WebView>
+				) : null}
+				<SectionLabel count={links.data?.filter((link) => link.status === "active").length}>
+					{agentSurfaceCopy.linkedAgents}
+				</SectionLabel>
+				{links.data?.filter((link) => link.status === "active").length === 0 ? (
+					<EmptyState
+						variant="inset"
+						title={copy.noLinkedAgents}
+						description={copy.noLinkedAgentsDescription}
+					/>
+				) : null}
 				{bot?.capabilities.link_agent && bot.available ? (
 					<AppView className="gap-3">
 						<NativePicker
@@ -258,46 +331,60 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 				) : null}
 				{links.data
 					?.filter((link) => link.status === "active")
-					.map((link) => (
-						<AppView key={link.id} className={webView(ENTITY_CARD_BASE)}>
-							<AppText selectable>
-								{agents.data?.find((agent) => agent.id === link.agent_id)?.name ?? link.agent_id} ·{" "}
-								{link.runtime_status}
-							</AppText>
-							{bot?.capabilities.pair_chat ? (
+					.map((link) => {
+						const linkedAgent = agents.data?.find((agent) => agent.id === link.agent_id);
+						return (
+							<AppView key={link.id} className={webView(ENTITY_CARD_BASE)}>
+								<EntityHeader
+									align="start"
+									icon={
+										<AgentIcon
+											agent={agents.data?.find((agent) => agent.id === link.agent_id)?.agent_type}
+											size="sm"
+										/>
+									}
+									title={linkedAgent ? agentDisplayName(linkedAgent) : "Agent unavailable"}
+									meta={[`Linked ${relativeTime(link.created_at)}`]}
+								/>
+								{bot?.capabilities.pair_chat ? (
+									<NativeButton
+										label={t("channels.pair")}
+										disabled={disabled}
+										onPress={() =>
+											void action.run(async (current) => {
+												const visible = capture();
+												if (!ready || !visible()) return;
+												setPairing(null);
+												const code = await read((signal) =>
+													channels.pair(id ?? "", link.id, signal),
+												);
+												if (
+													current() &&
+													visible() &&
+													code.agent_link_id === link.id &&
+													!pairCodeExpired(code.expires_at, Date.now())
+												)
+													setPairing(code);
+											})
+										}
+									/>
+								) : null}
 								<NativeButton
-									label={t("channels.pair")}
+									label={t("channels.unlink")}
+									icon={<Icon as={Unplug} />}
+									variant="ghost"
 									disabled={disabled}
 									onPress={() =>
-										void action.run(async (current) => {
-											const visible = capture();
-											if (!ready || !visible()) return;
-											setPairing(null);
-											const code = await read((signal) => channels.pair(id ?? "", link.id, signal));
-											if (
-												current() &&
-												visible() &&
-												code.agent_link_id === link.id &&
-												!pairCodeExpired(code.expires_at, Date.now())
-											)
-												setPairing(code);
-										})
+										confirm(
+											t("channels.unlink"),
+											t("channels.unlinkWarning"),
+											() => void perform((signal) => channels.unlink(id ?? "", link.id, signal)),
+										)
 									}
 								/>
-							) : null}
-							<NativeButton
-								label={t("channels.unlink")}
-								disabled={disabled}
-								onPress={() =>
-									confirm(
-										t("channels.unlink"),
-										t("channels.unlinkWarning"),
-										() => void perform((signal) => channels.unlink(id ?? "", link.id, signal)),
-									)
-								}
-							/>
-						</AppView>
-					))}
+							</AppView>
+						);
+					})}
 				{pairing ? (
 					<AppView className={webView(ENTITY_CARD_BASE)}>
 						<AppText>{t("channels.pairInstructions")}</AppText>
@@ -383,24 +470,6 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 						}
 					/>
 				) : null}
-				{ownedBot ||
-				(bot?.access === "owner" && bot.capabilities.manage_account && !pool.isError) ? (
-					<NativeButton
-						label={t("channels.remove")}
-						disabled={disabled}
-						onPress={() =>
-							confirm(
-								t("channels.remove"),
-								t("channels.removeWarning"),
-								() =>
-									void perform(
-										(signal) => channels.remove(id ?? "", signal),
-										() => router.replace("/channels"),
-									),
-							)
-						}
-					/>
-				) : null}
 				<Tabs defaultValue="activity">
 					<TabsList variant="default">
 						<TabsTrigger value="activity">{agentSurfaceCopy.activity}</TabsTrigger>
@@ -408,9 +477,9 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 						<TabsTrigger value="commands">{agentSurfaceCopy.commands}</TabsTrigger>
 					</TabsList>
 					<TabsContent value="activity">
-						<AppText accessibilityRole="header" className="text-xl font-semibold text-foreground">
-							{t("channels.activity")}
-						</AppText>
+						{!activity.isPending && !activity.isError && !activity.data?.items.length ? (
+							<EmptyState title={copy.noActivity} description={copy.noActivityDescription} />
+						) : null}
 						{activity.data?.items.map((event) => (
 							<AppView key={event.id} className={webView(ENTITY_CARD_BASE)}>
 								<AppText>

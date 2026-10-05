@@ -16,3 +16,7 @@ export const CLI_STEPS = [
 			"Detects Claude Code, Codex, Hermes, OpenClaw, Pi, and OpenCode; connects each one to your account and enables background sync.",
 	},
 ];
+
+export function agentSetupPrompt(origin: string): string {
+	return `Set up Clawdi on this machine. Fetch ${origin}/skill.md, and follow the skills to set it up. Finally, confirm the installation with \`clawdi doctor\`.`;
+}

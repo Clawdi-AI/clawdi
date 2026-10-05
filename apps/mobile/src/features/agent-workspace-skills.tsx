@@ -22,7 +22,14 @@ import { AgentSectionNavigation } from "../ui/agents/navigation";
 import { Alert } from "../ui/alert";
 import { ApiErrorPanel } from "../ui/api-error-panel";
 import { Button } from "../ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "../ui/dialog";
 import { EmptyState } from "../ui/empty-state";
 import { HeroCardSkeleton } from "../ui/entity-card";
 import { Icon } from "../ui/icon";
@@ -164,19 +171,23 @@ function WorkspaceSkills({ id }: { id?: string }) {
 							Enter a GitHub Skill path, then run the generated command on the Agent machine.
 						</DialogDescription>
 					</DialogHeader>
-					<Label>{agentSurfaceCopy.gitHubSkillRepository}</Label>
-					<Input
-						value={repo}
-						onChangeText={setRepo}
-						placeholder={agentSurfaceCopy.ownerRepoOrOwnerRepoPathTo}
-						autoCapitalize="none"
-					/>
+					<WebView recipe={panel.spaceY2}>
+						<Label>{agentSurfaceCopy.gitHubSkillRepository}</Label>
+						<Input
+							value={repo}
+							onChangeText={setRepo}
+							placeholder={agentSurfaceCopy.ownerRepoOrOwnerRepoPathTo}
+							autoCapitalize="none"
+						/>
+					</WebView>
 					{repo.trim() ? (
 						<WebText selectable recipe={panel.minWFlexOverflow}>
 							{workspaceSkillInstallCommand(repo, agent.data?.agent_type ?? "")}
 						</WebText>
 					) : null}
-					<ActionButton label="Done" onPress={() => setInstallOpen(false)} />
+					<DialogFooter>
+						<ActionButton variant="ghost" label="Done" onPress={() => setInstallOpen(false)} />
+					</DialogFooter>
 				</DialogContent>
 			</Dialog>
 			<Dialog
@@ -195,7 +206,9 @@ function WorkspaceSkills({ id }: { id?: string }) {
 					<WebText selectable recipe={panel.minWFlexOverflow}>
 						{removeCommand}
 					</WebText>
-					<ActionButton label="Done" onPress={() => setRemoveCommand(null)} />
+					<DialogFooter>
+						<ActionButton variant="ghost" label="Done" onPress={() => setRemoveCommand(null)} />
+					</DialogFooter>
 				</DialogContent>
 			</Dialog>
 		</AgentCollection>
