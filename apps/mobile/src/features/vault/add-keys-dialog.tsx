@@ -163,6 +163,7 @@ export function AddKeysDialog({
 								<ChoiceSelect
 									className={webBoth(addKeysDialogClasses.trigger)}
 									value={effectiveChoice}
+									displayValue={newVault ? ADD_KEYS_COPY.create : selected?.name}
 									onValueChange={(next) => {
 										setChoice(next);
 										setOverwrite(false);

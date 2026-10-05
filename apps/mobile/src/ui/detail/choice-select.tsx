@@ -6,12 +6,14 @@ export function ChoiceSelect<Value extends string | number>({
 	onValueChange,
 	disabled,
 	className,
+	displayValue,
 }: {
 	value: Value;
 	options: readonly { value: Value; label: string }[];
 	onValueChange: (value: Value) => void;
 	disabled?: boolean;
 	className?: string;
+	displayValue?: string;
 }) {
 	return (
 		<Select
@@ -23,7 +25,7 @@ export function ChoiceSelect<Value extends string | number>({
 			}}
 		>
 			<SelectTrigger className={className}>
-				<SelectValue />
+				<SelectValue>{displayValue}</SelectValue>
 			</SelectTrigger>
 			<SelectContent>
 				{options.map((option) => (
