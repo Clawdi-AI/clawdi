@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 from uuid import UUID
 
@@ -34,6 +34,7 @@ from app.models.channel import (
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_PROVIDERS,
+    CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
     CHANNEL_STATUS_ACTIVE,
     CHANNEL_VISIBILITY_PRIVATE,
     CHANNEL_VISIBILITY_PUBLIC,
@@ -42,6 +43,7 @@ from app.models.channel import (
     DELIVERY_STATUS_PENDING,
     DELIVERY_STATUS_SUCCEEDED,
     ChannelAccount,
+    ChannelAccountRuntimeMarker,
     ChannelBinding,
     ChannelBotAgentLink,
     ChannelDebugEvent,
@@ -79,6 +81,7 @@ from app.schemas.channel import (
     ChannelBotPoolResponse,
     ChannelCommandSyncRequest,
     ChannelCommandSyncResponse,
+    ChannelConnectionIssue,
     ChannelHealthItemResponse,
     ChannelHealthListResponse,
     ChannelMessageResponse,
@@ -146,6 +149,7 @@ from app.services.channels import (
     sync_channel_commands,
     telegram_reserved_commands_are_current,
 )
+from app.services.discord_gateway_worker import discord_gateway_account_revision
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.runtime_observed_evidence import (
     RuntimeObservedEvidence,
@@ -215,10 +219,11 @@ def _agent_link_with_account_response(
     *,
     binding_count: int = 0,
     runtime_status: ChannelRuntimeStatus = "connecting",
+    connection_issue: ChannelConnectionIssue | None = None,
 ) -> ChannelAgentLinkWithAccountResponse:
     return ChannelAgentLinkWithAccountResponse(
         **_agent_link_response(link, runtime_status=runtime_status).model_dump(),
-        account=account_response(account),
+        account=account_response(account, connection_issue=connection_issue),
         binding_count=binding_count,
     )
 
@@ -285,12 +290,16 @@ def _bot_pool_item(
     *,
     user_id: UUID,
     link_count: int = 0,
+    connection_issue: ChannelConnectionIssue | None = None,
 ) -> ChannelBotPoolItem:
     access = _bot_pool_access(account, user_id=user_id)
     max_links = channel_bot_link_limit(account)
     available = max_links is None or link_count < max_links
     return ChannelBotPoolItem(
-        **account_response(account).model_dump(),
+        **account_response(
+            account,
+            connection_issue=connection_issue if access == "owner" else None,
+        ).model_dump(),
         access=access,
         capabilities=_bot_pool_capabilities(access, available=available),
         link_count=link_count,
@@ -318,6 +327,54 @@ def _bot_pool_capabilities(
         manage_account=can_manage_account,
         sync_commands=can_manage_account,
     )
+
+
+_DISCORD_CONNECTION_ISSUES = frozenset(
+    {
+        "authentication_failed",
+        "disallowed_intents",
+        "invalid_intents",
+        "invalid_configuration",
+    }
+)
+
+
+async def _load_discord_connection_issues(
+    db: AsyncSession,
+    *,
+    accounts: list[ChannelAccount],
+) -> dict[UUID, ChannelConnectionIssue]:
+    discord_accounts = [
+        account for account in accounts if account.provider == CHANNEL_PROVIDER_DISCORD
+    ]
+    if not discord_accounts:
+        return {}
+    result = await db.execute(
+        select(ChannelAccountRuntimeMarker).where(
+            ChannelAccountRuntimeMarker.account_id.in_(
+                [account.id for account in discord_accounts]
+            ),
+            ChannelAccountRuntimeMarker.kind
+            == CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
+        )
+    )
+    markers_by_account: dict[UUID, list[ChannelAccountRuntimeMarker]] = {}
+    for marker in result.scalars().all():
+        markers_by_account.setdefault(marker.account_id, []).append(marker)
+    issues: dict[UUID, ChannelConnectionIssue] = {}
+    for account in discord_accounts:
+        revision = discord_gateway_account_revision(account)
+        marker = next(
+            (
+                marker
+                for marker in markers_by_account.get(account.id, [])
+                if marker.scope == revision and marker.outcome in _DISCORD_CONNECTION_ISSUES
+            ),
+            None,
+        )
+        if marker is not None:
+            issues[account.id] = cast(ChannelConnectionIssue, marker.outcome)
+    return issues
 
 
 async def _active_bot_agent_link_counts(
@@ -359,8 +416,14 @@ async def list_channels(
             ChannelAccount.id,
         )
     )
+    accounts = list(result.scalars().all())
+    connection_issues = await _load_discord_connection_issues(db, accounts=accounts)
     payload = [
-        account_response(account).model_dump(mode="json") for account in result.scalars().all()
+        account_response(
+            account,
+            connection_issue=connection_issues.get(account.id),
+        ).model_dump(mode="json")
+        for account in accounts
     ]
     etag = strong_json_etag(payload)
     headers = {"ETag": etag, "Cache-Control": "no-store"}
@@ -396,6 +459,7 @@ async def list_channel_bot_pool(
         provider: [] for provider in CHANNEL_PROVIDERS
     }
     accounts = list(result.scalars().all())
+    connection_issues = await _load_discord_connection_issues(db, accounts=accounts)
     link_counts = await _active_bot_agent_link_counts(
         db,
         account_ids=[account.id for account in accounts],
@@ -415,6 +479,7 @@ async def list_channel_bot_pool(
                 account,
                 user_id=auth.user_id,
                 link_count=link_counts.get(account.id, 0),
+                connection_issue=connection_issues.get(account.id),
             )
         )
     return ChannelBotPoolResponse(providers=providers)
@@ -593,12 +658,22 @@ async def list_agent_channel_links(
         owner_user_id=auth.user_id,
     )
     runtime_status = _agent_link_runtime_status(runtime_evidence.get(agent_id))
+    connection_issues = await _load_discord_connection_issues(
+        db,
+        accounts=[account for _link, account, _binding_count in rows],
+    )
     return [
         _agent_link_with_account_response(
             link,
             account,
             binding_count=binding_count,
             runtime_status=runtime_status,
+            connection_issue=(
+                connection_issues.get(account.id)
+                if account.visibility == CHANNEL_VISIBILITY_PRIVATE
+                and account.user_id == auth.user_id
+                else None
+            ),
         )
         for link, account, binding_count in rows
     ]
@@ -661,7 +736,13 @@ async def get_channel(
     db: AsyncSession = Depends(get_session),
 ) -> ChannelAccountResponse:
     account = await get_accessible_channel_account(db, account_id=account_id, user_id=auth.user_id)
-    return account_response(account)
+    connection_issues = await _load_discord_connection_issues(db, accounts=[account])
+    connection_issue = (
+        connection_issues.get(account.id)
+        if account.visibility == CHANNEL_VISIBILITY_PRIVATE and account.user_id == auth.user_id
+        else None
+    )
+    return account_response(account, connection_issue=connection_issue)
 
 
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)

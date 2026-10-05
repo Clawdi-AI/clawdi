@@ -2849,6 +2849,49 @@ async def find_platform_channel_runtime_marker(
     )
 
 
+async def delete_channel_account_runtime_markers(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    kind: str,
+) -> None:
+    await db.execute(
+        delete(ChannelAccountRuntimeMarker).where(
+            ChannelAccountRuntimeMarker.account_id == account_id,
+            ChannelAccountRuntimeMarker.kind == kind,
+        )
+    )
+
+
+async def upsert_channel_account_runtime_marker(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    kind: str,
+    scope: str,
+    outcome: str,
+    occurred_at: datetime,
+) -> None:
+    """Upsert an account-scoped runtime marker in the current transaction."""
+
+    statement = postgresql_insert(ChannelAccountRuntimeMarker).values(
+        account_id=account_id,
+        kind=kind,
+        scope=scope,
+        outcome=outcome,
+        updated_at=occurred_at,
+    )
+    statement = statement.on_conflict_do_update(
+        index_elements=[
+            ChannelAccountRuntimeMarker.account_id,
+            ChannelAccountRuntimeMarker.kind,
+            ChannelAccountRuntimeMarker.scope,
+        ],
+        set_={"outcome": outcome, "updated_at": occurred_at},
+    )
+    await db.execute(statement)
+
+
 def record_platform_channel_runtime_marker(
     db: AsyncSession,
     *,

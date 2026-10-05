@@ -41,6 +41,7 @@ from app.models.channel import (
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDER_WHATSAPP,
+    CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
     CHANNEL_STATUS_DISABLED,
     CHANNEL_VISIBILITY_PUBLIC,
     DELIVERY_STATUS_FAILED,
@@ -53,6 +54,7 @@ from app.models.channel import (
     PAIR_CODE_STATUS_PENDING,
     PAIR_CODE_STATUS_REVOKED,
     ChannelAccount,
+    ChannelAccountRuntimeMarker,
     ChannelAgentCredential,
     ChannelAgentReference,
     ChannelBinding,
@@ -118,6 +120,7 @@ from app.services.discord_gateway_worker import (
     DiscordGatewayWorker,
     _GatewayState,
     _send_heartbeat,
+    discord_gateway_account_revision,
     discord_gateway_advisory_lock_key,
     discord_gateway_intents,
     discord_gateway_uri,
@@ -2466,6 +2469,49 @@ async def test_channel_bot_pool_lists_public_bots_and_owned_private_bots(
     assert disabled_send.status_code == 404
     assert disabled_whatsapp_credential.status_code == 404
     assert disabled_whatsapp_auth_cert.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_discord_connection_issue_uses_current_account_revision(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    created = await _create_paired_discord_channel(
+        client,
+        name=f"discord-runtime-marker-{uuid4().hex}",
+    )
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    revision = discord_gateway_account_revision(account)
+    db_session.add(
+        ChannelAccountRuntimeMarker(
+            account_id=account.id,
+            kind=CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
+            scope=revision,
+            outcome="authentication_failed",
+        )
+    )
+    await db_session.commit()
+
+    listed = await client.get("/v1/channels")
+    assert listed.status_code == 200, listed.text
+    listed_account = next(item for item in listed.json() if item["id"] == created["id"])
+    assert listed_account["connection_issue"] == "authentication_failed"
+    fetched = await client.get(f"/v1/channels/{created['id']}")
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["connection_issue"] == "authentication_failed"
+
+    account.config = {
+        **(account.config if isinstance(account.config, dict) else {}),
+        "gateway_intents": 513,
+    }
+    await db_session.commit()
+    listed_after_revision_change = await client.get("/v1/channels")
+    assert listed_after_revision_change.status_code == 200
+    changed_account = next(
+        item for item in listed_after_revision_change.json() if item["id"] == created["id"]
+    )
+    assert changed_account["connection_issue"] is None
 
 
 @pytest.mark.asyncio

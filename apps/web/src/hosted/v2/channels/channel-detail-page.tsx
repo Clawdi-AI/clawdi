@@ -44,6 +44,7 @@ import {
 	ChannelStatusBadge,
 	CopyInline,
 	DeliveryBadge,
+	DiscordConnectionIssueAlert,
 	HealthBadge,
 	isNormalChannelHealth,
 	isNormalChannelStatus,
@@ -280,6 +281,9 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 					</ConfirmAction>
 				}
 			/>
+			{ch.provider === "discord" ? (
+				<DiscordConnectionIssueAlert issue={ch.connection_issue} />
+			) : null}
 
 			{providerUnavailable ? (
 				<InfoCard icon={TriangleAlert} title="Provider unavailable">

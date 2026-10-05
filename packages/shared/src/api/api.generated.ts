@@ -5163,6 +5163,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Connection Issue */
+            connection_issue?: ("authentication_failed" | "disallowed_intents" | "invalid_intents" | "invalid_configuration") | null;
             /** Webhook Secret */
             webhook_secret: string;
             /** Agent Link Id */
@@ -5200,6 +5202,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Connection Issue */
+            connection_issue?: ("authentication_failed" | "disallowed_intents" | "invalid_intents" | "invalid_configuration") | null;
         };
         /** ChannelActivityItemResponse */
         ChannelActivityItemResponse: {
@@ -5445,6 +5449,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Connection Issue */
+            connection_issue?: ("authentication_failed" | "disallowed_intents" | "invalid_intents" | "invalid_configuration") | null;
             /**
              * Access
              * @enum {string}

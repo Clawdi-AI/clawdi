@@ -27,6 +27,7 @@ import type {
 } from "@/hosted/v2/channels/channel-types";
 import {
 	ChannelStatusBadge,
+	DiscordConnectionIssueAlert,
 	HealthBadge,
 	isNormalChannelHealth,
 	isNormalChannelStatus,
@@ -331,6 +332,9 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: Ch
 					</>
 				}
 			/>
+			{channel.provider === "discord" ? (
+				<DiscordConnectionIssueAlert issue={channel.connection_issue} />
+			) : null}
 			<Link to="/channels/$id" params={{ id: channel.id }} className={ENTITY_STRETCHED_LINK_CLASS}>
 				<span className="sr-only">Open {channel.name}</span>
 			</Link>
