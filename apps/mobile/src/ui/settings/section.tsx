@@ -3,6 +3,7 @@ import {
 	settingsSectionClasses as section,
 } from "@clawdi/shared/ui";
 import type { ReactNode } from "react";
+import { HeaderActionGroup } from "../header-action-group";
 import { Separator } from "../separator";
 import { WebText, WebView } from "../web-layout";
 
@@ -23,7 +24,7 @@ export function SettingsPanelHeader({
 				</WebText>
 				{description ? <WebText recipe={header.description}>{description}</WebText> : null}
 			</WebView>
-			{actions}
+			{actions ? <HeaderActionGroup>{actions}</HeaderActionGroup> : null}
 		</WebView>
 	);
 }
@@ -57,7 +58,11 @@ export function SettingsSection({
 					)}
 					{description ? <WebText recipe={section.description}>{description}</WebText> : null}
 				</WebView>
-				{actions}
+				{actions ? (
+					<WebView recipe={section.actions} className="flex-row">
+						{actions}
+					</WebView>
+				) : null}
 			</WebView>
 			{children ? <WebView recipe={section.content}>{children}</WebView> : null}
 		</WebView>

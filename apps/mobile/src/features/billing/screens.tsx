@@ -12,15 +12,15 @@ import { BalanceCard, TransactionRow, WalletSettingsSections } from "../../ui/bi
 import { Button } from "../../ui/button";
 import { EmptyState } from "../../ui/empty-state";
 import { ErrorState, LoadingScreen } from "../../ui/feedback";
-import { DetailRow } from "../../ui/metadata-row";
-import { AppScrollView, AppText, AppView } from "../../ui/primitives";
 import { ReadScreen } from "../../ui/read-screen";
 import { RouteLoadingSkeleton } from "../../ui/route-loading-skeleton";
+import { SettingsBackButton } from "../../ui/settings/back-button";
 import { SettingsPanelHeader, SettingsSection } from "../../ui/settings/section";
 import { SettingsShell } from "../../ui/settings/shell";
 import { Text } from "../../ui/text";
+import { AppScrollView, AppView } from "../../ui/view";
 import { WebText, WebView, webView } from "../../ui/web-layout";
-import { BackButton, formatDate } from "../cloud-inventory";
+import { formatDate } from "../cloud-inventory";
 import { ResourceError } from "../resource-error";
 import {
 	nextBillingCursor,
@@ -262,6 +262,16 @@ function WalletView() {
 		</SettingsShell>
 	);
 }
+function BillingFact({ label, value }: { label: string; value: string }) {
+	return (
+		<WebView recipe={transactionsSectionClasses.mobileCopy}>
+			<WebText recipe={transactionsSectionClasses.description}>{label}</WebText>
+			<WebText selectable recipe={transactionsSectionClasses.label}>
+				{value}
+			</WebText>
+		</WebView>
+	);
+}
 function SubscriptionRecovery({ item }: { item: Subscription }) {
 	const t = useI18n();
 	const recovery = computeSubscriptionRecoveryPresentation(
@@ -284,29 +294,29 @@ function SubscriptionRecovery({ item }: { item: Subscription }) {
 	return (
 		<AppView className="gap-2">
 			{recovery.status.label !== item.status ? (
-				<AppText
+				<Text
 					accessibilityRole={recovery.hasPaymentIssue ? "alert" : undefined}
 					className="text-foreground"
 				>
 					{recovery.status.label}
-				</AppText>
+				</Text>
 			) : null}
 			{recovery.schedule?.at ? (
-				<DetailRow
+				<BillingFact
 					label={t("billing.retries")}
 					value={formatDate(recovery.schedule.at) ?? t("billing.unknown")}
 				/>
 			) : recovery.schedule?.fallback ? (
-				<AppText className="text-muted-foreground">{recovery.schedule.fallback}</AppText>
+				<Text className="text-muted-foreground">{recovery.schedule.fallback}</Text>
 			) : null}
 			{item.cancel_at_period_end ? (
-				<AppText className="text-muted-foreground">{t("billing.cancellation")}</AppText>
+				<Text className="text-muted-foreground">{t("billing.cancellation")}</Text>
 			) : null}
 			{item.pending_plan_slug ? (
-				<DetailRow label={t("billing.pendingPlan")} value={item.pending_plan_slug} />
+				<BillingFact label={t("billing.pendingPlan")} value={item.pending_plan_slug} />
 			) : null}
 			{recovery.recoveryTarget ? (
-				<AppText className="text-muted-foreground">{t("billing.providerRecovery")}</AppText>
+				<Text className="text-muted-foreground">{t("billing.providerRecovery")}</Text>
 			) : null}
 		</AppView>
 	);
@@ -329,9 +339,10 @@ export function SubscriptionDetailScreen({
 	if (!compute)
 		return (
 			<ReadScreen>
-				<AppView className="gap-4 p-6">
-					<BackButton />
-					<AppText>{t("billing.unavailable")}</AppText>
+				<AppView className={webView(billingPageClass)}>
+					<SettingsBackButton />
+					<SettingsPanelHeader title={t("billing.details")} />
+					<EmptyState variant="inset" title={t("billing.unavailable")} />
 				</AppView>
 			</ReadScreen>
 		);
@@ -339,7 +350,7 @@ export function SubscriptionDetailScreen({
 		return (
 			<ReadScreen>
 				<AppView className="gap-4 p-6">
-					<BackButton />
+					<SettingsBackButton />
 					<ResourceError missing />
 				</AppView>
 			</ReadScreen>
@@ -348,8 +359,8 @@ export function SubscriptionDetailScreen({
 	return (
 		<ReadScreen>
 			<AppScrollView contentContainerClassName={webView(billingPageClass)}>
-				<BackButton />
-				<AppText className="text-lg font-semibold text-foreground">{t("billing.details")}</AppText>
+				<SettingsBackButton />
+				<SettingsPanelHeader title={t("billing.details")} />
 				<DetailAction
 					disabled={query.isFetching}
 					label={t("inventory.refresh")}
@@ -363,16 +374,19 @@ export function SubscriptionDetailScreen({
 				{item ? (
 					<AppView className={webView(transactionsSectionClasses.section)}>
 						<ComputeSubscriptionCard item={item} />
-						<DetailRow label={t("billing.agent")} value={item.agent_name ?? t("billing.unknown")} />
-						<DetailRow label={t("billing.plan")} value={item.plan_slug} />
-						<DetailRow label={t("billing.status")} value={item.status} />
+						<BillingFact
+							label={t("billing.agent")}
+							value={item.agent_name ?? t("billing.unknown")}
+						/>
+						<BillingFact label={t("billing.plan")} value={item.plan_slug} />
+						<BillingFact label={t("billing.status")} value={item.status} />
 						<SubscriptionRecovery item={item} />
-						<DetailRow
+						<BillingFact
 							label={t("billing.price")}
 							value={subscriptionPrice(item) ?? t("billing.unknown")}
 						/>
-						<DetailRow label={t("billing.term")} value={String(item.billing_term_months)} />
-						<DetailRow
+						<BillingFact label={t("billing.term")} value={String(item.billing_term_months)} />
+						<BillingFact
 							label={t("billing.source")}
 							value={
 								item.subscription_kind === "included_basic"
@@ -384,14 +398,12 @@ export function SubscriptionDetailScreen({
 											: t("billing.unknown")
 							}
 						/>
-						<DetailRow
+						<BillingFact
 							label={t("billing.periodEnd")}
 							value={formatDate(item.current_period_end) ?? t("billing.unknown")}
 						/>
-						{item.funding_source === "wallet" ? (
-							<AppText>{t("billing.walletNotice")}</AppText>
-						) : null}
-						<AppText className="text-muted-foreground">{t("billing.management")}</AppText>
+						{item.funding_source === "wallet" ? <Text>{t("billing.walletNotice")}</Text> : null}
+						<Text className="text-muted-foreground">{t("billing.management")}</Text>
 						{item.deployment_id ? (
 							<DetailAction
 								label={t("billing.deployment")}
@@ -405,7 +417,7 @@ export function SubscriptionDetailScreen({
 				) : !query.isError ? (
 					query.hasNextPage ? (
 						<>
-							<AppText>{t("billing.moreToSearch")}</AppText>
+							<Text>{t("billing.moreToSearch")}</Text>
 							<DetailAction
 								disabled={query.isFetching}
 								label={t("inventory.loadMore")}
