@@ -16,6 +16,7 @@ export * from "./project-resource-model";
 export * from "./resource-identity";
 export * from "./session-agent-label";
 export * from "./session-queries";
+export * from "./session-transcript";
 export * from "./sessions";
 export * from "./skill-search";
 export * from "./utils";

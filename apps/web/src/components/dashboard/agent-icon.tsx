@@ -1,3 +1,8 @@
+import {
+	sessionAgentFallbackSizes,
+	sessionAgentIconRadius,
+	sessionAgentIconSizes,
+} from "@clawdi/shared/ui";
 import { AgentFrameworkIcon } from "@/components/agent-framework-icon";
 import { cn } from "@/lib/utils";
 
@@ -8,15 +13,6 @@ import { cn } from "@/lib/utils";
 
 export type AgentIconSize = "xs" | "sm" | "md" | "lg" | "rail" | "xl";
 
-const SIZE_CLASS: Record<AgentIconSize, string> = {
-	xs: "size-4",
-	sm: "size-5",
-	md: "size-6",
-	lg: "size-8",
-	rail: "size-10",
-	xl: "size-12",
-};
-
 const SIZE_PX: Record<AgentIconSize, number> = {
 	xs: 16,
 	sm: 20,
@@ -24,15 +20,6 @@ const SIZE_PX: Record<AgentIconSize, number> = {
 	lg: 32,
 	rail: 40,
 	xl: 48,
-};
-
-const FALLBACK_ICON_CLASS: Record<AgentIconSize, string> = {
-	xs: "size-2.5",
-	sm: "size-3",
-	md: "size-3.5",
-	lg: "size-4",
-	rail: "size-5",
-	xl: "size-6",
 };
 
 export function AgentIcon({
@@ -48,13 +35,14 @@ export function AgentIcon({
 	avatarUrl?: string | null;
 	className?: string;
 }) {
-	const radius = shape === "circle" ? "rounded-full" : "rounded-md";
+	const radius =
+		shape === "circle" ? sessionAgentIconRadius.circle : sessionAgentIconRadius.rounded;
 	return (
 		<AgentFrameworkIcon
 			agent={agent}
 			pixelSize={SIZE_PX[size]}
-			boxClassName={cn(SIZE_CLASS[size], radius)}
-			fallbackIconClassName={FALLBACK_ICON_CLASS[size]}
+			boxClassName={cn(sessionAgentIconSizes[size], radius)}
+			fallbackIconClassName={sessionAgentFallbackSizes[size]}
 			avatarUrl={avatarUrl}
 			className={className}
 			draggable={false}

@@ -1,3 +1,4 @@
+import { sessionAgentInlineClasses } from "@clawdi/shared/ui";
 import {
 	type AgentSourceKind,
 	agentIdentity,
@@ -53,9 +54,9 @@ export function AgentInline({
 	const title = identity.primaryLabel;
 	if (!hasIdentity) return null;
 	return (
-		<span className={cn("inline-flex items-center gap-1.5", className)}>
+		<span className={cn(sessionAgentInlineClasses.root, className)}>
 			<AgentIcon agent={type} size="xs" />
-			<span className="font-medium text-foreground">{title}</span>
+			<span className={sessionAgentInlineClasses.label}>{title}</span>
 		</span>
 	);
 }
