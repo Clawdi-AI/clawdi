@@ -326,7 +326,16 @@ export function UsagePage({ agentTiles }: { agentTiles: readonly AgentTile[] }) 
 	if (allUsage.isLoading || (selectedAgentId !== "all" && scopedUsage.isLoading)) {
 		return (
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
-				<SettingsPanelHeader title="Usage" actions={filters} />
+				<SettingsPanelHeader
+					title="Usage"
+					description={
+						// Same text length as the loaded date window, so the header keeps its size.
+						<span className="animate-pulse rounded-md bg-muted text-transparent">
+							Jan 1, 2026 – Jan 31, 2026 · UTC
+						</span>
+					}
+					actions={filters}
+				/>
 				<UsageSkeleton />
 			</div>
 		);
