@@ -17,6 +17,7 @@
 			"!apps/web/src/hooks/use-mobile.ts",
 			"!**/*.generated.*",
 			"!**/routeTree.gen.ts",
+			"!apps/mobile/uniwind-types.d.ts",
 			"!**/dist",
 			"!**/node_modules"
 		]

@@ -1,16 +1,8 @@
 {
 	"extends": "./tsconfig.json",
 	"compilerOptions": {
-		"types": [
-			"bun"
-		]
+		"types": ["bun"]
 	},
-	"include": [
-		"src/**/*.test.ts",
-		"src/**/*.test.tsx",
-		"scripts/**/*.ts"
-	],
-	"exclude": [
-		"compatibility"
-	]
+	"include": ["src/**/*.test.ts", "src/**/*.test.tsx", "scripts/**/*.ts"],
+	"exclude": ["compatibility"]
 }
