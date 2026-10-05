@@ -24,13 +24,13 @@ from sqlalchemy.pool import QueuePool
 
 from app.core import database
 from app.core.query_utils import search_excerpt, search_highlight_terms, search_terms
-from app.routes import search as search_routes
 from app.models.session import (
     SESSION_SEARCH_CHUNK_BODY_CHARACTERS,
     SESSION_SEARCH_CHUNK_MAX_CHARACTERS,
     Session,
     SessionMessageSearch,
 )
+from app.routes import search as search_routes
 from app.services.session_search import (
     SearchableSessionMessage,
     rebuild_session_search_index,

@@ -10,6 +10,8 @@ https://docs.svix.com/receiving/verifying-payloads/how-manual
 
 from __future__ import annotations
 
+# The module-level httpx name remains a patch seam for transport tests.
+# pyright: reportUnusedImport=false
 import base64
 import binascii
 import hashlib
@@ -169,7 +171,7 @@ async def _fetch_clerk_authority(subject: str) -> tuple[bool, datetime]:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "Clerk Backend API is not configured",
-    )
+        )
     try:
         response = await get_clerk_backend_client().get(
             clerk_user_url(subject),

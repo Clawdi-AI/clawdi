@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from urllib.parse import quote
 
 import httpx
@@ -29,36 +30,51 @@ _shared_client: httpx.AsyncClient | None = None
 
 
 class ClerkBackendClient:
-    async def _request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        json: object | None = None,
+    ) -> httpx.Response:
         client = _shared_client
         if client is not None:
-            return await self._request_with(client, method, url, **kwargs)
+            return await self._request_with(client, method, url, headers=headers, json=json)
         # ASGI unit tests do not drive application lifespan. Keep that path
         # deterministic while production uses the lifespan-owned client.
         async with httpx.AsyncClient(timeout=CLERK_BACKEND_TIMEOUT) as transient:
-            return await self._request_with(transient, method, url, **kwargs)
+            return await self._request_with(transient, method, url, headers=headers, json=json)
 
     @staticmethod
     async def _request_with(
         client: httpx.AsyncClient,
         method: str,
         url: str,
-        **kwargs: object,
+        *,
+        headers: Mapping[str, str] | None,
+        json: object | None,
     ) -> httpx.Response:
         try:
             if method == "GET":
-                return await client.get(url, **kwargs)
-            return await client.post(url, **kwargs)
+                return await client.get(url, headers=headers)
+            return await client.post(url, headers=headers, json=json)
         except httpx.TimeoutException as exc:
             raise ClerkBackendTimeoutError("Clerk Backend API request timed out") from exc
         except httpx.HTTPError as exc:
             raise ClerkBackendTransportError("Clerk Backend API request failed") from exc
 
-    async def get(self, url: str, **kwargs: object) -> httpx.Response:
-        return await self._request("GET", url, **kwargs)
+    async def get(self, url: str, *, headers: Mapping[str, str] | None = None) -> httpx.Response:
+        return await self._request("GET", url, headers=headers)
 
-    async def post(self, url: str, **kwargs: object) -> httpx.Response:
-        return await self._request("POST", url, **kwargs)
+    async def post(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        json: object | None = None,
+    ) -> httpx.Response:
+        return await self._request("POST", url, headers=headers, json=json)
 
 
 _clerk_backend_client = ClerkBackendClient()

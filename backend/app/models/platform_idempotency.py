@@ -32,4 +32,6 @@ class PlatformMutationIdempotency(Base, TimestampMixin):
     response_status: Mapped[int] = mapped_column(Integer, nullable=False)
     encrypted_response: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     response_nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )

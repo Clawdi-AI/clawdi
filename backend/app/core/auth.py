@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# The module-level httpx name remains a patch seam for transport tests.
+# pyright: reportUnusedImport=false
 import asyncio
 import hashlib
 import hmac

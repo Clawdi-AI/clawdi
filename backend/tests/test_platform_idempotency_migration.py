@@ -69,19 +69,16 @@ def test_platform_idempotency_migration_backfills_expiry_and_cascades_user_delet
 
             migration.upgrade()
             expires_at = connection.scalar(
-                text(
-                    "SELECT expires_at FROM platform_mutation_idempotency "
-                    "WHERE id = :row_id"
-                ),
+                text("SELECT expires_at FROM platform_mutation_idempotency WHERE id = :row_id"),
                 {"row_id": row_id},
             )
             assert expires_at == created_at + timedelta(days=7)
             foreign_keys = inspect(connection).get_foreign_keys("platform_mutation_idempotency")
             assert foreign_keys[0]["options"]["ondelete"] == "CASCADE"
             connection.execute(text("DELETE FROM users WHERE id = :user_id"), {"user_id": user_id})
-            assert connection.scalar(
-                text("SELECT count(*) FROM platform_mutation_idempotency")
-            ) == 0
+            assert (
+                connection.scalar(text("SELECT count(*) FROM platform_mutation_idempotency")) == 0
+            )
 
             migration.downgrade()
             assert "expires_at" not in {

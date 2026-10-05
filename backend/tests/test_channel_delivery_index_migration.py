@@ -4,7 +4,6 @@ import importlib.util
 import uuid
 from pathlib import Path
 
-import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect, text

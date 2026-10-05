@@ -19,6 +19,8 @@ This remains additive for existing released CLI clients. New first-party CLI
 login uses Clerk's Public OAuth App Authorization Code + PKCE flow instead.
 """
 
+# The module-level httpx name remains a patch seam for transport tests.
+# pyright: reportUnusedImport=false
 import secrets
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
