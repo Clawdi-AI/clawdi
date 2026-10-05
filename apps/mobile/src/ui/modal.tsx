@@ -103,7 +103,11 @@ export function ModalSurface({
 				!/^(?:fixed|absolute|top-|left-|right-|bottom-|inset-|z-|-?translate-)/.test(token),
 		)
 		.join(" ");
-	const overlay = resolveWebClasses(overlayRecipe).view.replace(/\bfixed\b/g, "absolute");
+	const overlay = resolveWebClasses(overlayRecipe)
+		.view.replace(/\bfixed\b/g, "absolute")
+		.split(/\s+/)
+		.filter((token) => !token.startsWith("z-"))
+		.join(" ");
 	const dismiss = () => {
 		if (dismissible) modal.setOpen(false);
 	};
