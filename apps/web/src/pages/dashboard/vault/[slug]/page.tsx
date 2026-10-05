@@ -9,6 +9,7 @@ import {
 	isCustomProject,
 	LIBRARY_COPY,
 	projectSupportingText,
+	vaultKeyFormCopy,
 } from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
@@ -699,8 +700,8 @@ export default function VaultDetailPage({
 									) : canManageVault ? (
 										<ConfirmAction
 											title={`Delete ${name}?`}
-											description={<p>The key is removed for every Project using this vault.</p>}
-											confirmLabel="Delete key"
+											description={<p>{vaultKeyFormCopy.deleteKeyDescription}</p>}
+											confirmLabel={vaultKeyFormCopy.deleteKey}
 											destructive
 											onConfirm={() => deleteKey.mutate({ section, name })}
 										>

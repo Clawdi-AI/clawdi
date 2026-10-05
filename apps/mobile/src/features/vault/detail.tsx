@@ -505,6 +505,8 @@ function VaultDetail({
 																	if (isCurrent()) await refresh();
 																},
 																true,
+																true,
+																formCopy.deleteKey,
 															);
 														}}
 													>
