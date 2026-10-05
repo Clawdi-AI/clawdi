@@ -112,6 +112,7 @@ export function SelectTrigger({
 			accessibilityRole="button"
 			accessibilityState={{ disabled: disabled || select.disabled }}
 			className={className}
+			style={{ paddingVertical: 0 }}
 		>
 			{children}
 			<WebIcon as={ChevronDown} recipe={styles.selectTrigger2} />

@@ -1,3 +1,5 @@
+export { deploymentFilesUrl } from "@clawdi/shared/view";
+
 import type { AiProviderAuthKind, HostedDeployment } from "@/hosted/billing/contracts";
 
 export const HOSTED_RUNTIMES = ["openclaw", "hermes"] as const;
@@ -52,27 +54,6 @@ export function runtimeConsoleUrl(
 }
 
 export { hermesOidcLoginUrl, runtimeDashboardUrl } from "@clawdi/shared/api";
-
-export function deploymentFilesUrl(deployment: HostedDeployment): string | null {
-	const value = deployment.files_endpoint?.url;
-	if (!value) return null;
-	try {
-		const url = new URL(value);
-		if (
-			url.protocol !== "https:" ||
-			url.username ||
-			url.password ||
-			url.pathname !== "/" ||
-			url.search ||
-			url.hash
-		) {
-			return null;
-		}
-		return url.toString();
-	} catch {
-		return null;
-	}
-}
 
 export function runtimeAiProviderAuthKind(
 	deployment: HostedDeployment,

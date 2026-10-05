@@ -73,12 +73,12 @@ export function ComputeSubscriptionCard({
 								fallbackIconClassName={agentIconClasses.mediumFallback}
 							/>
 							<WebView recipe={agentLabelClasses.copy}>
-								<WebText recipe={`${agentLabelClasses.name} ${agentLabelClasses.mediumName}`}>
+								<WebText recipe={`${agentLabelClasses.name} ${agentLabelClasses.nameBySize.md}`}>
 									{identity.primaryLabel}
 								</WebText>
 								{identity.secondaryLabel ? (
 									<WebText
-										recipe={`${agentLabelClasses.subtitle} ${agentLabelClasses.mediumSubtitleGap}`}
+										recipe={`${agentLabelClasses.subtitle} ${agentLabelClasses.subtitleGapBySize.md}`}
 									>
 										{identity.secondaryLabel}
 									</WebText>

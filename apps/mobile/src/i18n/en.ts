@@ -469,18 +469,6 @@ export const en = {
 			"Your account has a required setup step. Complete it on the web before using the mobile app.",
 	},
 	home: {
-		greeting: "Welcome back",
-		agentsTitle: "Cloud Agents",
-		sessionsTitle: "Recent Sessions",
-		workspaceTitle: "Your Agent workspace",
-		workspaceMessage:
-			"Your mobile foundation is ready. Agent inventory and sessions will appear here.",
-		emptyTitle: "No Agents to show",
-		emptyMessage: "When an Agent is available for this account, its status will appear here.",
-		statsTitle: "Workspace activity",
-		statsSessions: "Sessions",
-		statsMessages: "Messages",
-		statsProjects: "Projects",
 		statsSkills: "Skills",
 	},
 	inventory: {
