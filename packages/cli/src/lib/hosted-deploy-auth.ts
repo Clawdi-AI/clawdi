@@ -119,7 +119,7 @@ export function createHostedDeployAuthProvider(
 			} catch {
 				throw new HostedDeployAuthorizationError(
 					"hosted_endpoint_binding_mismatch",
-					"The refreshed Clerk OAuth login is not bound to the current Cloud and Hosted endpoints. Run `clawdi auth login` again.",
+					"The refreshed sign-in doesn't match the current Cloud and Hosted endpoints. Run `clawdi auth login` again.",
 				);
 			}
 			return { token, expiresAt: refreshed.accessTokenExpiresAt };

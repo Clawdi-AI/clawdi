@@ -121,7 +121,7 @@ export function parseDeployCommandOptions(options: DeployCommandOptions): Parsed
 		if (!value) {
 			throw new DeployInputError(
 				"invalid_provider",
-				"--provider must be managed, unmanaged, or an exact saved provider id.",
+				"--provider must be managed, unmanaged, or an exact saved provider ID.",
 			);
 		}
 		const keyword = value.toLowerCase();
@@ -248,7 +248,7 @@ export interface DeployPromptAdapter {
 
 class DeployCancelledError extends Error {
 	constructor() {
-		super("Deployment cancelled.");
+		super("Deployment canceled.");
 		this.name = "DeployCancelledError";
 	}
 }
@@ -630,7 +630,7 @@ export async function runDeployFlow(
 				if (!interactive || parsed.aiMode === "saved") {
 					throw new DeployInputError(
 						"provider_metadata_unavailable",
-						"Saved AI provider metadata could not be loaded. Retry before deploying with an exact saved provider id.",
+						"Saved AI provider metadata could not be loaded. Retry before deploying with an exact saved provider ID.",
 					);
 				}
 				prompts.note(
@@ -728,7 +728,7 @@ export async function runDeployFlow(
 	if (aiMode === "saved" && !selectedSavedProvider) {
 		throw new DeployInputError(
 			"provider_missing",
-			`Saved AI provider ${providerId ?? ""} was not found. Pass its exact provider id from Cloud AI Providers.`,
+			`Saved AI provider ${providerId ?? ""} was not found. Pass its exact provider ID from Cloud AI Providers.`,
 		);
 	}
 	const selectedProviderIssue = selectedSavedProvider
@@ -1107,7 +1107,7 @@ export async function runDeployFlow(
 		const immediateFailure = operationFailure(operation);
 		if (immediateFailure) throw immediateFailure;
 		deploymentId = operation.metadata.deploymentId.trim() || null;
-		if (!deploymentId) throw new Error("Hosted deploy API accepted creation without an agent id.");
+		if (!deploymentId) throw new Error("Hosted deploy API accepted creation without an Agent ID.");
 		onEvent({ stage: "accepted", message: `Accepted ${deploymentId} (${operation.name}).` });
 		completed = operation.done;
 		if (parsed.wait) {

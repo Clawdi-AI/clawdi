@@ -428,6 +428,6 @@ describe("owner project sharing commands", () => {
 			"GET /v1/projects",
 			"DELETE /v1/projects/project-owned/invitations/invite-1",
 		]);
-		expect(consoleCapture.lines.join("\n")).toContain("Invitation cancelled");
+		expect(consoleCapture.lines.join("\n")).toContain("Invitation canceled");
 	});
 });

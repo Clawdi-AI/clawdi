@@ -248,7 +248,7 @@ export async function pull(opts: PullOpts) {
 	}
 	if (opts.project && totals.skillImports > 0) {
 		p.log.info(
-			"Imported Skills remain Project-owned references and are not pushed back as Agent Skills. Explicit `clawdi skill install <repo> --agent <type>` or `clawdi skill add <path> --agent <type>` transfers that local key to Agent authority.",
+			"Imported Skills stay owned by their Project and aren't pushed back as Agent Skills. To make one an Agent Skill, run `clawdi skill install <repo> --agent <type>` or `clawdi skill add <path> --agent <type>.",
 		);
 	}
 	p.outro(chalk.green(`✓ Pull complete — ${parts.join(", ")}`));

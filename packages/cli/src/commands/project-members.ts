@@ -149,7 +149,7 @@ export async function projectUnshareCommand(
 	console.log(
 		chalk.gray(
 			`  Revoked ${result.links_revoked} link(s), removed ${result.members_removed} member(s), ` +
-				`cancelled ${result.invitations_cancelled} invitation(s).`,
+				`canceled ${result.invitations_cancelled} invitation(s).`,
 		),
 	);
 	console.log(chalk.gray("  Owned project content remains in place."));

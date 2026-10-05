@@ -338,7 +338,7 @@ export async function inboxAcceptCommand(
 		if (detectAcceptArgShape(normalized) === "uuid" && !opts.url) {
 			console.error(
 				chalk.red(
-					"That looks like an invitation id. Invitations require an account — " +
+					"That looks like an invitation ID. Invitations require an account — " +
 						"run `clawdi auth login` first, then re-run.",
 				),
 			);
@@ -361,7 +361,7 @@ export async function inboxAcceptCommand(
 	if (!posArg) {
 		console.error(
 			chalk.red(
-				"Pass an invitation id or share URL.\n" +
+				"Pass an invitation ID or share URL.\n" +
 					"  clawdi inbox accept <invitation-uuid>\n" +
 					"  clawdi inbox accept <https://.../share/...>\n" +
 					"  clawdi inbox accept --invite <uuid>   # explicit\n" +
@@ -381,8 +381,8 @@ export async function inboxAcceptCommand(
 	} else {
 		console.error(
 			chalk.red(
-				`Can't tell whether '${normalized.slice(0, 60)}…' is an invitation id or a URL.\n` +
-					"  Invitation id shape:  1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d\n" +
+				`Can't tell whether '${normalized.slice(0, 60)}…' is an invitation ID or a URL.\n` +
+					"  Invitation ID shape:  1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d\n" +
 					"  Share URL shape:      https://.../share/<43-char-token>\n" +
 					"  Use --invite <id> or --url <link> to be explicit.",
 			),
@@ -618,8 +618,7 @@ export async function inboxForgetCommand(projectId: string): Promise<void> {
 	}
 	console.log(
 		chalk.gray(
-			"  This is a LOCAL operation only. Server-side membership (if any) " +
-				"is unchanged — `clawdi project leave <project>` drops that.",
+			"  This only affects this device. To leave the Project on the server, run `clawdi project leave <project>`.",
 		),
 	);
 }

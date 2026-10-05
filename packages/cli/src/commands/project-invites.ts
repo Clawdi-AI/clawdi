@@ -46,7 +46,7 @@ export async function projectInvitesCommand(
 			`/v1/projects/${projectId}/invitations/${opts.cancel}`,
 			{ method: "DELETE" },
 		);
-		console.log(`${chalk.green("✓")} Invitation cancelled.`);
+		console.log(`${chalk.green("✓")} Invitation canceled.`);
 		console.log(chalk.gray("  The recipient will no longer see it in their inbox."));
 		return;
 	}

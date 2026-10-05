@@ -206,7 +206,7 @@ async function registerEnv(
 		const vaultWorkspace = await selectVaultWorkspace(agentType, opts);
 		if (vaultWorkspace && !userId)
 			throw new Error(
-				"Vault workspace requires an account-bound CLI login. Run clawdi auth login first; environment-only credentials have no local account fence.",
+				"Vault workspace needs a signed-in CLI account. Run `clawdi auth login` first; environment-variable credentials aren't enough.",
 			);
 		const env = unwrap(
 			await api.POST("/v1/agents", {

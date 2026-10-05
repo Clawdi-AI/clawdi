@@ -129,7 +129,7 @@ export async function agentSkillsInstall(agentId: string, opts: InstallOptions) 
 		if (opts.json || !process.stdout.isTTY) print({ status: "accepted", ...result });
 		else
 			console.log(
-				`Library Skill ${result.desired_state} request accepted. Run \`agent skills list ${agentId}\` to check application.`,
+				`Library Skill ${result.desired_state} request accepted. Run \`clawdi agent skills list ${agentId}\` to check application.`,
 			);
 		return;
 	}
@@ -165,7 +165,7 @@ export async function agentSkillsRemove(
 		if (opts.json || !process.stdout.isTTY) print({ status: "accepted", ...result });
 		else
 			console.log(
-				`Library Skill ${result.desired_state} request accepted. Run \`agent skills list ${agentId}\` to check application.`,
+				`Library Skill ${result.desired_state} request accepted. Run \`clawdi agent skills list ${agentId}\` to check application.`,
 			);
 		return;
 	}
@@ -235,13 +235,13 @@ async function mutateGithubSkill(
 			);
 			if (result.failure_message) console.log(sanitizeMetadata(result.failure_message));
 			console.log(`Request ID: ${requestId}; resource version: ${resourceVersion}`);
-			console.log(`Run \`agent skills list ${agentId}\` to check runtime application.`);
+			console.log(`Run \`clawdi agent skills list ${agentId}\` to check runtime application.`);
 		}
 		if (result.status === "failed") process.exitCode = 1;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Remote Skill request failed.";
 		throw new Error(
-			`${message} Request ID: ${requestId}; resource version: ${resourceVersion}. Replay only with the same --request-id and --resource-version. Inspect \`agent skills list ${agentId}\` before retrying; acceptance does not prove application.`,
+			`${message}\nRequest ID: ${requestId}\nResource version: ${resourceVersion}\nAn accepted request may not be applied yet. Check \`clawdi agent skills list ${agentId}\` before retrying, and reuse the same --request-id and --resource-version.`,
 		);
 	}
 }

@@ -148,7 +148,7 @@ export async function agentReconnect(
 	if (!opts.yes && isInteractive()) {
 		const confirmed = await p.confirm({
 			message: recentOtherMachine
-				? `Take over “${candidate.name}” from the recently active machine “${candidate.machine_name}”? Its daemon will be fenced immediately.`
+				? `Take over “${candidate.name}” from “${candidate.machine_name}”? Its daemon on that machine stops syncing immediately.`
 				: `Reconnect ${adapterRegistry[agentType].displayName} to “${candidate.name}” and replace its previous installation binding?`,
 			initialValue: true,
 		});

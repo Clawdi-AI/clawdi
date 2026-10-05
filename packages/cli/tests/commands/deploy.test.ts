@@ -711,7 +711,7 @@ describe("deploy orchestration", () => {
 				client,
 				interactive: false,
 			}),
-		).rejects.toThrow("exact provider id");
+		).rejects.toThrow("exact provider ID");
 		await expect(
 			runDeployFlow(parseDeployCommandOptions({ ...base, provider: "needs-key" }), {
 				client,
