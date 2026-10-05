@@ -40,6 +40,8 @@ import {
 	persistedStepRevision,
 	recordPersistedStepRevision,
 	runtimeFilesContentRevision,
+	runtimeFilesStatRevision,
+	runtimeSubdirectoryNames,
 } from "./persisted-step-revisions";
 import { runtimeImpactRevision } from "./runtime-impact-revision";
 import { spawnRuntimeUserCommand } from "./runtime-user-command";
@@ -219,10 +221,12 @@ export function openClawSupportsOwnerBrowserBootstrap(
 	const capabilityRevision = [revision, runtimeFileCurrentRevision(sdkPath)].join("\0");
 	const cached = openClawOwnerBrowserCapabilities.get(context.home);
 	if (cached?.revision === capabilityRevision) return cached.supported;
+	// Version-only across processes: the probed SDK file alone decides the answer.
 	const persistedKey = `openclaw.ownerBrowserCapability:${context.home}`;
+	const sdkRevision = runtimeFileCurrentRevision(sdkPath);
 	const persisted = persistedStepRevision(persistedKey);
 	for (const supported of [true, false]) {
-		if (persisted === `${capabilityRevision}\n${supported}`) {
+		if (persisted === `${sdkRevision}\n${supported}`) {
 			openClawOwnerBrowserCapabilities.set(context.home, {
 				revision: capabilityRevision,
 				supported,
@@ -250,7 +254,7 @@ export function openClawSupportsOwnerBrowserBootstrap(
 			revision: capabilityRevision,
 			supported,
 		});
-		recordPersistedStepRevision(persistedKey, `${capabilityRevision}\n${supported}`);
+		recordPersistedStepRevision(persistedKey, `${sdkRevision}\n${supported}`);
 		return supported;
 	}
 	throw new Error("installed OpenClaw device-bootstrap capability probe returned invalid output");
@@ -322,8 +326,22 @@ export function ensureHostedOpenClawProviderAuthCapability(input: {
 	revision: string;
 }): void {
 	const desired = hostedRuntimeOAuthCredentials(input.manifest, "openclaw", input.secretValues);
-	const cleanupManagedProvider = input.context.managedApiKeyProjection;
-	if (desired.length === 0 && !cleanupManagedProvider) return;
+	ensureOpenClawProviderAuthCapability({
+		context: input.context,
+		revision: input.revision,
+		oauth: desired.length > 0,
+		cleanupManagedProvider: input.context.managedApiKeyProjection,
+	});
+}
+/** Check the public provider-auth SDK for the requested credential operations. */
+export function ensureOpenClawProviderAuthCapability(input: {
+	context: OpenClawHostedContext;
+	revision: string;
+	oauth: boolean;
+	cleanupManagedProvider: boolean;
+}): void {
+	const { oauth, cleanupManagedProvider } = input;
+	if (!oauth && !cleanupManagedProvider) return;
 	const capabilityRevision = [
 		input.revision,
 		runtimeFileCurrentRevision(input.context.sdk.providerAuth ?? ""),
@@ -335,8 +353,9 @@ export function ensureHostedOpenClawProviderAuthCapability(input: {
 	// Version-only capability: the probed SDK files and requested checks decide it.
 	const persistedKey = `openclaw.providerAuthCapability:${input.context.home}`;
 	const persistedRevision = runtimeImpactRevision({
-		capabilityRevision,
-		oauth: desired.length > 0,
+		providerAuthSdk: runtimeFileCurrentRevision(input.context.sdk.providerAuth ?? ""),
+		configMutationSdk: runtimeFileCurrentRevision(input.context.sdk.configMutation ?? ""),
+		oauth,
 		cleanupManagedProvider,
 	});
 	if (persistedStepRevision(persistedKey) === persistedRevision) {
@@ -344,13 +363,13 @@ export function ensureHostedOpenClawProviderAuthCapability(input: {
 		return;
 	}
 	const requirement =
-		desired.length > 0 && cleanupManagedProvider
+		oauth && cleanupManagedProvider
 			? "OpenClaw credential convergence"
 			: cleanupManagedProvider
 				? "OpenClaw managed API-key cleanup"
 				: "OpenClaw OAuth";
 	try {
-		if (desired.length > 0) requireOpenClawProviderAuthCapability(input.context);
+		if (oauth) requireOpenClawProviderAuthCapability(input.context);
 		if (cleanupManagedProvider) {
 			requireOpenClawManagedProviderAuthCleanupCapability(input.context);
 		}
@@ -420,16 +439,25 @@ export function removeOpenClawManagedProviderAuthProfiles(
 		configMutationSdk: runtimeFileCurrentRevision(context.sdk.configMutation ?? ""),
 	});
 	if (openClawManagedProviderAuthCleanupRevisions.get(context.home) === cleanupRevision) return;
-	// Across processes, also require the stores and config to be byte-identical to
-	// the state this exact cleanup last produced.
+	// Across processes, require the config and every store the helper reads to be
+	// unchanged since this cleanup last left them clean. Stores are SQLite
+	// databases (plus legacy JSON), so their write identity is compared.
 	const persistedKey = `openclaw.managedProviderAuthCleanup:${context.home}`;
 	const stateRevision = () =>
 		runtimeImpactRevision({
-			cleanupRevision,
+			agentDirs: context.agentDirs.managed,
+			providerAuthSdk: runtimeFileCurrentRevision(context.sdk.providerAuth ?? ""),
+			configMutationSdk: runtimeFileCurrentRevision(context.sdk.configMutation ?? ""),
 			files: runtimeFilesContentRevision([
 				context.configPath,
 				...context.agentDirs.managed.map((dir) => join(dir, "auth-profiles.json")),
 			]),
+			stores: runtimeFilesStatRevision(
+				[
+					join(context.stateRoot, "state", "openclaw.sqlite"),
+					...context.agentDirs.managed.map((dir) => join(dir, "openclaw-agent.sqlite")),
+				].flatMap((database) => [database, `${database}-wal`, `${database}-journal`]),
+			),
 		});
 	if (persistedStepRevision(persistedKey) === stateRevision()) {
 		openClawManagedProviderAuthCleanupRevisions.set(context.home, cleanupRevision);
@@ -476,13 +504,21 @@ export function discoverOpenClawManagedProviderAuthAgentDirs(
 	].join("\0");
 	const cached = openClawManagedProviderAuthAgentDirs.get(context.home);
 	if (cached?.revision === discoveryRevision) return [...cached.agentDirs];
+	// Across processes, key on exactly what discovery reads: the configured roster,
+	// the agent directories on disk and the SDK files.
 	const persistedKey = `openclaw.managedProviderAuthDirs:${context.home}`;
+	const persistedRevision = runtimeImpactRevision({
+		roster: openClawRosterConfigRevision(context.home),
+		agents: runtimeSubdirectoryNames(join(context.stateRoot, "agents")),
+		providerAuthSdk: runtimeFileCurrentRevision(context.sdk.providerAuth ?? ""),
+		configMutationSdk: runtimeFileCurrentRevision(context.sdk.configMutation ?? ""),
+	});
 	const persisted = persistedStepRevision(persistedKey);
-	if (persisted?.startsWith(`${discoveryRevision}\n`)) {
+	if (persisted?.startsWith(`${persistedRevision}\n`)) {
 		const agentDirs = z
 			.array(z.string())
 			.min(1)
-			.parse(JSON.parse(persisted.slice(discoveryRevision.length + 1)));
+			.parse(JSON.parse(persisted.slice(persistedRevision.length + 1)));
 		openClawManagedProviderAuthAgentDirs.set(context.home, {
 			revision: discoveryRevision,
 			agentDirs,
@@ -526,7 +562,7 @@ export function discoverOpenClawManagedProviderAuthAgentDirs(
 		revision: discoveryRevision,
 		agentDirs,
 	});
-	recordPersistedStepRevision(persistedKey, `${discoveryRevision}\n${JSON.stringify(agentDirs)}`);
+	recordPersistedStepRevision(persistedKey, `${persistedRevision}\n${JSON.stringify(agentDirs)}`);
 	return [...agentDirs];
 }
 function runtimeOAuthLedgerOwnership(

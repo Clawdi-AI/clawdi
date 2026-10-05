@@ -51,7 +51,7 @@ function openClawDoctorRepairRequired(result: ReturnType<typeof spawnRuntimeUser
 	);
 }
 
-export type OpenClawHostedContext = ReturnType<typeof createOpenClawHostedContext>;
+export type OpenClawHostedContext = ReturnType<typeof createOpenClawHostedContextForHome>;
 
 export function installedOpenClawCommandPath(home: string): string | null {
 	for (const candidate of [
@@ -259,13 +259,18 @@ function resolveSdkExports(
 }
 
 export function createOpenClawHostedContext(manifest: RuntimeManifest, home: string) {
+	return createOpenClawHostedContextForHome(home, hasManagedApiKeyProjection(manifest));
+}
+
+/** Context without a manifest: anonymous pool warm-up states the projection itself. */
+export function createOpenClawHostedContextForHome(home: string, managedApiKeyProjection: boolean) {
 	const stateRoot = join(home, ".openclaw");
 	const statePath = (...parts: string[]) => join(stateRoot, ...parts);
 	const configPath = statePath("openclaw.json");
 	const sdk = resolveSdkExports(home);
 	return {
 		home,
-		managedApiKeyProjection: hasManagedApiKeyProjection(manifest),
+		managedApiKeyProjection,
 		stateRoot,
 		configPath,
 		agentDirs: {

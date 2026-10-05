@@ -901,7 +901,7 @@ runtimeCmd
 		const { warmHostedOpenClawRuntime } = await import("./runtime/runtime-warm.js");
 		const { getRuntimePaths } = await import("./runtime/paths.js");
 		if (process.getuid?.() !== 0) throw new Error("runtime warm requires root");
-		warmHostedOpenClawRuntime(getRuntimePaths({ mode: "hosted" }));
+		await warmHostedOpenClawRuntime(getRuntimePaths({ mode: "hosted" }));
 	});
 
 runtimeCmd

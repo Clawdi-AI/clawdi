@@ -73,6 +73,10 @@ import {
 	runtimeSnapshotPath,
 } from "../runtime/manifest-source";
 import { readComponentServiceState } from "../runtime/observed";
+import {
+	adoptableWarmOpenClawGatewayUnits,
+	consumeWarmOpenClawGateway,
+} from "../runtime/openclaw-warm-gateway";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
 import { captureRuntimeRunConfigs } from "../runtime/run-config";
 import {
@@ -1620,6 +1624,7 @@ async function applyRuntimeDesiredState(
 							staleSystemUnits,
 							staleUserUnits,
 						);
+						const adoptUserUnits = adoptableWarmOpenClawGatewayUnits(paths);
 						const activation = applySystemdRuntimeUpdate(
 							paths,
 							previousSystemdUnits,
@@ -1631,8 +1636,12 @@ async function applyRuntimeDesiredState(
 								skipActivatedSystemUnits: egressPrerequisiteActivated
 									? [RUNTIME_SIDECAR_SYSTEM_UNIT]
 									: [],
+								adoptUserUnits,
 							},
 						);
+						if (activation.applied && adoptUserUnits.length > 0) {
+							consumeWarmOpenClawGateway(paths);
+						}
 						systemdApply = {
 							applied: activation.applied && (egressPrerequisiteApply?.applied ?? true),
 							systemUnitsChanged: [

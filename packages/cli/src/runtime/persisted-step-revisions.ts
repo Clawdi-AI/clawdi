@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { log, toErrorMessage } from "../serve/log";
@@ -91,6 +91,42 @@ export function runtimeFilesContentRevision(files: readonly string[]): string {
 		digest.update("\0");
 	}
 	return digest.digest("hex");
+}
+
+/**
+ * Write identity of files too large or too busy to hash (SQLite databases and
+ * their journals). Any committed write changes size, mtime or ctime.
+ */
+export function runtimeFilesStatRevision(files: readonly string[]): string {
+	const digest = createHash("sha256");
+	for (const file of files) {
+		digest.update(file);
+		digest.update("\0");
+		try {
+			const stat = lstatSync(file, { bigint: true });
+			digest.update(
+				[stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeNs, stat.ctimeNs].join(":"),
+			);
+		} catch (error) {
+			if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+			digest.update("absent");
+		}
+		digest.update("\0");
+	}
+	return digest.digest("hex");
+}
+
+/** Sorted names of a directory's subdirectories; absent directories are explicit. */
+export function runtimeSubdirectoryNames(path: string): string[] | null {
+	try {
+		return readdirSync(path, { withFileTypes: true })
+			.filter((entry) => entry.isDirectory())
+			.map((entry) => entry.name)
+			.sort();
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+		throw error;
+	}
 }
 
 export function resetPersistedStepRevisionsForTest(): void {

@@ -2933,7 +2933,7 @@ fi
 		);
 	});
 
-	test("reuses OpenClaw probes until the provider revision changes", () => {
+	test("reuses version-only OpenClaw probes and invalidates live provider and roster state", () => {
 		const paths = tempRuntimePaths();
 		const commandLog = join(paths.serviceStateRoot, "openclaw-probe-commands.log");
 		const sdkLog = join(paths.serviceStateRoot, "openclaw-probe-sdk.log");
@@ -3053,9 +3053,11 @@ fi
 		const revisedHotspots = hotspotCounts();
 		expect(revisedHotspots["agents list --json"]).toBe(rosterChangedHotspots["agents list --json"]);
 		const revisedSdkCalls = sdkCounts();
-		for (const [sdk, count] of Object.entries(firstSdkCalls)) {
-			expect(revisedSdkCalls[sdk]).toBeGreaterThan(count);
-		}
+		expect(revisedSdkCalls["device-bootstrap"]).toBe(firstSdkCalls["device-bootstrap"]);
+		expect(revisedSdkCalls["provider-auth"]).toBe(afterRosterChange["provider-auth"]);
+		expect(revisedSdkCalls["config-mutation"]).toBeGreaterThan(
+			afterRosterChange["config-mutation"] ?? 0,
+		);
 	});
 
 	test.each(["managed", "native-path", "native-pairing", "local-disabled"])(

@@ -282,7 +282,7 @@ function runtimeSystemdPath(paths: RuntimePaths): string {
 	].join(":");
 }
 
-function systemdUnitFileName(name: string): string {
+export function systemdUnitFileName(name: string): string {
 	return `${systemdUnitNameSegment(name)}.service`;
 }
 
@@ -290,7 +290,7 @@ export function runtimeSystemdUserUnitName(program: RuntimeSystemdUserProgram): 
 	return systemdUnitFileName(runtimeSystemdProgramName(program));
 }
 
-function systemdDropInFilePath(paths: RuntimePaths, unitName: string): string {
+export function systemdDropInFilePath(paths: RuntimePaths, unitName: string): string {
 	return join(
 		paths.systemdUserRoot,
 		`${systemdUnitFileName(unitName)}.d`,
@@ -860,6 +860,7 @@ function installOfficialRuntimeUserService(
 export function installAnonymousOpenClawGatewayService(
 	paths: RuntimePaths,
 	runtimeIdentity: { uid: number; gid: number },
+	env: Record<string, string>,
 ): string {
 	const descriptor = OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS.find(
 		(candidate) => candidate.runtime === "openclaw",
@@ -888,7 +889,7 @@ export function installAnonymousOpenClawGatewayService(
 	writeSystemdUserEnvironmentDropIn({
 		paths,
 		name: descriptor.programName,
-		env: {},
+		env,
 		unsetEnvironment: ["CLAWDI_AUTH_TOKEN"],
 	});
 	return systemdUnitFileName(descriptor.programName);

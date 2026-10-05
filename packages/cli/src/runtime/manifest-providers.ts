@@ -30,7 +30,9 @@ import {
 import {
 	applyOpenClawGatewayHostedProjection,
 	applyOpenClawHostedProviderPatch,
+	openClawGatewayHostedPatch,
 } from "./openclaw-provider-config";
+import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import { runtimeSecretValue } from "./secret-values";
 
 export { buildOpenClawHostedProviderPatch } from "./catalog-provider-config";
@@ -170,15 +172,29 @@ export function applyHostedAiProviderProjection(
 			workspaceRoot,
 			environment,
 		) || connectionChanged;
-	applyOpenClawGatewayHostedProjection(
-		observation.commandPath,
-		manifest,
-		secretValues,
-		openClawContext,
-		workspaceRoot,
-		openClawOwnerBrowserBootstrapSupported,
-		environment,
-	);
+	// Hot apply: one official-writer run commits the gateway and catalog patches
+	// together, so the watching gateway reloads one complete config.
+	const singleWriter =
+		openClawHotApplyEnabled() && patch.apply && native.length === 0 && !hasTransfers;
+	if (singleWriter) {
+		const gatewayPatch = openClawGatewayHostedPatch(
+			manifest,
+			secretValues,
+			openClawOwnerBrowserBootstrapSupported,
+		);
+		if (gatewayPatch)
+			patch.content = JSON.stringify(mergeJsonPatches(gatewayPatch, JSON.parse(patch.content)));
+	} else {
+		applyOpenClawGatewayHostedProjection(
+			observation.commandPath,
+			manifest,
+			secretValues,
+			openClawContext,
+			workspaceRoot,
+			openClawOwnerBrowserBootstrapSupported,
+			environment,
+		);
+	}
 	// The catalog SDK owns exact replacement and large shrink. It runs first so
 	// migration from a whole-owned catalog row to native auth cannot retain models.
 	if (patch.apply)
@@ -228,6 +244,17 @@ export function applyHostedAiProviderProjection(
 		nativeCredentialProviderIds: nativePatch.providerIds,
 		nativeCredentialsChanged: nativeChanged,
 	};
+}
+
+/** Combine two JSON merge patches; the second wins on conflicting leaves. */
+function mergeJsonPatches(first: unknown, second: unknown): unknown {
+	const left = recordValue(first);
+	const right = recordValue(second);
+	if (!left || !right) return second;
+	const merged: Record<string, unknown> = { ...left };
+	for (const [key, value] of Object.entries(right))
+		merged[key] = Object.hasOwn(merged, key) ? mergeJsonPatches(merged[key], value) : value;
+	return merged;
 }
 
 /** Validate the selected path without materializing any credentials. */

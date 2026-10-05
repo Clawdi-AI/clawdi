@@ -203,10 +203,16 @@ export function applyOpenClawHostedProviderPatch(
 		content,
 		sdk: runtimeFileCurrentRevision(sdkPath),
 	});
+	// Across processes the patch content and SDK decide the result; the live config
+	// is still re-read below.
 	const persistedKey = `openclaw.providerPatch:${context.configPath}`;
+	const persistedRevision = runtimeImpactRevision({
+		content,
+		sdk: runtimeFileCurrentRevision(sdkPath),
+	});
 	if (
-		(openClawProviderPatchRevisions.get(context.configPath) ??
-			persistedStepRevision(persistedKey)) === patchRevision
+		openClawProviderPatchRevisions.get(context.configPath) === patchRevision ||
+		persistedStepRevision(persistedKey) === persistedRevision
 	) {
 		// The live config is re-read: a remembered revision alone never skips.
 		const expected = recordValue(JSON.parse(content) as unknown);
@@ -221,7 +227,7 @@ export function applyOpenClawHostedProviderPatch(
 		workspaceRoot,
 	);
 	openClawProviderPatchRevisions.set(context.configPath, patchRevision);
-	recordPersistedStepRevision(persistedKey, patchRevision);
+	recordPersistedStepRevision(persistedKey, persistedRevision);
 }
 
 /** Apply one JSON merge patch through the official config writer. */
@@ -247,6 +253,7 @@ export function applyOpenClawHostedChannelPatch(
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
 ): void {
+	if (openClawChannelPatchIsNoop(patch, previousChannels, context.configPath)) return;
 	const sdkPath = context.requireSdkExport("configMutation");
 	const input = JSON.stringify({ patch, previousChannels, availableChannelEnv });
 	// Skip only when this exact input already produced the current config bytes.
@@ -264,6 +271,58 @@ export function applyOpenClawHostedChannelPatch(
 		workspaceRoot,
 	);
 	recordPersistedStepRevision(persistedKey, appliedState());
+}
+
+const OPENCLAW_MANAGED_CHANNEL_PROVIDERS = ["telegram", "discord", "whatsapp"] as const;
+
+function hasManagedChannelAccounts(channels: unknown): boolean {
+	const record = recordValue(channels);
+	return OPENCLAW_MANAGED_CHANNEL_PROVIDERS.some(
+		(provider) =>
+			Object.keys(recordValue(recordValue(record?.[provider])?.accounts) ?? {}).length > 0,
+	);
+}
+
+/** Strict merge-patch no-op: an empty object still requires an existing object. */
+function jsonMergePatchIsNoop(current: unknown, patch: unknown): boolean {
+	if (!isPlainRecord(patch)) return canonicalJsonEqual(current, patch);
+	if (!isPlainRecord(current)) return false;
+	return Object.entries(patch).every(([key, value]) =>
+		value === null ? !Object.hasOwn(current, key) : jsonMergePatchIsNoop(current[key], value),
+	);
+}
+
+/**
+ * Without selected or previously owned accounts, the channel helper only ensures
+ * its containers exist. Decide that case from the plain config file so an
+ * unchanged empty projection does not start the SDK; anything else (managed
+ * accounts, native managed-provider entries, includes) runs the helper.
+ */
+function openClawChannelPatchIsNoop(
+	patch: Record<string, unknown>,
+	previousChannels: Record<string, unknown> | null,
+	configPath: string,
+): boolean {
+	if (hasManagedChannelAccounts(patch.channels) || hasManagedChannelAccounts(previousChannels)) {
+		return false;
+	}
+	let current: Record<string, unknown> | null;
+	try {
+		const text = readFileSync(configPath, "utf-8");
+		if (text.includes("$include")) return false;
+		current = recordValue(JSON.parse(text) as unknown);
+	} catch {
+		return false;
+	}
+	const currentChannels = recordValue(current?.channels);
+	if (
+		!currentChannels ||
+		OPENCLAW_MANAGED_CHANNEL_PROVIDERS.some((provider) => Object.hasOwn(currentChannels, provider))
+	) {
+		return false;
+	}
+	const desired = recordValue(JSON.parse(JSON.stringify({ ...patch, channels: {} })) as unknown);
+	return jsonMergePatchIsNoop(current, desired);
 }
 
 function adaptOpenClawMemorySearchPatch(

@@ -229,6 +229,8 @@ export function applySystemdRuntimeUpdate(
 			userUnits: readonly string[];
 		};
 		skipActivatedSystemUnits?: readonly string[];
+		/** Active user units whose running process already matches the candidate. */
+		adoptUserUnits?: readonly string[];
 	},
 ): {
 	applied: boolean;
@@ -429,6 +431,7 @@ export function applySystemdRuntimeUpdate(
 			continue;
 		}
 		if (state.activeState !== "active") continue;
+		if (opts.adoptUserUnits?.includes(unit)) continue;
 		if (user.changed.includes(unit) || pendingUserActivation.has(unit)) {
 			restartUserUnits.push(unit);
 			userUnitsChanged.add(unit);
