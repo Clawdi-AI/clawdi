@@ -1,10 +1,10 @@
 import { type components, isWritableSkillProject, type Project } from "@clawdi/shared/api";
-import { HERO_GRID_CLASS, projectDetailClasses } from "@clawdi/shared/ui";
+import { HERO_GRID_CLASS, skillsPageClasses } from "@clawdi/shared/ui";
 import {
 	displayProjectName,
 	formatResourceCount,
-	getProjectResourceDefinition,
 	isCustomProject,
+	skillsPageDescription,
 } from "@clawdi/shared/view";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
@@ -87,7 +87,7 @@ function SkillsView({ project }: { project?: Project }) {
 		<LibraryPage>
 			<PageHeader
 				title={t("skills.title")}
-				description={getProjectResourceDefinition("skills").managementDescription}
+				description={skillsPageDescription(project)}
 				actions={
 					project && writable ? (
 						<Button
@@ -103,8 +103,10 @@ function SkillsView({ project }: { project?: Project }) {
 				}
 			/>
 			{!project ? (
-				<>
-					<WebText recipe={projectDetailClasses.heading}>{t("libraryPort.chooseProject")}</WebText>
+				<WebView recipe={skillsPageClasses.projectChooser}>
+					<WebText recipe={skillsPageClasses.projectChooserHeading}>
+						{t("libraryPort.chooseProject")}
+					</WebText>
 					{projects.error ? (
 						<ApiErrorPanel error={projects.error} onRetry={() => void projects.refetch()} />
 					) : null}
@@ -123,7 +125,7 @@ function SkillsView({ project }: { project?: Project }) {
 									/>
 								))}
 					</WebView>
-				</>
+				</WebView>
 			) : (
 				<>
 					<ProjectScopeHeader project={project} />

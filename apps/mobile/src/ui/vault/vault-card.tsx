@@ -29,7 +29,7 @@ export function VaultCard({
 		<HeroCard
 			icon={
 				<IconChip tint={identity.colorClasses} className={webBoth(vaultsSurfaceClasses.identity)}>
-					{identity.emoji}
+					<Text>{identity.emoji}</Text>
 					{vault.is_owner === false ? (
 						<WebView recipe={vaultsSurfaceClasses.sharedLock}>
 							<Icon as={Lock} className={webBoth(vaultsSurfaceClasses.lockIcon)} />

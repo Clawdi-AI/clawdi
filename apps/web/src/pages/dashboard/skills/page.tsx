@@ -2,7 +2,7 @@
 
 import { parseProjectSkillGitHubInput } from "@clawdi/shared/api";
 
-import { detailLayoutClasses } from "@clawdi/shared/ui";
+import { detailLayoutClasses, skillsPageClasses } from "@clawdi/shared/ui";
 import {
 	canManageCustomProject,
 	displayProjectName,
@@ -11,6 +11,7 @@ import {
 	isCustomProject,
 	isProjectOwner,
 	LIBRARY_COPY,
+	skillsPageDescription,
 } from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -207,11 +208,7 @@ function SkillsPageInner() {
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.page)}>
 			<PageHeader
 				title="Skills"
-				description={
-					selectedProject
-						? `Skills in ${displayProjectName(selectedProject)}. Linked Agents use the whole Project.`
-						: "Choose a Project to view or add its Skills."
-				}
+				description={skillsPageDescription(selectedProject ?? undefined)}
 				actions={
 					selectedProject ? (
 						<>
@@ -435,8 +432,8 @@ function ProjectSelection({
 		);
 	}
 	return (
-		<section className="space-y-3">
-			<h2 className="text-sm font-medium">Choose a Project</h2>
+		<section className={skillsPageClasses.projectChooser}>
+			<h2 className={skillsPageClasses.projectChooserHeading}>Choose a Project</h2>
 			<div className={HERO_GRID_CLASS}>
 				{projects.map((project) => (
 					<ProjectResourceCard

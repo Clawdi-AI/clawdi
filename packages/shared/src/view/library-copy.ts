@@ -1,4 +1,11 @@
 import type { ProjectMetadata } from "./project-metadata";
+import { displayProjectName } from "./project-metadata";
+
+export function skillsPageDescription(project?: ProjectMetadata) {
+	return project
+		? `Skills in ${displayProjectName(project)}. Linked Agents use the whole Project.`
+		: "Choose a Project to view or add its Skills.";
+}
 export function projectDetailDescription(project: ProjectMetadata, isOwner: boolean) {
 	const access = isOwner ? "you own" : "shared with you";
 	if (project.kind === "workspace") {

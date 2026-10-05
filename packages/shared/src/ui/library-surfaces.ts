@@ -92,6 +92,11 @@ export const connectorsSurfaceClasses = {
 	pageCount: "px-3 text-xs tabular-nums text-muted-foreground",
 } as const;
 
+export const skillsPageClasses = {
+	projectChooser: "space-y-3",
+	projectChooserHeading: "text-sm font-medium",
+};
+
 export const projectDetailClasses = {
 	statTile:
 		"group rounded-xl border border-transparent p-4 transition-all duration-150 hover:-translate-y-px hover:border-foreground/20 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none",
