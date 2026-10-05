@@ -42,7 +42,10 @@ import type {
 import type { HostedAgentPluginCommandRunner } from "./hosted-agent-plugin-runtime";
 import { resolveHostedBundledSkill } from "./hosted-bundled-skill";
 import { hostedHermesSkillSourceMatches } from "./hosted-hermes-skill";
-import { createOpenClawHostedContext } from "./hosted-openclaw-context";
+import {
+	createOpenClawHostedContext,
+	resolveHostedOpenClawWorkspace,
+} from "./hosted-openclaw-context";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
 import { MANAGED_BAILEYS_STATIC_PATCH_TARGETS } from "./managed-baileys-compat";
@@ -75,6 +78,8 @@ import {
 	type HostedSkillSource,
 } from "./manifest-resources";
 import { parseHostedRuntimeBundleV2, type RuntimeManifestLoad } from "./manifest-source";
+import { preinstallOpenClawBundledSkill } from "./openclaw-preinstallation";
+import { recordOpenClawPreinstalledService } from "./openclaw-preinstalled-service";
 import {
 	applyOpenClawContextMergePatch,
 	applyOpenClawHostedChannelPatch,
@@ -86,6 +91,8 @@ import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 import {
 	HERMES_DASHBOARD_BUILD_REVISION_FILE,
+	installOfficialRuntimeService,
+	planOfficialRuntimeServices,
 	runtimeSystemdCommonEnvironment,
 } from "./runtime-systemd-reconciliation";
 import {
@@ -2940,6 +2947,171 @@ fi
 		expect(readFileSync(probeLog, "utf8")).toContain(
 			'CLAWDI_AI_API_KEY="clawdi-egress-placeholder"',
 		);
+	});
+
+	test("anonymous bundled software is reused by the first tenant apply without tenant state", () => {
+		const paths = tempRuntimePaths();
+		ensureRuntimeStateDirs(paths);
+		const commandLog = join(paths.userHome, "commands.log");
+		writeFakeOpenClawConfigMutationSdk(paths.userHome);
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		writeFakeGatewayCli({
+			path: command,
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+			commandLog,
+		});
+		preinstallOpenClawBundledSkill(paths);
+		expect(readRuntimeAppliedState(paths)).toBeNull();
+		expect(existsSync(paths.manifestLastGood)).toBe(false);
+		expect(existsSync(paths.managedSecretCacheFile)).toBe(false);
+		const ledger = readFileSync(managedSkillReservationLedgerPath(), "utf8");
+		expect(ledger).not.toContain("environmentId");
+		expect(ledger).not.toContain("instanceId");
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					services: {},
+					providerMode: "unmanaged",
+					run: runSettings(command, ["gateway", "run"]),
+				},
+			},
+			{ projection: { skills: { entries: { clawdi: { enabled: true, version: 1 } } } } },
+		);
+		expect(
+			convergeRuntimeManifest(
+				manifestLoad(manifest, "first-tenant-with-preinstalled-software"),
+				paths,
+			).installErrors,
+		).toEqual([]);
+		expect(
+			readFileSync(commandLog, "utf8")
+				.split("\n")
+				.filter((line) => line.startsWith("skills install ")),
+		).toHaveLength(1);
+	});
+
+	test("normal hot apply refreshes a gateway unit only when it still captures migrated credentials", () => {
+		const paths = tempRuntimePaths();
+		writeFakeOpenClawConfigMutationSdk(paths.userHome, {
+			initialConfig: {
+				models: {
+					providers: {
+						clawdi: {
+							apiKey: { source: "file", provider: "clawdi-runtime", id: "/CLAWDI_AI_API_KEY" },
+						},
+					},
+				},
+			},
+		});
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
+		writeFakeGatewayCli({ path: command, runtime: "openclaw", unitPath });
+		mkdirSync(dirname(unitPath), { recursive: true });
+		const stale =
+			"[Service]\nExecStart=official gateway run\nEnvironment=OPENCLAW_SERVICE_MANAGED_ENV_KEYS=CLAWDI_AI_API_KEY\n";
+		writeFileSync(unitPath, stale);
+		const program = {
+			programKind: "runtime" as const,
+			runtime: "openclaw" as const,
+			service: null,
+			command,
+			args: ["gateway", "run"],
+			cwd: paths.userHome,
+			env: {},
+			resolvedSecretEnv: {},
+		};
+		expect(planOfficialRuntimeServices([program], paths, true).pending).toHaveLength(0);
+		process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
+		expect(planOfficialRuntimeServices([program], paths, true).pending).toHaveLength(1);
+		writeFileSync(unitPath, "[Service]\nExecStart=official gateway run\n");
+		expect(planOfficialRuntimeServices([program], paths, true).pending).toHaveLength(0);
+		writeFileSync(
+			unitPath,
+			"[Service]\nExecStart=official gateway run\nEnvironment=OPENCLAW_GATEWAY_TOKEN=old-token\n",
+		);
+		expect(planOfficialRuntimeServices([program], paths, true).pending).toHaveLength(0);
+		expect(
+			planOfficialRuntimeServices(
+				[{ ...program, resolvedSecretEnv: { OPENCLAW_GATEWAY_TOKEN: "managed-token" } }],
+				paths,
+				true,
+			).pending,
+		).toHaveLength(1);
+	});
+
+	test("capacity drift replaces only an unchanged preinstalled unit through the official installer", () => {
+		const paths = tempRuntimePaths();
+		ensureRuntimeStateDirs(paths);
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
+		const commandLog = join(paths.userHome, "commands.log");
+		writeFakeGatewayCli({ path: command, runtime: "openclaw", unitPath, commandLog });
+		mkdirSync(dirname(unitPath), { recursive: true });
+		const original = "[Service]\nExecStart=official gateway run\n";
+		writeFileSync(unitPath, original);
+		const program = {
+			programKind: "runtime" as const,
+			runtime: "openclaw" as const,
+			service: null,
+			command,
+			args: ["gateway", "run"],
+			cwd: paths.userHome,
+			env: {},
+			resolvedSecretEnv: {},
+		};
+		const initial = planOfficialRuntimeServices([program], paths, true);
+		recordOpenClawPreinstalledService(
+			paths,
+			initial.serviceRevisions["openclaw-gateway.service"] ?? "",
+		);
+		expect(planOfficialRuntimeServices([program], paths, true).pending).toEqual([]);
+		const receiptPath = join(paths.statusRoot, "openclaw-preinstalled-service.json");
+		const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+		writeFileSync(receiptPath, JSON.stringify({ ...receipt, memoryBytes: 1 }));
+		const plan = planOfficialRuntimeServices([program], paths, true);
+		expect(plan.pending).toHaveLength(1);
+		writeFileSync(unitPath, `${original}Environment=OPERATOR_SETTING=preserve\n`);
+		expect(planOfficialRuntimeServices([program], paths, true).pending).toEqual([]);
+		writeFileSync(unitPath, original);
+		for (const item of plan.pending) {
+			expect(
+				installOfficialRuntimeService(item, paths, {
+					uid: process.getuid?.() ?? 1000,
+					gid: process.getgid?.() ?? 1000,
+				}),
+			).toBeNull();
+		}
+		expect(readFileSync(commandLog, "utf8")).toContain(
+			"gateway uninstall\ngateway install --force --json",
+		);
+		expect(existsSync(receiptPath)).toBe(false);
+		expect(planOfficialRuntimeServices([program], paths, true).pending).toEqual([]);
+	});
+
+	test("roster reuse validates JSON5 inputs and leaves included dependencies to the native probe", () => {
+		const paths = tempRuntimePaths();
+		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome);
+		const commandLog = join(paths.userHome, "commands.log");
+		writeFakeGatewayCli({
+			path: join(paths.userHome, ".local", "bin", "openclaw"),
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+			commandLog,
+		});
+		writeFileSync(configPath, "{agents:{defaults:{workspace:'/first'}},}");
+		resolveHostedOpenClawWorkspace(paths.userHome);
+		resolveHostedOpenClawWorkspace(paths.userHome);
+		expect(readFileSync(commandLog, "utf8").trim().split("\n")).toHaveLength(1);
+		writeFileSync(configPath, "{agents:{defaults:{workspace:'/second'}},}");
+		resolveHostedOpenClawWorkspace(paths.userHome);
+		expect(readFileSync(commandLog, "utf8").trim().split("\n")).toHaveLength(2);
+		writeFileSync(configPath, "{$include:'roster.json'}");
+		resolveHostedOpenClawWorkspace(paths.userHome);
+		resolveHostedOpenClawWorkspace(paths.userHome);
+		expect(readFileSync(commandLog, "utf8").trim().split("\n")).toHaveLength(4);
 	});
 
 	test("batches hot provider, gateway, agent and channel changes with the native writer", () => {

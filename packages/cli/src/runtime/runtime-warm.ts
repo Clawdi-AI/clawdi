@@ -9,19 +9,14 @@ import {
 } from "../lib/codex-oauth-native-store";
 import { buildEgressEngineEnv } from "./egress-env";
 import { publishEgressSystemCaBundle } from "./egress-sidecar";
-import {
-	createOpenClawHostedContextForHome,
-	resolveHostedOpenClawWorkspace,
-} from "./hosted-openclaw-context";
+import { resolveHostedOpenClawWorkspace } from "./hosted-openclaw-context";
 import { makeEgressIdentityPrivateDir } from "./manifest-egress";
 import { runtimeCommandPath } from "./manifest-install";
-import {
-	discoverOpenClawManagedProviderAuthAgentDirs,
-	ensureOpenClawProviderAuthCapability,
-	openClawSupportsOwnerBrowserBootstrap,
-	removeOpenClawManagedProviderAuthProfiles,
-} from "./manifest-oauth";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
+import {
+	anonymousOpenClawGatewayPatch,
+	seedAnonymousOpenClawAuthProbes,
+} from "./openclaw-preinstallation";
 import { applyOpenClawConfigMergePatch } from "./openclaw-provider-config";
 import { recordWarmOpenClawGateway, warmOpenClawGatewayEnvironment } from "./openclaw-warm-gateway";
 import type { RuntimePaths } from "./paths";
@@ -42,7 +37,6 @@ import { ensureRuntimePlatformDirectory, writeRuntimePlatformFileAtomic } from "
 
 const EGRESS_CA_TIMEOUT_MS = 30_000;
 const GATEWAY_READY_TIMEOUT_MS = 180_000;
-const WARM_REVISION = "anonymous-warm";
 
 /**
  * Pool warm-up for a booted instance that has not been claimed (experimental,
@@ -83,17 +77,7 @@ export async function warmHostedOpenClawRuntime(
 	await generateEgressCa(paths, identity.gid);
 
 	loadPersistedStepRevisions(paths);
-	const patch = {
-		gateway: {
-			mode: "local",
-			port: 18789,
-			bind: "lan",
-			auth: { mode: "token", token: randomBytes(32).toString("base64url") },
-			controlUi: { basePath: "/", dangerouslyAllowHostHeaderOriginFallback: false },
-		},
-		channels: {},
-		plugins: { entries: {} },
-	};
+	const patch = anonymousOpenClawGatewayPatch(randomBytes(32).toString("base64url"));
 	applyOpenClawConfigMergePatch(sdk, JSON.stringify(patch), paths.userHome, paths.userHome);
 	const unit = installAnonymousOpenClawGatewayService(
 		paths,
@@ -109,17 +93,7 @@ export async function warmHostedOpenClawRuntime(
 
 	// The gateway has created its state; seed what the first apply would probe.
 	resolveHostedOpenClawWorkspace(paths.userHome);
-	const context = createOpenClawHostedContextForHome(paths.userHome, true);
-	context.refreshSdkExports({ commandPath: command });
-	openClawSupportsOwnerBrowserBootstrap(context, WARM_REVISION);
-	ensureOpenClawProviderAuthCapability({
-		context,
-		revision: WARM_REVISION,
-		oauth: false,
-		cleanupManagedProvider: true,
-	});
-	context.agentDirs.managed = discoverOpenClawManagedProviderAuthAgentDirs(context, WARM_REVISION);
-	removeOpenClawManagedProviderAuthProfiles(context, paths.userHome, WARM_REVISION);
+	seedAnonymousOpenClawAuthProbes(paths, command);
 	flushPersistedStepRevisions(paths);
 	recordWarmOpenClawGateway(paths);
 }

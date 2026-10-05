@@ -7,7 +7,7 @@ import { isPlainRecord, recordValue } from "./manifest-shared";
 export const OPENCLAW_FILE_SECRET_PROVIDER = "clawdi-runtime";
 
 /**
- * Project only API-key references owned by this provider patch. The versioned
+ * Project credential references owned by this config patch. The versioned
  * path makes a key rotation a config change, so OpenClaw reloads the file in the
  * same transaction as the models, without an authenticated secrets.reload RPC.
  * Called under the runtime filesystem identity; directories are 0700, files 0600.

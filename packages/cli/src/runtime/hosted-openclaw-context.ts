@@ -5,6 +5,7 @@ import {
 	isClawdiManagedV2ProviderId,
 	MANAGED_AI_PROVIDER_RUNTIME_ENV,
 } from "@clawdi/shared";
+import JSON5 from "json5";
 import {
 	type OpenClawAgentWorkspace,
 	parseOpenClawAgentWorkspaces,
@@ -84,11 +85,17 @@ function parseOfficialWorkspaceRoster(stdout: string): string {
 	return resolve(main[0].workspace);
 }
 
-export function openClawRosterConfigRevision(home: string): string {
+export function openClawRosterConfigRevision(home: string): string | null {
 	try {
-		const config = JSON.parse(
+		const config = JSON5.parse(
 			readFileSync(join(home, ".openclaw", "openclaw.json"), "utf8"),
 		) as unknown;
+		if (!config || typeof config !== "object" || Array.isArray(config)) return null;
+		const hasInclude = (value: unknown): boolean => {
+			if (!value || typeof value !== "object") return false;
+			return Object.hasOwn(value, "$include") || Object.values(value).some(hasInclude);
+		};
+		if (hasInclude(config)) return null;
 		const root =
 			config && typeof config === "object" && !Array.isArray(config)
 				? (config as Record<string, unknown>)
@@ -107,7 +114,7 @@ export function openClawRosterConfigRevision(home: string): string {
 			list: agents.list ?? null,
 		});
 	} catch {
-		return "unavailable";
+		return null;
 	}
 }
 
@@ -138,14 +145,13 @@ function waitForOpenClawGatewayTransition(): void {
 
 export function resolveHostedOpenClawWorkspace(home: string): string {
 	const command = commandPath(home);
-	const revision = [runtimeFileCurrentRevision(command), openClawRosterConfigRevision(home)].join(
-		"\0",
-	);
+	const rosterRevision = openClawRosterConfigRevision(home);
+	const revision = [runtimeFileCurrentRevision(command), rosterRevision].join("\0");
 	const cached = openClawWorkspaces.get(home);
-	if (cached?.revision === revision) return cached.workspace;
+	if (rosterRevision !== null && cached?.revision === revision) return cached.workspace;
 	const persistedKey = `openclaw.workspace:${home}`;
 	const persisted = persistedStepRevision(persistedKey);
-	if (persisted?.startsWith(`${revision}\n`)) {
+	if (rosterRevision !== null && persisted?.startsWith(`${revision}\n`)) {
 		const workspace = persisted.slice(revision.length + 1);
 		openClawWorkspaces.set(home, { revision, workspace });
 		return workspace;
@@ -171,7 +177,8 @@ export function resolveHostedOpenClawWorkspace(home: string): string {
 	if (result.status !== 0) throw new OpenClawWorkspaceRosterError(false);
 	const workspace = parseOfficialWorkspaceRoster(String(result.stdout));
 	openClawWorkspaces.set(home, { revision, workspace });
-	recordPersistedStepRevision(persistedKey, `${revision}\n${workspace}`);
+	if (rosterRevision !== null)
+		recordPersistedStepRevision(persistedKey, `${revision}\n${workspace}`);
 	return workspace;
 }
 

@@ -6,6 +6,7 @@ import {
 	openClawFileSecretEnvironmentKeys,
 	projectOpenClawProviderFileSecrets,
 } from "./openclaw-file-secrets";
+import { openClawConfigCanHotReload } from "./openclaw-warm-gateway";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -49,6 +50,19 @@ describe("OpenClaw file credentials", () => {
 		mkdirSync(join(home, ".openclaw"));
 		writeFileSync(join(home, ".openclaw", "openclaw.json"), JSON.stringify(next));
 		expect([...openClawFileSecretEnvironmentKeys(home)]).toEqual(["CLAWDI_AI_API_KEY"]);
+	});
+
+	test("native reload preferences retain the normal restart boundary", () => {
+		const home = mkdtempSync(join(tmpdir(), "clawdi-reload-preferences-"));
+		roots.push(home);
+		mkdirSync(join(home, ".openclaw"));
+		for (const mode of [undefined, "hybrid", "hot", "off", "restart"]) {
+			writeFileSync(
+				join(home, ".openclaw", "openclaw.json"),
+				JSON.stringify({ gateway: { reload: { mode } } }),
+			);
+			expect(openClawConfigCanHotReload(home)).toBe(mode === undefined || mode === "hybrid");
+		}
 	});
 
 	test("does not withdraw unrelated env credentials", () => {

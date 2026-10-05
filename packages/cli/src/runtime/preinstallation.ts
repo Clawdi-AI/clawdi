@@ -30,6 +30,10 @@ import { resolveHostedOpenClawWorkspace } from "./hosted-openclaw-context";
 import { ensureHostedCodexCli } from "./managed-codex-provider";
 import { runtimeCommandVersionRevision, runtimeFileCurrentRevision } from "./manifest-install";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
+import {
+	prepareAnonymousOpenClawGateway,
+	seedAnonymousOpenClawAuthProbes,
+} from "./openclaw-preinstallation";
 import { seedOpenClawMemorySearchLayout } from "./openclaw-provider-config";
 import type { RuntimePaths } from "./paths";
 import {
@@ -157,6 +161,7 @@ function prepareOpenClawProbeResults(paths: RuntimePaths, command: string): void
 		OPENCLAW_SDK_EXPORT_PATHS.configMutation,
 	);
 	if (configMutation) seedOpenClawMemorySearchLayout(command, paths.userHome, configMutation);
+	seedAnonymousOpenClawAuthProbes(paths, command);
 	flushPersistedStepRevisions(paths);
 }
 
@@ -361,7 +366,10 @@ export function prepareRuntimePreinstallation(
 			}
 			if (spec.fileBrowserAsset) prefetchFileBrowserAsset(paths, spec.fileBrowserAsset);
 			if (!ensureHostedCodexCli(paths)) throw new Error("Codex preparation is disabled");
-			if (spec.runtime === "openclaw") prepareOpenClawProbeResults(paths, command);
+			if (spec.runtime === "openclaw") {
+				prepareAnonymousOpenClawGateway(paths, identity);
+				prepareOpenClawProbeResults(paths, command);
+			}
 			installRuntimeCliArchive(paths, spec.cliPackageSpec, cliArchive);
 		}
 		// Only caches explicitly redirected by this command are disposable.

@@ -26,7 +26,12 @@ import {
 import { runtimeRecoverableSecretValues } from "./manifest-secrets";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import { openClawFileSecretEnvironmentKeys } from "./openclaw-file-secrets";
-import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
+import {
+	forgetOpenClawPreinstalledService,
+	openClawPreinstalledServiceNeedsRefresh,
+	recordOpenClawPreinstalledService,
+} from "./openclaw-preinstalled-service";
+import { openClawConfigCanHotReload, openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import {
 	gatewayOomProtectionLines,
 	platformOomProtectionLines,
@@ -103,6 +108,7 @@ export interface OfficialRuntimeServicePlan {
 		unitName: string;
 		program: RuntimeSystemdUserProgram;
 		serviceRevision: string | null;
+		replacePreinstalledService?: boolean;
 	}>;
 	serviceRevisions: Record<string, string>;
 }
@@ -456,6 +462,28 @@ function officialRuntimeServiceRevision(
 	return createHash("sha256").update(commandRevision).update("\0").update(contents).digest("hex");
 }
 
+/** The official writer removes retired SecretRef env keys during reinstall.
+ * Refresh only when this apply moved a managed credential to a file ref. */
+function openClawGatewayHasRetiredEnvironment(
+	paths: RuntimePaths,
+	unitName: string,
+	program: RuntimeSystemdUserProgram,
+): boolean {
+	const content = readFileSync(join(paths.systemdUserRoot, unitName), "utf8");
+	const keys = openClawFileSecretEnvironmentKeys(paths.userHome);
+	// A managed token is authored in native config; an older unit must not keep
+	// overriding it through a captured value. Native-only tokens remain user-owned.
+	if (program.resolvedSecretEnv.OPENCLAW_GATEWAY_TOKEN) keys.add("OPENCLAW_GATEWAY_TOKEN");
+	if (keys.size === 0) return false;
+	const managed = content.match(/OPENCLAW_SERVICE_MANAGED_ENV_KEYS=([^"\s]*)/);
+	return [...keys].some(
+		(key) =>
+			managed?.[1].split(",").includes(key) ||
+			content.includes(`Environment=${key}=`) ||
+			content.includes(`Environment="${key}=`),
+	);
+}
+
 export function planOfficialRuntimeServices(
 	programs: RuntimeSystemdUserProgram[],
 	paths: RuntimePaths,
@@ -469,8 +497,17 @@ export function planOfficialRuntimeServices(
 		const serviceRevision = officialRuntimeServiceRevision(program, paths);
 		if (serviceRevision) serviceRevisions[unitName] = serviceRevision;
 		// Native updaters own service refresh. Fingerprint drift alone is not a repair request.
-		if (!serviceRevision) {
-			pending.push({ unitName, program, serviceRevision });
+		const migrateCredentials =
+			program.runtime === "openclaw" &&
+			openClawHotApplyEnabled() &&
+			serviceRevision !== null &&
+			openClawGatewayHasRetiredEnvironment(paths, unitName, program);
+		const replacePreinstalledService =
+			program.runtime === "openclaw" &&
+			serviceRevision !== null &&
+			openClawPreinstalledServiceNeedsRefresh(paths, serviceRevision);
+		if (!serviceRevision || migrateCredentials || replacePreinstalledService) {
+			pending.push({ unitName, program, serviceRevision, replacePreinstalledService });
 		}
 	}
 	return { pending, serviceRevisions };
@@ -855,7 +892,7 @@ function installOfficialRuntimeUserService(
 }
 
 /**
- * Pool warm-up only: install OpenClaw's official gateway unit with the same
+ * Anonymous preparation and warm-up: reuse or install OpenClaw's official gateway unit with the same
  * arguments and environment overrides as tenant convergence, plus the Clawdi
  * drop-in and an environment file carrying no tenant values.
  */
@@ -868,25 +905,52 @@ export function installAnonymousOpenClawGatewayService(
 		(candidate) => candidate.runtime === "openclaw",
 	);
 	if (!descriptor) throw new Error("OpenClaw official service descriptor is missing");
-	const result = spawnRuntimeUserCommand(
-		officialRuntimeServiceCommand(descriptor, paths),
-		descriptor.installArgs,
-		paths.userHome,
-		paths.userHome,
-		{
-			environmentOverrides: {
-				OPENCLAW_HOME: undefined,
-				OPENCLAW_STATE_DIR: undefined,
-				OPENCLAW_CONFIG_PATH: undefined,
+	const program: RuntimeSystemdUserProgram = {
+		programKind: "runtime",
+		runtime: "openclaw",
+		service: null,
+		command: officialRuntimeServiceCommand(descriptor, paths),
+		args: ["gateway", "run"],
+		cwd: paths.userHome,
+		env: {},
+		resolvedSecretEnv: {},
+	};
+	const serviceRevision = officialRuntimeServiceRevision(program, paths);
+	const replacePreinstalledService =
+		serviceRevision !== null && openClawPreinstalledServiceNeedsRefresh(paths, serviceRevision);
+	if (replacePreinstalledService) {
+		const error = uninstallOfficialRuntimeUserService({
+			unitName: systemdUnitFileName(descriptor.programName),
+			paths,
+			workspaceRoot: paths.userHome,
+		});
+		if (error) throw new Error(error);
+	}
+	if (!serviceRevision || replacePreinstalledService) {
+		const result = spawnRuntimeUserCommand(
+			officialRuntimeServiceCommand(descriptor, paths),
+			descriptor.installArgs,
+			paths.userHome,
+			paths.userHome,
+			{
+				environmentOverrides: {
+					OPENCLAW_HOME: undefined,
+					OPENCLAW_STATE_DIR: undefined,
+					OPENCLAW_CONFIG_PATH: undefined,
+				},
+				maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
+				runtimeGid: runtimeIdentity.gid,
+				runtimeUid: runtimeIdentity.uid,
+				timeoutMs: OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS,
 			},
-			maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
-			runtimeGid: runtimeIdentity.gid,
-			runtimeUid: runtimeIdentity.uid,
-			timeoutMs: OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS,
-		},
-	);
-	if (result.status !== 0 || result.error) {
-		throw new Error(`official OpenClaw gateway install failed (${result.status ?? "error"})`);
+		);
+		if (result.status !== 0 || result.error) {
+			throw new Error(`official OpenClaw gateway install failed (${result.status ?? "error"})`);
+		}
+		const installedRevision = officialRuntimeServiceRevision(program, paths);
+		if (!installedRevision)
+			throw new Error("anonymous OpenClaw gateway unit could not be verified");
+		recordOpenClawPreinstalledService(paths, installedRevision);
 	}
 	writeSystemdUserEnvironmentDropIn({
 		paths,
@@ -902,6 +966,18 @@ export function installOfficialRuntimeService(
 	paths: RuntimePaths,
 	runtimeIdentity: { uid: number; gid: number },
 ): string | null {
+	if (item.replacePreinstalledService) {
+		if (officialRuntimeServiceRevision(item.program, paths) !== item.serviceRevision)
+			return "preinstalled OpenClaw service changed before capacity refresh";
+		// The official installer preserves existing heap argv. Remove only our exact
+		// anonymous unit first so its install-time sizing is recomputed for this guest.
+		const error = uninstallOfficialRuntimeUserService({
+			unitName: item.unitName,
+			paths,
+			workspaceRoot: paths.userHome,
+		});
+		if (error) return error;
+	}
 	const error = installOfficialRuntimeUserService(
 		{ ...item.program, cwd: paths.userHome },
 		paths,
@@ -912,6 +988,7 @@ export function installOfficialRuntimeService(
 	if (!item.serviceRevision) {
 		return `official ${runtimeSystemdProgramName(item.program)} service install could not be verified`;
 	}
+	if (item.program.runtime === "openclaw") forgetOpenClawPreinstalledService(paths);
 	return null;
 }
 
@@ -1068,7 +1145,10 @@ function runtimeSystemdUserProgramEnvironment(
 	for (const envName of installerOnlySecretEnv) {
 		delete runtimeEnv[envName];
 	}
-	const hotOpenClaw = descriptor?.runtime === "openclaw" && openClawHotApplyEnabled();
+	const hotOpenClaw =
+		descriptor?.runtime === "openclaw" &&
+		openClawHotApplyEnabled() &&
+		openClawConfigCanHotReload(input.paths.userHome);
 	if (hotOpenClaw) {
 		for (const key of openClawFileSecretEnvironmentKeys(input.paths.userHome))
 			delete runtimeEnv[key];

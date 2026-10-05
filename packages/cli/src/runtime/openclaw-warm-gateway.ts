@@ -1,5 +1,6 @@
 import { lstatSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import JSON5 from "json5";
 import { z } from "zod";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import { isPlainRecord } from "./manifest-shared";
@@ -23,6 +24,22 @@ export const OPENCLAW_HOT_APPLY_ENV = "CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY";
 
 export function openClawHotApplyEnabled(): boolean {
 	return process.env[OPENCLAW_HOT_APPLY_ENV] === "1";
+}
+
+/** Keep the normal restart boundary when native config disables hybrid reload. */
+export function openClawConfigCanHotReload(home: string): boolean {
+	try {
+		const config = JSON5.parse(
+			readFileSync(join(home, ".openclaw", "openclaw.json"), "utf8"),
+		) as unknown;
+		if (!isPlainRecord(config) || Object.hasOwn(config, "$include")) return false;
+		const gateway = isPlainRecord(config.gateway) ? config.gateway : {};
+		if (Object.hasOwn(gateway, "$include")) return false;
+		const reload = isPlainRecord(gateway.reload) ? gateway.reload : {};
+		return reload.mode === undefined || reload.mode === "hybrid";
+	} catch {
+		return false;
+	}
 }
 
 const MARKER_SCHEMA = z
@@ -107,7 +124,12 @@ export function recordWarmOpenClawGateway(paths: RuntimePaths): void {
 
 /** The warm gateway unit when its running process already matches this apply. */
 export function adoptableWarmOpenClawGatewayUnits(paths: RuntimePaths): string[] {
-	if (!openClawHotApplyEnabled() || paths.mode !== "hosted") return [];
+	if (
+		!openClawHotApplyEnabled() ||
+		paths.mode !== "hosted" ||
+		!openClawConfigCanHotReload(paths.userHome)
+	)
+		return [];
 	const path = markerPath(paths);
 	let marker: z.infer<typeof MARKER_SCHEMA>;
 	try {
@@ -122,7 +144,7 @@ export function adoptableWarmOpenClawGatewayUnits(paths: RuntimePaths): string[]
 		: [];
 }
 
-/** Adoption is single-use: later applies restart on any digest change as usual. */
+/** Adoption is single-use; later hot applies use the official watcher. */
 export function consumeWarmOpenClawGateway(paths: RuntimePaths): void {
 	rmSync(markerPath(paths), { force: true });
 }

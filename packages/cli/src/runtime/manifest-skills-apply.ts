@@ -11,6 +11,7 @@ import {
 import {
 	activateHostedOpenClawSkill,
 	hostedOpenClawSkillSourceMatches,
+	OPENCLAW_INSTALLED_TREE_EXCLUDES,
 } from "./hosted-openclaw-skill";
 import type { HostedSkillEvidence } from "./hosted-skill-evidence";
 import {
@@ -200,7 +201,7 @@ function hostedSkillProjectionDrivers(input: {
 			"openclaw",
 			{
 				skillsRoot: openClawSkillsRoot,
-				exclude: new Set([".openclaw/source-origin.json"]),
+				exclude: OPENCLAW_INSTALLED_TREE_EXCLUDES,
 				sourceMatches: hostedOpenClawSkillSourceMatches,
 				activate: (sourceDir, targetDir, source) => {
 					const workspaceRoot = input.openClawWorkspaceRoot;
