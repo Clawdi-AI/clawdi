@@ -3,18 +3,24 @@ import {
 	type ApiMode,
 	authFor,
 	derivedProviderFields,
+	PROVIDER_TYPE_META,
 	providerEditOperation,
 	providerPresetById,
 	providerPresetForSavedProvider,
+	providerPresetRegion,
 	type SavedAiProvider,
 } from "@clawdi/shared/api";
 import { providerDialogClasses as dialogStyles } from "@clawdi/shared/ui";
-import { providerFieldsFormCopy as copy, providerPresentation } from "@clawdi/shared/view";
+import {
+	providerFieldsFormCopy as copy,
+	providerCredentialLinkLabel,
+	providerPresentation,
+} from "@clawdi/shared/view";
 import { randomUUID } from "expo-crypto";
 import { useFocusEffect } from "expo-router";
-import { Pencil } from "lucide-react-native";
+import { Pencil, RefreshCw } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState } from "react-native";
+import { AppState, Linking, useWindowDimensions } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { useAccountRead, useAccountScope } from "../platform/account-lifecycle";
@@ -27,6 +33,7 @@ import { Dialog, DialogContent, DialogFooter } from "../ui/dialog";
 import { Icon } from "../ui/icon";
 import { AppText, AppView } from "../ui/primitives";
 import { WebView, webView } from "../ui/web-layout";
+import { ProviderOAuth } from "./provider-oauth";
 
 export function ProviderEdit({
 	provider,
@@ -36,6 +43,7 @@ export function ProviderEdit({
 	refresh: () => Promise<void>;
 }) {
 	const t = useI18n();
+	const { height } = useWindowDimensions();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { aiProviders } = useMobileApi();
@@ -52,6 +60,18 @@ export function ProviderEdit({
 	const [apiMode, setApiMode] = useState<ApiMode>(provider.api_mode ?? defaults.apiMode);
 	const [region, setRegion] = useState(provider.native_variant ?? null);
 	const [secret, setSecret] = useState("");
+	const keyUrl = preset
+		? (providerPresetRegion(preset, region)?.api_key_url ??
+			preset.api_key_url ??
+			PROVIDER_TYPE_META[provider.type].apiKeyUrl)
+		: PROVIDER_TYPE_META[provider.type].apiKeyUrl;
+	const openKeyHelp = keyUrl
+		? () => {
+				void action.run(async () => {
+					if (capture()()) await Linking.openURL(keyUrl);
+				});
+			}
+		: undefined;
 	const [locked, setLocked] = useState(false);
 	const [uncertain, setUncertain] = useState(false);
 	const attempt = useRef<{
@@ -155,7 +175,12 @@ export function ProviderEdit({
 						if (!next && !action.busy) clear();
 					}}
 				>
-					<DialogContent className={webView(dialogStyles.content)} showCloseButton={!action.busy}>
+					<DialogContent
+						className={webView(dialogStyles.content)}
+						showCloseButton={!action.busy}
+						// Native equivalent of Web's min(36rem, calc(100dvh - 2rem)) scroll surface.
+						style={{ maxHeight: Math.min(36 * 16, height - 2 * 16) }}
+					>
 						<ProviderDialogHeader
 							title={`Edit ${providerPresentation(provider).label}`}
 							providerId={provider.native_provider ?? provider.type}
@@ -163,7 +188,8 @@ export function ProviderEdit({
 						/>
 						<WebView
 							recipe={dialogStyles.body}
-							style={{ flexGrow: 0, flexShrink: 0, flexBasis: "auto" }}
+							className="flex-none"
+							style={{ flex: 0, flexGrow: 0, flexShrink: 0, flexBasis: "auto" }}
 						>
 							{!oauth && native && preset?.region_variants?.length ? (
 								<ChoiceSelect
@@ -188,6 +214,21 @@ export function ProviderEdit({
 								secret={secret}
 								onSecret={setSecret}
 								credentialLabel={preset?.credential_label ?? copy.apiKey}
+								credentialLinkLabel={providerCredentialLinkLabel(
+									preset?.credential_label ?? copy.apiKey,
+									preset?.credential_link_label,
+								)}
+								onCredentialHelp={openKeyHelp}
+								oauthContent={
+									oauth ? (
+										<ProviderOAuth
+											provider={provider}
+											refresh={refresh}
+											startLabel={copy.reconnect}
+											startIcon={<Icon as={RefreshCw} />}
+										/>
+									) : undefined
+								}
 								credentialPlaceholder={
 									provider.auth.type === "none" ? copy.apiKeyPlaceholder : copy.keepCredential
 								}

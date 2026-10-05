@@ -609,7 +609,7 @@ export function AddProviderDialog({
 									{form.authMethod === "oauth" && !isEdit
 										? busy
 											? "Opening sign-in…"
-											: "Continue to ChatGPT"
+											: copy.continueChatGpt
 										: isEdit
 											? busy
 												? "Saving settings…"

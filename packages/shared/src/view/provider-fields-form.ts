@@ -1,5 +1,9 @@
 export const providerFieldsFormCopy = {
 	name: "Name",
+	chatGpt: "ChatGPT sign-in",
+	subscriptionAccess: "Subscription access",
+	reconnect: "Reconnect",
+	continueChatGpt: "Continue to ChatGPT",
 	apiFormat: "API format",
 	endpoint: "Endpoint",
 	endpointPlaceholder: "https://api.example.com/v1",
@@ -32,3 +36,10 @@ export const providerOAuthCopy = {
 	waiting: "Waiting for ChatGPT authorization…",
 	restart: "Get a new code",
 };
+
+export function providerCredentialName(label: string) {
+	return label === "API key" ? "API key" : label.toLowerCase();
+}
+export function providerCredentialLinkLabel(label: string, override?: string | null) {
+	return override ?? `Get ${providerCredentialName(label)}`;
+}

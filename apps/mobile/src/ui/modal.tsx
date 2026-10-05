@@ -6,7 +6,13 @@ import {
 	useContext,
 	useState,
 } from "react";
-import { KeyboardAvoidingView, Modal, Platform, type PressableProps } from "react-native";
+import {
+	KeyboardAvoidingView,
+	Modal,
+	Platform,
+	type PressableProps,
+	type ScrollViewProps,
+} from "react-native";
 import { Button, type ButtonProps } from "./button";
 import { Content } from "./content";
 import { TextClassContext } from "./text";
@@ -72,6 +78,7 @@ export function ModalSurface({
 	overlayRecipe,
 	state,
 	className,
+	style,
 	dismissible = true,
 	side,
 }: {
@@ -80,6 +87,7 @@ export function ModalSurface({
 	overlayRecipe: string;
 	state?: WebClassState;
 	className?: string;
+	style?: ScrollViewProps["style"];
 	dismissible?: boolean;
 	side?: "top" | "right" | "bottom" | "left";
 }) {
@@ -130,7 +138,7 @@ export function ModalSurface({
 							accessibilityViewIsModal
 							keyboardShouldPersistTaps="handled"
 							className={`${surface} ${className ?? ""}`}
-							style={{ flexGrow: 0, flexShrink: 1 }}
+							style={[{ flexGrow: 0, flexShrink: 1 }, style]}
 							contentContainerStyle={{ flexGrow: 1 }}
 						>
 							{children}

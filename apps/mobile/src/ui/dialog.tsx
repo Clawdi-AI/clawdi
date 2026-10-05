@@ -1,6 +1,7 @@
 import { dialogClasses as styles } from "@clawdi/shared/ui";
 import { X } from "lucide-react-native";
 import { type ReactNode, useContext } from "react";
+import type { ScrollViewProps } from "react-native";
 import { useI18n } from "../i18n";
 import { Button } from "./button";
 import { Icon } from "./icon";
@@ -35,11 +36,17 @@ export function DialogContent({
 	children,
 	className,
 	showCloseButton = true,
-}: SlotProps & { showCloseButton?: boolean }) {
+	style,
+}: SlotProps & { showCloseButton?: boolean; style?: ScrollViewProps["style"] }) {
 	const t = useI18n(),
 		modal = useContext(ModalContext);
 	return (
-		<ModalSurface recipe={styles.content} overlayRecipe={styles.overlay} className={className}>
+		<ModalSurface
+			recipe={styles.content}
+			overlayRecipe={styles.overlay}
+			className={className}
+			style={style}
+		>
 			<WebView
 				recipe={styles.content
 					.split(/\s+/)

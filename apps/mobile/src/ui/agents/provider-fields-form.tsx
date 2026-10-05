@@ -7,12 +7,12 @@ import {
 	providerFieldsFormClasses as styles,
 } from "@clawdi/shared/ui";
 import { providerFieldsFormCopy as copy } from "@clawdi/shared/view";
-import { Eye, EyeOff } from "lucide-react-native";
-import { useState } from "react";
+import { ExternalLink, Eye, EyeOff, UserRound } from "lucide-react-native";
+import { type ReactNode, useState } from "react";
 import { Button } from "../button";
 import { Icon } from "../icon";
 import { Input, Label } from "../input";
-import { WebView, webBoth, webView } from "../web-layout";
+import { WebText, WebView, webBoth, webView } from "../web-layout";
 import { ChoiceSelect } from "./controls";
 
 /** Web's name, routing and credential fields, with controlled native inputs. */
@@ -31,6 +31,9 @@ export function ProviderFieldsForm({
 	credentialPlaceholder = copy.apiKeyPlaceholder,
 	disabled,
 	oauth,
+	credentialLinkLabel,
+	onCredentialHelp,
+	oauthContent,
 }: {
 	label: string;
 	placeholder: string;
@@ -46,6 +49,9 @@ export function ProviderFieldsForm({
 	credentialPlaceholder?: string;
 	disabled: boolean;
 	oauth?: boolean;
+	credentialLinkLabel?: string;
+	onCredentialHelp?: () => void;
+	oauthContent?: ReactNode;
 }) {
 	const [visible, setVisible] = useState(false);
 	return (
@@ -90,9 +96,31 @@ export function ProviderFieldsForm({
 					</WebView>
 				</>
 			) : null}
+			{oauthContent ? (
+				<WebView recipe={styles.oauth}>
+					<Icon as={UserRound} className={webBoth(styles.oauthIcon)} />
+					<WebView recipe={styles.content}>
+						<WebText recipe={styles.title}>{copy.chatGpt}</WebText>
+						<WebText recipe={styles.hint}>{copy.subscriptionAccess}</WebText>
+					</WebView>
+					{oauthContent}
+				</WebView>
+			) : null}
 			{!oauth ? (
 				<WebView recipe={styles.field}>
-					<Label>{credentialLabel}</Label>
+					<WebView recipe={styles.credentialHeader} className="flex-row">
+						<Label>{credentialLabel}</Label>
+						{onCredentialHelp ? (
+							<WebText
+								recipe={styles.credentialLink}
+								accessibilityRole="link"
+								onPress={onCredentialHelp}
+							>
+								{credentialLinkLabel}{" "}
+								<Icon as={ExternalLink} className={webBoth(styles.externalIcon)} />
+							</WebText>
+						) : null}
+					</WebView>
 					<WebView recipe={inputGroupClasses.root} className="flex-row">
 						<Input
 							accessibilityLabel={credentialLabel}

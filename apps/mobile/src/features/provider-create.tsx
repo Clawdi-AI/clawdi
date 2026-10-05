@@ -7,6 +7,7 @@ import {
 	type ProviderTypeId,
 	providerFormIdentity,
 	providerPresetById,
+	providerPresetRegion,
 	type SavedAiProvider,
 } from "@clawdi/shared/api";
 import { providerDialogClasses as dialogStyles } from "@clawdi/shared/ui";
@@ -14,12 +15,13 @@ import {
 	providerFieldsFormCopy as copy,
 	type ProviderChoice,
 	type ProviderGroup,
+	providerCredentialLinkLabel,
 } from "@clawdi/shared/view";
 import { randomUUID } from "expo-crypto";
 import { useFocusEffect } from "expo-router";
 import { Plus } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState } from "react-native";
+import { AppState, Linking, useWindowDimensions } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { useAccountRead, useAccountScope } from "../platform/account-lifecycle";
@@ -44,6 +46,7 @@ export function ProviderCreate({
 	refresh: () => Promise<void>;
 }) {
 	const t = useI18n();
+	const { height } = useWindowDimensions();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { aiProviders } = useMobileApi();
@@ -81,6 +84,25 @@ export function ProviderCreate({
 	const preset = providerPresetById(choice);
 	const route = nativeAiProvider(choice, region);
 	const custom = choice === "custom_openai_compatible";
+	const identity = providerFormIdentity({
+		type: oauth ? "openai" : type,
+		authMethod: oauth ? "oauth" : "api_key",
+		labelInput: label,
+		existingProviderIds: (providers ?? []).map((provider) => provider.provider_id),
+		preset: oauth ? undefined : preset,
+	});
+	const keyUrl = preset
+		? (providerPresetRegion(preset, region)?.api_key_url ??
+			preset.api_key_url ??
+			PROVIDER_TYPE_META[type].apiKeyUrl)
+		: PROVIDER_TYPE_META[type].apiKeyUrl;
+	const openKeyHelp = keyUrl
+		? () => {
+				void action.run(async () => {
+					if (capture()()) await Linking.openURL(keyUrl);
+				});
+			}
+		: undefined;
 	const submit = () =>
 		action.run(async (current) => {
 			const visible = capture();
@@ -162,14 +184,19 @@ export function ProviderCreate({
 						if (!next && !action.busy) clearSensitive();
 					}}
 				>
-					<DialogContent className={webView(dialogStyles.content)} showCloseButton={!action.busy}>
+					<DialogContent
+						className={webView(dialogStyles.content)}
+						showCloseButton={!action.busy}
+						// Native equivalent of Web's min(36rem, calc(100dvh - 2rem)) scroll surface.
+						style={{ maxHeight: Math.min(36 * 16, height - 2 * 16) }}
+					>
 						<ProviderDialogHeader
 							title={
 								step === "choose"
 									? (group?.label ?? copy.addTitle)
 									: oauth
-										? "Sign in with ChatGPT"
-										: `Set up ${preset?.label ?? PROVIDER_TYPE_META[type].label}`
+										? `Set up ${identity.label ?? identity.providerId}`
+										: `Set up ${identity.label ?? identity.providerId}`
 							}
 							providerId={
 								step === "configure" ? (oauth ? "openai" : (preset?.id ?? type)) : group?.iconId
@@ -189,7 +216,8 @@ export function ProviderCreate({
 						/>
 						<WebView
 							recipe={dialogStyles.body}
-							style={{ flexGrow: 0, flexShrink: 0, flexBasis: "auto" }}
+							className="flex-none"
+							style={{ flex: 0, flexGrow: 0, flexShrink: 0, flexBasis: "auto" }}
 						>
 							{step === "choose" ? (
 								<ProviderChooser
@@ -210,7 +238,28 @@ export function ProviderCreate({
 									}}
 								/>
 							) : oauth ? (
-								<ProviderOAuth providers={providers} refresh={refresh} />
+								<>
+									<ProviderFieldsForm
+										label={label}
+										placeholder="ChatGPT"
+										onLabel={setLabel}
+										showRouting={false}
+										baseUrl={baseUrl}
+										onBaseUrl={setBaseUrl}
+										apiMode={apiMode}
+										onApiMode={setApiMode}
+										secret={secret}
+										onSecret={setSecret}
+										disabled={locked || action.busy}
+										oauth
+									/>
+									<ProviderOAuth
+										providers={providers}
+										refresh={refresh}
+										label={label}
+										startLabel={copy.continueChatGpt}
+									/>
+								</>
 							) : (
 								<>
 									{preset?.region_variants?.length ? (
@@ -239,29 +288,31 @@ export function ProviderCreate({
 										secret={secret}
 										onSecret={setSecret}
 										credentialLabel={preset?.credential_label ?? copy.apiKey}
+										credentialLinkLabel={providerCredentialLinkLabel(
+											preset?.credential_label ?? copy.apiKey,
+											preset?.credential_link_label,
+										)}
+										onCredentialHelp={openKeyHelp}
 										disabled={locked || action.busy}
 									/>
-									<DialogFooter className={webView(dialogStyles.footer)}>
-										<ActionButton
-											label={t("account.cancel")}
-											disabled={action.busy}
-											onPress={clearSensitive}
-										/>
-										<ActionButton
-											label={locked ? t("providers.retrySame") : copy.add}
-											variant="default"
-											disabled={
-												action.busy ||
-												!providers ||
-												!secret.trim() ||
-												(custom && (!baseUrl.trim() || !label.trim()))
-											}
-											onPress={() => void submit()}
-										/>
-									</DialogFooter>
 								</>
 							)}
 						</WebView>
+						{step === "configure" && !oauth ? (
+							<DialogFooter className={webView(dialogStyles.footer)}>
+								<ActionButton
+									label={locked ? t("providers.retrySame") : copy.add}
+									variant="default"
+									disabled={
+										action.busy ||
+										!providers ||
+										!secret.trim() ||
+										(custom && (!baseUrl.trim() || !label.trim()))
+									}
+									onPress={() => void submit()}
+								/>
+							</DialogFooter>
+						) : null}
 						{action.error ? (
 							<AppText accessibilityRole="alert">{t("providers.failed")}</AppText>
 						) : null}

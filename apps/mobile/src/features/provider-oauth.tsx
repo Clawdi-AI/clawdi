@@ -11,7 +11,7 @@ import { providerOAuthCopy as copy } from "@clawdi/shared/view";
 import { onlineManager } from "@tanstack/react-query";
 import { randomUUID } from "expo-crypto";
 import { useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Linking } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
@@ -29,10 +29,16 @@ export function ProviderOAuth({
 	providers,
 	provider,
 	refresh,
+	label = "",
+	startLabel,
+	startIcon,
 }: {
 	providers?: SavedAiProvider[];
 	provider?: SavedAiProvider;
 	refresh: () => Promise<void>;
+	label?: string;
+	startLabel?: string;
+	startIcon?: ReactNode;
 }) {
 	const t = useI18n();
 	const scope = useAccountScope();
@@ -108,7 +114,7 @@ export function ProviderOAuth({
 					const identity = providerFormIdentity({
 						type: "openai",
 						authMethod: "oauth",
-						labelInput: "",
+						labelInput: label,
 						existingProviderIds: (providers ?? []).map((item) => item.provider_id),
 					});
 					attempt = {
@@ -251,7 +257,8 @@ export function ProviderOAuth({
 		<WebView recipe={styles.root}>
 			{!authorization ? (
 				<ActionButton
-					label={t(provider ? "providers.reconnectOAuth" : "providers.connectOAuth")}
+					label={startLabel ?? t(provider ? "providers.reconnectOAuth" : "providers.connectOAuth")}
+					icon={startIcon}
 					disabled={action.busy || !scope.isReady || !online || (!provider && !providers)}
 					onPress={() => void begin()}
 				/>

@@ -1,6 +1,10 @@
 "use client";
 import { providerFieldsFormClasses as styles } from "@clawdi/shared/ui";
-import { providerFieldsFormCopy as copy } from "@clawdi/shared/view";
+import {
+	providerFieldsFormCopy as copy,
+	providerCredentialLinkLabel,
+	providerCredentialName,
+} from "@clawdi/shared/view";
 
 import { ExternalLink, Eye, EyeOff, RefreshCw, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -70,7 +74,7 @@ export function ProviderFieldsForm({
 			? Object.keys(API_MODE_LABEL).filter(isApiMode)
 			: meta.apiModes;
 	const credentialLabel = preset?.credential_label ?? "API key";
-	const credentialName = credentialLabel === "API key" ? "API key" : credentialLabel.toLowerCase();
+	const credentialName = providerCredentialName(credentialLabel);
 	const [apiKeyVisible, setApiKeyVisible] = useState(false);
 	useEffect(() => {
 		setApiKeyVisible(false);
@@ -131,12 +135,12 @@ export function ProviderFieldsForm({
 				<div className={styles.oauth}>
 					<UserRound className={styles.oauthIcon} />
 					<div className={styles.content}>
-						<p className={styles.title}>ChatGPT sign-in</p>
-						<p className={styles.hint}>Subscription access</p>
+						<p className={styles.title}>{copy.chatGpt}</p>
+						<p className={styles.hint}>{copy.subscriptionAccess}</p>
 					</div>
 					<Button variant="outline" size="sm" onClick={onReconnectOAuth} disabled={startingOAuth}>
 						{startingOAuth ? <Spinner /> : <RefreshCw />}
-						Reconnect
+						{copy.reconnect}
 					</Button>
 				</div>
 			) : form.authMethod === "api_key" ? (
@@ -150,7 +154,7 @@ export function ProviderFieldsForm({
 								rel="noreferrer"
 								className={styles.credentialLink}
 							>
-								{preset?.credential_link_label ?? `Get ${credentialName}`}{" "}
+								{providerCredentialLinkLabel(credentialLabel, preset?.credential_link_label)}{" "}
 								<ExternalLink className={styles.externalIcon} aria-hidden="true" />
 							</a>
 						) : null}
