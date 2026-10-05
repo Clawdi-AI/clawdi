@@ -1544,3 +1544,34 @@ export function validateRuntimeSystemdPlan(programs: RuntimeSystemdUserProgram[]
 		}
 	}
 }
+
+/**
+ * Pool warm-up only: install Hermes' official gateway unit with the same command,
+ * arguments and environment as tenant convergence (Hermes passes no install-time
+ * secrets). Convergence later finds the official unit and does not reinstall it.
+ */
+export function installAnonymousHermesGatewayService(
+	paths: RuntimePaths,
+	runtimeIdentity: { uid: number; gid: number },
+): string {
+	const descriptor = OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS.find(
+		(candidate) => candidate.runtime === "hermes" && candidate.service === "gateway",
+	);
+	if (!descriptor) throw new Error("Hermes official service descriptor is missing");
+	const result = spawnRuntimeUserCommand(
+		officialRuntimeServiceCommand(descriptor, paths),
+		descriptor.installArgs,
+		paths.userHome,
+		paths.userHome,
+		{
+			maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
+			runtimeGid: runtimeIdentity.gid,
+			runtimeUid: runtimeIdentity.uid,
+			timeoutMs: OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS,
+		},
+	);
+	if (result.status !== 0 || result.error) {
+		throw new Error(`official Hermes gateway install failed (${result.status ?? "error"})`);
+	}
+	return systemdUnitFileName(descriptor.programName);
+}

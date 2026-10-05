@@ -897,11 +897,20 @@ runtimeCmd
 runtimeCmd
 	.command("warm", { hidden: true })
 	.description("Experimental: start tenant-independent services in an unclaimed pool instance")
-	.action(async () => {
-		const { warmHostedOpenClawRuntime } = await import("./runtime/runtime-warm.js");
+	.option("--runtime <runtime>", "openclaw or hermes", "openclaw")
+	.action(async (opts: { runtime: string }) => {
 		const { getRuntimePaths } = await import("./runtime/paths.js");
 		if (process.getuid?.() !== 0) throw new Error("runtime warm requires root");
-		await warmHostedOpenClawRuntime(getRuntimePaths({ mode: "hosted" }));
+		const paths = getRuntimePaths({ mode: "hosted" });
+		if (opts.runtime === "hermes") {
+			const { warmHostedHermesRuntime } = await import("./runtime/runtime-warm-hermes.js");
+			warmHostedHermesRuntime(paths);
+		} else if (opts.runtime === "openclaw") {
+			const { warmHostedOpenClawRuntime } = await import("./runtime/runtime-warm.js");
+			await warmHostedOpenClawRuntime(paths);
+		} else {
+			throw new Error(`runtime warm does not support ${opts.runtime}`);
+		}
 	});
 
 runtimeCmd
