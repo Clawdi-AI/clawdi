@@ -17,6 +17,8 @@ import {
 	OVERVIEW_CHANNELS_DESCRIPTION,
 	OverviewMetadata,
 	OverviewModuleError,
+	OVERVIEW_CHANNELS_ACTION,
+	OVERVIEW_WEB_CHAT_ACTION,
 	OverviewNavigationCard,
 } from "@/components/dashboard/agent-overview-capabilities";
 import {
@@ -474,6 +476,13 @@ function AgentDetailContentSkeleton({
 									tint={item.tint}
 									link={null}
 									loading
+									actionLabel={
+										section === "console"
+											? OVERVIEW_WEB_CHAT_ACTION
+											: section === "channels"
+												? OVERVIEW_CHANNELS_ACTION
+												: undefined
+									}
 								/>
 							);
 						})}
