@@ -1,10 +1,12 @@
 "use client";
 
+import { projectVaultCatalogClasses } from "@clawdi/shared/ui";
 import {
-	compareVaultsForCatalog,
 	displayProjectName,
 	isCustomProject,
-	vaultSearchRank,
+	PROJECT_VAULT_COPY,
+	projectVaultCatalogDescription,
+	projectVaultCatalogRows,
 } from "@clawdi/shared/view";
 import { useMutation } from "@tanstack/react-query";
 import { parseAsString, useQueryState } from "nuqs";
@@ -83,26 +85,14 @@ export function ProjectVaultCatalog({
 	const context = project.kind === "environment" ? "Workspace" : "Project";
 	const attachedIds = new Set(attachedVaults?.map((vault) => vault.id));
 	const attachmentsKnown = attachedVaults !== undefined;
-	const scopedSnapshotIsNewer = attachedVaultsUpdatedAt > catalog.dataUpdatedAt;
-	const vaultsById = new Map(attachedVaults?.map((vault) => [vault.id, vault]));
-	for (const vault of canAttach ? (catalog.data?.items ?? []) : []) {
-		const attached = vaultsById.get(vault.id);
-		// Metadata follows the latest snapshot; only the catalog knows other Project links.
-		const metadata = attached && scopedSnapshotIsNewer ? attached : vault;
-		const projectIds = scopedSnapshotIsNewer
-			? attached
-				? Array.from(new Set([...vault.project_ids, project.id]))
-				: vault.project_ids.filter((id) => id !== project.id)
-			: vault.project_ids;
-		vaultsById.set(vault.id, { ...metadata, project_ids: projectIds });
-	}
-	const rows = Array.from(vaultsById.values())
-		.filter((vault) => vaultSearchRank(vault, search) !== null)
-		.sort(
-			(a, b) =>
-				Number(a.is_owner === false) - Number(b.is_owner === false) ||
-				compareVaultsForCatalog(a, b, search),
-		);
+	const rows = projectVaultCatalogRows({
+		projectId: project.id,
+		attachedVaults,
+		attachedVaultsUpdatedAt,
+		catalogVaults: canAttach ? (catalog.data?.items ?? []) : [],
+		catalogUpdatedAt: catalog.dataUpdatedAt,
+		search,
+	});
 	const groups = attachmentsKnown
 		? [
 				{ label: `In this ${context}`, rows: rows.filter((vault) => attachedIds.has(vault.id)) },
@@ -149,21 +139,20 @@ export function ProjectVaultCatalog({
 	});
 
 	return (
-		<div className="space-y-4" data-testid="project-vault-catalog">
+		<div className={projectVaultCatalogClasses.root} data-testid="project-vault-catalog">
 			<ListToolbar
 				search={
 					<SearchInput
 						value={search}
 						onChange={setSearch}
-						placeholder="Search Vaults…"
-						ariaLabel="Search Vaults"
+						placeholder={PROJECT_VAULT_COPY.searchPlaceholder}
+						ariaLabel={PROJECT_VAULT_COPY.searchLabel}
 					/>
 				}
 			/>
 			{canAttach ? (
-				<p className="text-sm text-muted-foreground">
-					Add Vaults from your Library to this {context}. Removing a Vault preserves its keys and
-					other Projects.
+				<p className={projectVaultCatalogClasses.description}>
+					{projectVaultCatalogDescription(context)}
 				</p>
 			) : null}
 			{error ? (
@@ -185,7 +174,7 @@ export function ProjectVaultCatalog({
 					group.rows.length > 0 ? (
 						<section
 							key={group.label ?? "catalog"}
-							className="space-y-3"
+							className={projectVaultCatalogClasses.section}
 							aria-label={
 								group.label
 									? `${group.label}${group.label === "Available" ? ` ${context}` : ""} Vaults`
@@ -216,7 +205,11 @@ export function ProjectVaultCatalog({
 											? agentResourceScope(scope.agentId)
 											: LIBRARY_RESOURCE_SCOPE;
 									return (
-										<div key={vault.id} data-testid="project-vault-card" className="min-w-0">
+										<div
+											key={vault.id}
+											data-testid="project-vault-card"
+											className={projectVaultCatalogClasses.card}
+										>
 											<VaultCard
 												vault={vault}
 												projectNameById={projectNames}
@@ -281,7 +274,7 @@ export function ProjectVaultCatalog({
 				(!canAttach || !shouldBlockQueryError(catalog.error, catalog.data)) ? (
 				<EmptyState
 					variant="inset"
-					description={search.trim() ? "No Vaults match that search." : "No Vaults available yet."}
+					description={search.trim() ? PROJECT_VAULT_COPY.noMatches : PROJECT_VAULT_COPY.empty}
 				/>
 			) : null}
 		</div>

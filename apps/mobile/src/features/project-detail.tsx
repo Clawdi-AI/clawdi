@@ -33,7 +33,6 @@ import { PageHeader, PageHeaderSkeleton } from "../ui/page-header";
 import { ManageProjectAgentsDialog } from "../ui/projects/manage-project-agents-dialog";
 import { Tabs, TabsList, TabsTrigger } from "../ui/tabs";
 import { Text } from "../ui/text";
-import { VaultCard } from "../ui/vault/vault-card";
 import { AppPressable } from "../ui/view";
 import { WebText, WebView, webBoth, webView } from "../ui/web-layout";
 import { agentDisplayName, isNotFound, useCloudAgents } from "./cloud-inventory";
@@ -42,7 +41,7 @@ import { canManageSharing } from "./project-sharing-state";
 import { projectRouteFilter } from "./read-helpers";
 import { ResourceError } from "./resource-error";
 import { SkillRow, useCloudSkills } from "./skills";
-import { useVaultCatalog } from "./vault/catalog";
+import { ProjectVaultCatalog } from "./vault/project-catalog";
 
 export function ProjectDetailScreen() {
 	const scope = useAccountScope();
@@ -65,7 +64,6 @@ function ProjectHub({ id }: { id?: string }) {
 	const query = useProject(id);
 	const project = query.data?.id === id && !query.isError ? query.data : undefined;
 	const skills = useCloudSkills(id, "", Boolean(id && tab === "skills"));
-	const vaults = useVaultCatalog("", id, Boolean(id && tab === "vaults"));
 	const agents = useCloudAgents(id);
 	const members = useQuery({
 		queryKey: accountQueryKey(scope, "project-members", id),
@@ -248,42 +246,7 @@ function ProjectHub({ id }: { id?: string }) {
 							) : null}
 						</WebView>
 					) : null}
-					{tab === "vaults" ? (
-						<WebView recipe={projectDetailClasses.section}>
-							<WebText recipe={projectDetailClasses.heading}>{t("navigation.vaults")}</WebText>
-							<WebText recipe={projectDetailClasses.subtitle}>
-								{t("libraryPort.projectVaultsDescription")}
-							</WebText>
-							{vaults.error ? (
-								<ApiErrorPanel error={vaults.error} onRetry={() => void vaults.refetch()} />
-							) : (
-								<WebView recipe={HERO_GRID_CLASS}>
-									{vaults.isPending ? (
-										<HeroCardSkeleton />
-									) : (
-										vaults.data?.pages
-											.flatMap((page) => page.items)
-											.map((vault) => (
-												<VaultCard
-													key={vault.id}
-													vault={vault}
-													names={new Map([[project.id, project.name]])}
-												/>
-											))
-									)}
-								</WebView>
-							)}
-							<Button
-								variant="outline"
-								size="sm"
-								onPress={() =>
-									router.push({ pathname: "/vault", params: { projectId: project.id } })
-								}
-							>
-								<Text>{t("libraryPort.manageVaults")}</Text>
-							</Button>
-						</WebView>
-					) : null}
+					{tab === "vaults" ? <ProjectVaultCatalog project={project} /> : null}
 					{tab === "access" ? (
 						<WebView recipe={projectDetailClasses.section}>
 							<WebText recipe={projectDetailClasses.heading}>

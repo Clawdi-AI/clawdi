@@ -42,6 +42,7 @@ export * from "./overview-compute";
 export * from "./plan-comparison";
 export * from "./project-metadata";
 export * from "./project-resource-model";
+export * from "./project-vault-catalog";
 export * from "./provider-chooser";
 export * from "./provider-fields-form";
 export * from "./provider-model-binding";
