@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from uuid import UUID
 
@@ -12,9 +13,15 @@ from app.services.channel_wakeups import (
     ChannelWakeup,
     channel_deliveries_enqueued,
 )
-from app.services.channels import claim_next_channel_delivery, deliver_channel_delivery
+from app.services.channels import (
+    claim_next_channel_delivery,
+    deliver_channel_delivery,
+    reap_expired_channel_delivery_leases,
+)
 
 log = logging.getLogger(__name__)
+
+LEASE_REAP_INTERVAL_SECONDS = 30.0
 
 
 class ChannelDeliveryWorker:
@@ -30,16 +37,22 @@ class ChannelDeliveryWorker:
         self._worker_id = worker_id or f"channel-delivery-{uuid.uuid4()}"
         self._poll_interval_seconds = poll_interval_seconds
         self._wakeup = wakeup
+        self._next_lease_reap_at = 0.0
 
     async def run_once(self) -> UUID | None:
         async with self._sessionmaker() as db:
+            if time.monotonic() >= self._next_lease_reap_at:
+                await reap_expired_channel_delivery_leases(db)
+                await db.commit()
+                self._next_lease_reap_at = time.monotonic() + LEASE_REAP_INTERVAL_SECONDS
             delivery = await claim_next_channel_delivery(db, worker_id=self._worker_id)
             if delivery is None:
                 await db.rollback()
                 return None
             delivery_id = delivery.id
+            # Commits the claim before the provider send and finalizes in a
+            # separate transaction; see deliver_channel_delivery.
             await deliver_channel_delivery(db, delivery=delivery)
-            await db.commit()
             return delivery_id
 
     async def run_forever(self, stop: asyncio.Event | None = None) -> None:
