@@ -103,6 +103,8 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 			transport.read((init) => api.GET("/v2/ai-providers/managed/models", init), signal),
 		getWallet: (signal?: AbortSignal) =>
 			transport.read((init) => api.GET("/v2/wallet", init), signal),
+		getWalletPaymentMethods: (signal?: AbortSignal) =>
+			transport.read((init) => api.GET("/v2/wallet/payment-methods", init), signal),
 		getSubscriptions: (query?: ComputeSubscriptionsQuery, signal?: AbortSignal) =>
 			transport.read(
 				(init) => api.GET("/v2/subscriptions", { ...init, params: { query } }),

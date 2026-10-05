@@ -1,3 +1,4 @@
+import { hostedAgentOverviewClasses } from "@clawdi/shared/ui";
 import {
 	AGENT_NAVIGATION_GROUPS,
 	agentSectionCopy,
@@ -165,7 +166,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "console",
 		label: "Dashboard",
 		icon: PanelsTopLeft,
-		tint: "bg-identity-6-bg text-identity-6-fg",
+		tint: hostedAgentOverviewClasses.browserTint,
 		description: "Open this agent's dashboard.",
 		tooltip: "Open dashboard",
 		variants: ["hosted"],
@@ -247,7 +248,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 	channels: {
 		id: "channels",
 		...CANONICAL_NAVIGATION_IDENTITIES.channels,
-		tint: "bg-identity-5-bg text-identity-5-fg",
+		tint: hostedAgentOverviewClasses.channelsTint,
 		description: agentSectionCopy.channels.description,
 		tooltip: "Channels linked to this agent",
 		variants: ["hosted"],
@@ -256,7 +257,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "plugins",
 		label: "Plugins",
 		icon: Blocks,
-		tint: "bg-identity-7-bg text-identity-7-fg",
+		tint: hostedAgentOverviewClasses.pluginsTint,
 		description: agentSectionCopy.plugins.description,
 		tooltip: "Install plugins for this agent",
 		variants: ["hosted"],
@@ -328,11 +329,9 @@ export function agentNavigationGroups(
 	})).filter((group) => group.items.length > 0);
 }
 
-export function runtimeBrowserUiLabel(runtime?: string | null): string {
-	if (runtime === "openclaw") return "OpenClaw Control UI";
-	if (runtime === "hermes") return "Hermes Dashboard";
-	return "Dashboard";
-}
+export { runtimeBrowserUiLabel } from "@clawdi/shared/view";
+
+import { runtimeBrowserUiLabel } from "@clawdi/shared/view";
 
 export function agentSectionNavigationItem(
 	section: AgentSectionId,

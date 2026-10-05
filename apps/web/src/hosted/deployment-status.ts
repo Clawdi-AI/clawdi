@@ -1,7 +1,6 @@
 import {
 	type DeploymentStatus,
 	deploymentStatusFromResource,
-	hasCurrentRuntimeHealthDegradation,
 	parseDeploymentStatus,
 } from "@clawdi/shared/view";
 
@@ -22,11 +21,7 @@ export {
 } from "@clawdi/shared/view";
 
 import { canCancelDeploymentOperation, deploymentLifecycleAvailable } from "@clawdi/shared/api";
-import type {
-	DeploymentOperation,
-	HostedDeployment,
-	HostedDeploymentStatus,
-} from "@/hosted/billing/contracts";
+import type { DeploymentOperation, HostedDeployment } from "@/hosted/billing/contracts";
 
 // `plan_change` is a projected failure phase; `runtime_switch` remains a live
 // legacy wire value while the hosted main rollout converges.
@@ -82,69 +77,17 @@ export type DeploymentPollingState = {
  * controller projects while the agent keeps running (`Ready` stays True). They
  * never carry a lifecycle failure, so they must not render as failed.
  */
-export const DEPLOYMENT_SERVING_ADVISORY_REASONS = [
-	"ProviderConflict",
-	"RuntimeUiUnavailable",
-] as const;
-export type DeploymentServingAdvisoryReason = (typeof DEPLOYMENT_SERVING_ADVISORY_REASONS)[number];
+export {
+	currentServingAdvisory,
+	DEPLOYMENT_SERVING_ADVISORY_REASONS,
+	type DeploymentServingAdvisoryReason,
+	deploymentRuntimeUiIsReady,
+	deploymentRuntimeUiWithdrawn,
+} from "@clawdi/shared/view";
 
-const SERVING_ADVISORY_REASON_SET = new Set<string>(DEPLOYMENT_SERVING_ADVISORY_REASONS);
-
-function isServingAdvisoryReason(reason: string): reason is DeploymentServingAdvisoryReason {
-	return SERVING_ADVISORY_REASON_SET.has(reason);
-}
-
-/** The current-generation serving advisory, if the controller projects one. */
-export function currentServingAdvisory(
-	status: HostedDeploymentStatus | null | undefined,
-): DeploymentServingAdvisoryReason | null {
-	if (!status) return null;
-	for (const condition of status.conditions) {
-		if (
-			condition.type === "Degraded" &&
-			condition.status === "True" &&
-			condition.observedGeneration === status.observedGeneration &&
-			isServingAdvisoryReason(condition.reason)
-		) {
-			return condition.reason;
-		}
-	}
-	return null;
-}
-
-/** The runtime withdrew only its optional dashboard; the agent itself keeps serving. */
-export function deploymentRuntimeUiWithdrawn(
-	status: HostedDeploymentStatus | null | undefined,
-): boolean {
-	return currentServingAdvisory(status) === "RuntimeUiUnavailable";
-}
+import { deploymentRuntimeUiIsReady, deploymentRuntimeUiWithdrawn } from "@clawdi/shared/view";
 
 export { deploymentTerminalIsAvailable } from "@clawdi/shared/api";
-export function deploymentRuntimeUiIsReady(deployment: HostedDeployment): boolean {
-	const { metadata, spec, status } = deployment.resource;
-	const generation = metadata.generation;
-	const ready = status?.conditions.find((condition) => condition.type === "Ready");
-	const componentReady = deployment.runtime_ui_endpoint?.component_readiness === 1;
-	return Boolean(
-		generation >= 1 &&
-			spec.desired_lifecycle === "running" &&
-			(status?.summary_state === "running" ||
-				(componentReady && status?.summary_state === "failed")) &&
-			!status.deleted_at &&
-			status.observed_at &&
-			status.observedGeneration === generation &&
-			!deploymentRuntimeUiWithdrawn(status) &&
-			status.driver_acknowledged_generation === generation &&
-			status.driver_applied_generation === generation &&
-			(componentReady ||
-				(ready?.status === "True" &&
-					ready.observedGeneration === generation &&
-					!hasCurrentRuntimeHealthDegradation(status))) &&
-			deployment.runtime_ui_endpoint?.runtime === spec.runtime &&
-			deployment.runtime_ui_endpoint.role === "control_ui" &&
-			deployment.runtime_ui_endpoint.url,
-	);
-}
 
 /**
  * A running agent whose browser UI has not been admitted yet. A withdrawn

@@ -309,3 +309,19 @@ const PROVIDER_AUTH_LABEL: Record<string, string> = {
 export function providerAuthLabel(type: string): string {
 	return PROVIDER_AUTH_LABEL[type] ?? type;
 }
+
+export const aiBindingCopy = {
+	managed: "Clawdi AI",
+	managedDescription: "No setup required. Usage draws from your Wallet.",
+	unmanaged: "Configure inside agent",
+	unmanagedDescription: "Configure model access inside the agent.",
+	unmanagedNotice:
+		"This agent has no Clawdi provider connection. Configure models inside the agent after it starts.",
+	addProvider: "Add a provider",
+	addProviderDescription: "Connect OpenAI, Anthropic, or another endpoint.",
+	unavailable: "Unavailable",
+	mainModel: "Main model",
+	moreModels: "More models",
+	modelsUnavailable: "Couldn't load Clawdi AI models",
+	save: "Save changes",
+} as const;
