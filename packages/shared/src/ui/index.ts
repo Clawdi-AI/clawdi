@@ -305,6 +305,7 @@ export * from "./share-controls";
 export * from "./shared-session-links";
 export * from "./sheet";
 export * from "./site-header";
+export * from "./skill-transfer-dialog";
 export * from "./switch";
 export * from "./term-switcher";
 export * from "./this-week-card";

@@ -38,25 +38,28 @@ import { WebText, WebView, webBoth, webView } from "../ui/web-layout";
 import { agentDisplayName, isNotFound, useCloudAgents } from "./cloud-inventory";
 import { useProject } from "./project-scope";
 import { canManageSharing } from "./project-sharing-state";
-import { projectRouteFilter } from "./read-helpers";
+import { projectRouteFilter, routeParam } from "./read-helpers";
 import { ResourceError } from "./resource-error";
 import { SkillRow, useCloudSkills } from "./skills";
 import { ProjectVaultCatalog } from "./vault/project-catalog";
 
 export function ProjectDetailScreen() {
 	const scope = useAccountScope();
-	const params = useLocalSearchParams<{ projectId?: string | string[] }>();
+	const params = useLocalSearchParams<{ projectId?: string | string[]; tab?: string | string[] }>();
 	const filter = projectRouteFilter(params.projectId);
+	const initialTab =
+		PROJECT_LOCAL_TABS.find((item) => item.id === routeParam(params.tab))?.id ?? "overview";
 	return (
 		<ProjectHub
-			key={`${scope.identity}:${scope.generation}:${filter.kind === "project" ? filter.id : ""}`}
+			key={`${scope.identity}:${scope.generation}:${filter.kind === "project" ? filter.id : ""}:${initialTab}`}
+			initialTab={initialTab}
 			id={filter.kind === "project" ? filter.id : undefined}
 		/>
 	);
 }
-function ProjectHub({ id }: { id?: string }) {
+function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 	const t = useI18n();
-	const [tab, setTab] = useState("overview");
+	const [tab, setTab] = useState(initialTab);
 	const [agentsOpen, setAgentsOpen] = useState(false);
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -228,7 +231,9 @@ function ProjectHub({ id }: { id?: string }) {
 									) : (
 										skills.data?.pages
 											.flatMap((page) => page.items)
-											.map((skill) => <SkillRow key={skill.skill_key} skill={skill} />)
+											.map((skill) => (
+												<SkillRow key={skill.skill_key} skill={skill} project={project} />
+											))
 									)}
 								</WebView>
 							)}

@@ -53,6 +53,7 @@ export * from "./session-transcript";
 export * from "./sessions";
 export * from "./settings-copy";
 export * from "./skill-search";
+export * from "./skill-transfer-dialog";
 export * from "./utils";
 export * from "./vault-search";
 export * from "./wallet-transactions";

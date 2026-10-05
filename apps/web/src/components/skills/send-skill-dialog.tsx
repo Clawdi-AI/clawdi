@@ -1,7 +1,13 @@
 "use client";
 
 import { skillTransferTargets, transferSkill } from "@clawdi/shared/api";
-import { displayProjectName, identityFor } from "@clawdi/shared/view";
+import { skillTransferDialogClasses } from "@clawdi/shared/ui";
+import {
+	displayProjectName,
+	identityFor,
+	SKILL_TRANSFER_COPY,
+	skillTransferTitle,
+} from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Copy } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useRef, useState } from "react";
@@ -164,7 +170,7 @@ export function SendSkillDialog({
 
 	const trigger = children ?? (
 		<Button variant="ghost" size="icon-sm" aria-label={`Copy or move ${skill.name}`}>
-			<Copy className="size-3.5" />
+			<Copy className={skillTransferDialogClasses.icon} />
 		</Button>
 	);
 
@@ -179,21 +185,21 @@ export function SendSkillDialog({
 			}}
 		>
 			<DialogTrigger render={trigger} />
-			<DialogContent className="sm:max-w-md">
+			<DialogContent className={skillTransferDialogClasses.dialog}>
 				<DialogHeader>
-					<DialogTitle>Copy or move {skill.name}</DialogTitle>
+					<DialogTitle>{skillTransferTitle(skill.name)}</DialogTitle>
 					{/* Copy-vs-reference semantics must be explicit (Kingsley's
 					    review): skills duplicate per Project, so the destination's
 					    copy will NOT follow future changes to the source. */}
 					<DialogDescription>
-						The destination gets an independent copy — later changes to the source won&apos;t sync.
-						To give people the <em className="not-italic font-medium">same</em> Skill, share the
-						Project instead.
+						{SKILL_TRANSFER_COPY.descriptionBefore}{" "}
+						<em className="not-italic font-medium">{SKILL_TRANSFER_COPY.descriptionSame}</em>{" "}
+						{SKILL_TRANSFER_COPY.descriptionAfter}
 					</DialogDescription>
 				</DialogHeader>
-				<div className="space-y-4">
-					<div className="space-y-1.5">
-						<Label htmlFor="send-skill-target">Destination</Label>
+				<div className={skillTransferDialogClasses.body}>
+					<div className={skillTransferDialogClasses.field}>
+						<Label htmlFor="send-skill-target">{SKILL_TRANSFER_COPY.destination}</Label>
 						<Select
 							items={targetItems}
 							value={target}
@@ -201,13 +207,13 @@ export function SendSkillDialog({
 								if (value !== null) setTarget(value);
 							}}
 						>
-							<SelectTrigger id="send-skill-target" className="w-full">
-								<SelectValue placeholder="Choose a Project…" />
+							<SelectTrigger id="send-skill-target" className={skillTransferDialogClasses.trigger}>
+								<SelectValue placeholder={SKILL_TRANSFER_COPY.chooseProject} />
 							</SelectTrigger>
-							<SelectContent className="max-h-80">
+							<SelectContent className={skillTransferDialogClasses.menu}>
 								{projectTargets.map((t) => (
 									<SelectItem key={`p-${t.value}`} value={t.value} label={t.label}>
-										<span aria-hidden className="select-none">
+										<span aria-hidden className={skillTransferDialogClasses.emoji}>
 											{t.emoji}
 										</span>
 										{t.label}
@@ -234,9 +240,9 @@ export function SendSkillDialog({
 							{send.isPending && send.variables === "copy" ? (
 								<Spinner />
 							) : (
-								<Copy className="size-3.5" />
+								<Copy className={skillTransferDialogClasses.icon} />
 							)}
-							Copy skill
+							{SKILL_TRANSFER_COPY.copy}
 						</Button>
 						<Button
 							disabled={!target || send.isPending || !!destinationLoadError}
@@ -245,9 +251,9 @@ export function SendSkillDialog({
 							{send.isPending && send.variables === "move" ? (
 								<Spinner />
 							) : (
-								<ArrowRight className="size-3.5" />
+								<ArrowRight className={skillTransferDialogClasses.icon} />
 							)}
-							Move skill
+							{SKILL_TRANSFER_COPY.move}
 						</Button>
 					</DialogFooter>
 				</div>
