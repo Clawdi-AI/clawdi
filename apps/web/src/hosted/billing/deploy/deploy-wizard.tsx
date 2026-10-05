@@ -105,6 +105,7 @@ import {
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
 import {
+	billingErrorDetail,
 	billingErrorNormalizer,
 	deploymentRequestTerminalOutcome,
 	deploySubmissionErrorPresentation,
@@ -946,22 +947,32 @@ export function DeployWizard() {
 					checkoutFingerprint,
 					newIdempotencyKey,
 				);
-				const outcome = await createSubscription
-					.execute({
+				const execute = (attempt: IdempotencyAttempt) =>
+					createSubscription.execute({
 						selection,
 						subscriptionSelection,
 						target,
 						uiMode: cardCheckoutUiMode,
-						idempotencyKey: checkoutAttemptRef.current.key,
+						idempotencyKey: attempt.key,
 						quote: lastSuccessfulSubscriptionQuote,
-					})
-					.catch((error: unknown) => {
-						if (isIdempotencyKeyReusedError(error)) {
-							forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
-							checkoutAttemptRef.current = null;
-						}
-						throw error;
 					});
+				const outcome = await execute(checkoutAttemptRef.current).catch((error: unknown) => {
+					if (isIdempotencyKeyReusedError(error)) {
+						forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
+						checkoutAttemptRef.current = null;
+						throw error;
+					}
+					if (billingErrorDetail(error)?.code !== "checkout_attempt_expired") throw error;
+					forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
+					checkoutAttemptRef.current = idempotencyAttemptFor(
+						null,
+						"subscription-checkout",
+						checkoutFingerprint,
+						newIdempotencyKey,
+					);
+					// Only this first failure is retried; a second failure reaches the outer handler.
+					return execute(checkoutAttemptRef.current);
+				});
 				if (outcome.flowType === "subscription_activation") {
 					forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
 					checkoutAttemptRef.current = null;
