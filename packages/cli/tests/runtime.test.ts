@@ -8453,7 +8453,8 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			},
 		});
 	});
-	it("hands off a CLI update without restarting a tenant for repaired unit drift", async () => {
+	it("hands off a CLI update from a 0.14.101 receipt without restarting a tenant", async () => {
+		const withOom = false;
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -8579,6 +8580,39 @@ chmod +x "$prefix/bin/clawdi"
 			expect(existsSync(join(paths.systemdUserRoot, "openclaw-gateway.service"))).toBe(true);
 			expect(existsSync(paths.daemonAuthToken)).toBe(true);
 			const initialAppliedState = readRuntimeAppliedState(paths);
+			if (!initialAppliedState) throw new Error("Initial applied receipt is missing");
+			const gatewayUnit = "openclaw-gateway.service";
+			const gatewayDropIn = join(
+				paths.systemdUserRoot,
+				`${gatewayUnit}.d`,
+				"10-clawdi-hosted.conf",
+			);
+			if (!withOom) {
+				writeFileSync(
+					gatewayDropIn,
+					readFileSync(gatewayDropIn, "utf8").replace(
+						"# ClawdiOOMProtection=v1\nOOMPolicy=continue\n# EndClawdiOOMProtection\n",
+						"",
+					),
+				);
+			}
+			// Reproduce 0.14.101's full-byte receipt independently of the current reader.
+			const oldGatewayReceipt = createHash("sha256")
+				.update(
+					`${readFileSync(join(paths.systemdUserRoot, gatewayUnit), "utf8")}\n${readFileSync(gatewayDropIn, "utf8")}`,
+				)
+				.update(readFileSync(join(paths.systemdEnvRoot, `${gatewayUnit}.env`)))
+				.digest("hex");
+			writeRuntimeAppliedState(
+				{
+					...initialAppliedState,
+					activated: {
+						...initialAppliedState.activated,
+						[gatewayUnit]: oldGatewayReceipt,
+					},
+				},
+				paths,
+			);
 			const initialDaemonActivation = initialAppliedState?.activated["clawdi-daemon.service"];
 			expect(initialDaemonActivation).toMatch(/^[a-f0-9]{64}$/);
 			const legacyUnitPaths = [
@@ -8597,6 +8631,7 @@ chmod +x "$prefix/bin/clawdi"
 				}),
 			];
 			for (const unitPath of legacyUnitPaths) {
+				if (unitPath.startsWith(paths.systemdUserRoot)) continue;
 				writeFileSync(unitPath, `${readFileSync(unitPath, "utf-8")}# legacy renderer drift\n`);
 			}
 			logs.length = 0;
@@ -8683,7 +8718,11 @@ chmod +x "$prefix/bin/clawdi"
 						call,
 					),
 				);
-			expect(activationCalls).toEqual(["daemon-reload", "restart clawdi-daemon.service"]);
+			expect(activationCalls).toEqual([
+				"daemon-reload",
+				"--user daemon-reload",
+				"restart clawdi-daemon.service",
+			]);
 			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
 				"restart clawdi-runtime-watch.service",
 			);
@@ -8695,6 +8734,18 @@ chmod +x "$prefix/bin/clawdi"
 				bad: null,
 			});
 
+			logs.length = 0;
+			writeFileSync(systemctlLog, "");
+			process.exitCode = undefined;
+			runtimeGeneration = 15;
+			await runtimeWatch({ once: true, json: true });
+			expect(JSON.parse(logs[0]).systemdApply).toEqual({
+				applied: true,
+				systemUnitsChanged: [],
+				userUnitsChanged: [],
+			});
+			expect(readFileSync(systemctlLog, "utf8")).not.toMatch(/\b(?:start|restart|stop)\b/);
+
 			// Model a crash after the cache write but before the applied-state commit.
 			writeFileSync(paths.appliedState, appliedBeforeDaemonHandoff);
 			logs.length = 0;
@@ -8703,7 +8754,7 @@ chmod +x "$prefix/bin/clawdi"
 			await runtimeWatch({ once: true, json: true });
 
 			expect(process.exitCode ?? 0).toBe(0);
-			expect(manifestRequests()).toHaveLength(4);
+			expect(manifestRequests()).toHaveLength(5);
 			expect(JSON.parse(logs[0]).systemdApply).toEqual({
 				applied: true,
 				systemUnitsChanged: ["clawdi-daemon.service"],
@@ -8725,7 +8776,7 @@ chmod +x "$prefix/bin/clawdi"
 			await runtimeWatch({ once: true, json: true });
 
 			expect(process.exitCode ?? 0).toBe(0);
-			expect(manifestRequests()).toHaveLength(5);
+			expect(manifestRequests()).toHaveLength(6);
 			expect(JSON.parse(logs[0])).toMatchObject({ status: "not_modified" });
 			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
 			expect(readFileSync(paths.appliedState, "utf-8")).toBe(committedAfterRetry);
