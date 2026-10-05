@@ -1,6 +1,6 @@
 import { skeletonClassName } from "@clawdi/shared/ui";
 import { cn } from "cn";
-import { useEffect } from "react";
+import { type ReactNode, useEffect } from "react";
 import type { ViewProps } from "react-native";
 import Animated, {
 	cancelAnimation,
@@ -18,9 +18,11 @@ const AnimatedView = withUniwind(Animated.View);
 export function Skeleton({
 	className,
 	style: layoutStyle,
+	children,
 }: {
 	className?: string;
 	style?: ViewProps["style"];
+	children?: ReactNode;
 }) {
 	const opacity = useSharedValue(1);
 	useEffect(() => {
@@ -34,6 +36,8 @@ export function Skeleton({
 			importantForAccessibility="no"
 			className={cn(resolveWebClasses(skeletonClassName).view, className)}
 			style={[layoutStyle, style]}
-		/>
+		>
+			{children}
+		</AnimatedView>
 	);
 }

@@ -1,6 +1,7 @@
 import type { ContributionDay } from "@clawdi/shared/api";
 import {
 	dashboardPageClasses as page,
+	skeletonClassName,
 	contributionGraphClasses as styles,
 } from "@clawdi/shared/ui";
 import { buildWeeks, clampLevel, computeMonthLabels, DASHBOARD_COPY } from "@clawdi/shared/view";
@@ -88,42 +89,42 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 export function ActivityGraphSkeleton() {
 	const [maxWeeks, setMaxWeeks] = useState(20);
 	return (
-		<WebView
-			recipe={page.wFull}
-			onLayout={({ nativeEvent }) =>
-				setMaxWeeks(
-					Math.max(4, Math.floor((nativeEvent.layout.width - DAY_LABEL_W + GAP) / STRIDE)),
-				)
-			}
-		>
-			<WebView recipe={page.flexGap15} className="flex-row">
-				<WebView recipe={page.flexW3Shrink0}>
-					{Array.from({ length: 7 }, (_, i) => (
-						<Skeleton key={i} className={webView(page.h11PxW2Rounded)} />
-					))}
-				</WebView>
-				<WebView recipe={page.minW0Flex1}>
-					<WebView recipe={page.flexMaxH95PxOverflow} className="flex-row">
-						{Array.from({ length: maxWeeks }, (_, wi) => (
-							<WebView key={wi} recipe={page.flexFlexColGap3Px}>
-								{Array.from({ length: 7 }, (_, di) => (
-									<Skeleton
-										key={di}
-										className={webView(
-											`${page.size11PxRounded3Px} ${(wi + di) % 5 === 0 ? page.opacity50 : ""}`,
-										)}
-									/>
-								))}
-							</WebView>
+		<Skeleton className={webView(styles.bgTransparent)}>
+			<WebView
+				recipe={page.wFull}
+				onLayout={({ nativeEvent }) =>
+					setMaxWeeks(
+						Math.max(4, Math.floor((nativeEvent.layout.width - DAY_LABEL_W + GAP) / STRIDE)),
+					)
+				}
+			>
+				<WebView recipe={page.flexGap15} className="flex-row">
+					<WebView recipe={page.flexW3Shrink0}>
+						{Array.from({ length: 7 }, (_, i) => (
+							<WebView key={i} recipe={`${skeletonClassName} ${page.h11PxW2Rounded}`} />
 						))}
 					</WebView>
-					<WebView recipe={page.mt1FlexH4} className="flex-row">
-						{Array.from({ length: 6 }, (_, i) => (
-							<Skeleton key={i} className={webView(page.h25W6)} />
-						))}
+					<WebView recipe={page.minW0Flex1}>
+						<WebView recipe={page.flexMaxH95PxOverflow} className="flex-row">
+							{Array.from({ length: maxWeeks }, (_, wi) => (
+								<WebView key={wi} recipe={page.flexFlexColGap3Px}>
+									{Array.from({ length: 7 }, (_, di) => (
+										<WebView
+											key={di}
+											recipe={`${skeletonClassName} ${page.size11PxRounded3Px} ${(wi + di) % 5 === 0 ? page.opacity50 : ""}`}
+										/>
+									))}
+								</WebView>
+							))}
+						</WebView>
+						<WebView recipe={page.mt1FlexH4} className="flex-row">
+							{Array.from({ length: 6 }, (_, i) => (
+								<WebView key={i} recipe={`${skeletonClassName} ${page.h25W6}`} />
+							))}
+						</WebView>
 					</WebView>
 				</WebView>
 			</WebView>
-		</WebView>
+		</Skeleton>
 	);
 }
