@@ -787,7 +787,6 @@ export const en = {
 		profile: "Profile",
 		security: "Security",
 		settings: "Settings",
-		more: "More",
 		title: "Account",
 		signedInAs: "Signed in as",
 		signOut: "Sign out",

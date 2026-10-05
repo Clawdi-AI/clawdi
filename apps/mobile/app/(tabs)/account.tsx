@@ -1,13 +1,14 @@
 import { generalPanelClasses } from "@clawdi/shared/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
+import { LogOut } from "lucide-react-native";
 import { isDevAuthBypass, useAuthActions } from "../../src/auth/auth-client";
 import { useAuthAction } from "../../src/auth/use-auth-action";
 import { useI18n } from "../../src/i18n";
 import { clearAccountScope, useAccountScope } from "../../src/platform/account-lifecycle";
 import { Button } from "../../src/ui/button";
+import { Icon } from "../../src/ui/icon";
 import { GeneralPanel } from "../../src/ui/settings/general-panel";
-import { SettingsSection } from "../../src/ui/settings/section";
 import { SettingsShell } from "../../src/ui/settings/shell";
 import { Text } from "../../src/ui/text";
 import { WebView } from "../../src/ui/web-layout";
@@ -31,24 +32,15 @@ export default function AccountRoute() {
 		<SettingsShell>
 			<GeneralPanel />
 			<WebView recipe={generalPanelClasses.panel} className="pt-8">
-				<SettingsSection title={t("account.more")}>
-					<Button variant="ghost" onPress={() => router.push("/ai-providers")}>
-						<Text>{t("providers.title")}</Text>
-					</Button>
-					<Button variant="ghost" onPress={() => router.push("/channels")}>
-						<Text>{t("channels.title")}</Text>
-					</Button>
-					<Button
-						variant="outline"
-						disabled={isDevAuthBypass() || action.busy || !scope.isReady || !scope.sessionId}
-						onPress={leave}
-					>
-						<Text>{t("account.signOut")}</Text>
-					</Button>
-					{action.error ? (
-						<Text accessibilityRole="alert">{t("account.signOutFailed")}</Text>
-					) : null}
-				</SettingsSection>
+				<Button
+					variant="outline"
+					disabled={isDevAuthBypass() || action.busy || !scope.isReady || !scope.sessionId}
+					onPress={leave}
+				>
+					<Icon as={LogOut} />
+					<Text>{t("account.signOut")}</Text>
+				</Button>
+				{action.error ? <Text accessibilityRole="alert">{t("account.signOutFailed")}</Text> : null}
 			</WebView>
 		</SettingsShell>
 	);
