@@ -1277,7 +1277,8 @@ class AddonSnapshotWatchTest(unittest.IsolatedAsyncioTestCase):
                     "CLAWDI_EGRESS_SNAPSHOT_FILE": str(source),
                     "CLAWDI_EGRESS_SNAPSHOT_ACK": str(ack),
                 })
-                await engine.running()
+                # Match ScriptLoader's synchronous RunningHook invocation.
+                engine.running()
                 task = engine.snapshot_task
                 self.assertIsNotNone(task)
                 try:

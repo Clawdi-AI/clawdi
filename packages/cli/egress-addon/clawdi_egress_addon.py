@@ -86,7 +86,8 @@ class ClawdiEgressAddon:
     def load(self, loader: Any) -> None:  # pragma: no cover - mitmproxy integration glue.
         self.reload_from_environment(os.environ)
 
-    async def running(self) -> None:  # pragma: no cover - native integration glue.
+    def running(self) -> None:  # pragma: no cover - native integration glue.
+        # ScriptLoader invokes RunningHook synchronously, including reloads.
         if self.snapshot_path:
             self.snapshot_task = asyncio.create_task(self.watch_snapshot())
 

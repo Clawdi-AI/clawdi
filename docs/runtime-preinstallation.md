@@ -155,6 +155,14 @@ claim. A root-owned atomic snapshot binds the complete policy and credential
 set; the engine validates it, clears stale credentials on an invalid replacement,
 and privately acknowledges its SHA-256. A background watcher acknowledges
 replacement without requiring a request. Snapshot paths are tenant-independent.
+The script loader's synchronous `running` hook schedules the asynchronous
+watcher; shutdown cancels it. Both warm commands refresh managed CLI verification
+after the golden volume copy, before the first claim's shim invocation.
+The official OpenClaw mutation helper also enables Node's runtime-user-local
+module compile cache when supported. The anonymous warm mutation seeds it;
+Node verifies source/version identity when reusing compiled modules. Config
+reads, native locking, plugin validation and hot reload still run normally.
+Unsupported Node versions or an unavailable cache retain uncached behavior.
 Existing tenants without the warm-created private enablement marker retain
 the legacy sidecar inputs and normal restart behavior.
 

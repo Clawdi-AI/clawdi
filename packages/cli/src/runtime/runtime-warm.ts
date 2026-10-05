@@ -6,6 +6,7 @@ import {
 	OPENCLAW_SDK_EXPORT_PATHS,
 	resolveOpenClawSdkExport,
 } from "../lib/codex-oauth-native-store";
+import { reconcilePendingRuntimeCliUpgrade } from "./cli-update";
 import { resolveHostedOpenClawWorkspace } from "./hosted-openclaw-context";
 import { runtimeCommandPath } from "./manifest-install";
 import {
@@ -46,6 +47,8 @@ export async function warmHostedOpenClawRuntime(
 	if (paths.mode !== "hosted") throw new Error("runtime warm requires hosted runtime mode");
 	if ([paths.appliedState, paths.manifestLastGood, paths.managedSecretCacheFile].some(existsSync))
 		throw new Error("runtime warm requires an unclaimed runtime with no applied tenant state");
+	// Refresh verification after the golden volume copy, before the claim shim.
+	reconcilePendingRuntimeCliUpgrade(paths);
 	const command = runtimeCommandPath("openclaw", paths.userHome);
 	if (!command) throw new Error("OpenClaw is not installed");
 	const sdk = resolveOpenClawSdkExport(

@@ -31,9 +31,15 @@ export interface OpenClawHostedProviderPatch {
 }
 const OPENCLAW_CONFIG_MUTATION_HELPER = `
 import { readFileSync } from "node:fs";
+import * as nodeModule from "node:module";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
+// Warm-up seeds this runtime-user cache. Node validates source/version identity;
+// unavailable caching is harmless and never replaces native config validation.
+nodeModule.enableCompileCache?.(join(homedir(), ".cache", "clawdi", "openclaw-config-writer"));
 const sdk = await import(pathToFileURL(process.argv[1]).href);
 if (
   typeof sdk.readConfigFileSnapshotForWrite !== "function" ||
