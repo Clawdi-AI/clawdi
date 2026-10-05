@@ -15,6 +15,7 @@ import {
 	negotiateSessionProtocol,
 	planSessionUpload,
 	prepareSessionUpload,
+	SessionPlanStaleError,
 	sessionFence,
 	sessionPlanIsDurablyBlocked,
 	syncSessionContent,
@@ -253,6 +254,84 @@ describe("session upload negotiation and integrity", () => {
 });
 
 describe("events-v1 incremental upload", () => {
+	it.each([undefined, false, true] as const)(
+		"confirms shortening a remote prefix (confirmed=%s)",
+		async (confirmed) => {
+			const api = eventApi();
+			const remote = events(["one", "first"], ["two", "second"], ["three", "third"]);
+			const session = rawSession(remote.slice(0, 2));
+			const plan = planSessionUpload(session, "events-v1");
+			const fence = sessionFence(api, {
+				environmentId: "agent-pi",
+				adapter: "pi",
+				sourceSessionKey: session.localSessionId,
+			});
+			api.getSessionEventHead = async () => ({
+				protocol: "events-v1",
+				generation: "remote",
+				revision: 7,
+				count: 3,
+				head_hash: advanceEventHead(EMPTY_EVENT_HEAD, remote),
+			});
+			let confirmations = 0;
+			let stages = 0;
+			let commits = 0;
+			api.stageSessionEventGeneration = async (_id, body) => {
+				stages++;
+				if (stages === 1) throw new ApiError({ status: 409, body: "retry", hint: "conflict" });
+				return { generation: body.generation, status: "staging" };
+			};
+			api.uploadSessionEventGenerationChunk = async (chunk) => ({
+				generation: chunk.generation,
+				start_seq: chunk.startSeq,
+				end_seq: 1,
+				count: 2,
+				content_hash: chunk.contentHash,
+				result_head_hash: plan.localHash,
+			});
+			api.commitSessionEventGeneration = async (_id, generation, body) => {
+				commits++;
+				return {
+					generation,
+					revision: body.base_revision + 1,
+					count: body.final_count,
+					head_hash: body.final_head_hash,
+				};
+			};
+			const input = {
+				api,
+				fence,
+				session,
+				plan,
+				needsSnapshotContent: false,
+				...(confirmed === undefined
+					? {}
+					: {
+							confirmPlanCurrent: async () => {
+								confirmations++;
+								return confirmed;
+							},
+						}),
+			};
+			if (confirmed === true) {
+				expect((await syncSessionContent(input)).status).toBe("synced");
+				expect({ confirmations, stages, commits }).toEqual({
+					confirmations: 1,
+					stages: 2,
+					commits: 1,
+				});
+			} else {
+				await expect(syncSessionContent(input)).rejects.toBeInstanceOf(SessionPlanStaleError);
+				expect({ confirmations, stages, commits }).toEqual({
+					confirmations: confirmed === undefined ? 0 : 1,
+					stages: 0,
+					commits: 0,
+				});
+				expect(readFencedSessionEntry(readSessionsLock(), fence)).toBeUndefined();
+			}
+		},
+	);
+
 	it.each(["stage", "commit"] as const)("does not block a %s 422", async (operation) => {
 		const api = eventApi();
 		const session = rawSession(events(["one", "first"]));
@@ -593,7 +672,14 @@ describe("events-v1 incremental upload", () => {
 			});
 
 			await expect(
-				syncSessionContent({ api, fence, session, plan, needsSnapshotContent: false }),
+				syncSessionContent({
+					api,
+					fence,
+					session,
+					plan,
+					needsSnapshotContent: false,
+					confirmPlanCurrent: async () => true,
+				}),
 			).rejects.toThrow("server event chunk receipt does not match uploaded bytes");
 			const pendingGeneration = readFencedSessionEntry(readSessionsLock(), fence)?.pending
 				?.generation;
@@ -608,6 +694,7 @@ describe("events-v1 incremental upload", () => {
 				session,
 				plan,
 				needsSnapshotContent: false,
+				confirmPlanCurrent: async () => true,
 			});
 			expect(stagedGeneration).toBe(pendingGeneration);
 			expect(result).toMatchObject({ status: "synced", localHash: finalHead });

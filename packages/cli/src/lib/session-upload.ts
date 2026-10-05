@@ -34,6 +34,13 @@ export interface SessionUploadPlan {
 	snapshotSizeBytes?: number;
 }
 
+export class SessionPlanStaleError extends Error {
+	constructor(localSessionId: string) {
+		super(`${localSessionId} upload plan is stale; retry with a fresh scan`);
+		this.name = "SessionPlanStaleError";
+	}
+}
+
 export type SessionContentSyncResult =
 	| { status: "synced"; uploaded: boolean; localHash: string }
 	| { status: "blocked"; uploaded: false; localHash: string; message: string };
@@ -242,6 +249,7 @@ export async function syncSessionContent(input: {
 	session: RawSession;
 	plan: SessionUploadPlan;
 	needsSnapshotContent: boolean;
+	confirmPlanCurrent?: () => Promise<boolean>;
 }): Promise<SessionContentSyncResult> {
 	const blocked = sessionPlanIsDurablyBlocked(input.fence, input.plan);
 	if (blocked) {
@@ -316,6 +324,7 @@ async function syncEventSession(input: {
 	fence: SessionFence;
 	session: RawSession;
 	plan: SessionUploadPlan;
+	confirmPlanCurrent?: () => Promise<boolean>;
 }): Promise<SessionContentSyncResult> {
 	const eventCount = input.plan.eventCount;
 	const finalHead = input.plan.finalEventHead;
@@ -326,6 +335,7 @@ async function syncEventSession(input: {
 		throw new Error("events-v1 capability disappeared after session negotiation");
 	}
 	let uploaded = false;
+	let planConfirmed = false;
 	for (let attempt = 0; attempt < EVENT_RETRY_LIMIT; attempt++) {
 		const remote = await input.api.getSessionEventHead(
 			input.session.localSessionId,
@@ -353,6 +363,11 @@ async function syncEventSession(input: {
 				uploaded = uploaded || appendResult.uploaded;
 				persistEventSuccess(input, appendResult.head);
 				return { status: "synced", uploaded, localHash: finalHead };
+			}
+			if (head.generation && head.count > eventCount && !planConfirmed) {
+				if (!input.confirmPlanCurrent || (await input.confirmPlanCurrent()) !== true)
+					throw new SessionPlanStaleError(input.session.localSessionId);
+				planConfirmed = true;
 			}
 			const rewriteResult = await replaceEventGeneration(input, head, capabilities);
 			uploaded = uploaded || rewriteResult.uploaded;

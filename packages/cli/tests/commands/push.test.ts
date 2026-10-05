@@ -6,7 +6,11 @@ import { CodexAdapter } from "../../src/adapters/codex";
 import { adapterRegistry } from "../../src/adapters/registry";
 import { push } from "../../src/commands/push";
 import { ApiClient } from "../../src/lib/api-client";
-import { EMPTY_EVENT_HEAD } from "../../src/lib/session-events";
+import {
+	advanceEventHead,
+	EMPTY_EVENT_HEAD,
+	sequenceSessionEvents,
+} from "../../src/lib/session-events";
 import { planSessionUpload, sessionFence } from "../../src/lib/session-upload";
 import {
 	persistFencedSessionEntry,
@@ -70,6 +74,78 @@ afterEach(() => {
 });
 
 describe("push — scan snapshot", () => {
+	it("re-resolves a shortening plan and leaves the lock unchanged when stale", async () => {
+		setup("codex");
+		const fixture = (await new CodexAdapter().sessions.collect({ kind: "complete" })).sessions[0];
+		if (!fixture) throw new Error("expected Codex session");
+		const remoteEvents = sequenceSessionEvents(
+			["one", "two", "three"].map((recordId) => ({
+				type: "message" as const,
+				role: "user" as const,
+				parts: [{ type: "text" as const, text: recordId }],
+				source: {
+					adapter: "codex" as const,
+					session_key: fixture.localSessionId,
+					record_id: recordId,
+				},
+			})),
+		);
+		const session = { ...fixture, events: remoteEvents.slice(0, 2) };
+		const lock = readSessionsLock();
+		let resolves = 0;
+		const originalCreate = adapterRegistry.codex.create;
+		adapterRegistry.codex.create = () => {
+			const adapter = new CodexAdapter();
+			adapter.sessions.collect = async () => ({
+				sessions: [session],
+				coverage: "complete",
+				dedupedCount: 0,
+			});
+			adapter.sessions.resolve = async () => {
+				resolves++;
+				return { ...fixture, events: remoteEvents };
+			};
+			return adapter;
+		};
+		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
+			{
+				path: "/v1/sessions/upload-capabilities",
+				response: () =>
+					jsonResponse({
+						protocols: ["events-v1"],
+						event_chunk_target_bytes: 1024 * 1024,
+						event_chunk_max_bytes: 8 * 1024 * 1024,
+					}),
+			},
+			{
+				method: "POST",
+				path: "/v1/sessions/batch",
+				response: () => jsonResponse({ created: 0, updated: 0, unchanged: 1, needs_content: [] }),
+			},
+			{
+				path: `/v1/sessions/${session.localSessionId}/events/head`,
+				response: () =>
+					jsonResponse({
+						protocol: "events-v1",
+						generation: "remote",
+						revision: 7,
+						count: 3,
+						head_hash: advanceEventHead(EMPTY_EVENT_HEAD, remoteEvents),
+					}),
+			},
+		]);
+		try {
+			await push({ agent: "codex", modules: "sessions", all: true });
+			expect(resolves).toBe(1);
+			expect(captured.some((request) => request.path.includes("/generations"))).toBe(false);
+			expect(readSessionsLock()).toEqual(lock);
+		} finally {
+			adapterRegistry.codex.create = originalCreate;
+			restore();
+		}
+	});
+
 	it("reads pending and blocked state after collection on every push", async () => {
 		setup("codex");
 		const session = (await new CodexAdapter().sessions.collect({ kind: "complete" })).sessions[0];

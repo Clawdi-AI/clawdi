@@ -1094,6 +1094,10 @@ async function prepareSessionSync(
 	const executeScan = async (request: SessionScanRequest): Promise<void> => {
 		if (opts.abort.aborted) return;
 		try {
+			lastPushedSessionHash.clear();
+			for (const [key, hash] of loadFencedSessionHashes(api, opts)) {
+				lastPushedSessionHash.set(key, hash);
+			}
 			const materializeActivity =
 				request.kind === "complete" &&
 				runtimeUserActivityNeedsMaterialization(opts.adapter.agentType);
@@ -2025,6 +2029,17 @@ async function uploadSessionFromQueue(
 			session,
 			plan,
 			needsSnapshotContent: result.needs_content.includes(session.localSessionId),
+			confirmPlanCurrent: async () => {
+				const current = await sessions.resolve(item.source_session_key, {
+					signal: opts.abort,
+					streaming: true,
+				});
+				opts.abort.throwIfAborted();
+				return (
+					current !== null &&
+					(await prepareSessionUpload(current, protocol)).localHash === plan.localHash
+				);
+			},
 		});
 		if (content.status === "blocked") {
 			log.warn("engine.session_sync_blocked", {

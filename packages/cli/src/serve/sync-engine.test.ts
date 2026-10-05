@@ -1691,6 +1691,104 @@ describe("daemon startup Agent lookup", () => {
 		}
 	}
 
+	it("reloads a hash replaced by another process on the next scan", async () => {
+		await withStartupCase(
+			async () => Response.json({ id: "agent-isolated" }),
+			async ({ abortController }) => {
+				const session: RawSession = {
+					localSessionId: "external-write",
+					projectPath: null,
+					startedAt: new Date(0),
+					endedAt: null,
+					messageCount: 1,
+					inputTokens: 0,
+					outputTokens: 0,
+					cacheReadTokens: 0,
+					model: null,
+					modelsUsed: [],
+					durationSeconds: null,
+					summary: null,
+					messages: [{ role: "user", content: "new content" }],
+					rawFilePath: "/sessions/external-write",
+				};
+				const plan = planSessionUpload(session, "snapshot-v1");
+				const fence = sessionFence(new ApiClient(), {
+					environmentId: "agent-isolated",
+					adapter: "hermes",
+					sourceSessionKey: session.localSessionId,
+				});
+				persistFencedSessionEntry(fence, { protocol: plan.protocol, local_hash: plan.localHash });
+				let scans = 0;
+				let resolved = false;
+				const adapter: AgentAdapter = {
+					agentType: "hermes",
+					detect: async () => true,
+					getVersion: async () => null,
+					sessions: {
+						contentProtocol: async () => "snapshot-v1",
+						watchPaths: () => [],
+						collect: async () => ({ sessions: [], coverage: "complete", dedupedCount: 0 }),
+						scan: async () => ({
+							coverage: "complete",
+							batches: (async function* () {
+								scans++;
+								yield {
+									sessions: [session],
+									observedLocalSessionIds: [session.localSessionId],
+									dedupedCount: 0,
+								};
+								if (scans === 1)
+									persistFencedSessionEntry(fence, {
+										protocol: plan.protocol,
+										local_hash: "old hash",
+									});
+							})(),
+						}),
+						resolve: async () => {
+							resolved = true;
+							abortController.abort();
+							return null;
+						},
+					},
+				};
+				const originalTimeout = globalThis.setTimeout;
+				function fastTimeout(handler: TimerHandler, timeout?: number, ...args: unknown[]): number;
+				function fastTimeout<TArgs extends unknown[]>(
+					handler: (...args: TArgs) => void,
+					timeout?: number,
+					...args: TArgs
+				): ReturnType<typeof setTimeout>;
+				function fastTimeout(
+					handler: TimerHandler,
+					timeout?: number,
+					...args: unknown[]
+				): number | ReturnType<typeof setTimeout> {
+					if (typeof handler !== "function") throw new Error("unexpected string timer");
+					return originalTimeout(() => handler(...args), timeout === 300_000 ? 1 : timeout);
+				}
+				const timerSpy = spyOn(globalThis, "setTimeout").mockImplementation(
+					Object.assign(fastTimeout, { __promisify__: originalTimeout.__promisify__ }),
+				);
+				const deadline = originalTimeout(() => abortController.abort(), 5000);
+				try {
+					await runSyncEngine({
+						environmentId: "agent-isolated",
+						adapter,
+						abort: abortController.signal,
+						abortController,
+						forcePollWatcher: true,
+					});
+					expect(scans).toBeGreaterThanOrEqual(2);
+					expect(resolved).toBe(true);
+				} finally {
+					clearTimeout(deadline);
+					timerSpy.mockRestore();
+					abortController.abort();
+				}
+			},
+		);
+	});
+
 	it("requeues an expired block with the same source revision", async () => {
 		await withStartupCase(
 			async () => Response.json({ id: "agent-isolated" }),
