@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 import { FolderKanban, Import as ImportIcon, Plus } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
@@ -10,7 +10,7 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
-import { PageHeader } from "@/components/page-header";
+import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
 import { ProjectActions } from "@/components/projects/project-actions";
@@ -41,6 +41,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
@@ -70,15 +71,41 @@ export default function SkillsPage() {
 }
 
 function SkillsPageSkeleton() {
+	// Suspense fallback can't use nuqs; read the raw param to pick the shape.
+	const hasProject = useRouterState({
+		select: (state) => Boolean(new URLSearchParams(state.location.searchStr).get("project")),
+	});
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<PageHeader title="Skills" description={SKILLS_RESOURCE.managementDescription} />
-			<div className={HERO_GRID_CLASS}>
-				{Array.from({ length: 3 }).map((_, index) => (
-					<ProjectResourceCardSkeleton key={index} />
-				))}
-			</div>
+			{hasProject ? (
+				<>
+					<PageHeaderSkeleton actions />
+					<ProjectSkillsSkeleton />
+				</>
+			) : (
+				<>
+					<PageHeader title="Skills" description={SKILLS_RESOURCE.managementDescription} />
+					<div className={HERO_GRID_CLASS}>
+						{Array.from({ length: 3 }).map((_, index) => (
+							<ProjectResourceCardSkeleton key={index} />
+						))}
+					</div>
+				</>
+			)}
 		</div>
+	);
+}
+
+/** Toolbar + Skill grid placeholder for a selected Project. */
+function ProjectSkillsSkeleton() {
+	return (
+		<>
+			<ListToolbar
+				search={<Skeleton className="h-9 w-full" />}
+				filters={<Skeleton className="h-9 w-full sm:w-72" />}
+			/>
+			<SkillCardGrid skills={[]} isLoading emptyMessage="" />
+		</>
 	);
 }
 
@@ -125,6 +152,9 @@ function SkillsPageInner() {
 	);
 	const projectResolved = projectsQuery.data !== undefined;
 	const staleProject = Boolean(projectParam && projectResolved && !selectedProject);
+	// A Project is requested but the list hasn't resolved; show the Project's
+	// Skills shape rather than the Project picker.
+	const projectPending = Boolean(projectParam && !projectResolved && !projectsQuery.error);
 	const projectError = shouldBlockQueryError(projectsQuery.error, projectsQuery.data)
 		? projectsQuery.error
 		: null;
@@ -200,39 +230,43 @@ function SkillsPageInner() {
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
-			<PageHeader
-				title="Skills"
-				description={
-					selectedProject
-						? `Skills in ${displayProjectName(selectedProject)}. Linked Agents use the whole Project.`
-						: "Choose a Project to view or add its Skills."
-				}
-				actions={
-					selectedProject ? (
-						<>
-							{isProjectOwner(selectedProject) ? (
-								<ShareProjectDialog
-									projectId={selectedProject.id}
-									projectName={displayProjectName(selectedProject)}
-									projectKind={selectedProject.kind}
-								/>
-							) : null}
-							{writable ? (
-								<>
-									<Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
-										<ImportIcon />
-										Import from GitHub
-									</Button>
-									<Button size="sm" onClick={() => setCreateOpen(true)}>
-										<Plus />
-										Add skill
-									</Button>
-								</>
-							) : null}
-						</>
-					) : undefined
-				}
-			/>
+			{projectPending ? (
+				<PageHeaderSkeleton actions />
+			) : (
+				<PageHeader
+					title="Skills"
+					description={
+						selectedProject
+							? `Skills in ${displayProjectName(selectedProject)}. Linked Agents use the whole Project.`
+							: "Choose a Project to view or add its Skills."
+					}
+					actions={
+						selectedProject ? (
+							<>
+								{isProjectOwner(selectedProject) ? (
+									<ShareProjectDialog
+										projectId={selectedProject.id}
+										projectName={displayProjectName(selectedProject)}
+										projectKind={selectedProject.kind}
+									/>
+								) : null}
+								{writable ? (
+									<>
+										<Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+											<ImportIcon />
+											Import from GitHub
+										</Button>
+										<Button size="sm" onClick={() => setCreateOpen(true)}>
+											<Plus />
+											Add skill
+										</Button>
+									</>
+								) : null}
+							</>
+						) : undefined
+					}
+				/>
+			)}
 
 			{projectError ? (
 				<ApiErrorPanel
@@ -271,7 +305,9 @@ function SkillsPageInner() {
 				</Alert>
 			) : null}
 
-			{!selectedProject ? (
+			{projectPending ? (
+				<ProjectSkillsSkeleton />
+			) : !selectedProject ? (
 				<ProjectSelection
 					projects={projects}
 					loading={!projectResolved && !projectError}
