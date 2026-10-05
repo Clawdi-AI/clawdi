@@ -904,7 +904,7 @@ runtimeCmd
 		const paths = getRuntimePaths({ mode: "hosted" });
 		if (opts.runtime === "hermes") {
 			const { warmHostedHermesRuntime } = await import("./runtime/runtime-warm-hermes.js");
-			warmHostedHermesRuntime(paths);
+			await warmHostedHermesRuntime(paths);
 		} else if (opts.runtime === "openclaw") {
 			const { warmHostedOpenClawRuntime } = await import("./runtime/runtime-warm.js");
 			await warmHostedOpenClawRuntime(paths);

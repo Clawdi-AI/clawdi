@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { log } from "../serve/log";
 import { readRuntimeAppliedState } from "./applied-state";
 import { withoutOomProtection } from "./oom-protection";
+import { hermesWasWarmed } from "./hermes-warm-state";
 import type { getRuntimePaths } from "./paths";
 import { buildRuntimeUserCommand, runtimeUserUid } from "./runtime-user-command";
 import { managedRuntimeSystemdUnitEntries, parseSystemctlShow, systemctlPath } from "./systemd";
@@ -444,7 +445,26 @@ export function applySystemdRuntimeUpdate(
 		runtimeUserSystemctl(paths, ["reset-failed", ...resetFailedUserUnits]);
 	}
 	if (startUserUnits.length > 0) {
-		runtimeUserSystemctl(paths, ["start", ...startUserUnits]);
+		const dashboard = "clawdi-hermes-dashboard.service";
+		const gateway = "hermes-gateway.service";
+		if (
+			hermesWasWarmed(paths) &&
+			!existsSync(paths.appliedState) &&
+			startUserUnits.includes(dashboard) &&
+			startUserUnits.includes(gateway)
+		) {
+			// On a small tenant shape, both Python startup trees compete for the
+			// same CPUs. Establish the interactive dashboard first; gateway and
+			// channel readiness still pass the normal observation proof afterward.
+			runtimeUserSystemctl(paths, ["start", dashboard]);
+			waitForHermesDashboard();
+			runtimeUserSystemctl(paths, [
+				"start",
+				...startUserUnits.filter((unit) => unit !== dashboard),
+			]);
+		} else {
+			runtimeUserSystemctl(paths, ["start", ...startUserUnits]);
+		}
 	}
 	if (restartUserUnits.length > 0) {
 		for (const unit of restartUserUnits) {
@@ -494,8 +514,18 @@ export function applySystemdRuntimeUpdate(
 		};
 	}
 
+	// Final proof needs a fresh manager read, batched once per scope. Reading
+	// every unit separately serializes the same systemctl startup and D-Bus work.
+	const finalSystemStates = readSystemdRuntimeUnits(paths, "system", [
+		...system.present,
+		...system.removed,
+	]);
+	const finalUserStates = readSystemdRuntimeUnits(paths, "user", [
+		...user.present,
+		...user.removed,
+	]);
 	const systemConverged = system.present.every((unit) => {
-		const state = systemdUnitManagerState(paths, "system", unit);
+		const state = requiredSystemdUnitState(finalSystemStates, "system", unit);
 		return (
 			state.loadState !== "not-found" &&
 			state.activeState === "active" &&
@@ -504,7 +534,7 @@ export function applySystemdRuntimeUpdate(
 		);
 	});
 	const userConverged = user.present.every((unit) => {
-		const state = systemdUnitManagerState(paths, "user", unit);
+		const state = requiredSystemdUnitState(finalUserStates, "user", unit);
 		return !(
 			state.loadState === "not-found" ||
 			state.activeState !== "active" ||
@@ -513,11 +543,11 @@ export function applySystemdRuntimeUpdate(
 		);
 	});
 	const removedSystemConverged = system.removed.every((unit) => {
-		const state = systemdUnitManagerState(paths, "system", unit);
+		const state = requiredSystemdUnitState(finalSystemStates, "system", unit);
 		return systemdUnitAbsentOrInactive(state) && systemdUnitAbsentOrDisabled(state);
 	});
 	const removedUserConverged = user.removed.every((unit) => {
-		const state = systemdUnitManagerState(paths, "user", unit);
+		const state = requiredSystemdUnitState(finalUserStates, "user", unit);
 		return systemdUnitAbsentOrInactive(state) && systemdUnitAbsentOrDisabled(state);
 	});
 	const applied =
@@ -540,6 +570,21 @@ export function applySystemdRuntimeUpdate(
 			.sort(),
 		userUnitsChanged: [...userUnitsChanged].sort(),
 	};
+}
+
+function waitForHermesDashboard(): void {
+	const result = spawnSync(
+		"bash",
+		[
+			"-c",
+			"for i in $(seq 1 120); do " +
+				"code=$(curl --max-time 1 -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9119/ || true); " +
+				"case $code in 200|302|401) exit 0;; esac; sleep 0.25; done; exit 1",
+		],
+		{ stdio: "ignore", timeout: 45_000 },
+	);
+	if (result.status !== 0)
+		throw new Error("Hermes dashboard did not become ready before gateway start");
 }
 
 function readSystemdRuntimeUnits(
@@ -585,14 +630,6 @@ function requiredSystemdUnitState(
 	const state = states.get(unit);
 	if (!state) throw new Error(`systemd ${scope} unit ${unit} was not preflighted`);
 	return state;
-}
-
-function systemdUnitManagerState(
-	paths: ReturnType<typeof getRuntimePaths>,
-	scope: "system" | "user",
-	unit: string,
-): SystemdUnitManagerState {
-	return requiredSystemdUnitState(readSystemdRuntimeUnits(paths, scope, [unit]), scope, unit);
 }
 
 function parseSystemdUnitManagerState(

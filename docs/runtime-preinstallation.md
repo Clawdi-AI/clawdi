@@ -78,6 +78,23 @@ random gateway token, reuses the prepared official unit, starts the gateway and
 records its unit, drop-in, environment, CA and structural-config identity.
 The provisioning owner controls when and where this command runs.
 
+`clawdi runtime warm --runtime hermes` uses the same unclaimed-state guard. It
+refreshes the copied managed CLI verification, installs the official gateway
+unit without starting it, prepares the instance's egress CA, byte-compiles the
+application and dependency tree, then starts the
+official dashboard in a transient user unit on loopback to complete first-use
+local work. Warm-up stops that unit and any gateway it started before returning.
+The first tenant apply starts fresh services with the tenant's environment and
+OAuth gate; Hermes authentication is resolved at process startup and is not
+hot-adopted. No placeholder manifest or Cloud identity is used. Warm-up can be
+repeated on an unclaimed home; failed warm-up must not qualify it for a claim.
+A root-owned private warm marker enables first-apply ordering on small tenant
+shapes: after the platform/egress services become ready, start the dashboard,
+wait for its local HTTP response, then start the gateway. Normal gateway and
+channel observation still determine readiness. Existing tenants keep their
+normal startup order. Final systemd state is freshly read in one batch per
+scope, including unit enablement; warm-up does not replace this proof.
+
 Tenant apply opts in with `CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY=1`; absence keeps the
 existing restart behavior. The flag propagates into root-managed watch and
 daemon units. Managed catalog, native/connection provider and channel credentials
