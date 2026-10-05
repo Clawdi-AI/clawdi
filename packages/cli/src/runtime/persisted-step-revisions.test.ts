@@ -34,7 +34,8 @@ function hostedPaths(): RuntimePaths {
 test("committed step revisions survive a new process and stay bounded", () => {
 	const paths = hostedPaths();
 	loadPersistedStepRevisions(paths);
-	for (let index = 0; index < 300; index += 1) recordPersistedStepRevision(`k${index}`, `r${index}`);
+	for (let index = 0; index < 300; index += 1)
+		recordPersistedStepRevision(`k${index}`, `r${index}`);
 	flushPersistedStepRevisions(paths);
 	resetPersistedStepRevisionsForTest();
 	loadPersistedStepRevisions(paths);

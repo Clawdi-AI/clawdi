@@ -224,6 +224,22 @@ export function applyOpenClawHostedProviderPatch(
 	recordPersistedStepRevision(persistedKey, patchRevision);
 }
 
+/** Apply one JSON merge patch through the official config writer. */
+export function applyOpenClawConfigMergePatch(
+	sdkPath: string,
+	content: string,
+	home: string,
+	workspaceRoot: string,
+): void {
+	runRuntimeUserCommand(
+		"node",
+		["--input-type=module", "--eval", OPENCLAW_CONFIG_MUTATION_HELPER, sdkPath],
+		content,
+		home,
+		workspaceRoot,
+	);
+}
+
 export function applyOpenClawHostedChannelPatch(
 	patch: Record<string, unknown>,
 	previousChannels: Record<string, unknown> | null,

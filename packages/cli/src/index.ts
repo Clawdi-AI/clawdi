@@ -895,6 +895,16 @@ runtimeCmd
 	});
 
 runtimeCmd
+	.command("warm", { hidden: true })
+	.description("Experimental: start tenant-independent services in an unclaimed pool instance")
+	.action(async () => {
+		const { warmHostedOpenClawRuntime } = await import("./runtime/runtime-warm.js");
+		const { getRuntimePaths } = await import("./runtime/paths.js");
+		if (process.getuid?.() !== 0) throw new Error("runtime warm requires root");
+		warmHostedOpenClawRuntime(getRuntimePaths({ mode: "hosted" }));
+	});
+
+runtimeCmd
 	.command("init", { hidden: true })
 	.description("Converge a hosted runtime from controller desired state")
 	.option("--non-interactive", "Required for hosted boot; never prompt")

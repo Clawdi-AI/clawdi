@@ -852,6 +852,48 @@ function installOfficialRuntimeUserService(
 	}
 }
 
+/**
+ * Pool warm-up only: install OpenClaw's official gateway unit with the same
+ * arguments and environment overrides as tenant convergence, plus the Clawdi
+ * drop-in and an environment file carrying no tenant values.
+ */
+export function installAnonymousOpenClawGatewayService(
+	paths: RuntimePaths,
+	runtimeIdentity: { uid: number; gid: number },
+): string {
+	const descriptor = OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS.find(
+		(candidate) => candidate.runtime === "openclaw",
+	);
+	if (!descriptor) throw new Error("OpenClaw official service descriptor is missing");
+	const result = spawnRuntimeUserCommand(
+		officialRuntimeServiceCommand(descriptor, paths),
+		descriptor.installArgs,
+		paths.userHome,
+		paths.userHome,
+		{
+			environmentOverrides: {
+				OPENCLAW_HOME: undefined,
+				OPENCLAW_STATE_DIR: undefined,
+				OPENCLAW_CONFIG_PATH: undefined,
+			},
+			maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
+			runtimeGid: runtimeIdentity.gid,
+			runtimeUid: runtimeIdentity.uid,
+			timeoutMs: OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS,
+		},
+	);
+	if (result.status !== 0 || result.error) {
+		throw new Error(`official OpenClaw gateway install failed (${result.status ?? "error"})`);
+	}
+	writeSystemdUserEnvironmentDropIn({
+		paths,
+		name: descriptor.programName,
+		env: {},
+		unsetEnvironment: ["CLAWDI_AUTH_TOKEN"],
+	});
+	return systemdUnitFileName(descriptor.programName);
+}
+
 export function installOfficialRuntimeService(
 	item: OfficialRuntimeServicePlan["pending"][number],
 	paths: RuntimePaths,
