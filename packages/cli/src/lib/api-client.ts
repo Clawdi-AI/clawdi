@@ -466,21 +466,19 @@ export class ApiClient {
 		}
 	}
 
-	/** Upload per-session content JSON to `/v1/sessions/{id}/upload`. */
+	/** Upload content with its immutable Agent origin, even for unbound credentials. */
 	async uploadSessionContent(
 		localSessionId: string,
 		file: Buffer,
 		filename: string,
-		fence?: { environmentId: string; expectedContentHash: string },
+		fence: { environmentId: string; expectedContentHash: string },
 	): Promise<SessionUploadResponse> {
 		return this.multipartPost<SessionUploadResponse>(
 			`/v1/sessions/${encodeURIComponent(localSessionId)}/upload`,
-			fence
-				? {
-						environment_id: fence.environmentId,
-						expected_content_hash: fence.expectedContentHash,
-					}
-				: {},
+			{
+				environment_id: fence.environmentId,
+				expected_content_hash: fence.expectedContentHash,
+			},
 			file,
 			filename,
 		);

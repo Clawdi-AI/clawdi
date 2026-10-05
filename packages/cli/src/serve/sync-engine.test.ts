@@ -607,6 +607,78 @@ describe("Agent filesystem projection reconcile", () => {
 		});
 	});
 
+	it.each(["skill_push", "skill_delete"] as const)(
+		"retires an invalid legacy %s while uploading the next valid Skill",
+		async (kind) => {
+			await withProjectionCase(async ({ root, queue, reconcile }) => {
+				for (const key of ["bad key", "valid"]) {
+					mkdirSync(join(root, key));
+					writeFileSync(join(root, key, "SKILL.md"), "# Fixture\n");
+				}
+				const common = {
+					agent_id: "agent-1",
+					project_id: "project-1",
+					skill_key: "bad key",
+					enqueued_at: new Date().toISOString(),
+					attempts: 0,
+				};
+				queue.enqueue(
+					kind === "skill_push" ? { ...common, kind, new_hash: "legacy" } : { ...common, kind },
+				);
+				const legacyClaims = new Map([["bad key", "legacy"]]);
+				await reconcile(legacyClaims, new Set(["bad key"]));
+				expect(queue.depth).toBe(2);
+				const originalFetch = globalThis.fetch;
+				const warn = spyOn((await import("./log")).log, "warn");
+				let requests = 0;
+				try {
+					globalThis.fetch = (async (request: Request) => {
+						requests++;
+						expect((await request.formData()).get("skill_key")).toBe("valid");
+						return Response.json({ skill_key: "valid", version: 1 });
+					}) as typeof fetch;
+					const adapter = adapterRegistry.hermes.create();
+					const abortController = new AbortController();
+					const lastPushed = new Map<string, string>();
+					for (const expectedOutcome of ["absent", "applied"] as const) {
+						const item = queue.peek();
+						if (!item) throw new Error("expected queued Skill");
+						expect(
+							await processQueueItem(
+								{
+									environmentId: "agent-1",
+									adapter,
+									abort: abortController.signal,
+									abortController,
+								},
+								new ApiClient({ requireAuth: false }),
+								queue,
+								item,
+								queueModules(adapter),
+								lastPushed,
+								new Map(),
+								new Map(),
+							),
+						).toBe(expectedOutcome);
+					}
+					expect(queue.depth).toBe(0);
+					expect(requests).toBe(1);
+					expect(lastPushed.has("bad key")).toBe(false);
+					expect(lastPushed.has("valid")).toBe(true);
+					expect(legacyClaims.get("bad key")).toBe("legacy");
+					expect(readFileSync(join(root, "bad key", "SKILL.md"), "utf8")).toBe("# Fixture\n");
+					expect(warn).toHaveBeenCalledWith("engine.invalid_skill_key_skipped", {
+						key_shape: "length=7, components=1, reason=invalid_characters",
+						origin: "queue",
+					});
+				} finally {
+					warn.mockRestore();
+					globalThis.fetch = originalFetch;
+				}
+			});
+		},
+	);
+
 	it("durably deletes a claimed nested key missing after directory removal", async () => {
 		await withProjectionCase(async ({ queue, reconcile }) => {
 			await reconcile(new Map([["category/demo", "claimed-hash"]]));

@@ -12,6 +12,11 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.105
+
+- Invalid local Skill keys report their shape without exposing names, and old queued invalid Skills no longer leave sync permanently errored while other Skills continue syncing.
+- Session snapshot uploads always include their Agent origin, keeping equal local session IDs isolated across Agents.
+
 ### CLI 0.14.104
 
 - Codex sessions with oversized or invalid attachment names sync successfully, preserving available filenames and attachment metadata.

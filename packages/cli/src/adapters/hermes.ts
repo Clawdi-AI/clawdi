@@ -9,7 +9,7 @@ import {
 	type SessionEventDraft,
 	sequenceSessionEvents,
 } from "../lib/session-events";
-import { isValidSkillKey } from "../lib/skill-key";
+import { describeSkillKey, isValidSkillKey } from "../lib/skill-key";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
 import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
@@ -17,6 +17,7 @@ import {
 	mutateUserSkillTarget,
 	shouldIgnoreUserSkill,
 } from "../runtime/managed-skill-reservation";
+import { log } from "../serve/log";
 import type {
 	AgentAdapterCore,
 	RawSession,
@@ -503,7 +504,12 @@ function shouldSkipHermesSkillDir(entryName: string): boolean {
 
 function hermesSkillKeyFromPath(fullPath: string): string | null {
 	const skillKey = relative(skillsDir(), fullPath).replaceAll("\\", "/");
-	return isValidSkillKey(skillKey) ? skillKey : null;
+	if (isValidSkillKey(skillKey)) return skillKey;
+	log.warn("adapter.invalid_skill_key_skipped", {
+		adapter: "hermes",
+		key_shape: describeSkillKey(skillKey),
+	});
+	return null;
 }
 
 /**
