@@ -16,6 +16,7 @@ import {
 import { agentTargetProjectionInput, hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { RuntimeManifest } from "./manifest-contract";
 import { runtimeFileCurrentRevision } from "./manifest-install";
+import { persistedStepRevision, recordPersistedStepRevision } from "./persisted-step-revisions";
 import { runtimeImpactRevision } from "./runtime-impact-revision";
 import { executableExists, spawnRuntimeUserCommand } from "./runtime-user-command";
 import { parseSystemctlShow, systemctlPath } from "./systemd";
@@ -141,6 +142,13 @@ export function resolveHostedOpenClawWorkspace(home: string): string {
 	);
 	const cached = openClawWorkspaces.get(home);
 	if (cached?.revision === revision) return cached.workspace;
+	const persistedKey = `openclaw.workspace:${home}`;
+	const persisted = persistedStepRevision(persistedKey);
+	if (persisted?.startsWith(`${revision}\n`)) {
+		const workspace = persisted.slice(revision.length + 1);
+		openClawWorkspaces.set(home, { revision, workspace });
+		return workspace;
+	}
 	let result = spawnRuntimeUserCommand(command, ["agents", "list", "--json"], home, home, {
 		timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS,
 		maxBufferBytes: 1024 * 1024,
@@ -162,6 +170,7 @@ export function resolveHostedOpenClawWorkspace(home: string): string {
 	if (result.status !== 0) throw new OpenClawWorkspaceRosterError(false);
 	const workspace = parseOfficialWorkspaceRoster(String(result.stdout));
 	openClawWorkspaces.set(home, { revision, workspace });
+	recordPersistedStepRevision(persistedKey, `${revision}\n${workspace}`);
 	return workspace;
 }
 

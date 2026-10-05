@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { z } from "zod";
 import {
 	decideChatGptOAuthCredentialReconciliation,
 	intentLedgerForDecision,
@@ -35,6 +36,11 @@ import type { RuntimeManifest } from "./manifest-contract";
 import { runtimeFileCurrentRevision, tail } from "./manifest-install";
 import { recordValue, stringValue } from "./manifest-shared";
 import type { RuntimePaths } from "./paths";
+import {
+	persistedStepRevision,
+	recordPersistedStepRevision,
+	runtimeFilesContentRevision,
+} from "./persisted-step-revisions";
 import { runtimeImpactRevision } from "./runtime-impact-revision";
 import { spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
@@ -213,6 +219,17 @@ export function openClawSupportsOwnerBrowserBootstrap(
 	const capabilityRevision = [revision, runtimeFileCurrentRevision(sdkPath)].join("\0");
 	const cached = openClawOwnerBrowserCapabilities.get(context.home);
 	if (cached?.revision === capabilityRevision) return cached.supported;
+	const persistedKey = `openclaw.ownerBrowserCapability:${context.home}`;
+	const persisted = persistedStepRevision(persistedKey);
+	for (const supported of [true, false]) {
+		if (persisted === `${capabilityRevision}\n${supported}`) {
+			openClawOwnerBrowserCapabilities.set(context.home, {
+				revision: capabilityRevision,
+				supported,
+			});
+			return supported;
+		}
+	}
 	const result = spawnRuntimeUserCommand(
 		"node",
 		["--input-type=module", "--eval", OPENCLAW_OWNER_BROWSER_BOOTSTRAP_CAPABILITY_PROBE, sdkPath],
@@ -233,6 +250,7 @@ export function openClawSupportsOwnerBrowserBootstrap(
 			revision: capabilityRevision,
 			supported,
 		});
+		recordPersistedStepRevision(persistedKey, `${capabilityRevision}\n${supported}`);
 		return supported;
 	}
 	throw new Error("installed OpenClaw device-bootstrap capability probe returned invalid output");
@@ -314,6 +332,17 @@ export function ensureHostedOpenClawProviderAuthCapability(input: {
 	if (openClawProviderAuthCapabilityRevisions.get(input.context.home) === capabilityRevision) {
 		return;
 	}
+	// Version-only capability: the probed SDK files and requested checks decide it.
+	const persistedKey = `openclaw.providerAuthCapability:${input.context.home}`;
+	const persistedRevision = runtimeImpactRevision({
+		capabilityRevision,
+		oauth: desired.length > 0,
+		cleanupManagedProvider,
+	});
+	if (persistedStepRevision(persistedKey) === persistedRevision) {
+		openClawProviderAuthCapabilityRevisions.set(input.context.home, capabilityRevision);
+		return;
+	}
 	const requirement =
 		desired.length > 0 && cleanupManagedProvider
 			? "OpenClaw credential convergence"
@@ -334,6 +363,7 @@ export function ensureHostedOpenClawProviderAuthCapability(input: {
 		);
 	}
 	openClawProviderAuthCapabilityRevisions.set(input.context.home, capabilityRevision);
+	recordPersistedStepRevision(persistedKey, persistedRevision);
 }
 function runOpenClawProviderAuthCommand(
 	context: OpenClawHostedContext,
@@ -390,6 +420,21 @@ export function removeOpenClawManagedProviderAuthProfiles(
 		configMutationSdk: runtimeFileCurrentRevision(context.sdk.configMutation ?? ""),
 	});
 	if (openClawManagedProviderAuthCleanupRevisions.get(context.home) === cleanupRevision) return;
+	// Across processes, also require the stores and config to be byte-identical to
+	// the state this exact cleanup last produced.
+	const persistedKey = `openclaw.managedProviderAuthCleanup:${context.home}`;
+	const stateRevision = () =>
+		runtimeImpactRevision({
+			cleanupRevision,
+			files: runtimeFilesContentRevision([
+				context.configPath,
+				...context.agentDirs.managed.map((dir) => join(dir, "auth-profiles.json")),
+			]),
+		});
+	if (persistedStepRevision(persistedKey) === stateRevision()) {
+		openClawManagedProviderAuthCleanupRevisions.set(context.home, cleanupRevision);
+		return;
+	}
 	const configMutationSdkPath = context.sdk.configMutation;
 	if (!configMutationSdkPath) {
 		throw new Error("installed OpenClaw public config-mutation SDK export is unavailable");
@@ -417,6 +462,7 @@ export function removeOpenClawManagedProviderAuthProfiles(
 		);
 	}
 	openClawManagedProviderAuthCleanupRevisions.set(context.home, cleanupRevision);
+	recordPersistedStepRevision(persistedKey, stateRevision());
 }
 export function discoverOpenClawManagedProviderAuthAgentDirs(
 	context: OpenClawHostedContext,
@@ -430,6 +476,19 @@ export function discoverOpenClawManagedProviderAuthAgentDirs(
 	].join("\0");
 	const cached = openClawManagedProviderAuthAgentDirs.get(context.home);
 	if (cached?.revision === discoveryRevision) return [...cached.agentDirs];
+	const persistedKey = `openclaw.managedProviderAuthDirs:${context.home}`;
+	const persisted = persistedStepRevision(persistedKey);
+	if (persisted?.startsWith(`${discoveryRevision}\n`)) {
+		const agentDirs = z
+			.array(z.string())
+			.min(1)
+			.parse(JSON.parse(persisted.slice(discoveryRevision.length + 1)));
+		openClawManagedProviderAuthAgentDirs.set(context.home, {
+			revision: discoveryRevision,
+			agentDirs,
+		});
+		return [...agentDirs];
+	}
 	const configMutationSdkPath = context.sdk.configMutation;
 	if (!configMutationSdkPath) {
 		throw new Error("installed OpenClaw public config-mutation SDK export is unavailable");
@@ -467,6 +526,7 @@ export function discoverOpenClawManagedProviderAuthAgentDirs(
 		revision: discoveryRevision,
 		agentDirs,
 	});
+	recordPersistedStepRevision(persistedKey, `${discoveryRevision}\n${JSON.stringify(agentDirs)}`);
 	return [...agentDirs];
 }
 function runtimeOAuthLedgerOwnership(

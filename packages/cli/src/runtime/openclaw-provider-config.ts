@@ -3,6 +3,11 @@ import type { OpenClawHostedContext } from "./hosted-openclaw-context";
 import type { RuntimeManifest } from "./manifest-contract";
 import { runtimeFileCurrentRevision } from "./manifest-install";
 import { canonicalJsonEqual, isPlainRecord, recordValue } from "./manifest-shared";
+import {
+	persistedStepRevision,
+	recordPersistedStepRevision,
+	runtimeFilesContentRevision,
+} from "./persisted-step-revisions";
 import { runtimeImpactRevision } from "./runtime-impact-revision";
 import { runRuntimeUserCommand, spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
@@ -198,7 +203,12 @@ export function applyOpenClawHostedProviderPatch(
 		content,
 		sdk: runtimeFileCurrentRevision(sdkPath),
 	});
-	if (openClawProviderPatchRevisions.get(context.configPath) === patchRevision) {
+	const persistedKey = `openclaw.providerPatch:${context.configPath}`;
+	if (
+		(openClawProviderPatchRevisions.get(context.configPath) ??
+			persistedStepRevision(persistedKey)) === patchRevision
+	) {
+		// The live config is re-read: a remembered revision alone never skips.
 		const expected = recordValue(JSON.parse(content) as unknown);
 		if (!expected) throw new Error("OpenClaw provider projection patch must be an object");
 		if (openClawConfigPatchIsApplied(context, expected, patch.providerIds)) return;
@@ -211,6 +221,7 @@ export function applyOpenClawHostedProviderPatch(
 		workspaceRoot,
 	);
 	openClawProviderPatchRevisions.set(context.configPath, patchRevision);
+	recordPersistedStepRevision(persistedKey, patchRevision);
 }
 
 export function applyOpenClawHostedChannelPatch(
@@ -220,20 +231,23 @@ export function applyOpenClawHostedChannelPatch(
 	context: OpenClawHostedContext,
 	workspaceRoot: string,
 ): void {
+	const sdkPath = context.requireSdkExport("configMutation");
+	const input = JSON.stringify({ patch, previousChannels, availableChannelEnv });
+	// Skip only when this exact input already produced the current config bytes.
+	const persistedKey = `openclaw.channelPatch:${context.configPath}`;
+	const inputRevision = runtimeImpactRevision({ input, sdk: runtimeFileCurrentRevision(sdkPath) });
+	const appliedState = () =>
+		`${inputRevision}\n${runtimeFilesContentRevision([context.configPath])}`;
+	if (persistedStepRevision(persistedKey) === appliedState()) return;
 	// No custom IO: the official writer owns its cross-process lock, snapshot and commit checks.
 	runRuntimeUserCommand(
 		"node",
-		[
-			"--input-type=module",
-			"--eval",
-			OPENCLAW_CONFIG_MUTATION_HELPER,
-			context.requireSdkExport("configMutation"),
-			"channels",
-		],
-		JSON.stringify({ patch, previousChannels, availableChannelEnv }),
+		["--input-type=module", "--eval", OPENCLAW_CONFIG_MUTATION_HELPER, sdkPath, "channels"],
+		input,
 		context.home,
 		workspaceRoot,
 	);
+	recordPersistedStepRevision(persistedKey, appliedState());
 }
 
 function adaptOpenClawMemorySearchPatch(
@@ -274,6 +288,14 @@ function openClawMemorySearchLayout(
 	].join("\0");
 	const cached = openClawMemorySearchLayouts.get(commandPath);
 	if (cached?.revision === revision) return cached.layout;
+	// Version-only: the installed command and SDK files decide the schema layout.
+	const persistedKey = `openclaw.memorySearchLayout:${commandPath}`;
+	for (const layout of ["top-level", "agents-defaults"] as const) {
+		if (persistedStepRevision(persistedKey) === `${revision}\n${layout}`) {
+			openClawMemorySearchLayouts.set(commandPath, { revision, layout });
+			return layout;
+		}
+	}
 
 	const result = spawnRuntimeUserCommand(commandPath, ["config", "schema"], home, workspaceRoot, {
 		timeoutMs: OPENCLAW_SCHEMA_PROBE_TIMEOUT_MS,
@@ -295,6 +317,7 @@ function openClawMemorySearchLayout(
 	}
 	const layout: OpenClawMemorySearchLayout = topLevel ? "top-level" : "agents-defaults";
 	openClawMemorySearchLayouts.set(commandPath, { revision, layout });
+	recordPersistedStepRevision(persistedKey, `${revision}\n${layout}`);
 	return layout;
 }
 

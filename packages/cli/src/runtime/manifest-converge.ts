@@ -113,6 +113,10 @@ import { loadCommittedRuntimeManifest, type RuntimeManifestLoad } from "./manife
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
 import { removeLegacyManagedOpenClawProviderPlugin } from "./openclaw-legacy-provider-plugin";
 import type { RuntimePaths } from "./paths";
+import {
+	flushPersistedStepRevisions,
+	loadPersistedStepRevisions,
+} from "./persisted-step-revisions";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import {
 	commitProviderTransfers,
@@ -1470,6 +1474,7 @@ export function convergeRuntimeManifest(
 	opts: RuntimeConvergenceOptions = {},
 ): RuntimeConvergenceResult {
 	const { context, state } = initializeRuntimeConvergence(load, paths, opts);
+	loadPersistedStepRevisions(paths);
 	try {
 		if (load.manifest.providerHandoffs?.length)
 			throw new Error(
@@ -1555,6 +1560,7 @@ export function convergeRuntimeManifest(
 			activationOutputs,
 		);
 		commitRuntimeConvergence(context, state, egressProjection, convergence);
+		flushPersistedStepRevisions(paths);
 		return convergence;
 	} catch (error) {
 		return runtimeApplyFailure(context, state, error);
