@@ -7,7 +7,7 @@ import {
 	readSharedTheme,
 	readWebClassSources,
 	webClassesOutputPath,
-} from "./theme";
+} from "../../scripts/theme";
 
 test("mobile theme is generated from the current shared Web tokens", () => {
 	expect(readFileSync(outputPath, "utf8")).toBe(buildMobileTheme(readSharedTheme()));

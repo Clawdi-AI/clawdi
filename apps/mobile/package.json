@@ -8,7 +8,7 @@
 		"typecheck": "EXPO_OFFLINE=1 expo customize tsconfig.json && tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
 		"lint": "biome check .",
 		"test": "../../scripts/test.sh mobile",
-		"test:internal": "bun test src scripts",
+		"test:internal": "bun test src",
 		"theme": "bun scripts/theme.ts"
 	},
 	"dependencies": {
