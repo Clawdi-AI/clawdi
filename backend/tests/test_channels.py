@@ -4559,7 +4559,8 @@ async def test_list_channel_agent_links_by_agent_returns_linked_channel_summarie
     assert public_item["binding_count"] == 1
     assert other_private["id"] not in by_account_id
     assert other_user_listing.status_code == 404
-    assert select_count == 3
+    # Constant query budget: base listing queries plus one batched connection-issue lookup.
+    assert select_count == 4
 
 
 @pytest.mark.asyncio

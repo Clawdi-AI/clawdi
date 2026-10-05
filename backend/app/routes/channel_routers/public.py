@@ -660,7 +660,12 @@ async def list_agent_channel_links(
     runtime_status = _agent_link_runtime_status(runtime_evidence.get(agent_id))
     connection_issues = await _load_discord_connection_issues(
         db,
-        accounts=[account for _link, account, _binding_count in rows],
+        accounts=[
+            account
+            for _link, account, _binding_count in rows
+            if account.visibility == CHANNEL_VISIBILITY_PRIVATE
+            and account.user_id == auth.user_id
+        ],
     )
     return [
         _agent_link_with_account_response(
@@ -668,12 +673,7 @@ async def list_agent_channel_links(
             account,
             binding_count=binding_count,
             runtime_status=runtime_status,
-            connection_issue=(
-                connection_issues.get(account.id)
-                if account.visibility == CHANNEL_VISIBILITY_PRIVATE
-                and account.user_id == auth.user_id
-                else None
-            ),
+            connection_issue=connection_issues.get(account.id),
         )
         for link, account, binding_count in rows
     ]
