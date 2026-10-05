@@ -20,7 +20,7 @@ import { DetailMeta, DetailNotFound, DetailPanel } from "@/components/detail/lay
 import { EmptyState } from "@/components/empty-state";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
-import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
+import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
 import { SessionSearchNavigation } from "@/components/sessions/session-search-navigation";
@@ -36,7 +36,6 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import { useSidebar } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { agentDetailQueryOptions } from "@/lib/agent-queries";
@@ -908,18 +907,31 @@ function LoadMoreControl({
 	);
 }
 
+/** Mirrors the loaded context header (title, meta row, actions, filters). */
 function DetailSkeleton() {
 	return (
-		<div className="space-y-5">
-			<PageHeaderSkeleton actions description={false} />
-			<div className="flex gap-3">
-				<Skeleton className="h-6 w-20 rounded-full" />
-				<Skeleton className="h-4 w-24" />
-				<Skeleton className="h-4 w-20" />
+		<>
+			<div className="-mx-4 border-b px-4 py-2 lg:-mx-6 lg:px-6">
+				<PageHeader
+					aria-hidden
+					className="gap-2"
+					title={<Skeleton className="h-lh w-72 max-w-full" />}
+					status={
+						<DetailMeta>
+							<Skeleton className="h-5 w-24" />
+							<Skeleton className="h-5 w-28" />
+							<Skeleton className="h-5 w-20 rounded-full" />
+							<Skeleton className="h-5 w-24" />
+						</DetailMeta>
+					}
+					actions={<Skeleton className="h-11 w-40 sm:h-8" />}
+				/>
+				<div className="mt-2 flex min-h-9 items-center md:justify-end">
+					<Skeleton className="h-4 w-56" />
+				</div>
 			</div>
-			<Separator />
 			<MessagesSkeleton />
-		</div>
+		</>
 	);
 }
 

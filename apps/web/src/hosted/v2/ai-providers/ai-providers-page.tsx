@@ -101,7 +101,7 @@ export function AiProvidersPage() {
 				) : providers.isLoading ? (
 					<div className={PROVIDER_GRID_CLASS}>
 						{[0, 1, 2].map((i) => (
-							<EntityCardSkeleton key={i} metaLines={2} actions />
+							<EntityCardSkeleton key={i} align="start" actions />
 						))}
 					</div>
 				) : list.length === 0 ? (
