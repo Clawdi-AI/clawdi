@@ -20,8 +20,9 @@ export function SectionLabel({
 				</WebView>
 			) : null}
 			{typeof children === "string" || typeof children === "number" ? (
-				<WebText recipe={styles.label} style={{ paddingRight: 1 }}>
-					{children}
+				<WebText recipe={styles.label}>
+					{/* Measure the same uppercase string that Android displays. */}
+					{typeof children === "string" ? children.toUpperCase() : children}
 				</WebText>
 			) : (
 				<WebContent recipe={styles.label}>{children}</WebContent>
