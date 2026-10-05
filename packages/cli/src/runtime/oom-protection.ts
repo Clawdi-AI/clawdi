@@ -58,21 +58,19 @@ export function gatewayOomProtectionLines(
 	return [
 		BEGIN,
 		"OOMPolicy=continue",
-		...(runtime === "hermes"
-			? [`Environment=TERMINAL_LOCAL_MEMORY_MAX_MB=${toolMemoryMiB}`]
-			: ["Environment=OPENCLAW_CHILD_OOM_SCORE_ADJ=1"]),
+		...(runtime === "hermes" ? [`Environment=TERMINAL_LOCAL_MEMORY_MAX_MB=${toolMemoryMiB}`] : []),
 		END,
 	];
 }
 
 export function platformOomProtectionLines(): string[] {
-	return [BEGIN, "OOMScoreAdjust=-900", "OOMPolicy=continue", END];
+	return [BEGIN, "OOMPolicy=continue", END];
 }
 
 /** These settings may wait for a natural start; changing them must not restart a gateway. */
 export function withoutOomProtection(contents: string): string {
 	return contents.replace(
-		/^# ClawdiOOMProtection=v1\n((?:OOMPolicy=continue\n|OOMScoreAdjust=-900\n|Environment=OPENCLAW_CHILD_OOM_SCORE_ADJ=1\n|Environment=TERMINAL_LOCAL_MEMORY_MAX_MB=[1-9]\d*\n)+)# EndClawdiOOMProtection\n/gm,
+		/^# ClawdiOOMProtection=v1\r?\n[\s\S]*?^# EndClawdiOOMProtection(?:\r?\n|$)/gm,
 		"",
 	);
 }

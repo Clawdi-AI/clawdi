@@ -1064,7 +1064,6 @@ esac
 		expect(openclawUnit).not.toContain("\nWorkingDirectory=");
 		expect(openclawUnit).toContain("UnsetEnvironment=CLAWDI_AUTH_TOKEN");
 		expect(openclawUnit).toContain("OOMPolicy=continue");
-		expect(openclawUnit).toContain("Environment=OPENCLAW_CHILD_OOM_SCORE_ADJ=1");
 		expect(hermesUnit).toContain(
 			`ConditionPathExists=${join(paths.systemdEnvRoot, "hermes-gateway.service.env")}`,
 		);
@@ -1091,7 +1090,7 @@ esac
 		expect(runtimeWatchUnit).not.toContain("\nRuntimeDirectoryMode=");
 		expect(runtimeWatchUnit).not.toContain("\nRuntimeDirectoryPreserve=");
 		expect(runtimeWatchUnit).toContain("TasksMax=infinity");
-		expect(runtimeWatchUnit).toContain("OOMScoreAdjust=-900");
+		expect(runtimeWatchUnit).not.toContain("OOMScoreAdjust");
 		expect(runtimeWatchUnit).toContain("OOMPolicy=continue");
 		expect(runtimeWatchUnit).not.toContain("ConditionPathExists=");
 		expect(runtimeWatchEnv).not.toContain("runtime-byok-value");

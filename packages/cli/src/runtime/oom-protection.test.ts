@@ -44,29 +44,34 @@ test("uses the tightest visible ancestor limit rather than host RAM", () => {
 	).toBe(4 * GIB);
 });
 
-test("renders finite system protection and the official runtime child controls", () => {
-	expect(platformOomProtectionLines()).toContain("OOMScoreAdjust=-900");
-	expect(platformOomProtectionLines().join("\n")).not.toContain("-1000");
+test("renders continue policy and the official Hermes memory control", () => {
+	expect(platformOomProtectionLines()).toContain("OOMPolicy=continue");
+	expect(platformOomProtectionLines().join("\n")).not.toContain("OOMScoreAdjust");
 	for (const gib of [4, 8, 16]) {
 		const lines = gatewayOomProtectionLines("hermes", gib * GIB);
 		expect(lines).toContain("OOMPolicy=continue");
 		expect(lines).toContain(`Environment=TERMINAL_LOCAL_MEMORY_MAX_MB=${gib * 512}`);
 		expect(lines.join("\n")).not.toContain("OOMScoreAdjust");
 	}
-	expect(gatewayOomProtectionLines("openclaw", 4 * GIB)).toContain(
-		"Environment=OPENCLAW_CHILD_OOM_SCORE_ADJ=1",
-	);
+	expect(gatewayOomProtectionLines("openclaw", 4 * GIB).join("\n")).not.toContain("Environment=");
 });
 
-test("only approved policy lines can be excluded from activation", () => {
+test("excludes whole marked blocks from activation and preserves surrounding content", () => {
 	const original = "[Service]\nExecStart=/bin/sleep 30\n";
 	const policy = gatewayOomProtectionLines("hermes", 4 * GIB).join("\n");
 	expect(withoutOomProtection(`${original}${policy}\n`)).toBe(original);
-	for (const mutation of ["ExecStart=/bin/false", "OOMPolicy=kill", "OOMScoreAdjust=-1000"]) {
+	for (const mutation of ["OOMPolicy=kill", "MemoryHigh=3G", "OOMScoreAdjust=-900"]) {
 		expect(
 			withoutOomProtection(`${original}${policy.replace("OOMPolicy=continue", mutation)}\n`),
-		).toContain(mutation);
+		).toBe(original);
 	}
+	const outside = "Environment=OUTSIDE_POLICY=1\n";
+	expect(withoutOomProtection(`${policy}\n${original}${policy}\n${outside}`)).toBe(
+		`${original}${outside}`,
+	);
+	expect(withoutOomProtection(`${original}${policy}`)).toBe(original);
+	const incomplete = `${original}${policy.replace("# EndClawdiOOMProtection", "")}`;
+	expect(withoutOomProtection(incomplete)).toBe(incomplete);
 });
 
 function commitActivation(paths: RuntimePaths, snapshot: SystemdUnitSnapshot): void {
@@ -118,6 +123,13 @@ esac
 		{ mode: 0o755 },
 	);
 	const previous = { ...process.env };
+	const expectReloadOnly = () => {
+		const commands = readFileSync(log, "utf8");
+		expect(commands.match(/^daemon-reload$/gm)).toHaveLength(1);
+		expect(commands.match(/^--user daemon-reload$/gm)).toHaveLength(1);
+		expect(commands).not.toMatch(/\b(start|restart|stop)\b/);
+		writeFileSync(log, "");
+	};
 	try {
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		process.env.CLAWDI_SYSTEMCTL_PATH = command;
@@ -126,7 +138,9 @@ esac
 		commitActivation(paths, before);
 		writeFileSync(
 			systemUnit,
-			`${readFileSync(systemUnit, "utf8")}${platformOomProtectionLines().join("\n")}\n`,
+			`${readFileSync(systemUnit, "utf8")}${platformOomProtectionLines()
+				.join("\n")
+				.replace("OOMPolicy=continue", "OOMScoreAdjust=-900\nOOMPolicy=continue")}\n`,
 		);
 		writeFileSync(
 			dropIn,
@@ -143,16 +157,31 @@ esac
 			systemUnitsChanged: [],
 			userUnitsChanged: [],
 		});
-		const commands = readFileSync(log, "utf8");
-		expect(commands.match(/^daemon-reload$/gm)).toHaveLength(1);
-		expect(commands.match(/^--user daemon-reload$/gm)).toHaveLength(1);
-		expect(commands).not.toMatch(/\b(start|restart|stop)\b/);
-		writeFileSync(log, "");
-		expect(applySystemdRuntimeUpdate(paths, after, after, {}).applied).toBe(true);
+		expectReloadOnly();
+		// Removing a legacy setting, changing a value, and adding a new directive only reload.
+		writeFileSync(
+			systemUnit,
+			readFileSync(systemUnit, "utf8").replace("OOMScoreAdjust=-900\n", ""),
+		);
+		writeFileSync(
+			dropIn,
+			readFileSync(dropIn, "utf8")
+				.replace("TERMINAL_LOCAL_MEMORY_MAX_MB=2048", "TERMINAL_LOCAL_MEMORY_MAX_MB=4096")
+				.replace("# EndClawdiOOMProtection", "MemoryHigh=3G\n# EndClawdiOOMProtection"),
+		);
+		const updated = readSystemdUnitSnapshot(paths);
+		expect(updated.system).toEqual(after.system);
+		expect(updated.user).toEqual(after.user);
+		expect(updated.reload).not.toEqual(after.reload);
+		expect(
+			applySystemdRuntimeUpdate(paths, after, updated, { restartChangedUnits: true }).applied,
+		).toBe(true);
+		expectReloadOnly();
+		expect(applySystemdRuntimeUpdate(paths, updated, updated, {}).applied).toBe(true);
 		expect(readFileSync(log, "utf8")).not.toMatch(/daemon-reload|\b(start|restart|stop)\b/);
 		// A real command change still activates the service.
 		writeFileSync(dropIn, `${readFileSync(dropIn, "utf8")}ExecStart=/bin/false\n`);
-		applySystemdRuntimeUpdate(paths, after, readSystemdUnitSnapshot(paths), {});
+		applySystemdRuntimeUpdate(paths, updated, readSystemdUnitSnapshot(paths), {});
 		expect(readFileSync(log, "utf8")).toContain("--user restart hermes-gateway.service");
 	} finally {
 		for (const key of ["CLAWDI_SYSTEMD_APPLY", "CLAWDI_SYSTEMCTL_PATH", "CLAWDI_RUNTIME_USER"]) {
@@ -186,7 +215,8 @@ while not pathlib.Path('${trigger}').exists():
     time.sleep(0.025)
 child = subprocess.Popen(['/bin/sh', '-c', 'echo 1000 > /proc/self/oom_score_adj; exec "$0" "$@"', sys.executable, __file__, 'child'])
 result = child.wait()
-pathlib.Path('${state}').write_text(str(result))
+pathlib.Path('${state}.tmp').write_text(str(result))
+pathlib.Path('${state}.tmp').replace('${state}')
 while True:
     time.sleep(1)
 `,
@@ -207,26 +237,6 @@ while True:
 		};
 		const show = (property: string) => run(["show", unit, `--property=${property}`, "--value"]);
 		try {
-			const unprivileged = runCommandResult("unshare", [
-				"--user",
-				"--map-root-user",
-				"/bin/sh",
-				"-c",
-				"if echo -900 > /proc/self/oom_score_adj 2>/dev/null; then exit 10; fi; cat /proc/self/oom_score_adj",
-			]);
-			expect(unprivileged.status).toBe(0);
-			expect(Number(unprivileged.stdout.trim())).toBeGreaterThanOrEqual(0);
-			const privileged = runCommandResult("systemd-run", [
-				"--quiet",
-				"--wait",
-				"--pipe",
-				"--collect",
-				"--property=OOMScoreAdjust=-900",
-				"/bin/cat",
-				"/proc/self/oom_score_adj",
-			]);
-			expect(privileged.status).toBe(0);
-			expect(privileged.stdout.trim()).toBe("-900");
 			run(["daemon-reload"]);
 			run(["start", unit]);
 			const pid = show("MainPID");
@@ -255,7 +265,7 @@ while True:
 			expect(show("MainPID")).toBe(pid);
 			expect(readFileSync(join(cg, "memory.events"), "utf8")).not.toBe(eventsBefore);
 			console.log(
-				"native OOM proof: daemon-reload kept PID; child SIGKILL; gateway active; memory.oom.group=0; -900 needs host privilege",
+				"native OOM proof: daemon-reload kept PID; child SIGKILL; gateway active; memory.oom.group=0",
 			);
 		} finally {
 			runCommandResult("systemctl", ["stop", unit]);
