@@ -12,7 +12,7 @@
  * contract without needing a long-running daemon fixture.
  */
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import {
 	SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
 	SKILL_SYNC_PROTOCOL_HEADER,
@@ -58,6 +58,54 @@ async function consumeChunks(chunks: string[]): Promise<unknown[]> {
 }
 
 describe("classifySseReconnect", () => {
+	it("resets backoff after each stable connection errors five times", async () => {
+		let now = 0;
+		const clock = spyOn(Date, "now").mockImplementation(() => now);
+		const abort = new AbortController();
+		const disconnects: Array<{ classification: string; attempt: number }> = [];
+		globalThis.fetch = Object.assign(
+			async () => {
+				let received = false;
+				return new Response(
+					new ReadableStream<Uint8Array>(
+						{
+							pull(controller) {
+								if (!received) {
+									received = true;
+									controller.enqueue(new TextEncoder().encode(": heartbeat\n\n"));
+								} else {
+									now += 60_000;
+									controller.error(new Error("connection reset"));
+								}
+							},
+						},
+						{ highWaterMark: 0 },
+					),
+					{ headers: { "content-type": "text/event-stream" } },
+				);
+			},
+			{ preconnect: originalFetch.preconnect },
+		);
+		try {
+			await consumeSse({
+				apiUrl: "https://cloud.example",
+				apiKey: "test-key",
+				abort: abort.signal,
+				onEvent: () => {},
+				onDisconnect: (info) => {
+					disconnects.push(info);
+					if (disconnects.length === 5) abort.abort();
+				},
+			});
+			expect(disconnects).toHaveLength(5);
+			for (const info of disconnects)
+				expect(info).toMatchObject({ classification: "transient", attempt: 0 });
+		} finally {
+			clock.mockRestore();
+			abort.abort();
+		}
+	});
+
 	it("treats the first few reconnects as transient churn", () => {
 		expect(classifySseReconnect(1)).toBe("transient");
 		expect(classifySseReconnect(2)).toBe("transient");
