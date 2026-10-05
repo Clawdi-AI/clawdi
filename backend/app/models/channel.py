@@ -797,7 +797,6 @@ class ChannelDelivery(Base, TimestampMixin):
         nullable=False,
         default=DELIVERY_STATUS_PENDING,
         server_default=DELIVERY_STATUS_PENDING,
-        index=True,
     )
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     max_attempts: Mapped[int] = mapped_column(
