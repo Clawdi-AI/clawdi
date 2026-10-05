@@ -238,28 +238,20 @@ export function ProviderCreate({
 									}}
 								/>
 							) : oauth ? (
-								<>
-									<ProviderFieldsForm
-										label={label}
-										placeholder={identity.label ?? PROVIDER_TYPE_META.openai.label}
-										onLabel={setLabel}
-										showRouting={false}
-										baseUrl={baseUrl}
-										onBaseUrl={setBaseUrl}
-										apiMode={apiMode}
-										onApiMode={setApiMode}
-										secret={secret}
-										onSecret={setSecret}
-										disabled={locked || action.busy}
-										oauth
-									/>
-									<ProviderOAuth
-										providers={providers}
-										refresh={refresh}
-										label={label}
-										startLabel={copy.continueChatGpt}
-									/>
-								</>
+								<ProviderFieldsForm
+									label={label}
+									placeholder={identity.label ?? PROVIDER_TYPE_META.openai.label}
+									onLabel={setLabel}
+									showRouting={false}
+									baseUrl={baseUrl}
+									onBaseUrl={setBaseUrl}
+									apiMode={apiMode}
+									onApiMode={setApiMode}
+									secret={secret}
+									onSecret={setSecret}
+									disabled={locked || action.busy}
+									oauth
+								/>
 							) : (
 								<>
 									{preset?.region_variants?.length ? (
@@ -298,6 +290,15 @@ export function ProviderCreate({
 								</>
 							)}
 						</WebView>
+						{step === "configure" && oauth ? (
+							<ProviderOAuth
+								dialogFooter
+								providers={providers}
+								refresh={refresh}
+								label={label}
+								startLabel={copy.continueChatGpt}
+							/>
+						) : null}
 						{step === "configure" && !oauth ? (
 							<DialogFooter className={webView(dialogStyles.footer)}>
 								<ActionButton

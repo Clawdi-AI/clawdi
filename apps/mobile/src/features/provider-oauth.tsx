@@ -6,7 +6,7 @@ import {
 	providerFormIdentity,
 	type SavedAiProvider,
 } from "@clawdi/shared/api";
-import { providerOAuthFlowClasses as styles } from "@clawdi/shared/ui";
+import { providerDialogClasses, providerOAuthFlowClasses as styles } from "@clawdi/shared/ui";
 import { providerOAuthCopy as copy } from "@clawdi/shared/view";
 import { onlineManager } from "@tanstack/react-query";
 import { randomUUID } from "expo-crypto";
@@ -19,8 +19,11 @@ import { useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
 import { ActionButton } from "../ui/agents/controls";
+import { Button } from "../ui/button";
+import { DialogFooter } from "../ui/dialog";
 import { AppText } from "../ui/primitives";
-import { WebText, WebView } from "../ui/web-layout";
+import { Text } from "../ui/text";
+import { WebText, WebView, webView } from "../ui/web-layout";
 
 type Authorization = components["schemas"]["AiProviderOAuthDeviceStartResponse"];
 type AcceptBody = components["schemas"]["AiProviderAcceptRequest"];
@@ -32,6 +35,7 @@ export function ProviderOAuth({
 	label = "",
 	startLabel,
 	startIcon,
+	dialogFooter = false,
 }: {
 	providers?: SavedAiProvider[];
 	provider?: SavedAiProvider;
@@ -39,6 +43,7 @@ export function ProviderOAuth({
 	label?: string;
 	startLabel?: string;
 	startIcon?: ReactNode;
+	dialogFooter?: boolean;
 }) {
 	const t = useI18n();
 	const scope = useAccountScope();
@@ -253,8 +258,28 @@ export function ProviderOAuth({
 		aiProviders,
 		scope,
 	]);
+	if (dialogFooter && !authorization)
+		return (
+			<DialogFooter className={webView(providerDialogClasses.footer)}>
+				{ready ? <AppText accessibilityRole="alert">{t("providers.oauthReady")}</AppText> : null}
+				{action.error ? (
+					<WebText recipe={styles.error} accessibilityRole="alert">
+						{t("providers.failed")}
+					</WebText>
+				) : null}
+				<Button
+					disabled={action.busy || !scope.isReady || !online || (!provider && !providers)}
+					onPress={() => void begin()}
+				>
+					{startIcon}
+					<Text>
+						{startLabel ?? t(provider ? "providers.reconnectOAuth" : "providers.connectOAuth")}
+					</Text>
+				</Button>
+			</DialogFooter>
+		);
 	return (
-		<WebView recipe={styles.root}>
+		<WebView recipe={dialogFooter ? `${providerDialogClasses.body} ${styles.root}` : styles.root}>
 			{!authorization ? (
 				<ActionButton
 					label={startLabel ?? t(provider ? "providers.reconnectOAuth" : "providers.connectOAuth")}
