@@ -207,9 +207,12 @@ export function entityChoiceCardClass({
 	);
 }
 
-/** Shared loading shape for entity cards and selectable entity options. */
+/** Shared loading shape for entity cards and selectable entity options.
+ * Text placeholders use `h-lh` inside the same type scale as `EntityHeader`,
+ * so the loaded card keeps the skeleton's height. */
 export function EntityCardSkeleton({
 	iconSize = "md",
+	align = "center",
 	metaLines = 1,
 	statusDot = false,
 	titleBadge = false,
@@ -218,6 +221,7 @@ export function EntityCardSkeleton({
 	className,
 }: {
 	iconSize?: "sm" | "md";
+	align?: "center" | "start";
 	metaLines?: 0 | 1 | 2;
 	statusDot?: boolean;
 	titleBadge?: boolean;
@@ -226,19 +230,27 @@ export function EntityCardSkeleton({
 	className?: string;
 }) {
 	return (
-		<div className={entityCardChassisClass({ variant: "compact", className })}>
-			<div className="flex items-start gap-3">
+		<div
+			className={entityCardChassisClass({ variant: "compact", className })}
+			aria-hidden="true"
+			data-slot="entity-card-skeleton"
+		>
+			<div className={cn("flex gap-3", align === "start" ? "items-start" : "items-center")}>
 				<Skeleton
 					className={cn("shrink-0", iconSize === "sm" ? "size-8 rounded-md" : "size-10 rounded-lg")}
 				/>
 				<div className="min-w-0 flex-1">
-					<div className="flex min-w-0 items-center gap-1.5">
+					<div className="flex min-w-0 items-center gap-1.5 text-sm">
 						{statusDot ? <Skeleton className="size-1.5 shrink-0 rounded-full" /> : null}
-						<Skeleton className="h-4 min-w-16 flex-1 max-w-32" />
+						<Skeleton className="h-lh min-w-16 max-w-32 flex-1" />
 						{titleBadge ? <Skeleton className="h-5 w-16 shrink-0 rounded-full" /> : null}
 					</div>
-					{metaLines > 0 ? <Skeleton className="mt-2 h-3 w-40 max-w-[80%]" /> : null}
-					{metaLines > 1 ? <Skeleton className="mt-1.5 h-3 w-full max-w-56" /> : null}
+					{metaLines > 0 ? (
+						<div className="mt-0.5 space-y-1 text-sm">
+							<Skeleton className="h-lh w-40 max-w-[80%]" />
+							{metaLines > 1 ? <Skeleton className="h-lh w-full max-w-56" /> : null}
+						</div>
+					) : null}
 				</div>
 				{trailingBadge ? <Skeleton className="h-5 w-16 shrink-0 rounded-full" /> : null}
 			</div>
@@ -253,13 +265,16 @@ export function EntityCardSkeleton({
 	);
 }
 
-/** Loading shape for top-level resource cards. */
+/** Loading shape for `HeroCard`: same chassis, gaps, and text line heights. */
 export function HeroCardSkeleton({
 	compact = false,
+	iconSize = compact ? "sm" : "md",
 	footerItems = 2,
 	className,
 }: {
+	/** Matches `HeroCard className="min-h-28 gap-2"` (Skills). */
 	compact?: boolean;
+	iconSize?: "sm" | "md";
 	footerItems?: 0 | 1 | 2;
 	className?: string;
 }) {
@@ -272,15 +287,19 @@ export function HeroCardSkeleton({
 			aria-hidden="true"
 			data-slot="hero-card-skeleton"
 		>
-			<Skeleton className={compact ? "size-8 rounded-lg" : "size-10 rounded-lg"} />
-			<div className="min-w-0 space-y-2">
-				<Skeleton className="h-4 w-40 max-w-full" />
-				<Skeleton className="h-3 w-56 max-w-[85%]" />
+			<Skeleton className={iconSize === "sm" ? "size-8 rounded-lg" : "size-10 rounded-lg"} />
+			<div className="min-w-0">
+				<div className="text-sm">
+					<Skeleton className="h-lh w-40 max-w-full" />
+				</div>
+				<div className="mt-1 text-xs leading-relaxed">
+					<Skeleton className="h-lh w-56 max-w-[85%]" />
+				</div>
 			</div>
 			{footerItems > 0 ? (
-				<div className="mt-auto flex items-center gap-3">
-					<Skeleton className="h-3 w-16" />
-					{footerItems > 1 ? <Skeleton className="h-3 w-28 max-w-[45%]" /> : null}
+				<div className="mt-auto flex items-center gap-3 text-xs">
+					<Skeleton className="h-lh w-16" />
+					{footerItems > 1 ? <Skeleton className="h-lh w-28 max-w-[45%]" /> : null}
 				</div>
 			) : null}
 		</div>

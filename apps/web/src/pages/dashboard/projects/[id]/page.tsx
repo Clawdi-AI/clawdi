@@ -436,19 +436,18 @@ export default function ProjectDetailPage({
 
 	if (projectQuery.isLoading || (isWorkspaceView && scopedBindings.isLoading)) {
 		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
 				<DetailBackLink
 					href={catalogReturnTarget?.href ?? projectsTarget.href}
 					label={catalogReturnTarget?.label ?? projectsTarget.label}
 					mobileOnly={false}
 				/>
 				<PageHeaderSkeleton icon actions />
-				<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-					{Array.from({ length: 4 }).map((_, i) => (
-						<Skeleton key={i} className="h-24 w-full rounded-xl" />
-					))}
-				</div>
-				<Skeleton className="h-40 w-full rounded-lg" />
+				{isWorkspaceView ? (
+					<Skeleton className="h-40 w-full rounded-lg" />
+				) : (
+					<ProjectOverviewSkeleton showPanel={localTab === "overview"} />
+				)}
 			</div>
 		);
 	}
@@ -1032,6 +1031,46 @@ const STAT_TILE_TINTS: Record<string, string> = {
 	People: "bg-identity-6-bg/50",
 	Agents: "bg-identity-5-bg/50",
 };
+
+/** Mirrors the loaded tab bar and Overview panel while the Project loads. */
+function ProjectOverviewSkeleton({ showPanel }: { showPanel: boolean }) {
+	return (
+		<>
+			<div
+				aria-hidden="true"
+				className="grid w-full grid-cols-5 gap-1 rounded-xl border bg-muted/30 p-1"
+			>
+				{PROJECT_LOCAL_TABS.map((tab) => (
+					<div key={tab.id} className="px-1 py-2 text-xs sm:px-2 sm:text-sm">
+						<Skeleton className="mx-auto h-lh w-12 max-w-full" />
+					</div>
+				))}
+			</div>
+			{showPanel ? (
+				<DetailPanel className="space-y-5">
+					<div className="space-y-1">
+						<h2 className="text-sm font-semibold">Project bundle</h2>
+						<div className="text-sm">
+							<Skeleton className="h-lh w-full max-w-md" />
+						</div>
+					</div>
+					<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+						{Object.entries(STAT_TILE_TINTS).map(([label, tint]) => (
+							<div key={label} className={cn("rounded-xl border border-transparent p-4", tint)}>
+								<div className="text-2xl font-semibold">
+									<Skeleton className="h-8 w-8" />
+								</div>
+								<div className="mt-0.5 text-xs text-muted-foreground">{label}</div>
+							</div>
+						))}
+					</div>
+				</DetailPanel>
+			) : (
+				<Skeleton className="h-40 w-full rounded-lg" />
+			)}
+		</>
+	);
+}
 
 function StatTile({ label, value, href }: { label: string; value?: CountValue; href: string }) {
 	return (

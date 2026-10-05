@@ -3,7 +3,15 @@
 import type { components } from "@clawdi/shared/api";
 import { AlertCircle, Check, Link2Off, Plug, Wrench } from "lucide-react";
 import { parseAsString, useQueryStates } from "nuqs";
-import { Suspense, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+	type ReactNode,
+	Suspense,
+	useDeferredValue,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -60,15 +68,17 @@ export default function ConnectorDetailPage({
 	scope?: ResourceNavigationScope;
 }) {
 	return (
-		<Suspense fallback={<DetailSkeletonShell />}>
+		<Suspense fallback={<DetailSkeletonShell scope={scope} />}>
 			<ConnectorDetail key={name} name={name} scope={scope} />
 		</Suspense>
 	);
 }
 
-function DetailSkeletonShell() {
+function DetailSkeletonShell({ scope }: { scope: ResourceNavigationScope }) {
+	const collectionTarget = resourceCollectionTarget(scope, "connectors");
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-4 px-4 lg:px-6")}>
+			<DetailBackLink href={collectionTarget.href} label={collectionTarget.label} />
 			<DetailSkeleton />
 		</div>
 	);
@@ -285,7 +295,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					description={
 						usesNoAuth
 							? "This connector does not require an account connection."
-							: "Connect an account once. Approved tools become available to agents through this connector."
+							: ACCOUNTS_DESCRIPTION
 					}
 					actions={
 						app &&
@@ -311,15 +321,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 							title="Couldn't load connections"
 						/>
 					) : !usesNoAuth && isConnectionsLoading ? (
-						<div className="p-4">
-							<div className="flex items-center gap-3">
-								<Skeleton className="size-9 shrink-0 rounded-lg" />
-								<div className="min-w-0 flex-1 space-y-2">
-									<Skeleton className="h-3.5 w-40" />
-									<Skeleton className="h-3 w-28" />
-								</div>
-							</div>
-						</div>
+						<AccountRowSkeleton />
 					) : usesNoAuth ? (
 						<EmptyState variant="inset" description="No account connection is required." />
 					) : hasUnsupportedAuthType && appConnections.length === 0 ? (
@@ -382,31 +384,84 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 // Sub-components
 // ---------------------------------------------------------------------------
 
+const ACCOUNTS_DESCRIPTION =
+	"Connect an account once. Approved tools become available to agents through this connector.";
+
+/** Mirrors the loaded page: header, Accounts section, Available tools section. */
 function DetailSkeleton() {
 	return (
-		<div className="flex flex-col gap-4">
+		<>
 			<PageHeaderSkeleton icon iconClassName="size-14 rounded-xl" />
-			{/* Connection section */}
-			<div className="space-y-3">
-				<Skeleton className="h-3.5 w-32" />
-				<Skeleton className="h-3 w-20" />
-				<div className="rounded-lg border border-dashed p-6">
-					<Skeleton className="mx-auto h-9 w-28 rounded-lg" />
+			<DashboardSection priority="primary">
+				<DashboardSectionHeader
+					icon={Plug}
+					title="Accounts"
+					count="Checking accounts"
+					description={ACCOUNTS_DESCRIPTION}
+				/>
+				<div className="p-4">
+					<AccountRowSkeleton />
 				</div>
-			</div>
-			{/* Tools */}
-			<div className="space-y-3">
-				<Skeleton className="h-3.5 w-32" />
-				<div className="rounded-lg border">
-					{Array.from({ length: 5 }).map((_, i) => (
-						<div key={i} className={cn("px-3 py-2.5 space-y-1.5", i > 0 && "border-t")}>
-							<Skeleton className="h-3.5 w-32" />
-							<Skeleton className="h-3 w-56" />
-						</div>
-					))}
+			</DashboardSection>
+			<ConnectorToolsSection requiresConnection>
+				<ToolRowsSkeleton />
+			</ConnectorToolsSection>
+		</>
+	);
+}
+
+function AccountRowSkeleton() {
+	return (
+		<div className="flex items-center gap-3">
+			<div className="min-w-0 flex-1">
+				<div className="text-sm">
+					<Skeleton className="h-lh w-40" />
+				</div>
+				<div className="mt-0.5 text-xs">
+					<Skeleton className="h-lh w-28" />
 				</div>
 			</div>
 		</div>
+	);
+}
+
+function ToolRowsSkeleton() {
+	return (
+		<div aria-hidden="true">
+			{Array.from({ length: 5 }).map((_, i) => (
+				<div key={i} className={cn("px-3 py-2.5", i > 0 && "border-t")}>
+					<div className="text-sm">
+						<Skeleton className="h-lh w-32" />
+					</div>
+					<div className="mt-0.5 text-xs">
+						<Skeleton className="h-lh w-56 max-w-full" />
+					</div>
+				</div>
+			))}
+		</div>
+	);
+}
+
+function ConnectorToolsSection({
+	requiresConnection,
+	children,
+}: {
+	requiresConnection: boolean;
+	children: ReactNode;
+}) {
+	return (
+		<DashboardSection>
+			<DashboardSectionHeader
+				icon={Wrench}
+				title="Available tools"
+				description={
+					requiresConnection
+						? "Tools available once an account is connected."
+						: "Tools this connector exposes."
+				}
+			/>
+			{children}
+		</DashboardSection>
 	);
 }
 
@@ -436,20 +491,9 @@ function ConnectorToolsList({
 
 	if (isLoading) {
 		return (
-			<DashboardSection>
-				<DashboardSectionHeader
-					icon={Wrench}
-					title="Available tools"
-					description={
-						requiresConnection
-							? "Tools available once an account is connected."
-							: "Tools this connector exposes."
-					}
-				/>
-				<div className="flex items-center justify-center py-6">
-					<Spinner className="size-5 text-muted-foreground" />
-				</div>
-			</DashboardSection>
+			<ConnectorToolsSection requiresConnection={requiresConnection}>
+				<ToolRowsSkeleton />
+			</ConnectorToolsSection>
 		);
 	}
 
@@ -457,20 +501,11 @@ function ConnectorToolsList({
 	// doesn't masquerade as "this connector has no tools".
 	if (error) {
 		return (
-			<DashboardSection>
-				<DashboardSectionHeader
-					icon={Wrench}
-					title="Available tools"
-					description={
-						requiresConnection
-							? "Tools available once an account is connected."
-							: "Tools this connector exposes."
-					}
-				/>
+			<ConnectorToolsSection requiresConnection={requiresConnection}>
 				<div className="p-4">
 					<ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load tools" />
 				</div>
-			</DashboardSection>
+			</ConnectorToolsSection>
 		);
 	}
 

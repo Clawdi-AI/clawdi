@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import { Copy as CopyIcon, FolderInput, ListChecks, Plus, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -381,11 +381,15 @@ export default function VaultDetailPage({
 
 	if (vaultDetail.isLoading || (isAgentScope && browseAccess.isLoading)) {
 		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
 				<DetailBackLink href={backTarget.href} label={backTarget.label} mobileOnly={false} />
 				<PageHeaderSkeleton icon actions />
-				<Skeleton className="h-36 w-full rounded-lg" />
-				<Skeleton className="h-24 w-full rounded-lg" />
+				<VaultSectionSkeleton>
+					<VaultKeysSkeleton />
+				</VaultSectionSkeleton>
+				<VaultSectionSkeleton>
+					<VaultProjectsSkeleton />
+				</VaultSectionSkeleton>
 			</div>
 		);
 	}
@@ -611,7 +615,7 @@ export default function VaultDetailPage({
 				) : null}
 
 				{keys.isLoading ? (
-					<Skeleton className="h-32 w-full rounded-lg" />
+					<VaultKeysSkeleton />
 				) : blockingKeysError ? (
 					<ApiErrorPanel
 						error={blockingKeysError}
@@ -785,7 +789,7 @@ export default function VaultDetailPage({
 					) : null}
 				</div>
 				{projects.isLoading ? (
-					<Skeleton className="h-16 w-full" />
+					<VaultProjectsSkeleton />
 				) : blockingProjectsError ? (
 					<ApiErrorPanel
 						error={blockingProjectsError}
@@ -909,6 +913,52 @@ function AttachProjectPicker({
 				{isPending ? <Spinner /> : <Plus className="size-3.5" />}
 				Add to Project
 			</Button>
+		</div>
+	);
+}
+
+/** Section heading + description placeholder matching the Keys/Projects headers. */
+function VaultSectionSkeleton({ children }: { children: ReactNode }) {
+	return (
+		<section className="space-y-3" aria-hidden="true">
+			<div>
+				<div className="text-sm">
+					<Skeleton className="h-lh w-20" />
+				</div>
+				<div className="mt-0.5 text-xs">
+					<Skeleton className="h-lh w-80 max-w-full" />
+				</div>
+			</div>
+			{children}
+		</section>
+	);
+}
+
+function VaultKeysSkeleton() {
+	return (
+		<div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+			{Array.from({ length: 6 }).map((_, index) => (
+				<div key={index} className="rounded-lg border bg-card px-3 py-2.5 text-xs">
+					<Skeleton className="h-lh w-32 max-w-full" />
+				</div>
+			))}
+		</div>
+	);
+}
+
+function VaultProjectsSkeleton() {
+	return (
+		<div className="divide-y overflow-hidden rounded-lg border bg-card">
+			{Array.from({ length: 2 }).map((_, index) => (
+				<div key={index} className="px-4 py-2.5">
+					<div className="text-sm">
+						<Skeleton className="h-lh w-40" />
+					</div>
+					<div className="text-xs">
+						<Skeleton className="h-lh w-56 max-w-full" />
+					</div>
+				</div>
+			))}
 		</div>
 	);
 }

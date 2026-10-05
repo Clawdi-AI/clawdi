@@ -475,7 +475,7 @@ function AgentPluginGridSkeleton() {
 		<div className={HERO_GRID_CLASS}>
 			<span className="sr-only">Loading plugins</span>
 			{Array.from({ length: 4 }).map((_, index) => (
-				<HeroCardSkeleton key={`plugin-skeleton-${index}`} compact />
+				<HeroCardSkeleton key={`plugin-skeleton-${index}`} iconSize="sm" />
 			))}
 		</div>
 	);
