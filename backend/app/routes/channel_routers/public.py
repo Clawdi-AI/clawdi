@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any, cast, get_args
 from urllib.parse import quote
 from uuid import UUID
 
@@ -329,14 +329,7 @@ def _bot_pool_capabilities(
     )
 
 
-_DISCORD_CONNECTION_ISSUES = frozenset(
-    {
-        "authentication_failed",
-        "disallowed_intents",
-        "invalid_intents",
-        "invalid_configuration",
-    }
-)
+_DISCORD_CONNECTION_ISSUES: frozenset[str] = frozenset(get_args(ChannelConnectionIssue))
 
 
 async def _load_discord_connection_issues(

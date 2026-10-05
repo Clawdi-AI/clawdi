@@ -118,7 +118,6 @@ class _GatewayState:
     # Preserve this marker when INVALID_SESSION clears the resume fields so
     # the outer loop still resets backoff after an established connection.
     session_established: bool = False
-    terminal_marker_clear_attempted: bool = False
 
     def can_resume(self) -> bool:
         return self.sequence is not None and bool(self.session_id) and bool(self.resume_gateway_url)
@@ -348,7 +347,6 @@ class DiscordGatewayWorker:
     ) -> None:
         state.heartbeat_acknowledged = True
         state.session_established = False
-        state.terminal_marker_clear_attempted = False
         async with self._connect_factory(
             uri,
             ping_interval=None,
@@ -410,15 +408,13 @@ class DiscordGatewayWorker:
             if frame.get("t") in {"READY", "RESUMED"}:
                 if not state.session_established:
                     state.session_established = True
-                    if not state.terminal_marker_clear_attempted:
-                        state.terminal_marker_clear_attempted = True
-                        try:
-                            await self._clear_terminal_close_markers(account_id)
-                        except Exception:
-                            log.exception(
-                                "discord gateway account %s failed to clear terminal close marker",
-                                account_id,
-                            )
+                    try:
+                        await self._clear_terminal_close_markers(account_id)
+                    except Exception:
+                        log.exception(
+                            "discord gateway account %s failed to clear terminal close marker",
+                            account_id,
+                        )
             await record_discord_gateway_dispatch(
                 self._sessionmaker,
                 account_id,

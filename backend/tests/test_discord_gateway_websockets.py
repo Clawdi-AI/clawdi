@@ -421,7 +421,6 @@ async def test_established_discord_gateway_session_clears_terminal_close_markers
             )
         assert marker is None
         assert state.session_established is True
-        assert state.terminal_marker_clear_attempted is True
     finally:
         await worker.stop()
         async with sessionmaker() as db:
