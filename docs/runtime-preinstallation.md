@@ -174,7 +174,6 @@ normal fresh systemd proof still runs. Changed engine or platform inputs keep
 the normal restart boundary. The single-use warm receipt is consumed after
 successful activation. Neither warm command's CLI interface changes.
 
-
 Anonymous OpenClaw warm-up also preloads the official config-mutation SDK in a
 runtime-user service with a root-owned 0600 single-use socket. Its root-private
 receipt binds the idle invocation, effective units, socket inode, Node binary
@@ -182,10 +181,8 @@ and installed SDK source graph, including dependency symlink targets. Source
 identity uses inode, nanosecond ctime/mtime, ownership, mode and size; editing and
 restoring file bytes/mtime still invalidates adoption. Warm-up completes an
 anonymous official snapshot read and plugin validation before socket readiness.
-It also performs a fully validated official identity write with explicit
-`afterWrite:none` to preload the write pipeline; gateway adoption is recorded
-against the resulting anonymous configuration. First hot apply persists a
-consumed marker before sending its batch, checks an acknowledgement bound to the request UUID/hash,
+First hot apply persists a consumed marker before sending its batch, checks an
+acknowledgement bound to the request UUID/hash,
 and re-attests ownership before stopping the service/socket. Native config reads,
 cross-process locking, CAS and full validation still run for that batch. Stale
 or absent receipts select the normal official writer; crash/replay never resends
@@ -195,15 +192,17 @@ Both warm commands refuse an existing runtime context before mutating services.
 When anonymous egress has been re-attested and acknowledged for the claimed
 snapshot, first Hermes activation overlaps the dashboard with platform startup
 and starts the gateway only after dashboard HTTP readiness. Normal/fallback
-activation keeps its previous ordering. The producer accepts equivalent successful watch events only under the exact current apply
+activation keeps its previous ordering. The producer accepts equivalent successful
+watch events only under the exact current apply
 and source authority, while retaining complete parent/health fences. Manager
-status reads batch by explicit unit ID with per-unit fallback. Initial healthy
-observation polling uses a bounded 250 ms cadence; network backoff and the
-60-second steady cadence are unchanged. When a successful bootstrap is still
-writing its final status, capture waits at most 500 ms and re-attests authority
-before running every normal proof. Static discard and pending-unit spans help
-identify first-readiness gates. Native qualification of the follow-up is pending;
-no 10 s readiness bound is claimed.
+status reads batch by explicit unit ID with per-unit fallback. Initial readiness
+observations use a one-second retry cadence; network backoff and the
+60-second steady cadence are unchanged. Successful bootstrap publishes its actual
+initial watch event without overwriting existing watcher health. Fully validated unchanged HTTP 200 conditional responses
+reuse only exact committed source/content/apply authority and a verified snapshot;
+periodic forced repair remains enabled. Static discard and pending-unit spans
+identify first-readiness gates. Qualification belongs to the paired provisioning
+fixture; no 10 s readiness bound is claimed.
 
 Done: Docker CLI typecheck, focused systemd/producer regressions and Biome pass;
 latency qualification belongs to the paired provisioning fixture.

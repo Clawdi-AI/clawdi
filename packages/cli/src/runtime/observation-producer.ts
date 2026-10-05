@@ -13,11 +13,10 @@ import {
 } from "./heartbeat-observation";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { profileRuntimeStepAsync } from "./profile";
-import { readRuntimeBootStatus } from "./state";
 
 const OBSERVATION_INTERVAL_MS = 60_000;
 // Until the first healthy sample, readiness latency is user-visible deploy time.
-const CONVERGENCE_OBSERVATION_INTERVAL_MS = 250;
+const CONVERGENCE_OBSERVATION_INTERVAL_MS = 1_000;
 const CONVERGENCE_OBSERVATION_WINDOW_MS = 90_000;
 const IDLE_RETRY_INTERVAL_MS = 1_000;
 const FAILURE_RETRY_INTERVAL_MS = 5_000;
@@ -60,8 +59,6 @@ interface ObservationSchedule {
 export class HostedRuntimeObservationProducer {
 	private readonly paths: RuntimePaths;
 	private readonly contextPath: string | undefined;
-	private readonly abort: AbortSignal;
-	private readonly settleDelay: NonNullable<RuntimeObservationProducerOptions["delay"]>;
 	private readonly submit: NonNullable<RuntimeObservationProducerOptions["submit"]>;
 	private readonly sessionFactory: NonNullable<RuntimeObservationProducerOptions["sessionFactory"]>;
 	private session: HostedRuntimeHeartbeatSession | null = null;
@@ -71,8 +68,6 @@ export class HostedRuntimeObservationProducer {
 	constructor(options: RuntimeObservationProducerOptions) {
 		this.paths = options.paths ?? getRuntimePaths();
 		this.contextPath = options.contextPath;
-		this.abort = options.abort;
-		this.settleDelay = options.delay ?? abortableDelay;
 		this.sessionFactory =
 			options.sessionFactory ??
 			((environmentId, paths) => new HostedRuntimeHeartbeatSession({ environmentId, paths }));
@@ -105,15 +100,6 @@ export class HostedRuntimeObservationProducer {
 				this.session.refreshAppliedState();
 			}
 
-			// Applied state precedes the final boot status by a few synchronous
-			// writes. Avoid an expensive capture known to straddle that transition.
-			// This wait is bounded; every normal proof still runs afterward.
-			if (
-				!(await profileRuntimeStepAsync("observation.boot-settle", () =>
-					this.settleBootStatus(context.identityKey),
-				))
-			)
-				return { outcome: "idle" };
 			const session = this.session;
 			buffered = await profileRuntimeStepAsync("observation.capture", () => session.nextEvent());
 			if (!buffered && this.currentAttestedIdentityKey() === context.identityKey) {
@@ -160,16 +146,6 @@ export class HostedRuntimeObservationProducer {
 			});
 			return { outcome: "failed" };
 		}
-	}
-
-	private async settleBootStatus(identityKey: string): Promise<boolean> {
-		for (let attempt = 0; attempt < 10; attempt += 1) {
-			if (this.abort.aborted || this.currentAttestedIdentityKey() !== identityKey) return false;
-			const boot = readRuntimeBootStatus(this.paths).status;
-			if (boot?.status !== "ok" || boot.stage !== "config") return true;
-			await this.settleDelay(50, this.abort);
-		}
-		return !this.abort.aborted && this.currentAttestedIdentityKey() === identityKey;
 	}
 
 	currentAttestedIdentityKey(): string | null {
@@ -224,7 +200,6 @@ export async function runRuntimeObservationProducer(
 	const now = options.now ?? Date.now;
 	const activeAttempts = new Map<string, Promise<void>>();
 	const schedules = new Map<string, ObservationSchedule>();
-	const initialWindowEnd = now() + CONVERGENCE_OBSERVATION_WINDOW_MS;
 	while (!options.abort.aborted) {
 		try {
 			const identityKey = producer.currentAttestedIdentityKey();
@@ -235,7 +210,7 @@ export async function runRuntimeObservationProducer(
 				const schedule = schedules.get(identityKey) ?? {
 					nextAttemptAt: 0,
 					consecutiveFailures: 0,
-					convergenceWindowEnd: now() + CONVERGENCE_OBSERVATION_WINDOW_MS,
+					convergenceWindowEnd: null,
 					lastAttemptedAppliedReceipt: null,
 				};
 				schedules.set(identityKey, schedule);
@@ -262,9 +237,7 @@ export async function runRuntimeObservationProducer(
 							// A retried event retains its capture time; acknowledging it must not
 							// postpone the next fresh sample by another full interval.
 							interval = Math.max(
-								schedule.convergenceWindowEnd === "closed"
-									? IDLE_RETRY_INTERVAL_MS
-									: CONVERGENCE_OBSERVATION_INTERVAL_MS,
+								IDLE_RETRY_INTERVAL_MS,
 								interval - Math.max(0, completedAt - Date.parse(result.capturedAt)),
 							);
 						}
@@ -278,11 +251,7 @@ export async function runRuntimeObservationProducer(
 							schedule.consecutiveFailures = 0;
 						}
 						if (result.outcome === "idle") {
-							interval =
-								typeof schedule.convergenceWindowEnd === "number" &&
-								completedAt < schedule.convergenceWindowEnd
-									? CONVERGENCE_OBSERVATION_INTERVAL_MS
-									: IDLE_RETRY_INTERVAL_MS;
+							interval = IDLE_RETRY_INTERVAL_MS;
 						}
 						schedule.nextAttemptAt = completedAt + interval;
 						if (activeAttempts.get(identityKey) === attempt) {
@@ -295,22 +264,7 @@ export async function runRuntimeObservationProducer(
 		} catch (error) {
 			log.info("daemon.runtime_observation_failed", { error: toErrorMessage(error) });
 		}
-		// Poll quickly only during the bounded first-readiness window. Network
-		// backoff and the steady cadence retain their independent deadlines.
-		const schedule = schedules.get(producer.currentAttestedIdentityKey() ?? "");
-		const converging =
-			schedule &&
-			typeof schedule.convergenceWindowEnd === "number" &&
-			now() < schedule.convergenceWindowEnd;
-		const pollInterval =
-			converging || (!schedule && now() < initialWindowEnd)
-				? CONVERGENCE_OBSERVATION_INTERVAL_MS
-				: IDLE_RETRY_INTERVAL_MS;
-		const untilAttempt = schedule ? schedule.nextAttemptAt - now() : 0;
-		await delay(
-			untilAttempt > 0 ? Math.min(pollInterval, untilAttempt) : pollInterval,
-			options.abort,
-		);
+		await delay(IDLE_RETRY_INTERVAL_MS, options.abort);
 	}
 }
 

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
 import { getCliVersion } from "../lib/version";
@@ -107,7 +108,7 @@ import {
 	withoutStaleSystemdUnits,
 } from "../runtime/systemd-transaction";
 import { syncRuntimeVaultFiles } from "../runtime/vault-files";
-import { toErrorMessage } from "../serve/log";
+import { log, toErrorMessage } from "../serve/log";
 import { consumeSse } from "../serve/sse-client";
 
 interface RuntimeInitOptions {
@@ -989,6 +990,25 @@ async function runtimeInitLocked(
 		const runtimeErrors = [...outcome.runtimeErrors, ...outcome.cliRollbackErrors];
 		const runtimeReady = runtimeErrors.length === 0;
 		const applied = runtimeAppliedStatus(paths);
+		if (
+			runtimeReady &&
+			outcome.resourceProjectionErrors.length === 0 &&
+			!outcome.selfReexec &&
+			!existsSync(paths.runtimeWatchStatus)
+		) {
+			// Publish the actual successful initial apply before final boot status.
+			// The first watcher poll can then report the same authority without a
+			// null-to-healthy parent transition invalidating a full health capture.
+			// Never replace an existing watcher result, especially a health failure.
+			const event = runtimeWatchEventForOutcome(outcome, paths);
+			if (event) {
+				try {
+					writeRuntimeWatchStatus(event, paths);
+				} catch (error) {
+					log.warn("runtime.initial_watch_status_failed", { error: toErrorMessage(error) });
+				}
+			}
+		}
 		emitRuntimeInitStatus({
 			opts,
 			paths,
@@ -1218,8 +1238,20 @@ async function loadRuntimeManifestForWatch(
 	}
 	const responseEtag = conditional.etag ?? manifestEtag ?? null;
 	if (retryDeferred && opts.failureBackoff?.etag === responseEtag) return { kind: "idle" };
+	// A valid datasource may return 200 for an unchanged conditional request.
+	// Reuse only exact committed input and apply authority, after full response
+	// validation and the same snapshot checks as 304. Periodic forced repair still
+	// reconverges native drift even when its manifest is unchanged.
+	const unchangedContent =
+		!opts.forceRefresh &&
+		!("notModified" in conditional) &&
+		active !== null &&
+		conditional.sourceRevision === active.sourceRevision &&
+		conditional.sourcePath === active.contentIdentity.sourcePath &&
+		runtimeAppliedContentIdentity(applyRuntimeBundleChannelsToManifestLoad(conditional)).sha256 ===
+			active.contentIdentity.sha256;
 	if (
-		"notModified" in conditional &&
+		("notModified" in conditional || unchangedContent) &&
 		active !== null &&
 		active.etag === responseEtag &&
 		runtimeApplyIdentitiesEqual(

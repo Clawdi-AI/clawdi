@@ -97,10 +97,8 @@ export async function warmHostedOpenClawRuntime(
 	resolveHostedOpenClawWorkspace(paths.userHome);
 	seedAnonymousOpenClawAuthProbes(paths, command);
 	flushPersistedStepRevisions(paths);
-	warmFirstOpenClawWriter(paths, sdk, identity.uid, identity.gid);
-	// The official anonymous identity write can canonicalize native config.
-	// Bind adoption to that final state after the writer has notified readiness.
 	recordWarmOpenClawGateway(paths);
+	warmFirstOpenClawWriter(paths, sdk, identity.uid, identity.gid);
 }
 
 async function waitForGatewayHealth(): Promise<void> {

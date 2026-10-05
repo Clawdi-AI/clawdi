@@ -158,56 +158,6 @@ async function observationSchedule(
 }
 
 describe("hosted runtime observation producer", () => {
-	test.each(["settled", "stalled", "rotated", "aborted"])(
-		"bounds the final-boot wait and re-attests before capture (%s)",
-		async (mode) => {
-			const paths = tempRuntimePaths();
-			writeApplyIdentityFile(paths, 1);
-			writeRuntimeAppliedState(appliedState(1), paths);
-			writeObservationHealth(paths, "ok");
-			mkdirSync(dirname(paths.bootStatus), { recursive: true });
-			const status = {
-				schemaVersion: "clawdi.runtimeBootStatus.v1",
-				status: "ok",
-				stage: "config",
-				bootId: "first-boot",
-				timestamp: new Date().toISOString(),
-				runtimeMode: "hosted",
-				enabledRuntimes: [],
-			};
-			writeFileSync(paths.bootStatus, JSON.stringify(status));
-			const abort = new AbortController();
-			const waits: number[] = [];
-			let captures = 0;
-			class CountingSession extends HostedRuntimeHeartbeatSession {
-				override async nextEvent() {
-					captures += 1;
-					return null;
-				}
-			}
-			const producer = new HostedRuntimeObservationProducer({
-				abort: abort.signal,
-				paths,
-				contextPath: runtimeContextPath(paths),
-				sessionFactory: (environmentId, sessionPaths) =>
-					new CountingSession({ environmentId, paths: sessionPaths }),
-				submit: async () => {
-					throw new Error("unexpected submission");
-				},
-				delay: async (ms) => {
-					waits.push(ms);
-					if (mode === "settled")
-						writeFileSync(paths.bootStatus, JSON.stringify({ ...status, stage: "final" }));
-					if (mode === "rotated") writeApplyIdentityFile(paths, 2);
-					if (mode === "aborted") abort.abort();
-				},
-			});
-			expect(await producer.sendOnce()).toEqual({ outcome: "idle" });
-			expect(waits).toEqual(Array(mode === "stalled" ? 10 : 1).fill(50));
-			expect(captures).toBe(mode === "rotated" || mode === "aborted" ? 0 : 2);
-		},
-	);
-
 	test.each([false, true])(
 		"bounds immediate recapture and fences a changed identity (%s)",
 		async (changeIdentity) => {
@@ -655,10 +605,10 @@ describe("hosted runtime observation producer", () => {
 		expect(isPermanentRuntimeObservationRejection({ response: { status } })).toBe(expected);
 	});
 
-	test("reports a non-ok to ok transition within a quarter second", async () => {
+	test("reports a non-ok to ok transition within one second", async () => {
 		expect(await observationSchedule("error", 2_000, true)).toEqual([
 			{ at: 0, status: "error" },
-			{ at: 250, status: "ok" },
+			{ at: 1_000, status: "ok" },
 		]);
 	});
 
@@ -696,7 +646,7 @@ describe("hosted runtime observation producer", () => {
 			},
 		});
 
-		expect(attempts).toEqual([0, 250]);
+		expect(attempts).toEqual([0, 1_000]);
 	});
 
 	test.each([
@@ -704,7 +654,7 @@ describe("hosted runtime observation producer", () => {
 			"bounds non-ok fast observations to ninety seconds",
 			"error",
 			151_000,
-			[...Array.from({ length: 361 }, (_, index) => index * 250), 150_000],
+			[...Array.from({ length: 91 }, (_, index) => index * 1_000), 150_000],
 		],
 		["keeps ready observations on the steady cadence", "ok", 61_000, [0, 60_000]],
 	] as const)("%s", async (_name, status, stopAtMs, expectedTimes) => {

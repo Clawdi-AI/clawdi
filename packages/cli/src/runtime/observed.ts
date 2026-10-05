@@ -543,6 +543,7 @@ function observationServingSamples(paths: RuntimePaths, applied: RuntimeAppliedS
 		// A changed invocation/configuration invalidates even a successful sample;
 		// failures are also shared, never retried within this observation.
 		if (!sample.binding || bindingFor(unit) !== sample.binding) {
+			profileRuntimeStep("observation.discard.service-binding", () => null);
 			sample.binding = null;
 			sample.serviceReady = false;
 			sample.componentReady = false;
@@ -881,6 +882,7 @@ export async function runtimeServiceIsReady(
 		const status = recordValue(await probeHermesStatus());
 		const expectedProvider = hermesUiExpectedAuthProvider(paths);
 		if (!expectedProvider || !hermesUiAuthenticationIsReady(status, expectedProvider)) {
+			profileRuntimeStep("observation.pending.hermes-auth", () => null);
 			options.onFailure?.(
 				"Hermes dashboard readiness: self-hosted authentication is not established",
 			);
@@ -891,6 +893,7 @@ export async function runtimeServiceIsReady(
 		options.onComponentReady?.(ready);
 		if (!ready) options.onFailure?.("Hermes dashboard readiness: login HTML is not available");
 		if (status?.gateway_running !== true || status.gateway_state !== "running") {
+			profileRuntimeStep("observation.pending.hermes-native-gateway", () => null);
 			options.onFailure?.("Hermes service readiness: native gateway is not running");
 			return false;
 		}

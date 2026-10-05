@@ -73,8 +73,7 @@ test.each(["success", "rejected", "incomplete", "oversized"])(
   return {snapshot:{valid:true,sourceConfig:JSON.parse(readFileSync(path,"utf8"))}};
  }
  export async function mutateConfigFile(options){
-  const warm = options.afterWrite.mode==="none" && options.afterWrite.reason==="Clawdi anonymous runtime warm-up";
-  if(options.base!=="source"||(!warm && (options.afterWrite.mode!=="auto"||!options.writeOptions.allowConfigSizeDrop)))
+  if(options.base!=="source"||options.afterWrite.mode!=="auto"||!options.writeOptions.allowConfigSizeDrop)
    throw new Error("missing native validation path");
   const draft=JSON.parse(readFileSync(path,"utf8"));options.mutate(draft);
   if(draft.reject)throw new Error("validation failed");
@@ -217,8 +216,7 @@ test.skipIf(process.env.CLAWDI_TEST_SYSTEMD_COMMAND !== "1")(
   return {snapshot:{valid:true,sourceConfig:JSON.parse(readFileSync(path,"utf8"))}};
  }
  export async function mutateConfigFile(options){
-  const warm=options.afterWrite.mode==="none" && options.afterWrite.reason==="Clawdi anonymous runtime warm-up";
-  if(options.base!=="source"||(!warm && options.afterWrite.mode!=="auto"))throw new Error("wrong native mutation");
+  if(options.base!=="source"||options.afterWrite.mode!=="auto")throw new Error("wrong native mutation");
   const config=JSON.parse(readFileSync(path,"utf8"));options.mutate(config);
   writeFileSync(path,JSON.stringify(config));
  }
