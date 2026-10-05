@@ -5,6 +5,7 @@ import hashlib
 import logging
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -24,7 +25,11 @@ from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, 
 from app.models.user import PRINCIPAL_KIND_PARTNER_TENANT, User
 from app.schemas.platform import PLATFORM_RUNTIME_KEY_SCOPES, PlatformRuntimeStateUpsert
 from app.services.hosted_runtime_secrets import runtime_secret_values_idempotency_identity
-from app.services.platform_contract import platform_request_hash, store_platform_response
+from app.services.platform_contract import (
+    platform_request_hash,
+    prune_platform_mutation_idempotency,
+    store_platform_response,
+)
 from app.services.runtime_source import (
     expected_runtime_bundle_v2_etag,
     load_runtime_source_batch,
@@ -1735,3 +1740,24 @@ async def test_platform_channel_bundle_initialization_is_atomic(
         )
         == 1
     )
+
+
+@pytest.mark.asyncio
+async def test_platform_idempotency_retention_prunes_expired_rows(db_session, seed_user):
+    row = store_platform_response(
+        db_session,
+        operation="retention.test",
+        idempotency_key=f"retention-{uuid.uuid4().hex}",
+        request_hash="a" * 64,
+        owner_user_id=seed_user.id,
+        resource_type="test",
+        resource_id=None,
+        response_status=200,
+        response_body={"ok": True},
+    )
+    now = datetime.now(UTC)
+    row.expires_at = now - timedelta(seconds=1)
+    await db_session.flush()
+
+    assert await prune_platform_mutation_idempotency(db_session, now=now, limit=10) == 1
+    assert await db_session.get(PlatformMutationIdempotency, row.id) is None

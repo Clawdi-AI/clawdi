@@ -17,6 +17,7 @@ from app.services.metrics import (
     channel_retention_delivery_expirations,
     channel_retention_secret_scrubs,
 )
+from app.services.platform_contract import prune_platform_mutation_idempotency
 from app.services.platform_workload_auth import prune_platform_workload_assertion_replays
 
 log = logging.getLogger(__name__)
@@ -66,6 +67,19 @@ class ChannelMessageRetentionWorker:
         processed_total += replay_deletions
         if replay_deletions:
             log.info("platform workload replay retention completed: deleted=%s", replay_deletions)
+        async with self._sessionmaker() as db:
+            idempotency_deletions = await prune_platform_mutation_idempotency(
+                db,
+                now=current_time,
+                limit=self._batch_size,
+            )
+            await db.commit()
+        processed_total += idempotency_deletions
+        if idempotency_deletions:
+            log.info(
+                "platform mutation idempotency retention completed: deleted=%s",
+                idempotency_deletions,
+            )
         last_saturated: tuple[str, ...] = ()
         batches = 0
         while batches < self._max_batches and not stop_event.is_set():
