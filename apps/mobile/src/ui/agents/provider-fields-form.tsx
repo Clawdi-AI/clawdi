@@ -10,10 +10,10 @@ import { providerFieldsFormCopy as copy } from "@clawdi/shared/view";
 import { ExternalLink, Eye, EyeOff, UserRound } from "lucide-react-native";
 import { type ReactNode, useState } from "react";
 import { Button } from "../button";
+import { ChoiceSelect } from "../detail/choice-select";
 import { Icon } from "../icon";
 import { Input, Label } from "../input";
 import { WebText, WebView, webBoth, webView } from "../web-layout";
-import { ChoiceSelect } from "./controls";
 
 /** Web's name, routing and credential fields, with controlled native inputs. */
 export function ProviderFieldsForm({
@@ -72,6 +72,7 @@ export function ProviderFieldsForm({
 					<WebView recipe={styles.field}>
 						<Label>{copy.apiFormat}</Label>
 						<ChoiceSelect
+							triggerClassName={webView(styles.select)}
 							value={apiMode}
 							options={AI_PROVIDER_API_MODES.map((mode) => ({
 								value: mode,
