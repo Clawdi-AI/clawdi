@@ -108,7 +108,7 @@ export function TabsTrigger({
 		"group-data-vertical/tabs": tabs.orientation === "vertical",
 	};
 	const classes = resolveWebClasses(
-		cn(tabsTriggerClassName, tabsTriggerActiveClassName, tabsTriggerLineClassName),
+		cn(tabsTriggerClassName, tabsTriggerActiveClassName, tabsTriggerLineClassName, className),
 		state,
 	);
 	// Web draws the underline with ::after. Resolve that same recipe on a child View.
@@ -123,7 +123,7 @@ export function TabsTrigger({
 				accessibilityState={{ selected: active, disabled }}
 				disabled={disabled}
 				onPress={() => tabs.setValue(value)}
-				className={cn(classes.view, className)}
+				className={classes.view}
 			>
 				<Content className={classes.text}>{children}</Content>
 				{variant === "line" ? <AppView pointerEvents="none" className={indicator.view} /> : null}

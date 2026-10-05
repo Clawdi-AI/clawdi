@@ -1,6 +1,10 @@
 import { type Project, slugFromVaultName } from "@clawdi/shared/api";
 import { HERO_GRID_CLASS, vaultsSurfaceClasses } from "@clawdi/shared/ui";
-import { getProjectResourceDefinition, identityFor } from "@clawdi/shared/view";
+import {
+	compareVaultsForCatalog,
+	getProjectResourceDefinition,
+	identityFor,
+} from "@clawdi/shared/view";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { Plus } from "lucide-react-native";
@@ -78,7 +82,7 @@ function VaultCatalog({ project }: { project?: Project }) {
 		!project || (project.is_owner && project.kind !== "environment" && !project.archived_at);
 	const items = [
 		...new Map((catalog.data?.pages.flatMap((p) => p.items) ?? []).map((v) => [v.id, v])).values(),
-	];
+	].sort((a, b) => compareVaultsForCatalog(a, b, search));
 	const create = () => {
 		const visible = capture();
 		return action.run(async (isCurrent) => {
@@ -106,7 +110,7 @@ function VaultCatalog({ project }: { project?: Project }) {
 	return (
 		<LibraryPage>
 			<PageHeader
-				title={t("vault.title")}
+				title={getProjectResourceDefinition("vaults").label}
 				description={getProjectResourceDefinition("vaults").managementDescription}
 				actions={
 					canCreate ? (
@@ -135,6 +139,7 @@ function VaultCatalog({ project }: { project?: Project }) {
 						</FilterChip>
 						{(projects.data ?? [])
 							.filter((p) => p.vault_count > 0)
+							.sort((a, b) => b.vault_count - a.vault_count || a.name.localeCompare(b.name))
 							.map((p) => (
 								<FilterChip
 									key={p.id}

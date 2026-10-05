@@ -144,7 +144,7 @@ function ProjectHub({ id }: { id?: string }) {
 								<TabsTrigger
 									key={item.id}
 									value={item.id}
-									className={webView(projectDetailClasses.tab)}
+									className={webBoth(projectDetailClasses.tab)}
 								>
 									{item.label}
 								</TabsTrigger>

@@ -119,6 +119,11 @@ Location**, enter `10.0.2.2:8082`, and apply. Verify Metro logs show **Android
 Bundled** from your worktree before capturing; the native config remains baked
 into the APK.
 
+The bundle address is temporary in this APK: a force-stop/cold launch restores
+the default port. Keep the app running while capturing, and repeat the dev-menu
+selection after a cold launch. When the keyboard opens, use the current position
+of **Apply Changes**; its button moves above the keyboard.
+
 The script uses `adb` from `~/.cache/clawdi/android-preview/sdk/platform-tools`
 (override with `ANDROID_SDK_ROOT`), opens `clawdi://<path>`, and writes
 `/tmp/clawdi-ui-parity/android/<name>.png`. It fails if no device is attached;
