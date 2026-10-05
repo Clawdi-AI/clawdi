@@ -24,6 +24,7 @@ from sqlalchemy.pool import QueuePool
 
 from app.core import database
 from app.core.query_utils import search_excerpt, search_highlight_terms, search_terms
+from app.routes import search as search_routes
 from app.models.session import (
     SESSION_SEARCH_CHUNK_BODY_CHARACTERS,
     SESSION_SEARCH_CHUNK_MAX_CHARACTERS,
@@ -36,6 +37,36 @@ from app.services.session_search import (
     replace_snapshot_search_index,
 )
 from tests.db_lock_helpers import wait_for_lock_wait
+
+
+@pytest.mark.asyncio
+async def test_global_search_isolates_failed_source_transaction(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def fail_sessions(db, auth, query):
+        await db.execute(text("SELECT 1 / 0"))
+        return []
+
+    async def healthy_agents(db, auth, query):
+        return [
+            search_routes.SearchHit(
+                type="agent",
+                id="agent-after-failure",
+                title="Search still works",
+                href="/agents/agent-after-failure",
+            )
+        ]
+
+    monkeypatch.setattr(search_routes, "_search_sessions", fail_sessions)
+    monkeypatch.setattr(search_routes, "_search_agents", healthy_agents)
+
+    response = await client.get("/v1/search", params={"q": "isolated"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["failed_sources"] == ["sessions"]
+    assert [hit["id"] for hit in body["results"]] == ["agent-after-failure"]
 
 
 async def _register_env(client: httpx.AsyncClient) -> str:
