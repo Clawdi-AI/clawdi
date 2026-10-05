@@ -28,26 +28,23 @@ export function computeStatusDetailsPresentation(deployment: DeploymentRead) {
 		};
 	if (failure)
 		return { title: failure.title, description: failure.reason, tone: "destructive" as const };
+	const descriptions = {
+		creating: computeStatusDetailsCopy.starting,
+		starting: computeStatusDetailsCopy.starting,
+		failed: computeStatusDetailsCopy.failed,
+		restarting: computeStatusDetailsCopy.restarting,
+		updating: computeStatusDetailsCopy.updating,
+		stopping: computeStatusDetailsCopy.stopping,
+		deleting: computeStatusDetailsCopy.deleting,
+		deleted: computeStatusDetailsCopy.deleted,
+		unknown: computeStatusDetailsCopy.unknown,
+	};
 	const description =
 		status.kind === "stopped"
 			? `Compute is stopped. Channels and ${runtimeBrowserUiLabel(deployment.resource.spec.runtime)} are unavailable.`
-			: status.kind === "failed"
-				? computeStatusDetailsCopy.failed
-				: status.kind === "restarting"
-					? computeStatusDetailsCopy.restarting
-					: status.kind === "updating"
-						? computeStatusDetailsCopy.updating
-						: status.kind === "creating" || status.kind === "starting"
-							? computeStatusDetailsCopy.starting
-							: status.kind === "stopping"
-								? computeStatusDetailsCopy.stopping
-								: status.kind === "deleting"
-									? computeStatusDetailsCopy.deleting
-									: status.kind === "deleted"
-										? computeStatusDetailsCopy.deleted
-										: status.kind === "unknown"
-											? computeStatusDetailsCopy.unknown
-											: null;
+			: status.kind in descriptions
+				? descriptions[status.kind as keyof typeof descriptions]
+				: null;
 	return description
 		? {
 				title: null,

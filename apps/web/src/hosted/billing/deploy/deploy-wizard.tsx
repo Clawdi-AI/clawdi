@@ -2,7 +2,12 @@
 
 import { validateHostedDeployPersona } from "@clawdi/shared/api";
 import { deployWizardClasses } from "@clawdi/shared/ui";
-import { agentSurfaceCopy } from "@clawdi/shared/view";
+import {
+	agentSurfaceCopy,
+	deployComputeResourceLabels,
+	deployConfigurationSummary,
+	deployFormCopy,
+} from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import {
@@ -282,15 +287,16 @@ function ComputeResources({
 	ramGb: number;
 	diskGb: number;
 }) {
+	const resources = deployComputeResourceLabels(vcpu, ramGb, diskGb);
 	return (
 		<span className={deployWizardClasses.specs}>
-			<span className={deployWizardClasses.priceSegment}>{vcpu} vCPU</span>
+			<span className={deployWizardClasses.priceSegment}>{resources[0]}</span>
 			{" · "}
 			<span className={deployWizardClasses.priceSegment} data-testid={testId}>
-				{ramGb} GB RAM
+				{resources[1]}
 			</span>
 			{" · "}
-			<span className={deployWizardClasses.priceSegment}>{diskGb} GB storage</span>
+			<span className={deployWizardClasses.priceSegment}>{resources[2]}</span>
 		</span>
 	);
 }
@@ -1087,9 +1093,7 @@ export function DeployWizard() {
 			: compute === "performance"
 				? agentSurfaceCopy.performance
 				: "Basic";
-	const summaryLine = [runtimeSummary, aiSummary, `${selectedComputeLabel} compute`]
-		.filter(Boolean)
-		.join(" · ");
+	const summaryLine = deployConfigurationSummary(runtimeSummary, aiSummary, selectedComputeLabel);
 
 	const plansLoadError =
 		(shouldBlockQueryError(plans.error, plans.data) ? plans.error : null) ??
@@ -1317,7 +1321,7 @@ export function DeployWizard() {
 						paidSelection &&
 						(compute === "performance" ? perfOffers : basicOffers).length > 1 ? (
 							<div className={deployWizardClasses.billingTerm}>
-								<span className={deployWizardClasses.fieldLabel}>Billing term</span>
+								<span className={deployWizardClasses.fieldLabel}>{deployFormCopy.billingTerm}</span>
 								<TermSwitcher
 									offers={compute === "performance" ? perfOffers : basicOffers}
 									value={compute === "performance" ? perfBillingTermMonths : basicBillingTermMonths}
@@ -1374,7 +1378,7 @@ export function DeployWizard() {
 												: undefined
 										}
 										icon={
-											<IconChip size="sm" tint="bg-identity-8-bg text-identity-8-fg">
+											<IconChip size="sm" tint={deployWizardClasses.performanceTint}>
 												<Zap />
 											</IconChip>
 										}
@@ -1411,7 +1415,9 @@ export function DeployWizard() {
 								</div>
 								{paidSelection ? (
 									<div className={deployWizardClasses.paymentMethods}>
-										<div className={deployWizardClasses.fieldTitle}>Payment method</div>
+										<div className={deployWizardClasses.fieldTitle}>
+											{deployFormCopy.paymentMethod}
+										</div>
 										<div className={ENTITY_CHOICE_GRID_CLASS}>
 											<EntityChoiceCard
 												selected={paymentMethod === "card"}
@@ -1421,8 +1427,8 @@ export function DeployWizard() {
 														<CreditCard />
 													</IconChip>
 												}
-												title="Card subscription"
-												description="Recurring subscription via Stripe. Manage or cancel anytime."
+												title={deployFormCopy.cardTitle}
+												description={deployFormCopy.cardDescription}
 												badge={
 													selectedCardTrial ? (
 														<Badge variant="secondary">{selectedCardTrial.label}</Badge>
@@ -1439,11 +1445,8 @@ export function DeployWizard() {
 														<WalletCards />
 													</IconChip>
 												}
-												title="Wallet balance"
-												description={
-													walletDisabledReason ??
-													"Paid upfront from your Wallet balance. Renews from Wallet."
-												}
+												title={deployFormCopy.walletTitle}
+												description={walletDisabledReason ?? deployFormCopy.walletDescription}
 												disabled={walletDisabledReason !== null}
 											/>
 										</div>

@@ -1,4 +1,5 @@
 export const agentChannelSectionClasses = {
+	pairedChatsTrigger: "h-auto max-w-full justify-start p-0 text-sm",
 	section: "flex min-w-0 scroll-mt-6 flex-col gap-3 outline-none",
 	header: "flex min-w-0 flex-wrap items-start justify-between gap-3",
 	copy: "min-w-0 flex-1",

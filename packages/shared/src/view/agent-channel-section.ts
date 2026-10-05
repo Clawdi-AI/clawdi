@@ -25,3 +25,7 @@ export function agentChannelLinkUnavailableReason({
 	}
 	return null;
 }
+
+export function agentChannelPairedChatsLabel(count: number): string {
+	return `${count} paired ${count === 1 ? "chat" : "chats"}`;
+}

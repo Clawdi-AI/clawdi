@@ -1,4 +1,5 @@
 export const deployWizardClasses = {
+	performanceTint: "bg-identity-8-bg text-identity-8-fg",
 	planPrice: "flex min-w-0 flex-col items-end text-right tabular-nums",
 	planPriceHeading: "flex items-baseline justify-end leading-5",
 	planPriceValue: "whitespace-nowrap text-sm font-semibold text-foreground",
