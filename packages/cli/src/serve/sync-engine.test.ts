@@ -1255,23 +1255,22 @@ describe("Agent filesystem projection reconcile", () => {
 				});
 				expect(queue.peek()?.version).toBe(absenceDelete?.version);
 
-				// A full offline queue may evict the Skill operation. Once the
-				// unrelated session completes and the daemon restarts, the durable
-				// queue is empty while the remote revision remains unchanged.
-				const sessionVersion = queue.enqueue({
-					kind: "session_push",
-					...sessionQueueFence(api, adapterRegistry.hermes.create(), "session-1"),
-					local_session_id: "session-1",
-					content_hash: "session-hash",
+				// Skills have independent capacity: exercise an eviction from a
+				// competing Skill, then complete it before restarting the queue.
+				const competingVersion = queue.enqueue({
+					kind: "skill_delete",
+					agent_id: "agent-1",
+					project_id: "project-1",
+					skill_key: "other-skill",
 					enqueued_at: new Date().toISOString(),
 					attempts: 0,
 				});
-				expect(queue.peek()?.kind).toBe("session_push");
-				const sessionItem = queue.peek();
-				if (!sessionItem || sessionItem.version !== sessionVersion) {
-					throw new Error("expected retained session queue item");
+				expect(queue.peek()?.kind).toBe("skill_delete");
+				const competingItem = queue.peek();
+				if (!competingItem || competingItem.version !== competingVersion) {
+					throw new Error("expected retained competing Skill item");
 				}
-				queue.markDoneIfVersion(sessionItem);
+				queue.markDoneIfVersion(competingItem);
 				await queue.flushPersist();
 				const restarted = new RetryQueue({ agentType: "hermes", maxItems: 1 });
 				restarted.load();
@@ -1690,6 +1689,74 @@ describe("daemon startup Agent lookup", () => {
 			rmSync(root, { recursive: true, force: true });
 		}
 	}
+
+	it.each([false, true])(
+		"reports drop deltas after failed heartbeats with bounded health text (long error=%s)",
+		async (longError) => {
+			const reports: Array<{
+				dropped_count_delta: number;
+				last_sync_error: string | null;
+			}> = [];
+			let finish: () => void = () => {};
+			await withStartupCase(
+				async (request) => {
+					const body = (await request.json()) as {
+						dropped_count_delta: number;
+						last_sync_error: string | null;
+					};
+					expect(body).not.toHaveProperty("reset_queue_counters");
+					reports.push(body);
+					if (reports.length === 1) return new Response("temporarily unavailable", { status: 500 });
+					if (reports.length === 3) finish();
+					return new Response(null, { status: 204 });
+				},
+				async ({ abortController, logs }) => {
+					finish = () => abortController.abort();
+					const queue = new RetryQueue({ agentType: "pi" });
+					queue.recordPermanentDrop();
+					queue.recordPermanentDrop("retry_exhausted");
+					const opts = {
+						environmentId: "agent-isolated",
+						adapter: adapterRegistry.pi.create(),
+						abort: abortController.signal,
+						abortController,
+						heartbeatIntervalMs: 1,
+					};
+					await heartbeatLoop(
+						opts,
+						new ApiClient({ requireAuth: false }),
+						queue,
+						abortController.signal,
+						() => ({
+							last_revision_seen: null,
+							last_sync_error: longError ? "x".repeat(10_000) : null,
+						}),
+						() => {},
+					);
+					const dropLogs = logs
+						.map((line): { event: string } => JSON.parse(line))
+						.filter(({ event }) => event === "engine.queue_dropped");
+					expect(dropLogs).toEqual([
+						expect.objectContaining({
+							dropped_count_delta: 2,
+							reasons: { permanent: 1, retry_exhausted: 1 },
+						}),
+					]);
+				},
+			);
+			expect(reports.map(({ dropped_count_delta }) => dropped_count_delta)).toEqual([2, 2, 0]);
+			const dropMessage = "queue_dropped: permanent=1, retry_exhausted=1";
+			const errorWithDrops = longError ? `${"x".repeat(500)}; ${dropMessage}` : dropMessage;
+			expect(reports.map(({ last_sync_error }) => last_sync_error)).toEqual([
+				errorWithDrops,
+				errorWithDrops,
+				longError ? "x".repeat(1000) : null,
+			]);
+			for (const report of reports) {
+				expect(report.last_sync_error?.length ?? 0).toBeLessThanOrEqual(1000);
+			}
+		},
+	);
 
 	it("bounds individual health errors and the reported heartbeat text", async () => {
 		const health = new SyncHealth();
