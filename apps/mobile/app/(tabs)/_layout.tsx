@@ -28,6 +28,7 @@ function AppTabs() {
 	]);
 	return (
 		<NativeTabs
+			labelVisibilityMode="labeled"
 			backgroundColor={themeColor(background)}
 			tintColor={themeColor(foreground)}
 			iconColor={{ default: themeColor(muted), selected: themeColor(foreground) }}
