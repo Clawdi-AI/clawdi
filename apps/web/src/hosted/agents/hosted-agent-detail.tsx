@@ -1420,6 +1420,7 @@ function OverviewTab({
 					icon={AGENT_SECTION_NAVIGATION_ITEMS.channels.icon}
 					tint={AGENT_SECTION_NAVIGATION_ITEMS.channels.tint}
 					link={agentSectionLink(agentId, "channels")}
+					prominent
 				/>
 				<OverviewNavigationCard
 					id="model-provider"
