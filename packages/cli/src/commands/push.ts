@@ -498,7 +498,8 @@ async function scanOneAgent(
 				!(
 					cached?.protocol === plan.protocol &&
 					cached.local_hash === plan.localHash &&
-					cached.pending === undefined
+					cached.pending === undefined &&
+					cached.blocked === undefined
 				)
 			)
 				retained.push(s);
@@ -568,6 +569,7 @@ async function uploadOneAgent(
 	moduleState: ModuleState,
 ): Promise<AgentUploadResult | "aborted"> {
 	const { agentType, envId, sessions, sessionPlans, skills } = scan;
+	const sessionsModule = adapterForType(agentType)?.sessions;
 
 	if (!envId) {
 		p.log.error("Environment id missing — rerun `clawdi setup`.");
@@ -694,6 +696,13 @@ async function uploadOneAgent(
 						session: s,
 						plan,
 						needsSnapshotContent: needsContent.has(id),
+						confirmPlanCurrent: async () => {
+							const current = await sessionsModule?.resolve(id);
+							return (
+								!!current &&
+								(await prepareSessionUpload(current, plan.protocol)).localHash === plan.localHash
+							);
+						},
 					});
 					if (result.status === "blocked") {
 						p.log.warn(result.message);

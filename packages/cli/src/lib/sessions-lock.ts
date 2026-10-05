@@ -4,6 +4,7 @@ import { join } from "node:path";
 import chalk from "chalk";
 import type { AgentType } from "../adapters/registry";
 import { getClawdiDir } from "./config";
+import { getCliVersion } from "./version";
 
 export interface SessionFence {
 	apiOrigin: string;
@@ -30,6 +31,17 @@ export interface SessionUploadBlock {
 	size_bytes?: number;
 	message: string;
 	blocked_at: string;
+	cli_version?: string;
+}
+
+export function isSessionBlockCurrent(block: SessionUploadBlock, now = Date.now()): boolean {
+	const blockedAt = Date.parse(block.blocked_at);
+	return (
+		block.cli_version === getCliVersion() &&
+		Number.isFinite(blockedAt) &&
+		blockedAt <= now &&
+		now - blockedAt <= 24 * 60 * 60 * 1000
+	);
 }
 
 export interface FencedSessionLockEntry {

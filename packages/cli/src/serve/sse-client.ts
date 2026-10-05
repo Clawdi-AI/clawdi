@@ -184,6 +184,9 @@ export async function consumeSse(opts: Opts): Promise<void> {
 				opts.onAuthFailure?.();
 				return;
 			}
+			if (firstByteAt !== null && Date.now() - firstByteAt >= STABLE_CONNECTION_MS) {
+				attempt = 0;
+			}
 			const wait = error.retry_after_ms ?? backoffMs(attempt);
 			const info = buildReconnectInfo({
 				reason: error.reason,

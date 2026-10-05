@@ -12,6 +12,12 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.106
+
+- Rejected sessions retry after CLI upgrades or within a day, and concurrent pushes preserve newer session history while allowing confirmed local truncation.
+- Background sync reconnects promptly after stable connections drop, reports bounded errors and queue drops, and keeps session backlogs from displacing Skills.
+- Linked Project Skills continue reconciling around local conflicts, and large Skill and session uploads have enough time to transfer over slower connections.
+
 ### CLI 0.14.105
 
 - Invalid local Skill keys report their shape without exposing names, and old queued invalid Skills no longer leave sync permanently errored while other Skills continue syncing.

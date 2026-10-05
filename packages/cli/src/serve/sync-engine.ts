@@ -69,6 +69,7 @@ import {
 import {
 	type FencedSessionLockEntry,
 	type FencedSessionSourceRevisionUpdate,
+	isSessionBlockCurrent,
 	persistFencedSessionSourceRevisions,
 	readSessionsLock,
 	type SessionFence,
@@ -97,7 +98,7 @@ export { isSafelyTerminalRuntimeObservationFailure } from "../runtime/observatio
 import { log, toErrorMessage } from "./log";
 import { getServeStateDir } from "./paths";
 import { reconcileConnectedProjectSkills } from "./project-skill-reconcile";
-import { hasSessionFence, type QueueItem, RetryQueue } from "./queue";
+import { hasSessionFence, QUEUE_DROP_REASONS, type QueueItem, RetryQueue } from "./queue";
 import { type SessionWatchEvent, watchSessions } from "./sessions-watcher";
 import {
 	consumeSse,
@@ -237,12 +238,12 @@ export class SyncHealth {
 	};
 
 	set(area: SyncHealthArea, resource: string, message: string, transient = false): void {
-		this.errors[area].set(resource, { message, transient });
+		this.errors[area].set(resource, { message: message.slice(0, 500), transient });
 	}
 
 	setIfAbsent(area: SyncHealthArea, resource: string, message: string, transient = false): void {
 		if (!this.errors[area].has(resource)) {
-			this.errors[area].set(resource, { message, transient });
+			this.errors[area].set(resource, { message: message.slice(0, 500), transient });
 		}
 	}
 
@@ -1079,7 +1080,7 @@ async function prepareSessionSync(
 	const protocol = await negotiateSessionProtocol(api, sessions, { signal: opts.abort });
 	const lastPushedSessionHash = loadFencedSessionHashes(api, opts);
 	for (const entry of currentFencedSessionEntries(api, opts)) {
-		if (entry.blocked) {
+		if (entry.blocked && isSessionBlockCurrent(entry.blocked)) {
 			health.set(
 				"push",
 				`session:${entry.source_session_key}`,
@@ -1093,6 +1094,10 @@ async function prepareSessionSync(
 	const executeScan = async (request: SessionScanRequest): Promise<void> => {
 		if (opts.abort.aborted) return;
 		try {
+			lastPushedSessionHash.clear();
+			for (const [key, hash] of loadFencedSessionHashes(api, opts)) {
+				lastPushedSessionHash.set(key, hash);
+			}
 			const materializeActivity =
 				request.kind === "complete" &&
 				runtimeUserActivityNeedsMaterialization(opts.adapter.agentType);
@@ -1122,9 +1127,8 @@ async function prepareSessionSync(
 							adapter: opts.adapter.agentType,
 							sourceSessionKey: session.localSessionId,
 						}),
-					onBlocked: (session, message, hash) => {
+					onBlocked: (session, message) => {
 						health.set("push", `session:${session.localSessionId}`, `permanent: ${message}`);
-						lastPushedSessionHash.set(session.localSessionId, hash);
 					},
 				});
 				enqueued += result.enqueued;
@@ -1205,7 +1209,7 @@ async function prepareSessionSync(
 function loadFencedSessionHashes(api: ApiClient, opts: EngineOpts): Map<string, string> {
 	const hashes = new Map<string, string>();
 	for (const value of currentFencedSessionEntries(api, opts)) {
-		if (value.pending === undefined) {
+		if (value.pending === undefined && (!value.blocked || isSessionBlockCurrent(value.blocked))) {
 			hashes.set(value.source_session_key, value.local_hash);
 		}
 	}
@@ -1219,7 +1223,12 @@ function loadFencedSessionSourceRevisions(
 ): Map<string, string> {
 	const revisions = new Map<string, string>();
 	for (const value of currentFencedSessionEntries(api, opts)) {
-		if (value.protocol === protocol && value.pending === undefined && value.source_revision) {
+		if (
+			value.protocol === protocol &&
+			value.pending === undefined &&
+			value.source_revision &&
+			(!value.blocked || isSessionBlockCurrent(value.blocked))
+		) {
 			revisions.set(value.source_session_key, value.source_revision);
 		}
 	}
@@ -1480,8 +1489,8 @@ async function drainQueueLoop(
 	// oversized clears only a same-resource transient, while permanent
 	// and retry-exhausted failures remain unresolved until that exact
 	// resource is later applied or disappears.
-	const dropItem = (item: QueueItem) => {
-		queue.recordPermanentDrop();
+	const dropItem = (item: QueueItem, reason: "permanent" | "retry_exhausted" | "oversized") => {
+		queue.recordPermanentDrop(reason);
 		clearInFlight(item);
 		queue.markDoneIfVersion(item);
 	};
@@ -1585,7 +1594,7 @@ async function drainQueueLoop(
 				// only its prior transient push failure; the dropped
 				// counter remains the user-visible oversized signal.
 				health.clearTransient("push", resource);
-				dropItem(item);
+				dropItem(item, "oversized");
 			} else if (isPermanentUploadError(e)) {
 				// 4xx that won't change on retry — malformed body,
 				// schema validation, etc. Retrying 30 times costs the
@@ -1612,7 +1621,7 @@ async function drainQueueLoop(
 				// too. Pre-fix only FIFO eviction ticked the counter
 				// and a 4xx-rejected session vanished without any UI
 				// signal.
-				dropItem(item);
+				dropItem(item, "permanent");
 			} else if (newAttempts >= MAX_QUEUE_ATTEMPTS) {
 				log.error("engine.queue_drop_max_attempts", {
 					item: redactItem(item),
@@ -1632,7 +1641,7 @@ async function drainQueueLoop(
 				// will pick this up automatically once connectivity
 				// is back."
 				health.set("push", resource, `retry_exhausted: ${msg}`);
-				dropItem(item);
+				dropItem(item, "retry_exhausted");
 			} else {
 				log.warn("engine.queue_retry", {
 					item: redactItem(item),
@@ -1901,7 +1910,7 @@ export async function processQueueItem(
 		// Leave the in-memory state untouched so the next watcher
 		// tick can decide.
 		opts.abort.throwIfAborted();
-		if (result.outcome === "applied" || result.outcome === "blocked") {
+		if (result.outcome === "applied") {
 			lastPushedSessionHash.set(item.local_session_id, result.actualHash);
 		}
 		const cur = inFlightSessionHash.get(item.local_session_id);
@@ -2020,6 +2029,17 @@ async function uploadSessionFromQueue(
 			session,
 			plan,
 			needsSnapshotContent: result.needs_content.includes(session.localSessionId),
+			confirmPlanCurrent: async () => {
+				const current = await sessions.resolve(item.source_session_key, {
+					signal: opts.abort,
+					streaming: true,
+				});
+				opts.abort.throwIfAborted();
+				return (
+					current !== null &&
+					(await prepareSessionUpload(current, protocol)).localHash === plan.localHash
+				);
+			},
 		});
 		if (content.status === "blocked") {
 			log.warn("engine.session_sync_blocked", {
@@ -2546,6 +2566,15 @@ export async function heartbeatLoop(
 	const send = async () => {
 		const fields = snapshot();
 		const dropped = queue.drainDroppedDelta();
+		const droppedCount = Object.values(dropped).reduce((total, delta) => total + delta, 0);
+		const dropMessage = QUEUE_DROP_REASONS.filter((reason) => dropped[reason])
+			.map((reason) => `${reason}=${dropped[reason]}`)
+			.join(", ");
+		const syncError = dropMessage
+			? [fields.last_sync_error?.slice(0, 500), `queue_dropped: ${dropMessage}`.slice(0, 500)]
+					.filter(Boolean)
+					.join("; ")
+			: fields.last_sync_error;
 		try {
 			const runtimeObserved = await readHostedRuntimeObserved();
 			unwrap(
@@ -2560,14 +2589,17 @@ export async function heartbeatLoop(
 						// dashboard's `queue_depth_high_water_since_start`
 						// converge to the actual peak.
 						queue_depth: queue.highWaterMark,
-						dropped_count_delta: dropped,
+						dropped_count_delta: droppedCount,
 						last_revision_seen: fields.last_revision_seen,
-						last_sync_error: fields.last_sync_error,
+						last_sync_error: syncError?.slice(0, 1000) ?? null,
 						...(runtimeObserved ? { runtime_observed: runtimeObserved } : {}),
 					},
 				}),
 			);
 			heartbeatFailureStreak = 0;
+			if (droppedCount > 0) {
+				log.warn("engine.queue_dropped", { dropped_count_delta: droppedCount, reasons: dropped });
+			}
 			await touchHealthFile(opts.adapter.agentType);
 		} catch (e) {
 			// POST failed — restore the unsent dropped delta so the

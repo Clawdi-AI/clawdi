@@ -15,15 +15,18 @@ import {
 	negotiateSessionProtocol,
 	planSessionUpload,
 	prepareSessionUpload,
+	SessionPlanStaleError,
 	sessionFence,
 	sessionPlanIsDurablyBlocked,
 	syncSessionContent,
 } from "./session-upload";
 import {
+	isSessionBlockCurrent,
 	persistFencedSessionEntry,
 	readFencedSessionEntry,
 	readSessionsLock,
 } from "./sessions-lock";
+import { getCliVersion } from "./version";
 
 const originalHome = process.env.HOME;
 const originalClawdiHome = process.env.CLAWDI_HOME;
@@ -112,6 +115,29 @@ function eventApi(): ApiClient {
 }
 
 describe("session upload negotiation and integrity", () => {
+	it.each([
+		["current", getCliVersion(), 0, true],
+		["previous CLI", "old-version", 0, false],
+		["expired", getCliVersion(), -24 * 60 * 60 * 1000 - 1, false],
+		["future", getCliVersion(), 1, false],
+		["legacy", undefined, 0, false],
+		["invalid date", getCliVersion(), NaN, false],
+	] as const)("checks %s blocks", (_name, version, offset, current) => {
+		const now = Date.now();
+		expect(
+			isSessionBlockCurrent(
+				{
+					code: "event_schema_invalid",
+					content_hash: "hash",
+					message: "rejected",
+					blocked_at: Number.isNaN(offset) ? "invalid" : new Date(now + offset).toISOString(),
+					cli_version: version,
+				},
+				now,
+			),
+		).toBe(current);
+	});
+
 	it("plans snapshots without retaining bodies and verifies content when materialized", async () => {
 		let text = "original";
 		const session = rawSession([]);
@@ -147,6 +173,7 @@ describe("session upload negotiation and integrity", () => {
 				size_bytes: 100,
 				message: "blocked after snapshot",
 				blocked_at: new Date().toISOString(),
+				cli_version: getCliVersion(),
 			},
 		});
 		expect(sessionPlanIsDurablyBlocked(fence, plan, snapshot)).toBeNull();
@@ -227,6 +254,114 @@ describe("session upload negotiation and integrity", () => {
 });
 
 describe("events-v1 incremental upload", () => {
+	it.each([undefined, false, true] as const)(
+		"confirms shortening a remote prefix (confirmed=%s)",
+		async (confirmed) => {
+			const api = eventApi();
+			const remote = events(["one", "first"], ["two", "second"], ["three", "third"]);
+			const session = rawSession(remote.slice(0, 2));
+			const plan = planSessionUpload(session, "events-v1");
+			const fence = sessionFence(api, {
+				environmentId: "agent-pi",
+				adapter: "pi",
+				sourceSessionKey: session.localSessionId,
+			});
+			api.getSessionEventHead = async () => ({
+				protocol: "events-v1",
+				generation: "remote",
+				revision: 7,
+				count: 3,
+				head_hash: advanceEventHead(EMPTY_EVENT_HEAD, remote),
+			});
+			let confirmations = 0;
+			let stages = 0;
+			let commits = 0;
+			api.stageSessionEventGeneration = async (_id, body) => {
+				stages++;
+				if (stages === 1) throw new ApiError({ status: 409, body: "retry", hint: "conflict" });
+				return { generation: body.generation, status: "staging" };
+			};
+			api.uploadSessionEventGenerationChunk = async (chunk) => ({
+				generation: chunk.generation,
+				start_seq: chunk.startSeq,
+				end_seq: 1,
+				count: 2,
+				content_hash: chunk.contentHash,
+				result_head_hash: plan.localHash,
+			});
+			api.commitSessionEventGeneration = async (_id, generation, body) => {
+				commits++;
+				return {
+					generation,
+					revision: body.base_revision + 1,
+					count: body.final_count,
+					head_hash: body.final_head_hash,
+				};
+			};
+			const input = {
+				api,
+				fence,
+				session,
+				plan,
+				needsSnapshotContent: false,
+				...(confirmed === undefined
+					? {}
+					: {
+							confirmPlanCurrent: async () => {
+								confirmations++;
+								return confirmed;
+							},
+						}),
+			};
+			if (confirmed === true) {
+				expect((await syncSessionContent(input)).status).toBe("synced");
+				expect({ confirmations, stages, commits }).toEqual({
+					confirmations: 1,
+					stages: 2,
+					commits: 1,
+				});
+			} else {
+				await expect(syncSessionContent(input)).rejects.toBeInstanceOf(SessionPlanStaleError);
+				expect({ confirmations, stages, commits }).toEqual({
+					confirmations: confirmed === undefined ? 0 : 1,
+					stages: 0,
+					commits: 0,
+				});
+				expect(readFencedSessionEntry(readSessionsLock(), fence)).toBeUndefined();
+			}
+		},
+	);
+
+	it.each(["stage", "commit"] as const)("does not block a %s 422", async (operation) => {
+		const api = eventApi();
+		const session = rawSession(events(["one", "first"]));
+		const plan = planSessionUpload(session, "events-v1");
+		const fence = sessionFence(api, {
+			environmentId: "agent-pi",
+			adapter: "pi",
+			sourceSessionKey: session.localSessionId,
+		});
+		api.getSessionEventHead = async () => ({
+			protocol: "events-v1",
+			generation: null,
+			revision: 0,
+			count: 0,
+			head_hash: EMPTY_EVENT_HEAD,
+		});
+		const reject = async () => {
+			throw new ApiError({ status: 422, body: "invalid generation", hint: "validation" });
+		};
+		api.stageSessionEventGeneration =
+			operation === "stage"
+				? reject
+				: async (_id, body) => ({ generation: body.generation, status: "committed" });
+		api.commitSessionEventGeneration = reject;
+		await expect(
+			syncSessionContent({ api, fence, session, plan, needsSnapshotContent: false }),
+		).rejects.toThrow("invalid generation");
+		expect(readFencedSessionEntry(readSessionsLock(), fence)?.blocked).toBeUndefined();
+	});
+
 	it.each(["append", "rewrite"] as const)(
 		"persists a %s validation rejection, skips unchanged content and recovers after re-mapping",
 		async (kind) => {
@@ -537,7 +672,14 @@ describe("events-v1 incremental upload", () => {
 			});
 
 			await expect(
-				syncSessionContent({ api, fence, session, plan, needsSnapshotContent: false }),
+				syncSessionContent({
+					api,
+					fence,
+					session,
+					plan,
+					needsSnapshotContent: false,
+					confirmPlanCurrent: async () => true,
+				}),
 			).rejects.toThrow("server event chunk receipt does not match uploaded bytes");
 			const pendingGeneration = readFencedSessionEntry(readSessionsLock(), fence)?.pending
 				?.generation;
@@ -552,6 +694,7 @@ describe("events-v1 incremental upload", () => {
 				session,
 				plan,
 				needsSnapshotContent: false,
+				confirmPlanCurrent: async () => true,
 			});
 			expect(stagedGeneration).toBe(pendingGeneration);
 			expect(result).toMatchObject({ status: "synced", localHash: finalHead });

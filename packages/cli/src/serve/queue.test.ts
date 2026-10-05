@@ -248,8 +248,8 @@ describe("RetryQueue", () => {
 			});
 		}
 		expect(q.depth).toBe(2);
-		expect(q.drainDroppedDelta()).toBe(1);
-		expect(q.drainDroppedDelta()).toBe(0); // delta resets after read
+		expect(q.drainDroppedDelta()).toEqual({ capacity_skills: 1 });
+		expect(q.drainDroppedDelta()).toEqual({}); // delta resets after read
 		await q.flushPersist();
 	});
 
@@ -282,7 +282,7 @@ describe("RetryQueue", () => {
 
 		await Promise.resolve();
 		expect(secondEnqueued).toBe(false);
-		expect(q.drainDroppedDelta()).toBe(0);
+		expect(q.drainDroppedDelta()).toEqual({});
 		const first = q.peek();
 		if (!first) throw new Error("expected first session");
 		q.markDoneIfVersion(first);
@@ -291,7 +291,7 @@ describe("RetryQueue", () => {
 		expect(q.all().map((item) => item.kind === "session_push" && item.local_session_id)).toEqual([
 			"second",
 		]);
-		expect(q.drainDroppedDelta()).toBe(0);
+		expect(q.drainDroppedDelta()).toEqual({});
 		await q.flushPersist();
 	});
 
@@ -629,73 +629,84 @@ describe("RetryQueue", () => {
 		expect(item2.skill_key).toBe("legit-skill");
 	});
 
-	it("eviction prefers skill_push over session_push", async () => {
-		// Per round-5 must-have: session content is lossless;
-		// only skill_push should get FIFO-evicted when the queue
-		// is full. Without this rule a long offline window
-		// flooded with skill edits silently evicts pending
-		// session uploads and the transcript history is gone.
-		const q = new RetryQueue({ agentType: "claude_code", maxItems: 2 });
+	it("partitions module capacity so session floods preserve Skills", async () => {
+		const q = new RetryQueue({ agentType: "claude_code", maxItems: 1 });
+		q.enqueue({
+			kind: "skill_delete",
+			agent_id: "agent",
+			project_id: "project",
+			skill_key: "alpha",
+			enqueued_at: "2026-01-01T00:00:00Z",
+			attempts: 0,
+		});
+		for (const key of ["s1", "s2", "s3"])
+			q.enqueue({
+				kind: "session_push",
+				...sessionFence(key),
+				local_session_id: key,
+				content_hash: "hash",
+				enqueued_at: "2026-01-01T00:00:00Z",
+				attempts: 0,
+			});
+		expect(q.all().map((item) => item.kind)).toEqual(["skill_delete", "session_push"]);
+		expect(q.drainDroppedDelta()).toEqual({ capacity_sessions: 2 });
+		q.enqueue({
+			kind: "skill_delete",
+			agent_id: "agent",
+			project_id: "project",
+			skill_key: "beta",
+			enqueued_at: "2026-01-01T00:00:00Z",
+			attempts: 0,
+		});
+		expect(q.all().map((item) => item.kind)).toEqual(["session_push", "skill_delete"]);
+		expect(q.drainDroppedDelta()).toEqual({ capacity_skills: 1 });
+		await q.flushPersist();
+	});
+
+	it("admits Skills while the session module is full without eviction", async () => {
+		const q = new RetryQueue({ agentType: "claude_code", maxItems: 1 });
 		q.enqueue({
 			kind: "session_push",
 			...sessionFence("s1"),
 			local_session_id: "s1",
-			content_hash: "h1",
+			content_hash: "hash",
 			enqueued_at: "2026-01-01T00:00:00Z",
 			attempts: 0,
 		});
-		q.enqueue({
-			kind: "skill_push",
-			agent_id: "test-agent",
-			project_id: "s",
-			skill_key: "alpha",
-			new_hash: "ha",
-			enqueued_at: "2026-01-01T00:00:00Z",
-			attempts: 0,
-		});
-		q.enqueue({
-			kind: "skill_push",
-			agent_id: "test-agent",
-			project_id: "s",
-			skill_key: "beta",
-			new_hash: "hb",
-			enqueued_at: "2026-01-01T00:00:00Z",
-			attempts: 0,
-		});
-		// One was evicted to keep depth at 2. The session must
-		// survive; the oldest skill (alpha) is the one to go.
+		expect(
+			await q.enqueueWhenAvailable(
+				{
+					kind: "skill_delete",
+					agent_id: "agent",
+					project_id: "project",
+					skill_key: "alpha",
+					enqueued_at: "2026-01-01T00:00:00Z",
+					attempts: 0,
+				},
+				new AbortController().signal,
+			),
+		).toBeGreaterThan(0);
 		expect(q.depth).toBe(2);
-		expect(q.drainDroppedDelta()).toBe(1);
-		const all = q.all();
-		const kinds = all.map((i) => i.kind).sort();
-		expect(kinds).toEqual(["session_push", "skill_push"]);
-		const skill = all.find((i) => i.kind === "skill_push");
-		if (skill?.kind !== "skill_push") throw new Error("expected skill_push");
-		expect(skill.skill_key).toBe("beta");
+		expect(q.drainDroppedDelta()).toEqual({});
 		await q.flushPersist();
 	});
 
-	it("eviction treats skill_delete as a shedable Skill operation", async () => {
-		const q = new RetryQueue({ agentType: "claude_code", maxItems: 1 });
-		q.enqueue({
-			kind: "session_push",
-			...sessionFence("session-a"),
-			local_session_id: "session-a",
-			content_hash: "session-hash",
-			enqueued_at: "2026-01-01T00:00:00Z",
-			attempts: 0,
-		});
-		q.enqueue({
-			kind: "skill_delete",
-			agent_id: "agent-a",
-			project_id: "project-a",
-			skill_key: "alpha",
-			enqueued_at: "2026-01-01T00:00:01Z",
-			attempts: 0,
-		});
-
-		expect(q.all().map((item) => item.kind)).toEqual(["session_push"]);
-		expect(q.drainDroppedDelta()).toBe(1);
+	it("drains and restores reasons separately and resets them on restart", async () => {
+		const q = new RetryQueue({ agentType: "claude_code" });
+		q.recordPermanentDrop();
+		q.recordPermanentDrop("retry_exhausted");
+		const delta = q.drainDroppedDelta();
+		expect(delta).toEqual({ permanent: 1, retry_exhausted: 1 });
+		expect(q.drainDroppedDelta()).toEqual({});
+		q.recordPermanentDrop("oversized");
+		q.restoreDroppedDelta(delta);
+		expect(q.drainDroppedDelta()).toEqual({ permanent: 1, retry_exhausted: 1, oversized: 1 });
+		q.recordPermanentDrop();
+		q.persist();
+		await q.flushPersist();
+		const restarted = new RetryQueue({ agentType: "claude_code" });
+		restarted.load();
+		expect(restarted.drainDroppedDelta()).toEqual({});
 	});
 
 	it("onEvict callback fires once per evicted item", async () => {

@@ -159,10 +159,63 @@ describe("Connected Project Skill reconcile", () => {
 				agentType: adapter.agentType,
 				skills: adapter.skills,
 			}),
-		).rejects.toThrow("already exists in this Agent's Workspace");
+		).rejects.toThrow("Project Skills skipped due to local conflicts: alpha");
 		expect(readFileSync(adapter.skills.path("alpha"), "utf8")).toBe("# Local Workspace Skill\n");
 		expect(archiveRequests).toHaveLength(0);
 	});
+
+	it.each(["unowned", "receipt mismatch", "locally modified", "duplicate Project"] as const)(
+		"isolates a %s key while installing and removing other keys",
+		async (conflict) => {
+			const alpha = await desiredSkill("alpha", "Cloud Alpha");
+			const beta = await desiredSkill("beta", "Cloud Beta");
+			const gamma = await desiredSkill("gamma", "Removed Gamma");
+			const adapter = new CodexAdapter();
+			await adapter.skills.writeArchive("alpha", alpha.archive);
+			await adapter.skills.writeArchive("gamma", gamma.archive);
+			recordProjectSkillMaterialization({
+				agentType: "codex",
+				localSkillKey: "gamma",
+				sourceProjectId: projectId,
+				sourceSkillKey: "gamma",
+				contentHash: gamma.desired.content_hash,
+				reconcileAgentId: agentId,
+			});
+			if (conflict !== "unowned")
+				recordProjectSkillMaterialization({
+					agentType: "codex",
+					localSkillKey: "alpha",
+					sourceProjectId: projectId,
+					sourceSkillKey: "alpha",
+					contentHash: alpha.desired.content_hash,
+					reconcileAgentId: conflict === "receipt mismatch" ? "other-agent" : agentId,
+				});
+			if (conflict === "locally modified" || conflict === "unowned")
+				writeFileSync(adapter.skills.path("alpha"), "# Local Alpha\n");
+			const before = readFileSync(adapter.skills.path("alpha"), "utf8");
+			serveInventory([
+				alpha,
+				beta,
+				...(conflict === "duplicate Project"
+					? [{ ...alpha, desired: { ...alpha.desired, project_id: "other-project" } }]
+					: []),
+			]);
+			await expect(
+				reconcileConnectedProjectSkills({
+					api: new ApiClient({ requireAuth: false }),
+					agentId,
+					agentType: "codex",
+					skills: adapter.skills,
+				}),
+			).rejects.toThrow("Project Skills skipped due to local conflicts: alpha");
+			expect(readFileSync(adapter.skills.path("alpha"), "utf8")).toBe(before);
+			expect(readFileSync(adapter.skills.path("beta"), "utf8")).toContain("Cloud Beta");
+			expect(existsSync(adapter.skills.path("gamma"))).toBe(false);
+			expect(
+				readProjectSkillMaterialization({ agentType: "codex", localSkillKey: "gamma" }),
+			).toBeNull();
+		},
+	);
 
 	it("removes only exact daemon-owned materializations", async () => {
 		const alpha = await desiredSkill("alpha", "Alpha");
