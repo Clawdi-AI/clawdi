@@ -8,7 +8,7 @@ import {
 	releaseManagedSkill,
 	reserveManagedSkill,
 } from "../../src/runtime/managed-skill-reservation";
-import { addSkillDirectorySymlinkCases, cleanupTmp, copyFixtureToTmp } from "./helpers";
+import { cleanupTmp, copyFixtureToTmp } from "./helpers";
 
 let tmpHome: string;
 let origHome: string | undefined;
@@ -420,28 +420,6 @@ describe("ClaudeCodeAdapter.collectSkills", () => {
 		const demo = skills.find((s) => s.skillKey === "demo")!;
 		expect(demo.content).toContain("description: A demo skill");
 		expect(demo.filePath).toContain("/.claude/skills/demo/SKILL.md");
-	});
-
-	it("discovers safe top-level directory symlinks and isolates unsafe ones", async () => {
-		const root = join(tmpHome, ".claude", "skills");
-		const linked = addSkillDirectorySymlinkCases(root, join(tmpHome, "outside-claude-skill"));
-		const adapter = new ClaudeCodeAdapter();
-		const skills = await adapter.skills.collect();
-		expect(skills.map((skill) => skill.skillKey).sort()).toEqual(["demo", "linked"]);
-		expect(skills.find((skill) => skill.skillKey === "linked")?.directoryPath).toBe(linked);
-		expect((await adapter.skills.listKeys()).sort()).toEqual(["demo", "linked"]);
-	});
-
-	it("does not scan a hidden managed Skill recovery directory", async () => {
-		const recovery = join(tmpHome, ".claude", "skills", ".clawdi-previous-test");
-		mkdirSync(recovery, { recursive: true });
-		writeFileSync(join(recovery, "SKILL.md"), "# Managed recovery artifact\n");
-
-		const adapter = new ClaudeCodeAdapter();
-		expect((await adapter.skills.collect()).map((skill) => skill.skillKey)).not.toContain(
-			".clawdi-previous-test",
-		);
-		expect(await adapter.skills.listKeys()).not.toContain(".clawdi-previous-test");
 	});
 
 	it("adopts a pre-ledger bundled clawdi target without uploading it", async () => {

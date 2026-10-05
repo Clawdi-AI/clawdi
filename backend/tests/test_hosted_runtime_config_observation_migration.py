@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import uuid
 from pathlib import Path
 
@@ -11,6 +10,8 @@ from alembic.operations import Operations
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.ext.asyncio import AsyncEngine
+
+from tests.migration_harness import load_migration
 
 REVISION = "f1a7c3d9e2b4"
 APP_SETTINGS_REVISION = "3e7a9c1d5b82"
@@ -23,15 +24,6 @@ PREVIOUS_HEAD_REVISION = "a6d2f4c8b1e7"
 RUNTIME_OBSERVATION_COMPANION_REVISION = "4c8f2a1d7e9b"
 RUNTIME_OBSERVATION_DOWN_REVISION = "c7e4a9b2d6f1"
 MIGRATION_FILENAME = f"{REVISION}_finalize_unlaunched_agent_v2_schema.py"
-
-
-def _load_migration():
-    migration_path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
-    spec = importlib.util.spec_from_file_location("agent_v2_final_schema_migration", migration_path)
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
 
 
 def _create_previous_schema(connection: sa.Connection) -> None:
@@ -95,7 +87,7 @@ def test_agent_v2_final_schema_migration_is_single_head() -> None:
 def test_agent_v2_final_schema_migration_is_additive_for_rolling_deploys(
     engine: AsyncEngine,
 ) -> None:
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "agent_v2_final_schema_migration")
     schema = f"agent_v2_final_schema_{uuid.uuid4().hex}"
     sync_engine = create_engine(engine.url.set(drivername="postgresql+psycopg2"))
     old_op = migration.op

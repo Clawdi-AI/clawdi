@@ -1,15 +1,19 @@
 """Contracts for the PostgreSQL application-test fixture architecture."""
 
+from datetime import UTC, datetime, timedelta
+from inspect import unwrap
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.auth import get_auth
 from app.main import app
+from app.models.channel import ChannelAccount, ChannelWhatsAppOnboardingSession
 from app.models.user import User
 from tests.conftest import _dependency_overrides, rollback_session, worker_test_identity
+from tests.conftest import seed_user as seed_user_fixture
 
 pytestmark = pytest.mark.asyncio
 
@@ -94,3 +98,74 @@ async def test_committed_lane_is_visible_to_independent_connections(
     finally:
         await committed_db_session.delete(user)
         await committed_db_session.commit()
+
+
+@pytest.mark.committed_db
+async def test_committed_user_cleanup_preserves_other_workers_platform_rows(
+    engine, committed_db_session: AsyncSession, test_identity: str, request: pytest.FixtureRequest
+):
+    fixture = unwrap(seed_user_fixture)(committed_db_session, test_identity, request)
+    user = await anext(fixture)
+    user_id = user.id
+    now = datetime.now(UTC)
+    rows = [
+        (
+            ChannelAccount,
+            {
+                "provider": "telegram",
+                "visibility": "private",
+                "user_id": user_id,
+                "webhook_secret_hash": "a" * 64,
+            },
+        ),
+        (
+            ChannelWhatsAppOnboardingSession,
+            {
+                "ownership_kind": "platform",
+                "sidecar_account_id": uuid4(),
+                "sidecar_config_revision": "test",
+                "request_id": uuid4(),
+                "state": "pending",
+                "started_at": now,
+                "expires_at": now + timedelta(minutes=5),
+            },
+        ),
+    ]
+    own_ids, foreign_ids = [uuid4() for _ in rows], [uuid4() for _ in rows]
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        # This test's HTTP routes can also insert through independent ORM sessions.
+        async with sessionmaker() as writer:
+            own_rows = [
+                model(id=row_id, name=f"own-{row_id}", **values)
+                for (model, values), row_id in zip(rows, own_ids, strict=True)
+            ]
+            writer.add_all(own_rows)
+            await writer.flush()
+            for row in own_rows:
+                if isinstance(row, ChannelAccount):
+                    row.user_id = None
+                    row.visibility = "public"
+            await writer.commit()
+        # Core inserts represent an xdist worker outside this process's ORM hooks.
+        async with engine.begin() as foreign_worker:
+            for (model, values), row_id in zip(rows, foreign_ids, strict=True):
+                foreign_values = dict(values)
+                if model is ChannelAccount:
+                    foreign_values.update(visibility="public", user_id=None)
+                else:
+                    foreign_values.update(sidecar_account_id=uuid4(), request_id=uuid4())
+                await foreign_worker.execute(
+                    insert(model).values(id=row_id, name=f"foreign-{row_id}", **foreign_values)
+                )
+        await fixture.aclose()
+        async with sessionmaker() as observer:
+            assert await observer.get(User, user_id) is None
+            for (model, _), own_id, foreign_id in zip(rows, own_ids, foreign_ids, strict=True):
+                assert await observer.get(model, own_id) is None
+                assert await observer.get(model, foreign_id) is not None
+    finally:
+        await fixture.aclose()
+        async with engine.begin() as cleanup:
+            for (model, _), own_id, foreign_id in zip(rows, own_ids, foreign_ids, strict=True):
+                await cleanup.execute(delete(model).where(model.id.in_([own_id, foreign_id])))

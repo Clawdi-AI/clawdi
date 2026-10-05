@@ -64,10 +64,10 @@ STANDARD_ONLY = frozenset(
 )
 RUNTIME_OBSERVATION_COMPATIBILITY_ONLY = frozenset(
     {
-        # Repository-owned byte hashes protect the pre-v2 runtime-observation
-        # and heartbeat compatibility symbols in this otherwise canonical v1
-        # API module. BasedPyright strictness is file-scoped, so the exception
-        # audit below pins every remaining diagnostic to those exact symbols.
+        # Pre-v2 runtime-observation and heartbeat compatibility symbols remain
+        # in this otherwise canonical v1 API module. BasedPyright strictness is
+        # file-scoped, so the exception audit below pins every remaining diagnostic
+        # to those exact symbols.
         "app/routes/sessions.py",
     }
 )

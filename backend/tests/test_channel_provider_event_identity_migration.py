@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
 import uuid
-from pathlib import Path
 
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
@@ -10,23 +8,16 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from tests.migration_harness import load_migration
+
 REVISION = "8d3f1a6c9b2e"
 MIGRATION_FILENAME = f"{REVISION}_add_channel_provider_event_identity.py"
-
-
-def _load_migration():
-    path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
-    spec = importlib.util.spec_from_file_location("channel_provider_event_identity", path)
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
 
 
 def test_channel_provider_event_identity_migration_backfills_and_downgrades(
     engine: AsyncEngine,
 ) -> None:
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "channel_provider_event_identity")
     schema = f"channel_provider_event_{uuid.uuid4().hex}"
     account_id = uuid.uuid4()
     link_id = uuid.uuid4()

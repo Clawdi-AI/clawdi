@@ -162,12 +162,10 @@ are the preserved A boundary or the narrow C naming described above.
 **A/C — backend verification**
 
 ```text
-backend/tests/e2e/test_channels_blackbox.py
 backend/tests/test_channel_debug_events.py
 backend/tests/test_channel_inbox.py
 backend/tests/test_channels.py
 backend/tests/test_whatsapp_baileys.py
-backend/tests/test_whatsapp_baileys_smoke.py
 backend/tests/test_whatsapp_native_transport.py
 backend/tests/test_whatsapp_noise.py
 backend/tests/test_whatsapp_provider_bridge.py

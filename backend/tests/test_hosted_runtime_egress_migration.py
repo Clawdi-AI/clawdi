@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import uuid
-from pathlib import Path
 
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
@@ -11,20 +9,13 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-
-def _load_migration(filename: str, module_name: str):
-    migration_path = Path(__file__).parents[1] / "alembic" / "versions" / filename
-    spec = importlib.util.spec_from_file_location(module_name, migration_path)
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
+from tests.migration_harness import load_migration
 
 
 def test_hosted_runtime_egress_migration_backfills_engine_type(
     engine: AsyncEngine,
 ) -> None:
-    migration = _load_migration(
+    migration = load_migration(
         "c4e8f1a2b3d5_rename_hosted_runtime_egress_columns.py",
         "hosted_runtime_egress_migration",
     )

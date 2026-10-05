@@ -9,7 +9,6 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
-BOTO_VERSION = "1.43.67"
 BOTO_DISTRIBUTIONS = frozenset(
     {
         "boto3",
@@ -34,7 +33,6 @@ def test_boto_runtime_stubs_lock_and_metadata_use_one_exact_patch() -> None:
     }
 
     assert direct.keys() == BOTO_DISTRIBUTIONS
-    assert {str(requirement.specifier) for requirement in direct.values()} == {f"=={BOTO_VERSION}"}
 
     lock = tomllib.loads((BACKEND_ROOT / "uv.lock").read_text(encoding="utf-8"))
     locked = {
@@ -43,10 +41,14 @@ def test_boto_runtime_stubs_lock_and_metadata_use_one_exact_patch() -> None:
         if canonicalize_name(package["name"]) in BOTO_DISTRIBUTIONS
     }
 
-    assert locked == dict.fromkeys(BOTO_DISTRIBUTIONS, BOTO_VERSION)
+    assert locked.keys() == BOTO_DISTRIBUTIONS
+    assert len(set(locked.values())) == 1
+    assert {str(requirement.specifier) for requirement in direct.values()} == {
+        f"=={locked['boto3']}"
+    }
     assert {
         canonicalize_name(distribution): version(distribution)
         for distribution in BOTO_DISTRIBUTIONS
-    } == dict.fromkeys(BOTO_DISTRIBUTIONS, BOTO_VERSION)
+    } == locked
     assert packages_distributions()["mypy_boto3_s3"] == ["boto3-stubs-full"]
-    assert s3_stub_version == BOTO_VERSION
+    assert s3_stub_version == locked["boto3"]

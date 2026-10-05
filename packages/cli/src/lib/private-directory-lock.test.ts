@@ -46,19 +46,20 @@ describe("private directory lock", () => {
 		const gate = new Promise<void>((resolve) => {
 			releaseFirst = resolve;
 		});
+		const { promise: acquired, resolve: markAcquired } = Promise.withResolvers<void>();
 		const first = withPrivateDirectoryLock(lockDir, async (lease) => {
 			events.push("first:start");
+			markAcquired();
 			expect(statSync(lockDir).mode & 0o777).toBe(0o700);
 			expect(statSync(ownerPath).mode & 0o777).toBe(0o600);
 			lease.assertOwned();
 			await gate;
 			events.push("first:end");
 		});
-		await new Promise((resolve) => setTimeout(resolve, 5));
+		await acquired;
 		const second = withPrivateDirectoryLock(lockDir, async () => {
 			events.push("second");
 		});
-		await new Promise((resolve) => setTimeout(resolve, 5));
 		expect(events).toEqual(["first:start"]);
 		releaseFirst?.();
 		await Promise.all([first, second]);
@@ -172,17 +173,19 @@ describe("private directory lock", () => {
 		const gate = new Promise<void>((resolve) => {
 			release = resolve;
 		});
+		const { promise: acquired, resolve: markAcquired } = Promise.withResolvers<void>();
 		const first = withPrivateDirectoryLock(lockDir, async (lease) => {
 			events.push("first:start");
+			markAcquired();
 			await gate;
 			lease.assertOwned();
 			events.push("first:end");
 		});
+		await acquired;
 		const second = withPrivateDirectoryLock(lockDir, async (lease) => {
 			lease.assertOwned();
 			events.push("second");
 		});
-		await new Promise((resolve) => setTimeout(resolve, 5));
 		expect(events).toEqual(["first:start"]);
 		release?.();
 		await Promise.all([first, second]);
