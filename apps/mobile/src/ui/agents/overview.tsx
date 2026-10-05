@@ -17,8 +17,8 @@ export function AgentOverviewHeading({
 	action?: ReactNode;
 }) {
 	return (
-		<WebView recipe={layout.flexMinHItems} className="flex-row">
-			<WebText recipe={styles.textSmFontSemibold}>{children}</WebText>
+		<WebView recipe={layout.heading} className="flex-row">
+			<WebText recipe={styles.sectionTitle}>{children}</WebText>
 			{action}
 		</WebView>
 	);
@@ -41,44 +41,42 @@ export function OverviewNavigationCard({
 	return (
 		<Card
 			size="sm"
-			className={webView(
-				(children ? styles.hFullMinW : styles.hFullMinW2).replace(/\bh-full\b/g, ""),
-			)}
+			className={webView((children ? styles.module : styles.statusCard).replace(/\bh-full\b/g, ""))}
 		>
 			<CardHeader
-				className={webView((children ? styles.p : styles.hFullGridRows).replace(/\bh-full\b/g, ""))}
+				className={webView(
+					(children ? styles.header : styles.statusHeader).replace(/\bh-full\b/g, ""),
+				)}
 			>
 				<AppPressable
 					accessibilityRole="link"
 					accessibilityLabel={title}
 					onPress={onPress}
 					disabled={!onPress}
-					className={`${webView(children ? styles.groupFlexItemsCenter : styles.groupFlexMinW)} flex-row`}
+					className={`${webView(children ? styles.headingLink : styles.statusLink)} flex-row`}
 				>
 					<IconChip size="sm" tint={tint}>
-						<WebIcon as={icon} recipe={styles.sizeShrink} />
+						<WebIcon as={icon} recipe={styles.arrowSkeleton} />
 					</IconChip>
-					<WebView recipe={styles.minWFlex}>
+					<WebView recipe={styles.headingBody}>
 						<CardTitle>{title}</CardTitle>
 						<CardDescription>{description}</CardDescription>
 					</WebView>
-					{onPress ? <WebIcon as={ArrowRight} recipe={styles.sizeShrinkTextMuted} /> : null}
+					{onPress ? <WebIcon as={ArrowRight} recipe={styles.arrow} /> : null}
 				</AppPressable>
 			</CardHeader>
-			{children ? (
-				<CardContent className={webView(styles.flexFlexFlexCol)}>{children}</CardContent>
-			) : null}
+			{children ? <CardContent className={webView(styles.content)}>{children}</CardContent> : null}
 		</Card>
 	);
 }
 export function OverviewMetadata({ items }: { items: { label: string; value: ReactNode }[] }) {
 	return (
-		<WebView recipe={styles.spaceYTextXs}>
+		<WebView recipe={styles.metadata}>
 			{items.map((item) => (
-				<WebView key={item.label} recipe={styles.flexMinWItems} className="flex-row">
-					<WebText recipe={styles.spaceYTextXs}>{item.label}</WebText>
+				<WebView key={item.label} recipe={styles.metadataRow} className="flex-row">
+					<WebText recipe={styles.metadata}>{item.label}</WebText>
 					<WebText
-						recipe={`${styles.spaceYTextXs} ${styles.minWBreakWords}`}
+						recipe={`${styles.metadata} ${styles.metadataValue}`}
 						className="flex-shrink"
 						style={{ flex: 1 }}
 					>

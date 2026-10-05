@@ -252,21 +252,16 @@ function ComputePriceBlock({
 	testId: string;
 }) {
 	return (
-		<div data-testid={testId} className={deployWizardClasses.flexMinWFlexColItemsEnd}>
-			<div className={deployWizardClasses.flexItemsBaselineJustifyEndLeading}>
-				<span className={deployWizardClasses.whitespaceNowrapTextSmFontSemiboldTextForeground}>
-					{presentation.primary}
-				</span>
+		<div data-testid={testId} className={deployWizardClasses.planPrice}>
+			<div className={deployWizardClasses.planPriceHeading}>
+				<span className={deployWizardClasses.planPriceValue}>{presentation.primary}</span>
 			</div>
-			<div className={deployWizardClasses.textXsLeadingFontNormalTextMutedForeground}>
+			<div className={deployWizardClasses.planPriceMeta}>
 				{presentation.secondary}
 				{presentation.savings ? (
 					<>
 						{" "}
-						<span
-							className={deployWizardClasses.whitespaceNowrap}
-							data-testid={`${testId}-savings`}
-						>
+						<span className={deployWizardClasses.priceSegment} data-testid={`${testId}-savings`}>
 							· {presentation.savings}
 						</span>
 					</>
@@ -288,14 +283,14 @@ function ComputeResources({
 	diskGb: number;
 }) {
 	return (
-		<span className={deployWizardClasses.textXs}>
-			<span className={deployWizardClasses.whitespaceNowrap}>{vcpu} vCPU</span>
+		<span className={deployWizardClasses.specs}>
+			<span className={deployWizardClasses.priceSegment}>{vcpu} vCPU</span>
 			{" · "}
-			<span className={deployWizardClasses.whitespaceNowrap} data-testid={testId}>
+			<span className={deployWizardClasses.priceSegment} data-testid={testId}>
 				{ramGb} GB RAM
 			</span>
 			{" · "}
-			<span className={deployWizardClasses.whitespaceNowrap}>{diskGb} GB storage</span>
+			<span className={deployWizardClasses.priceSegment}>{diskGb} GB storage</span>
 		</span>
 	);
 }
@@ -1156,7 +1151,7 @@ export function DeployWizard() {
 				busy={false}
 			/>
 			<form
-				className={deployWizardClasses.flexFlexColGap}
+				className={deployWizardClasses.form}
 				onSubmit={(event) => {
 					event.preventDefault();
 					if (canSubmit) void runAction(onDeploy);
@@ -1206,7 +1201,7 @@ export function DeployWizard() {
 					</SettingsSection>
 				) : null}
 				<SettingsSection title={agentSurfaceCopy.aIProviders2}>
-					<div className={deployWizardClasses.flexFlexColGap2}>
+					<div className={deployWizardClasses.providerChoices}>
 						<div className={ENTITY_CHOICE_GRID_CLASS} data-testid="provider-choice-grid">
 							<EntityChoiceCard
 								selected={managedProviderSelected}
@@ -1228,9 +1223,9 @@ export function DeployWizard() {
 								description={agentSurfaceCopy.deployFirstThenConfigureModelAccessInside}
 							/>
 							{aiProviders.isLoading ? (
-								<Skeleton className={deployWizardClasses.hPxWFullRoundedLg} />
+								<Skeleton className={deployWizardClasses.providerSkeleton} />
 							) : shouldBlockQueryError(aiProviders.error, aiProviders.data) ? (
-								<div className={deployWizardClasses.xlMainColSpan}>
+								<div className={deployWizardClasses.providerError}>
 									<ApiErrorPanel
 										title="Couldn't load providers"
 										error={aiProviders.error}
@@ -1287,7 +1282,7 @@ export function DeployWizard() {
 				</SettingsSection>
 
 				<SettingsSection title={agentSurfaceCopy.compute}>
-					<div className={deployWizardClasses.flexMinWFlexColGap}>
+					<div className={deployWizardClasses.compute}>
 						<SubscriptionSourcePicker
 							value={subscriptionSource}
 							onChange={setSubscriptionSource}
@@ -1314,15 +1309,15 @@ export function DeployWizard() {
 								title="Couldn't load compute plans"
 							/>
 						) : subscriptionSource?.mode === "new" && plans.isLoading ? (
-							<p className={deployWizardClasses.flexItemsCenterGapTextSm} role="status">
-								<Spinner className={deployWizardClasses.size} /> Loading compute plans…
+							<p className={deployWizardClasses.loadingPlans} role="status">
+								<Spinner className={deployWizardClasses.actionIcon} /> Loading compute plans…
 							</p>
 						) : null}
 						{subscriptionSource?.mode === "new" &&
 						paidSelection &&
 						(compute === "performance" ? perfOffers : basicOffers).length > 1 ? (
-							<div className={deployWizardClasses.flexMaxWXsFlexColGap}>
-								<span className={deployWizardClasses.textXsTextMutedForeground}>Billing term</span>
+							<div className={deployWizardClasses.billingTerm}>
+								<span className={deployWizardClasses.fieldLabel}>Billing term</span>
 								<TermSwitcher
 									offers={compute === "performance" ? perfOffers : basicOffers}
 									value={compute === "performance" ? perfBillingTermMonths : basicBillingTermMonths}
@@ -1353,7 +1348,7 @@ export function DeployWizard() {
 													diskGb={basicPlan.disk_size}
 												/>
 											) : (
-												<span className={deployWizardClasses.textXs}>Basic plan unavailable</span>
+												<span className={deployWizardClasses.specs}>Basic plan unavailable</span>
 											)
 										}
 										detailsPlacement="trailing"
@@ -1369,7 +1364,7 @@ export function DeployWizard() {
 											basicPricePresentation ? null : <Badge>{agentSurfaceCopy.unavailable}</Badge>
 										}
 										disabled={!basicPlan || !basicOfferSelection}
-										className={deployWizardClasses.itemsCenterP}
+										className={deployWizardClasses.computeChoice}
 									/>
 									<EntityChoiceCard
 										selected={compute === "performance"}
@@ -1393,7 +1388,7 @@ export function DeployWizard() {
 													diskGb={perfPlan.disk_size}
 												/>
 											) : (
-												<span className={deployWizardClasses.textXs}>
+												<span className={deployWizardClasses.specs}>
 													Performance plan unavailable
 												</span>
 											)
@@ -1411,12 +1406,12 @@ export function DeployWizard() {
 											perfPricePresentation ? null : <Badge>{agentSurfaceCopy.unavailable}</Badge>
 										}
 										disabled={!perfPlan || !perfOfferSelection}
-										className={deployWizardClasses.itemsCenterP}
+										className={deployWizardClasses.computeChoice}
 									/>
 								</div>
 								{paidSelection ? (
-									<div className={deployWizardClasses.flexFlexColGap3}>
-										<div className={deployWizardClasses.textSmFontMedium}>Payment method</div>
+									<div className={deployWizardClasses.paymentMethods}>
+										<div className={deployWizardClasses.fieldTitle}>Payment method</div>
 										<div className={ENTITY_CHOICE_GRID_CLASS}>
 											<EntityChoiceCard
 												selected={paymentMethod === "card"}
@@ -1455,7 +1450,7 @@ export function DeployWizard() {
 									</div>
 								) : null}
 								{compute === "basic" && basicPlan && !basicOfferSelection ? (
-									<p className={deployWizardClasses.textXsTextDestructive} role="alert">
+									<p className={deployWizardClasses.error} role="alert">
 										Paid Basic checkout isn’t available. Retry plans or choose Performance.
 									</p>
 								) : null}
@@ -1465,16 +1460,16 @@ export function DeployWizard() {
 						compute === "performance" &&
 						perfPlan &&
 						!perfOfferSelection ? (
-							<p className={deployWizardClasses.textXsTextDestructive} role="alert">
+							<p className={deployWizardClasses.error} role="alert">
 								Performance pricing isn’t available. Retry plans before deploying.
 							</p>
 						) : null}
 					</div>
 				</SettingsSection>
-				<div className={deployWizardClasses.pbXlMainPb}>
+				<div className={deployWizardClasses.personalizeSection}>
 					<SettingsSection title={agentSurfaceCopy.personalize}>
-						<div className={deployWizardClasses.flexMaxWXlFlexColGap}>
-							<div className={deployWizardClasses.flexWFullMaxWMdFlexCol}>
+						<div className={deployWizardClasses.personalize}>
+							<div className={deployWizardClasses.nameField}>
 								<Label htmlFor="agent-name">Name in Clawdi</Label>
 								<Input
 									id="agent-name"
@@ -1490,11 +1485,7 @@ export function DeployWizard() {
 									onBlur={() => setAgentName((name) => name.trim())}
 								/>
 								{nameError ? (
-									<p
-										id="agent-name-error"
-										className={deployWizardClasses.textXsTextDestructive}
-										role="alert"
-									>
+									<p id="agent-name-error" className={deployWizardClasses.error} role="alert">
 										{nameError}
 									</p>
 								) : null}
@@ -1514,13 +1505,17 @@ export function DeployWizard() {
 									</p>
 								) : null}
 								{nameLimitReached ? (
-									<span className={deployWizardClasses.srOnly} role="status" aria-live="polite">
+									<span
+										className={deployWizardClasses.screenReaderOnly}
+										role="status"
+										aria-live="polite"
+									>
 										{`Name limit reached. You can enter up to ${DEPLOY_AGENT_NAME_MAX_LENGTH} characters.`}
 									</span>
 								) : null}
 							</div>
-							<div className={deployWizardClasses.flexFlexWrapItemsStartGap}>
-								<div className={deployWizardClasses.flexFlexColGap4}>
+							<div className={deployWizardClasses.localeFields}>
+								<div className={deployWizardClasses.languageField}>
 									<Label htmlFor="agent-language">Language</Label>
 									<Select
 										items={LANGUAGE_SELECT_ITEMS}
@@ -1545,7 +1540,7 @@ export function DeployWizard() {
 									</Select>
 								</div>
 								{tzOptions.length > 0 ? (
-									<div className={deployWizardClasses.flexWFullMaxWSmMinW}>
+									<div className={deployWizardClasses.timezoneField}>
 										<Label htmlFor="agent-timezone">Timezone</Label>
 										<TimezoneCombobox
 											id="agent-timezone"
@@ -1561,12 +1556,12 @@ export function DeployWizard() {
 				</div>
 
 				{/* Sticky action bar */}
-				<div data-testid="deploy-action-bar" className={deployWizardClasses.recipe27}>
+				<div data-testid="deploy-action-bar" className={deployWizardClasses.actionBar}>
 					{acceptedDeploymentHydrationFailed ? (
 						<Alert
 							data-testid="accepted-deployment-hydration-error"
 							variant="destructive"
-							className={deployWizardClasses.mb}
+							className={deployWizardClasses.hydrationError}
 						>
 							<TriangleAlert />
 							<AlertTitle>Agent couldn’t be opened</AlertTitle>
@@ -1577,30 +1572,28 @@ export function DeployWizard() {
 							</AlertDescription>
 						</Alert>
 					) : null}
-					<div className={deployWizardClasses.recipe29}>
+					<div className={deployWizardClasses.actionBarContent}>
 						<div
 							data-testid="deploy-configuration-summary"
-							className={deployWizardClasses.minWTruncateTextXsTextMutedForeground}
+							className={deployWizardClasses.configurationSummary}
 						>
 							{summaryLine}
 						</div>
-						<div className={deployWizardClasses.recipe31}>
+						<div className={deployWizardClasses.checkout}>
 							{deployAmount ? (
 								<div
 									data-testid="deploy-amount"
-									className={deployWizardClasses.flexMinWFlexColXlMainW}
+									className={deployWizardClasses.amount}
 									aria-live="polite"
 								>
-									<div className={deployWizardClasses.flexFlexWrapItemsCenterGapX}>
-										<span className={deployWizardClasses.fontSemiboldTabularNumsTextForeground}>
-											{deployAmount.amount}
-										</span>
+									<div className={deployWizardClasses.amountHeading}>
+										<span className={deployWizardClasses.amountValue}>{deployAmount.amount}</span>
 										{paymentMethod === "wallet" && walletQuoteState === "error" ? (
 											<Button
 												type="button"
 												variant="link"
 												size="sm"
-												className={deployWizardClasses.hAutoP}
+												className={deployWizardClasses.refreshQuote}
 												disabled={
 													(wallet.isFetching && wallet.data === undefined) ||
 													subscriptionCreateQuote.isFetching
@@ -1612,22 +1605,16 @@ export function DeployWizard() {
 										) : null}
 									</div>
 									{deployAmount.caption ? (
-										<span className={deployWizardClasses.whitespaceNowrapTextXsTextMutedForeground}>
+										<span className={deployWizardClasses.amountCaption}>
 											{deployAmount.caption}
 										</span>
 									) : null}
 									{deployAmount.detail ? (
-										<span
-											className={
-												deployWizardClasses.whitespaceNowrapTextXsFontMediumTextDestructive
-											}
-										>
-											{deployAmount.detail}
-										</span>
+										<span className={deployWizardClasses.amountError}>{deployAmount.detail}</span>
 									) : null}
 								</div>
 							) : null}
-							<div className={deployWizardClasses.flexMinWFlexColGap2}>
+							<div className={deployWizardClasses.submitGroup}>
 								<Button
 									type={
 										acceptedDeploymentHydrationFailed || walletTopUpAction ? "button" : "submit"
@@ -1648,7 +1635,7 @@ export function DeployWizard() {
 												? () => walletTopUp.show(walletShortfallUsd)
 												: undefined
 									}
-									className={deployWizardClasses.wFullShrink}
+									className={deployWizardClasses.submit}
 								>
 									{submitting ? (
 										<Spinner data-icon="inline-start" />

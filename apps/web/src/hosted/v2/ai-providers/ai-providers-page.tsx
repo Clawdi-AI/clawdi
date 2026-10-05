@@ -83,12 +83,12 @@ export function AiProvidersPage() {
 				}
 			/>
 
-			<div className={aiProvidersPageClasses.flexFlexColGap}>
+			<div className={aiProvidersPageClasses.section}>
 				<SectionLabel>{agentSurfaceCopy.clawdi}</SectionLabel>
 				<ManagedProviderCard />
 			</div>
 
-			<div className={aiProvidersPageClasses.flexFlexColGap}>
+			<div className={aiProvidersPageClasses.section}>
 				<SectionLabel
 					count={!providers.isLoading && !blockingProvidersError ? list.length : undefined}
 				>
@@ -161,7 +161,7 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 				icon={<ProviderIcon provider={provider} />}
 				title={presentation.label}
 				titleAdornment={
-					<span className={aiProvidersPageClasses.inlineFlexItemsCenter}>
+					<span className={aiProvidersPageClasses.titleBadges}>
 						<AuthBadge auth={provider.auth} />
 						<ProviderReadinessBadge deployable={deployable} />
 					</span>
@@ -177,7 +177,7 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 								: agentSurfaceCopy.finishSetupBeforeAssigningThisProviderToAnAgent,
 				]}
 			/>
-			<div className={aiProvidersPageClasses.mtAutoFlexFlex}>
+			<div className={aiProvidersPageClasses.actions}>
 				<Button
 					variant="outline"
 					size="sm"
@@ -275,7 +275,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 					<Button
 						variant="ghost"
 						size="icon-sm"
-						className={aiProvidersPageClasses.mlAutoTextMuted}
+						className={aiProvidersPageClasses.removeAction}
 						disabled={del.isPending}
 						aria-label={`Remove ${providerLabel}`}
 					/>
@@ -286,7 +286,9 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 			<AlertDialogContent>
 				<AlertDialogHeader>
 					<AlertDialogTitle>Remove {providerLabel}?</AlertDialogTitle>
-					<AlertDialogDescription render={<div className={aiProvidersPageClasses.spaceY} />}>
+					<AlertDialogDescription
+						render={<div className={aiProvidersPageClasses.removalDescription} />}
+					>
 						<p>This provider will be removed from your account and cannot be restored.</p>
 						{revokesChatGpt ? (
 							<p>
@@ -295,7 +297,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 							</p>
 						) : null}
 						{impact.isFetching ? (
-							<p className={aiProvidersPageClasses.flexItemsCenterGap}>
+							<p className={aiProvidersPageClasses.impactLoading}>
 								<Spinner />
 								Checking affected agents...
 							</p>
@@ -312,7 +314,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 									running, but model features will remain unavailable until reconfigured. There is
 									no automatic fallback to Clawdi AI.
 								</p>
-								<ul className={aiProvidersPageClasses.spaceYTextForeground}>
+								<ul className={aiProvidersPageClasses.affectedAgents}>
 									{affectedAgents.map((agent) => (
 										<li key={agent.deployment_id}>{agent.name}</li>
 									))}
@@ -324,13 +326,16 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 					</AlertDialogDescription>
 				</AlertDialogHeader>
 				{acknowledgementRequired ? (
-					<div className={aiProvidersPageClasses.flexItemsStartGap}>
+					<div className={aiProvidersPageClasses.acknowledgement}>
 						<Checkbox
 							id={acknowledgementId}
 							checked={acknowledged}
 							onCheckedChange={(checked) => setAcknowledged(checked === true)}
 						/>
-						<Label htmlFor={acknowledgementId} className={aiProvidersPageClasses.textSmFontNormal}>
+						<Label
+							htmlFor={acknowledgementId}
+							className={aiProvidersPageClasses.acknowledgementLabel}
+						>
 							I understand that affected agents will lose model access until reconfigured.
 						</Label>
 					</div>

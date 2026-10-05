@@ -31,21 +31,18 @@ export function OverviewComputeBody({
 		: [subscription, date].filter((fact): fact is ComputeFact => Boolean(fact));
 	return (
 		<div
-			className={overviewComputeBodyClasses.spaceY}
+			className={overviewComputeBodyClasses.root}
 			data-testid="overview-compute-summary"
 			aria-busy={loading || undefined}
 		>
-			<div
-				data-overview-compute-plan
-				className={overviewComputeBodyClasses.textSmTextMutedForeground}
-			>
-				{loading ? <Skeleton className={overviewComputeBodyClasses.hLhWMaxWFull} /> : planLabel}
+			<div data-overview-compute-plan className={overviewComputeBodyClasses.plan}>
+				{loading ? <Skeleton className={overviewComputeBodyClasses.planSkeleton} /> : planLabel}
 			</div>
-			<dl aria-label={copy.resources} className={overviewComputeBodyClasses.flexFlexWrapGapXGapY}>
+			<dl aria-label={copy.resources} className={overviewComputeBodyClasses.specs}>
 				{specs.map((item, index) => (
 					<div key={item.label}>
-						<dt className={overviewComputeBodyClasses.srOnly}>{item.label}</dt>
-						<dd className={overviewComputeBodyClasses.flexItemsCenterGap}>
+						<dt className={overviewComputeBodyClasses.screenReaderOnly}>{item.label}</dt>
+						<dd className={overviewComputeBodyClasses.specValue}>
 							{index > 0 && <span aria-hidden="true">·</span>}
 							{loading ? (
 								<Skeleton
@@ -62,7 +59,7 @@ export function OverviewComputeBody({
 				))}
 			</dl>
 			{commercial.length > 0 && (
-				<dl className={overviewComputeBodyClasses.spaceYTextXsTextMutedForeground}>
+				<dl className={overviewComputeBodyClasses.commercial}>
 					{commercial.map((item, index) => (
 						<div
 							key={item.label ?? "access"}
@@ -76,12 +73,12 @@ export function OverviewComputeBody({
 								className={
 									item.label
 										? overviewComputeBodyClasses.commercialLabel
-										: overviewComputeBodyClasses.srOnly
+										: overviewComputeBodyClasses.screenReaderOnly
 								}
 							>
 								{loading ? (
-									<Skeleton className={overviewComputeBodyClasses.relativeHLhMaxWFull}>
-										<span className={overviewComputeBodyClasses.invisible} aria-hidden="true">
+									<Skeleton className={overviewComputeBodyClasses.commercialLabelSkeleton}>
+										<span className={overviewComputeBodyClasses.skeletonLabel} aria-hidden="true">
 											{item.label}
 										</span>
 									</Skeleton>
@@ -98,10 +95,10 @@ export function OverviewComputeBody({
 							>
 								<span
 									data-overview-subscription-status={index === 0 || undefined}
-									className={overviewComputeBodyClasses.inlineBlockMaxWFullAlignTop}
+									className={overviewComputeBodyClasses.commercialStatus}
 								>
 									{loading ? (
-										<Skeleton className={overviewComputeBodyClasses.hLhWMaxWFull2} />
+										<Skeleton className={overviewComputeBodyClasses.commercialStatusSkeleton} />
 									) : (
 										item.value
 									)}
@@ -111,9 +108,7 @@ export function OverviewComputeBody({
 					))}
 				</dl>
 			)}
-			{action && (
-				<div className={overviewComputeBodyClasses.flexFlexWrapJustifyEndGap}>{action}</div>
-			)}
+			{action && <div className={overviewComputeBodyClasses.actions}>{action}</div>}
 		</div>
 	);
 }

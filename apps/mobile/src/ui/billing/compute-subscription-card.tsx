@@ -1,5 +1,7 @@
 import {
-	agentIconClasses,
+	agentIconFallbackClasses,
+	agentIconRadiusClasses,
+	agentIconSizeClasses,
 	agentLabelClasses,
 	computeSubscriptionCardClasses as styles,
 } from "@clawdi/shared/ui";
@@ -69,8 +71,10 @@ export function ComputeSubscriptionCard({
 							<AgentFrameworkIcon
 								agent={null}
 								pixelSize={24}
-								boxClassName={webView(`${agentIconClasses.medium} ${agentIconClasses.rounded}`)}
-								fallbackIconClassName={agentIconClasses.mediumFallback}
+								boxClassName={webView(
+									`${agentIconSizeClasses.md} ${agentIconRadiusClasses.rounded}`,
+								)}
+								fallbackIconClassName={agentIconFallbackClasses.md}
 							/>
 							<WebView recipe={agentLabelClasses.copy}>
 								<WebText recipe={`${agentLabelClasses.name} ${agentLabelClasses.nameBySize.md}`}>

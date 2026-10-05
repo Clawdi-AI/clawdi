@@ -2,7 +2,7 @@
 export const transactionsSectionClasses = {
 	muted: "text-muted-foreground",
 	inlineAction: "h-auto px-0",
-	minWidth: "min-w-0",
+	descriptionBody: "min-w-0",
 	label: "font-medium",
 	reference: "truncate text-xs text-muted-foreground",
 	pagination: "flex justify-center",

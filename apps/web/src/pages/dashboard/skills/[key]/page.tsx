@@ -589,7 +589,7 @@ export function SkillDetailContent({
 											className={skillDetailClasses.projectLink}
 										>
 											{skill.source_repo}
-											<ExternalLink className={skillDetailClasses.smallIcon} />
+											<ExternalLink className={skillDetailClasses.metadataIcon} />
 										</a>
 									</>
 								) : null}
@@ -597,7 +597,7 @@ export function SkillDetailContent({
 									<>
 										<span>·</span>
 										<span className={skillDetailClasses.inlineMeta}>
-											<Laptop className={skillDetailClasses.smallIcon} />
+											<Laptop className={skillDetailClasses.metadataIcon} />
 											{agentCaption}
 										</span>
 									</>

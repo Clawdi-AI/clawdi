@@ -96,7 +96,7 @@ export function ChannelsPage() {
 					<>
 						<FilterChip active={filter === "all"} onClick={() => setFilter("all")}>
 							All
-							<span className={channelsPageClasses.textMutedForegroundTabular}>{totalCount}</span>
+							<span className={channelsPageClasses.filterCount}>{totalCount}</span>
 						</FilterChip>
 						{visibleProviders.map((provider) => (
 							<FilterChip
@@ -105,9 +105,7 @@ export function ChannelsPage() {
 								onClick={() => setFilter(provider)}
 							>
 								{providerMeta(provider).label}
-								<span className={channelsPageClasses.textMutedForegroundTabular}>
-									{counts[provider]}
-								</span>
+								<span className={channelsPageClasses.filterCount}>{counts[provider]}</span>
 							</FilterChip>
 						))}
 					</>
@@ -202,7 +200,7 @@ function OwnedBotsSection({
 	}
 
 	return (
-		<section data-owned-bots-section className={channelsPageClasses.flexFlexColGap}>
+		<section data-owned-bots-section className={channelsPageClasses.ownedSection}>
 			<SectionLabel count={!isLoading ? visibleCount : undefined}>
 				{agentSurfaceCopy.customBots}
 			</SectionLabel>
@@ -260,12 +258,12 @@ function SharedBotsSection({
 	}
 
 	return (
-		<section data-shared-bots-section className={channelsPageClasses.flexMinWFlex}>
+		<section data-shared-bots-section className={channelsPageClasses.sharedSection}>
 			<div>
 				<SectionLabel count={!isLoading ? visibleBots.length : undefined}>
 					{agentSurfaceCopy.clawdiBots}
 				</SectionLabel>
-				<p className={channelsPageClasses.mtTextXsText}>
+				<p className={channelsPageClasses.sharedDescription}>
 					{agentSurfaceCopy.linkAnAgentAndPairAChatWithoutLeaving}
 				</p>
 			</div>
@@ -285,7 +283,7 @@ function SharedBotCard({ bot }: { bot: ChannelBotPoolItem }) {
 				? "This bot has reached its Agent limit."
 				: undefined;
 	return (
-		<div data-shared-channel-account-id={bot.id} className={channelsPageClasses.hFullMinW}>
+		<div data-shared-channel-account-id={bot.id} className={channelsPageClasses.sharedCard}>
 			<SharedChannelCard
 				provider={bot.provider}
 				title={bot.name}
@@ -306,11 +304,11 @@ function SharedBotCard({ bot }: { bot: ChannelBotPoolItem }) {
 function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: ChannelHealthItem }) {
 	const del = useDeleteChannel();
 	return (
-		<div data-channel-account-id={channel.id} className={channelsPageClasses.groupRelativeZH}>
+		<div data-channel-account-id={channel.id} className={channelsPageClasses.cardContainer}>
 			<SharedChannelCard
 				provider={channel.provider}
 				title={channel.name}
-				className={channelsPageClasses.transitionColorsGroupHover}
+				className={channelsPageClasses.card}
 				state={[
 					health && !isNormalChannelHealth(health.health_status) ? (
 						<HealthBadge key="health" health={health} />
@@ -337,14 +335,14 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: Ch
 								type="button"
 								variant="ghost"
 								size="icon-sm"
-								className={channelsPageClasses.textMutedForegroundHover}
+								className={channelsPageClasses.removeAction}
 								disabled={del.isPending}
 								aria-label={`Delete ${channel.name}`}
 							>
 								{del.isPending ? (
-									<Spinner className={channelsPageClasses.size} />
+									<Spinner className={channelsPageClasses.actionIcon} />
 								) : (
-									<Trash2 className={channelsPageClasses.size} />
+									<Trash2 className={channelsPageClasses.actionIcon} />
 								)}
 							</Button>
 						</ConfirmAction>
@@ -352,7 +350,7 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: Ch
 				}
 			/>
 			<Link to="/channels/$id" params={{ id: channel.id }} className={ENTITY_STRETCHED_LINK_CLASS}>
-				<span className={channelsPageClasses.srOnly}>Open {channel.name}</span>
+				<span className={channelsPageClasses.screenReaderOnly}>Open {channel.name}</span>
 			</Link>
 		</div>
 	);

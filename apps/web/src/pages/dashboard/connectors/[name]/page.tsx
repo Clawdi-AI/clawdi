@@ -153,7 +153,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 
 	const renderAccount = (c: components["schemas"]["ConnectorConnectionResponse"]) => (
 		<div key={c.id} className={connectorDetailClasses.accountHeader}>
-			<div className={connectorDetailClasses.shrinkContent}>
+			<div className={connectorDetailClasses.rowBody}>
 				<p className={connectorDetailClasses.title} title={c.alias || c.account_display || c.id}>
 					{c.alias || c.account_display || `Account ${c.id.slice(-6)}`}
 				</p>
@@ -189,9 +189,9 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 						className={connectorDetailClasses.disconnectAction}
 					>
 						{isDisconnecting(c.id) ? (
-							<Spinner className={connectorDetailClasses.smallIcon} />
+							<Spinner className={connectorDetailClasses.actionIcon} />
 						) : (
-							<Link2Off className={connectorDetailClasses.smallIcon} />
+							<Link2Off className={connectorDetailClasses.actionIcon} />
 						)}
 						Disconnect
 					</Button>
@@ -314,7 +314,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 							title="Couldn't load connections"
 						/>
 					) : !usesNoAuth && isConnectionsLoading ? (
-						<div className={connectorDetailClasses.skeletonPadding}>
+						<div className={connectorDetailClasses.skeletonContent}>
 							<div className={connectorDetailClasses.identityRow}>
 								<Skeleton className={connectorDetailClasses.iconSkeleton} />
 								<div className={connectorDetailClasses.identitySkeleton}>
@@ -358,7 +358,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 							/>
 						)
 					) : (
-						<div className={connectorDetailClasses.divided}>
+						<div className={connectorDetailClasses.accountList}>
 							{appConnections.map(renderAccount)}
 						</div>
 					)}
@@ -406,7 +406,7 @@ function DetailSkeleton() {
 			{/* Tools */}
 			<div className={connectorDetailClasses.section}>
 				<Skeleton className={connectorDetailClasses.accountTitleSkeleton} />
-				<div className={connectorDetailClasses.bordered}>
+				<div className={connectorDetailClasses.toolPanel}>
 					{Array.from({ length: 5 }).map((_, i) => (
 						<div key={i} className={cn("px-3 py-2.5 space-y-1.5", i > 0 && "border-t")}>
 							<Skeleton className={connectorDetailClasses.accountTitleSkeleton} />
@@ -473,7 +473,7 @@ function ConnectorToolsList({
 							: "Tools this connector exposes."
 					}
 				/>
-				<div className={connectorDetailClasses.skeletonPadding}>
+				<div className={connectorDetailClasses.skeletonContent}>
 					<ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load tools" />
 				</div>
 			</DashboardSection>
@@ -523,7 +523,7 @@ function ConnectorToolsList({
 			<div className={connectorDetailClasses.toolList}>
 				{filtered.map((tool, i) => (
 					<div key={tool.name} className={cn(connectorDetailClasses.toolRow, i > 0 && "border-t")}>
-						<div className={connectorDetailClasses.grow}>
+						<div className={connectorDetailClasses.toolBody}>
 							<div className={connectorDetailClasses.toolHeading}>
 								<span className={connectorDetailClasses.title}>{tool.display_name}</span>
 								{tool.is_deprecated && (

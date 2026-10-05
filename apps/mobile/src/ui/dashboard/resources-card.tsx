@@ -27,10 +27,10 @@ const routes: Record<(typeof LIBRARY_ROW_IDS)[number], Href> = {
 	connectors: "/connectors",
 };
 const tints = {
-	"identity-1": identity.bgIdentity1BgText,
-	"identity-2": identity.bgIdentity2BgText,
-	"identity-4": identity.bgIdentity4BgText,
-	"identity-7": identity.bgIdentity7BgText,
+	"identity-1": identity.projects,
+	"identity-2": identity.skills,
+	"identity-4": identity.vaults,
+	"identity-7": identity.connectors,
 };
 export function ResourcesCard({
 	stats,
@@ -42,14 +42,14 @@ export function ResourcesCard({
 	onRetryStats?: () => void;
 }) {
 	return (
-		<Card className={webView(styles.gap0Pb0)}>
-			<CardHeader className={webView(styles.borderB)}>
+		<Card className={webView(styles.root)}>
+			<CardHeader className={webView(styles.header)}>
 				<CardTitle>{DASHBOARD_COPY.libraryTitle}</CardTitle>
 			</CardHeader>
-			<CardContent className={webView(styles.p0)}>
-				<WebView recipe={styles.p0}>
+			<CardContent className={webView(styles.content)}>
+				<WebView recipe={styles.content}>
 					{statsError ? (
-						<WebView recipe={styles.p6}>
+						<WebView recipe={styles.error}>
 							<ApiErrorPanel
 								error={statsError}
 								onRetry={onRetryStats}
@@ -58,21 +58,21 @@ export function ResourcesCard({
 						</WebView>
 					) : stats ? (
 						dashboardResources(stats).map(({ id, definition, count }, i) => (
-							<WebView key={id} recipe={styles.p0}>
+							<WebView key={id} recipe={styles.content}>
 								{i > 0 ? <Separator /> : null}
 								<AppPressable
 									accessibilityRole="link"
-									className={webView(styles.groupFlexItemsCenterGap)}
+									className={webView(styles.row)}
 									onPress={() => router.push(routes[id])}
 								>
-									<WebView recipe={`${styles.flexSize7Shrink0} ${tints[RESOURCE_TINT_TOKENS[id]]}`}>
-										<WebIcon as={icons[id]} recipe={styles.size35} />
+									<WebView recipe={`${styles.iconTile} ${tints[RESOURCE_TINT_TOKENS[id]]}`}>
+										<WebIcon as={icons[id]} recipe={styles.icon} />
 									</WebView>
-									<WebView recipe={styles.minW0Flex1}>
-										<WebText recipe={styles.textSmFontMedium}>{definition.label}</WebText>
+									<WebView recipe={styles.body}>
+										<WebText recipe={styles.name}>{definition.label}</WebText>
 									</WebView>
 									<WebText
-										recipe={`${styles.textSmTabularNums} ${count === null || count === 0 ? styles.textMutedForeground : styles.fontSemibold}`}
+										recipe={`${styles.count} ${count === null || count === 0 ? styles.emptyCount : styles.activeCount}`}
 									>
 										{count === null ? "—" : formatNumber(count)}
 									</WebText>
@@ -81,10 +81,10 @@ export function ResourcesCard({
 						))
 					) : (
 						LIBRARY_ROW_IDS.map((id) => (
-							<WebView key={id} recipe={styles.flexItemsCenterGap3} className="flex-row">
-								<Skeleton className={webView(styles.size4)} />
-								<Skeleton className={webView(styles.h4Flex1)} />
-								<Skeleton className={webView(styles.h4W8)} />
+							<WebView key={id} recipe={styles.skeletonRow} className="flex-row">
+								<Skeleton className={webView(styles.iconSkeleton)} />
+								<Skeleton className={webView(styles.nameSkeleton)} />
+								<Skeleton className={webView(styles.countSkeleton)} />
 							</WebView>
 						))
 					)}

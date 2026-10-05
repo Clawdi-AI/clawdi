@@ -33,7 +33,7 @@ function DialogOverlay({
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        dialogClasses.dialogOverlay,
+        dialogClasses.overlay,
         className
       )}
       {...props}
@@ -55,7 +55,7 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          dialogClasses.dialogContent,
+          dialogClasses.content,
           className
         )}
         {...props}
@@ -67,7 +67,7 @@ function DialogContent({
             render={
               <Button
                 variant="ghost"
-                className={dialogClasses.dialogContent2}
+                className={dialogClasses.closeAction}
                 size="icon-sm"
               />
             }
@@ -86,7 +86,7 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-header"
-      className={cn(dialogClasses.dialogHeader, className)}
+      className={cn(dialogClasses.header, className)}
       {...props}
     />
   )
@@ -104,7 +104,7 @@ function DialogFooter({
     <div
       data-slot="dialog-footer"
       className={cn(
-        dialogClasses.dialogFooter,
+        dialogClasses.footer,
         className
       )}
       {...props}
@@ -123,7 +123,7 @@ function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn(dialogClasses.dialogTitle, className)}
+      className={cn(dialogClasses.title, className)}
       {...props}
     />
   )
@@ -137,7 +137,7 @@ function DialogDescription({
     <DialogPrimitive.Description
       data-slot="dialog-description"
       className={cn(
-        dialogClasses.dialogDescription,
+        dialogClasses.description,
         className
       )}
       {...props}

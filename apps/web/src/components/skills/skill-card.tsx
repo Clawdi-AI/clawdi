@@ -108,7 +108,7 @@ export function SkillCard({
 							className={skillCardClasses.removeAction}
 							aria-label={`Remove ${skill.name} from Project`}
 						>
-							<Trash2 className={skillCardClasses.smallIcon} />
+							<Trash2 className={skillCardClasses.actionIcon} />
 						</Button>
 					</ConfirmAction>
 				) : null}
@@ -153,7 +153,7 @@ export function SkillCard({
 				provenanceLabel ? <span key="provenance">{provenanceLabel}</span> : null,
 				sourceLabel ? (
 					<span key="source-label" className={skillCardClasses.projectChip}>
-						<span aria-hidden className={skillCardClasses.unselectable}>
+						<span aria-hidden className={skillCardClasses.versionPrefix}>
 							{sourceLabel.emoji}
 						</span>
 						<TruncatedText>{sourceLabel.name}</TruncatedText>

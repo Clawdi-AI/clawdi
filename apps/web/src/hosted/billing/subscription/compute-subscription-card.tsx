@@ -71,7 +71,7 @@ function SubscriptionIdentity({ identity }: { identity: ComputeSubscriptionIdent
 			{label}
 		</Link>
 	) : (
-		<div className={computeSubscriptionCardClasses.minWidth}>{label}</div>
+		<div className={computeSubscriptionCardClasses.labelBody}>{label}</div>
 	);
 }
 

@@ -27,7 +27,7 @@ function SheetOverlay({ className, ...props }: SheetPrimitive.Backdrop.Props) {
     <SheetPrimitive.Backdrop
       data-slot="sheet-overlay"
       className={cn(
-        sheetClasses.sheetOverlay,
+        sheetClasses.overlay,
         className
       )}
       {...props}
@@ -52,7 +52,7 @@ function SheetContent({
         data-slot="sheet-content"
         data-side={side}
         className={cn(
-          sheetClasses.sheetContent,
+          sheetClasses.content,
           className
         )}
         {...props}
@@ -64,7 +64,7 @@ function SheetContent({
             render={
               <Button
                 variant="ghost"
-                className={sheetClasses.sheetContent2}
+                className={sheetClasses.closeAction}
                 size="icon-sm"
               />
             }
@@ -83,7 +83,7 @@ function SheetHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="sheet-header"
-      className={cn(sheetClasses.sheetHeader, className)}
+      className={cn(sheetClasses.header, className)}
       {...props}
     />
   )
@@ -93,7 +93,7 @@ function SheetFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="sheet-footer"
-      className={cn(sheetClasses.sheetFooter, className)}
+      className={cn(sheetClasses.footer, className)}
       {...props}
     />
   )
@@ -103,7 +103,7 @@ function SheetTitle({ className, ...props }: SheetPrimitive.Title.Props) {
   return (
     <SheetPrimitive.Title
       data-slot="sheet-title"
-      className={cn(sheetClasses.sheetTitle, className)}
+      className={cn(sheetClasses.title, className)}
       {...props}
     />
   )
@@ -116,7 +116,7 @@ function SheetDescription({
   return (
     <SheetPrimitive.Description
       data-slot="sheet-description"
-      className={cn(sheetClasses.sheetDescription, className)}
+      className={cn(sheetClasses.description, className)}
       {...props}
     />
   )

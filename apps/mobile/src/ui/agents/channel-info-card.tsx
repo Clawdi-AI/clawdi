@@ -13,14 +13,14 @@ export function ChannelInfoCard({
 	children: string;
 }) {
 	return (
-		<WebView recipe={styles.roundedLgBorderBgCardP}>
-			<WebView recipe={styles.flexItemsStartGap} className="flex-row">
-				<IconChip size="sm" tint={styles.infoTint} className={webView(styles.sizeSvgSize)}>
-					<WebIcon as={icon} recipe={styles.size} />
+		<WebView recipe={styles.notice}>
+			<WebView recipe={styles.noticeHeader} className="flex-row">
+				<IconChip size="sm" tint={styles.infoTint} className={webView(styles.noticeIcon)}>
+					<WebIcon as={icon} recipe={styles.actionIcon} />
 				</IconChip>
-				<WebView recipe={styles.minWFlexSpaceY}>
-					<WebText recipe={styles.textSmFontMedium}>{title}</WebText>
-					<WebText recipe={styles.textSmTextMutedForeground}>{children}</WebText>
+				<WebView recipe={styles.noticeBody}>
+					<WebText recipe={styles.noticeTitle}>{title}</WebText>
+					<WebText recipe={styles.noticeDescription}>{children}</WebText>
 				</WebView>
 			</WebView>
 		</WebView>

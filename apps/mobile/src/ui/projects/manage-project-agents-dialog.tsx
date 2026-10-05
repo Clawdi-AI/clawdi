@@ -146,7 +146,7 @@ export function ManageProjectAgentsDialog({
 											}
 											title={identity.primaryLabel}
 											meta={identity.secondaryLabel}
-											className={webView(projectDetailClasses.grow)}
+											className={webView(projectDetailClasses.agentIdentity)}
 										/>
 									</WebView>
 								);

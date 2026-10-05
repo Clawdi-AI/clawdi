@@ -59,8 +59,8 @@ export function AgentsCard({
 
 	// Tiles start flush with the column, level with the cards on the right.
 	return (
-		<section className={agentsCardClasses.spaceY3}>
-			<div className={agentsCardClasses.spaceY3}>
+		<section className={agentsCardClasses.section}>
+			<div className={agentsCardClasses.section}>
 				{error ? (
 					<ApiErrorPanel error={error} onRetry={onRetry} title={OVERVIEW_COPY.agentsError} />
 				) : isLoading ? (
@@ -157,25 +157,25 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 
 	return (
 		<div
-			className={cn(ENTITY_CARD_BASE, agentsCardClasses.groupRelativeZ0H)}
+			className={cn(ENTITY_CARD_BASE, agentsCardClasses.card)}
 			title={tile.href ? undefined : tile.name}
 		>
 			<EntityHeader
 				icon={<AgentIcon agent={tile.agentType} size="lg" avatarUrl={tile.avatarUrl} />}
 				title={
-					<span className={agentsCardClasses.flexMinW0Items}>
+					<span className={agentsCardClasses.title}>
 						{statusVisual ? <AgentStatusDot visual={statusVisual} /> : null}
-						<span className={agentsCardClasses.minW0Truncate} title={tile.name}>
+						<span className={agentsCardClasses.name} title={tile.name}>
 							{tile.name}
 						</span>
 					</span>
 				}
 				meta={meta.length > 0 ? meta : undefined}
 				titleAdornment={sourcePill}
-				className={agentsCardClasses.minW0Flex1}
+				className={agentsCardClasses.body}
 			/>
 			{tile.external ? (
-				<ArrowUpRight aria-hidden className={agentsCardClasses.pointerEventsNoneAbsoluteRight} />
+				<ArrowUpRight aria-hidden className={agentsCardClasses.externalIcon} />
 			) : null}
 			{tile.href ? (
 				tile.external ? (
@@ -186,7 +186,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 						className={ENTITY_STRETCHED_LINK_CLASS}
 						aria-label={linkLabel}
 					>
-						<span className={agentsCardClasses.srOnly}>{linkLabel}</span>
+						<span className={agentsCardClasses.screenReaderOnly}>{linkLabel}</span>
 					</a>
 				) : (
 					<Link
@@ -197,7 +197,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 						onFocus={preloadHostedAgentHome}
 						onTouchStartCapture={preloadHostedAgentHome}
 					>
-						<span className={agentsCardClasses.srOnly}>{linkLabel}</span>
+						<span className={agentsCardClasses.screenReaderOnly}>{linkLabel}</span>
 					</Link>
 				)
 			) : null}
@@ -207,12 +207,9 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 
 function AgentStatusDot({ visual }: { visual: AgentCardStatusVisual }) {
 	return (
-		<span
-			title={`Status: ${visual.label}. ${visual.tooltip}`}
-			className={agentsCardClasses.inlineFlexShrink0Items}
-		>
-			<span aria-hidden className={cn(agentsCardClasses.size15RoundedFull, visual.dotClass)} />
-			<span className={agentsCardClasses.srOnly}>{visual.label}</span>
+		<span title={`Status: ${visual.label}. ${visual.tooltip}`} className={agentsCardClasses.status}>
+			<span aria-hidden className={cn(agentsCardClasses.dot, visual.dotClass)} />
+			<span className={agentsCardClasses.screenReaderOnly}>{visual.label}</span>
 		</span>
 	);
 }

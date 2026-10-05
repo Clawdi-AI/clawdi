@@ -1,10 +1,10 @@
 import {
+	agentIconFallbackClasses,
+	agentIconRadiusClasses,
+	agentIconSizeClasses,
+	agentLabelClasses,
 	detailLayoutClasses as detail,
 	sessionModelBadgeClasses as model,
-	sessionAgentFallbackSizes,
-	sessionAgentIconRadius,
-	sessionAgentIconSizes,
-	sessionAgentInlineClasses,
 	sessionStatClasses as stat,
 } from "@clawdi/shared/ui";
 import { type AgentIdentityInput, agentIdentity, formatModelLabel } from "@clawdi/shared/view";
@@ -39,14 +39,14 @@ export function Stat({ icon, label }: { icon: LucideIcon; label: string }) {
 }
 export function AgentInline({ identity }: { identity: AgentIdentityInput }) {
 	return (
-		<WebView recipe={sessionAgentInlineClasses.root}>
+		<WebView recipe={agentLabelClasses.inline.root}>
 			<AgentFrameworkIcon
 				agent={identity.agent_type}
 				pixelSize={16}
-				boxClassName={webBoth(`${sessionAgentIconSizes.xs} ${sessionAgentIconRadius.rounded}`)}
-				fallbackIconClassName={webBoth(sessionAgentFallbackSizes.xs)}
+				boxClassName={webBoth(`${agentIconSizeClasses.xs} ${agentIconRadiusClasses.rounded}`)}
+				fallbackIconClassName={webBoth(agentIconFallbackClasses.xs)}
 			/>
-			<WebText recipe={sessionAgentInlineClasses.label}>
+			<WebText recipe={agentLabelClasses.inline.label}>
 				{agentIdentity(identity).primaryLabel}
 			</WebText>
 		</WebView>

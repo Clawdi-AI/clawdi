@@ -175,7 +175,7 @@ export function AgentSettingsPanel({
 	if (isLoading) {
 		return (
 			<div className={className}>
-				<Skeleton className={agentSettingsPanelClasses.hPxWFull} />
+				<Skeleton className={agentSettingsPanelClasses.skeleton} />
 			</div>
 		);
 	}
@@ -183,8 +183,8 @@ export function AgentSettingsPanel({
 	if (shouldBlockQueryError(error, agent) || !agent) {
 		return (
 			<div className={cn("flex flex-col gap-1 rounded-md border p-4", className)}>
-				<div className={agentSettingsPanelClasses.textSmFontSemibold}>Settings unavailable</div>
-				<p className={agentSettingsPanelClasses.textSmTextMuted}>
+				<div className={agentSettingsPanelClasses.errorTitle}>Settings unavailable</div>
+				<p className={agentSettingsPanelClasses.errorDescription}>
 					{errorMessage(error ?? "Agent not found")}
 				</p>
 			</div>
@@ -230,14 +230,14 @@ export function AgentSettingsPanel({
 				type="file"
 				accept="image/png,image/jpeg,image/webp"
 				aria-label="Upload agent avatar"
-				className={agentSettingsPanelClasses.hidden}
+				className={agentSettingsPanelClasses.avatarInput}
 				onChange={onUploadChange}
 			/>
-			<div className={agentSettingsPanelClasses.flexFlexColItems}>
+			<div className={agentSettingsPanelClasses.identity}>
 				<AgentIcon agent={agent.agent_type} size="xl" avatarUrl={agent.avatar_url} />
-				<div className={agentSettingsPanelClasses.flexMinWFlex}>
-					<div className={agentSettingsPanelClasses.maxWFullTruncate}>{displayName}</div>
-					<div className={agentSettingsPanelClasses.flexFlexWrapItems}>
+				<div className={agentSettingsPanelClasses.identityCopy}>
+					<div className={agentSettingsPanelClasses.name}>{displayName}</div>
+					<div className={agentSettingsPanelClasses.identityMeta}>
 						<span>{runtimeLabel}</span>
 						<AgentSourceBadgeForEnvironment
 							env={agent}
@@ -253,9 +253,12 @@ export function AgentSettingsPanel({
 				title={agentSurfaceCopy.name}
 				description={agentSurfaceCopy.useAShortNameThatDistinguishesThis}
 			>
-				<div className={agentSettingsPanelClasses.flexWFullFlex}>
-					<div className={agentSettingsPanelClasses.flexFlexColGap}>
-						<Label htmlFor="agent-display-name" className={agentSettingsPanelClasses.srOnly}>
+				<div className={agentSettingsPanelClasses.nameForm}>
+					<div className={agentSettingsPanelClasses.nameRow}>
+						<Label
+							htmlFor="agent-display-name"
+							className={agentSettingsPanelClasses.screenReaderOnly}
+						>
 							Agent name
 						</Label>
 						<Input
@@ -271,7 +274,7 @@ export function AgentSettingsPanel({
 							type="button"
 							size="sm"
 							variant={nameChanged ? "default" : "outline"}
-							className={agentSettingsPanelClasses.lgHLgMin}
+							className={agentSettingsPanelClasses.saveName}
 							disabled={!nameChanged || updateIdentity.isPending}
 							onClick={() => updateIdentity.mutate({ display_name: normalizedDraftName })}
 						>
@@ -283,15 +286,15 @@ export function AgentSettingsPanel({
 							Save
 						</Button>
 					</div>
-					<div className={agentSettingsPanelClasses.flexFlexColGap2}>
-						<span className={agentSettingsPanelClasses.minWTruncate}>
+					<div className={agentSettingsPanelClasses.nameHelp}>
+						<span className={agentSettingsPanelClasses.defaultName}>
 							Default: {defaultDisplayName}
 						</span>
 						<Button
 							type="button"
 							size="sm"
 							variant="ghost"
-							className={agentSettingsPanelClasses.hWFitPx}
+							className={agentSettingsPanelClasses.resetName}
 							disabled={!agent.display_name || updateIdentity.isPending}
 							onClick={() => updateIdentity.mutate({ display_name: null })}
 						>
@@ -306,19 +309,17 @@ export function AgentSettingsPanel({
 				title={agentSurfaceCopy.avatar}
 				description={agentSurfaceCopy.shownInTheSidebarPickersAndAgent}
 			>
-				<div className={agentSettingsPanelClasses.flexFlexColGap3}>
-					<div className={agentSettingsPanelClasses.flexMinWFlex2}>
+				<div className={agentSettingsPanelClasses.avatarRow}>
+					<div className={agentSettingsPanelClasses.avatarIdentity}>
 						<AgentIcon agent={agent.agent_type} size="lg" avatarUrl={agent.avatar_url} />
-						<div className={agentSettingsPanelClasses.minW}>
-							<div className={agentSettingsPanelClasses.truncateTextSmFont}>
-								{currentAvatarLabel}
-							</div>
-							<div className={agentSettingsPanelClasses.textXsTextMuted}>
+						<div className={agentSettingsPanelClasses.avatarCopy}>
+							<div className={agentSettingsPanelClasses.avatarLabel}>{currentAvatarLabel}</div>
+							<div className={agentSettingsPanelClasses.avatarHint}>
 								{agentSurfaceCopy.imageUpTo2Mb}
 							</div>
 						</div>
 					</div>
-					<div className={agentSettingsPanelClasses.flexShrinkFlexWrap}>
+					<div className={agentSettingsPanelClasses.avatarActions}>
 						<Button
 							type="button"
 							variant="outline"
@@ -339,7 +340,7 @@ export function AgentSettingsPanel({
 							size="sm"
 							disabled={isBusy || !hasCustomAvatar}
 							onClick={() => clearAvatar.mutate()}
-							className={agentSettingsPanelClasses.textMutedForeground}
+							className={agentSettingsPanelClasses.removeAvatar}
 						>
 							{clearAvatar.isPending ? (
 								<Spinner data-icon="inline-start" />
@@ -357,8 +358,8 @@ export function AgentSettingsPanel({
 					title="Legacy dashboard"
 					description="Manage this Legacy hosted agent in the legacy dashboard."
 				>
-					<div className={agentSettingsPanelClasses.flexFlexColGap4}>
-						<p className={agentSettingsPanelClasses.maxWMdText}>
+					<div className={agentSettingsPanelClasses.actionRow}>
+						<p className={agentSettingsPanelClasses.actionDescription}>
 							This agent uses the legacy management surface for runtime actions.
 						</p>
 						<Button
@@ -387,8 +388,8 @@ export function AgentSettingsPanel({
 					description={agentSurfaceCopy.stopThisInstallationWhileKeepingItsClawdi}
 					variant="destructive"
 				>
-					<div className={agentSettingsPanelClasses.flexFlexColGap4}>
-						<p className={agentSettingsPanelClasses.maxWMdText}>
+					<div className={agentSettingsPanelClasses.actionRow}>
+						<p className={agentSettingsPanelClasses.actionDescription}>
 							{agentSurfaceCopy.syncStopsAndRetainedSessionsSkillsFilesAndProjects}
 						</p>
 						<ConfirmAction
@@ -408,7 +409,7 @@ export function AgentSettingsPanel({
 								variant="outline"
 								size="sm"
 								disabled={disconnect.isPending}
-								className={agentSettingsPanelClasses.borderDestructiveTextDestructive}
+								className={agentSettingsPanelClasses.disconnect}
 							>
 								{disconnect.isPending ? (
 									<Spinner data-icon="inline-start" />

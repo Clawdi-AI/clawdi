@@ -32,7 +32,7 @@ export function SearchInput({
 }) {
 	const t = useI18n();
 	return (
-		<WebView recipe={styles.InputGroup} className={className}>
+		<WebView recipe={styles.root} className={className}>
 			<WebView recipe={inputGroupAddonVariants({ align: "inline-start" })}>
 				<Icon as={Search} />
 			</WebView>
@@ -46,7 +46,7 @@ export function SearchInput({
 				maxLength={maxLength}
 				autoCorrect={false}
 				autoCapitalize="none"
-				className={webView(styles.InputGroupInput)}
+				className={webView(styles.input)}
 			/>
 			{value ? (
 				<WebView recipe={inputGroupAddonVariants({ align: "inline-end" })}>

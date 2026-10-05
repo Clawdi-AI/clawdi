@@ -112,7 +112,7 @@ function ChannelsView() {
 					/>
 				) : null}
 				{custom.length || owned.isPending || owned.isError ? (
-					<WebView recipe={styles.flexFlexColGap}>
+					<WebView recipe={styles.ownedSection}>
 						<SectionLabel count={!owned.isPending ? custom.length : undefined}>
 							{agentSurfaceCopy.customBots}
 						</SectionLabel>
@@ -171,12 +171,12 @@ function ChannelsView() {
 					</WebView>
 				) : null}
 				{bots.length || pool.isPending || pool.isError ? (
-					<WebView recipe={styles.flexMinWFlex}>
-						<WebView recipe={styles.flexFlexColGap}>
+					<WebView recipe={styles.sharedSection}>
+						<WebView recipe={styles.ownedSection}>
 							<SectionLabel count={!pool.isPending ? bots.length : undefined}>
 								{agentSurfaceCopy.clawdiBots}
 							</SectionLabel>
-							<WebText recipe={styles.mtTextXsText}>
+							<WebText recipe={styles.sharedDescription}>
 								{agentSurfaceCopy.linkAnAgentAndPairAChatWithoutLeaving}
 							</WebText>
 						</WebView>

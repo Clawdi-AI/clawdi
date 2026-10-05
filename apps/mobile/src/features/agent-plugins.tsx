@@ -195,7 +195,7 @@ function Plugins({ id }: { id: string }) {
 					const group = items.filter((item) => Boolean(item.desired) === installed);
 					if (!group.length) return null;
 					return (
-						<WebView key={String(installed)} recipe={styles.spaceY2}>
+						<WebView key={String(installed)} recipe={styles.section}>
 							<SectionLabel count={group.length}>
 								{installed ? agentSurfaceCopy.installed : agentSurfaceCopy.available}
 							</SectionLabel>

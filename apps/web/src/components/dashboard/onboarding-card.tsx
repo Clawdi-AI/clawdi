@@ -43,8 +43,8 @@ export function OnboardingCard({
 		<>
 			<Card>
 				<CardHeader>
-					<CardTitle className={onboardingCardClasses.flexItemsCenterGap2}>
-						<Rocket className={onboardingCardClasses.size5TextPrimary} />
+					<CardTitle className={onboardingCardClasses.title}>
+						<Rocket className={onboardingCardClasses.titleIcon} />
 						{title}
 					</CardTitle>
 					<CardDescription>{description}</CardDescription>
@@ -53,8 +53,8 @@ export function OnboardingCard({
 					<div
 						className={
 							canDeployOnClawdi && !isAdditionalAgent
-								? onboardingCardClasses.gridGap2XlGrid
-								: onboardingCardClasses.gridGap2
+								? onboardingCardClasses.actionsWithDeploy
+								: onboardingCardClasses.actions
 						}
 					>
 						{canDeployOnClawdi ? (
@@ -62,7 +62,7 @@ export function OnboardingCard({
 								render={<Link to="/deploy" />}
 								nativeButton={false}
 								size="lg"
-								className={onboardingCardClasses.wFull}
+								className={onboardingCardClasses.deployAction}
 							>
 								<Rocket data-icon="inline-start" /> Deploy on Clawdi
 							</Button>
@@ -71,7 +71,7 @@ export function OnboardingCard({
 							type="button"
 							variant={canDeployOnClawdi ? "outline" : "default"}
 							size="lg"
-							className={onboardingCardClasses.hAutoMinH10}
+							className={onboardingCardClasses.connectAction}
 							onClick={connectAgent}
 						>
 							<TerminalSquare data-icon="inline-start" /> Connect an Agent on your machine

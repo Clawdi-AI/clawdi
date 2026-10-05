@@ -16,13 +16,13 @@ export function AgentSourceBadge({
 	ownership: AgentOwnership | null;
 }) {
 	const kind = agentOwnershipKindFromId(agentId, ownership);
-	if (kind === "unresolved") return <Skeleton className={webView(styles.loading)} />;
+	if (kind === "unresolved") return <Skeleton className={webView(styles.skeleton)} />;
 	const source = kind === "cloud" ? "hosted" : "connected";
 	return (
 		<StatusBadge
 			status="neutral"
 			className={webBoth(
-				`${kind === "legacy" ? styles.legacy : styles.base} ${styles.compact} ${kind === "legacy" ? "" : styles[source]}`,
+				`${kind === "legacy" ? styles.legacyRoot : styles.root} ${styles.compact} ${kind === "legacy" ? "" : styles[source]}`,
 			)}
 		>
 			<Icon

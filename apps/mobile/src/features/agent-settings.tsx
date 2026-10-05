@@ -201,16 +201,16 @@ function Settings({ id }: { id: string | undefined }) {
 				{!id || agent.isError ? <ResourceError missing={!id || isNotFound(agent.error)} /> : null}
 				{agent.data && agent.data.id === id ? (
 					<WebView recipe={styles.root}>
-						<WebView recipe={styles.flexFlexColItems}>
+						<WebView recipe={styles.identity}>
 							<AgentIcon
 								agent={agent.data.agent_type}
 								size="xl"
 								avatarUrl={agent.data.avatar_url}
 							/>
-							<WebView recipe={styles.flexMinWFlex}>
-								<WebText recipe={styles.maxWFullTruncate}>{agentDisplayName(agent.data)}</WebText>
-								<WebView recipe={styles.flexFlexWrapItems} className="flex-row">
-									<WebText recipe={styles.textSmTextMuted}>
+							<WebView recipe={styles.identityCopy}>
+								<WebText recipe={styles.name}>{agentDisplayName(agent.data)}</WebText>
+								<WebView recipe={styles.identityMeta} className="flex-row">
+									<WebText recipe={styles.errorDescription}>
 										{agentTypeLabel(agent.data.agent_type)}
 									</WebText>
 									<AgentSourceBadge agentId={id} ownership={resolvedOwnership} />
@@ -221,7 +221,7 @@ function Settings({ id }: { id: string | undefined }) {
 							title={agentSurfaceCopy.name}
 							description={agentSurfaceCopy.useAShortNameThatDistinguishesThis}
 						>
-							<WebView recipe={styles.flexWFullFlex}>
+							<WebView recipe={styles.nameForm}>
 								<Input
 									accessibilityLabel={t("agentSettings.name")}
 									placeholder={t("agentSettings.name")}
@@ -250,12 +250,12 @@ function Settings({ id }: { id: string | undefined }) {
 										})
 									}
 								/>
-								<WebText recipe={styles.textXsTextMuted}>
+								<WebText recipe={styles.avatarHint}>
 									Default: {agentDisplayName({ ...agent.data, display_name: null })}
 								</WebText>
 								<ActionButton
 									label="Use default name"
-									className={webView(styles.hWFitPx)}
+									className={webView(styles.resetName)}
 									icon={<Icon as={RotateCcw} />}
 									variant="ghost"
 									disabled={unavailable || !agent.data.display_name}
@@ -275,25 +275,23 @@ function Settings({ id }: { id: string | undefined }) {
 							title={agentSurfaceCopy.avatar}
 							description={agentSurfaceCopy.shownInTheSidebarPickersAndAgent}
 						>
-							<WebView recipe={styles.flexFlexColGap3}>
-								<WebView recipe={styles.flexMinWFlex2} className="flex-row">
+							<WebView recipe={styles.avatarRow}>
+								<WebView recipe={styles.avatarIdentity} className="flex-row">
 									<AgentIcon
 										agent={agent.data.agent_type}
 										size="lg"
 										avatarUrl={agent.data.avatar_url}
 									/>
-									<WebView recipe={styles.minW}>
-										<WebText recipe={styles.truncateTextSmFont}>
+									<WebView recipe={styles.avatarCopy}>
+										<WebText recipe={styles.avatarLabel}>
 											{agent.data.avatar_url
 												? agentSurfaceCopy.customUpload
 												: `${agentTypeLabel(agent.data.agent_type)} default`}
 										</WebText>
-										<WebText recipe={styles.textXsTextMuted}>
-											{agentSurfaceCopy.imageUpTo2Mb}
-										</WebText>
+										<WebText recipe={styles.avatarHint}>{agentSurfaceCopy.imageUpTo2Mb}</WebText>
 									</WebView>
 								</WebView>
-								<WebView recipe={styles.flexShrinkFlexWrap} className="flex-row">
+								<WebView recipe={styles.avatarActions} className="flex-row">
 									<ActionButton
 										label="Upload image"
 										icon={<Icon as={Upload} />}
@@ -339,8 +337,8 @@ function Settings({ id }: { id: string | undefined }) {
 								description={agentSurfaceCopy.stopThisInstallationWhileKeepingItsClawdi}
 								destructive
 							>
-								<WebView recipe={styles.flexFlexColGap4}>
-									<WebText recipe={styles.maxWMdText}>
+								<WebView recipe={styles.actionRow}>
+									<WebText recipe={styles.actionDescription}>
 										{agentSurfaceCopy.syncStopsAndRetainedSessionsSkillsFilesAndProjects}
 									</WebText>
 									<ActionButton

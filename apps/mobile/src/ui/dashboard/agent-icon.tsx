@@ -1,7 +1,7 @@
 import {
-	sessionAgentIconSizes as boxSizes,
-	sessionAgentFallbackSizes as fallbackSizes,
-	sessionAgentIconRadius as radius,
+	agentIconSizeClasses as boxSizes,
+	agentIconFallbackClasses as fallbackSizes,
+	agentIconRadiusClasses as radius,
 } from "@clawdi/shared/ui";
 import { AgentFrameworkIcon } from "../agent-framework-icon";
 import { webView } from "../web-layout";

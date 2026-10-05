@@ -146,7 +146,7 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 						</WebView>
 						{memory.source_session_id || memory.source_machine_name ? (
 							<WebView recipe={memoryDetailClasses.provenance}>
-								<Icon as={Laptop} className={webBoth(memoryDetailClasses.smallIcon)} />
+								<Icon as={Laptop} className={webBoth(memoryDetailClasses.sourceIcon)} />
 								<Text>
 									{memory.source_machine_name
 										? `Learned on ${memory.source_machine_name}`

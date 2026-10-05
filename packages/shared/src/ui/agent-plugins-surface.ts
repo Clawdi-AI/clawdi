@@ -1,7 +1,7 @@
 /** Exact Web recipes from apps/web/src/hosted/v2/agent-plugins/agent-plugins-surface.tsx. */
 export const agentPluginsSurfaceClasses = {
-	spaceY: "space-y-6",
-	textMutedForegroundTabular: "text-muted-foreground tabular-nums",
-	spaceY2: "space-y-3",
-	srOnly: "sr-only",
+	root: "space-y-6",
+	filterCount: "text-muted-foreground tabular-nums",
+	section: "space-y-3",
+	screenReaderOnly: "sr-only",
 } as const;

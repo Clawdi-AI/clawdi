@@ -511,9 +511,9 @@ export default function VaultDetailPage({
 								variant="outline"
 								size="sm"
 								disabled={deleteVault.isPending}
-								className={vaultDetailClasses.destructive}
+								className={vaultDetailClasses.deleteAction}
 							>
-								<Trash2 className={vaultDetailClasses.smallButtonIcon} />
+								<Trash2 className={vaultDetailClasses.deleteIcon} />
 								Delete
 							</Button>
 						</ConfirmAction>
@@ -526,7 +526,7 @@ export default function VaultDetailPage({
 			{/* Keys */}
 			<section className={vaultDetailClasses.section}>
 				<div className={vaultDetailClasses.sectionHeader}>
-					<div className={vaultDetailClasses.shrinkContent}>
+					<div className={vaultDetailClasses.sectionHeading}>
 						<div className={vaultDetailClasses.headingRow}>
 							<h2 className={vaultDetailClasses.heading}>Keys</h2>
 							{blockingKeysError ? (
@@ -568,7 +568,7 @@ export default function VaultDetailPage({
 										aria-pressed={selectMode}
 										className={vaultDetailClasses.control}
 									>
-										<ListChecks className={vaultDetailClasses.smallIcon} />
+										<ListChecks className={vaultDetailClasses.actionIcon} />
 										{selectMode ? "Done" : "Select"}
 									</Button>
 								) : null}
@@ -589,7 +589,7 @@ export default function VaultDetailPage({
 									disabled={!vault.id}
 									className={vaultDetailClasses.control}
 								>
-									<Plus className={vaultDetailClasses.smallIcon} />
+									<Plus className={vaultDetailClasses.actionIcon} />
 									Add keys
 								</Button>
 							</AddKeysDialog>
@@ -619,7 +619,7 @@ export default function VaultDetailPage({
 				) : null}
 
 				{keys.isLoading ? (
-					<Skeleton className={vaultDetailClasses.gridSkeleton} />
+					<Skeleton className={vaultDetailClasses.keyGridSkeleton} />
 				) : blockingKeysError ? (
 					<ApiErrorPanel
 						error={blockingKeysError}
@@ -710,7 +710,7 @@ export default function VaultDetailPage({
 												className={vaultDetailClasses.removeKey}
 												aria-label={`Delete ${name}`}
 											>
-												<Trash2 className={vaultDetailClasses.tinyIcon} />
+												<Trash2 className={vaultDetailClasses.removeKeyIcon} />
 											</Button>
 										</ConfirmAction>
 									) : null}
@@ -725,13 +725,13 @@ export default function VaultDetailPage({
 				<BulkActionBar count={selectedKeys.size} noun="key" onClear={clearSelection}>
 					<CopyKeysDialog vault={vault} keys={selectedList} mode="copy" onDone={clearSelection}>
 						<Button size="sm" variant="outline">
-							<CopyIcon className={vaultDetailClasses.smallIcon} />
+							<CopyIcon className={vaultDetailClasses.actionIcon} />
 							Copy to vault…
 						</Button>
 					</CopyKeysDialog>
 					<CopyKeysDialog vault={vault} keys={selectedList} mode="move" onDone={clearSelection}>
 						<Button size="sm">
-							<FolderInput className={vaultDetailClasses.smallIcon} />
+							<FolderInput className={vaultDetailClasses.actionIcon} />
 							Move to vault…
 						</Button>
 					</CopyKeysDialog>
@@ -746,9 +746,9 @@ export default function VaultDetailPage({
 							size="sm"
 							variant="outline"
 							disabled={bulkDeleteKeys.isPending}
-							className={vaultDetailClasses.destructive}
+							className={vaultDetailClasses.deleteAction}
 						>
-							<Trash2 className={vaultDetailClasses.smallIcon} />
+							<Trash2 className={vaultDetailClasses.actionIcon} />
 							Delete
 						</Button>
 					</ConfirmAction>
@@ -758,7 +758,7 @@ export default function VaultDetailPage({
 			{/* Projects */}
 			<section className={vaultDetailClasses.section}>
 				<div className={vaultDetailClasses.sectionHeader}>
-					<div className={vaultDetailClasses.shrinkContent}>
+					<div className={vaultDetailClasses.sectionHeading}>
 						<div className={vaultDetailClasses.headingRow}>
 							<h2 className={vaultDetailClasses.heading}>
 								{isAgentScope ? requestedAttachmentLabel : "Projects"}
@@ -847,7 +847,7 @@ export default function VaultDetailPage({
 												className={vaultDetailClasses.detachAction}
 												aria-label={`Remove from ${attachmentLabel}`}
 											>
-												<Trash2 className={vaultDetailClasses.smallIcon} />
+												<Trash2 className={vaultDetailClasses.actionIcon} />
 											</Button>
 										</ConfirmAction>
 									) : null}
@@ -910,7 +910,7 @@ function AttachProjectPicker({
 					setValue("");
 				}}
 			>
-				{isPending ? <Spinner /> : <Plus className={vaultDetailClasses.smallIcon} />}
+				{isPending ? <Spinner /> : <Plus className={vaultDetailClasses.actionIcon} />}
 				Add to Project
 			</Button>
 		</div>

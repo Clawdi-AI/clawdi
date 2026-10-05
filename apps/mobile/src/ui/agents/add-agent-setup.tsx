@@ -41,80 +41,76 @@ export function AddAgentSetup() {
 		(agent) => baseline.current && !baseline.current.has(agent.id),
 	);
 	return (
-		<WebView recipe={styles.spaceY}>
+		<WebView recipe={styles.root}>
 			<Tabs defaultValue="commands">
 				<TabsList variant="default">
 					<TabsTrigger value="commands">
-						<WebView recipe={styles.flexItemsCenterGap} className="flex-row">
+						<WebView recipe={styles.registrationHeading} className="flex-row">
 							<Icon as={Terminal} />
 							<Text>Run commands</Text>
 						</WebView>
 					</TabsTrigger>
 					<TabsTrigger value="prompt">
-						<WebView recipe={styles.flexItemsCenterGap} className="flex-row">
+						<WebView recipe={styles.registrationHeading} className="flex-row">
 							<Icon as={Bot} />
 							<Text>Ask your agent</Text>
 						</WebView>
 					</TabsTrigger>
 				</TabsList>
-				<TabsContent value="commands" className={webView(styles.mtSpaceY)}>
+				<TabsContent value="commands" className={webView(styles.commands)}>
 					<WebView recipe="">
-						<WebText recipe={styles.textSmFontMedium}>
+						<WebText recipe={styles.title}>
 							{agentSurfaceCopy.runTheseCommandsInOrderOnTheMachine}
 						</WebText>
-						<WebText recipe={styles.mtTextXsText}>{agentSurfaceCopy.nodeJs24IsRequired}</WebText>
-						<WebText recipe={styles.mtTextXsText2}>
+						<WebText recipe={styles.requirementHint}>{agentSurfaceCopy.nodeJs24IsRequired}</WebText>
+						<WebText recipe={styles.packageManagerHint}>
 							{agentSurfaceCopy.preferBunUseBunAddGClawdiLatest}
 						</WebText>
 					</WebView>
-					<WebView recipe={styles.spaceY2}>
+					<WebView recipe={styles.steps}>
 						{CLI_STEPS.map((step, index) => (
-							<WebView key={step.title} recipe={styles.flexGap} className="flex-row">
-								<WebView recipe={styles.flexSizeShrinkItems2}>
+							<WebView key={step.title} recipe={styles.step} className="flex-row">
+								<WebView recipe={styles.stepNumber}>
 									<Text>{index + 1}</Text>
 								</WebView>
-								<WebView recipe={styles.minWFlex}>
-									<WebText recipe={styles.textSmFontMedium}>{step.title}</WebText>
-									<WebView recipe={styles.mtFlexItemsCenter2} className="flex-row">
-										<WebText selectable recipe={styles.minWFlexOverflow}>
+								<WebView recipe={styles.body}>
+									<WebText recipe={styles.title}>{step.title}</WebText>
+									<WebView recipe={styles.commandRow} className="flex-row">
+										<WebText selectable recipe={styles.command}>
 											{step.code}
 										</WebText>
 									</WebView>
-									<WebText recipe={styles.mtTextXsText}>{step.description}</WebText>
+									<WebText recipe={styles.requirementHint}>{step.description}</WebText>
 								</WebView>
 							</WebView>
 						))}
 					</WebView>
 				</TabsContent>
-				<TabsContent value="prompt" className={webView(styles.mtSpaceY2)}>
-					<WebText recipe={styles.textSmFontMedium}>
-						{agentSurfaceCopy.askYourAgentToSetUpClawdi}
-					</WebText>
-					<WebText recipe={styles.mtTextXsText}>
+				<TabsContent value="prompt" className={webView(styles.promptContent)}>
+					<WebText recipe={styles.title}>{agentSurfaceCopy.askYourAgentToSetUpClawdi}</WebText>
+					<WebText recipe={styles.requirementHint}>
 						{agentSurfaceCopy.pasteThisPromptIntoClaudeCodeCodexHermesOpenClaw}
 					</WebText>
-					<WebView recipe={styles.roundedLgBorderBg}>
-						<WebView recipe={styles.flexItemsCenterJustify}>
-							<WebText recipe={styles.textXsUppercaseTracking}>
-								{agentSurfaceCopy.setupPrompt}
-							</WebText>
+					<WebView recipe={styles.promptPanel}>
+						<WebView recipe={styles.promptHeader}>
+							<WebText recipe={styles.promptLabel}>{agentSurfaceCopy.setupPrompt}</WebText>
 						</WebView>
-						<WebText selectable recipe={styles.whitespacePreWrapP}>
+						<WebText selectable recipe={styles.prompt}>
 							{agentSetupPrompt("https://cloud.clawdi.ai")}
 						</WebText>
 					</WebView>
 				</TabsContent>
 			</Tabs>
-			<WebView recipe={styles.borderTPt}>
-				<WebText recipe={styles.textSmFontMedium}>
+			<WebView recipe={styles.registration}>
+				<WebText recipe={styles.title}>
 					{registered.length
 						? agentSurfaceCopy.agentRegistered
 						: agentSurfaceCopy.watchForYourAgent}
 				</WebText>
 				{registered.length ? (
-					<WebView recipe={styles.mtSpaceYRounded}>
+					<WebView recipe={styles.registeredAgents}>
 						{registered.map((agent) => (
-							<WebView key={agent.id} recipe={styles.flexItemsCenterJustify2} className="flex-row">
+							<WebView key={agent.id} recipe={styles.registeredAgent} className="flex-row">
 								<Text>{agentDisplayName(agent)}</Text>
 								<Button
 									size="sm"
@@ -127,13 +123,13 @@ export function AddAgentSetup() {
 								</Button>
 							</WebView>
 						))}
-						<WebText recipe={styles.textXsTextSuccess}>
+						<WebText recipe={styles.registeredDescription}>
 							{agentRegistrationDescription(registered)}
 						</WebText>
 					</WebView>
 				) : (
-					<WebView recipe={styles.mtFlexItemsCenter} className="flex-row">
-						<WebView recipe={styles.relativeInlineFlexSize} />
+					<WebView recipe={styles.waiting} className="flex-row">
+						<WebView recipe={styles.waitingDot} />
 						<Text>Waiting for your agent to connect…</Text>
 					</WebView>
 				)}

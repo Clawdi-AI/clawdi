@@ -72,7 +72,7 @@ export default function HomeRoute() {
 								size="icon-sm"
 								accessibilityLabel={t("sessionFilters.options")}
 							>
-								<WebIcon as={MoreHorizontal} recipe={styles.textMutedForeground} />
+								<WebIcon as={MoreHorizontal} recipe={styles.viewAll} />
 							</Button>
 						}
 					/>
@@ -106,13 +106,13 @@ export default function HomeRoute() {
 			}}
 		>
 			{isLoaded ? (
-				<WebText recipe={styles.text2XlFontSemiboldTracking} accessibilityRole="header">
+				<WebText recipe={styles.greeting} accessibilityRole="header">
 					{dashboardGreeting(currentDaypart(), user?.fullName?.split(" ")[0] ?? user?.firstName)}
 				</WebText>
 			) : (
-				<Skeleton className={webView(styles.h8W64Max)} />
+				<Skeleton className={webView(styles.greetingSkeleton)} />
 			)}
-			<WebView recipe={styles.gridGap4LgGrid}>
+			<WebView recipe={styles.grid}>
 				{empty ? (
 					<OnboardingCard canDeployOnClawdi={canDeploy} />
 				) : (
@@ -124,8 +124,8 @@ export default function HomeRoute() {
 						hostedStatus={hostedStatus}
 					/>
 				)}
-				<WebView recipe={styles.minW0SpaceY}>
-					<WebText recipe={styles.textBaseFontSemibold}>{OVERVIEW_COPY.activity}</WebText>
+				<WebView recipe={styles.activity}>
+					<WebText recipe={styles.sectionTitle}>{OVERVIEW_COPY.activity}</WebText>
 					<Card>
 						<CardContent>
 							{statsError ? (
@@ -142,7 +142,7 @@ export default function HomeRoute() {
 						</CardContent>
 					</Card>
 				</WebView>
-				<WebView recipe={styles.minW0SpaceY2}>
+				<WebView recipe={styles.sidebar}>
 					{tiles.length > 0 ? (
 						hasHosted ? (
 							<OnboardingCard variant="additional-agent" canDeployOnClawdi={canDeploy} />
@@ -161,18 +161,18 @@ export default function HomeRoute() {
 						onRetry={() => void stats.refetch()}
 					/>
 				</WebView>
-				<WebView recipe={styles.minW0SpaceY3}>
-					<WebView recipe={styles.flexItemsEndJustifyBetween} className="flex-row">
-						<WebText recipe={styles.textBaseFontSemibold}>{OVERVIEW_COPY.recentSessions}</WebText>
+				<WebView recipe={styles.recentSessions}>
+					<WebView recipe={styles.recentSessionsHeader} className="flex-row">
+						<WebText recipe={styles.sectionTitle}>{OVERVIEW_COPY.recentSessions}</WebText>
 						<Button
 							variant="ghost"
 							size="sm"
-							textClassName={styles.textMutedForeground}
+							textClassName={styles.viewAll}
 							style={{ flexShrink: 0 }}
 							onPress={() => router.push("/sessions")}
 						>
 							<Text numberOfLines={1}>{OVERVIEW_COPY.viewAll}</Text>
-							<WebIcon as={ArrowRight} recipe={styles.textMutedForeground} />
+							<WebIcon as={ArrowRight} recipe={styles.viewAll} />
 						</Button>
 					</WebView>
 					{sessionsError ? (

@@ -129,7 +129,7 @@ export function CreateProjectDialog({
 							{copy.cancel}
 						</Button>
 						<Button type="submit" disabled={!name.trim() || createProject.isPending}>
-							{createProject.isPending ? <Spinner className={styles.smallIcon} /> : <Plus />}
+							{createProject.isPending ? <Spinner className={styles.actionIcon} /> : <Plus />}
 							{copy.title}
 						</Button>
 					</DialogFooter>

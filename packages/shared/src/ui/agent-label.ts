@@ -1,10 +1,3 @@
-import {
-	sessionAgentFallbackSizes,
-	sessionAgentIconRadius,
-	sessionAgentIconSizes,
-	sessionAgentInlineClasses,
-} from "./session-meta";
-
 const nameBySize = {
 	xs: "text-xs font-medium",
 	sm: "text-sm font-medium",
@@ -34,14 +27,8 @@ export const agentLabelClasses = {
 	subtitleSegment: "inline-flex items-center whitespace-nowrap",
 	nameBySize,
 	subtitleGapBySize,
-	inline: sessionAgentInlineClasses,
-} as const;
-
-/** AgentSourceBadge / LegacyAgentBadge recipes. */
-export { agentSourceBadgeClasses } from "./agent-source-badge";
-
-export const agentIconClasses = {
-	medium: sessionAgentIconSizes.md,
-	mediumFallback: sessionAgentFallbackSizes.md,
-	rounded: sessionAgentIconRadius.rounded,
+	inline: {
+		root: "inline-flex items-center gap-1.5",
+		label: "font-medium text-foreground",
+	},
 } as const;

@@ -102,7 +102,7 @@ export function SelectTrigger({
 	const select = useContext(SelectContext);
 	return (
 		<WebView
-			recipe={styles.selectTrigger.replace(/\bdisabled:/g, "data-disabled:")}
+			recipe={styles.trigger.replace(/\bdisabled:/g, "data-disabled:")}
 			state={{
 				"data-[size=default]": size === "default",
 				"data-[size=sm]": size === "sm",
@@ -115,7 +115,7 @@ export function SelectTrigger({
 			style={{ paddingVertical: 0 }}
 		>
 			{children}
-			<WebIcon as={ChevronDown} recipe={styles.selectTrigger2} />
+			<WebIcon as={ChevronDown} recipe={styles.triggerIcon} />
 		</WebView>
 	);
 }
@@ -126,10 +126,8 @@ export function SelectValue({
 }: SlotProps & { placeholder?: string }) {
 	const { label } = useContext(SelectContext);
 	return (
-		<WebView recipe={cn(styles.selectValue, className)}>
-			<WebContent recipe={webText(styles.selectTrigger)}>
-				{children ?? (label || placeholder)}
-			</WebContent>
+		<WebView recipe={cn(styles.value, className)}>
+			<WebContent recipe={webText(styles.trigger)}>{children ?? (label || placeholder)}</WebContent>
 		</WebView>
 	);
 }

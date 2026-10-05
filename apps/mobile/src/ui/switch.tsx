@@ -27,7 +27,7 @@ export function Switch({
 	]);
 	const color = (value: unknown) => (typeof value === "string" ? value : undefined);
 	// Geometry stays native; the shared Web recipe still provides disabled opacity.
-	const recipe = switchClasses.switch
+	const recipe = switchClasses.root
 		.split(/\s+/)
 		.filter((token) => token.includes("data-disabled:opacity"))
 		.join(" ");

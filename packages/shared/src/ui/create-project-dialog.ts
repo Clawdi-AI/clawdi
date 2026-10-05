@@ -3,5 +3,5 @@ export const createProjectDialogClasses = {
 	form: "space-y-4",
 	field: "space-y-1.5",
 	description: "min-h-24",
-	smallIcon: "size-3.5",
+	actionIcon: "size-3.5",
 } as const;

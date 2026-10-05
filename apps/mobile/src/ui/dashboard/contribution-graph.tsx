@@ -14,21 +14,20 @@ const CELL = 11,
 	STRIDE = CELL + GAP,
 	DAY_LABEL_W = 18;
 const colors = [
-	styles.bgPrimary10,
-	styles.bgPrimary30,
-	styles.bgPrimary50,
-	styles.bgPrimary75,
-	styles.bgPrimary,
+	styles.inactiveActivity,
+	styles.lowActivity,
+	styles.mediumActivity,
+	styles.highActivity,
+	styles.peakActivity,
 ];
 export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 	const [maxWeeks, setMaxWeeks] = useState(52);
 	const weeks = buildWeeks(data).slice(-maxWeeks),
 		labels = computeMonthLabels(weeks);
-	if (!data.length)
-		return <WebText recipe={styles.textSmTextMutedForeground}>{DASHBOARD_COPY.noActivity}</WebText>;
+	if (!data.length) return <WebText recipe={styles.empty}>{DASHBOARD_COPY.noActivity}</WebText>;
 	return (
 		<WebView
-			recipe={styles.wFull}
+			recipe={styles.root}
 			onLayout={({ nativeEvent }) =>
 				setMaxWeeks(
 					Math.max(4, Math.floor((nativeEvent.layout.width - DAY_LABEL_W + GAP) / STRIDE)),
@@ -36,29 +35,25 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 			}
 		>
 			<WebView
-				recipe={styles.mxAutoFlexWFit}
+				recipe={styles.graph}
 				className="flex-row"
 				style={{ width: DAY_LABEL_W + weeks.length * STRIDE - GAP }}
 			>
-				<WebView recipe={styles.flexShrink0FlexCol} style={{ width: 12 }}>
+				<WebView recipe={styles.weekdays} style={{ width: 12 }}>
 					{["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
-						<WebText
-							key={i}
-							recipe={styles.flexShrink0FlexCol}
-							style={{ height: CELL, lineHeight: CELL }}
-						>
+						<WebText key={i} recipe={styles.weekdays} style={{ height: CELL, lineHeight: CELL }}>
 							{d}
 						</WebText>
 					))}
 				</WebView>
-				<WebView recipe={styles.wFull} style={{ width: weeks.length * STRIDE - GAP }}>
-					<WebView recipe={styles.flexGap3Px} className="flex-row">
+				<WebView recipe={styles.root} style={{ width: weeks.length * STRIDE - GAP }}>
+					<WebView recipe={styles.weeks} className="flex-row">
 						{weeks.map((week, wi) => (
-							<WebView key={wi} recipe={styles.flexFlexColGap3Px}>
+							<WebView key={wi} recipe={styles.week}>
 								{week.map((day, di) => (
 									<WebView
 										key={di}
-										recipe={`${styles.rounded3Px} ${day.date ? colors[clampLevel(day.level)] : styles.bgTransparent}`}
+										recipe={`${styles.cell} ${day.date ? colors[clampLevel(day.level)] : styles.placeholder}`}
 										style={{ width: CELL, height: CELL }}
 										accessibilityLabel={
 											day.date ? `${day.count} sessions on ${day.date}` : undefined
@@ -68,12 +63,12 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 							</WebView>
 						))}
 					</WebView>
-					<WebView recipe={styles.relativeMt1H4}>
+					<WebView recipe={styles.months}>
 						{labels.map((label, i) =>
 							label && !labels[i + 1] ? (
 								<WebText
 									key={i}
-									recipe={`${styles.relativeMt1H4} ${styles.absoluteWhitespaceNowrap}`}
+									recipe={`${styles.months} ${styles.monthLabel}`}
 									style={{ left: Math.min(i * STRIDE, weeks.length * STRIDE - 24), marginTop: 0 }}
 								>
 									{label}
@@ -89,37 +84,37 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 export function ActivityGraphSkeleton() {
 	const [maxWeeks, setMaxWeeks] = useState(20);
 	return (
-		<Skeleton className={webView(styles.bgTransparent)}>
+		<Skeleton className={webView(styles.placeholder)}>
 			<WebView
-				recipe={page.wFull}
+				recipe={page.graphSkeleton}
 				onLayout={({ nativeEvent }) =>
 					setMaxWeeks(
 						Math.max(4, Math.floor((nativeEvent.layout.width - DAY_LABEL_W + GAP) / STRIDE)),
 					)
 				}
 			>
-				<WebView recipe={page.flexGap15} className="flex-row">
-					<WebView recipe={page.flexW3Shrink0}>
+				<WebView recipe={page.graphSkeletonLayout} className="flex-row">
+					<WebView recipe={page.graphSkeletonWeekdays}>
 						{Array.from({ length: 7 }, (_, i) => (
-							<WebView key={i} recipe={`${skeletonClassName} ${page.h11PxW2Rounded}`} />
+							<WebView key={i} recipe={`${skeletonClassName} ${page.graphSkeletonWeekday}`} />
 						))}
 					</WebView>
-					<WebView recipe={page.minW0Flex1}>
-						<WebView recipe={page.flexMaxH95PxOverflow} className="flex-row">
+					<WebView recipe={page.graphSkeletonBody}>
+						<WebView recipe={page.graphSkeletonWeeks} className="flex-row">
 							{Array.from({ length: maxWeeks }, (_, wi) => (
-								<WebView key={wi} recipe={page.flexFlexColGap3Px}>
+								<WebView key={wi} recipe={page.graphSkeletonWeek}>
 									{Array.from({ length: 7 }, (_, di) => (
 										<WebView
 											key={di}
-											recipe={`${skeletonClassName} ${page.size11PxRounded3Px} ${(wi + di) % 5 === 0 ? page.opacity50 : ""}`}
+											recipe={`${skeletonClassName} ${page.graphSkeletonCell} ${(wi + di) % 5 === 0 ? page.graphSkeletonMutedCell : ""}`}
 										/>
 									))}
 								</WebView>
 							))}
 						</WebView>
-						<WebView recipe={page.mt1FlexH4} className="flex-row">
+						<WebView recipe={page.graphSkeletonMonths} className="flex-row">
 							{Array.from({ length: 6 }, (_, i) => (
-								<WebView key={i} recipe={`${skeletonClassName} ${page.h25W6}`} />
+								<WebView key={i} recipe={`${skeletonClassName} ${page.graphSkeletonMonth}`} />
 							))}
 						</WebView>
 					</WebView>

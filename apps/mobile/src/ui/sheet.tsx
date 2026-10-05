@@ -42,13 +42,13 @@ export function SheetContent({
 	return (
 		<ModalSurface
 			side={side}
-			recipe={styles.sheetContent}
-			overlayRecipe={styles.sheetOverlay}
+			recipe={styles.content}
+			overlayRecipe={styles.overlay}
 			state={{ [`data-[side=${side}]`]: true }}
 			className={className}
 		>
 			<WebView
-				recipe={styles.sheetContent
+				recipe={styles.content
 					.split(/\s+/)
 					.filter((token) => token.startsWith("gap-"))
 					.join(" ")}
@@ -60,7 +60,7 @@ export function SheetContent({
 				<Button
 					variant="ghost"
 					size="icon-sm"
-					className={webView(styles.sheetContent2)}
+					className={webView(styles.closeAction)}
 					accessibilityLabel={t("composite.close")}
 					onPress={() => modal.setOpen(false)}
 				>
@@ -72,29 +72,29 @@ export function SheetContent({
 }
 export function SheetHeader({ children, className }: SlotProps) {
 	return (
-		<WebView recipe={styles.sheetHeader} className={className}>
+		<WebView recipe={styles.header} className={className}>
 			{children}
 		</WebView>
 	);
 }
 export function SheetFooter({ children, className }: SlotProps) {
 	return (
-		<WebView recipe={styles.sheetFooter} className={className}>
+		<WebView recipe={styles.footer} className={className}>
 			{children}
 		</WebView>
 	);
 }
 export function SheetTitle({ children, className }: SlotProps) {
 	return (
-		<WebText recipe={styles.sheetTitle} className={className} accessibilityRole="header">
+		<WebText recipe={styles.title} className={className} accessibilityRole="header">
 			{children}
 		</WebText>
 	);
 }
 export function SheetDescription({ children, className }: SlotProps) {
 	return (
-		<WebView recipe={styles.sheetDescription} className={className}>
-			<WebContent recipe={styles.sheetDescription}>{children}</WebContent>
+		<WebView recipe={styles.description} className={className}>
+			<WebContent recipe={styles.description}>{children}</WebContent>
 		</WebView>
 	);
 }

@@ -42,16 +42,16 @@ export function AgentPluginCard({
 	const actionState = agentPluginActionState(item, runtime);
 
 	return (
-		<div data-hosted="true" data-v2="true" className={agentPluginCardClasses.contents}>
+		<div data-hosted="true" data-v2="true" className={agentPluginCardClasses.root}>
 			<HeroCard
-				className={agentPluginCardClasses.minH}
+				className={agentPluginCardClasses.card}
 				onClick={() => onOpen(item.name)}
 				ariaLabel={`View ${title} details`}
 				icon={
 					<IconChip
 						size="sm"
 						tint={identityFor(item.name).colorClasses}
-						className={agentPluginCardClasses.roundedLg}
+						className={agentPluginCardClasses.iconTile}
 					>
 						<Blocks />
 					</IconChip>

@@ -104,8 +104,8 @@ export function AgentOverview({ agent }: { agent: CloudAgent }) {
 			agentOverviewSummary(kind, count)
 		);
 	return (
-		<WebView recipe={styles.flexFlexColGap}>
-			<WebView recipe={detail.flexFlexColGap}>
+		<WebView recipe={styles.root}>
+			<WebView recipe={detail.section}>
 				{supportsSessions ? (
 					<>
 						<AgentOverviewHeading
@@ -137,7 +137,7 @@ export function AgentOverview({ agent }: { agent: CloudAgent }) {
 				<OverviewNavigationCard
 					title={copy.status}
 					description={
-						<WebView recipe={styles.flexMinWItems2} className="flex-row">
+						<WebView recipe={styles.statusContent} className="flex-row">
 							<StatusDot status={daemonStatusPresentation(agent).tone} />
 							<Text>{status.label}</Text>
 						</WebView>
@@ -156,7 +156,7 @@ export function AgentOverview({ agent }: { agent: CloudAgent }) {
 					/>
 				</OverviewNavigationCard>
 			</WebView>
-			<WebView recipe={styles.flexFlexColGap2}>
+			<WebView recipe={styles.section}>
 				<AgentOverviewHeading>{copy.workspace}</AgentOverviewHeading>
 				<OverviewNavigationCard
 					title="Projects"
@@ -203,7 +203,7 @@ export function AgentOverview({ agent }: { agent: CloudAgent }) {
 					}
 				/>
 			</WebView>
-			<WebView recipe={styles.flexFlexColGap2}>
+			<WebView recipe={styles.section}>
 				<AgentOverviewHeading>{copy.shared}</AgentOverviewHeading>
 				<OverviewNavigationCard
 					title="Memories"

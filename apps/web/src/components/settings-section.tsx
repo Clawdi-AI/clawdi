@@ -32,7 +32,7 @@ export function SettingsSection({
 		<section
 			{...sectionProps}
 			aria-labelledby={generatedTitleId}
-			className={cn(settingsSectionClasses.section, className)}
+			className={cn(settingsSectionClasses.root, className)}
 		>
 			<Separator />
 			<div className={settingsSectionClasses.header}>

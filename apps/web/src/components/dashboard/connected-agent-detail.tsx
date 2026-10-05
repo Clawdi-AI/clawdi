@@ -207,7 +207,7 @@ export function ConnectedAgentDetail({
 					message="This Connected Agent does not provide session sync."
 				/>
 			) : agent ? (
-				<section className={connectedAgentDetailClasses.flexFlexColGap}>
+				<section className={connectedAgentDetailClasses.section}>
 					{activeTab === "projects" ? null : (
 						<PageHeader
 							title={activeTab === "overview" ? (agentTitle ?? activeTabLabel) : activeTabLabel}
@@ -215,7 +215,7 @@ export function ConnectedAgentDetail({
 							description={activeTabMeta.description}
 							icon={
 								ActiveTabIcon ? (
-									<ActiveTabIcon className={connectedAgentDetailClasses.sizeTextMutedForeground} />
+									<ActiveTabIcon className={connectedAgentDetailClasses.sectionIcon} />
 								) : null
 							}
 							actions={
@@ -243,12 +243,12 @@ export function ConnectedAgentDetail({
 					)}
 
 					{activeTab === "overview" ? (
-						<div className={connectedAgentDetailClasses.flexFlexColGap2}>
+						<div className={connectedAgentDetailClasses.overview}>
 							<AgentOverviewActivity
 								heading={
 									<h2
 										id="connected-recent-sessions"
-										className={connectedAgentDetailClasses.textSmFontSemibold}
+										className={connectedAgentDetailClasses.sectionTitle}
 									>
 										Recent sessions
 									</h2>
@@ -259,7 +259,7 @@ export function ConnectedAgentDetail({
 										nativeButton={false}
 										variant="ghost"
 										size="sm"
-										className={connectedAgentDetailClasses.textMutedForeground}
+										className={connectedAgentDetailClasses.viewAll}
 									>
 										View all
 										<ArrowRight />
@@ -269,7 +269,7 @@ export function ConnectedAgentDetail({
 									supportsSessions ? (
 										<section
 											aria-labelledby="connected-recent-sessions"
-											className={connectedAgentDetailClasses.minW}
+											className={connectedAgentDetailClasses.sessions}
 										>
 											{blockingOverviewSessionsError ? (
 												<OverviewModuleError
@@ -295,12 +295,12 @@ export function ConnectedAgentDetail({
 									icon={Laptop}
 									tint={connectedAgentDetailClasses.statusTint}
 									description={
-										<span className={connectedAgentDetailClasses.flexItemsCenterGap}>
+										<span className={connectedAgentDetailClasses.statusLabel}>
 											<StatusDot status={syncTone} /> {syncStatus.label}
 										</span>
 									}
 								>
-									<div className={connectedAgentDetailClasses.flexHFullFlex}>
+									<div className={connectedAgentDetailClasses.statusContent}>
 										<OverviewMetadata
 											items={[
 												{ label: "Machine", value: agent.machine_name },
@@ -373,7 +373,7 @@ export function ConnectedAgentDetail({
 							headerAdornment={headerStatus}
 							headerIcon={
 								ActiveTabIcon ? (
-									<ActiveTabIcon className={connectedAgentDetailClasses.sizeTextMutedForeground} />
+									<ActiveTabIcon className={connectedAgentDetailClasses.sectionIcon} />
 								) : null
 							}
 						/>
@@ -400,17 +400,17 @@ export function ConnectedAgentDetailSkeleton({
 				data-testid="agent-live-tool-loading-shell"
 				role="status"
 				aria-label={`${agentSectionLabel(section)} loading`}
-				className={connectedAgentDetailClasses.flexMinHW}
+				className={connectedAgentDetailClasses.sectionSkeleton}
 			>
-				<div className={connectedAgentDetailClasses.flexMinHFlex}>
-					<div className={connectedAgentDetailClasses.flexHShrinkItems}>
-						<div className={connectedAgentDetailClasses.flexMinWItems}>
-							<Skeleton className={connectedAgentDetailClasses.sizeShrinkRoundedSm} />
-							<Skeleton className={connectedAgentDetailClasses.hWMaxW} />
+				<div className={connectedAgentDetailClasses.sectionSkeletonBody}>
+					<div className={connectedAgentDetailClasses.sectionSkeletonHeader}>
+						<div className={connectedAgentDetailClasses.sectionSkeletonHeading}>
+							<Skeleton className={connectedAgentDetailClasses.sectionIconSkeleton} />
+							<Skeleton className={connectedAgentDetailClasses.sectionTitleSkeleton} />
 						</div>
-						<Skeleton className={connectedAgentDetailClasses.hWShrink} />
+						<Skeleton className={connectedAgentDetailClasses.sectionActionSkeleton} />
 					</div>
-					<Skeleton className={connectedAgentDetailClasses.minHFlexRounded} />
+					<Skeleton className={connectedAgentDetailClasses.sectionContentSkeleton} />
 				</div>
 			</div>
 		);
@@ -436,7 +436,7 @@ function AgentDetailContentSkeleton({
 	if (section !== "overview") {
 		return (
 			<section
-				className={connectedAgentDetailClasses.flexFlexColGap}
+				className={connectedAgentDetailClasses.section}
 				data-agent-detail-skeleton
 				data-agent-detail-section={section}
 			>
@@ -446,10 +446,10 @@ function AgentDetailContentSkeleton({
 					actions={section === "memories"}
 					description={AGENT_SECTION_NAVIGATION_ITEMS[section].description ?? false}
 				/>
-				<div className={connectedAgentDetailClasses.spaceY}>
-					<Skeleton className={connectedAgentDetailClasses.hW} />
-					<Skeleton className={connectedAgentDetailClasses.hWMaxW2} />
-					<Skeleton className={connectedAgentDetailClasses.hWFull} />
+				<div className={connectedAgentDetailClasses.skeletonContent}>
+					<Skeleton className={connectedAgentDetailClasses.metadataSkeleton} />
+					<Skeleton className={connectedAgentDetailClasses.descriptionSkeleton} />
+					<Skeleton className={connectedAgentDetailClasses.contentSkeleton} />
 				</div>
 			</section>
 		);
@@ -457,7 +457,7 @@ function AgentDetailContentSkeleton({
 
 	return (
 		<section
-			className={connectedAgentDetailClasses.flexFlexColGap}
+			className={connectedAgentDetailClasses.section}
 			data-agent-detail-skeleton
 			data-agent-detail-section="overview"
 		>
@@ -466,7 +466,7 @@ function AgentDetailContentSkeleton({
 				iconClassName="size-4 rounded-sm"
 				description={AGENT_SECTION_NAVIGATION_ITEMS.overview.description ?? false}
 			/>
-			<div className={connectedAgentDetailClasses.flexFlexColGap2}>
+			<div className={connectedAgentDetailClasses.overview}>
 				{variant === "hosted" ? (
 					<AgentOverviewTools>
 						{(
@@ -494,11 +494,11 @@ function AgentDetailContentSkeleton({
 				) : null}
 				<AgentOverviewActivity
 					heading={
-						<h2 className={connectedAgentDetailClasses.textSmFontSemibold}>
-							<Skeleton className={connectedAgentDetailClasses.hLhW} />
+						<h2 className={connectedAgentDetailClasses.sectionTitle}>
+							<Skeleton className={connectedAgentDetailClasses.activityTitleSkeleton} />
 						</h2>
 					}
-					action={<Skeleton className={connectedAgentDetailClasses.hW2} />}
+					action={<Skeleton className={connectedAgentDetailClasses.activityActionSkeleton} />}
 					sessions={<OverviewSessionListSkeleton />}
 				>
 					<AgentOverviewStatusCard
@@ -513,16 +513,16 @@ function AgentDetailContentSkeleton({
 						{variant === "hosted" ? (
 							<OverviewComputeBody loading />
 						) : (
-							<div className={connectedAgentDetailClasses.flexHFullFlex}>
+							<div className={connectedAgentDetailClasses.statusContent}>
 								<OverviewMetadata
 									items={[
 										{
 											label: "Machine",
-											value: <Skeleton className={connectedAgentDetailClasses.hLhW2} />,
+											value: <Skeleton className={connectedAgentDetailClasses.machineSkeleton} />,
 										},
 										{
 											label: "Last seen",
-											value: <Skeleton className={connectedAgentDetailClasses.hLhW3} />,
+											value: <Skeleton className={connectedAgentDetailClasses.lastSeenSkeleton} />,
 										},
 									]}
 								/>

@@ -656,7 +656,7 @@ export default function ProjectDetailPage({
 								{!isWorkspaceView && !joinedFromShare
 									? manageAgentsDialog(
 											<Button size="sm">
-												<Bot className={projectDetailClasses.smallButtonIcon} />
+												<Bot className={projectDetailClasses.inlineActionIcon} />
 												{LIBRARY_COPY.manageAgents}
 											</Button>,
 										)
@@ -681,7 +681,7 @@ export default function ProjectDetailPage({
 					<AlertDescription className={projectDetailClasses.alertDescription}>
 						<span>Linking lets an Agent use this Project&apos;s Skills and Vaults together.</span>
 						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
-							<Bot className={projectDetailClasses.smallButtonIcon} />
+							<Bot className={projectDetailClasses.inlineActionIcon} />
 							{LIBRARY_COPY.manageAgents}
 						</Button>
 					</AlertDescription>
@@ -759,7 +759,7 @@ export default function ProjectDetailPage({
 							{canManageProjectSkills ? (
 								<CreateSkillDialog project={project} onCreated={refresh}>
 									<Button variant="outline" size="sm">
-										<Plus className={projectDetailClasses.smallIcon} />
+										<Plus className={projectDetailClasses.actionIcon} />
 										{LIBRARY_COPY.addSkill}
 									</Button>
 								</CreateSkillDialog>
@@ -901,7 +901,7 @@ export default function ProjectDetailPage({
 							projectKind={project.kind}
 						>
 							<Button variant="outline" size="sm">
-								<Share2 className={projectDetailClasses.smallButtonIcon} />
+								<Share2 className={projectDetailClasses.inlineActionIcon} />
 								Manage sharing
 							</Button>
 						</ShareProjectDialog>
@@ -995,7 +995,7 @@ export default function ProjectDetailPage({
 										avatarUrl={env.avatar_url}
 										size="sm"
 										titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
-										className={projectDetailClasses.grow}
+										className={projectDetailClasses.agentIdentity}
 									/>
 									{env.default_project_id === project.id ? (
 										<Badge variant="secondary" className={projectDetailClasses.badge}>
@@ -1107,11 +1107,11 @@ function HubSection({
 		<section id={id} className={projectDetailClasses.section}>
 			{showHeading ? (
 				<div className={projectDetailClasses.sectionHeader}>
-					<div className={projectDetailClasses.shrinkContent}>
+					<div className={projectDetailClasses.sectionHeading}>
 						<div className={projectDetailClasses.paginationActions}>
 							<h2 className={projectDetailClasses.heading}>{title}</h2>
 							{count !== undefined ? (
-								<Badge variant="secondary" className={projectDetailClasses.tabular}>
+								<Badge variant="secondary" className={projectDetailClasses.resourceCount}>
 									{formatCountValue(count)}
 								</Badge>
 							) : null}
@@ -1139,7 +1139,7 @@ function ProjectResourceViewAllLink({
 			nativeButton={false}
 			variant="ghost"
 			size="sm"
-			className={projectDetailClasses.muted}
+			className={projectDetailClasses.emptyCount}
 		>
 			View all
 			<ArrowRight />
@@ -1194,7 +1194,7 @@ function SharedAccessPanel({
 						/>
 					}
 				>
-					<LogOut className={projectDetailClasses.smallButtonIcon} />
+					<LogOut className={projectDetailClasses.inlineActionIcon} />
 					{isLeaving ? "Leaving…" : "Leave project"}
 				</AlertDialogTrigger>
 				<AlertDialogContent>
@@ -1391,7 +1391,7 @@ function ManageProjectAgentsDialog({
 													? `synced ${formatShortDate(environment.last_sync_at, { includeYear: false })}`
 													: "not synced yet",
 											]}
-											className={projectDetailClasses.grow}
+											className={projectDetailClasses.agentIdentity}
 										/>
 									</label>
 								);
@@ -1406,7 +1406,7 @@ function ManageProjectAgentsDialog({
 								{updateProjectAgents.isPending ? (
 									<Spinner />
 								) : (
-									<Save className={projectDetailClasses.smallIcon} />
+									<Save className={projectDetailClasses.actionIcon} />
 								)}
 								Save changes
 							</Button>
@@ -1458,7 +1458,7 @@ function CreateProjectVaultDialog({
 	return (
 		<>
 			<Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
-				<Plus className={projectDetailClasses.smallIcon} />
+				<Plus className={projectDetailClasses.actionIcon} />
 				{LIBRARY_COPY.createVault}
 			</Button>
 
@@ -1495,7 +1495,7 @@ function CreateProjectVaultDialog({
 								onChange={(event) => setVaultName(event.target.value)}
 								placeholder="Production credentials…"
 								autoComplete="off"
-								className={projectDetailClasses.grow}
+								className={projectDetailClasses.agentIdentity}
 							/>
 							{vaultName.trim() && !newVaultSlug ? (
 								<p className={projectDetailClasses.error}>
@@ -1514,7 +1514,7 @@ function CreateProjectVaultDialog({
 								{create.isPending ? (
 									<Spinner />
 								) : (
-									<Plus className={projectDetailClasses.smallIcon} />
+									<Plus className={projectDetailClasses.actionIcon} />
 								)}
 								Create vault
 							</Button>

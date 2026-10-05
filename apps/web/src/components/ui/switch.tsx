@@ -18,14 +18,14 @@ function Switch({
       data-slot="switch"
       data-size={size}
       className={cn(
-        switchClasses.switch,
+        switchClasses.root,
         className
       )}
       {...props}
     >
       <SwitchPrimitive.Thumb
         data-slot="switch-thumb"
-        className={switchClasses.switch2}
+        className={switchClasses.thumb}
       />
     </SwitchPrimitive.Root>
   )

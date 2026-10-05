@@ -453,7 +453,7 @@ export function MemoryCard({
 						className={memoriesSurfaceClasses.deleteAction}
 						aria-label={`Delete memory: ${memoryDisplayName(memory.content)}`}
 					>
-						<Trash2 className={memoriesSurfaceClasses.smallIcon} />
+						<Trash2 className={memoriesSurfaceClasses.deleteIcon} />
 					</Button>
 				</ConfirmAction>
 			</EntityCardActions>

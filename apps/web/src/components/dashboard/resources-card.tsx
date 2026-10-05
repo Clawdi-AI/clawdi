@@ -35,13 +35,13 @@ export function ResourcesCard({
 }) {
 	const ready = stats && !statsError;
 	return (
-		<Card className={resourcesCardClasses.gap0Pb0}>
-			<CardHeader className={resourcesCardClasses.borderB}>
+		<Card className={resourcesCardClasses.root}>
+			<CardHeader className={resourcesCardClasses.header}>
 				<CardTitle>{DASHBOARD_COPY.libraryTitle}</CardTitle>
 			</CardHeader>
-			<CardContent className={resourcesCardClasses.p0}>
+			<CardContent className={resourcesCardClasses.content}>
 				{statsError ? (
-					<div className={resourcesCardClasses.p6}>
+					<div className={resourcesCardClasses.error}>
 						<ApiErrorPanel
 							error={statsError}
 							onRetry={onRetryStats}
@@ -64,10 +64,10 @@ export function ResourcesCard({
 
 function ResourceRowSkeleton() {
 	return (
-		<div className={resourcesCardClasses.flexItemsCenterGap3}>
-			<Skeleton className={resourcesCardClasses.size4} />
-			<Skeleton className={resourcesCardClasses.h4Flex1} />
-			<Skeleton className={resourcesCardClasses.h4W8} />
+		<div className={resourcesCardClasses.skeletonRow}>
+			<Skeleton className={resourcesCardClasses.iconSkeleton} />
+			<Skeleton className={resourcesCardClasses.nameSkeleton} />
+			<Skeleton className={resourcesCardClasses.countSkeleton} />
 		</div>
 	);
 }
@@ -81,10 +81,10 @@ function ResourceRow({ resource }: { resource: Resource }) {
 	const count = (
 		<span
 			className={cn(
-				resourcesCardClasses.textSmTabularNums,
+				resourcesCardClasses.count,
 				empty || countUnavailable
-					? resourcesCardClasses.textMutedForeground
-					: resourcesCardClasses.fontSemibold,
+					? resourcesCardClasses.emptyCount
+					: resourcesCardClasses.activeCount,
 			)}
 			title={scopeLabel}
 		>
@@ -92,16 +92,14 @@ function ResourceRow({ resource }: { resource: Resource }) {
 		</span>
 	);
 	return (
-		<Link to={definition.href} className={resourcesCardClasses.groupFlexItemsCenterGap}>
+		<Link to={definition.href} className={resourcesCardClasses.row}>
 			{/* Same identity hue as this resource's sidebar chip — the rail
 			    and the nav read as one system. */}
-			<span
-				className={cn(resourcesCardClasses.flexSize7Shrink0, RESOURCE_TINT_CLASSES[definition.id])}
-			>
-				<Icon className={resourcesCardClasses.size35} />
+			<span className={cn(resourcesCardClasses.iconTile, RESOURCE_TINT_CLASSES[definition.id])}>
+				<Icon className={resourcesCardClasses.icon} />
 			</span>
-			<div className={resourcesCardClasses.minW0Flex1}>
-				<div className={resourcesCardClasses.textSmFontMedium}>{definition.label}</div>
+			<div className={resourcesCardClasses.body}>
+				<div className={resourcesCardClasses.name}>{definition.label}</div>
 			</div>
 			{count}
 		</Link>

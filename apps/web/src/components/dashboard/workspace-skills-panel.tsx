@@ -59,7 +59,7 @@ export function ConnectedWorkspaceSkillsPanel({
 					{...pageHeader}
 					actions={
 						<Button size="sm" onClick={() => setInstallOpen(true)}>
-							<Plus className={workspaceSkillsPanelClasses.size} />
+							<Plus className={workspaceSkillsPanelClasses.actionIcon} />
 							Install skill
 						</Button>
 					}
@@ -78,10 +78,10 @@ export function ConnectedWorkspaceSkillsPanel({
 					{pageHeader ? null : (
 						<Button
 							size="sm"
-							className={workspaceSkillsPanelClasses.minHWFull}
+							className={workspaceSkillsPanelClasses.installAction}
 							onClick={() => setInstallOpen(true)}
 						>
-							<Plus className={workspaceSkillsPanelClasses.size} />
+							<Plus className={workspaceSkillsPanelClasses.actionIcon} />
 							Install skill
 						</Button>
 					)}
@@ -132,15 +132,15 @@ export function ConnectedWorkspaceSkillsPanel({
 					if (!open) setRepo("");
 				}}
 			>
-				<DialogContent className={workspaceSkillsPanelClasses.smMaxWXl}>
+				<DialogContent className={workspaceSkillsPanelClasses.dialog}>
 					<DialogHeader>
 						<DialogTitle>{agentSurfaceCopy.installSkill}</DialogTitle>
 						<DialogDescription>
 							Enter a GitHub Skill path, then run the generated command on the Agent machine.
 						</DialogDescription>
 					</DialogHeader>
-					<div className={workspaceSkillsPanelClasses.spaceY}>
-						<div className={workspaceSkillsPanelClasses.spaceY2}>
+					<div className={workspaceSkillsPanelClasses.form}>
+						<div className={workspaceSkillsPanelClasses.field}>
 							<Label htmlFor="workspace-skill-repo">{agentSurfaceCopy.gitHubSkillRepository}</Label>
 							<Input
 								id="workspace-skill-repo"
@@ -179,14 +179,14 @@ function ConnectedSkillRemoveAction({
 			<Button
 				variant="ghost"
 				size="icon-sm"
-				className={workspaceSkillsPanelClasses.textMutedForegroundHover}
+				className={workspaceSkillsPanelClasses.removeAction}
 				onClick={() => setOpen(true)}
 				aria-label={`Uninstall ${skill.name} from Agent`}
 			>
-				<Trash2 className={workspaceSkillsPanelClasses.size} />
+				<Trash2 className={workspaceSkillsPanelClasses.actionIcon} />
 			</Button>
 			<Dialog open={open} onOpenChange={setOpen}>
-				<DialogContent className={workspaceSkillsPanelClasses.smMaxWXl}>
+				<DialogContent className={workspaceSkillsPanelClasses.dialog}>
 					<DialogHeader>
 						<DialogTitle>{agentSurfaceCopy.uninstallSkill}</DialogTitle>
 						<DialogDescription>
@@ -211,8 +211,8 @@ function CliCommand({ command }: { command: string }) {
 		error: "Couldn't copy command",
 	});
 	return (
-		<div className={workspaceSkillsPanelClasses.flexMinWItems}>
-			<code className={workspaceSkillsPanelClasses.minWFlexOverflow}>{command}</code>
+		<div className={workspaceSkillsPanelClasses.commandRow}>
+			<code className={workspaceSkillsPanelClasses.command}>{command}</code>
 			<Button
 				type="button"
 				variant="ghost"
@@ -221,9 +221,9 @@ function CliCommand({ command }: { command: string }) {
 				aria-label="Copy CLI command"
 			>
 				{copied ? (
-					<Check className={workspaceSkillsPanelClasses.size} />
+					<Check className={workspaceSkillsPanelClasses.actionIcon} />
 				) : (
-					<Copy className={workspaceSkillsPanelClasses.size} />
+					<Copy className={workspaceSkillsPanelClasses.actionIcon} />
 				)}
 			</Button>
 		</div>

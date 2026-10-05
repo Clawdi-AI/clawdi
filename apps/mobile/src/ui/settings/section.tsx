@@ -42,7 +42,7 @@ export function SettingsSection({
 	destructive?: boolean;
 }) {
 	return (
-		<WebView recipe={section.section}>
+		<WebView recipe={section.root}>
 			<Separator />
 			<WebView recipe={section.header}>
 				<WebView recipe={section.copy}>
