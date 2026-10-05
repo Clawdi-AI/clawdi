@@ -236,6 +236,15 @@ export async function syncSessionContent(input: {
 	plan: SessionUploadPlan;
 	needsSnapshotContent: boolean;
 }): Promise<SessionContentSyncResult> {
+	const blocked = sessionPlanIsDurablyBlocked(input.fence, input.plan);
+	if (blocked) {
+		return {
+			status: "blocked",
+			uploaded: false,
+			localHash: input.plan.localHash,
+			message: blocked,
+		};
+	}
 	if (input.plan.protocol === "snapshot-v1") return syncSnapshotSession(input);
 	return syncEventSession(input);
 }
@@ -348,6 +357,12 @@ async function syncEventSession(input: {
 					code: "event_too_large",
 					sizeBytes: error.sizeBytes,
 					message: error.message,
+				});
+			}
+			if (error instanceof ApiError && error.status === 422) {
+				return persistBlocked(input, {
+					code: "event_schema_invalid",
+					message: `${input.session.localSessionId} events-v1 upload rejected: ${error.message}`,
 				});
 			}
 			if (!(error instanceof ApiError) || error.status !== 409) throw error;
@@ -689,8 +704,8 @@ function reusablePending(
 function persistBlocked(
 	input: { fence: SessionFence; session: RawSession; plan: SessionUploadPlan },
 	block: {
-		code: "legacy_session_too_large" | "event_too_large";
-		sizeBytes: number;
+		code: "legacy_session_too_large" | "event_too_large" | "event_schema_invalid";
+		sizeBytes?: number;
 		message: string;
 	},
 ): SessionContentSyncResult {
@@ -702,7 +717,7 @@ function persistBlocked(
 		blocked: {
 			code: block.code,
 			content_hash: input.plan.localHash,
-			size_bytes: block.sizeBytes,
+			...(block.sizeBytes === undefined ? {} : { size_bytes: block.sizeBytes }),
 			message: block.message,
 			blocked_at: new Date().toISOString(),
 		},

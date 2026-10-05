@@ -25,9 +25,9 @@ export interface PendingEventUpload {
 }
 
 export interface SessionUploadBlock {
-	code: "legacy_session_too_large" | "event_too_large";
+	code: "legacy_session_too_large" | "event_too_large" | "event_schema_invalid";
 	content_hash: string;
-	size_bytes: number;
+	size_bytes?: number;
 	message: string;
 	blocked_at: string;
 }

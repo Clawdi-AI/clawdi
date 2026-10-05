@@ -13,6 +13,7 @@ import {
 	restoreAgentHomeOverrides,
 	snapshotAndClearAgentHomeOverrides,
 } from "../commands/helpers";
+import inlineImage from "../fixtures/hermes-inline-image.json";
 import { addSkillDirectorySymlinkCases, cleanupTmp, copyFixtureToTmp } from "./helpers";
 
 let tmpHome: string;
@@ -48,6 +49,39 @@ describe("HermesAdapter.detect", () => {
 });
 
 describe("HermesAdapter.collectSessions", () => {
+	it.each(["user", "tool"])(
+		"re-maps persisted %s inline images without invalid attachment metadata",
+		async (role) => {
+			const db = new Database(join(tmpHome, ".hermes", "state.db"));
+			db.run("UPDATE messages SET role = ?, content = ? WHERE id = 4", [
+				role,
+				`\0json:${JSON.stringify(inlineImage.content)}`,
+			]);
+			db.close();
+			const adapter = new HermesAdapter();
+			const eager = await adapter.sessions.resolve("s-modern");
+			const streamed = await adapter.sessions.resolve("s-modern", {
+				signal: new AbortController().signal,
+				streaming: true,
+			});
+			if (!eager || !streamed?.readEvents) throw new Error("expected Hermes event readers");
+			const streamEvents = [];
+			for await (const event of streamed.readEvents()) streamEvents.push(event);
+			expect(streamEvents).toEqual(eager.events);
+			const result = streamEvents.find((event) => event.source.record_id === "4");
+			expect(result).toMatchObject({
+				type: role === "user" ? "message" : "tool_result",
+				parts: [
+					{ type: "text", text: "Synthetic image input" },
+					{ type: "attachment", availability: "metadata_only" },
+				],
+			});
+			if (result?.type !== "tool_result" && result?.type !== "message")
+				throw new Error("expected image event");
+			expect(result.parts[1]).not.toHaveProperty("name");
+			expect(JSON.stringify(result)).not.toContain("base64");
+		},
+	);
 	it("selects events-v1 and maps every safe modern row in stable source order", async () => {
 		const a = new HermesAdapter();
 		expect(await a.sessions.contentProtocol()).toBe("events-v1");

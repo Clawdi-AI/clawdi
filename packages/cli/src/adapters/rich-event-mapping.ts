@@ -61,6 +61,7 @@ const CONTENT_BLOCK_TYPES = new Set([
 	"input_text",
 	"output_text",
 	"image",
+	"image_url",
 	"input_image",
 	"file",
 	"document",
@@ -116,9 +117,12 @@ function localReferenceName(value: string | null): string | null {
 function uriReferenceName(value: string | null): string | null {
 	if (!value) return null;
 	try {
-		return localReferenceName(decodeURIComponent(new URL(value, "https://invalid.local").pathname));
+		const parsed = new URL(value, "https://invalid.local");
+		// Opaque URI paths (notably data: image payloads) are not filenames.
+		if (!["http:", "https:", "file:"].includes(parsed.protocol)) return null;
+		return localReferenceName(decodeURIComponent(parsed.pathname));
 	} catch {
-		return localReferenceName(value);
+		return null;
 	}
 }
 
