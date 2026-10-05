@@ -1,12 +1,10 @@
 import { APPEARANCE_MODES } from "@clawdi/shared/consts";
-import { useClerk, useUser } from "@clerk/expo";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, AppState } from "react-native";
+import { isDevAuthBypass, useAuthActions, useCurrentUser } from "../../src/auth/auth-client";
 import { useAuthAction } from "../../src/auth/use-auth-action";
-import { isMobilePreview } from "../../src/config/preview";
-import { PreviewAccount } from "../../src/features/preview";
 import { useI18n } from "../../src/i18n";
 import {
 	accountQueryKey,
@@ -22,7 +20,6 @@ import { NativeButton, NativePicker } from "../../src/ui/native-controls";
 import { AppScrollView, AppText, AppTextInput, AppView } from "../../src/ui/primitives";
 
 export default function AccountRoute() {
-	if (isMobilePreview()) return <PreviewAccount />;
 	const scope = useAccountScope();
 	return <AccountView key={`${scope.accountKey}:${scope.generation}`} />;
 }
@@ -30,8 +27,8 @@ export default function AccountRoute() {
 function AccountView() {
 	const t = useI18n();
 	const appearance = useAppearance();
-	const { isLoaded, user } = useUser();
-	const { signOut } = useClerk();
+	const { isLoaded, user } = useCurrentUser();
+	const { signOut } = useAuthActions();
 	const scope = useAccountScope();
 	const queryClient = useQueryClient();
 	const router = useRouter();
@@ -193,7 +190,7 @@ function AccountView() {
 			<NativeButton
 				label={busy ? t("auth.working") : t("account.signOut")}
 				onPress={() => void onSignOut()}
-				disabled={busy || !scope.isReady || !scope.sessionId}
+				disabled={isDevAuthBypass() || busy || !scope.isReady || !scope.sessionId}
 			/>
 		</AppScrollView>
 	);

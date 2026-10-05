@@ -37,6 +37,45 @@ describe("mobile runtime configuration", () => {
 		).toEqual({ ok: false, reason: "missing" });
 	});
 
+	test("only the explicit dev configuration may omit the Clerk key", () => {
+		const values = {
+			cloudApiUrl: "http://10.0.2.2:8787",
+			clerkPublishableKey: undefined,
+		};
+		expect(parseMobileRuntimeConfig(values)).toEqual({ ok: false, reason: "missing" });
+		expect(parseMobileRuntimeConfig(values, { requireClerk: false })).toEqual({
+			ok: true,
+			value: { cloudApiUrl: values.cloudApiUrl, clerkPublishableKey: "" },
+		});
+	});
+
+	test("dev configuration still requires a safe Cloud URL and rejects malformed Clerk keys", () => {
+		expect(
+			parseMobileRuntimeConfig(
+				{ cloudApiUrl: undefined, clerkPublishableKey: undefined },
+				{ requireClerk: false },
+			),
+		).toEqual({ ok: false, reason: "missing" });
+		for (const cloudApiUrl of [
+			"http://user:password@10.0.2.2:8787",
+			"http://10.0.2.2:8787?token=forbidden",
+			"file:///fixture",
+		]) {
+			expect(
+				parseMobileRuntimeConfig(
+					{ cloudApiUrl, clerkPublishableKey: undefined },
+					{ requireClerk: false },
+				),
+			).toEqual({ ok: false, reason: "invalid" });
+		}
+		expect(
+			parseMobileRuntimeConfig(
+				{ cloudApiUrl: "http://10.0.2.2:8787", clerkPublishableKey: "not_publishable" },
+				{ requireClerk: false },
+			),
+		).toEqual({ ok: false, reason: "invalid" });
+	});
+
 	test("rejects credentials and malformed Clerk keys", () => {
 		expect(
 			parseMobileRuntimeConfig({

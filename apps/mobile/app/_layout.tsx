@@ -4,7 +4,7 @@ import { tokenCache } from "@clerk/expo/token-cache";
 import { type ErrorBoundaryProps, Stack } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { isMobilePreview } from "../src/config/preview";
+import { isDevAuthBypass } from "../src/auth/auth-client";
 import { loadMobileRuntimeConfig, RuntimeConfigProvider } from "../src/config/runtime";
 import { I18nProvider } from "../src/i18n";
 import { AppearanceProvider } from "../src/providers/appearance-provider";
@@ -36,20 +36,12 @@ function Navigation() {
 export default function RootLayout() {
 	const fontsReady = useAppFonts();
 	if (!fontsReady) return null;
-	if (isMobilePreview()) {
-		return (
-			<I18nProvider>
-				<GestureHandlerRootView style={{ flex: 1 }}>
-					<SafeAreaProvider>
-						<AppearanceProvider>
-							<Navigation />
-						</AppearanceProvider>
-					</SafeAreaProvider>
-				</GestureHandlerRootView>
-			</I18nProvider>
-		);
-	}
 	const runtime = loadMobileRuntimeConfig();
+	const app = runtime.ok ? (
+		<MobileProviders config={runtime.value}>
+			<Navigation />
+		</MobileProviders>
+	) : null;
 	return (
 		<RuntimeConfigProvider value={runtime}>
 			<I18nProvider>
@@ -57,15 +49,17 @@ export default function RootLayout() {
 					<SafeAreaProvider>
 						<AppearanceProvider>
 							{runtime.ok ? (
-								<ClerkProvider
-									publishableKey={runtime.value.clerkPublishableKey}
-									tokenCache={tokenCache}
-									experimental={{ rethrowOfflineNetworkErrors: true }}
-								>
-									<MobileProviders config={runtime.value}>
-										<Navigation />
-									</MobileProviders>
-								</ClerkProvider>
+								isDevAuthBypass() ? (
+									app
+								) : (
+									<ClerkProvider
+										publishableKey={runtime.value.clerkPublishableKey}
+										tokenCache={tokenCache}
+										experimental={{ rethrowOfflineNetworkErrors: true }}
+									>
+										{app}
+									</ClerkProvider>
+								)
 							) : (
 								<ConfigurationErrorScreen reason={runtime.reason} />
 							)}

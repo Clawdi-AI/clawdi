@@ -75,12 +75,15 @@ Mobile reads its cloud API base URL from `EXPO_PUBLIC_CLAWDI_API_URL`
 ```bash
 EXPO_PUBLIC_CLAWDI_API_URL=http://10.0.2.2:8787   # emulator → host loopback
 EXPO_PUBLIC_DEV_AUTH_BYPASS=1                      # dev-only auth bypass (mobile side)
-EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...      # still required by runtime config parsing
 ```
 
 Alternatively run `adb reverse tcp:8787 tcp:8787` and use
-`http://127.0.0.1:8787`. The existing `EXPO_PUBLIC_MOBILE_PREVIEW=1` visual
-preview mode is a separate, fixture-free dev path.
+`http://127.0.0.1:8787`. Development auth bypass runs the real mobile screens,
+providers and API clients without a Clerk publishable key. Its default name/email
+are `Avery Chen` and `avery@clawdi.dev`, matching the fixture and web reference; optionally override
+`EXPO_PUBLIC_DEV_AUTH_NAME`, `EXPO_PUBLIC_DEV_AUTH_EMAIL` or
+`EXPO_PUBLIC_DEV_AUTH_TOKEN` (default `dev-bypass`). Production builds cannot
+enable bypass. Clerk-only account management shows an EmptyState in this mode.
 
 With the emulator already running and the app installed (preview package
 `com.clawdi.preview`):

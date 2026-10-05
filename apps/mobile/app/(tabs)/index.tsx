@@ -1,15 +1,13 @@
-import { useUser } from "@clerk/expo";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { RefreshControl } from "react-native";
-import { isMobilePreview } from "../../src/config/preview";
+import { useCurrentUser } from "../../src/auth/auth-client";
 import {
 	AgentRow,
 	SessionRow,
 	useCloudAgents,
 	useCloudSessions,
 } from "../../src/features/cloud-inventory";
-import { PreviewHome } from "../../src/features/preview";
 import { useI18n } from "../../src/i18n";
 import {
 	accountQueryKey,
@@ -22,9 +20,8 @@ import { ErrorState, LoadingScreen } from "../../src/ui/feedback";
 import { AppScrollView, AppText, AppView } from "../../src/ui/primitives";
 
 export default function HomeRoute() {
-	if (isMobilePreview()) return <PreviewHome />;
 	const t = useI18n();
-	const { isLoaded, user } = useUser();
+	const { isLoaded, user } = useCurrentUser();
 	const router = useRouter();
 	const agents = useCloudAgents();
 	const sessions = useCloudSessions();

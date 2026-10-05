@@ -65,6 +65,36 @@ values are embedded in the app; never put private credentials in them. Clerk
 email/password verification, recovery and supported second factors must be
 configured by the account owner. This work does not change Clerk settings.
 
+### Local fixture authentication
+
+For UI parity against the local fixture API on port 8787, run the real mobile
+dashboard with development authentication bypass:
+
+```bash
+EXPO_PUBLIC_DEV_AUTH_BYPASS=1 \
+EXPO_PUBLIC_CLAWDI_API_URL=http://10.0.2.2:8787 \
+bun run --cwd apps/mobile dev
+```
+
+`10.0.2.2` reaches the development host from the Android emulator. No Clerk
+publishable key is required in this mode; the Cloud API URL is still required
+and validated. All real providers, account fencing, screens and API clients run.
+The bypass identity is `dev_browser` with session `dev_browser_session`.
+Optional `EXPO_PUBLIC_DEV_AUTH_NAME`, `EXPO_PUBLIC_DEV_AUTH_EMAIL` and
+`EXPO_PUBLIC_DEV_AUTH_TOKEN` default to `Avery Chen`, `avery@clawdi.dev` and
+`dev-bypass`. These are public fixture values, not credentials for a live API.
+
+Sign-out is disabled for the fixed fixture identity. Clerk account management
+(profile, email/phone, password, MFA, passkeys, sessions, connected accounts and
+deletion), sign-in/sign-up and their reverification flows are unavailable and
+show an EmptyState. Restart Metro when changing public environment values.
+The flag requires `__DEV__`; production exports remove the bypass identity and
+token even when `EXPO_PUBLIC_DEV_AUTH_BYPASS=1` is set. Real Clerk authentication
+and its account/session request fencing remain in use for production builds.
+
+Done: with the fixture API running, the Android development build opens the
+real Home tab without Clerk sign-in and loads fixture data through the Cloud API.
+
 The sign-in screen also offers an explicit email-code path without requiring or
 submitting a password. It creates an identifier-only SignIn attempt, prepares only
 the server-advertised email factor and reuses the existing code/MFA/finalization

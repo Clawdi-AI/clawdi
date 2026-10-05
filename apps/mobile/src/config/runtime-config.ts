@@ -35,16 +35,19 @@ function requiredString(value: unknown): string | undefined {
 
 const clerkPublishableKeyPattern = /^pk_(?:test|live)_[A-Za-z0-9_-]+$/;
 
-export function parseMobileRuntimeConfig(values: RuntimeConfigValues): MobileRuntimeConfigResult {
+export function parseMobileRuntimeConfig(
+	values: RuntimeConfigValues,
+	{ requireClerk = true }: { requireClerk?: boolean } = {},
+): MobileRuntimeConfigResult {
 	const cloudApiUrl = requiredString(values.cloudApiUrl);
 	const clerkPublishableKey = requiredString(values.clerkPublishableKey);
 	const computeApiUrl = requiredString(values.computeApiUrl);
 	const revenueCatAppleKey = requiredString(values.revenueCatAppleKey);
 	const revenueCatGoogleKey = requiredString(values.revenueCatGoogleKey);
-	if (!cloudApiUrl || !clerkPublishableKey) {
+	if (!cloudApiUrl || (requireClerk && !clerkPublishableKey)) {
 		return { ok: false, reason: "missing" };
 	}
-	if (!clerkPublishableKeyPattern.test(clerkPublishableKey))
+	if (clerkPublishableKey && !clerkPublishableKeyPattern.test(clerkPublishableKey))
 		return { ok: false, reason: "invalid" };
 	if (values.computeApiUrl != null && typeof values.computeApiUrl !== "string")
 		return { ok: false, reason: "invalid" };
@@ -55,7 +58,7 @@ export function parseMobileRuntimeConfig(values: RuntimeConfigValues): MobileRun
 			ok: true,
 			value: {
 				cloudApiUrl: readApiBaseUrl(cloudApiUrl),
-				clerkPublishableKey,
+				clerkPublishableKey: clerkPublishableKey ?? "",
 				...(clerkOauthProviders.length ? { clerkOauthProviders } : {}),
 				...(linkHosts.length ? { linkHosts } : {}),
 				...(computeApiUrl ? { computeApiUrl: readApiBaseUrl(computeApiUrl, true) } : {}),

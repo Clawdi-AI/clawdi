@@ -1,11 +1,20 @@
 import { publicSessionId } from "@clawdi/shared/api";
-import { useAuth } from "@clerk/expo";
 import { Redirect, Stack, useGlobalSearchParams } from "expo-router";
+import { useAppAuth } from "../../src/auth/auth-client";
+import { ClerkOnly } from "../../src/auth/clerk-only";
 import { LoadingScreen } from "../../src/ui/feedback";
 import { ReadScreen } from "../../src/ui/read-screen";
 
 export default function AuthLayout() {
-	const { isLoaded, isSignedIn } = useAuth();
+	return (
+		<ClerkOnly>
+			<ClerkAuthLayout />
+		</ClerkOnly>
+	);
+}
+
+function ClerkAuthLayout() {
+	const { isLoaded, isSignedIn } = useAppAuth();
 	const params = useGlobalSearchParams<{ publicShareId?: string }>();
 	const returnShare =
 		typeof params.publicShareId === "string" ? publicSessionId(params.publicShareId) : null;

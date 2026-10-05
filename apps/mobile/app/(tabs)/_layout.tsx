@@ -1,15 +1,13 @@
-import { useAuth } from "@clerk/expo";
 import { Redirect } from "expo-router";
 import { NativeTabs } from "expo-router/unstable-native-tabs";
 import { useCSSVariable } from "uniwind";
-import { isMobilePreview } from "../../src/config/preview";
+import { useAppAuth } from "../../src/auth/auth-client";
 import { useI18n } from "../../src/i18n";
 import { LoadingScreen } from "../../src/ui/feedback";
 
 export default function TabsLayout() {
-	if (isMobilePreview()) return <AppTabs />;
 	const t = useI18n();
-	const { isLoaded, isSignedIn } = useAuth();
+	const { isLoaded, isSignedIn } = useAppAuth();
 	if (!isLoaded) return <LoadingScreen label={t("loading.authentication")} />;
 	if (!isSignedIn) return <Redirect href="/(auth)/sign-in" />;
 	return <AppTabs />;

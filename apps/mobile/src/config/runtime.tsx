@@ -1,6 +1,7 @@
 import Constants from "expo-constants";
 import { createContext, createElement, useContext } from "react";
 
+import { isDevAuthBypass } from "../auth/auth-client";
 import { type MobileRuntimeConfigResult, parseMobileRuntimeConfig } from "./runtime-config";
 
 export type { MobileRuntimeConfig, MobileRuntimeConfigResult } from "./runtime-config";
@@ -14,15 +15,18 @@ function configuredValue(name: string): unknown {
 }
 
 export function loadMobileRuntimeConfig(): MobileRuntimeConfigResult {
-	return parseMobileRuntimeConfig({
-		cloudApiUrl: configuredValue("cloudApiUrl"),
-		clerkPublishableKey: configuredValue("clerkPublishableKey"),
-		computeApiUrl: configuredValue("computeApiUrl"),
-		revenueCatAppleKey: configuredValue("revenueCatAppleKey"),
-		revenueCatGoogleKey: configuredValue("revenueCatGoogleKey"),
-		clerkOauthProviders: configuredValue("clerkOauthProviders"),
-		linkHosts: configuredValue("linkHosts"),
-	});
+	return parseMobileRuntimeConfig(
+		{
+			cloudApiUrl: configuredValue("cloudApiUrl"),
+			clerkPublishableKey: configuredValue("clerkPublishableKey"),
+			computeApiUrl: configuredValue("computeApiUrl"),
+			revenueCatAppleKey: configuredValue("revenueCatAppleKey"),
+			revenueCatGoogleKey: configuredValue("revenueCatGoogleKey"),
+			clerkOauthProviders: configuredValue("clerkOauthProviders"),
+			linkHosts: configuredValue("linkHosts"),
+		},
+		{ requireClerk: !isDevAuthBypass() },
+	);
 }
 
 const RuntimeConfigContext = createContext<MobileRuntimeConfigResult>({

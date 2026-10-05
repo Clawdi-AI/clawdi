@@ -43,8 +43,8 @@ import {
 	type WhatsAppClient,
 	type WorkspaceSkillClient,
 } from "@clawdi/shared/api";
-import { useAuth } from "@clerk/expo";
 import { createContext, type ReactNode, useCallback, useContext, useMemo } from "react";
+import { useAppAuth } from "../auth/auth-client";
 import type { MobileRuntimeConfig } from "../config/runtime";
 import { useAccountScope } from "../platform/account-lifecycle";
 
@@ -82,7 +82,7 @@ export function MobileApiProvider({
 	config: MobileRuntimeConfig;
 }) {
 	const scope = useAccountScope();
-	const { getToken, sessionId } = useAuth();
+	const { getToken, sessionId } = useAppAuth();
 	const readToken = useCallback(async (): Promise<string | null> => {
 		const scopeSignal = scope.signal;
 		if (
