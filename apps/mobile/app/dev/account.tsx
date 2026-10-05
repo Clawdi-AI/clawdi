@@ -31,7 +31,7 @@ import {
 } from "../../src/ui/settings/account-forms";
 import { SettingsPanelHeader, SettingsSection } from "../../src/ui/settings/section";
 import { AppScrollView } from "../../src/ui/view";
-import { WebView, webView } from "../../src/ui/web-layout";
+import { WebText, WebView, webView } from "../../src/ui/web-layout";
 
 const subscriptionFixture = {
 	subscription_id: "csub_fixture",
@@ -319,23 +319,25 @@ function AccountStories() {
 								title={t("billingParity.transactions")}
 								description={t("billingParity.transactionsDescription")}
 							>
-								<WebView recipe={transactionsSectionClasses.mobileRows}>
-									<TransactionRow
-										item={{
-											id: "fixture-topup",
-											kind: "topup",
-											occurred_at: "2026-10-05T12:00:00Z",
-											amount: "25.00",
-											currency: "usd",
-											direction: "credit",
-											status: "succeeded",
-											funding: "card",
-										}}
-									/>
+								<WebView recipe={transactionsSectionClasses.section}>
+									<WebView recipe={transactionsSectionClasses.mobileRows}>
+										<TransactionRow
+											item={{
+												id: "fixture-topup",
+												kind: "topup",
+												occurred_at: "2026-10-05T12:00:00Z",
+												amount: "25.00",
+												currency: "usd",
+												direction: "credit",
+												status: "succeeded",
+												funding: "card",
+											}}
+										/>
+									</WebView>
+									<WebText recipe={transactionsSectionClasses.description}>
+										{t("billingParity.transactionsCount").replace("{count}", "1")}
+									</WebText>
 								</WebView>
-								<ClerkText>
-									{t("billingParity.transactionsCount").replace("{count}", "1")}
-								</ClerkText>
 							</SettingsSection>
 						</>
 					) : (

@@ -210,46 +210,48 @@ function WalletView() {
 							title={t("billingParity.transactions")}
 							description={t("billingParity.transactionsDescription")}
 						>
-							{transactions.isPending ? (
-								<RouteLoadingSkeleton />
-							) : transactions.isError && !transactions.data ? (
-								<ApiErrorPanel
-									error={transactions.error}
-									onRetry={() => void transactions.refetch()}
-								/>
-							) : rows.length ? (
-								<WebView recipe={transactionsSectionClasses.mobileRows}>
-									{rows.map((item) => (
-										<TransactionRow key={item.id} item={item} />
-									))}
-								</WebView>
-							) : (
-								<EmptyState
-									variant="inset"
-									title={t("billingParity.emptyTransactions")}
-									description={t("billingParity.emptyTransactionsDescription")}
-								/>
-							)}
-							{rows.length ? (
-								<WebText recipe={transactionsSectionClasses.description}>
-									{t("billingParity.transactionsCount").replace("{count}", String(rows.length))}
-								</WebText>
-							) : null}
-							{transactions.hasNextPage ? (
-								<Button
-									variant="outline"
-									disabled={transactions.isFetching}
-									onPress={() => void transactions.fetchNextPage()}
-								>
-									<Text>{t("inventory.loadMore")}</Text>
-								</Button>
-							) : null}
-							{transactions.isError && transactions.data ? (
-								<ApiErrorPanel
-									error={transactions.error}
-									onRetry={() => void transactions.refetch()}
-								/>
-							) : null}
+							<WebView recipe={transactionsSectionClasses.section}>
+								{transactions.isPending ? (
+									<RouteLoadingSkeleton />
+								) : transactions.isError && !transactions.data ? (
+									<ApiErrorPanel
+										error={transactions.error}
+										onRetry={() => void transactions.refetch()}
+									/>
+								) : rows.length ? (
+									<WebView recipe={transactionsSectionClasses.mobileRows}>
+										{rows.map((item) => (
+											<TransactionRow key={item.id} item={item} />
+										))}
+									</WebView>
+								) : (
+									<EmptyState
+										variant="inset"
+										title={t("billingParity.emptyTransactions")}
+										description={t("billingParity.emptyTransactionsDescription")}
+									/>
+								)}
+								{rows.length ? (
+									<WebText recipe={transactionsSectionClasses.description}>
+										{t("billingParity.transactionsCount").replace("{count}", String(rows.length))}
+									</WebText>
+								) : null}
+								{transactions.hasNextPage ? (
+									<Button
+										variant="outline"
+										disabled={transactions.isFetching}
+										onPress={() => void transactions.fetchNextPage()}
+									>
+										<Text>{t("inventory.loadMore")}</Text>
+									</Button>
+								) : null}
+								{transactions.isError && transactions.data ? (
+									<ApiErrorPanel
+										error={transactions.error}
+										onRetry={() => void transactions.refetch()}
+									/>
+								) : null}
+							</WebView>
 						</SettingsSection>
 						<WebText recipe={transactionsSectionClasses.description}>
 							{t("billing.noStore")}
