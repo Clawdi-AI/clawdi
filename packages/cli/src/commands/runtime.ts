@@ -1624,7 +1624,9 @@ async function applyRuntimeDesiredState(
 							staleSystemUnits,
 							staleUserUnits,
 						);
-						const adoptUserUnits = adoptableWarmOpenClawGatewayUnits(paths);
+						const adoptUserUnits = adoptableWarmOpenClawGatewayUnits(paths).filter(
+							(unit) => !invalidatedUserUnits.includes(unit),
+						);
 						const activation = applySystemdRuntimeUpdate(
 							paths,
 							previousSystemdUnits,

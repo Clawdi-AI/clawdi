@@ -38,7 +38,7 @@ import {
 	runtimeUserGid,
 	runtimeUserUid,
 } from "./runtime-user-command";
-import { ensureRuntimePlatformDirectory } from "./state";
+import { ensureRuntimePlatformDirectory, writeRuntimePlatformFileAtomic } from "./state";
 
 const EGRESS_CA_TIMEOUT_MS = 30_000;
 const GATEWAY_READY_TIMEOUT_MS = 180_000;
@@ -63,6 +63,8 @@ export async function warmHostedOpenClawRuntime(
 	runtimeUser = "clawdi",
 ): Promise<void> {
 	if (paths.mode !== "hosted") throw new Error("runtime warm requires hosted runtime mode");
+	if ([paths.appliedState, paths.manifestLastGood, paths.managedSecretCacheFile].some(existsSync))
+		throw new Error("runtime warm requires an unclaimed runtime with no applied tenant state");
 	const command = runtimeCommandPath("openclaw", paths.userHome);
 	if (!command) throw new Error("OpenClaw is not installed");
 	const sdk = resolveOpenClawSdkExport(
@@ -125,7 +127,6 @@ export async function warmHostedOpenClawRuntime(
 /** Let the pinned engine create this instance's CA; the sidecar reuses it later. */
 async function generateEgressCa(paths: RuntimePaths, runtimeGid: number): Promise<void> {
 	const receipt = preinstallationSpecSchema
-		.pick({ egressEngine: true })
 		.passthrough()
 		.parse(
 			JSON.parse(
@@ -140,27 +141,53 @@ async function generateEgressCa(paths: RuntimePaths, runtimeGid: number): Promis
 	ensureRuntimePlatformDirectory(paths, dirname(paths.egressSystemCaFile), { mode: 0o711 });
 	chmodSync(dirname(paths.egressSystemCaFile), 0o711);
 	if (!existsSync(paths.egressCaCert)) {
+		// The maintained artifact lives below root-only /var/lib/clawdi. Normal
+		// egress uses a systemd read-only bind; anonymous warm-up projects the same
+		// verified binary into the traversable runtime root before dropping uid.
+		writeRuntimePlatformFileAtomic(
+			paths,
+			paths.egressServiceBinary,
+			readFileSync(engine.binaryPath),
+			{
+				mode: 0o755,
+			},
+		);
 		const child = buildNumericUserCommand(
 			runtimeEgressUid(),
 			runtimeEgressGid(),
-			engine.binaryPath,
+			paths.egressServiceBinary,
 			["--set", `confdir=${paths.egressCaDir}`, "--set", "server=false"],
 		);
 		const engineProcess = spawn(child.command, child.args, {
 			env: buildEgressEngineEnv(process.env, { envFile: "", home: paths.egressCaDir }),
-			stdio: "ignore",
+			stdio: ["ignore", "ignore", "pipe"],
 		});
-		const exited = new Promise<void>((resolve) => engineProcess.once("exit", () => resolve()));
+		let diagnostic = "";
+		let spawnError = false;
+		engineProcess.stderr?.on("data", (chunk: Buffer) => {
+			diagnostic = (diagnostic + chunk.toString("utf8")).slice(-4096);
+		});
+		engineProcess.once("error", () => {
+			spawnError = true;
+		});
+		const exited = new Promise<void>((resolve) => engineProcess.once("close", () => resolve()));
 		try {
 			const deadline = Date.now() + EGRESS_CA_TIMEOUT_MS;
 			while (!existsSync(paths.egressCaCert)) {
-				if (engineProcess.exitCode !== null || Date.now() > deadline)
-					throw new Error("egress engine did not create its CA");
+				if (spawnError || engineProcess.exitCode !== null || Date.now() > deadline)
+					throw new Error(
+						`anonymous egress CA creation failed (${engineProcess.exitCode ?? "timeout"}): ${diagnostic.trim()}`,
+					);
 				await sleep(100);
 			}
 		} finally {
 			if (engineProcess.exitCode === null) engineProcess.kill("SIGTERM");
-			await exited;
+			const killTimer = setTimeout(() => engineProcess.kill("SIGKILL"), 2_000);
+			try {
+				await exited;
+			} finally {
+				clearTimeout(killTimer);
+			}
 		}
 	}
 	publishEgressSystemCaBundle({

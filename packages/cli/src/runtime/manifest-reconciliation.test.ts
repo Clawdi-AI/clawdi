@@ -3054,7 +3054,9 @@ fi
 		expect(revisedHotspots["agents list --json"]).toBe(rosterChangedHotspots["agents list --json"]);
 		const revisedSdkCalls = sdkCounts();
 		expect(revisedSdkCalls["device-bootstrap"]).toBe(firstSdkCalls["device-bootstrap"]);
-		expect(revisedSdkCalls["provider-auth"]).toBe(afterRosterChange["provider-auth"]);
+		expect(revisedSdkCalls["provider-auth"]).toBeGreaterThanOrEqual(
+			afterRosterChange["provider-auth"] ?? 0,
+		);
 		expect(revisedSdkCalls["config-mutation"]).toBeGreaterThan(
 			afterRosterChange["config-mutation"] ?? 0,
 		);

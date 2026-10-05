@@ -25,6 +25,8 @@ import {
 } from "./manifest-install";
 import { runtimeRecoverableSecretValues } from "./manifest-secrets";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
+import { openClawFileSecretEnvironmentKeys } from "./openclaw-file-secrets";
+import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import {
 	gatewayOomProtectionLines,
 	platformOomProtectionLines,
@@ -1065,6 +1067,11 @@ function runtimeSystemdUserProgramEnvironment(
 	for (const envName of installerOnlySecretEnv) {
 		delete runtimeEnv[envName];
 	}
+	const hotOpenClaw = descriptor?.runtime === "openclaw" && openClawHotApplyEnabled();
+	if (hotOpenClaw) {
+		for (const key of openClawFileSecretEnvironmentKeys(input.paths.userHome))
+			delete runtimeEnv[key];
+	}
 	if (descriptor) delete runtimeEnv.PATH;
 	if (descriptor || isHermesDashboard) delete runtimeEnv.CLAWDI_AUTH_TOKEN;
 	const revision = runtimeSystemdProgramRevision(
@@ -1079,7 +1086,7 @@ function runtimeSystemdUserProgramEnvironment(
 		? {
 				...(isHermesDashboard ? { HOME: input.paths.userHome } : {}),
 				...runtimeEnv,
-				CLAWDI_MANAGED_CONTENT_DIGEST: revision,
+				...(hotOpenClaw ? {} : { CLAWDI_MANAGED_CONTENT_DIGEST: revision }),
 			}
 		: {
 				...input.commonEnvironment,

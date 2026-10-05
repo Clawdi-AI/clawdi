@@ -21,6 +21,7 @@ import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimeInstallObservation } from "./manifest-install";
 import { removeOpenClawManagedProviderAuthProfiles } from "./manifest-oauth";
 import { recordValue, stringValue } from "./manifest-shared";
+import { projectOpenClawProviderFileSecrets } from "./openclaw-file-secrets";
 import {
 	applyOpenClawNativeProviders,
 	buildNativeOpenClawProviderPatch,
@@ -184,6 +185,7 @@ export function applyHostedAiProviderProjection(
 		);
 		if (gatewayPatch)
 			patch.content = JSON.stringify(mergeJsonPatches(gatewayPatch, JSON.parse(patch.content)));
+		patch.content = projectOpenClawProviderFileSecrets(patch.content, environment, home);
 	} else {
 		applyOpenClawGatewayHostedProjection(
 			observation.commandPath,

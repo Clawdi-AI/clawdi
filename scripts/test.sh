@@ -14,7 +14,7 @@ if [[ -z "${TEST_RUNNER_IMAGE:-}" ]]; then
 fi
 
 usage() {
-	echo "Usage: scripts/test.sh [all|ci|js|mobile|cli|cli-native|preinstallation-artifact|desktop|shared|sidecar|web|backend|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory] [suite args...]"
+	echo "Usage: scripts/test.sh [all|ci|js|mobile|cli|cli-lint|cli-native|preinstallation-artifact|desktop|shared|sidecar|web|backend|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory] [suite args...]"
 }
 
 compose() {
@@ -23,7 +23,7 @@ compose() {
 
 validate_suite() {
 	case "$1" in
-		all|backend|ci|js|mobile|cli|cli-native|preinstallation-artifact|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory)
+		all|backend|ci|js|mobile|cli|cli-lint|cli-native|preinstallation-artifact|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory)
 			;;
 		*)
 			echo "Unknown test suite: $1" >&2
@@ -387,6 +387,10 @@ run_in_container() {
 			;;
 		cli)
 			run_cli "$@"
+			;;
+		cli-lint)
+			install_js
+			bunx --no-install biome check "${@:-packages/cli/src}"
 			;;
 		preinstallation-artifact)
 			install_js

@@ -3,6 +3,7 @@ import type { OpenClawHostedContext } from "./hosted-openclaw-context";
 import type { RuntimeManifest } from "./manifest-contract";
 import { runtimeFileCurrentRevision } from "./manifest-install";
 import { canonicalJsonEqual, isPlainRecord, recordValue } from "./manifest-shared";
+import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import {
 	persistedStepRevision,
 	recordPersistedStepRevision,
@@ -178,7 +179,7 @@ explicitSetPaths.length = 0;
 unsetPaths.length = 0;
 await sdk.mutateConfigFile({
   base: "source",
-  afterWrite: { mode: "none", reason: "Clawdi runtime convergence owns service reconciliation" },
+  afterWrite: process.argv.includes("hot-apply") ? { mode: "auto" } : { mode: "none", reason: "Clawdi runtime convergence owns service reconciliation" },
   writeOptions: { allowConfigSizeDrop: true, explicitSetPaths, unsetPaths },
   mutate,
 });
@@ -221,7 +222,13 @@ export function applyOpenClawHostedProviderPatch(
 	}
 	runRuntimeUserCommand(
 		"node",
-		["--input-type=module", "--eval", OPENCLAW_CONFIG_MUTATION_HELPER, sdkPath],
+		[
+			"--input-type=module",
+			"--eval",
+			OPENCLAW_CONFIG_MUTATION_HELPER,
+			sdkPath,
+			...(openClawHotApplyEnabled() ? ["hot-apply"] : []),
+		],
 		content,
 		context.home,
 		workspaceRoot,
@@ -239,7 +246,13 @@ export function applyOpenClawConfigMergePatch(
 ): void {
 	runRuntimeUserCommand(
 		"node",
-		["--input-type=module", "--eval", OPENCLAW_CONFIG_MUTATION_HELPER, sdkPath],
+		[
+			"--input-type=module",
+			"--eval",
+			OPENCLAW_CONFIG_MUTATION_HELPER,
+			sdkPath,
+			...(openClawHotApplyEnabled() ? ["hot-apply"] : []),
+		],
 		content,
 		home,
 		workspaceRoot,
@@ -265,7 +278,14 @@ export function applyOpenClawHostedChannelPatch(
 	// No custom IO: the official writer owns its cross-process lock, snapshot and commit checks.
 	runRuntimeUserCommand(
 		"node",
-		["--input-type=module", "--eval", OPENCLAW_CONFIG_MUTATION_HELPER, sdkPath, "channels"],
+		[
+			"--input-type=module",
+			"--eval",
+			OPENCLAW_CONFIG_MUTATION_HELPER,
+			sdkPath,
+			"channels",
+			...(openClawHotApplyEnabled() ? ["hot-apply"] : []),
+		],
 		input,
 		context.home,
 		workspaceRoot,

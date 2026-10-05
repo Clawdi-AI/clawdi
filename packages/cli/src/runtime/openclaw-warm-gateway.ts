@@ -1,8 +1,7 @@
 import { lstatSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { MANAGED_AI_PROVIDER_RUNTIME_ENV } from "@clawdi/shared";
 import { z } from "zod";
-import { applyEgressTransparentRuntimeEnv, MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
+import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import { isPlainRecord } from "./manifest-shared";
 import type { RuntimePaths } from "./paths";
 import { runtimeImpactRevision } from "./runtime-impact-revision";
@@ -54,9 +53,7 @@ function markerPath(paths: RuntimePaths): string {
  * is not adopted.
  */
 export function warmOpenClawGatewayEnvironment(paths: RuntimePaths): Record<string, string> {
-	const env: NodeJS.ProcessEnv = {
-		[MANAGED_AI_PROVIDER_RUNTIME_ENV]: MANAGED_EGRESS_PLACEHOLDER_VALUE,
-	};
+	const env: NodeJS.ProcessEnv = {};
 	applyEgressTransparentRuntimeEnv(env, { caFile: paths.egressSystemCaFile });
 	return Object.fromEntries(
 		Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
