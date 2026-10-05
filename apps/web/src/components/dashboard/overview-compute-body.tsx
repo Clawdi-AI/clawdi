@@ -1,5 +1,5 @@
 import { overviewComputeBodyClasses } from "@clawdi/shared/ui";
-import { formatMemoryMib } from "@clawdi/shared/view";
+import { overviewComputeSummaryCopy as copy, overviewComputeSpecs } from "@clawdi/shared/view";
 import type { ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -22,23 +22,11 @@ export function OverviewComputeBody({
 	action?: ReactNode;
 	loading?: boolean;
 }) {
-	const specs = [
-		{ label: "CPU", value: resources ? `${resources.vcpu} vCPU` : null, width: "w-10" },
-		{
-			label: "Memory",
-			value: resources ? `${formatMemoryMib(resources.memory_mib)} RAM` : null,
-			width: "w-16",
-		},
-		{
-			label: "Storage",
-			value: resources ? `${resources.disk_gib} GiB storage` : null,
-			width: "w-20",
-		},
-	];
+	const specs = overviewComputeSpecs(resources);
 	const commercial = loading
 		? [
-				{ label: "Subscription", value: null },
-				{ label: "Next renewal", value: null },
+				{ label: copy.subscription, value: null },
+				{ label: copy.nextRenewal, value: null },
 			]
 		: [subscription, date].filter((fact): fact is ComputeFact => Boolean(fact));
 	return (
@@ -53,17 +41,19 @@ export function OverviewComputeBody({
 			>
 				{loading ? <Skeleton className={overviewComputeBodyClasses.hLhWMaxWFull} /> : planLabel}
 			</div>
-			<dl
-				aria-label="Compute resources"
-				className={overviewComputeBodyClasses.flexFlexWrapGapXGapY}
-			>
+			<dl aria-label={copy.resources} className={overviewComputeBodyClasses.flexFlexWrapGapXGapY}>
 				{specs.map((item, index) => (
 					<div key={item.label}>
 						<dt className={overviewComputeBodyClasses.srOnly}>{item.label}</dt>
 						<dd className={overviewComputeBodyClasses.flexItemsCenterGap}>
 							{index > 0 && <span aria-hidden="true">·</span>}
 							{loading ? (
-								<Skeleton className={cn("h-lh max-w-full", item.width)} />
+								<Skeleton
+									className={cn(
+										overviewComputeBodyClasses.specSkeleton,
+										overviewComputeBodyClasses[`${item.key}Skeleton`],
+									)}
+								/>
 							) : (
 								<span>{item.value}</span>
 							)}
@@ -77,12 +67,18 @@ export function OverviewComputeBody({
 						<div
 							key={item.label ?? "access"}
 							className={cn(
-								"grid grid-cols-[fit-content(40%)_minmax(0,1fr)] items-baseline gap-x-4",
-								loading && "items-center",
+								overviewComputeBodyClasses.commercialRow,
+								loading && overviewComputeBodyClasses.commercialLoadingRow,
 							)}
 							data-overview-subscription-row={index === 0 || undefined}
 						>
-							<dt className={item.label ? "min-w-0 break-words" : "sr-only"}>
+							<dt
+								className={
+									item.label
+										? overviewComputeBodyClasses.commercialLabel
+										: overviewComputeBodyClasses.srOnly
+								}
+							>
 								{loading ? (
 									<Skeleton className={overviewComputeBodyClasses.relativeHLhMaxWFull}>
 										<span className={overviewComputeBodyClasses.invisible} aria-hidden="true">
@@ -90,14 +86,14 @@ export function OverviewComputeBody({
 										</span>
 									</Skeleton>
 								) : (
-									(item.label ?? "Plan access")
+									(item.label ?? copy.planAccess)
 								)}
 							</dt>
 							<dd
 								className={
 									item.label
-										? "min-w-0 text-right break-words"
-										: "col-span-full min-w-0 break-words"
+										? overviewComputeBodyClasses.commercialValue
+										: overviewComputeBodyClasses.commercialAccess
 								}
 							>
 								<span

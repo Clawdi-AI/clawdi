@@ -14,7 +14,7 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams } from "expo-router";
-import { FolderKanban } from "lucide-react-native";
+import { FolderKanban, MoreHorizontal } from "lucide-react-native";
 import { useState } from "react";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
@@ -34,11 +34,11 @@ import {
 	DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { HERO_GRID_CLASS, HeroCardSkeleton } from "../ui/entity-card";
+import { Icon } from "../ui/icon";
 import { ListToolbar } from "../ui/list-toolbar";
 import { ProjectResourceCard } from "../ui/projects/project-resource-card";
 import { SearchInput } from "../ui/search-input";
 import { SectionLabel } from "../ui/section-label";
-import { Text } from "../ui/text";
 import { WebView } from "../ui/web-layout";
 import { useCloudAgent } from "./cloud-inventory";
 import { useCloudProjects } from "./projects";
@@ -196,7 +196,7 @@ function BindingsView({ agentId }: { agentId?: string }) {
 																size="icon-sm"
 																accessibilityLabel="Project actions"
 															>
-																<Text>⋯</Text>
+																<Icon as={MoreHorizontal} />
 															</Button>
 														</DropdownMenuTrigger>
 														<DropdownMenuContent>

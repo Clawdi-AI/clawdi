@@ -6,7 +6,7 @@ import {
 	computeSubscriptionLifecycle,
 	computeTierLabel,
 } from "./compute-subscriptions";
-import { formatShortDate } from "./format";
+import { formatMemoryMib, formatShortDate } from "./format";
 
 type HostedComputeSubscription = NonNullable<
 	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
@@ -114,3 +114,30 @@ export function overviewComputeState(deployment: DeploymentRead, now = Date.now(
 
 	return { facts, subscription, operation, pending, funding, recovery };
 }
+
+/** The same ordered resource facts on the Web and native Compute summary. */
+export function overviewComputeSpecs(resources?: {
+	vcpu: number;
+	memory_mib: number;
+	disk_gib: number;
+}) {
+	return [
+		{ key: "cpu", label: "CPU", value: resources ? `${resources.vcpu} vCPU` : null },
+		{
+			key: "memory",
+			label: "Memory",
+			value: resources ? `${formatMemoryMib(resources.memory_mib)} RAM` : null,
+		},
+		{
+			key: "storage",
+			label: "Storage",
+			value: resources ? `${resources.disk_gib} GiB storage` : null,
+		},
+	] as const;
+}
+export const overviewComputeSummaryCopy = {
+	resources: "Compute resources",
+	subscription: "Subscription",
+	nextRenewal: "Next renewal",
+	planAccess: "Plan access",
+} as const;

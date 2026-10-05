@@ -6,12 +6,14 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
+import { ArrowLeft, ChevronDown } from "lucide-react-native";
 import { useState } from "react";
 import { useCloudAgent } from "../../features/cloud-inventory";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useMobileApi } from "../../providers/api-provider";
 import { Button } from "../button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../dialog";
+import { Icon } from "../icon";
 import { SectionLabel } from "../section-label";
 import { Text } from "../text";
 import { AppView } from "../view";
@@ -79,10 +81,12 @@ export function AgentSectionNavigation({
 		<>
 			<AppView className="flex-row justify-between">
 				<Button variant="ghost" size="sm" onPress={() => router.push("/(tabs)/agents")}>
-					<Text>← Agents</Text>
+					<Icon as={ArrowLeft} />
+					<Text>Agents</Text>
 				</Button>
 				<Button variant="ghost" size="sm" onPress={() => setOpen(true)}>
-					<Text>{agentSectionCopy[section].label} ▾</Text>
+					<Text>{agentSectionCopy[section].label}</Text>
+					<Icon as={ChevronDown} />
 				</Button>
 			</AppView>
 			<Dialog open={open} onOpenChange={setOpen}>

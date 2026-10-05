@@ -1,4 +1,13 @@
 export const overviewComputeBodyClasses = {
+	commercialRow: "grid grid-cols-[fit-content(40%)_minmax(0,1fr)] items-baseline gap-x-4",
+	commercialLoadingRow: "items-center",
+	commercialLabel: "min-w-0 break-words",
+	commercialValue: "min-w-0 text-right break-words",
+	commercialAccess: "col-span-full min-w-0 break-words",
+	specSkeleton: "h-lh max-w-full",
+	cpuSkeleton: "w-10",
+	memorySkeleton: "w-16",
+	storageSkeleton: "w-20",
 	spaceY: "space-y-2",
 	textSmTextMutedForeground: "text-sm text-muted-foreground",
 	hLhWMaxWFull: "h-lh w-32 max-w-full",

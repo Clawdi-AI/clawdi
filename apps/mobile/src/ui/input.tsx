@@ -11,7 +11,7 @@ type InputProps = TextInputProps & { className?: string };
 
 /** apps/web/src/components/ui/input.tsx and textarea.tsx, from the same classes. */
 export const Input = forwardRef<TextInput, InputProps>(function Input(
-	{ className, ...props },
+	{ className, style, ...props },
 	ref,
 ) {
 	const placeholder = useCSSVariable("--color-muted-foreground");
@@ -19,6 +19,7 @@ export const Input = forwardRef<TextInput, InputProps>(function Input(
 	return (
 		<AppTextInput
 			ref={ref}
+			style={[{ flexShrink: 0 }, style]}
 			placeholderTextColor={typeof placeholder === "string" ? placeholder : undefined}
 			textAlignVertical={props.multiline ? "top" : "center"}
 			className={cn(classes.view, "font-normal text-foreground", classes.text, className)}

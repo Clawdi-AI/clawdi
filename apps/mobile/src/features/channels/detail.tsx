@@ -508,7 +508,6 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 						)}
 					</TabsContent>
 					<TabsContent value="commands">
-						{" "}
 						{bot?.capabilities.sync_commands ? (
 							<NativeButton
 								label={t("channels.sync")}
