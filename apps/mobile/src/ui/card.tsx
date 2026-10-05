@@ -34,10 +34,11 @@ function Card({
 	...props
 }: ViewProps & ClassName & { size?: CardSize }) {
 	const classes = resolveWebClasses(cardClassName, { "data-[size=sm]": size === "sm" });
+	const own = resolveWebClasses(className ?? "");
 	return (
 		<CardSizeContext.Provider value={size}>
-			<TextClassContext.Provider value={classes.text}>
-				<AppView className={cn(classes.view, spacing[size].root, className)} {...props} />
+			<TextClassContext.Provider value={cn(classes.text, own.text)}>
+				<AppView className={cn(classes.view, spacing[size].root, own.view)} {...props} />
 			</TextClassContext.Provider>
 		</CardSizeContext.Provider>
 	);

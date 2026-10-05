@@ -13,9 +13,11 @@ export function Badge({
 	...props
 }: ViewProps & VariantProps<typeof badgeVariants> & { className?: string }) {
 	const classes = resolveWebClasses(badgeVariants({ variant }));
+	// Like DOM, text classes on the container (e.g. category colors) reach its text.
+	const own = resolveWebClasses(className ?? "");
 	return (
-		<TextClassContext.Provider value={classes.text}>
-			<AppView className={cn(classes.view, className)} {...props} />
+		<TextClassContext.Provider value={cn(classes.text, own.text)}>
+			<AppView className={cn(classes.view, own.view)} {...props} />
 		</TextClassContext.Provider>
 	);
 }
