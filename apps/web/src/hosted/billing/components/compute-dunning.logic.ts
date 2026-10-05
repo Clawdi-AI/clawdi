@@ -51,7 +51,7 @@ export function fallbackReasonSentence(
 		case "disputed":
 			return `This agent fell back from ${planLabel} after its payment was disputed on ${dateLabel}. Review Transactions or contact support.`;
 		case "admin_forced":
-			return `This agent fell back from ${planLabel} after compute funding was changed by an administrator on ${dateLabel}. Contact support if this was unexpected.`;
+			return `This Agent fell back from ${planLabel} after an administrator changed its funding on ${dateLabel}. Contact support if this was unexpected.`;
 	}
 }
 

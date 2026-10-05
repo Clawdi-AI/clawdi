@@ -959,10 +959,9 @@ test("agent settings uses compact canonical subscription management", async ({ p
 	await expect(unavailableUpgrade).toBeDisabled();
 	await expect(unavailableCard.getByRole("button")).toHaveCount(1);
 	await expect(
-		unavailableCard.getByText(
-			"Wait until this agent is running or stopped before trying to upgrade again.",
-			{ exact: true },
-		),
+		unavailableCard.getByText("Wait until this Agent is running or stopped, then try again.", {
+			exact: true,
+		}),
 	).toBeVisible();
 
 	await expectNoHorizontalOverflow(page);

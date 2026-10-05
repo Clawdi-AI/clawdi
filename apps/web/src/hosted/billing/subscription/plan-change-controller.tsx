@@ -294,7 +294,7 @@ function PlanChangeControllerState({
 			setAcceptedOperationName(error.operationName);
 			toast.info("Still waiting for confirmation", {
 				description:
-					"We don’t have a final result yet. Don’t submit another subscription change. Check again in a few minutes; if it still hasn’t finished, contact support. Checking only reads the status and does not submit another request or charge.",
+					"Don't submit another change. Check again in a few minutes — checking won't resubmit or charge. Contact support if it doesn't finish.",
 			});
 			return;
 		}

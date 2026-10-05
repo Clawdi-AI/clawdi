@@ -269,7 +269,7 @@ export function deploymentFailurePresentation(
 				...failure,
 				title: `${operationLabel} failed`,
 				description:
-					"Clawdi could not complete this action. Check the current Agent status. Contact support if the issue persists.",
+					"Couldn't complete this action. Check the Agent's status, and contact support if this continues.",
 				status: FAILED_STATUS,
 				remediation: { kind: "none", label: null },
 			};

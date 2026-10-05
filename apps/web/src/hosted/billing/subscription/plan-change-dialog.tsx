@@ -422,9 +422,8 @@ export function PlanChangeDialog({
 							<CalendarClock aria-hidden />
 							<AlertTitle>Still waiting for confirmation</AlertTitle>
 							<AlertDescription>
-								We don’t have a final result yet. Don’t submit another subscription change. You can
-								close this window and check again in a few minutes; if it still hasn’t finished,
-								contact support.
+								Don't submit another change. You can close this window and check again in a few
+								minutes. Contact support if it doesn't finish.
 							</AlertDescription>
 						</Alert>
 						<DialogFooter>

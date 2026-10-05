@@ -24,28 +24,26 @@ type HostedComputeUpgradeIneligibilityReason = NonNullable<
 >;
 
 const PERFORMANCE_UPGRADE_UNAVAILABLE_COPY = {
-	deployment_deleted:
-		"This agent has been deleted, so it can’t be upgraded. Create a new agent if you need Performance.",
-	compute_basic_required:
-		"Only agents on the Basic plan can be upgraded to Performance. No upgrade is available for this agent’s current plan.",
+	deployment_deleted: "This Agent was deleted. Create a new Agent to use Performance.",
+	compute_basic_required: "Only Agents on the Basic plan can upgrade to Performance.",
 	compute_subscription_unavailable:
-		"Clawdi couldn’t read this agent’s subscription details, so it can’t safely start an upgrade. Check again in a moment.",
+		"Couldn't load this Agent's subscription details. Check again in a moment.",
 	included_basic_required:
-		"This agent’s subscription is managed separately, so it can’t be upgraded here. Use the subscription controls to change its plan instead.",
+		"This Agent's subscription is managed separately. Change its plan from the subscription controls.",
 	compute_subscription_not_active:
-		"Clawdi can’t start this upgrade because this agent’s no-cost subscription is not active. You were not charged, and there’s nothing you need to fix. Check again later.",
+		"This Agent's no-cost subscription isn't active yet, so it can't upgrade. You weren't charged and don't need to do anything. Check again later.",
 	compute_subscription_canceling:
-		"This agent’s subscription is set to cancel, so it can’t be upgraded. Resume the subscription first, then try again.",
+		"This Agent's subscription is set to cancel. Resume it, then try again.",
 	deployment_state_unknown:
-		"Clawdi couldn’t read this agent’s current state. Check again before trying to upgrade.",
+		"Couldn't load this Agent's current state. Check again before upgrading.",
 	deployment_must_be_running_or_stopped:
-		"Wait until this agent is running or stopped before trying to upgrade again.",
+		"Wait until this Agent is running or stopped, then try again.",
 	upgrade_already_in_progress:
-		"An upgrade to Performance is already in progress. Wait for it to finish; there is no second upgrade to start.",
+		"An upgrade to Performance is already in progress. Wait for it to finish.",
 } satisfies Record<HostedComputeUpgradeIneligibilityReason, string>;
 
 const UNKNOWN_PERFORMANCE_UPGRADE_UNAVAILABLE_COPY =
-	"Clawdi can’t confirm why this agent can’t be upgraded right now. Check again later, or contact support if this continues.";
+	"This Agent can't be upgraded right now. Check again later, or contact support if this continues.";
 
 /** Recover an active plan change from the authoritative deployment projection. */
 export function activePlanChangeOperationName(
@@ -349,7 +347,7 @@ export function performanceUpgradeUnavailableReason({
 		return performanceUpgradeEligibilityReasonCopy(upgradeEligibilityReason);
 	}
 	if (!isIncludedBasic) {
-		return "This upgrade is only available for Basic agents without a separate subscription. Use this agent’s subscription controls to change its plan.";
+		return "Only Basic Agents without a separate subscription can upgrade here. Use this Agent's subscription controls instead.";
 	}
 	if (pendingPlanSlug === COMPUTE_PERFORMANCE_SLUG) {
 		return "An upgrade to Performance is already scheduled.";

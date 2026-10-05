@@ -332,7 +332,7 @@ export function HostedTerminalPanel({
 			updateStatus("reconnecting");
 			writeTerminalNotice(
 				term,
-				`${message} Reconnecting ${reconnectAttempts}/${TERMINAL_RECONNECT_DELAYS_MS.length} in ${delaySeconds}s...`,
+				`${message} Reconnecting ${reconnectAttempts}/${TERMINAL_RECONNECT_DELAYS_MS.length} in ${delaySeconds}s…`,
 			);
 			retryTimer = window.setTimeout(() => {
 				retryTimer = null;

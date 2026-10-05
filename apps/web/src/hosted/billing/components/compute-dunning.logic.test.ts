@@ -316,7 +316,7 @@ describe("computeDunningState", () => {
 			"contact support",
 		);
 		expect(fallbackReasonSentence("admin_forced", "Performance compute", "Jul 18")).toContain(
-			"changed by an administrator",
+			"an administrator changed its funding",
 		);
 	});
 });
