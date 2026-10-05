@@ -1,6 +1,6 @@
 "use client";
 import { paymentMethodsSectionClasses } from "@clawdi/shared/ui";
-import { billingCopy } from "@clawdi/shared/view";
+import { billingCopy, paymentMethodPresentation, paymentMethodsCopy } from "@clawdi/shared/view";
 
 import { CreditCard, Pencil } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -42,39 +42,41 @@ export function PaymentMethodsSection({
 		>
 			<div className={paymentMethodsSectionClasses.body}>
 				{methods.isLoading ? (
-					<Skeleton className="h-16 w-full" />
+					<Skeleton className={paymentMethodsSectionClasses.loading} />
 				) : methods.error ? (
 					<ApiErrorPanel
 						error={methods.error}
 						normalizer={billingErrorNormalizer}
 						onRetry={() => void methods.refetch()}
-						title="Couldn’t load saved cards"
+						title={paymentMethodsCopy.error}
 					/>
 				) : methods.data?.items.length ? (
-					<ul className="divide-y rounded-lg border">
+					<ul className={paymentMethodsSectionClasses.list}>
 						{methods.data.items.map((method) => (
-							<li key={method.id} className="flex flex-wrap items-center gap-3 p-3">
-								<CreditCard aria-hidden className="size-4 text-muted-foreground" />
-								<div className="min-w-40 flex-1">
-									<p className="text-sm font-medium capitalize">
-										{method.card.brand} ending in {method.card.last4}
+							<li key={method.id} className={paymentMethodsSectionClasses.item}>
+								<CreditCard aria-hidden className={paymentMethodsSectionClasses.icon} />
+								<div className={paymentMethodsSectionClasses.copy}>
+									<p className={paymentMethodsSectionClasses.title}>
+										{paymentMethodPresentation(method).title}
 									</p>
 									<p className={paymentMethodsSectionClasses.hint}>
-										Expires {String(method.card.exp_month).padStart(2, "0")}/{method.card.exp_year}
+										{paymentMethodPresentation(method).expires}
 									</p>
 								</div>
-								{method.is_default ? <Badge variant="outline">Billing default</Badge> : null}
-								{method.is_auto_reload ? <Badge variant="outline">Auto-reload</Badge> : null}
+								{method.is_default ? (
+									<Badge variant="outline">{paymentMethodsCopy.billingDefault}</Badge>
+								) : null}
+								{method.is_auto_reload ? (
+									<Badge variant="outline">{paymentMethodsCopy.autoReload}</Badge>
+								) : null}
 							</li>
 						))}
 					</ul>
 				) : (
-					<p className="text-sm text-muted-foreground">No saved cards yet.</p>
+					<p className={paymentMethodsSectionClasses.empty}>{paymentMethodsCopy.empty}</p>
 				)}
 				{methods.data?.has_more ? (
-					<p className={paymentMethodsSectionClasses.hint}>
-						Additional saved cards are not shown here.
-					</p>
+					<p className={paymentMethodsSectionClasses.hint}>{paymentMethodsCopy.more}</p>
 				) : null}
 				<p className={paymentMethodsSectionClasses.hint}>{billingCopy.autoReloadCardHint}</p>
 			</div>

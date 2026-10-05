@@ -121,6 +121,7 @@ describe("Hosted compute client", () => {
 			await client.listPlans();
 			await client.getManagedModels();
 			await client.getWallet();
+			await client.getWalletPaymentMethods();
 			const cursor = "next &+/%?你好";
 			await client.getSubscriptions({ limit: 7, cursor });
 			await client.getReusableSubscriptions({ limit: 8, cursor });
@@ -143,6 +144,7 @@ describe("Hosted compute client", () => {
 				["GET", "/v2/subscription/plans"],
 				["GET", "/v2/ai-providers/managed/models"],
 				["GET", "/v2/wallet"],
+				["GET", "/v2/wallet/payment-methods"],
 				["GET", "/v2/subscriptions"],
 				["GET", "/v2/subscriptions/reusable"],
 				["GET", "/v2/subscriptions/included-basic"],

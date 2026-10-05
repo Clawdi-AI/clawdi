@@ -1,5 +1,7 @@
 export const creationEn = {
 	title: "New Cloud Agent",
+	savedProviderBoundary:
+		"This saved provider can be previewed here. Mobile creation currently supports Clawdi AI or configuration inside the agent; select either before deploying.",
 	unavailable: "Cloud creation is not configured.",
 	name: "Agent name",
 	runtime: "Runtime",

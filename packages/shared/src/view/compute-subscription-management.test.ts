@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 import {
 	type ComputeSubscriptionEntitlement,
 	computeSubscriptionManagement,
 } from "./compute-subscription-management";
+import { hostedDeploymentFixture } from "./hosted-deployment.test-fixture";
 
 function entitlement(
 	overrides: Partial<ComputeSubscriptionEntitlement> = {},

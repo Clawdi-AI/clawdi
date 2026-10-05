@@ -1,5 +1,9 @@
 /** Text shared by the Web and native Agent overview. */
 export const agentOverviewCopy = {
+	chatOnWeb: "Chat on the web",
+	chatViaChannels: "Chat via channels",
+	channelsDescription: "Telegram, Discord, or WhatsApp",
+	hostedSessionsEmpty: "No sessions from this agent yet.",
 	description: "Status, resources, and recent activity for this agent.",
 	recentSessions: "Recent sessions",
 	viewAll: "View all",
@@ -31,4 +35,10 @@ export function agentOverviewSummary(
 		case "connectors":
 			return total ? `${total} ${total === 1 ? "app" : "apps"} · all agents` : "No apps available";
 	}
+}
+
+export function runtimeBrowserUiLabel(runtime?: string | null): string {
+	if (runtime === "openclaw") return "OpenClaw Control UI";
+	if (runtime === "hermes") return "Hermes Dashboard";
+	return "Dashboard";
 }

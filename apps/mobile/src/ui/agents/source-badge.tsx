@@ -27,6 +27,7 @@ export function AgentSourceBadge({
 		>
 			<Icon
 				as={kind === "legacy" ? History : source === "hosted" ? Cloud : Laptop}
+				fill={source === "hosted" && kind !== "legacy" ? "currentColor" : "none"}
 				className={webBoth(styles.icon)}
 			/>
 			<Text>{kind === "legacy" ? "Legacy" : agentSourceLabel(source)}</Text>

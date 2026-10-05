@@ -1,16 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import type {
-	ComputePlanSlug,
-	HostedComputeSubscription,
-	HostedDeploymentStatus,
-	HostedFundingFact,
-} from "@/hosted/billing/contracts";
-import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
+import type { DeployComponents, DeploymentRead } from "../api";
+
+type ComputePlanSlug = DeployComponents["schemas"]["V2HostedDeployRequest"]["compute_plan_slug"];
+type HostedComputeSubscription = NonNullable<
+	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
+>;
+type HostedDeploymentStatus = DeployComponents["schemas"]["HostedDeploymentStatus"];
+type HostedFundingFact = DeployComponents["schemas"]["V2HostedCommercialFundingFactInfo"];
+
 import {
 	computeDunningState,
 	computeSubscriptionRequiredToStart,
 	fallbackReasonSentence,
-} from "./compute-dunning.logic";
+} from "./compute-dunning";
+import { hostedDeploymentFixture } from "./hosted-deployment.test-fixture";
 
 function deployment({
 	computeSubscription = null,

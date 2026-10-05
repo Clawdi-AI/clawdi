@@ -7,10 +7,12 @@ import { useState } from "react";
 import { RefreshControl } from "react-native";
 import { AgentOverview } from "../../src/features/agent-overview";
 import { useCloudAgent } from "../../src/features/cloud-inventory";
+import { DeploymentDetailScreen } from "../../src/features/deployments";
 import { routeParam } from "../../src/features/read-helpers";
 import { accountQueryKey, useAccountScope } from "../../src/platform/account-lifecycle";
 import { AgentSectionNavigation } from "../../src/ui/agents/navigation";
 import { ApiErrorPanel } from "../../src/ui/api-error-panel";
+import { useDashboardAgents } from "../../src/ui/dashboard/use-dashboard-agents";
 import { PageHeader, PageHeaderSkeleton } from "../../src/ui/page-header";
 import { AppScrollView } from "../../src/ui/primitives";
 import { ReadScreen } from "../../src/ui/read-screen";
@@ -30,6 +32,9 @@ export default function AgentDetailRoute() {
 	};
 	const agentId = routeParam(params.agentId),
 		agent = useCloudAgent(agentId);
+	const inventory = useDashboardAgents();
+	const deployment = inventory.inventory.data?.find((d) => d.agent_id === agentId);
+	if (deployment) return <DeploymentDetailScreen deploymentId={deployment.resource.id} />;
 	return (
 		<ReadScreen>
 			<AppScrollView

@@ -30,7 +30,13 @@ import { Input, Label } from "../../ui/input";
 import { AppText, AppView } from "../../ui/primitives";
 import { WebText, WebView, webView } from "../../ui/web-layout";
 
-export function ChannelCreate({ refresh }: { refresh: () => Promise<void> }) {
+export function ChannelCreate({
+	refresh,
+	scoped = false,
+}: {
+	refresh: () => Promise<void>;
+	scoped?: boolean;
+}) {
 	const t = useI18n();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -75,9 +81,9 @@ export function ChannelCreate({ refresh }: { refresh: () => Promise<void> }) {
 			) : null}
 			{!open ? (
 				<ActionButton
-					label={copy.title}
+					label={scoped ? "Add channel" : copy.title}
 					icon={<Icon as={Plus} />}
-					variant="default"
+					variant={scoped ? "outline" : "default"}
 					disabled={action.busy || !scope.isReady}
 					onPress={() => {
 						action.clearError();

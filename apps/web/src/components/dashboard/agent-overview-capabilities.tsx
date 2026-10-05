@@ -1,4 +1,5 @@
 import { agentOverviewCapabilitiesClasses } from "@clawdi/shared/ui";
+import { agentOverviewCopy } from "@clawdi/shared/view";
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { ArrowRight, type LucideIcon, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
@@ -22,7 +23,7 @@ export type AgentOverviewModuleContent = {
 
 type OverviewLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
 
-export const OVERVIEW_CHANNELS_DESCRIPTION = "Telegram, Discord, or WhatsApp";
+export const OVERVIEW_CHANNELS_DESCRIPTION = agentOverviewCopy.channelsDescription;
 
 export function AgentOverviewStatusCard({
 	agentId,

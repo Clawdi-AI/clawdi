@@ -1,28 +1,39 @@
 import type { HostedDeployOperation } from "@clawdi/shared/api";
 import { agentsIndexClasses, ENTITY_CARD_BASE, ENTITY_GRID_CLASS } from "@clawdi/shared/ui";
-import { agentSurfaceCopy, overviewComputeState, RESOURCE_TINT_CLASSES } from "@clawdi/shared/view";
+import {
+	agentOverviewCopy,
+	agentSurfaceCopy,
+	deploymentFailurePresentation,
+	deploymentRuntimeStatusPresentation,
+} from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import { Cpu, Laptop } from "lucide-react-native";
+import { MoreHorizontal, TerminalSquare } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useMobileApi } from "../../providers/api-provider";
 import { AgentCollection } from "../../ui/agents/collection";
+import { ComputeStatusDetails } from "../../ui/agents/compute-status-details";
 import { ActionButton as NativeButton } from "../../ui/agents/controls";
-import { AgentOverviewHeading, OverviewNavigationCard } from "../../ui/agents/overview";
-import { OverviewComputeBody } from "../../ui/agents/overview-compute-body";
+import { AgentSectionNavigation } from "../../ui/agents/navigation";
+import { AgentSourceBadge } from "../../ui/agents/source-badge";
 import { ApiErrorPanel } from "../../ui/api-error-panel";
+import { Button } from "../../ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../ui/dialog";
 import { EmptyState } from "../../ui/empty-state";
 import { EntityCardSkeleton, EntityHeader } from "../../ui/entity-card";
 import { EntityIcon } from "../../ui/entity-icon";
+import { Icon } from "../../ui/icon";
 import { PageHeader } from "../../ui/page-header";
 import { AppPressable, AppScrollView, AppText } from "../../ui/primitives";
 import { ReadScreen } from "../../ui/read-screen";
+import { Text } from "../../ui/text";
 import { WebView, webView } from "../../ui/web-layout";
-import { BackButton, isNotFound } from "../cloud-inventory";
+import { AgentOverview } from "../agent-overview";
+import { BackButton, isNotFound, useCloudAgent } from "../cloud-inventory";
 import { ResourceError } from "../resource-error";
-import { RuntimeBrowser } from "./browser";
+
 import { CancelOperation } from "./cancel";
 import { DeploymentControls } from "./controls";
 import {
@@ -140,6 +151,7 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 	const cache = useQueryClient();
 	const [accepted, setAccepted] = useState<HostedDeployOperation | null>(null);
 	const [deletionReported, setDeletionReported] = useState(false);
+	const [managementOpen, setManagementOpen] = useState(false);
 	const { hosted } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -188,6 +200,7 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 		refetchOnReconnect: false,
 	});
 	const deployment = query.data;
+	const agent = useCloudAgent(deployment?.agent_id ?? undefined);
 	useEffect(() => {
 		if (
 			accepted &&
@@ -234,10 +247,38 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 	return (
 		<ReadScreen>
 			<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
-				<BackButton />
+				{deployment?.agent_id ? (
+					<AgentSectionNavigation
+						agentId={deployment.agent_id}
+						actions={
+							<Button
+								variant="ghost"
+								size="icon-sm"
+								accessibilityLabel="Agent actions"
+								onPress={() => setManagementOpen(true)}
+							>
+								<Icon as={MoreHorizontal} />
+							</Button>
+						}
+					/>
+				) : (
+					<BackButton />
+				)}
 				<PageHeader
 					title={deployment?.resource.name ?? "Overview"}
-					description="Status, resources, and recent activity for this agent."
+					description={agentOverviewCopy.description}
+					titleAdornment={
+						deployment?.agent_id ? (
+							<AgentSourceBadge
+								agentId={deployment.agent_id}
+								ownership={{
+									cloudAgentIds: new Set([deployment.agent_id.toLowerCase()]),
+									legacyAgentIds: new Set(),
+									isResolved: true,
+								}}
+							/>
+						) : undefined
+					}
 				/>
 				{!hosted ? (
 					<EmptyState
@@ -248,158 +289,151 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 					<ResourceError missing />
 				) : (
 					<>
-						<NativeButton
-							label={t("deployments.refresh")}
-							disabled={query.isFetching || operation.isFetching}
-							onPress={() => {
-								setStartedAt(Date.now());
-								void query.refetch();
-								if (operationId) void operation.refetch();
-							}}
-						/>
-						{query.isError ? <ResourceError missing={isNotFound(query.error)} /> : null}
-						{query.isPending ? <AppText>{t("loading.app")}</AppText> : null}
-						{deletionReported ? (
-							<AppText accessibilityRole="alert">{t("runtime.deleteReported")}</AppText>
-						) : (
-							<DeploymentControls
-								deployment={deployment}
-								deploymentId={deploymentId}
-								blocked={
-									query.isError ||
-									(activeOperation?.metadata?.verb === "delete" && !activeOperation.done)
-								}
-								transitioning={Boolean(activeOperation && !activeOperation.done)}
-								onAccepted={async (result) => {
-									setAccepted(result);
-									setStartedAt(Date.now());
-									await refreshResources();
-								}}
-								onAbsent={async () => {
-									setDeletionReported(true);
-									await refreshResources();
-								}}
-							/>
-						)}
-						{deployment ? (
-							<WebView recipe={agentsIndexClasses.page}>
-								<AgentOverviewHeading>{agentSurfaceCopy.status}</AgentOverviewHeading>
-								<OverviewNavigationCard
-									title={agentSurfaceCopy.compute}
-									description={t(
-										deployment.resource.status
-											? deploymentSummaryKeys[deployment.resource.status.summary_state]
-											: "deployments.unknown",
-									)}
-									icon={Cpu}
-									tint={RESOURCE_TINT_CLASSES.overview}
-								>
-									<OverviewComputeBody
-										{...overviewComputeState(deployment).facts}
-										resources={deployment.resource.spec.resources}
-									/>
-								</OverviewNavigationCard>
-								<OverviewNavigationCard
-									title="Chat on the web"
-									description={
-										deployment.resource.spec.runtime === "hermes"
-											? "Hermes Dashboard"
-											: "OpenClaw Control UI"
-									}
-									icon={Laptop}
-									tint={RESOURCE_TINT_CLASSES.sessions}
-								>
-									<RuntimeBrowser deployment={deployment} />
-								</OverviewNavigationCard>
-								<NativeButton
-									label={t("terminal.title")}
-									onPress={() =>
-										router.push({
-											pathname: "/deployments/[deploymentId]/terminal",
-											params: { deploymentId },
-										})
-									}
-								/>
-								<NativeButton
-									label={t("workspaceSkills.title")}
-									onPress={() =>
-										router.push({
-											pathname: "/deployments/[deploymentId]/skills",
-											params: { deploymentId },
-										})
-									}
-								/>
-								<AppText className="text-xl font-semibold text-foreground">
-									{deployment.resource.name}
-								</AppText>
-								<AppText>
-									{deployment.resource.spec.runtime} · {deployment.current_plan_slug}
-								</AppText>
-								<AppText>
-									{t(
-										deployment.resource.status
-											? deploymentSummaryKeys[deployment.resource.status.summary_state]
-											: "deployments.unknown",
-									)}
-								</AppText>
-								{deployment.resource.status?.conditions.map((condition) => (
-									<AppText key={condition.type}>
-										{condition.type}: {condition.status}
-									</AppText>
-								))}
-								{deployment.resource.status?.failure ? (
-									<AppText className="text-destructive">{t("deployments.failed")}</AppText>
-								) : null}
-								{operation.data ? (
-									<AppText>
-										{t("deployments.operation")}:{" "}
-										{operation.data.done ? t("deployments.complete") : t("deployments.progress")}
-									</AppText>
-								) : null}
-								{operation.data?.error ? (
-									<AppText className="text-destructive">
-										{t(
-											operation.data.error.code === 1
-												? "deployments.operationCancelled"
-												: "deployments.failed",
-										)}
-									</AppText>
-								) : null}
-								{operation.isError ? <ResourceError missing={false} /> : null}
-								{!deletionReported &&
-								operation.data &&
-								!operation.isError &&
-								operation.data.name === operationName &&
-								operation.data.metadata?.deploymentId === deploymentId ? (
-									<CancelOperation
-										key={operation.data.name}
-										operation={operation.data}
-										onRequested={async () => {
-											setStartedAt(Date.now());
-											await operation.refetch();
-											await query.refetch();
-										}}
-									/>
-								) : null}
-								{deploymentNeedsPolling(deployment) &&
-								Date.now() - startedAt >= DEPLOYMENT_POLL_WINDOW_MS ? (
-									<AppText>{t("deployments.timeout")}</AppText>
-								) : null}
-								<AppText>{t("deployments.paused")}</AppText>
-								<AppText>{t("deployments.noSessions")}</AppText>
-								{deployment.agent_id ? (
-									<NativeButton
-										label={t("deployments.agent")}
-										onPress={() => {
-											if (deployment.agent_id && scope.isCurrent() && !scope.signal.aborted)
-												router.push(`/agents/${encodeURIComponent(deployment.agent_id)}`);
-										}}
-									/>
-								) : (
-									<AppText>{t("deployments.agentUnavailable")}</AppText>
-								)}
-							</WebView>
+						{query.isError ? (
+							<ApiErrorPanel error={query.error} onRetry={() => void query.refetch()} />
 						) : null}
+						{query.isPending ? <EntityCardSkeleton /> : null}
+						{deployment && agent.data ? (
+							<AgentOverview
+								agent={agent.data}
+								deployment={deployment}
+								onManage={() => setManagementOpen(true)}
+							/>
+						) : null}
+						{deployment && !agent.data ? (
+							<EmptyState
+								title={deploymentRuntimeStatusPresentation(deployment.resource.status).label}
+								description={
+									agent.isError ? agentSurfaceCopy.unavailable : agentOverviewCopy.description
+								}
+							/>
+						) : null}
+						<Dialog open={managementOpen} onOpenChange={setManagementOpen}>
+							<DialogContent>
+								<DialogHeader>
+									<DialogTitle>Agent settings</DialogTitle>
+								</DialogHeader>
+								<AppScrollView>
+									{deployment ? <ComputeStatusDetails deployment={deployment} /> : null}
+									<NativeButton
+										label={t("deployments.refresh")}
+										disabled={query.isFetching || operation.isFetching}
+										onPress={() => {
+											setStartedAt(Date.now());
+											void query.refetch();
+											if (operationId) void operation.refetch();
+										}}
+									/>
+									{query.isError ? <ResourceError missing={isNotFound(query.error)} /> : null}
+									{query.isPending ? <AppText>{t("loading.app")}</AppText> : null}
+									{deletionReported ? (
+										<AppText accessibilityRole="alert">{t("runtime.deleteReported")}</AppText>
+									) : (
+										<DeploymentControls
+											deployment={deployment}
+											deploymentId={deploymentId}
+											blocked={
+												query.isError ||
+												(activeOperation?.metadata?.verb === "delete" && !activeOperation.done)
+											}
+											transitioning={Boolean(activeOperation && !activeOperation.done)}
+											onAccepted={async (result) => {
+												setAccepted(result);
+												setStartedAt(Date.now());
+												await refreshResources();
+											}}
+											onAbsent={async () => {
+												setDeletionReported(true);
+												await refreshResources();
+											}}
+										/>
+									)}
+									{deployment ? (
+										<WebView recipe={agentsIndexClasses.page}>
+											<Button
+												variant="outline"
+												size="sm"
+												onPress={() => {
+													setManagementOpen(false);
+													router.push({
+														pathname: "/deployments/[deploymentId]/terminal",
+														params: { deploymentId },
+													});
+												}}
+											>
+												<Icon as={TerminalSquare} />
+												<Text>{t("terminal.title")}</Text>
+											</Button>
+											<NativeButton
+												label={t("workspaceSkills.title")}
+												onPress={() => {
+													setManagementOpen(false);
+													router.push({
+														pathname: "/deployments/[deploymentId]/skills",
+														params: { deploymentId },
+													});
+												}}
+											/>
+											{deploymentFailurePresentation(deployment) ? (
+												<Text accessibilityRole="alert">
+													{deploymentFailurePresentation(deployment)?.reason}
+												</Text>
+											) : null}
+
+											{operation.data ? (
+												<AppText>
+													{t("deployments.operation")}:{" "}
+													{operation.data.done
+														? t("deployments.complete")
+														: t("deployments.progress")}
+												</AppText>
+											) : null}
+											{operation.data?.error ? (
+												<AppText className="text-destructive">
+													{t(
+														operation.data.error.code === 1
+															? "deployments.operationCancelled"
+															: "deployments.failed",
+													)}
+												</AppText>
+											) : null}
+											{operation.isError ? <ResourceError missing={false} /> : null}
+											{!deletionReported &&
+											operation.data &&
+											!operation.isError &&
+											operation.data.name === operationName &&
+											operation.data.metadata?.deploymentId === deploymentId ? (
+												<CancelOperation
+													key={operation.data.name}
+													operation={operation.data}
+													onRequested={async () => {
+														setStartedAt(Date.now());
+														await operation.refetch();
+														await query.refetch();
+													}}
+												/>
+											) : null}
+											{deploymentNeedsPolling(deployment) &&
+											Date.now() - startedAt >= DEPLOYMENT_POLL_WINDOW_MS ? (
+												<AppText>{t("deployments.timeout")}</AppText>
+											) : null}
+
+											{deployment.agent_id ? (
+												<NativeButton
+													label={t("deployments.agent")}
+													onPress={() => {
+														if (deployment.agent_id && scope.isCurrent() && !scope.signal.aborted)
+															router.push(`/agents/${encodeURIComponent(deployment.agent_id)}`);
+													}}
+												/>
+											) : (
+												<AppText>{t("deployments.agentUnavailable")}</AppText>
+											)}
+										</WebView>
+									) : null}
+								</AppScrollView>
+							</DialogContent>
+						</Dialog>
 					</>
 				)}
 			</AppScrollView>

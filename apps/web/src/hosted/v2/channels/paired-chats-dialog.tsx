@@ -1,5 +1,8 @@
 "use client";
 
+import { agentChannelSectionClasses } from "@clawdi/shared/ui";
+import { agentChannelPairedChatsLabel } from "@clawdi/shared/view";
+
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -67,7 +70,7 @@ export function PairedChatsDialog({
 		}
 	};
 	const panelId = `paired-chats-${linkId}`;
-	const label = `${bindingCount} paired ${bindingCount === 1 ? "chat" : "chats"}`;
+	const label = agentChannelPairedChatsLabel(bindingCount);
 	const description = `${descriptionCount} ${descriptionCount === 1 ? "chat is" : "chats are"} paired through this channel. Unpairing affects only the selected chat.`;
 	const trigger = (
 		<button
@@ -75,7 +78,7 @@ export function PairedChatsDialog({
 			data-agent-paired-chats-trigger={linkId}
 			className={cn(
 				buttonVariants({ variant: "link", size: "xs" }),
-				"h-auto max-w-full justify-start p-0 text-sm",
+				agentChannelSectionClasses.pairedChatsTrigger,
 			)}
 			aria-controls={panelId}
 		>

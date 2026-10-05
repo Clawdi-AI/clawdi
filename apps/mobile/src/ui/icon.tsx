@@ -13,15 +13,24 @@ export function Icon({
 	as: Component,
 	className,
 	strokeWidth = 1.75,
+	fill = "none",
 }: {
 	as: LucideIcon;
 	className?: string;
 	strokeWidth?: number;
+	fill?: "currentColor" | "none";
 }) {
 	const inherited = useContext(TextClassContext);
 	const inheritedColor = useContext(TextColorContext);
 	const style = useResolveClassNames(cn("size-4 text-foreground", inherited, className));
 	const size = typeof style.width === "number" ? style.width : 16;
 	const color = inheritedColor ?? (typeof style.color === "string" ? style.color : undefined);
-	return <Component size={size} color={color} strokeWidth={strokeWidth} />;
+	return (
+		<Component
+			size={size}
+			color={color}
+			strokeWidth={strokeWidth}
+			fill={fill === "currentColor" ? color : fill}
+		/>
+	);
 }

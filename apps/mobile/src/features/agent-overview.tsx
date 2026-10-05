@@ -1,4 +1,6 @@
 import {
+	agentPluginOverviewState,
+	type DeploymentRead,
 	effectiveAgentProjectIds,
 	isActiveConnection,
 	linkedAgentProjectCount,
@@ -6,6 +8,8 @@ import {
 } from "@clawdi/shared/api";
 import {
 	connectedAgentDetailClasses as detail,
+	hostedAgentOverviewClasses as hostedStyles,
+	agentOverviewLayoutClasses as layout,
 	agentOverviewCapabilitiesClasses as styles,
 } from "@clawdi/shared/ui";
 import {
@@ -13,30 +17,65 @@ import {
 	agentOverviewCopy as copy,
 	daemonStatusPresentation,
 	daemonStatusVisual,
+	deploymentFailurePresentation,
+	deploymentRuntimeStatusPresentation,
 	fetchAgentProjectSkills,
 	fetchAgentProjectVaults,
+	MANAGED_PROVIDER_ID,
+	modelBindingDisplayName,
+	modelOptionsForProvider,
+	overviewComputePresentation,
+	primaryModelProviderId,
 	RESOURCE_TINT_CLASSES,
 	relativeTime,
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
-import { Brain, FolderKanban, KeyRound, Laptop, Plug, Sparkles } from "lucide-react-native";
+import {
+	ArrowUp,
+	Blocks,
+	Brain,
+	BrainCircuit,
+	Cpu,
+	CreditCard,
+	FolderKanban,
+	KeyRound,
+	Laptop,
+	MessagesSquare,
+	Plug,
+	Settings,
+	Sparkles,
+	WalletCards,
+} from "lucide-react-native";
+import type { ReactNode } from "react";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
+import { ComputeDunningBanner } from "../ui/agents/compute-dunning-banner";
 import {
 	AgentOverviewHeading,
 	OverviewMetadata,
 	OverviewNavigationCard,
 } from "../ui/agents/overview";
+import { OverviewComputeBody } from "../ui/agents/overview-compute-body";
 import { AgentRecentSessions } from "../ui/agents/recent-sessions";
 import { ApiErrorPanel } from "../ui/api-error-panel";
 import { Button } from "../ui/button";
+import { Icon } from "../ui/icon";
 import { Skeleton } from "../ui/skeleton";
 import { StatusDot } from "../ui/status-badge";
 import { Text } from "../ui/text";
 import { WebView } from "../ui/web-layout";
 import { type CloudAgent, useCloudSessions } from "./cloud-inventory";
-export function AgentOverview({ agent }: { agent: CloudAgent }) {
+import { RuntimeBrowser } from "./deployments/browser";
+export function AgentOverview({
+	agent,
+	deployment,
+	onManage,
+}: {
+	agent: CloudAgent;
+	deployment?: DeploymentRead;
+	onManage?: () => void;
+}) {
 	const scope = useAccountScope(),
 		read = useAccountRead(),
 		api = useMobileApi();
@@ -50,14 +89,15 @@ export function AgentOverview({ agent }: { agent: CloudAgent }) {
 	});
 	const workspace = resolveAgentWorkspaceProjectId(bindings.data ?? [], agent.default_project_id);
 	const projectIds = effectiveAgentProjectIds(bindings.data ?? []);
+	const skillProjectIds = workspace ? [workspace] : [];
 	const skills = useQuery({
-		queryKey: accountQueryKey(scope, "agent-overview-skills", workspace),
-		enabled: scope.isReady && Boolean(workspace),
+		queryKey: accountQueryKey(scope, "agent-overview-skills", skillProjectIds),
+		enabled: scope.isReady && skillProjectIds.length > 0,
 		retry: false,
 		queryFn: ({ signal }) =>
 			read(
 				(s) =>
-					fetchAgentProjectSkills(workspace ? [workspace] : [], (project_id, page, page_size) =>
+					fetchAgentProjectSkills(skillProjectIds, (project_id, page, page_size) =>
 						api.cloud.listSkills({ project_id, page, page_size }, s),
 					),
 				signal,
@@ -89,6 +129,121 @@ export function AgentOverview({ agent }: { agent: CloudAgent }) {
 		retry: false,
 		queryFn: ({ signal }) => read((s) => api.connectors.list(s), signal),
 	});
+	const hostedCatalog = useQuery({
+		queryKey: accountQueryKey(scope, "hosted-overview-catalog"),
+		enabled: scope.isReady && Boolean(deployment && api.compute),
+		retry: false,
+		queryFn: ({ signal }) =>
+			read(async (lease) => {
+				if (!api.compute) throw new Error("Compute unavailable");
+				const [providers, models, plans, capabilities] = await Promise.all([
+					api.aiProviders.list(lease),
+					api.compute.getManagedModels(lease),
+					api.compute.listPlans(lease),
+					api.compute.getProductCapabilities(lease),
+				]);
+				return { providers: providers.providers, models: models.models, plans, capabilities };
+			}, signal),
+	});
+	const plugins = useQuery({
+		queryKey: accountQueryKey(scope, "agent-plugins", agent.id),
+		enabled: scope.isReady && Boolean(deployment),
+		retry: false,
+		queryFn: ({ signal }) =>
+			read((lease) => api.agentExtensions.listPlugins(agent.id, lease), signal),
+	});
+	const runtimeSkills = useQuery({
+		queryKey: accountQueryKey(scope, "hosted-overview-skills", deployment?.resource.id),
+		enabled: scope.isReady && Boolean(deployment && api.workspaceSkills),
+		retry: false,
+		queryFn: ({ signal }) =>
+			read((lease) => {
+				if (!api.workspaceSkills || !deployment) throw new Error("Skills unavailable");
+				return api.workspaceSkills.list(deployment.resource.id, lease);
+			}, signal),
+	});
+	const managedSkills = useQuery({
+		queryKey: accountQueryKey(scope, "managed-agent-skills", agent.id),
+		enabled: scope.isReady && Boolean(deployment && workspace),
+		retry: false,
+		queryFn: ({ signal }) =>
+			read((lease) => api.agentExtensions.listSkills(agent.id, lease), signal),
+	});
+	const pluginState = agentPluginOverviewState({
+		plugins: plugins.data?.plugins,
+		isLoading: plugins.isPending,
+		error: plugins.data ? null : plugins.error,
+	});
+	const primary = deployment?.resource.spec.runtime_configuration.primary_model;
+	const providerId =
+		primaryModelProviderId(primary) ??
+		deployment?.resource.spec.runtime_configuration.providers[0]?.provider_id ??
+		MANAGED_PROVIDER_ID;
+	const modelLabel = modelBindingDisplayName(
+		primary,
+		deployment?.resource.spec.runtime_configuration.providers[0]?.auth_kind,
+		modelOptionsForProvider(
+			providerId,
+			hostedCatalog.data?.providers ?? [],
+			hostedCatalog.data?.models ?? [],
+		),
+	);
+	const compute = deployment
+		? overviewComputePresentation(deployment, {
+				canCreateCloudAgents: hostedCatalog.data?.capabilities.can_use_v2 ?? false,
+				plansLoading: hostedCatalog.isPending,
+				performancePlanAvailable:
+					hostedCatalog.data?.plans.some((p) => p.slug === "compute_performance") ?? false,
+			})
+		: null;
+	const computeStatus = deployment
+		? (deploymentFailurePresentation(deployment)?.status ??
+			deploymentRuntimeStatusPresentation(deployment.resource.status))
+		: null;
+	const ComputeActionIcon =
+		compute?.action?.kind === "upgrade"
+			? ArrowUp
+			: compute?.action?.kind === "top_up"
+				? WalletCards
+				: compute?.action?.kind === "fix_payment"
+					? CreditCard
+					: Settings;
+	const computeCard: ReactNode =
+		deployment && compute && computeStatus ? (
+			<OverviewNavigationCard
+				title="Compute"
+				description={
+					<WebView recipe={hostedStyles.computeStatus} className="flex-row">
+						<StatusDot status={computeStatus.tone} />
+						<Text>{computeStatus.label}</Text>
+					</WebView>
+				}
+				icon={Cpu}
+				tint={hostedStyles.computeTint}
+				onPress={onManage}
+			>
+				<OverviewComputeBody
+					{...compute}
+					resources={deployment.resource.spec.resources}
+					action={
+						compute.action ? (
+							<Button
+								variant="outline"
+								size="sm"
+								onPress={
+									compute.action.kind === "top_up"
+										? () => router.push("/billing/wallet")
+										: () => router.push("/billing")
+								}
+							>
+								<Icon as={ComputeActionIcon} />
+								<Text>{compute.action.label}</Text>
+							</Button>
+						) : undefined
+					}
+				/>
+			</OverviewNavigationCard>
+		) : null;
 	const status = daemonStatusVisual(agent);
 	const summary = (
 		kind: Parameters<typeof agentOverviewSummary>[0],
@@ -105,56 +260,92 @@ export function AgentOverview({ agent }: { agent: CloudAgent }) {
 		);
 	return (
 		<WebView recipe={styles.root}>
-			<WebView recipe={detail.section}>
-				{supportsSessions ? (
-					<>
-						<AgentOverviewHeading
-							action={
-								<Button
-									variant="ghost"
-									size="sm"
-									onPress={() =>
-										router.push({ pathname: "/sessions", params: { agentId: agent.id } })
-									}
-								>
-									<Text>{copy.viewAll} →</Text>
-								</Button>
-							}
-						>
-							{copy.recentSessions}
-						</AgentOverviewHeading>
-						{sessions.isError && !sessions.data ? (
-							<ApiErrorPanel error={sessions.error} onRetry={() => void sessions.refetch()} />
-						) : (
-							<AgentRecentSessions
-								sessions={sessions.data?.pages.flatMap((page) => page.items) ?? []}
-								loading={sessions.isPending}
-								emptyMessage={copy.noRecentSessions}
-							/>
-						)}
-					</>
-				) : null}
-				<OverviewNavigationCard
-					title={copy.status}
-					description={
-						<WebView recipe={styles.statusContent} className="flex-row">
-							<StatusDot status={daemonStatusPresentation(agent).tone} />
-							<Text>{status.label}</Text>
-						</WebView>
-					}
-					icon={Laptop}
-					tint={detail.statusTint}
-					onPress={() =>
-						router.push({ pathname: "/agents/[agentId]/settings", params: { agentId: agent.id } })
-					}
-				>
-					<OverviewMetadata
-						items={[
-							{ label: copy.machine, value: agent.machine_name },
-							{ label: copy.lastSeen, value: relativeTime(agent.last_seen_at) },
-						]}
+			{deployment ? <ComputeDunningBanner deployment={deployment} /> : null}
+			{deployment ? (
+				<WebView recipe={layout.tools}>
+					<RuntimeBrowser deployment={deployment} overview />
+					<OverviewNavigationCard
+						title={copy.chatViaChannels}
+						description={copy.channelsDescription}
+						icon={MessagesSquare}
+						tint={hostedStyles.channelsTint}
+						onPress={() => router.push({ pathname: "/channels", params: { agentId: agent.id } })}
 					/>
-				</OverviewNavigationCard>
+					<OverviewNavigationCard
+						title="AI Providers"
+						description={
+							hostedCatalog.isPending ? (
+								<Skeleton className="h-4 w-32" />
+							) : hostedCatalog.isError ? (
+								copy.unavailable
+							) : (
+								modelLabel
+							)
+						}
+						icon={BrainCircuit}
+						tint={hostedStyles.aiTint}
+						onPress={() =>
+							router.push({ pathname: "/ai-providers", params: { agentId: agent.id } })
+						}
+					/>
+				</WebView>
+			) : null}
+			<WebView recipe={deployment ? layout.entry : detail.section}>
+				<WebView recipe={deployment ? layout.activity : detail.section}>
+					{supportsSessions ? (
+						<>
+							<AgentOverviewHeading
+								action={
+									<Button
+										variant="ghost"
+										size="sm"
+										onPress={() =>
+											router.push({ pathname: "/sessions", params: { agentId: agent.id } })
+										}
+									>
+										<Text>{copy.viewAll} →</Text>
+									</Button>
+								}
+							>
+								{copy.recentSessions}
+							</AgentOverviewHeading>
+							{sessions.isError && !sessions.data ? (
+								<ApiErrorPanel error={sessions.error} onRetry={() => void sessions.refetch()} />
+							) : (
+								<AgentRecentSessions
+									sessions={sessions.data?.pages.flatMap((page) => page.items) ?? []}
+									loading={sessions.isPending}
+									emptyMessage={deployment ? copy.hostedSessionsEmpty : copy.noRecentSessions}
+								/>
+							)}
+						</>
+					) : null}
+				</WebView>
+				{deployment ? (
+					computeCard
+				) : (
+					<OverviewNavigationCard
+						title={copy.status}
+						description={
+							<WebView recipe={styles.statusContent} className="flex-row">
+								<StatusDot status={daemonStatusPresentation(agent).tone} />
+								<Text>{status.label}</Text>
+							</WebView>
+						}
+						icon={Laptop}
+						tint={detail.statusTint}
+						onPress={() =>
+							router.push({ pathname: "/agents/[agentId]/settings", params: { agentId: agent.id } })
+						}
+					>
+						<OverviewMetadata
+							items={[
+								{ label: copy.machine, value: agent.machine_name },
+								{ label: copy.lastSeen, value: relativeTime(agent.last_seen_at) },
+							]}
+						/>
+					</OverviewNavigationCard>
+				)}
 			</WebView>
 			<WebView recipe={styles.section}>
 				<AgentOverviewHeading>{copy.workspace}</AgentOverviewHeading>
@@ -172,14 +363,25 @@ export function AgentOverview({ agent }: { agent: CloudAgent }) {
 						router.push({ pathname: "/agents/[agentId]/projects", params: { agentId: agent.id } })
 					}
 				/>
-				{!agent.adapter_modules || agent.adapter_modules.includes("skills") ? (
+				{deployment || !agent.adapter_modules || agent.adapter_modules.includes("skills") ? (
 					<OverviewNavigationCard
 						title="Skills"
 						description={summary(
 							"skills",
-							new Set(skills.data?.map((skill) => skill.skill_key)).size,
-							bindings.isPending || skills.isLoading,
-							bindings.isError || !workspace || (skills.data ? null : skills.error),
+							new Set([
+								...(skills.data ?? [])
+									.filter((skill) => !deployment || skill.authority === "agent_sync")
+									.map((skill) => skill.skill_key),
+								...(runtimeSkills.data?.items ?? []).map((skill) => skill.skill_key),
+								...(managedSkills.data?.skills ?? []).map((skill) => skill.skill_key),
+							]).size,
+							bindings.isPending ||
+								skills.isLoading ||
+								(Boolean(deployment) && (runtimeSkills.isPending || managedSkills.isPending)),
+							bindings.isError ||
+								!workspace ||
+								(skills.data ? null : skills.error) ||
+								(deployment && (runtimeSkills.isError || managedSkills.isError)),
 						)}
 						icon={Sparkles}
 						tint={RESOURCE_TINT_CLASSES.skills}
@@ -200,6 +402,25 @@ export function AgentOverview({ agent }: { agent: CloudAgent }) {
 					tint={RESOURCE_TINT_CLASSES.vaults}
 					onPress={() => router.push({ pathname: "/vault", params: { agentId: agent.id } })}
 				/>
+				{deployment ? (
+					<OverviewNavigationCard
+						title="Plugins"
+						description={
+							pluginState.kind === "loading" ? (
+								<Skeleton className="h-4 w-32" />
+							) : pluginState.kind === "error" ? (
+								copy.unavailable
+							) : (
+								pluginState.description
+							)
+						}
+						icon={Blocks}
+						tint={hostedStyles.pluginsTint}
+						onPress={() =>
+							router.push({ pathname: "/agents/[agentId]/plugins", params: { agentId: agent.id } })
+						}
+					/>
+				) : null}
 			</WebView>
 			<WebView recipe={styles.section}>
 				<AgentOverviewHeading>{copy.shared}</AgentOverviewHeading>

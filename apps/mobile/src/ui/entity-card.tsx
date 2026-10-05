@@ -179,7 +179,7 @@ export function entityChoiceCardClass({
 			? webView(entityCardClasses.choiceCompactLayout)
 			: webView(entityCardClasses.choiceLayout),
 		selected
-			? webView(entityCardClasses.choiceSelected)
+			? webView(entityCardClasses.choiceSelected.replace(/\bring-\S+/g, ""))
 			: interactive &&
 					(variant === "compact"
 						? webView(entityCardClasses.compactChoiceInteractive)
@@ -598,7 +598,7 @@ export function EntityAddCard({
 			}
 			title={title}
 			description={description}
-			className={webView(entityCardClasses.add)}
+			className={webView(entityCardClasses.add.replace(/\bh-full\b/g, ""))}
 		/>
 	);
 }
