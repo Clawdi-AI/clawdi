@@ -1,105 +1,123 @@
 import { validateSessionDetailSearch } from "@clawdi/shared/api";
-import { useLocalSearchParams } from "expo-router";
+import { detailLayoutClasses, sessionDetailClasses as styles } from "@clawdi/shared/ui";
 import {
-	BackButton,
-	formatDate,
-	isNotFound,
-	sessionDisplayName,
-	useCloudSession,
-} from "../../src/features/cloud-inventory";
+	formatDuration,
+	formatNumber,
+	relativeTime,
+	sessionAgentIdentityInput,
+	sessionHasLaterActivity,
+	sessionTitle,
+} from "@clawdi/shared/view";
+import { router, useLocalSearchParams } from "expo-router";
+import { ArrowLeft, Clock, Hash, MessageSquare, Zap } from "lucide-react-native";
+import { isNotFound, useCloudSession } from "../../src/features/cloud-inventory";
 import { routeParam } from "../../src/features/read-helpers";
-import { ResourceError } from "../../src/features/resource-error";
 import { SessionShareActions } from "../../src/features/session-sharing";
 import { Transcript } from "../../src/features/transcript";
 import { useI18n } from "../../src/i18n";
-import { LoadingScreen } from "../../src/ui/feedback";
-import { DetailRow } from "../../src/ui/metadata-row";
-import { AppScrollView, AppText, AppView } from "../../src/ui/primitives";
+import { ApiErrorPanel } from "../../src/ui/api-error-panel";
+import { Button } from "../../src/ui/button";
+import { EmptyState } from "../../src/ui/empty-state";
+import { Icon } from "../../src/ui/icon";
+import { PageHeader, PageHeaderSkeleton } from "../../src/ui/page-header";
+import { AppScrollView } from "../../src/ui/primitives";
 import { ReadScreen } from "../../src/ui/read-screen";
+import { AgentInline, DetailMeta, ModelBadge, Stat } from "../../src/ui/sessions/meta";
+import { MessagesSkeleton } from "../../src/ui/sessions/skeleton";
+import { Text } from "../../src/ui/text";
+import { WebText, WebView, webView } from "../../src/ui/web-layout";
 
 export default function SessionDetailRoute() {
 	const t = useI18n();
 	const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
 	const sessionId = routeParam(params.sessionId);
-	const session = useCloudSession(sessionId);
-	if (sessionId && session.isPending) return <LoadingScreen label={t("loading.session")} />;
-	const header = (
-		<AppView className="bg-background">
-			<AppView className="gap-5">
-				<BackButton />
-				{!sessionId || session.isError || !session.data ? (
-					<ResourceError
-						missing={!sessionId || isNotFound(session.error)}
-						onRetry={session.isFetching ? undefined : () => void session.refetch()}
-					/>
-				) : (
-					<>
-						<AppView className="gap-1">
-							<AppText className="text-3xl font-semibold text-foreground">
-								{sessionDisplayName(session.data)}
-							</AppText>
-							<AppText className="text-base leading-6 text-muted-foreground">
-								{t("sessions.detailDescription")}
-							</AppText>
-						</AppView>
-						<AppView className="gap-3">
-							<SessionShareActions
-								sessionId={session.data.id}
-								hasContent={session.data.has_content}
-							/>
-							<DetailRow
-								label={t("sessions.agent")}
-								value={
-									session.data.agent_display_name ??
-									session.data.agent_name ??
-									session.data.agent_type ??
-									t("sessions.unknownAgent")
-								}
-							/>
-							<DetailRow label={t("sessions.status")} value={session.data.status} />
-							<DetailRow
-								label={t("sessions.project")}
-								value={session.data.project_path ?? t("sessions.unknownProject")}
-							/>
-							<DetailRow label={t("sessions.localId")} value={session.data.local_session_id} />
-							<DetailRow
-								label={t("sessions.started")}
-								value={formatDate(session.data.started_at) ?? t("sessions.unknownActivity")}
-							/>
-							<DetailRow
-								label={t("sessions.lastActivity")}
-								value={formatDate(session.data.last_activity_at) ?? t("sessions.unknownActivity")}
-							/>
-							<DetailRow
-								label={t("sessions.ended")}
-								value={formatDate(session.data.ended_at) ?? t("sessions.inProgress")}
-							/>
-							<DetailRow
-								label={t("sessions.messages")}
-								value={String(session.data.message_count)}
-							/>
-							<DetailRow
-								label={t("sessions.model")}
-								value={session.data.model ?? t("sessions.unknownModel")}
-							/>
-							{session.data.tags?.length ? (
-								<DetailRow label={t("sessions.tags")} value={session.data.tags.join(", ")} />
-							) : null}
-						</AppView>
-					</>
-				)}
-			</AppView>
-		</AppView>
+	const query = useCloudSession(sessionId);
+	const session = !query.isError ? query.data : undefined;
+	const back = (
+		<Button
+			variant="ghost"
+			className="self-start"
+			size="sm"
+			onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/sessions"))}
+		>
+			<Icon as={ArrowLeft} />
+			<Text>{t("sessionDetail.back")}</Text>
+		</Button>
 	);
-	return session.data && !session.isError ? (
+	if (!session)
+		return (
+			<ReadScreen>
+				<AppScrollView contentContainerStyle={{ padding: 16 }}>
+					<WebView recipe={styles.page} className="px-0">
+						{back}
+						{query.isPending && sessionId ? (
+							<>
+								<PageHeaderSkeleton actions description={false} />
+								<MessagesSkeleton />
+							</>
+						) : isNotFound(query.error) || !sessionId ? (
+							<EmptyState
+								title={t("sessionDetail.notFound")}
+								description={t("sessionDetail.notFoundDescription")}
+							/>
+						) : (
+							<ApiErrorPanel error={query.error} onRetry={() => void query.refetch()} />
+						)}
+					</WebView>
+				</AppScrollView>
+			</ReadScreen>
+		);
+	const header = (
+		<WebView recipe={styles.header}>
+			{back}
+			<PageHeader
+				title={sessionTitle(session)}
+				className={webView(styles.header)}
+				status={
+					<DetailMeta>
+						<AgentInline identity={sessionAgentIdentityInput(session)} />
+						{session.project_path ? (
+							<>
+								<WebText recipe={detailLayoutClasses.meta}>·</WebText>
+								<WebText recipe={styles.project}>{session.project_path}</WebText>
+							</>
+						) : null}
+						<WebText recipe={detailLayoutClasses.meta}>·</WebText>
+						<WebText recipe={detailLayoutClasses.meta}>
+							Started {relativeTime(session.started_at)}
+						</WebText>
+						{sessionHasLaterActivity(session.started_at, session.last_activity_at) ? (
+							<>
+								<WebText recipe={detailLayoutClasses.meta}>·</WebText>
+								<WebText recipe={detailLayoutClasses.meta}>
+									Last activity {relativeTime(session.last_activity_at)}
+								</WebText>
+							</>
+						) : null}
+						<ModelBadge modelId={session.model} />
+						<Stat icon={MessageSquare} label={`${session.message_count} messages`} />
+						<Stat
+							icon={Zap}
+							label={`${formatNumber((session.input_tokens ?? 0) + (session.output_tokens ?? 0))} tokens`}
+						/>
+						{session.duration_seconds ? (
+							<Stat icon={Clock} label={formatDuration(session.duration_seconds)} />
+						) : null}
+						<Stat icon={Hash} label={session.local_session_id.slice(0, 8)} />
+					</DetailMeta>
+				}
+				actions={<SessionShareActions sessionId={session.id} hasContent={session.has_content} />}
+			/>
+		</WebView>
+	);
+	return (
 		<Transcript
-			sessionId={session.data.id}
+			sessionId={session.id}
+			agentType={session.agent_type}
+			hasContent={session.has_content}
+			relatedRefs={session.related_refs}
 			header={header}
 			search={validateSessionDetailSearch(params)}
 		/>
-	) : (
-		<ReadScreen>
-			<AppScrollView contentContainerStyle={{ padding: 24, flexGrow: 1 }}>{header}</AppScrollView>
-		</ReadScreen>
 	);
 }

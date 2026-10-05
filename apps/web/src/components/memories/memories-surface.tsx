@@ -7,8 +7,10 @@ import {
 	SEARCH_QUERY_MIN_LENGTH,
 	searchQueryLength,
 } from "@clawdi/shared/consts";
+import { memoriesSurfaceClasses } from "@clawdi/shared/ui";
 import {
 	MEMORY_CATEGORIES as CATEGORIES,
+	LIBRARY_COPY,
 	MEMORY_CATEGORY_COLORS,
 	memoryDisplayName,
 	relativeTime,
@@ -197,7 +199,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 		/>
 	);
 	return (
-		<div className="space-y-6" data-testid="memories-surface">
+		<div className={memoriesSurfaceClasses.page} data-testid="memories-surface">
 			{scope.kind === "agent" ? (
 				<Alert>
 					<Brain />
@@ -216,7 +218,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 					<SearchInput
 						value={search}
 						onChange={(v) => void setParams({ q: v, page: 1 })}
-						placeholder="Search memories…"
+						placeholder={LIBRARY_COPY.searchMemories}
 						maxLength={SEARCH_QUERY_MAX_LENGTH}
 					/>
 				}
@@ -231,7 +233,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 						variant="outline"
 						size="sm"
 						spacing={1}
-						className="flex-wrap justify-start"
+						className={memoriesSurfaceClasses.filters}
 					>
 						{CATEGORIES.map((c) => (
 							<ToggleGroupItem key={c.value} value={c.value}>
@@ -242,7 +244,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 				}
 				actions={
 					searchQueryError ? (
-						<span className="text-xs text-muted-foreground" role="status">
+						<span className={memoriesSurfaceClasses.providerDescription} role="status">
 							{searchQueryError}
 						</span>
 					) : null
@@ -258,7 +260,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 					title="Couldn't load memories"
 				/>
 			) : (
-				<div className="space-y-6">
+				<div className={memoriesSurfaceClasses.page}>
 					<MemoryNotesGrid
 						memories={memories ?? []}
 						isLoading={isLoading}
@@ -305,8 +307,8 @@ export function MemoriesPageActions({
 	if (settings.isLoading && !settings.data) {
 		return (
 			<>
-				<Skeleton className="h-11 w-36 sm:h-8" />
-				<Skeleton className="h-11 w-32 sm:h-8" />
+				<Skeleton className={memoriesSurfaceClasses.providerSkeleton} />
+				<Skeleton className={memoriesSurfaceClasses.createSkeleton} />
 			</>
 		);
 	}
@@ -405,11 +407,11 @@ export function MemoryCard({
 				{...memoryDetailLink(scope, memory.id)}
 				ariaLabel={`Open memory: ${memoryDisplayName(memory.content)}`}
 			/>
-			<p className="line-clamp-[8] break-words pr-10 text-sm leading-relaxed">
+			<p className={memoriesSurfaceClasses.content}>
 				<SearchHighlightedText text={visibleContent} query={searchQuery} />
 			</p>
 			<EntityMeta
-				className="mt-3 text-xs"
+				className={memoriesSurfaceClasses.footer}
 				items={[
 					<Badge
 						key="category"
@@ -426,16 +428,18 @@ export function MemoryCard({
 					) : null,
 					memory.source_machine_name ? (
 						<Tooltip key="machine">
-							<TooltipTrigger render={<span className="inline-flex min-w-0 items-center gap-1" />}>
-								<Laptop className="size-3 shrink-0" />
-								<span className="max-w-28 truncate">{memory.source_machine_name}</span>
+							<TooltipTrigger render={<span className={memoriesSurfaceClasses.source} />}>
+								<Laptop className={memoriesSurfaceClasses.sourceIcon} />
+								<span className={memoriesSurfaceClasses.sourceName}>
+									{memory.source_machine_name}
+								</span>
 							</TooltipTrigger>
 							<TooltipContent>Learned on {memory.source_machine_name}</TooltipContent>
 						</Tooltip>
 					) : null,
 				]}
 			/>
-			<EntityCardActions className="absolute right-2 top-2">
+			<EntityCardActions className={memoriesSurfaceClasses.actions}>
 				<ConfirmAction
 					title="Delete this memory?"
 					description={<p>Deleting removes this memory from all agents.</p>}
@@ -446,10 +450,10 @@ export function MemoryCard({
 					<Button
 						variant="ghost"
 						size="icon-sm"
-						className="bg-card/80 text-muted-foreground backdrop-blur-sm hover:text-destructive"
+						className={memoriesSurfaceClasses.deleteAction}
 						aria-label={`Delete memory: ${memoryDisplayName(memory.content)}`}
 					>
-						<Trash2 className="size-3.5" />
+						<Trash2 className={memoriesSurfaceClasses.smallIcon} />
 					</Button>
 				</ConfirmAction>
 			</EntityCardActions>
@@ -460,7 +464,7 @@ export function MemoryCard({
 function MemoryCardSkeleton({ lineCount }: { lineCount: number }) {
 	return (
 		<EntityCardChassis variant="resource">
-			<div className="space-y-2">
+			<div className={memoriesSurfaceClasses.skeletonContent}>
 				{Array.from({ length: lineCount }).map((_, lineIndex) => (
 					<Skeleton
 						key={lineIndex}
@@ -468,10 +472,10 @@ function MemoryCardSkeleton({ lineCount }: { lineCount: number }) {
 					/>
 				))}
 			</div>
-			<div className="mt-4 flex items-center gap-2">
-				<Skeleton className="h-5 w-24 rounded-full" />
-				<Skeleton className="h-3 w-14" />
-				<Skeleton className="ml-auto h-3 w-20" />
+			<div className={memoriesSurfaceClasses.skeletonFooter}>
+				<Skeleton className={memoriesSurfaceClasses.skeletonBadge} />
+				<Skeleton className={memoriesSurfaceClasses.skeletonCategory} />
+				<Skeleton className={memoriesSurfaceClasses.skeletonDate} />
 			</div>
 		</EntityCardChassis>
 	);
@@ -479,10 +483,10 @@ function MemoryCardSkeleton({ lineCount }: { lineCount: number }) {
 
 function MemoriesGridSkeleton() {
 	return (
-		<div className="space-y-6" data-testid="memories-surface">
-			<div className="flex flex-wrap gap-2">
-				<Skeleton className="h-11 w-56 sm:h-9" />
-				<Skeleton className="h-11 w-72 sm:h-9" />
+		<div className={memoriesSurfaceClasses.page} data-testid="memories-surface">
+			<div className={memoriesSurfaceClasses.pagination}>
+				<Skeleton className={memoriesSurfaceClasses.pageSizeSkeleton} />
+				<Skeleton className={memoriesSurfaceClasses.paginationSkeleton} />
 			</div>
 			<div className={ENTITY_CARD_MASONRY_CLASS}>
 				{[4, 7, 3, 5, 6, 4].map((lineCount, index) => (
@@ -513,19 +517,19 @@ function Mem0KeyForm({
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle className="flex items-center gap-2 text-sm">
-					<Key className="size-4" />
+				<CardTitle className={memoriesSurfaceClasses.loadingRow}>
+					<Key className={memoriesSurfaceClasses.loadingIcon} />
 					Mem0 Configuration
 				</CardTitle>
 			</CardHeader>
-			<CardContent className="space-y-3">
-				<p className="text-sm text-muted-foreground">
+			<CardContent className={memoriesSurfaceClasses.section}>
+				<p className={memoriesSurfaceClasses.emptyHint}>
 					Enter your Mem0 API key to use semantic memory search.
 				</p>
-				<Label htmlFor="mem0-api-key" className="text-xs font-medium">
+				<Label htmlFor="mem0-api-key" className={memoriesSurfaceClasses.keyInput}>
 					Mem0 API key
 				</Label>
-				<div className="flex flex-col gap-2 sm:flex-row">
+				<div className={memoriesSurfaceClasses.keyHelp}>
 					<Input
 						id="mem0-api-key"
 						name="mem0-api-key"
@@ -533,7 +537,7 @@ function Mem0KeyForm({
 						value={apiKey}
 						onChange={(e) => setApiKey(e.target.value)}
 						placeholder="m0-…"
-						className="flex-1 font-mono"
+						className={memoriesSurfaceClasses.fieldStack}
 						autoComplete="off"
 						spellCheck={false}
 						onKeyDown={(e) => {
@@ -541,7 +545,7 @@ function Mem0KeyForm({
 						}}
 					/>
 					<Button
-						className="w-full sm:w-auto"
+						className={memoriesSurfaceClasses.inputLabel}
 						onClick={() => void submit()}
 						disabled={!apiKey || isPending}
 					>
@@ -591,7 +595,7 @@ function AddMemoryForm({ scope }: { scope: ResourceNavigationScope }) {
 				<Plus />
 				Create memory
 			</DialogTrigger>
-			<DialogContent className="sm:max-w-lg">
+			<DialogContent className={memoriesSurfaceClasses.dialog}>
 				<DialogHeader>
 					<DialogTitle>Create memory</DialogTitle>
 					<DialogDescription>
@@ -599,7 +603,7 @@ function AddMemoryForm({ scope }: { scope: ResourceNavigationScope }) {
 					</DialogDescription>
 				</DialogHeader>
 				<form
-					className="space-y-3"
+					className={memoriesSurfaceClasses.section}
 					onSubmit={(event) => {
 						event.preventDefault();
 						if (content.trim() && !secretFinding && !createMemory.isPending) {
@@ -609,8 +613,8 @@ function AddMemoryForm({ scope }: { scope: ResourceNavigationScope }) {
 						}
 					}}
 				>
-					<div className="space-y-1.5">
-						<Label htmlFor="memory-content" className="sr-only">
+					<div className={memoriesSurfaceClasses.field}>
+						<Label htmlFor="memory-content" className={memoriesSurfaceClasses.screenReaderOnly}>
 							Memory content
 						</Label>
 						<Textarea
@@ -621,7 +625,7 @@ function AddMemoryForm({ scope }: { scope: ResourceNavigationScope }) {
 							placeholder="Prefer concise PR summaries…"
 							rows={5}
 							autoFocus
-							className="resize-none"
+							className={memoriesSurfaceClasses.textarea}
 						/>
 					</div>
 					{secretFinding ? (
@@ -630,9 +634,9 @@ function AddMemoryForm({ scope }: { scope: ResourceNavigationScope }) {
 							title="Use Vault for secrets"
 						/>
 					) : null}
-					<div className="space-y-1.5">
-						<div className="flex items-center gap-2">
-							<Label htmlFor="memory-category" className="text-sm text-muted-foreground">
+					<div className={memoriesSurfaceClasses.field}>
+						<div className={memoriesSurfaceClasses.fieldRow}>
+							<Label htmlFor="memory-category" className={memoriesSurfaceClasses.emptyHint}>
 								Category
 							</Label>
 							<Select
@@ -642,7 +646,11 @@ function AddMemoryForm({ scope }: { scope: ResourceNavigationScope }) {
 									if (value !== null) setAddCategory(value);
 								}}
 							>
-								<SelectTrigger id="memory-category" size="sm" className="w-32">
+								<SelectTrigger
+									id="memory-category"
+									size="sm"
+									className={memoriesSurfaceClasses.categorySelect}
+								>
 									<SelectValue />
 								</SelectTrigger>
 								<SelectContent>

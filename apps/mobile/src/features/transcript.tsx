@@ -2,7 +2,6 @@ import {
 	ApiClientError,
 	buildSessionTimelineRows,
 	DEFAULT_SESSION_TIMELINE_VIEW,
-	SESSION_TIMELINE_CATEGORIES,
 	type SessionDetailSearch,
 	type SessionSearchAnchor,
 	type SessionTimelineRow,
@@ -12,16 +11,26 @@ import {
 	sessionTimelineViewFromCategories,
 } from "@clawdi/shared/api";
 import { isSearchQueryReady, SEARCH_QUERY_MAX_LENGTH } from "@clawdi/shared/consts";
+import { checkboxClasses, sessionDetailClasses as styles } from "@clawdi/shared/ui";
+import { sessionEmptyDescription, sessionTimelineFilters } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp } from "lucide-react-native";
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import { FlatList } from "react-native";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
-import { ErrorState } from "../ui/feedback";
-import { NativeButton, NativeSwitch } from "../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../ui/primitives";
+import { ApiErrorPanel } from "../ui/api-error-panel";
+import { Button } from "../ui/button";
+import { EmptyState } from "../ui/empty-state";
+import { Icon } from "../ui/icon";
+import { AppPressable, AppView } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
+import { SearchInput } from "../ui/search-input";
+import { SessionSidebar } from "../ui/sessions/session-sidebar";
+import { MessagesSkeleton } from "../ui/sessions/skeleton";
+import { Text } from "../ui/text";
+import { WebText, WebView, webView } from "../ui/web-layout";
 import { isNotFound } from "./cloud-inventory";
 import { TimelineRow } from "./timeline-row";
 import {
@@ -31,7 +40,18 @@ import {
 	timelineRequest,
 } from "./timeline-state";
 
-type Props = { sessionId: string; header: ReactElement; search: SessionDetailSearch };
+type Props = {
+	sessionId: string;
+	header: ReactElement;
+	search: SessionDetailSearch;
+	agentType?: string | null;
+	hasContent?: boolean;
+	relatedRefs?: {
+		prs?: string[] | null;
+		repos?: string[] | null;
+		branches?: string[] | null;
+	} | null;
+};
 export function Transcript(props: Props) {
 	const scope = useAccountScope();
 	return (
@@ -42,7 +62,14 @@ export function Transcript(props: Props) {
 	);
 }
 
-function TranscriptView({ sessionId, header, search }: Props) {
+function TranscriptView({
+	sessionId,
+	header,
+	search,
+	agentType,
+	hasContent = true,
+	relatedRefs,
+}: Props) {
 	const t = useI18n();
 	const { cloud } = useMobileApi();
 	const scope = useAccountScope();
@@ -51,6 +78,10 @@ function TranscriptView({ sessionId, header, search }: Props) {
 	const [view, setView] = useState(search.timelineView ?? DEFAULT_SESSION_TIMELINE_VIEW);
 	const [query, setQuery] = useState(search.matchQuery ?? "");
 	const [draft, setDraft] = useState(query);
+	useEffect(() => {
+		const timer = setTimeout(() => setQuery(draft.trim()), 250);
+		return () => clearTimeout(timer);
+	}, [draft]);
 	const [anchor, setAnchor] = useState<SessionSearchAnchor | undefined>(() =>
 		sessionSearchAnchorFromSearch(search),
 	);
@@ -85,7 +116,7 @@ function TranscriptView({ sessionId, header, search }: Props) {
 			),
 		getNextPageParam: (page) => adjacentTimelineCursor(page),
 		getPreviousPageParam: (page) => adjacentTimelineCursor(page, true),
-		enabled: scope.isReady,
+		enabled: scope.isReady && hasContent,
 		retry: false,
 	});
 	const entries = messages.data?.pages.flatMap((page) => page.items) ?? [];
@@ -139,13 +170,122 @@ function TranscriptView({ sessionId, header, search }: Props) {
 	};
 	return (
 		<ReadScreen>
+			<WebView recipe={styles.page} className="px-4 pt-4">
+				<WebView recipe={styles.context}>
+					{header}
+					{hasContent ? (
+						<WebView recipe={styles.controls}>
+							<WebView recipe={styles.controlGrid}>
+								{sessionTimelineIncludesMessages(view) ? (
+									<SearchInput
+										value={draft}
+										placeholder={t("sessionDetail.searchPlaceholder")}
+										ariaLabel={t("sessionDetail.search")}
+										maxLength={SEARCH_QUERY_MAX_LENGTH}
+										onChange={(value) => {
+											setDraft(value);
+											setAnchor(undefined);
+											setDirection("asc");
+										}}
+									/>
+								) : null}
+								{draft && sessionTimelineIncludesMessages(view) ? (
+									<WebView recipe={styles.actions}>
+										<WebText recipe={styles.muted} accessibilityLiveRegion="polite">
+											{!isSearchQueryReady(draft)
+												? t("sessionDetail.searchMinimum")
+												: messages.isFetching
+													? t("sessionDetail.searching")
+													: messages.isError
+														? t("sessionDetail.unavailable")
+														: navigation
+															? `${navigation.index} / ${navigation.total}`
+															: "0 / 0"}
+										</WebText>
+										<Button
+											variant="ghost"
+											size="icon-xs"
+											accessibilityLabel={t("sessionDetail.previous")}
+											disabled={!navigation?.previous || messages.isFetching || messages.isError}
+											onPress={() => selectMatch(navigation?.previous)}
+										>
+											<Icon as={ChevronUp} />
+										</Button>
+										<Button
+											variant="ghost"
+											size="icon-xs"
+											accessibilityLabel={t("sessionDetail.next")}
+											disabled={!navigation?.next || messages.isFetching || messages.isError}
+											onPress={() => selectMatch(navigation?.next)}
+										>
+											<Icon as={ChevronDown} />
+										</Button>
+										{matchIndex >= 0 ? (
+											<Button variant="ghost" size="sm" onPress={jumpToMatch}>
+												<Text>{t("sessionDetail.match")}</Text>
+											</Button>
+										) : null}
+									</WebView>
+								) : null}
+								<WebView recipe={styles.toolbar}>
+									<WebView
+										recipe={styles.filters}
+										accessibilityLabel={t("sessionDetail.timelineLabel")}
+									>
+										{sessionTimelineFilters.map(({ category, label }) => {
+											const categories = sessionTimelineCategories(view);
+											const checked = categories.includes(category);
+											const disabled = checked && categories.length === 1;
+											return (
+												<AppPressable
+													key={category}
+													className={webView(styles.filter)}
+													accessibilityRole="checkbox"
+													accessibilityLabel={label}
+													accessibilityState={{ checked, disabled }}
+													hitSlop={8}
+													disabled={disabled}
+													onPress={() => {
+														const next = sessionTimelineViewFromCategories(
+															checked
+																? categories.filter((value) => value !== category)
+																: [...categories, category],
+														);
+														if (next) {
+															setView(next);
+															setAnchor(undefined);
+														}
+													}}
+												>
+													<WebView
+														recipe={checkboxClasses.root}
+														state={{ "data-checked": checked }}
+													>
+														{checked ? <Icon as={Check} /> : null}
+													</WebView>
+													<WebText recipe={styles.filterLabel}>{label}</WebText>
+												</AppPressable>
+											);
+										})}
+									</WebView>
+								</WebView>
+							</WebView>
+						</WebView>
+					) : null}
+				</WebView>
+			</WebView>
 			<FlatList
 				key={windowKey}
 				ref={list}
 				maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
 				data={rows}
 				keyExtractor={(row) => String(row.rowKey)}
-				contentContainerStyle={{ padding: 24, gap: 12, flexGrow: 1 }}
+				contentContainerStyle={{
+					paddingHorizontal: 16,
+					paddingTop: 16,
+					paddingBottom: 24,
+					flexGrow: 1,
+				}}
 				initialNumToRender={8}
 				windowSize={5}
 				onScrollToIndexFailed={({ index, averageItemLength }) => {
@@ -163,166 +303,138 @@ function TranscriptView({ sessionId, header, search }: Props) {
 				}
 				onRefresh={refresh}
 				ListHeaderComponent={
-					<AppView className="gap-4 pb-3">
-						{header}
-						<AppText accessibilityRole="header" className="text-xl font-semibold text-foreground">
-							{t("timeline.title")}
-						</AppText>
-						{SESSION_TIMELINE_CATEGORIES.map((category) => (
-							<NativeSwitch
-								key={category}
-								label={t(`timeline.${category}`)}
-								value={sessionTimelineCategories(view).includes(category)}
-								onValueChange={(enabled) => {
-									const categories = sessionTimelineCategories(view);
-									const next = sessionTimelineViewFromCategories(
-										enabled
-											? [...categories, category]
-											: categories.filter((value) => value !== category),
-									);
-									if (next) {
-										setView(next);
-										setAnchor(undefined);
-									}
-								}}
-							/>
-						))}
-						{sessionTimelineIncludesMessages(view) ? (
-							<>
-								<AppTextInput
-									accessibilityLabel={t("timeline.search")}
-									placeholder={t("timeline.search")}
-									value={draft}
-									onChangeText={setDraft}
-									maxLength={SEARCH_QUERY_MAX_LENGTH}
-									autoCapitalize="none"
-									autoCorrect={false}
-									className="rounded-xl bg-card p-3 text-foreground"
-								/>
-								{draft.trim() && !isSearchQueryReady(draft) ? (
-									<AppText accessibilityRole="alert">{t("sessionFilters.searchInvalid")}</AppText>
-								) : null}
-								<NativeButton
-									label={t("timeline.find")}
-									disabled={!!draft.trim() && !isSearchQueryReady(draft)}
-									onPress={() => {
-										setQuery(draft.trim());
-										setAnchor(undefined);
-										setDirection("asc");
-									}}
-								/>
-							</>
-						) : null}
-						{effectiveQuery && !messages.isError ? (
-							<AppText accessibilityLiveRegion="polite">
-								{messages.isPending || messages.isFetching
-									? t("loading.session")
-									: navigation
-										? `${t("timeline.match")}: ${navigation.index} / ${navigation.total}`
-										: t("timeline.noMatch")}
-							</AppText>
-						) : null}
-						{navigation ? (
-							<>
-								<NativeButton
-									label={t("timeline.previous")}
-									disabled={!navigation.previous || messages.isFetching || messages.isError}
-									onPress={() => selectMatch(navigation.previous)}
-								/>
-								<NativeButton
-									label={t("timeline.next")}
-									disabled={!navigation.next || messages.isFetching || messages.isError}
-									onPress={() => selectMatch(navigation.next)}
-								/>
-							</>
-						) : null}
-						{matchIndex >= 0 ? (
-							<NativeButton label={t("timeline.jump")} onPress={jumpToMatch} />
-						) : null}
-						<NativeButton
-							label={t("timeline.beginning")}
-							onPress={() => {
-								setAnchor(undefined);
-								setQuery("");
-								setDraft("");
-								setDirection("asc");
-							}}
-						/>
-						<NativeButton
-							label={t("timeline.latest")}
-							onPress={() => {
-								setAnchor(undefined);
-								setQuery("");
-								setDraft("");
-								setDirection("desc");
-							}}
-						/>
+					<WebView recipe={styles.page} className="px-0">
+						<SessionSidebar relatedRefs={relatedRefs} />
 						{messages.hasPreviousPage ? (
-							<NativeButton
-								label={t(direction === "asc" ? "timeline.earlier" : "timeline.later")}
-								disabled={messages.isFetching || conflict}
-								onPress={() => {
-									if (scope.isCurrent()) void messages.fetchPreviousPage();
-								}}
-							/>
+							<WebView recipe={styles.pagination}>
+								<Button
+									variant="ghost"
+									size="sm"
+									disabled={messages.isFetching || conflict}
+									onPress={() => {
+										if (scope.isCurrent()) void messages.fetchPreviousPage().catch(() => undefined);
+									}}
+								>
+									<Text>{t(direction === "asc" ? "timeline.earlier" : "timeline.later")}</Text>
+								</Button>
+							</WebView>
 						) : null}
-					</AppView>
+					</WebView>
 				}
 				renderItem={({ item }) => (
 					<TimelineRow
 						row={item}
 						sessionId={sessionId}
+						agentType={agentType}
 						highlighted={item.rowKey === highlightedKey}
 						query={effectiveQuery}
 						disabled={messages.isFetching || messages.isError}
 					/>
 				)}
 				ListEmptyComponent={
-					!messages.isError ? (
-						<AppText>{t(messages.isPending ? "loading.session" : "timeline.empty")}</AppText>
+					hasContent && !messages.isError ? (
+						messages.isPending ? (
+							<MessagesSkeleton />
+						) : (
+							<EmptyState variant="inset" description={sessionEmptyDescription(view)} />
+						)
+					) : !hasContent ? (
+						<EmptyState
+							variant="inset"
+							title={t("sessionDetail.conversation")}
+							description={t("sessionDetail.uploadHelp")}
+						/>
 					) : undefined
 				}
 				ListFooterComponent={
-					<AppView className="gap-3 py-4">
+					<WebView recipe={styles.pagination}>
 						{isNotFound(messages.error) ? (
-							<AppText>{t("sessions.noMessages")}</AppText>
+							<WebText recipe={styles.muted}>{t("sessions.noMessages")}</WebText>
 						) : conflict ? (
-							<AppText>{t("sessions.revisionChanged")}</AppText>
+							<>
+								<WebText recipe={styles.muted}>{t("sessions.revisionChanged")}</WebText>
+								<Button
+									variant="outline"
+									size="sm"
+									disabled={messages.isFetching}
+									onPress={refresh}
+								>
+									<Text>{t("sessionDetail.refresh")}</Text>
+								</Button>
+							</>
 						) : messages.isError ? (
-							<ErrorState
+							<ApiErrorPanel
+								error={messages.error}
+								title={t("sessionDetail.activityError")}
 								onRetry={
 									messages.isFetching
 										? undefined
 										: () =>
-												void (messages.isFetchNextPageError
-													? messages.fetchNextPage()
-													: messages.isFetchPreviousPageError
-														? messages.fetchPreviousPage()
-														: messages.refetch())
+												void (
+													messages.isFetchNextPageError
+														? messages.fetchNextPage()
+														: messages.isFetchPreviousPageError
+															? messages.fetchPreviousPage()
+															: messages.refetch()
+												).catch(() => undefined)
 								}
 							/>
 						) : null}
-						<AppText>
-							{t("timeline.loaded")}: {entries.length} / {messages.data?.pages[0]?.total ?? 0}
-						</AppText>
-						{conflict ? (
-							<NativeButton
-								label={t("inventory.refresh")}
-								disabled={messages.isFetching}
-								onPress={refresh}
-							/>
-						) : messages.hasNextPage ? (
-							<NativeButton
-								label={t(direction === "asc" ? "timeline.later" : "timeline.earlier")}
+						{!conflict && messages.hasNextPage ? (
+							<Button
+								variant="ghost"
+								size="sm"
 								disabled={messages.isFetching}
 								onPress={() => {
-									if (scope.isCurrent()) void messages.fetchNextPage();
+									if (scope.isCurrent()) void messages.fetchNextPage().catch(() => undefined);
 								}}
-							/>
+							>
+								<Text>
+									{t(direction === "asc" ? "timeline.later" : "timeline.earlier")} ({entries.length}
+									/{messages.data?.pages[0]?.total ?? 0})
+								</Text>
+							</Button>
 						) : null}
-					</AppView>
+						{direction === "desc" ? (
+							<Button
+								variant="ghost"
+								size="sm"
+								accessibilityLabel={t("sessionDetail.beginning")}
+								onPress={() => {
+									setAnchor(undefined);
+									setQuery("");
+									setDraft("");
+									setDirection("asc");
+								}}
+							>
+								<Icon as={ArrowUp} />
+								<Text>{t("sessionDetail.beginning")}</Text>
+							</Button>
+						) : null}
+					</WebView>
 				}
 			/>
+			{rows.length && !effectiveQuery ? (
+				<AppView
+					pointerEvents="box-none"
+					style={{ position: "absolute", bottom: 24, left: 0, right: 0, alignItems: "center" }}
+				>
+					<Button
+						variant="secondary"
+						size="sm"
+						onPress={() => {
+							setAnchor(undefined);
+							setQuery("");
+							setDraft("");
+							setDirection("desc");
+							list.current?.scrollToEnd({ animated: false });
+						}}
+					>
+						<Icon as={ArrowDown} />
+						<Text>{t("sessionDetail.latest")}</Text>
+					</Button>
+				</AppView>
+			) : null}
 		</ReadScreen>
 	);
 }

@@ -7,6 +7,8 @@ import {
 	vaultRequestToken,
 	vaultSupplyFields,
 } from "@clawdi/shared/api";
+import { vaultRequestClasses } from "@clawdi/shared/ui";
+import { buildVaultSupplyAgentMessage, VAULT_REQUEST_COPY } from "@clawdi/shared/view";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import { Alert, AppState, Share } from "react-native";
@@ -16,9 +18,14 @@ import { useAccountScope } from "../../platform/account-lifecycle";
 import { incomingVaultLink } from "../../platform/incoming-link";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
-import { NativeButton, NativeSwitch } from "../../ui/native-controls";
-import { AppScrollView, AppText, AppTextInput, AppView } from "../../ui/primitives";
+import { Button } from "../../ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../../ui/card";
+import { Input, Label } from "../../ui/input";
+import { AppScrollView, AppText, AppView } from "../../ui/primitives";
 import { ReadScreen } from "../../ui/read-screen";
+import { Text } from "../../ui/text";
+import { SecretInput } from "../../ui/vault/secret-input";
+import { WebText, WebView, webBoth, webView } from "../../ui/web-layout";
 import { BackButton } from "../cloud-inventory";
 
 type Context = components["schemas"]["VaultSecretRequestStatus"];
@@ -46,7 +53,7 @@ function VaultSupply({ intake }: { intake: string | null }) {
 	const [context, setContext] = useState<Context>();
 	const [rows, setRows] = useState<VaultSupplyRow[]>([]);
 	const [envText, setEnvText] = useState("");
-	const [show, setShow] = useState(false);
+
 	const [phase, setPhase] = useState<"link" | "ready" | "done" | "unavailable" | "uncertain">(
 		"link",
 	);
@@ -58,7 +65,6 @@ function VaultSupply({ intake }: { intake: string | null }) {
 		setIncoming(false);
 		setRows([]);
 		setEnvText("");
-		setShow(false);
 	}, []);
 	useFocusEffect(
 		useCallback(() => {
@@ -179,7 +185,6 @@ function VaultSupply({ intake }: { intake: string | null }) {
 								pendingSupply.current = null;
 								setRows([]);
 								setEnvText("");
-								setShow(false);
 								try {
 									const result = await api.supply(pending.token, pending.fields, requestSignal());
 									if (!stillCurrent() || !visible()) return;
@@ -215,183 +220,199 @@ function VaultSupply({ intake }: { intake: string | null }) {
 	return (
 		<ReadScreen>
 			<AppScrollView
-				contentContainerStyle={{ padding: 24, gap: 16 }}
+				contentContainerClassName={webView(vaultRequestClasses.page)}
 				keyboardShouldPersistTaps="handled"
 			>
 				<BackButton />
-				<AppText accessibilityRole="header" className="text-2xl font-semibold text-foreground">
-					{t("vault.supplyTitle")}
-				</AppText>
-				<AppText className="text-muted-foreground">{t("vault.supplyPrivacy")}</AppText>
-				{phase === "link" ? (
-					<>
-						{incoming ? (
-							<AppText>{t("vault.supplyReceived")}</AppText>
-						) : (
-							<AppTextInput
-								accessibilityLabel={t("vault.supplyLink")}
-								placeholder={t("vault.supplyLink")}
-								value={link}
-								onChangeText={setLink}
-								maxLength={4096}
-								secureTextEntry
-								autoCorrect={false}
-								autoCapitalize="none"
-								autoComplete="off"
-								textContentType="none"
-								editable={!action.busy}
-								className="rounded-xl bg-card p-3 text-foreground"
-							/>
-						)}
-						<NativeButton
-							label={t("vault.supplyLoad")}
-							disabled={action.busy || (!incoming && !link)}
-							onPress={load}
-						/>
-					</>
-				) : null}
-				{phase === "ready" && context ? (
-					<>
-						<AppText className="text-lg font-semibold text-foreground">
-							{context.vault_name} · {context.project_name}
-						</AppText>
-						<AppText>
-							{context.section || t("vault.defaultSection")} · {context.expires_at}
-						</AppText>
-						<NativeSwitch
-							value={show}
-							onValueChange={setShow}
-							label={t("vault.supplyReveal")}
-							disabled={action.busy}
-						/>
-						{rows.map((row, index) => (
-							<AppView key={`${index}:${row.required}`} className="gap-2">
-								<AppTextInput
-									accessibilityLabel={t("vault.supplyName")}
-									placeholder={t("vault.supplyName")}
-									value={row.name}
-									maxLength={200}
-									editable={!row.required && !action.busy}
-									onChangeText={(name) =>
-										setRows(rows.map((r, i) => (i === index ? { ...r, name } : r)))
-									}
-									autoCorrect={false}
-									autoCapitalize="none"
-									className="rounded-xl bg-card p-3 text-foreground"
-								/>
-								<AppTextInput
-									accessibilityLabel={`${t("vault.supplyValue")}: ${row.name}`}
-									placeholder={
-										!show && /[\r\n]/.test(row.value)
-											? t("vault.supplyMultiline")
-											: t("vault.supplyValue")
-									}
-									value={!show && /[\r\n]/.test(row.value) ? "" : row.value}
-									onChangeText={(value) =>
-										setRows(rows.map((r, i) => (i === index ? { ...r, value } : r)))
-									}
-									editable={!action.busy && (show || !/[\r\n]/.test(row.value))}
-									secureTextEntry={!show}
-									multiline={show}
-									autoCorrect={false}
-									autoCapitalize="none"
-									autoComplete="off"
-									textContentType="none"
-									maxLength={131072}
-									className="rounded-xl bg-card p-3 text-foreground"
-								/>
-								{!row.required ? (
-									<NativeButton
-										label={t("vault.supplyRemove")}
-										disabled={action.busy}
-										onPress={() => setRows(rows.filter((_, i) => i !== index))}
+				<Card className={webView(vaultRequestClasses.card)}>
+					<CardHeader className={webView(vaultRequestClasses.header)}>
+						<WebText recipe={vaultRequestClasses.brandName}>Clawdi</WebText>
+						<CardTitle className={webBoth(vaultRequestClasses.title)}>
+							{phase === "done"
+								? VAULT_REQUEST_COPY.saved
+								: phase === "unavailable"
+									? VAULT_REQUEST_COPY.unavailableTitle
+									: VAULT_REQUEST_COPY.title}
+						</CardTitle>
+					</CardHeader>
+					<CardContent>
+						<WebView recipe={vaultRequestClasses.form}>
+							{phase === "link" ? (
+								<>
+									{incoming ? (
+										<AppText>{t("vault.supplyReceived")}</AppText>
+									) : (
+										<Input
+											accessibilityLabel={t("vault.supplyLink")}
+											placeholder={t("vault.supplyLink")}
+											value={link}
+											onChangeText={setLink}
+											maxLength={4096}
+											secureTextEntry
+											autoCorrect={false}
+											autoCapitalize="none"
+											autoComplete="off"
+											textContentType="none"
+											editable={!action.busy}
+										/>
+									)}
+									<Button
+										variant="outline"
+										size="sm"
+										disabled={action.busy || (!incoming && !link)}
+										onPress={load}
+									>
+										<Text>{t("vault.supplyLoad")}</Text>
+									</Button>
+								</>
+							) : null}
+							{phase === "ready" && context ? (
+								<>
+									<AppText className="text-lg font-semibold text-foreground">
+										{context.vault_name} · {context.project_name}
+									</AppText>
+									<AppText>
+										{context.section || t("vault.defaultSection")} · {context.expires_at}
+									</AppText>
+									{rows.map((row, index) => (
+										<AppView key={`${index}:${row.required}`} className="gap-2">
+											{row.required ? (
+												<Label>{row.name}</Label>
+											) : (
+												<Input
+													accessibilityLabel={t("vault.supplyName")}
+													placeholder={t("vault.supplyName")}
+													value={row.name}
+													maxLength={200}
+													editable={!row.required && !action.busy}
+													onChangeText={(name) =>
+														setRows(rows.map((r, i) => (i === index ? { ...r, name } : r)))
+													}
+													autoCorrect={false}
+													autoCapitalize="none"
+												/>
+											)}
+											<SecretInput
+												label={row.name || t("vault.supplyValue")}
+												value={row.value}
+												onChange={(value) =>
+													setRows(rows.map((r, i) => (i === index ? { ...r, value } : r)))
+												}
+												disabled={action.busy}
+												maxLength={131072}
+											/>
+											{!row.required ? (
+												<Button
+													variant="outline"
+													size="sm"
+													disabled={action.busy}
+													onPress={() => setRows(rows.filter((_, i) => i !== index))}
+												>
+													<Text>{t("vault.supplyRemove")}</Text>
+												</Button>
+											) : null}
+										</AppView>
+									))}
+									<Button
+										variant="outline"
+										size="sm"
+										disabled={action.busy || rows.length >= 32}
+										onPress={() => setRows([...rows, { name: "", value: "", required: false }])}
+									>
+										<Text>{t("vault.supplyAdd")}</Text>
+									</Button>
+									<Input
+										accessibilityLabel={t("vault.supplyImport")}
+										placeholder={t("vault.supplyImport")}
+										value={envText}
+										onChangeText={setEnvText}
+										multiline
+										maxLength={1048576}
+										autoCorrect={false}
+										autoCapitalize="none"
+										autoComplete="off"
+										textContentType="none"
+										editable={!action.busy}
 									/>
-								) : null}
-							</AppView>
-						))}
-						<NativeButton
-							label={t("vault.supplyAdd")}
-							disabled={action.busy || rows.length >= 32}
-							onPress={() => setRows([...rows, { name: "", value: "", required: false }])}
-						/>
-						<AppTextInput
-							accessibilityLabel={t("vault.supplyImport")}
-							placeholder={t("vault.supplyImport")}
-							value={envText}
-							onChangeText={setEnvText}
-							multiline
-							maxLength={1048576}
-							autoCorrect={false}
-							autoCapitalize="none"
-							autoComplete="off"
-							textContentType="none"
-							editable={!action.busy}
-							className="rounded-xl bg-card p-3 text-foreground"
-						/>
-						<NativeButton
-							label={t("vault.supplyImport")}
-							disabled={action.busy || !envText}
-							onPress={() => {
-								try {
-									setRows(importVaultSupplyRows(rows, envText));
-									setEnvText("");
+									<Button
+										variant="outline"
+										size="sm"
+										disabled={action.busy || !envText}
+										onPress={() => {
+											try {
+												setRows(importVaultSupplyRows(rows, envText));
+												setEnvText("");
+												setError(null);
+											} catch {
+												setError("invalid");
+											}
+										}}
+									>
+										<Text>{t("vault.supplyImport")}</Text>
+									</Button>
+									<Button
+										variant="outline"
+										size="sm"
+										disabled={action.busy || !!envText}
+										onPress={prepare}
+									>
+										<Text>{t("vault.supplyReview")}</Text>
+									</Button>
+								</>
+							) : null}
+							{phase === "done" ? (
+								<>
+									<AppText accessibilityRole="alert">{VAULT_REQUEST_COPY.done}</AppText>
+									<Button
+										variant="outline"
+										size="sm"
+										onPress={() => {
+											const visible = capture();
+											void action.run(async () => {
+												if (context && visible())
+													await Share.share({ message: buildVaultSupplyAgentMessage(context.id) });
+											});
+										}}
+										disabled={action.busy}
+									>
+										<Text>{t("vault.supplyReceipt")}</Text>
+									</Button>
+								</>
+							) : null}
+							{phase === "unavailable" ? (
+								<AppText accessibilityRole="alert">{VAULT_REQUEST_COPY.unavailable}</AppText>
+							) : null}
+							{phase === "uncertain" ? (
+								<AppText accessibilityRole="alert">{t("vault.supplyUncertain")}</AppText>
+							) : null}
+							{error || action.error ? (
+								<AppText accessibilityRole="alert">
+									{t(
+										error === "invalid"
+											? "vault.supplyInvalid"
+											: error === "conflict"
+												? "vault.supplyConflict"
+												: "vault.failed",
+									)}
+								</AppText>
+							) : null}
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={action.busy}
+								onPress={() => {
+									activeRequest.current?.abort();
+									clearSecrets();
+									setContext(undefined);
+									setPhase("link");
 									setError(null);
-								} catch {
-									setError("invalid");
-								}
-							}}
-						/>
-						<NativeButton
-							label={t("vault.supplyReview")}
-							disabled={action.busy || !!envText}
-							onPress={prepare}
-						/>
-					</>
-				) : null}
-				{phase === "done" ? (
-					<>
-						<AppText accessibilityRole="alert">{t("vault.supplyDone")}</AppText>
-						<NativeButton
-							label={t("vault.supplyReceipt")}
-							onPress={() => {
-								const visible = capture();
-								void action.run(async () => {
-									if (context && visible())
-										await Share.share({ message: `${t("vault.supplyReceiptText")} ${context.id}` });
-								});
-							}}
-							disabled={action.busy}
-						/>
-					</>
-				) : null}
-				{phase === "unavailable" ? (
-					<AppText accessibilityRole="alert">{t("vault.supplyUnavailable")}</AppText>
-				) : null}
-				{phase === "uncertain" ? (
-					<AppText accessibilityRole="alert">{t("vault.supplyUncertain")}</AppText>
-				) : null}
-				{error || action.error ? (
-					<AppText accessibilityRole="alert">
-						{t(
-							error === "invalid"
-								? "vault.supplyInvalid"
-								: error === "conflict"
-									? "vault.supplyConflict"
-									: "vault.failed",
-						)}
-					</AppText>
-				) : null}
-				<NativeButton
-					label={t("vault.supplyReset")}
-					disabled={action.busy}
-					onPress={() => {
-						activeRequest.current?.abort();
-						clearSecrets();
-						setContext(undefined);
-						setPhase("link");
-						setError(null);
-					}}
-				/>
+								}}
+							>
+								<Text>{t("vault.supplyReset")}</Text>
+							</Button>
+						</WebView>
+					</CardContent>
+				</Card>
 			</AppScrollView>
 		</ReadScreen>
 	);

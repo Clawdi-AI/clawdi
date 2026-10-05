@@ -1,5 +1,8 @@
+import { memoryDetailClasses } from "@clawdi/shared/ui";
+import { MEMORY_CATEGORY_COLORS, RESOURCE_TINT_CLASSES, relativeTime } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { Brain, Laptop, Trash2 } from "lucide-react-native";
 import { useRef } from "react";
 import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
@@ -7,13 +10,18 @@ import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
-import { LoadingScreen } from "../ui/feedback";
-import { DetailRow } from "../ui/metadata-row";
-import { NativeButton } from "../ui/native-controls";
-import { AppScrollView, AppText } from "../ui/primitives";
-import { ReadScreen } from "../ui/read-screen";
-import { BackButton, formatDate, isNotFound } from "./cloud-inventory";
-import { MemoryRow } from "./memories";
+import { ApiErrorPanel } from "../ui/api-error-panel";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
+import { DetailBackLink, DetailMeta, DetailPanel, LibraryPage } from "../ui/detail/layout";
+import { Icon } from "../ui/icon";
+import { IconChip } from "../ui/icon-chip";
+import { PageHeader, PageHeaderSkeleton } from "../ui/page-header";
+import { Text } from "../ui/text";
+import { WebText, WebView, webBoth, webText, webView } from "../ui/web-layout";
+
+import { isNotFound } from "./cloud-inventory";
+
 import { routeParam } from "./read-helpers";
 import { ResourceError } from "./resource-error";
 
@@ -72,59 +80,98 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 			},
 		]);
 	};
-	if (id && query.isPending && scope.isReady) return <LoadingScreen />;
 	return (
-		<ReadScreen>
-			<AppScrollView contentContainerClassName="gap-4 p-6">
-				<BackButton />
-				<AppText accessibilityRole="header" className="text-2xl font-semibold text-foreground">
-					{t("memories.detail")}
-				</AppText>
-				<AppText>{t("memories.recallScope")}</AppText>
-				{!id || query.isError || !memory ? (
-					<ResourceError
-						missing={!id || isNotFound(query.error)}
-						onRetry={id && !query.isFetching ? () => void query.refetch() : undefined}
+		<LibraryPage detail>
+			<DetailBackLink href="/memories" label={t("memories.title")} />
+			{id && query.isPending ? (
+				<PageHeaderSkeleton icon actions />
+			) : !id || query.isError || !memory ? (
+				<ResourceError
+					missing={!id || isNotFound(query.error)}
+					onRetry={id && !query.isFetching ? () => void query.refetch() : undefined}
+				/>
+			) : (
+				<>
+					<PageHeader
+						title={memory.content}
+						icon={
+							<IconChip tint={RESOURCE_TINT_CLASSES.memories}>
+								<Icon as={Brain} />
+							</IconChip>
+						}
+						status={
+							<DetailMeta>
+								<Badge
+									variant="secondary"
+									className={webBoth(MEMORY_CATEGORY_COLORS[memory.category] ?? "")}
+								>
+									<Text>{memory.category}</Text>
+								</Badge>
+								<Text>
+									{memory.source} · Saved {relativeTime(memory.created_at)} ·{" "}
+									{(memory.access_count ?? 0) > 0
+										? `Recalled ${memory.access_count} ${memory.access_count === 1 ? "time" : "times"}`
+										: "Never recalled yet"}
+								</Text>
+							</DetailMeta>
+						}
+						actions={
+							<Button
+								variant="outline"
+								size="sm"
+								className={webView(memoryDetailClasses.deleteAction)}
+								textClassName={webText(memoryDetailClasses.deleteAction)}
+								disabled={action.busy || query.isFetching}
+								onPress={remove}
+							>
+								<Icon as={Trash2} />
+								<Text>{t("libraryPort.delete")}</Text>
+							</Button>
+						}
 					/>
-				) : (
-					<>
-						<MemoryRow memory={memory} />
-						<DetailRow
-							label={t("memories.savedAt")}
-							value={formatDate(memory.created_at) ?? t("memories.notRecorded")}
-						/>
-						<DetailRow label={t("memories.recalled")} value={String(memory.access_count ?? 0)} />
-						{memory.source_machine_name ? (
-							<DetailRow label={t("memories.learnedOn")} value={memory.source_machine_name} />
+					<DetailPanel className={webView(memoryDetailClasses.panel)}>
+						<WebView recipe={memoryDetailClasses.headingStack}>
+							<WebText recipe={memoryDetailClasses.heading}>{t("libraryPort.recallScope")}</WebText>
+							<WebText recipe={memoryDetailClasses.subtitle}>
+								{t("libraryPort.recallDescription")}
+							</WebText>
+						</WebView>
+						<WebView recipe={memoryDetailClasses.tags}>
+							<WebText recipe={memoryDetailClasses.subtitle}>Tags:</WebText>
+							{memory.tags?.map((tag) => (
+								<Badge key={tag} variant="outline">
+									<Text>#{tag}</Text>
+								</Badge>
+							))}
+						</WebView>
+						{memory.source_session_id || memory.source_machine_name ? (
+							<WebView recipe={memoryDetailClasses.provenance}>
+								<Icon as={Laptop} className={webBoth(memoryDetailClasses.smallIcon)} />
+								<Text>
+									{memory.source_machine_name
+										? `Learned on ${memory.source_machine_name}`
+										: "Learned from a session"}
+								</Text>
+								{memory.source_session_id ? (
+									<Button
+										variant="link"
+										size="sm"
+										onPress={() =>
+											router.push({
+												pathname: "/sessions/[sessionId]",
+												params: { sessionId: memory.source_session_id ?? "" },
+											})
+										}
+									>
+										<Text>View session</Text>
+									</Button>
+								) : null}
+							</WebView>
 						) : null}
-						{memory.source_session_id ? (
-							<NativeButton
-								label={t("memories.sourceSession")}
-								onPress={() => {
-									if (scope.isCurrent() && !scope.signal.aborted && memory.source_session_id)
-										router.push({
-											pathname: "/sessions/[sessionId]",
-											params: { sessionId: memory.source_session_id },
-										});
-								}}
-							/>
-						) : null}
-						<NativeButton
-							label={t("inventory.refresh")}
-							disabled={query.isFetching || action.busy}
-							onPress={() => void query.refetch()}
-						/>
-						<NativeButton
-							label={t("memories.remove")}
-							disabled={action.busy || query.isFetching}
-							onPress={remove}
-						/>
-					</>
-				)}
-				{action.error ? (
-					<AppText accessibilityRole="alert">{t("memories.mutationFailed")}</AppText>
-				) : null}
-			</AppScrollView>
-		</ReadScreen>
+					</DetailPanel>
+				</>
+			)}
+			{action.error ? <ApiErrorPanel error={action.error} /> : null}
+		</LibraryPage>
 	);
 }

@@ -1,4 +1,6 @@
-import type { components, Project } from "@clawdi/shared/api";
+import type { Project } from "@clawdi/shared/api";
+import { shareProjectClasses } from "@clawdi/shared/ui";
+import { SHARING_COPY } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -7,20 +9,22 @@ import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
+import { ApiErrorPanel } from "../ui/api-error-panel";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
+import { DetailBackLink, LibraryPage } from "../ui/detail/layout";
 import { ErrorState, LoadingScreen } from "../ui/feedback";
-import { NativeButton } from "../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../ui/primitives";
+import { Input } from "../ui/input";
+import { PageHeader } from "../ui/page-header";
+import { AppText, AppView } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
+import { Skeleton } from "../ui/skeleton";
+import { Text } from "../ui/text";
+import { WebText, WebView } from "../ui/web-layout";
 import { BackButton, formatDate } from "./cloud-inventory";
-import { InventoryList } from "./inventory-list";
 import { useProject } from "./project-scope";
 import { canManageSharing, linkIsActive, safeShareUrl } from "./project-sharing-state";
 import { projectRouteFilter } from "./read-helpers";
-
-type Row =
-	| { id: string; kind: "link"; value: components["schemas"]["ShareLinkResponse"] }
-	| { id: string; kind: "invitation"; value: components["schemas"]["InvitationResponse"] }
-	| { id: string; kind: "member"; value: components["schemas"]["MemberResponse"] };
 
 export function ProjectSharingScreen() {
 	const scope = useAccountScope();
@@ -58,7 +62,13 @@ function ProjectGate({ projectId }: { projectId?: string }) {
 	);
 }
 
-function SharingView({ project }: { project: Project }) {
+export function SharingView({
+	project,
+	embedded = false,
+}: {
+	project: Project;
+	embedded?: boolean;
+}) {
 	const t = useI18n();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -154,7 +164,7 @@ function SharingView({ project }: { project: Project }) {
 		});
 	const invite = () =>
 		action.run(async (isCurrent) => {
-			if (!email.trim()) return;
+			if (!/^\S+@\S+\.\S+$/.test(email.trim())) return;
 			await read((signal) =>
 				sharing.invite(project.id, { email: email.trim().toLowerCase() }, signal),
 			);
@@ -162,159 +172,192 @@ function SharingView({ project }: { project: Project }) {
 			setEmail("");
 			await refresh();
 		});
-	const rows: Row[] = [
-		...(inventory.data?.links ?? []).map(
-			(value): Row => ({ id: `link:${value.id}`, kind: "link", value }),
-		),
-		...(inventory.data?.invitations ?? []).map(
-			(value): Row => ({ id: `invitation:${value.id}`, kind: "invitation", value }),
-		),
-		...(inventory.data?.members ?? []).map(
-			(value): Row => ({ id: `member:${value.id}`, kind: "member", value }),
-		),
-	];
-	return (
-		<InventoryList
-			title={project.name}
-			description={t("sharing.description")}
-			items={rows}
-			empty={t(inventory.isPending ? "loading.app" : "sharing.empty")}
-			refreshing={inventory.isRefetching}
-			onRefresh={() => {
-				if (!inventory.isFetching) void inventory.refetch();
-			}}
-			error={inventory.isError}
-			onRetry={() => void inventory.refetch()}
-			busy={inventory.isFetching}
-			header={
-				<AppView className="gap-3">
-					<AppText>{t("sharing.permissions")}</AppText>
-					<AppTextInput
+
+	const content = (
+		<WebView recipe={shareProjectClasses.panels}>
+			{!embedded ? (
+				<PageHeader title={`Share ${project.name}`} description={SHARING_COPY.permissions} />
+			) : null}
+			{inventory.isError ? (
+				<ApiErrorPanel error={inventory.error} onRetry={() => void inventory.refetch()} />
+			) : null}
+			{action.error ? <ApiErrorPanel error={t("sharing.failed")} /> : null}
+			<WebView recipe={shareProjectClasses.section}>
+				<WebView recipe={shareProjectClasses.form} className="flex-row">
+					<Input
+						className="flex-1"
 						accessibilityLabel={t("sharing.email")}
-						placeholder={t("sharing.email")}
+						placeholder={SHARING_COPY.email}
 						value={email}
 						onChangeText={setEmail}
 						autoCapitalize="none"
 						autoCorrect={false}
 						keyboardType="email-address"
 						editable={!action.busy}
-						className="rounded-xl bg-card p-3 text-foreground"
 					/>
-					<NativeButton
-						label={t("sharing.invite")}
-						disabled={action.busy || !email.trim()}
+					<Button
+						size="sm"
+						disabled={action.busy || !/^\S+@\S+\.\S+$/.test(email.trim())}
 						onPress={() => void invite()}
-					/>
-					<AppTextInput
-						accessibilityLabel={t("sharing.label")}
-						placeholder={t("sharing.label")}
-						value={label}
-						onChangeText={setLabel}
-						maxLength={200}
-						editable={!action.busy}
-						className="rounded-xl bg-card p-3 text-foreground"
-					/>
-					<NativeButton
-						label={t("sharing.createLink")}
+					>
+						<Text>{SHARING_COPY.invite}</Text>
+					</Button>
+				</WebView>
+				{inventory.isPending ? <Skeleton className="h-16" /> : null}
+				{(inventory.data?.invitations ?? []).map((invitation) => (
+					<WebView key={invitation.id} recipe={shareProjectClasses.row}>
+						<WebView recipe={shareProjectClasses.identity}>
+							<WebText recipe={shareProjectClasses.name}>{invitation.invitee_email}</WebText>
+							<Badge variant="outline">
+								<Text>{t("libraryPort.pending")}</Text>
+							</Badge>
+						</WebView>
+						<Button
+							variant="ghost"
+							size="sm"
+							disabled={action.busy}
+							onPress={() =>
+								confirm(t("sharing.cancelInvite"), t("sharing.cancelWarning"), (signal) =>
+									sharing.cancelInvitation(project.id, invitation.id, signal),
+								)
+							}
+						>
+							<Text>{t("sharing.cancelInvite")}</Text>
+						</Button>
+					</WebView>
+				))}
+			</WebView>
+			<WebView recipe={shareProjectClasses.section}>
+				<WebText recipe={shareProjectClasses.heading}>{SHARING_COPY.people}</WebText>
+				{inventory.isSuccess && !inventory.data.members.length ? (
+					<WebText recipe={shareProjectClasses.description}>{SHARING_COPY.onlyYou}</WebText>
+				) : null}
+				{(inventory.data?.members ?? []).map((member) => (
+					<WebView key={member.id} recipe={shareProjectClasses.row}>
+						<WebView recipe={shareProjectClasses.identity}>
+							<WebText recipe={shareProjectClasses.name}>
+								{member.user_email ?? member.user_display ?? member.user_id}
+							</WebText>
+							<WebText recipe={shareProjectClasses.meta}>{member.role}</WebText>
+						</WebView>
+						<Button
+							variant="ghost"
+							size="sm"
+							disabled={action.busy}
+							onPress={() =>
+								confirm(t("sharing.removeMember"), t("sharing.removeWarning"), (signal) =>
+									sharing.removeMember(project.id, member.user_id, signal),
+								)
+							}
+						>
+							<Text>{t("sharing.removeMember")}</Text>
+						</Button>
+					</WebView>
+				))}
+			</WebView>
+			<WebView recipe={shareProjectClasses.linksSection}>
+				<WebView recipe={shareProjectClasses.headingRow}>
+					<WebText recipe={shareProjectClasses.heading}>{SHARING_COPY.inviteLink}</WebText>
+					<Button
+						variant="outline"
+						size="sm"
 						disabled={action.busy || Boolean(freshLink)}
 						onPress={() => void createLink()}
-					/>
-					{freshLink ? (
-						<AppView className="gap-2">
-							<AppText>{t("sharing.once")}</AppText>
-							<AppText selectable>{freshLink.url}</AppText>
-							<NativeButton
-								label={t("sharing.shareLink")}
-								disabled={action.busy}
-								onPress={() =>
-									void action.run(async () => {
-										if (scope.isCurrent() && !scope.signal.aborted && focused.current)
-											await Share.share({ message: freshLink.url });
-									})
-								}
-							/>
-							<NativeButton
-								label={t("sharing.dismiss")}
-								onPress={() => {
-									presentation.current += 1;
-									setFreshLink(null);
-								}}
-							/>
-						</AppView>
-					) : null}
-					{action.error ? <AppText accessibilityRole="alert">{t("sharing.failed")}</AppText> : null}
-					<NativeButton
-						label={t("sharing.stop")}
-						disabled={action.busy}
-						onPress={() =>
-							confirm(t("sharing.stop"), t("sharing.stopWarning"), (signal) =>
-								sharing.stopSharing(project.id, signal),
-							)
-						}
-					/>
-				</AppView>
-			}
-			renderItem={(row) => (
-				<AppView className="gap-2 rounded-2xl bg-card p-4">
-					{row.kind === "link" ? (
-						<>
-							<AppText>
-								{t("sharing.link")} · {row.value.label || row.value.prefix}
-							</AppText>
-							<AppText>
-								{t(linkIsActive(row.value) ? "sharing.active" : "sharing.inactive")} ·{" "}
-								{row.value.redeem_count} {t("sharing.redemptions")}
-							</AppText>
-							{row.value.expires_at ? (
-								<AppText>
-									{t("sharing.expires")} {formatDate(row.value.expires_at)}
-								</AppText>
+					>
+						<Text>{SHARING_COPY.createLink}</Text>
+					</Button>
+				</WebView>
+				<WebText recipe={shareProjectClasses.description}>{SHARING_COPY.linkDescription}</WebText>
+				<Input
+					accessibilityLabel={t("sharing.label")}
+					placeholder={t("sharing.label")}
+					value={label}
+					onChangeText={setLabel}
+					maxLength={200}
+					editable={!action.busy}
+				/>
+				{freshLink ? (
+					<WebView recipe={shareProjectClasses.section}>
+						<Text>{t("sharing.once")}</Text>
+						<Text selectable>{freshLink.url}</Text>
+						<Button
+							variant="outline"
+							size="sm"
+							disabled={action.busy}
+							onPress={() =>
+								void action.run(async () => {
+									if (scope.isCurrent() && !scope.signal.aborted && focused.current)
+										await Share.share({ message: freshLink.url });
+								})
+							}
+						>
+							<Text>{t("sharing.shareLink")}</Text>
+						</Button>
+						<Button
+							variant="ghost"
+							size="sm"
+							onPress={() => {
+								presentation.current += 1;
+								setFreshLink(null);
+							}}
+						>
+							<Text>{t("sharing.dismiss")}</Text>
+						</Button>
+					</WebView>
+				) : null}
+				{(inventory.data?.links ?? []).map((link) => (
+					<WebView key={link.id} recipe={shareProjectClasses.row}>
+						<WebView recipe={shareProjectClasses.identity}>
+							<WebText recipe={shareProjectClasses.name}>
+								{link.label ?? SHARING_COPY.inviteLink}
+							</WebText>
+							<WebText recipe={shareProjectClasses.linkMeta}>
+								{formatDate(link.created_at)} · {link.redeem_count} {t("sharing.redemptions")}
+							</WebText>
+							{!linkIsActive(link) ? (
+								<Badge variant="secondary">
+									<Text>{t("sharing.inactive")}</Text>
+								</Badge>
 							) : null}
-							<NativeButton
-								label={t("sharing.revoke")}
-								disabled={action.busy || Boolean(row.value.revoked_at)}
+						</WebView>
+						{linkIsActive(link) ? (
+							<Button
+								variant="ghost"
+								size="sm"
+								disabled={action.busy}
 								onPress={() =>
 									confirm(t("sharing.revoke"), t("sharing.revokeWarning"), (signal) =>
-										sharing.revokeLink(project.id, row.value.id, signal),
+										sharing.revokeLink(project.id, link.id, signal),
 									)
 								}
-							/>
-						</>
-					) : row.kind === "invitation" ? (
-						<>
-							<AppText>
-								{t("sharing.invitation")} · {row.value.invitee_email}
-							</AppText>
-							<NativeButton
-								label={t("sharing.cancelInvite")}
-								disabled={action.busy}
-								onPress={() =>
-									confirm(t("sharing.cancelInvite"), t("sharing.cancelWarning"), (signal) =>
-										sharing.cancelInvitation(project.id, row.value.id, signal),
-									)
-								}
-							/>
-						</>
-					) : (
-						<>
-							<AppText>
-								{t("sharing.member")} ·{" "}
-								{row.value.user_display || row.value.user_email || t("sharing.unknownMember")}
-							</AppText>
-							<AppText>{row.value.role}</AppText>
-							<NativeButton
-								label={t("sharing.removeMember")}
-								disabled={action.busy}
-								onPress={() =>
-									confirm(t("sharing.removeMember"), t("sharing.removeWarning"), (signal) =>
-										sharing.removeMember(project.id, row.value.user_id, signal),
-									)
-								}
-							/>
-						</>
-					)}
-				</AppView>
-			)}
-		/>
+							>
+								<Text>{t("sharing.revoke")}</Text>
+							</Button>
+						) : null}
+					</WebView>
+				))}
+			</WebView>
+			<Button
+				variant="ghost"
+				size="sm"
+				textClassName="text-destructive"
+				disabled={action.busy}
+				onPress={() =>
+					confirm(t("sharing.stop"), t("sharing.stopWarning"), (signal) =>
+						sharing.stopSharing(project.id, signal),
+					)
+				}
+			>
+				<Text>{SHARING_COPY.stop}</Text>
+			</Button>
+		</WebView>
+	);
+	return embedded ? (
+		content
+	) : (
+		<LibraryPage>
+			<DetailBackLink href="/projects" label={t("projects.title")} />
+			{content}
+		</LibraryPage>
 	);
 }

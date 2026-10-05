@@ -1,14 +1,19 @@
+import {
+	sessionAgentFallbackSizes,
+	sessionAgentIconRadius,
+	sessionAgentIconSizes,
+} from "./session-meta";
 /** Verbatim Web recipes, shared with the native phone layout. */
 export const agentIconClasses = {
-	size4: "size-4",
-	size5: "size-5",
-	size6: "size-6",
-	size8: "size-8",
-	size10: "size-10",
-	size12: "size-12",
-	size25: "size-2.5",
-	size3: "size-3",
-	size35: "size-3.5",
-	roundedFull: "rounded-full",
-	roundedMd: "rounded-md",
+	size4: sessionAgentIconSizes.xs,
+	size5: sessionAgentIconSizes.sm,
+	size6: sessionAgentIconSizes.md,
+	size8: sessionAgentIconSizes.lg,
+	size10: sessionAgentIconSizes.rail,
+	size12: sessionAgentIconSizes.xl,
+	size25: sessionAgentFallbackSizes.xs,
+	size3: sessionAgentFallbackSizes.sm,
+	size35: sessionAgentFallbackSizes.md,
+	roundedFull: sessionAgentIconRadius.circle,
+	roundedMd: sessionAgentIconRadius.rounded,
 } as const;

@@ -1,7 +1,8 @@
+import { sessionAgentInlineClasses } from "./session-meta";
 /** Verbatim Web recipes, shared with the native phone layout. */
 export const agentLabelClasses = {
-	inlineFlexItemsCenterGap: "inline-flex items-center gap-1.5",
-	fontMediumTextForeground: "font-medium text-foreground",
+	inlineFlexItemsCenterGap: sessionAgentInlineClasses.root,
+	fontMediumTextForeground: sessionAgentInlineClasses.label,
 	textInfoMutedForeground: "text-info-muted-foreground",
 	textMutedForeground: "text-muted-foreground",
 	shrink0WhitespaceNowrapBorder:
