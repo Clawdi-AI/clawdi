@@ -1768,6 +1768,17 @@ const computeGetRoutes = {
 	"/v2/deployments/{deployment_id}": ({ params }) =>
 		deployments.find((item) => item.resource.id === params.deployment_id) ??
 		notFound("Deployment not found"),
+	"/v2/deployments/{deployment_id}/workspace-skills": ({ params }) => {
+		const deployment = deployments.find((item) => item.resource.id === params.deployment_id);
+		if (!deployment) return notFound("Deployment not found");
+		return {
+			deployment_id: deployment.resource.id,
+			deployment_resource_version: deployment.resource.metadata.resourceVersion,
+			manifest_generation: 1,
+			capability: { available: true, reason: "available" },
+			items: [],
+		};
+	},
 	"/v2/operations/{operation_id}": ({ params }) =>
 		deploymentOperations.find((item) => item.name === `operations/${params.operation_id}`) ??
 		notFound("Operation not found"),

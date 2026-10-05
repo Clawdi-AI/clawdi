@@ -112,6 +112,13 @@ scripts/ui-parity/android-screenshot.sh agent-detail /agents/c1a0de00-0001-4c00-
 scripts/ui-parity/android-screenshot.sh sessions /sessions --settle 5
 ```
 
+The preview APK uses React Native's dev menu rather than `expo-dev-client`.
+If the development-client deep link does not change the server, open the RN dev
+menu (`adb -s emulator-5556 shell input keyevent 82`), choose **Change Bundle
+Location**, enter `10.0.2.2:8082`, and apply. Verify Metro logs show **Android
+Bundled** from your worktree before capturing; the native config remains baked
+into the APK.
+
 The script uses `adb` from `~/.cache/clawdi/android-preview/sdk/platform-tools`
 (override with `ANDROID_SDK_ROOT`), opens `clawdi://<path>`, and writes
 `/tmp/clawdi-ui-parity/android/<name>.png`. It fails if no device is attached;
