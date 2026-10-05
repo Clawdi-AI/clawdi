@@ -2,16 +2,19 @@ import { HERO_GRID_CLASS, PROJECT_STAT_TILE_TINTS, projectDetailClasses } from "
 import {
 	displayProjectName,
 	identityFor,
+	OVERVIEW_COPY,
 	PROJECT_LOCAL_TABS,
 	projectDetailDescription,
+	SHARING_COPY,
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
-import { Bot, MoreHorizontal, Plus } from "lucide-react-native";
+import { ArrowRight, Bot, MoreHorizontal, Plus, Share2 } from "lucide-react-native";
 import { useState } from "react";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
+import { AgentIcon } from "../ui/agents/agent-icon";
 import { ApiErrorPanel } from "../ui/api-error-panel";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -23,7 +26,7 @@ import {
 	DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { EmptyState } from "../ui/empty-state";
-import { EntityHeader, HeroCardSkeleton } from "../ui/entity-card";
+import { HeroCardSkeleton } from "../ui/entity-card";
 import { Icon } from "../ui/icon";
 import { IconChip } from "../ui/icon-chip";
 import { PageHeader, PageHeaderSkeleton } from "../ui/page-header";
@@ -35,7 +38,6 @@ import { AppPressable } from "../ui/view";
 import { WebText, WebView, webBoth, webView } from "../ui/web-layout";
 import { agentDisplayName, isNotFound, useCloudAgents } from "./cloud-inventory";
 import { useProject } from "./project-scope";
-import { SharingView } from "./project-sharing";
 import { canManageSharing } from "./project-sharing-state";
 import { projectRouteFilter } from "./read-helpers";
 import { ResourceError } from "./resource-error";
@@ -183,23 +185,41 @@ function ProjectHub({ id }: { id?: string }) {
 						<WebView recipe={projectDetailClasses.section}>
 							<WebView recipe={projectDetailClasses.sectionHeader}>
 								<WebView recipe={projectDetailClasses.sectionHeading}>
-									<WebText recipe={projectDetailClasses.heading}>{t("skills.title")}</WebText>
+									<WebText recipe={projectDetailClasses.heading}>
+										{t("skills.title")}{" "}
+										<WebText recipe={projectDetailClasses.resourceCount}>
+											{project.skill_count}
+										</WebText>
+									</WebText>
 									<WebText recipe={projectDetailClasses.subtitle}>
 										{t("libraryPort.projectSkillsDescription")}
 									</WebText>
 								</WebView>
-								{project.is_owner && !project.archived_at ? (
+								<WebView recipe={projectDetailClasses.paginationActions}>
 									<Button
-										variant="outline"
+										variant="ghost"
 										size="sm"
+										textClassName={webBoth(projectDetailClasses.emptyCount)}
 										onPress={() =>
-											router.push({ pathname: "/skills/new", params: { projectId: project.id } })
+											router.push({ pathname: "/skills", params: { projectId: project.id } })
 										}
 									>
-										<Icon as={Plus} />
-										<Text>{t("libraryPort.addSkill")}</Text>
+										<Text>{OVERVIEW_COPY.viewAll}</Text>
+										<Icon as={ArrowRight} />
 									</Button>
-								) : null}
+									{project.is_owner && !project.archived_at ? (
+										<Button
+											variant="outline"
+											size="sm"
+											onPress={() =>
+												router.push({ pathname: "/skills/new", params: { projectId: project.id } })
+											}
+										>
+											<Icon as={Plus} />
+											<Text>{t("libraryPort.addSkill")}</Text>
+										</Button>
+									) : null}
+								</WebView>
 							</WebView>
 							{skills.error ? (
 								<ApiErrorPanel error={skills.error} onRetry={() => void skills.refetch()} />
@@ -230,7 +250,7 @@ function ProjectHub({ id }: { id?: string }) {
 					) : null}
 					{tab === "vaults" ? (
 						<WebView recipe={projectDetailClasses.section}>
-							<WebText recipe={projectDetailClasses.heading}>{t("vault.title")}</WebText>
+							<WebText recipe={projectDetailClasses.heading}>{t("navigation.vaults")}</WebText>
 							<WebText recipe={projectDetailClasses.subtitle}>
 								{t("libraryPort.projectVaultsDescription")}
 							</WebText>
@@ -266,10 +286,31 @@ function ProjectHub({ id }: { id?: string }) {
 					) : null}
 					{tab === "access" ? (
 						<WebView recipe={projectDetailClasses.section}>
-							<WebText recipe={projectDetailClasses.heading}>{t("libraryPort.people")}</WebText>
+							<WebText recipe={projectDetailClasses.heading}>
+								{t("libraryPort.people")}{" "}
+								<WebText recipe={projectDetailClasses.resourceCount}>
+									{project.member_count + 1}
+								</WebText>
+							</WebText>
 							<WebText recipe={projectDetailClasses.subtitle}>
 								{t("libraryPort.peopleDescription")}
 							</WebText>
+							{canManageSharing(project) ? (
+								<Button
+									variant="outline"
+									size="sm"
+									className="self-start"
+									onPress={() =>
+										router.push({
+											pathname: "/projects/[projectId]/sharing",
+											params: { projectId: project.id },
+										})
+									}
+								>
+									<Icon as={Share2} />
+									<Text>{SHARING_COPY.manage}</Text>
+								</Button>
+							) : null}
 							{members.error ? (
 								<ApiErrorPanel error={members.error} onRetry={() => void members.refetch()} />
 							) : null}
@@ -285,14 +326,14 @@ function ProjectHub({ id }: { id?: string }) {
 									</WebView>
 								))}
 							</WebView>
-							{canManageSharing(project) ? (
-								<SharingView key={project.id} project={project} embedded />
-							) : null}
 						</WebView>
 					) : null}
 					{tab === "agents" ? (
 						<WebView recipe={projectDetailClasses.section}>
-							<WebText recipe={projectDetailClasses.heading}>{t("libraryPort.yourAgents")}</WebText>
+							<WebText recipe={projectDetailClasses.heading}>
+								{t("libraryPort.yourAgents")}{" "}
+								<WebText recipe={projectDetailClasses.resourceCount}>{project.agent_count}</WebText>
+							</WebText>
 							<WebText recipe={projectDetailClasses.subtitle}>
 								{t("libraryPort.projectAgentsDescription")}
 							</WebText>
@@ -311,24 +352,23 @@ function ProjectHub({ id }: { id?: string }) {
 											})
 										}
 									>
-										<EntityHeader
-											icon={
-												<IconChip>
-													<Icon as={Bot} />
-												</IconChip>
-											}
-											title={agentDisplayName(agent)}
-											meta={agent.machine_name}
-										/>
+										<AgentIcon agent={agent.agent_type} avatarUrl={agent.avatar_url} size="sm" />
+										<WebText
+											recipe={`${projectDetailClasses.rowName} ${projectDetailClasses.agentIdentity}`}
+										>
+											{agentDisplayName(agent)}
+										</WebText>
+										{agent.default_project_id === project.id ? (
+											<Badge variant="secondary">
+												<Text>Workspace</Text>
+											</Badge>
+										) : null}
 									</AppPressable>
 								))}
 							</WebView>
 							{agents.isSuccess && !agents.data.length ? (
 								<EmptyState variant="inset" description={t("libraryPort.emptyProjectAgents")} />
 							) : null}
-							<Button variant="outline" size="sm" onPress={() => setAgentsOpen(true)}>
-								<Text>{t("libraryPort.manageAgents")}</Text>
-							</Button>
 						</WebView>
 					) : null}
 				</>
