@@ -18,11 +18,12 @@ type ButtonProps = PressableProps &
 /** apps/web/src/components/ui/button.tsx, rendered from the same variants. */
 function Button({ className, textClassName, variant, size, ...props }: ButtonProps) {
 	const touchTarget = useContext(TouchTargetContext);
+	const inherited = useContext(TextClassContext);
 	const classes = resolveWebClasses(buttonVariants({ variant, size }));
 	// Like DOM, text classes on the container (e.g. `text-muted-foreground`) reach its text.
 	const own = resolveWebClasses(className ?? "");
 	return (
-		<TextClassContext.Provider value={cn(classes.text, own.text, textClassName)}>
+		<TextClassContext.Provider value={cn(inherited, classes.text, own.text, textClassName)}>
 			<AppPressable
 				accessibilityRole="button"
 				className={cn(
