@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { readRuntimeAppliedState } from "./applied-state";
@@ -50,6 +50,12 @@ const sdk = await import(pathToFileURL(process.argv[2]).href);
 const importDuration = performance.now() - importStarted;
 if (typeof sdk.readConfigFileSnapshotForWrite !== "function" || typeof sdk.mutateConfigFile !== "function")
   throw new Error("required public config-mutation export is missing");
+// Warm the official snapshot reader and complete plugin validation without a
+// tenant. Each submitted mutation still reads fresh native state under its lock.
+const anonymousStartedAt = Date.now(), anonymousStarted = performance.now();
+const anonymous = await sdk.readConfigFileSnapshotForWrite();
+const anonymousDuration = performance.now() - anonymousStarted;
+if (anonymous?.snapshot?.valid !== true) throw new Error("anonymous config validation failed");
 ${OPENCLAW_MUTATION_FUNCTION}
 let receivedRequest = false;
 const server = createServer((connection) => {
@@ -80,6 +86,10 @@ const server = createServer((connection) => {
       if (mutationProfileEnabled) console.error("CLAWDI_RUNTIME_SPAN " + JSON.stringify({
         label: "writer.import-sdk", pid: process.pid, startedAt: importStartedAt,
         durationMs: Math.round(importDuration * 100) / 100,
+      }));
+      if (mutationProfileEnabled) console.error("CLAWDI_RUNTIME_SPAN " + JSON.stringify({
+        label: "writer.anonymous-validation", pid: process.pid, startedAt: anonymousStartedAt,
+        durationMs: Math.round(anonymousDuration * 100) / 100,
       }));
       await profileMutation("writer.total", () => mutateOpenClawConfig(sdk, frame, "batch", true));
       connection.end(JSON.stringify({schemaVersion:"clawdi.openclawFirstWriteAck.v1",
@@ -129,29 +139,64 @@ function privateRootFile(path: string): boolean {
 	}
 }
 
-// Bind the loaded package graph, including bundled plugin JS. Source changes
-// invalidate adoption; config reads and validation still happen for every request.
-function sdkSourceRevision(sdkPath: string): string {
+// A runtime user cannot restore inode ctime after editing sources. Bind the
+// installed graph and symlink targets without reading every byte on claim.
+export function openClawWriterSourceRevision(sdkPath: string): string {
 	let root = dirname(realpathSync(sdkPath));
 	while (!existsSync(join(root, "package.json"))) {
 		const parent = dirname(root);
 		if (parent === root) throw new Error("native SDK package identity is unavailable");
 		root = parent;
 	}
-	const hashState = createHash("sha256");
-	const visit = (directory: string): void => {
-		for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
-			a.name.localeCompare(b.name),
-		)) {
-			const path = join(directory, entry.name);
-			if (entry.isDirectory() && entry.name !== "node_modules") visit(path);
-			else if (entry.isFile() && /\.(?:[cm]?js|json)$/.test(entry.name)) {
-				hashState.update(path).update(readFileSync(path));
-			}
-		}
-	};
-	visit(root);
-	return hashState.digest("hex");
+	const entries: Array<[string, string]> = [];
+	// The first walk binds symlinks themselves; the second also binds external
+	// dependency targets. Loops, oversized graphs and timeout fail admission.
+	for (const follow of [false, true]) {
+		const result = spawnSync(
+			"find",
+			[
+				...(follow ? ["-L"] : []),
+				root,
+				"(",
+				"-type",
+				"f",
+				"-o",
+				"-type",
+				"l",
+				")",
+				"-printf",
+				"%p\\0%D:%i:%s:%m:%U:%G:%T@:%C@:%l\\0",
+			],
+			{ encoding: "utf8", timeout: 5000, maxBuffer: 16 * 1024 * 1024 },
+		);
+		if (result.status !== 0) throw new Error("native SDK source identity is unavailable");
+		const fields = result.stdout.split("\0");
+		if (fields.length % 2 !== 1 || fields.at(-1) !== "")
+			throw new Error("native SDK source identity is malformed");
+		for (let index = 0; index + 1 < fields.length; index += 2)
+			entries.push([`${follow}:${fields[index]}`, fields[index + 1]]);
+	}
+	return hash(JSON.stringify(entries.sort(([left], [right]) => left.localeCompare(right))));
+}
+
+function nodeRevision(): string {
+	const path = realpathSync(nativeNodePath());
+	const info = statSync(path, { bigint: true });
+	return hash(
+		JSON.stringify([
+			path,
+			...[
+				info.dev,
+				info.ino,
+				info.size,
+				info.mode,
+				info.uid,
+				info.gid,
+				info.mtimeNs,
+				info.ctimeNs,
+			].map((value) => String(value)),
+		]),
+	);
 }
 
 function nativeNodePath(): string {
@@ -222,9 +267,13 @@ function identity(
 		const checks = {
 			manager: hash(JSON.stringify(state)),
 			sdk: hash(
-				JSON.stringify([sdkPath, runtimeFileCurrentRevision(sdkPath), sdkSourceRevision(sdkPath)]),
+				JSON.stringify([
+					sdkPath,
+					runtimeFileCurrentRevision(sdkPath),
+					openClawWriterSourceRevision(sdkPath),
+				]),
 			),
-			node: hash(JSON.stringify(runtimeFileCurrentRevision(nativeNodePath()))),
+			node: nodeRevision(),
 			script: hash(readFileSync(files.script, "utf8")),
 			socket: hash(JSON.stringify([socket.dev, socket.ino])),
 			units: hash(
@@ -261,7 +310,10 @@ function readReceipt(paths: RuntimePaths) {
 }
 
 function stopMatchingWriter(paths: RuntimePaths, sdkPath: string, expected: string): void {
-	if (identity(paths, sdkPath)?.revision !== expected)
+	if (
+		profileRuntimeStep("writer.cleanup-identity", () => identity(paths, sdkPath))?.revision !==
+		expected
+	)
 		throw new Error("anonymous writer ownership changed before cleanup");
 	systemctl(["stop", SOCKET, SERVICE]);
 }
@@ -337,7 +389,7 @@ export function tryFirstOpenClawWrite(
 		return profileRuntimeStep("writer.admission.ineligible", () => false);
 	const receipt = readReceipt(paths);
 	if (!receipt) return profileRuntimeStep("writer.admission.invalid-receipt", () => false);
-	const candidate = identity(paths, sdkPath);
+	const candidate = profileRuntimeStep("writer.admission-identity", () => identity(paths, sdkPath));
 	if (receipt.identity !== candidate?.revision) {
 		for (const name of ["manager", "sdk", "node", "script", "socket", "units"]) {
 			if (receipt.checks?.[name] !== candidate?.checks[name])

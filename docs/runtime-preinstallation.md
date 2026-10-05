@@ -89,9 +89,9 @@ OAuth gate; Hermes authentication is resolved at process startup and is not
 hot-adopted. No placeholder manifest or Cloud identity is used. Warm-up can be
 repeated on an unclaimed home; failed warm-up must not qualify it for a claim.
 A root-owned private warm marker enables first-apply ordering on small tenant
-shapes: after the platform/egress services become ready, start fresh dashboard
-and gateway services together when anonymous egress has been safely adopted;
-otherwise wait for dashboard HTTP before starting the gateway. Normal gateway and
+shapes: when anonymous egress has been safely adopted, overlap fresh dashboard
+startup with platform activation, then wait for dashboard HTTP before starting
+the gateway. Without that proof, platform activation remains first. Normal gateway and
 channel observation still determine readiness. Existing tenants keep their
 normal startup order. Final systemd state is freshly read in one batch per
 scope, including unit enablement; warm-up does not replace this proof.
@@ -179,7 +179,10 @@ successful activation. Neither warm command's CLI interface changes.
 Anonymous OpenClaw warm-up also preloads the official config-mutation SDK in a
 runtime-user service with a root-owned 0600 single-use socket. Its root-private
 receipt binds the idle invocation, effective units, socket inode, Node binary
-and installed SDK source graph. First hot apply persists a consumed marker before
+and installed SDK source graph, including dependency symlink targets. Source
+identity uses inode, nanosecond ctime/mtime, ownership, mode and size; editing and
+restoring file bytes/mtime still invalidates adoption. Warm-up completes an
+anonymous official snapshot read and plugin validation before socket readiness. First hot apply persists a consumed marker before
 sending its batch, checks an acknowledgement bound to the request UUID/hash,
 and re-attests ownership before stopping the service/socket. Native config reads,
 cross-process locking, CAS and full validation still run for that batch. Stale
@@ -188,11 +191,13 @@ a consumed request. The temporary service is outside tenant unit inventory.
 Both warm commands refuse an existing runtime context before mutating services.
 
 When anonymous egress has been re-attested and acknowledged for the claimed
-snapshot, first Hermes activation starts its fresh dashboard and gateway
-together. Normal/fallback activation keeps its previous ordering. The producer
+snapshot, first Hermes activation overlaps the dashboard with platform startup
+and starts the gateway only after dashboard HTTP readiness. Normal/fallback activation keeps its previous ordering. The producer
 accepts equivalent successful watch events only under the exact current apply
-and source authority, while retaining complete parent/health fences. Native
-qualification of these changes is pending; no 10 s readiness bound is claimed.
+and source authority, while retaining complete parent/health fences. Manager
+status reads batch by explicit unit ID with per-unit fallback. Initial healthy
+observation polling uses a bounded 250 ms cadence; network backoff and the
+60-second steady cadence are unchanged. Native qualification of these changes is pending; no 10 s readiness bound is claimed.
 
 Done: Docker CLI typecheck, focused systemd/producer regressions and Biome pass;
 latency qualification belongs to the paired provisioning fixture.

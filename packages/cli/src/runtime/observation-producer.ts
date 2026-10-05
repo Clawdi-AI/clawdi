@@ -16,7 +16,7 @@ import { profileRuntimeStepAsync } from "./profile";
 
 const OBSERVATION_INTERVAL_MS = 60_000;
 // Until the first healthy sample, readiness latency is user-visible deploy time.
-const CONVERGENCE_OBSERVATION_INTERVAL_MS = 1_000;
+const CONVERGENCE_OBSERVATION_INTERVAL_MS = 250;
 const CONVERGENCE_OBSERVATION_WINDOW_MS = 90_000;
 const IDLE_RETRY_INTERVAL_MS = 1_000;
 const FAILURE_RETRY_INTERVAL_MS = 5_000;
@@ -200,6 +200,7 @@ export async function runRuntimeObservationProducer(
 	const now = options.now ?? Date.now;
 	const activeAttempts = new Map<string, Promise<void>>();
 	const schedules = new Map<string, ObservationSchedule>();
+	const initialWindowEnd = now() + CONVERGENCE_OBSERVATION_WINDOW_MS;
 	while (!options.abort.aborted) {
 		try {
 			const identityKey = producer.currentAttestedIdentityKey();
@@ -210,7 +211,7 @@ export async function runRuntimeObservationProducer(
 				const schedule = schedules.get(identityKey) ?? {
 					nextAttemptAt: 0,
 					consecutiveFailures: 0,
-					convergenceWindowEnd: null,
+					convergenceWindowEnd: now() + CONVERGENCE_OBSERVATION_WINDOW_MS,
 					lastAttemptedAppliedReceipt: null,
 				};
 				schedules.set(identityKey, schedule);
@@ -237,7 +238,9 @@ export async function runRuntimeObservationProducer(
 							// A retried event retains its capture time; acknowledging it must not
 							// postpone the next fresh sample by another full interval.
 							interval = Math.max(
-								IDLE_RETRY_INTERVAL_MS,
+								schedule.convergenceWindowEnd === "closed"
+									? IDLE_RETRY_INTERVAL_MS
+									: CONVERGENCE_OBSERVATION_INTERVAL_MS,
 								interval - Math.max(0, completedAt - Date.parse(result.capturedAt)),
 							);
 						}
@@ -251,7 +254,11 @@ export async function runRuntimeObservationProducer(
 							schedule.consecutiveFailures = 0;
 						}
 						if (result.outcome === "idle") {
-							interval = IDLE_RETRY_INTERVAL_MS;
+							interval =
+								typeof schedule.convergenceWindowEnd === "number" &&
+								completedAt < schedule.convergenceWindowEnd
+									? CONVERGENCE_OBSERVATION_INTERVAL_MS
+									: IDLE_RETRY_INTERVAL_MS;
 						}
 						schedule.nextAttemptAt = completedAt + interval;
 						if (activeAttempts.get(identityKey) === attempt) {
@@ -264,7 +271,22 @@ export async function runRuntimeObservationProducer(
 		} catch (error) {
 			log.info("daemon.runtime_observation_failed", { error: toErrorMessage(error) });
 		}
-		await delay(IDLE_RETRY_INTERVAL_MS, options.abort);
+		// Poll quickly only during the bounded first-readiness window. Network
+		// backoff and the steady cadence retain their independent deadlines.
+		const schedule = schedules.get(producer.currentAttestedIdentityKey() ?? "");
+		const converging =
+			schedule &&
+			typeof schedule.convergenceWindowEnd === "number" &&
+			now() < schedule.convergenceWindowEnd;
+		const pollInterval =
+			converging || (!schedule && now() < initialWindowEnd)
+				? CONVERGENCE_OBSERVATION_INTERVAL_MS
+				: IDLE_RETRY_INTERVAL_MS;
+		const untilAttempt = schedule ? schedule.nextAttemptAt - now() : 0;
+		await delay(
+			untilAttempt > 0 ? Math.min(pollInterval, untilAttempt) : pollInterval,
+			options.abort,
+		);
 	}
 }
 

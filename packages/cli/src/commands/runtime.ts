@@ -1673,7 +1673,7 @@ async function applyRuntimeDesiredState(
 									? [RUNTIME_SIDECAR_SYSTEM_UNIT]
 									: [],
 								adoptUserUnits,
-								concurrentFreshHermes: warmEgress,
+								earlyFreshHermes: warmEgress,
 							},
 						);
 						if (activation.applied && adoptUserUnits.length > 0) {

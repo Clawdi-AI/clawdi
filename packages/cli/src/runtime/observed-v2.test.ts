@@ -104,6 +104,42 @@ function healthyAppliedRuntimePaths(enabledRuntimes: string[] = []) {
 }
 
 describe("hosted runtime observed v2", () => {
+	test.each([false, true])(
+		"joins batched manager state by ID and falls back on incomplete output (%s)",
+		async (incomplete) => {
+			const paths = healthyAppliedRuntimePaths();
+			const first = "clawdi-batch-first.service";
+			const second = "clawdi-batch-second.service";
+			mkdirSync(paths.systemdSystemRoot);
+			for (const unit of [first, second])
+				writeFileSync(join(paths.systemdSystemRoot, unit), "[Service]\n");
+			const root = dirname(paths.systemdSystemRoot);
+			const command = join(root, "systemctl");
+			const commands = join(root, "commands");
+			writeFileSync(
+				command,
+				`#!/bin/sh
+echo "$*" >> '${commands}'
+case "$*" in
+ *--property=Id*)
+  printf 'Id=${second}\\nActiveState=inactive\\nSubState=dead\\n\\n'
+  ${incomplete ? "exit 0" : "printf 'Id=" + first + "\\nActiveState=active\\nSubState=running\\n'"} ;;
+ *${first}*) printf 'ActiveState=active\\nSubState=running\\n' ;;
+ *) printf 'ActiveState=inactive\\nSubState=dead\\n' ;;
+esac
+`,
+				{ mode: 0o755 },
+			);
+			process.env.CLAWDI_SYSTEMCTL_PATH = command;
+			const observed = await readHostedRuntimeObserved(paths);
+			expect(observed?.systemd?.units).toEqual([
+				expect.objectContaining({ name: first, activeState: "active", status: "ok" }),
+				expect.objectContaining({ name: second, activeState: "inactive", status: "unknown" }),
+			]);
+			expect(readFileSync(commands, "utf8").trim().split("\n")).toHaveLength(incomplete ? 3 : 1);
+		},
+	);
+
 	test("reports applied authority and keeps status version separate from the active process", async () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-observed-v2-"));
 		roots.push(root);

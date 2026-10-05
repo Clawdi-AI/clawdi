@@ -8,6 +8,9 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	statSync,
+	symlinkSync,
+	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,6 +21,7 @@ import {
 	assertFirstWriterUnclaimed,
 	FIRST_WRITER_SCRIPT,
 	firstWriterPaths,
+	openClawWriterSourceRevision,
 	tryFirstOpenClawWrite,
 	warmFirstOpenClawWriter,
 } from "../src/runtime/openclaw-first-writer";
@@ -66,7 +70,7 @@ test.each(["success", "rejected", "incomplete", "oversized"])(
  import {readFileSync,writeFileSync} from "node:fs";
  const path=process.env.OPENCLAW_CONFIG_PATH;
  export async function readConfigFileSnapshotForWrite(options){
-  if(options.skipPluginValidation!==true)throw new Error("bad preview");
+  if(options && options.skipPluginValidation!==true)throw new Error("bad preview");
   return {snapshot:{valid:true,sourceConfig:JSON.parse(readFileSync(path,"utf8"))}};
  }
  export async function mutateConfigFile(options){
@@ -124,6 +128,34 @@ finally:
 	},
 	30_000,
 );
+
+test("writer source attestation detects restored content, dependencies and symlink targets", () => {
+	scratch = mkdtempSync(join(tmpdir(), "writer-source-revision-"));
+	const sdk = join(scratch, "sdk");
+	mkdirSync(sdk);
+	writeFileSync(join(sdk, "package.json"), "{}");
+	const entry = join(sdk, "mutation.mjs");
+	writeFileSync(entry, "export const value = 1;");
+	const original = statSync(entry);
+	const initial = openClawWriterSourceRevision(entry);
+	writeFileSync(entry, "export const value = 2;");
+	writeFileSync(entry, "export const value = 1;");
+	utimesSync(entry, original.atime, original.mtime);
+	expect(openClawWriterSourceRevision(entry)).not.toBe(initial);
+
+	const dependencies = join(sdk, "node_modules");
+	mkdirSync(dependencies);
+	const external = join(scratch, "external.mjs");
+	writeFileSync(external, "export const dependency = 1;");
+	symlinkSync(external, join(dependencies, "dependency.mjs"));
+	const linked = openClawWriterSourceRevision(entry);
+	writeFileSync(external, "export const dependency = 2;");
+	expect(openClawWriterSourceRevision(entry)).not.toBe(linked);
+	const changed = openClawWriterSourceRevision(entry);
+	rmSync(join(dependencies, "dependency.mjs"));
+	symlinkSync(entry, join(dependencies, "dependency.mjs"));
+	expect(openClawWriterSourceRevision(entry)).not.toBe(changed);
+});
 
 test("OpenClaw warm rejects a supplied context or submitted write before service actions", async () => {
 	scratch = mkdtempSync(join(tmpdir(), "first-writer-warm-safety-"));

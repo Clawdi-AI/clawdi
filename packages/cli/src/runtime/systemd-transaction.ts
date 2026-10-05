@@ -258,7 +258,7 @@ export function applySystemdRuntimeUpdate(
 	opts: {
 		recoverFailedUnits?: boolean;
 		/** First apply only, after anonymous egress identity and snapshot ACK. */
-		concurrentFreshHermes?: boolean;
+		earlyFreshHermes?: boolean;
 		restartChangedUnits?: boolean;
 		invalidatedUserUnits?: readonly string[];
 		activationScope?: {
@@ -430,21 +430,6 @@ export function applySystemdRuntimeUpdate(
 	if (resetFailedSystemUnits.length > 0) {
 		systemctl(["reset-failed", ...resetFailedSystemUnits]);
 	}
-	if (startSystemUnits.length > 0) {
-		systemctl(["start", ...startSystemUnits]);
-	}
-	if (restartSystemUnits.length > 0) {
-		for (const unit of restartSystemUnits) {
-			log.info("runtime.systemd_restart", {
-				scope: "system",
-				unit,
-				changed: system.changed.includes(unit),
-				pendingActivation: pendingSystemActivation.has(unit),
-			});
-		}
-		systemctl(["restart", ...restartSystemUnits]);
-	}
-
 	const enableUserUnits: string[] = [];
 	const resetFailedUserUnits: string[] = [];
 	const startUserUnits: string[] = [];
@@ -480,12 +465,41 @@ export function applySystemdRuntimeUpdate(
 	if (resetFailedUserUnits.length > 0) {
 		runtimeUserSystemctl(paths, ["reset-failed", ...resetFailedUserUnits]);
 	}
+	const dashboard = "clawdi-hermes-dashboard.service";
+	const gateway = "hermes-gateway.service";
+	const earlyDashboard =
+		opts.earlyFreshHermes &&
+		hermesWasWarmed(paths) &&
+		!existsSync(paths.appliedState) &&
+		startUserUnits.includes(dashboard) &&
+		startUserUnits.includes(gateway) &&
+		requiredSystemdUnitState(userStates, "user", dashboard).activeState === "inactive" &&
+		requiredSystemdUnitState(userStates, "user", gateway).activeState === "inactive";
+	if (earlyDashboard) {
+		// Verified anonymous egress is already ready. Overlap the dashboard's
+		// Python imports with platform activation, then start the gateway after
+		// HTTP readiness to avoid competing Python startup trees on two CPUs.
+		if (readSystemdComponentFingerprint(paths, "user", dashboard) !== after.user.get(dashboard))
+			throw new SystemdReobservationRequiredError("early dashboard candidate changed");
+		runtimeUserSystemctl(paths, ["start", dashboard]);
+	}
+	if (startSystemUnits.length > 0) systemctl(["start", ...startSystemUnits]);
+	if (restartSystemUnits.length > 0) {
+		for (const unit of restartSystemUnits) {
+			log.info("runtime.systemd_restart", {
+				scope: "system",
+				unit,
+				changed: system.changed.includes(unit),
+				pendingActivation: pendingSystemActivation.has(unit),
+			});
+		}
+		systemctl(["restart", ...restartSystemUnits]);
+	}
+	if (startSystemUnits.length > 0) systemctl(["start", ...startSystemUnits]);
+	if (restartSystemUnits.length > 0) systemctl(["restart", ...restartSystemUnits]);
 	if (startUserUnits.length > 0) {
-		const dashboard = "clawdi-hermes-dashboard.service";
-		const gateway = "hermes-gateway.service";
 		if (
 			hermesWasWarmed(paths) &&
-			!opts.concurrentFreshHermes &&
 			!existsSync(paths.appliedState) &&
 			startUserUnits.includes(dashboard) &&
 			startUserUnits.includes(gateway)
@@ -493,7 +507,7 @@ export function applySystemdRuntimeUpdate(
 			// On a small tenant shape, both Python startup trees compete for the
 			// same CPUs. Establish the interactive dashboard first; gateway and
 			// channel readiness still pass the normal observation proof afterward.
-			runtimeUserSystemctl(paths, ["start", dashboard]);
+			if (!earlyDashboard) runtimeUserSystemctl(paths, ["start", dashboard]);
 			profileRuntimeStep("systemd.hermes-dashboard-ready", waitForHermesDashboard);
 			runtimeUserSystemctl(paths, [
 				"start",

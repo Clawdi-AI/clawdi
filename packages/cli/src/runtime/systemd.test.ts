@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { readComponentInvocation, readComponentServiceState } from "./observed";
+import {
+	readComponentInvocation,
+	readComponentServiceState,
+	readHostedRuntimeObserved,
+} from "./observed";
 import { getRuntimePaths } from "./paths";
 import { buildRuntimeUserCommand, PRIVILEGE_DROP_STRATEGIES } from "./runtime-user-command";
 import { managedRuntimeSystemdUnitEntries, RUNTIME_SYSTEMD_DROP_IN_FILE } from "./systemd";
@@ -10,6 +15,7 @@ import {
 	applySystemdRuntimeUpdate,
 	assertSystemdRuntimeIdle,
 	beginFirstApplyEgress,
+	readSystemdUnitSnapshot,
 	runCommandResult,
 	SystemdReobservationRequiredError,
 	shouldRecoverFailedSystemdUnit,
@@ -117,6 +123,126 @@ esac
 			process.env = previous;
 		}
 	});
+
+	test.skipIf(process.env.CLAWDI_TEST_SYSTEMD_COMMAND !== "1")(
+		"fresh Hermes overlaps platform startup and retains pending-job admission",
+		() => {
+			const root = mkdtempSync(join(tmpdir(), "hermes-start-order-"));
+			roots.push(root);
+			const environment = { ...process.env };
+			const paths = {
+				...getRuntimePaths({ mode: "local" }),
+				runRoot: join(root, "run"),
+				appliedState: join(root, "applied.json"),
+				systemdSystemRoot: join(root, "system"),
+				systemdUserRoot: join(root, "user"),
+				systemdEnvRoot: join(root, "env"),
+			};
+			const dashboard = "clawdi-hermes-dashboard.service";
+			const gateway = "hermes-gateway.service";
+			const platform = "clawdi-platform-fixture.service";
+			for (const [scope, units] of [
+				["user", [dashboard, gateway]],
+				["system", [platform]],
+			] as const)
+				for (const unit of units)
+					writeFixture(
+						root,
+						`${scope}/${unit}`,
+						`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\nExecStart=/fixture\n`,
+					);
+			writeFixture(root, "run/hermes-warmed", "prepared\n");
+			const command = join(root, "bin/systemctl");
+			const log = join(root, "commands");
+			const pending = join(root, "pending");
+			writeFixture(
+				root,
+				"bin/systemctl",
+				`#!/bin/bash
+set -eu
+echo "$*" >> '${log}'
+[ "$1" != --user ] || shift
+op=$1; shift
+case "$op" in
+show)
+ for unit in "$@"; do
+  [[ "$unit" != --* ]] || continue
+  active=inactive; [ ! -f '${root}/'$unit.active ] || active=active
+  job=; [ ! -f '${pending}' ] || job=42
+  printf 'LoadState=loaded\\nActiveState=%s\\nNeedDaemonReload=no\\nJob=%s\\n\\n' "$active" "$job"
+ done ;;
+is-enabled) for unit in "$@"; do echo enabled; done ;;
+start) for unit in "$@"; do touch '${root}/'$unit.active; done ;;
+esac
+`,
+			);
+			writeFixture(root, "bin/curl", "#!/bin/sh\necho 200\n");
+			try {
+				execFileSync("chmod", ["755", command, join(root, "bin/curl")]);
+				execFileSync("chmod", ["600", join(paths.runRoot, "hermes-warmed")]);
+				process.env.CLAWDI_SYSTEMD_APPLY = "1";
+				process.env.CLAWDI_SYSTEMCTL_PATH = command;
+				process.env.CLAWDI_RUNTIME_USER = "root";
+				process.env.PATH = `${join(root, "bin")}:${process.env.PATH}`;
+				const snapshot = readSystemdUnitSnapshot(paths);
+				writeFileSync(pending, "pending");
+				expect(() =>
+					applySystemdRuntimeUpdate(paths, snapshot, snapshot, { earlyFreshHermes: true }),
+				).toThrow(SystemdReobservationRequiredError);
+				expect(readFileSync(log, "utf8")).not.toContain("start ");
+				rmSync(pending);
+				writeFileSync(log, "");
+				expect(
+					applySystemdRuntimeUpdate(paths, snapshot, snapshot, { earlyFreshHermes: true }).applied,
+				).toBe(true);
+				const calls = readFileSync(log, "utf8").trim().split("\n");
+				expect(calls.indexOf(`--user start ${dashboard}`)).toBeLessThan(
+					calls.indexOf(`start ${platform}`),
+				);
+				expect(calls.indexOf(`start ${platform}`)).toBeLessThan(
+					calls.indexOf(`--user start ${gateway}`),
+				);
+			} finally {
+				process.env = environment;
+			}
+		},
+	);
+
+	test.skipIf(process.env.CLAWDI_TEST_SYSTEMD_COMMAND !== "1")(
+		"observes real batched manager IDs without mixing active and inactive units",
+		async () => {
+			const root = mkdtempSync(join(tmpdir(), "native-batched-state-"));
+			roots.push(root);
+			const paths = {
+				...getRuntimePaths({ mode: "hosted" }),
+				serviceStateRoot: root,
+				bootStatus: join(root, "boot.json"),
+				appliedState: join(root, "applied.json"),
+				runtimeWatchStatus: join(root, "watch.json"),
+				systemdSystemRoot: "/etc/systemd/system",
+				systemdUserRoot: join(root, "user"),
+			};
+			const units = ["clawdi-batch-active.service", "clawdi-batch-inactive.service"];
+			try {
+				for (const unit of units)
+					writeFileSync(
+						join(paths.systemdSystemRoot, unit),
+						"[Service]\nExecStart=/bin/sleep 60\n",
+					);
+				execFileSync("systemctl", ["daemon-reload"]);
+				execFileSync("systemctl", ["start", units[0]]);
+				const observed = await readHostedRuntimeObserved(paths);
+				expect(observed?.systemd?.units.filter((unit) => units.includes(unit.name))).toEqual([
+					expect.objectContaining({ name: units[0], status: "ok", activeState: "active" }),
+					expect.objectContaining({ name: units[1], status: "unknown", activeState: "inactive" }),
+				]);
+			} finally {
+				execFileSync("systemctl", ["stop", ...units]);
+				for (const unit of units) rmSync(join(paths.systemdSystemRoot, unit), { force: true });
+				execFileSync("systemctl", ["daemon-reload"]);
+			}
+		},
+	);
 
 	test("reobserves an existing job before issuing mutations", () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-systemd-pending-"));

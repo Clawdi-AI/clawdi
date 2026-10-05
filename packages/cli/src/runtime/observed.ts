@@ -547,8 +547,10 @@ async function readSystemdObserved(
 	enabledRuntimes: readonly string[],
 	servingSamples: ReturnType<typeof observationServingSamples>,
 ): Promise<HostedRuntimeObservedSystemd | null> {
-	const systemUnits = managedSystemdUnitNames(paths.systemdSystemRoot).map((unit) =>
-		systemdUnitStatus("system", unit, paths),
+	const systemUnits = systemdUnitStatuses(
+		"system",
+		managedSystemdUnitNames(paths.systemdSystemRoot),
+		paths,
 	);
 	// The applied receipt survives missing unit files; directory discovery alone fails open.
 	const requiredUserUnits = Object.keys(appliedState?.activated ?? {}).filter((unit) =>
@@ -565,11 +567,11 @@ async function readSystemdObserved(
 			requiredUserUnits.push("hermes-gateway.service", "clawdi-hermes-dashboard.service");
 	}
 
-	const userUnits = [
-		...new Set([...managedSystemdUnitNames(paths.systemdUserRoot), ...requiredUserUnits]),
-	]
-		.sort()
-		.map((unit) => systemdUnitStatus("user", unit, paths));
+	const userUnits = systemdUnitStatuses(
+		"user",
+		[...new Set([...managedSystemdUnitNames(paths.systemdUserRoot), ...requiredUserUnits])].sort(),
+		paths,
+	);
 	await Promise.all(
 		userUnits.map(async (unit) => {
 			if (unit.status !== "ok") return;
@@ -652,6 +654,44 @@ export function readComponentInvocation(
 		: null;
 }
 
+// Manager output is joined by its explicit unit ID, never output order. A
+// failed or incomplete batch falls back to independent reads, preserving peer
+// health and missing-unit/error semantics.
+function systemdUnitStatuses(
+	scope: "system" | "user",
+	units: string[],
+	paths: RuntimePaths,
+): HostedRuntimeObservedSystemdUnit[] {
+	if (units.length < 2) return units.map((unit) => systemdUnitStatus(scope, unit, paths));
+	const args = [
+		"show",
+		"--all",
+		...units,
+		"--property=Id",
+		"--property=ActiveState",
+		"--property=SubState",
+		"--property=Result",
+		"--property=ExecMainCode",
+		"--property=ExecMainStatus",
+	];
+	const result = scope === "system" ? runSystemctl(args) : runRuntimeUserSystemctl(paths, args);
+	const blocks = result.output
+		.split(/\r?\n\s*\r?\n/)
+		.filter(Boolean)
+		.map(parseSystemctlShow);
+	const byId = new Map(blocks.map((fields) => [fields.Id, fields]));
+	if (
+		result.exitCode !== 0 ||
+		blocks.length !== units.length ||
+		byId.size !== units.length ||
+		units.some((unit) => !byId.get(unit)?.ActiveState)
+	)
+		return units.map((unit) => systemdUnitStatus(scope, unit, paths));
+	return units.map((unit) =>
+		systemdStatusFromProperties(scope, unit, byId.get(unit) ?? {}, result),
+	);
+}
+
 function systemdUnitStatus(
 	scope: "system" | "user",
 	unit: string,
@@ -677,7 +717,15 @@ function systemdUnitStatus(
 					"--property=ExecMainCode",
 					"--property=ExecMainStatus",
 				]);
-	const parsed = parseSystemctlShow(result.output);
+	return systemdStatusFromProperties(scope, unit, parseSystemctlShow(result.output), result);
+}
+
+function systemdStatusFromProperties(
+	scope: "system" | "user",
+	unit: string,
+	parsed: Record<string, string>,
+	result: { exitCode: number | null; output: string },
+): HostedRuntimeObservedSystemdUnit {
 	const status = systemdUnitObservedStatus(parsed.ActiveState, result.exitCode);
 	return {
 		scope,
