@@ -31,6 +31,7 @@ export * from "./deployment-failure";
 export * from "./deployment-status";
 export * from "./entity-brand-icon-ids";
 export * from "./format";
+export * from "./global-wallet-balance";
 export * from "./hosted-agent-list";
 export * from "./hosted-agent-tiles";
 export * from "./hosted-runtime";

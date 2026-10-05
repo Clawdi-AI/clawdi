@@ -268,6 +268,7 @@ export * from "./entity-card";
 export * from "./entity-icon";
 export * from "./filter-chip";
 export * from "./general-panel";
+export * from "./global-wallet-balance";
 export * from "./header-action-group";
 export * from "./icon-chip";
 export * from "./input-group";

@@ -20,6 +20,7 @@ import {
 	ActivityGraphSkeleton,
 	ContributionGraph,
 } from "../../src/ui/dashboard/contribution-graph";
+import { GlobalWalletBalance } from "../../src/ui/dashboard/global-wallet-balance";
 import { ConnectAnotherCard, OnboardingCard } from "../../src/ui/dashboard/onboarding-card";
 import { ResourcesCard } from "../../src/ui/dashboard/resources-card";
 import { TabPage } from "../../src/ui/dashboard/tab-page";
@@ -64,33 +65,36 @@ export default function HomeRoute() {
 		<TabPage
 			title={OVERVIEW_COPY.title}
 			actions={
-				<DropdownMenu>
-					<DropdownMenuTrigger
-						render={
-							<Button
-								variant="ghost"
-								size="icon-sm"
-								accessibilityLabel={t("sessionFilters.options")}
-							>
-								<WebIcon as={MoreHorizontal} recipe={styles.viewAll} />
-							</Button>
-						}
-					/>
-					<DropdownMenuContent>
-						<DropdownMenuItem
-							label={t("navigation.deployments")}
-							onSelect={() => router.push("/deployments")}
+				<>
+					<GlobalWalletBalance />
+					<DropdownMenu>
+						<DropdownMenuTrigger
+							render={
+								<Button
+									variant="ghost"
+									size="icon-sm"
+									accessibilityLabel={t("sessionFilters.options")}
+								>
+									<WebIcon as={MoreHorizontal} recipe={styles.viewAll} />
+								</Button>
+							}
 						/>
-						<DropdownMenuItem
-							label={t("publicSession.open")}
-							onSelect={() => router.push("/open-share")}
-						/>
-						<DropdownMenuItem
-							label={t("vault.supplyTitle")}
-							onSelect={() => router.push("/vault-supply")}
-						/>
-					</DropdownMenuContent>
-				</DropdownMenu>
+						<DropdownMenuContent>
+							<DropdownMenuItem
+								label={t("navigation.deployments")}
+								onSelect={() => router.push("/deployments")}
+							/>
+							<DropdownMenuItem
+								label={t("publicSession.open")}
+								onSelect={() => router.push("/open-share")}
+							/>
+							<DropdownMenuItem
+								label={t("vault.supplyTitle")}
+								onSelect={() => router.push("/vault-supply")}
+							/>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</>
 			}
 			refreshing={
 				agents.isRefetching ||
