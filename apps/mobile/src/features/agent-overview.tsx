@@ -198,9 +198,7 @@ export function AgentOverview({ agent }: { agent: CloudAgent }) {
 					)}
 					icon={KeyRound}
 					tint={RESOURCE_TINT_CLASSES.vaults}
-					onPress={() =>
-						router.push({ pathname: "/vault", params: { projectId: workspace ?? "" } })
-					}
+					onPress={() => router.push({ pathname: "/vault", params: { agentId: agent.id } })}
 				/>
 			</WebView>
 			<WebView recipe={styles.section}>

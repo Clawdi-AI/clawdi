@@ -1,12 +1,19 @@
-import { type Project, slugFromVaultName } from "@clawdi/shared/api";
+import {
+	ApiClientError,
+	type Project,
+	resolveAgentProjectScope,
+	slugFromVaultName,
+} from "@clawdi/shared/api";
 import { HERO_GRID_CLASS, vaultsSurfaceClasses } from "@clawdi/shared/ui";
 import {
 	compareVaultsForCatalog,
+	fetchAgentProjectVaults,
 	getProjectResourceDefinition,
 	identityFor,
+	vaultSearchRank,
 } from "@clawdi/shared/view";
-import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { router } from "expo-router";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { router, useLocalSearchParams } from "expo-router";
 import { Plus } from "lucide-react-native";
 import { useState } from "react";
 import { useAuthAction } from "../../auth/use-auth-action";
@@ -14,6 +21,7 @@ import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
+import { AgentSectionNavigation } from "../../ui/agents/navigation";
 import { ApiErrorPanel } from "../../ui/api-error-panel";
 import { Button } from "../../ui/button";
 import { LibraryPage } from "../../ui/detail/layout";
@@ -30,25 +38,40 @@ import { SectionLabel } from "../../ui/section-label";
 import { Text } from "../../ui/text";
 import { VaultCard } from "../../ui/vault/vault-card";
 import { WebText, WebView } from "../../ui/web-layout";
+import { useCloudAgent } from "../cloud-inventory";
 import { ProjectResourceBoundary } from "../project-scope";
 import { useCloudProjects } from "../projects";
+import { routeParam } from "../read-helpers";
 
-export function useVaultCatalog(search = "", projectId?: string, enabled = true) {
+export function useVaultCatalog(
+	search = "",
+	projectId?: string,
+	enabled = true,
+	agentProjectIds?: readonly string[],
+) {
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { vault } = useMobileApi();
 	return useInfiniteQuery({
-		queryKey: accountQueryKey(scope, "vault-catalog", search, projectId ?? "all"),
+		queryKey: accountQueryKey(scope, "vault-catalog", search, projectId ?? "all", agentProjectIds),
 		initialPageParam: 1,
 		queryFn: ({ signal, pageParam }) =>
-			read(
-				(s) =>
-					vault.list(
-						{ q: search || undefined, project_id: projectId, page: pageParam, page_size: 25 },
-						s,
-					),
-				signal,
-			),
+			read(async (s) => {
+				if (agentProjectIds !== undefined) {
+					const ids = projectId
+						? agentProjectIds.filter((id) => id === projectId)
+						: agentProjectIds;
+					const rows = await fetchAgentProjectVaults(ids, (project_id, page, page_size) =>
+						vault.list({ project_id, page, page_size }, s),
+					);
+					const items = rows.filter((item) => vaultSearchRank(item, search) !== null);
+					return { items, total: items.length, page: 1, page_size: Math.max(1, items.length) };
+				}
+				return vault.list(
+					{ q: search || undefined, project_id: projectId, page: pageParam, page_size: 25 },
+					s,
+				);
+			}, signal),
 		getNextPageParam: (page) =>
 			page.items.length && page.page * page.page_size < page.total ? page.page + 1 : undefined,
 		enabled: scope.isReady && enabled,
@@ -57,6 +80,17 @@ export function useVaultCatalog(search = "", projectId?: string, enabled = true)
 }
 
 export function VaultCatalogScreen() {
+	const scope = useAccountScope();
+	const params = useLocalSearchParams<{ agentId?: string; projectId?: string }>();
+	const agentId = routeParam(params.agentId);
+	if (agentId)
+		return (
+			<AgentVaultCatalog
+				key={`${scope.identity}:${scope.generation}:${agentId}`}
+				agentId={agentId}
+				projectId={routeParam(params.projectId)}
+			/>
+		);
 	return (
 		<ProjectResourceBoundary>
 			{(project) => <VaultCatalog project={project} />}
@@ -64,7 +98,70 @@ export function VaultCatalogScreen() {
 	);
 }
 
-function VaultCatalog({ project }: { project?: Project }) {
+function AgentVaultCatalog({ agentId, projectId }: { agentId: string; projectId?: string }) {
+	const scope = useAccountScope();
+	const read = useAccountRead();
+	const { agentProjects } = useMobileApi();
+	const agent = useCloudAgent(agentId);
+	const projects = useCloudProjects();
+	const bindings = useQuery({
+		queryKey: accountQueryKey(scope, "agent-overview-bindings", agentId),
+		enabled: scope.isReady,
+		retry: false,
+		queryFn: ({ signal }) => read((s) => agentProjects.listBindings(agentId, s), signal),
+	});
+	let projectIds: string[] = [];
+	let scopeError: unknown;
+	if (bindings.data && agent.data) {
+		try {
+			projectIds = resolveAgentProjectScope(
+				bindings.data,
+				agent.data.default_project_id,
+			).projectIds;
+			if (projectId && !projectIds.includes(projectId))
+				scopeError = new ApiClientError(404, "project_unavailable");
+		} catch (error) {
+			scopeError = error;
+		}
+	}
+	const error = scopeError || bindings.error || agent.error || projects.error;
+	if (error || bindings.isPending || agent.isPending || projects.isPending)
+		return (
+			<LibraryPage>
+				<AgentSectionNavigation agentId={agentId} section="vaults" />
+				{error ? (
+					<ApiErrorPanel
+						error={error}
+						title="Couldn't load Agent Vault access"
+						onRetry={() => {
+							void bindings.refetch();
+							void agent.refetch();
+							void projects.refetch();
+						}}
+					/>
+				) : (
+					<HeroCardSkeleton />
+				)}
+			</LibraryPage>
+		);
+	return (
+		<VaultCatalog
+			agentId={agentId}
+			agentProjectIds={projectIds}
+			project={projects.data?.find((item) => item.id === projectId && projectIds.includes(item.id))}
+		/>
+	);
+}
+
+function VaultCatalog({
+	project,
+	agentId,
+	agentProjectIds,
+}: {
+	project?: Project;
+	agentId?: string;
+	agentProjectIds?: readonly string[];
+}) {
 	const t = useI18n();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -77,12 +174,16 @@ function VaultCatalog({ project }: { project?: Project }) {
 	const projects = useCloudProjects();
 	const [name, setName] = useState("");
 	const [slug, setSlug] = useState("");
-	const catalog = useVaultCatalog(search, project?.id);
+	const catalog = useVaultCatalog(search, project?.id, true, agentProjectIds);
 	const canCreate =
-		!project || (project.is_owner && project.kind !== "environment" && !project.archived_at);
+		!agentId &&
+		(!project || (project.is_owner && project.kind !== "environment" && !project.archived_at));
 	const items = [
 		...new Map((catalog.data?.pages.flatMap((p) => p.items) ?? []).map((v) => [v.id, v])).values(),
 	].sort((a, b) => compareVaultsForCatalog(a, b, search));
+	const defaultVault = catalog.data?.pages
+		.flatMap((page) => page.items)
+		.find((item) => item.is_owner !== false);
 	const create = () => {
 		const visible = capture();
 		return action.run(async (isCurrent) => {
@@ -104,20 +205,46 @@ function VaultCatalog({ project }: { project?: Project }) {
 		});
 	};
 	const names = new Map((projects.data ?? []).map((p) => [p.id, p.name]));
+	const filterableProjects = (projects.data ?? [])
+		.filter((p) => p.vault_count > 0)
+		.filter((p) => !agentProjectIds || agentProjectIds.includes(p.id))
+		.sort((a, b) => b.vault_count - a.vault_count || a.name.localeCompare(b.name));
 	const card = (item: (typeof items)[number]) => (
 		<VaultCard key={item.id} vault={item} names={names} />
 	);
 	return (
 		<LibraryPage>
+			{agentId ? <AgentSectionNavigation agentId={agentId} section="vaults" /> : null}
 			<PageHeader
 				title={getProjectResourceDefinition("vaults").label}
-				description={getProjectResourceDefinition("vaults").managementDescription}
+				description={
+					agentId
+						? t("libraryPort.agentVaultsDescription")
+						: getProjectResourceDefinition("vaults").managementDescription
+				}
 				actions={
 					canCreate ? (
-						<Button size="sm" onPress={() => setOpen(true)}>
-							<Icon as={Plus} />
-							<Text>{t("libraryPort.createVault")}</Text>
-						</Button>
+						<>
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={!defaultVault || catalog.isFetching || catalog.isError}
+								onPress={() => {
+									if (!defaultVault) return;
+									router.push({
+										pathname: "/vault/detail",
+										params: { vaultId: defaultVault.id, slug: defaultVault.slug, add: "1" },
+									});
+								}}
+							>
+								<Icon as={Plus} />
+								<Text>{t("libraryPort.addKeys")}</Text>
+							</Button>
+							<Button size="sm" onPress={() => setOpen(true)}>
+								<Icon as={Plus} />
+								<Text>{t("libraryPort.createVault")}</Text>
+							</Button>
+						</>
 					) : undefined
 				}
 			/>
@@ -130,17 +257,15 @@ function VaultCatalog({ project }: { project?: Project }) {
 					/>
 				}
 				filters={
-					<>
-						<FilterChip
-							active={!project}
-							onClick={() => router.setParams({ projectId: undefined })}
-						>
-							<Text>All Vaults {items.length}</Text>
-						</FilterChip>
-						{(projects.data ?? [])
-							.filter((p) => p.vault_count > 0)
-							.sort((a, b) => b.vault_count - a.vault_count || a.name.localeCompare(b.name))
-							.map((p) => (
+					filterableProjects.length > 1 ? (
+						<>
+							<FilterChip
+								active={!project}
+								onClick={() => router.setParams({ projectId: undefined })}
+							>
+								<Text>All Vaults {items.length}</Text>
+							</FilterChip>
+							{filterableProjects.map((p) => (
 								<FilterChip
 									key={p.id}
 									active={project?.id === p.id}
@@ -151,7 +276,8 @@ function VaultCatalog({ project }: { project?: Project }) {
 									</Text>
 								</FilterChip>
 							))}
-					</>
+						</>
+					) : undefined
 				}
 			/>
 			{catalog.error ? (

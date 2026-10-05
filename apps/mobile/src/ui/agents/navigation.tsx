@@ -55,7 +55,7 @@ export function AgentSectionNavigation({
 				router.push("/connectors");
 				break;
 			case "vaults":
-				if (workspace) router.push({ pathname: "/vault", params: { projectId: workspace } });
+				if (workspace) router.push({ pathname: "/vault", params: { agentId } });
 				break;
 			case "ai":
 				router.push({ pathname: "/ai-providers", params: { agentId } });

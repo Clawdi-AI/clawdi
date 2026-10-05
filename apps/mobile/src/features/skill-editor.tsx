@@ -15,6 +15,7 @@ import { router, useLocalSearchParams, useNavigation } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import {
 	BookOpen,
+	Copy,
 	FileText,
 	FolderKanban,
 	Pencil,
@@ -367,6 +368,22 @@ function SkillEditor({
 							actions={
 								canWrite ? (
 									<>
+										{projectId ? (
+											<Button
+												variant="outline"
+												size="sm"
+												disabled={action.busy || detail.isError}
+												onPress={() =>
+													router.push({
+														pathname: "/skills/archive",
+														params: { projectId, skillKey: skillKey ?? "" },
+													})
+												}
+											>
+												<Icon as={Copy} />
+												<Text>{t("libraryPort.copyOrMove")}</Text>
+											</Button>
+										) : null}
 										<Button
 											variant="outline"
 											size="sm"
@@ -384,23 +401,8 @@ function SkillEditor({
 											onPress={remove}
 										>
 											<Icon as={Trash2} />
-											<Text>{t("skills.remove")}</Text>
+											<Text>{t("libraryPort.removeFromProject")}</Text>
 										</Button>
-										{projectId ? (
-											<Button
-												variant="outline"
-												size="sm"
-												disabled={action.busy || detail.isError}
-												onPress={() =>
-													router.push({
-														pathname: "/skills/archive",
-														params: { projectId, skillKey: skillKey ?? "" },
-													})
-												}
-											>
-												<Text>{t("skillArchive.open")}</Text>
-											</Button>
-										) : null}
 									</>
 								) : undefined
 							}

@@ -190,9 +190,7 @@ export function VaultsSurface({
 				<PageHeader
 					title="Vaults"
 					description={
-						isAgent
-							? "Vaults available through this Agent’s Workspace and linked Projects. Configure Vaults in the source Project."
-							: VAULTS_RESOURCE.managementDescription
+						isAgent ? LIBRARY_COPY.agentVaultsDescription : VAULTS_RESOURCE.managementDescription
 					}
 					actions={
 						isAgent ? null : (

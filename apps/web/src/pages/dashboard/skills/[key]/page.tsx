@@ -11,6 +11,7 @@ import {
 	decodeResourceRouteParam,
 	displayProjectName,
 	errorMessage,
+	LIBRARY_COPY,
 	projectResourceHref,
 	relativeTime,
 } from "@clawdi/shared/view";
@@ -508,7 +509,7 @@ export function SkillDetailContent({
 									<SendSkillDialog skill={skill}>
 										<Button variant="outline" size="sm">
 											<Copy />
-											Copy or move
+											{LIBRARY_COPY.copyOrMove}
 										</Button>
 									</SendSkillDialog>
 									<Button
@@ -530,7 +531,7 @@ export function SkillDetailContent({
 									<ConfirmAction
 										title={`Remove ${skill.name} from Project?`}
 										description={<SkillRemovalDescription projectName={sourceProjectName} />}
-										confirmLabel="Remove from project"
+										confirmLabel={LIBRARY_COPY.removeFromProject}
 										destructive
 										onConfirm={onUninstall}
 									>
@@ -542,7 +543,7 @@ export function SkillDetailContent({
 											className={skillDetailClasses.removeAction}
 										>
 											<Trash2 />
-											Remove from project
+											{LIBRARY_COPY.removeFromProject}
 										</Button>
 									</ConfirmAction>
 								</>

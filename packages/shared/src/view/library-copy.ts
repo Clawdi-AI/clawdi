@@ -27,6 +27,10 @@ export const LIBRARY_COPY = {
 	done: "Done",
 	select: "Select",
 	transferKeys: "Copy or move keys",
+	copyOrMove: "Copy or move",
+	removeFromProject: "Remove from project",
+	agentVaultsDescription:
+		"Vaults available through this Agent’s Workspace and linked Projects. Configure Vaults in the source Project.",
 	manageAgents: "Manage agents",
 	chooseAgents: "Choose which Agents can use this Project.",
 	noAgentsAvailable: "No Agents available",

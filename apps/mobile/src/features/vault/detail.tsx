@@ -10,7 +10,7 @@ import {
 	validVaultSplit,
 } from "@clawdi/shared/api";
 import { projectDetailClasses, vaultDetailClasses } from "@clawdi/shared/ui";
-import { identityFor } from "@clawdi/shared/view";
+import { getProjectResourceDefinition, identityFor } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { ListChecks, Plus, Trash2 } from "lucide-react-native";
@@ -31,7 +31,6 @@ import { EntityCardSkeleton } from "../../ui/entity-card";
 import { Icon } from "../../ui/icon";
 import { IconChip } from "../../ui/icon-chip";
 import { Input } from "../../ui/input";
-import { ListToolbar } from "../../ui/list-toolbar";
 import { PageHeader, PageHeaderSkeleton } from "../../ui/page-header";
 import { AppText, AppView } from "../../ui/primitives";
 import { SearchInput } from "../../ui/search-input";
@@ -285,7 +284,7 @@ function VaultDetail({
 	);
 	return (
 		<LibraryPage detail>
-			<DetailBackLink href="/vault" label={t("vault.title")} />
+			<DetailBackLink href="/vault" label={getProjectResourceDefinition("vaults").label} />
 			{!identity || detail.isError ? (
 				<ResourceError
 					missing={
@@ -340,41 +339,48 @@ function VaultDetail({
 								{t("libraryPort.keysDescription")}
 							</WebText>
 						</WebView>
-						<ListToolbar
-							search={
-								<SearchInput
-									value={keySearch}
-									onChange={setKeySearch}
-									placeholder={t("libraryPort.searchKeys")}
-								/>
-							}
-							actions={
-								writable ? (
-									<>
+						<WebView recipe={vaultDetailClasses.actions}>
+							<SearchInput
+								value={keySearch}
+								onChange={setKeySearch}
+								placeholder={t("libraryPort.searchKeys")}
+							/>
+							{writable ? (
+								<>
+									<Button
+										className={webBoth(vaultDetailClasses.control)}
+										variant="outline"
+										size="sm"
+										onPress={() => {
+											setSelectMode(!selectMode);
+											setSelected([]);
+										}}
+									>
+										<Icon as={ListChecks} />
+										<Text>{t(selectMode ? "libraryPort.done" : "libraryPort.select")}</Text>
+									</Button>
+									<Button
+										className={webBoth(vaultDetailClasses.control)}
+										variant="outline"
+										size="sm"
+										onPress={() => setAddOpen(true)}
+									>
+										<Icon as={Plus} />
+										<Text>{t("libraryPort.addKeys")}</Text>
+									</Button>
+									{selected.length ? (
 										<Button
+											className={webBoth(vaultDetailClasses.control)}
 											variant="outline"
 											size="sm"
-											onPress={() => {
-												setSelectMode(!selectMode);
-												setSelected([]);
-											}}
+											onPress={() => setTransferOpen(true)}
 										>
-											<Icon as={ListChecks} />
-											<Text>{t(selectMode ? "libraryPort.done" : "libraryPort.select")}</Text>
+											<Text>Copy or move {selected.length}</Text>
 										</Button>
-										<Button variant="outline" size="sm" onPress={() => setAddOpen(true)}>
-											<Icon as={Plus} />
-											<Text>{t("libraryPort.addKeys")}</Text>
-										</Button>
-										{selected.length ? (
-											<Button variant="outline" size="sm" onPress={() => setTransferOpen(true)}>
-												<Text>Copy or move {selected.length}</Text>
-											</Button>
-										) : null}
-									</>
-								) : undefined
-							}
-						/>
+									) : null}
+								</>
+							) : null}
+						</WebView>
 						{sections.error ? (
 							<ApiErrorPanel error={sections.error} onRetry={() => void sections.refetch()} />
 						) : sections.isPending ? (
@@ -445,7 +451,7 @@ function VaultDetail({
 					</WebView>
 					<WebView recipe={vaultDetailClasses.section}>
 						<WebView recipe={vaultDetailClasses.headingRow}>
-							<WebText recipe={vaultDetailClasses.heading}>{t("vault.projects")}</WebText>
+							<WebText recipe={vaultDetailClasses.heading}>{t("projects.title")}</WebText>
 							<Badge variant="secondary">
 								<Text>{current.project_ids.length}</Text>
 							</Badge>
