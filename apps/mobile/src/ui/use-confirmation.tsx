@@ -4,6 +4,7 @@ import { ConfirmAction } from "./confirm-action";
 type ConfirmationButton = {
 	text: string;
 	style?: "cancel" | "destructive" | "default";
+	className?: string;
 	onPress?: () => unknown;
 };
 
@@ -35,6 +36,7 @@ export function useConfirmation() {
 				description={request?.description ?? ""}
 				cancelLabel={cancel?.text}
 				confirmLabel={action?.text}
+				confirmClassName={action?.className}
 				destructive={action?.style === "destructive"}
 				onConfirm={async () => {
 					await action?.onPress?.();

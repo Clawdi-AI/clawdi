@@ -219,7 +219,7 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 						void create.execute().catch(() => undefined);
 					}}
 				>
-					<Link2 className="mr-1.5 size-4" />
+					<Link2 className={shareProjectClasses.createLinkIcon} />
 					{create.isPending ? "Creating…" : SHARING_COPY.createLink}
 				</Button>
 			</div>
@@ -248,8 +248,8 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 				</ul>
 			) : null}
 			{inactiveLinks.length > 0 ? (
-				<details className="text-sm">
-					<summary className="cursor-pointer text-muted-foreground">
+				<details className={shareProjectClasses.manageRoot}>
+					<summary className={shareProjectClasses.manageTrigger}>
 						Inactive links ({inactiveLinks.length})
 					</summary>
 					<ul className="mt-2 space-y-1">
@@ -292,7 +292,7 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 									revoke.mutate(renderedRevokeTarget.id);
 							}}
 							disabled={!renderedRevokeTarget || revoke.isPending}
-							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+							className={shareProjectClasses.destructiveAction}
 						>
 							{revoke.isPending ? "Turning off…" : formCopy.revoke}
 						</AlertDialogAction>
@@ -600,7 +600,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 									cancel.mutate(renderedCancelTarget.id);
 							}}
 							disabled={!renderedCancelTarget || cancel.isPending}
-							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+							className={shareProjectClasses.destructiveAction}
 						>
 							{cancel.isPending ? "Canceling…" : formCopy.cancelInvitation}
 						</AlertDialogAction>
@@ -746,7 +746,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 									remove.mutate(renderedRemoveTarget.user_id);
 							}}
 							disabled={!renderedRemoveTarget || remove.isPending}
-							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+							className={shareProjectClasses.destructiveAction}
 						>
 							{remove.isPending ? "Removing…" : formCopy.removeMember}
 						</AlertDialogAction>
@@ -789,8 +789,8 @@ function StopSharingPanel({ projectId }: { projectId: string }) {
 	});
 
 	return (
-		<details className="text-sm">
-			<summary className="cursor-pointer text-muted-foreground">{SHARING_COPY.manage}</summary>
+		<details className={shareProjectClasses.manageRoot}>
+			<summary className={shareProjectClasses.manageTrigger}>{SHARING_COPY.manage}</summary>
 			<AlertDialog
 				open={stopAllOpen}
 				onOpenChange={(nextOpen) => {
@@ -801,7 +801,7 @@ function StopSharingPanel({ projectId }: { projectId: string }) {
 					render={
 						<Button
 							variant="ghost"
-							className="text-destructive"
+							className={shareProjectClasses.manageAction}
 							size="sm"
 							disabled={unshare.isPending}
 							aria-label="Stop all sharing for this Project"
@@ -825,7 +825,7 @@ function StopSharingPanel({ projectId }: { projectId: string }) {
 								if (!unshare.isPending) unshare.mutate();
 							}}
 							disabled={unshare.isPending}
-							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+							className={shareProjectClasses.destructiveAction}
 						>
 							{SHARING_COPY.stop}
 						</AlertDialogAction>

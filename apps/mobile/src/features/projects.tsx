@@ -14,7 +14,7 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import { MoreHorizontal, Plus } from "lucide-react-native";
+import { MoreHorizontal, Pencil, Plus } from "lucide-react-native";
 import { useState } from "react";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
@@ -329,6 +329,7 @@ function ProjectsView() {
 							<Text>{t("libraryPort.cancel")}</Text>
 						</Button>
 						<Button disabled={action.busy || !name.trim()} onPress={() => void save()}>
+							<Icon as={editing ? Pencil : Plus} />
 							<Text>{editing ? formCopy.saveChanges : formCopy.title}</Text>
 						</Button>
 					</DialogFooter>

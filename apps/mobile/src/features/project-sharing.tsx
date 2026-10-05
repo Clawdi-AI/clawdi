@@ -9,6 +9,7 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { ChevronDown, ChevronRight, Link2, UserMinus } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Share } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
@@ -20,13 +21,15 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { ErrorState, LoadingScreen } from "../ui/feedback";
+import { Icon } from "../ui/icon";
 import { Input } from "../ui/input";
 import { AppText, AppView } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
 import { Skeleton } from "../ui/skeleton";
 import { Text } from "../ui/text";
 import { useConfirmation } from "../ui/use-confirmation";
-import { WebText, WebView, webText, webView } from "../ui/web-layout";
+import { AppPressable } from "../ui/view";
+import { WebText, WebView, webBoth, webText, webView } from "../ui/web-layout";
 import { BackButton, formatDate } from "./cloud-inventory";
 import { useProject } from "./project-scope";
 import { canManageSharing, linkIsActive, safeShareUrl } from "./project-sharing-state";
@@ -85,6 +88,7 @@ export function SharingView({
 	const [email, setEmail] = useState("");
 	const [label, setLabel] = useState("");
 	const [showLabel, setShowLabel] = useState(false);
+	const [manageOpen, setManageOpen] = useState(false);
 	const [freshLink, setFreshLink] = useState<{ id: string; url: string } | null>(null);
 	const presentation = useRef(0);
 	const focused = useRef(false);
@@ -140,6 +144,7 @@ export function SharingView({
 			{
 				text: confirmLabel,
 				style: "destructive",
+				className: shareProjectClasses.destructiveAction,
 				onPress: () => {
 					if (scopeSignal.aborted || !scope.isCurrent() || !focused.current) return;
 					return action.run(async (isCurrent) => {
@@ -255,7 +260,8 @@ export function SharingView({
 						</WebView>
 						<Button
 							variant="ghost"
-							size="sm"
+							size="icon"
+							accessibilityLabel={formCopy.removeMember}
 							disabled={action.busy}
 							onPress={() =>
 								confirm(
@@ -268,7 +274,7 @@ export function SharingView({
 								)
 							}
 						>
-							<Text>{t("sharing.removeMember")}</Text>
+							<Icon as={UserMinus} className={webBoth(shareProjectClasses.destructiveIcon)} />
 						</Button>
 					</WebView>
 				))}
@@ -282,6 +288,7 @@ export function SharingView({
 						disabled={action.busy || Boolean(freshLink)}
 						onPress={() => void createLink()}
 					>
+						<Icon as={Link2} className={webBoth(shareProjectClasses.createLinkIcon)} />
 						<Text>{SHARING_COPY.createLink}</Text>
 					</Button>
 				</WebView>
@@ -364,23 +371,36 @@ export function SharingView({
 					</WebView>
 				))}
 			</WebView>
-			<Button
-				variant="ghost"
-				size="sm"
-				textClassName="text-destructive"
-				disabled={action.busy}
-				onPress={() =>
-					confirm(
-						formCopy.stopTitle,
-						formCopy.stopDescription,
-						(signal) => sharing.stopSharing(project.id, signal),
-						SHARING_COPY.stop,
-						formCopy.keepSharing,
-					)
-				}
+			<AppPressable
+				className="flex-row items-center"
+				accessibilityRole="button"
+				accessibilityLabel={SHARING_COPY.manage}
+				accessibilityState={{ expanded: manageOpen }}
+				onPress={() => setManageOpen(!manageOpen)}
 			>
-				<Text>{SHARING_COPY.stop}</Text>
-			</Button>
+				<Icon as={manageOpen ? ChevronDown : ChevronRight} />
+				<WebText recipe={shareProjectClasses.manageTrigger}>{SHARING_COPY.manage}</WebText>
+			</AppPressable>
+			{manageOpen ? (
+				<Button
+					variant="ghost"
+					size="sm"
+					textClassName={webText(shareProjectClasses.manageAction)}
+					className="self-start"
+					disabled={action.busy}
+					onPress={() =>
+						confirm(
+							formCopy.stopTitle,
+							formCopy.stopDescription,
+							(signal) => sharing.stopSharing(project.id, signal),
+							SHARING_COPY.stop,
+							formCopy.keepSharing,
+						)
+					}
+				>
+					<Text>{SHARING_COPY.stop}</Text>
+				</Button>
+			) : null}
 			{confirmationDialog.dialog}
 		</WebView>
 	);

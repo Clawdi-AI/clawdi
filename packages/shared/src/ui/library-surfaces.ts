@@ -311,6 +311,11 @@ export const libraryNavigationClasses = {
 } as const;
 
 export const shareProjectClasses = {
+	createLinkIcon: "mr-1.5 size-4",
+	destructiveAction: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+	manageRoot: "text-sm",
+	manageTrigger: "cursor-pointer text-muted-foreground",
+	manageAction: "text-destructive",
 	content: "max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg",
 	title: "pr-8 leading-snug break-words",
 	panels: "space-y-4",

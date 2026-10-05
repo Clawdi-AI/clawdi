@@ -17,7 +17,7 @@ import {
 import { ApiErrorPanel } from "./api-error-panel";
 import { Content } from "./content";
 import { Spinner } from "./feedback";
-import { webView } from "./web-layout";
+import { webBoth, webView } from "./web-layout";
 /** Web confirmation lifecycle on a native Modal: lock duplicate presses, retain on failure. */
 export function ConfirmAction({
 	children,
@@ -25,6 +25,7 @@ export function ConfirmAction({
 	description,
 	confirmLabel,
 	cancelLabel,
+	confirmClassName,
 	secondaryAction,
 	destructive = false,
 	onConfirm,
@@ -38,6 +39,7 @@ export function ConfirmAction({
 	description: ReactNode;
 	confirmLabel?: string;
 	cancelLabel?: string;
+	confirmClassName?: string;
 	secondaryAction?: { label: string; onAction: () => unknown };
 	destructive?: boolean;
 	onConfirm: () => unknown;
@@ -114,7 +116,7 @@ export function ConfirmAction({
 					<AlertDialogAction
 						variant={destructive ? "destructive" : "default"}
 						disabled={pendingAction !== null}
-						className={webView(confirmActionClasses.action)}
+						className={`${webView(confirmActionClasses.action)} ${webBoth(confirmClassName ?? "")}`}
 						onPress={() => void runAction("confirm", onConfirm)}
 					>
 						{pendingAction === "confirm" ? <Spinner /> : null}
