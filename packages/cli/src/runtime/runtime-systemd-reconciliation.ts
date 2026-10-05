@@ -24,6 +24,11 @@ import {
 import { runtimeRecoverableSecretValues } from "./manifest-secrets";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import {
+	gatewayOomProtectionLines,
+	platformOomProtectionLines,
+	runtimeMemoryBudget,
+} from "./oom-protection";
+import {
 	DEFAULT_RUN_ROOT,
 	DEFAULT_SERVICE_STATE_ROOT,
 	type RuntimePaths,
@@ -651,6 +656,7 @@ function writeSystemdSystemUnit(
 ): string {
 	return writeSystemdUnit({
 		...input,
+		extraServiceLines: [...(input.extraServiceLines ?? []), ...platformOomProtectionLines()],
 		root: input.paths.systemdSystemRoot,
 		owner: "root",
 		wantedBy: "multi-user.target",
@@ -673,6 +679,7 @@ function writeSystemdUserEnvironmentDropIn(input: {
 	name: string;
 	env: Record<string, string>;
 	unsetEnvironment?: readonly string[];
+	oomProtectionLines?: readonly string[];
 }): string {
 	const unitName = systemdUnitFileName(input.name);
 	const envFile = writeSystemdProgramEnvironment({
@@ -691,6 +698,7 @@ function writeSystemdUserEnvironmentDropIn(input: {
 		`ConditionPathExists=${systemdPath(envFile)}`,
 		"",
 		"[Service]",
+		...(input.oomProtectionLines ?? []),
 		...(input.unsetEnvironment?.length
 			? [`UnsetEnvironment=${input.unsetEnvironment.join(" ")}`]
 			: []),
@@ -1091,6 +1099,10 @@ function writeRuntimeSystemdUserProgram(input: RuntimeSystemdUserProgramEnvironm
 			name,
 			env,
 			unsetEnvironment: ["CLAWDI_AUTH_TOKEN"],
+			oomProtectionLines:
+				program.runtime === "hermes" || program.runtime === "openclaw"
+					? gatewayOomProtectionLines(program.runtime, runtimeMemoryBudget())
+					: [],
 		});
 	}
 	return writeSystemdUserUnit({
