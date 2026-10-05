@@ -49,7 +49,7 @@ export function ConnectorCard({
 
 	return (
 		<EntityRow
-			className={connectorCardClasses.rowHeight}
+			className={connectorCardClasses.root}
 			ariaLabel={app.display_name}
 			icon={<ConnectorIcon logo={app.logo} name={app.display_name} size="md" />}
 			title={
@@ -85,7 +85,7 @@ export function ConnectorCard({
 }
 
 export function ConnectorCardSkeleton() {
-	return <EntityCardSkeleton className={connectorCardClasses.rowHeight} />;
+	return <EntityCardSkeleton className={connectorCardClasses.root} />;
 }
 
 export const CONNECTOR_GRID_CLASS = ENTITY_GRID_CLASS;

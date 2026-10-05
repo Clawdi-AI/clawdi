@@ -61,7 +61,7 @@ export default function SessionsPage() {
 	return (
 		<Suspense
 			fallback={
-				<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, sessionsPageClasses.spaceY5Px4)}>
+				<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, sessionsPageClasses.root)}>
 					<PageHeader
 						title={copy.title}
 						description={SESSIONS_RESOURCE.managementDescription}
@@ -333,7 +333,7 @@ function SessionsListInner() {
 			actions={
 				<>
 					{(isFiltered || isListUpdating) && data ? (
-						<span className={sessionsPageClasses.textXsTextMutedForeground} aria-live="polite">
+						<span className={sessionsPageClasses.updateStatus} aria-live="polite">
 							{searchQueryError
 								? searchQueryError
 								: isListUpdating
@@ -347,7 +347,7 @@ function SessionsListInner() {
 						<Button
 							variant="ghost"
 							size="sm"
-							className={sessionsPageClasses.h8Px2}
+							className={sessionsPageClasses.clearFilters}
 							onClick={() =>
 								void setParams({
 									q: "",
@@ -399,7 +399,7 @@ function SessionsListInner() {
 	);
 
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, sessionsPageClasses.spaceY5Px4)}>
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, sessionsPageClasses.root)}>
 			<PageHeader
 				title={copy.title}
 				description={SESSIONS_RESOURCE.managementDescription}
@@ -415,7 +415,7 @@ function SessionsListInner() {
 					title={copy.error}
 				/>
 			) : (
-				<div className={sessionsPageClasses.spaceY4}>
+				<div className={sessionsPageClasses.content}>
 					{sessionToolbar}
 					{params.view === "table" ? (
 						<div className="hidden md:block">
@@ -453,7 +453,7 @@ function SessionsListInner() {
 												)
 										: undefined
 								}
-								className={sessionsPageClasses.spaceY0}
+								className={sessionsPageClasses.table}
 							/>
 						</div>
 					) : null}

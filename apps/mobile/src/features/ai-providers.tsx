@@ -88,7 +88,7 @@ function ProvidersView() {
 							: "Provider removed."}
 					</Text>
 				) : null}
-				<WebView recipe={styles.flexFlexColGap}>
+				<WebView recipe={styles.section}>
 					<SectionLabel>{agentSurfaceCopy.clawdi}</SectionLabel>
 					<WebView recipe={ENTITY_CARD_BASE}>
 						<EntityHeader
@@ -109,7 +109,7 @@ function ProvidersView() {
 						/>
 					</WebView>
 				</WebView>
-				<WebView recipe={styles.flexFlexColGap}>
+				<WebView recipe={styles.section}>
 					<SectionLabel
 						count={!providers.isPending && !providers.isError ? list.length : undefined}
 					>
@@ -178,7 +178,7 @@ function ProviderCard({
 				}
 				title={presentation.label}
 				titleAdornment={
-					<WebView recipe={styles.inlineFlexItemsCenter} className="flex-row">
+					<WebView recipe={styles.titleBadges} className="flex-row">
 						<Badge variant="secondary" className={webView(aiProvidersUiClasses.authBadge)}>
 							<Text>{providerAuthLabel(provider.auth.type)}</Text>
 						</Badge>
@@ -196,7 +196,7 @@ function ProviderCard({
 							: null,
 				]}
 			/>
-			<WebView recipe={styles.mtAutoFlexFlex} className="flex-row">
+			<WebView recipe={styles.actions} className="flex-row">
 				<ProviderEdit provider={provider} refresh={refresh} />
 				<ProviderRemove providerId={provider.provider_id} onRemoved={onRemoved} />
 				{provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile" ? (

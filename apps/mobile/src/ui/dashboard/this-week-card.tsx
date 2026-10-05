@@ -22,31 +22,27 @@ export function ThisWeekCard({
 				<CardTitle>{DASHBOARD_COPY.weeklyTitle}</CardTitle>
 				<CardDescription>{DASHBOARD_COPY.weeklyDescription}</CardDescription>
 			</CardHeader>
-			<CardContent className={webView(styles.spaceY5)}>
+			<CardContent className={webView(styles.content)}>
 				{error ? (
 					<ApiErrorPanel error={error} onRetry={onRetry} title={DASHBOARD_COPY.weeklyError} />
 				) : (
 					<>
 						<WebView recipe="" style={{ marginBottom: 12 }}>
-							<WebText recipe={styles.textXsTextMutedForeground}>
-								{DASHBOARD_COPY.yourSessions}
-							</WebText>
+							<WebText recipe={styles.statLabel}>{DASHBOARD_COPY.yourSessions}</WebText>
 							{ready && manualWeek !== undefined ? (
 								<>
-									<WebText recipe={styles.text3XlFontSemiboldTabular}>
-										{formatNumber(manualWeek)}
-									</WebText>
+									<WebText recipe={styles.sessionCount}>{formatNumber(manualWeek)}</WebText>
 									{automatedWeek !== undefined && automatedWeek > 0 ? (
-										<WebText recipe={styles.mt1TextXsText}>
+										<WebText recipe={styles.automatedCount}>
 											+ {formatNumber(automatedWeek)} automated (cron, heartbeat)
 										</WebText>
 									) : null}
 								</>
 							) : (
-								<Skeleton className={webView(styles.h9W16)} />
+								<Skeleton className={webView(styles.sessionCountSkeleton)} />
 							)}
 						</WebView>
-						<WebView recipe={styles.gridGridCols3Gap} className="flex-row">
+						<WebView recipe={styles.secondaryStats} className="flex-row">
 							<SecondaryStat
 								label={DASHBOARD_COPY.today}
 								value={ready && todaySessions !== undefined ? formatNumber(todaySessions) : null}
@@ -74,15 +70,12 @@ function SecondaryStat({
 	small?: boolean;
 }) {
 	return (
-		<WebView recipe={styles.spaceY1} className="flex-1">
-			<WebText recipe={styles.textXsTextMutedForeground}>{label}</WebText>
+		<WebView recipe={styles.stat} className="flex-1">
+			<WebText recipe={styles.statLabel}>{label}</WebText>
 			{value === null ? (
-				<Skeleton className={webView(styles.h5W10)} />
+				<Skeleton className={webView(styles.valueSkeleton)} />
 			) : (
-				<WebText
-					recipe={small ? styles.truncateTextSmFontMedium : styles.textBaseFontSemiboldTabular}
-					numberOfLines={1}
-				>
+				<WebText recipe={small ? styles.textValue : styles.numericValue} numberOfLines={1}>
 					{value}
 				</WebText>
 			)}

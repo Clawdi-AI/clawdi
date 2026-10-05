@@ -8,7 +8,7 @@ export const computeSubscriptionCardClasses = {
 	orphanIconTile: "flex size-6 shrink-0 items-center justify-center rounded-md bg-muted",
 	agentLink:
 		"min-w-0 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-	minWidth: "min-w-0",
+	labelBody: "min-w-0",
 	heading: "flex min-w-0 flex-wrap items-start gap-x-3 gap-y-1.5",
 	planName: "min-w-28 flex-1 basis-28 text-base font-semibold leading-6 [overflow-wrap:anywhere]",
 	badges: "ml-auto flex max-w-full shrink-0 flex-wrap justify-end gap-1.5",

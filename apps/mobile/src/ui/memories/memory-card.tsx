@@ -67,7 +67,7 @@ export function MemoryCard({
 						onLongPress={onEdit}
 						accessibilityLabel={`Delete memory: ${memoryDisplayName(memory.content)}`}
 					>
-						<Icon as={Trash2} className={webBoth(memoriesSurfaceClasses.smallIcon)} />
+						<Icon as={Trash2} className={webBoth(memoriesSurfaceClasses.deleteIcon)} />
 					</Button>
 				</EntityCardActions>
 			) : null}

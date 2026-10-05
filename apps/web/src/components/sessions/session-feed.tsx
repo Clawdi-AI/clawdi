@@ -34,9 +34,9 @@ type SessionMetadataItem = {
 
 // Title, metadata, padding and borders occupy 80px on narrow layouts; wide
 // layouts use one metadata line and the established 66px minimum.
-const SESSION_ROW_HEIGHT_CLASS = sessionFeedClasses.sessionRowHeightSpacing20;
-const SESSION_CARD_CLASS = cn(SESSION_ROW_HEIGHT_CLASS, sessionFeedClasses.flexMinHSessionRow);
-const OVERVIEW_SESSION_LIST_CLASS = cn(SESSION_ROW_HEIGHT_CLASS, sessionFeedClasses.gridGap2);
+const SESSION_ROW_HEIGHT_CLASS = sessionFeedClasses.rowHeight;
+const SESSION_CARD_CLASS = cn(SESSION_ROW_HEIGHT_CLASS, sessionFeedClasses.card);
+const OVERVIEW_SESSION_LIST_CLASS = cn(SESSION_ROW_HEIGHT_CLASS, sessionFeedClasses.overviewList);
 
 function SessionCardSkeleton({ testId }: { testId?: string }) {
 	return (
@@ -45,14 +45,14 @@ function SessionCardSkeleton({ testId }: { testId?: string }) {
 			aria-hidden="true"
 			className={cn(ENTITY_CARD_BASE, SESSION_CARD_CLASS)}
 		>
-			<Skeleton className={sessionFeedClasses.size8Shrink0Rounded} />
-			<div className={sessionFeedClasses.minW0Flex1}>
-				<div className={sessionFeedClasses.textSmLeading5Font}>
-					<Skeleton className={sessionFeedClasses.hLhW45} />
+			<Skeleton className={sessionFeedClasses.avatarSkeleton} />
+			<div className={sessionFeedClasses.skeletonBody}>
+				<div className={sessionFeedClasses.skeletonTitle}>
+					<Skeleton className={sessionFeedClasses.titleSkeleton} />
 				</div>
-				<div className={sessionFeedClasses.mt05MinH}>
-					<Skeleton className={sessionFeedClasses.hLhW12} />
-					<Skeleton className={sessionFeedClasses.hLhW13} />
+				<div className={sessionFeedClasses.skeletonMeta}>
+					<Skeleton className={sessionFeedClasses.metaSkeleton} />
+					<Skeleton className={sessionFeedClasses.secondaryMetaSkeleton} />
 				</div>
 			</div>
 		</div>
@@ -105,11 +105,7 @@ export function OverviewSessionList({
 					key={index}
 					data-testid="overview-session-placeholder"
 					aria-hidden={visibleSessions.length > 0 || index > 0 ? true : undefined}
-					className={cn(
-						ENTITY_CARD_BASE,
-						SESSION_CARD_CLASS,
-						sessionFeedClasses.justifyCenterBorderDashedBg,
-					)}
+					className={cn(ENTITY_CARD_BASE, SESSION_CARD_CLASS, sessionFeedClasses.emptyRow)}
 				>
 					{visibleSessions.length === 0 && index === 0 ? emptyMessage : null}
 				</div>
@@ -152,7 +148,7 @@ export function SessionFeed({
 }) {
 	if (isLoading) {
 		return (
-			<div className={sessionFeedClasses.flexFlexColGap2}>
+			<div className={sessionFeedClasses.list}>
 				{Array.from({ length: 5 }).map((_, index) => (
 					<SessionCardSkeleton key={index} />
 				))}
@@ -166,7 +162,7 @@ export function SessionFeed({
 
 	if (!grouped) {
 		return (
-			<div className={sessionFeedClasses.flexFlexColGap2}>
+			<div className={sessionFeedClasses.list}>
 				{sessions.map((session) => (
 					<SessionCard
 						key={session.id}
@@ -184,11 +180,11 @@ export function SessionFeed({
 	const groups = groupSessionsByRecency(sessions, groupBy);
 
 	return (
-		<div className={sessionFeedClasses.flexFlexColGap5}>
+		<div className={sessionFeedClasses.groups}>
 			{groups.map((group) => (
-				<section key={group.key} className={sessionFeedClasses.flexFlexColGap2}>
+				<section key={group.key} className={sessionFeedClasses.list}>
 					<SectionLabel>{group.label}</SectionLabel>
-					<div className={sessionFeedClasses.flexFlexColGap2}>
+					<div className={sessionFeedClasses.list}>
 						{group.items.map((session) => (
 							<SessionCard
 								key={session.id}
@@ -231,7 +227,7 @@ export function SessionCard({
 					key: "project",
 					value: projectFolder,
 					title: session.project_path ?? undefined,
-					className: String(sessionFeedClasses.fontMono),
+					className: String(sessionFeedClasses.project),
 				}
 			: null,
 		{
@@ -246,45 +242,41 @@ export function SessionCard({
 		},
 	].filter((item): item is SessionMetadataItem => item !== null);
 	return (
-		<article data-testid="session-card" className={sessionFeedClasses.minW0}>
+		<article data-testid="session-card" className={sessionFeedClasses.root}>
 			<Link
 				{...link}
 				aria-label={`Open session ${title}`}
 				className={cn(
 					ENTITY_CARD_BASE,
 					SESSION_CARD_CLASS,
-					sessionFeedClasses.groupHoverBgMuted50,
-					isAutomated && sessionFeedClasses.bgMuted30,
+					sessionFeedClasses.link,
+					isAutomated && sessionFeedClasses.automated,
 				)}
 			>
-				<span data-testid="session-card-avatar" className={sessionFeedClasses.flexShrink0}>
+				<span data-testid="session-card-avatar" className={sessionFeedClasses.avatar}>
 					<AgentIcon agent={session.agent_type} size="lg" />
 				</span>
-				<span data-testid="session-card-text" className={sessionFeedClasses.w0MinW0}>
-					<span
-						data-testid="session-card-title"
-						className={sessionFeedClasses.blockTruncateTextSmLeading}
-						title={title}
-					>
+				<span data-testid="session-card-text" className={sessionFeedClasses.body}>
+					<span data-testid="session-card-title" className={sessionFeedClasses.title} title={title}>
 						{title}
 					</span>
 					{session.search_match ? (
 						<SessionSearchMatchExcerpt
 							match={session.search_match}
 							query={searchQuery}
-							className={sessionFeedClasses.mt05LineClamp}
+							className={sessionFeedClasses.searchExcerpt}
 						/>
 					) : null}
-					<span data-testid="session-card-meta" className={sessionFeedClasses.mt05FlexMin}>
+					<span data-testid="session-card-meta" className={sessionFeedClasses.meta}>
 						{metadata.map((item, index) => (
-							<span key={item.key} className={sessionFeedClasses.inlineFlexMinW0}>
+							<span key={item.key} className={sessionFeedClasses.metaItem}>
 								{index > 0 ? (
-									<span className={sessionFeedClasses.mx15Shrink0} aria-hidden="true">
+									<span className={sessionFeedClasses.metaSeparator} aria-hidden="true">
 										·
 									</span>
 								) : null}
 								<span
-									className={cn(sessionFeedClasses.minW0Truncate, item.className)}
+									className={cn(sessionFeedClasses.metaValue, item.className)}
 									title={item.title}
 								>
 									{item.value}

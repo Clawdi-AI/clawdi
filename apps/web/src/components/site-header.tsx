@@ -30,17 +30,17 @@ export function SiteHeader({ actions }: { actions?: ReactNode }) {
 	return (
 		<header
 			data-clawdi-window-drag-region
-			className={`${siteHeaderClasses.stickyTop0Z20} ${siteHeaderClasses.pageSurface}`}
+			className={`${siteHeaderClasses.root} ${siteHeaderClasses.pageSurface}`}
 		>
-			<div className={siteHeaderClasses.flexWFullMinW}>
-				<SidebarTrigger className={siteHeaderClasses.ml1MdHidden} />
-				<Separator orientation="vertical" className={siteHeaderClasses.mx2H4Data} />
-				<div className={siteHeaderClasses.minW8Flex1}>
+			<div className={siteHeaderClasses.content}>
+				<SidebarTrigger className={siteHeaderClasses.sidebarTrigger} />
+				<Separator orientation="vertical" className={siteHeaderClasses.sidebarSeparator} />
+				<div className={siteHeaderClasses.breadcrumbs}>
 					<AppBreadcrumb />
 				</div>
 				{actions}
 				{!ready ? (
-					<Skeleton className={siteHeaderClasses.size8RoundedMd} />
+					<Skeleton className={siteHeaderClasses.notificationSkeleton} />
 				) : HostedNotificationCenter ? (
 					<Suspense fallback={<NotificationCenter />}>
 						<HostedNotificationCenter />

@@ -40,7 +40,7 @@ function DropdownMenuContent({
       >
         <MenuPrimitive.Popup
           data-slot="dropdown-menu-content"
-          className={cn(dropdownMenuClasses.dropdownMenuContent, className )}
+          className={cn(dropdownMenuClasses.content, className )}
           {...props}
         />
       </MenuPrimitive.Positioner>
@@ -64,7 +64,7 @@ function DropdownMenuLabel({
       data-slot="dropdown-menu-label"
       data-inset={inset}
       className={cn(
-        dropdownMenuClasses.dropdownMenuLabel,
+        dropdownMenuClasses.label,
         className
       )}
       {...props}
@@ -87,7 +87,7 @@ function DropdownMenuItem({
       data-inset={inset}
       data-variant={variant}
       className={cn(
-        dropdownMenuClasses.dropdownMenuItem,
+        dropdownMenuClasses.item,
         className
       )}
       {...props}
@@ -112,13 +112,13 @@ function DropdownMenuSubTrigger({
       data-slot="dropdown-menu-sub-trigger"
       data-inset={inset}
       className={cn(
-        dropdownMenuClasses.dropdownMenuSubTrigger,
+        dropdownMenuClasses.subTrigger,
         className
       )}
       {...props}
     >
       {children}
-      <ChevronRightIcon className={dropdownMenuClasses.dropdownMenuSubTrigger2} />
+      <ChevronRightIcon className={dropdownMenuClasses.subTriggerIcon} />
     </MenuPrimitive.SubmenuTrigger>
   )
 }
@@ -134,7 +134,7 @@ function DropdownMenuSubContent({
   return (
     <DropdownMenuContent
       data-slot="dropdown-menu-sub-content"
-      className={cn(dropdownMenuClasses.dropdownMenuSubContent, className )}
+      className={cn(dropdownMenuClasses.subContent, className )}
       align={align}
       alignOffset={alignOffset}
       side={side}
@@ -158,14 +158,14 @@ function DropdownMenuCheckboxItem({
       data-slot="dropdown-menu-checkbox-item"
       data-inset={inset}
       className={cn(
-        dropdownMenuClasses.dropdownMenuCheckboxItem,
+        dropdownMenuClasses.checkboxItem,
         className
       )}
       checked={checked}
       {...props}
     >
       <span
-        className={dropdownMenuClasses.dropdownMenuCheckboxItem2}
+        className={dropdownMenuClasses.checkboxIndicator}
         data-slot="dropdown-menu-checkbox-item-indicator"
       >
         <MenuPrimitive.CheckboxItemIndicator>
@@ -200,13 +200,13 @@ function DropdownMenuRadioItem({
       data-slot="dropdown-menu-radio-item"
       data-inset={inset}
       className={cn(
-        dropdownMenuClasses.dropdownMenuCheckboxItem,
+        dropdownMenuClasses.checkboxItem,
         className
       )}
       {...props}
     >
       <span
-        className={dropdownMenuClasses.dropdownMenuCheckboxItem2}
+        className={dropdownMenuClasses.checkboxIndicator}
         data-slot="dropdown-menu-radio-item-indicator"
       >
         <MenuPrimitive.RadioItemIndicator>
@@ -226,7 +226,7 @@ function DropdownMenuSeparator({
   return (
     <MenuPrimitive.Separator
       data-slot="dropdown-menu-separator"
-      className={cn(dropdownMenuClasses.dropdownMenuSeparator, className)}
+      className={cn(dropdownMenuClasses.separator, className)}
       {...props}
     />
   )
@@ -240,7 +240,7 @@ function DropdownMenuShortcut({
     <span
       data-slot="dropdown-menu-shortcut"
       className={cn(
-        dropdownMenuClasses.dropdownMenuShortcut,
+        dropdownMenuClasses.shortcut,
         className
       )}
       {...props}

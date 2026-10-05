@@ -93,7 +93,7 @@ export function ProviderFieldsForm({
 			{!oauth ? (
 				<WebView recipe={styles.field}>
 					<Label>{credentialLabel}</Label>
-					<WebView recipe={inputGroupClasses.InputGroup} className="flex-row">
+					<WebView recipe={inputGroupClasses.root} className="flex-row">
 						<Input
 							accessibilityLabel={credentialLabel}
 							placeholder={credentialPlaceholder}
@@ -103,7 +103,7 @@ export function ProviderFieldsForm({
 							secureTextEntry={!visible}
 							autoCapitalize="none"
 							autoCorrect={false}
-							className={webBoth(inputGroupClasses.InputGroupInput)}
+							className={webBoth(inputGroupClasses.input)}
 						/>
 						<WebView recipe={inputGroupAddonVariants({ align: "inline-end" })}>
 							<Button

@@ -17,31 +17,31 @@ export function OnboardingCard({
 	return (
 		<Card>
 			<CardHeader>
-				<WebView recipe={styles.flexItemsCenterGap2} className="flex-row">
-					<WebIcon as={Rocket} recipe={styles.size5TextPrimary} />
+				<WebView recipe={styles.title} className="flex-row">
+					<WebIcon as={Rocket} recipe={styles.titleIcon} />
 					<CardTitle>{title}</CardTitle>
 				</WebView>
 				<CardDescription>{description}</CardDescription>
 			</CardHeader>
 			<CardContent>
-				<WebView recipe={styles.gridGap2}>
+				<WebView recipe={styles.actions}>
 					{canDeployOnClawdi ? (
 						<Button
 							size="lg"
-							className={webView(styles.wFull)}
+							className={webView(styles.deployAction)}
 							onPress={() => router.push("/agents/new")}
 						>
-							<WebIcon as={Rocket} recipe={styles.size5TextPrimary} />
+							<WebIcon as={Rocket} recipe={styles.titleIcon} />
 							<Text>{OVERVIEW_COPY.deploy}</Text>
 						</Button>
 					) : null}
 					<Button
 						variant={canDeployOnClawdi ? "outline" : "default"}
 						size="lg"
-						className={webView(styles.hAutoMinH10)}
+						className={webView(styles.connectAction)}
 						onPress={() => router.push("/agents/new")}
 					>
-						<WebIcon as={TerminalSquare} recipe={styles.size5TextPrimary} />
+						<WebIcon as={TerminalSquare} recipe={styles.titleIcon} />
 						<Text>{OVERVIEW_COPY.connect}</Text>
 					</Button>
 				</WebView>
@@ -51,9 +51,9 @@ export function OnboardingCard({
 }
 export function ConnectAnotherCard() {
 	return (
-		<Card className={webView(page.py4)}>
-			<CardContent className={`${webView(page.flexItemsCenterJustifyBetween)} flex-col`}>
-				<WebText recipe={page.minW0TextSm}>{OVERVIEW_COPY.connectAnother}</WebText>
+		<Card className={webView(page.connectCard)}>
+			<CardContent className={`${webView(page.connectCardContent)} flex-col`}>
+				<WebText recipe={page.connectCardTitle}>{OVERVIEW_COPY.connectAnother}</WebText>
 				<Button size="sm" variant="outline" onPress={() => router.push("/agents/new")}>
 					<Text>{OVERVIEW_COPY.addAgent}</Text>
 				</Button>

@@ -11,7 +11,7 @@ function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   return (
     <SelectPrimitive.Group
       data-slot="select-group"
-      className={cn(selectClasses.selectGroup, className)}
+      className={cn(selectClasses.group, className)}
       {...props}
     />
   )
@@ -21,7 +21,7 @@ function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
   return (
     <SelectPrimitive.Value
       data-slot="select-value"
-      className={cn(selectClasses.selectValue, className)}
+      className={cn(selectClasses.value, className)}
       {...props}
     />
   )
@@ -40,7 +40,7 @@ function SelectTrigger({
       data-slot="select-trigger"
       data-size={size}
       className={cn(
-        selectClasses.selectTrigger,
+        selectClasses.trigger,
         className
       )}
       {...props}
@@ -48,7 +48,7 @@ function SelectTrigger({
       {children}
       <SelectPrimitive.Icon
         render={
-          <ChevronDownIcon className={selectClasses.selectTrigger2} />
+          <ChevronDownIcon className={selectClasses.triggerIcon} />
         }
       />
     </SelectPrimitive.Trigger>
@@ -82,7 +82,7 @@ function SelectContent({
         <SelectPrimitive.Popup
           data-slot="select-content"
           data-align-trigger={alignItemWithTrigger}
-          className={cn(selectClasses.selectContent, className )}
+          className={cn(selectClasses.content, className )}
           {...props}
         >
           <SelectScrollUpButton />
@@ -101,7 +101,7 @@ function SelectLabel({
   return (
     <SelectPrimitive.GroupLabel
       data-slot="select-label"
-      className={cn(selectClasses.selectLabel, className)}
+      className={cn(selectClasses.label, className)}
       {...props}
     />
   )
@@ -116,20 +116,20 @@ function SelectItem({
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        selectClasses.selectItem,
+        selectClasses.item,
         className
       )}
       {...props}
     >
-      <SelectPrimitive.ItemText className={selectClasses.selectItem2}>
+      <SelectPrimitive.ItemText className={selectClasses.itemText}>
         {children}
       </SelectPrimitive.ItemText>
       <SelectPrimitive.ItemIndicator
         render={
-          <span className={selectClasses.selectItem3} />
+          <span className={selectClasses.itemIndicator} />
         }
       >
-        <CheckIcon className={selectClasses.selectItem4} />
+        <CheckIcon className={selectClasses.itemIndicatorIcon} />
       </SelectPrimitive.ItemIndicator>
     </SelectPrimitive.Item>
   )
@@ -142,7 +142,7 @@ function SelectSeparator({
   return (
     <SelectPrimitive.Separator
       data-slot="select-separator"
-      className={cn(selectClasses.selectSeparator, className)}
+      className={cn(selectClasses.separator, className)}
       {...props}
     />
   )
@@ -156,7 +156,7 @@ function SelectScrollUpButton({
     <SelectPrimitive.ScrollUpArrow
       data-slot="select-scroll-up-button"
       className={cn(
-        selectClasses.selectScrollUpButton,
+        selectClasses.scrollUp,
         className
       )}
       {...props}
@@ -175,7 +175,7 @@ function SelectScrollDownButton({
     <SelectPrimitive.ScrollDownArrow
       data-slot="select-scroll-down-button"
       className={cn(
-        selectClasses.selectScrollDownButton,
+        selectClasses.scrollDown,
         className
       )}
       {...props}

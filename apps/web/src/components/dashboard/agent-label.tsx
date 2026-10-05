@@ -112,7 +112,9 @@ export function AgentSourceBadge({
 	const label = agentSourceLabel(source);
 	const title = agentSourceDescription(source);
 	const iconClass =
-		source === "hosted" ? agentSourceBadgeClasses.infoIcon : agentSourceBadgeClasses.neutralIcon;
+		source === "hosted"
+			? agentSourceBadgeClasses.hostedIcon
+			: agentSourceBadgeClasses.connectedIcon;
 	// Solid silhouette at badge sizes: the outline cloud dissolves under ~16px.
 	const iconFill = source === "hosted" ? "currentColor" : "none";
 	return (
@@ -126,7 +128,7 @@ export function AgentSourceBadge({
 					: compact
 						? agentSourceBadgeClasses.compact
 						: agentSourceBadgeClasses.regular,
-				source === "hosted" ? agentSourceBadgeClasses.info : agentSourceBadgeClasses.neutral,
+				source === "hosted" ? agentSourceBadgeClasses.hosted : agentSourceBadgeClasses.connected,
 				className,
 			)}
 		>
@@ -137,7 +139,7 @@ export function AgentSourceBadge({
 				)}
 				fill={iconFill}
 			/>
-			{iconOnly ? <span className={agentSourceBadgeClasses.srOnly}>{label}</span> : label}
+			{iconOnly ? <span className={agentSourceBadgeClasses.screenReaderOnly}>{label}</span> : label}
 		</StatusBadge>
 	);
 }
@@ -171,7 +173,11 @@ export function LegacyAgentBadge({
 					agentSourceBadgeClasses.legacyIcon,
 				)}
 			/>
-			{iconOnly ? <span className={agentSourceBadgeClasses.srOnly}>Legacy</span> : "Legacy"}
+			{iconOnly ? (
+				<span className={agentSourceBadgeClasses.screenReaderOnly}>Legacy</span>
+			) : (
+				"Legacy"
+			)}
 		</StatusBadge>
 	);
 }

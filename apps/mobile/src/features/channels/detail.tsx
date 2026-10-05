@@ -277,16 +277,14 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 				) : null}
 				{notice ? <AppText accessibilityRole="alert">{t(`channels.${notice}`)}</AppText> : null}
 				{(bot?.provider ?? ownedBot?.provider) === "discord" ? (
-					<WebView recipe={styles.roundedLgBorderBgCardP}>
-						<WebView recipe={styles.flexItemsStartGap} className="flex-row">
+					<WebView recipe={styles.notice}>
+						<WebView recipe={styles.noticeHeader} className="flex-row">
 							<IconChip size="sm" tint={styles.infoTint}>
 								<Icon as={TriangleAlert} />
 							</IconChip>
-							<WebView recipe={styles.minWFlexSpaceY}>
-								<WebText recipe={styles.textSmFontMedium}>{copy.discordTitle}</WebText>
-								<WebText recipe={styles.textSmTextMutedForeground}>
-									{copy.discordDescription}
-								</WebText>
+							<WebView recipe={styles.noticeBody}>
+								<WebText recipe={styles.noticeTitle}>{copy.discordTitle}</WebText>
+								<WebText recipe={styles.noticeDescription}>{copy.discordDescription}</WebText>
 							</WebView>
 						</WebView>
 					</WebView>
@@ -517,7 +515,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 						)}
 					</TabsContent>
 					<TabsContent value="commands">
-						<WebView recipe={styles.flexFlexColGap}>
+						<WebView recipe={styles.skeletonContent}>
 							<ChannelInfoCard icon={KeyRound} title={copy.pairingCommands}>
 								{pairingCommandsDescription(
 									providerMeta(provider).label,
@@ -544,18 +542,18 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 								/>
 							) : null}
 							{commands?.commands.length ? (
-								<WebView recipe={`${ENTITY_CARD_BASE} ${styles.flexFlexColGap3}`}>
-									<WebText recipe={styles.textXsFontMediumTextSuccessMutedForeground}>
+								<WebView recipe={`${ENTITY_CARD_BASE} ${styles.activityList}`}>
+									<WebText recipe={styles.commandsHeading}>
 										{publishedCommandsLabel(commands.commands.length)}
 									</WebText>
 									{commands.commands.map((command) => (
 										<WebView
 											key={String(command.name)}
-											recipe={styles.flexItemsBaselineGapTextSm}
+											recipe={styles.command}
 											className="flex-row"
 										>
-											<WebText recipe={styles.fontMonoTextXs}>/{String(command.name)}</WebText>
-											<WebText recipe={styles.textMutedForeground}>
+											<WebText recipe={styles.commandName}>/{String(command.name)}</WebText>
+											<WebText recipe={styles.commandDescription}>
 												{String(command.description)}
 											</WebText>
 										</WebView>

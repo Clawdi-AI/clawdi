@@ -26,7 +26,7 @@ export function ThisWeekCard({
 				<CardTitle>{DASHBOARD_COPY.weeklyTitle}</CardTitle>
 				<CardDescription>{DASHBOARD_COPY.weeklyDescription}</CardDescription>
 			</CardHeader>
-			<CardContent className={thisWeekCardClasses.spaceY5}>
+			<CardContent className={thisWeekCardClasses.content}>
 				{error ? (
 					<ApiErrorPanel error={error} onRetry={onRetry} title={DASHBOARD_COPY.weeklyError} />
 				) : (
@@ -34,27 +34,23 @@ export function ThisWeekCard({
 						{/* Hero — the user's own sessions. Fleet automation is the quiet
 				    sub-line, not the headline. */}
 						<div>
-							<div className={thisWeekCardClasses.textXsTextMutedForeground}>
-								{DASHBOARD_COPY.yourSessions}
-							</div>
+							<div className={thisWeekCardClasses.statLabel}>{DASHBOARD_COPY.yourSessions}</div>
 							{ready && manualWeek !== undefined ? (
 								<>
-									<div className={thisWeekCardClasses.text3XlFontSemiboldTabular}>
-										{formatNumber(manualWeek)}
-									</div>
+									<div className={thisWeekCardClasses.sessionCount}>{formatNumber(manualWeek)}</div>
 									{automatedWeek !== undefined && automatedWeek > 0 ? (
-										<div className={thisWeekCardClasses.mt1TextXsText}>
+										<div className={thisWeekCardClasses.automatedCount}>
 											+ {formatNumber(automatedWeek)} automated (cron, heartbeat)
 										</div>
 									) : null}
 								</>
 							) : (
-								<Skeleton className={thisWeekCardClasses.h9W16} />
+								<Skeleton className={thisWeekCardClasses.sessionCountSkeleton} />
 							)}
 						</div>
 
 						{/* Secondary stats — smaller, grouped. */}
-						<dl className={thisWeekCardClasses.gridGridCols3Gap}>
+						<dl className={thisWeekCardClasses.secondaryStats}>
 							<SecondaryStat
 								label={DASHBOARD_COPY.today}
 								value={ready && todaySessions !== undefined ? formatNumber(todaySessions) : null}
@@ -83,18 +79,12 @@ function SecondaryStat({
 	small?: boolean;
 }) {
 	return (
-		<div className={thisWeekCardClasses.spaceY1}>
-			<dt className={thisWeekCardClasses.textXsTextMutedForeground}>{label}</dt>
+		<div className={thisWeekCardClasses.stat}>
+			<dt className={thisWeekCardClasses.statLabel}>{label}</dt>
 			{value === null ? (
-				<Skeleton className={thisWeekCardClasses.h5W10} />
+				<Skeleton className={thisWeekCardClasses.valueSkeleton} />
 			) : (
-				<dd
-					className={
-						small
-							? thisWeekCardClasses.truncateTextSmFontMedium
-							: thisWeekCardClasses.textBaseFontSemiboldTabular
-					}
-				>
+				<dd className={small ? thisWeekCardClasses.textValue : thisWeekCardClasses.numericValue}>
 					{value}
 				</dd>
 			)}

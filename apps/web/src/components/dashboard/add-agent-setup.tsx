@@ -63,9 +63,9 @@ function CopyButton({
 			aria-label={label}
 		>
 			{copied ? (
-				<Check className={addAgentSetupClasses.size} />
+				<Check className={addAgentSetupClasses.actionIcon} />
 			) : (
-				<Copy className={addAgentSetupClasses.size} />
+				<Copy className={addAgentSetupClasses.actionIcon} />
 			)}
 		</Button>
 	);
@@ -108,9 +108,9 @@ export function AddAgentSetup() {
 	);
 
 	return (
-		<div className={addAgentSetupClasses.spaceY}>
+		<div className={addAgentSetupClasses.root}>
 			<Tabs defaultValue="commands">
-				<TabsList className={addAgentSetupClasses.wFullSmW}>
+				<TabsList className={addAgentSetupClasses.tabsList}>
 					<TabsTrigger value="commands">
 						<Terminal data-icon="inline-start" /> Run commands
 					</TabsTrigger>
@@ -118,58 +118,58 @@ export function AddAgentSetup() {
 						<Bot data-icon="inline-start" /> Ask your agent
 					</TabsTrigger>
 				</TabsList>
-				<TabsContent value="commands" className={addAgentSetupClasses.mtSpaceY}>
+				<TabsContent value="commands" className={addAgentSetupClasses.commands}>
 					<div>
-						<p className={addAgentSetupClasses.textSmFontMedium}>
+						<p className={addAgentSetupClasses.title}>
 							{agentSurfaceCopy.runTheseCommandsInOrderOnTheMachine}
 						</p>
-						<p className={addAgentSetupClasses.mtTextXsText}>
+						<p className={addAgentSetupClasses.requirementHint}>
 							{agentSurfaceCopy.nodeJs24IsRequired}
 						</p>
-						<p className={addAgentSetupClasses.mtTextXsText2}>
+						<p className={addAgentSetupClasses.packageManagerHint}>
 							{agentSurfaceCopy.preferBunUseBunAddGClawdiLatest}
 						</p>
 					</div>
 					<CommandSteps steps={CLI_STEPS} numbered />
 				</TabsContent>
-				<TabsContent value="prompt" className={addAgentSetupClasses.mtSpaceY2}>
+				<TabsContent value="prompt" className={addAgentSetupClasses.promptContent}>
 					<div>
-						<p className={addAgentSetupClasses.textSmFontMedium}>
+						<p className={addAgentSetupClasses.title}>
 							{agentSurfaceCopy.askYourAgentToSetUpClawdi}
 						</p>
-						<p className={addAgentSetupClasses.mtTextXsText}>
+						<p className={addAgentSetupClasses.requirementHint}>
 							{agentSurfaceCopy.pasteThisPromptIntoClaudeCodeCodexHermesOpenClaw}
 						</p>
 					</div>
-					<div className={addAgentSetupClasses.roundedLgBorderBg}>
-						<div className={addAgentSetupClasses.flexItemsCenterJustify}>
-							<span className={addAgentSetupClasses.textXsUppercaseTracking}>
+					<div className={addAgentSetupClasses.promptPanel}>
+						<div className={addAgentSetupClasses.promptHeader}>
+							<span className={addAgentSetupClasses.promptLabel}>
 								{agentSurfaceCopy.setupPrompt}
 							</span>
 							<CopyButton text={prompt} label="Copy prompt" />
 						</div>
-						<pre className={addAgentSetupClasses.whitespacePreWrapP}>{prompt}</pre>
+						<pre className={addAgentSetupClasses.prompt}>{prompt}</pre>
 					</div>
 				</TabsContent>
 			</Tabs>
 
-			<div className={addAgentSetupClasses.borderTPt}>
-				<div className={addAgentSetupClasses.flexItemsCenterGap}>
+			<div className={addAgentSetupClasses.registration}>
+				<div className={addAgentSetupClasses.registrationHeading}>
 					{newAgents.length > 0 ? (
-						<span className={addAgentSetupClasses.flexSizeShrinkItems}>
-							<Check className={addAgentSetupClasses.size} />
+						<span className={addAgentSetupClasses.registeredIcon}>
+							<Check className={addAgentSetupClasses.actionIcon} />
 						</span>
 					) : null}
-					<span className={addAgentSetupClasses.textSmFontMedium}>
+					<span className={addAgentSetupClasses.title}>
 						{newAgents.length > 0
 							? agentSurfaceCopy.agentRegistered
 							: agentSurfaceCopy.watchForYourAgent}
 					</span>
 				</div>
 				{newAgents.length > 0 ? (
-					<div className={addAgentSetupClasses.mtSpaceYRounded}>
+					<div className={addAgentSetupClasses.registeredAgents}>
 						{newAgents.map((env) => (
-							<div key={env.id} className={addAgentSetupClasses.flexItemsCenterJustify2}>
+							<div key={env.id} className={addAgentSetupClasses.registeredAgent}>
 								<AgentLabel
 									machineName={env.machine_name}
 									displayName={env.display_name}
@@ -178,7 +178,7 @@ export function AddAgentSetup() {
 									avatarUrl={env.avatar_url}
 									size="sm"
 									titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
-									className={addAgentSetupClasses.minWFlex}
+									className={addAgentSetupClasses.body}
 								/>
 								<Button
 									render={<Link to="/agents/$id" params={{ id: env.id }} />}
@@ -190,15 +190,15 @@ export function AddAgentSetup() {
 								</Button>
 							</div>
 						))}
-						<p className={addAgentSetupClasses.textXsTextSuccess}>
+						<p className={addAgentSetupClasses.registeredDescription}>
 							{agentRegistrationDescription(newAgents)}
 						</p>
 					</div>
 				) : (
-					<div className={addAgentSetupClasses.mtFlexItemsCenter}>
-						<span className={addAgentSetupClasses.relativeFlexSize}>
-							<span className={addAgentSetupClasses.absoluteInlineFlexH} />
-							<span className={addAgentSetupClasses.relativeInlineFlexSize} />
+					<div className={addAgentSetupClasses.waiting}>
+						<span className={addAgentSetupClasses.waitingIndicator}>
+							<span className={addAgentSetupClasses.waitingPulse} />
+							<span className={addAgentSetupClasses.waitingDot} />
 						</span>
 						Waiting for your agent to connect…
 					</div>
@@ -216,17 +216,17 @@ function CommandSteps({
 	numbered?: boolean;
 }) {
 	return (
-		<div className={addAgentSetupClasses.spaceY2}>
+		<div className={addAgentSetupClasses.steps}>
 			{steps.map((step, index) => (
-				<div key={step.title} className={addAgentSetupClasses.flexGap}>
+				<div key={step.title} className={addAgentSetupClasses.step}>
 					{numbered ? <StepNumber n={index + 1} /> : null}
-					<div className={addAgentSetupClasses.minWFlex}>
-						<div className={addAgentSetupClasses.textSmFontMedium}>{step.title}</div>
-						<div className={addAgentSetupClasses.mtFlexItemsCenter2}>
-							<code className={addAgentSetupClasses.minWFlexOverflow}>{step.code}</code>
+					<div className={addAgentSetupClasses.body}>
+						<div className={addAgentSetupClasses.title}>{step.title}</div>
+						<div className={addAgentSetupClasses.commandRow}>
+							<code className={addAgentSetupClasses.command}>{step.code}</code>
 							<CopyButton text={step.code} label={`Copy ${step.title} command`} />
 						</div>
-						<p className={addAgentSetupClasses.mtTextXsText}>{step.description}</p>
+						<p className={addAgentSetupClasses.requirementHint}>{step.description}</p>
 					</div>
 				</div>
 			))}
@@ -235,5 +235,5 @@ function CommandSteps({
 }
 
 function StepNumber({ n }: { n: number }) {
-	return <span className={addAgentSetupClasses.flexSizeShrinkItems2}>{n}</span>;
+	return <span className={addAgentSetupClasses.stepNumber}>{n}</span>;
 }

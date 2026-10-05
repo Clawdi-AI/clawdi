@@ -129,7 +129,7 @@ export default function MemoryDetailPage({
 								{/* Whether agents actually USE a memory is the
 								    fact that decides keep-vs-delete — surface it. */}
 								<span>·</span>
-								<span className={memoryDetailClasses.tabular}>
+								<span className={memoryDetailClasses.metadataValue}>
 									{(memory.access_count ?? 0) > 0
 										? `Recalled ${memory.access_count} ${memory.access_count === 1 ? "time" : "times"}`
 										: "Never recalled yet"}
@@ -187,7 +187,7 @@ export default function MemoryDetailPage({
 						    name alone is still useful without a session link. */}
 						{memory.source_session_id || memory.source_machine_name ? (
 							<div className={memoryDetailClasses.provenance}>
-								<Laptop className={memoryDetailClasses.smallIcon} />
+								<Laptop className={memoryDetailClasses.sourceIcon} />
 								<span>
 									{memory.source_machine_name
 										? `Learned on ${memory.source_machine_name}`

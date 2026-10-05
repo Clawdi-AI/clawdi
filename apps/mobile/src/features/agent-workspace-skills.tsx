@@ -145,7 +145,7 @@ function WorkspaceSkills({ id }: { id?: string }) {
 								<Button
 									variant="ghost"
 									size="icon-sm"
-									className={webView(panel.textMutedForegroundHover)}
+									className={webView(panel.removeAction)}
 									accessibilityLabel={`Uninstall ${skill.name} from Agent`}
 									onPress={() =>
 										setRemoveCommand(
@@ -153,7 +153,7 @@ function WorkspaceSkills({ id }: { id?: string }) {
 										)
 									}
 								>
-									<Icon as={Trash2} className={webView(panel.size)} />
+									<Icon as={Trash2} className={webView(panel.actionIcon)} />
 								</Button>
 							}
 						/>
@@ -168,7 +168,7 @@ function WorkspaceSkills({ id }: { id?: string }) {
 							Enter a GitHub Skill path, then run the generated command on the Agent machine.
 						</DialogDescription>
 					</DialogHeader>
-					<WebView recipe={panel.spaceY2}>
+					<WebView recipe={panel.field}>
 						<Label>{agentSurfaceCopy.gitHubSkillRepository}</Label>
 						<Input
 							value={repo}
@@ -178,7 +178,7 @@ function WorkspaceSkills({ id }: { id?: string }) {
 						/>
 					</WebView>
 					{repo.trim() ? (
-						<WebText selectable recipe={panel.minWFlexOverflow}>
+						<WebText selectable recipe={panel.command}>
 							{workspaceSkillInstallCommand(repo, agent.data?.agent_type ?? "")}
 						</WebText>
 					) : null}
@@ -200,7 +200,7 @@ function WorkspaceSkills({ id }: { id?: string }) {
 							{agentSurfaceCopy.runThisCommandOnTheAgentMachineTheSkill}
 						</DialogDescription>
 					</DialogHeader>
-					<WebText selectable recipe={panel.minWFlexOverflow}>
+					<WebText selectable recipe={panel.command}>
 						{removeCommand}
 					</WebText>
 					<DialogFooter>

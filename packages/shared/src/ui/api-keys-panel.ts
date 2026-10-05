@@ -34,7 +34,7 @@ export const apiKeysPanelClasses = {
 	cards: "flex flex-col gap-3",
 	card: "min-w-0 rounded-lg border bg-card p-4",
 	cardHeader: "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3",
-	minWidth: "min-w-0",
+	factBody: "min-w-0",
 	cardName: "line-clamp-2 break-all text-sm font-medium",
 	cardPrefix: "mt-1.5 max-w-full",
 	facts: "mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-3 text-xs",

@@ -7,12 +7,12 @@ export function AgentSourceBadge({ icon, legacy = false }: { icon: LucideIcon; l
 		<StatusBadge
 			status="neutral"
 			className={webView(
-				`${legacy ? agentSourceBadgeClasses.legacyRoot : agentSourceBadgeClasses.root} ${agentSourceBadgeClasses.iconOnly} ${legacy ? "" : agentSourceBadgeClasses.info}`,
+				`${legacy ? agentSourceBadgeClasses.legacyRoot : agentSourceBadgeClasses.root} ${agentSourceBadgeClasses.iconOnly} ${legacy ? "" : agentSourceBadgeClasses.hosted}`,
 			)}
 		>
 			<WebIcon
 				as={icon}
-				recipe={`${agentSourceBadgeClasses.icon} ${legacy ? agentSourceBadgeClasses.legacyIcon : agentSourceBadgeClasses.infoIcon}`}
+				recipe={`${agentSourceBadgeClasses.icon} ${legacy ? agentSourceBadgeClasses.legacyIcon : agentSourceBadgeClasses.hostedIcon}`}
 			/>
 		</StatusBadge>
 	);

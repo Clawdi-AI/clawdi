@@ -140,11 +140,11 @@ export default function DashboardPage() {
 	const hostedSectionEnabled = cloudDeploymentManagementEnabled || legacyHostedAgentsEnabled;
 
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, dashboardPageClasses.spaceY5Px4)}>
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, dashboardPageClasses.root)}>
 			<Greeting />
 
-			<div className={dashboardPageClasses.gridGap4LgGrid}>
-				<div className={dashboardPageClasses.minW0LgCol}>
+			<div className={dashboardPageClasses.grid}>
+				<div className={dashboardPageClasses.agents}>
 					{hostedAccessLoading ? (
 						<AgentsCard agents={selfManagedTiles} isLoading />
 					) : hostedSectionEnabled && HostedAgentsSection ? (
@@ -176,8 +176,8 @@ export default function DashboardPage() {
 					)}
 				</div>
 
-				<section className={dashboardPageClasses.minW0SpaceY}>
-					<h2 className={dashboardPageClasses.textBaseFontSemibold}>{OVERVIEW_COPY.activity}</h2>
+				<section className={dashboardPageClasses.activity}>
+					<h2 className={dashboardPageClasses.sectionTitle}>{OVERVIEW_COPY.activity}</h2>
 					<Card>
 						<CardContent>
 							{blockingStatsError ? (
@@ -198,7 +198,7 @@ export default function DashboardPage() {
 				</section>
 
 				{/* This source order is also the mobile reading and focus order. */}
-				<div className={dashboardPageClasses.minW0SpaceY2}>
+				<div className={dashboardPageClasses.sidebar}>
 					{hostedAccessLoading ? null : hostedSectionEnabled && HostedSecondaryCTA ? (
 						<Suspense fallback={null}>
 							<HostedSecondaryCTA
@@ -228,17 +228,15 @@ export default function DashboardPage() {
 					/>
 				</div>
 
-				<section className={dashboardPageClasses.minW0SpaceY3}>
-					<div className={dashboardPageClasses.flexItemsEndJustifyBetween}>
-						<h2 className={dashboardPageClasses.textBaseFontSemibold}>
-							{OVERVIEW_COPY.recentSessions}
-						</h2>
+				<section className={dashboardPageClasses.recentSessions}>
+					<div className={dashboardPageClasses.recentSessionsHeader}>
+						<h2 className={dashboardPageClasses.sectionTitle}>{OVERVIEW_COPY.recentSessions}</h2>
 						<Button
 							render={<Link to="/sessions" />}
 							nativeButton={false}
 							variant="ghost"
 							size="sm"
-							className={dashboardPageClasses.textMutedForeground}
+							className={dashboardPageClasses.viewAll}
 						>
 							{OVERVIEW_COPY.viewAll}
 							<ArrowRight />
@@ -269,32 +267,33 @@ export default function DashboardPage() {
 
 function ActivityGraphSkeleton() {
 	return (
-		<div className={dashboardPageClasses.wFull}>
-			<div className={dashboardPageClasses.flexGap15}>
-				<div className={dashboardPageClasses.flexW3Shrink0}>
+		<div className={dashboardPageClasses.graphSkeleton}>
+			<div className={dashboardPageClasses.graphSkeletonLayout}>
+				<div className={dashboardPageClasses.graphSkeletonWeekdays}>
 					{Array.from({ length: 7 }).map((_, index) => (
-						<Skeleton key={index} className={dashboardPageClasses.h11PxW2Rounded} />
+						<Skeleton key={index} className={dashboardPageClasses.graphSkeletonWeekday} />
 					))}
 				</div>
-				<div className={dashboardPageClasses.minW0Flex1}>
-					<div className={dashboardPageClasses.flexMaxH95PxOverflow}>
+				<div className={dashboardPageClasses.graphSkeletonBody}>
+					<div className={dashboardPageClasses.graphSkeletonWeeks}>
 						{Array.from({ length: 52 }).map((_, weekIndex) => (
-							<div key={weekIndex} className={dashboardPageClasses.flexFlexColGap3Px}>
+							<div key={weekIndex} className={dashboardPageClasses.graphSkeletonWeek}>
 								{Array.from({ length: 7 }).map((_, dayIndex) => (
 									<Skeleton
 										key={dayIndex}
 										className={cn(
-											dashboardPageClasses.size11PxRounded3Px,
-											(weekIndex + dayIndex) % 5 === 0 && dashboardPageClasses.opacity50,
+											dashboardPageClasses.graphSkeletonCell,
+											(weekIndex + dayIndex) % 5 === 0 &&
+												dashboardPageClasses.graphSkeletonMutedCell,
 										)}
 									/>
 								))}
 							</div>
 						))}
 					</div>
-					<div className={dashboardPageClasses.mt1FlexH4}>
+					<div className={dashboardPageClasses.graphSkeletonMonths}>
 						{Array.from({ length: 6 }).map((_, index) => (
-							<Skeleton key={index} className={dashboardPageClasses.h25W6} />
+							<Skeleton key={index} className={dashboardPageClasses.graphSkeletonMonth} />
 						))}
 					</div>
 				</div>
@@ -316,9 +315,9 @@ function ConnectAnotherCard() {
 		setOpen(true);
 	};
 	return (
-		<Card className={dashboardPageClasses.py4}>
-			<CardContent className={dashboardPageClasses.flexItemsCenterJustifyBetween}>
-				<div className={dashboardPageClasses.minW0TextSm}>{OVERVIEW_COPY.connectAnother}</div>
+		<Card className={dashboardPageClasses.connectCard}>
+			<CardContent className={dashboardPageClasses.connectCardContent}>
+				<div className={dashboardPageClasses.connectCardTitle}>{OVERVIEW_COPY.connectAnother}</div>
 				<Button size="sm" variant="outline" onClick={connectAgent}>
 					{OVERVIEW_COPY.addAgent}
 				</Button>
@@ -338,11 +337,11 @@ function Greeting() {
 	const firstName = user?.fullName?.split(" ")[0];
 	return (
 		<div>
-			<h1 className={dashboardPageClasses.text2XlFontSemiboldTracking}>
+			<h1 className={dashboardPageClasses.greeting}>
 				{daypart && isLoaded ? (
 					dashboardGreeting(daypart, firstName)
 				) : (
-					<Skeleton className={dashboardPageClasses.h8W64Max} />
+					<Skeleton className={dashboardPageClasses.greetingSkeleton} />
 				)}
 			</h1>
 		</div>

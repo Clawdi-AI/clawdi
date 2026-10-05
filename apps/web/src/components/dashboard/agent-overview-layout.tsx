@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 
 export function AgentOverviewTools({ children }: { children: ReactNode }) {
 	return (
-		<div className={agentOverviewLayoutClasses.gridAutoRowsFr} data-overview-section="tools">
+		<div className={agentOverviewLayoutClasses.tools} data-overview-section="tools">
 			{children}
 		</div>
 	);
@@ -18,7 +18,7 @@ export function AgentOverviewSectionHeading({
 	action?: ReactNode;
 }) {
 	return (
-		<div className={agentOverviewLayoutClasses.flexMinHItems} data-overview-heading>
+		<div className={agentOverviewLayoutClasses.heading} data-overview-heading>
 			{children}
 			{action}
 		</div>
@@ -37,9 +37,9 @@ export function AgentOverviewActivity({
 	children: ReactNode;
 }) {
 	return (
-		<div className={agentOverviewLayoutClasses.gridItemsStretchGap} data-overview-section="entry">
+		<div className={agentOverviewLayoutClasses.entry} data-overview-section="entry">
 			{sessions ? (
-				<div className={agentOverviewLayoutClasses.gridMinWGap} data-overview-section="activity">
+				<div className={agentOverviewLayoutClasses.activity} data-overview-section="activity">
 					<AgentOverviewSectionHeading action={action}>{heading}</AgentOverviewSectionHeading>
 					{sessions}
 				</div>

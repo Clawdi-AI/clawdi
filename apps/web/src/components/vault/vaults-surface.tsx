@@ -199,7 +199,7 @@ export function VaultsSurface({
 							<>
 								<AddKeysDialog>
 									<Button size="sm" variant="outline">
-										<Plus className={vaultsSurfaceClasses.smallIcon} />
+										<Plus className={vaultsSurfaceClasses.createIcon} />
 										Add keys
 									</Button>
 								</AddKeysDialog>
@@ -231,7 +231,7 @@ export function VaultsSurface({
 									active={projectFilter === p.id}
 									onClick={() => setProjectFilter(p.id)}
 								>
-									<span aria-hidden className={vaultsSurfaceClasses.unselectable}>
+									<span aria-hidden className={vaultsSurfaceClasses.protectedValue}>
 										{identityFor(p.name).emoji}
 									</span>
 									{projectNameById.get(p.id)}
@@ -411,7 +411,7 @@ export function VaultCard({
 
 	return (
 		<HeroCard
-			className={vaultsSurfaceClasses.fullHeight}
+			className={vaultsSurfaceClasses.card}
 			icon={
 				<IconChip tint={identity.colorClasses} className={vaultsSurfaceClasses.identity}>
 					{identity.emoji}
@@ -436,7 +436,7 @@ export function VaultCard({
 				keyCountLabel,
 				usedBy.length > 0 ? (
 					<Tooltip>
-						<TooltipTrigger render={<span className={vaultsSurfaceClasses.truncate} />}>
+						<TooltipTrigger render={<span className={vaultsSurfaceClasses.name} />}>
 							{visibleProjectIds ? "From " : "used by "}
 							{usedBy.slice(0, 2).join(", ")}
 							{usedBy.length > 2 ? ` +${usedBy.length - 2}` : ""}
@@ -539,7 +539,7 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 			}}
 		>
 			<DialogTrigger render={<Button size="sm" />}>
-				<Plus className={vaultsSurfaceClasses.smallIcon} />
+				<Plus className={vaultsSurfaceClasses.createIcon} />
 				Create vault
 			</DialogTrigger>
 			<DialogContent className={vaultsSurfaceClasses.dialog}>
@@ -585,7 +585,11 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 							Cancel
 						</Button>
 						<Button type="submit" disabled={!canCreate || create.isPending}>
-							{create.isPending ? <Spinner /> : <Plus className={vaultsSurfaceClasses.smallIcon} />}
+							{create.isPending ? (
+								<Spinner />
+							) : (
+								<Plus className={vaultsSurfaceClasses.createIcon} />
+							)}
 							Create vault
 						</Button>
 					</DialogFooter>

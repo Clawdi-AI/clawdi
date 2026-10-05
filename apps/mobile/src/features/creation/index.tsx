@@ -307,7 +307,7 @@ function CreationForm() {
 			? aiSelection.model
 			: "";
 	return (
-		<WebView recipe={styles.flexFlexColGap}>
+		<WebView recipe={styles.form}>
 			<PageHeader title={agentSurfaceCopy.deployAnAgent} />
 			{!compute || !hosted ? (
 				<EmptyState title={agentSurfaceCopy.unavailable} description={t("creation.unavailable")} />
@@ -358,7 +358,7 @@ function CreationForm() {
 						</WebView>
 					</SettingsSection>
 					<SettingsSection title={agentSurfaceCopy.aIProviders2}>
-						<WebView recipe={styles.flexFlexColGap2}>
+						<WebView recipe={styles.providerChoices}>
 							<WebView recipe={ENTITY_CHOICE_GRID_CLASS}>
 								<EntityChoiceCard
 									selected={draft.ai.mode === "managed"}
@@ -407,7 +407,7 @@ function CreationForm() {
 						</WebView>
 					</SettingsSection>
 					<SettingsSection title={agentSurfaceCopy.compute}>
-						<WebView recipe={styles.flexMinWFlexColGap}>
+						<WebView recipe={styles.compute}>
 							<WebView recipe={ENTITY_CHOICE_GRID_CLASS}>
 								{(["compute_basic", "compute_performance"] as const).map((slug) => {
 									const plan = inventory.data?.plans.find((item) => item.slug === slug);
@@ -520,7 +520,7 @@ function CreationForm() {
 						</WebView>
 					</SettingsSection>
 					<SettingsSection title={agentSurfaceCopy.personalize}>
-						<WebView recipe={styles.flexMaxWXlFlexColGap}>
+						<WebView recipe={styles.personalize}>
 							<AppText>{t("creation.name")}</AppText>
 							<AppTextInput
 								accessibilityLabel={t("creation.name")}

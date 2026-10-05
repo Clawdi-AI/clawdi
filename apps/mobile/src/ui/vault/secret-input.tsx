@@ -30,7 +30,7 @@ export function SecretInput({
 	const multiline = /[\r\n]/.test(value);
 	return (
 		<WebView
-			recipe={inputGroupClasses.InputGroup}
+			recipe={inputGroupClasses.root}
 			className="flex-row"
 			state={{ "has-[>textarea]": visible }}
 		>
@@ -48,7 +48,7 @@ export function SecretInput({
 				multiline={visible}
 				placeholder={!visible && multiline ? VAULT_REQUEST_COPY.multiline : undefined}
 				className={webBoth(
-					`${visible ? inputGroupClasses.InputGroupTextarea : inputGroupClasses.InputGroupInput} ${vaultRequestClasses.secretInput}`,
+					`${visible ? inputGroupClasses.textarea : inputGroupClasses.input} ${vaultRequestClasses.secretInput}`,
 				)}
 			/>
 			<WebView recipe={inputGroupAddonVariants({ align: "inline-end" })}>

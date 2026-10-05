@@ -1,7 +1,7 @@
 import { type SessionTimelineRow, splitSearchHighlight } from "@clawdi/shared/api";
 import {
-	sessionAgentIconRadius,
-	sessionAgentIconSizes,
+	agentIconRadiusClasses,
+	agentIconSizeClasses,
 	messageListClasses as styles,
 } from "@clawdi/shared/ui";
 import {
@@ -97,7 +97,7 @@ export function SessionTimelineRowView({
 										agent={agentType}
 										pixelSize={32}
 										boxClassName={webView(
-											`${sessionAgentIconSizes.lg} ${sessionAgentIconRadius.circle}`,
+											`${agentIconSizeClasses.lg} ${agentIconRadiusClasses.circle}`,
 										)}
 									/>
 								)

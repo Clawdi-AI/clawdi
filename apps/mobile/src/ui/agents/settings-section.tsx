@@ -17,7 +17,7 @@ export function SettingsSection({
 		<WebView recipe={styles.root}>
 			<Separator />
 			<WebView recipe={styles.header}>
-				<WebView recipe={styles.body}>
+				<WebView recipe={styles.copy}>
 					<WebText recipe={`${styles.title} ${destructive ? styles.destructive : ""}`}>
 						{title}
 					</WebText>

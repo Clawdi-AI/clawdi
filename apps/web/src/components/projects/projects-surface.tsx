@@ -193,7 +193,7 @@ export function ProjectsSurface({
 						}}
 					>
 						<Button size="sm" disabled={actionsDisabled}>
-							<Plus className={projectsSurfaceClasses.smallIcon} />
+							<Plus className={projectsSurfaceClasses.createIcon} />
 							Create project
 						</Button>
 					</CreateProjectDialog>
@@ -274,11 +274,11 @@ export function ProjectsSurface({
 									return (
 										<li
 											key={project.id}
-											className={projectsSurfaceClasses.shrinkContent}
+											className={projectsSurfaceClasses.sectionHeading}
 											data-testid={agentId ? "agent-project-card" : "project-card"}
 										>
 											<ProjectResourceCard
-												className={projectsSurfaceClasses.fullHeight}
+												className={projectsSurfaceClasses.card}
 												project={project}
 												searchQuery={search.trim() || undefined}
 												link={projectDetailLink(scope, project.id, search ? from : undefined)}

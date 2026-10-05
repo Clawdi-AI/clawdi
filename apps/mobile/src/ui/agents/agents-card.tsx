@@ -29,7 +29,7 @@ export function AgentsCard({
 	onRetry?: () => void;
 }) {
 	return (
-		<WebView recipe={styles.spaceY}>
+		<WebView recipe={styles.section}>
 			{error ? (
 				<ApiErrorPanel error={error} onRetry={onRetry} title={agentSurfaceCopy.couldnTLoadAgents} />
 			) : isLoading ? (
@@ -60,21 +60,21 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 		<AppPressable
 			accessibilityRole="link"
 			accessibilityLabel={`Open ${tile.name}${statusVisual ? `. Status: ${statusVisual.label}` : ""}`}
-			className={webView(`${ENTITY_CARD_BASE} ${styles.tile.replace(/\bh-full\b/g, "")}`)}
+			className={webView(`${ENTITY_CARD_BASE} ${styles.card.replace(/\bh-full\b/g, "")}`)}
 			onPress={() => router.push({ pathname: "/agents/[agentId]", params: { agentId: tile.id } })}
 		>
 			<EntityHeader
 				icon={<AgentIcon agent={tile.agentType} size="lg" avatarUrl={tile.avatarUrl} />}
 				title={
-					<WebView recipe={styles.flexMinWItems} className="flex-row">
+					<WebView recipe={styles.title} className="flex-row">
 						{statusVisual ? <WebView recipe={`${styles.dot} ${statusVisual.dotClass}`} /> : null}
-						<WebText recipe={styles.minWTruncate} className="flex-shrink" numberOfLines={1}>
+						<WebText recipe={styles.name} className="flex-shrink" numberOfLines={1}>
 							{tile.name}
 						</WebText>
 					</WebView>
 				}
 				meta={meta}
-				className={webView(styles.minWFlex)}
+				className={webView(styles.body)}
 			/>
 		</AppPressable>
 	);

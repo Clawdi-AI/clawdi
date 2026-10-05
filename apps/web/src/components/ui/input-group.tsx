@@ -16,7 +16,7 @@ function InputGroup({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="input-group"
       role="group"
       className={cn(
-        inputGroupClasses.InputGroup,
+        inputGroupClasses.root,
         className
       )}
       {...props}
@@ -73,7 +73,7 @@ function InputGroupText({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span
       className={cn(
-        inputGroupClasses.InputGroupText,
+        inputGroupClasses.text,
         className
       )}
       {...props}
@@ -89,7 +89,7 @@ function InputGroupInput({
     <Input
       data-slot="input-group-control"
       className={cn(
-        inputGroupClasses.InputGroupInput,
+        inputGroupClasses.input,
         className
       )}
       {...props}
@@ -105,7 +105,7 @@ function InputGroupTextarea({
     <Textarea
       data-slot="input-group-control"
       className={cn(
-        inputGroupClasses.InputGroupTextarea,
+        inputGroupClasses.textarea,
         className
       )}
       {...props}

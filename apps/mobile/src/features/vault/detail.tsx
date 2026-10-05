@@ -318,7 +318,7 @@ function VaultDetail({
 								<Button
 									variant="outline"
 									size="sm"
-									textClassName={webText(vaultDetailClasses.destructive)}
+									textClassName={webText(vaultDetailClasses.deleteAction)}
 									onPress={remove}
 									disabled={action.busy}
 								>
@@ -329,7 +329,7 @@ function VaultDetail({
 						}
 					/>
 					<WebView recipe={vaultDetailClasses.section}>
-						<WebView recipe={vaultDetailClasses.shrinkContent}>
+						<WebView recipe={vaultDetailClasses.sectionHeading}>
 							<WebView recipe={vaultDetailClasses.headingRow}>
 								<WebText recipe={vaultDetailClasses.heading}>{t("vault.keys")}</WebText>
 								<Badge variant="secondary">
@@ -497,7 +497,7 @@ function VaultDetail({
 						) : null}
 						{current.project_ids.map((projectId) => (
 							<WebView key={projectId} recipe={vaultDetailClasses.projectCard}>
-								<WebView recipe={projectDetailClasses.grow}>
+								<WebView recipe={projectDetailClasses.agentIdentity}>
 									<WebText recipe={projectDetailClasses.heading}>
 										{projects.data?.find((p) => p.id === projectId)?.name ?? projectId}
 									</WebText>

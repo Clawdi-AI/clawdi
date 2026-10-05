@@ -19,7 +19,7 @@ export function ConnectorCard({
 }) {
 	return (
 		<EntityRow
-			className={webView(connectorCardClasses.rowHeight)}
+			className={webView(connectorCardClasses.root)}
 			icon={<ConnectorIcon name={app.display_name} logo={app.logo} />}
 			title={app.display_name}
 			titleAdornment={

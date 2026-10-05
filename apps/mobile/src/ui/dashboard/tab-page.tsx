@@ -22,9 +22,9 @@ export function TabPage({
 			edges={["top", "left", "right"]}
 			className={`flex-1 ${webView(styles.pageSurface)}`}
 		>
-			<WebView recipe={styles.stickyTop0Z20} style={{ height: 48 }}>
-				<WebView recipe={styles.flexWFullMinW} className="flex-row">
-					<WebText recipe={page.minW0TextSm} className="flex-1">
+			<WebView recipe={styles.root} style={{ height: 48 }}>
+				<WebView recipe={styles.content} className="flex-row">
+					<WebText recipe={page.connectCardTitle} className="flex-1">
 						{title}
 					</WebText>
 					{actions}
@@ -36,7 +36,7 @@ export function TabPage({
 					onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} /> : undefined
 				}
 			>
-				<WebView recipe={page.spaceY5Px4} style={{ paddingTop: 20, paddingBottom: 24 }}>
+				<WebView recipe={page.root} style={{ paddingTop: 20, paddingBottom: 24 }}>
 					{children}
 				</WebView>
 			</AppScrollView>

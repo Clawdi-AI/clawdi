@@ -56,7 +56,7 @@ function TransactionAction({ transaction }: { transaction: WalletTransaction }) 
 function TransactionDescription({ transaction }: { transaction: WalletTransaction }) {
 	const details = transactionComputeDetails(transaction);
 	return (
-		<div className={transactionsSectionClasses.minWidth}>
+		<div className={transactionsSectionClasses.descriptionBody}>
 			<div className={transactionsSectionClasses.label}>
 				{transactionKindLabel(transaction.kind)}
 			</div>

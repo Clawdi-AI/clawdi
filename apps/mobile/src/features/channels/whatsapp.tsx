@@ -222,17 +222,17 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 				<BackButton />
 				<PageHeader title={t(accountId ? "whatsapp.repair" : "whatsapp.title")} />
 				<Alert>
-					<WebText recipe={styles.textXsTextMutedForeground}>
+					<WebText recipe={styles.hint}>
 						{t(accountId ? "whatsapp.repairWarning" : "whatsapp.warning")}
 					</WebText>
 				</Alert>
-				<WebText recipe={styles.textXsTextMutedForeground}>{t("whatsapp.leaving")}</WebText>
+				<WebText recipe={styles.hint}>{t("whatsapp.leaving")}</WebText>
 				{!online ? <AppText accessibilityRole="alert">{t("whatsapp.offline")}</AppText> : null}
 				{!session ? (
 					<>
 						{!ready ? <AppText>{t("whatsapp.unavailable")}</AppText> : null}
 						{!accountId ? (
-							<WebView recipe={styles.spaceY}>
+							<WebView recipe={styles.nameField}>
 								<Label>{copy.accountName}</Label>
 								<AppTextInput
 									accessibilityLabel={copy.accountName}
@@ -242,7 +242,7 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 									editable={!started && !action.busy}
 									maxLength={120}
 								/>
-								<WebText recipe={styles.textXsTextMutedForeground}>{copy.nameHint}</WebText>
+								<WebText recipe={styles.hint}>{copy.nameHint}</WebText>
 							</WebView>
 						) : null}
 						<NativeSwitch
@@ -284,8 +284,8 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 					</>
 				) : (
 					<>
-						<WebView recipe={styles.flexMinHFlexColItemsCenter}>
-							<WebText recipe={styles.maxWFullFontMediumOverflowWrapAnywhere}>
+						<WebView recipe={styles.centeredState}>
+							<WebText recipe={styles.stateTitle}>
 								{session.state === "ready" ? t("whatsapp.ready") : copy[session.state]}
 							</WebText>
 						</WebView>
@@ -299,14 +299,14 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 						) : null}
 						{session.state === "ready" && !expired ? (
 							<>
-								<WebText recipe={styles.textSmFontMedium}>{copy.scanInstruction}</WebText>
-								<WebText recipe={styles.textXsTextMutedForeground}>{copy.phoneWarning}</WebText>
+								<WebText recipe={styles.pairingCodeTitle}>{copy.scanInstruction}</WebText>
+								<WebText recipe={styles.hint}>{copy.phoneWarning}</WebText>
 								{!qr && session.method === "qr" ? (
 									<AppText>{t("whatsapp.qrWaiting")}</AppText>
 								) : null}
 								{focused && active && session.method === "code" && session.pairing_code ? (
 									<>
-										<WebText recipe={styles.textSmFontMedium}>
+										<WebText recipe={styles.pairingCodeTitle}>
 											{t("whatsapp.codeInstructions")}
 										</WebText>
 										<AppText selectable className="text-2xl font-semibold text-foreground">
@@ -315,8 +315,8 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 									</>
 								) : null}
 								{session.manual_pairing_code_supported && session.method !== "code" ? (
-									<WebView recipe={styles.roundedLgBorderBgMutedP}>
-										<WebText recipe={styles.textSmFontMedium}>{copy.fallback}</WebText>
+									<WebView recipe={styles.fallback}>
+										<WebText recipe={styles.pairingCodeTitle}>{copy.fallback}</WebText>
 										<AppTextInput
 											accessibilityLabel={t("whatsapp.phone")}
 											placeholder={t("whatsapp.phone")}

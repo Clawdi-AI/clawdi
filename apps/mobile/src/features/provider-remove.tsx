@@ -82,7 +82,7 @@ export function ProviderRemove({
 				size="icon-sm"
 				accessibilityLabel={t("providers.removalUnavailable")}
 				disabled
-				className={webView(aiProvidersPageClasses.mlAutoTextMuted)}
+				className={webView(aiProvidersPageClasses.removeAction)}
 			>
 				<Icon as={Trash2} />
 			</Button>
@@ -93,7 +93,7 @@ export function ProviderRemove({
 				accessibilityLabel={t("providers.reviewRemoval")}
 				variant="ghost"
 				size="icon-sm"
-				className={webView(aiProvidersPageClasses.mlAutoTextMuted)}
+				className={webView(aiProvidersPageClasses.removeAction)}
 				disabled={action.busy || !scope.isReady}
 				onPress={() => {
 					if (attempt.current) setOpen(true);

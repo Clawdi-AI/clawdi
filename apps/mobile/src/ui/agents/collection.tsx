@@ -38,7 +38,7 @@ export function AgentCollection({
 								<Icon as={icon} />
 							</IconChip>
 						) : icon ? (
-							<WebIcon as={icon} recipe={connectedAgentDetailClasses.sizeTextMutedForeground} />
+							<WebIcon as={icon} recipe={connectedAgentDetailClasses.sectionIcon} />
 						) : undefined
 					}
 				/>

@@ -1,5 +1,5 @@
 import type { SessionListItem } from "@clawdi/shared/api";
-import { ENTITY_CARD_BASE, agentRecentSessionClasses as styles } from "@clawdi/shared/ui";
+import { ENTITY_CARD_BASE, sessionFeedClasses as styles } from "@clawdi/shared/ui";
 import { formatNumber, relativeTime, sessionCardModel } from "@clawdi/shared/view";
 import { router } from "expo-router";
 import { EntityCardSkeleton } from "../entity-card";
@@ -17,7 +17,7 @@ export function AgentRecentSessions({
 }) {
 	if (loading)
 		return (
-			<WebView recipe={styles.list}>
+			<WebView recipe={styles.overviewList}>
 				{[0, 1, 2].map((i) => (
 					<EntityCardSkeleton key={i} />
 				))}
@@ -25,7 +25,7 @@ export function AgentRecentSessions({
 		);
 	const visible = sessions.slice(0, 3);
 	return (
-		<WebView recipe={styles.list}>
+		<WebView recipe={styles.overviewList}>
 			{visible.map((session) => {
 				const model = sessionCardModel(session);
 				return (
@@ -58,11 +58,11 @@ export function AgentRecentSessions({
 			{Array.from({ length: 3 - visible.length }, (_, index) => (
 				<WebView
 					key={`empty-${index}`}
-					recipe={`${ENTITY_CARD_BASE} ${styles.card} ${styles.placeholder}`}
+					recipe={`${ENTITY_CARD_BASE} ${styles.card} ${styles.emptyRow}`}
 					style={{ minHeight: 80 }}
 				>
 					{!visible.length && !index ? (
-						<WebText recipe={styles.placeholder}>{emptyMessage}</WebText>
+						<WebText recipe={styles.emptyRow}>{emptyMessage}</WebText>
 					) : null}
 				</WebView>
 			))}

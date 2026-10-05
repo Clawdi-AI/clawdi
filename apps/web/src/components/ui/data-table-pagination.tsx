@@ -34,16 +34,16 @@ export function DataTablePagination({
 	const last = Math.min(total, page * pageSize);
 
 	return (
-		<div className={dataTablePaginationClasses.flexFlexColReverseItems}>
-			<div className={dataTablePaginationClasses.textSmTextMutedForeground}>
+		<div className={dataTablePaginationClasses.root}>
+			<div className={dataTablePaginationClasses.results}>
 				{total === 0 ? "0 results" : `${first}–${last} of ${total}`}
 			</div>
 
-			<div className={dataTablePaginationClasses.flexWFullFlexCol}>
-				<div className={dataTablePaginationClasses.flexItemsCenterGap2}>
-					<span className={dataTablePaginationClasses.textSmTextMutedForeground}>Rows</span>
+			<div className={dataTablePaginationClasses.controls}>
+				<div className={dataTablePaginationClasses.pageSize}>
+					<span className={dataTablePaginationClasses.results}>Rows</span>
 					<Select value={String(pageSize)} onValueChange={(v) => onPageSizeChange(Number(v))}>
-						<SelectTrigger size="sm" className={dataTablePaginationClasses.w72Px}>
+						<SelectTrigger size="sm" className={dataTablePaginationClasses.pageSizeTrigger}>
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
@@ -56,16 +56,16 @@ export function DataTablePagination({
 					</Select>
 				</div>
 
-				<div className={dataTablePaginationClasses.flexItemsCenterGap1}>
+				<div className={dataTablePaginationClasses.navigation}>
 					<Button
 						variant="outline"
 						size="icon-sm"
 						onClick={() => onPageChange(1)}
 						disabled={page <= 1}
 						aria-label="First page"
-						className={dataTablePaginationClasses.hiddenSmInlineFlex}
+						className={dataTablePaginationClasses.boundaryAction}
 					>
-						<ChevronsLeft className={dataTablePaginationClasses.size4} />
+						<ChevronsLeft className={dataTablePaginationClasses.actionIcon} />
 					</Button>
 					<Button
 						variant="outline"
@@ -74,9 +74,9 @@ export function DataTablePagination({
 						disabled={page <= 1}
 						aria-label="Previous page"
 					>
-						<ChevronLeft className={dataTablePaginationClasses.size4} />
+						<ChevronLeft className={dataTablePaginationClasses.actionIcon} />
 					</Button>
-					<span className={dataTablePaginationClasses.minW12Px2}>
+					<span className={dataTablePaginationClasses.pageCount}>
 						{page} / {pageCount}
 					</span>
 					<Button
@@ -86,7 +86,7 @@ export function DataTablePagination({
 						disabled={page >= pageCount}
 						aria-label="Next page"
 					>
-						<ChevronRight className={dataTablePaginationClasses.size4} />
+						<ChevronRight className={dataTablePaginationClasses.actionIcon} />
 					</Button>
 					<Button
 						variant="outline"
@@ -94,9 +94,9 @@ export function DataTablePagination({
 						onClick={() => onPageChange(pageCount)}
 						disabled={page >= pageCount}
 						aria-label="Last page"
-						className={dataTablePaginationClasses.hiddenSmInlineFlex}
+						className={dataTablePaginationClasses.boundaryAction}
 					>
-						<ChevronsRight className={dataTablePaginationClasses.size4} />
+						<ChevronsRight className={dataTablePaginationClasses.actionIcon} />
 					</Button>
 				</div>
 			</div>

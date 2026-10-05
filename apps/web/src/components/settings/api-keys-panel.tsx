@@ -549,7 +549,7 @@ function ApiKeysMobileList({
 			{keys.map((key) => (
 				<article key={key.id} className={apiKeysPanelClasses.card}>
 					<div className={apiKeysPanelClasses.cardHeader}>
-						<div className={apiKeysPanelClasses.minWidth}>
+						<div className={apiKeysPanelClasses.factBody}>
 							<h3 className={apiKeysPanelClasses.cardName} title={key.label}>
 								{key.label}
 							</h3>
@@ -561,20 +561,20 @@ function ApiKeysMobileList({
 					</div>
 
 					<dl className={apiKeysPanelClasses.facts}>
-						<div className={apiKeysPanelClasses.minWidth}>
+						<div className={apiKeysPanelClasses.factBody}>
 							<dt className={apiKeysPanelClasses.muted}>{settingsCopy.created}</dt>
 							<dd className={apiKeysPanelClasses.factValue}>
 								<ApiKeyDate value={key.created_at} />
 							</dd>
 						</div>
-						<div className={apiKeysPanelClasses.minWidth}>
+						<div className={apiKeysPanelClasses.factBody}>
 							<dt className={apiKeysPanelClasses.muted}>{settingsCopy.lastUsed}</dt>
 							<dd className={apiKeysPanelClasses.factValue}>
 								<ApiKeyDate value={key.last_used_at} emptyLabel={settingsCopy.never} />
 							</dd>
 						</div>
 						{key.expires_at ? (
-							<div className={apiKeysPanelClasses.minWidth}>
+							<div className={apiKeysPanelClasses.factBody}>
 								<dt className={apiKeysPanelClasses.muted}>{settingsCopy.expires}</dt>
 								<dd className={apiKeysPanelClasses.factValue}>
 									<ApiKeyDate value={key.expires_at} />

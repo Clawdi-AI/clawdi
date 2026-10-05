@@ -15,13 +15,13 @@ export const RESOURCE_TINT_TOKENS = {
 export type ResourceTintToken = (typeof RESOURCE_TINT_TOKENS)[keyof typeof RESOURCE_TINT_TOKENS];
 
 const TINT_CLASSES = {
-	"identity-1": resourceIdentityClasses.bgIdentity1BgText,
-	"identity-2": resourceIdentityClasses.bgIdentity2BgText,
-	"identity-3": resourceIdentityClasses.bgIdentity3BgText,
-	"identity-4": resourceIdentityClasses.bgIdentity4BgText,
-	"identity-6": resourceIdentityClasses.bgIdentity6BgText,
-	"identity-7": resourceIdentityClasses.bgIdentity7BgText,
-	"identity-8": resourceIdentityClasses.bgIdentity8BgText,
+	"identity-1": resourceIdentityClasses.projects,
+	"identity-2": resourceIdentityClasses.skills,
+	"identity-3": resourceIdentityClasses.sessions,
+	"identity-4": resourceIdentityClasses.vaults,
+	"identity-6": resourceIdentityClasses.memories,
+	"identity-7": resourceIdentityClasses.connectors,
+	"identity-8": resourceIdentityClasses.overview,
 } as const;
 
 export const RESOURCE_TINT_CLASSES: Record<ProjectResourceId | "overview", string> = {

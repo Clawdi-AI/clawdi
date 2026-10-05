@@ -50,7 +50,7 @@ export default function AgentDetailRoute() {
 						<PageHeader
 							title={agentDisplayName(agent.data)}
 							description={agentOverviewCopy.description}
-							icon={<WebIcon as={LayoutDashboard} recipe={styles.sizeTextMutedForeground} />}
+							icon={<WebIcon as={LayoutDashboard} recipe={styles.sectionIcon} />}
 						/>
 						<AgentOverview agent={agent.data} />
 					</>

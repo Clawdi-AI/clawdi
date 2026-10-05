@@ -26,40 +26,36 @@ export function OverviewComputeBody({
 			]
 		: [subscription, date].filter((fact) => fact !== null && fact !== undefined);
 	return (
-		<WebView recipe={styles.spaceY}>
-			<WebText recipe={styles.textSmTextMutedForeground}>
+		<WebView recipe={styles.root}>
+			<WebText recipe={styles.plan}>
 				{loading ? (
-					<Skeleton className={webView(styles.hLhWMaxWFull)} style={{ height: 20 }} />
+					<Skeleton className={webView(styles.planSkeleton)} style={{ height: 20 }} />
 				) : (
 					planLabel
 				)}
 			</WebText>
-			<WebView
-				recipe={styles.flexFlexWrapGapXGapY}
-				className="flex-row"
-				accessibilityLabel={copy.resources}
-			>
+			<WebView recipe={styles.specs} className="flex-row" accessibilityLabel={copy.resources}>
 				{specs.map((item, index) => (
 					<WebView
 						key={item.key}
-						recipe={styles.flexItemsCenterGap}
+						recipe={styles.specValue}
 						className="flex-row"
 						accessibilityLabel={item.label}
 					>
-						{index > 0 ? <WebText recipe={styles.textSmTextMutedForeground}>·</WebText> : null}
+						{index > 0 ? <WebText recipe={styles.plan}>·</WebText> : null}
 						{loading ? (
 							<Skeleton
 								className={webView(`${styles.specSkeleton} ${styles[`${item.key}Skeleton`]}`)}
 								style={{ height: 16 }}
 							/>
 						) : (
-							<WebText recipe={styles.flexFlexWrapGapXGapY}>{item.value}</WebText>
+							<WebText recipe={styles.specs}>{item.value}</WebText>
 						)}
 					</WebView>
 				))}
 			</WebView>
 			{facts.length ? (
-				<WebView recipe={styles.spaceYTextXsTextMutedForeground}>
+				<WebView recipe={styles.commercial}>
 					{facts.map((fact, index) => (
 						<WebView
 							key={fact.label ?? index}
@@ -69,7 +65,7 @@ export function OverviewComputeBody({
 							{fact.label ? (
 								loading ? (
 									<Skeleton
-										className={webView(styles.relativeHLhMaxWFull)}
+										className={webView(styles.commercialLabelSkeleton)}
 										style={{ height: 16, minWidth: 88 }}
 									/>
 								) : (
@@ -77,7 +73,10 @@ export function OverviewComputeBody({
 								)
 							) : null}
 							{loading ? (
-								<Skeleton className={webView(styles.hLhWMaxWFull2)} style={{ height: 16 }} />
+								<Skeleton
+									className={webView(styles.commercialStatusSkeleton)}
+									style={{ height: 16 }}
+								/>
 							) : (
 								<WebText
 									recipe={fact.label ? styles.commercialValue : styles.commercialAccess}
@@ -90,7 +89,7 @@ export function OverviewComputeBody({
 					))}
 				</WebView>
 			) : null}
-			{action ? <WebView recipe={styles.flexFlexWrapJustifyEndGap}>{action}</WebView> : null}
+			{action ? <WebView recipe={styles.actions}>{action}</WebView> : null}
 		</WebView>
 	);
 }

@@ -135,7 +135,7 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 				}
 				actions={
 					<Button variant="outline" size="sm" onPress={() => router.push("/sessions/shared")}>
-						<WebIcon as={Link2} recipe={filterStyles.size4} />
+						<WebIcon as={Link2} recipe={filterStyles.triggerIcon} />
 						<Text>{copy.sharedLinks}</Text>
 					</Button>
 				}
@@ -145,7 +145,7 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 					<Text>{t("sessions.clearFilter")}</Text>
 				</Button>
 			) : (
-				<WebView recipe={styles.spaceY4}>
+				<WebView recipe={styles.content}>
 					<ListToolbar
 						search={
 							<SearchInput
@@ -197,14 +197,19 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 						}
 						actions={
 							filtered ? (
-								<Button size="sm" variant="ghost" className={webView(styles.h8Px2)} onPress={reset}>
+								<Button
+									size="sm"
+									variant="ghost"
+									className={webView(styles.clearFilters)}
+									onPress={reset}
+								>
 									<Text>{copy.reset}</Text>
 								</Button>
 							) : undefined
 						}
 					/>
 					{!searchValid ? (
-						<WebText recipe={styles.textXsTextMutedForeground} accessibilityRole="alert">
+						<WebText recipe={styles.updateStatus} accessibilityRole="alert">
 							{t("sessionFilters.searchInvalid")}
 						</WebText>
 					) : null}
@@ -244,20 +249,20 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 							emptyMessage={sessionListEmptyMessage(applied.q ?? "", filtered)}
 						/>
 					) : null}
-					<WebView recipe={paginationStyles.flexFlexColReverseItems}>
-						<WebText recipe={paginationStyles.textSmTextMutedForeground}>
+					<WebView recipe={paginationStyles.root}>
+						<WebText recipe={paginationStyles.results}>
 							{total === 0
 								? "0 results"
 								: `${(page - 1) * pageSize + 1}–${Math.min(total, page * pageSize)} of ${total}`}
 						</WebText>
-						<WebView recipe={paginationStyles.flexWFullFlexCol}>
-							<WebView recipe={paginationStyles.flexItemsCenterGap2} className="flex-row">
-								<WebText recipe={paginationStyles.textSmTextMutedForeground}>{copy.rows}</WebText>
+						<WebView recipe={paginationStyles.controls}>
+							<WebView recipe={paginationStyles.pageSize} className="flex-row">
+								<WebText recipe={paginationStyles.results}>{copy.rows}</WebText>
 								<Select
 									value={String(draft.page_size ?? 25)}
 									onValueChange={(value) => update({ page_size: Number(value) })}
 								>
-									<SelectTrigger size="sm" className={webView(paginationStyles.w72Px)}>
+									<SelectTrigger size="sm" className={webView(paginationStyles.pageSizeTrigger)}>
 										<SelectValue />
 									</SelectTrigger>
 									<SelectContent>
@@ -269,7 +274,7 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 									</SelectContent>
 								</Select>
 							</WebView>
-							<WebView recipe={paginationStyles.flexItemsCenterGap1} className="flex-row">
+							<WebView recipe={paginationStyles.navigation} className="flex-row">
 								<Button
 									variant="outline"
 									size="icon-sm"
@@ -277,9 +282,9 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 									disabled={page <= 1 || sessions.isFetching}
 									onPress={() => setPage((current) => current - 1)}
 								>
-									<WebIcon as={ChevronLeft} recipe={paginationStyles.size4} />
+									<WebIcon as={ChevronLeft} recipe={paginationStyles.actionIcon} />
 								</Button>
-								<WebText recipe={paginationStyles.minW12Px2}>
+								<WebText recipe={paginationStyles.pageCount}>
 									{page} / {pageCount}
 								</WebText>
 								<Button
@@ -289,7 +294,7 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 									disabled={page >= pageCount || sessions.isFetching}
 									onPress={() => void next()}
 								>
-									<WebIcon as={ChevronRight} recipe={paginationStyles.size4} />
+									<WebIcon as={ChevronRight} recipe={paginationStyles.actionIcon} />
 								</Button>
 							</WebView>
 						</WebView>
@@ -347,9 +352,9 @@ function SessionFilter({
 					<FilterChip
 						active={value !== "all"}
 						onClick={() => {}}
-						className={`${buttonVariants({ variant: "outline", size: "sm" })} ${filterStyles.h8BorderDashed}`}
+						className={`${buttonVariants({ variant: "outline", size: "sm" })} ${filterStyles.trigger}`}
 					>
-						<WebIcon as={PlusCircle} recipe={filterStyles.size4} />
+						<WebIcon as={PlusCircle} recipe={filterStyles.triggerIcon} />
 						<Text>
 							{title}
 							{value !== "all" ? " · 1" : ""}

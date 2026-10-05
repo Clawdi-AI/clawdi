@@ -25,13 +25,13 @@ import { AppPressable } from "../view";
 import { WebText, WebView, webView } from "../web-layout";
 export function SessionCardSkeleton() {
 	return (
-		<WebView recipe={`${ENTITY_CARD_BASE} ${styles.flexMinHSessionRow}`} style={{ minHeight: 80 }}>
-			<Skeleton className={webView(styles.size8Shrink0Rounded)} />
-			<WebView recipe={styles.minW0Flex1}>
-				<Skeleton className={webView(styles.hLhW45)} style={{ height: 20 }} />
-				<WebView recipe={styles.mt05MinH}>
-					<Skeleton className={webView(styles.hLhW12)} style={{ height: 16 }} />
-					<Skeleton className={webView(styles.hLhW13)} style={{ height: 16 }} />
+		<WebView recipe={`${ENTITY_CARD_BASE} ${styles.card}`} style={{ minHeight: 80 }}>
+			<Skeleton className={webView(styles.avatarSkeleton)} />
+			<WebView recipe={styles.skeletonBody}>
+				<Skeleton className={webView(styles.titleSkeleton)} style={{ height: 20 }} />
+				<WebView recipe={styles.skeletonMeta}>
+					<Skeleton className={webView(styles.metaSkeleton)} style={{ height: 16 }} />
+					<Skeleton className={webView(styles.secondaryMetaSkeleton)} style={{ height: 16 }} />
 				</WebView>
 			</WebView>
 		</WebView>
@@ -60,7 +60,7 @@ export function SessionFeed({
 }) {
 	if (isLoading)
 		return (
-			<WebView recipe={styles.flexFlexColGap2}>
+			<WebView recipe={styles.list}>
 				{Array.from({ length: 5 }, (_, i) => (
 					<SessionCardSkeleton key={i} />
 				))}
@@ -78,16 +78,16 @@ export function SessionFeed({
 		/>
 	);
 	return grouped ? (
-		<WebView recipe={styles.flexFlexColGap5}>
+		<WebView recipe={styles.groups}>
 			{groupSessionsByRecency(sessions, groupBy).map((group) => (
-				<WebView key={group.key} recipe={styles.flexFlexColGap2}>
+				<WebView key={group.key} recipe={styles.list}>
 					<SectionLabel>{group.label}</SectionLabel>
-					<WebView recipe={styles.flexFlexColGap2}>{group.items.map(card)}</WebView>
+					<WebView recipe={styles.list}>{group.items.map(card)}</WebView>
 				</WebView>
 			))}
 		</WebView>
 	) : (
-		<WebView recipe={styles.flexFlexColGap2}>{sessions.map(card)}</WebView>
+		<WebView recipe={styles.list}>{sessions.map(card)}</WebView>
 	);
 }
 export function SessionCard({
@@ -122,9 +122,9 @@ export function SessionCard({
 			accessibilityLabel={`Open session ${title}`}
 			className={cn(
 				ENTITY_CARD_BASE,
-				webView(styles.flexMinHSessionRow),
-				webView(styles.groupHoverBgMuted50),
-				isAutomated && webView(styles.bgMuted30),
+				webView(styles.card),
+				webView(styles.link),
+				isAutomated && webView(styles.automated),
 			)}
 			style={{ minHeight: 80 }}
 			onPress={() => {
@@ -144,12 +144,12 @@ export function SessionCard({
 			}}
 		>
 			<AgentIcon agent={session.agent_type} size="lg" />
-			<WebView recipe={styles.w0MinW0}>
-				<WebText recipe={styles.blockTruncateTextSmLeading} numberOfLines={1}>
+			<WebView recipe={styles.body}>
+				<WebText recipe={styles.title} numberOfLines={1}>
 					{title}
 				</WebText>
 				{session.search_match ? (
-					<WebText recipe={styles.mt05LineClamp} numberOfLines={2}>
+					<WebText recipe={styles.searchExcerpt} numberOfLines={2}>
 						<WebText recipe={styles.searchRole}>{session.search_match.role}</WebText>
 						{": "}
 						{splitSearchHighlight(session.search_match.excerpt, searchQuery).map((part, index) => (
@@ -162,12 +162,12 @@ export function SessionCard({
 						))}
 					</WebText>
 				) : null}
-				<WebView recipe={styles.mt05FlexMin}>
+				<WebView recipe={styles.meta}>
 					{metadata.map((item, i) => (
-						<WebView key={item.key} recipe={styles.inlineFlexMinW0} className="flex-row">
-							{i > 0 ? <WebText recipe={styles.mx15Shrink0}>·</WebText> : null}
+						<WebView key={item.key} recipe={styles.metaItem} className="flex-row">
+							{i > 0 ? <WebText recipe={styles.metaSeparator}>·</WebText> : null}
 							<WebText
-								recipe={`${styles.minW0Truncate} ${item.key === "project" ? styles.fontMono : ""}`}
+								recipe={`${styles.metaValue} ${item.key === "project" ? styles.project : ""}`}
 								numberOfLines={1}
 							>
 								{item.value}

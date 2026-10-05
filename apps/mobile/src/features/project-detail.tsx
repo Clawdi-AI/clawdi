@@ -182,7 +182,7 @@ function ProjectHub({ id }: { id?: string }) {
 					{tab === "skills" ? (
 						<WebView recipe={projectDetailClasses.section}>
 							<WebView recipe={projectDetailClasses.sectionHeader}>
-								<WebView recipe={projectDetailClasses.shrinkContent}>
+								<WebView recipe={projectDetailClasses.sectionHeading}>
 									<WebText recipe={projectDetailClasses.heading}>{t("skills.title")}</WebText>
 									<WebText recipe={projectDetailClasses.subtitle}>
 										{t("libraryPort.projectSkillsDescription")}

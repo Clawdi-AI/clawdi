@@ -36,7 +36,7 @@ export function AgentsCard({
 	hostedStatus?: { isLoading: boolean; error?: unknown; onRetry?: () => void };
 }) {
 	return (
-		<WebView recipe={styles.spaceY3}>
+		<WebView recipe={styles.section}>
 			{error ? (
 				<ApiErrorPanel error={error} onRetry={onRetry} title={OVERVIEW_COPY.agentsError} />
 			) : isLoading ? (
@@ -78,17 +78,15 @@ export function AgentTileView({ tile }: { tile: AgentTile }) {
 			style={{ height: "auto" }}
 			accessibilityRole="link"
 			accessibilityLabel={`Open ${tile.name}${statusVisual ? `. Status: ${statusVisual.label}` : ""}`}
-			className={cn(ENTITY_CARD_BASE, webView(styles.groupRelativeZ0H))}
+			className={cn(ENTITY_CARD_BASE, webView(styles.card))}
 			onPress={() => router.push({ pathname: "/agents/[agentId]", params: { agentId: tile.id } })}
 		>
 			<EntityHeader
 				icon={<AgentIcon agent={tile.agentType} size="lg" avatarUrl={tile.avatarUrl} />}
 				title={
-					<WebView recipe={styles.flexMinW0Items} className="flex-row">
-						{statusVisual ? (
-							<WebView recipe={`${styles.size15RoundedFull} ${statusVisual.dotClass}`} />
-						) : null}
-						<Text numberOfLines={1} className={webView(styles.minW0Truncate)}>
+					<WebView recipe={styles.title} className="flex-row">
+						{statusVisual ? <WebView recipe={`${styles.dot} ${statusVisual.dotClass}`} /> : null}
+						<Text numberOfLines={1} className={webView(styles.name)}>
 							{tile.name}
 						</Text>
 					</WebView>

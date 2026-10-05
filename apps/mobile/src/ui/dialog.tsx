@@ -39,13 +39,9 @@ export function DialogContent({
 	const t = useI18n(),
 		modal = useContext(ModalContext);
 	return (
-		<ModalSurface
-			recipe={styles.dialogContent}
-			overlayRecipe={styles.dialogOverlay}
-			className={className}
-		>
+		<ModalSurface recipe={styles.content} overlayRecipe={styles.overlay} className={className}>
 			<WebView
-				recipe={styles.dialogContent
+				recipe={styles.content
 					.split(/\s+/)
 					.filter((token) => token.startsWith("gap-"))
 					.join(" ")}
@@ -56,7 +52,7 @@ export function DialogContent({
 				<Button
 					variant="ghost"
 					size="icon-sm"
-					className={webView(styles.dialogContent2)}
+					className={webView(styles.closeAction)}
 					style={{ top: 0, right: 0 }}
 					accessibilityLabel={t("composite.close")}
 					onPress={() => modal.setOpen(false)}
@@ -69,7 +65,7 @@ export function DialogContent({
 }
 export function DialogHeader({ children, className }: SlotProps) {
 	return (
-		<WebView recipe={styles.dialogHeader} className={className}>
+		<WebView recipe={styles.header} className={className}>
 			{children}
 		</WebView>
 	);
@@ -81,7 +77,7 @@ export function DialogFooter({
 }: SlotProps & { showCloseButton?: boolean }) {
 	const t = useI18n();
 	return (
-		<WebView recipe={styles.dialogFooter} className={className}>
+		<WebView recipe={styles.footer} className={className}>
 			{children}
 			{showCloseButton ? <DialogClose variant="outline">{t("composite.close")}</DialogClose> : null}
 		</WebView>
@@ -89,16 +85,16 @@ export function DialogFooter({
 }
 export function DialogTitle({ children, className }: SlotProps) {
 	return (
-		<WebText recipe={styles.dialogTitle} accessibilityRole="header" className={className}>
+		<WebText recipe={styles.title} accessibilityRole="header" className={className}>
 			{children}
 		</WebText>
 	);
 }
 export function DialogDescription({ children, className }: SlotProps) {
 	return (
-		<WebView recipe={styles.dialogDescription} className={className}>
+		<WebView recipe={styles.description} className={className}>
 			{typeof children === "string" ? (
-				<WebText recipe={styles.dialogDescription}>{children}</WebText>
+				<WebText recipe={styles.description}>{children}</WebText>
 			) : (
 				children
 			)}

@@ -241,7 +241,7 @@ export function AgentPluginsSurface({
 	}, [desiredQuery.data, catalogQuery.data]);
 
 	return (
-		<div data-hosted="true" data-v2="true" className={agentPluginsSurfaceClasses.spaceY}>
+		<div data-hosted="true" data-v2="true" className={agentPluginsSurfaceClasses.root}>
 			{selectedItem ? (
 				<AgentPluginDetail
 					item={selectedItem}
@@ -376,7 +376,7 @@ function AgentPluginCatalog({
 	}
 
 	return (
-		<div className={agentPluginsSurfaceClasses.spaceY} data-testid="agent-plugins-surface">
+		<div className={agentPluginsSurfaceClasses.root} data-testid="agent-plugins-surface">
 			<ListToolbar
 				search={
 					<SearchInput
@@ -390,9 +390,7 @@ function AgentPluginCatalog({
 					<>
 						<FilterChip active={category === "all"} onClick={() => onCategoryChange("all")}>
 							All
-							<span className={agentPluginsSurfaceClasses.textMutedForegroundTabular}>
-								{inventory.length}
-							</span>
+							<span className={agentPluginsSurfaceClasses.filterCount}>{inventory.length}</span>
 						</FilterChip>
 						{categories.map((value) => (
 							<FilterChip
@@ -401,7 +399,7 @@ function AgentPluginCatalog({
 								onClick={() => onCategoryChange(value)}
 							>
 								{value}
-								<span className={agentPluginsSurfaceClasses.textMutedForegroundTabular}>
+								<span className={agentPluginsSurfaceClasses.filterCount}>
 									{inventory.filter((item) => item.catalog?.category === value).length}
 								</span>
 							</FilterChip>
@@ -421,7 +419,7 @@ function AgentPluginCatalog({
 			) : null}
 			{groups.map((group) =>
 				group.items.length > 0 ? (
-					<section key={group.id} className={agentPluginsSurfaceClasses.spaceY2}>
+					<section key={group.id} className={agentPluginsSurfaceClasses.section}>
 						<SectionLabel count={group.items.length}>{group.label}</SectionLabel>
 						<div className={HERO_GRID_CLASS}>
 							{group.items.map((item) => (
@@ -477,7 +475,7 @@ function DesiredStateErrorAlert({
 function AgentPluginGridSkeleton() {
 	return (
 		<div className={HERO_GRID_CLASS}>
-			<span className={agentPluginsSurfaceClasses.srOnly}>Loading plugins</span>
+			<span className={agentPluginsSurfaceClasses.screenReaderOnly}>Loading plugins</span>
 			{Array.from({ length: 4 }).map((_, index) => (
 				<HeroCardSkeleton key={`plugin-skeleton-${index}`} compact />
 			))}

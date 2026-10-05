@@ -148,7 +148,7 @@ function ApiKeysView() {
 					{items.map((key) => (
 						<WebView key={key.id} recipe={styles.card}>
 							<WebView recipe={styles.cardHeader} className="flex-row">
-								<WebView recipe={styles.minWidth} className="flex-1">
+								<WebView recipe={styles.factBody} className="flex-1">
 									<WebText recipe={styles.cardName}>{key.label}</WebText>
 									<WebView recipe={styles.cardPrefix}>
 										<WebText recipe={styles.keyPrefix}>{key.key_prefix}…</WebText>
@@ -173,7 +173,7 @@ function ApiKeysView() {
 										? [{ label: t("settingsParity.expires"), value: key.expires_at }]
 										: []),
 								].map((fact) => (
-									<WebView key={fact.label} recipe={styles.minWidth} className="flex-1">
+									<WebView key={fact.label} recipe={styles.factBody} className="flex-1">
 										<WebText recipe={styles.description}>{fact.label}</WebText>
 										<WebText recipe={styles.description}>
 											{fact.value ? formatShortDate(fact.value) : t("settingsParity.never")}
