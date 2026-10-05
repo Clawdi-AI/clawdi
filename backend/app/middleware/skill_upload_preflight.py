@@ -18,6 +18,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.skill_key import (
     RESERVED_SKILL_KEY_SUFFIXES,
+    describe_skill_key,
     has_reserved_skill_key_suffix,
     is_legacy_hidden_skill_key,
     is_valid_skill_key,
@@ -62,7 +63,7 @@ class SkillUploadPreflightMiddleware:
                     if path.startswith("/api/projects/") and is_legacy_hidden_skill_key(skill_key):
                         break
                     if not is_valid_skill_key(skill_key):
-                        await _send_invalid_skill_key(send)
+                        await _send_invalid_skill_key(send, skill_key)
                         return
                     break
 
@@ -132,8 +133,10 @@ class _ReplayReceive:
         return self._receive()
 
 
-async def _send_invalid_skill_key(send: Send) -> None:
-    body = json.dumps({"detail": "Invalid skill_key"}).encode("utf-8")
+async def _send_invalid_skill_key(send: Send, skill_key: str) -> None:
+    body = json.dumps({"detail": f"Invalid skill_key ({describe_skill_key(skill_key)})"}).encode(
+        "utf-8"
+    )
     await _send_json(send, status=422, body=body)
 
 

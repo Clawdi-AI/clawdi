@@ -73,7 +73,7 @@ import {
 	readSessionsLock,
 	type SessionFence,
 } from "../lib/sessions-lock";
-import { isValidSkillKey, SkillKeyValidationError } from "../lib/skill-key";
+import { describeSkillKey, isValidSkillKey, SkillKeyValidationError } from "../lib/skill-key";
 import {
 	computeSkillFolderHash,
 	readProjectSkillMaterialization,
@@ -1283,7 +1283,7 @@ async function enqueueIfChanged(
 	getProjectId: () => string,
 ): Promise<void> {
 	if (!isValidSkillKey(skillKey)) {
-		log.warn("engine.invalid_skill_key_skipped", { skill_key: skillKey });
+		log.warn("engine.invalid_skill_key_skipped", { key_shape: describeSkillKey(skillKey) });
 		return;
 	}
 	if (
@@ -1674,6 +1674,16 @@ export async function processQueueItem(
 			log.warn("engine.queue_module_missing_dropped", { kind: item.kind, module: "skills" });
 			queue.markDoneIfVersion(item);
 			return "not_applied";
+		}
+		// Old queues can contain scanner names outside the storage contract.
+		// Retire only that task, preserving local files and projection claims.
+		if (!isValidSkillKey(item.skill_key)) {
+			log.warn("engine.invalid_skill_key_skipped", {
+				key_shape: describeSkillKey(item.skill_key),
+				origin: "queue",
+			});
+			queue.markDoneIfVersion(item);
+			return "absent";
 		}
 		const projectId = modules.skills.getProjectId();
 		const materialization = readProjectSkillMaterialization({
@@ -2332,7 +2342,7 @@ export async function reconcileAgentSkillProjection(input: {
 		...(input.trustedLegacyRemoteKeys ?? []),
 	]);
 
-	for (const skillKey of [...allKeys].sort()) {
+	for (const skillKey of filterValidSkillKeysForSync(allKeys).sort()) {
 		opts.abort?.throwIfAborted();
 		if (
 			readProjectSkillMaterialization({
@@ -2458,7 +2468,10 @@ export function filterValidSkillKeysForSync(
 		if (isValidSkillKey(key)) {
 			validKeys.push(key);
 		} else if (logSkipped) {
-			log.warn("engine.invalid_skill_key_skipped", { skill_key: key, origin: "adapter_list" });
+			log.warn("engine.invalid_skill_key_skipped", {
+				key_shape: describeSkillKey(key),
+				origin: "inventory",
+			});
 		}
 	}
 	return validKeys;

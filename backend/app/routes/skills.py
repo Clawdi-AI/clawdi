@@ -38,6 +38,7 @@ from app.core.skill_key import (
     RESERVED_SKILL_KEY_SUFFIXES,
     SKILL_KEY_PATTERN,
     SkillKeyValidationError,
+    describe_skill_key,
     has_reserved_skill_key_suffix,
     is_legacy_hidden_skill_key,
     is_valid_skill_key,
@@ -1381,7 +1382,10 @@ async def refresh_project_skill(
 ) -> SkillUploadResponse:
     """Explicitly replace one linked Project snapshot from its source Agent."""
     if not is_valid_skill_key(body.skill_key):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid skill_key")
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"Invalid skill_key ({describe_skill_key(body.skill_key)})",
+        )
     await validate_project_for_caller(db, auth, project_id)
     _target, source, source_file_key, source_file_count = await _project_skill_refresh_rows(
         db,
@@ -1518,10 +1522,16 @@ async def upload_skill_project_legacy(
             skill_sync_protocol=skill_sync_protocol,
         )
         if authority != SKILL_AUTHORITY_AGENT_SYNC:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid skill_key")
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                f"Invalid skill_key ({describe_skill_key(skill_key)})",
+            )
         return {"ignored": True}
     if not is_valid_skill_key(skill_key):
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Invalid skill_key")
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"Invalid skill_key ({describe_skill_key(skill_key)})",
+        )
     return await _upload_skill_project(
         db=db,
         auth=auth,

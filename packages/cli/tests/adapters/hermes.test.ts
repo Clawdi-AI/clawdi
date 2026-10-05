@@ -671,17 +671,29 @@ describe("HermesAdapter.collectSkills", () => {
 			join(skillsRoot, "apple", ".archive", "old-reminders", "SKILL.md"),
 			"---\nname: old reminders\n---\n",
 		);
-		mkdirSync(join(skillsRoot, "bad key"), { recursive: true });
-		writeFileSync(join(skillsRoot, "bad key", "SKILL.md"), "---\nname: bad key\n---\n");
-		mkdirSync(join(skillsRoot, "apple", "_private"), { recursive: true });
-		writeFileSync(join(skillsRoot, "apple", "_private", "SKILL.md"), "---\nname: private\n---\n");
+		for (const key of [
+			"bad key",
+			"apple/_private",
+			"中文",
+			"a/b/c/d/e",
+			"a".repeat(201),
+			"team/download",
+			"demo\n",
+		]) {
+			mkdirSync(join(skillsRoot, key), { recursive: true });
+			writeFileSync(join(skillsRoot, key, "SKILL.md"), "# Invalid key fixture\n");
+		}
+		for (const key of ["Team.tools/Demo_v1", "valid/nested/at/limit"]) {
+			mkdirSync(join(skillsRoot, key), { recursive: true });
+			writeFileSync(join(skillsRoot, key, "SKILL.md"), "# Valid key fixture\n");
+		}
 
 		const a = new HermesAdapter();
 		const skills = await a.skills.collect();
 		const keys = skills.map((s) => s.skillKey).sort();
 
-		expect(keys).toEqual(["core/demo"]);
-		expect(await a.skills.listKeys()).toEqual(["core/demo"]);
+		expect(keys).toEqual(["Team.tools/Demo_v1", "core/demo", "valid/nested/at/limit"]);
+		expect((await a.skills.listKeys()).sort()).toEqual(keys);
 	});
 
 	it("returns empty when skills dir is missing", async () => {

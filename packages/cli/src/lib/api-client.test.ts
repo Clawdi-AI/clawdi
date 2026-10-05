@@ -18,7 +18,31 @@ describe("ApiClient.uploadSkill", () => {
 				Buffer.from("not a tar"),
 				".system.tar.gz",
 			),
-		).rejects.toThrow('Invalid skill_key: ".system"');
+		).rejects.toThrow("Invalid skill_key (length=7, components=1, reason=invalid_component_start)");
+	});
+});
+
+describe("ApiClient session upload origin", () => {
+	it("sends the Agent origin for equal local IDs with unbound credentials", async () => {
+		const origins: FormDataEntryValue[] = [];
+		globalThis.fetch = (async (request: Request) => {
+			expect(new URL(request.url).pathname).toBe("/v1/sessions/shared-id/upload");
+			const form = await request.formData();
+			const origin = form.get("environment_id");
+			if (origin === null)
+				return Response.json({ detail: "session_origin_required" }, { status: 409 });
+			origins.push(origin);
+			expect(form.get("expected_content_hash")).toBe("a".repeat(64));
+			return Response.json({ status: "uploaded", content_hash: "a".repeat(64) });
+		}) as typeof fetch;
+		const api = new ApiClient({ requireAuth: false });
+		for (const environmentId of ["agent-a", "agent-b"]) {
+			await api.uploadSessionContent("shared-id", Buffer.from("[]"), "shared-id.json", {
+				environmentId,
+				expectedContentHash: "a".repeat(64),
+			});
+		}
+		expect(origins).toEqual(["agent-a", "agent-b"]);
 	});
 });
 

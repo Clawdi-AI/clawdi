@@ -284,6 +284,30 @@ AI Providers, not the local `ai-provider list` catalog.
 
 ## Cloud context and remote Skills
 
+Skill keys preserve local directory spelling: each of up to four `/`-separated
+components starts with an ASCII letter or digit and then uses letters, digits,
+`.`, `_`, or `-`; total length is at most 200 characters. Nested keys cannot end
+with `download`, `content`, or `install`. Hermes derives keys from the directory
+path relative to its Skills root, rather than the frontmatter display name.
+Unsupported names are skipped individually, with length, component count and
+reason logged; local files are preserved. Rename them to this grammar to sync.
+Automatic normalization would let distinct local directories collide.
+
+Session snapshot uploads send `environment_id` and `expected_content_hash` in
+the multipart form to `/v1/sessions/{local_session_id}/upload`. The origin is
+required by the CLI even with account-wide credentials: the same local ID on
+two Agents denotes two separate sessions. An unfenced ambiguous upload returns
+`session_origin_required`; upgrading the CLI supplies the origin without
+merging existing sessions.
+
+```bash
+bash scripts/test.sh cli tests/skill-key.test.ts tests/adapters/hermes.test.ts src/serve/sync-engine.test.ts src/lib/api-client.test.ts
+bash scripts/test.sh backend tests/test_skill_key.py tests/test_skill_upload_preflight.py tests/test_sessions.py
+```
+
+Done: both commands exit 0; invalid Skills do not block valid ones and equal
+local session IDs retain separate content for each Agent.
+
 These commands use the configured Cloud API and require login. `session list`
 continues to read local history; `session search`, `read`, and `export` use Cloud
 session UUIDs. Export writes owner Markdown to stdout and never creates a link.
