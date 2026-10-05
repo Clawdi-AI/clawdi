@@ -1,6 +1,8 @@
 import { agentsIndexClasses, connectedAgentDetailClasses } from "@clawdi/shared/ui";
 import type { LucideIcon } from "lucide-react-native";
 import type { ReactNode } from "react";
+import { Icon } from "../icon";
+import { IconChip } from "../icon-chip";
 import { PageHeader } from "../page-header";
 import { AppScrollView } from "../primitives";
 import { ReadScreen } from "../read-screen";
@@ -8,6 +10,7 @@ import { WebIcon, webView } from "../web-layout";
 export function AgentCollection({
 	title,
 	icon,
+	iconTint,
 	description,
 	actions,
 	navigation,
@@ -15,6 +18,7 @@ export function AgentCollection({
 }: {
 	title: string;
 	icon?: LucideIcon;
+	iconTint?: string;
 	description?: string;
 	actions?: ReactNode;
 	navigation?: ReactNode;
@@ -29,7 +33,11 @@ export function AgentCollection({
 					description={description}
 					actions={actions}
 					icon={
-						icon ? (
+						icon && iconTint ? (
+							<IconChip tint={iconTint}>
+								<Icon as={icon} />
+							</IconChip>
+						) : icon ? (
 							<WebIcon as={icon} recipe={connectedAgentDetailClasses.sizeTextMutedForeground} />
 						) : undefined
 					}

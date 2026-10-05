@@ -2,19 +2,17 @@ import { resolveAgentWorkspaceProjectId } from "@clawdi/shared/api";
 import {
 	HERO_GRID_CLASS,
 	workspaceSkillsPanelClasses as panel,
-	agentSkillCardClasses as styles,
+	RESOURCE_TINT_CLASSES,
 } from "@clawdi/shared/ui";
 import {
 	agentSurfaceCopy,
 	fetchAgentProjectSkills,
-	identityFor,
-	relativeTime,
 	workspaceSkillInstallCommand,
 	workspaceSkillRemoveCommand,
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { useLocalSearchParams } from "expo-router";
-import { Plus, Sparkles } from "lucide-react-native";
+import { Plus, Sparkles, Trash2 } from "lucide-react-native";
 import { useState } from "react";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
@@ -23,14 +21,13 @@ import { ActionButton } from "../ui/agents/controls";
 import { AgentSectionNavigation } from "../ui/agents/navigation";
 import { Alert } from "../ui/alert";
 import { ApiErrorPanel } from "../ui/api-error-panel";
-import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { EmptyState } from "../ui/empty-state";
-import { HeroCard, HeroCardSkeleton } from "../ui/entity-card";
+import { HeroCardSkeleton } from "../ui/entity-card";
 import { Icon } from "../ui/icon";
-import { IconChip } from "../ui/icon-chip";
 import { Input, Label } from "../ui/input";
-import { Text } from "../ui/text";
+import { SkillCard } from "../ui/skills/skill-card";
 import { WebText, WebView, webView } from "../ui/web-layout";
 import { HostedAgentLibrarySkillsScreen } from "./agent-library-skills";
 import { useCloudAgent } from "./cloud-inventory";
@@ -89,6 +86,7 @@ function WorkspaceSkills({ id }: { id?: string }) {
 	return (
 		<AgentCollection
 			icon={Sparkles}
+			iconTint={RESOURCE_TINT_CLASSES.skills}
 			title="Skills"
 			description="Skills available in this Agent's Workspace. Skills synced from the Agent are read-only."
 			navigation={id ? <AgentSectionNavigation agentId={id} section="skills" /> : null}
@@ -127,54 +125,35 @@ function WorkspaceSkills({ id }: { id?: string }) {
 				/>
 			) : (
 				<WebView recipe={HERO_GRID_CLASS}>
-					{skills.data.map((skill) => {
-						const identity = identityFor(skill.name || skill.skill_key);
-						return (
-							<HeroCard
-								key={skill.id}
-								className={webView(styles.card)}
-								icon={
-									<IconChip size="sm" tint={identity.colorClasses} className={webView(styles.icon)}>
-										<Text>{identity.emoji}</Text>
-									</IconChip>
-								}
-								title={skill.name}
-								description={skill.description}
-								badges={
-									<>
-										<Badge variant="outline">
-											<Text>v{skill.version}</Text>
-										</Badge>
-										<Badge variant="secondary">
-											<Text>{agentSurfaceCopy.readOnly}</Text>
-										</Badge>
-									</>
-								}
-								footer={[
-									agentSurfaceCopy.syncedFromAgent,
-									skill.source_repo,
-									skill.updated_at ? relativeTime(skill.updated_at) : null,
-								]}
-								link={{
-									to: {
-										pathname: "/skills/detail",
-										params: { projectId: skill.project_id ?? "", skillKey: skill.skill_key },
-									},
-								}}
-								actions={
-									<ActionButton
-										label="Uninstall"
-										variant="ghost"
-										onPress={() =>
-											setRemoveCommand(
-												workspaceSkillRemoveCommand(skill.skill_key, agent.data?.agent_type ?? ""),
-											)
-										}
-									/>
-								}
-							/>
-						);
-					})}
+					{skills.data.map((skill) => (
+						<SkillCard
+							key={skill.id}
+							skill={skill}
+							readOnly
+							provenanceLabel={agentSurfaceCopy.syncedFromAgent}
+							link={{
+								to: {
+									pathname: "/skills/detail",
+									params: { projectId: skill.project_id ?? "", skillKey: skill.skill_key },
+								},
+							}}
+							actions={
+								<Button
+									variant="ghost"
+									size="icon-sm"
+									className={webView(panel.textMutedForegroundHover)}
+									accessibilityLabel={`Uninstall ${skill.name} from Agent`}
+									onPress={() =>
+										setRemoveCommand(
+											workspaceSkillRemoveCommand(skill.skill_key, agent.data?.agent_type ?? ""),
+										)
+									}
+								>
+									<Icon as={Trash2} className={webView(panel.size)} />
+								</Button>
+							}
+						/>
+					))}
 				</WebView>
 			)}
 			<Dialog open={installOpen} onOpenChange={setInstallOpen}>
@@ -182,7 +161,7 @@ function WorkspaceSkills({ id }: { id?: string }) {
 					<DialogHeader>
 						<DialogTitle>{agentSurfaceCopy.installSkill}</DialogTitle>
 						<DialogDescription>
-							Run this command on the Agent machine. Skills appear here after the next sync.
+							Enter a GitHub Skill path, then run the generated command on the Agent machine.
 						</DialogDescription>
 					</DialogHeader>
 					<Label>{agentSurfaceCopy.gitHubSkillRepository}</Label>

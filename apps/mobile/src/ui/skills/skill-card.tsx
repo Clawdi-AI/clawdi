@@ -1,5 +1,6 @@
 import { skillCardClasses } from "@clawdi/shared/ui";
 import {
+	agentSurfaceCopy,
 	identityFor,
 	relativeTime,
 	type SkillCardEntity,
@@ -16,11 +17,15 @@ export function SkillCard({
 	link,
 	searchQuery,
 	actions,
+	readOnly = false,
+	provenanceLabel,
 }: {
 	skill: SkillCardEntity;
 	link?: EntityCardLinkOptions;
 	searchQuery?: string;
 	actions?: ReactNode;
+	readOnly?: boolean;
+	provenanceLabel?: string;
 }) {
 	const identity = identityFor(skill.name || skill.skill_key);
 	return (
@@ -37,14 +42,29 @@ export function SkillCard({
 			}
 			title={skill.name}
 			badges={
-				skill.version !== undefined ? (
-					<Badge variant="outline">
-						<Text>v{skill.version}</Text>
-					</Badge>
-				) : undefined
+				<>
+					{skill.version !== undefined ? (
+						<Badge variant="outline" className={webView(skillCardClasses.badge)}>
+							<Text>v{skill.version}</Text>
+						</Badge>
+					) : null}
+					{readOnly ? (
+						<Badge variant="secondary" className={webView(skillCardClasses.badge)}>
+							<Text>{agentSurfaceCopy.readOnly}</Text>
+						</Badge>
+					) : null}
+				</>
 			}
 			description={searchQuery ? skillSearchSupportingText(skill, searchQuery) : skill.description}
-			footer={[skill.source_repo, skill.updated_at ? relativeTime(skill.updated_at) : null]}
+			footer={[
+				provenanceLabel,
+				skill.source_repo ? (
+					<Text key="source" className={webBoth(skillCardClasses.version)}>
+						{skill.source_repo}
+					</Text>
+				) : null,
+				skill.updated_at ? relativeTime(skill.updated_at) : null,
+			]}
 			link={link}
 			actions={actions}
 			ariaLabel={`Open ${skill.name}`}

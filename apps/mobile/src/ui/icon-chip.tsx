@@ -34,9 +34,10 @@ export function IconChip({
 	const inheritedColor = useContext(TextColorContext);
 	const color = foregroundToken && typeof foreground === "string" ? foreground : inheritedColor;
 	const glyph = /\[&>svg\]:(size-[\d.]+)/.exec(ICON_CHIP_SIZE_CLASS[size])?.[1];
+	const textual = typeof children === "string" || typeof children === "number";
 	return (
 		<TextColorContext.Provider value={color}>
-			<TextClassContext.Provider value={cn(inherited, glyph)}>
+			<TextClassContext.Provider value={cn(inherited, !textual && glyph)}>
 				<WebView
 					recipe={cn(styles.root, ICON_CHIP_SIZE_CLASS[size], tint)}
 					accessibilityElementsHidden={hidden}
@@ -48,11 +49,7 @@ export function IconChip({
 							: undefined
 					}
 				>
-					{typeof children === "string" || typeof children === "number" ? (
-						<WebContent recipe={styles.root}>{children}</WebContent>
-					) : (
-						children
-					)}
+					{textual ? <WebContent recipe={styles.root}>{children}</WebContent> : children}
 				</WebView>
 			</TextClassContext.Provider>
 		</TextColorContext.Provider>
