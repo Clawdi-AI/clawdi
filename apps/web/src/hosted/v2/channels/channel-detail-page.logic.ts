@@ -10,31 +10,4 @@ export function pairCodeExpiryLabel(expiresAt: string, nowMs: number): string {
 	return `Expires in ${minutes > 0 ? `${minutes}m ` : ""}${seconds}s`;
 }
 
-export type NativeTransportSummary = {
-	status: string;
-	connection: string;
-	delivery: string;
-};
-
-export function nativeTransportSummary(transport: Record<string, unknown>): NativeTransportSummary {
-	const status =
-		transport.available === true
-			? "Ready"
-			: transport.available === false
-				? "Unavailable"
-				: "Unknown";
-	const connection =
-		transport.mode === "sidecar"
-			? "Managed connection"
-			: transport.mode === "none"
-				? "Not connected"
-				: "Details unavailable";
-	const delivery =
-		transport.supportsOutboundMessages === true
-			? "Available"
-			: transport.supportsOutboundMessages === false
-				? "Unavailable"
-				: "Unknown";
-
-	return { status, connection, delivery };
-}
+export { type NativeTransportSummary, nativeTransportSummary } from "@clawdi/shared/view";

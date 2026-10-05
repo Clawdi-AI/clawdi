@@ -30,6 +30,7 @@ export const channelDetailPageClasses = {
 	activityError: "mt-1 flex items-start gap-1 text-xs text-destructive",
 	activityErrorIcon: "mt-0.5 size-3 shrink-0",
 	externalChat: "mt-1",
+	healthError: "flex flex-col gap-1 border-destructive/30 bg-destructive/5",
 	healthMeta: "text-xs text-muted-foreground",
 	healthStats: "grid grid-cols-2 gap-2 sm:grid-cols-4",
 	healthStatValue: "text-2xl font-semibold tabular-nums",

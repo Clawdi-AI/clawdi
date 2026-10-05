@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import type { ChannelActivityItem, ChannelHealthItem } from "@/hosted/v2/channels/channel-types";
+import type { components } from "../api/api.generated";
+
+type ChannelActivityItem = components["schemas"]["ChannelActivityItemResponse"];
+type ChannelHealthItem = components["schemas"]["ChannelHealthItemResponse"];
+
 import {
 	channelActivityErrorSummary,
 	channelHealthErrorSummary,
-} from "@/hosted/v2/channels/channel-user-facing-errors";
+} from "./channel-user-facing-errors";
 
 const activity = (overrides: Partial<ChannelActivityItem> = {}): ChannelActivityItem => ({
 	kind: "message",

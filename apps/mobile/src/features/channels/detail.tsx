@@ -17,7 +17,6 @@ import {
 import {
 	agentDisplayName,
 	agentSurfaceCopy,
-	channelHealthSummary,
 	channelDetailCopy as copy,
 	pairingCommandsDescription,
 	providerMeta,
@@ -52,10 +51,12 @@ import { PageHeader } from "../../ui/page-header";
 import { AppScrollView, AppText, AppView } from "../../ui/primitives";
 import { ReadScreen } from "../../ui/read-screen";
 import { SectionLabel } from "../../ui/section-label";
+import { Skeleton } from "../../ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../ui/tabs";
 import { WebText, WebView, webView } from "../../ui/web-layout";
 import { BackButton, useCloudAgents } from "../cloud-inventory";
 import { routeParam } from "../read-helpers";
+import { ChannelHealthTab } from "./health-tab";
 import { useChannelQuery } from "./queries";
 
 export function ChannelDetailScreen() {
@@ -498,20 +499,18 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 						))}
 					</TabsContent>
 					<TabsContent value="health">
-						{health.isError ? (
-							<ApiErrorPanel error={health.error} onRetry={() => void health.refetch()} />
+						{health.isPending ? (
+							<Skeleton className={webView(styles.activitySkeleton)} />
+						) : health.isError ? (
+							<ApiErrorPanel
+								error={health.error}
+								title={agentSurfaceCopy.couldnTLoadChannelHealth}
+								onRetry={() => void health.refetch()}
+							/>
 						) : (
-							health.data?.items
-								.filter((item) => item.account_id === id)
-								.map((item) => {
-									const summary = channelHealthSummary(item);
-									return (
-										<WebView key={item.account_id} recipe={ENTITY_CARD_BASE}>
-											<AppText>{summary.label}</AppText>
-											<AppText>{summary.detail}</AppText>
-										</WebView>
-									);
-								})
+							<ChannelHealthTab
+								health={health.data?.items.find((item) => item.account_id === id)}
+							/>
 						)}
 					</TabsContent>
 					<TabsContent value="commands">
