@@ -2109,6 +2109,10 @@ function resolve(method: string, pathname: string) {
 	return null;
 }
 
+// Static collection subpaths must precede parameterized detail routes.
+// Otherwise /channels/health and /channels/bot-pool resolve as account IDs.
+routes.sort((a, b) => a.keys.length - b.keys.length);
+
 const server = Bun.serve({
 	port,
 	hostname,
