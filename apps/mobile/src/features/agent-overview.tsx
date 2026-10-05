@@ -60,6 +60,7 @@ import { OverviewComputeBody } from "../ui/agents/overview-compute-body";
 import { AgentRecentSessions } from "../ui/agents/recent-sessions";
 import { ApiErrorPanel } from "../ui/api-error-panel";
 import { Button } from "../ui/button";
+import { Icon } from "../ui/icon";
 import { Skeleton } from "../ui/skeleton";
 import { StatusDot } from "../ui/status-badge";
 import { Text } from "../ui/text";
@@ -235,7 +236,7 @@ export function AgentOverview({
 										: () => router.push("/billing")
 								}
 							>
-								<ComputeActionIcon size={14} />
+								<Icon as={ComputeActionIcon} />
 								<Text>{compute.action.label}</Text>
 							</Button>
 						) : undefined
