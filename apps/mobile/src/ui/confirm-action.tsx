@@ -114,7 +114,9 @@ export function ConfirmAction({
 						</AlertDialogAction>
 					) : null}
 					<AlertDialogAction
-						variant={destructive ? "destructive" : "default"}
+						// Web forms with a custom action recipe style the default Action.
+						// A destructive variant would keep its dark muted background here.
+						variant={destructive && !confirmClassName ? "destructive" : "default"}
 						disabled={pendingAction !== null}
 						className={`${webView(confirmActionClasses.action)} ${webBoth(confirmClassName ?? "")}`}
 						onPress={() => void runAction("confirm", onConfirm)}

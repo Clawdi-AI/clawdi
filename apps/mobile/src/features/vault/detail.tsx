@@ -32,7 +32,7 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { AlertCircle, Check, ListChecks, Plus, Trash2 } from "lucide-react-native";
+import { AlertCircle, ArrowRight, Check, ListChecks, Plus, Trash2 } from "lucide-react-native";
 import { useCallback, useState } from "react";
 import { AppState } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
@@ -820,9 +820,13 @@ function VaultDetail({
 									</WebText>
 								) : null}
 								{transferMode === "copy" ? (
-									<WebText
-										recipe={copyKeysDialogClasses.hint}
-									>{`${formCopy.referenceBefore}${formCopy.referenceAction}${formCopy.referenceAfter}`}</WebText>
+									<WebText recipe={copyKeysDialogClasses.hint}>
+										{formCopy.referenceBefore}
+										<WebText recipe={copyKeysDialogClasses.emphasis}>
+											{formCopy.referenceAction}
+										</WebText>
+										{formCopy.referenceAfter}
+									</WebText>
 								) : null}
 								<Button
 									className={webView(copyKeysDialogClasses.trigger)}
@@ -835,6 +839,7 @@ function VaultDetail({
 									}
 									onPress={() => transfer(transferMode)}
 								>
+									<Icon as={ArrowRight} className={webBoth(copyKeysDialogClasses.icon)} />
 									<Text>{transferVaultKeysLabel(transferMode, selected.length)}</Text>
 								</Button>
 							</WebView>
