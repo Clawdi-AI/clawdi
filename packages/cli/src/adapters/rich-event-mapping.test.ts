@@ -94,6 +94,13 @@ describe("rich event mapping", () => {
 			},
 		]);
 		expect(JSON.stringify(result)).not.toContain("base64");
+		const attachments = [...result.parts, ...visibleContentParts(inlineImage.content)].filter(
+			(part) => part.type === "attachment",
+		);
+		expect(attachments).toHaveLength(2);
+		for (const attachment of attachments) {
+			expect(attachment.name ?? null).toBeNull();
+		}
 		expect(
 			visibleContentParts({ type: "file", url: "https://cdn.example.com/report%20one.pdf" })[0],
 		).toMatchObject({ name: "report one.pdf" });

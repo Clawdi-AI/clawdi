@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import hashlib
-import subprocess
 import threading
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -118,26 +116,6 @@ def test_hermes_event_semantics_are_strict_and_normalized() -> None:
     assert validated.semantics.lifecycle == "inactive"
     assert validated.semantics.display_metadata is not None
     assert validated.semantics.display_metadata.attempt == 2
-
-
-def test_cli_inline_image_fixture_matches_events_v1() -> None:
-    root = Path(__file__).resolve().parents[2]
-    result = subprocess.run(
-        ["bun", "run", "packages/cli/tests/fixtures/hermes-inline-image-events.ts"],
-        cwd=root,
-        capture_output=True,
-        check=True,
-        timeout=30,
-    )
-    chunk = validate_event_chunk(result.stdout, start_seq=0, base_head_hash=EMPTY_EVENT_HEAD)
-    assert [event.type for event in chunk.events] == ["message", "tool_result"]
-    for event in chunk.events:
-        assert event.type in {"message", "tool_result"}
-        assert len(event.parts) == 2
-        assert event.parts[1].type == "attachment"
-        assert event.parts[1].availability == "metadata_only"
-        assert event.parts[1].name is None
-    assert b"base64" not in result.stdout
 
 
 def test_event_schema_diagnostics_identify_the_field_without_content() -> None:

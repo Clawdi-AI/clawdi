@@ -12,6 +12,13 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.101
+
+- Hermes sessions with inline images sync successfully, including previously
+  stuck histories, after upgrading the CLI.
+- Sessions rejected for invalid events report the failure and stop retrying until
+  their content changes, while other sessions continue syncing.
+
 ### CLI 0.14.100
 
 - Large session histories sync without loading the entire history into memory,
