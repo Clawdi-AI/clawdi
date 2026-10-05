@@ -495,8 +495,6 @@ export function applySystemdRuntimeUpdate(
 		}
 		systemctl(["restart", ...restartSystemUnits]);
 	}
-	if (startSystemUnits.length > 0) systemctl(["start", ...startSystemUnits]);
-	if (restartSystemUnits.length > 0) systemctl(["restart", ...restartSystemUnits]);
 	if (startUserUnits.length > 0) {
 		if (
 			hermesWasWarmed(paths) &&
