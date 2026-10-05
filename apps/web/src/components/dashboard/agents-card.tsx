@@ -124,7 +124,7 @@ export function AgentsCard({
 					// step from placeholders to partial tiles plus a placeholder.
 					<div className={ENTITY_GRID_CLASS}>
 						{Array.from({ length: 4 }).map((_, i) => (
-							<EntityCardSkeleton key={i} iconSize="sm" statusDot titleBadge />
+							<EntityCardSkeleton key={i} iconSize="sm" statusDot titleBadge className="p-3" />
 						))}
 					</div>
 				) : agents.length ? (

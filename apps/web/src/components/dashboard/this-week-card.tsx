@@ -49,7 +49,7 @@ export function ThisWeekCard({
 									) : null}
 								</>
 							) : (
-								<Skeleton className="h-9 w-16" />
+								<Skeleton className="h-7.5 w-16" />
 							)}
 						</div>
 
@@ -82,7 +82,7 @@ function SecondaryStat({
 		<div className="space-y-1">
 			<dt className="text-xs text-muted-foreground">{label}</dt>
 			{value === null ? (
-				<Skeleton className="h-5 w-10" />
+				<Skeleton className={small ? "h-5 w-16" : "h-6 w-10"} />
 			) : (
 				<dd
 					className={

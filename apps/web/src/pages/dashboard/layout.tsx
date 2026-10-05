@@ -28,6 +28,7 @@ import {
 } from "@/lib/product-access";
 import { useHydrated } from "@/lib/use-hydrated";
 import { cn } from "@/lib/utils";
+import { DashboardPageSkeleton } from "@/pages/dashboard/page";
 
 // Cap dashboard content at 1536px (= Tailwind's 2xl screen) and center it in
 // SidebarInset. Below that width the constraint is inert; above it (27"/4K
@@ -184,7 +185,11 @@ function DashboardAccountLayout({ children }: { children: ReactNode }) {
 													: "pb-4 md:pb-5"),
 										)}
 									>
-										<AccountDataBoundary>{children}</AccountDataBoundary>
+										<AccountDataBoundary
+											loadingFallback={pathname === "/" ? <DashboardPageSkeleton /> : undefined}
+										>
+											{children}
+										</AccountDataBoundary>
 									</div>
 								</div>
 							</div>

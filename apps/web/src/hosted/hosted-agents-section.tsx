@@ -231,11 +231,9 @@ export function HostedAgentsByCompute({
 		);
 	}
 
-	if (
-		(envsLoading || unified.isLoading) &&
-		hostedTiles.length === 0 &&
-		connectedTiles.length === 0
-	) {
+	// Hold the skeleton until hosted tiles resolve too; otherwise the
+	// connected section renders first and Clawdi Cloud pushes in above it.
+	if (unified.isLoading) {
 		return (
 			<div data-hosted="true" className="space-y-6">
 				<AgentsCard agents={[]} isLoading />

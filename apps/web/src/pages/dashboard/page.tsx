@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, type ReactNode, Suspense, useEffect, useMemo, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
@@ -132,65 +132,56 @@ export default function DashboardPage() {
 	const hostedSectionEnabled = cloudDeploymentManagementEnabled || legacyHostedAgentsEnabled;
 
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			<Greeting />
-
-			<div className="grid gap-4 lg:grid-cols-3 lg:grid-rows-[auto_auto_1fr]">
-				<div className="min-w-0 lg:col-span-2 lg:row-start-1">
-					{hostedAccessLoading ? (
-						<AgentsCard agents={selfManagedTiles} isLoading />
-					) : hostedSectionEnabled && HostedAgentsSection ? (
-						<Suspense fallback={<AgentsCard agents={selfManagedTiles} isLoading />}>
-							<HostedAgentsSection
-								envsLoading={envsLoading}
-								selfManagedError={blockingEnvsError}
-								onRetrySelfManaged={() => {
-									void refetchEnvs();
-								}}
-								selfManagedCount={selfManagedCount}
-								cloudEnvs={environments ?? []}
-								canDeployOnClawdi={hostedAccess.canCreateCloudAgents}
-								showCloudDeployments={cloudDeploymentManagementEnabled}
-								showLegacyAgents={legacyHostedAgentsEnabled}
-							/>
-						</Suspense>
-					) : ossIsEmptyState ? (
-						<OnboardingCard />
-					) : (
-						<AgentsCard
-							agents={selfManagedTiles}
-							isLoading={envsLoading}
-							error={blockingEnvsError}
-							onRetry={() => {
+		<OverviewLayout
+			greeting={<Greeting />}
+			agents={
+				hostedAccessLoading ? (
+					<AgentsCard agents={selfManagedTiles} isLoading />
+				) : hostedSectionEnabled && HostedAgentsSection ? (
+					<Suspense fallback={<AgentsCard agents={selfManagedTiles} isLoading />}>
+						<HostedAgentsSection
+							envsLoading={envsLoading}
+							selfManagedError={blockingEnvsError}
+							onRetrySelfManaged={() => {
 								void refetchEnvs();
 							}}
+							selfManagedCount={selfManagedCount}
+							cloudEnvs={environments ?? []}
+							canDeployOnClawdi={hostedAccess.canCreateCloudAgents}
+							showCloudDeployments={cloudDeploymentManagementEnabled}
+							showLegacyAgents={legacyHostedAgentsEnabled}
 						/>
-					)}
-				</div>
-
-				<section className="min-w-0 space-y-2 lg:col-span-2 lg:row-start-2">
-					<h2 className="text-base font-semibold">Activity</h2>
-					<Card>
-						<CardContent>
-							{blockingStatsError ? (
-								<ApiErrorPanel
-									error={blockingStatsError}
-									onRetry={() => {
-										void refetchStats();
-									}}
-									title="Couldn't load activity"
-								/>
-							) : statsLoading ? (
-								<ActivityGraphSkeleton />
-							) : contribution ? (
-								<ContributionGraph data={contribution} />
-							) : null}
-						</CardContent>
-					</Card>
-				</section>
-
-				{/* This source order is also the mobile reading and focus order. */}
-				<div className="min-w-0 space-y-4 lg:col-start-3 lg:row-span-3 lg:row-start-1">
+					</Suspense>
+				) : ossIsEmptyState ? (
+					<OnboardingCard />
+				) : (
+					<AgentsCard
+						agents={selfManagedTiles}
+						isLoading={envsLoading}
+						error={blockingEnvsError}
+						onRetry={() => {
+							void refetchEnvs();
+						}}
+					/>
+				)
+			}
+			activity={
+				blockingStatsError ? (
+					<ApiErrorPanel
+						error={blockingStatsError}
+						onRetry={() => {
+							void refetchStats();
+						}}
+						title="Couldn't load activity"
+					/>
+				) : statsLoading ? (
+					<ActivityGraphSkeleton />
+				) : contribution ? (
+					<ContributionGraph data={contribution} />
+				) : null
+			}
+			aside={
+				<>
 					{hostedAccessLoading ? null : hostedSectionEnabled && HostedSecondaryCTA ? (
 						<Suspense fallback={null}>
 							<HostedSecondaryCTA
@@ -218,6 +209,63 @@ export default function DashboardPage() {
 							void refetchStats();
 						}}
 					/>
+				</>
+			}
+			sessions={
+				blockingSessionsError ? (
+					<ApiErrorPanel
+						error={blockingSessionsError}
+						onRetry={() => {
+							void refetchSessions();
+						}}
+						title="Couldn't load recent sessions"
+					/>
+				) : (
+					<SessionFeed
+						sessions={sessions ?? []}
+						isLoading={sessionsLoading}
+						grouped={false}
+						emptyMessage="No manual sessions yet. Once you start a conversation, it'll show up here."
+						emptyVariant="inset"
+					/>
+				)
+			}
+		/>
+	);
+}
+
+/** Overview grid shared by the page and its auth-loading skeleton so both
+ * phases render the same shape. */
+function OverviewLayout({
+	greeting,
+	agents,
+	activity,
+	aside,
+	sessions,
+}: {
+	greeting: ReactNode;
+	agents: ReactNode;
+	activity: ReactNode;
+	aside: ReactNode;
+	sessions: ReactNode;
+}) {
+	return (
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			{greeting}
+
+			<div className="grid gap-4 lg:grid-cols-3 lg:grid-rows-[auto_auto_1fr]">
+				<div className="min-w-0 lg:col-span-2 lg:row-start-1">{agents}</div>
+
+				<section className="min-w-0 space-y-2 lg:col-span-2 lg:row-start-2">
+					<h2 className="text-base font-semibold">Activity</h2>
+					<Card>
+						<CardContent>{activity}</CardContent>
+					</Card>
+				</section>
+
+				{/* This source order is also the mobile reading and focus order. */}
+				<div className="min-w-0 space-y-4 lg:col-start-3 lg:row-span-3 lg:row-start-1">
+					{aside}
 				</div>
 
 				<section className="min-w-0 space-y-2 lg:col-span-2 lg:row-start-3">
@@ -234,33 +282,36 @@ export default function DashboardPage() {
 							<ArrowRight />
 						</Button>
 					</div>
-					{blockingSessionsError ? (
-						<ApiErrorPanel
-							error={blockingSessionsError}
-							onRetry={() => {
-								void refetchSessions();
-							}}
-							title="Couldn't load recent sessions"
-						/>
-					) : (
-						<SessionFeed
-							sessions={sessions ?? []}
-							isLoading={sessionsLoading}
-							grouped={false}
-							emptyMessage="No manual sessions yet. Once you start a conversation, it'll show up here."
-							emptyVariant="inset"
-						/>
-					)}
+					{sessions}
 				</section>
 			</div>
 		</div>
 	);
 }
 
+/** Overview placeholder shown while auth resolves, before the page mounts. */
+export function DashboardPageSkeleton() {
+	return (
+		<OverviewLayout
+			greeting={<GreetingSkeleton />}
+			agents={<AgentsCard agents={[]} isLoading />}
+			activity={<ActivityGraphSkeleton />}
+			aside={
+				<>
+					<ResourcesCard stats={undefined} />
+					<ThisWeekCard stats={undefined} />
+				</>
+			}
+			sessions={<SessionFeed sessions={[]} isLoading grouped={false} emptyMessage="" />}
+		/>
+	);
+}
+
 function ActivityGraphSkeleton() {
 	return (
 		<div className="w-full">
-			<div className="flex gap-1.5">
+			{/* Centered like ContributionGraph so the grid doesn't shift on load. */}
+			<div className="mx-auto flex w-fit max-w-full gap-1.5">
 				<div className="flex w-3 shrink-0 flex-col items-center gap-[3px]">
 					{Array.from({ length: 7 }).map((_, index) => (
 						<Skeleton key={index} className="h-[11px] w-2 rounded-[3px]" />
@@ -339,6 +390,16 @@ function Greeting() {
 				) : (
 					<Skeleton className="h-8 w-64 max-w-full" />
 				)}
+			</h1>
+		</div>
+	);
+}
+
+function GreetingSkeleton() {
+	return (
+		<div>
+			<h1 className="text-2xl font-semibold tracking-tight">
+				<Skeleton className="h-8 w-64 max-w-full" />
 			</h1>
 		</div>
 	);
