@@ -7,6 +7,13 @@ import {
 	SEARCH_QUERY_MIN_LENGTH,
 	searchQueryLength,
 } from "@clawdi/shared/consts";
+import {
+	agentTypeLabel,
+	formatNumber,
+	getProjectResourceDefinition,
+	recencyBucketFor,
+	type SessionListQuery,
+} from "@clawdi/shared/view";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "@tanstack/react-router";
 import type { SortingState } from "@tanstack/react-table";
@@ -15,7 +22,6 @@ import { parseAsBoolean, parseAsString, parseAsStringLiteral, useQueryStates } f
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
-import { agentTypeLabel } from "@/components/dashboard/agent-label";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -29,13 +35,12 @@ import { SearchInput } from "@/components/ui/search-input";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
-import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { type SessionListQuery, sessionListQueryOptions } from "@/lib/session-queries";
+import { sessionListQueryOptions } from "@/lib/session-queries";
 import { sessionDetailLink } from "@/lib/session-search-anchor";
 import { parseAsPositiveInt } from "@/lib/url-search-parsers";
 import { useDebouncedValue } from "@/lib/use-debounced";
-import { cn, formatNumber, recencyBucketFor } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 // `relevance` ranks deterministic phrase matches across metadata and messages.
 // Relevance is special-cased server-side: it's only meaningful when q

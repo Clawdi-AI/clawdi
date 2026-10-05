@@ -1,9 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import {
-	normalizeSessionListQuery,
-	sessionDetailQueryKey,
-	sessionListQueryKey,
-} from "./session-queries";
+import { sessionDetailQueryKey, sessionListQueryKey } from "@clawdi/shared/view";
+import { normalizeSessionListQuery } from "../api/session-query";
 
 describe("session query cache keys", () => {
 	it("fills backend defaults so equivalent list queries share cache", () => {

@@ -1,5 +1,6 @@
 "use client";
 
+import { MEMORY_CATEGORY_COLORS, memoryDisplayName, relativeTime } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import { Brain, Laptop, Trash2 } from "lucide-react";
@@ -20,7 +21,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { agentSessionDetailLink } from "@/lib/agent-routes";
 import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError, normalizeApiError } from "@/lib/api-errors";
-import { MEMORY_CATEGORY_COLORS, memoryDisplayName } from "@/lib/memory-utils";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 import {
@@ -28,7 +28,7 @@ import {
 	type ResourceNavigationScope,
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
-import { cn, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 export default function MemoryDetailPage({
 	memoryId,

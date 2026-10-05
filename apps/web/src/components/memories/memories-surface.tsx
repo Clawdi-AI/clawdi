@@ -7,6 +7,12 @@ import {
 	SEARCH_QUERY_MIN_LENGTH,
 	searchQueryLength,
 } from "@clawdi/shared/consts";
+import {
+	MEMORY_CATEGORIES as CATEGORIES,
+	MEMORY_CATEGORY_COLORS,
+	memoryDisplayName,
+	relativeTime,
+} from "@clawdi/shared/view";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { Brain, Database, Key, Laptop, Plus, Trash2 } from "lucide-react";
@@ -59,7 +65,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import type { Memory } from "@/lib/api-schemas";
-import { MEMORY_CATEGORY_COLORS, memoryDisplayName } from "@/lib/memory-utils";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	LIBRARY_RESOURCE_SCOPE,
@@ -71,16 +76,7 @@ import { searchExcerpt } from "@/lib/search-highlight";
 import { parseAsPositiveInt } from "@/lib/url-search-parsers";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
-import { cn, relativeTime } from "@/lib/utils";
-
-const CATEGORIES = [
-	{ value: "all", label: "All" },
-	{ value: "fact", label: "Fact" },
-	{ value: "preference", label: "Preference" },
-	{ value: "pattern", label: "Pattern" },
-	{ value: "decision", label: "Decision" },
-	{ value: "context", label: "Context" },
-] as const;
+import { cn } from "@/lib/utils";
 
 // "all" is a local UI sentinel; the API uses an empty category string to mean
 // "no filter". Keep them separate so ToggleGroup can render a selected state

@@ -1,7 +1,14 @@
 "use client";
 
 import { parseProjectSkillGitHubInput } from "@clawdi/shared/api";
-
+import {
+	canManageCustomProject,
+	displayProjectName,
+	formatResourceCount,
+	getProjectResourceDefinition,
+	isCustomProject,
+	isProjectOwner,
+} from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { FolderKanban, Import as ImportIcon, Plus } from "lucide-react";
@@ -16,13 +23,7 @@ import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
 import { ProjectActions } from "@/components/projects/project-actions";
-import {
-	canManageCustomProject,
-	displayProjectName,
-	isCustomProject,
-	isProjectOwner,
-	ProjectCompactPicker,
-} from "@/components/projects/project-metadata";
+import { ProjectCompactPicker } from "@/components/projects/project-metadata";
 import {
 	ProjectResourceCard,
 	ProjectResourceCardSkeleton,
@@ -47,7 +48,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
-import { formatResourceCount, getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
 import { parseAsPositiveInt } from "@/lib/url-search-parsers";

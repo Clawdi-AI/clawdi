@@ -1,15 +1,15 @@
 "use client";
 
+import { agentRegistrationDescription, errorMessage } from "@clawdi/shared/view";
 import { Link } from "@tanstack/react-router";
 import { Bot, Check, Copy, Terminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentLabel, AgentSourceBadgeForEnvironment } from "@/components/dashboard/agent-label";
-import { agentRegistrationDescription } from "@/components/dashboard/agent-registration-status";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useOpenApi } from "@/lib/api";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 // Fallback origin used during SSR and on the first client render before the
 // useEffect fires, so server and client markup match. The real origin is

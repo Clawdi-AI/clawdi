@@ -4,6 +4,15 @@ import { buildSkillUpdateRequest, stripFrontmatter } from "@clawdi/shared/api";
 
 export { stripFrontmatter } from "@clawdi/shared/api";
 
+import {
+	agentDisplayName,
+	cleanMachineName,
+	decodeResourceRouteParam,
+	displayProjectName,
+	errorMessage,
+	projectResourceHref,
+	relativeTime,
+} from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
@@ -24,7 +33,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { agentDisplayName, cleanMachineName } from "@/components/dashboard/agent-label";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import { useAgentProjectBrowseAccess } from "@/components/dashboard/agent-project-browse-access";
 import { resolveAgentProjectScope } from "@/components/dashboard/agent-project-scope";
@@ -41,7 +49,7 @@ import { Markdown } from "@/components/markdown";
 import { Stat } from "@/components/meta/stat";
 import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { displayProjectName, ProjectIdentity } from "@/components/projects/project-metadata";
+import { ProjectIdentity } from "@/components/projects/project-metadata";
 import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
 import { SkillRemovalDescription } from "@/components/skills/skill-removal-description";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -61,12 +69,11 @@ import {
 } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
-import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 import { skillCapabilities } from "@/lib/skill-authority";
 import { useCommittedLocation } from "@/lib/use-committed-location";
-import { cn, errorMessage, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import {
 	removeDeletedSkillQueries,
 	skillDetailQueryKey,

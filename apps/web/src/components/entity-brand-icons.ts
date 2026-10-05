@@ -1,3 +1,4 @@
+import type { FrameworkBrandIconId, ProviderBrandIconId } from "@clawdi/shared/view";
 import Anthropic from "@lobehub/icons/es/Anthropic/components/Mono.js";
 import ClaudeCode from "@lobehub/icons/es/ClaudeCode/components/Color.js";
 import Codex from "@lobehub/icons/es/Codex/components/Inner.js";
@@ -26,7 +27,6 @@ import XAI from "@lobehub/icons/es/XAI/components/Mono.js";
 import XiaomiMiMo from "@lobehub/icons/es/XiaomiMiMo/components/Mono.js";
 import ZAI from "@lobehub/icons/es/ZAI/components/Mono.js";
 import type { BrandIconComponent } from "@/components/brand-icon-tile";
-import type { FrameworkBrandIconId, ProviderBrandIconId } from "@/components/entity-brand-icon-ids";
 
 export type BrandIconMetadata = {
 	icon: BrandIconComponent;

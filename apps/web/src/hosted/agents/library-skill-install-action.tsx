@@ -1,10 +1,10 @@
 "use client";
 
+import { agentDisplayName } from "@clawdi/shared/view";
 import { Download } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { agentDisplayName } from "@/components/dashboard/agent-label";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,

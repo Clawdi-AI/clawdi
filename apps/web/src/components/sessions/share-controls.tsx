@@ -6,6 +6,7 @@ import {
 	type SessionShareTarget,
 	sessionShareMatchesTarget,
 } from "@clawdi/shared/api";
+import { errorMessage, relativeTime, sessionDetailQueryKey } from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, Link2, Share2, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -34,8 +35,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { ApiError, unwrap, useApi } from "@/lib/api";
-import { sessionDetailQueryKey } from "@/lib/session-queries";
-import { cn, errorMessage, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 export type { SessionShareTarget } from "@clawdi/shared/api";
 

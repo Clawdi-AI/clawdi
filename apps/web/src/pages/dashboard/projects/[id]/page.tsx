@@ -1,5 +1,16 @@
 "use client";
 
+import {
+	agentDisplayName,
+	compareAgentEnvironments,
+	displayProjectName,
+	formatShortDate,
+	identityFor,
+	isCustomProject,
+	type ProjectAgentMetadata,
+	projectAgentFor,
+	projectResourceHref,
+} from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import {
@@ -26,12 +37,7 @@ import {
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import {
-	AgentLabel,
-	AgentSourceBadgeForEnvironment,
-	agentDisplayName,
-	compareAgentEnvironments,
-} from "@/components/dashboard/agent-label";
+import { AgentLabel, AgentSourceBadgeForEnvironment } from "@/components/dashboard/agent-label";
 import {
 	agentProjectBindingsQueryKey,
 	useAgentProjectBindings,
@@ -47,13 +53,7 @@ import { IconChip } from "@/components/icon-chip";
 import { PageHeader, type PageHeaderProps, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { ProjectActions } from "@/components/projects/project-actions";
-import {
-	displayProjectName,
-	isCustomProject,
-	type ProjectAgentMetadata,
-	ProjectIdentity,
-	projectAgentFor,
-} from "@/components/projects/project-metadata";
+import { ProjectIdentity } from "@/components/projects/project-metadata";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { CreateSkillDialog } from "@/components/skills/create-skill-dialog";
 import { SkillCardGrid, SkillCardSkeleton } from "@/components/skills/skill-card";
@@ -101,10 +101,7 @@ import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError, normalizeApiError } from "@/lib/api-errors";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
-import { formatShortDate } from "@/lib/format";
-import { identityFor } from "@/lib/identity";
 import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
-import { projectResourceHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	projectDetailHrefForScope,

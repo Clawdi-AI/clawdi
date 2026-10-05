@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { formatShortDate } from "@clawdi/shared/view";
 import type { WalletTransaction } from "@/hosted/billing/contracts";
-import { formatShortDate } from "@/lib/format";
 import {
 	transactionComputeDetails,
 	transactionKindLabel,

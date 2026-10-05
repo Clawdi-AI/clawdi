@@ -1,5 +1,6 @@
 "use client";
 
+import type { AgentTile } from "@clawdi/shared/view";
 import type { ShouldBlockFn } from "@tanstack/react-router";
 import {
 	BarChart3,
@@ -12,7 +13,6 @@ import {
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
-import type { AgentTile } from "@/components/dashboard/agents-card";
 import { IconChip } from "@/components/icon-chip";
 import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
 import { ApiKeysPanel } from "@/components/settings/api-keys-panel";

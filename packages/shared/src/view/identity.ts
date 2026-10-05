@@ -67,12 +67,17 @@ export interface ObjectIdentity {
 	colorClasses: string;
 }
 
+export function identityColorIndex(seed: string | null | undefined): number {
+	const s = (seed ?? "").trim().toLowerCase() || "untitled";
+	return (fnv1a(s) >>> 7) % IDENTITY_COLORS.length;
+}
+
 export function identityFor(seed: string | null | undefined): ObjectIdentity {
 	const s = (seed ?? "").trim().toLowerCase() || "untitled";
 	const h = fnv1a(s);
 	return {
 		emoji: IDENTITY_EMOJI[h % IDENTITY_EMOJI.length],
 		// Use independent bits for the color so emoji/color combos vary.
-		colorClasses: IDENTITY_COLORS[(h >>> 7) % IDENTITY_COLORS.length],
+		colorClasses: IDENTITY_COLORS[identityColorIndex(seed)],
 	};
 }

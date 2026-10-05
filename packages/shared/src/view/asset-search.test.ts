@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { connectorSearchSupportingText } from "@/components/connectors/connector-search";
-import { skillSearchSupportingText } from "@/components/skills/skill-search";
-import { vaultSearchRank, vaultSearchSupportingText } from "@/components/vault/vault-search";
+import {
+	connectorSearchSupportingText,
+	skillSearchSupportingText,
+	vaultSearchRank,
+	vaultSearchSupportingText,
+} from "@clawdi/shared/view";
 
 describe("asset search presentation", () => {
 	test("reveals a long Skill description match", () => {

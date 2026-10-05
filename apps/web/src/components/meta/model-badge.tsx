@@ -1,5 +1,5 @@
+import { formatModelLabel } from "@clawdi/shared/view";
 import { Badge } from "@/components/ui/badge";
-import { formatModelLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 /**

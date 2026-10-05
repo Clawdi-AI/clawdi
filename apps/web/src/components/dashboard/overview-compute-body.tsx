@@ -1,6 +1,6 @@
+import { formatMemoryMib } from "@clawdi/shared/view";
 import type { ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatMemoryMib } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type ComputeFact = { label: string | null; value: ReactNode };

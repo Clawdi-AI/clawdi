@@ -1,5 +1,6 @@
 "use client";
 
+import { projectDetailHref } from "@clawdi/shared/view";
 import { Link, useRouter } from "@tanstack/react-router";
 import { AlertCircle, CheckCircle2, KeyRound, LogIn, ShieldCheck, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -12,7 +13,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { getPublicSharePreview, unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { useCurrentUser, useDashboardAuth, useSessionIdentity } from "@/lib/auth-client";
-import { projectDetailHref } from "@/lib/project-resource-model";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
 /**

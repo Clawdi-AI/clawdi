@@ -2,6 +2,18 @@
 
 import type { components } from "@clawdi/shared/api";
 import {
+	type AgentCardStatusProjection,
+	type AgentTile,
+	agentDisplayName,
+	agentSourceKindLabel,
+	agentTypeLabel,
+	compareAgentTiles,
+	type DaemonStatusSource,
+	errorMessage,
+	relativeTime,
+	selfManagedAgentTiles,
+} from "@clawdi/shared/view";
+import {
 	closestCenter,
 	DndContext,
 	type DragEndEvent,
@@ -44,21 +56,12 @@ import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
 	AgentSourceBadge,
 	AgentSourceBadgeForEnvironment,
-	agentDisplayName,
-	agentSourceKindLabel,
-	agentTypeLabel,
 	LegacyAgentBadge,
 } from "@/components/dashboard/agent-label";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import { resolveAgentDefaultProject } from "@/components/dashboard/agent-project-scope";
-import {
-	type AgentCardStatusProjection,
-	type AgentTile,
-	agentTileMatchesRouteId,
-	compareAgentTiles,
-	selfManagedAgentTiles,
-} from "@/components/dashboard/agents-card";
-import { DaemonStatusBadge, type DaemonStatusSource } from "@/components/dashboard/daemon-status";
+import { agentTileMatchesRouteId } from "@/components/dashboard/agents-card";
+import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { NewAgentButton } from "@/components/dashboard/new-agent-button";
 import { IconChip } from "@/components/icon-chip";
 import { SettingsDialog } from "@/components/settings-dialog";
@@ -124,7 +127,7 @@ import { useProductAccess } from "@/lib/product-access";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 import { DEFAULT_SETTINGS_SECTION, type SettingsSectionId } from "@/lib/settings-routes";
 import { useHydrated } from "@/lib/use-hydrated";
-import { cn, errorMessage, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type AgentChromeKind = AgentOwnershipKind;
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";

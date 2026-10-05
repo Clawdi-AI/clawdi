@@ -1,9 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import {
-	buildWeeks,
-	computeMonthLabels,
-	parseCalendarDate,
-} from "@/components/dashboard/contribution-graph";
+import { buildWeeks, computeMonthLabels, parseCalendarDate } from "@clawdi/shared/view";
 
 const originalTimezone = process.env.TZ;
 

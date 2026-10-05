@@ -1,10 +1,10 @@
 "use client";
 
+import { identityFor } from "@clawdi/shared/view";
 import { Blocks } from "lucide-react";
 import { HeroCard } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
 import type { HostedRuntime } from "@/hosted/runtimes";
-import { identityFor } from "@/lib/identity";
 import { AgentPluginActions, type AgentPluginPendingAction } from "./agent-plugin-actions";
 import {
 	type AgentPluginInventoryItem,

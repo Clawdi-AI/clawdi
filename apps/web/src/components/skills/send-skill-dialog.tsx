@@ -1,12 +1,12 @@
 "use client";
 
 import { skillTransferTargets, transferSkill } from "@clawdi/shared/api";
+import { displayProjectName, identityFor } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Copy } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { displayProjectName } from "@/components/projects/project-metadata";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -29,7 +29,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { ensureBlob, unwrap, useApi, useOpenApi, useSkillArchiveUploader } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
-import { identityFor } from "@/lib/identity";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];

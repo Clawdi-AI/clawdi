@@ -1,25 +1,25 @@
 "use client";
 
+import {
+	agentIdentity,
+	formatAbsoluteTooltip,
+	formatNumber,
+	groupSessionsByRecency,
+	relativeTime,
+	sessionAgentIdentityInput,
+	sessionCardModel,
+} from "@clawdi/shared/view";
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { MessageSquare } from "lucide-react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
-import { agentIdentity } from "@/components/dashboard/agent-label";
 import { EmptyState, type EmptyStateVariant } from "@/components/empty-state";
 import { ENTITY_CARD_BASE } from "@/components/entity-card";
 import { SectionLabel } from "@/components/section-label";
 import { SessionSearchMatchExcerpt } from "@/components/sessions/search-match-excerpt";
-import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { sessionDetailLink } from "@/lib/session-search-anchor";
-import {
-	cn,
-	formatAbsoluteTooltip,
-	formatNumber,
-	formatSessionSummary,
-	recencyBucketFor,
-	relativeTime,
-} from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type SessionLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
 
@@ -183,15 +183,7 @@ export function SessionFeed({
 		);
 	}
 
-	const groups: Array<{ key: string; label: string; items: SessionListItem[] }> = [];
-	for (const session of sessions) {
-		const bucket = recencyBucketFor(
-			groupBy === "started_at" ? session.started_at : session.last_activity_at,
-		);
-		const last = groups[groups.length - 1];
-		if (last && last.key === bucket.key) last.items.push(session);
-		else groups.push({ key: bucket.key, label: bucket.label, items: [session] });
-	}
+	const groups = groupSessionsByRecency(sessions, groupBy);
 
 	return (
 		<div className="flex flex-col gap-5">
@@ -229,13 +221,11 @@ export function SessionCard({
 	link: SessionLinkOptions;
 	searchQuery?: string;
 }) {
-	const title = formatSessionSummary(session.summary) || session.local_session_id.slice(0, 8);
-	const projectFolder = session.project_path?.split("/").pop();
-	const totalTokens = session.input_tokens + session.output_tokens;
+	const { title, projectFolder, totalTokens, isAutomated } = sessionCardModel(
+		session,
+		quietAutomated,
+	);
 	const agent = agentIdentity(sessionAgentIdentityInput(session)).primaryLabel;
-	// Cron jobs and bracketed heartbeats are routine noise — keep them in the
-	// timeline but visually quieter than human work (taste audit round 2).
-	const isAutomated = quietAutomated && /^(Cron:|\[)/.test(title);
 	const metadata: SessionMetadataItem[] = [
 		showAgent ? { key: "agent", value: agent } : null,
 		projectFolder

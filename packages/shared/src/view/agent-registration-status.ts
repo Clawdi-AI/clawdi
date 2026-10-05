@@ -1,5 +1,5 @@
 import type { components } from "@clawdi/shared/api";
-import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
+import { daemonStatusVisual } from "./daemon-status";
 
 type Env = components["schemas"]["AgentResponse"];
 

@@ -1,3 +1,4 @@
+import { formatShortDate } from "@clawdi/shared/view";
 import { Cpu, CreditCard, Plus, WalletCards, Zap } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EntityChoiceCard } from "@/components/entity-card";
@@ -10,7 +11,6 @@ import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { billingTermLabel, billingTermSuffix, formatCurrencyCents } from "@/hosted/billing/format";
 import type { SubscriptionSource } from "@/hosted/billing/subscription/subscription-create-adapter";
 import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
-import { formatShortDate } from "@/lib/format";
 
 export function SubscriptionSourcePicker({
 	disabled = false,

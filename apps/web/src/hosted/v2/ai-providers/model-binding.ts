@@ -4,6 +4,7 @@ import {
 	isClawdiManagedProviderId,
 	isFirstPartyManagedAiProvider,
 } from "@clawdi/shared";
+import { formatModelLabel } from "@clawdi/shared/view";
 import type { AiProviderAuthKind, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
 import type { HostedRuntime } from "@/hosted/runtimes";
 import {
@@ -13,7 +14,6 @@ import {
 } from "@/hosted/v2/ai-providers/provider-presets";
 import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
-import { formatModelLabel } from "@/lib/format";
 
 export const MANAGED_AI_CHOICE = "__managed__";
 export const MANAGED_PROVIDER_ID = CLAWDI_MANAGED_PROVIDER_ID;

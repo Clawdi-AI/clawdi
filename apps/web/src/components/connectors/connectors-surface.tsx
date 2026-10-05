@@ -1,5 +1,6 @@
 "use client";
 
+import { getProjectResourceDefinition } from "@clawdi/shared/view";
 import { ChevronLeft, ChevronRight, Plug } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, Suspense, useEffect, useMemo } from "react";
@@ -27,7 +28,6 @@ import {
 	useAvailableApps,
 	useConnectedAppCards,
 } from "@/lib/connectors-data";
-import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	connectorDetailHrefForScope,

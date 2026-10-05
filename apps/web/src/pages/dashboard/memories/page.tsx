@@ -1,9 +1,9 @@
 "use client";
 
+import { getProjectResourceDefinition } from "@clawdi/shared/view";
 import { MemoriesPageActions, MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { cn } from "@/lib/utils";
 
 const MEMORIES_RESOURCE = getProjectResourceDefinition("memories");

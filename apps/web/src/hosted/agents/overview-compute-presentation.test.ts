@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { formatShortDate } from "@clawdi/shared/view";
 import type { HostedComputeSubscription } from "@/hosted/billing/contracts";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
-import { formatShortDate } from "@/lib/format";
 import { overviewComputePresentation } from "./overview-compute-presentation";
 
 const now = Date.parse("2026-09-07T12:00:00Z");

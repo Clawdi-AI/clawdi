@@ -3,11 +3,11 @@
 import { linkIsExpired } from "@clawdi/shared/api";
 
 import { buildShareAgentHandoffPrompt } from "@clawdi/shared/sharing";
+import { isCustomProject } from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, CheckCircle2, Copy, Link2, Share2, Trash2, UserMinus } from "lucide-react";
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { isCustomProject } from "@/components/projects/project-metadata";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
 	AlertDialog,

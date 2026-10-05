@@ -1,5 +1,11 @@
 "use client";
 
+import {
+	compareVaultsForCatalog,
+	displayProjectName,
+	isCustomProject,
+	vaultSearchRank,
+} from "@clawdi/shared/view";
 import { useMutation } from "@tanstack/react-query";
 import { parseAsString, useQueryState } from "nuqs";
 import { useRef } from "react";
@@ -8,13 +14,11 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
-import { displayProjectName, isCustomProject } from "@/components/projects/project-metadata";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
 import { Spinner } from "@/components/ui/spinner";
 import { useVaultCatalog } from "@/components/vault/vault-catalog-query";
-import { compareVaultsForCatalog, vaultSearchRank } from "@/components/vault/vault-search";
 import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";

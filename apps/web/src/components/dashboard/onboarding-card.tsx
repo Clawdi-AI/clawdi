@@ -1,5 +1,7 @@
 "use client";
 
+import { onboardingCardModel } from "@clawdi/shared/view";
+
 import { Link } from "@tanstack/react-router";
 import { Rocket, TerminalSquare } from "lucide-react";
 import { useState } from "react";
@@ -26,19 +28,7 @@ export function OnboardingCard({
 }: OnboardingCardProps) {
 	const desktopBridge = useDesktopBridge();
 	const [connectOpen, setConnectOpen] = useState(false);
-	const isAdditionalAgent = variant === "additional-agent";
-	const title = isAdditionalAgent
-		? "Add another Agent"
-		: canDeployOnClawdi
-			? "Get your first Agent running"
-			: "Let's connect your first Agent";
-	const description = isAdditionalAgent
-		? canDeployOnClawdi
-			? "Deploy another Agent on Clawdi, or connect one from your machine."
-			: "Connect another Agent on your machine and manage it from this dashboard."
-		: canDeployOnClawdi
-			? "Deploy an Agent on Clawdi, or connect one from your machine."
-			: "Connect an Agent on your machine and manage it from this dashboard.";
+	const { isAdditionalAgent, title, description } = onboardingCardModel(variant, canDeployOnClawdi);
 	const connectAgent = () => {
 		if (desktopBridge) {
 			void desktopBridge.openConnectWizard().catch(() => setConnectOpen(true));

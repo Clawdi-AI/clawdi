@@ -11,7 +11,7 @@ import { statusBadgeVariants, statusDotVariants as dotVariants, statusTextVarian
 
 
 
-type StatusTone = NonNullable<VariantProps<typeof statusBadgeVariants>["status"]>;
+
 
 function StatusBadge({
 	className,
@@ -51,7 +51,7 @@ function StatusDot({
 	);
 }
 
-export type { StatusTone };
+export type { StatusTone } from "@clawdi/shared/view";
 export {
 	dotVariants as statusDotVariants,
 	StatusBadge,

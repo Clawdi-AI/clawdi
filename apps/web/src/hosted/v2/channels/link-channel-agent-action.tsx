@@ -1,9 +1,9 @@
 "use client";
 
+import { agentDisplayName } from "@clawdi/shared/view";
 import { Link2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { agentDisplayName } from "@/components/dashboard/agent-label";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,

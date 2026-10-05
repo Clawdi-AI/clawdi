@@ -1,5 +1,6 @@
 "use client";
 
+import { formatShortDate } from "@clawdi/shared/view";
 import { ExternalLink, Receipt } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -26,7 +27,6 @@ import {
 	transactionPaymentSourceLabel,
 	transactionSignedAmount,
 } from "@/hosted/billing/wallet/transactions-section.logic";
-import { formatShortDate } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 

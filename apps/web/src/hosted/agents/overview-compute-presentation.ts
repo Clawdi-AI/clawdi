@@ -1,3 +1,4 @@
+import { formatShortDate } from "@clawdi/shared/view";
 import { computeDunningState } from "@/hosted/billing/components/compute-dunning.logic";
 import type { HostedComputeSubscription, HostedDeployment } from "@/hosted/billing/contracts";
 import { resolveComputeSubscriptionActions } from "@/hosted/billing/subscription/compute-subscription-actions";
@@ -17,7 +18,6 @@ import {
 	deploymentStatusFromResource,
 	hasCurrentRuntimeHealthDegradation,
 } from "@/hosted/deployment-status";
-import { formatShortDate } from "@/lib/format";
 
 type Availability = Pick<
 	Parameters<typeof computeSubscriptionManagement>[0],

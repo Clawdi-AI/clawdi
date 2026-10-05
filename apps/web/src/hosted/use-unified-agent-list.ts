@@ -1,8 +1,8 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
+import { type AgentTile, selfManagedAgentTiles } from "@clawdi/shared/view";
 import { useEffect, useMemo } from "react";
-import { type AgentTile, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
 import { useLegacyEnvIds } from "@/hosted/agents/ownership-sensor";
 import type { HostedInventoryStatus } from "@/hosted/hosted-agent-resolution";
 import { legacyConnectedAgentTiles } from "@/hosted/legacy-agent-tiles";

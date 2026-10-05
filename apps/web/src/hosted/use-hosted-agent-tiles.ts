@@ -1,10 +1,9 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
+import type { AgentCardStatusProjection, AgentTile } from "@clawdi/shared/view";
+import { agentDisplayName, type DaemonStatusVisual, daemonStatusVisual } from "@clawdi/shared/view";
 import { useMemo } from "react";
-import { agentDisplayName } from "@/components/dashboard/agent-label";
-import type { AgentCardStatusProjection, AgentTile } from "@/components/dashboard/agents-card";
-import { type DaemonStatusVisual, daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { statusDotVariants, statusTextVariants } from "@/components/ui/status-badge";
 import type { HostedDeployment, HostedDeploymentStatus } from "@/hosted/billing/contracts";
 import { hasExistingCloudDeployments } from "@/hosted/cloud-deployment-management";

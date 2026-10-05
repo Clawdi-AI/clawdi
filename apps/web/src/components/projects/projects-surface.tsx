@@ -1,5 +1,14 @@
 "use client";
 
+import {
+	canManageCustomProject,
+	compareProjectsForUse,
+	formatResourceCount,
+	getProjectResourceDefinition,
+	isCustomProject,
+	projectMatchesSearch,
+	projectSearchRank,
+} from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
@@ -18,13 +27,6 @@ import { PageHeader } from "@/components/page-header";
 import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
 import { ProjectActions } from "@/components/projects/project-actions";
 import {
-	canManageCustomProject,
-	compareProjectsForUse,
-	isCustomProject,
-	projectMatchesSearch,
-	projectSearchRank,
-} from "@/components/projects/project-metadata";
-import {
 	ProjectResourceCard,
 	ProjectResourceCardSkeleton,
 	UnavailableProjectResourceCard,
@@ -36,7 +38,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { agentDetailQueryKey } from "@/lib/agent-queries";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
-import { formatResourceCount, getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	agentResourceScope,

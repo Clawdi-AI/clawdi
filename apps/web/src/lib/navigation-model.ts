@@ -1,4 +1,9 @@
 import {
+	getProjectResourceDefinition,
+	projectResourcePathLabel,
+	projectResourceScopeLabel,
+} from "@clawdi/shared/view";
+import {
 	Blocks,
 	BrainCircuit,
 	FolderOpen,
@@ -11,11 +16,6 @@ import {
 	TerminalSquare,
 } from "lucide-react";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
-import {
-	getProjectResourceDefinition,
-	projectResourcePathLabel,
-	projectResourceScopeLabel,
-} from "@/lib/project-resource-model";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 
 export type AgentSectionId =

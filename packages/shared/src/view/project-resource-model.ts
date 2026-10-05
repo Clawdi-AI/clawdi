@@ -1,4 +1,4 @@
-import type { DashboardStats } from "@/lib/api-schemas";
+import type { DashboardStats } from "../api";
 
 export type ProjectResourceId =
 	| "projects"

@@ -1,3 +1,10 @@
+import {
+	connectorDetailHref,
+	memoryDetailHref,
+	PROJECT_RESOURCE_LIST_PATHS,
+	projectDetailHref,
+	vaultDetailHref,
+} from "@clawdi/shared/view";
 import { linkOptions } from "@tanstack/react-router";
 import {
 	agentConnectorDetailHref,
@@ -11,13 +18,6 @@ import {
 	agentVaultDetailHref,
 	agentVaultDetailLink,
 } from "@/lib/agent-routes";
-import {
-	connectorDetailHref,
-	memoryDetailHref,
-	PROJECT_RESOURCE_LIST_PATHS,
-	projectDetailHref,
-	vaultDetailHref,
-} from "@/lib/project-resource-model";
 
 export type ResourceNavigationScope =
 	| { kind: "library" }

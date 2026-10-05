@@ -4,7 +4,7 @@ import {
 	projectMatchesSearch,
 	projectSearchRank,
 	projectSearchSupportingText,
-} from "@/components/projects/project-metadata";
+} from "@clawdi/shared/view";
 
 describe("projectAgentLabel", () => {
 	test("uses the canonical agent identity fallback", () => {

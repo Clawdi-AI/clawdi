@@ -1,7 +1,7 @@
 "use client";
 
+import type { AgentTile } from "@clawdi/shared/view";
 import { useState } from "react";
-import type { AgentTile } from "@/components/dashboard/agents-card";
 import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { SubscriptionsSection } from "@/hosted/billing/subscription/subscriptions-section";

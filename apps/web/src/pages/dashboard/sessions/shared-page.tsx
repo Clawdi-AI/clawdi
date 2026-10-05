@@ -1,6 +1,7 @@
 "use client";
 
 import { type components, sessionShareIdentity, sessionShareScope } from "@clawdi/shared/api";
+import { relativeTime } from "@clawdi/shared/view";
 import { keepPreviousData, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowLeft, Check, Copy, ExternalLink, Link2, Trash2 } from "lucide-react";
@@ -29,7 +30,7 @@ import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import { parseAsPositiveInt } from "@/lib/url-search-parsers";
-import { cn, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type SessionShare = components["schemas"]["SessionShareListItemResponse"];
 

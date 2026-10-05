@@ -1,5 +1,6 @@
 "use client";
 
+import { identityFor } from "@clawdi/shared/view";
 import {
 	AlertCircle,
 	ArrowLeft,
@@ -20,7 +21,6 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import type { HostedRuntime } from "@/hosted/runtimes";
-import { identityFor } from "@/lib/identity";
 import { AgentPluginActions, type AgentPluginPendingAction } from "./agent-plugin-actions";
 import {
 	type AgentPluginCatalogEntry,

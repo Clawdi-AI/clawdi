@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { getProjectResourceDefinition, projectResourceCount } from "@clawdi/shared/view";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
 import type { DashboardStats } from "@/lib/api-schemas";
-import { getProjectResourceDefinition, projectResourceCount } from "@/lib/project-resource-model";
 
 function stats(overrides: Partial<DashboardStats> = {}): DashboardStats {
 	return {
