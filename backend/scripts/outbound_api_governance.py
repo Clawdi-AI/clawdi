@@ -84,6 +84,7 @@ EXPECTED_EXTERNAL_IMPORTS: dict[str, frozenset[str]] = {
             "app/services/ai_provider_oauth_attempt.py",
             "app/services/ai_provider_oauth_revoke_worker.py",
             "app/services/channels.py",
+            "app/services/clerk_backend.py",
             "app/services/codex_oauth.py",
             "app/services/embedding.py",
             "app/services/memory_provider_mem0.py",
