@@ -8,8 +8,23 @@
  * Usage: bun scripts/ui-parity/fixture-api.ts [--port 8787] [--host 0.0.0.0]
  */
 import type { components, paths } from "../../packages/shared/src/api/api.generated";
+import type {
+	components as DeployComponents,
+	paths as DeployPaths,
+} from "../../packages/shared/src/api/deploy.generated";
 
 type Schemas = components["schemas"];
+type DeploySchemas = DeployComponents["schemas"];
+type DeployGetPath = {
+	[P in keyof DeployPaths]: DeployPaths[P] extends { get: { responses: { 200: unknown } } }
+		? P
+		: never;
+}[keyof DeployPaths];
+type DeployGetOk<P extends DeployGetPath> = DeployPaths[P] extends {
+	get: { responses: { 200: infer R } };
+}
+	? JsonBody<R>
+	: never;
 type JsonBody<R> = R extends { content: { "application/json": infer B } } ? B : never;
 type GetPath = {
 	[P in keyof paths]: paths[P] extends { get: { responses: { 200: unknown } } } ? P : never;
@@ -1426,6 +1441,357 @@ function withResourceCounts(project: Schemas["ProjectResponse"]): Schemas["Proje
 function findAgent(id: string | undefined) {
 	return agents.find((agent) => agent.id === id);
 }
+
+// ---------------------------------------------------------------------------
+// Hosted compute fixtures: the same origin serves both generated API contracts.
+// ---------------------------------------------------------------------------
+
+const hostedProfile = {
+	id: "usr_parity",
+	clerk_id: "dev_browser",
+	email: currentUser.email,
+	name: currentUser.name,
+	created_at: ago(120 * DAY),
+	updated_at: ago(DAY),
+	settings: {},
+	capabilities: { can_use_v1: true, can_use_v2: true, can_create_v1_deployment: false },
+} satisfies DeployGetOk<"/v1/me">;
+
+const computePlans = [
+	{
+		slug: "compute_basic",
+		name: "Basic",
+		price_cents: 1000,
+		vcpu: 1,
+		ram_gb: 2,
+		disk_size: 20,
+		signup_grant_usd: "5.00",
+		offers: [
+			{
+				billing_term_months: 1,
+				price_cents: 1000,
+				effective_monthly_price_cents: 1000,
+				discount_percent: 0,
+			},
+			{
+				billing_term_months: 12,
+				price_cents: 9600,
+				effective_monthly_price_cents: 800,
+				discount_percent: 20,
+			},
+		],
+	},
+	{
+		slug: "compute_performance",
+		name: "Performance",
+		price_cents: 2500,
+		vcpu: 2,
+		ram_gb: 4,
+		disk_size: 40,
+		signup_grant_usd: "5.00",
+		offers: [
+			{
+				billing_term_months: 1,
+				price_cents: 2500,
+				effective_monthly_price_cents: 2500,
+				discount_percent: 0,
+			},
+			{
+				billing_term_months: 12,
+				price_cents: 24000,
+				effective_monthly_price_cents: 2000,
+				discount_percent: 20,
+			},
+		],
+	},
+] satisfies DeployGetOk<"/v2/subscription/plans">;
+
+function hostedDeployment(
+	id: string,
+	agentId: string,
+	runtime: "openclaw" | "hermes",
+	name: string,
+	included: boolean,
+) {
+	return {
+		agent_id: agentId,
+		resource: {
+			id,
+			name,
+			commercial_revision: 1,
+			deployment_target: "saas",
+			metadata: {
+				generation: 1,
+				manifestETag: `etag-${id}`,
+				resourceVersion: `rv-${id}`,
+				createdAt: ago(30 * DAY),
+				updatedAt: ago(HOUR),
+			},
+			spec: {
+				schema_version: 1,
+				desired_lifecycle: "running",
+				runtime,
+				runtime_version: "latest",
+				resources: included
+					? { vcpu: 1, memory_mib: 2048, disk_gib: 20 }
+					: { vcpu: 2, memory_mib: 4096, disk_gib: 40 },
+				agents: [{ agent_id: agentId, enabled: true, secret_references: [] }],
+				ports: [],
+				runtime_configuration: {
+					providers: [],
+					features: [],
+					language: "en",
+					timezone: "America/Los_Angeles",
+					primary_model: { provider_id: "clawdi-managed-v2", model: "openai/gpt-4o-mini" },
+				},
+				rollout_nonce: 0,
+				secret_references: [],
+			},
+			status: {
+				summary_state: "running",
+				observedGeneration: 1,
+				driver_acknowledged_generation: 1,
+				driver_applied_generation: 1,
+				driver_observation_sequence: 1,
+				conditions: [
+					{
+						type: "Ready",
+						status: "True",
+						observedGeneration: 1,
+						reason: "RuntimeReady",
+						message: "Runtime observation",
+						lastTransitionTime: ago(HOUR),
+					},
+				],
+				endpoints: [],
+				observed_at: ago(20_000),
+			},
+		},
+		clawdi_cloud_environments: { [agentId]: agentId },
+		ai_provider_auth_kinds: { [runtime]: "managed" },
+		current_plan_slug: included ? "compute_basic" : "compute_performance",
+		upgrade_available: included,
+		upgrade_eligibility: { eligible: included, reason: null },
+		compute_slot_occupancy: {
+			occupies_slot: true,
+			backing_infra: "present",
+			reason: "backing_infra_present",
+		},
+		commercial_display: {
+			compute_subscription: {
+				status: "active",
+				funding_source: included ? null : "wallet",
+				payment_state: "ok",
+				billing_term_months: 1,
+				price_cents: included ? 0 : 2500,
+				currency: "usd",
+				cancel_at_period_end: false,
+				current_period_end: ago(-20 * DAY),
+			},
+		},
+	} satisfies DeploySchemas["V2HostedDeploymentReadResponse"];
+}
+
+const deployments = [
+	hostedDeployment("hdep_ParityOpenClaw", AGENT.openclaw, "openclaw", "OpenClaw", true),
+	hostedDeployment("hdep_ParityHermes", AGENT.hermes, "hermes", "Research Hermes", false),
+] satisfies DeploySchemas["V2HostedDeploymentReadResponse"][];
+
+const deploymentOperations = deployments.map(
+	(deployment) =>
+		({
+			name: `operations/op-${deployment.resource.id}`,
+			metadata: {
+				"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+				deploymentId: deployment.resource.id,
+				verb: "create",
+				targetGeneration: 1,
+				manifestETag: deployment.resource.metadata.manifestETag,
+				createTime: ago(30 * DAY),
+				updateTime: ago(30 * DAY),
+			},
+			done: true,
+			response: {
+				"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse",
+				deployment: deployment.resource,
+			},
+		}) satisfies DeploySchemas["LongRunningOperation"],
+);
+
+const computeSubscriptions = {
+	items: deployments.map(
+		(deployment, index) =>
+			({
+				subscription_id: index === 0 ? "csub_ParityIncluded" : "csub_ParityPerformance",
+				subscription_kind: index === 0 ? "included_basic" : "paid",
+				plan_slug: deployment.current_plan_slug,
+				funding_source: index === 0 ? null : "wallet",
+				status: "active",
+				price_cents: index === 0 ? 0 : 2500,
+				currency: "usd",
+				billing_term_months: 1,
+				current_period_end: ago(-20 * DAY),
+				cancel_at_period_end: false,
+				deployment_id: deployment.resource.id,
+				agent_name: deployment.resource.name,
+				is_orphan: false,
+				payment_state: "ok",
+				latest_failed_invoice_hosted_url: null,
+				next_payment_attempt_at: null,
+				recovery_action: null,
+				pending_plan_slug: null,
+			}) satisfies DeploySchemas["V2ComputeSubscriptionListItem"],
+	),
+	has_more: false,
+	next_cursor: null,
+} satisfies DeployGetOk<"/v2/subscriptions">;
+
+const wallet = {
+	balance_usd: "42.50",
+	x402_enabled: false,
+	x402_payment_status: "idle",
+	auto_reload_enabled: false,
+	auto_reload_has_payment_method: false,
+	auto_reload_currency: "usd",
+	auto_reload_required_consent_version: "wallet_auto_reload_off_session_v2",
+	auto_reload_amount_policy: "wallet_reload_configured_plus_negative_balance_v1",
+	auto_reload_threshold_usd: "5.00",
+	auto_reload_amount_cents: 2500,
+	auto_reload_monthly_cap_cents: 10000,
+	auto_reload_monthly_spent_cents: 0,
+	auto_reload_period_end: ago(-20 * DAY),
+	auto_reload_status: "off",
+} satisfies DeployGetOk<"/v2/wallet">;
+
+const walletTransactions = {
+	items: [
+		{
+			id: "txn_parity_topup",
+			kind: "topup",
+			occurred_at: ago(2 * DAY),
+			amount: "50.00",
+			currency: "usd",
+			direction: "credit",
+			status: "succeeded",
+			funding: "card",
+		},
+		{
+			id: "txn_parity_compute",
+			kind: "compute_subscription",
+			occurred_at: ago(DAY),
+			amount: "25.00",
+			currency: "usd",
+			direction: "debit",
+			status: "succeeded",
+			funding: "wallet",
+			context: {
+				plan: "compute_performance",
+				agent_name: "Research Hermes",
+				deployment_id: "hdep_ParityHermes",
+				period_start: ago(10 * DAY),
+				period_end: ago(-20 * DAY),
+			},
+		},
+		{
+			id: "txn_parity_usage",
+			kind: "ai_usage",
+			occurred_at: ago(HOUR),
+			amount: "0.42",
+			currency: "usd",
+			direction: "debit",
+			status: "succeeded",
+			funding: "wallet",
+		},
+	],
+	has_more: false,
+	next_cursor: null,
+} satisfies DeployGetOk<"/v2/wallet/transactions">;
+
+const managedModels = {
+	models: [
+		{
+			id: "openai/gpt-4o-mini",
+			display_name: "GPT-4o mini",
+			provider_id: "clawdi-managed-v2",
+			api_mode: "openai_chat",
+			is_default: true,
+			is_featured: true,
+			description: "Fast, efficient model for everyday tasks.",
+			capabilities: {
+				context_window: 128000,
+				max_context_window: 128000,
+				max_input_tokens: 128000,
+				max_output_tokens: 16384,
+				input_modalities: ["text", "image"],
+				supports_vision: true,
+				supports_reasoning: false,
+				supports_tools: true,
+			},
+		},
+	],
+} satisfies DeployGetOk<"/v2/ai-providers/managed/models">;
+
+const computeGetRoutes = {
+	"/v1/me": () => hostedProfile,
+	"/v1/agent-environments": () => ({ environment_ids: [] }),
+	"/v1/me/notifications": () => ({ items: [], unread_count: 0, next_cursor: null }),
+	"/v2/subscription/plans": () => computePlans,
+	"/v2/deployments": ({ url }) =>
+		url.searchParams.get("event_stream_handoff") === "true"
+			? {
+					snapshot_isolation: "REPEATABLE READ",
+					read_only: true,
+					deployments,
+					operations: deploymentOperations,
+					event_stream_cursor: "parity:1",
+				}
+			: deployments,
+	"/v2/deployments/by-request/{deploy_request_id}": ({ params }) => {
+		const deployment = deployments.find(
+			(item) => params.deploy_request_id === `request-${item.resource.id}`,
+		);
+		if (!deployment) return notFound("Deploy request not found");
+		return {
+			deploy_request_id: params.deploy_request_id ?? "",
+			request_status: "succeeded",
+			lineage_tail: {
+				deployment_id: deployment.resource.id,
+				agent_id: deployment.agent_id,
+				deployment_status: deployment.resource.status,
+				lineage_version: 1,
+				lineage_state: "succeeded",
+				accepted_generation: 1,
+				operation_name: `operations/op-${deployment.resource.id}`,
+			},
+		};
+	},
+	"/v2/deployments/{deployment_id}": ({ params }) =>
+		deployments.find((item) => item.resource.id === params.deployment_id) ??
+		notFound("Deployment not found"),
+	"/v2/operations/{operation_id}": ({ params }) =>
+		deploymentOperations.find((item) => item.name === `operations/${params.operation_id}`) ??
+		notFound("Operation not found"),
+	"/v2/subscriptions": ({ url }) => ({
+		...computeSubscriptions,
+		items: computeSubscriptions.items.filter(
+			(item) =>
+				!url.searchParams.has("deployment_id") ||
+				item.deployment_id === url.searchParams.get("deployment_id"),
+		),
+	}),
+	"/v2/subscriptions/reusable": () => ({ items: [], has_more: false, next_cursor: null }),
+	"/v2/subscriptions/included-basic": () => ({ total_slots: 2, used_slots: 1, available_slots: 1 }),
+	"/v2/wallet": () => wallet,
+	"/v2/wallet/transactions": () => walletTransactions,
+	"/v2/wallet/payment-methods": () => ({ items: [], has_more: false }),
+	"/v2/ai-providers/managed/models": () => managedModels,
+} satisfies { [P in DeployGetPath]?: (ctx: Ctx) => DeployGetOk<P> | Reply };
+
+for (const [template, handler] of Object.entries(computeGetRoutes)) {
+	routes.push({ method: "GET", template, handler, ...compile(template) });
+}
+// No live hosted stream or runtime infrastructure is simulated.
+on("GET", "/v2/events", () => new Reply(204, null));
 
 // ---------------------------------------------------------------------------
 // Routes: identity + settings

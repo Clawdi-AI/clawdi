@@ -30,9 +30,17 @@ bun scripts/ui-parity/fixture-api.ts --port 9000 --host 127.0.0.1
   plausible success body and are not persisted.
 - `GET /v1/sessions/{id}/content-events` deliberately returns `404`; the web
   client treats that as "no live stream".
-- Only the cloud API is served. Hosted surfaces (deploy/compute API) are out of
-  scope: leave `VITE_CLAWDI_HOSTED` unset on web and
-  `EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL` unset on mobile (both are optional).
+- The same server also serves the hosted compute/deploy API (`/v1/me` and
+  `/v2/*`), typed against `packages/shared/src/api/deploy.generated.ts`.
+  Use the same origin for both API URLs; no separate compute port is needed.
+  Hosted fixtures include two running deployments, Included Basic and paid
+  Performance subscriptions, a Wallet balance/transactions, plans and managed models.
+  Runtime infrastructure and live event streams are deliberately absent.
+- During parallel verification, keep the shared `:8787` server untouched and
+  start your copy with `--port 8788`. Stop only the server you started.
+
+Hosted deployment IDs: `hdep_ParityOpenClaw`, `hdep_ParityHermes`; recovery
+request IDs: `request-<deployment-id>`; operation IDs: `op-<deployment-id>`.
 
 Stable IDs used by the default routes: agent `c1a0de00-0001-4c00-8000-000000000001`
 (Claude Code), session `5e550000-0001-4000-8000-000000000001`, project
@@ -46,8 +54,9 @@ VITE_DEV_AUTH_BYPASS=true \
 VITE_DEV_AUTH_TOKEN=dev-bypass \
 VITE_DEV_AUTH_NAME="Avery Chen" \
 VITE_DEV_AUTH_EMAIL=avery@clawdi.dev \
-VITE_CLAWDI_API_URL=http://127.0.0.1:8787 \
-VITE_CLAWDI_HOSTED=false \
+VITE_CLAWDI_API_URL=http://127.0.0.1:8788 \
+VITE_CLAWDI_HOSTED=true \
+VITE_CLAWDI_DEPLOY_API_URL=http://127.0.0.1:8788 \
 bun run dev -- --host 127.0.0.1 --port 3200 --strictPort
 ```
 
@@ -73,9 +82,17 @@ Mobile reads its cloud API base URL from `EXPO_PUBLIC_CLAWDI_API_URL`
 `apps/mobile/src/config/runtime-config.ts`). Point it at the fixture server:
 
 ```bash
-EXPO_PUBLIC_CLAWDI_API_URL=http://10.0.2.2:8787   # emulator → host loopback
+EXPO_PUBLIC_CLAWDI_API_URL=http://10.0.2.2:8788   # emulator → host loopback
+EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL=http://10.0.2.2:8788 # hosted compute/deploy fixtures
 EXPO_PUBLIC_DEV_AUTH_BYPASS=1                      # dev-only auth bypass (mobile side)
 ```
+
+The installed native APK reads API URLs from the build-time Expo config
+(`extra.clawdi`), not from a Metro-only environment override. Setting the
+compute environment variable only when starting Metro does not enable hosted
+screens in an APK built without it. Have the build owner produce the preview
+APK with both URLs above and `EXPO_PUBLIC_DEV_AUTH_BYPASS=1`, then install it
+on your assigned emulator; UI parity agents must not rebuild the APK.
 
 Alternatively run `adb reverse tcp:8787 tcp:8787` and use
 `http://127.0.0.1:8787`. Development auth bypass runs the real mobile screens,
