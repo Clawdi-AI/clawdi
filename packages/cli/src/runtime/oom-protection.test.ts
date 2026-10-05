@@ -56,14 +56,14 @@ test("renders continue policy and the official Hermes memory control", () => {
 	expect(gatewayOomProtectionLines("openclaw", 4 * GIB).join("\n")).not.toContain("Environment=");
 });
 
-test("excludes whole marked blocks from activation and preserves surrounding content", () => {
+test("excludes only recognized Clawdi policy blocks and preserves all other bytes", () => {
 	const original = "[Service]\nExecStart=/bin/sleep 30\n";
 	const policy = gatewayOomProtectionLines("hermes", 4 * GIB).join("\n");
 	expect(withoutOomProtection(`${original}${policy}\n`)).toBe(original);
 	for (const mutation of ["OOMPolicy=kill", "MemoryHigh=3G", "OOMScoreAdjust=-900"]) {
 		expect(
 			withoutOomProtection(`${original}${policy.replace("OOMPolicy=continue", mutation)}\n`),
-		).toBe(original);
+		).toBe(`${original}${policy.replace("OOMPolicy=continue", mutation)}\n`);
 	}
 	const outside = "Environment=OUTSIDE_POLICY=1\n";
 	expect(withoutOomProtection(`${policy}\n${original}${policy}\n${outside}`)).toBe(
@@ -158,16 +158,17 @@ esac
 			userUnitsChanged: [],
 		});
 		expectReloadOnly();
-		// Removing a legacy setting, changing a value, and adding a new directive only reload.
+		// Removing a legacy setting and changing the supported memory control only reload.
 		writeFileSync(
 			systemUnit,
 			readFileSync(systemUnit, "utf8").replace("OOMScoreAdjust=-900\n", ""),
 		);
 		writeFileSync(
 			dropIn,
-			readFileSync(dropIn, "utf8")
-				.replace("TERMINAL_LOCAL_MEMORY_MAX_MB=2048", "TERMINAL_LOCAL_MEMORY_MAX_MB=4096")
-				.replace("# EndClawdiOOMProtection", "MemoryHigh=3G\n# EndClawdiOOMProtection"),
+			readFileSync(dropIn, "utf8").replace(
+				"TERMINAL_LOCAL_MEMORY_MAX_MB=2048",
+				"TERMINAL_LOCAL_MEMORY_MAX_MB=4096",
+			),
 		);
 		const updated = readSystemdUnitSnapshot(paths);
 		expect(updated.system).toEqual(after.system);
