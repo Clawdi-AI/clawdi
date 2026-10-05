@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { readJson } from "../lib/api-client";
+import { ApiClient, readJson } from "../lib/api-client";
 import { projectAlias, requireProjectAuth } from "../lib/project-command-utils";
 import {
 	findProjectFolderLink,
@@ -101,9 +101,9 @@ async function findVisibleProject(
 
 async function fetchDefaultProject(): Promise<ProjectBrief | null> {
 	const { apiUrl, apiKey } = await requireProjectAuth();
-	const r = await fetch(`${apiUrl}/v1/projects/default`, {
-		headers: { Authorization: `Bearer ${apiKey}` },
-	});
+	const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
+		"/v1/projects/default",
+	);
 	if (!r.ok) return null;
 	const body = await readJson<{ project_id: string }>(r, "/v1/projects/default");
 	const projects = await listProjects(apiUrl, apiKey).catch(() => []);

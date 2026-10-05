@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { ApiError, readJson } from "./api-client";
+import { ApiClient, ApiError, readJson } from "./api-client";
 import { ClerkOAuthError, getClawdiAccessToken } from "./clerk-oauth";
 import { getConfig } from "./config";
 import type { ProjectBrief } from "./project-resolver";
@@ -33,13 +33,8 @@ export async function authedJson<T>(
 	path: string,
 	init: RequestInit = {},
 ): Promise<T> {
-	const r = await fetch(`${apiUrl}${path}`, {
-		...init,
-		headers: {
-			Authorization: `Bearer ${apiKey}`,
-			...(init.headers ?? {}),
-		},
-	});
+	const api = new ApiClient({ authToken: apiKey, baseUrl: apiUrl });
+	const r = await api.request(path, init);
 	if (!r.ok) {
 		throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 	}

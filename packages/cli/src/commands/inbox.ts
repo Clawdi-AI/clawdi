@@ -17,7 +17,7 @@ import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
 
 import { allAdapterEntries } from "../adapters/registry";
-import { ApiError, readJson } from "../lib/api-client";
+import { ApiClient, ApiError, readJson } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { getAuth, getConfig } from "../lib/config";
@@ -256,9 +256,9 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 	}
 	const accessToken = await getClawdiAccessToken(apiUrl);
 
-	const r = await fetch(`${apiUrl}/v1/me/invitations`, {
-		headers: { Authorization: `Bearer ${accessToken}` },
-	});
+	const r = await new ApiClient({ baseUrl: apiUrl, authToken: accessToken }).request(
+		"/v1/me/invitations",
+	);
 	if (!r.ok) {
 		throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 	}
@@ -440,15 +440,17 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 
 	let response: Response;
 	try {
-		response = await fetch(`${apiOrigin}/v1/share/${encodeURIComponent(ticket.token)}/upgrade`, {
+		response = await new ApiClient({ baseUrl: apiOrigin, authToken: bearer }).request(
+			`/v1/share/${encodeURIComponent(ticket.token)}/upgrade`,
+			{
 			method: "POST",
 			headers: {
-				Authorization: `Bearer ${bearer}`,
 				"Content-Type": "application/json",
 				"Idempotency-Key": upgradeIdempotencyKey(ticket.token),
 			},
 			body: JSON.stringify(reqBody),
-		});
+			},
+		);
 	} catch {
 		throw new Error(
 			"Could not reach Clawdi to join this project. The local share was kept; check your connection and retry.",
@@ -563,10 +565,12 @@ export async function inboxDeclineCommand(invitationId: string): Promise<void> {
 		return;
 	}
 	const accessToken = await getClawdiAccessToken(apiUrl);
-	const r = await fetch(`${apiUrl}/v1/me/invitations/${invitationId}/decline`, {
+	const r = await new ApiClient({ baseUrl: apiUrl, authToken: accessToken }).request(
+		`/v1/me/invitations/${invitationId}/decline`,
+		{
 		method: "POST",
-		headers: { Authorization: `Bearer ${accessToken}` },
-	});
+		},
+	);
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 	console.log(`${chalk.green("✓")} Invitation declined.`);
 }
@@ -696,10 +700,13 @@ async function acceptAnonymousUrl(
 		return;
 	}
 
-	const r = await fetch(`${apiOrigin}/v1/share/${token}/redeem`, {
+	const r = await new ApiClient({ baseUrl: apiOrigin, requireAuth: false }).request(
+		`/v1/share/${token}/redeem`,
+		{
 		method: "POST",
-		headers: { "Idempotency-Key": redeemIdempotencyKey(token) },
-	});
+			headers: { "Idempotency-Key": redeemIdempotencyKey(token) },
+		},
+	);
 	if (r.status === 404) {
 		throw new Error("Share link not found. Ask the owner for a fresh one.");
 	}
@@ -785,15 +792,17 @@ async function acceptUrl(
 	}
 	const reqBody = await buildAcceptRequestBody(opts);
 
-	const r = await fetch(`${apiOrigin}/v1/share/${token}/upgrade`, {
+	const r = await new ApiClient({ baseUrl: apiOrigin, authToken: bearer }).request(
+		`/v1/share/${token}/upgrade`,
+		{
 		method: "POST",
 		headers: {
-			Authorization: `Bearer ${bearer}`,
 			"Content-Type": "application/json",
 			"Idempotency-Key": upgradeIdempotencyKey(token),
 		},
 		body: JSON.stringify(reqBody),
-	});
+		},
+	);
 
 	if (r.status === 409) {
 		const detail = (await r.json().catch(() => ({})))?.detail ?? {};
@@ -864,11 +873,14 @@ async function acceptInvitation(
 ): Promise<void> {
 	const reqBody = await buildAcceptRequestBody(opts);
 
-	const r = await fetch(`${apiUrl}/v1/me/invitations/${invitationId}/accept`, {
+	const r = await new ApiClient({ baseUrl: apiUrl, authToken: bearer }).request(
+		`/v1/me/invitations/${invitationId}/accept`,
+		{
 		method: "POST",
-		headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(reqBody),
-	});
+		},
+	);
 
 	if (r.status === 410) {
 		console.error(chalk.red("This invitation was revoked or already accepted."));

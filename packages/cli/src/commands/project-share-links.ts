@@ -1,6 +1,6 @@
 import chalk from "chalk";
 
-import { ApiError } from "../lib/api-client";
+import { ApiClient, ApiError } from "../lib/api-client";
 import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 
@@ -81,10 +81,12 @@ export async function projectShareLinksCommand(
 			}
 			linkId = matches[0].id;
 		}
-		const r = await fetch(`${apiUrl}/v1/projects/${projectId}/share-links/${linkId}`, {
+		const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
+			`/v1/projects/${projectId}/share-links/${linkId}`,
+			{
 			method: "DELETE",
-			headers: { Authorization: `Bearer ${apiKey}` },
-		});
+			},
+		);
 		if (r.status === 404) {
 			console.error(chalk.red("Link not found on that project."));
 			process.exitCode = 1;

@@ -1,6 +1,6 @@
 import chalk from "chalk";
 
-import { ApiError, readJson } from "../lib/api-client";
+import { ApiClient, ApiError, readJson } from "../lib/api-client";
 import { projectAuthOrExit } from "../lib/project-command-utils";
 
 interface ProjectRow {
@@ -62,10 +62,9 @@ export async function projectCreateCommand(
 	const slug = normalizeSlugInput(opts.slug);
 	if (slug) payload.slug = slug;
 
-	const r = await fetch(`${apiUrl}/v1/projects`, {
+	const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request("/v1/projects", {
 		method: "POST",
 		headers: {
-			Authorization: `Bearer ${apiKey}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify(payload),

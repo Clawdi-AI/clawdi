@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { readJson } from "../lib/api-client";
+import { ApiClient, readJson } from "../lib/api-client";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { getAuth, getConfig } from "../lib/config";
 import { resolveProjectId } from "../lib/project-resolver";
@@ -75,10 +75,12 @@ export async function vaultResolveCommand(
 	if (opts.debug) params.set("debug", "true");
 	if (opts.dryRun) params.set("preview", "true");
 
-	const r = await fetch(`${apiUrl}/v1/vault/resolve?${params.toString()}`, {
+	const r = await new ApiClient({ baseUrl: apiUrl, authToken: accessToken }).request(
+		`/v1/vault/resolve?${params.toString()}`,
+		{
 		method: "POST",
-		headers: { Authorization: `Bearer ${accessToken}` },
-	});
+		},
+	);
 	let body: VaultResolveHit | { detail?: unknown };
 	try {
 		body = await readJson<VaultResolveHit | { detail?: unknown }>(r, "/v1/vault/resolve");

@@ -1,7 +1,7 @@
 import { buildShareAgentHandoffPrompt } from "@clawdi/shared/sharing";
 import chalk from "chalk";
 
-import { ApiError, readJson } from "../lib/api-client";
+import { ApiClient, ApiError, readJson } from "../lib/api-client";
 import { projectAuthOrExit } from "../lib/project-command-utils";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
 
@@ -52,14 +52,16 @@ export async function projectShareCommand(
 	// by the caller's network stack if they already hit /api/projects
 	// via resolveProjectId moments ago.
 	const projectSlug = (await listProjects(apiUrl, apiKey)).find((s) => s.id === projectId)?.slug;
-	const r = await fetch(`${apiUrl}/v1/projects/${projectId}/share-links`, {
+	const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
+		`/v1/projects/${projectId}/share-links`,
+		{
 		method: "POST",
 		headers: {
-			Authorization: `Bearer ${apiKey}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify({ label: opts.label ?? null }),
-	});
+		},
+	);
 	if (r.status === 409) {
 		const body = (await r.json().catch(() => ({}))) as {
 			detail?: { error?: string; message?: string };
