@@ -8,7 +8,7 @@ import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
-import { NativeButton } from "../../ui/native-controls";
+import { ActionButton as NativeButton } from "../../ui/agents/controls";
 import { AppText, AppView } from "../../ui/primitives";
 import { ReadScreen } from "../../ui/read-screen";
 import { BackButton } from "../cloud-inventory";

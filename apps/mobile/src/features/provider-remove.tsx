@@ -6,7 +6,8 @@ import { useI18n } from "../i18n";
 import { useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
-import { NativeButton, NativeSwitch } from "../ui/native-controls";
+import { ActionButton, NativeSwitch } from "../ui/agents/controls";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { AppText, AppView } from "../ui/primitives";
 
 export function ProviderRemove({
@@ -77,7 +78,7 @@ export function ProviderRemove({
 		);
 	return (
 		<AppView className="gap-3">
-			<NativeButton
+			<ActionButton
 				label={t("providers.reviewRemoval")}
 				disabled={action.busy || !scope.isReady}
 				onPress={() => {
@@ -86,60 +87,75 @@ export function ProviderRemove({
 				}}
 			/>
 			{open ? (
-				<>
-					<AppText>{t("providers.removeWarning")}</AppText>
-					{uncertain ? (
-						<AppText accessibilityRole="alert">{t("providers.removalUncertain")}</AppText>
-					) : null}
-					{attempt.current ? (
-						<NativeButton
-							label={t("providers.retryRemoval")}
-							disabled={action.busy}
-							onPress={() => void remove(true)}
-						/>
-					) : null}
-					<NativeButton
-						label={t("providers.reviewCurrentImpact")}
-						disabled={action.busy}
-						onPress={() => void review()}
-					/>
-					{impact ? (
-						<>
-							<AppText>
-								{t(
-									impact.agents.length ? "providers.affectedAgents" : "providers.noAffectedAgents",
-								)}
-							</AppText>
-							{impact.agents.map((agent) => (
-								<AppText selectable key={agent.deployment_id}>
-									{agent.name} · {agent.deployment_id}
-								</AppText>
-							))}
-							<NativeSwitch
-								label={t("providers.acknowledgeRemoval")}
-								value={acknowledged}
-								disabled={action.busy}
-								onValueChange={setAcknowledged}
-							/>
-							<NativeButton
-								label={t("providers.removePermanently")}
-								disabled={action.busy || !acknowledged}
-								onPress={() => void remove(false)}
-							/>
-						</>
-					) : null}
-					{action.error ? (
-						<AppText accessibilityRole="alert">{t("providers.removalFailed")}</AppText>
-					) : null}
-					<NativeButton
-						label={t("account.cancel")}
-						disabled={action.busy}
-						onPress={() => {
+				<Dialog
+					open={open}
+					onOpenChange={(next) => {
+						if (!next && !action.busy) {
 							setOpen(false);
 							setAcknowledged(false);
-						}}
-					/>
-				</>
+						}
+					}}
+				>
+					<DialogContent>
+						<DialogHeader>
+							<DialogTitle>{t("providers.reviewRemoval")}</DialogTitle>
+						</DialogHeader>
+						<AppText>{t("providers.removeWarning")}</AppText>
+						{uncertain ? (
+							<AppText accessibilityRole="alert">{t("providers.removalUncertain")}</AppText>
+						) : null}
+						{attempt.current ? (
+							<ActionButton
+								label={t("providers.retryRemoval")}
+								disabled={action.busy}
+								onPress={() => void remove(true)}
+							/>
+						) : null}
+						<ActionButton
+							label={t("providers.reviewCurrentImpact")}
+							disabled={action.busy}
+							onPress={() => void review()}
+						/>
+						{impact ? (
+							<>
+								<AppText>
+									{t(
+										impact.agents.length
+											? "providers.affectedAgents"
+											: "providers.noAffectedAgents",
+									)}
+								</AppText>
+								{impact.agents.map((agent) => (
+									<AppText selectable key={agent.deployment_id}>
+										{agent.name} · {agent.deployment_id}
+									</AppText>
+								))}
+								<NativeSwitch
+									label={t("providers.acknowledgeRemoval")}
+									value={acknowledged}
+									disabled={action.busy}
+									onValueChange={setAcknowledged}
+								/>
+								<ActionButton
+									label={t("providers.removePermanently")}
+									disabled={action.busy || !acknowledged}
+									onPress={() => void remove(false)}
+								/>
+							</>
+						) : null}
+						{action.error ? (
+							<AppText accessibilityRole="alert">{t("providers.removalFailed")}</AppText>
+						) : null}
+						<ActionButton
+							label={t("account.cancel")}
+							disabled={action.busy}
+							onPress={() => {
+								setOpen(false);
+								setAcknowledged(false);
+							}}
+						/>
+					</DialogContent>
+				</Dialog>
 			) : null}
 		</AppView>
 	);

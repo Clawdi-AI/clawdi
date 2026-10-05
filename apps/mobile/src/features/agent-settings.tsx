@@ -9,21 +9,32 @@ import {
 	EMPTY_AGENT_OWNERSHIP,
 	normalizeAgentId,
 } from "@clawdi/shared/client";
+import { agentsIndexClasses, agentSettingsPanelClasses as styles } from "@clawdi/shared/ui";
+import { agentDisplayName, agentSurfaceCopy, agentTypeLabel } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { File } from "expo-file-system";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
+import { Settings as SettingsIcon } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
-import { Alert, Image } from "react-native";
+import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
-import { NativeButton } from "../ui/native-controls";
-import { AppScrollView, AppText, AppTextInput, AppView } from "../ui/primitives";
+import { AgentIcon } from "../ui/agents/agent-icon";
+import { useAgentConfirmation } from "../ui/agents/confirmation";
+import { ActionButton } from "../ui/agents/controls";
+import { AgentSectionNavigation } from "../ui/agents/navigation";
+import { SettingsSection } from "../ui/agents/settings-section";
+import { Icon } from "../ui/icon";
+import { Input } from "../ui/input";
+import { PageHeader } from "../ui/page-header";
+import { AppScrollView, AppText } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
-import { BackButton, type CloudAgent, isNotFound, useCloudAgent } from "./cloud-inventory";
+import { WebText, WebView, webView } from "../ui/web-layout";
+import { type CloudAgent, isNotFound, useCloudAgent } from "./cloud-inventory";
 import { routeParam } from "./read-helpers";
 import { ResourceError } from "./resource-error";
 
@@ -36,6 +47,7 @@ export function AgentSettingsScreen() {
 
 function Settings({ id }: { id: string | undefined }) {
 	const t = useI18n();
+	const confirmationDialog = useAgentConfirmation();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const capture = useForegroundLease();
@@ -132,147 +144,208 @@ function Settings({ id }: { id: string | undefined }) {
 		if (unavailable || !canDisconnect || !id) return;
 		const visible = capture();
 		const ticket = ++confirmation.current;
-		Alert.alert(t("agentSettings.disconnect"), t("agentSettings.disconnectWarning"), [
-			{ text: t("account.cancel"), style: "cancel" },
-			{
-				text: t("agentSettings.disconnect"),
-				style: "destructive",
-				onPress: () => {
-					if (
-						ticket !== confirmation.current ||
-						!visible() ||
-						!scope.isCurrent() ||
-						scope.signal.aborted
-					)
-						return;
-					confirmation.current++;
-					void action.run(async (current) => {
-						const latest = await ownership.refetch();
-						if (latest.isError || !latest.data || !current() || !visible())
-							throw new Error("Ownership unresolved");
-						const currentOwnership = latest.data;
-						const fresh = await read((signal) => cloud.getAgent(id, signal));
-						if (!current() || !visible()) return;
-						if (fresh.id !== id) throw new Error("Agent identity changed");
-						await read((signal) =>
-							agentSettings.disconnect(
-								id,
-								{
-									platform: "mobile",
-									ownership: currentOwnership,
-									explicitIdentity: fresh.explicit_identity,
-								},
-								signal,
-							),
-						);
-						if (!current()) return;
-						setDisconnected(true);
-						cache.removeQueries({
-							queryKey: accountQueryKey(scope, "cloud-agent", id),
-							exact: true,
-						});
-						await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
-						if (current() && visible()) router.replace("/agents");
+		confirmationDialog.request({
+			title: t("agentSettings.disconnect"),
+			description: t("agentSettings.disconnectWarning"),
+			confirmLabel: t("agentSettings.disconnect"),
+			onConfirm: () => {
+				if (
+					ticket !== confirmation.current ||
+					!visible() ||
+					!scope.isCurrent() ||
+					scope.signal.aborted
+				)
+					return;
+				confirmation.current++;
+				void action.run(async (current) => {
+					const latest = await ownership.refetch();
+					if (latest.isError || !latest.data || !current() || !visible())
+						throw new Error("Ownership unresolved");
+					const currentOwnership = latest.data;
+					const fresh = await read((signal) => cloud.getAgent(id, signal));
+					if (!current() || !visible()) return;
+					if (fresh.id !== id) throw new Error("Agent identity changed");
+					await read((signal) =>
+						agentSettings.disconnect(
+							id,
+							{
+								platform: "mobile",
+								ownership: currentOwnership,
+								explicitIdentity: fresh.explicit_identity,
+							},
+							signal,
+						),
+					);
+					if (!current()) return;
+					setDisconnected(true);
+					cache.removeQueries({
+						queryKey: accountQueryKey(scope, "cloud-agent", id),
+						exact: true,
 					});
-				},
+					await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
+					if (current() && visible()) router.replace("/agents");
+				});
 			},
-		]);
+		});
 	};
 	return (
 		<ReadScreen>
-			<AppScrollView contentContainerClassName="gap-4 p-5">
-				<BackButton />
-				<AppText accessibilityRole="header" className="text-2xl font-semibold text-foreground">
-					{t("agentSettings.title")}
-				</AppText>
-				<NativeButton
-					label={t("inventory.refresh")}
-					disabled={action.busy || agent.isFetching || ownership.isFetching}
-					onPress={() => {
-						void agent.refetch();
-						void ownership.refetch();
-					}}
+			<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
+				{id ? <AgentSectionNavigation agentId={id} section="settings" /> : null}
+				<PageHeader
+					icon={<Icon as={SettingsIcon} />}
+					title="Settings"
+					description="Name, preferences, and agent controls."
 				/>
 				{!id || agent.isError ? <ResourceError missing={!id || isNotFound(agent.error)} /> : null}
 				{agent.data && agent.data.id === id ? (
-					<AppView className="gap-3">
-						{agent.data.avatar_url?.startsWith("https://") ? (
-							<Image
-								source={{ uri: agent.data.avatar_url }}
-								style={{ width: 88, height: 88, borderRadius: 20 }}
-								accessibilityLabel={t("agentSettings.avatar")}
+					<WebView recipe="">
+						<WebView recipe={styles.flexFlexColItems}>
+							<AgentIcon
+								agent={agent.data.agent_type}
+								size="xl"
+								avatarUrl={agent.data.avatar_url}
 							/>
+							<WebText recipe={styles.maxWFullTruncate}>{agentDisplayName(agent.data)}</WebText>
+							<WebText recipe={styles.textSmTextMuted}>
+								{agentTypeLabel(agent.data.agent_type)} · Connected
+							</WebText>
+						</WebView>
+						<SettingsSection
+							title={agentSurfaceCopy.name}
+							description={agentSurfaceCopy.useAShortNameThatDistinguishesThis}
+						>
+							<WebView recipe={styles.flexWFullFlex}>
+								<Input
+									accessibilityLabel={t("agentSettings.name")}
+									placeholder={t("agentSettings.name")}
+									value={draft}
+									onChangeText={setDraft}
+									maxLength={240}
+									editable={!unavailable}
+								/>
+								<WebText recipe={styles.textXsTextMuted}>
+									Default: {agentDisplayName({ ...agent.data, display_name: null })}
+								</WebText>
+								<ActionButton
+									label="Save"
+									disabled={
+										unavailable || !validName || normalized === (agent.data.display_name ?? null)
+									}
+									onPress={() =>
+										void action.run(async (current) => {
+											if (!id) return;
+											const result = await read((signal) =>
+												agentSettings.setName(id, draft, signal),
+											);
+											if (!current()) return;
+											setDraft(result.display_name ?? "");
+											await saveResult(result);
+										})
+									}
+								/>
+								<ActionButton
+									label="Use default name"
+									variant="ghost"
+									disabled={unavailable || !agent.data.display_name}
+									onPress={() =>
+										void action.run(async (current) => {
+											if (!id) return;
+											const result = await read((signal) => agentSettings.setName(id, "", signal));
+											if (!current()) return;
+											setDraft(result.display_name ?? "");
+											await saveResult(result);
+										})
+									}
+								/>
+							</WebView>
+						</SettingsSection>
+						<SettingsSection
+							title={agentSurfaceCopy.avatar}
+							description={agentSurfaceCopy.shownInTheSidebarPickersAndAgent}
+						>
+							<WebView recipe={styles.flexFlexColGap3}>
+								<WebView recipe={styles.flexMinWFlex2} className="flex-row">
+									<AgentIcon
+										agent={agent.data.agent_type}
+										size="lg"
+										avatarUrl={agent.data.avatar_url}
+									/>
+									<WebView recipe={styles.minW}>
+										<WebText recipe={styles.truncateTextSmFont}>
+											{agent.data.avatar_url
+												? agentSurfaceCopy.customUpload
+												: `${agentTypeLabel(agent.data.agent_type)} default`}
+										</WebText>
+										<WebText recipe={styles.textXsTextMuted}>
+											{agentSurfaceCopy.imageUpTo2Mb}
+										</WebText>
+									</WebView>
+								</WebView>
+								<WebView recipe={styles.flexShrinkFlexWrap} className="flex-row">
+									<ActionButton
+										label="Upload image"
+										disabled={unavailable}
+										onPress={() =>
+											void action.run(async (current) => {
+												if (!id) return;
+												const picked = await File.pickFileAsync({
+													mimeTypes: [...AGENT_AVATAR_MIME_TYPES],
+												});
+												// A system picker may change AppState: capture presentation permission
+												// after it returns, but retain the original account/action lease.
+												const visible = capture();
+												if (picked.canceled || !current() || !visible()) return;
+												const result = await read((signal) =>
+													agentSettings.uploadAvatar(id, picked.result, signal),
+												);
+												if (current()) await saveResult(result);
+											})
+										}
+									/>
+									<ActionButton
+										label="Remove"
+										variant="ghost"
+										disabled={unavailable || !agent.data.avatar_url}
+										onPress={() =>
+											void action.run(async (current) => {
+												if (!id) return;
+												const result = await read((signal) =>
+													agentSettings.clearAvatar(id, signal),
+												);
+												if (current()) await saveResult(result);
+											})
+										}
+									/>
+								</WebView>
+							</WebView>
+						</SettingsSection>
+						{canDisconnect ? (
+							<SettingsSection
+								title={agentSurfaceCopy.disconnect}
+								description={agentSurfaceCopy.stopThisInstallationWhileKeepingItsClawdi}
+								destructive
+							>
+								<WebView recipe={styles.flexFlexColGap4}>
+									<WebText recipe={styles.maxWMdText}>
+										{agentSurfaceCopy.syncStopsAndRetainedSessionsSkillsFilesAndProjects}
+									</WebText>
+									<ActionButton
+										label={agentSurfaceCopy.disconnectAgent}
+										variant="destructive"
+										disabled={unavailable || !canDisconnect || ownership.isFetching}
+										onPress={disconnect}
+									/>
+								</WebView>
+							</SettingsSection>
 						) : null}
-						<AppTextInput
-							accessibilityLabel={t("agentSettings.name")}
-							placeholder={t("agentSettings.name")}
-							value={draft}
-							onChangeText={setDraft}
-							maxLength={240}
-							editable={!unavailable}
-							className="rounded-xl bg-card p-3 text-foreground"
-						/>
-						<AppText>{t("agentSettings.nameHint")}</AppText>
-						<NativeButton
-							label={t("agentSettings.saveName")}
-							disabled={
-								unavailable || !validName || normalized === (agent.data.display_name ?? null)
-							}
-							onPress={() =>
-								void action.run(async (current) => {
-									if (!id) return;
-									const result = await read((signal) => agentSettings.setName(id, draft, signal));
-									if (!current()) return;
-									setDraft(result.display_name ?? "");
-									await saveResult(result);
-								})
-							}
-						/>
-						<AppText>{t("agentSettings.avatarHint")}</AppText>
-						<NativeButton
-							label={t("agentSettings.uploadAvatar")}
-							disabled={unavailable}
-							onPress={() =>
-								void action.run(async (current) => {
-									if (!id) return;
-									const picked = await File.pickFileAsync({
-										mimeTypes: [...AGENT_AVATAR_MIME_TYPES],
-									});
-									// A system picker may change AppState: capture presentation permission
-									// after it returns, but retain the original account/action lease.
-									const visible = capture();
-									if (picked.canceled || !current() || !visible()) return;
-									const result = await read((signal) =>
-										agentSettings.uploadAvatar(id, picked.result, signal),
-									);
-									if (current()) await saveResult(result);
-								})
-							}
-						/>
-						<NativeButton
-							label={t("agentSettings.clearAvatar")}
-							disabled={unavailable || !agent.data.avatar_url}
-							onPress={() =>
-								void action.run(async (current) => {
-									if (!id) return;
-									const result = await read((signal) => agentSettings.clearAvatar(id, signal));
-									if (current()) await saveResult(result);
-								})
-							}
-						/>
-						<AppText>{t("agentSettings.disconnectWarning")}</AppText>
-						<NativeButton
-							label={t("agentSettings.disconnect")}
-							disabled={unavailable || !canDisconnect || ownership.isFetching}
-							onPress={disconnect}
-						/>
-						{!canDisconnect ? <AppText>{t("agentSettings.disconnectUnavailable")}</AppText> : null}
-					</AppView>
+					</WebView>
 				) : null}
 				{action.error ? (
 					<AppText accessibilityRole="alert">{t("agentSettings.failed")}</AppText>
 				) : null}
 			</AppScrollView>
+			{confirmationDialog.dialog}
 		</ReadScreen>
 	);
 }

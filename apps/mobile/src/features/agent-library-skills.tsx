@@ -1,22 +1,34 @@
 import type { components } from "@clawdi/shared/api";
+import { HERO_GRID_CLASS } from "@clawdi/shared/ui";
+import { agentSurfaceCopy, identityFor } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
 import { useState } from "react";
-import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
-import { NativeButton } from "../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../ui/primitives";
+import { AgentCollection } from "../ui/agents/collection";
+import { useAgentConfirmation } from "../ui/agents/confirmation";
+import { ActionButton as NativeButton } from "../ui/agents/controls";
+import { AgentSectionNavigation } from "../ui/agents/navigation";
+import { ApiErrorPanel } from "../ui/api-error-panel";
+import { Badge } from "../ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
+import { EmptyState } from "../ui/empty-state";
+import { HeroCard, HeroCardSkeleton } from "../ui/entity-card";
+import { IconChip } from "../ui/icon-chip";
+import { ListToolbar } from "../ui/list-toolbar";
+import { AppText } from "../ui/primitives";
+import { SearchInput } from "../ui/search-input";
+import { WebView } from "../ui/web-layout";
 import { canPollDeployment } from "./deployments/state";
-import { InventoryList } from "./inventory-list";
 import { routeParam } from "./read-helpers";
 import { useCloudSkills } from "./skills";
 
-export function AgentLibrarySkillsScreen() {
+export function HostedAgentLibrarySkillsScreen() {
 	const params = useLocalSearchParams<{ agentId?: string | string[] }>();
 	const id = routeParam(params.agentId) ?? "";
 	const scope = useAccountScope();
@@ -25,6 +37,7 @@ export function AgentLibrarySkillsScreen() {
 
 function AgentLibrarySkills({ id }: { id: string }) {
 	const t = useI18n();
+	const confirmationDialog = useAgentConfirmation();
 	const router = useRouter();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -72,132 +85,162 @@ function AgentLibrarySkills({ id }: { id: string }) {
 	const remove = (skillId: string) => {
 		const foreground = capture();
 		const signal = scope.signal;
-		Alert.alert(t("agentExtensions.remove"), t("agentExtensions.removeWarning"), [
-			{ text: t("account.cancel"), style: "cancel" },
-			{
-				text: t("agentExtensions.remove"),
-				style: "destructive",
-				onPress: () => {
-					if (foreground() && scope.isCurrent() && !signal.aborted) void mutate(skillId, false);
-				},
+		confirmationDialog.request({
+			title: t("agentExtensions.remove"),
+			description: t("agentExtensions.removeWarning"),
+			confirmLabel: t("agentExtensions.remove"),
+			onConfirm: () => {
+				if (foreground() && scope.isCurrent() && !signal.aborted) void mutate(skillId, false);
 			},
-		]);
+		});
 	};
-	const header = (
-		<AppView className="gap-3">
-			<NativeButton
-				label={t(browse ? "agentExtensions.current" : "agentExtensions.library")}
-				disabled={action.busy}
-				onPress={() => setBrowse(!browse)}
-			/>
-			{browse ? (
-				<AppTextInput
-					accessibilityLabel={t("agentExtensions.search")}
-					placeholder={t("agentExtensions.search")}
-					value={search}
-					onChangeText={setSearch}
+	const items = Array.from(
+		new Map(
+			(library.data?.pages.flatMap((page) => page.items) ?? [])
+				.filter((item) => item.authority === "cloud")
+				.map((item) => [item.id, item]),
+		).values(),
+	);
+	return (
+		<AgentCollection
+			title="Skills"
+			description="Skills available in this Agent's Workspace."
+			navigation={<AgentSectionNavigation agentId={id} section="skills" />}
+			actions={
+				<NativeButton
+					label="+ Install skill"
+					onPress={() => setBrowse(true)}
+					disabled={action.busy}
 				/>
-			) : null}
+			}
+		>
 			{accepted ? <AppText>{t("agentExtensions.accepted")}</AppText> : null}
-			{action.error ? (
-				<AppText accessibilityRole="alert">{t("agentExtensions.failed")}</AppText>
-			) : null}
+			{action.error ? <ApiErrorPanel error={action.error} title="Couldn't update Skill" /> : null}
 			{inventory.data?.removal_failures?.length ? (
 				<AppText accessibilityRole="alert">{t("agentExtensions.removalFailed")}</AppText>
 			) : null}
-		</AppView>
-	);
-	const common = {
-		title: t("agentExtensions.title"),
-		description: t("agentExtensions.description"),
-		empty: t(inventory.isPending ? "loading.app" : "agentExtensions.empty"),
-		header,
-		refreshing: inventory.isRefetching,
-		onRefresh: refresh,
-		onRetry: refresh,
-	};
-	if (browse) {
-		const items = Array.from(
-			new Map(
-				(library.data?.pages.flatMap((page) => page.items) ?? [])
-					.filter((item) => item.authority === "cloud")
-					.map((item) => [item.id, item]),
-			).values(),
-		);
-		return (
-			<InventoryList
-				{...common}
-				items={items}
-				error={!id || inventory.isError || library.isError}
-				busy={library.isFetching || inventory.isFetching}
-				more={library.hasNextPage}
-				onMore={() => void library.fetchNextPage()}
-				renderItem={(item) => (
-					<AppView className="gap-3 rounded-2xl bg-card p-4">
-						<AppText className="text-lg text-foreground">{item.name}</AppText>
-						<AppText>{item.description}</AppText>
-						<NativeButton
-							label={t("agentExtensions.attach")}
-							disabled={
-								disabled ||
-								inventory.data?.skills.some(
-									(skill) => skill.source === "library" && skill.skill_id === item.id,
-								)
-							}
-							onPress={() => void mutate(item.id, true)}
-						/>
-					</AppView>
-				)}
-			/>
-		);
-	}
-	return (
-		<InventoryList
-			{...common}
-			items={(inventory.data?.skills ?? []).map((item) => ({ ...item, id: item.skill_key }))}
-			error={!id || inventory.isError}
-			busy={inventory.isFetching}
-			renderItem={(item) => (
-				<AppView className="gap-3 rounded-2xl bg-card p-4">
-					<AppText className="text-lg text-foreground">{item.name}</AppText>
-					<AppText>
-						{item.source} ·{" "}
-						{t(
-							item.convergence === "failed"
-								? "agentExtensions.failedState"
-								: item.convergence === "installed"
-									? "agentExtensions.installed"
-									: "agentExtensions.not_observed",
-						)}
-					</AppText>
-					{item.source === "library" && item.skill_id ? (
-						<>
-							<NativeButton
-								label={t("agentExtensions.view")}
-								disabled={!item.project_id || !item.source_skill_key}
-								onPress={() =>
-									router.push({
-										pathname: "/skills/detail",
-										params: {
-											projectId: item.project_id ?? "",
-											skillKey: item.source_skill_key ?? "",
-										},
-									})
+			{!id || inventory.isError ? (
+				<ApiErrorPanel error={inventory.error} title="Couldn't load Skills" onRetry={refresh} />
+			) : inventory.isPending ? (
+				<WebView recipe={HERO_GRID_CLASS}>
+					{[0, 1, 2].map((i) => (
+						<HeroCardSkeleton key={i} />
+					))}
+				</WebView>
+			) : !inventory.data?.skills.length ? (
+				<EmptyState variant="inset" description="No Skills have synced from this Agent yet." />
+			) : (
+				<WebView recipe={HERO_GRID_CLASS}>
+					{inventory.data.skills.map((item) => {
+						const identity = identityFor(item.name || item.skill_key);
+						return (
+							<HeroCard
+								key={item.skill_key}
+								icon={
+									<IconChip tint={identity.colorClasses}>
+										<AppText>{identity.emoji}</AppText>
+									</IconChip>
+								}
+								title={item.name}
+								footer={[
+									item.source,
+									t(
+										item.convergence === "failed"
+											? "agentExtensions.failedState"
+											: item.convergence === "installed"
+												? "agentExtensions.installed"
+												: "agentExtensions.not_observed",
+									),
+								]}
+								badges={
+									item.read_only ? (
+										<Badge variant="secondary">
+											<AppText>{agentSurfaceCopy.readOnly}</AppText>
+										</Badge>
+									) : undefined
+								}
+								actions={
+									item.source === "library" && item.skill_id ? (
+										<>
+											<NativeButton
+												label={t("agentExtensions.view")}
+												disabled={!item.project_id || !item.source_skill_key}
+												onPress={() =>
+													router.push({
+														pathname: "/skills/detail",
+														params: {
+															projectId: item.project_id ?? "",
+															skillKey: item.source_skill_key ?? "",
+														},
+													})
+												}
+											/>
+											<NativeButton
+												label="Uninstall"
+												disabled={disabled || item.read_only}
+												onPress={() => {
+													if (item.skill_id) remove(item.skill_id);
+												}}
+											/>
+										</>
+									) : undefined
 								}
 							/>
-							<NativeButton
-								label={t("agentExtensions.remove")}
-								disabled={disabled || item.read_only}
-								onPress={() => {
-									if (item.skill_id) remove(item.skill_id);
-								}}
-							/>
-						</>
-					) : (
-						<AppText>{t("agentExtensions.readOnly")}</AppText>
-					)}
-				</AppView>
+						);
+					})}
+				</WebView>
 			)}
-		/>
+			<Dialog open={browse} onOpenChange={setBrowse}>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>{agentSurfaceCopy.installSkill}</DialogTitle>
+					</DialogHeader>
+					<ListToolbar
+						search={
+							<SearchInput value={search} onChange={setSearch} placeholder="Search Skills…" />
+						}
+					/>
+					{library.isError ? (
+						<ApiErrorPanel error={library.error} onRetry={() => void library.refetch()} />
+					) : (
+						<WebView recipe={HERO_GRID_CLASS}>
+							{items.map((item) => (
+								<HeroCard
+									key={item.id}
+									icon={
+										<IconChip>
+											<AppText>{identityFor(item.name).emoji}</AppText>
+										</IconChip>
+									}
+									title={item.name}
+									description={item.description}
+									actions={
+										<NativeButton
+											label="Install"
+											disabled={
+												disabled ||
+												inventory.data?.skills.some(
+													(skill) => skill.source === "library" && skill.skill_id === item.id,
+												)
+											}
+											onPress={() => void mutate(item.id, true)}
+										/>
+									}
+								/>
+							))}
+						</WebView>
+					)}
+					{library.hasNextPage ? (
+						<NativeButton
+							label={t("inventory.loadMore")}
+							disabled={library.isFetching}
+							onPress={() => void library.fetchNextPage()}
+						/>
+					) : null}
+					<NativeButton label="Done" onPress={() => setBrowse(false)} />
+				</DialogContent>
+			</Dialog>
+			{confirmationDialog.dialog}
+		</AgentCollection>
 	);
 }

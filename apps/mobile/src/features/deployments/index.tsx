@@ -1,15 +1,31 @@
 import type { HostedDeployOperation } from "@clawdi/shared/api";
+import {
+	agentsIndexClasses,
+	ENTITY_CARD_BASE,
+	ENTITY_GRID_CLASS,
+	RESOURCE_TINT_CLASSES,
+} from "@clawdi/shared/ui";
+import { agentSurfaceCopy, overviewComputeState } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
+import { Cpu, Laptop } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useMobileApi } from "../../providers/api-provider";
-import { NativeButton } from "../../ui/native-controls";
+import { AgentCollection } from "../../ui/agents/collection";
+import { ActionButton as NativeButton } from "../../ui/agents/controls";
+import { AgentOverviewHeading, OverviewNavigationCard } from "../../ui/agents/overview";
+import { OverviewComputeBody } from "../../ui/agents/overview-compute-body";
+import { ApiErrorPanel } from "../../ui/api-error-panel";
+import { EmptyState } from "../../ui/empty-state";
+import { EntityCardSkeleton, EntityHeader } from "../../ui/entity-card";
+import { EntityIcon } from "../../ui/entity-icon";
+import { PageHeader } from "../../ui/page-header";
 import { AppPressable, AppScrollView, AppText, AppView } from "../../ui/primitives";
 import { ReadScreen } from "../../ui/read-screen";
+import { WebView, webView } from "../../ui/web-layout";
 import { BackButton, isNotFound } from "../cloud-inventory";
-import { InventoryList } from "../inventory-list";
 import { ResourceError } from "../resource-error";
 import { RuntimeBrowser } from "./browser";
 import { CancelOperation } from "./cancel";
@@ -53,39 +69,62 @@ export function DeploymentListScreen() {
 		if (!query.isFetching) void query.refetch();
 	};
 	return (
-		<InventoryList
-			items={(query.data ?? []).map((deployment) => ({ id: deployment.resource.id, deployment }))}
-			title={t("deployments.title")}
-			description={t("deployments.description")}
-			empty={query.isPending ? t("loading.app") : t("deployments.empty")}
-			refreshing={query.isRefetching}
-			onRefresh={refresh}
-			error={query.isError}
-			onRetry={refresh}
-			busy={query.isFetching}
-			renderItem={({ deployment }) => (
-				<AppPressable
-					accessibilityRole="button"
-					className="gap-2 rounded-2xl bg-card p-4"
-					onPress={() => {
-						if (scope.isCurrent() && !scope.signal.aborted)
-							router.push(`/deployments/${encodeURIComponent(deployment.resource.id)}`);
-					}}
-				>
-					<AppText className="text-lg font-semibold text-foreground">
-						{deployment.resource.name}
-					</AppText>
-					<AppText>
-						{deployment.resource.spec.runtime} ·{" "}
-						{t(
-							deployment.resource.status
-								? deploymentSummaryKeys[deployment.resource.status.summary_state]
-								: "deployments.unknown",
-						)}
-					</AppText>
-				</AppPressable>
+		<AgentCollection
+			title={agentSurfaceCopy.agents}
+			description={agentSurfaceCopy.everyAgentInYourAccount}
+		>
+			{query.isError ? (
+				<ApiErrorPanel
+					error={query.error}
+					title={agentSurfaceCopy.couldnTLoadAgents}
+					onRetry={refresh}
+				/>
+			) : query.isPending ? (
+				<WebView recipe={ENTITY_GRID_CLASS}>
+					{[0, 1, 2].map((i) => (
+						<EntityCardSkeleton key={i} />
+					))}
+				</WebView>
+			) : !query.data?.length ? (
+				<EmptyState
+					title={agentSurfaceCopy.noAgentsYet}
+					description={agentSurfaceCopy.connectAnAgentToSeeItHere}
+				/>
+			) : (
+				<WebView recipe={ENTITY_GRID_CLASS}>
+					{query.data.map((deployment) => (
+						<AppPressable
+							key={deployment.resource.id}
+							accessibilityRole="link"
+							className={webView(ENTITY_CARD_BASE)}
+							onPress={() => {
+								if (scope.isCurrent() && !scope.signal.aborted)
+									router.push(`/deployments/${encodeURIComponent(deployment.resource.id)}`);
+							}}
+						>
+							<EntityHeader
+								title={deployment.resource.name}
+								icon={
+									<EntityIcon
+										kind="framework"
+										id={deployment.resource.spec.runtime}
+										label={deployment.resource.spec.runtime}
+									/>
+								}
+								meta={[
+									deployment.resource.spec.runtime,
+									t(
+										deployment.resource.status
+											? deploymentSummaryKeys[deployment.resource.status.summary_state]
+											: "deployments.unknown",
+									),
+								]}
+							/>
+						</AppPressable>
+					))}
+				</WebView>
 			)}
-		/>
+		</AgentCollection>
 	);
 }
 
@@ -196,11 +235,12 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 	const activeOperation = operation.data ?? accepted ?? deployment?.accepted_operation;
 	return (
 		<ReadScreen>
-			<AppScrollView contentContainerClassName="gap-4 p-5">
+			<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
 				<BackButton />
-				<AppText className="text-2xl font-semibold text-foreground">
-					{t("deployments.detail")}
-				</AppText>
+				<PageHeader
+					title={deployment?.resource.name ?? "Overview"}
+					description="Status, resources, and recent activity for this agent."
+				/>
 				{!hosted ? (
 					<AppText>{t("deployments.unavailable")}</AppText>
 				) : !deploymentId ? (
@@ -241,8 +281,35 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 							/>
 						)}
 						{deployment ? (
-							<AppView className="gap-3 rounded-2xl bg-card p-4">
-								<RuntimeBrowser deployment={deployment} />
+							<WebView recipe={agentsIndexClasses.page}>
+								<AgentOverviewHeading>{agentSurfaceCopy.status}</AgentOverviewHeading>
+								<OverviewNavigationCard
+									title={agentSurfaceCopy.compute}
+									description={t(
+										deployment.resource.status
+											? deploymentSummaryKeys[deployment.resource.status.summary_state]
+											: "deployments.unknown",
+									)}
+									icon={Cpu}
+									tint={RESOURCE_TINT_CLASSES.overview}
+								>
+									<OverviewComputeBody
+										{...overviewComputeState(deployment).facts}
+										resources={deployment.resource.spec.resources}
+									/>
+								</OverviewNavigationCard>
+								<OverviewNavigationCard
+									title="Chat on the web"
+									description={
+										deployment.resource.spec.runtime === "hermes"
+											? "Hermes Dashboard"
+											: "OpenClaw Control UI"
+									}
+									icon={Laptop}
+									tint={RESOURCE_TINT_CLASSES.sessions}
+								>
+									<RuntimeBrowser deployment={deployment} />
+								</OverviewNavigationCard>
 								<NativeButton
 									label={t("terminal.title")}
 									onPress={() =>
@@ -330,7 +397,7 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 								) : (
 									<AppText>{t("deployments.agentUnavailable")}</AppText>
 								)}
-							</AppView>
+							</WebView>
 						) : null}
 					</>
 				)}

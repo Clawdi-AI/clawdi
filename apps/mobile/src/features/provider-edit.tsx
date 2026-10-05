@@ -18,8 +18,10 @@ import { useI18n } from "../i18n";
 import { useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
-import { NativeButton, NativePicker } from "../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../ui/primitives";
+import { ActionButton, ChoiceSelect } from "../ui/agents/controls";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Input } from "../ui/input";
+import { AppText, AppView } from "../ui/primitives";
 
 export function ProviderEdit({
 	provider,
@@ -128,7 +130,7 @@ export function ProviderEdit({
 		<AppView className="gap-3">
 			{uncertain ? <AppText accessibilityRole="alert">{t("providers.uncertain")}</AppText> : null}
 			{!open ? (
-				<NativeButton
+				<ActionButton
 					label={t("providers.edit")}
 					disabled={action.busy || !scope.isReady}
 					onPress={() => {
@@ -141,74 +143,84 @@ export function ProviderEdit({
 					}}
 				/>
 			) : (
-				<>
-					<AppTextInput
-						accessibilityLabel={t("providers.label")}
-						value={label}
-						onChangeText={setLabel}
-						maxLength={200}
-						editable={!locked && !action.busy}
-						className="rounded-xl bg-background p-3 text-foreground"
-					/>
-					{!oauth && native && preset?.region_variants?.length ? (
-						<NativePicker
-							value={region ?? preset.region_variants[0]?.id ?? ""}
-							options={preset.region_variants.map((variant) => ({
-								value: variant.id,
-								label: variant.label,
-							}))}
-							disabled={locked || action.busy}
-							onValueChange={setRegion}
+				<Dialog
+					open={open}
+					onOpenChange={(next) => {
+						if (!next && !action.busy) clear();
+					}}
+				>
+					<DialogContent>
+						<DialogHeader>
+							<DialogTitle>{t("providers.edit")}</DialogTitle>
+						</DialogHeader>
+						<Input
+							accessibilityLabel={t("providers.label")}
+							value={label}
+							onChangeText={setLabel}
+							maxLength={200}
+							editable={!locked && !action.busy}
 						/>
-					) : null}
-					{!oauth && !native ? (
-						<>
-							<AppTextInput
-								accessibilityLabel={t("providers.endpoint")}
-								value={baseUrl}
-								onChangeText={setBaseUrl}
-								maxLength={1000}
-								autoCorrect={false}
-								autoCapitalize="none"
-								editable={!locked && !action.busy}
-								className="rounded-xl bg-background p-3 text-foreground"
-							/>
-							<NativePicker
-								value={apiMode}
-								options={AI_PROVIDER_API_MODES.map((mode) => ({
-									value: mode,
-									label: API_MODE_LABEL[mode],
+						{!oauth && native && preset?.region_variants?.length ? (
+							<ChoiceSelect
+								value={region ?? preset.region_variants[0]?.id ?? ""}
+								options={preset.region_variants.map((variant) => ({
+									value: variant.id,
+									label: variant.label,
 								}))}
 								disabled={locked || action.busy}
-								onValueChange={setApiMode}
+								onValueChange={setRegion}
 							/>
-						</>
-					) : null}
-					{!oauth ? (
-						<>
-							<AppText className="text-sm text-muted-foreground">
-								{t("providers.keepCredential")}
-							</AppText>
-							<AppTextInput
-								accessibilityLabel={t("providers.apiKey")}
-								placeholder={t("providers.apiKey")}
-								value={secret}
-								onChangeText={setSecret}
-								secureTextEntry
-								autoCorrect={false}
-								autoCapitalize="none"
-								editable={!locked && !action.busy}
-								className="rounded-xl bg-background p-3 text-foreground"
-							/>
-						</>
-					) : null}
-					<NativeButton
-						label={t(locked ? "providers.retrySame" : "projects.save")}
-						disabled={action.busy || !scope.isReady || !baseUrl.trim()}
-						onPress={() => void save()}
-					/>
-					<NativeButton label={t("account.cancel")} disabled={action.busy} onPress={clear} />
-				</>
+						) : null}
+						{!oauth && !native ? (
+							<>
+								<Input
+									accessibilityLabel={t("providers.endpoint")}
+									value={baseUrl}
+									onChangeText={setBaseUrl}
+									maxLength={1000}
+									autoCorrect={false}
+									autoCapitalize="none"
+									editable={!locked && !action.busy}
+								/>
+								<ChoiceSelect
+									value={apiMode}
+									options={AI_PROVIDER_API_MODES.map((mode) => ({
+										value: mode,
+										label: API_MODE_LABEL[mode],
+									}))}
+									disabled={locked || action.busy}
+									onValueChange={setApiMode}
+								/>
+							</>
+						) : null}
+						{!oauth ? (
+							<>
+								<AppText className="text-sm text-muted-foreground">
+									{t("providers.keepCredential")}
+								</AppText>
+								<Input
+									accessibilityLabel={t("providers.apiKey")}
+									placeholder={t("providers.apiKey")}
+									value={secret}
+									onChangeText={setSecret}
+									secureTextEntry
+									autoCorrect={false}
+									autoCapitalize="none"
+									editable={!locked && !action.busy}
+								/>
+							</>
+						) : null}
+						<ActionButton
+							label={t(locked ? "providers.retrySame" : "projects.save")}
+							disabled={action.busy || !scope.isReady || !baseUrl.trim()}
+							onPress={() => void save()}
+						/>
+						<ActionButton label={t("account.cancel")} disabled={action.busy} onPress={clear} />
+						{action.error ? (
+							<AppText accessibilityRole="alert">{t("providers.failed")}</AppText>
+						) : null}
+					</DialogContent>
+				</Dialog>
 			)}
 			{action.error ? <AppText accessibilityRole="alert">{t("providers.failed")}</AppText> : null}
 		</AppView>

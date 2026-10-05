@@ -4,18 +4,47 @@ import {
 	buildContextBindingReorder,
 	resolveAgentProjectScope,
 } from "@clawdi/shared/api";
+import {
+	agentSurfaceCopy,
+	compareProjectsForUse,
+	displayProjectName,
+	formatResourceCount,
+	identityFor,
+	isCustomProject,
+	projectMatchesSearch,
+	projectSearchRank,
+	projectSupportingText,
+} from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
+import { FolderKanban, Plus } from "lucide-react-native";
 import { useState } from "react";
-import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
-import { NativeButton, NativePicker } from "../ui/native-controls";
-import { AppText, AppView } from "../ui/primitives";
+import { AgentCollection } from "../ui/agents/collection";
+import { useAgentConfirmation } from "../ui/agents/confirmation";
+import { ActionButton } from "../ui/agents/controls";
+import { AgentSectionNavigation } from "../ui/agents/navigation";
+import { ApiErrorPanel } from "../ui/api-error-panel";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
+import { HERO_GRID_CLASS, HeroCard, HeroCardSkeleton } from "../ui/entity-card";
+import { Icon } from "../ui/icon";
+import { IconChip } from "../ui/icon-chip";
+import { ListToolbar } from "../ui/list-toolbar";
+import { SearchInput } from "../ui/search-input";
+import { SectionLabel } from "../ui/section-label";
+import { Text } from "../ui/text";
+import { WebView } from "../ui/web-layout";
 import { useCloudAgent } from "./cloud-inventory";
-import { InventoryList } from "./inventory-list";
 import { useCloudProjects } from "./projects";
 import { routeParam } from "./read-helpers";
 
@@ -30,6 +59,7 @@ export function AgentProjectsScreen() {
 
 function BindingsView({ agentId }: { agentId?: string }) {
 	const t = useI18n();
+	const confirmationDialog = useAgentConfirmation();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { agentProjects } = useMobileApi();
@@ -37,7 +67,7 @@ function BindingsView({ agentId }: { agentId?: string }) {
 	const action = useAuthAction(scope);
 	const projects = useCloudProjects();
 	const agent = useCloudAgent(agentId);
-	const [selection, setSelection] = useState("");
+	const [search, setSearch] = useState("");
 	const bindings = useQuery({
 		queryKey: accountQueryKey(scope, ...agentProjectBindingsQueryKey(agentId)),
 		queryFn: ({ signal }) =>
@@ -59,14 +89,6 @@ function BindingsView({ agentId }: { agentId?: string }) {
 	const busy = bindings.isFetching || projects.isFetching || agent.isFetching;
 	const disabled = failed || loading || action.busy || busy;
 	const context = ordered.filter((binding) => binding.binding_type === "context");
-	const available = (projects.data ?? []).filter(
-		(project) =>
-			project.kind === "workspace" &&
-			!project.archived_at &&
-			!ordered.some((binding) => binding.project_id === project.id),
-	);
-	const selected =
-		available.find((project) => project.id === selection)?.id ?? available[0]?.id ?? "";
 	const refresh = async () => {
 		await Promise.all([bindings.refetch(), projects.refetch(), agent.refetch()]);
 	};
@@ -78,105 +100,168 @@ function BindingsView({ agentId }: { agentId?: string }) {
 		});
 	const unlink = (binding: AgentProjectBinding) => {
 		const signal = scope.signal;
-		Alert.alert(t("bindings.unlink"), t("bindings.unlinkWarning"), [
-			{ text: t("account.cancel"), style: "cancel" },
-			{
-				text: t("bindings.unlink"),
-				style: "destructive",
-				onPress: () => {
-					if (signal.aborted || !scope.isCurrent() || binding.binding_type !== "context") return;
-					void mutate((id, requestSignal) => agentProjects.unlink(id, binding.id, requestSignal));
-				},
+		confirmationDialog.request({
+			title: t("bindings.unlink"),
+			description: t("bindings.unlinkWarning"),
+			confirmLabel: t("bindings.unlink"),
+			onConfirm: () => {
+				if (signal.aborted || !scope.isCurrent() || binding.binding_type !== "context") return;
+				void mutate((id, requestSignal) => agentProjects.unlink(id, binding.id, requestSignal));
 			},
-		]);
+		});
 	};
+	const rows = (projects.data ?? [])
+		.filter(isCustomProject)
+		.filter(
+			(project) =>
+				!project.archived_at || context.some((binding) => binding.project_id === project.id),
+		)
+		.filter((project) => projectMatchesSearch(project, search))
+		.sort(
+			(a, b) =>
+				(projectSearchRank(a, search) ?? 0) - (projectSearchRank(b, search) ?? 0) ||
+				compareProjectsForUse(a, b),
+		);
 	return (
-		<InventoryList
-			title={t("bindings.title")}
-			description={t("bindings.description")}
-			items={failed ? [] : ordered}
-			empty={t(loading ? "loading.app" : "bindings.empty")}
-			refreshing={bindings.isRefetching || projects.isRefetching || agent.isRefetching}
-			onRefresh={() => {
-				if (!busy) void refresh();
-			}}
-			error={failed}
-			onRetry={() => void refresh()}
-			busy={busy}
-			header={
-				<AppView className="gap-3">
-					{available.length ? (
-						<>
-							<NativePicker
-								value={selected}
-								options={available.map((project) => ({ value: project.id, label: project.name }))}
-								onValueChange={setSelection}
-								disabled={disabled}
-							/>
-							<NativeButton
-								label={t("bindings.link")}
-								disabled={disabled || !selected}
-								onPress={() =>
-									void mutate((id, signal) => agentProjects.link(id, selected, signal))
-								}
-							/>
-						</>
-					) : (
-						<AppText>{t("bindings.noAvailable")}</AppText>
-					)}
-					{action.error ? (
-						<AppText accessibilityRole="alert">{t("bindings.failed")}</AppText>
-					) : null}
-				</AppView>
+		<AgentCollection
+			icon={FolderKanban}
+			navigation={agentId ? <AgentSectionNavigation agentId={agentId} section="projects" /> : null}
+			title="Projects"
+			description="Choose the Projects this Agent can use."
+			actions={
+				<ActionButton
+					label="Create project"
+					variant="default"
+					icon={<Icon as={Plus} />}
+					onPress={() => router.push("/projects")}
+				/>
 			}
-			renderItem={(binding) => (
-				<AppView className="gap-3 rounded-2xl bg-card p-4">
-					<AppText className="text-lg text-foreground">
-						{projects.data?.find((project) => project.id === binding.project_id)?.name ??
-							t("projects.unknown")}
-					</AppText>
-					{binding.binding_type === "primary" ? (
-						<AppText>{t("bindings.primary")}</AppText>
-					) : (
-						<>
-							<AppText>
-								{t("bindings.priority")}: {binding.priority}
-							</AppText>
-							<NativeButton
-								label={t("bindings.up")}
-								disabled={disabled || context[0]?.id === binding.id}
-								onPress={() =>
-									void mutate((id, signal) =>
-										agentProjects.reorder(
-											id,
-											buildContextBindingReorder(ordered, binding.id, -1),
-											signal,
-										),
-									)
-								}
-							/>
-							<NativeButton
-								label={t("bindings.down")}
-								disabled={disabled || context[context.length - 1]?.id === binding.id}
-								onPress={() =>
-									void mutate((id, signal) =>
-										agentProjects.reorder(
-											id,
-											buildContextBindingReorder(ordered, binding.id, 1),
-											signal,
-										),
-									)
-								}
-							/>
-							<NativeButton
-								label={t("bindings.unlink")}
-								disabled={disabled}
-								onPress={() => unlink(binding)}
-							/>
-						</>
-					)}
-				</AppView>
+		>
+			<ListToolbar
+				search={<SearchInput value={search} onChange={setSearch} placeholder="Search projects…" />}
+			/>
+			{failed ? (
+				<ApiErrorPanel
+					error={bindings.error ?? agent.error ?? projects.error}
+					title="Couldn't load Projects"
+					onRetry={() => void refresh()}
+				/>
+			) : loading ? (
+				<WebView recipe={HERO_GRID_CLASS}>
+					{[0, 1, 2].map((i) => (
+						<HeroCardSkeleton key={i} />
+					))}
+				</WebView>
+			) : (
+				[true, false].map((linked) => {
+					const group = rows.filter(
+						(project) => context.some((binding) => binding.project_id === project.id) === linked,
+					);
+					if (!group.length) return null;
+					return (
+						<WebView key={String(linked)} recipe={HERO_GRID_CLASS}>
+							<SectionLabel count={group.length}>
+								{linked ? "Linked" : agentSurfaceCopy.available}
+							</SectionLabel>
+							{group.map((project) => {
+								const name = displayProjectName(project),
+									identity = identityFor(name),
+									binding = context.find((item) => item.project_id === project.id);
+								return (
+									<HeroCard
+										key={project.id}
+										icon={
+											<IconChip tint={identity.colorClasses}>
+												<Text>{identity.emoji}</Text>
+											</IconChip>
+										}
+										title={name}
+										link={{
+											to: { pathname: "/projects/[projectId]", params: { projectId: project.id } },
+										}}
+										description={projectSupportingText(project)}
+										badges={
+											!project.is_owner ? (
+												<Badge variant="outline">
+													<Text>Viewer</Text>
+												</Badge>
+											) : undefined
+										}
+										footer={[
+											formatResourceCount(project.skill_count, "skill"),
+											formatResourceCount(project.vault_count, "vault"),
+										]}
+										actionsVisibility="always"
+										actions={
+											<>
+												<ActionButton
+													label={linked ? "Unlink" : "Link"}
+													variant={linked ? "ghost" : "default"}
+													disabled={disabled || (!linked && project.kind !== "workspace")}
+													onPress={() => {
+														if (binding) unlink(binding);
+														else
+															void mutate((id, signal) =>
+																agentProjects.link(id, project.id, signal),
+															);
+													}}
+												/>
+												{binding ? (
+													<DropdownMenu>
+														<DropdownMenuTrigger>
+															<Button
+																variant="ghost"
+																size="icon-sm"
+																accessibilityLabel="Project actions"
+															>
+																<Text>⋯</Text>
+															</Button>
+														</DropdownMenuTrigger>
+														<DropdownMenuContent>
+															<DropdownMenuItem
+																label="Move up"
+																disabled={disabled || context[0]?.id === binding.id}
+																onSelect={() =>
+																	void mutate((id, signal) =>
+																		agentProjects.reorder(
+																			id,
+																			buildContextBindingReorder(ordered, binding.id, -1),
+																			signal,
+																		),
+																	)
+																}
+															/>
+															<DropdownMenuItem
+																label="Move down"
+																disabled={
+																	disabled || context[context.length - 1]?.id === binding.id
+																}
+																onSelect={() =>
+																	void mutate((id, signal) =>
+																		agentProjects.reorder(
+																			id,
+																			buildContextBindingReorder(ordered, binding.id, 1),
+																			signal,
+																		),
+																	)
+																}
+															/>
+														</DropdownMenuContent>
+													</DropdownMenu>
+												) : null}
+											</>
+										}
+									/>
+								);
+							})}
+						</WebView>
+					);
+				})
 			)}
-		/>
+			{action.error ? (
+				<ApiErrorPanel error={action.error} title="Couldn't update Project link" />
+			) : null}
+			{confirmationDialog.dialog}
+		</AgentCollection>
 	);
 }

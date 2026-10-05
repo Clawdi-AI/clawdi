@@ -16,7 +16,7 @@ import { useI18n } from "../i18n";
 import { useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
-import { NativeButton } from "../ui/native-controls";
+import { ActionButton } from "../ui/agents/controls";
 import { AppText, AppView } from "../ui/primitives";
 
 type Authorization = components["schemas"]["AiProviderOAuthDeviceStartResponse"];
@@ -247,7 +247,7 @@ export function ProviderOAuth({
 	return (
 		<AppView className="gap-3">
 			{!authorization ? (
-				<NativeButton
+				<ActionButton
 					label={t(provider ? "providers.reconnectOAuth" : "providers.connectOAuth")}
 					disabled={action.busy || !scope.isReady || !online || (!provider && !providers)}
 					onPress={() => void begin()}
@@ -258,7 +258,7 @@ export function ProviderOAuth({
 					<AppText selectable className="text-lg font-semibold text-foreground">
 						{authorization.user_code}
 					</AppText>
-					<NativeButton
+					<ActionButton
 						label={t("providers.openAuthorization")}
 						disabled={action.busy || issue === "expired"}
 						onPress={() =>
@@ -269,7 +269,7 @@ export function ProviderOAuth({
 						}
 					/>
 					{issue === "failed" ? (
-						<NativeButton
+						<ActionButton
 							label={t("providers.resumeOAuth")}
 							disabled={!online}
 							onPress={() => {
@@ -284,7 +284,7 @@ export function ProviderOAuth({
 						</AppText>
 					) : null}
 					{!online ? <AppText>{t("providers.oauthOffline")}</AppText> : null}
-					<NativeButton label={t("providers.stopOAuth")} onPress={stop} />
+					<ActionButton label={t("providers.stopOAuth")} onPress={stop} />
 				</>
 			)}
 			{ready ? <AppText accessibilityRole="alert">{t("providers.oauthReady")}</AppText> : null}

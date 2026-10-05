@@ -11,7 +11,7 @@ import { useI18n } from "../../i18n";
 import { useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
-import { NativeButton } from "../../ui/native-controls";
+import { ActionButton as NativeButton } from "../../ui/agents/controls";
 import { AppText } from "../../ui/primitives";
 
 export function RuntimeBrowser({ deployment }: { deployment: DeploymentRead }) {

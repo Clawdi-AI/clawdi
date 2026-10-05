@@ -12,6 +12,8 @@ import {
 	isValidHostedDeployTimezone,
 	normalizeHostedDeployLanguage,
 } from "@clawdi/shared/api";
+import { ENTITY_CHOICE_GRID_CLASS } from "@clawdi/shared/ui";
+import { agentSurfaceCopy, providerPresentation } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypto";
 import { useEffect, useRef, useState } from "react";
@@ -21,8 +23,15 @@ import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
-import { NativeButton, NativePicker } from "../../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../../ui/primitives";
+import {
+	ActionButton as NativeButton,
+	ChoiceSelect as NativePicker,
+} from "../../ui/agents/controls";
+import { EntityChoiceCard } from "../../ui/entity-card";
+import { EntityIcon } from "../../ui/entity-icon";
+import { Input as AppTextInput } from "../../ui/input";
+import { AppText, AppView } from "../../ui/primitives";
+import { WebView } from "../../ui/web-layout";
 
 import type { RuntimeAttempt } from "./attempt";
 import { runtimeAttempts } from "./attempt-storage";
@@ -34,6 +43,7 @@ export function DeploymentControls({
 	transitioning,
 	onAccepted,
 	onAbsent,
+	section = "all",
 }: {
 	deployment: DeploymentRead | undefined;
 	deploymentId: string;
@@ -41,6 +51,7 @@ export function DeploymentControls({
 	transitioning: boolean;
 	onAccepted: (operation: HostedDeployOperation) => Promise<void>;
 	onAbsent: () => Promise<void>;
+	section?: "all" | "ai";
 }) {
 	const t = useI18n();
 	const scope = useAccountScope();
@@ -187,7 +198,7 @@ export function DeploymentControls({
 	return (
 		<AppView className="gap-3">
 			<AppText accessibilityRole="header" className="text-xl font-semibold text-foreground">
-				{t("runtime.title")}
+				{section === "ai" ? agentSurfaceCopy.aIProviders : t("runtime.title")}
 			</AppText>
 			<AppText>{t("runtime.warning")}</AppText>
 			{storageError ? (
@@ -234,38 +245,40 @@ export function DeploymentControls({
 				</>
 			) : null}
 			{action.error ? <AppText accessibilityRole="alert">{t("runtime.failed")}</AppText> : null}
-			{deploymentLifecycleAvailable("start", state) && deployment?.start_action === "start" ? (
+			{section !== "ai" &&
+			deploymentLifecycleAvailable("start", state) &&
+			deployment?.start_action === "start" ? (
 				<NativeButton
 					label={t("runtime.start")}
 					disabled={busy}
 					onPress={() => confirm({ action: "start" })}
 				/>
 			) : null}
-			{state === "stopped" && deployment?.start_action !== "start" ? (
+			{section !== "ai" && state === "stopped" && deployment?.start_action !== "start" ? (
 				<AppText>{t("runtime.paymentRequired")}</AppText>
 			) : null}
-			{deploymentLifecycleAvailable("stop", state) ? (
+			{section !== "ai" && deploymentLifecycleAvailable("stop", state) ? (
 				<NativeButton
 					label={t("runtime.stop")}
 					disabled={busy}
 					onPress={() => confirm({ action: "stop" })}
 				/>
 			) : null}
-			{deploymentLifecycleAvailable("restart", state) ? (
+			{section !== "ai" && deploymentLifecycleAvailable("restart", state) ? (
 				<NativeButton
 					label={t("runtime.restart")}
 					disabled={busy}
 					onPress={() => confirm({ action: "restart" })}
 				/>
 			) : null}
-			{stable ? (
+			{section !== "ai" && stable ? (
 				<NativeButton
 					label={t("runtime.resetAccess")}
 					disabled={busy}
 					onPress={() => confirm({ action: "reset_runtime_ui_access" })}
 				/>
 			) : null}
-			{deploymentLifecycleAvailable("delete", state) ? (
+			{section !== "ai" && deploymentLifecycleAvailable("delete", state) ? (
 				<NativeButton
 					label={t("runtime.deleteAgent")}
 					disabled={writeBlocked}
@@ -279,15 +292,17 @@ export function DeploymentControls({
 			) : null}
 			{deployment ? (
 				<>
-					<LocaleSettings
-						key={JSON.stringify([
-							deployment.resource.spec.runtime_configuration.language,
-							deployment.resource.spec.runtime_configuration.timezone,
-						])}
-						deployment={deployment}
-						disabled={busy || !stable}
-						apply={(body) => confirm({ action: "update", body })}
-					/>
+					{section !== "ai" ? (
+						<LocaleSettings
+							key={JSON.stringify([
+								deployment.resource.spec.runtime_configuration.language,
+								deployment.resource.spec.runtime_configuration.timezone,
+							])}
+							deployment={deployment}
+							disabled={busy || !stable}
+							apply={(body) => confirm({ action: "update", body })}
+						/>
+					) : null}
 					<ModelSettings
 						key={JSON.stringify([
 							deployment.resource.spec.runtime_configuration.providers,
@@ -343,7 +358,6 @@ function LocaleSettings({
 				autoCorrect={false}
 				maxLength={100}
 				editable={!disabled}
-				className="rounded-xl bg-card p-3 text-foreground"
 			/>
 			{!valid ? <AppText>{t("runtime.invalidLocale")}</AppText> : null}
 			<NativeButton
@@ -433,15 +447,45 @@ function ModelSettings({
 				disabled={catalog.isFetching || action.busy}
 				onPress={() => void catalog.refetch()}
 			/>
-			<NativePicker
-				value={choice}
-				options={options}
-				disabled={disabled || catalog.isPending || catalog.isError}
-				onValueChange={(value) => {
-					setChoice(value);
-					setModel("");
-				}}
-			/>
+			<WebView recipe={ENTITY_CHOICE_GRID_CLASS}>
+				{options
+					.filter((option) => option.value)
+					.map((option) => {
+						const provider = available.find((item) => item.provider_id === option.value);
+						return (
+							<EntityChoiceCard
+								key={option.value}
+								icon={
+									<EntityIcon
+										kind="provider"
+										id={
+											provider
+												? providerPresentation(provider).iconId
+												: option.value === "__managed__"
+													? "clawdi"
+													: "custom"
+										}
+										label={option.label}
+									/>
+								}
+								title={option.label}
+								description={
+									provider
+										? providerPresentation(provider).summary
+										: option.value === "__managed__"
+											? agentSurfaceCopy.noSetupRequiredUsageDrawsFromYour
+											: "Configure model access inside the agent."
+								}
+								selected={choice === option.value}
+								disabled={disabled || catalog.isPending || catalog.isError}
+								onClick={() => {
+									setChoice(option.value);
+									setModel("");
+								}}
+							/>
+						);
+					})}
+			</WebView>
 			{choice === "__managed__" ? (
 				<NativePicker
 					value={model}
@@ -465,7 +509,6 @@ function ModelSettings({
 					editable={!disabled}
 					autoCapitalize="none"
 					autoCorrect={false}
-					className="rounded-xl bg-card p-3 text-foreground"
 				/>
 			) : agentOwnsModels ? (
 				<AppText>{t("runtime.modelsInAgent")}</AppText>
@@ -486,7 +529,7 @@ function ModelSettings({
 					void action.run(async () => {
 						if (!catalog.data) return;
 						if (choice !== "__managed__" && choice !== "__unmanaged__" && !selected)
-							throw new Error("Provider unavailable");
+							throw new Error(agentSurfaceCopy.providerUnavailable);
 						apply(
 							buildHostedAiBindingFields({
 								mode: "update",

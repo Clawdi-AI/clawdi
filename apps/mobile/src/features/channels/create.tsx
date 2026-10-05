@@ -11,8 +11,10 @@ import { useI18n } from "../../i18n";
 import { useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
-import { NativeButton, NativePicker } from "../../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../../ui/primitives";
+import { ActionButton, ChoiceSelect } from "../../ui/agents/controls";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../ui/dialog";
+import { Input } from "../../ui/input";
+import { AppText, AppView } from "../../ui/primitives";
 
 export function ChannelCreate({ refresh }: { refresh: () => Promise<void> }) {
 	const t = useI18n();
@@ -58,7 +60,7 @@ export function ChannelCreate({ refresh }: { refresh: () => Promise<void> }) {
 				<AppText accessibilityRole="alert">{t("channels.createUncertain")}</AppText>
 			) : null}
 			{!open ? (
-				<NativeButton
+				<ActionButton
 					label={t("channels.create")}
 					disabled={action.busy || !scope.isReady}
 					onPress={() => {
@@ -67,107 +69,115 @@ export function ChannelCreate({ refresh }: { refresh: () => Promise<void> }) {
 					}}
 				/>
 			) : (
-				<>
-					<AppText>{t("channels.createInstructions")}</AppText>
-					<NativePicker
-						value={provider}
-						options={[
-							{ value: "telegram", label: "Telegram" },
-							{ value: "discord", label: "Discord" },
-						]}
-						disabled={action.busy || uncertain}
-						onValueChange={(value) => {
-							setProvider(value);
-							setToken("");
-						}}
-					/>
-					<AppTextInput
-						accessibilityLabel={t("channels.name")}
-						placeholder={t("channels.name")}
-						value={name}
-						onChangeText={setName}
-						maxLength={120}
-						editable={!action.busy && !uncertain}
-						className="rounded-xl bg-card p-3 text-foreground"
-					/>
-					<AppTextInput
-						accessibilityLabel={t("channels.token")}
-						placeholder={t("channels.token")}
-						value={token}
-						onChangeText={setToken}
-						maxLength={2000}
-						secureTextEntry
-						autoCapitalize="none"
-						autoCorrect={false}
-						editable={!action.busy && !uncertain}
-						className="rounded-xl bg-card p-3 text-foreground"
-					/>
-					{provider === "discord" ? (
-						<>
-							<AppTextInput
-								accessibilityLabel={t("channels.applicationId")}
-								placeholder={t("channels.applicationId")}
-								value={applicationId}
-								onChangeText={setApplicationId}
-								maxLength={20}
-								autoCapitalize="none"
-								autoCorrect={false}
-								editable={!action.busy && !uncertain}
-								className="rounded-xl bg-card p-3 text-foreground"
-							/>
-							<AppTextInput
-								accessibilityLabel={t("channels.publicKey")}
-								placeholder={t("channels.publicKey")}
-								value={publicKey}
-								onChangeText={setPublicKey}
-								maxLength={64}
-								autoCapitalize="none"
-								autoCorrect={false}
-								editable={!action.busy && !uncertain}
-								className="rounded-xl bg-card p-3 text-foreground"
-							/>
-						</>
-					) : null}
-					<NativeButton
-						label={t("channels.create")}
-						disabled={action.busy || uncertain || invalid}
-						onPress={() =>
-							void action.run(async (current) => {
-								const visible = capture();
-								if (!visible() || invalid || uncertain) return;
-								setUncertain(true);
-								await read((signal) =>
-									channels.create(
-										{
-											provider,
-											name: name.trim(),
-											provider_token: token.trim(),
-											agent_id: null,
-											...(provider === "discord"
-												? {
-														config: {
-															application_id: applicationId.trim(),
-															public_key: publicKey.trim(),
-														},
-													}
-												: {}),
-										},
-										signal,
-									),
-								);
-								if (!current() || !visible()) return;
-								clear();
-								setName("");
-								setUncertain(false);
-								await refresh();
-							})
+				<Dialog
+					open={open}
+					onOpenChange={(next) => {
+						if (!next && !action.busy) {
+							clear();
 						}
-					/>
-					<NativeButton label={t("account.cancel")} disabled={action.busy} onPress={clear} />
-				</>
+					}}
+				>
+					<DialogContent>
+						<DialogHeader>
+							<DialogTitle>{t("channels.create")}</DialogTitle>
+						</DialogHeader>
+						<AppText>{t("channels.createInstructions")}</AppText>
+						<ChoiceSelect
+							value={provider}
+							options={[
+								{ value: "telegram", label: "Telegram" },
+								{ value: "discord", label: "Discord" },
+							]}
+							disabled={action.busy || uncertain}
+							onValueChange={(value) => {
+								setProvider(value);
+								setToken("");
+							}}
+						/>
+						<Input
+							accessibilityLabel={t("channels.name")}
+							placeholder={t("channels.name")}
+							value={name}
+							onChangeText={setName}
+							maxLength={120}
+							editable={!action.busy && !uncertain}
+						/>
+						<Input
+							accessibilityLabel={t("channels.token")}
+							placeholder={t("channels.token")}
+							value={token}
+							onChangeText={setToken}
+							maxLength={2000}
+							secureTextEntry
+							autoCapitalize="none"
+							autoCorrect={false}
+							editable={!action.busy && !uncertain}
+						/>
+						{provider === "discord" ? (
+							<>
+								<Input
+									accessibilityLabel={t("channels.applicationId")}
+									placeholder={t("channels.applicationId")}
+									value={applicationId}
+									onChangeText={setApplicationId}
+									maxLength={20}
+									autoCapitalize="none"
+									autoCorrect={false}
+									editable={!action.busy && !uncertain}
+								/>
+								<Input
+									accessibilityLabel={t("channels.publicKey")}
+									placeholder={t("channels.publicKey")}
+									value={publicKey}
+									onChangeText={setPublicKey}
+									maxLength={64}
+									autoCapitalize="none"
+									autoCorrect={false}
+									editable={!action.busy && !uncertain}
+								/>
+							</>
+						) : null}
+						<ActionButton
+							label={t("channels.create")}
+							disabled={action.busy || uncertain || invalid}
+							onPress={() =>
+								void action.run(async (current) => {
+									const visible = capture();
+									if (!visible() || invalid || uncertain) return;
+									setUncertain(true);
+									await read((signal) =>
+										channels.create(
+											{
+												provider,
+												name: name.trim(),
+												provider_token: token.trim(),
+												agent_id: null,
+												...(provider === "discord"
+													? {
+															config: {
+																application_id: applicationId.trim(),
+																public_key: publicKey.trim(),
+															},
+														}
+													: {}),
+											},
+											signal,
+										),
+									);
+									if (!current() || !visible()) return;
+									clear();
+									setName("");
+									setUncertain(false);
+									await refresh();
+								})
+							}
+						/>
+						<ActionButton label={t("account.cancel")} disabled={action.busy} onPress={clear} />
+					</DialogContent>
+				</Dialog>
 			)}
 			{uncertain ? (
-				<NativeButton
+				<ActionButton
 					label={t("channels.reviewInventory")}
 					disabled={action.busy}
 					onPress={() =>

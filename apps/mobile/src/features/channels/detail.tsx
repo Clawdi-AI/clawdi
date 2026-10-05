@@ -8,30 +8,48 @@ import {
 	verifiedDiscordPairingCommand,
 	verifiedWhatsAppPairLink,
 } from "@clawdi/shared/api";
+import { agentsIndexClasses, ENTITY_CARD_BASE } from "@clawdi/shared/ui";
+import { agentSurfaceCopy, channelHealthSummary, providerMeta } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, AppState, Linking, ScrollView } from "react-native";
+import { Alert, AppState, Linking } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
 import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
-import { NativeButton, NativePicker, NativeSwitch } from "../../ui/native-controls";
-import { AppText, AppView } from "../../ui/primitives";
+import {
+	ActionButton as NativeButton,
+	ChoiceSelect as NativePicker,
+	NativeSwitch,
+} from "../../ui/agents/controls";
+import { ApiErrorPanel } from "../../ui/api-error-panel";
+import { EntityIcon } from "../../ui/entity-icon";
+import { PageHeader } from "../../ui/page-header";
+import { AppScrollView, AppText, AppView } from "../../ui/primitives";
 import { ReadScreen } from "../../ui/read-screen";
+import { SectionLabel } from "../../ui/section-label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../ui/tabs";
+import { WebView, webView } from "../../ui/web-layout";
 import { BackButton, useCloudAgents } from "../cloud-inventory";
 import { routeParam } from "../read-helpers";
 import { useChannelQuery } from "./queries";
 
 export function ChannelDetailScreen() {
 	const scope = useAccountScope();
-	const params = useLocalSearchParams<{ id?: string | string[] }>();
+	const params = useLocalSearchParams<{ id?: string | string[]; agentId?: string | string[] }>();
 	const id = routeParam(params.id);
-	return <ChannelDetail key={`${scope.accountKey}:${scope.generation}:${id}`} id={id} />;
+	return (
+		<ChannelDetail
+			key={`${scope.accountKey}:${scope.generation}:${id}`}
+			id={id}
+			initialAgentId={routeParam(params.agentId)}
+		/>
+	);
 }
 
-function ChannelDetail({ id }: { id?: string }) {
+function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: string }) {
 	const t = useI18n();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -40,7 +58,7 @@ function ChannelDetail({ id }: { id?: string }) {
 	const router = useRouter();
 	const capture = useForegroundLease();
 	const action = useAuthAction(scope.identity);
-	const [agentId, setAgentId] = useState("");
+	const [agentId, setAgentId] = useState(initialAgentId ?? "");
 	const [replace, setReplace] = useState(false);
 	const [pairing, setPairing] = useState<ChannelPairing | null>(null);
 	const [notice, setNotice] = useState<"done" | "cleanupWarning" | "unpairNotConfirmed" | null>(
@@ -68,6 +86,7 @@ function ChannelDetail({ id }: { id?: string }) {
 		Boolean(id),
 	);
 	const agents = useCloudAgents();
+	const health = useChannelQuery(["health"], (api, signal) => api.health(signal));
 	const selected = agents.data?.find((agent) => agent.id === agentId);
 	const agentLinks = useChannelQuery(
 		["agent", agentId],
@@ -165,18 +184,20 @@ function ChannelDetail({ id }: { id?: string }) {
 		});
 	return (
 		<ReadScreen>
-			<ScrollView contentContainerStyle={{ padding: 24, gap: 16 }}>
+			<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
 				<BackButton />
-				<AppText accessibilityRole="header" className="text-3xl font-semibold text-foreground">
-					{bot?.name ?? ownedBot?.name ?? t("channels.title")}
-				</AppText>
-				{bot ? (
-					<AppText>
-						{bot.provider} · {bot.status}
-					</AppText>
-				) : (
-					<AppText>{t(pool.isPending ? "loading.app" : "channels.unavailable")}</AppText>
-				)}
+				<PageHeader
+					title={bot?.name ?? ownedBot?.name ?? "Channels"}
+					description={providerMeta(bot?.provider ?? ownedBot?.provider ?? "").label}
+					icon={
+						<EntityIcon
+							kind="channel"
+							id={bot?.provider ?? ownedBot?.provider ?? ""}
+							label="Channel"
+							size="lg"
+						/>
+					}
+				/>
 				<NativeButton
 					label={t("channels.refresh")}
 					onPress={() =>
@@ -197,9 +218,7 @@ function ChannelDetail({ id }: { id?: string }) {
 					<AppText accessibilityRole="alert">{t("channels.failed")}</AppText>
 				) : null}
 				{notice ? <AppText accessibilityRole="alert">{t(`channels.${notice}`)}</AppText> : null}
-				<AppText accessibilityRole="header" className="text-xl font-semibold text-foreground">
-					{t("channels.links")}
-				</AppText>
+				<SectionLabel>{agentSurfaceCopy.linkedAgents}</SectionLabel>
 				{bot?.capabilities.link_agent && bot.available ? (
 					<AppView className="gap-3">
 						<NativePicker
@@ -240,7 +259,7 @@ function ChannelDetail({ id }: { id?: string }) {
 				{links.data
 					?.filter((link) => link.status === "active")
 					.map((link) => (
-						<AppView key={link.id} className="gap-3 rounded-2xl bg-card p-4">
+						<AppView key={link.id} className={webView(ENTITY_CARD_BASE)}>
 							<AppText selectable>
 								{agents.data?.find((agent) => agent.id === link.agent_id)?.name ?? link.agent_id} ·{" "}
 								{link.runtime_status}
@@ -280,7 +299,7 @@ function ChannelDetail({ id }: { id?: string }) {
 						</AppView>
 					))}
 				{pairing ? (
-					<AppView className="gap-3 rounded-2xl bg-card p-4">
+					<AppView className={webView(ENTITY_CARD_BASE)}>
 						<AppText>{t("channels.pairInstructions")}</AppText>
 						{verifiedDiscordPairingCommand(pairing.pairing_command, pairing.code) ? (
 							<AppText selectable>{pairing.pairing_command}</AppText>
@@ -317,12 +336,10 @@ function ChannelDetail({ id }: { id?: string }) {
 						<NativeButton label={t("account.cancel")} onPress={clearPairing} />
 					</AppView>
 				) : null}
-				<AppText accessibilityRole="header" className="text-xl font-semibold text-foreground">
-					{t("channels.bindings")}
-				</AppText>
+				<SectionLabel>Paired chats</SectionLabel>
 				{bindings.data?.length === 0 ? <AppText>{t("channels.noBindings")}</AppText> : null}
 				{bindings.data?.map((binding) => (
-					<AppView key={binding.id} className="gap-3 rounded-2xl bg-card p-4">
+					<AppView key={binding.id} className={webView(ENTITY_CARD_BASE)}>
 						<AppText selectable>
 							{binding.external_chat_name ?? binding.external_chat_id} · {binding.status}
 						</AppText>
@@ -357,13 +374,6 @@ function ChannelDetail({ id }: { id?: string }) {
 						/>
 					</AppView>
 				))}
-				{bot?.capabilities.sync_commands ? (
-					<NativeButton
-						label={t("channels.sync")}
-						disabled={disabled}
-						onPress={() => void perform((signal) => channels.syncCommands(id ?? "", signal))}
-					/>
-				) : null}
 				{ownedBot?.provider === "whatsapp" ? (
 					<NativeButton
 						label={t("whatsapp.repair")}
@@ -391,19 +401,55 @@ function ChannelDetail({ id }: { id?: string }) {
 						}
 					/>
 				) : null}
-				<AppText accessibilityRole="header" className="text-xl font-semibold text-foreground">
-					{t("channels.activity")}
-				</AppText>
-				{activity.data?.items.map((event) => (
-					<AppView key={event.id} className="gap-2 rounded-xl bg-card p-3">
-						<AppText>
-							{event.created_at} · {event.direction ?? event.kind} ·{" "}
-							{event.delivery_status ?? event.outcome}
+				<Tabs defaultValue="activity">
+					<TabsList variant="default">
+						<TabsTrigger value="activity">{agentSurfaceCopy.activity}</TabsTrigger>
+						<TabsTrigger value="health">{agentSurfaceCopy.health}</TabsTrigger>
+						<TabsTrigger value="commands">{agentSurfaceCopy.commands}</TabsTrigger>
+					</TabsList>
+					<TabsContent value="activity">
+						<AppText accessibilityRole="header" className="text-xl font-semibold text-foreground">
+							{t("channels.activity")}
 						</AppText>
-						<AppText selectable>{event.text?.slice(0, 12000)}</AppText>
-					</AppView>
-				))}
-			</ScrollView>
+						{activity.data?.items.map((event) => (
+							<AppView key={event.id} className={webView(ENTITY_CARD_BASE)}>
+								<AppText>
+									{event.created_at} · {event.direction ?? event.kind} ·{" "}
+									{event.delivery_status ?? event.outcome}
+								</AppText>
+								<AppText selectable>{event.text?.slice(0, 12000)}</AppText>
+							</AppView>
+						))}
+					</TabsContent>
+					<TabsContent value="health">
+						{health.isError ? (
+							<ApiErrorPanel error={health.error} onRetry={() => void health.refetch()} />
+						) : (
+							health.data?.items
+								.filter((item) => item.account_id === id)
+								.map((item) => {
+									const summary = channelHealthSummary(item);
+									return (
+										<WebView key={item.account_id} recipe={ENTITY_CARD_BASE}>
+											<AppText>{summary.label}</AppText>
+											<AppText>{summary.detail}</AppText>
+										</WebView>
+									);
+								})
+						)}
+					</TabsContent>
+					<TabsContent value="commands">
+						{" "}
+						{bot?.capabilities.sync_commands ? (
+							<NativeButton
+								label={t("channels.sync")}
+								disabled={disabled}
+								onPress={() => void perform((signal) => channels.syncCommands(id ?? "", signal))}
+							/>
+						) : null}
+					</TabsContent>
+				</Tabs>
+			</AppScrollView>
 		</ReadScreen>
 	);
 }

@@ -1,24 +1,38 @@
 import {
 	agentPluginActionState,
+	agentPluginComponentSummary,
 	agentPluginMatches,
 	buildAgentPluginInventory,
 	type components,
 	pluginDisplayName,
 } from "@clawdi/shared/api";
+import { agentPluginsSurfaceClasses as styles } from "@clawdi/shared/ui";
+import { agentSurfaceCopy, identityFor } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery } from "@tanstack/react-query";
 import { useLocalSearchParams } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
+import { Blocks } from "lucide-react-native";
 import { useState } from "react";
-import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
-import { NativeButton, NativePicker } from "../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../ui/primitives";
+import { AgentCollection } from "../ui/agents/collection";
+import { useAgentConfirmation } from "../ui/agents/confirmation";
+import { ActionButton, ChoiceSelect } from "../ui/agents/controls";
+import { AgentSectionNavigation } from "../ui/agents/navigation";
+import { ApiErrorPanel } from "../ui/api-error-panel";
+import { EmptyState } from "../ui/empty-state";
+import { HERO_GRID_CLASS, HeroCard, HeroCardSkeleton } from "../ui/entity-card";
+import { Icon } from "../ui/icon";
+import { IconChip } from "../ui/icon-chip";
+import { ListToolbar } from "../ui/list-toolbar";
+import { AppText } from "../ui/primitives";
+import { SearchInput } from "../ui/search-input";
+import { SectionLabel } from "../ui/section-label";
+import { WebView } from "../ui/web-layout";
 import { canPollDeployment } from "./deployments/state";
-import { InventoryList } from "./inventory-list";
 import { routeParam } from "./read-helpers";
 
 export function AgentPluginsScreen() {
@@ -30,6 +44,7 @@ export function AgentPluginsScreen() {
 
 function Plugins({ id }: { id: string }) {
 	const t = useI18n();
+	const confirmationDialog = useAgentConfirmation();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const capture = useForegroundLease();
@@ -52,7 +67,7 @@ function Plugins({ id }: { id: string }) {
 		retry: false,
 		queryFn: ({ signal }) =>
 			read((lease) => {
-				if (!hosted) throw new Error("Unavailable");
+				if (!hosted) throw new Error(agentSurfaceCopy.unavailable);
 				return hosted.listDeployments(lease);
 			}, signal),
 	});
@@ -109,16 +124,14 @@ function Plugins({ id }: { id: string }) {
 	const remove = (name: string) => {
 		const foreground = capture();
 		const signal = scope.signal;
-		Alert.alert(t("agentExtensions.pluginRemove"), t("agentExtensions.pluginRemoveWarning"), [
-			{ text: t("account.cancel"), style: "cancel" },
-			{
-				text: t("agentExtensions.pluginRemove"),
-				style: "destructive",
-				onPress: () => {
-					if (foreground() && scope.isCurrent() && !signal.aborted) void mutate(name);
-				},
+		confirmationDialog.request({
+			title: t("agentExtensions.pluginRemove"),
+			description: t("agentExtensions.pluginRemoveWarning"),
+			confirmLabel: t("agentExtensions.pluginRemove"),
+			onConfirm: () => {
+				if (foreground() && scope.isCurrent() && !signal.aborted) void mutate(name);
 			},
-		]);
+		});
 	};
 	const categories = Array.from(new Set(catalog.data?.plugins.map((item) => item.category) ?? []));
 	const items = buildAgentPluginInventory(
@@ -131,98 +144,132 @@ function Plugins({ id }: { id: string }) {
 		)
 		.map((item) => ({ ...item, id: item.name }));
 	return (
-		<InventoryList
-			title={t("agentExtensions.plugins")}
-			description={t("agentExtensions.pluginDescription")}
-			items={items}
-			empty={t(inventory.isPending ? "loading.app" : "agentExtensions.empty")}
-			refreshing={inventory.isRefetching || catalog.isRefetching}
-			onRefresh={refresh}
-			onRetry={refresh}
-			error={!id || inventory.isError || catalog.isError || Boolean(hosted && deployments.isError)}
-			busy={inventory.isFetching || catalog.isFetching || deployments.isFetching}
-			header={
-				<AppView className="gap-3">
-					<AppTextInput
-						accessibilityLabel={t("agentExtensions.pluginSearch")}
-						placeholder={t("agentExtensions.pluginSearch")}
+		<AgentCollection
+			icon={Blocks}
+			navigation={id ? <AgentSectionNavigation agentId={id} section="plugins" /> : null}
+			title={agentSurfaceCopy.plugins}
+			description="Install Skills and MCP servers for this agent."
+		>
+			<ListToolbar
+				search={
+					<SearchInput
 						value={search}
-						onChangeText={setSearch}
+						onChange={setSearch}
+						placeholder={agentSurfaceCopy.searchPlugins}
 					/>
-					<NativePicker
+				}
+				filters={
+					<ChoiceSelect
 						value={category}
 						onValueChange={setCategory}
 						options={[
-							{ value: "", label: t("agentExtensions.all") },
+							{ value: "", label: "All categories" },
 							...categories.map((value) => ({ value, label: value })),
 						]}
 					/>
-					{!supportedRuntime ? <AppText>{t("agentExtensions.unavailable")}</AppText> : null}
-					{accepted ? <AppText>{t("agentExtensions.accepted")}</AppText> : null}
-					{action.error ? (
-						<AppText accessibilityRole="alert">{t("agentExtensions.failed")}</AppText>
-					) : null}
-				</AppView>
-			}
-			renderItem={(item) => {
-				const state = supportedRuntime ? agentPluginActionState(item, supportedRuntime) : null;
-				const kind = state?.primaryAction?.kind ?? "unavailable";
-				const actionable = kind === "install" || kind === "update" || kind === "retry";
-				const label =
-					kind === "installed" ? "pluginInstalled" : kind === "failed" ? "pluginFailed" : kind;
-				return (
-					<AppView className="gap-3 rounded-2xl bg-card p-4">
-						<AppText className="text-lg text-foreground">{pluginDisplayName(item)}</AppText>
-						<AppText>{state?.version ?? item.desired?.version ?? item.catalog?.version}</AppText>
-						<AppText>{item.catalog?.description}</AppText>
-						{item.desired ? (
-							<AppText>
-								{t(
-									item.desired.convergence === "installed"
-										? "agentExtensions.installed"
-										: item.desired.convergence === "failed"
-											? "agentExtensions.failedState"
-											: "agentExtensions.not_observed",
-								)}
-							</AppText>
-						) : null}
-						{item.catalog ? (
-							<>
-								<AppText>
-									{item.catalog.publisher} · {item.catalog.category}
-								</AppText>
-								<AppText>
-									{t("agentExtensions.components")}:{" "}
-									{[
-										...item.catalog.components.skills,
-										...Object.keys(item.catalog.components.mcpServers),
-									].join(", ")}
-								</AppText>
-							</>
-						) : null}
-						<NativeButton
-							label={t(`agentExtensions.${label}`)}
-							disabled={
-								disabled ||
-								!actionable ||
-								catalog.isError ||
-								catalog.isFetching ||
-								deployments.isFetching
-							}
-							onPress={() => {
-								if (actionable && item.catalog) void mutate(item.name, item.catalog.version);
-							}}
-						/>
-						{item.desired ? (
-							<NativeButton
-								label={t("agentExtensions.pluginRemove")}
-								disabled={disabled}
-								onPress={() => remove(item.name)}
-							/>
-						) : null}
-					</AppView>
-				);
-			}}
-		/>
+				}
+			/>
+			{action.error ? (
+				<ApiErrorPanel error={action.error} title={agentSurfaceCopy.couldnTUpdatePlugin} />
+			) : null}
+			{accepted ? <AppText>{t("agentExtensions.accepted")}</AppText> : null}
+			{inventory.isError || catalog.isError ? (
+				<ApiErrorPanel
+					error={inventory.error ?? catalog.error}
+					title="Couldn't load plugins"
+					onRetry={refresh}
+				/>
+			) : inventory.isPending || catalog.isPending ? (
+				<WebView recipe={HERO_GRID_CLASS}>
+					{[0, 1, 2].map((i) => (
+						<HeroCardSkeleton key={i} />
+					))}
+				</WebView>
+			) : !items.length ? (
+				<EmptyState
+					title={agentSurfaceCopy.noPluginsFound}
+					description={agentSurfaceCopy.tryADifferentSearchOrCategory}
+				/>
+			) : (
+				[true, false].map((installed) => {
+					const group = items.filter((item) => Boolean(item.desired) === installed);
+					if (!group.length) return null;
+					return (
+						<WebView key={String(installed)} recipe={styles.spaceY2}>
+							<SectionLabel count={group.length}>
+								{installed ? agentSurfaceCopy.installed : agentSurfaceCopy.available}
+							</SectionLabel>
+							<WebView recipe={HERO_GRID_CLASS}>
+								{group.map((item) => {
+									const state = supportedRuntime
+										? agentPluginActionState(item, supportedRuntime)
+										: null;
+									const kind = state?.primaryAction?.kind ?? "unavailable",
+										actionable = kind === "install" || kind === "update" || kind === "retry";
+									return (
+										<HeroCard
+											key={item.name}
+											icon={
+												<IconChip size="sm" tint={identityFor(item.name).colorClasses}>
+													<Icon as={Blocks} />
+												</IconChip>
+											}
+											title={pluginDisplayName(item)}
+											description={
+												item.catalog?.description ??
+												agentSurfaceCopy.thisPluginIsNoLongerAvailableInTheStore
+											}
+											footer={[
+												item.catalog?.publisher,
+												state?.version ?? item.desired?.version,
+												item.catalog ? agentPluginComponentSummary(item.catalog) : null,
+											]}
+											footerWrap
+											actionsVisibility="always"
+											actions={
+												<>
+													<ActionButton
+														label={
+															kind === "installed"
+																? agentSurfaceCopy.installed
+																: kind === "update"
+																	? "Update"
+																	: kind === "retry"
+																		? "Retry"
+																		: kind === "install"
+																			? "Install"
+																			: agentSurfaceCopy.unavailable
+														}
+														disabled={
+															disabled ||
+															!actionable ||
+															catalog.isFetching ||
+															deployments.isFetching
+														}
+														onPress={() => {
+															if (item.catalog && actionable)
+																void mutate(item.name, item.catalog.version);
+														}}
+													/>
+													{item.desired ? (
+														<ActionButton
+															label="Remove"
+															variant="ghost"
+															disabled={disabled}
+															onPress={() => remove(item.name)}
+														/>
+													) : null}
+												</>
+											}
+										/>
+									);
+								})}
+							</WebView>
+						</WebView>
+					);
+				})
+			)}
+			{confirmationDialog.dialog}
+		</AgentCollection>
 	);
 }

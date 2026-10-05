@@ -20,8 +20,10 @@ import { useI18n } from "../i18n";
 import { useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
-import { NativeButton, NativePicker } from "../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../ui/primitives";
+import { ActionButton, ChoiceSelect } from "../ui/agents/controls";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Input } from "../ui/input";
+import { AppText, AppView } from "../ui/primitives";
 
 type AcceptRequest = components["schemas"]["AiProviderAcceptRequest"];
 const choices = [
@@ -136,7 +138,7 @@ export function ProviderCreate({
 		<AppView className="gap-3">
 			{uncertain ? <AppText accessibilityRole="alert">{t("providers.uncertain")}</AppText> : null}
 			{!open ? (
-				<NativeButton
+				<ActionButton
 					label={t("providers.add")}
 					disabled={action.busy || !providers || !scope.isReady}
 					onPress={() => {
@@ -145,98 +147,108 @@ export function ProviderCreate({
 					}}
 				/>
 			) : (
-				<>
-					<NativePicker
-						value={choice}
-						options={choices.map((item) => ({ value: item.id, label: item.label }))}
-						disabled={locked || action.busy}
-						onValueChange={(value) => {
-							const item = choices.find((entry) => entry.id === value);
-							if (!item) return;
-							setChoice(item.id);
-							setType(item.type);
-							setRegion(null);
-							setSecret("");
-						}}
-					/>
-					{preset?.region_variants?.length ? (
-						<NativePicker
-							value={region ?? preset.region_variants[0]?.id ?? ""}
-							options={preset.region_variants.map((variant) => ({
-								value: variant.id,
-								label: variant.label,
-							}))}
+				<Dialog
+					open={open}
+					onOpenChange={(next) => {
+						if (!next && !action.busy) clearSensitive();
+					}}
+				>
+					<DialogContent>
+						<DialogHeader>
+							<DialogTitle>{t("providers.add")}</DialogTitle>
+						</DialogHeader>
+						<ChoiceSelect
+							value={choice}
+							options={choices.map((item) => ({ value: item.id, label: item.label }))}
 							disabled={locked || action.busy}
 							onValueChange={(value) => {
-								setRegion(value);
+								const item = choices.find((entry) => entry.id === value);
+								if (!item) return;
+								setChoice(item.id);
+								setType(item.type);
+								setRegion(null);
 								setSecret("");
 							}}
 						/>
-					) : null}
-					<AppTextInput
-						accessibilityLabel={t("providers.label")}
-						placeholder={t("providers.label")}
-						value={label}
-						onChangeText={setLabel}
-						maxLength={200}
-						editable={!locked && !action.busy}
-						className="rounded-xl bg-card p-3 text-foreground"
-					/>
-					{custom ? (
-						<>
-							<AppTextInput
-								accessibilityLabel={t("providers.endpoint")}
-								placeholder="https://"
-								value={baseUrl}
-								onChangeText={setBaseUrl}
-								autoCapitalize="none"
-								autoCorrect={false}
-								maxLength={1000}
-								editable={!locked && !action.busy}
-								className="rounded-xl bg-card p-3 text-foreground"
-							/>
-							<NativePicker
-								value={apiMode}
-								options={AI_PROVIDER_API_MODES.map((mode) => ({
-									value: mode,
-									label: API_MODE_LABEL[mode],
+						{preset?.region_variants?.length ? (
+							<ChoiceSelect
+								value={region ?? preset.region_variants[0]?.id ?? ""}
+								options={preset.region_variants.map((variant) => ({
+									value: variant.id,
+									label: variant.label,
 								}))}
 								disabled={locked || action.busy}
-								onValueChange={setApiMode}
+								onValueChange={(value) => {
+									setRegion(value);
+									setSecret("");
+								}}
 							/>
-						</>
-					) : (
-						<AppText selectable className="text-sm text-muted-foreground">
-							{route?.base_url}
-						</AppText>
-					)}
-					<AppTextInput
-						accessibilityLabel={t("providers.apiKey")}
-						placeholder={t("providers.apiKey")}
-						value={secret}
-						onChangeText={setSecret}
-						secureTextEntry
-						autoCapitalize="none"
-						autoCorrect={false}
-						editable={!locked && !action.busy}
-						className="rounded-xl bg-card p-3 text-foreground"
-					/>
-					<NativeButton
-						label={t(locked ? "providers.retrySame" : "projects.save")}
-						disabled={
-							action.busy ||
-							!providers ||
-							!secret.trim() ||
-							(custom && (!baseUrl.trim() || !label.trim()))
-						}
-						onPress={() => void submit()}
-					/>
-					<NativeButton
-						label={t("account.cancel")}
-						disabled={action.busy}
-						onPress={clearSensitive}
-					/>
-				</>
+						) : null}
+						<Input
+							accessibilityLabel={t("providers.label")}
+							placeholder={t("providers.label")}
+							value={label}
+							onChangeText={setLabel}
+							maxLength={200}
+							editable={!locked && !action.busy}
+						/>
+						{custom ? (
+							<>
+								<Input
+									accessibilityLabel={t("providers.endpoint")}
+									placeholder="https://"
+									value={baseUrl}
+									onChangeText={setBaseUrl}
+									autoCapitalize="none"
+									autoCorrect={false}
+									maxLength={1000}
+									editable={!locked && !action.busy}
+								/>
+								<ChoiceSelect
+									value={apiMode}
+									options={AI_PROVIDER_API_MODES.map((mode) => ({
+										value: mode,
+										label: API_MODE_LABEL[mode],
+									}))}
+									disabled={locked || action.busy}
+									onValueChange={setApiMode}
+								/>
+							</>
+						) : (
+							<AppText selectable className="text-sm text-muted-foreground">
+								{route?.base_url}
+							</AppText>
+						)}
+						<Input
+							accessibilityLabel={t("providers.apiKey")}
+							placeholder={t("providers.apiKey")}
+							value={secret}
+							onChangeText={setSecret}
+							secureTextEntry
+							autoCapitalize="none"
+							autoCorrect={false}
+							editable={!locked && !action.busy}
+						/>
+						<ActionButton
+							label={t(locked ? "providers.retrySame" : "projects.save")}
+							disabled={
+								action.busy ||
+								!providers ||
+								!secret.trim() ||
+								(custom && (!baseUrl.trim() || !label.trim()))
+							}
+							onPress={() => void submit()}
+						/>
+						<ActionButton
+							label={t("account.cancel")}
+							disabled={action.busy}
+							onPress={clearSensitive}
+						/>
+						{action.error ? (
+							<AppText accessibilityRole="alert">{t("providers.failed")}</AppText>
+						) : null}
+					</DialogContent>
+				</Dialog>
 			)}
 			{action.error ? <AppText accessibilityRole="alert">{t("providers.failed")}</AppText> : null}
 		</AppView>

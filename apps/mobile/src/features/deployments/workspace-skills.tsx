@@ -4,20 +4,29 @@ import {
 	type WorkspaceSkillMutation,
 	workspaceSkillMutationsAvailable,
 } from "@clawdi/shared/api";
+import { HERO_GRID_CLASS } from "@clawdi/shared/ui";
+import { agentSurfaceCopy, identityFor } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypto";
 import { useLocalSearchParams } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
 import { useEffect, useRef, useState } from "react";
-import { Alert } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
 import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
-import { NativeButton } from "../../ui/native-controls";
-import { AppText, AppTextInput, AppView } from "../../ui/primitives";
-import { InventoryList } from "../inventory-list";
+import { AgentCollection } from "../../ui/agents/collection";
+import { useAgentConfirmation } from "../../ui/agents/confirmation";
+import { ActionButton as NativeButton } from "../../ui/agents/controls";
+import { ApiErrorPanel } from "../../ui/api-error-panel";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../ui/dialog";
+import { EmptyState } from "../../ui/empty-state";
+import { HeroCard, HeroCardSkeleton } from "../../ui/entity-card";
+import { IconChip } from "../../ui/icon-chip";
+import { Input as AppTextInput } from "../../ui/input";
+import { AppText, AppView } from "../../ui/primitives";
+import { WebView } from "../../ui/web-layout";
 import { routeParam } from "../read-helpers";
 import { type SkillAttempt, skillAttemptAfterFailure } from "./skill-attempt";
 import { skillAttempts } from "./skill-attempt-storage";
@@ -32,6 +41,7 @@ export function WorkspaceSkillsScreen() {
 
 function WorkspaceSkills({ id }: { id: string }) {
 	const t = useI18n();
+	const confirmationDialog = useAgentConfirmation();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const capture = useForegroundLease();
@@ -63,7 +73,7 @@ function WorkspaceSkills({ id }: { id: string }) {
 		retry: false,
 		queryFn: ({ signal }) =>
 			read((lease) => {
-				if (!client) throw new Error("Unavailable");
+				if (!client) throw new Error(agentSurfaceCopy.unavailable);
 				return client.list(id, lease);
 			}, signal),
 	});
@@ -73,7 +83,7 @@ function WorkspaceSkills({ id }: { id: string }) {
 		retry: false,
 		queryFn: ({ signal }) =>
 			read((lease) => {
-				if (!hosted) throw new Error("Unavailable");
+				if (!hosted) throw new Error(agentSurfaceCopy.unavailable);
 				return hosted.getDeployment(id, lease);
 			}, signal),
 	});
@@ -157,24 +167,22 @@ function WorkspaceSkills({ id }: { id: string }) {
 	const confirm = (label: string, message: string, run: () => void) => {
 		const ticket = ++confirmation.current;
 		const visible = capture();
-		Alert.alert(label, message, [
-			{ text: t("account.cancel"), style: "cancel" },
-			{
-				text: label,
-				style: "destructive",
-				onPress: () => {
-					if (
-						ticket !== confirmation.current ||
-						!scope.isCurrent() ||
-						scope.signal.aborted ||
-						!visible()
-					)
-						return;
-					confirmation.current++;
-					run();
-				},
+		confirmationDialog.request({
+			title: label,
+			description: message,
+			confirmLabel: label,
+			onConfirm: () => {
+				if (
+					ticket !== confirmation.current ||
+					!scope.isCurrent() ||
+					scope.signal.aborted ||
+					!visible()
+				)
+					return;
+				confirmation.current++;
+				run();
 			},
-		]);
+		});
 	};
 	const prepare = (mutation: WorkspaceSkillMutation) => {
 		if (!enabled || !inventory.data) return;
@@ -197,114 +205,114 @@ function WorkspaceSkills({ id }: { id: string }) {
 		/* Invalid drafts stay local. */
 	}
 	return (
-		<InventoryList
-			title={t("workspaceSkills.title")}
-			description={t("workspaceSkills.description")}
-			empty={t("workspaceSkills.empty")}
-			items={(inventory.data?.items ?? []).map((item) => ({ ...item, id: item.skill_key }))}
-			refreshing={inventory.isFetching}
-			onRefresh={() => {
-				setStartedAt(Date.now());
-				void inventory.refetch();
-				void deployment.refetch();
-			}}
-			error={inventory.isError || deployment.isError}
-			onRetry={() => {
-				setStartedAt(Date.now());
-				void inventory.refetch();
-				void deployment.refetch();
-			}}
-			busy={action.busy}
-			header={
-				<AppView className="gap-3">
-					{!enabled && !saved ? <AppText>{t("workspaceSkills.unavailable")}</AppText> : null}
-					<AppTextInput
-						value={source}
-						onChangeText={setSource}
-						editable={enabled}
-						maxLength={2048}
-						accessibilityLabel={t("workspaceSkills.source")}
-						placeholder={t("workspaceSkills.source")}
-						className="rounded-xl bg-card p-3 text-foreground"
-					/>
-					<NativeButton
-						label={t("workspaceSkills.install")}
-						disabled={!enabled || !install}
-						onPress={() => {
-							if (install) prepare(install);
-						}}
-					/>
-					{saved ? (
-						<>
-							<AppText>{t("workspaceSkills.uncertain")}</AppText>
-							<AppText selectable>
-								{saved.mutation.action === "install"
-									? `${saved.mutation.request.repo}/${saved.mutation.request.path ?? ""}`
-									: saved.mutation.skillKey}
-							</AppText>
-							<NativeButton
-								label={t("workspaceSkills.retry")}
-								disabled={
-									action.busy ||
-									storageError ||
-									!storageKey ||
-									!client ||
-									saved.status === "rejected"
-								}
-								onPress={() => submit(saved)}
-							/>
-							{saved.status !== "uncertain" ? (
-								<NativeButton
-									label={t("workspaceSkills.discard")}
-									disabled={action.busy || storageError}
-									onPress={() =>
-										confirm(
-											t("workspaceSkills.discard"),
-											t("workspaceSkills.discardWarning"),
-											() =>
-												void action.run(async (current) => {
-													if (!storageKey) return;
-													await skillAttempts.clearAttempt(
-														storageKey,
-														saved,
-														() => current() && scope.isCurrent(),
-													);
-													if (current()) {
-														setSaved(null);
-														await refresh();
-													}
-												}),
-										)
-									}
-								/>
-							) : null}
-						</>
-					) : null}
-					{storageError ? (
-						<AppText accessibilityRole="alert">{t("workspaceSkills.storageError")}</AppText>
-					) : null}
-					<NativeButton
-						label={t("workspaceSkills.reload")}
-						disabled={action.busy}
-						onPress={() => setEpoch((value) => value + 1)}
-					/>
-					{accepted ? (
-						<AppText accessibilityRole="alert">{t("workspaceSkills.accepted")}</AppText>
-					) : null}
-					{action.error ? (
-						<AppText accessibilityRole="alert">{t("workspaceSkills.error")}</AppText>
-					) : null}
-				</AppView>
-			}
-			renderItem={(item) => (
-				<WorkspaceSkillItem
-					deploymentId={id}
-					item={item}
-					disabled={!enabled}
-					onRemove={() => prepare({ action: "uninstall", skillKey: item.skill_key })}
+		<AgentCollection title="Skills" description="Skills available in this Agent's Workspace.">
+			<AppView className="gap-3">
+				{!enabled && !saved ? <AppText>{t("workspaceSkills.unavailable")}</AppText> : null}
+				<AppTextInput
+					value={source}
+					onChangeText={setSource}
+					editable={enabled}
+					maxLength={2048}
+					accessibilityLabel={t("workspaceSkills.source")}
+					placeholder={t("workspaceSkills.source")}
 				/>
+				<NativeButton
+					label={t("workspaceSkills.install")}
+					disabled={!enabled || !install}
+					onPress={() => {
+						if (install) prepare(install);
+					}}
+				/>
+				{saved ? (
+					<>
+						<AppText>{t("workspaceSkills.uncertain")}</AppText>
+						<AppText selectable>
+							{saved.mutation.action === "install"
+								? `${saved.mutation.request.repo}/${saved.mutation.request.path ?? ""}`
+								: saved.mutation.skillKey}
+						</AppText>
+						<NativeButton
+							label={t("workspaceSkills.retry")}
+							disabled={
+								action.busy || storageError || !storageKey || !client || saved.status === "rejected"
+							}
+							onPress={() => submit(saved)}
+						/>
+						{saved.status !== "uncertain" ? (
+							<NativeButton
+								label={t("workspaceSkills.discard")}
+								disabled={action.busy || storageError}
+								onPress={() =>
+									confirm(
+										t("workspaceSkills.discard"),
+										t("workspaceSkills.discardWarning"),
+										() =>
+											void action.run(async (current) => {
+												if (!storageKey) return;
+												await skillAttempts.clearAttempt(
+													storageKey,
+													saved,
+													() => current() && scope.isCurrent(),
+												);
+												if (current()) {
+													setSaved(null);
+													await refresh();
+												}
+											}),
+									)
+								}
+							/>
+						) : null}
+					</>
+				) : null}
+				{storageError ? (
+					<AppText accessibilityRole="alert">{t("workspaceSkills.storageError")}</AppText>
+				) : null}
+				<NativeButton
+					label={t("workspaceSkills.reload")}
+					disabled={action.busy}
+					onPress={() => setEpoch((value) => value + 1)}
+				/>
+				{accepted ? (
+					<AppText accessibilityRole="alert">{t("workspaceSkills.accepted")}</AppText>
+				) : null}
+				{action.error ? (
+					<AppText accessibilityRole="alert">{t("workspaceSkills.error")}</AppText>
+				) : null}
+			</AppView>
+			{inventory.isError || deployment.isError ? (
+				<ApiErrorPanel
+					error={inventory.error ?? deployment.error}
+					title="Couldn't load Skills"
+					onRetry={() => {
+						setStartedAt(Date.now());
+						void inventory.refetch();
+						void deployment.refetch();
+					}}
+				/>
+			) : inventory.isPending ? (
+				<WebView recipe={HERO_GRID_CLASS}>
+					{[0, 1, 2].map((i) => (
+						<HeroCardSkeleton key={i} />
+					))}
+				</WebView>
+			) : !inventory.data?.items?.length ? (
+				<EmptyState variant="inset" description="No Skills have synced from this Agent yet." />
+			) : (
+				<WebView recipe={HERO_GRID_CLASS}>
+					{(inventory.data.items ?? []).map((item) => (
+						<WorkspaceSkillItem
+							key={item.skill_key}
+							deploymentId={id}
+							item={item}
+							disabled={!enabled}
+							onRemove={() => prepare({ action: "uninstall", skillKey: item.skill_key })}
+						/>
+					))}
+				</WebView>
 			)}
-		/>
+			{confirmationDialog.dialog}
+		</AgentCollection>
 	);
 }
 
@@ -338,7 +346,7 @@ function WorkspaceSkillItem({
 		retry: false,
 		queryFn: ({ signal }) =>
 			read(async (lease) => {
-				if (!client) throw new Error("Unavailable");
+				if (!client) throw new Error(agentSurfaceCopy.unavailable);
 				const result = await client.get(deploymentId, item.skill_key, lease);
 				if (
 					result.source.commit !== item.source.commit ||
@@ -349,30 +357,49 @@ function WorkspaceSkillItem({
 				return result;
 			}, signal),
 	});
+	const identity = identityFor(item.skill_key);
 	return (
-		<AppView className="gap-3 rounded-xl bg-card p-4">
-			<AppText>{item.skill_key}</AppText>
-			<AppText>{t(`workspaceSkills.${item.status}`)}</AppText>
-			<AppText selectable>
-				{item.source.url} · {item.source.path} · {item.source.commit}
-			</AppText>
-			<NativeButton
-				label={t("workspaceSkills.open")}
-				onPress={() => {
-					setOpen(true);
-					if (open) void detail.refetch();
-				}}
+		<>
+			<HeroCard
+				icon={
+					<IconChip tint={identity.colorClasses}>
+						<AppText>{identity.emoji}</AppText>
+					</IconChip>
+				}
+				title={item.skill_key}
+				footer={[t(`workspaceSkills.${item.status}`), item.source.url]}
+				actions={
+					<>
+						<NativeButton
+							label={t("workspaceSkills.open")}
+							onPress={() => {
+								setOpen(true);
+								if (open) void detail.refetch();
+							}}
+						/>
+						<NativeButton
+							label="Uninstall"
+							disabled={disabled || item.skill_key === "clawdi"}
+							onPress={onRemove}
+						/>
+					</>
+				}
 			/>
-			{open && detail.isPending ? <AppText>{t("loading.app")}</AppText> : null}
-			{open && detail.isError ? <AppText>{t("workspaceSkills.error")}</AppText> : null}
-			{open && detail.data && !detail.isError ? (
-				<AppText selectable>{detail.data.content}</AppText>
-			) : null}
-			<NativeButton
-				label={t("workspaceSkills.uninstall")}
-				disabled={disabled || item.skill_key === "clawdi"}
-				onPress={onRemove}
-			/>
-		</AppView>
+			<Dialog open={open} onOpenChange={setOpen}>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>{item.skill_key}</DialogTitle>
+					</DialogHeader>
+					{detail.isError ? (
+						<ApiErrorPanel error={detail.error} onRetry={() => void detail.refetch()} />
+					) : detail.data ? (
+						<AppText selectable>{detail.data.content}</AppText>
+					) : (
+						<HeroCardSkeleton />
+					)}
+					<NativeButton label="Done" onPress={() => setOpen(false)} />
+				</DialogContent>
+			</Dialog>
+		</>
 	);
 }
