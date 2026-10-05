@@ -42,6 +42,7 @@ import { useCloudAgent } from "../cloud-inventory";
 import { ProjectResourceBoundary } from "../project-scope";
 import { useCloudProjects } from "../projects";
 import { routeParam } from "../read-helpers";
+import { AddKeysDialog } from "./add-keys-dialog";
 
 export function useVaultCatalog(
 	search = "",
@@ -172,6 +173,7 @@ function VaultCatalog({
 	const capture = useForegroundLease();
 	const [search, setSearch] = useState("");
 	const [open, setOpen] = useState(false);
+	const [addOpen, setAddOpen] = useState(false);
 	const projects = useCloudProjects();
 	const [name, setName] = useState("");
 	const [slug, setSlug] = useState("");
@@ -182,9 +184,6 @@ function VaultCatalog({
 	const items = [
 		...new Map((catalog.data?.pages.flatMap((p) => p.items) ?? []).map((v) => [v.id, v])).values(),
 	].sort((a, b) => compareVaultsForCatalog(a, b, search));
-	const defaultVault = catalog.data?.pages
-		.flatMap((page) => page.items)
-		.find((item) => item.is_owner !== false);
 	const create = () => {
 		const visible = capture();
 		return action.run(async (isCurrent) => {
@@ -226,18 +225,7 @@ function VaultCatalog({
 				actions={
 					canCreate ? (
 						<>
-							<Button
-								variant="outline"
-								size="sm"
-								disabled={!defaultVault || catalog.isFetching || catalog.isError}
-								onPress={() => {
-									if (!defaultVault) return;
-									router.push({
-										pathname: "/vault/detail",
-										params: { vaultId: defaultVault.id, slug: defaultVault.slug, add: "1" },
-									});
-								}}
-							>
+							<Button variant="outline" size="sm" onPress={() => setAddOpen(true)}>
 								<Icon as={Plus} />
 								<Text>{t("libraryPort.addKeys")}</Text>
 							</Button>
@@ -314,6 +302,7 @@ function VaultCatalog({
 					<Text>{t("inventory.loadMore")}</Text>
 				</Button>
 			) : null}
+			<AddKeysDialog open={addOpen} onOpenChange={setAddOpen} />
 			<Dialog
 				open={open}
 				onOpenChange={(v) => {

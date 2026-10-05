@@ -225,6 +225,7 @@ export const tabsTriggerIndicatorClassName =
 export const tabsContentClassName = "flex-1 text-sm outline-none";
 
 export * from "./add-agent-setup";
+export * from "./add-keys-dialog";
 export * from "./agent-framework-icon";
 export * from "./agent-icon";
 export * from "./agent-label";
