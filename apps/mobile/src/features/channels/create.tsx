@@ -6,7 +6,7 @@ import {
 import { connectBotDialogClasses as styles } from "@clawdi/shared/ui";
 import { connectBotDialogCopy as copy, PROVIDER_META } from "@clawdi/shared/view";
 import { router, useFocusEffect } from "expo-router";
-import { Plus } from "lucide-react-native";
+import { ExternalLink, Plus } from "lucide-react-native";
 import { useCallback, useEffect, useState } from "react";
 import { AppState, Linking } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
@@ -28,7 +28,7 @@ import { EntityIcon } from "../../ui/entity-icon";
 import { Icon } from "../../ui/icon";
 import { Input, Label } from "../../ui/input";
 import { AppText, AppView } from "../../ui/primitives";
-import { WebText, WebView, webView } from "../../ui/web-layout";
+import { WebText, WebView, webBoth, webView } from "../../ui/web-layout";
 
 export function ChannelCreate({ refresh }: { refresh: () => Promise<void> }) {
 	const t = useI18n();
@@ -130,21 +130,29 @@ export function ChannelCreate({ refresh }: { refresh: () => Promise<void> }) {
 								))}
 							</WebView>
 						</WebView>
+						<WebText recipe={styles.unsupported}>
+							{copy.unsupported}
+							{copy.unsupportedInventory}
+						</WebText>
 						<WebView recipe={styles.configuration}>
 							<WebText recipe={styles.configurationTitle}>
 								Configure {PROVIDER_META[provider].label}
 							</WebText>
-							<WebText
-								recipe={styles.hint}
-								accessibilityRole="link"
-								onPress={() =>
-									void action.run(async () => {
-										const url = PROVIDER_META[provider].setupUrl;
-										if (url && capture()()) await Linking.openURL(url);
-									})
-								}
-							>
-								{provider === "telegram" ? copy.telegramSetup : copy.discordSetup}
+							<WebText recipe={styles.hint}>
+								{provider === "telegram" ? copy.telegramSetupPrefix : copy.discordSetupPrefix}
+								<WebText
+									recipe={styles.setupLink}
+									accessibilityRole="link"
+									onPress={() =>
+										void action.run(async () => {
+											const url = PROVIDER_META[provider].setupUrl;
+											if (url && capture()()) await Linking.openURL(url);
+										})
+									}
+								>
+									{provider === "telegram" ? copy.telegramSetup : copy.discordSetup}{" "}
+									<Icon as={ExternalLink} className={webBoth(styles.setupIcon)} />
+								</WebText>
 							</WebText>
 							<WebView recipe={styles.form}>
 								<WebView recipe={styles.field}>

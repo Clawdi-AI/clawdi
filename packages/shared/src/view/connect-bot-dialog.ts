@@ -1,5 +1,10 @@
 export const connectBotDialogCopy = {
 	title: "Add channel",
+	unsupported: "Need a provider that Clawdi Channels doesn't support? ",
+	unsupportedInventory:
+		"Open the relevant Agent's OpenClaw Control UI or Hermes Dashboard to configure it.",
+	telegramSetupPrefix: "Need a bot token? ",
+	discordSetupPrefix: "Need app credentials? ",
 	description: "Add a Custom bot you manage to your inventory.",
 	chooseProvider: "Choose provider",
 	name: "Name",

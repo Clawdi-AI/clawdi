@@ -7,6 +7,10 @@ export const connectBotDialogClasses = {
 	configuration: "min-w-0 border-t pt-4",
 	configurationTitle: "mb-3 text-sm font-medium",
 	form: "flex min-w-0 flex-col gap-3",
+	unsupported: "min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]",
+	setupIcon: "size-3",
+	setupLink:
+		"inline-flex min-w-0 flex-wrap items-center gap-1 font-medium text-foreground underline underline-offset-4",
 	hint: "min-w-0 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]",
 	action: "min-w-0 whitespace-normal",
 } as const;

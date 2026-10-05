@@ -215,11 +215,8 @@ export function ConnectBotDialog({
 	}
 
 	const otherProviderHint = (
-		<p
-			data-other-provider-hint
-			className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]"
-		>
-			Need a provider that Clawdi Channels doesn&apos;t support?{" "}
+		<p data-other-provider-hint className={styles.unsupported}>
+			{copy.unsupported}
 			{agentId ? (
 				<>
 					Configure it in this Agent&apos;s{" "}
@@ -233,7 +230,7 @@ export function ConnectBotDialog({
 					.
 				</>
 			) : (
-				"Open the relevant Agent's OpenClaw Control UI or Hermes Dashboard to configure it."
+				copy.unsupportedInventory
 			)}
 		</p>
 	);
@@ -364,15 +361,17 @@ export function ConnectBotDialog({
 									) : (
 										<>
 											<p className={styles.hint}>
-												{provider === "telegram" ? "Need a bot token? " : "Need app credentials? "}
+												{provider === "telegram"
+													? copy.telegramSetupPrefix
+													: copy.discordSetupPrefix}
 												<a
 													href={meta.setupUrl}
 													target="_blank"
 													rel="noreferrer"
-													className="inline-flex min-w-0 flex-wrap items-center gap-1 font-medium text-foreground underline underline-offset-4"
+													className={styles.setupLink}
 												>
 													{provider === "telegram" ? copy.telegramSetup : copy.discordSetup}
-													<ExternalLink className="size-3" />
+													<ExternalLink className={styles.setupIcon} />
 												</a>
 											</p>
 

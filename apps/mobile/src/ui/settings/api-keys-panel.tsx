@@ -1,5 +1,5 @@
 import { apiKeysPanelClasses as styles } from "@clawdi/shared/ui";
-import { activeApiKeys, formatShortDate } from "@clawdi/shared/view";
+import { activeApiKeys, formatShortDate, settingsCopy } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect } from "expo-router";
 import { Laptop, Plus, Trash2 } from "lucide-react-native";
@@ -277,6 +277,7 @@ function ApiKeysView() {
 								onChangeText={setKeyLabel}
 								editable={!busy}
 							/>
+							<WebText recipe={styles.description}>{settingsCopy.keyNameHelp}</WebText>
 							{error ? (
 								<WebText accessibilityRole="alert" recipe={styles.error}>
 									{t("account.actionFailed")}
@@ -290,6 +291,7 @@ function ApiKeysView() {
 									disabled={busy || !scope.isReady || !keyLabel.trim() || Boolean(rawKey)}
 									onPress={() => void onCreateKey()}
 								>
+									<Icon as={Plus} />
 									<Text>{t("settingsParity.createKey")}</Text>
 								</Button>
 							</DialogFooter>

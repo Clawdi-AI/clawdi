@@ -1,5 +1,6 @@
 /** Product copy from Web settings, reused by the native translation catalog. */
 export const settingsCopy = {
+	keyNameHelp: "For example, the server, container, or automation that will use this key.",
 	general: "General",
 	generalDescription: "Account and app preferences.",
 	account: "Account",

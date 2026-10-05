@@ -322,7 +322,7 @@ export function ApiKeysPanel() {
 									aria-describedby="new-key-label-help"
 								/>
 								<p id="new-key-label-help" className={apiKeysPanelClasses.description}>
-									For example, the server, container, or automation that will use this key.
+									{settingsCopy.keyNameHelp}
 								</p>
 								{createKey.error ? (
 									<p role="alert" className={apiKeysPanelClasses.error}>
