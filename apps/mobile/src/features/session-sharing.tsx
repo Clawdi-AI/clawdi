@@ -10,6 +10,7 @@ import {
 } from "@clawdi/shared/api";
 import {
 	shareControlsClasses as dialogStyles,
+	inputClassName,
 	sharedSessionLinksClasses as styles,
 } from "@clawdi/shared/ui";
 import {
@@ -56,13 +57,12 @@ import {
 } from "../ui/dropdown-menu";
 import { EmptyState } from "../ui/empty-state";
 import { Icon } from "../ui/icon";
-import { Input } from "../ui/input";
 import { PageHeader } from "../ui/page-header";
 import { AppScrollView } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
 import { Skeleton } from "../ui/skeleton";
 import { Text } from "../ui/text";
-import { WebText, WebView, webBoth, webView } from "../ui/web-layout";
+import { WebText, WebView, webText, webView } from "../ui/web-layout";
 import { useCloudSession } from "./cloud-inventory";
 import { routeParam } from "./read-helpers";
 
@@ -343,13 +343,19 @@ function SharesView({
 			</WebView>
 			<WebView recipe={compact ? dialogStyles.linkActions : styles.actions}>
 				{compact ? (
-					<Input
-						value={share.share_url}
-						editable={false}
-						selectTextOnFocus
-						accessibilityLabel={t("sessionDetail.link")}
-						className={`${webBoth(dialogStyles.url)} flex-1`}
-					/>
+					<WebView
+						recipe={inputClassName}
+						className={`${webView(dialogStyles.url)} flex-1 justify-center`}
+					>
+						<WebText
+							recipe={webText(dialogStyles.url)}
+							selectable
+							numberOfLines={1}
+							accessibilityLabel={t("sessionDetail.link")}
+						>
+							{share.share_url}
+						</WebText>
+					</WebView>
 				) : null}
 				<Button
 					variant="outline"
