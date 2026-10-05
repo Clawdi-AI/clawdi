@@ -334,7 +334,23 @@ export const en = {
 		name: "Clawdi",
 	},
 	navigation: {
-		home: "Home",
+		home: "Overview",
+		agents: "Agents",
+		sessions: "Sessions",
+		library: "Library",
+		vaults: "Vaults",
+		channels: "Channels",
+		aiProviders: "AI Providers",
+		memoriesDescription: "Memories are shared across all agents in this account.",
+		projectsDescription:
+			"Group Skills and Vaults into Projects, then choose which Agents use them.",
+		skillsDescription:
+			"Skills belong to Projects. Choose a Project before adding, editing, removing, copying, or moving a Skill. Linked Agents use the whole Project bundle.",
+		vaultsDescription:
+			"Keep API keys in a Vault, then add it to the Projects where Agents should use those keys.",
+		connectorsDescription: "Connect apps once to share approved tools across all agents.",
+		channelsDescription: "Account channel inventory and connections.",
+		aiProvidersDescription: "Account AI provider connections and credentials.",
 		account: "Account",
 		back: "Back",
 		createAgent: "New Cloud Agent",
