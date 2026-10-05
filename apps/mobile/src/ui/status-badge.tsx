@@ -16,10 +16,10 @@ function StatusBadge({
 	children,
 	...props
 }: ViewProps & { className?: string; status?: StatusTone; withDot?: boolean }) {
-	const classes = resolveWebClasses(statusBadgeVariants({ status }));
+	const classes = resolveWebClasses(cn(statusBadgeVariants({ status }), className));
 	return (
 		<TextClassContext.Provider value={classes.text}>
-			<AppView className={cn(classes.view, className)} {...props}>
+			<AppView className={classes.view} {...props}>
 				{withDot ? <StatusDot status={status} /> : null}
 				{children}
 			</AppView>

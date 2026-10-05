@@ -1,5 +1,6 @@
 /** Exact Web recipes from apps/web/src/components/dashboard/agent-settings-panel.tsx. */
 export const agentSettingsPanelClasses = {
+	root: "flex flex-col gap-8",
 	hPxWFull: "h-[420px] w-full rounded-lg",
 	textSmFontSemibold: "text-sm font-semibold",
 	textSmTextMuted: "text-sm text-muted-foreground",

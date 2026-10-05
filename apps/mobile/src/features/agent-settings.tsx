@@ -15,7 +15,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { File } from "expo-file-system";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
-import { Settings as SettingsIcon } from "lucide-react-native";
+import { RotateCcw, Save, Settings as SettingsIcon, Trash2, Upload } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
@@ -28,6 +28,7 @@ import { useAgentConfirmation } from "../ui/agents/confirmation";
 import { ActionButton } from "../ui/agents/controls";
 import { AgentSectionNavigation } from "../ui/agents/navigation";
 import { SettingsSection } from "../ui/agents/settings-section";
+import { AgentSourceBadge } from "../ui/agents/source-badge";
 import { Icon } from "../ui/icon";
 import { Input } from "../ui/input";
 import { PageHeader } from "../ui/page-header";
@@ -199,17 +200,22 @@ function Settings({ id }: { id: string | undefined }) {
 				/>
 				{!id || agent.isError ? <ResourceError missing={!id || isNotFound(agent.error)} /> : null}
 				{agent.data && agent.data.id === id ? (
-					<WebView recipe="">
+					<WebView recipe={styles.root}>
 						<WebView recipe={styles.flexFlexColItems}>
 							<AgentIcon
 								agent={agent.data.agent_type}
 								size="xl"
 								avatarUrl={agent.data.avatar_url}
 							/>
-							<WebText recipe={styles.maxWFullTruncate}>{agentDisplayName(agent.data)}</WebText>
-							<WebText recipe={styles.textSmTextMuted}>
-								{agentTypeLabel(agent.data.agent_type)} · Connected
-							</WebText>
+							<WebView recipe={styles.flexMinWFlex}>
+								<WebText recipe={styles.maxWFullTruncate}>{agentDisplayName(agent.data)}</WebText>
+								<WebView recipe={styles.flexFlexWrapItems} className="flex-row">
+									<WebText recipe={styles.textSmTextMuted}>
+										{agentTypeLabel(agent.data.agent_type)}
+									</WebText>
+									<AgentSourceBadge agentId={id} ownership={resolvedOwnership} />
+								</WebView>
+							</WebView>
 						</WebView>
 						<SettingsSection
 							title={agentSurfaceCopy.name}
@@ -224,11 +230,11 @@ function Settings({ id }: { id: string | undefined }) {
 									maxLength={240}
 									editable={!unavailable}
 								/>
-								<WebText recipe={styles.textXsTextMuted}>
-									Default: {agentDisplayName({ ...agent.data, display_name: null })}
-								</WebText>
+
 								<ActionButton
 									label="Save"
+									variant={normalized !== (agent.data.display_name ?? null) ? "default" : "outline"}
+									icon={<Icon as={Save} />}
 									disabled={
 										unavailable || !validName || normalized === (agent.data.display_name ?? null)
 									}
@@ -244,8 +250,13 @@ function Settings({ id }: { id: string | undefined }) {
 										})
 									}
 								/>
+								<WebText recipe={styles.textXsTextMuted}>
+									Default: {agentDisplayName({ ...agent.data, display_name: null })}
+								</WebText>
 								<ActionButton
 									label="Use default name"
+									className={webView(styles.hWFitPx)}
+									icon={<Icon as={RotateCcw} />}
 									variant="ghost"
 									disabled={unavailable || !agent.data.display_name}
 									onPress={() =>
@@ -285,6 +296,7 @@ function Settings({ id }: { id: string | undefined }) {
 								<WebView recipe={styles.flexShrinkFlexWrap} className="flex-row">
 									<ActionButton
 										label="Upload image"
+										icon={<Icon as={Upload} />}
 										disabled={unavailable}
 										onPress={() =>
 											void action.run(async (current) => {
@@ -305,6 +317,7 @@ function Settings({ id }: { id: string | undefined }) {
 									/>
 									<ActionButton
 										label="Remove"
+										icon={<Icon as={Trash2} />}
 										variant="ghost"
 										disabled={unavailable || !agent.data.avatar_url}
 										onPress={() =>

@@ -234,6 +234,7 @@ export * from "./agent-plugins-surface";
 export * from "./agent-recent-sessions";
 export * from "./agent-settings-panel";
 export * from "./agent-skill-card";
+export * from "./agent-source-badge";
 export * from "./agents-card";
 export * from "./agents-index";
 export * from "./ai-providers-page";

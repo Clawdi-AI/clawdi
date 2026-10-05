@@ -12,10 +12,10 @@ export function Badge({
 	variant,
 	...props
 }: ViewProps & VariantProps<typeof badgeVariants> & { className?: string }) {
-	const classes = resolveWebClasses(badgeVariants({ variant }));
+	const classes = resolveWebClasses(cn(badgeVariants({ variant }), className));
 	return (
 		<TextClassContext.Provider value={classes.text}>
-			<AppView className={cn(classes.view, className)} {...props} />
+			<AppView className={classes.view} {...props} />
 		</TextClassContext.Provider>
 	);
 }

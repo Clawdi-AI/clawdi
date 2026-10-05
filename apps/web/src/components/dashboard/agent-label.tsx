@@ -1,4 +1,4 @@
-import { sessionAgentInlineClasses } from "@clawdi/shared/ui";
+import { agentSourceBadgeClasses, sessionAgentInlineClasses } from "@clawdi/shared/ui";
 import {
 	type AgentSourceKind,
 	agentIdentity,
@@ -119,19 +119,20 @@ export function AgentSourceBadge({
 			status="neutral"
 			title={title}
 			className={cn(
-				"shrink-0 whitespace-nowrap border font-medium leading-none shadow-sm",
+				agentSourceBadgeClasses.base,
 				iconOnly
-					? "size-5 justify-center rounded-full p-0"
+					? agentSourceBadgeClasses.iconOnly
 					: compact
-						? "h-5 gap-1 rounded-full px-1.5 text-2xs"
-						: "h-5 gap-1.5 rounded-full px-2 text-2xs",
-				source === "hosted"
-					? "border-info-muted bg-info-muted text-info-muted-foreground"
-					: "border-border bg-background text-muted-foreground",
+						? agentSourceBadgeClasses.compact
+						: agentSourceBadgeClasses.regular,
+				source === "hosted" ? agentSourceBadgeClasses.hosted : agentSourceBadgeClasses.connected,
 				className,
 			)}
 		>
-			<Icon className={cn(iconOnly ? "!size-3.5" : "size-3.5", iconClass)} fill={iconFill} />
+			<Icon
+				className={cn(iconOnly ? "!size-3.5" : agentSourceBadgeClasses.icon, iconClass)}
+				fill={iconFill}
+			/>
 			{iconOnly ? <span className="sr-only">{label}</span> : label}
 		</StatusBadge>
 	);
@@ -151,17 +152,20 @@ export function LegacyAgentBadge({
 			status="neutral"
 			title="Managed in the legacy hosted dashboard"
 			className={cn(
-				"shrink-0 whitespace-nowrap border border-warning-muted bg-warning-muted font-medium leading-none text-warning-muted-foreground shadow-sm",
+				agentSourceBadgeClasses.legacy,
 				iconOnly
-					? "size-5 justify-center rounded-full p-0"
+					? agentSourceBadgeClasses.iconOnly
 					: compact
-						? "h-5 gap-1 rounded-full px-1.5 text-2xs"
-						: "h-5 gap-1.5 rounded-full px-2 text-2xs",
+						? agentSourceBadgeClasses.compact
+						: agentSourceBadgeClasses.regular,
 				className,
 			)}
 		>
 			<History
-				className={cn(iconOnly ? "!size-3.5" : "size-3.5", "text-warning-muted-foreground")}
+				className={cn(
+					iconOnly ? "!size-3.5" : agentSourceBadgeClasses.icon,
+					"text-warning-muted-foreground",
+				)}
 			/>
 			{iconOnly ? <span className="sr-only">Legacy</span> : "Legacy"}
 		</StatusBadge>
@@ -188,7 +192,9 @@ export function AgentSourceBadgeForEnvironment({
 	const ownership = useAgentOwnership();
 	const kind = ownershipKind ?? agentOwnershipKindFromId(env.id, ownership);
 	if (kind === "unresolved") {
-		return <Skeleton aria-label="Agent source loading" className="h-5 w-14 rounded-full" />;
+		return (
+			<Skeleton aria-label="Agent source loading" className={agentSourceBadgeClasses.loading} />
+		);
 	}
 	if (kind === "legacy") {
 		if (iconOnly) return null;
