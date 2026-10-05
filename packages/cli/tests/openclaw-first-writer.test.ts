@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { execFile, spawnSync } from "node:child_process";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
 import {
 	chmodSync,
 	chownSync,
@@ -10,7 +10,6 @@ import {
 	rmSync,
 	statSync,
 	symlinkSync,
-	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -74,7 +73,8 @@ test.each(["success", "rejected", "incomplete", "oversized"])(
   return {snapshot:{valid:true,sourceConfig:JSON.parse(readFileSync(path,"utf8"))}};
  }
  export async function mutateConfigFile(options){
-  if(options.base!=="source"||options.afterWrite.mode!=="auto"||!options.writeOptions.allowConfigSizeDrop)
+  const warm = options.afterWrite.mode==="none" && options.afterWrite.reason==="Clawdi anonymous runtime warm-up";
+  if(options.base!=="source"||(!warm && (options.afterWrite.mode!=="auto"||!options.writeOptions.allowConfigSizeDrop)))
    throw new Error("missing native validation path");
   const draft=JSON.parse(readFileSync(path,"utf8"));options.mutate(draft);
   if(draft.reject)throw new Error("validation failed");
@@ -136,11 +136,19 @@ test("writer source attestation detects restored content, dependencies and symli
 	writeFileSync(join(sdk, "package.json"), "{}");
 	const entry = join(sdk, "mutation.mjs");
 	writeFileSync(entry, "export const value = 1;");
-	const original = statSync(entry);
+	const original = statSync(entry, { bigint: true });
 	const initial = openClawWriterSourceRevision(entry);
-	writeFileSync(entry, "export const value = 2;");
-	writeFileSync(entry, "export const value = 1;");
-	utimesSync(entry, original.atime, original.mtime);
+	execFileSync("python3", [
+		"-c",
+		"import os,sys; p=sys.argv[1]; s=os.stat(p); " +
+			"open(p,'w').write('export const value = 2;'); " +
+			"open(p,'w').write('export const value = 1;'); " +
+			"os.utime(p,ns=(s.st_atime_ns,s.st_mtime_ns))",
+		entry,
+	]);
+	const restored = statSync(entry, { bigint: true });
+	expect(restored.mtimeNs).toBe(original.mtimeNs);
+	expect(restored.ctimeNs).not.toBe(original.ctimeNs);
 	expect(openClawWriterSourceRevision(entry)).not.toBe(initial);
 
 	const dependencies = join(sdk, "node_modules");
@@ -209,7 +217,8 @@ test.skipIf(process.env.CLAWDI_TEST_SYSTEMD_COMMAND !== "1")(
   return {snapshot:{valid:true,sourceConfig:JSON.parse(readFileSync(path,"utf8"))}};
  }
  export async function mutateConfigFile(options){
-  if(options.base!=="source"||options.afterWrite.mode!=="auto")throw new Error("wrong native mutation");
+  const warm=options.afterWrite.mode==="none" && options.afterWrite.reason==="Clawdi anonymous runtime warm-up";
+  if(options.base!=="source"||(!warm && options.afterWrite.mode!=="auto"))throw new Error("wrong native mutation");
   const config=JSON.parse(readFileSync(path,"utf8"));options.mutate(config);
   writeFileSync(path,JSON.stringify(config));
  }

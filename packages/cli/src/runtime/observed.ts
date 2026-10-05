@@ -32,7 +32,7 @@ import { readHostedSkillsObservation } from "./hosted-skill-observation";
 import { providerHealthReasons } from "./manifest-providers";
 import { hostedRuntimeBundleV2Schema, loadCommittedRuntimeManifest } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
-import { profileRuntimeStepAsync } from "./profile";
+import { profileRuntimeStep, profileRuntimeStepAsync } from "./profile";
 import { execRuntimeUserCommand, spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
 import { type RuntimeBootStatus, readRuntimeBootStatus } from "./state";
@@ -205,13 +205,25 @@ export async function readHostedRuntimeObserved(
 	// Reject the whole snapshot when its parent authority or health changed while
 	// any asynchronous probe ran. Dropping only component proof leaves a stale
 	// aggregate success available to legacy admission readers.
+	if (runtimeContentSha256(readRuntimeAppliedState(paths)) !== runtimeContentSha256(appliedState))
+		return profileRuntimeStep("observation.discard.applied-parent", () => null);
+	if (runtimeContentSha256(readRuntimeBootStatus(paths)) !== runtimeContentSha256(boot))
+		return profileRuntimeStep("observation.discard.boot-parent", () => null);
 	if (
-		runtimeContentSha256(readRuntimeAppliedState(paths)) !== runtimeContentSha256(appliedState) ||
-		runtimeContentSha256(readRuntimeBootStatus(paths)) !== runtimeContentSha256(boot) ||
 		watchStatusRevision(readJsonRecord(paths.runtimeWatchStatus), appliedState) !==
-			watchStatusRevision(watchStatus, appliedState)
+		watchStatusRevision(watchStatus, appliedState)
 	)
-		return null;
+		return profileRuntimeStep("observation.discard.watch-parent", () => null);
+	for (const [unit, label] of [
+		["clawdi-hermes-dashboard.service", "observation.pending.hermes-dashboard"],
+		["hermes-gateway.service", "observation.pending.hermes-gateway"],
+		["openclaw-gateway.service", "observation.pending.openclaw-gateway"],
+		["clawdi-files.service", "observation.pending.files"],
+		["clawdi-daemon.service", "observation.pending.daemon"],
+	] as const) {
+		if (observed.systemd?.units.some((entry) => entry.name === unit && entry.status !== "ok"))
+			profileRuntimeStep(label, () => null);
+	}
 
 	if (boot.error) observed.error = boot.error;
 	const convergeError = runtimeConvergeError(watchStatus);

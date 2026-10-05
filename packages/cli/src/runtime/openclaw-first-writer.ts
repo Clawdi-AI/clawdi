@@ -56,6 +56,15 @@ const anonymousStartedAt = Date.now(), anonymousStarted = performance.now();
 const anonymous = await sdk.readConfigFileSnapshotForWrite();
 const anonymousDuration = performance.now() - anonymousStarted;
 if (anonymous?.snapshot?.valid !== true) throw new Error("anonymous config validation failed");
+// Load the complete official write/validation pipeline before claim. This is a
+// locked, fully validated identity mutation of anonymous config only; no tenant
+// request or credential is present, and the native follow-up mode is explicit.
+const anonymousWriteStartedAt = Date.now(), anonymousWriteStarted = performance.now();
+await sdk.mutateConfigFile({
+  base: "source", afterWrite: {mode: "none", reason: "Clawdi anonymous runtime warm-up"},
+  mutate: () => {},
+});
+const anonymousWriteDuration = performance.now() - anonymousWriteStarted;
 ${OPENCLAW_MUTATION_FUNCTION}
 let receivedRequest = false;
 const server = createServer((connection) => {
@@ -90,6 +99,10 @@ const server = createServer((connection) => {
       if (mutationProfileEnabled) console.error("CLAWDI_RUNTIME_SPAN " + JSON.stringify({
         label: "writer.anonymous-validation", pid: process.pid, startedAt: anonymousStartedAt,
         durationMs: Math.round(anonymousDuration * 100) / 100,
+      }));
+      if (mutationProfileEnabled) console.error("CLAWDI_RUNTIME_SPAN " + JSON.stringify({
+        label: "writer.anonymous-write", pid: process.pid, startedAt: anonymousWriteStartedAt,
+        durationMs: Math.round(anonymousWriteDuration * 100) / 100,
       }));
       await profileMutation("writer.total", () => mutateOpenClawConfig(sdk, frame, "batch", true));
       connection.end(JSON.stringify({schemaVersion:"clawdi.openclawFirstWriteAck.v1",
@@ -158,11 +171,7 @@ export function openClawWriterSourceRevision(sdkPath: string): string {
 				...(follow ? ["-L"] : []),
 				root,
 				"(",
-				"-type",
-				"f",
-				"-o",
-				"-type",
-				"l",
+				...(follow ? ["-type", "f", "-o", "-type", "l"] : ["-type", "l"]),
 				")",
 				"-printf",
 				"%p\\0%D:%i:%s:%m:%U:%G:%T@:%C@:%l\\0",
@@ -176,7 +185,9 @@ export function openClawWriterSourceRevision(sdkPath: string): string {
 		for (let index = 0; index + 1 < fields.length; index += 2)
 			entries.push([`${follow}:${fields[index]}`, fields[index + 1]]);
 	}
-	return hash(JSON.stringify(entries.sort(([left], [right]) => left.localeCompare(right))));
+	return hash(
+		JSON.stringify(entries.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))),
+	);
 }
 
 function nodeRevision(): string {

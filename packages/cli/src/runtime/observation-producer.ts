@@ -13,6 +13,7 @@ import {
 } from "./heartbeat-observation";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { profileRuntimeStepAsync } from "./profile";
+import { readRuntimeBootStatus } from "./state";
 
 const OBSERVATION_INTERVAL_MS = 60_000;
 // Until the first healthy sample, readiness latency is user-visible deploy time.
@@ -59,6 +60,8 @@ interface ObservationSchedule {
 export class HostedRuntimeObservationProducer {
 	private readonly paths: RuntimePaths;
 	private readonly contextPath: string | undefined;
+	private readonly abort: AbortSignal;
+	private readonly settleDelay: NonNullable<RuntimeObservationProducerOptions["delay"]>;
 	private readonly submit: NonNullable<RuntimeObservationProducerOptions["submit"]>;
 	private readonly sessionFactory: NonNullable<RuntimeObservationProducerOptions["sessionFactory"]>;
 	private session: HostedRuntimeHeartbeatSession | null = null;
@@ -68,6 +71,8 @@ export class HostedRuntimeObservationProducer {
 	constructor(options: RuntimeObservationProducerOptions) {
 		this.paths = options.paths ?? getRuntimePaths();
 		this.contextPath = options.contextPath;
+		this.abort = options.abort;
+		this.settleDelay = options.delay ?? abortableDelay;
 		this.sessionFactory =
 			options.sessionFactory ??
 			((environmentId, paths) => new HostedRuntimeHeartbeatSession({ environmentId, paths }));
@@ -100,6 +105,15 @@ export class HostedRuntimeObservationProducer {
 				this.session.refreshAppliedState();
 			}
 
+			// Applied state precedes the final boot status by a few synchronous
+			// writes. Avoid an expensive capture known to straddle that transition.
+			// This wait is bounded; every normal proof still runs afterward.
+			if (
+				!(await profileRuntimeStepAsync("observation.boot-settle", () =>
+					this.settleBootStatus(context.identityKey),
+				))
+			)
+				return { outcome: "idle" };
 			const session = this.session;
 			buffered = await profileRuntimeStepAsync("observation.capture", () => session.nextEvent());
 			if (!buffered && this.currentAttestedIdentityKey() === context.identityKey) {
@@ -146,6 +160,16 @@ export class HostedRuntimeObservationProducer {
 			});
 			return { outcome: "failed" };
 		}
+	}
+
+	private async settleBootStatus(identityKey: string): Promise<boolean> {
+		for (let attempt = 0; attempt < 10; attempt += 1) {
+			if (this.abort.aborted || this.currentAttestedIdentityKey() !== identityKey) return false;
+			const boot = readRuntimeBootStatus(this.paths).status;
+			if (boot?.status !== "ok" || boot.stage !== "config") return true;
+			await this.settleDelay(50, this.abort);
+		}
+		return !this.abort.aborted && this.currentAttestedIdentityKey() === identityKey;
 	}
 
 	currentAttestedIdentityKey(): string | null {
