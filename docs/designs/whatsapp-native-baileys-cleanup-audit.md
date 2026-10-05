@@ -108,7 +108,7 @@ they are not product transport implementations.
 **A — Web discovery and activation**
 
 ```text
-apps/web/e2e/hosted-smoke.pw.ts
+apps/web/e2e/hosted-{smoke,billing,openclaw,channels,rail-nav}.pw.ts
 apps/web/src/components/entity-icon.tsx
 apps/web/src/components/entity-icon.test.tsx
 apps/web/src/hosted/v2/README.md

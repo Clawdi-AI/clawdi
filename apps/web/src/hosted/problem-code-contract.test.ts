@@ -32,10 +32,16 @@ const DEPLOYMENT_FAILURE_SOURCE = readFileSync(
 	new URL("./deployment-failure.ts", import.meta.url),
 	"utf8",
 );
-const HOSTED_SMOKE_SOURCE = readFileSync(
-	new URL("../../e2e/hosted-smoke.pw.ts", import.meta.url),
-	"utf8",
-);
+const HOSTED_SMOKE_SOURCE = [
+	"hosted-smoke.pw.ts",
+	"hosted-billing.pw.ts",
+	"hosted-openclaw.pw.ts",
+	"hosted-channels.pw.ts",
+	"hosted-rail-nav.pw.ts",
+	"support/hosted-api-stub.ts",
+]
+	.map((path) => readFileSync(new URL(`../../e2e/${path}`, import.meta.url), "utf8"))
+	.join("\n");
 
 /**
  * Collect every pure snake_case string literal that appears in a `code:`
