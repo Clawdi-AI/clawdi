@@ -264,9 +264,7 @@ function OverviewLayout({
 				</section>
 
 				{/* This source order is also the mobile reading and focus order. */}
-				<div className="min-w-0 space-y-4 lg:col-start-3 lg:row-span-3 lg:row-start-1">
-					{aside}
-				</div>
+				<div className="min-w-0 space-y-4 lg:col-start-3 lg:row-span-3 lg:row-start-1">{aside}</div>
 
 				<section className="min-w-0 space-y-2 lg:col-span-2 lg:row-start-3">
 					<div className="flex items-center justify-between">

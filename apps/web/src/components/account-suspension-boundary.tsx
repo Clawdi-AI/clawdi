@@ -77,7 +77,9 @@ export function AccountSuspensionBoundary({
 		fallback = <AuthStatus status="unavailable" />;
 	}
 	return (
-		<AccountDataContext value={{ identity: admitted, loading, fallback }}>{children}</AccountDataContext>
+		<AccountDataContext value={{ identity: admitted, loading, fallback }}>
+			{children}
+		</AccountDataContext>
 	);
 }
 
