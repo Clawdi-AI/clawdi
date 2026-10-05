@@ -160,28 +160,39 @@ function WorkspaceSkills({ id }: { id?: string }) {
 					))}
 				</WebView>
 			)}
-			<Dialog open={installOpen} onOpenChange={setInstallOpen}>
-				<DialogContent>
+			<Dialog
+				open={installOpen}
+				onOpenChange={(open) => {
+					setInstallOpen(open);
+					if (!open) setRepo("");
+				}}
+			>
+				<DialogContent className={webView(panel.dialog)}>
 					<DialogHeader>
 						<DialogTitle>{agentSurfaceCopy.installSkill}</DialogTitle>
 						<DialogDescription>
 							Enter a GitHub Skill path, then run the generated command on the Agent machine.
 						</DialogDescription>
 					</DialogHeader>
-					<WebView recipe={panel.field}>
-						<Label>{agentSurfaceCopy.gitHubSkillRepository}</Label>
-						<Input
-							value={repo}
-							onChangeText={setRepo}
-							placeholder={agentSurfaceCopy.ownerRepoOrOwnerRepoPathTo}
-							autoCapitalize="none"
-						/>
+					<WebView recipe={panel.form}>
+						<WebView recipe={panel.field}>
+							<Label>{agentSurfaceCopy.gitHubSkillRepository}</Label>
+							<Input
+								value={repo}
+								onChangeText={setRepo}
+								placeholder={agentSurfaceCopy.ownerRepoOrOwnerRepoPathTo}
+								autoCapitalize="none"
+								autoCorrect={false}
+							/>
+						</WebView>
+						{repo.trim() ? (
+							<WebView recipe={panel.commandRow} className="flex-row">
+								<WebText selectable recipe={panel.command}>
+									{workspaceSkillInstallCommand(repo, agent.data?.agent_type ?? "")}
+								</WebText>
+							</WebView>
+						) : null}
 					</WebView>
-					{repo.trim() ? (
-						<WebText selectable recipe={panel.command}>
-							{workspaceSkillInstallCommand(repo, agent.data?.agent_type ?? "")}
-						</WebText>
-					) : null}
 					<DialogFooter>
 						<ActionButton variant="ghost" label="Done" onPress={() => setInstallOpen(false)} />
 					</DialogFooter>
@@ -193,16 +204,18 @@ function WorkspaceSkills({ id }: { id?: string }) {
 					if (!open) setRemoveCommand(null);
 				}}
 			>
-				<DialogContent>
+				<DialogContent className={webView(panel.dialog)}>
 					<DialogHeader>
 						<DialogTitle>{agentSurfaceCopy.uninstallSkill}</DialogTitle>
 						<DialogDescription>
 							{agentSurfaceCopy.runThisCommandOnTheAgentMachineTheSkill}
 						</DialogDescription>
 					</DialogHeader>
-					<WebText selectable recipe={panel.command}>
-						{removeCommand}
-					</WebText>
+					<WebView recipe={panel.commandRow} className="flex-row">
+						<WebText selectable recipe={panel.command}>
+							{removeCommand}
+						</WebText>
+					</WebView>
 					<DialogFooter>
 						<ActionButton variant="ghost" label="Done" onPress={() => setRemoveCommand(null)} />
 					</DialogFooter>
