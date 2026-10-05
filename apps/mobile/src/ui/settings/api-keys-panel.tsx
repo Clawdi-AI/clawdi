@@ -4,14 +4,23 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect } from "expo-router";
 import { Laptop, Plus, Trash2 } from "lucide-react-native";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, AppState } from "react-native";
+import { AppState } from "react-native";
 import { useCurrentUser } from "../../auth/auth-client";
 import { useAuthAction } from "../../auth/use-auth-action";
 import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
-import { LoadingScreen } from "../../ui/feedback";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "../alert-dialog";
 import { ApiErrorPanel } from "../api-error-panel";
 import { Button } from "../button";
 import {
@@ -53,12 +62,24 @@ function ApiKeysView() {
 	const [keyLabel, setKeyLabel] = useState("");
 	const [createOpen, setCreateOpen] = useState(false);
 	const [acknowledged, setAcknowledged] = useState(false);
+	const [revokeTarget, setRevokeTarget] = useState<{ id: string; label: string } | null>(null);
 	const [rawKey, setRawKey] = useState<string | null>(null);
 	const capture = useForegroundLease();
-	useFocusEffect(useCallback(() => () => setRawKey(null), []));
+	useFocusEffect(
+		useCallback(
+			() => () => {
+				setRawKey(null);
+				setRevokeTarget(null);
+			},
+			[],
+		),
+	);
 	useEffect(() => {
 		const subscription = AppState.addEventListener("change", (state) => {
-			if (state !== "active") setRawKey(null);
+			if (state !== "active") {
+				setRawKey(null);
+				setRevokeTarget(null);
+			}
 		});
 		return () => subscription.remove();
 	}, []);
@@ -81,24 +102,13 @@ function ApiKeysView() {
 		});
 	const onRevokeKey = (keyId: string) =>
 		run(async (isCurrent) => {
+			if (!scope.isCurrent() || !capture()()) return;
 			await read((signal) => account.revokeApiKey(keyId, signal), scope.signal);
 			if (!isCurrent()) return;
+			setRevokeTarget(null);
 			await queryClient.invalidateQueries({ queryKey: accountQueryKey(scope, "account-api-keys") });
 		});
-	const confirmRevoke = (keyId: string) => {
-		const signal = scope.signal;
-		Alert.alert(t("account.revokeApiKey"), t("settingsParity.revokeDescription"), [
-			{ text: t("account.cancel"), style: "cancel" },
-			{
-				text: t("account.revokeApiKey"),
-				style: "destructive",
-				onPress: () => {
-					if (scope.isCurrent() && !signal.aborted) void onRevokeKey(keyId);
-				},
-			},
-		]);
-	};
-	if (!isLoaded) return <LoadingScreen label={t("loading.authentication")} />;
+	if (!isLoaded) return <RouteLoadingSkeleton />;
 
 	const items = activeApiKeys(keys.data);
 	const openCreate = () => {
@@ -148,7 +158,7 @@ function ApiKeysView() {
 									variant="ghost"
 									size="sm"
 									disabled={busy}
-									onPress={() => confirmRevoke(key.id)}
+									onPress={() => setRevokeTarget({ id: key.id, label: key.label })}
 									textClassName={styles.revoke}
 								>
 									<Icon as={Trash2} />
@@ -185,6 +195,39 @@ function ApiKeysView() {
 					}
 				/>
 			)}
+			<AlertDialog
+				open={revokeTarget !== null}
+				onOpenChange={(open) => {
+					if (!busy && !open) setRevokeTarget(null);
+				}}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							{t("settingsParity.revokeTitle").replace("{label}", revokeTarget?.label ?? "API key")}
+						</AlertDialogTitle>
+						<AlertDialogDescription>{t("settingsParity.revokeDescription")}</AlertDialogDescription>
+					</AlertDialogHeader>
+					{error ? (
+						<WebText accessibilityRole="alert" recipe={styles.error}>
+							{t("account.actionFailed")}
+						</WebText>
+					) : null}
+					<AlertDialogFooter>
+						<AlertDialogCancel disabled={busy}>{t("account.cancel")}</AlertDialogCancel>
+						<AlertDialogAction
+							variant="destructive"
+							disabled={busy || !revokeTarget}
+							onPress={() => {
+								if (revokeTarget) void onRevokeKey(revokeTarget.id);
+							}}
+						>
+							<Text>{t("settingsParity.revokeKey")}</Text>
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+
 			<Dialog
 				open={createOpen}
 				onOpenChange={(open) => {

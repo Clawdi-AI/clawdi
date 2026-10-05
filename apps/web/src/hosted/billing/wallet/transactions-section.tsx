@@ -6,6 +6,7 @@ import {
 	formatShortDate,
 	transactionStatusLabel as statusLabel,
 	transactionStatusTone as statusTone,
+	transactionDocumentAction,
 } from "@clawdi/shared/view";
 import { ExternalLink, Receipt } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -37,11 +38,7 @@ import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
 function TransactionAction({ transaction }: { transaction: WalletTransaction }) {
-	const action = transaction.receipt_url
-		? { label: "Receipt", url: transaction.receipt_url }
-		: transaction.hosted_invoice_url
-			? { label: "Invoice", url: transaction.hosted_invoice_url }
-			: null;
+	const action = transactionDocumentAction(transaction);
 	if (!action) return <span className={transactionsSectionClasses.muted}>—</span>;
 	return (
 		<Button
@@ -214,7 +211,7 @@ export function TransactionsSection() {
 							</Table>
 						</div>
 						<p className={transactionsSectionClasses.description}>
-							Showing {rows.length} transactions
+							{billingCopy.transactionsCount.replace("{count}", String(rows.length))}
 						</p>
 						{loadMore}
 					</>

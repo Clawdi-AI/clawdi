@@ -367,12 +367,12 @@ export function ApiKeysPanel() {
 				<AlertDialogContent>
 					<AlertDialogHeader>
 						<AlertDialogTitle>
-							Revoke “{renderedRevokeTarget?.label ?? "API key"}”?
+							{settingsCopy.revokeTitle.replace(
+								"{label}",
+								renderedRevokeTarget?.label ?? "API key",
+							)}
 						</AlertDialogTitle>
-						<AlertDialogDescription>
-							Requests using this key will stop working. This can’t be undone; create and install a
-							new key to reconnect the client.
-						</AlertDialogDescription>
+						<AlertDialogDescription>{settingsCopy.revokeDescription}</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
 						<AlertDialogCancel disabled={revokeKey.isPending}>Cancel</AlertDialogCancel>
@@ -386,7 +386,7 @@ export function ApiKeysPanel() {
 							}}
 						>
 							{revokeKey.isPending ? <Spinner /> : null}
-							Revoke key
+							{settingsCopy.revokeKey}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>

@@ -24,6 +24,8 @@ export const settingsCopy = {
 	expires: "Expires",
 	never: "Never",
 	revoke: "Revoke",
+	revokeTitle: "Revoke “{label}”?",
+	revokeKey: "Revoke key",
 	emptyKeys: "No active API keys",
 	emptyKeysDescription:
 		"Create a key to authenticate a server, container, or other client that can’t open a browser.",
@@ -82,6 +84,7 @@ export const billingCopy = {
 		"Pays for AI usage and wallet-funded compute subscriptions. Card-paid subscriptions do not use this balance.",
 	transactions: "Transactions",
 	transactionsDescription: "Top-ups, compute payments, credits, and adjustments.",
+	transactionsCount: "Showing {count} transactions",
 	emptyTransactions: "No transactions yet",
 	emptyTransactionsDescription:
 		"Top-ups, grants, compute charges, and other money movements will appear here.",

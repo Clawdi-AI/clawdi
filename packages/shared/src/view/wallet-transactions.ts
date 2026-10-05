@@ -3,6 +3,14 @@ import { formatShortDate } from "./format";
 
 type WalletTransaction = DeployComponents["schemas"]["V2WalletTransactionItemResponse"];
 
+export function transactionDocumentAction(transaction: WalletTransaction) {
+	return transaction.receipt_url
+		? { label: "Receipt", url: transaction.receipt_url }
+		: transaction.hosted_invoice_url
+			? { label: "Invoice", url: transaction.hosted_invoice_url }
+			: null;
+}
+
 import { formatUsdExact } from "./billing-format";
 import { computeTierLabel } from "./compute-subscriptions";
 

@@ -11,15 +11,20 @@ import {
 	formatUsdExact,
 	isLowBalance,
 	transactionComputeDetails,
+	transactionDocumentAction,
 	transactionKindLabel,
 	transactionPaymentSourceLabel,
 	transactionSignedAmount,
 	transactionStatusLabel,
 	transactionStatusTone,
 } from "@clawdi/shared/view";
-import { Coins, CreditCard, Link2, Pencil, TriangleAlert } from "lucide-react-native";
+import { openBrowserAsync } from "expo-web-browser";
+import { Coins, CreditCard, ExternalLink, Link2, Pencil, TriangleAlert } from "lucide-react-native";
+import { useAuthAction } from "../../auth/use-auth-action";
 import type { Transaction } from "../../features/billing/helpers";
 import { useI18n } from "../../i18n";
+import { useAccountScope } from "../../platform/account-lifecycle";
+import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { Badge } from "../badge";
 import { Button } from "../button";
 import { Card, CardContent } from "../card";
@@ -65,6 +70,23 @@ export function BalanceCard({ wallet }: { wallet: Pick<Wallet, "balance_usd"> })
 	);
 }
 export function TransactionRow({ item }: { item: Transaction }) {
+	const t = useI18n();
+	const scope = useAccountScope();
+	const action = useAuthAction(scope.identity);
+	const capture = useForegroundLease();
+	const document = transactionDocumentAction(item);
+	let documentUrl: string | null = null;
+	try {
+		const url = document ? new URL(document.url) : null;
+		if (url?.protocol === "https:" && !url.username && !url.password) documentUrl = url.href;
+	} catch {
+		// Malformed document links remain visible but cannot open a browser.
+	}
+	const openDocument = () =>
+		void action.run(async (current) => {
+			if (!documentUrl || !current() || !scope.isCurrent() || !capture()()) return;
+			await openBrowserAsync(documentUrl);
+		});
 	return (
 		<WebView recipe={transactions.mobileRow} className="flex-row">
 			<WebView recipe={transactions.mobileCopy} className="flex-1">
@@ -83,6 +105,25 @@ export function TransactionRow({ item }: { item: Transaction }) {
 					</StatusBadge>
 					<WebText recipe={transactions.description}>{formatShortDate(item.occurred_at)}</WebText>
 				</WebView>
+				{document ? (
+					<Button
+						variant="link"
+						size="xs"
+						className={webView(transactions.inlineAction)}
+						disabled={!documentUrl || action.busy}
+						onPress={openDocument}
+					>
+						<Text>{document.label}</Text>
+						<Icon as={ExternalLink} />
+					</Button>
+				) : (
+					<WebText recipe={transactions.muted}>—</WebText>
+				)}
+				{action.error ? (
+					<WebText accessibilityRole="alert" recipe={transactions.description}>
+						{t("account.actionFailed")}
+					</WebText>
+				) : null}
 			</WebView>
 			<WebText
 				recipe={transactions.amount}

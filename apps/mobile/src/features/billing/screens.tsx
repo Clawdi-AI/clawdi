@@ -8,10 +8,10 @@ import { ApiErrorPanel } from "../../ui/api-error-panel";
 import { ClerkAction as DetailAction } from "../../ui/auth/clerk-form";
 import { ComputeSubscriptionCard } from "../../ui/billing/compute-subscription-card";
 import { PlanComparison } from "../../ui/billing/plan-comparison";
+import { SubscriptionDetails } from "../../ui/billing/subscription-details";
 import { BalanceCard, TransactionRow, WalletSettingsSections } from "../../ui/billing/wallet";
 import { Button } from "../../ui/button";
 import { EmptyState } from "../../ui/empty-state";
-import { ErrorState, LoadingScreen } from "../../ui/feedback";
 import { ReadScreen } from "../../ui/read-screen";
 import { RouteLoadingSkeleton } from "../../ui/route-loading-skeleton";
 import { SettingsBackButton } from "../../ui/settings/back-button";
@@ -20,15 +20,8 @@ import { SettingsShell } from "../../ui/settings/shell";
 import { Text } from "../../ui/text";
 import { AppScrollView, AppView } from "../../ui/view";
 import { WebText, WebView, webView } from "../../ui/web-layout";
-import { formatDate } from "../cloud-inventory";
 import { ResourceError } from "../resource-error";
-import {
-	nextBillingCursor,
-	type Subscription,
-	subscriptionPrice,
-	uniqueBillingItems,
-	validSubscriptionId,
-} from "./helpers";
+import { nextBillingCursor, uniqueBillingItems, validSubscriptionId } from "./helpers";
 
 function initialCursor(): string | undefined {
 	return undefined;
@@ -237,6 +230,11 @@ function WalletView() {
 									description={t("billingParity.emptyTransactionsDescription")}
 								/>
 							)}
+							{rows.length ? (
+								<WebText recipe={transactionsSectionClasses.description}>
+									{t("billingParity.transactionsCount").replace("{count}", String(rows.length))}
+								</WebText>
+							) : null}
 							{transactions.hasNextPage ? (
 								<Button
 									variant="outline"
@@ -260,65 +258,6 @@ function WalletView() {
 				)}
 			</WebView>
 		</SettingsShell>
-	);
-}
-function BillingFact({ label, value }: { label: string; value: string }) {
-	return (
-		<WebView recipe={transactionsSectionClasses.mobileCopy}>
-			<WebText recipe={transactionsSectionClasses.description}>{label}</WebText>
-			<WebText selectable recipe={transactionsSectionClasses.label}>
-				{value}
-			</WebText>
-		</WebView>
-	);
-}
-function SubscriptionRecovery({ item }: { item: Subscription }) {
-	const t = useI18n();
-	const recovery = computeSubscriptionRecoveryPresentation(
-		item,
-		{ label: item.status, tone: "neutral" },
-		{
-			updating: t("billing.updating"),
-			processing: t("billing.processing"),
-			unpaid: t("billing.unpaid"),
-			actionRequired: t("billing.actionRequired"),
-			pastDue: t("billing.pastDue"),
-			paymentProcessing: t("billing.paymentProcessing"),
-			attention: t("billing.attention"),
-			awaitingPayment: t("billing.awaitingPayment"),
-			support: t("billing.support"),
-			ended: t("billing.ended"),
-			paymentAttention: t("billing.paymentAttention"),
-		},
-	);
-	return (
-		<AppView className="gap-2">
-			{recovery.status.label !== item.status ? (
-				<Text
-					accessibilityRole={recovery.hasPaymentIssue ? "alert" : undefined}
-					className="text-foreground"
-				>
-					{recovery.status.label}
-				</Text>
-			) : null}
-			{recovery.schedule?.at ? (
-				<BillingFact
-					label={t("billing.retries")}
-					value={formatDate(recovery.schedule.at) ?? t("billing.unknown")}
-				/>
-			) : recovery.schedule?.fallback ? (
-				<Text className="text-muted-foreground">{recovery.schedule.fallback}</Text>
-			) : null}
-			{item.cancel_at_period_end ? (
-				<Text className="text-muted-foreground">{t("billing.cancellation")}</Text>
-			) : null}
-			{item.pending_plan_slug ? (
-				<BillingFact label={t("billing.pendingPlan")} value={item.pending_plan_slug} />
-			) : null}
-			{recovery.recoveryTarget ? (
-				<Text className="text-muted-foreground">{t("billing.providerRecovery")}</Text>
-			) : null}
-		</AppView>
 	);
 }
 
@@ -355,7 +294,12 @@ export function SubscriptionDetailScreen({
 				</AppView>
 			</ReadScreen>
 		);
-	if (query.isPending) return <LoadingScreen />;
+	if (query.isPending)
+		return (
+			<ReadScreen>
+				<RouteLoadingSkeleton />
+			</ReadScreen>
+		);
 	return (
 		<ReadScreen>
 			<AppScrollView contentContainerClassName={webView(billingPageClass)}>
@@ -369,51 +313,19 @@ export function SubscriptionDetailScreen({
 					}}
 				/>
 				{query.isError ? (
-					<ErrorState onRetry={query.isFetching ? undefined : () => void query.refetch()} />
+					<ApiErrorPanel
+						error={query.error}
+						onRetry={query.isFetching ? undefined : () => void query.refetch()}
+					/>
 				) : null}
 				{item ? (
-					<AppView className={webView(transactionsSectionClasses.section)}>
-						<ComputeSubscriptionCard item={item} />
-						<BillingFact
-							label={t("billing.agent")}
-							value={item.agent_name ?? t("billing.unknown")}
-						/>
-						<BillingFact label={t("billing.plan")} value={item.plan_slug} />
-						<BillingFact label={t("billing.status")} value={item.status} />
-						<SubscriptionRecovery item={item} />
-						<BillingFact
-							label={t("billing.price")}
-							value={subscriptionPrice(item) ?? t("billing.unknown")}
-						/>
-						<BillingFact label={t("billing.term")} value={String(item.billing_term_months)} />
-						<BillingFact
-							label={t("billing.source")}
-							value={
-								item.subscription_kind === "included_basic"
-									? t("billing.included")
-									: item.funding_source === "wallet"
-										? t("billing.wallet")
-										: item.funding_source === "stripe"
-											? t("billing.stripe")
-											: t("billing.unknown")
-							}
-						/>
-						<BillingFact
-							label={t("billing.periodEnd")}
-							value={formatDate(item.current_period_end) ?? t("billing.unknown")}
-						/>
-						{item.funding_source === "wallet" ? <Text>{t("billing.walletNotice")}</Text> : null}
-						<Text className="text-muted-foreground">{t("billing.management")}</Text>
-						{item.deployment_id ? (
-							<DetailAction
-								label={t("billing.deployment")}
-								onPress={() => {
-									if (scope.isCurrent() && !scope.signal.aborted && item.deployment_id)
-										router.push(`/deployments/${encodeURIComponent(item.deployment_id)}`);
-								}}
-							/>
-						) : null}
-					</AppView>
+					<SubscriptionDetails
+						item={item}
+						onDeployment={() => {
+							if (scope.isCurrent() && !scope.signal.aborted && item.deployment_id)
+								router.push(`/deployments/${encodeURIComponent(item.deployment_id)}`);
+						}}
+					/>
 				) : !query.isError ? (
 					query.hasNextPage ? (
 						<>
@@ -434,5 +346,3 @@ export function SubscriptionDetailScreen({
 		</ReadScreen>
 	);
 }
-
-import { computeSubscriptionRecoveryPresentation } from "@clawdi/shared/api";

@@ -16,6 +16,7 @@ import { ClerkAction, ClerkText } from "../../src/ui/auth/clerk-form";
 import { AuthCredentialSecondaryActions } from "../../src/ui/auth/credential-options";
 import { ComputeSubscriptionCard } from "../../src/ui/billing/compute-subscription-card";
 import { PlanComparison } from "../../src/ui/billing/plan-comparison";
+import { SubscriptionDetails } from "../../src/ui/billing/subscription-details";
 import { BalanceCard, TransactionRow, WalletSettingsSections } from "../../src/ui/billing/wallet";
 import { ReadScreen } from "../../src/ui/read-screen";
 import {
@@ -31,6 +32,26 @@ import {
 import { SettingsPanelHeader, SettingsSection } from "../../src/ui/settings/section";
 import { AppScrollView } from "../../src/ui/view";
 import { WebView, webView } from "../../src/ui/web-layout";
+
+const subscriptionFixture = {
+	subscription_id: "csub_fixture",
+	subscription_kind: "paid",
+	plan_slug: "compute_performance",
+	funding_source: "wallet",
+	status: "active",
+	price_cents: 1900,
+	currency: "usd",
+	billing_term_months: 1,
+	current_period_end: "2026-11-05T12:00:00Z",
+	cancel_at_period_end: false,
+	agent_name: "Research Assistant",
+	is_orphan: false,
+	payment_state: "ok",
+	latest_failed_invoice_hosted_url: null,
+	next_payment_attempt_at: null,
+	recovery_action: null,
+	pending_plan_slug: null,
+} as const;
 
 /** Read-only stories render production presentation components without mounting Clerk hooks. */
 export default function AccountStoriesRoute() {
@@ -256,6 +277,18 @@ function AccountStories() {
 				<ClerkAction label={t("publicSession.open")} onPress={noop} />
 			</AuthFrame>
 		);
+	if (panel === "subscription-details")
+		return (
+			<ReadScreen>
+				<AppScrollView
+					contentContainerClassName={webView(`${billingPageClass} ${settingsDialogClasses.panel}`)}
+				>
+					<SettingsPanelHeader title={t("billing.details")} />
+					<SubscriptionDetails item={subscriptionFixture} onDeployment={noop} />
+				</AppScrollView>
+			</ReadScreen>
+		);
+
 	if (panel === "billing" || panel === "wallet")
 		return (
 			<ReadScreen>
@@ -300,6 +333,9 @@ function AccountStories() {
 										}}
 									/>
 								</WebView>
+								<ClerkText>
+									{t("billingParity.transactionsCount").replace("{count}", "1")}
+								</ClerkText>
 							</SettingsSection>
 						</>
 					) : (
@@ -308,27 +344,7 @@ function AccountStories() {
 								title={t("billingParity.subscriptions")}
 								description={t("billingParity.subscriptionsDescription")}
 							>
-								<ComputeSubscriptionCard
-									item={{
-										subscription_id: "csub_fixture",
-										subscription_kind: "paid",
-										plan_slug: "compute_performance",
-										funding_source: "wallet",
-										status: "active",
-										price_cents: 1900,
-										currency: "usd",
-										billing_term_months: 1,
-										current_period_end: "2026-11-05T12:00:00Z",
-										cancel_at_period_end: false,
-										agent_name: "Research Assistant",
-										is_orphan: false,
-										payment_state: "ok",
-										latest_failed_invoice_hosted_url: null,
-										next_payment_attempt_at: null,
-										recovery_action: null,
-										pending_plan_slug: null,
-									}}
-								/>
+								<ComputeSubscriptionCard item={subscriptionFixture} />
 							</SettingsSection>
 							<PlanComparison
 								plans={[
