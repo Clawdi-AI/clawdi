@@ -1,4 +1,5 @@
 import { memoriesSurfaceClasses } from "@clawdi/shared/ui";
+import { memoryFormCopy as copy } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Brain, Database } from "lucide-react-native";
 import { useEffect, useState } from "react";
@@ -8,10 +9,17 @@ import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
 import { Button } from "../ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "../ui/dialog";
 import { ErrorState } from "../ui/feedback";
 import { Icon } from "../ui/icon";
-import { Input } from "../ui/input";
+import { Input, Label } from "../ui/input";
 import { Skeleton } from "../ui/skeleton";
 import { Text } from "../ui/text";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
@@ -104,12 +112,24 @@ function MemorySettingsView() {
 					<Text>{t("memories.mem0Key")}</Text>
 				</Button>
 			) : null}
-			<Dialog open={open} onOpenChange={setOpen}>
+			<Dialog
+				open={open}
+				onOpenChange={(next) => {
+					if (!action.busy) {
+						setOpen(next);
+						if (!next) setSecret("");
+					}
+				}}
+			>
 				<DialogContent>
 					<DialogHeader>
-						<DialogTitle>{t("memories.settingsTitle")}</DialogTitle>
+						<DialogTitle>{copy.mem0Title}</DialogTitle>
+						<DialogDescription>{copy.mem0Description}</DialogDescription>
 					</DialogHeader>
+					<Label>{copy.mem0Label}</Label>
 					<Input
+						accessibilityLabel={copy.mem0Label}
+						placeholder={copy.mem0Placeholder}
 						secureTextEntry
 						autoCapitalize="none"
 						autoCorrect={false}
@@ -119,8 +139,18 @@ function MemorySettingsView() {
 					/>
 					{action.error ? <ErrorState /> : null}
 					<DialogFooter>
+						<Button
+							variant="ghost"
+							disabled={action.busy}
+							onPress={() => {
+								setOpen(false);
+								setSecret("");
+							}}
+						>
+							<Text>{copy.cancel}</Text>
+						</Button>
 						<Button disabled={action.busy || !secret.trim()} onPress={() => void save()}>
-							<Text>{t("memories.save")}</Text>
+							<Text>{copy.mem0Save}</Text>
 						</Button>
 					</DialogFooter>
 				</DialogContent>

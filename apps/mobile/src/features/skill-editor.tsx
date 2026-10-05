@@ -8,8 +8,20 @@ import {
 	skillCapabilities,
 	stripFrontmatter,
 } from "@clawdi/shared/api";
-import { detailLayoutClasses, skillDetailClasses } from "@clawdi/shared/ui";
-import { identityFor, RESOURCE_TINT_CLASSES, relativeTime } from "@clawdi/shared/view";
+import {
+	createSkillDialogClasses,
+	detailLayoutClasses,
+	skillDetailClasses,
+} from "@clawdi/shared/ui";
+import {
+	skillFormCopy as copy,
+	createSkillDescription,
+	identityFor,
+	RESOURCE_TINT_CLASSES,
+	relativeTime,
+	skillRemovalDescription,
+	skillRemovalTitle,
+} from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useLocalSearchParams, useNavigation } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
@@ -19,12 +31,13 @@ import {
 	FileText,
 	FolderKanban,
 	Pencil,
+	Plus,
+	Save,
 	Sparkles,
 	Tag,
 	Trash2,
 } from "lucide-react-native";
 import { useRef, useState } from "react";
-import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
@@ -34,16 +47,25 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { ChoiceSelect } from "../ui/detail/choice-select";
 import { DetailBackLink, DetailMeta, DetailPanel } from "../ui/detail/layout";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "../ui/dialog";
 import { EntityHeader } from "../ui/entity-card";
 import { ErrorState } from "../ui/feedback";
 import { Icon } from "../ui/icon";
 import { IconChip } from "../ui/icon-chip";
-import { Input } from "../ui/input";
+import { Input, Label } from "../ui/input";
 import { Markdown } from "../ui/markdown";
 import { PageHeader, PageHeaderSkeleton } from "../ui/page-header";
 import { AppScrollView, AppText, AppView } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
 import { Text } from "../ui/text";
+import { useConfirmation } from "../ui/use-confirmation";
 import { WebText, WebView, webText, webView } from "../ui/web-layout";
 
 import { ProjectResourceBoundary } from "./project-scope";
@@ -90,6 +112,7 @@ function SkillEditor({
 	skillKey?: string;
 }) {
 	const t = useI18n();
+	const confirmationDialog = useConfirmation();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { skills } = useMobileApi();
@@ -123,6 +146,7 @@ function SkillEditor({
 		create ? { name: "", description: "", instructions: "", revision: "" } : null,
 	);
 	const [source, setSource] = useState("");
+	const [importOpen, setImportOpen] = useState(false);
 	const [conflict, setConflict] = useState(false);
 	const dirty = Boolean(
 		source ||
@@ -140,7 +164,7 @@ function SkillEditor({
 		if (action.busy) return;
 		const visible = capture();
 		const ticket = ++confirmation.current;
-		Alert.alert(t("profile.unsavedTitle"), t("skills.discardWarning"), [
+		confirmationDialog.show(t("profile.unsavedTitle"), t("skills.discardWarning"), [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
 				text: t("profile.discard"),
@@ -215,25 +239,29 @@ function SkillEditor({
 		if (disabled || !current || !projectId || !skillKey) return;
 		const signal = scope.signal;
 		const visible = capture();
-		Alert.alert(t("skills.remove"), t("skills.removeWarning"), [
-			{ text: t("account.cancel"), style: "cancel" },
-			{
-				text: t("skills.remove"),
-				style: "destructive",
-				onPress: () => {
-					if (signal.aborted || !scope.isCurrent() || !visible()) return;
-					void action.run(async (isCurrent) => {
-						await read((s) => skills.remove(projectId, skillKey, current.content_hash, s));
-						if (!isCurrent()) return;
-						await invalidate();
-						if (isCurrent() && visible()) {
-							acknowledged.current = true;
-							router.replace("/skills");
-						}
-					});
+		confirmationDialog.show(
+			skillRemovalTitle(detail.data?.name ?? "this Skill"),
+			skillRemovalDescription(project?.name),
+			[
+				{ text: t("account.cancel"), style: "cancel" },
+				{
+					text: t("libraryPort.removeFromProject"),
+					style: "destructive",
+					onPress: () => {
+						if (signal.aborted || !scope.isCurrent() || !visible()) return;
+						return action.run(async (isCurrent) => {
+							await read((s) => skills.remove(projectId, skillKey, current.content_hash, s));
+							if (!isCurrent()) return;
+							await invalidate();
+							if (isCurrent() && visible()) {
+								acknowledged.current = true;
+								router.replace("/skills");
+							}
+						});
+					},
 				},
-			},
-		]);
+			],
+		);
 	};
 	const startEdit = () => {
 		if (disabled || !detail.data || detail.data.content === null) return;
@@ -251,6 +279,80 @@ function SkillEditor({
 		setConflict(false);
 		action.clearError();
 	};
+	const fields = draft ? (
+		<WebView recipe={create ? createSkillDialogClasses.form : skillDetailClasses.headingStack}>
+			{(["name", "description", "instructions"] as const).map((field) => (
+				<WebView
+					key={field}
+					recipe={create ? createSkillDialogClasses.field : skillDetailClasses.field}
+				>
+					<Label>{copy[field]}</Label>
+					<Input
+						accessibilityLabel={copy[field]}
+						placeholder={create ? copy[`${field}Placeholder`] : undefined}
+						value={draft[field]}
+						editable={!disabled}
+						multiline={field === "instructions"}
+						className={
+							field === "instructions"
+								? webView(create ? createSkillDialogClasses.textarea : skillDetailClasses.textarea)
+								: undefined
+						}
+						maxLength={field === "name" ? 64 : field === "description" ? 1024 : 204800}
+						autoCapitalize={field === "name" ? "none" : "sentences"}
+						onChangeText={(value) => setDraft({ ...draft, [field]: value })}
+					/>
+					{create && field === "name" ? (
+						<WebText recipe={createSkillDialogClasses.help}>{copy.nameHelp}</WebText>
+					) : null}
+				</WebView>
+			))}
+		</WebView>
+	) : null;
+	const saveButton = draft ? (
+		<Button
+			disabled={
+				disabled ||
+				conflict ||
+				!draft.name.trim() ||
+				!draft.description.trim() ||
+				!draft.instructions.trim()
+			}
+			onPress={() => void save()}
+		>
+			<Icon as={create ? Plus : Save} />
+			<Text>
+				{action.busy ? (create ? copy.adding : copy.saving) : create ? copy.title : copy.save}
+			</Text>
+		</Button>
+	) : null;
+	const projectPanel = (
+		<DetailPanel className={webView(skillDetailClasses.panel)}>
+			<WebView recipe={skillDetailClasses.headingStack}>
+				<WebView recipe={skillDetailClasses.headingRow}>
+					<Icon as={FolderKanban} />
+					<WebText recipe={skillDetailClasses.heading}>{t("skills.project")}</WebText>
+				</WebView>
+				<WebText recipe={skillDetailClasses.subtitle}>
+					{t("libraryPort.projectSkillDescription")}
+				</WebText>
+			</WebView>
+			<Badge variant="outline">
+				<Text>{canWrite ? "Editable" : "Read-only"}</Text>
+			</Badge>
+			{project ? (
+				<EntityHeader
+					icon={
+						<IconChip size="xs" tint={identityFor(project.name).colorClasses}>
+							{identityFor(project.name).emoji}
+						</IconChip>
+					}
+					title={project.name}
+					meta={project.description ?? ""}
+				/>
+			) : null}
+		</DetailPanel>
+	);
 	return (
 		<ReadScreen>
 			<AppScrollView
@@ -259,18 +361,6 @@ function SkillEditor({
 			>
 				<DetailBackLink href="/skills" label={t("skills.title")} />
 				{completed ? <AppText className="text-foreground">{t("skills.saved")}</AppText> : null}
-				{create ? <PageHeader title={t("libraryPort.createSkill")} /> : null}
-				{create ? (
-					<ChoiceSelect
-						disabled={action.busy}
-						value={selectedId ?? ""}
-						options={[
-							{ value: "", label: t("projects.choose") },
-							...writable.map((p) => ({ value: p.id, label: p.name })),
-						]}
-						onValueChange={setSelection}
-					/>
-				) : null}
 				{projects.isError ||
 				(!create && (detail.isError || !skillKey || (detail.data && !matches))) ? (
 					<ErrorState
@@ -286,67 +376,119 @@ function SkillEditor({
 						{t(!create && !projectId ? "skills.chooseProject" : "skills.readOnly")}
 					</AppText>
 				) : null}
-				{draft ? (
-					<AppView className="gap-3">
-						{(["name", "description", "instructions"] as const).map((field) => (
-							<AppView key={field} className="gap-2">
-								<AppText className="text-foreground">{t(`skills.${field}`)}</AppText>
-								<Input
-									accessibilityLabel={t(`skills.${field}`)}
-									value={draft[field]}
-									editable={!disabled}
-									multiline={field !== "name"}
-									maxLength={field === "name" ? 64 : field === "description" ? 1024 : 204800}
-									onChangeText={(value) => setDraft({ ...draft, [field]: value })}
-								/>
-							</AppView>
-						))}
-						<Button
-							variant="default"
-							size="sm"
-							disabled={
-								disabled ||
-								conflict ||
-								!draft.name.trim() ||
-								!draft.description.trim() ||
-								!draft.instructions.trim()
-							}
-							onPress={() => {
-								void save();
-							}}
+				{draft && create ? (
+					<Dialog
+						open
+						onOpenChange={(next) => {
+							if (!next && !action.busy) router.back();
+						}}
+					>
+						<DialogContent
+							className={webView(createSkillDialogClasses.dialog)}
+							showCloseButton={!action.busy}
 						>
-							<Text>{t("skills.save")}</Text>
-						</Button>
-						{!create ? (
-							<Button
-								variant="outline"
-								size="sm"
-								disabled={action.busy}
-								onPress={() => {
-									const visible = capture();
-									const ticket = ++confirmation.current;
-									Alert.alert(t("skills.discard"), t("skills.discardWarning"), [
-										{ text: t("account.cancel"), style: "cancel" },
-										{
-											text: t("skills.discard"),
-											style: "destructive",
-											onPress: () => {
-												if (ticket !== confirmation.current || !visible() || !scope.isCurrent())
-													return;
-												confirmation.current++;
-												setDraft(null);
-												setConflict(false);
-												action.clearError();
-												void detail.refetch();
-											},
-										},
-									]);
-								}}
-							>
-								<Text>{t("skills.discard")}</Text>
+							<DialogHeader>
+								<DialogTitle>{copy.title}</DialogTitle>
+								<DialogDescription>
+									{project ? createSkillDescription(project) : t("skills.chooseProject")}
+								</DialogDescription>
+							</DialogHeader>
+							{!projectId ? (
+								<ChoiceSelect
+									disabled={action.busy}
+									value={selectedId ?? ""}
+									options={[
+										{ value: "", label: copy.chooseProject },
+										...writable.map((p) => ({ value: p.id, label: p.name })),
+									]}
+									onValueChange={setSelection}
+								/>
+							) : null}
+							{fields}
+							<DialogFooter>
+								<Button variant="outline" disabled={action.busy} onPress={() => router.back()}>
+									<Text>{copy.cancel}</Text>
+								</Button>
+								{saveButton}
+							</DialogFooter>
+							{create && importOpen ? (
+								<AppView className="gap-3">
+									<AppText className="text-foreground">{t("skills.import")}</AppText>
+									<Input
+										accessibilityLabel={t("skills.github")}
+										placeholder={t("skills.github")}
+										autoCapitalize="none"
+										autoCorrect={false}
+										editable={!disabled}
+										value={source}
+										onChangeText={setSource}
+									/>
+									<Button
+										variant="default"
+										size="sm"
+										disabled={disabled || !source.trim()}
+										onPress={() => {
+											void save(true);
+										}}
+									>
+										<Text>{t("skills.import")}</Text>
+									</Button>
+								</AppView>
+							) : null}
+							<Button variant="ghost" onPress={() => setImportOpen(!importOpen)}>
+								<Text>{t("skills.import")}</Text>
 							</Button>
-						) : null}
-					</AppView>
+							{action.error ? <ErrorState /> : null}
+						</DialogContent>
+					</Dialog>
+				) : draft ? (
+					<>
+						<PageHeader
+							title={detail.data?.name ?? draft.name}
+							description={detail.data?.description}
+							actions={
+								<>
+									<Button
+										variant="outline"
+										disabled={action.busy}
+										onPress={() => {
+											const visible = capture();
+											const ticket = ++confirmation.current;
+											confirmationDialog.show(t("skills.discard"), t("skills.discardWarning"), [
+												{ text: copy.cancel, style: "cancel" },
+												{
+													text: t("skills.discard"),
+													style: "destructive",
+													onPress: () => {
+														if (ticket !== confirmation.current || !visible() || !scope.isCurrent())
+															return;
+														confirmation.current++;
+														setDraft(null);
+														setConflict(false);
+														action.clearError();
+														void detail.refetch();
+													},
+												},
+											]);
+										}}
+									>
+										<Text>{copy.cancel}</Text>
+									</Button>
+									{saveButton}
+								</>
+							}
+						/>
+						{projectPanel}
+						<DetailPanel className={webView(skillDetailClasses.instructionPanel)}>
+							<WebView recipe={skillDetailClasses.headingStack}>
+								<WebText recipe={skillDetailClasses.heading}>{copy.editTitle}</WebText>
+								<WebText recipe={skillDetailClasses.projectDescription}>
+									{copy.editDescription}
+								</WebText>
+							</WebView>
+							{fields}
+						</DetailPanel>
+					</>
 				) : detail.data && matches ? (
 					<>
 						<PageHeader
@@ -413,31 +555,7 @@ function SkillEditor({
 							<Icon as={FileText} />
 							<Text>{detail.data.file_count} files</Text>
 						</DetailMeta>
-						<DetailPanel className={webView(skillDetailClasses.panel)}>
-							<WebView recipe={skillDetailClasses.headingStack}>
-								<WebView recipe={skillDetailClasses.headingRow}>
-									<Icon as={FolderKanban} />
-									<WebText recipe={skillDetailClasses.heading}>{t("skills.project")}</WebText>
-								</WebView>
-								<WebText recipe={skillDetailClasses.subtitle}>
-									{t("libraryPort.projectSkillDescription")}
-								</WebText>
-							</WebView>
-							<Badge variant="outline">
-								<Text>{canWrite ? "Editable" : "Read-only"}</Text>
-							</Badge>
-							{project ? (
-								<EntityHeader
-									icon={
-										<IconChip size="xs" tint={identityFor(project.name).colorClasses}>
-											{identityFor(project.name).emoji}
-										</IconChip>
-									}
-									title={project.name}
-									meta={project.description ?? ""}
-								/>
-							) : null}
-						</DetailPanel>
+						{projectPanel}
 						<DetailPanel className={webView(skillDetailClasses.instructionPanel)}>
 							<WebView recipe={skillDetailClasses.headingStack}>
 								<WebView recipe={skillDetailClasses.headingRow}>
@@ -462,30 +580,6 @@ function SkillEditor({
 					</>
 				) : null}
 
-				{create ? (
-					<AppView className="gap-3">
-						<AppText className="text-foreground">{t("skills.import")}</AppText>
-						<Input
-							accessibilityLabel={t("skills.github")}
-							placeholder={t("skills.github")}
-							autoCapitalize="none"
-							autoCorrect={false}
-							editable={!disabled}
-							value={source}
-							onChangeText={setSource}
-						/>
-						<Button
-							variant="default"
-							size="sm"
-							disabled={disabled || !source.trim()}
-							onPress={() => {
-								void save(true);
-							}}
-						>
-							<Text>{t("skills.import")}</Text>
-						</Button>
-					</AppView>
-				) : null}
 				{conflict ? (
 					<AppText accessibilityRole="alert" className="text-destructive">
 						{t("skills.conflict")}
@@ -497,6 +591,7 @@ function SkillEditor({
 					</AppText>
 				) : null}
 			</AppScrollView>
+			{confirmationDialog.dialog}
 		</ReadScreen>
 	);
 }

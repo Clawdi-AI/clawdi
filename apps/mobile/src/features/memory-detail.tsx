@@ -1,10 +1,14 @@
 import { memoryDetailClasses } from "@clawdi/shared/ui";
-import { MEMORY_CATEGORY_COLORS, RESOURCE_TINT_CLASSES, relativeTime } from "@clawdi/shared/view";
+import {
+	memoryFormCopy as formCopy,
+	MEMORY_CATEGORY_COLORS,
+	RESOURCE_TINT_CLASSES,
+	relativeTime,
+} from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Brain, Laptop, Trash2 } from "lucide-react-native";
 import { useRef } from "react";
-import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
@@ -18,6 +22,7 @@ import { Icon } from "../ui/icon";
 import { IconChip } from "../ui/icon-chip";
 import { PageHeader, PageHeaderSkeleton } from "../ui/page-header";
 import { Text } from "../ui/text";
+import { useConfirmation } from "../ui/use-confirmation";
 import { WebText, WebView, webBoth, webText, webView } from "../ui/web-layout";
 
 import { isNotFound } from "./cloud-inventory";
@@ -34,6 +39,7 @@ export function MemoryDetailScreen() {
 
 function MemoryDetail({ id }: { id: string | undefined }) {
 	const t = useI18n();
+	const confirmationDialog = useConfirmation();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { cloud } = useMobileApi();
@@ -59,16 +65,16 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 		const signal = scope.signal;
 		const visible = capture();
 		const ticket = ++confirmation.current;
-		Alert.alert(t("memories.remove"), t("memories.removeWarning"), [
+		confirmationDialog.show(formCopy.deleteTitle, formCopy.deleteDetailDescription, [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
-				text: t("memories.remove"),
+				text: formCopy.delete,
 				style: "destructive",
 				onPress: () => {
 					if (ticket !== confirmation.current || signal.aborted || !scope.isCurrent() || !visible())
 						return;
 					confirmation.current++;
-					void action.run(async (current) => {
+					return action.run(async (current) => {
 						await read((s) => cloud.deleteMemory(id, s), signal);
 						// Cache invalidation survives leaving this screen, but never crosses accounts.
 						if (!scope.isCurrent()) return;
@@ -172,6 +178,7 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 				</>
 			)}
 			{action.error ? <ApiErrorPanel error={action.error} /> : null}
+			{confirmationDialog.dialog}
 		</LibraryPage>
 	);
 }

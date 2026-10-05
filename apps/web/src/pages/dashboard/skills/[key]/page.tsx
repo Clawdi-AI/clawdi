@@ -2,7 +2,7 @@
 
 import { buildSkillUpdateRequest, stripFrontmatter } from "@clawdi/shared/api";
 import { detailLayoutClasses, skillDetailClasses } from "@clawdi/shared/ui";
-import { skillFormCopy } from "@clawdi/shared/view";
+import { skillFormCopy, skillRemovalTitle } from "@clawdi/shared/view";
 
 export { stripFrontmatter } from "@clawdi/shared/api";
 
@@ -530,7 +530,7 @@ export function SkillDetailContent({
 										Edit
 									</Button>
 									<ConfirmAction
-										title={`Remove ${skill.name} from Project?`}
+										title={skillRemovalTitle(skill.name)}
 										description={<SkillRemovalDescription projectName={sourceProjectName} />}
 										confirmLabel={LIBRARY_COPY.removeFromProject}
 										destructive

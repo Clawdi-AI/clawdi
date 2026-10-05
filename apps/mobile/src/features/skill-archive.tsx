@@ -5,14 +5,14 @@ import {
 	skillTransferTargets,
 	transferSkill,
 } from "@clawdi/shared/api";
-import { detailLayoutClasses } from "@clawdi/shared/ui";
+import { detailLayoutClasses, sendSkillDialogClasses } from "@clawdi/shared/ui";
+import { skillFormCopy as copy, sendSkillTitle } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypto";
 import { Directory, File, Paths } from "expo-file-system";
-import { useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { isAvailableAsync, shareAsync } from "expo-sharing";
 import { useRef, useState } from "react";
-import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
@@ -20,12 +20,21 @@ import { useForegroundLease } from "../platform/use-foreground-lease";
 import { useMobileApi } from "../providers/api-provider";
 import { Button } from "../ui/button";
 import { ChoiceSelect } from "../ui/detail/choice-select";
-import { Input } from "../ui/input";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "../ui/dialog";
+import { Input, Label } from "../ui/input";
 import { PageHeader } from "../ui/page-header";
-import { AppScrollView, AppText, AppView } from "../ui/primitives";
+import { AppScrollView, AppText } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
 import { Text } from "../ui/text";
-import { webView } from "../ui/web-layout";
+import { useConfirmation } from "../ui/use-confirmation";
+import { WebView, webView } from "../ui/web-layout";
 import { BackButton } from "./cloud-inventory";
 import { useCloudProjects } from "./projects";
 import { routeParam } from "./read-helpers";
@@ -50,6 +59,7 @@ export function SkillArchiveScreen() {
 
 function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: string }) {
 	const t = useI18n();
+	const confirmationDialog = useConfirmation();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const capture = useForegroundLease();
@@ -64,6 +74,7 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 		"uploaded" | "copied" | "moved" | "partial" | "cleared" | null
 	>(null);
 	const confirmation = useRef(0);
+	const [archiveTools, setArchiveTools] = useState(false);
 	const detail = useQuery({
 		queryKey: accountQueryKey(scope, "skill-detail", sourceId, skillKey),
 		enabled: scope.isReady && Boolean(sourceId && skillKey),
@@ -93,10 +104,10 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 			`skill-exports-${await digestStringAsync(CryptoDigestAlgorithm.SHA256, scope.accountKey)}`,
 		);
 	};
-	const confirm = (title: string, message: string, run: () => void) => {
+	const confirm = (title: string, message: string, run: () => unknown) => {
 		const visible = capture();
 		const ticket = ++confirmation.current;
-		Alert.alert(title, message, [
+		confirmationDialog.show(title, message, [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
 				text: title,
@@ -110,7 +121,7 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 					)
 						return;
 					confirmation.current++;
-					run();
+					return run();
 				},
 			},
 		]);
@@ -135,7 +146,7 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 			await invalidate();
 		});
 	const transfer = (move: boolean) =>
-		void action.run(async (current) => {
+		action.run(async (current) => {
 			if (!ready || !writable || !skillKey || !targetId) return;
 			setResult(null);
 			const visible = capture();
@@ -197,123 +208,177 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 		});
 	return (
 		<ReadScreen>
-			<AppScrollView contentContainerClassName={webView(detailLayoutClasses.detailPage)}>
-				<BackButton />
-				<PageHeader title={t("skillArchive.title")} />
-				<Button
-					variant="outline"
-					size="sm"
-					disabled={action.busy}
-					onPress={() => {
-						void projects.refetch();
-						if (existing) void detail.refetch();
+			{existing ? (
+				<Dialog
+					open
+					onOpenChange={(next) => {
+						if (!next && !action.busy) router.back();
 					}}
 				>
-					<Text>{t("inventory.refresh")}</Text>
-				</Button>
-				{projects.isError || (existing && detail.isError) ? (
-					<ResourceError missing={false} />
-				) : null}
-				{!existing ? (
-					<>
-						<ChoiceSelect
-							disabled={action.busy}
-							value={sourceId}
-							onValueChange={setSourceId}
-							options={[
-								{ value: "", label: t("projects.choose") },
-								...(projects.data ?? [])
-									.filter((p) => isWritableSkillProject(p) && !p.archived_at)
-									.map((p) => ({ value: p.id, label: p.name })),
-							]}
-						/>
-						<Input
-							value={key}
-							onChangeText={setKey}
-							editable={!action.busy}
-							accessibilityLabel={t("skillArchive.key")}
-							placeholder={t("skillArchive.key")}
-							maxLength={200}
-						/>
-					</>
-				) : (
-					<AppText>{skillKey}</AppText>
-				)}
-				<AppText>{t("skillArchive.hint")}</AppText>
-				<Button
-					variant="outline"
-					size="sm"
-					disabled={!ready || !writable || !key.trim()}
-					onPress={() =>
-						existing
-							? confirm(t("skillArchive.replace"), t("skillArchive.replaceWarning"), upload)
-							: upload()
-					}
-				>
-					<Text>{t(existing ? "skillArchive.replace" : "skillArchive.upload")}</Text>
-				</Button>
-				{existing ? (
-					<AppView className="gap-3">
-						<Button variant="outline" size="sm" disabled={!ready} onPress={download}>
-							<Text>{t("skillArchive.download")}</Text>
+					<DialogContent
+						className={webView(sendSkillDialogClasses.dialog)}
+						showCloseButton={!action.busy}
+					>
+						<DialogHeader>
+							<DialogTitle>{sendSkillTitle(detail.data?.name ?? skillKey ?? "")}</DialogTitle>
+							<DialogDescription>
+								{`${copy.transferDescription} ${copy.transferAlternativeBefore}${copy.transferAlternativeEmphasis}${copy.transferAlternativeAfter}`}
+							</DialogDescription>
+						</DialogHeader>
+						<WebView recipe={sendSkillDialogClasses.body}>
+							<WebView recipe={sendSkillDialogClasses.field}>
+								<Label>{copy.destination}</Label>
+								<ChoiceSelect
+									value={targetId}
+									onValueChange={setTargetId}
+									disabled={action.busy}
+									options={[
+										{ value: "", label: copy.chooseProject },
+										...targets.map((p) => ({ value: p.id, label: p.name })),
+									]}
+								/>
+							</WebView>
+							{projects.isError || detail.isError ? <ResourceError missing={false} /> : null}
+							<DialogFooter>
+								<Button
+									variant="outline"
+									disabled={!ready || !writable || !targets.some((p) => p.id === targetId)}
+									onPress={() => transfer(false)}
+								>
+									<Text>{copy.copy}</Text>
+								</Button>
+								<Button
+									disabled={!ready || !writable || !targets.some((p) => p.id === targetId)}
+									onPress={() =>
+										confirm(copy.move, t("skillArchive.moveWarning"), () => transfer(true))
+									}
+								>
+									<Text>{copy.move}</Text>
+								</Button>
+							</DialogFooter>
+						</WebView>
+						<Button variant="ghost" onPress={() => setArchiveTools(!archiveTools)}>
+							<Text>{t("skillArchive.title")}</Text>
 						</Button>
-						<AppText>{t("skillArchive.target")}</AppText>
-						<ChoiceSelect
-							value={targetId}
-							onValueChange={setTargetId}
-							disabled={action.busy}
-							options={[
-								{ value: "", label: t("projects.choose") },
-								...targets.map((p) => ({ value: p.id, label: p.name })),
-							]}
-						/>
-						<Button
-							variant="outline"
-							size="sm"
-							disabled={!ready || !writable || !targets.some((p) => p.id === targetId)}
-							onPress={() => transfer(false)}
-						>
-							<Text>{t("skillArchive.copy")}</Text>
-						</Button>
-						<Button
-							variant="outline"
-							size="sm"
-							disabled={!ready || !writable || !targets.some((p) => p.id === targetId)}
-							onPress={() =>
-								confirm(t("skillArchive.move"), t("skillArchive.moveWarning"), () => transfer(true))
-							}
-						>
-							<Text>{t("skillArchive.move")}</Text>
-						</Button>
-					</AppView>
-				) : null}
-				<AppText>{t("skillArchive.cacheHint")}</AppText>
-				<Button
-					variant="outline"
-					size="sm"
-					disabled={action.busy || !scope.isReady}
-					onPress={() =>
-						confirm(
-							t("skillArchive.clear"),
-							t("skillArchive.clearWarning"),
-							() =>
-								void action.run(async (current) => {
-									const visible = capture();
-									const directory = await exportDirectory();
-									if (!current() || !visible()) return;
-									if (directory.exists) directory.delete();
-									setResult("cleared");
-								}),
-						)
-					}
-				>
-					<Text>{t("skillArchive.clear")}</Text>
-				</Button>
-				{result ? <AppText accessibilityRole="alert">{t(`skillArchive.${result}`)}</AppText> : null}
-				{action.error ? (
-					<AppText accessibilityRole="alert">{t("skillArchive.failed")}</AppText>
-				) : null}
-			</AppScrollView>
+						{archiveTools ? (
+							<WebView recipe={sendSkillDialogClasses.body}>
+								<Button variant="outline" disabled={!ready} onPress={download}>
+									<Text>{t("skillArchive.download")}</Text>
+								</Button>
+
+								<AppText>{t("skillArchive.hint")}</AppText>
+								<Button
+									variant="outline"
+									size="sm"
+									disabled={!ready || !writable || !key.trim()}
+									onPress={() =>
+										existing
+											? confirm(t("skillArchive.replace"), t("skillArchive.replaceWarning"), upload)
+											: upload()
+									}
+								>
+									<Text>{t(existing ? "skillArchive.replace" : "skillArchive.upload")}</Text>
+								</Button>
+								<AppText>{t("skillArchive.cacheHint")}</AppText>
+								<Button
+									variant="outline"
+									size="sm"
+									disabled={action.busy || !scope.isReady}
+									onPress={() =>
+										confirm(
+											t("skillArchive.clear"),
+											t("skillArchive.clearWarning"),
+											() =>
+												void action.run(async (current) => {
+													const visible = capture();
+													const directory = await exportDirectory();
+													if (!current() || !visible()) return;
+													if (directory.exists) directory.delete();
+													setResult("cleared");
+												}),
+										)
+									}
+								>
+									<Text>{t("skillArchive.clear")}</Text>
+								</Button>
+							</WebView>
+						) : null}
+						{result ? (
+							<AppText accessibilityRole="alert">{t(`skillArchive.${result}`)}</AppText>
+						) : null}
+						{action.error ? (
+							<AppText accessibilityRole="alert">{t("skillArchive.failed")}</AppText>
+						) : null}
+					</DialogContent>
+				</Dialog>
+			) : (
+				<AppScrollView contentContainerClassName={webView(detailLayoutClasses.detailPage)}>
+					<BackButton />
+					<PageHeader title={t("skillArchive.title")} />
+					<ChoiceSelect
+						disabled={action.busy}
+						value={sourceId}
+						onValueChange={setSourceId}
+						options={[
+							{ value: "", label: copy.chooseProject },
+							...(projects.data ?? [])
+								.filter((p) => isWritableSkillProject(p) && !p.archived_at)
+								.map((p) => ({ value: p.id, label: p.name })),
+						]}
+					/>
+					<Input
+						value={key}
+						onChangeText={setKey}
+						editable={!action.busy}
+						accessibilityLabel={t("skillArchive.key")}
+						placeholder={t("skillArchive.key")}
+						maxLength={200}
+					/>
+
+					<AppText>{t("skillArchive.hint")}</AppText>
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={!ready || !writable || !key.trim()}
+						onPress={() =>
+							existing
+								? confirm(t("skillArchive.replace"), t("skillArchive.replaceWarning"), upload)
+								: upload()
+						}
+					>
+						<Text>{t(existing ? "skillArchive.replace" : "skillArchive.upload")}</Text>
+					</Button>
+					<AppText>{t("skillArchive.cacheHint")}</AppText>
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={action.busy || !scope.isReady}
+						onPress={() =>
+							confirm(
+								t("skillArchive.clear"),
+								t("skillArchive.clearWarning"),
+								() =>
+									void action.run(async (current) => {
+										const visible = capture();
+										const directory = await exportDirectory();
+										if (!current() || !visible()) return;
+										if (directory.exists) directory.delete();
+										setResult("cleared");
+									}),
+							)
+						}
+					>
+						<Text>{t("skillArchive.clear")}</Text>
+					</Button>
+					{result ? (
+						<AppText accessibilityRole="alert">{t(`skillArchive.${result}`)}</AppText>
+					) : null}
+					{action.error ? (
+						<AppText accessibilityRole="alert">{t("skillArchive.failed")}</AppText>
+					) : null}
+				</AppScrollView>
+			)}
+			{confirmationDialog.dialog}
 		</ReadScreen>
 	);
 }

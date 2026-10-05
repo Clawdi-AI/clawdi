@@ -1,11 +1,15 @@
+import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import type { components } from "@clawdi/shared/api";
 import { isSearchQueryReady } from "@clawdi/shared/consts";
 import { ENTITY_CARD_MASONRY_CLASS, memoriesSurfaceClasses } from "@clawdi/shared/ui";
-import { getProjectResourceDefinition, MEMORY_CATEGORIES } from "@clawdi/shared/view";
+import {
+	memoryFormCopy as copy,
+	getProjectResourceDefinition,
+	MEMORY_CATEGORIES,
+} from "@clawdi/shared/view";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react-native";
 import { useEffect, useState } from "react";
-import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
@@ -13,17 +17,26 @@ import { useMobileApi } from "../providers/api-provider";
 import { ApiErrorPanel } from "../ui/api-error-panel";
 import { Button } from "../ui/button";
 import { LibraryPage } from "../ui/detail/layout";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "../ui/dialog";
 import { EmptyState } from "../ui/empty-state";
 import { HeroCardSkeleton } from "../ui/entity-card";
 import { Icon } from "../ui/icon";
-import { Input } from "../ui/input";
+import { Input, Label } from "../ui/input";
 import { ListToolbar } from "../ui/list-toolbar";
 import { MemoryCard } from "../ui/memories/memory-card";
 import { PageHeader } from "../ui/page-header";
 import { SearchInput } from "../ui/search-input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Text } from "../ui/text";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
+import { useConfirmation } from "../ui/use-confirmation";
 import { WebView, webView } from "../ui/web-layout";
 
 import { MemorySettings } from "./memory-settings";
@@ -68,11 +81,14 @@ export function MemoriesScreen() {
 
 function MemoriesView() {
 	const t = useI18n();
+	const confirmationDialog = useConfirmation();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { cloud } = useMobileApi();
 	const action = useAuthAction(scope);
 	const [content, setContent] = useState("");
+	const [addCategory, setAddCategory] = useState("fact");
+	const secretFinding = findLikelySecret(content);
 	const [editing, setEditing] = useState<string | null>(null);
 	const [category, setCategory] = useState("all");
 	const [open, setOpen] = useState(false);
@@ -95,12 +111,12 @@ function MemoriesView() {
 	];
 	const save = () =>
 		action.run(async (isCurrent) => {
-			if (!content.trim()) return;
+			if (!content.trim() || secretFinding) return;
 			await read(async (signal) => {
 				if (editing) await cloud.updateMemory(editing, content.trim(), signal);
 				else
 					await cloud.createMemory(
-						{ content: content.trim(), category: "fact", source: "manual" },
+						{ content: content.trim(), category: addCategory, source: "manual" },
 						signal,
 					);
 			});
@@ -112,14 +128,14 @@ function MemoriesView() {
 		});
 	const remove = (memory: Memory) => {
 		const signal = scope.signal;
-		Alert.alert(t("memories.remove"), t("memories.removeWarning"), [
+		confirmationDialog.show(copy.deleteTitle, copy.deleteDescription, [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
-				text: t("memories.remove"),
+				text: copy.delete,
 				style: "destructive",
 				onPress: () => {
 					if (signal.aborted || !scope.isCurrent()) return;
-					void action.run(async (isCurrent) => {
+					return action.run(async (isCurrent) => {
 						await read((requestSignal) => cloud.deleteMemory(memory.id, requestSignal));
 						if (!isCurrent()) return;
 						if (editing === memory.id) {
@@ -224,25 +240,65 @@ function MemoriesView() {
 					if (!action.busy) setOpen(v);
 				}}
 			>
-				<DialogContent>
+				<DialogContent
+					className={webView(memoriesSurfaceClasses.dialog)}
+					showCloseButton={!action.busy}
+				>
 					<DialogHeader>
-						<DialogTitle>{t(editing ? "memories.edit" : "libraryPort.createMemory")}</DialogTitle>
+						<DialogTitle>{editing ? t("memories.edit") : copy.title}</DialogTitle>
+						<DialogDescription>{copy.description}</DialogDescription>
 					</DialogHeader>
 					<Input
 						multiline
 						value={content}
 						onChangeText={setContent}
 						editable={!action.busy}
-						accessibilityLabel={t("libraryPort.content")}
+						accessibilityLabel={copy.content}
+						placeholder={copy.placeholder}
+						style={{ minHeight: 120 }}
 					/>
+					{secretFinding ? (
+						<ApiErrorPanel error={formatSecretMemoryWarning(secretFinding)} title={copy.secrets} />
+					) : null}
+					{!editing ? (
+						<WebView recipe={memoriesSurfaceClasses.fieldRow} className="flex-row">
+							<Label>{copy.category}</Label>
+							<Select
+								value={addCategory}
+								onValueChange={(value) => {
+									if (value) setAddCategory(value);
+								}}
+								disabled={action.busy}
+							>
+								<SelectTrigger size="sm" className={webView(memoriesSurfaceClasses.categorySelect)}>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{MEMORY_CATEGORIES.filter((c) => c.value !== "all").map((c) => (
+										<SelectItem key={c.value} value={c.value}>
+											{c.label}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</WebView>
+					) : null}
 					{action.error ? <ApiErrorPanel error={action.error} /> : null}
 					<DialogFooter>
-						<Button disabled={action.busy || !content.trim()} onPress={() => void save()}>
-							<Text>{t(editing ? "libraryPort.save" : "libraryPort.createMemory")}</Text>
+						<Button variant="ghost" disabled={action.busy} onPress={() => setOpen(false)}>
+							<Text>{copy.cancel}</Text>
+						</Button>
+						<Button
+							disabled={action.busy || !content.trim() || Boolean(secretFinding)}
+							onPress={() => void save()}
+						>
+							{!editing ? <Icon as={Plus} /> : null}
+							<Text>{editing ? t("libraryPort.save") : copy.save}</Text>
 						</Button>
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
+			{confirmationDialog.dialog}
 		</LibraryPage>
 	);
 }

@@ -29,8 +29,12 @@ export const vaultFormCopy = {
 } as const;
 
 export const splitVaultCopy = {
-	description:
-		"Keys named app/KEY become a vault per app, renamed to their clean KEY. Values stay server-side. New Vaults are not automatically linked to Projects. Copy and deletion are non-atomic; avoid concurrent edits. Failed destinations may remain; inspect them before retrying.",
+	descriptionBefore: "Keys named ",
+	prefixExample: "app/KEY",
+	descriptionBetween: " become a vault per app, renamed to their clean ",
+	keyExample: "KEY",
+	descriptionAfter:
+		". Values stay server-side. New Vaults are not automatically linked to Projects. Copy and deletion are non-atomic; avoid concurrent edits. Failed destinations may remain; inspect them before retrying.",
 	invalid:
 		"Choose distinct destination slugs using lowercase letters, numbers and hyphens, different from the source Vault.",
 	inspect:
@@ -48,6 +52,9 @@ export function splitVaultRemoveLabel(name: string) {
 
 export const vaultKeyFormCopy = {
 	addTitle: "Add keys",
+	createVault: "Create vault…",
+	newVaultPlaceholder: "Vault name…",
+	newVaultTaken: "That vault already exists. Choose it from the list or use a different name.",
 	save: "Save",
 	addDescriptionBefore: "Paste ",
 	format: "KEY=value",
@@ -71,3 +78,14 @@ export const vaultKeyFormCopy = {
 	referenceAction: "Link vault",
 	referenceAfter: " on this vault instead — one source of truth, changes apply everywhere.",
 };
+
+export function transferVaultKeysTitle(mode: "copy" | "move", count: number) {
+	return `${transferVaultKeysLabel(mode, count)} to…`;
+}
+export function transferVaultKeysLabel(mode: "copy" | "move", count: number) {
+	return `${mode === "move" ? "Move" : "Copy"} ${count} ${count === 1 ? "key" : "keys"}`;
+}
+
+export function vaultMoveWarning(name: string, count: number) {
+	return `${name} is used by ${count} Projects — moving these keys removes them from all of those Projects.`;
+}
