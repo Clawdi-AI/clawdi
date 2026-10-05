@@ -281,6 +281,7 @@ import {
 	CHANNEL_DESTRUCTIVE_ACTION_CLASS,
 	ChannelStatusBadge,
 	CopyInline,
+	DiscordConnectionIssueAlert,
 	isNormalChannelStatus,
 } from "@/hosted/v2/channels/channel-ui";
 import {
@@ -3013,7 +3014,10 @@ function AgentChannelBotCard({
 			</ConfirmAction>
 		) : null;
 	return (
-		<div data-agent-channel-account-id={bot.id} className="h-full min-w-0">
+		<div data-agent-channel-account-id={bot.id} className="flex h-full min-w-0 flex-col gap-2">
+			{bot.provider === "discord" ? (
+				<DiscordConnectionIssueAlert issue={bot.connection_issue} />
+			) : null}
 			{bot.link ? (
 				<ConnectedChannelGroup
 					link={bot.link}

@@ -8,6 +8,7 @@ export type AgentChannelCardItem = {
 	name: string;
 	status: string;
 	visibility: "private" | "public";
+	connection_issue?: ChannelAccount["connection_issue"];
 	available: boolean;
 	canLink: boolean;
 	maxLinks: number | null;
@@ -136,6 +137,7 @@ function cardFromAccount(account: ChannelAccount, link: AgentChannelLink | null)
 		name: account.name,
 		status: account.status,
 		visibility: account.visibility,
+		connection_issue: account.connection_issue,
 		available: account.status.toLowerCase() === "active",
 		canLink: account.status.toLowerCase() === "active",
 		maxLinks: null,
@@ -152,6 +154,7 @@ function cardFromPool(bot: ChannelBotPoolItem, link: AgentChannelLink | null): M
 		name: bot.name,
 		status: bot.status,
 		visibility: bot.visibility,
+		connection_issue: bot.connection_issue,
 		available: bot.available,
 		canLink: bot.capabilities.link_agent,
 		maxLinks: bot.max_links ?? null,

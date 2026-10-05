@@ -7,6 +7,7 @@ import json
 import logging
 import random
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from types import TracebackType
 from typing import Protocol
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -24,14 +25,17 @@ from app.core.database import finish_cleanup
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     CHANNEL_PROVIDER_DISCORD,
+    CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
     CHANNEL_STATUS_ACTIVE,
     ChannelAccount,
     ChannelBinding,
 )
 from app.services.channels import (
     decrypt_provider_token,
+    delete_channel_account_runtime_markers,
     record_discord_dispatch,
     update_discord_binding_display_name_from_trusted_event,
+    upsert_channel_account_runtime_marker,
 )
 from app.services.discord_advisory_session import (
     DiscordAdvisorySession,
@@ -53,6 +57,14 @@ DISCORD_DEFAULT_INTENTS = 46593
 
 _NON_RETRYABLE_CLOSE_CODES = {4004, 4010, 4011, 4012, 4013, 4014}
 _SESSION_RESET_CLOSE_CODES = {4007, 4009}
+_DISCORD_GATEWAY_TERMINAL_CLOSE_OUTCOMES = {
+    4004: "authentication_failed",
+    4010: "invalid_configuration",
+    4011: "invalid_configuration",
+    4012: "invalid_configuration",
+    4013: "invalid_intents",
+    4014: "disallowed_intents",
+}
 
 type GatewayFrame = dict[str, JsonValue]
 
@@ -244,6 +256,18 @@ class DiscordGatewayWorker:
                     )
                     if state.account_revision is not None:
                         self._terminal_account_revisions[account_id] = state.account_revision
+                        try:
+                            await self._persist_terminal_close_marker(
+                                account_id=account_id,
+                                account_revision=state.account_revision,
+                                close_code=close_code,
+                            )
+                        except Exception:
+                            log.exception(
+                                "discord gateway account %s failed to persist "
+                                "terminal close marker",
+                                account_id,
+                            )
                     return
                 log.warning("discord gateway account %s disconnected: %s", account_id, exc)
             except Exception as exc:
@@ -382,7 +406,15 @@ class DiscordGatewayWorker:
         if op == 0:
             _update_gateway_session_state(state, frame)
             if frame.get("t") in {"READY", "RESUMED"}:
-                state.session_established = True
+                if not state.session_established:
+                    state.session_established = True
+                    try:
+                        await self._clear_terminal_close_markers(account_id)
+                    except Exception:
+                        log.exception(
+                            "discord gateway account %s failed to clear terminal close marker",
+                            account_id,
+                        )
             await record_discord_gateway_dispatch(
                 self._sessionmaker,
                 account_id,
@@ -404,6 +436,37 @@ class DiscordGatewayWorker:
             raise RuntimeError("discord invalidated gateway session")
         elif op == 11:
             state.heartbeat_acknowledged = True
+
+    async def _persist_terminal_close_marker(
+        self,
+        *,
+        account_id: UUID,
+        account_revision: str,
+        close_code: int,
+    ) -> None:
+        outcome = _DISCORD_GATEWAY_TERMINAL_CLOSE_OUTCOMES.get(close_code)
+        if outcome is None:
+            return
+        occurred_at = datetime.now(UTC)
+        async with self._sessionmaker() as db:
+            await upsert_channel_account_runtime_marker(
+                db,
+                account_id=account_id,
+                kind=CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
+                scope=account_revision,
+                outcome=outcome,
+                occurred_at=occurred_at,
+            )
+            await db.commit()
+
+    async def _clear_terminal_close_markers(self, account_id: UUID) -> None:
+        async with self._sessionmaker() as db:
+            await delete_channel_account_runtime_markers(
+                db,
+                account_id=account_id,
+                kind=CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
+            )
+            await db.commit()
 
     def _observe_done_task(self, account_id: UUID, task: asyncio.Task[None]) -> None:
         with contextlib.suppress(asyncio.CancelledError):
