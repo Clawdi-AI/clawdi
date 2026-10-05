@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { totalmem } from "node:os";
-import { dirname, join } from "node:path";
+import { posix } from "node:path";
 
 const MIB = 1024 * 1024;
 const BEGIN = "# ClawdiOOMProtection=v1";
@@ -34,15 +34,17 @@ export function runtimeMemoryBudget(
 		?.slice(4);
 	// Reject traversal rather than following an unexpected kernel/fixture path.
 	let current =
-		relative !== undefined && !relative.split("/").includes("..") ? join(root, relative) : root;
+		relative !== undefined && !relative.split("/").includes("..")
+			? posix.join(root, relative)
+			: root;
 	for (;;) {
-		const raw = read(join(current, "memory.max"))?.trim();
+		const raw = read(posix.join(current, "memory.max"))?.trim();
 		if (raw && /^\d+$/.test(raw)) {
 			const limit = Number(raw);
 			if (Number.isSafeInteger(limit) && limit > 0) budget = Math.min(budget, limit);
 		}
 		if (current === root) break;
-		current = dirname(current);
+		current = posix.dirname(current);
 	}
 	return budget;
 }
