@@ -13,16 +13,18 @@ afterEach(() => {
 	scratch = "";
 });
 
-test.each(["appliedState", "manifestLastGood", "managedSecretCacheFile"] as const)(
-	"Hermes warm refuses %s before invoking services",
-	async (marker) => {
-		scratch = mkdtempSync(join(tmpdir(), "hermes-warm-safety-"));
-		const paths = { ...getRuntimePaths({ mode: "hosted" }), [marker]: join(scratch, marker) };
-		mkdirSync(dirname(paths[marker]), { recursive: true });
-		writeFileSync(paths[marker], "{}");
-		await expect(warmHostedHermesRuntime(paths)).rejects.toThrow("unclaimed runtime");
-	},
-);
+test.each([
+	"runtimeContextFile",
+	"appliedState",
+	"manifestLastGood",
+	"managedSecretCacheFile",
+] as const)("Hermes warm refuses %s before invoking services", async (marker) => {
+	scratch = mkdtempSync(join(tmpdir(), "hermes-warm-safety-"));
+	const paths = { ...getRuntimePaths({ mode: "hosted" }), [marker]: join(scratch, marker) };
+	mkdirSync(dirname(paths[marker]), { recursive: true });
+	writeFileSync(paths[marker], "{}");
+	await expect(warmHostedHermesRuntime(paths)).rejects.toThrow("unclaimed runtime");
+});
 
 test("Hermes warm refuses local mode before invoking services", async () => {
 	await expect(warmHostedHermesRuntime(getRuntimePaths({ mode: "local" }))).rejects.toThrow(

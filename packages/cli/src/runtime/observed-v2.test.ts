@@ -594,6 +594,55 @@ describe("hosted runtime observed v2", () => {
 				expect((await readHostedRuntimeObserved(paths))?.status).toBe("ok");
 				const parent = readRuntimeAppliedState(paths);
 				if (!parent) throw new Error("Expected applied fixture");
+				const healthyEvent = {
+					schemaVersion: "clawdi.runtimeWatchEvent.v1",
+					status: "applied",
+					instanceId: parent.instanceId,
+					generation: parent.generation,
+					etag: parent.etag,
+					sourceRevision: parent.sourceRevision,
+					sourcePath: parent.contentIdentity.sourcePath,
+					selfReexec: false,
+					systemdApply: { applied: true },
+					convergence: {},
+					cliUpdate: { selfReexec: false },
+				};
+				const successfulPoll = {
+					schemaVersion: "clawdi.runtimeWatchEvent.v1",
+					status: "not_modified",
+					instanceId: parent.instanceId,
+					generation: parent.generation,
+					etag: parent.etag,
+					sourceRevision: parent.sourceRevision,
+					sourcePath: parent.contentIdentity.sourcePath,
+					selfReexec: false,
+				};
+				for (const extra of [
+					{},
+					{ generation: parent.generation + 1 },
+					{ etag: "changed" },
+					{ sourceRevision: "f".repeat(64) },
+					{ sourcePath: "different" },
+					{ selfReexec: true },
+					{ healthImpact: "manifest_transport" },
+					{ error: "failed" },
+					{ convergence: { agentPlugins: { status: "failed" } } },
+				]) {
+					writeFileSync(
+						paths.runtimeWatchStatus,
+						JSON.stringify({ ...idleWatch, event: healthyEvent }),
+					);
+					mutateParent = () =>
+						writeFileSync(
+							paths.runtimeWatchStatus,
+							JSON.stringify({ ...idleWatch, event: { ...successfulPoll, ...extra } }),
+						);
+					const captured = await readHostedRuntimeObserved(paths);
+					if (Object.keys(extra).length === 0) expect(captured?.status).toBe("ok");
+					else expect(captured).toBeNull();
+				}
+				writeFileSync(paths.runtimeWatchStatus, JSON.stringify(idleWatch));
+
 				mutateParent = () =>
 					writeRuntimeAppliedState({ ...parent, appliedAt: "2026-09-12T12:00:00.000Z" }, paths);
 				expect(await readHostedRuntimeObserved(paths)).toBeNull();

@@ -1637,7 +1637,8 @@ async function applyRuntimeDesiredState(
 					}
 				},
 				activate: ({ staleSystemUnits, staleUserUnits, invalidatedUserUnits }) => {
-					if (adoptableWarmEgress(paths)) {
+					const warmEgress = adoptableWarmEgress(paths);
+					if (warmEgress) {
 						waitForEgressSnapshot(paths);
 						egressPrerequisiteActivated = true;
 						assertRuntimeUserCanRead(paths.egressSystemCaFile, paths.userHome);
@@ -1672,6 +1673,7 @@ async function applyRuntimeDesiredState(
 									? [RUNTIME_SIDECAR_SYSTEM_UNIT]
 									: [],
 								adoptUserUnits,
+								concurrentFreshHermes: warmEgress,
 							},
 						);
 						if (activation.applied && adoptUserUnits.length > 0) {

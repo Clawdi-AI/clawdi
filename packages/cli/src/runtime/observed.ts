@@ -208,8 +208,8 @@ export async function readHostedRuntimeObserved(
 	if (
 		runtimeContentSha256(readRuntimeAppliedState(paths)) !== runtimeContentSha256(appliedState) ||
 		runtimeContentSha256(readRuntimeBootStatus(paths)) !== runtimeContentSha256(boot) ||
-		watchStatusRevision(readJsonRecord(paths.runtimeWatchStatus)) !==
-			watchStatusRevision(watchStatus)
+		watchStatusRevision(readJsonRecord(paths.runtimeWatchStatus), appliedState) !==
+			watchStatusRevision(watchStatus, appliedState)
 	)
 		return null;
 
@@ -219,9 +219,49 @@ export async function readHostedRuntimeObserved(
 	return observed;
 }
 
-function watchStatusRevision(value: JsonRecord | null): string {
+function watchStatusRevision(
+	value: JsonRecord | null,
+	applied: RuntimeAppliedState | null,
+): string {
 	if (value === null) return runtimeContentSha256(null);
 	const { timestamp: _timestamp, ...semantic } = value;
+	const event = recordValue(semantic.event);
+	// Success metadata differs between apply and an unchanged poll. Only remove
+	// that metadata after exact authority and explicit successful health checks.
+	if (
+		applied &&
+		event &&
+		["applied", "not_modified"].includes(String(event.status)) &&
+		event.instanceId === applied.instanceId &&
+		event.generation === applied.generation &&
+		event.etag === applied.etag &&
+		event.sourceRevision === applied.sourceRevision &&
+		event.sourcePath === applied.contentIdentity.sourcePath &&
+		event.selfReexec === false
+	) {
+		const {
+			status: _status,
+			enabledRuntimes: _runtimes,
+			cliUpdate,
+			systemdUnitsChanged: _units,
+			systemdApply,
+			convergence,
+			...remaining
+		} = event;
+		const outputs = recordValue(convergence);
+		const plugins = recordValue(outputs?.agentPlugins);
+		if (
+			(!cliUpdate || recordValue(cliUpdate)?.selfReexec === false) &&
+			(!systemdApply || recordValue(systemdApply)?.applied === true) &&
+			!Object.hasOwn(event, "error") &&
+			!Object.hasOwn(event, "errors") &&
+			!Object.hasOwn(event, "healthImpact") &&
+			!Object.hasOwn(event, "healthAuthority") &&
+			(!plugins || !["error", "failed"].includes(String(plugins.status))) &&
+			(!outputs || !Object.hasOwn(outputs, "errors"))
+		)
+			return runtimeContentSha256({ ...semantic, event: { ...remaining, status: "healthy" } });
+	}
 	return runtimeContentSha256(semantic);
 }
 

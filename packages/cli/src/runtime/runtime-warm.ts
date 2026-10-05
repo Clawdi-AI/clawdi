@@ -7,8 +7,10 @@ import {
 	resolveOpenClawSdkExport,
 } from "../lib/codex-oauth-native-store";
 import { reconcilePendingRuntimeCliUpgrade } from "./cli-update";
+import { initializeAnonymousEgressSnapshot } from "./egress-snapshot";
 import { resolveHostedOpenClawWorkspace } from "./hosted-openclaw-context";
 import { runtimeCommandPath } from "./manifest-install";
+import { assertFirstWriterUnclaimed, warmFirstOpenClawWriter } from "./openclaw-first-writer";
 import {
 	anonymousOpenClawGatewayPatch,
 	seedAnonymousOpenClawAuthProbes,
@@ -45,8 +47,17 @@ export async function warmHostedOpenClawRuntime(
 	runtimeUser = "clawdi",
 ): Promise<void> {
 	if (paths.mode !== "hosted") throw new Error("runtime warm requires hosted runtime mode");
-	if ([paths.appliedState, paths.manifestLastGood, paths.managedSecretCacheFile].some(existsSync))
+	if (
+		[
+			paths.runtimeContextFile,
+			paths.appliedState,
+			paths.manifestLastGood,
+			paths.managedSecretCacheFile,
+		].some(existsSync)
+	)
 		throw new Error("runtime warm requires an unclaimed runtime with no applied tenant state");
+	assertFirstWriterUnclaimed(paths);
+	initializeAnonymousEgressSnapshot(paths);
 	// Refresh verification after the golden volume copy, before the claim shim.
 	reconcilePendingRuntimeCliUpgrade(paths);
 	const command = runtimeCommandPath("openclaw", paths.userHome);
@@ -87,6 +98,7 @@ export async function warmHostedOpenClawRuntime(
 	seedAnonymousOpenClawAuthProbes(paths, command);
 	flushPersistedStepRevisions(paths);
 	recordWarmOpenClawGateway(paths);
+	warmFirstOpenClawWriter(paths, sdk, identity.uid, identity.gid);
 }
 
 async function waitForGatewayHealth(): Promise<void> {

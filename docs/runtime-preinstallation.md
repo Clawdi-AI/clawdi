@@ -72,7 +72,7 @@ Hosted `backend-golden-native` suite.
 ## Anonymous warm qualification and opt-in hot apply
 
 The hidden root-only `clawdi runtime warm` command keeps its existing interface.
-It requires an unclaimed Hosted OpenClaw home with no applied state, last-good
+It requires an unclaimed Hosted OpenClaw home with no runtime context, applied state, last-good
 manifest or cached tenant secrets. It creates this instance's egress CA and a
 random gateway token, reuses the prepared official unit, starts the gateway and
 records its unit, drop-in, environment, CA and structural-config identity.
@@ -89,8 +89,9 @@ OAuth gate; Hermes authentication is resolved at process startup and is not
 hot-adopted. No placeholder manifest or Cloud identity is used. Warm-up can be
 repeated on an unclaimed home; failed warm-up must not qualify it for a claim.
 A root-owned private warm marker enables first-apply ordering on small tenant
-shapes: after the platform/egress services become ready, start the dashboard,
-wait for its local HTTP response, then start the gateway. Normal gateway and
+shapes: after the platform/egress services become ready, start fresh dashboard
+and gateway services together when anonymous egress has been safely adopted;
+otherwise wait for dashboard HTTP before starting the gateway. Normal gateway and
 channel observation still determine readiness. Existing tenants keep their
 normal startup order. Final systemd state is freshly read in one batch per
 scope, including unit enablement; warm-up does not replace this proof.
@@ -172,6 +173,26 @@ The exact claimed snapshot must be acknowledged before activation succeeds;
 normal fresh systemd proof still runs. Changed engine or platform inputs keep
 the normal restart boundary. The single-use warm receipt is consumed after
 successful activation. Neither warm command's CLI interface changes.
+
+
+
+Anonymous OpenClaw warm-up also preloads the official config-mutation SDK in a
+runtime-user service with a root-owned 0600 single-use socket. Its root-private
+receipt binds the idle invocation, effective units, socket inode, Node binary
+and installed SDK source graph. First hot apply persists a consumed marker before
+sending its batch, checks an acknowledgement bound to the request UUID/hash,
+and re-attests ownership before stopping the service/socket. Native config reads,
+cross-process locking, CAS and full validation still run for that batch. Stale
+or absent receipts select the normal official writer; crash/replay never resends
+a consumed request. The temporary service is outside tenant unit inventory.
+Both warm commands refuse an existing runtime context before mutating services.
+
+When anonymous egress has been re-attested and acknowledged for the claimed
+snapshot, first Hermes activation starts its fresh dashboard and gateway
+together. Normal/fallback activation keeps its previous ordering. The producer
+accepts equivalent successful watch events only under the exact current apply
+and source authority, while retaining complete parent/health fences. Native
+qualification of these changes is pending; no 10 s readiness bound is claimed.
 
 Done: Docker CLI typecheck, focused systemd/producer regressions and Biome pass;
 latency qualification belongs to the paired provisioning fixture.

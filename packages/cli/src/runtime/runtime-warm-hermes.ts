@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { reconcilePendingRuntimeCliUpgrade } from "./cli-update";
+import { initializeAnonymousEgressSnapshot } from "./egress-snapshot";
 import { hermesManagedPython } from "./hermes-python";
 import { hermesWarmMarker } from "./hermes-warm-state";
 import { runtimeCommandPath } from "./manifest-install";
@@ -30,8 +31,16 @@ export async function warmHostedHermesRuntime(
 	runtimeUser = "clawdi",
 ): Promise<void> {
 	if (paths.mode !== "hosted") throw new Error("runtime warm requires hosted runtime mode");
-	if ([paths.appliedState, paths.manifestLastGood, paths.managedSecretCacheFile].some(existsSync))
+	if (
+		[
+			paths.runtimeContextFile,
+			paths.appliedState,
+			paths.manifestLastGood,
+			paths.managedSecretCacheFile,
+		].some(existsSync)
+	)
 		throw new Error("runtime warm requires an unclaimed runtime with no applied tenant state");
+	initializeAnonymousEgressSnapshot(paths);
 	// A volume copy changes the inode/device identity of the prepared CLI.
 	// Refresh its normal verification before the first tenant init needs it.
 	reconcilePendingRuntimeCliUpgrade(paths);

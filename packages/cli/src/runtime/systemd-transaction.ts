@@ -257,6 +257,8 @@ export function applySystemdRuntimeUpdate(
 	after: SystemdUnitSnapshot,
 	opts: {
 		recoverFailedUnits?: boolean;
+		/** First apply only, after anonymous egress identity and snapshot ACK. */
+		concurrentFreshHermes?: boolean;
 		restartChangedUnits?: boolean;
 		invalidatedUserUnits?: readonly string[];
 		activationScope?: {
@@ -483,6 +485,7 @@ export function applySystemdRuntimeUpdate(
 		const gateway = "hermes-gateway.service";
 		if (
 			hermesWasWarmed(paths) &&
+			!opts.concurrentFreshHermes &&
 			!existsSync(paths.appliedState) &&
 			startUserUnits.includes(dashboard) &&
 			startUserUnits.includes(gateway)
