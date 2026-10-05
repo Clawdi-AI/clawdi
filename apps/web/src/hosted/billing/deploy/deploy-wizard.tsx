@@ -1484,8 +1484,8 @@ export function DeployWizard() {
 				</SettingsSection>
 				<div className="pb-32 @2xl/main:pb-24">
 					<SettingsSection title="Personalize">
-						<div className="flex max-w-2xl flex-col gap-4">
-							<div className="flex w-full max-w-md flex-col gap-1.5">
+						<div className="flex flex-wrap items-start gap-4">
+							<div className="flex w-64 flex-col gap-1.5">
 								<Label htmlFor="agent-name">Name in Clawdi</Label>
 								<Input
 									id="agent-name"
@@ -1526,43 +1526,41 @@ export function DeployWizard() {
 									</span>
 								) : null}
 							</div>
-							<div className="flex flex-wrap items-start gap-4">
-								<div className="flex flex-col gap-1.5">
-									<Label htmlFor="agent-language">Language</Label>
-									<Select
-										items={LANGUAGE_SELECT_ITEMS}
-										value={language || "default"}
-										onValueChange={(v) => {
-											setLanguage(v === null || v === "default" ? "" : v);
-										}}
-									>
-										<SelectTrigger id="agent-language" type="button">
-											<SelectValue />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectGroup>
-												<SelectItem value="default">Default</SelectItem>
-												{LANGUAGE_OPTIONS.map((l) => (
-													<SelectItem key={l.code} value={l.code}>
-														{l.label}
-													</SelectItem>
-												))}
-											</SelectGroup>
-										</SelectContent>
-									</Select>
-								</div>
-								{tzOptions.length > 0 ? (
-									<div className="flex w-full max-w-sm min-w-0 flex-col gap-1.5">
-										<Label htmlFor="agent-timezone">Timezone</Label>
-										<TimezoneCombobox
-											id="agent-timezone"
-											value={timezone}
-											onValueChange={setTimezone}
-											options={tzOptions}
-										/>
-									</div>
-								) : null}
+							<div className="flex flex-col gap-1.5">
+								<Label htmlFor="agent-language">Language</Label>
+								<Select
+									items={LANGUAGE_SELECT_ITEMS}
+									value={language || "default"}
+									onValueChange={(v) => {
+										setLanguage(v === null || v === "default" ? "" : v);
+									}}
+								>
+									<SelectTrigger id="agent-language" type="button">
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectGroup>
+											<SelectItem value="default">Default</SelectItem>
+											{LANGUAGE_OPTIONS.map((l) => (
+												<SelectItem key={l.code} value={l.code}>
+													{l.label}
+												</SelectItem>
+											))}
+										</SelectGroup>
+									</SelectContent>
+								</Select>
 							</div>
+							{tzOptions.length > 0 ? (
+								<div className="flex w-64 min-w-0 flex-col gap-1.5">
+									<Label htmlFor="agent-timezone">Timezone</Label>
+									<TimezoneCombobox
+										id="agent-timezone"
+										value={timezone}
+										onValueChange={setTimezone}
+										options={tzOptions}
+									/>
+								</div>
+							) : null}
 						</div>
 					</SettingsSection>
 				</div>
