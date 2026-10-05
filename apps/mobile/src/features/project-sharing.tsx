@@ -1,10 +1,16 @@
 import type { Project } from "@clawdi/shared/api";
 import { shareProjectClasses } from "@clawdi/shared/ui";
-import { SHARING_COPY } from "@clawdi/shared/view";
+import {
+	canceledInvitationDescription,
+	formatMembershipToken,
+	projectSharingFormCopy as formCopy,
+	removedMemberDescription,
+	SHARING_COPY,
+} from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useFocusEffect, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, AppState, Share } from "react-native";
+import { AppState, Share } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
@@ -12,15 +18,15 @@ import { useMobileApi } from "../providers/api-provider";
 import { ApiErrorPanel } from "../ui/api-error-panel";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { DetailBackLink, LibraryPage } from "../ui/detail/layout";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../ui/dialog";
 import { ErrorState, LoadingScreen } from "../ui/feedback";
 import { Input } from "../ui/input";
-import { PageHeader } from "../ui/page-header";
 import { AppText, AppView } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
 import { Skeleton } from "../ui/skeleton";
 import { Text } from "../ui/text";
-import { WebText, WebView } from "../ui/web-layout";
+import { useConfirmation } from "../ui/use-confirmation";
+import { WebText, WebView, webText, webView } from "../ui/web-layout";
 import { BackButton, formatDate } from "./cloud-inventory";
 import { useProject } from "./project-scope";
 import { canManageSharing, linkIsActive, safeShareUrl } from "./project-sharing-state";
@@ -70,6 +76,7 @@ export function SharingView({
 	embedded?: boolean;
 }) {
 	const t = useI18n();
+	const confirmationDialog = useConfirmation();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { sharing } = useMobileApi();
@@ -77,6 +84,7 @@ export function SharingView({
 	const action = useAuthAction(scope);
 	const [email, setEmail] = useState("");
 	const [label, setLabel] = useState("");
+	const [showLabel, setShowLabel] = useState(false);
 	const [freshLink, setFreshLink] = useState<{ id: string; url: string } | null>(null);
 	const presentation = useRef(0);
 	const focused = useRef(false);
@@ -123,16 +131,18 @@ export function SharingView({
 		title: string,
 		message: string,
 		mutate: (signal: AbortSignal) => Promise<unknown>,
+		confirmLabel = title,
+		cancelLabel: string = formCopy.cancel,
 	) => {
 		const scopeSignal = scope.signal;
-		Alert.alert(title, message, [
-			{ text: t("account.cancel"), style: "cancel" },
+		confirmationDialog.show(title, message, [
+			{ text: cancelLabel, style: "cancel" },
 			{
-				text: title,
+				text: confirmLabel,
 				style: "destructive",
 				onPress: () => {
 					if (scopeSignal.aborted || !scope.isCurrent() || !focused.current) return;
-					void action.run(async (isCurrent) => {
+					return action.run(async (isCurrent) => {
 						await read(mutate, scopeSignal);
 						if (!isCurrent()) return;
 						setFreshLink(null);
@@ -175,9 +185,6 @@ export function SharingView({
 
 	const content = (
 		<WebView recipe={shareProjectClasses.panels}>
-			{!embedded ? (
-				<PageHeader title={`Share ${project.name}`} description={SHARING_COPY.permissions} />
-			) : null}
 			{inventory.isError ? (
 				<ApiErrorPanel error={inventory.error} onRetry={() => void inventory.refetch()} />
 			) : null}
@@ -217,8 +224,12 @@ export function SharingView({
 							size="sm"
 							disabled={action.busy}
 							onPress={() =>
-								confirm(t("sharing.cancelInvite"), t("sharing.cancelWarning"), (signal) =>
-									sharing.cancelInvitation(project.id, invitation.id, signal),
+								confirm(
+									formCopy.cancelTitle,
+									canceledInvitationDescription(invitation.invitee_email),
+									(signal) => sharing.cancelInvitation(project.id, invitation.id, signal),
+									formCopy.cancelInvitation,
+									formCopy.keepInvitation,
 								)
 							}
 						>
@@ -238,15 +249,22 @@ export function SharingView({
 							<WebText recipe={shareProjectClasses.name}>
 								{member.user_email ?? member.user_display ?? member.user_id}
 							</WebText>
-							<WebText recipe={shareProjectClasses.meta}>{member.role}</WebText>
+							<WebText recipe={shareProjectClasses.meta}>
+								{formatMembershipToken(member.role)}
+							</WebText>
 						</WebView>
 						<Button
 							variant="ghost"
 							size="sm"
 							disabled={action.busy}
 							onPress={() =>
-								confirm(t("sharing.removeMember"), t("sharing.removeWarning"), (signal) =>
-									sharing.removeMember(project.id, member.user_id, signal),
+								confirm(
+									formCopy.removeTitle,
+									removedMemberDescription(
+										member.user_email ?? member.user_display ?? member.user_id,
+									),
+									(signal) => sharing.removeMember(project.id, member.user_id, signal),
+									formCopy.removeMember,
 								)
 							}
 						>
@@ -268,14 +286,20 @@ export function SharingView({
 					</Button>
 				</WebView>
 				<WebText recipe={shareProjectClasses.description}>{SHARING_COPY.linkDescription}</WebText>
-				<Input
-					accessibilityLabel={t("sharing.label")}
-					placeholder={t("sharing.label")}
-					value={label}
-					onChangeText={setLabel}
-					maxLength={200}
-					editable={!action.busy}
-				/>
+				{showLabel ? (
+					<Input
+						accessibilityLabel={t("sharing.label")}
+						placeholder={t("sharing.label")}
+						value={label}
+						onChangeText={setLabel}
+						maxLength={200}
+						editable={!action.busy}
+					/>
+				) : (
+					<Button variant="ghost" size="sm" onPress={() => setShowLabel(true)}>
+						<Text>{t("sharing.label")}</Text>
+					</Button>
+				)}
 				{freshLink ? (
 					<WebView recipe={shareProjectClasses.section}>
 						<Text>{t("sharing.once")}</Text>
@@ -326,8 +350,11 @@ export function SharingView({
 								size="sm"
 								disabled={action.busy}
 								onPress={() =>
-									confirm(t("sharing.revoke"), t("sharing.revokeWarning"), (signal) =>
-										sharing.revokeLink(project.id, link.id, signal),
+									confirm(
+										formCopy.revokeTitle,
+										formCopy.revokeDescription,
+										(signal) => sharing.revokeLink(project.id, link.id, signal),
+										formCopy.revoke,
 									)
 								}
 							>
@@ -343,21 +370,43 @@ export function SharingView({
 				textClassName="text-destructive"
 				disabled={action.busy}
 				onPress={() =>
-					confirm(t("sharing.stop"), t("sharing.stopWarning"), (signal) =>
-						sharing.stopSharing(project.id, signal),
+					confirm(
+						formCopy.stopTitle,
+						formCopy.stopDescription,
+						(signal) => sharing.stopSharing(project.id, signal),
+						SHARING_COPY.stop,
+						formCopy.keepSharing,
 					)
 				}
 			>
 				<Text>{SHARING_COPY.stop}</Text>
 			</Button>
+			{confirmationDialog.dialog}
 		</WebView>
 	);
 	return embedded ? (
 		content
 	) : (
-		<LibraryPage>
-			<DetailBackLink href="/projects" label={t("projects.title")} />
-			{content}
-		</LibraryPage>
+		<ReadScreen>
+			<Dialog
+				open
+				onOpenChange={(next) => {
+					if (!next && !action.busy) router.back();
+				}}
+			>
+				<DialogContent
+					className={webView(shareProjectClasses.content)}
+					showCloseButton={!action.busy}
+				>
+					<DialogHeader>
+						<DialogTitle
+							className={webText(shareProjectClasses.title)}
+						>{`Share ${project.name}`}</DialogTitle>
+						<DialogDescription>{SHARING_COPY.permissions}</DialogDescription>
+					</DialogHeader>
+					{content}
+				</DialogContent>
+			</Dialog>
+		</ReadScreen>
 	);
 }

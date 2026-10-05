@@ -1,7 +1,6 @@
 import type { components } from "@clawdi/shared/api";
 import { identityFor } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
@@ -14,6 +13,7 @@ import { HeroCard, HeroCardSkeleton } from "../ui/entity-card";
 import { IconChip } from "../ui/icon-chip";
 import { PageHeader } from "../ui/page-header";
 import { Text } from "../ui/text";
+import { useConfirmation } from "../ui/use-confirmation";
 
 export function ProjectInvitationsScreen() {
 	const scope = useAccountScope();
@@ -22,6 +22,7 @@ export function ProjectInvitationsScreen() {
 
 function InvitationsView() {
 	const t = useI18n();
+	const confirmationDialog = useConfirmation();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { sharing } = useMobileApi();
@@ -36,23 +37,27 @@ function InvitationsView() {
 	});
 	const respond = (invitation: components["schemas"]["InvitationResponse"], accept: boolean) => {
 		const signal = scope.signal;
-		Alert.alert(t(accept ? "sharing.accept" : "sharing.decline"), invitation.project_name, [
-			{ text: t("account.cancel"), style: "cancel" },
-			{
-				text: t(accept ? "sharing.accept" : "sharing.decline"),
-				style: accept ? "default" : "destructive",
-				onPress: () => {
-					if (signal.aborted || !scope.isCurrent()) return;
-					void action.run(async (isCurrent) => {
-						await read(async (requestSignal) => {
-							if (accept) await sharing.acceptInvitation(invitation.id, requestSignal);
-							else await sharing.declineInvitation(invitation.id, requestSignal);
-						}, signal);
-						if (isCurrent()) await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
-					});
+		confirmationDialog.show(
+			t(accept ? "sharing.accept" : "sharing.decline"),
+			invitation.project_name,
+			[
+				{ text: t("account.cancel"), style: "cancel" },
+				{
+					text: t(accept ? "sharing.accept" : "sharing.decline"),
+					style: accept ? "default" : "destructive",
+					onPress: () => {
+						if (signal.aborted || !scope.isCurrent()) return;
+						return action.run(async (isCurrent) => {
+							await read(async (requestSignal) => {
+								if (accept) await sharing.acceptInvitation(invitation.id, requestSignal);
+								else await sharing.declineInvitation(invitation.id, requestSignal);
+							}, signal);
+							if (isCurrent()) await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
+						});
+					},
 				},
-			},
-		]);
+			],
+		);
 	};
 
 	return (
@@ -98,6 +103,7 @@ function InvitationsView() {
 			{invitations.isSuccess && !invitations.data.length ? (
 				<EmptyState description={t("sharing.noInvitations")} />
 			) : null}
+			{confirmationDialog.dialog}
 		</LibraryPage>
 	);
 }

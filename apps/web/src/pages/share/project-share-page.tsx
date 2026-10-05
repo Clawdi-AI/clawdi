@@ -1,6 +1,12 @@
 "use client";
 
-import { projectDetailHref } from "@clawdi/shared/view";
+import { projectSharePageClasses as shareStyles } from "@clawdi/shared/ui";
+import {
+	projectDetailHref,
+	projectInvitationAccess,
+	projectInvitationCopy,
+	projectInvitationCounts,
+} from "@clawdi/shared/view";
 import { Link, useRouter } from "@tanstack/react-router";
 import { AlertCircle, CheckCircle2, KeyRound, LogIn, ShieldCheck, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -139,20 +145,20 @@ export default function SharePage({ token }: { token: string }) {
 		<Shell>
 			<Card>
 				<CardHeader>
-					<div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
+					<div className={shareStyles.invitation}>
 						<Sparkles className="size-4" />
-						Project invitation
+						{projectInvitationCopy.title}
 					</div>
-					<CardTitle className="mt-2 text-2xl">{data.project_name}</CardTitle>
-					<p className="text-sm text-muted-foreground">
-						Shared by <span className="font-medium text-foreground">{data.owner_display}</span>{" "}
-						<span className="text-xs font-mono">@{data.owner_handle}</span>
+					<CardTitle className={shareStyles.title}>{data.project_name}</CardTitle>
+					<p className={shareStyles.description}>
+						{projectInvitationCopy.sharedBy}
+						<span className={shareStyles.owner}>{data.owner_display}</span>{" "}
+						<span className={shareStyles.handle}>@{data.owner_handle}</span>
 					</p>
 				</CardHeader>
-				<CardContent className="space-y-6">
-					<p className="text-sm text-muted-foreground">
-						{data.skill_count} {data.skill_count === 1 ? "Skill" : "Skills"} · {data.vault_count}{" "}
-						{data.vault_count === 1 ? "Vault" : "Vaults"}
+				<CardContent className={shareStyles.body}>
+					<p className={shareStyles.description}>
+						{projectInvitationCounts(data.skill_count, data.vault_count)}
 					</p>
 
 					<ViewerAccessSummary hasVaults={data.vault_count > 0} />
@@ -176,11 +182,11 @@ export default function SharePage({ token }: { token: string }) {
 							<Button
 								onClick={() => void upgrade.execute().catch(() => undefined)}
 								disabled={upgrade.isPending || !sessionIdentity}
-								className="w-full"
+								className={shareStyles.action}
 								size="lg"
 							>
 								<CheckCircle2 className="mr-2 size-4" />
-								{upgrade.isPending ? "Joining…" : "Accept invitation"}
+								{upgrade.isPending ? projectInvitationCopy.joining : projectInvitationCopy.accept}
 							</Button>
 							{upgrade.error instanceof ShareError && upgrade.error.code === "already_member" ? (
 								<Alert>
@@ -203,7 +209,7 @@ export default function SharePage({ token }: { token: string }) {
 							<Button
 								render={<Link to="/sign-in" search={{ redirect_url: `/share/${token}` }} />}
 								nativeButton={false}
-								className="w-full"
+								className={shareStyles.action}
 								size="lg"
 							>
 								<LogIn className="mr-2 size-4" />
@@ -228,14 +234,7 @@ export default function SharePage({ token }: { token: string }) {
 }
 
 function ViewerAccessSummary({ hasVaults }: { hasVaults: boolean }) {
-	return (
-		<p className="text-sm text-muted-foreground">
-			You can view this Project and link it to your Agents. Only the owner can edit.
-			{hasVaults
-				? " Your Agents and the Clawdi CLI can use its keys; secret values stay hidden in the dashboard."
-				: ""}
-		</p>
-	);
+	return <p className={shareStyles.description}>{projectInvitationAccess(hasVaults)}</p>;
 }
 
 function CopyableCommand({ command }: { command: string }) {

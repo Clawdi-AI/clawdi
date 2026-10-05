@@ -1,6 +1,12 @@
 "use client";
 
-import { displayProjectName } from "@clawdi/shared/view";
+import { createProjectDialogClasses } from "@clawdi/shared/ui";
+import {
+	archiveProjectTitle,
+	createProjectDialogCopy,
+	displayProjectName,
+	projectSharingFormCopy,
+} from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Ellipsis, Pencil, Share2, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
@@ -146,15 +152,13 @@ export function ProjectActions({
 					}
 				}}
 			>
-				<DialogContent className="sm:max-w-md">
+				<DialogContent className={createProjectDialogClasses.dialog}>
 					<DialogHeader>
-						<DialogTitle>Edit project</DialogTitle>
-						<DialogDescription>
-							Update its name and description without leaving this page.
-						</DialogDescription>
+						<DialogTitle>{createProjectDialogCopy.editTitle}</DialogTitle>
+						<DialogDescription>{createProjectDialogCopy.editDescription}</DialogDescription>
 					</DialogHeader>
 					<form
-						className="space-y-4"
+						className={createProjectDialogClasses.form}
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (!name.trim() || editLockedRef.current) return;
@@ -162,7 +166,7 @@ export function ProjectActions({
 							update.mutate();
 						}}
 					>
-						<div className="space-y-1.5">
+						<div className={createProjectDialogClasses.field}>
 							<Label htmlFor={`project-name-${project.id}`}>Name</Label>
 							<Input
 								id={`project-name-${project.id}`}
@@ -171,14 +175,14 @@ export function ProjectActions({
 								onChange={(event) => setName(event.target.value)}
 							/>
 						</div>
-						<div className="space-y-1.5">
+						<div className={createProjectDialogClasses.field}>
 							<Label htmlFor={`project-description-${project.id}`}>Description</Label>
 							<Textarea
 								id={`project-description-${project.id}`}
 								value={description}
 								maxLength={2000}
 								onChange={(event) => setDescription(event.target.value)}
-								className="min-h-24"
+								className={createProjectDialogClasses.description}
 							/>
 						</div>
 						<DialogFooter>
@@ -187,7 +191,7 @@ export function ProjectActions({
 							</Button>
 							<Button type="submit" disabled={!name.trim() || update.isPending}>
 								{update.isPending ? <Spinner className="size-3.5" /> : <Pencil />}
-								Save changes
+								{createProjectDialogCopy.saveChanges}
 							</Button>
 						</DialogFooter>
 					</form>
@@ -205,14 +209,9 @@ export function ProjectActions({
 			</ShareProjectDialog>
 
 			<ConfirmAction
-				title={`Archive ${projectName}?`}
-				description={
-					<p>
-						Agents will stop using this Project's Skills and Vaults. The Project will disappear from
-						your library.
-					</p>
-				}
-				confirmLabel="Archive project"
+				title={archiveProjectTitle(projectName)}
+				description={<p>{projectSharingFormCopy.archiveDescription}</p>}
+				confirmLabel={projectSharingFormCopy.archive}
 				destructive
 				onConfirm={() => archive.mutateAsync()}
 				open={archiveOpen}

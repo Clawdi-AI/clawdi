@@ -1,5 +1,10 @@
 import type { components } from "@clawdi/shared/api";
-import { detailLayoutClasses } from "@clawdi/shared/ui";
+import { detailLayoutClasses, projectSharePageClasses as styles } from "@clawdi/shared/ui";
+import {
+	projectInvitationCopy as copy,
+	projectInvitationAccess,
+	projectInvitationCounts,
+} from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -9,12 +14,14 @@ import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
 import { useMobileApi } from "../providers/api-provider";
 import { Button } from "../ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Input } from "../ui/input";
 import { PageHeader } from "../ui/page-header";
-import { AppScrollView, AppText, AppView } from "../ui/primitives";
+import { AppScrollView, AppText } from "../ui/primitives";
 import { ReadScreen } from "../ui/read-screen";
+import { Separator } from "../ui/separator";
 import { Text } from "../ui/text";
-import { webView } from "../ui/web-layout";
+import { WebText, webView } from "../ui/web-layout";
 import { BackButton } from "./cloud-inventory";
 import { shareTokenFromUrl } from "./project-sharing-state";
 
@@ -122,21 +129,34 @@ function JoinView() {
 					<Text>{t("sharing.preview")}</Text>
 				</Button>
 				{preview ? (
-					<AppView className="gap-3 rounded-2xl bg-card p-4">
-						<AppText className="text-xl text-foreground">{preview.data.project_name}</AppText>
-						<AppText>
-							{preview.data.owner_display} · {preview.data.owner_handle}
-						</AppText>
-						<AppText>
-							{t("skills.title")}: {preview.data.skill_count}
-						</AppText>
-						<AppText>
-							{t("sharing.vaults")}: {preview.data.vault_count}
-						</AppText>
-						<Button variant="default" size="sm" disabled={action.busy} onPress={() => void join()}>
-							<Text>{t("sharing.join")}</Text>
-						</Button>
-					</AppView>
+					<Card>
+						<CardHeader>
+							<WebText recipe={styles.invitation}>{copy.title}</WebText>
+							<CardTitle className={webView(styles.title)}>{preview.data.project_name}</CardTitle>
+							<WebText recipe={styles.description}>
+								{copy.sharedBy}
+								<WebText recipe={styles.owner}>{preview.data.owner_display}</WebText>{" "}
+								<WebText recipe={styles.handle}>@{preview.data.owner_handle}</WebText>
+							</WebText>
+						</CardHeader>
+						<CardContent className={webView(styles.body)}>
+							<WebText recipe={styles.description}>
+								{projectInvitationCounts(preview.data.skill_count, preview.data.vault_count)}
+							</WebText>
+							<WebText recipe={styles.description}>
+								{projectInvitationAccess(preview.data.vault_count > 0)}
+							</WebText>
+							<Separator />
+							<Button
+								className={webView(styles.action)}
+								size="lg"
+								disabled={action.busy}
+								onPress={() => void join()}
+							>
+								<Text>{action.busy ? copy.joining : copy.accept}</Text>
+							</Button>
+						</CardContent>
+					</Card>
 				) : null}
 				{joined ? <AppText accessibilityLiveRegion="polite">{t("sharing.joined")}</AppText> : null}
 				{action.error ? (

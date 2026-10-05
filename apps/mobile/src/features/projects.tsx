@@ -1,19 +1,21 @@
 import type { Project } from "@clawdi/shared/api";
-import { HERO_GRID_CLASS, vaultsSurfaceClasses } from "@clawdi/shared/ui";
+import { createProjectDialogClasses, HERO_GRID_CLASS } from "@clawdi/shared/ui";
 import {
+	archiveProjectTitle,
 	canManageCustomProject,
 	compareProjectsForUse,
 	formatResourceCount,
+	createProjectDialogCopy as formCopy,
 	getProjectResourceDefinition,
 	isCustomProject,
 	projectMatchesSearch,
 	projectSearchRank,
+	projectSharingFormCopy,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { MoreHorizontal, Plus } from "lucide-react-native";
 import { useState } from "react";
-import { Alert } from "react-native";
 import { useAuthAction } from "../auth/use-auth-action";
 import { useI18n } from "../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../platform/account-lifecycle";
@@ -45,7 +47,8 @@ import { PageHeader } from "../ui/page-header";
 import { ProjectResourceCard } from "../ui/projects/project-resource-card";
 import { SearchInput } from "../ui/search-input";
 import { Text } from "../ui/text";
-import { WebView } from "../ui/web-layout";
+import { useConfirmation } from "../ui/use-confirmation";
+import { WebView, webView } from "../ui/web-layout";
 
 export function useCloudProjects() {
 	const { cloud } = useMobileApi();
@@ -78,6 +81,7 @@ export function ProjectsScreen() {
 
 function ProjectsView() {
 	const t = useI18n();
+	const confirmationDialog = useConfirmation();
 	const cache = useQueryClient();
 	const router = useRouter();
 	const projects = useCloudProjects();
@@ -109,33 +113,37 @@ function ProjectsView() {
 		});
 	const archive = (project: Project) => {
 		const signal = scope.signal;
-		Alert.alert(t("projects.archive"), t("projects.archiveWarning"), [
-			{ text: t("account.cancel"), style: "cancel" },
-			{
-				text: t("projects.archive"),
-				style: "destructive",
-				onPress: () => {
-					if (signal.aborted || !scope.isCurrent()) return;
-					void action.run(async (isCurrent) => {
-						await read((requestSignal) => cloud.archiveProject(project.id, requestSignal));
-						if (!isCurrent()) return;
-						if (editing === project.id) reset();
-						await projects.refetch();
-					});
+		confirmationDialog.show(
+			archiveProjectTitle(project.name),
+			projectSharingFormCopy.archiveDescription,
+			[
+				{ text: t("account.cancel"), style: "cancel" },
+				{
+					text: projectSharingFormCopy.archive,
+					style: "destructive",
+					onPress: () => {
+						if (signal.aborted || !scope.isCurrent()) return;
+						return action.run(async (isCurrent) => {
+							await read((requestSignal) => cloud.archiveProject(project.id, requestSignal));
+							if (!isCurrent()) return;
+							if (editing === project.id) reset();
+							await projects.refetch();
+						});
+					},
 				},
-			},
-		]);
+			],
+		);
 	};
 	const leave = (project: Project) => {
 		const signal = scope.signal;
-		Alert.alert(t("projects.leave"), t("projects.leaveWarning"), [
+		confirmationDialog.show(t("projects.leave"), t("projects.leaveWarning"), [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
 				text: t("projects.leave"),
 				style: "destructive",
 				onPress: () => {
 					if (signal.aborted || !scope.isCurrent()) return;
-					void action.run(async (isCurrent) => {
+					return action.run(async (isCurrent) => {
 						await read((requestSignal) => sharing.leaveProject(project.id, requestSignal), signal);
 						if (isCurrent()) await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
 					});
@@ -280,24 +288,40 @@ function ProjectsView() {
 					if (!action.busy) setOpen(v);
 				}}
 			>
-				<DialogContent>
+				<DialogContent
+					className={webView(createProjectDialogClasses.dialog)}
+					showCloseButton={!action.busy}
+				>
 					<DialogHeader>
-						<DialogTitle>
-							{t(editing ? "libraryPort.editProject" : "libraryPort.createProject")}
-						</DialogTitle>
-						<DialogDescription>{t("libraryPort.projectFormDescription")}</DialogDescription>
+						<DialogTitle>{editing ? formCopy.editTitle : formCopy.title}</DialogTitle>
+						<DialogDescription>
+							{editing ? formCopy.editDescription : formCopy.description}
+						</DialogDescription>
 					</DialogHeader>
-					<WebView recipe={vaultsSurfaceClasses.form}>
-						<Label>{t("libraryPort.name")}</Label>
-						<Input value={name} onChangeText={setName} maxLength={200} editable={!action.busy} />
-						<Label>{t("libraryPort.description")}</Label>
-						<Input
-							multiline
-							value={description}
-							onChangeText={setDescription}
-							maxLength={2000}
-							editable={!action.busy}
-						/>
+					<WebView recipe={createProjectDialogClasses.form}>
+						<WebView recipe={createProjectDialogClasses.field}>
+							<Label>{formCopy.name}</Label>
+							<Input
+								value={name}
+								onChangeText={setName}
+								maxLength={200}
+								editable={!action.busy}
+								placeholder={editing ? undefined : formCopy.namePlaceholder}
+								accessibilityLabel={formCopy.name}
+							/>
+						</WebView>
+						<WebView recipe={createProjectDialogClasses.field}>
+							<Label>{formCopy.descriptionLabel}</Label>
+							<Input
+								multiline
+								value={description}
+								placeholder={editing ? undefined : formCopy.descriptionPlaceholder}
+								className={webView(createProjectDialogClasses.description)}
+								onChangeText={setDescription}
+								maxLength={2000}
+								editable={!action.busy}
+							/>
+						</WebView>
 					</WebView>
 					{action.error ? <ApiErrorPanel error={action.error} /> : null}
 					<DialogFooter>
@@ -305,11 +329,12 @@ function ProjectsView() {
 							<Text>{t("libraryPort.cancel")}</Text>
 						</Button>
 						<Button disabled={action.busy || !name.trim()} onPress={() => void save()}>
-							<Text>{t(editing ? "libraryPort.save" : "libraryPort.createProject")}</Text>
+							<Text>{editing ? formCopy.saveChanges : formCopy.title}</Text>
 						</Button>
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
+			{confirmationDialog.dialog}
 		</LibraryPage>
 	);
 }
