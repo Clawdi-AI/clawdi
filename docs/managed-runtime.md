@@ -445,6 +445,44 @@ that boundary convergent in both directions:
   required active/enabled state, or a stale unit that cannot reach its required
   inactive/disabled state, fails the apply.
 
+Memory protection is a reload-only policy inside these generated declarations.
+Both official gateway drop-ins set `OOMPolicy=continue`, so a kernel OOM of a
+tool child does not ask systemd to stop the gateway. The four Clawdi system
+services also set `OOMPolicy=continue`. Gateway services have no negative score
+because children inherit it. Policy-only changes run `daemon-reload` without
+restarting active services; command, secret, and other environment changes retain
+normal activation rules. `OOMPolicy` changes on reload. Environment variables
+apply on the next natural service start. An inactive or failed service can still
+receive the usual recovery start.
+
+Hermes gets `TERMINAL_LOCAL_MEMORY_MAX_MB` at half the tightest visible cgroup-v2
+`memory.max` or physical RAM, in whole MiB (2,048 MiB on a 4 GiB instance;
+4,096 MiB on 8 GiB). Its official background-worker scopes honor this knob
+only as a tighter bound, with their native 64 MiB minimum and 4 GiB cap.
+OpenClaw's default Linux child wrapper already raises tool child scores to
+`1000`; Clawdi leaves it at its official default. These controls require native
+versions that implement them; older Hermes versions may ignore the memory
+override. See the official
+[Hermes worker implementation](https://github.com/NousResearch/hermes-agent/blob/main/tools/process_registry.py)
+and [OpenClaw child implementation](https://github.com/openclaw/openclaw/blob/main/src/process/linux-oom-score.ts).
+Hermes foreground commands and browser helpers can still share the gateway
+cgroup and score; this policy does not provide complete tool isolation.
+
+Lowering `oom_score_adj` below its inherited minimum requires `CAP_SYS_RESOURCE`
+in the host's initial user namespace, so an unprivileged instance cannot apply
+negative `OOMScoreAdjust` protection. Effective management-process score
+protection requires a host-side mechanism owned by the host/container owner.
+Memory reclaim protection also needs an allocation through ancestor cgroups;
+this CLI does not set ineffective leaf-only `MemoryMin`/`MemoryLow` reservations
+or alter host-owned cgroups. Ancestor `memory.oom.group=1` can still kill an
+entire instance and cannot be overridden by a gateway's `OOMPolicy`.
+
+Done: `scripts/test.sh cli src/runtime/oom-protection.test.ts
+src/runtime/manifest-services.test.ts` verifies rendering, cgroup sizing,
+idempotence, and no restart on policy migration. `scripts/test.sh runtime-systemd`
+uses an isolated privileged Docker container to verify PID preservation and a
+real child OOM while the gateway remains active.
+
 An official installer failure reports its exit code, terminating signal or
 spawn error, and bounded stdout/stderr tails. Capture is capped at 64 KiB per
 stream and each reported tail at 4,000 characters. Terminal controls are
