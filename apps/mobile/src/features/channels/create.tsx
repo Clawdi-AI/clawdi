@@ -129,7 +129,7 @@ export function ChannelCreate({ refresh }: { refresh: () => Promise<void> }) {
 											}}
 										/>
 									))}
-								</WebView>{" "}
+								</WebView>
 								<WebText recipe={styles.unsupported}>
 									{copy.unsupported}
 									{copy.unsupportedInventory}
