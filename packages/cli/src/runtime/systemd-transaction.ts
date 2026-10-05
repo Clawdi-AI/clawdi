@@ -137,7 +137,11 @@ function readManagedSystemdUnits(
 			systemdUnitFingerprint(
 				paths,
 				entry.unitName,
-				`${base}\n${systemdEffectiveDirectives(entry.generatedContents)}`,
+				`${base}\n${systemdEffectiveDirectives(
+					includeOomProtection
+						? entry.generatedContents
+						: withoutOomProtection(entry.generatedContents),
+				)}`,
 				includeOomProtection,
 			),
 		);

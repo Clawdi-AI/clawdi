@@ -15,6 +15,7 @@ database migration, CI, and implementation details.
 ### CLI 0.14.102
 
 - OpenClaw gateways no longer restart during CLI-only handoffs when their managed runtime settings are unchanged, and required provider credentials are published before configuration reloads.
+- Gateway services now survive tool-child OOM kills, while Hermes bounds local tool memory to half of the instance's visible memory budget.
 
 ### CLI 0.14.101
 

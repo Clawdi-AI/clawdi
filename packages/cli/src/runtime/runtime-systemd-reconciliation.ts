@@ -10,8 +10,8 @@ import {
 	rmdirSync,
 	rmSync,
 } from "node:fs";
-import { parseEnv } from "node:util";
 import { dirname, isAbsolute, join } from "node:path";
+import { parseEnv } from "node:util";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
@@ -1093,7 +1093,8 @@ export function publishRetainedOpenClawEnvironment(
 			),
 		);
 		const managedEnvironmentIsConsistent =
-			Object.keys(desiredManagedEnvironment).length === Object.keys(currentManagedEnvironment).length &&
+			Object.keys(desiredManagedEnvironment).length ===
+				Object.keys(currentManagedEnvironment).length &&
 			Object.entries(desiredManagedEnvironment).every(
 				([key, value]) => currentManagedEnvironment[key] === value,
 			);

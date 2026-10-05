@@ -2919,7 +2919,13 @@ fi
 			);
 		const first = converge(manifestFor("https://provider-one.example.test/v1", 1));
 		expect(first.installErrors).toEqual([]);
-		writeFileSync(envPath, readFileSync(envPath, "utf8").replace(/^CLAWDI_AI_API_KEY=.*\n/m, ""));
+		writeFileSync(
+			envPath,
+			readFileSync(envPath, "utf8").replace(
+				/^CLAWDI_AI_API_KEY=.*\n/m,
+				'FOREIGN_CLAWDI_AI_API_KEY="clawdi-egress-placeholder"\n',
+			),
+		);
 		const second = converge(manifestFor("https://provider-two.example.test/v1", 2));
 		expect(second.installErrors).toEqual([]);
 		expect(readFileSync(probeLog, "utf8")).toContain(
