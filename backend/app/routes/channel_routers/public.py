@@ -663,8 +663,7 @@ async def list_agent_channel_links(
         accounts=[
             account
             for _link, account, _binding_count in rows
-            if account.visibility == CHANNEL_VISIBILITY_PRIVATE
-            and account.user_id == auth.user_id
+            if account.visibility == CHANNEL_VISIBILITY_PRIVATE and account.user_id == auth.user_id
         ],
     )
     return [
