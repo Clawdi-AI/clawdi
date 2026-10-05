@@ -7,6 +7,8 @@ export const connectorFormCopy = {
 		"Choose a unique name to help identify this account. Leave blank to use the account identity.",
 	credentialsDescription:
 		"Enter the credentials this app expects. They are stored in Composio and used when connector tools run.",
+	credentialsEmpty:
+		"This connector doesn't need any credentials configured here. Try OAuth from the connector page.",
 	disconnectDescription:
 		"All agents will lose access immediately. To restore access, sign in again.",
 	disconnect: "Disconnect",

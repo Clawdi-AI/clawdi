@@ -153,10 +153,7 @@ export function ConnectorCredentialsDialog({
 							title="Couldn't load credential fields"
 						/>
 					) : visibleFields.length === 0 ? (
-						<p className={credentialsDialogClasses.empty}>
-							This connector doesn't need any credentials configured here. Try OAuth from the
-							connector page.
-						</p>
+						<p className={credentialsDialogClasses.empty}>{copy.credentialsEmpty}</p>
 					) : (
 						<form
 							id={formId}

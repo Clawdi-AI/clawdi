@@ -55,7 +55,7 @@ import { Icon } from "../../ui/icon";
 import { Input, Label } from "../../ui/input";
 import { ListToolbar } from "../../ui/list-toolbar";
 import { PageHeader } from "../../ui/page-header";
-import { AppText, AppView } from "../../ui/primitives";
+import { AppText } from "../../ui/primitives";
 import { SearchInput } from "../../ui/search-input";
 import { SectionLabel } from "../../ui/section-label";
 import { Skeleton } from "../../ui/skeleton";
@@ -434,28 +434,32 @@ function Detail({ name }: { name?: string }) {
 					}
 				}}
 			>
-				<DialogContent>
+				<DialogContent className={webView(credentialsDialogClasses.dialog)}>
 					<DialogHeader>
 						<DialogTitle>{connectorConnectTitle(app.data?.display_name ?? name ?? "")}</DialogTitle>
 						{flow === "credentials" ? (
 							<DialogDescription>{copy.credentialsDescription}</DialogDescription>
 						) : null}
 					</DialogHeader>
-					<WebView recipe={connectorDetailClasses.stack}>
+					<WebView recipe={credentialsDialogClasses.body}>
 						{flow === "no_auth" ? (
 							<AppText className="text-muted-foreground">{t("connectors.ready")}</AppText>
 						) : app.data && (!flow || app.data.connect_disabled) ? (
 							<AppText className="text-muted-foreground">{t("connectors.unavailable")}</AppText>
 						) : app.data ? (
-							<AppView className="gap-3">
-								<AppText className="text-muted-foreground">
-									{t(flow === "redirect" ? "connectors.oauth" : "connectors.credentials")}
-								</AppText>
+							<WebView recipe={credentialsDialogClasses.form}>
+								{flow === "redirect" ? (
+									<AppText className="text-muted-foreground">{t("connectors.oauth")}</AppText>
+								) : null}
 								{flow === "credentials" ? (
 									fields.isPending ? (
 										<Skeleton className={webView(connectorDetailClasses.accountTitleSkeleton)} />
 									) : fields.isError ? (
 										<ErrorState onRetry={() => void fields.refetch()} />
+									) : !visibleFields.length ? (
+										<WebText recipe={credentialsDialogClasses.empty}>
+											{copy.credentialsEmpty}
+										</WebText>
 									) : (
 										visibleFields.map((field) => (
 											<WebView key={field.name} recipe={credentialsDialogClasses.field}>
@@ -487,28 +491,22 @@ function Detail({ name }: { name?: string }) {
 										))
 									)
 								) : null}
-								<ConnectorAliasField value={alias} onChange={setAlias} disabled={action.busy} />
-								<DialogFooter>
-									<Button
-										variant="outline"
-										disabled={action.busy}
-										onPress={() => setAuthOpen(false)}
-									>
-										<Text>{copy.cancel}</Text>
-									</Button>
-									<Button
-										variant="default"
-										size="sm"
-										disabled={action.busy || !canConnect}
-										onPress={connect}
-									>
-										<Text>{copy.connect}</Text>
-									</Button>
-								</DialogFooter>
-							</AppView>
+								{flow === "redirect" ||
+								(!fields.isPending && !fields.isError && visibleFields.length) ? (
+									<ConnectorAliasField value={alias} onChange={setAlias} disabled={action.busy} />
+								) : null}
+							</WebView>
 						) : null}
 						{action.error ? <ApiErrorPanel error={action.error} /> : null}
 					</WebView>
+					<DialogFooter>
+						<Button variant="outline" disabled={action.busy} onPress={() => setAuthOpen(false)}>
+							<Text>{copy.cancel}</Text>
+						</Button>
+						<Button variant="default" disabled={action.busy || !canConnect} onPress={connect}>
+							<Text>{copy.connect}</Text>
+						</Button>
+					</DialogFooter>
 				</DialogContent>
 			</Dialog>
 		</LibraryPage>
@@ -547,7 +545,7 @@ function Account({ connection }: { connection: Connection }) {
 				copy.disconnectDescription,
 				[
 					{ text: t("account.cancel"), style: "cancel" },
-					{ text: t("connectors.disconnect"), style: "destructive", onPress: perform },
+					{ text: copy.disconnect, style: "destructive", onPress: perform },
 				],
 			);
 	};
