@@ -594,7 +594,7 @@ function CreationForm() {
 															value={String(offer.billing_term_months)}
 															className={webView(termSwitcherClasses.item)}
 														>
-															{billingTermLabel(offer.billing_term_months)}
+															<AppText>{billingTermLabel(offer.billing_term_months)}</AppText>
 															{offer.discount_percent > 0 ? (
 																<WebText recipe={termSwitcherClasses.discount}>
 																	−{offer.discount_percent}%
