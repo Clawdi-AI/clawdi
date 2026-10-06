@@ -1,5 +1,16 @@
 "use client";
 
+import { detailLayoutClasses, skillsPageClasses } from "@clawdi/shared/ui";
+import {
+	canManageCustomProject,
+	displayProjectName,
+	formatResourceCount,
+	getProjectResourceDefinition,
+	isCustomProject,
+	isProjectOwner,
+	LIBRARY_COPY,
+	skillsPageDescription,
+} from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { FolderKanban, Import as ImportIcon, Plus } from "lucide-react";
@@ -14,13 +25,7 @@ import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
 import { ProjectActions } from "@/components/projects/project-actions";
-import {
-	canManageCustomProject,
-	displayProjectName,
-	isCustomProject,
-	isProjectOwner,
-	ProjectCompactPicker,
-} from "@/components/projects/project-metadata";
+import { ProjectCompactPicker } from "@/components/projects/project-metadata";
 import {
 	ProjectResourceCard,
 	ProjectResourceCardSkeleton,
@@ -46,7 +51,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
-import { formatResourceCount, getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
 import { parseAsPositiveInt } from "@/lib/url-search-parsers";
@@ -76,7 +80,7 @@ function SkillsPageSkeleton() {
 		select: (state) => Boolean(new URLSearchParams(state.location.searchStr).get("project")),
 	});
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.page)}>
 			{hasProject ? (
 				<>
 					<PageHeaderSkeleton actions />
@@ -229,17 +233,13 @@ function SkillsPageInner() {
 	});
 
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.page)}>
 			{projectPending ? (
 				<PageHeaderSkeleton actions />
 			) : (
 				<PageHeader
 					title="Skills"
-					description={
-						selectedProject
-							? `Skills in ${displayProjectName(selectedProject)}. Linked agents use the whole project.`
-							: "Choose a project to view or add its skills."
-					}
+					description={skillsPageDescription(selectedProject ?? undefined)}
 					actions={
 						selectedProject ? (
 							<>
@@ -337,7 +337,7 @@ function SkillsPageInner() {
 								projects={projects}
 								value={selectedProject.id}
 								onValueChange={selectProject}
-								placeholder="Choose a project"
+								placeholder={LIBRARY_COPY.chooseProject}
 								ariaLabel="Choose project"
 								className="w-full sm:w-72"
 							/>
@@ -466,8 +466,8 @@ function ProjectSelection({
 		);
 	}
 	return (
-		<section className="space-y-3">
-			<h2 className="text-sm font-medium">Choose a project</h2>
+		<section className={skillsPageClasses.projectChooser}>
+			<h2 className={skillsPageClasses.projectChooserHeading}>Choose a project</h2>
 			<div className={HERO_GRID_CLASS}>
 				{projects.map((project) => (
 					<ProjectResourceCard

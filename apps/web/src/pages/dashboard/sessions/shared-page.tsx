@@ -1,6 +1,8 @@
 "use client";
 
-import type { components } from "@clawdi/shared/api";
+import { type components, sessionShareIdentity } from "@clawdi/shared/api";
+import { sharedSessionLinksClasses } from "@clawdi/shared/ui";
+import { relativeTime, shareScopeLabel } from "@clawdi/shared/view";
 import { keepPreviousData, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowLeft, Check, Copy, ExternalLink, Link2, Trash2 } from "lucide-react";
@@ -29,7 +31,7 @@ import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import { parseAsPositiveInt } from "@/lib/url-search-parsers";
-import { cn, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type SessionShare = components["schemas"]["SessionShareListItemResponse"];
 
@@ -59,7 +61,7 @@ export default function SharedSessionLinksPage() {
 	};
 
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, sharedSessionLinksClasses.page)}>
 			<PageHeader
 				title="Shared Session Links"
 				description="Review and turn off every active session link from one place."
@@ -92,10 +94,10 @@ export default function SharedSessionLinksPage() {
 				/>
 			) : (
 				<div className="space-y-4">
-					<div className="overflow-hidden rounded-lg border bg-card">
+					<div className={sharedSessionLinksClasses.list}>
 						{items.map((share, index) => (
 							<SharedLinkRow
-								key={`${share.kind}:${share.id}`}
+								key={sessionShareIdentity(share)}
 								share={share}
 								onRevoked={refresh}
 								className={index > 0 ? "border-t" : undefined}
@@ -159,29 +161,29 @@ function SharedLinkRow({
 	const scope = shareScopeLabel(share);
 
 	return (
-		<div className={cn("flex flex-col gap-3 p-4 sm:flex-row sm:items-center", className)}>
-			<div className="min-w-0 flex-1">
-				<div className="flex min-w-0 flex-wrap items-center gap-2">
+		<div className={cn(sharedSessionLinksClasses.row, className)}>
+			<div className={sharedSessionLinksClasses.content}>
+				<div className={sharedSessionLinksClasses.titleRow}>
 					<Link
 						to="/sessions/$id"
 						params={{ id: share.session_id }}
-						className="truncate text-sm font-medium underline-offset-4 hover:underline"
+						className={sharedSessionLinksClasses.title}
 					>
 						{share.session_title}
 					</Link>
 					<Badge variant="outline">{share.kind === "live" ? "Live" : "Snapshot"}</Badge>
 				</div>
-				<p className="mt-1 text-xs text-muted-foreground">
+				<p className={sharedSessionLinksClasses.meta}>
 					{scope} · {share.message_count} {share.message_count === 1 ? "message" : "messages"} ·
 					Created {relativeTime(share.created_at)}
 				</p>
 				{share.kind === "live" ? (
-					<p className="mt-1 text-xs text-muted-foreground">
+					<p className={sharedSessionLinksClasses.meta}>
 						Updates when the session is uploaded again.
 					</p>
 				) : null}
 			</div>
-			<div className="flex shrink-0 flex-wrap items-center gap-2">
+			<div className={sharedSessionLinksClasses.actions}>
 				<Button variant="outline" size="sm" onClick={() => void copy(share.share_url)}>
 					{copied ? <Check /> : <Copy />}
 					Copy
@@ -198,7 +200,7 @@ function SharedLinkRow({
 				<Button
 					variant="ghost"
 					size="icon-sm"
-					className="text-muted-foreground hover:text-destructive"
+					className={sharedSessionLinksClasses.revoke}
 					onClick={() => setConfirmOpen(true)}
 					aria-label={`Turn off share link for ${share.session_title}`}
 				>
@@ -231,23 +233,19 @@ function SharedLinkRow({
 	);
 }
 
-function shareScopeLabel(share: SessionShare): string {
-	if (share.kind === "live") return "Full session, live";
-	if (share.scope === "response") return "Single agent response";
-	if (share.scope === "through") return "Conversation excerpt";
-	return "Full session snapshot";
-}
-
 function SharedLinksSkeleton() {
 	return (
-		<div className="overflow-hidden rounded-lg border" aria-hidden="true">
+		<div className={sharedSessionLinksClasses.skeleton} aria-hidden="true">
 			{Array.from({ length: 4 }, (_, index) => (
-				<div key={index} className={cn("flex items-center gap-4 p-4", index > 0 && "border-t")}>
-					<div className="min-w-0 flex-1 space-y-2">
-						<Skeleton className="h-4 w-48 max-w-full" />
-						<Skeleton className="h-3 w-72 max-w-full" />
+				<div
+					key={index}
+					className={cn(sharedSessionLinksClasses.skeletonRow, index > 0 && "border-t")}
+				>
+					<div className={sharedSessionLinksClasses.skeletonBody}>
+						<Skeleton className={sharedSessionLinksClasses.skeletonTitle} />
+						<Skeleton className={sharedSessionLinksClasses.skeletonMeta} />
 					</div>
-					<Skeleton className="h-8 w-32 shrink-0" />
+					<Skeleton className={sharedSessionLinksClasses.skeletonActions} />
 				</div>
 			))}
 		</div>

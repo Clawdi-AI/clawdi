@@ -1,78 +1,15 @@
 "use client";
+import { selectUnifiedAgentList } from "@clawdi/shared/view";
+
+export { selectUnifiedAgentList, type UnifiedAgentListSelection } from "@clawdi/shared/view";
 
 import type { components } from "@clawdi/shared/api";
+import type { AgentTile } from "@clawdi/shared/view";
 import { useEffect, useMemo } from "react";
-import { type AgentTile, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
 import { useLegacyEnvIds } from "@/hosted/agents/ownership-sensor";
-import type { HostedInventoryStatus } from "@/hosted/hosted-agent-resolution";
-import { legacyConnectedAgentTiles } from "@/hosted/legacy-agent-tiles";
 import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
-import { normalizeAgentId } from "@/lib/agent-ownership";
 
 type Env = components["schemas"]["AgentResponse"];
-
-export interface UnifiedAgentListSelection {
-	tiles: AgentTile[];
-	hostedTiles: AgentTile[];
-	connectedTiles: AgentTile[];
-	membershipResolved: boolean;
-}
-
-/**
- * Canonical membership selector for every hosted dashboard agent list.
- *
- * A Cloud deployment owns its configured environment even while that
- * environment is absent from the Cloud API response. Legacy environments are
- * bridged once, and every remaining environment is rendered as self-managed.
- * `showLegacyAgents` controls their tiles, never whether ownership must resolve.
- */
-export function selectUnifiedAgentList({
-	cloudEnvs,
-	hostedTiles,
-	claimedEnvIds,
-	legacyEnvIds,
-	hostedInventoryStatus,
-	showLegacyAgents,
-}: {
-	cloudEnvs: Env[];
-	hostedTiles: AgentTile[];
-	claimedEnvIds: ReadonlySet<string>;
-	legacyEnvIds: ReadonlySet<string> | null;
-	hostedInventoryStatus: HostedInventoryStatus;
-	showLegacyAgents: boolean;
-}): UnifiedAgentListSelection {
-	if (hostedInventoryStatus !== "resolved" || legacyEnvIds === null) {
-		return {
-			tiles: hostedTiles,
-			hostedTiles,
-			connectedTiles: [],
-			membershipResolved: false,
-		};
-	}
-
-	const legacyConnectedTiles = showLegacyAgents
-		? legacyConnectedAgentTiles(cloudEnvs, legacyEnvIds, claimedEnvIds)
-		: [];
-	const dedupedSelfManaged = selfManagedAgentTiles(cloudEnvs).filter(
-		(tile) => !isOwnedEnvId(tile.id, claimedEnvIds, legacyEnvIds),
-	);
-	const connectedTiles = [...legacyConnectedTiles, ...dedupedSelfManaged];
-	return {
-		tiles: [...hostedTiles, ...connectedTiles],
-		hostedTiles,
-		connectedTiles,
-		membershipResolved: true,
-	};
-}
-
-function isOwnedEnvId(
-	id: string,
-	claimedEnvIds: ReadonlySet<string>,
-	legacyEnvIds: ReadonlySet<string>,
-): boolean {
-	const envId = normalizeAgentId(id);
-	return Boolean(envId && (claimedEnvIds.has(envId) || legacyEnvIds.has(envId)));
-}
 
 export function useUnifiedAgentList({
 	cloudEnvs,

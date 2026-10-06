@@ -1,5 +1,8 @@
 "use client";
 
+import { isAppearanceMode } from "@clawdi/shared/consts";
+import { generalPanelClasses } from "@clawdi/shared/ui";
+import { settingsCopy } from "@clawdi/shared/view";
 import { UserCog } from "lucide-react";
 import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
 import { SettingsSection } from "@/components/settings-section";
@@ -22,12 +25,6 @@ const THEME_ITEMS = [
 	{ label: "System", value: "system" },
 ] as const;
 
-type ThemeItemValue = (typeof THEME_ITEMS)[number]["value"];
-
-function isThemeItemValue(value: string | null): value is ThemeItemValue {
-	return value === "light" || value === "dark" || value === "system";
-}
-
 /** General settings — account identity and app-wide preferences. */
 export function GeneralPanel() {
 	const { theme, setTheme } = useTheme();
@@ -37,50 +34,57 @@ export function GeneralPanel() {
 	const initial = user?.fullName?.[0] ?? user?.primaryEmailAddress?.emailAddress?.[0] ?? "U";
 
 	return (
-		<div className="flex flex-col gap-8 px-5 sm:px-6 lg:px-8">
-			<SettingsPanelHeader title="General" description="Account and app preferences." />
+		<div className={generalPanelClasses.panel}>
+			<SettingsPanelHeader
+				title={settingsCopy.general}
+				description={settingsCopy.generalDescription}
+			/>
 
-			<SettingsSection headingLevel={3} title="Account" description="Your Clawdi identity.">
-				<div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-					<div className="flex min-w-0 items-center gap-3">
-						<Avatar className="size-11 shrink-0">
+			<SettingsSection
+				headingLevel={3}
+				title={settingsCopy.account}
+				description={settingsCopy.accountDescription}
+			>
+				<div className={generalPanelClasses.accountRow}>
+					<div className={generalPanelClasses.identity}>
+						<Avatar className={generalPanelClasses.avatar}>
 							{user?.imageUrl ? (
 								<AvatarImage src={user.imageUrl} alt={user.fullName ?? ""} />
 							) : null}
 							<AvatarFallback>{initial}</AvatarFallback>
 						</Avatar>
-						<div className="min-w-0">
-							<div className="truncate text-sm font-medium">{user?.fullName ?? "Anonymous"}</div>
-							<div className="truncate text-sm text-muted-foreground">
+						<div className={generalPanelClasses.identityText}>
+							<div className={generalPanelClasses.name}>{user?.fullName ?? "Anonymous"}</div>
+							<div className={generalPanelClasses.email}>
 								{user?.primaryEmailAddress?.emailAddress}
 							</div>
 						</div>
 					</div>
 					{openProfile ? (
 						<Button variant="outline" size="sm" onClick={() => openProfile()}>
-							<UserCog className="size-3.5" /> Manage account
+							<UserCog className={generalPanelClasses.manageIcon} /> {settingsCopy.manageAccount}
 						</Button>
 					) : null}
 				</div>
 			</SettingsSection>
 
-			<SettingsSection headingLevel={3} title="Appearance">
-				<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-					<div className="space-y-0.5">
-						<Label htmlFor="settings-theme">Theme</Label>
-						<p className="text-xs text-muted-foreground">Light, dark, or match your system.</p>
+			<SettingsSection headingLevel={3} title={settingsCopy.appearance}>
+				<div className={generalPanelClasses.appearanceRow}>
+					<div className={generalPanelClasses.appearanceLabel}>
+						<Label htmlFor="settings-theme">{settingsCopy.theme}</Label>
+						<p className={generalPanelClasses.description}>{settingsCopy.themeDescription}</p>
 					</div>
 					<Select
 						items={THEME_ITEMS}
 						value={theme ?? "system"}
 						onValueChange={(value) => {
-							if (isThemeItemValue(value)) setTheme(value);
+							if (isAppearanceMode(value)) setTheme(value);
 						}}
 					>
 						<SelectTrigger
 							id="settings-theme"
 							data-testid="settings-theme-select"
-							className="w-full sm:w-40"
+							className={generalPanelClasses.themeTrigger}
 						>
 							<SelectValue />
 						</SelectTrigger>

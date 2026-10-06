@@ -1,12 +1,19 @@
+import { hostedDeploymentMembers, isHostedDeploymentVisible } from "@clawdi/shared/view";
+
+export {
+	claimedEnvIdsFromDeployments,
+	hostedDeploymentMembers,
+	isHostedDeploymentMember,
+	isHostedDeploymentVisible,
+} from "@clawdi/shared/view";
+
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { isNetworkError } from "@/hosted/billing/errors";
 import {
 	type DeploymentStatus,
-	deploymentStatusFromResource,
 	isRunningStatus,
 	isTransitionalStatus,
 } from "@/hosted/deployment-status";
-import { observedCloudProjectionId } from "@/hosted/runtimes";
 import { isApiNotFoundError } from "@/lib/api-errors";
 
 export type HostedInventoryStatus = "resolved" | "loading" | "error" | "unavailable";
@@ -36,44 +43,6 @@ export class HostedInventoryUnavailableError extends Error {
 		super("Cloud Agents aren't available in this dashboard.");
 		this.name = "HostedInventoryUnavailableError";
 	}
-}
-
-/** Deleted deployments retain a projected agent claim during asynchronous cleanup. */
-export function isHostedDeploymentMember(deployment: HostedDeployment): boolean {
-	return (
-		deploymentStatusFromResource(deployment.resource.status).kind !== "deleted" ||
-		observedCloudProjectionId(deployment) !== undefined
-	);
-}
-
-/** Pending or authoritatively accepted deletion dismisses the agent during cleanup. */
-export function isHostedDeploymentVisible(deployment: HostedDeployment): boolean {
-	const status = deploymentStatusFromResource(deployment.resource.status);
-	const acceptedOperation = deployment.accepted_operation;
-	return (
-		status.kind !== "deleting" &&
-		status.kind !== "deleted" &&
-		!(acceptedOperation?.metadata.verb === "delete" && !acceptedOperation.done) &&
-		deployment.compute_slot_occupancy?.reason !== "delete_accepted"
-	);
-}
-
-export function hostedDeploymentMembers(
-	deployments: readonly HostedDeployment[],
-): HostedDeployment[] {
-	return deployments.filter(isHostedDeploymentMember);
-}
-
-/** One claimed-id set shared by list deduplication and ownership chrome. */
-export function claimedEnvIdsFromDeployments(
-	deployments: readonly HostedDeployment[],
-): Set<string> {
-	const environmentIds = new Set<string>();
-	for (const deployment of deployments) {
-		if (!isHostedDeploymentMember(deployment)) continue;
-		environmentIds.add(deployment.agent_id.toLowerCase());
-	}
-	return environmentIds;
 }
 
 export type AgentDeploymentMatch = {

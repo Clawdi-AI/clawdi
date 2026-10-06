@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { FRAMEWORK_BRAND_ICON_IDS } from "@clawdi/shared/view";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentFrameworkIcon } from "@/components/agent-framework-icon";
-import { FRAMEWORK_BRAND_ICON_IDS } from "@/components/entity-brand-icon-ids";
 import { frameworkBrandIcon, providerBrandIcon } from "@/components/entity-brand-icons";
 
 const FRAMEWORKS = {

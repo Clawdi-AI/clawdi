@@ -1,4 +1,5 @@
 "use client";
+import { detailLayoutClasses } from "@clawdi/shared/ui";
 
 import { Link } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
@@ -26,7 +27,7 @@ export function DetailBackLink({
 			nativeButton={false}
 			variant="ghost"
 			size="sm"
-			className={cn("w-fit", mobileOnly && "sm:hidden")}
+			className={cn(detailLayoutClasses.back, mobileOnly && "sm:hidden")}
 		>
 			<ArrowLeft className="size-4" />
 			Back to {label}

@@ -1,8 +1,8 @@
 "use client";
 
+import { agentDisplayName, formatShortDate } from "@clawdi/shared/view";
 import { useRouter } from "@tanstack/react-router";
 import { type ReactElement, useRef, useState } from "react";
-import { agentDisplayName } from "@/components/dashboard/agent-label";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -23,7 +23,6 @@ import {
 	computeSubscriptionCancellationCopy,
 	isComputeSubscriptionRenewing,
 } from "@/hosted/billing/subscription/subscription-utils";
-import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export function HostedDeploymentDeleteAction({

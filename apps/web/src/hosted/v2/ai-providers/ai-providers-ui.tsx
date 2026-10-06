@@ -1,5 +1,7 @@
 "use client";
 
+import { aiProvidersUiClasses } from "@clawdi/shared/ui";
+import { agentSurfaceCopy, providerAuthLabel } from "@clawdi/shared/view";
 import { ShieldCheck } from "lucide-react";
 import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
 import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
@@ -30,7 +32,7 @@ export function ProviderIcon({
 	if (presentation.managed) {
 		const Icon = CANONICAL_NAVIGATION_IDENTITIES["ai-providers"].icon;
 		return (
-			<IconChip size={size} tint="bg-primary/10 text-primary" className={className}>
+			<IconChip size={size} tint={aiProvidersUiClasses.managedTint} className={className}>
 				<Icon />
 			</IconChip>
 		);
@@ -46,23 +48,15 @@ export function ProviderIcon({
 	);
 }
 
-const AUTH_LABEL: Record<string, string> = {
-	api_key: "API key",
-	agent_profile: "ChatGPT",
-	oauth_profile: "ChatGPT",
-	secret_ref: "Vault key",
-	none: "No credential",
-};
-
 /** Auth-method pill for a provider. */
 export function AuthBadge({ auth }: { auth: AiProviderAuth }) {
-	const label = AUTH_LABEL[auth.type] ?? auth.type;
+	const label = providerAuthLabel(auth.type);
 	return (
 		<Badge
 			data-hosted="true"
 			data-v2="true"
 			variant="secondary"
-			className="px-2 py-0.5 text-2xs text-muted-foreground"
+			className={aiProvidersUiClasses.authBadge}
 		>
 			{label}
 		</Badge>
@@ -87,11 +81,11 @@ export function ManagedProviderCard() {
 				title={MANAGED_PROVIDER_LABEL}
 				titleAdornment={
 					<StatusBadge status="success">
-						<ShieldCheck className="size-3" />
+						<ShieldCheck className={aiProvidersUiClasses.shield} />
 						Default
 					</StatusBadge>
 				}
-				meta={["No setup required", "Wallet billed"]}
+				meta={[agentSurfaceCopy.noSetupRequired, agentSurfaceCopy.walletBilled]}
 			/>
 		</div>
 	);

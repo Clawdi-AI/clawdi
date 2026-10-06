@@ -1,5 +1,8 @@
 "use client";
 
+import { createProjectDialogClasses as styles } from "@clawdi/shared/ui";
+import { createProjectDialogCopy as copy } from "@clawdi/shared/view";
+
 import { useMutation } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { type ReactElement, useRef, useState } from "react";
@@ -54,8 +57,7 @@ export function CreateProjectDialog({
 			setOpen(false);
 			await onCreated(project);
 		},
-		onError: (error) =>
-			toast.error("Couldn't create project", { description: normalizeApiError(error) }),
+		onError: (error) => toast.error(copy.error, { description: normalizeApiError(error) }),
 		onSettled: () => {
 			submitLockedRef.current = false;
 		},
@@ -83,52 +85,52 @@ export function CreateProjectDialog({
 			}}
 		>
 			<DialogTrigger render={children} />
-			<DialogContent className="sm:max-w-md">
+			<DialogContent className={styles.dialog}>
 				<DialogHeader>
-					<DialogTitle>Create project</DialogTitle>
+					<DialogTitle>{copy.title}</DialogTitle>
 					<DialogDescription>
-						{agentId ? "Create a project for this agent." : "Group skills and vaults in a project."}
+						{agentId ? copy.agentDescription : copy.description}
 					</DialogDescription>
 				</DialogHeader>
 				<form
-					className="space-y-4"
+					className={styles.form}
 					onSubmit={(event) => {
 						event.preventDefault();
 						submit();
 					}}
 				>
-					<div className="space-y-1.5">
-						<Label htmlFor="create-project-name">Name</Label>
+					<div className={styles.field}>
+						<Label htmlFor="create-project-name">{copy.name}</Label>
 						<Input
 							id="create-project-name"
 							name="create-project-name"
 							value={name}
 							maxLength={200}
 							autoComplete="off"
-							placeholder="Project name…"
+							placeholder={copy.namePlaceholder}
 							onChange={(event) => setName(event.target.value)}
 						/>
 					</div>
-					<div className="space-y-1.5">
-						<Label htmlFor="create-project-description">Description</Label>
+					<div className={styles.field}>
+						<Label htmlFor="create-project-description">{copy.descriptionLabel}</Label>
 						<Textarea
 							id="create-project-description"
 							name="create-project-description"
 							value={description}
 							maxLength={2000}
-							placeholder="What should agents use this project for?"
+							placeholder={copy.descriptionPlaceholder}
 							autoComplete="off"
 							onChange={(event) => setDescription(event.target.value)}
-							className="min-h-24"
+							className={styles.description}
 						/>
 					</div>
 					<DialogFooter>
 						<Button type="button" variant="ghost" onClick={() => setOpen(false)}>
-							Cancel
+							{copy.cancel}
 						</Button>
 						<Button type="submit" disabled={!name.trim() || createProject.isPending}>
-							{createProject.isPending ? <Spinner className="size-3.5" /> : <Plus />}
-							Create project
+							{createProject.isPending ? <Spinner className={styles.actionIcon} /> : <Plus />}
+							{copy.title}
 						</Button>
 					</DialogFooter>
 				</form>

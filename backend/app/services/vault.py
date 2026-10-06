@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import array
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -83,6 +84,35 @@ async def create_account_vault(
 
     if selected_project_id is not None:
         await _ensure_vault_attached(db, vault.id, selected_project_id)
+    await db.commit()
+    await db.refresh(vault)
+    return vault
+
+
+async def attach_account_vault(
+    db: AsyncSession, auth: AuthContext, slug: str, vault_id: UUID, project_id: UUID
+) -> Vault:
+    """Attach an exact owned identity; never create or fall back to a slug."""
+    await validate_project_for_caller(db, auth, project_id)
+    query = select(Vault).where(
+        Vault.id == vault_id, Vault.user_id == auth.user_id, Vault.slug == slug
+    )
+    if is_env_bound_api_key(auth):
+        # Same source boundary as get_vault_for_write: a bound key sees only its Project's Vaults.
+        bound_project_id = await resolve_default_write_project(db, auth)
+        query = query.where(
+            select(VaultProjectAttachment.id)
+            .where(
+                VaultProjectAttachment.vault_id == Vault.id,
+                VaultProjectAttachment.project_id == bound_project_id,
+            )
+            .exists()
+        )
+    # KEY SHARE blocks a concurrent Vault delete without serializing other attaches.
+    vault = (await db.execute(query.with_for_update(key_share=True))).scalar_one_or_none()
+    if vault is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Vault '{slug}' not found")
+    await _ensure_vault_attached(db, vault.id, project_id)
     await db.commit()
     await db.refresh(vault)
     return vault
@@ -283,17 +313,16 @@ async def _ensure_vault_attached(
     vault_id: UUID,
     project_id: UUID,
 ) -> None:
-    existing = (
+    """Idempotent under concurrency; only the transaction that inserts the link notifies."""
+    inserted = (
         await db.execute(
-            select(VaultProjectAttachment.id).where(
-                VaultProjectAttachment.vault_id == vault_id,
-                VaultProjectAttachment.project_id == project_id,
-            )
+            pg_insert(VaultProjectAttachment)
+            .values(vault_id=vault_id, project_id=project_id)
+            .on_conflict_do_nothing(constraint="uq_vault_project_attachment")
+            .returning(VaultProjectAttachment.id)
         )
     ).scalar_one_or_none()
-    if existing is None:
-        db.add(VaultProjectAttachment(vault_id=vault_id, project_id=project_id))
-        await db.flush()
+    if inserted is not None:
         from app.services.runtime_vaults import notify_vault_changed
 
         await notify_vault_changed(db, vault_id)

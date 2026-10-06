@@ -2,13 +2,7 @@
 
 import { useOpenApi } from "@/lib/api";
 
-export function agentProjectBindingsQueryKey(agentId: string | null | undefined) {
-	return [
-		"get",
-		"/v1/agents/{agent_id}/project-bindings",
-		{ params: { path: { agent_id: agentId ?? "" } } },
-	] as const;
-}
+export { agentProjectBindingsQueryKey } from "@clawdi/shared/api";
 
 export function useAgentProjectBindings(
 	agentId: string | null | undefined,

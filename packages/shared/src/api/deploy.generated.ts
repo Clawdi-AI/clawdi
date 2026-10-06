@@ -32,7 +32,8 @@ export interface paths {
         get: operations["me_v1_me_get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete Account */
+        delete: operations["delete_account_v1_me_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3446,6 +3447,24 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["V1UserResponse"];
                 };
+            };
+        };
+    };
+    delete_account_v1_me_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

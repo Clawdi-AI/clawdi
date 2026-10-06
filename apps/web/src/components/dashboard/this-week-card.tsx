@@ -1,11 +1,12 @@
 "use client";
 
+import { thisWeekCardClasses } from "@clawdi/shared/ui";
+
+import { DASHBOARD_COPY, formatNumber, thisWeekModel } from "@clawdi/shared/view";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { DashboardStats } from "@/lib/api-schemas";
-import { formatModelLabel } from "@/lib/format";
-import { formatNumber } from "@/lib/utils";
 
 export function ThisWeekCard({
 	stats,
@@ -16,51 +17,50 @@ export function ThisWeekCard({
 	error?: unknown;
 	onRetry?: () => void;
 }) {
-	const ready = !!stats;
-	const todaySessions = stats?.sessions_today;
-	const topModel = formatModelLabel(stats?.top_model_last_7_days) || null;
-	const manualWeek = stats?.manual_sessions_last_7_days;
-	const automatedWeek = stats?.automated_sessions_last_7_days;
+	const { ready, todaySessions, topModel, manualWeek, automatedWeek, streakLabel } =
+		thisWeekModel(stats);
 
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle>Last 7 days</CardTitle>
-				<CardDescription>Agent activity, measured in UTC.</CardDescription>
+				<CardTitle>{DASHBOARD_COPY.weeklyTitle}</CardTitle>
+				<CardDescription>{DASHBOARD_COPY.weeklyDescription}</CardDescription>
 			</CardHeader>
-			<CardContent className="space-y-5">
+			<CardContent className={thisWeekCardClasses.content}>
 				{error ? (
-					<ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load weekly activity" />
+					<ApiErrorPanel error={error} onRetry={onRetry} title={DASHBOARD_COPY.weeklyError} />
 				) : (
 					<>
 						{/* Hero — the user's own sessions. Fleet automation is the quiet
 				    sub-line, not the headline. */}
 						<div>
-							<div className="text-xs text-muted-foreground">Your sessions</div>
+							<div className={thisWeekCardClasses.statLabel}>{DASHBOARD_COPY.yourSessions}</div>
 							{ready && manualWeek !== undefined ? (
 								<>
-									<div className="text-3xl font-semibold tabular-nums leading-none">
-										{formatNumber(manualWeek)}
-									</div>
+									<div className={thisWeekCardClasses.sessionCount}>{formatNumber(manualWeek)}</div>
 									{automatedWeek !== undefined && automatedWeek > 0 ? (
-										<div className="mt-1 text-xs text-muted-foreground tabular-nums">
+										<div className={thisWeekCardClasses.automatedCount}>
 											+ {formatNumber(automatedWeek)} automated (cron, heartbeat)
 										</div>
 									) : null}
 								</>
 							) : (
-								<Skeleton className="h-7.5 w-16" />
+								<Skeleton className={thisWeekCardClasses.sessionCountSkeleton} />
 							)}
 						</div>
 
 						{/* Secondary stats — smaller, grouped. */}
-						<dl className="grid grid-cols-3 gap-3 text-sm">
+						<dl className={thisWeekCardClasses.secondaryStats}>
 							<SecondaryStat
-								label="Today"
+								label={DASHBOARD_COPY.today}
 								value={ready && todaySessions !== undefined ? formatNumber(todaySessions) : null}
 							/>
-							<SecondaryStat label="Streak" value={ready ? `${stats.current_streak}d` : null} />
-							<SecondaryStat label="Top model" value={ready ? (topModel ?? "—") : null} small />
+							<SecondaryStat label={DASHBOARD_COPY.streak} value={streakLabel} />
+							<SecondaryStat
+								label={DASHBOARD_COPY.topModel}
+								value={ready ? (topModel ?? "—") : null}
+								small
+							/>
 						</dl>
 					</>
 				)}
@@ -79,16 +79,16 @@ function SecondaryStat({
 	small?: boolean;
 }) {
 	return (
-		<div className="space-y-1">
-			<dt className="text-xs text-muted-foreground">{label}</dt>
+		<div className={thisWeekCardClasses.stat}>
+			<dt className={thisWeekCardClasses.statLabel}>{label}</dt>
 			{value === null ? (
-				<Skeleton className={small ? "h-5 w-16" : "h-6 w-10"} />
-			) : (
-				<dd
+				<Skeleton
 					className={
-						small ? "truncate text-sm font-medium" : "text-base font-semibold tabular-nums"
+						small ? thisWeekCardClasses.textValueSkeleton : thisWeekCardClasses.numericValueSkeleton
 					}
-				>
+				/>
+			) : (
+				<dd className={small ? thisWeekCardClasses.textValue : thisWeekCardClasses.numericValue}>
 					{value}
 				</dd>
 			)}

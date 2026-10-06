@@ -1,10 +1,11 @@
 "use client";
 
+import type { AgentTile } from "@clawdi/shared/view";
+import { agentIdentity } from "@clawdi/shared/view";
 import { RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { AgentInline, agentIdentity } from "@/components/dashboard/agent-label";
-import type { AgentTile } from "@/components/dashboard/agents-card";
+import { AgentInline } from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
 import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
 import { SettingsSection } from "@/components/settings-section";

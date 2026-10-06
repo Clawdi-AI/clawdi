@@ -1,5 +1,5 @@
+import { isCustomProject } from "@clawdi/shared/view";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
-import { isCustomProject } from "@/components/projects/project-metadata";
 import { useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { shouldBlockQueryError } from "@/lib/query-state";

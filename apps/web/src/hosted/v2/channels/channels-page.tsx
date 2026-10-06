@@ -1,4 +1,6 @@
 "use client";
+import { channelsPageClasses } from "@clawdi/shared/ui";
+import { agentSurfaceCopy } from "@clawdi/shared/view";
 
 import { Link } from "@tanstack/react-router";
 import { MessagesSquare, Plus, Trash2 } from "lucide-react";
@@ -51,7 +53,7 @@ import { LinkChannelAgentAction } from "@/hosted/v2/channels/link-channel-agent-
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
-const DESCRIPTION = "Manage custom bots and discover Clawdi bots for your agents.";
+const DESCRIPTION = agentSurfaceCopy.manageCustomBotsAndDiscoverClawdiBotsForYour;
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 
 export function ChannelsPage() {
@@ -81,7 +83,7 @@ export function ChannelsPage() {
 	return (
 		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
 			<PageHeader
-				title="Channels"
+				title={agentSurfaceCopy.channels}
 				description={DESCRIPTION}
 				actions={
 					<Button size="sm" onClick={() => setConnectOpen(true)}>
@@ -96,7 +98,7 @@ export function ChannelsPage() {
 					<>
 						<FilterChip active={filter === "all"} onClick={() => setFilter("all")}>
 							All
-							<span className="text-muted-foreground tabular-nums">{totalCount}</span>
+							<span className={channelsPageClasses.filterCount}>{totalCount}</span>
 						</FilterChip>
 						{visibleProviders.map((provider) => (
 							<FilterChip
@@ -105,7 +107,7 @@ export function ChannelsPage() {
 								onClick={() => setFilter(provider)}
 							>
 								{providerMeta(provider).label}
-								<span className="text-muted-foreground tabular-nums">{counts[provider]}</span>
+								<span className={channelsPageClasses.filterCount}>{counts[provider]}</span>
 							</FilterChip>
 						))}
 					</>
@@ -115,8 +117,8 @@ export function ChannelsPage() {
 			{inventoryEmpty ? (
 				<EmptyState
 					icon={MessagesSquare}
-					title="No bots yet"
-					description="Add a Custom Telegram, Discord, or WhatsApp account you manage."
+					title={agentSurfaceCopy.noBotsYet}
+					description={agentSurfaceCopy.addACustomTelegramDiscordOrWhatsapp}
 				/>
 			) : (
 				<>
@@ -179,7 +181,9 @@ function OwnedBotsSection({
 			</div>
 		);
 	} else if (error) {
-		content = <ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load channels" />;
+		content = (
+			<ApiErrorPanel error={error} onRetry={onRetry} title={agentSurfaceCopy.couldnTLoadChannels} />
+		);
 	} else if (visibleCount === 0) {
 		return null;
 	} else {
@@ -198,13 +202,15 @@ function OwnedBotsSection({
 	}
 
 	return (
-		<section data-owned-bots-section className="flex flex-col gap-3">
-			<SectionLabel count={!isLoading ? visibleCount : undefined}>Custom bots</SectionLabel>
+		<section data-owned-bots-section className={channelsPageClasses.ownedSection}>
+			<SectionLabel count={!isLoading ? visibleCount : undefined}>
+				{agentSurfaceCopy.customBots}
+			</SectionLabel>
 			{healthError ? (
 				<ApiErrorPanel
 					error={healthError}
 					onRetry={onRetryHealth}
-					title="Couldn't load channel health"
+					title={agentSurfaceCopy.couldnTLoadChannelHealth}
 				/>
 			) : null}
 			{content}
@@ -234,7 +240,13 @@ function SharedBotsSection({
 			</div>
 		);
 	} else if (error) {
-		content = <ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load Clawdi bots" />;
+		content = (
+			<ApiErrorPanel
+				error={error}
+				onRetry={onRetry}
+				title={agentSurfaceCopy.couldnTLoadClawdiBots}
+			/>
+		);
 	} else if (visibleBots.length === 0) {
 		return null;
 	} else {
@@ -248,11 +260,13 @@ function SharedBotsSection({
 	}
 
 	return (
-		<section data-shared-bots-section className="flex min-w-0 flex-col gap-3">
+		<section data-shared-bots-section className={channelsPageClasses.sharedSection}>
 			<div>
-				<SectionLabel count={!isLoading ? visibleBots.length : undefined}>Clawdi bots</SectionLabel>
-				<p className="mt-1 text-xs text-muted-foreground">
-					Link an agent and pair a chat without leaving this page.
+				<SectionLabel count={!isLoading ? visibleBots.length : undefined}>
+					{agentSurfaceCopy.clawdiBots}
+				</SectionLabel>
+				<p className={channelsPageClasses.sharedDescription}>
+					{agentSurfaceCopy.linkAnAgentAndPairAChatWithoutLeaving}
 				</p>
 			</div>
 			{content}
@@ -271,7 +285,7 @@ function SharedBotCard({ bot }: { bot: ChannelBotPoolItem }) {
 				? "This bot has reached its agent limit."
 				: undefined;
 	return (
-		<div data-shared-channel-account-id={bot.id} className="h-full min-w-0">
+		<div data-shared-channel-account-id={bot.id} className={channelsPageClasses.sharedCard}>
 			<SharedChannelCard
 				provider={bot.provider}
 				title={bot.name}
@@ -292,11 +306,11 @@ function SharedBotCard({ bot }: { bot: ChannelBotPoolItem }) {
 function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: ChannelHealthItem }) {
 	const del = useDeleteChannel();
 	return (
-		<div data-channel-account-id={channel.id} className="group relative z-0 h-full min-w-0">
+		<div data-channel-account-id={channel.id} className={channelsPageClasses.cardContainer}>
 			<SharedChannelCard
 				provider={channel.provider}
 				title={channel.name}
-				className="transition-colors group-hover:bg-muted/50"
+				className={channelsPageClasses.card}
 				state={[
 					health && !isNormalChannelHealth(health.health_status) ? (
 						<HealthBadge key="health" health={health} />
@@ -323,11 +337,15 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: Ch
 								type="button"
 								variant="ghost"
 								size="icon-sm"
-								className="text-muted-foreground hover:text-destructive"
+								className={channelsPageClasses.removeAction}
 								disabled={del.isPending}
 								aria-label={`Delete ${channel.name}`}
 							>
-								{del.isPending ? <Spinner className="size-3.5" /> : <Trash2 className="size-3.5" />}
+								{del.isPending ? (
+									<Spinner className={channelsPageClasses.actionIcon} />
+								) : (
+									<Trash2 className={channelsPageClasses.actionIcon} />
+								)}
 							</Button>
 						</ConfirmAction>
 					</>
@@ -337,7 +355,7 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: Ch
 				<DiscordConnectionIssueAlert issue={channel.connection_issue} />
 			) : null}
 			<Link to="/channels/$id" params={{ id: channel.id }} className={ENTITY_STRETCHED_LINK_CLASS}>
-				<span className="sr-only">Open {channel.name}</span>
+				<span className={channelsPageClasses.screenReaderOnly}>Open {channel.name}</span>
 			</Link>
 		</div>
 	);

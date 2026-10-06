@@ -1,3 +1,4 @@
+import { agentOverviewCopy, runtimeBrowserUiLabel } from "@clawdi/shared/view";
 import { OverviewNavigationCard } from "@/components/dashboard/agent-overview-capabilities";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import {
@@ -5,7 +6,7 @@ import {
 	deploymentRuntimeUiWithdrawn,
 } from "@/hosted/deployment-status";
 import { agentSectionLink } from "@/lib/agent-routes";
-import { AGENT_SECTION_NAVIGATION_ITEMS, runtimeBrowserUiLabel } from "@/lib/navigation-model";
+import { AGENT_SECTION_NAVIGATION_ITEMS } from "@/lib/navigation-model";
 
 export function AgentDashboardOverview({
 	agentId,
@@ -22,7 +23,7 @@ export function AgentDashboardOverview({
 		<div data-hosted="true" className="min-w-0">
 			<OverviewNavigationCard
 				id="dashboard"
-				title="Chat on the web"
+				title={agentOverviewCopy.chatOnWeb}
 				description={
 					withdrawn
 						? `${runtimeBrowserUiLabel(runtime)} is unavailable. Your agent keeps running.`

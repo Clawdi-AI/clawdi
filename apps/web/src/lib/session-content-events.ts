@@ -1,6 +1,6 @@
 import type { components } from "@clawdi/shared/api";
+import { sessionDetailQueryKey } from "@clawdi/shared/view";
 import type { QueryClient } from "@tanstack/react-query";
-import { sessionDetailQueryKey } from "@/lib/session-queries";
 
 type Detail = components["schemas"]["SessionDetailResponse"];
 type ContentVersion = Pick<

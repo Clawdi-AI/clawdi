@@ -1,18 +1,26 @@
 "use client";
 
-import type { components } from "@clawdi/shared/api";
+import {
+	AGENT_AVATAR_MIME_TYPES,
+	type components,
+	MAX_AGENT_AVATAR_BYTES,
+} from "@clawdi/shared/api";
 import { agentDisconnectEligibility } from "@clawdi/shared/client";
+import { agentSettingsPanelClasses } from "@clawdi/shared/ui";
+import {
+	agentDisconnectConfirmationCopy,
+	agentDisplayName,
+	agentSurfaceCopy,
+	agentTypeLabel,
+	errorMessage,
+} from "@clawdi/shared/view";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { ExternalLink, RotateCcw, Save, Trash2, Unplug, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
-import {
-	AgentSourceBadgeForEnvironment,
-	agentDisplayName,
-	agentTypeLabel,
-} from "@/components/dashboard/agent-label";
+import { AgentSourceBadgeForEnvironment } from "@/components/dashboard/agent-label";
 import { syncAgentNameDraft } from "@/components/dashboard/agent-settings-panel.logic";
 import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
@@ -28,13 +36,10 @@ import { agentDetailQueryKey, agentDetailQueryOptions, agentsQueryKey } from "@/
 import { toastApiError, unwrap, useAgentAvatarUploader, useApi, useOpenApi } from "@/lib/api";
 import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type Environment = components["schemas"]["AgentResponse"];
 type EnvironmentUpdate = components["schemas"]["EnvironmentUpdate"];
-
-const MAX_AGENT_AVATAR_BYTES = 2 * 1024 * 1024;
-const AGENT_AVATAR_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 function updateEnvironmentCaches(queryClient: QueryClient, environment: Environment) {
 	queryClient.setQueryData(agentDetailQueryKey(environment.id), environment);
@@ -146,7 +151,7 @@ export function AgentSettingsPanel({
 		const file = event.target.files?.[0];
 		event.target.value = "";
 		if (!file) return;
-		if (!AGENT_AVATAR_MIME_TYPES.has(file.type)) {
+		if (!AGENT_AVATAR_MIME_TYPES.some((type) => type === file.type)) {
 			toast.error("Unsupported avatar file", {
 				description: "Upload a PNG, JPEG, or WebP image.",
 			});
@@ -171,7 +176,7 @@ export function AgentSettingsPanel({
 	if (isLoading) {
 		return (
 			<div className={className}>
-				<Skeleton className="h-[420px] w-full rounded-lg" />
+				<Skeleton className={agentSettingsPanelClasses.skeleton} />
 			</div>
 		);
 	}
@@ -179,8 +184,10 @@ export function AgentSettingsPanel({
 	if (shouldBlockQueryError(error, agent) || !agent) {
 		return (
 			<div className={cn("flex flex-col gap-1 rounded-md border p-4", className)}>
-				<div className="text-sm font-semibold">Settings unavailable</div>
-				<p className="text-sm text-muted-foreground">{errorMessage(error ?? "Agent not found")}</p>
+				<div className={agentSettingsPanelClasses.errorTitle}>Settings unavailable</div>
+				<p className={agentSettingsPanelClasses.errorDescription}>
+					{errorMessage(error ?? "Agent not found")}
+				</p>
 			</div>
 		);
 	}
@@ -205,11 +212,13 @@ export function AgentSettingsPanel({
 	const displayName = agentDisplayName(agent);
 	const defaultDisplayName = agentDisplayName({ ...agent, display_name: null });
 	const runtimeLabel = agentTypeLabel(agent.agent_type);
-	const currentAvatarLabel = hasCustomAvatar ? "Custom upload" : `${runtimeLabel} default`;
+	const currentAvatarLabel = hasCustomAvatar
+		? agentSurfaceCopy.customUpload
+		: `${runtimeLabel} default`;
 	const legacyDashboardUrl = ownershipKind === "legacy" ? projectedLegacyDashboardUrl : null;
 
 	return (
-		<div className={cn("flex flex-col gap-8", className)}>
+		<div className={cn(agentSettingsPanelClasses.root, className)}>
 			{guardedBySurface ? null : (
 				<UnsavedNavigationGuard
 					dirty={nameChanged}
@@ -222,14 +231,14 @@ export function AgentSettingsPanel({
 				type="file"
 				accept="image/png,image/jpeg,image/webp"
 				aria-label="Upload agent avatar"
-				className="hidden"
+				className={agentSettingsPanelClasses.avatarInput}
 				onChange={onUploadChange}
 			/>
-			<div className="flex flex-col items-center gap-5 text-center sm:flex-row sm:text-left">
+			<div className={agentSettingsPanelClasses.identity}>
 				<AgentIcon agent={agent.agent_type} size="xl" avatarUrl={agent.avatar_url} />
-				<div className="flex min-w-0 flex-col gap-1">
-					<div className="max-w-full truncate text-lg font-semibold leading-7">{displayName}</div>
-					<div className="flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground sm:justify-start">
+				<div className={agentSettingsPanelClasses.identityCopy}>
+					<div className={agentSettingsPanelClasses.name}>{displayName}</div>
+					<div className={agentSettingsPanelClasses.identityMeta}>
 						<span>{runtimeLabel}</span>
 						<AgentSourceBadgeForEnvironment
 							env={agent}
@@ -242,12 +251,15 @@ export function AgentSettingsPanel({
 			</div>
 
 			<SettingsSection
-				title="Name"
-				description="Use a short name that distinguishes this agent from others."
+				title={agentSurfaceCopy.name}
+				description={agentSurfaceCopy.useAShortNameThatDistinguishesThis}
 			>
-				<div className="flex w-full flex-col gap-3">
-					<div className="flex flex-col gap-2 lg:flex-row">
-						<Label htmlFor="agent-display-name" className="sr-only">
+				<div className={agentSettingsPanelClasses.nameForm}>
+					<div className={agentSettingsPanelClasses.nameRow}>
+						<Label
+							htmlFor="agent-display-name"
+							className={agentSettingsPanelClasses.screenReaderOnly}
+						>
 							Agent name
 						</Label>
 						<Input
@@ -263,7 +275,7 @@ export function AgentSettingsPanel({
 							type="button"
 							size="sm"
 							variant={nameChanged ? "default" : "outline"}
-							className="lg:h-9 lg:min-w-20"
+							className={agentSettingsPanelClasses.saveName}
 							disabled={!nameChanged || updateIdentity.isPending}
 							onClick={() => updateIdentity.mutate({ display_name: normalizedDraftName })}
 						>
@@ -275,13 +287,15 @@ export function AgentSettingsPanel({
 							Save
 						</Button>
 					</div>
-					<div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-						<span className="min-w-0 truncate">Default: {defaultDisplayName}</span>
+					<div className={agentSettingsPanelClasses.nameHelp}>
+						<span className={agentSettingsPanelClasses.defaultName}>
+							Default: {defaultDisplayName}
+						</span>
 						<Button
 							type="button"
 							size="sm"
 							variant="ghost"
-							className="h-7 w-fit px-2 text-xs text-muted-foreground"
+							className={agentSettingsPanelClasses.resetName}
 							disabled={!agent.display_name || updateIdentity.isPending}
 							onClick={() => updateIdentity.mutate({ display_name: null })}
 						>
@@ -292,16 +306,21 @@ export function AgentSettingsPanel({
 				</div>
 			</SettingsSection>
 
-			<SettingsSection title="Avatar" description="Shown in the sidebar, pickers, and agent lists.">
-				<div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-					<div className="flex min-w-0 flex-1 items-center gap-3">
+			<SettingsSection
+				title={agentSurfaceCopy.avatar}
+				description={agentSurfaceCopy.shownInTheSidebarPickersAndAgent}
+			>
+				<div className={agentSettingsPanelClasses.avatarRow}>
+					<div className={agentSettingsPanelClasses.avatarIdentity}>
 						<AgentIcon agent={agent.agent_type} size="lg" avatarUrl={agent.avatar_url} />
-						<div className="min-w-0">
-							<div className="truncate text-sm font-medium">{currentAvatarLabel}</div>
-							<div className="text-xs text-muted-foreground">Image up to 2 MB.</div>
+						<div className={agentSettingsPanelClasses.avatarCopy}>
+							<div className={agentSettingsPanelClasses.avatarLabel}>{currentAvatarLabel}</div>
+							<div className={agentSettingsPanelClasses.avatarHint}>
+								{agentSurfaceCopy.imageUpTo2Mb}
+							</div>
 						</div>
 					</div>
-					<div className="flex shrink-0 flex-wrap gap-2 lg:justify-end">
+					<div className={agentSettingsPanelClasses.avatarActions}>
 						<Button
 							type="button"
 							variant="outline"
@@ -322,7 +341,7 @@ export function AgentSettingsPanel({
 							size="sm"
 							disabled={isBusy || !hasCustomAvatar}
 							onClick={() => clearAvatar.mutate()}
-							className="text-muted-foreground"
+							className={agentSettingsPanelClasses.removeAvatar}
 						>
 							{clearAvatar.isPending ? (
 								<Spinner data-icon="inline-start" />
@@ -340,8 +359,8 @@ export function AgentSettingsPanel({
 					title="Legacy dashboard"
 					description="Manage this legacy Cloud Agent in the legacy dashboard."
 				>
-					<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-						<p className="max-w-md text-sm text-muted-foreground">
+					<div className={agentSettingsPanelClasses.actionRow}>
+						<p className={agentSettingsPanelClasses.actionDescription}>
 							This agent uses the legacy management surface for runtime actions.
 						</p>
 						<Button
@@ -366,23 +385,24 @@ export function AgentSettingsPanel({
 
 			{!disconnectUnavailable ? (
 				<SettingsSection
-					title="Disconnect"
-					description="Stop this installation while keeping its Clawdi data."
+					title={agentSurfaceCopy.disconnect}
+					description={agentSurfaceCopy.stopThisInstallationWhileKeepingItsClawdi}
 					variant="destructive"
 				>
-					<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-						<p className="max-w-md text-sm text-muted-foreground">
-							Sync stops and retained sessions, skills, files, and projects stay in your account.
+					<div className={agentSettingsPanelClasses.actionRow}>
+						<p className={agentSettingsPanelClasses.actionDescription}>
+							{agentSurfaceCopy.syncStopsAndRetainedSessionsSkillsFilesAndProjects}
 						</p>
 						<ConfirmAction
-							title="Disconnect this agent?"
+							title={agentDisconnectConfirmationCopy.title}
 							description={
 								<p>
-									Disconnect stops this installation and removes it from active views. Run{" "}
-									<code>clawdi setup</code> on it to reconnect with the same retained data.
+									{agentDisconnectConfirmationCopy.beforeCommand}
+									<code>{agentDisconnectConfirmationCopy.command}</code>
+									{agentDisconnectConfirmationCopy.afterCommand}
 								</p>
 							}
-							confirmLabel="Disconnect agent"
+							confirmLabel={agentSurfaceCopy.disconnectAgent}
 							destructive
 							onConfirm={() => disconnect.mutateAsync()}
 						>
@@ -391,7 +411,7 @@ export function AgentSettingsPanel({
 								variant="outline"
 								size="sm"
 								disabled={disconnect.isPending}
-								className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
+								className={agentSettingsPanelClasses.disconnect}
 							>
 								{disconnect.isPending ? (
 									<Spinner data-icon="inline-start" />

@@ -1,6 +1,8 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
+import { hostedAgentGroupsClasses } from "@clawdi/shared/ui";
+import { hostedAgentCountLabel, hostedAgentGroupsCopy } from "@clawdi/shared/view";
 import { useEffect } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentSourceBadge } from "@/components/dashboard/agent-label";
@@ -209,7 +211,7 @@ export function HostedAgentsByCompute({
 	const connectedTiles = unified.connectedTiles;
 	if (envsLoading) {
 		return (
-			<div data-hosted="true" className="space-y-6">
+			<div data-hosted="true" className={hostedAgentGroupsClasses.root}>
 				<AgentsCard agents={[]} isLoading />
 			</div>
 		);
@@ -225,7 +227,7 @@ export function HostedAgentsByCompute({
 		!unified.error;
 	if (isEmptyState) {
 		return (
-			<div data-hosted="true" className="space-y-6">
+			<div data-hosted="true" className={hostedAgentGroupsClasses.root}>
 				<HostedEmptyAccountHero canDeployOnClawdi={canDeployOnClawdi} />
 			</div>
 		);
@@ -235,36 +237,36 @@ export function HostedAgentsByCompute({
 	// connected section renders first and Clawdi Cloud pushes in above it.
 	if (unified.isLoading) {
 		return (
-			<div data-hosted="true" className="space-y-6">
+			<div data-hosted="true" className={hostedAgentGroupsClasses.root}>
 				<AgentsCard agents={[]} isLoading />
 			</div>
 		);
 	}
 
 	return (
-		<div data-hosted="true" className="space-y-6">
+		<div data-hosted="true" className={hostedAgentGroupsClasses.root}>
 			{hostedTiles.length > 0 ? (
-				<section className="space-y-2">
+				<section className={hostedAgentGroupsClasses.section}>
 					<SectionLabel
 						leading={<AgentSourceBadge source="hosted" compact />}
-						count={`${hostedTiles.length} agent${hostedTiles.length === 1 ? "" : "s"}`}
+						count={hostedAgentCountLabel(hostedTiles.length)}
 					>
-						Cloud Agents
+						{hostedAgentGroupsCopy.cloud}
 					</SectionLabel>
 					<AgentTileGrid tiles={hostedTiles} />
 				</section>
 			) : null}
 
 			{connectedTiles.length > 0 ? (
-				<section className="space-y-2">
-					<SectionLabel>Connected Agents</SectionLabel>
+				<section className={hostedAgentGroupsClasses.section}>
+					<SectionLabel>{hostedAgentGroupsCopy.other}</SectionLabel>
 					<AgentTileGrid tiles={connectedTiles} />
 				</section>
 			) : null}
 
 			{selfManagedError ? (
-				<section className="space-y-2">
-					<SectionLabel>Connected Agents</SectionLabel>
+				<section className={hostedAgentGroupsClasses.section}>
+					<SectionLabel>{hostedAgentGroupsCopy.other}</SectionLabel>
 					<ApiErrorPanel
 						error={selfManagedError}
 						onRetry={onRetrySelfManaged}

@@ -1,9 +1,10 @@
 "use client";
 
+import { channelFormClasses as formStyles } from "@clawdi/shared/ui";
+import { agentDisplayName, channelFormCopy as formCopy } from "@clawdi/shared/view";
 import { Link2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { agentDisplayName } from "@/components/dashboard/agent-label";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -163,12 +164,10 @@ export function LinkChannelAgentAction({
 					if (!nextOpen) setSelectedAgentId("");
 				}}
 			>
-				<DialogContent className="sm:max-w-md">
+				<DialogContent className={formStyles.content}>
 					<DialogHeader>
-						<DialogTitle>Link agent</DialogTitle>
-						<DialogDescription>
-							Choose an agent, then pair one of its chats without leaving this channel.
-						</DialogDescription>
+						<DialogTitle>{formCopy.linkTitle}</DialogTitle>
+						<DialogDescription>{formCopy.linkDescription}</DialogDescription>
 					</DialogHeader>
 					{linksError ? (
 						<ApiErrorPanel
@@ -185,7 +184,7 @@ export function LinkChannelAgentAction({
 					) : links.isLoading || envs.isLoading ? (
 						<Skeleton className="h-9 w-full rounded-md" />
 					) : availableAgents.length > 0 ? (
-						<div className="space-y-1.5">
+						<div className={formStyles.field}>
 							<Label htmlFor={`channel-link-agent-${accountId}`}>Agent</Label>
 							<Select
 								items={availableAgents.map((env) => ({
@@ -195,8 +194,11 @@ export function LinkChannelAgentAction({
 								value={selectedAgentId}
 								onValueChange={(value) => setSelectedAgentId(value ?? "")}
 							>
-								<SelectTrigger id={`channel-link-agent-${accountId}`} className="w-full">
-									<SelectValue placeholder="Choose an agent…" />
+								<SelectTrigger
+									id={`channel-link-agent-${accountId}`}
+									className={formStyles.trigger}
+								>
+									<SelectValue placeholder={formCopy.chooseAgent} />
 								</SelectTrigger>
 								<SelectContent>
 									{availableAgents.map((env) => (

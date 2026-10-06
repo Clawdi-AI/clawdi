@@ -1,3 +1,4 @@
+import { sessionStatClasses } from "@clawdi/shared/ui";
 import type { LucideIcon } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -26,8 +27,8 @@ export function Stat({
 	className?: string;
 }) {
 	const stat = (
-		<span className={cn("inline-flex items-center gap-1 text-xs text-muted-foreground", className)}>
-			<Icon className="size-3.5 shrink-0" />
+		<span className={cn(sessionStatClasses.root, className)}>
+			<Icon className={sessionStatClasses.icon} />
 			<span className="truncate">{label}</span>
 		</span>
 	);

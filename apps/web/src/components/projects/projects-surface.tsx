@@ -1,5 +1,16 @@
 "use client";
 
+import { projectsSurfaceClasses } from "@clawdi/shared/ui";
+import {
+	canManageCustomProject,
+	compareProjectsForUse,
+	formatResourceCount,
+	getProjectResourceDefinition,
+	isCustomProject,
+	LIBRARY_COPY,
+	projectMatchesSearch,
+	projectSearchRank,
+} from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { Plus } from "lucide-react";
@@ -18,13 +29,6 @@ import { PageHeader } from "@/components/page-header";
 import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
 import { ProjectActions } from "@/components/projects/project-actions";
 import {
-	canManageCustomProject,
-	compareProjectsForUse,
-	isCustomProject,
-	projectMatchesSearch,
-	projectSearchRank,
-} from "@/components/projects/project-metadata";
-import {
 	ProjectResourceCard,
 	ProjectResourceCardSkeleton,
 	UnavailableProjectResourceCard,
@@ -36,7 +40,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { agentDetailQueryKey } from "@/lib/agent-queries";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
-import { formatResourceCount, getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	agentResourceScope,
@@ -157,7 +160,10 @@ export function ProjectsSurface({
 	const from = `${returnHref}${search ? `?q=${encodeURIComponent(search)}` : ""}`;
 
 	return (
-		<div className="space-y-6" data-testid={agentId ? "agent-project-stack" : "projects-surface"}>
+		<div
+			className={projectsSurfaceClasses.page}
+			data-testid={agentId ? "agent-project-stack" : "projects-surface"}
+		>
 			<PageHeader
 				title="Projects"
 				icon={headerIcon}
@@ -187,14 +193,20 @@ export function ProjectsSurface({
 						}}
 					>
 						<Button size="sm" disabled={actionsDisabled}>
-							<Plus className="size-3.5" />
+							<Plus className={projectsSurfaceClasses.createIcon} />
 							Create project
 						</Button>
 					</CreateProjectDialog>
 				}
 			/>
 			<ListToolbar
-				search={<SearchInput value={search} onChange={setSearch} placeholder="Search projects…" />}
+				search={
+					<SearchInput
+						value={search}
+						onChange={setSearch}
+						placeholder={LIBRARY_COPY.searchProjects}
+					/>
+				}
 			/>
 			{agentId && bindings.error ? (
 				<ApiErrorPanel
@@ -237,7 +249,7 @@ export function ProjectsSurface({
 					group.rows.length + group.missingBindings.length > 0 ? (
 						<section
 							key={group.label ?? "catalog"}
-							className="space-y-3"
+							className={projectsSurfaceClasses.section}
 							aria-label={group.label ? `${group.label} projects` : undefined}
 						>
 							{group.label ? (
@@ -262,11 +274,11 @@ export function ProjectsSurface({
 									return (
 										<li
 											key={project.id}
-											className="min-w-0"
+											className={projectsSurfaceClasses.sectionHeading}
 											data-testid={agentId ? "agent-project-card" : "project-card"}
 										>
 											<ProjectResourceCard
-												className="h-full"
+												className={projectsSurfaceClasses.card}
 												project={project}
 												searchQuery={search.trim() || undefined}
 												link={projectDetailLink(scope, project.id, search ? from : undefined)}

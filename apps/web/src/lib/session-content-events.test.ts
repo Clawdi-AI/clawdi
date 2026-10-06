@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
+import { sessionDetailQueryKey } from "@clawdi/shared/view";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { observeSessionContent, parseContentVersion } from "./session-content-events";
-import { sessionDetailQueryKey } from "./session-queries";
 
 const empty = {
 	has_content: false,

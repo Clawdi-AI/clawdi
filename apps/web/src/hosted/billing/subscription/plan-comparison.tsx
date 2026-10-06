@@ -1,39 +1,26 @@
 "use client";
 
+import { planComparisonClasses } from "@clawdi/shared/ui";
+import { billingCopy, computePlanComparisonView } from "@clawdi/shared/view";
 import { Check, Cpu, Zap } from "lucide-react";
-import { useMemo } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { SettingsSection } from "@/components/settings-section";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
-import type { BillingOffer, Plan } from "@/hosted/billing/contracts";
+import type { BillingOffer } from "@/hosted/billing/contracts";
 import {
 	type ComputePricePresentation,
 	cardTrialPricePresentation,
-	computePricePresentation,
 } from "@/hosted/billing/deploy/deploy-price-presentation";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { usePlans } from "@/hosted/billing/hooks";
-import {
-	commonExplicitBillingOffers,
-	explicitPlanOffers,
-	resolveBasicPlan,
-	resolvePerformancePlan,
-} from "@/hosted/billing/subscription/subscription-utils";
 import { shouldBlockQueryError } from "@/lib/query-state";
-
-function partitionPlans(plans: Plan[]): { basic?: Plan; performance?: Plan } {
-	return {
-		basic: resolveBasicPlan(plans),
-		performance: resolvePerformancePlan(plans),
-	};
-}
 
 function FeatureRow({ children }: { children: React.ReactNode }) {
 	return (
-		<li className="flex items-start gap-2 text-sm">
-			<Check className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
+		<li className={planComparisonClasses.feature}>
+			<Check className={planComparisonClasses.featureIcon} aria-hidden />
 			<span>{children}</span>
 		</li>
 	);
@@ -49,12 +36,10 @@ function PlanPrice({
 	const trial = cardTrialPricePresentation(presentation.primary, offer.card_trial_period_days);
 	return (
 		<>
-			<p className="text-3xl font-semibold tracking-normal tabular-nums">{presentation.primary}</p>
-			<p className="text-xs text-muted-foreground tabular-nums">
-				{trial?.label ?? presentation.secondary}
-			</p>
+			<p className={planComparisonClasses.price}>{presentation.primary}</p>
+			<p className={planComparisonClasses.unit}>{trial?.label ?? presentation.secondary}</p>
 			{trial && offer.billing_term_months > 1 ? (
-				<p className="text-xs text-muted-foreground tabular-nums">{presentation.secondary}</p>
+				<p className={planComparisonClasses.unit}>{presentation.secondary}</p>
 			) : null}
 		</>
 	);
@@ -74,17 +59,12 @@ export function PlanComparison({
 }) {
 	const plansQuery = usePlans();
 
-	const { basic, performance } = useMemo(
-		() => partitionPlans(plansQuery.data ?? []),
-		[plansQuery.data],
-	);
-
 	if (plansQuery.isLoading) {
 		return (
 			<SettingsSection headingLevel={3} title="Plans" description="Compare Cloud Agent plans.">
-				<div className="grid gap-3 lg:grid-cols-2">
-					<Skeleton className="h-72 w-full rounded-lg" />
-					<Skeleton className="h-72 w-full rounded-lg" />
+				<div className={planComparisonClasses.grid}>
+					<Skeleton className={planComparisonClasses.skeletonCard} />
+					<Skeleton className={planComparisonClasses.skeletonCard} />
 				</div>
 			</SettingsSection>
 		);
@@ -103,28 +83,17 @@ export function PlanComparison({
 		);
 	}
 
-	const basicOffers = basic ? explicitPlanOffers(basic) : [];
-	const performanceOffers = performance ? explicitPlanOffers(performance) : [];
-	const commonOffers =
-		basic && performance ? commonExplicitBillingOffers([basic, performance]) : [];
-	const selectedTerm =
-		commonOffers.find((offer) => offer.billing_term_months === term)?.billing_term_months ??
-		commonOffers[0]?.billing_term_months ??
-		null;
-	const basicOffer =
-		selectedTerm === null
-			? null
-			: (basicOffers.find((offer) => offer.billing_term_months === selectedTerm) ?? null);
-	const performanceOffer =
-		selectedTerm === null
-			? null
-			: (performanceOffers.find((offer) => offer.billing_term_months === selectedTerm) ?? null);
-	const basicPrice = basicOffer ? computePricePresentation(basicOffer, basicOffers) : null;
-	const performancePrice = performanceOffer
-		? computePricePresentation(performanceOffer, performanceOffers)
-		: null;
-	const sharedPricingUnavailable =
-		basic !== undefined && performance !== undefined && !selectedTerm;
+	const {
+		basic,
+		performance,
+		commonOffers,
+		selectedTerm,
+		basicOffer,
+		performanceOffer,
+		basicPrice,
+		performancePrice,
+		sharedPricingUnavailable,
+	} = computePlanComparisonView(plansQuery.data ?? [], term);
 
 	return (
 		<SettingsSection
@@ -133,7 +102,7 @@ export function PlanComparison({
 			title="Plans"
 			actions={
 				commonOffers.length > 1 && selectedTerm !== null ? (
-					<div className="w-56">
+					<div className={planComparisonClasses.skeletonTitle}>
 						<TermSwitcher
 							offers={commonOffers}
 							value={selectedTerm}
@@ -146,30 +115,30 @@ export function PlanComparison({
 			}
 			description={
 				sharedPricingUnavailable
-					? "A shared Basic and Performance billing term is not currently available."
+					? billingCopy.sharedPricingUnavailable
 					: "Compare Cloud Agent plans."
 			}
 		>
 			<div>
-				<div className="grid gap-3 lg:grid-cols-2">
+				<div className={planComparisonClasses.grid}>
 					{/* Basic */}
 					<Card size="sm">
-						<CardHeader className="gap-2">
-							<CardTitle className="flex items-center gap-2">
-								<Cpu className="size-5 text-muted-foreground" aria-hidden /> Basic
+						<CardHeader className={planComparisonClasses.header}>
+							<CardTitle className={planComparisonClasses.title}>
+								<Cpu className={planComparisonClasses.icon} aria-hidden /> Basic
 							</CardTitle>
 							<CardDescription>Balanced capacity for everyday workloads.</CardDescription>
-							<div className="min-h-20 pt-1">
-								<p className="text-xs text-muted-foreground">Basic subscription</p>
+							<div className={planComparisonClasses.priceBlock}>
+								<p className={planComparisonClasses.description}>Basic subscription</p>
 								{basicPrice && basicOffer ? (
 									<PlanPrice offer={basicOffer} presentation={basicPrice} />
 								) : (
-									<p className="text-sm font-medium">Pricing unavailable</p>
+									<p className={planComparisonClasses.subheading}>Pricing unavailable</p>
 								)}
 							</div>
 						</CardHeader>
-						<CardContent className="flex-1">
-							<ul className="space-y-2">
+						<CardContent className={planComparisonClasses.stretch}>
+							<ul className={planComparisonClasses.features}>
 								{basic ? (
 									<FeatureRow>
 										Up to {basic.vcpu} vCPU · {basic.ram_gb} GB RAM · {basic.disk_size} GB storage
@@ -182,23 +151,23 @@ export function PlanComparison({
 					</Card>
 
 					{/* Performance */}
-					<Card size="sm" className="border-primary/30">
-						<CardHeader className="gap-2">
-							<CardTitle className="flex items-center gap-2">
-								<Zap className="size-5 text-primary" aria-hidden /> Performance
+					<Card size="sm" className={planComparisonClasses.featuredCard}>
+						<CardHeader className={planComparisonClasses.header}>
+							<CardTitle className={planComparisonClasses.title}>
+								<Zap className={planComparisonClasses.featuredIcon} aria-hidden /> Performance
 							</CardTitle>
 							<CardDescription>Higher capacity for production workloads.</CardDescription>
-							<div className="min-h-20 pt-1">
-								<p className="text-xs text-muted-foreground">Performance subscription</p>
+							<div className={planComparisonClasses.priceBlock}>
+								<p className={planComparisonClasses.description}>Performance subscription</p>
 								{performancePrice && performanceOffer ? (
 									<PlanPrice offer={performanceOffer} presentation={performancePrice} />
 								) : (
-									<p className="text-sm font-medium">Pricing unavailable</p>
+									<p className={planComparisonClasses.subheading}>Pricing unavailable</p>
 								)}
 							</div>
 						</CardHeader>
-						<CardContent className="flex-1">
-							<ul className="space-y-2">
+						<CardContent className={planComparisonClasses.stretch}>
+							<ul className={planComparisonClasses.features}>
 								{performance ? (
 									<FeatureRow>
 										Up to {performance.vcpu} vCPU · {performance.ram_gb} GB RAM ·{" "}

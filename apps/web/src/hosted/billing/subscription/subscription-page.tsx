@@ -1,20 +1,22 @@
 "use client";
 
+import { billingPageClass } from "@clawdi/shared/ui";
+import type { AgentTile } from "@clawdi/shared/view";
+import { billingCopy } from "@clawdi/shared/view";
 import { useState } from "react";
-import type { AgentTile } from "@/components/dashboard/agents-card";
 import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { SubscriptionsSection } from "@/hosted/billing/subscription/subscriptions-section";
 
-const DESCRIPTION = "Subscriptions, plans, and account billing for Cloud Agents.";
-const SUBSCRIPTION_PAGE_CLASS = "flex flex-col gap-8 px-5 sm:px-6 lg:px-8";
+const DESCRIPTION = billingCopy.computeDescription;
+const SUBSCRIPTION_PAGE_CLASS = billingPageClass;
 
 export function SubscriptionPage({ agentTiles }: { agentTiles: readonly AgentTile[] }) {
 	const [term, setTerm] = useState(1);
 
 	return (
 		<div data-hosted="true" className={SUBSCRIPTION_PAGE_CLASS}>
-			<SettingsPanelHeader title="Compute" description={DESCRIPTION} />
+			<SettingsPanelHeader title={billingCopy.compute} description={DESCRIPTION} />
 
 			<SubscriptionsSection agentTiles={agentTiles} />
 

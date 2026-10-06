@@ -1,8 +1,8 @@
 "use client";
 
+import { formatAbsoluteTooltip } from "@clawdi/shared/view";
 import type { ReactElement } from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { formatAbsoluteTooltip } from "@/lib/utils";
 
 export function TimeTooltip({
 	value,

@@ -1,6 +1,18 @@
 "use client";
 
 import { isSearchQueryReady, SEARCH_QUERY_MAX_LENGTH } from "@clawdi/shared/consts";
+import { sessionDetailClasses } from "@clawdi/shared/ui";
+import {
+	formatDuration,
+	formatNumber,
+	formatSessionSummary,
+	relativeTime,
+	sessionAgentIdentityInput,
+	sessionDetailQueryKey,
+	sessionEmptyDescription,
+	sessionHasLaterActivity,
+	sessionTimelineFilters,
+} from "@clawdi/shared/view";
 import {
 	type InfiniteData,
 	keepPreviousData,
@@ -22,7 +34,6 @@ import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
 import { SessionSearchNavigation } from "@/components/sessions/session-search-navigation";
 import { SessionSidebar } from "@/components/sessions/session-sidebar";
 import {
@@ -49,7 +60,6 @@ import type {
 	SessionTimelinePage,
 } from "@/lib/api-schemas";
 import { useCurrentUser } from "@/lib/auth-client";
-import { formatDuration } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { sessionContentRevision } from "@/lib/session-content-events";
 import {
@@ -57,7 +67,6 @@ import {
 	SESSION_DETAIL_STALE_MS,
 	SESSION_MESSAGES_GC_MS,
 	SESSION_MESSAGES_STALE_MS,
-	sessionDetailQueryKey,
 } from "@/lib/session-queries";
 import {
 	DEFAULT_SESSION_TIMELINE_VIEW,
@@ -71,19 +80,12 @@ import {
 } from "@/lib/session-search-anchor";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { useSessionContentEvents } from "@/lib/use-session-content-events";
-import { cn, formatNumber, formatSessionSummary, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 const SESSION_MESSAGE_PAGE_SIZE = 100;
 const SESSION_MESSAGE_API_DIRECTION = "desc" as const;
 
-const TIMELINE_FILTERS: readonly {
-	category: SessionTimelineCategory;
-	label: string;
-}[] = [
-	{ category: "user", label: "You" },
-	{ category: "assistant", label: "Agent" },
-	{ category: "tools", label: "Tools" },
-];
+const TIMELINE_FILTERS = sessionTimelineFilters;
 
 function normalizeTimelinePage(
 	page: SessionMessagesPage | SessionTimelinePage,
@@ -502,7 +504,7 @@ export function SessionDetailContent({
 
 	if (isSessionLoading) {
 		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, sessionDetailClasses.page)}>
 				<DetailBackLink href={sessionsHref} label="Sessions" />
 				<DetailSkeleton />
 			</div>
@@ -511,7 +513,7 @@ export function SessionDetailContent({
 
 	if (isApiNotFoundError(sessionError) || shouldBlockQueryError(sessionError, session)) {
 		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, sessionDetailClasses.page)}>
 				<DetailBackLink href={sessionsHref} label="Sessions" />
 				{isApiNotFoundError(sessionError) ? (
 					<DetailNotFound title="Session not found" message="This session doesn't exist." />
@@ -530,7 +532,7 @@ export function SessionDetailContent({
 
 	if (!session || !summaryText) {
 		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, sessionDetailClasses.page)}>
 				<DetailBackLink href={sessionsHref} label="Sessions" />
 				<DetailNotFound title="Session not found" message="This session doesn't exist." />
 			</div>
@@ -599,15 +601,12 @@ export function SessionDetailContent({
 	};
 
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, sessionDetailClasses.page)}>
 			<DetailBackLink href={sessionsHref} label="Sessions" />
 			{/* Keep context visible when the timeline opens at its latest message. */}
-			<div
-				data-testid="session-context-header"
-				className="sticky top-(--header-height) z-10 -mx-4 border-b bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:-mx-6 lg:px-6"
-			>
+			<div data-testid="session-context-header" className={sessionDetailClasses.context}>
 				<PageHeader
-					className="gap-2"
+					className={sessionDetailClasses.header}
 					title={summaryText}
 					status={
 						<DetailMeta>
@@ -629,7 +628,7 @@ export function SessionDetailContent({
 							{session.project_path ? (
 								<>
 									<span>·</span>
-									<span className="truncate font-mono">{session.project_path}</span>
+									<span className={sessionDetailClasses.project}>{session.project_path}</span>
 								</>
 							) : null}
 							<span>·</span>
@@ -644,11 +643,7 @@ export function SessionDetailContent({
 						    Above 5 minutes the relative bucket usually
 						    diverges (e.g. "3h ago" vs "2h ago" or "yesterday"
 						    vs "today") and the second stamp earns its space. */}
-							{Math.abs(
-								new Date(session.last_activity_at).getTime() -
-									new Date(session.started_at).getTime(),
-							) >
-							5 * 60_000 ? (
+							{sessionHasLaterActivity(session.started_at, session.last_activity_at) ? (
 								<>
 									<span>·</span>
 									<TimeTooltip value={session.last_activity_at}>
@@ -670,7 +665,7 @@ export function SessionDetailContent({
 						</DetailMeta>
 					}
 					actions={
-						<div className="flex items-center gap-2">
+						<div className={sessionDetailClasses.actions}>
 							<SessionShareButton onClick={() => openShare({ scope: "session" })} />
 							<ConfirmAction
 								title="Permanently delete this cloud session?"
@@ -708,10 +703,10 @@ export function SessionDetailContent({
 				/>
 
 				{session.has_content ? (
-					<div className="mt-2">
+					<div className={sessionDetailClasses.controls}>
 						<div
 							className={cn(
-								"grid min-w-0 gap-2 md:items-center",
+								sessionDetailClasses.controlGrid,
 								searchableTimeline ? "md:grid-cols-[minmax(16rem,1fr)_auto]" : "md:grid-cols-1",
 							)}
 						>
@@ -731,18 +726,18 @@ export function SessionDetailContent({
 							) : null}
 							<div
 								className={cn(
-									"flex min-h-9 min-w-0 items-center justify-between gap-2 md:justify-end",
+									sessionDetailClasses.toolbar,
 									!searchableTimeline && "md:justify-self-end",
 								)}
 							>
-								<fieldset className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+								<fieldset className={sessionDetailClasses.filters}>
 									<legend className="sr-only">Show in timeline</legend>
 									{TIMELINE_FILTERS.map(({ category, label }) => {
 										const checked = timelineCategories.includes(category);
 										const disabled = checked && timelineCategories.length === 1;
 										const id = `timeline-filter-${category}`;
 										return (
-											<div key={category} className="flex items-center gap-1.5">
+											<div key={category} className={sessionDetailClasses.filter}>
 												<Checkbox
 													id={id}
 													checked={checked}
@@ -751,7 +746,7 @@ export function SessionDetailContent({
 														updateTimelineCategory(category, value === true)
 													}
 												/>
-												<Label htmlFor={id} className="cursor-pointer text-xs font-normal">
+												<Label htmlFor={id} className={sessionDetailClasses.filterLabel}>
 													{label}
 												</Label>
 											</div>
@@ -815,13 +810,13 @@ export function SessionDetailContent({
 					<EmptyContent view={timelineView} />
 				)
 			) : (
-				<DetailPanel className="space-y-4">
+				<DetailPanel className={sessionDetailClasses.panel}>
 					<div className="space-y-1">
-						<div className="flex items-center gap-2">
+						<div className={sessionDetailClasses.actions}>
 							<MessageSquare className="size-4 text-muted-foreground" />
-							<h2 className="text-sm font-semibold">Conversation</h2>
+							<h2 className={sessionDetailClasses.panelHeading}>Conversation</h2>
 						</div>
-						<p className="text-xs text-muted-foreground">
+						<p className={sessionDetailClasses.muted}>
 							Messages appear here after the agent uploads this session.
 						</p>
 					</div>
@@ -907,7 +902,7 @@ function LoadMoreControl({
 	label: string;
 }) {
 	return (
-		<div className="flex flex-col items-center gap-2 py-4">
+		<div className={sessionDetailClasses.pagination}>
 			<Button variant="ghost" size="sm" onClick={onLoad} disabled={isFetching}>
 				{isFetching
 					? `Loading… (${loadedCount}/${totalCount})`
@@ -947,18 +942,20 @@ function DetailSkeleton() {
 
 function MessagesSkeleton() {
 	return (
-		<div className="space-y-6">
+		<div className={sessionDetailClasses.skeleton}>
 			{Array.from({ length: 4 }).map((_, i) => (
-				<div key={i} className="flex gap-3">
+				<div key={i} className={sessionDetailClasses.skeletonRow}>
 					{i % 2 === 0 ? (
-						<Skeleton className="size-7 rounded-full shrink-0" />
+						<Skeleton className={sessionDetailClasses.skeletonAvatar} />
 					) : (
 						<div className="w-7 shrink-0" />
 					)}
-					<div className="flex-1 space-y-2">
-						<Skeleton className="h-3.5 w-24" />
-						<Skeleton className={cn("h-4", i % 2 === 0 ? "w-3/4" : "w-full")} />
-						{i % 2 === 1 && <Skeleton className="h-20 w-full rounded-lg" />}
+					<div className={sessionDetailClasses.skeletonBody}>
+						<Skeleton className={sessionDetailClasses.skeletonAuthor} />
+						<Skeleton
+							className={cn(sessionDetailClasses.skeletonLine, i % 2 === 0 ? "w-3/4" : "w-full")}
+						/>
+						{i % 2 === 1 && <Skeleton className={sessionDetailClasses.skeletonCode} />}
 					</div>
 				</div>
 			))}
@@ -967,13 +964,6 @@ function MessagesSkeleton() {
 }
 
 function EmptyContent({ view }: { view: SessionTimelineView }) {
-	const description =
-		view === "tools"
-			? "No tool activity in this session."
-			: view === "user"
-				? "No user messages in this session."
-				: view === "assistant"
-					? "No agent messages in this session."
-					: "No visible activity in this session.";
+	const description = sessionEmptyDescription(view);
 	return <EmptyState variant="inset" description={description} />;
 }

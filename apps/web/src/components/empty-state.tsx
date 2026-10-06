@@ -1,3 +1,4 @@
+import { emptyStateClasses } from "@clawdi/shared/ui";
 import { Inbox, type LucideIcon } from "lucide-react";
 import { isValidElement, type ReactNode } from "react";
 import {
@@ -38,17 +39,13 @@ export function EmptyState({
 	return (
 		<Empty
 			className={cn(
-				variant === "page"
-					? "min-h-[320px] border-none bg-transparent p-0 md:p-0"
-					: "min-h-0 flex-none gap-3 border border-solid bg-muted/30 px-4 py-6 md:p-6",
+				variant === "page" ? emptyStateClasses.page : emptyStateClasses.inset,
 				className,
 			)}
 		>
-			<EmptyHeader className={cn(variant === "inset" && "gap-1")}>
+			<EmptyHeader className={cn(variant === "inset" && emptyStateClasses.insetHeader)}>
 				{icon ? <EmptyMedia variant="icon">{icon}</EmptyMedia> : null}
-				{title ? (
-					<EmptyTitle className="text-sm font-medium tracking-normal">{title}</EmptyTitle>
-				) : null}
+				{title ? <EmptyTitle className={emptyStateClasses.title}>{title}</EmptyTitle> : null}
 				{description ? <EmptyDescription>{description}</EmptyDescription> : null}
 			</EmptyHeader>
 			{action ? <EmptyContent>{action}</EmptyContent> : null}
@@ -60,5 +57,5 @@ function renderEmptyIcon(icon: EmptyStateProps["icon"]) {
 	if (!icon) return null;
 	if (isValidElement(icon) || typeof icon === "string" || typeof icon === "number") return icon;
 	const Icon = icon as LucideIcon;
-	return <Icon className="size-5" aria-hidden />;
+	return <Icon className={emptyStateClasses.icon} aria-hidden />;
 }

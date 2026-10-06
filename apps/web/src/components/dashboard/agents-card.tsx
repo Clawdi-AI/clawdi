@@ -1,18 +1,19 @@
 "use client";
 
-import type { components } from "@clawdi/shared/api";
+import { agentsCardClasses } from "@clawdi/shared/ui";
+import {
+	type AgentCardStatusVisual,
+	type AgentTile,
+	agentTileCardProjection,
+	compareAgentTiles,
+	OVERVIEW_COPY,
+} from "@clawdi/shared/view";
+
 import { Link } from "@tanstack/react-router";
 import { ArrowUpRight } from "lucide-react";
 import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
-import {
-	AgentSourceBadge,
-	agentDisplayName,
-	agentIdentity,
-	compareAgentEnvironments,
-	LegacyAgentBadge,
-} from "@/components/dashboard/agent-label";
-import { type DaemonStatusVisual, daemonStatusVisual } from "@/components/dashboard/daemon-status";
+import { AgentSourceBadge, LegacyAgentBadge } from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
 import {
 	ENTITY_CARD_BASE,
@@ -22,65 +23,8 @@ import {
 	EntityHeader,
 } from "@/components/entity-card";
 import { preloadHostedAgentHome } from "@/lib/agent-home-loader";
-import { agentRouteIdsEqual, agentSectionHref, parseAgentPathname } from "@/lib/agent-routes";
-import { cn, relativeTime } from "@/lib/utils";
-
-type Env = components["schemas"]["AgentResponse"];
-
-/**
- * Build self-managed AgentTiles from cloud-api environments. Shared by the
- * Overview grid and the `/agents` index so the tile shape stays identical
- * across both surfaces (single source of truth for the connected-agent row).
- */
-export function selfManagedAgentTiles(environments: Env[] | undefined): AgentTile[] {
-	return (environments ?? []).map((env) => ({
-		id: env.id,
-		source: "self-managed" as const,
-		name: agentDisplayName(env),
-		avatarUrl: env.avatar_url,
-		sortOrder: env.sort_order,
-		agentType: env.agent_type,
-		href: agentSectionHref(env.id),
-		env,
-	}));
-}
-
-export type AgentCardStatusVisual = Pick<DaemonStatusVisual, "label" | "tooltip" | "dotClass">;
-
-export interface AgentCardStatusProjection {
-	visual: AgentCardStatusVisual;
-	/** Explicit status labels rendered in the compact card metadata. */
-	labels: string[];
-}
-
-/**
- * UI-side projection of an agent for the dashboard grid. The dashboard
- * page composes this from cloud-api environments and (for hosted users)
- * hosted deployments — `AgentsCard` itself stays generic and
- * never imports cross-origin clients or `@/hosted/*`.
- */
-export interface AgentTile {
-	id: string;
-	source: "self-managed" | "on-clawdi" | "legacy-hosted";
-	name: string;
-	avatarUrl?: string | null;
-	sortOrder?: number | null;
-	agentType: string | null;
-	/** Primary click target. Points at the canonical Agent UUID route. */
-	href: string | null;
-	external?: boolean;
-	/** Optional remediation target for legacy status dialogs. */
-	manageHref?: string;
-	/** Hosted integrations can project compute-first status without making the
-	 * generic card import hosted lifecycle types. */
-	cardStatus?: AgentCardStatusProjection;
-	/** Whether this hosted deployment has an authoritative Files endpoint. */
-	filesAvailable?: boolean;
-	/** Self-managed Agents carry their full response so the tile can render a
-	 * sync indicator. Hosted tiles attach an observed Cloud projection when it
-	 * exists; deployment authority remains available when it does not. */
-	env?: Env | null;
-}
+import { agentRouteIdsEqual, parseAgentPathname } from "@/lib/agent-routes";
+import { cn } from "@/lib/utils";
 
 export function agentTileMatchesRouteId(tile: AgentTile, routeId: string): boolean {
 	if (agentRouteIdsEqual(tile.id, routeId) || agentRouteIdsEqual(tile.env?.id, routeId))
@@ -115,10 +59,10 @@ export function AgentsCard({
 
 	// Tiles start flush with the column, level with the cards on the right.
 	return (
-		<section className="space-y-3">
-			<div className="space-y-3">
+		<section className={agentsCardClasses.section}>
+			<div className={agentsCardClasses.section}>
 				{error ? (
-					<ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load agents" />
+					<ApiErrorPanel error={error} onRetry={onRetry} title={OVERVIEW_COPY.agentsError} />
 				) : isLoading || hostedStatus?.isLoading ? (
 					// One skeleton until every source resolves, so the grid doesn't
 					// step from placeholders to partial tiles plus a placeholder.
@@ -138,8 +82,8 @@ export function AgentsCard({
 					// the message — render no empty state to avoid contradicting it.
 					<EmptyState
 						variant="inset"
-						title="No agents yet"
-						description="Connect an agent to see it here."
+						title={OVERVIEW_COPY.agentsEmpty}
+						description={OVERVIEW_COPY.agentsEmptyDescription}
 					/>
 				)}
 				{hostedStatus?.error ? (
@@ -174,7 +118,7 @@ export function HostedUnavailableBanner({
 			error={error}
 			onRetry={onRetry}
 			normalizer={normalizer}
-			title="Cloud Agents aren't available here"
+			title={OVERVIEW_COPY.cloudInventoryError}
 		/>
 	);
 }
@@ -212,31 +156,25 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 
 	return (
 		<div
-			className={cn(
-				ENTITY_CARD_BASE,
-				"group relative z-0 h-full p-3 transition-colors hover:bg-muted/50",
-			)}
+			className={cn(ENTITY_CARD_BASE, agentsCardClasses.card)}
 			title={tile.href ? undefined : tile.name}
 		>
 			<EntityHeader
 				icon={<AgentIcon agent={tile.agentType} size="lg" avatarUrl={tile.avatarUrl} />}
 				title={
-					<span className="flex min-w-0 items-center gap-1.5">
+					<span className={agentsCardClasses.title}>
 						{statusVisual ? <AgentStatusDot visual={statusVisual} /> : null}
-						<span className="min-w-0 truncate" title={tile.name}>
+						<span className={agentsCardClasses.name} title={tile.name}>
 							{tile.name}
 						</span>
 					</span>
 				}
 				meta={meta.length > 0 ? meta : undefined}
 				titleAdornment={sourcePill}
-				className="min-w-0 flex-1"
+				className={agentsCardClasses.body}
 			/>
 			{tile.external ? (
-				<ArrowUpRight
-					aria-hidden
-					className="pointer-events-none absolute right-3 top-3.5 size-3.5 text-muted-foreground"
-				/>
+				<ArrowUpRight aria-hidden className={agentsCardClasses.externalIcon} />
 			) : null}
 			{tile.href ? (
 				tile.external ? (
@@ -247,7 +185,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 						className={ENTITY_STRETCHED_LINK_CLASS}
 						aria-label={linkLabel}
 					>
-						<span className="sr-only">{linkLabel}</span>
+						<span className={agentsCardClasses.screenReaderOnly}>{linkLabel}</span>
 					</a>
 				) : (
 					<Link
@@ -258,7 +196,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 						onFocus={preloadHostedAgentHome}
 						onTouchStartCapture={preloadHostedAgentHome}
 					>
-						<span className="sr-only">{linkLabel}</span>
+						<span className={agentsCardClasses.screenReaderOnly}>{linkLabel}</span>
 					</Link>
 				)
 			) : null}
@@ -268,55 +206,9 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 
 function AgentStatusDot({ visual }: { visual: AgentCardStatusVisual }) {
 	return (
-		<span
-			title={`Status: ${visual.label}. ${visual.tooltip}`}
-			className="inline-flex shrink-0 items-center"
-		>
-			<span aria-hidden className={cn("size-1.5 rounded-full", visual.dotClass)} />
-			<span className="sr-only">{visual.label}</span>
+		<span title={`Status: ${visual.label}. ${visual.tooltip}`} className={agentsCardClasses.status}>
+			<span aria-hidden className={cn(agentsCardClasses.dot, visual.dotClass)} />
+			<span className={agentsCardClasses.screenReaderOnly}>{visual.label}</span>
 		</span>
 	);
-}
-
-/**
- * The compact card projects sync only from a real Cloud API environment.
- * A v2 deployment can exist before that projection arrives; rendering the
- * daemon's null-env "pending" state there would turn missing data into a
- * reassuring status. Self-managed and legacy tiles retain their established
- * setup status because their environment record is their source of truth.
- * Metadata is intentionally limited to the highest-priority available label.
- */
-export function agentTileCardProjection(tile: AgentTile): {
-	meta: [] | [string];
-	statusVisual: AgentCardStatusVisual | null;
-} {
-	const identity = agentIdentity({
-		name: tile.name,
-		machine_name: tile.name,
-		agent_type: tile.agentType,
-	});
-	const metaLabel =
-		tile.cardStatus?.labels[0] ?? agentTileActivityLabel(tile) ?? identity.secondaryLabel;
-	const statusVisual = tile.cardStatus
-		? tile.cardStatus.visual
-		: tile.source === "on-clawdi" && !tile.env
-			? null
-			: daemonStatusVisual(tile.env, tile.source === "self-managed" ? "self-managed" : "on-clawdi");
-	return { meta: metaLabel ? [metaLabel] : [], statusVisual };
-}
-
-function agentTileActivityLabel(tile: AgentTile): string | null {
-	if (tile.env?.last_sync_at) return `Synced ${relativeTime(tile.env.last_sync_at)}`;
-	if (tile.env?.last_seen_at) return `Seen ${relativeTime(tile.env.last_seen_at)}`;
-	return null;
-}
-
-export function compareAgentTiles(a: AgentTile, b: AgentTile): number {
-	if (a.env && b.env) return compareAgentEnvironments(a.env, b.env);
-	const aOrder = a.sortOrder ?? Number.MAX_SAFE_INTEGER;
-	const bOrder = b.sortOrder ?? Number.MAX_SAFE_INTEGER;
-	if (aOrder !== bOrder) return aOrder - bOrder;
-	const name = a.name.localeCompare(b.name);
-	if (name !== 0) return name;
-	return a.id.localeCompare(b.id);
 }

@@ -1,0 +1,81 @@
+import { expect, test } from "bun:test";
+import { createAgentProjectClient } from "./agent-project-client";
+import { type AgentProjectBinding, buildContextBindingReorder } from "./project-scope";
+
+function binding(id: string, type: string, priority: number): AgentProjectBinding {
+	return {
+		id,
+		agent_id: "agent",
+		project_id: `project-${id}`,
+		binding_type: type,
+		priority,
+		default_write_enabled: type === "primary",
+		created_at: "2026-10-03T00:00:00Z",
+	};
+}
+
+test("context reorder follows shared read order and never includes or mutates the Workspace", () => {
+	const rows = [
+		binding("later", "context", 8),
+		binding("workspace", "primary", 0),
+		binding("earlier", "context", 2),
+	];
+	expect(buildContextBindingReorder(rows, "later", -1)).toEqual({
+		items: [
+			{ binding_id: "later", priority: 1 },
+			{ binding_id: "earlier", priority: 2 },
+		],
+	});
+	expect(rows.map((row) => row.priority)).toEqual([8, 0, 2]);
+	expect(() => buildContextBindingReorder(rows, "workspace", 1)).toThrow();
+	expect(() => buildContextBindingReorder(rows, "earlier", -1)).toThrow();
+	expect(() =>
+		buildContextBindingReorder(
+			[rows[0], rows[0]].filter((row): row is AgentProjectBinding => Boolean(row)),
+			"later",
+			1,
+		),
+	).toThrow();
+});
+
+test("Agent Project client keeps authentication, escaped paths and generated mutation bodies", async () => {
+	const requests: { method: string; path: string; body: unknown }[] = [];
+	const client = createAgentProjectClient({
+		baseUrl: "https://api.example.test",
+		getToken: async () => "test-token",
+		fetch: async (request) => {
+			expect(request.headers.get("Authorization")).toBe("Bearer test-token");
+			const body = await request.text();
+			requests.push({
+				method: request.method,
+				path: new URL(request.url).pathname,
+				body: body ? JSON.parse(body) : null,
+			});
+			return Response.json({});
+		},
+	});
+	await client.createProject("agent/a", { name: "Research", description: null });
+	await client.listBindings("agent/a");
+	await client.link("agent/a", "project");
+	await client.unlink("agent/a", "binding/b");
+	const order = { items: [{ binding_id: "context", priority: 1 }] };
+	await client.reorder("agent/a", order);
+	const access = { add_agent_ids: ["a"], remove_agent_ids: ["b"] };
+	await client.updateProjectAgents("project/a", access);
+	expect(requests).toEqual([
+		{
+			method: "POST",
+			path: "/v1/projects/for-agent/agent%2Fa",
+			body: { name: "Research", description: null },
+		},
+		{ method: "GET", path: "/v1/agents/agent%2Fa/project-bindings", body: null },
+		{
+			method: "POST",
+			path: "/v1/agents/agent%2Fa/project-bindings/context",
+			body: { project_id: "project" },
+		},
+		{ method: "DELETE", path: "/v1/agents/agent%2Fa/project-bindings/binding%2Fb", body: null },
+		{ method: "PATCH", path: "/v1/agents/agent%2Fa/project-bindings/context/reorder", body: order },
+		{ method: "PATCH", path: "/v1/projects/project%2Fa/agents", body: access },
+	]);
+});

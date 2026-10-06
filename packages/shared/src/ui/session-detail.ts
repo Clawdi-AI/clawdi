@@ -1,0 +1,26 @@
+/** Verbatim recipes from apps/web/src/pages/dashboard/sessions/[id]/page.tsx. */
+export const sessionDetailClasses = {
+	page: "space-y-5 px-4 lg:px-6",
+	context:
+		"sticky top-(--header-height) z-10 -mx-4 border-b bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 lg:-mx-6 lg:px-6",
+	header: "gap-2",
+	filters: "flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2",
+	filter: "flex items-center gap-1.5",
+	filterLabel: "cursor-pointer text-xs font-normal",
+	toolbar: "flex min-h-9 min-w-0 items-center justify-between gap-2 md:justify-end",
+	controls: "mt-2",
+	controlGrid: "grid min-w-0 gap-2 md:items-center",
+	actions: "flex items-center gap-2",
+	project: "truncate font-mono",
+	pagination: "flex flex-col items-center gap-2 py-4",
+	skeleton: "space-y-6",
+	skeletonRow: "flex gap-3",
+	skeletonBody: "flex-1 space-y-2",
+	skeletonAvatar: "size-7 rounded-full shrink-0",
+	skeletonAuthor: "h-3.5 w-24",
+	skeletonLine: "h-4",
+	skeletonCode: "h-20 w-full rounded-lg",
+	panelHeading: "text-sm font-semibold",
+	muted: "text-xs text-muted-foreground",
+	panel: "space-y-4",
+} as const;

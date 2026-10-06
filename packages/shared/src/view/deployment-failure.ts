@@ -1,0 +1,302 @@
+import type { DeployComponents, DeploymentRead } from "../api";
+
+type HostedDeployment = DeploymentRead;
+type DeploymentOperationVerb =
+	| DeployComponents["schemas"]["LongRunningOperation"]["metadata"]["verb"]
+	| "plan_change"
+	| "runtime_switch";
+const DEFAULT_FAILURE_REASON_MAX_LENGTH = 96;
+const PLAN_CHANGE_FAILURE_REASON =
+	"The Clawdi service couldn't confirm the plan change. Your plan was not changed and you were not charged.";
+const DEFAULT_SERVICE_FAILURE_REASON = "The Clawdi service couldn't complete this request.";
+const RUNTIME_UNAVAILABLE_REASON =
+	"Clawdi is checking this agent. Open agent settings for details.";
+export const DEPLOYMENT_SUBSCRIPTION_REQUIRED_REASON =
+	"This agent needs an active subscription to start. Open agent settings and choose a subscription. Your saved data is kept.";
+const RUNTIME_CONFIGURATION_FAILURE_CODE = "runtime_configuration_failed";
+const RUNTIME_CONFIGURATION_FAILURE_REASON =
+	"One of this agent's channels, AI providers, or tools couldn't be set up. Review recent changes, then restart the agent.";
+const RUNTIME_CONFIGURATION_FAILURE_DESCRIPTION =
+	"Clawdi couldn't apply part of this agent's configuration. Fix or disable the item named above, then restart the agent.";
+
+export type DeploymentFailureProjection = {
+	reason: string;
+	failedVerb: DeploymentOperationVerb | null;
+	retryable: boolean | null;
+	code: string;
+};
+
+export type DeploymentFailureRemediation =
+	| { kind: "restart"; label: string }
+	| { kind: "review_plan_change"; label: string }
+	| { kind: "retry_delete"; label: string }
+	| { kind: "none"; label: null };
+
+export type DeploymentFailurePresentation = DeploymentFailureProjection & {
+	title: string;
+	description: string;
+	status: {
+		kind: "failed" | "runtime_unavailable" | "cancelled";
+		label: "Failed" | "Temporarily unavailable" | "Cancelled";
+		tone: "destructive" | "warning" | "neutral";
+	};
+	remediation: DeploymentFailureRemediation;
+};
+
+// Public projection maps internal runtime codes (for example
+// runtime_readiness_timeout) to deployment_service_unavailable, so only the
+// user-facing post-ready health loss can reach the client.
+const RUNTIME_FAILURE_CODES = new Set(["runtime_unreachable"]);
+const FAILED_STATUS = { kind: "failed", label: "Failed", tone: "destructive" } as const;
+const RUNTIME_UNAVAILABLE_STATUS = {
+	kind: "runtime_unavailable",
+	label: "Temporarily unavailable",
+	tone: "warning",
+} as const;
+const CANCELLED_STATUS = { kind: "cancelled", label: "Cancelled", tone: "neutral" } as const;
+
+function isRuntimeStatusFailure(failure: { code?: string }): boolean {
+	return RUNTIME_FAILURE_CODES.has(failure.code ?? "");
+}
+
+/** Stable product name for every operation verb; never render the wire value. */
+export function deploymentOperationLabel(verb: DeploymentOperationVerb | null): string {
+	switch (verb) {
+		case "create":
+			return "Agent setup";
+		case "start":
+			return "Agent startup";
+		case "stop":
+			return "Agent stop";
+		case "restart":
+			return "Agent restart";
+		case "reset_runtime_ui_access":
+			return "Dashboard access reset";
+		case "update":
+		case "migrate_runtime_context":
+		case "migrate_image":
+		case "rollback_image":
+			return "Agent update";
+		case "runtime_switch":
+			return "Agent software change";
+		case "rename":
+			return "Agent rename";
+		case "delete":
+			return "Agent deletion";
+		case "plan_change":
+			return "Plan change";
+		case null:
+			return "Agent action";
+	}
+}
+
+/** Shared honest copy/action decision for detail, status, and tile surfaces. */
+export function deploymentFailurePresentation(
+	deployment: HostedDeployment | null | undefined,
+): DeploymentFailurePresentation | null {
+	const failure = deploymentFailureProjection(deployment);
+	if (!failure) return null;
+	const operationLabel = deploymentOperationLabel(failure.failedVerb);
+	const operationName = operationLabel.toLocaleLowerCase();
+	if (failure.code === "funding_revoked_after_accept") {
+		return {
+			...failure,
+			title: "Subscription required",
+			description: DEPLOYMENT_SUBSCRIPTION_REQUIRED_REASON,
+			status: FAILED_STATUS,
+			remediation: { kind: "none", label: null },
+		};
+	}
+	if (failure.code === RUNTIME_CONFIGURATION_FAILURE_CODE) {
+		return {
+			...failure,
+			title: "Agent configuration failed",
+			description: RUNTIME_CONFIGURATION_FAILURE_DESCRIPTION,
+			status: FAILED_STATUS,
+			remediation: {
+				kind: "restart",
+				label: failure.failedVerb === "create" ? "Retry startup" : "Restart agent",
+			},
+		};
+	}
+	const statusFailure =
+		deployment?.resource.status?.summary_state === "failed"
+			? deployment.resource.status.failure
+			: null;
+	// Specific customer-actionable classes must win over a broad controller
+	// phase such as reconcile. A phase alone cannot prove a runtime-health issue.
+	if (failure.failedVerb === null && statusFailure?.phase === "plan_change") {
+		return {
+			...failure,
+			title: "Plan change failed",
+			description: "Get a fresh quote and confirm the price before trying again.",
+			status: FAILED_STATUS,
+			remediation: {
+				kind: "review_plan_change",
+				label: "Get fresh quote",
+			},
+		};
+	}
+	if (failure.failedVerb === null && statusFailure && isRuntimeStatusFailure(statusFailure)) {
+		return {
+			...failure,
+			title: "Temporarily unavailable",
+			description: RUNTIME_UNAVAILABLE_REASON,
+			status: RUNTIME_UNAVAILABLE_STATUS,
+			remediation: { kind: "none", label: null },
+		};
+	}
+	// A user-initiated cancellation is not a failure: the operation was stopped
+	// deliberately and the backend committed a compensating desired state. Say
+	// so instead of offering the failure's retry actions.
+	if (failure.code === "operation_cancelled") {
+		return {
+			...failure,
+			title: `${operationLabel} cancelled`,
+			description: `The in-progress ${operationName} was stopped before it completed. Check the latest status and try again when you’re ready.`,
+			status: CANCELLED_STATUS,
+			remediation: { kind: "none", label: null },
+		};
+	}
+
+	switch (failure.failedVerb) {
+		case "create":
+		case "start":
+			return {
+				...failure,
+				title: `${operationLabel} failed`,
+				description: `The Clawdi service couldn't finish ${operationName}. Restart the agent to try again.`,
+				status: FAILED_STATUS,
+				remediation: {
+					kind: "restart",
+					label: "Retry startup",
+				},
+			};
+		case "restart":
+			return {
+				...failure,
+				title: `${operationLabel} failed`,
+				description:
+					"The Clawdi service couldn't restart the agent. Review the reason below, then try again.",
+				status: FAILED_STATUS,
+				remediation: {
+					kind: "restart",
+					label: "Retry restart",
+				},
+			};
+		case "plan_change":
+			return {
+				...failure,
+				title: `${operationLabel} failed`,
+				description: "Get a fresh quote and confirm the price before trying again.",
+				status: FAILED_STATUS,
+				remediation: {
+					kind: "review_plan_change",
+					label: "Get fresh quote",
+				},
+			};
+		case "delete":
+			return {
+				...failure,
+				title: `${operationLabel} failed`,
+				description:
+					"The Clawdi service did not delete the agent. Review the reason, then try again.",
+				status: FAILED_STATUS,
+				remediation: {
+					kind: "retry_delete",
+					label: "Retry delete",
+				},
+			};
+		case "stop":
+		case "update":
+		case "migrate_runtime_context":
+		case "reset_runtime_ui_access":
+		case "runtime_switch":
+		case "migrate_image":
+		case "rollback_image":
+		case "rename":
+		case null:
+			return {
+				...failure,
+				title: `${operationLabel} failed`,
+				description:
+					"Couldn't complete this action. Check the agent's status, and contact support if this continues.",
+				status: FAILED_STATUS,
+				remediation: { kind: "none", label: null },
+			};
+	}
+}
+
+export function deploymentFailureReason(
+	input: {
+		failure?: {
+			title: string;
+			conditionMessage: string;
+			detail?: string;
+			phase?: string | null;
+			code?: string;
+		} | null;
+	} | null,
+	failedVerb: DeploymentOperationVerb | null = null,
+): string | null {
+	const failure = input?.failure;
+	if (!failure) return null;
+	if (failure.code === "funding_revoked_after_accept")
+		return DEPLOYMENT_SUBSCRIPTION_REQUIRED_REASON;
+	// The one exception to the rule below: Hosted builds this code's detail only
+	// from closed templates naming the failing component (for example "The
+	// WhatsApp channel could not be set up…"), never from runtime output.
+	if (failure.code === RUNTIME_CONFIGURATION_FAILURE_CODE) {
+		return failure.detail?.trim() || RUNTIME_CONFIGURATION_FAILURE_REASON;
+	}
+
+	// Failure title/detail/conditionMessage are free-form backend strings. Even
+	// after removing identifiers they can contain exception names or service
+	// vocabulary, so none of them are customer copy. Only structured classes
+	// that the client explicitly recognizes may select a specific message.
+	if (failedVerb === "plan_change" || failure.phase === "plan_change") {
+		return PLAN_CHANGE_FAILURE_REASON;
+	}
+	return isRuntimeStatusFailure(failure)
+		? RUNTIME_UNAVAILABLE_REASON
+		: DEFAULT_SERVICE_FAILURE_REASON;
+}
+
+/** One tab-agnostic failure view backed by the authoritative failed snapshot. */
+export function deploymentFailureProjection(
+	deployment: HostedDeployment | null | undefined,
+): DeploymentFailureProjection | null {
+	if (!deployment) return null;
+	const status = deployment.resource.status;
+	const operation = deployment.accepted_operation;
+	const operationFailed = operation?.done === true && operation.error != null;
+	const operationFailure = operationFailed ? operation.error?.details[0] : null;
+	const statusFailure =
+		status?.summary_state === "failed" && status.failure ? status.failure : null;
+	const failure = operationFailure ?? statusFailure;
+	if (!failure && !operationFailed) return null;
+	// A completed operation can remain attached to later status snapshots. Its
+	// verb only names a failure when that operation itself terminated with an
+	// error; otherwise a later runtime/reconcile failure is a separate event.
+	const failedVerb = operationFailed ? operation.metadata.verb : null;
+	const reason = failure
+		? deploymentFailureReason({ failure }, failedVerb)
+		: DEFAULT_SERVICE_FAILURE_REASON;
+	if (!reason) return null;
+	return {
+		reason,
+		failedVerb,
+		retryable: failure?.retryable ?? null,
+		code: failure?.code ?? "operation_failed",
+	};
+}
+
+export function compactDeploymentFailureReason(
+	reason: string,
+	maxLength = DEFAULT_FAILURE_REASON_MAX_LENGTH,
+): string {
+	const compact = reason.replace(/\s+/g, " ").trim();
+	if (compact.length <= maxLength) return compact;
+	if (maxLength <= 3) return compact.slice(0, maxLength);
+	return `${compact.slice(0, maxLength - 3)}...`;
+}

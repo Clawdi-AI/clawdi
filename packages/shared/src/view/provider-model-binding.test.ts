@@ -1,0 +1,383 @@
+import { describe, expect, test } from "bun:test";
+import type { SavedAiProvider as AiProvider } from "../api";
+import { nativeAiProvider } from "../index";
+import {
+	firstModelForProvider,
+	isManagedProviderId,
+	MANAGED_AI_CHOICE,
+	MANAGED_PROVIDER_LABEL,
+	modelBindingDisplayName,
+	modelDisplayName,
+	modelOptionsForProvider,
+	providerAvailabilityIssue,
+	providerChoiceFromRef,
+	providerDisplayLabel,
+	providerPresentation,
+	usableProviders,
+} from "./provider-model-binding";
+
+const managedMetadata = {
+	provider_id: "openai-codex",
+	description: null,
+	capabilities: {
+		context_window: 128_000,
+		max_context_window: null,
+		max_input_tokens: 128_000,
+		max_output_tokens: null,
+		input_modalities: ["text" as const],
+		supports_vision: false,
+		supports_reasoning: null,
+		supports_tools: null,
+	},
+};
+
+const savedOpenAiProvider = {
+	id: "row-openai",
+	provider_id: "openai-main",
+	scope: "account_global",
+	type: "openai",
+	base_url: "https://api.openai.com/v1",
+	models: [{ id: "gpt-5.5", label: "GPT Latest" }, { id: "gpt-5.4" }],
+	api_mode: "openai_responses",
+	auth: { type: "api_key", source: "managed" },
+	usable: true,
+	readiness: {
+		credential_material: "available",
+		runtime_compatibility: { openclaw: true, hermes: true, codex: true },
+		deployable: true,
+		endpoint_reachability: "not_tested",
+		inference_verification: "not_tested",
+	},
+	managed_by: "user",
+	runtime_env_name: "OPENAI_API_KEY",
+	capabilities: null,
+	created_at: "2026-01-01T00:00:00Z",
+	updated_at: "2026-01-01T00:00:00Z",
+	label: "OpenAI",
+} satisfies AiProvider;
+
+test("connection metadata never seeds a model or permits selection onto a fresh agent", () => {
+	const provider = {
+		...savedOpenAiProvider,
+		configuration_mode: "connection",
+	} satisfies AiProvider;
+	expect(firstModelForProvider(provider.provider_id, [provider])).toBe("");
+	expect(modelOptionsForProvider(provider.provider_id, [provider])).toEqual([]);
+	expect(
+		providerAvailabilityIssue(provider, { runtime: "openclaw", environmentId: null }),
+	).not.toBeNull();
+	expect(
+		providerAvailabilityIssue(provider, {
+			runtime: "openclaw",
+			environmentId: "current-agent",
+			currentProviderIds: [provider.provider_id],
+		}),
+	).toBeNull();
+});
+
+describe("model binding", () => {
+	test("native identity and product stay visible even with a custom connection name", () => {
+		const route = nativeAiProvider("tencent", "tokenplan");
+		if (!route) throw new Error("Tencent TokenPlan route missing");
+		const provider = {
+			...savedOpenAiProvider,
+			type: route.type,
+			base_url: route.base_url,
+			provider_id: "work",
+			label: "Work",
+			configuration_mode: "native",
+			native_provider: "tencent",
+			native_variant: "tokenplan",
+			models: null,
+		} satisfies AiProvider;
+		expect(providerPresentation(provider)).toMatchObject({
+			label: "Work",
+			brandLabel: "Tencent Cloud",
+			iconId: "tencent",
+			summary: "Tencent Cloud · TokenPlan · Models managed in agent",
+		});
+	});
+
+	test("does not invent a managed model before the catalog loads", () => {
+		expect(firstModelForProvider(MANAGED_AI_CHOICE, [])).toBe("");
+		expect(modelOptionsForProvider(MANAGED_AI_CHOICE, [])).toEqual([]);
+	});
+
+	test("preserves backend catalog order while selecting its declared default", () => {
+		const managedModels = [
+			{
+				...managedMetadata,
+				id: "gpt-5.6-sol",
+				display_name: "GPT-5.6 Sol",
+				is_default: false,
+				is_featured: true,
+			},
+			{
+				...managedMetadata,
+				id: "gpt-5.6-luna",
+				display_name: "GPT-5.6 Luna",
+				is_default: true,
+				is_featured: true,
+			},
+			{
+				...managedMetadata,
+				id: "gpt-5.6-terra",
+				display_name: "GPT-5.6 Terra",
+				is_default: false,
+				is_featured: false,
+			},
+		];
+
+		expect(
+			modelOptionsForProvider(MANAGED_AI_CHOICE, [], managedModels).map((model) => model.id),
+		).toEqual(["gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra"]);
+		expect(firstModelForProvider(MANAGED_AI_CHOICE, [], managedModels)).toBe("gpt-5.6-luna");
+		expect(modelOptionsForProvider(MANAGED_AI_CHOICE, [], managedModels)).toEqual(managedModels);
+
+		expect(modelDisplayName("gpt-5.6-sol", managedModels)).toBe("GPT-5.6 Sol");
+	});
+
+	test("uses catalog metadata before the shared formatter and raw id fallback", () => {
+		expect(
+			modelDisplayName("model", [
+				{
+					...managedMetadata,
+					id: "model",
+					display_name: "Display",
+					is_default: false,
+					is_featured: false,
+				},
+			]),
+		).toBe("Display");
+		expect(modelDisplayName("model", [{ id: "model", label: "Label", alias: "Alias" }])).toBe(
+			"Label",
+		);
+		expect(modelDisplayName("model", [{ id: "model", alias: "Alias" }])).toBe("Alias");
+		expect(modelDisplayName("gpt-5.4", [])).toBe("GPT 5.4");
+		expect(modelDisplayName("unknown/model", [])).toBe("unknown/model");
+	});
+
+	test("uses the first catalog model for a selected provider", () => {
+		const providers = [savedOpenAiProvider];
+
+		expect(firstModelForProvider("openai-main", providers)).toBe("gpt-5.5");
+		expect(modelOptionsForProvider("openai-main", providers)).toEqual(providers[0].models);
+		expect(modelDisplayName("gpt-5.5", providers[0].models ?? [])).toBe("GPT Latest");
+		expect(providerDisplayLabel(providers[0])).toBe("OpenAI");
+		expect(providerDisplayLabel("openai-main", providers)).toBe("OpenAI");
+		expect(providerDisplayLabel({ ...providers[0], label: null })).toBe("OpenAI");
+	});
+
+	test("preserves preset brand identity for saved compatible providers", () => {
+		const deepSeek = {
+			...savedOpenAiProvider,
+			provider_id: "deepseek-2",
+			type: "custom_openai_compatible",
+			label: "Research DeepSeek",
+			base_url: "https://api.deepseek.com/v1",
+			models: [{ id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" }],
+			api_mode: "openai_chat",
+			runtime_env_name: "DEEPSEEK_API_KEY",
+		} satisfies AiProvider;
+
+		expect(providerPresentation(deepSeek)).toMatchObject({
+			label: "Research DeepSeek",
+			brandLabel: "DeepSeek",
+			iconId: "deepseek",
+			summary: "DeepSeek · DeepSeek V4 Flash",
+		});
+
+		const proxy = {
+			...deepSeek,
+			provider_id: "deepseek-team",
+			label: "DeepSeek proxy",
+			base_url: "https://proxy.example.com/v1",
+		} satisfies AiProvider;
+		expect(providerPresentation(proxy)).toMatchObject({
+			label: "DeepSeek proxy",
+			brandLabel: "Custom provider",
+			iconId: "custom_openai_compatible",
+			summary: "Custom provider · DeepSeek V4 Flash",
+		});
+	});
+
+	test("native providers never seed a model", () => {
+		const provider = {
+			...savedOpenAiProvider,
+			configuration_mode: "native",
+			native_provider: "openai",
+			models: null,
+		} satisfies AiProvider;
+		expect(firstModelForProvider(provider.provider_id, [provider])).toBe("");
+	});
+
+	test("preserves a legacy provider catalog when present and no fallback when absent", () => {
+		const withCatalog = {
+			...savedOpenAiProvider,
+			provider_id: "custom-with-catalog",
+			type: "custom_openai_compatible",
+			models: [{ id: "owner-default" }, { id: "owner-alternate" }],
+		} satisfies AiProvider;
+		const withoutCatalog = {
+			...withCatalog,
+			provider_id: "custom-without-catalog",
+			models: null,
+		} satisfies AiProvider;
+
+		expect(firstModelForProvider(withCatalog.provider_id, [withCatalog])).toBe("owner-default");
+		expect(firstModelForProvider(withoutCatalog.provider_id, [withoutCatalog])).toBe("");
+	});
+
+	test("does not offer an unfinished provider as a deploy selection", () => {
+		const unfinishedProvider = {
+			id: "row-codex",
+			provider_id: "openai-codex",
+			scope: "account_global",
+			type: "openai",
+			base_url: "https://api.openai.com/v1",
+			models: [{ id: "gpt-5.5" }],
+			api_mode: "openai_responses",
+			auth: { type: "agent_profile", tool: "codex", profile: "default" },
+			usable: false,
+			managed_by: "user",
+			created_at: "2026-01-01T00:00:00Z",
+			updated_at: "2026-01-01T00:00:00Z",
+			label: "Codex",
+		} satisfies AiProvider;
+		const selectable = usableProviders([unfinishedProvider]);
+
+		expect(selectable).toEqual([]);
+	});
+
+	test("uses structured deployability instead of the legacy credential-only flag", () => {
+		const readiness = {
+			credential_material: "available",
+			runtime_compatibility: { openclaw: true, hermes: true, codex: false },
+			deployable: true,
+			endpoint_reachability: "not_tested",
+			inference_verification: "not_tested",
+		} as const;
+		const deployable = { ...savedOpenAiProvider, usable: false, readiness } satisfies AiProvider;
+		const blocked = {
+			...savedOpenAiProvider,
+			provider_id: "blocked-provider",
+			readiness: { ...readiness, deployable: false },
+		} satisfies AiProvider;
+
+		expect(usableProviders([deployable, blocked])).toEqual([deployable]);
+	});
+
+	test("does not offer legacy local-only providers to hosted agents", () => {
+		const localProvider = {
+			...savedOpenAiProvider,
+			provider_id: "local-no-auth",
+			base_url: "http://127.0.0.1:11434/v1",
+			auth: { type: "none" },
+			usable: true,
+		} satisfies AiProvider;
+
+		expect(usableProviders([localProvider])).toEqual([]);
+		expect(
+			providerAvailabilityIssue(localProvider, {
+				runtime: "openclaw",
+				environmentId: null,
+			})?.message,
+		).toBe("This credential source is local-only and cannot be delivered to a Hosted agent.");
+	});
+
+	test("preserves shared guidance when readiness metadata is missing", () => {
+		const provider = {
+			...savedOpenAiProvider,
+			readiness: undefined,
+		} satisfies AiProvider;
+
+		expect(
+			providerAvailabilityIssue(provider, {
+				runtime: "openclaw",
+				environmentId: null,
+			})?.message,
+		).toBe("Provider readiness metadata is unavailable. Refresh providers before selecting it.");
+	});
+
+	test("disables incompatible Gemini providers for Hermes with actionable guidance", () => {
+		const geminiProvider = {
+			...savedOpenAiProvider,
+			provider_id: "gemini-main",
+			type: "gemini",
+			api_mode: "google_generate_content",
+			models: [{ id: "gemini-3.1-pro-preview" }],
+			readiness: {
+				...savedOpenAiProvider.readiness,
+				runtime_compatibility: { openclaw: true, hermes: false, codex: false },
+			},
+		} satisfies AiProvider;
+
+		const issue = providerAvailabilityIssue(geminiProvider, {
+			runtime: "hermes",
+			environmentId: null,
+		});
+		expect(issue?.message).toContain("this Gemini connection");
+		expect(issue?.message).not.toContain("GenerateContent");
+		expect(usableProviders([geminiProvider], { runtime: "hermes", environmentId: null })).toEqual(
+			[],
+		);
+	});
+
+	test("preserves shared runtime compatibility guidance for non-Gemini providers", () => {
+		const provider = {
+			...savedOpenAiProvider,
+			readiness: {
+				credential_material: "available",
+				runtime_compatibility: { openclaw: true, hermes: false, codex: false },
+				deployable: true,
+				endpoint_reachability: "not_tested",
+				inference_verification: "not_tested",
+			},
+		} satisfies AiProvider;
+
+		expect(
+			providerAvailabilityIssue(provider, { runtime: "hermes", environmentId: null })?.message,
+		).toBe("Hermes cannot use this provider's authentication or API protocol.");
+		expect(usableProviders([provider], { runtime: "hermes", environmentId: null })).toEqual([]);
+	});
+
+	test("gates claimed connections by current Agent ownership", () => {
+		const claimed = {
+			...savedOpenAiProvider,
+			consumer: { environment_id: "agent-a", runtime: "openclaw" },
+		} satisfies AiProvider;
+
+		expect(
+			providerAvailabilityIssue(claimed, {
+				runtime: "openclaw",
+				environmentId: "agent-a",
+			}),
+		).toBeNull();
+		expect(
+			providerAvailabilityIssue(claimed, {
+				runtime: "openclaw",
+				environmentId: "agent-b",
+			})?.message,
+		).toBe("Used by another agent. Add another ChatGPT connection.");
+		expect(
+			providerAvailabilityIssue(claimed, {
+				runtime: "hermes",
+				environmentId: "agent-a",
+			})?.message,
+		).toBe("Used by this agent's openclaw runtime. Add another ChatGPT connection.");
+		expect(usableProviders([claimed], { runtime: "openclaw", environmentId: null })).toEqual([]);
+	});
+
+	test("maps deployment-scoped managed provider ids to the friendly managed choice", () => {
+		const providerId = "clawdi-v2-deployment-10";
+		expect(isManagedProviderId(providerId)).toBe(true);
+		expect(providerChoiceFromRef(providerId, [])).toBe(MANAGED_AI_CHOICE);
+		expect(providerDisplayLabel(providerId)).toBe(MANAGED_PROVIDER_LABEL);
+	});
+
+	test("labels empty bindings from their actual auth mode", () => {
+		expect(modelBindingDisplayName(null, "managed", [])).toBe("Clawdi AI default");
+		expect(modelBindingDisplayName(null, "unmanaged", [])).toBe("Configured in agent");
+		expect(modelBindingDisplayName(null, "api_key", [])).toBe("Not set");
+	});
+});
