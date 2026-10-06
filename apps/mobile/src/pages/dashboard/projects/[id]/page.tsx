@@ -136,7 +136,7 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 												label={t("projects.sharing")}
 												onSelect={() =>
 													router.push({
-														pathname: "/native/projects/[id]/sharing",
+														pathname: "/projects/[id]/sharing",
 														params: { id: project.id },
 													})
 												}
@@ -223,7 +223,7 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 											size="sm"
 											onPress={() =>
 												router.push({
-													pathname: "/native/skills/new",
+													pathname: "/skills/new",
 													params: { projectId: project.id },
 												})
 											}
@@ -282,7 +282,7 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 									className="self-start"
 									onPress={() =>
 										router.push({
-											pathname: "/native/projects/[id]/sharing",
+											pathname: "/projects/[id]/sharing",
 											params: { id: project.id },
 										})
 									}

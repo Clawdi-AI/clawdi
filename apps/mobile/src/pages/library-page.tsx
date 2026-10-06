@@ -1,4 +1,4 @@
-import { libraryNavigationClasses, projectsSurfaceClasses } from "@clawdi/shared/ui";
+import { libraryNavigationClasses } from "@clawdi/shared/ui";
 import {
 	CONSOLE_NAVIGATION_ITEMS,
 	type ConsoleNavigationItemId,
@@ -15,14 +15,15 @@ import {
 	Plug,
 	Sparkles,
 } from "lucide-react-native";
-import { LibraryPage } from "@/components/detail/layout";
 import { IconChip } from "@/components/icon-chip";
-import { PageHeader } from "@/components/page-header";
 import { SectionLabel } from "@/components/section-label";
 import { Icon } from "@/components/ui/icon";
+import { NativeList } from "@/components/ui/native-list";
 import { AppPressable } from "@/components/ui/view";
 import { WebText, WebView, webText, webView } from "@/components/ui/web-layout";
 import { useI18n } from "@/lib/i18n";
+import { NativeHeader } from "@/platform/navigation/native-header";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 const routes = {
 	memories: "/memories",
@@ -47,10 +48,12 @@ export default function LibraryRoute() {
 	const library = consoleNavigationGroups(true).find((g) => g.id === "library");
 	const items = [CONSOLE_NAVIGATION_ITEMS.memories, ...(library?.items ?? [])];
 	return (
-		<LibraryPage>
-			<PageHeader title={t("navigation.library")} />
-			<WebView recipe={projectsSurfaceClasses.section}>
-				{items.map((item) => {
+		<SafeAreaScreen>
+			<NativeHeader title={t("navigation.library")} />
+			<NativeList
+				data={items}
+				keyExtractor={(item) => item.id}
+				renderItem={({ item }) => {
 					if (!(item.id in routes)) return null;
 					const id = item.id as keyof typeof routes;
 					return (
@@ -73,8 +76,8 @@ export default function LibraryRoute() {
 							</AppPressable>
 						</WebView>
 					);
-				})}
-			</WebView>
-		</LibraryPage>
+				}}
+			/>
+		</SafeAreaScreen>
 	);
 }

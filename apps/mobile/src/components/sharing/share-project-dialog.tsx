@@ -8,12 +8,11 @@ import {
 	SHARING_COPY,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { ChevronDown, ChevronRight, Link2, UserMinus } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Share } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { BackButton } from "@/components/detail/back-link";
 import { useProject } from "@/components/projects/project-scope";
 import {
 	canManageSharing,
@@ -22,21 +21,15 @@ import {
 } from "@/components/sharing/project-sharing-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
 import { ErrorState, LoadingScreen } from "@/components/ui/feedback";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
+import { SheetPage } from "@/components/ui/sheet-page";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Text as AppText, Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { AppPressable, AppView } from "@/components/ui/view";
-import { WebText, WebView, webBoth, webText, webView } from "@/components/ui/web-layout";
+import { WebText, WebView, webBoth, webText } from "@/components/ui/web-layout";
 import { formatDate } from "@/hooks/cloud-inventory";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
@@ -68,7 +61,6 @@ function ProjectGate({ projectId }: { projectId?: string }) {
 	return (
 		<SafeAreaScreen>
 			<AppView className="gap-4 p-6">
-				<BackButton />
 				{projectId && project.isPending ? (
 					<LoadingScreen />
 				) : project.isError ? (
@@ -151,7 +143,7 @@ function SharingView({ project, embedded = false }: { project: Project; embedded
 				className: shareProjectClasses.destructiveAction,
 				onPress: () => {
 					if (scopeSignal.aborted || !scope.isCurrent() || !focused.current) return;
-					return action.run(async (isCurrent) => {
+					return action.runOrThrow(async (isCurrent) => {
 						await read(mutate, scopeSignal);
 						if (!isCurrent()) return;
 						setFreshLink(null);
@@ -411,26 +403,13 @@ function SharingView({ project, embedded = false }: { project: Project; embedded
 	return embedded ? (
 		content
 	) : (
-		<SafeAreaScreen>
-			<Dialog
-				open
-				onOpenChange={(next) => {
-					if (!next && !action.busy) router.back();
-				}}
-			>
-				<DialogContent
-					className={webView(shareProjectClasses.content)}
-					showCloseButton={!action.busy}
-				>
-					<DialogHeader>
-						<DialogTitle
-							className={webText(shareProjectClasses.title)}
-						>{`Share ${project.name}`}</DialogTitle>
-						<DialogDescription>{SHARING_COPY.permissions}</DialogDescription>
-					</DialogHeader>
-					{content}
-				</DialogContent>
-			</Dialog>
-		</SafeAreaScreen>
+		<SheetPage
+			title={`Share ${project.name}`}
+			description={SHARING_COPY.permissions}
+			fallback="/projects"
+			busy={action.busy}
+		>
+			{content}
+		</SheetPage>
 	);
 }

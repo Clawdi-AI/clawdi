@@ -576,7 +576,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 						disabled={disabled}
 						onPress={() =>
 							router.push({
-								pathname: "/native/channels/whatsapp",
+								pathname: "/channels/whatsapp",
 								params: { accountId: ownedBot.id },
 							})
 						}

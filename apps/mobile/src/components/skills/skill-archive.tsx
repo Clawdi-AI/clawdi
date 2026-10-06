@@ -5,40 +5,31 @@ import {
 	skillTransferTargets,
 	transferSkill,
 } from "@clawdi/shared/api";
-import { detailLayoutClasses, sendSkillDialogClasses } from "@clawdi/shared/ui";
+import { dialogClasses, sendSkillDialogClasses } from "@clawdi/shared/ui";
 import { skillFormCopy as copy, sendSkillTitle } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypto";
 import { Directory, File, Paths } from "expo-file-system";
-import { router, useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { isAvailableAsync, shareAsync } from "expo-sharing";
 import { ArrowRight, Copy } from "lucide-react-native";
 import { useRef, useState } from "react";
-import { BackButton } from "@/components/detail/back-link";
 import { ChoiceSelect } from "@/components/detail/choice-select";
-import { PageHeader } from "@/components/page-header";
 import { useCloudProjects } from "@/components/projects/projects-surface";
 import { ResourceError } from "@/components/resource-error";
 import { Button } from "@/components/ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
+import { SheetPage } from "@/components/ui/sheet-page";
 import { Text as AppText, Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
-import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { useSheet } from "@/platform/navigation/use-sheet";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
@@ -46,10 +37,11 @@ export function SkillArchiveScreen() {
 	const params = useLocalSearchParams<{
 		projectId?: string | string[];
 		skillKey?: string | string[];
+		key?: string | string[];
 	}>();
 	const scope = useAccountScope();
 	const projectId = routeParam(params.projectId);
-	const skillKey = routeParam(params.skillKey);
+	const skillKey = routeParam(params.key ?? params.skillKey);
 	return (
 		<Archive
 			key={`${scope.accountKey}:${scope.generation}:${projectId}:${skillKey}`}
@@ -65,6 +57,7 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const capture = useForegroundLease();
+	const sheet = useSheet({ fallback: "/skills" });
 	const { skills, cloud } = useMobileApi();
 	const action = useAuthAction(scope.identity);
 	const cache = useQueryClient();
@@ -114,7 +107,7 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 			{
 				text: title,
 				style: "destructive",
-				onPress: () => {
+				onPress: async () => {
 					if (
 						ticket !== confirmation.current ||
 						!scope.isCurrent() ||
@@ -122,14 +115,14 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 						!visible()
 					)
 						return;
-					confirmation.current++;
-					return run();
+					await run();
+					if (ticket === confirmation.current) confirmation.current++;
 				},
 			},
 		]);
 	};
-	const upload = () =>
-		void action.run(async (current) => {
+	const upload = (confirm = false) =>
+		(confirm ? action.runOrThrow : action.run)(async (current) => {
 			if (!ready || !writable || !key.trim()) return;
 			setResult(null);
 			const picked = await File.pickFileAsync({
@@ -148,7 +141,7 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 			await invalidate();
 		});
 	const transfer = (move: boolean) =>
-		action.run(async (current) => {
+		(move ? action.runOrThrow : action.run)(async (current) => {
 			if (!ready || !writable || !skillKey || !targetId) return;
 			setResult(null);
 			const visible = capture();
@@ -186,9 +179,10 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 						: "copied",
 			);
 			await invalidate();
+			if (current() && visible()) await sheet.close();
 		});
 	const download = () =>
-		void action.run(async (current) => {
+		action.run(async (current) => {
 			if (!ready || !skillKey) return;
 			setResult(null);
 			const visible = capture();
@@ -211,121 +205,111 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 	return (
 		<SafeAreaScreen>
 			{existing ? (
-				<Dialog
-					open
-					onOpenChange={(next) => {
-						if (!next && !action.busy) router.back();
-					}}
+				<SheetPage
+					title={sendSkillTitle(detail.data?.name ?? skillKey ?? "")}
+					fallback="/skills"
+					busy={action.busy}
 				>
-					<DialogContent
-						className={webView(sendSkillDialogClasses.dialog)}
-						showCloseButton={!action.busy}
-					>
-						<DialogHeader>
-							<DialogTitle>{sendSkillTitle(detail.data?.name ?? skillKey ?? "")}</DialogTitle>
-							<DialogDescription>
-								<Text>
-									{copy.transferDescription} {copy.transferAlternativeBefore}
-									<WebText recipe={sendSkillDialogClasses.emphasis}>
-										{copy.transferAlternativeEmphasis}
-									</WebText>
-									{copy.transferAlternativeAfter}
-								</Text>
-							</DialogDescription>
-						</DialogHeader>
-						<WebView recipe={sendSkillDialogClasses.body}>
-							<WebView recipe={sendSkillDialogClasses.field}>
-								<Label>{copy.destination}</Label>
-								<ChoiceSelect
-									triggerClassName={webView(sendSkillDialogClasses.trigger)}
-									value={targetId}
-									onValueChange={setTargetId}
-									disabled={action.busy}
-									options={[
-										{ value: "", label: copy.chooseProject },
-										...targets.map((p) => ({ value: p.id, label: p.name })),
-									]}
-								/>
-							</WebView>
-							{projects.isError || detail.isError ? <ResourceError missing={false} /> : null}
-							<DialogFooter>
-								<Button
-									variant="outline"
-									disabled={!ready || !writable || !targets.some((p) => p.id === targetId)}
-									onPress={() => transfer(false)}
-								>
-									<Icon as={Copy} />
-									<Text>{copy.copy}</Text>
-								</Button>
-								<Button
-									disabled={!ready || !writable || !targets.some((p) => p.id === targetId)}
-									onPress={() =>
-										confirm(copy.move, t("skillArchive.moveWarning"), () => transfer(true))
-									}
-								>
-									<Icon as={ArrowRight} />
-									<Text>{copy.move}</Text>
-								</Button>
-							</DialogFooter>
+					<WebView recipe="gap-2">
+						<WebView recipe="text-sm text-muted-foreground">
+							<Text>
+								{copy.transferDescription} {copy.transferAlternativeBefore}
+								<WebText recipe={sendSkillDialogClasses.emphasis}>
+									{copy.transferAlternativeEmphasis}
+								</WebText>
+								{copy.transferAlternativeAfter}
+							</Text>
 						</WebView>
-						<Button variant="ghost" onPress={() => setArchiveTools(!archiveTools)}>
-							<Text>{t("skillArchive.title")}</Text>
-						</Button>
-						{archiveTools ? (
-							<WebView recipe={sendSkillDialogClasses.body}>
-								<Button variant="outline" disabled={!ready} onPress={download}>
-									<Text>{t("skillArchive.download")}</Text>
-								</Button>
+					</WebView>
+					<WebView recipe={sendSkillDialogClasses.body}>
+						<WebView recipe={sendSkillDialogClasses.field}>
+							<Label>{copy.destination}</Label>
+							<ChoiceSelect
+								triggerClassName={webView(sendSkillDialogClasses.trigger)}
+								value={targetId}
+								onValueChange={setTargetId}
+								disabled={action.busy}
+								options={[
+									{ value: "", label: copy.chooseProject },
+									...targets.map((p) => ({ value: p.id, label: p.name })),
+								]}
+							/>
+						</WebView>
+						{projects.isError || detail.isError ? <ResourceError missing={false} /> : null}
+						<WebView recipe={dialogClasses.footer}>
+							<Button
+								variant="outline"
+								disabled={!ready || !writable || !targets.some((p) => p.id === targetId)}
+								onPress={() => void transfer(false)}
+							>
+								<Icon as={Copy} />
+								<Text>{copy.copy}</Text>
+							</Button>
+							<Button
+								disabled={!ready || !writable || !targets.some((p) => p.id === targetId)}
+								onPress={() =>
+									confirm(copy.move, t("skillArchive.moveWarning"), () => transfer(true))
+								}
+							>
+								<Icon as={ArrowRight} />
+								<Text>{copy.move}</Text>
+							</Button>
+						</WebView>
+					</WebView>
+					<Button variant="ghost" onPress={() => setArchiveTools(!archiveTools)}>
+						<Text>{t("skillArchive.title")}</Text>
+					</Button>
+					{archiveTools ? (
+						<WebView recipe={sendSkillDialogClasses.body}>
+							<Button variant="outline" disabled={!ready} onPress={download}>
+								<Text>{t("skillArchive.download")}</Text>
+							</Button>
 
-								<AppText>{t("skillArchive.hint")}</AppText>
-								<Button
-									variant="outline"
-									size="sm"
-									disabled={!ready || !writable || !key.trim()}
-									onPress={() =>
-										existing
-											? confirm(t("skillArchive.replace"), t("skillArchive.replaceWarning"), upload)
-											: upload()
-									}
-								>
-									<Text>{t(existing ? "skillArchive.replace" : "skillArchive.upload")}</Text>
-								</Button>
-								<AppText>{t("skillArchive.cacheHint")}</AppText>
-								<Button
-									variant="outline"
-									size="sm"
-									disabled={action.busy || !scope.isReady}
-									onPress={() =>
-										confirm(
-											t("skillArchive.clear"),
-											t("skillArchive.clearWarning"),
-											() =>
-												void action.run(async (current) => {
-													const visible = capture();
-													const directory = await exportDirectory();
-													if (!current() || !visible()) return;
-													if (directory.exists) directory.delete();
-													setResult("cleared");
-												}),
-										)
-									}
-								>
-									<Text>{t("skillArchive.clear")}</Text>
-								</Button>
-							</WebView>
-						) : null}
-						{result ? (
-							<AppText accessibilityRole="alert">{t(`skillArchive.${result}`)}</AppText>
-						) : null}
-						{action.error ? (
-							<AppText accessibilityRole="alert">{t("skillArchive.failed")}</AppText>
-						) : null}
-					</DialogContent>
-				</Dialog>
+							<AppText>{t("skillArchive.hint")}</AppText>
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={!ready || !writable || !key.trim()}
+								onPress={() =>
+									existing
+										? confirm(t("skillArchive.replace"), t("skillArchive.replaceWarning"), () =>
+												upload(true),
+											)
+										: upload()
+								}
+							>
+								<Text>{t(existing ? "skillArchive.replace" : "skillArchive.upload")}</Text>
+							</Button>
+							<AppText>{t("skillArchive.cacheHint")}</AppText>
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={action.busy || !scope.isReady}
+								onPress={() =>
+									confirm(t("skillArchive.clear"), t("skillArchive.clearWarning"), () =>
+										action.runOrThrow(async (current) => {
+											const visible = capture();
+											const directory = await exportDirectory();
+											if (!current() || !visible()) return;
+											if (directory.exists) directory.delete();
+											setResult("cleared");
+										}),
+									)
+								}
+							>
+								<Text>{t("skillArchive.clear")}</Text>
+							</Button>
+						</WebView>
+					) : null}
+					{result ? (
+						<AppText accessibilityRole="alert">{t(`skillArchive.${result}`)}</AppText>
+					) : null}
+					{action.error ? (
+						<AppText accessibilityRole="alert">{t("skillArchive.failed")}</AppText>
+					) : null}
+				</SheetPage>
 			) : (
-				<AppScrollView contentContainerClassName={webView(detailLayoutClasses.detailPage)}>
-					<BackButton />
-					<PageHeader title={t("skillArchive.title")} />
+				<SheetPage title={t("skillArchive.title")} fallback="/skills" busy={action.busy}>
 					<ChoiceSelect
 						disabled={action.busy}
 						value={sourceId}
@@ -353,7 +337,9 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 						disabled={!ready || !writable || !key.trim()}
 						onPress={() =>
 							existing
-								? confirm(t("skillArchive.replace"), t("skillArchive.replaceWarning"), upload)
+								? confirm(t("skillArchive.replace"), t("skillArchive.replaceWarning"), () =>
+										upload(true),
+									)
 								: upload()
 						}
 					>
@@ -365,17 +351,14 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 						size="sm"
 						disabled={action.busy || !scope.isReady}
 						onPress={() =>
-							confirm(
-								t("skillArchive.clear"),
-								t("skillArchive.clearWarning"),
-								() =>
-									void action.run(async (current) => {
-										const visible = capture();
-										const directory = await exportDirectory();
-										if (!current() || !visible()) return;
-										if (directory.exists) directory.delete();
-										setResult("cleared");
-									}),
+							confirm(t("skillArchive.clear"), t("skillArchive.clearWarning"), () =>
+								action.runOrThrow(async (current) => {
+									const visible = capture();
+									const directory = await exportDirectory();
+									if (!current() || !visible()) return;
+									if (directory.exists) directory.delete();
+									setResult("cleared");
+								}),
 							)
 						}
 					>
@@ -387,7 +370,7 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 					{action.error ? (
 						<AppText accessibilityRole="alert">{t("skillArchive.failed")}</AppText>
 					) : null}
-				</AppScrollView>
+				</SheetPage>
 			)}
 			{confirmationDialog.dialog}
 		</SafeAreaScreen>

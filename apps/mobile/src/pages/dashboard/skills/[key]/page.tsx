@@ -11,6 +11,7 @@ import {
 import {
 	createSkillDialogClasses,
 	detailLayoutClasses,
+	dialogClasses,
 	projectIdentityClasses,
 	skillDetailClasses,
 } from "@clawdi/shared/ui";
@@ -55,14 +56,6 @@ import { ProjectResourceBoundary } from "@/components/projects/project-scope";
 import { useCloudProjects } from "@/components/projects/projects-surface";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
 import { ErrorState } from "@/components/ui/feedback";
 import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
@@ -75,6 +68,8 @@ import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { NativeHeader } from "@/platform/navigation/native-header";
+import { useSheet } from "@/platform/navigation/use-sheet";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
@@ -135,6 +130,7 @@ function SkillEditor({
 	const cache = useQueryClient();
 	const action = useAuthAction(scope);
 	const navigation = useNavigation();
+	const sheet = useSheet({ fallback: "/skills" });
 	const capture = useForegroundLease();
 	const confirmation = useRef(0);
 	const acknowledged = useRef(false);
@@ -242,7 +238,7 @@ function SkillEditor({
 				if (create) {
 					acknowledged.current = true;
 					setCompleted(true);
-					if (visible()) router.replace("/skills");
+					if (visible()) await sheet.close();
 				} else setDraft(null);
 			} catch (error) {
 				if (isCurrent() && error instanceof ApiClientError && error.status === 412)
@@ -265,7 +261,7 @@ function SkillEditor({
 					style: "destructive",
 					onPress: () => {
 						if (signal.aborted || !scope.isCurrent() || !visible()) return;
-						return action.run(async (isCurrent) => {
+						return action.runOrThrow(async (isCurrent) => {
 							await read((s) => skills.remove(projectId, skillKey, current.content_hash, s));
 							if (!isCurrent()) return;
 							await invalidate();
@@ -403,9 +399,10 @@ function SkillEditor({
 		<SafeAreaScreen>
 			<AppScrollView
 				keyboardShouldPersistTaps="handled"
+				contentInsetAdjustmentBehavior="automatic"
 				contentContainerClassName={webView(detailLayoutClasses.detailPage)}
 			>
-				<DetailBackLink href="/skills" label={t("skills.title")} />
+				{!create ? <DetailBackLink href="/skills" label={t("skills.title")} /> : null}
 				{completed ? <AppText className="text-foreground">{t("skills.saved")}</AppText> : null}
 				{projects.isError ||
 				(!create && (detail.isError || !skillKey || (detail.data && !matches))) ? (
@@ -423,70 +420,70 @@ function SkillEditor({
 					</AppText>
 				) : null}
 				{draft && create ? (
-					<Dialog
-						open
-						onOpenChange={(next) => {
-							if (!next && !action.busy) router.back();
-						}}
-					>
-						<DialogContent
-							className={webView(createSkillDialogClasses.dialog)}
-							showCloseButton={!action.busy}
-						>
-							<DialogHeader>
-								<DialogTitle>{copy.title}</DialogTitle>
-								<DialogDescription>
-									{project ? createSkillDescription(project) : t("skills.chooseProject")}
-								</DialogDescription>
-							</DialogHeader>
-							{!projectId ? (
-								<ChoiceSelect
-									disabled={action.busy}
-									value={selectedId ?? ""}
-									options={[
-										{ value: "", label: copy.chooseProject },
-										...writable.map((p) => ({ value: p.id, label: p.name })),
-									]}
-									onValueChange={setSelection}
-								/>
-							) : null}
-							{fields}
-							<DialogFooter>
-								<Button variant="outline" disabled={action.busy} onPress={() => router.back()}>
-									<Text>{copy.cancel}</Text>
-								</Button>
-								{saveButton}
-							</DialogFooter>
-							{create && importOpen ? (
-								<AppView className="gap-3">
-									<AppText className="text-foreground">{t("skills.import")}</AppText>
-									<Input
-										accessibilityLabel={t("skills.github")}
-										placeholder={t("skills.github")}
-										autoCapitalize="none"
-										autoCorrect={false}
-										editable={!disabled}
-										value={source}
-										onChangeText={setSource}
-									/>
-									<Button
-										variant="default"
-										size="sm"
-										disabled={disabled || !source.trim()}
-										onPress={() => {
-											void save(true);
-										}}
-									>
-										<Text>{t("skills.import")}</Text>
-									</Button>
-								</AppView>
-							) : null}
-							<Button variant="ghost" onPress={() => setImportOpen(!importOpen)}>
-								<Text>{t("skills.import")}</Text>
+					<WebView recipe="gap-4">
+						<NativeHeader
+							title={copy.title}
+							actions={[
+								{
+									id: "cancel",
+									label: copy.cancel,
+									disabled: action.busy,
+									onPress: () => router.back(),
+								},
+							]}
+						/>
+						<WebView recipe="gap-2">
+							<WebText recipe="text-sm text-muted-foreground">
+								{project ? createSkillDescription(project) : t("skills.chooseProject")}
+							</WebText>
+						</WebView>
+						{!projectId ? (
+							<ChoiceSelect
+								disabled={action.busy}
+								value={selectedId ?? ""}
+								options={[
+									{ value: "", label: copy.chooseProject },
+									...writable.map((p) => ({ value: p.id, label: p.name })),
+								]}
+								onValueChange={setSelection}
+							/>
+						) : null}
+						{fields}
+						<WebView recipe={dialogClasses.footer}>
+							<Button variant="outline" disabled={action.busy} onPress={() => router.back()}>
+								<Text>{copy.cancel}</Text>
 							</Button>
-							{action.error ? <ErrorState /> : null}
-						</DialogContent>
-					</Dialog>
+							{saveButton}
+						</WebView>
+						{create && importOpen ? (
+							<AppView className="gap-3">
+								<AppText className="text-foreground">{t("skills.import")}</AppText>
+								<Input
+									accessibilityLabel={t("skills.github")}
+									placeholder={t("skills.github")}
+									autoCapitalize="none"
+									autoCorrect={false}
+									editable={!disabled}
+									value={source}
+									onChangeText={setSource}
+								/>
+								<Button
+									variant="default"
+									size="sm"
+									disabled={disabled || !source.trim()}
+									onPress={() => {
+										void save(true);
+									}}
+								>
+									<Text>{t("skills.import")}</Text>
+								</Button>
+							</AppView>
+						) : null}
+						<Button variant="ghost" onPress={() => setImportOpen(!importOpen)}>
+							<Text>{t("skills.import")}</Text>
+						</Button>
+						{action.error ? <ErrorState /> : null}
+					</WebView>
 				) : draft ? (
 					<>
 						<PageHeader
@@ -580,8 +577,8 @@ function SkillEditor({
 												disabled={action.busy || detail.isError}
 												onPress={() =>
 													router.push({
-														pathname: "/native/skills/archive",
-														params: { projectId, skillKey: skillKey ?? "" },
+														pathname: "/skills/[key]/archive",
+														params: { projectId, key: skillKey ?? "" },
 													})
 												}
 											>

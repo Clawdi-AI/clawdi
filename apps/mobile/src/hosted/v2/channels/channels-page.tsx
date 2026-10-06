@@ -372,7 +372,7 @@ function ChannelsView() {
 				<ActionButton
 					label="WhatsApp"
 					variant="ghost"
-					onPress={() => router.push("/native/channels/whatsapp")}
+					onPress={() => router.push("/channels/whatsapp")}
 				/>
 			</AppScrollView>
 		</SafeAreaScreen>

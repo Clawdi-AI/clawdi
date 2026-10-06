@@ -1,20 +1,17 @@
 import { settingsDialogClasses as styles } from "@clawdi/shared/ui";
 import { useRouter } from "expo-router";
-import { ArrowLeft, CreditCard, Key, SlidersHorizontal, WalletCards } from "lucide-react-native";
+import { CreditCard, Key, SlidersHorizontal, WalletCards } from "lucide-react-native";
 import type { ReactNode } from "react";
-import { IconChip } from "@/components/icon-chip";
-import { Button } from "@/components/ui/button";
-import { Icon } from "@/components/ui/icon";
-import { Text } from "@/components/ui/text";
 import { AppSafeAreaView, AppScrollView } from "@/components/ui/view";
-import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
+import { WebView, webView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
+import { NativeSegments } from "@/platform/navigation/segmented-control";
 
 export function SettingsShell({
 	children,
 	active = "general",
-	back = false,
+	back: _back,
 }: {
 	children: ReactNode;
 	active?: "general" | "api-keys" | "wallet" | "compute";
@@ -49,54 +46,20 @@ export function SettingsShell({
 			: []),
 	] as const;
 	return (
-		<AppSafeAreaView edges={["top", "left", "right"]} className="flex-1 bg-popover">
-			<WebView recipe={styles.header} className={back ? "justify-start" : undefined}>
-				{back ? (
-					<Button
-						variant="ghost"
-						size="icon-sm"
-						accessibilityLabel={t("navigation.back")}
-						onPress={() => (router.canGoBack() ? router.back() : router.replace("/settings"))}
-					>
-						<Icon as={ArrowLeft} />
-					</Button>
-				) : null}
-				<WebText recipe={styles.title}>{t("account.settings")}</WebText>
-			</WebView>
+		<AppSafeAreaView edges={["left", "right"]} className="flex-1 bg-popover">
 			<WebView recipe={styles.navigation}>
-				<AppScrollView
-					horizontal
-					showsHorizontalScrollIndicator={false}
-					contentContainerClassName={`${webView(styles.navigationItems)} flex-row`}
-				>
-					{items.map((item) => (
-						<Button
-							key={item.id}
-							variant="ghost"
-							className={webBoth(`${styles.navigationButton} ${styles.navigationActive}`, {
-								"data-[active=true]": item.id === active,
-							})}
-							onPress={() => {
-								if (item.id !== active) router.push(item.href);
-							}}
-						>
-							<IconChip
-								size="sm"
-								tint={
-									item.id === active
-										? "bg-primary text-primary-foreground"
-										: "bg-background text-foreground"
-								}
-							>
-								<Icon as={item.icon} />
-							</IconChip>
-							<Text className={webBoth(styles.navigationLabel)}>{item.label}</Text>
-						</Button>
-					))}
-				</AppScrollView>
+				<NativeSegments
+					value={active}
+					options={items.map((item) => ({ value: item.id, label: item.label }))}
+					onChange={(value) => {
+						const item = items.find((item) => item.id === value);
+						if (item && item.id !== active) router.push(item.href);
+					}}
+				/>
 			</WebView>
 			<AppScrollView
 				keyboardShouldPersistTaps="handled"
+				contentInsetAdjustmentBehavior="automatic"
 				contentContainerClassName={webView(styles.panel)}
 			>
 				{children}

@@ -106,7 +106,7 @@ function SkillsView({ project }: { project?: Project }) {
 						<Button
 							size="sm"
 							onPress={() =>
-								router.push({ pathname: "/native/skills/new", params: { projectId: project.id } })
+								router.push({ pathname: "/skills/new", params: { projectId: project.id } })
 							}
 						>
 							<Icon as={Plus} />
@@ -158,7 +158,7 @@ function SkillsView({ project }: { project?: Project }) {
 									size="sm"
 									onPress={() =>
 										router.push({
-											pathname: "/native/skills/archive",
+											pathname: "/skills/archive",
 											params: { projectId: project.id },
 										})
 									}

@@ -129,7 +129,7 @@ export function ChannelCreate({
 											onClick={() => {
 												if (id === "whatsapp") {
 													clear();
-													router.push("/native/channels/whatsapp");
+													router.push("/channels/whatsapp");
 												} else {
 													setProvider(id);
 													setToken("");

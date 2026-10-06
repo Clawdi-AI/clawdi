@@ -114,7 +114,13 @@ function isWebPath(path: string): boolean {
 			"channels",
 		].includes(root ?? "")
 	) {
-		if (root !== "agents") return pieces.length <= 2;
+		if (root !== "agents")
+			return (
+				pieces.length <= 2 ||
+				(pieces.length === 3 &&
+					((root === "projects" && section === "sharing") ||
+						(root === "skills" && section === "archive")))
+			);
 		if (pieces.length <= 2) return true;
 		if (
 			!id ||

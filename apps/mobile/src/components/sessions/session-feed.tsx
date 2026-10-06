@@ -92,7 +92,7 @@ export function SessionFeed({
 		<WebView recipe={styles.list}>{sessions.map(card)}</WebView>
 	);
 }
-function SessionCard({
+export function SessionCard({
 	session,
 	showAgent = true,
 	quietAutomated = true,

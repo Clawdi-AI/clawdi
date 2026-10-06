@@ -86,7 +86,7 @@ export function ProjectCardActions({ project }: { project: Project }) {
 						label={PROJECT_ACTION_COPY.share}
 						onSelect={() =>
 							router.push({
-								pathname: "/native/projects/[id]/sharing",
+								pathname: "/projects/[id]/sharing",
 								params: { id: project.id },
 							})
 						}

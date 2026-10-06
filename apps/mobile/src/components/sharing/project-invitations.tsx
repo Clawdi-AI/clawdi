@@ -2,12 +2,11 @@ import type { components } from "@clawdi/shared/api";
 import { identityFor } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { DetailBackLink, LibraryPage } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCard, HeroCardSkeleton } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
-import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
+import { SheetPage } from "@/components/ui/sheet-page";
 import { Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { useMobileApi } from "@/lib/api-provider";
@@ -47,7 +46,7 @@ function InvitationsView() {
 					style: accept ? "default" : "destructive",
 					onPress: () => {
 						if (signal.aborted || !scope.isCurrent()) return;
-						return action.run(async (isCurrent) => {
+						return action.runOrThrow(async (isCurrent) => {
 							await read(async (requestSignal) => {
 								if (accept) await sharing.acceptInvitation(invitation.id, requestSignal);
 								else await sharing.declineInvitation(invitation.id, requestSignal);
@@ -61,9 +60,12 @@ function InvitationsView() {
 	};
 
 	return (
-		<LibraryPage>
-			<DetailBackLink href="/projects" label={t("projects.title")} />
-			<PageHeader title={t("sharing.received")} description={t("sharing.receivedDescription")} />
+		<SheetPage
+			title={t("sharing.received")}
+			description={t("sharing.receivedDescription")}
+			fallback="/projects"
+			busy={action.busy}
+		>
 			{invitations.error ? (
 				<ApiErrorPanel error={invitations.error} onRetry={() => void invitations.refetch()} />
 			) : null}
@@ -104,6 +106,6 @@ function InvitationsView() {
 				<EmptyState description={t("sharing.noInvitations")} />
 			) : null}
 			{confirmationDialog.dialog}
-		</LibraryPage>
+		</SheetPage>
 	);
 }

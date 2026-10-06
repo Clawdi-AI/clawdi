@@ -9,7 +9,7 @@ import { WebIcon, WebText, webView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 
-export function GlobalWalletBalance() {
+function useWalletPresentation() {
 	const { compute } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -29,6 +29,22 @@ export function GlobalWalletBalance() {
 		wallet.data?.balance_usd,
 		true,
 	);
+	return { compute, scope, state, displayedBalance, label };
+}
+export function useHeaderWalletBalance() {
+	const { compute, scope, displayedBalance, label } = useWalletPresentation();
+	return compute
+		? {
+				id: "wallet",
+				label: displayedBalance ?? label,
+				onPress: () => {
+					if (scope.isCurrent() && !scope.signal.aborted) router.push("/settings/wallet");
+				},
+			}
+		: null;
+}
+export function GlobalWalletBalance() {
+	const { compute, scope, state, displayedBalance, label } = useWalletPresentation();
 	if (!compute) return null;
 	return (
 		<Button
