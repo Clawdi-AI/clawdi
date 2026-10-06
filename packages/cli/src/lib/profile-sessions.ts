@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import {
@@ -115,10 +115,26 @@ export function createProfileSync(
 		supported = false;
 		inventoryComplete = true;
 	};
-	const signature = async () =>
-		JSON.stringify(
+	const signature = async () => {
+		const paths = [...discoveryPaths];
+		if (adapter.agentType === "hermes") {
+			for (const root of discoveryPaths) {
+				paths.push(join(root, ".deleted"));
+				try {
+					// Watch metadata changes even in profiles skipped after a read failure.
+					// Only upstream discovery determines which directories are identities.
+					const entries = await readdir(root, { withFileTypes: true });
+					for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name)))
+						if (entry.isDirectory() && entry.name !== ".deleted")
+							paths.push(join(root, entry.name, "profile.yaml"));
+				} catch {
+					/* A missing inventory root remains observable through its own stat. */
+				}
+			}
+		}
+		return JSON.stringify(
 			await Promise.all(
-				discoveryPaths.map(async (path) => {
+				paths.map(async (path) => {
 					try {
 						const entry = await stat(path);
 						return [path, entry.mtimeMs, entry.size];
@@ -128,6 +144,7 @@ export function createProfileSync(
 				}),
 			),
 		);
+	};
 	const putInventory = (complete: boolean) =>
 		api.PUT("/v1/agents/{agent_id}/profiles", {
 			params: { path: { agent_id: environmentId ?? "" } },

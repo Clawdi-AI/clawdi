@@ -607,6 +607,7 @@ exec '${process.execPath}' '${configMock}' "$@"`,
 	await sync.sessions?.contentProtocol();
 	await sync.sessions?.collect({ kind: "complete" });
 	utimesSync(join(home, ".hermes", "state.db"), new Date(), new Date());
+	utimesSync(join(home, ".hermes", "profiles", "work", "state.db"), new Date(), new Date());
 	await sync.sessions?.collect({ kind: "complete" });
 	expect(gets).toBe(1);
 	await sync.refresh();
@@ -620,6 +621,40 @@ exec '${process.execPath}' '${configMock}' "$@"`,
 	expect(gets).toBe(3);
 	expect(result?.sessions.some((session) => session.profileKey === "research")).toBeTrue();
 	expect(readFileSync(commandLog, "utf8").trim().split("\n")).toHaveLength(3);
+});
+
+test("Hermes metadata edits and tombstones refresh the inventory without repeating MCP reconcile", async () => {
+	const reconcile = spyOn(await import("../src/commands/hermes-mcp"), "reconcileLocalHermesMcp");
+	let gets = 0;
+	const inventories: unknown[] = [];
+	const client = api(async (input) => {
+		const request = input instanceof Request ? input : new Request(input);
+		if (request.method === "GET") gets++;
+		if (request.method === "PUT") inventories.push(await request.json());
+		return response([]);
+	});
+	try {
+		const sync = createProfileSync(new HermesAdapter(), client, "env");
+		await sync.refresh();
+		const metadata = join(home, ".hermes", "profiles", "work", "profile.yaml");
+		writeFileSync(metadata, '{"previous_names":["older","old"]}');
+		await sync.sessions?.collect({ kind: "complete" });
+		expect(gets).toBe(2);
+		expect(reconcile).toHaveBeenCalledTimes(2);
+		roster(["default"]);
+		writeFileSync(join(home, ".hermes", "profiles", ".deleted", "work"), "deleted\n");
+		const result = await sync.sessions?.collect({ kind: "complete" });
+		expect(gets).toBe(3);
+		expect(reconcile).toHaveBeenCalledTimes(2);
+		expect(result?.sessions.length).toBeGreaterThan(0);
+		expect(result?.sessions.every((session) => session.profileKey === "")).toBeTrue();
+		expect(inventories.at(-1)).toEqual({
+			complete: true,
+			profiles: [{ upstream_key: "default", is_default: true }],
+		});
+	} finally {
+		reconcile.mockRestore();
+	}
 });
 
 test("async Hermes discovery leaves the event loop available", async () => {
