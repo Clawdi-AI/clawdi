@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
-import { isLoggedIn } from "../lib/config";
 import { HostedDeployClient } from "../lib/hosted-deploy-client";
+import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata, stripTerminalEscapes } from "../lib/sanitize";
 
 function requireAgentId(agentId: string): void {
-	if (!isLoggedIn()) throw new Error("Not signed in. Run `clawdi auth login` first.");
+	requireAuth();
 	if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(agentId)) {
 		throw new Error("Use the full remote Cloud Agent UUID, not a local --agent type.");
 	}

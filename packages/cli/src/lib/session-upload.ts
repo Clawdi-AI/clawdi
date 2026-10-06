@@ -169,6 +169,7 @@ export async function prepareSessionUpload(
 	session: RawSession,
 	protocol: SelectedSessionProtocol,
 ): Promise<SessionUploadPlan> {
+	if (session.contentProtocol === "snapshot-v1") protocol = "snapshot-v1";
 	if (protocol === "snapshot-v1") return snapshotPlan(session);
 	if (!session.readEvents && !session.readMessages) return planSessionUpload(session, protocol);
 	if (protocol === "events-v1") {
@@ -203,6 +204,7 @@ export function sessionFence(
 		environmentId: string;
 		adapter: SessionFence["adapter"];
 		sourceSessionKey: string;
+		profileKey?: string;
 	},
 ): SessionFence {
 	return {
@@ -210,6 +212,7 @@ export function sessionFence(
 		environmentId: input.environmentId,
 		adapter: input.adapter,
 		sourceSessionKey: input.sourceSessionKey,
+		...(input.profileKey !== undefined ? { profileKey: input.profileKey } : {}),
 	};
 }
 
@@ -290,6 +293,7 @@ async function syncSnapshotSession(input: {
 				`${input.session.localSessionId}.json`,
 				{
 					environmentId: input.fence.environmentId,
+					profileKey: input.fence.profileKey,
 					expectedContentHash: input.plan.localHash,
 				},
 			);
@@ -340,6 +344,7 @@ async function syncEventSession(input: {
 		const remote = await input.api.getSessionEventHead(
 			input.session.localSessionId,
 			input.fence.environmentId,
+			input.fence.profileKey,
 		);
 		const head: EventHead = {
 			protocol: remote.protocol,
@@ -434,6 +439,7 @@ async function appendEvents(
 			input.api.appendSessionEvents({
 				localSessionId: input.session.localSessionId,
 				environmentId: input.fence.environmentId,
+				profileKey: input.fence.profileKey,
 				appendId,
 				generation,
 				baseRevision: head.revision,
@@ -493,6 +499,7 @@ async function replaceEventGeneration(
 	};
 	persistPending(input, pending);
 	const commitBody = {
+		...(input.fence.profileKey !== undefined ? { profile_key: input.fence.profileKey } : {}),
 		append_id: pending.append_id,
 		base_generation: base.generation,
 		base_revision: base.revision,
@@ -503,6 +510,7 @@ async function replaceEventGeneration(
 	};
 	const staged = await input.api.stageSessionEventGeneration(input.session.localSessionId, {
 		environment_id: input.fence.environmentId,
+		...(input.fence.profileKey !== undefined ? { profile_key: input.fence.profileKey } : {}),
 		generation: pending.generation,
 		append_id: pending.append_id,
 		base_generation: base.generation,

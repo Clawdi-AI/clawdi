@@ -16,7 +16,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.pool import QueuePool
 
 from app.core import database
 from app.core.auth import AuthContext, get_auth_short_session
@@ -132,6 +133,20 @@ async def workload_harness(db_session, seed_user) -> AsyncIterator[WorkloadHarne
     async def _override_get_session():
         yield db_session
 
+    async def _override_get_control_session():
+        # Keep route transactions separate from the fixture's ORM identity map:
+        # auth rollback must not expire the test's seeded objects.
+        await db_session.flush()
+        connection = await db_session.connection()
+        async with AsyncSession(
+            bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint"
+        ) as session:
+            yield session
+
+    async def _override_get_observation_session():
+        async for session in _override_get_control_session():
+            yield session
+
     def _override_resolver():
         return resolver
 
@@ -147,9 +162,9 @@ async def workload_harness(db_session, seed_user) -> AsyncIterator[WorkloadHarne
     settings.public_api_url = "http://test"
     settings.platform_workload_token_endpoint = ""
     settings.platform_workload_issuer = "clawdi-cloud-platform-test"
-    app.dependency_overrides[get_control_session] = _override_get_session
+    app.dependency_overrides[get_control_session] = _override_get_control_session
     app.dependency_overrides[get_session] = _override_get_session
-    app.dependency_overrides[get_runtime_observation_session] = _override_get_session
+    app.dependency_overrides[get_runtime_observation_session] = _override_get_observation_session
     app.dependency_overrides[get_platform_workload_key_resolver] = _override_resolver
     try:
         async with httpx.AsyncClient(
@@ -244,6 +259,456 @@ async def _access_token(harness: WorkloadHarness, scope: str) -> str:
     response = await _token_response(harness, scope=scope)
     assert response.status_code == 200, response.text
     return response.json()["access_token"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_workload_reads_release_single_control_slot_before_observation_session(
+    workload_harness,
+    db_session,
+    seed_user,
+    monkeypatch,
+):
+    from app.services.runtime_observation import (
+        provision_runtime_environment_fence,
+        register_runtime_observation_consumer,
+    )
+    from tests.conftest import create_env_with_project
+
+    environment = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"workload-read-pool-{uuid.uuid4().hex}",
+        machine_name="Workload read pool",
+    )
+    environment_id = environment.id
+    deployment_id = f"deployment-{environment_id}"
+    await provision_runtime_environment_fence(
+        db_session,
+        environment_id=environment_id,
+        owner_id=seed_user.id,
+        deployment_id=deployment_id,
+    )
+    registered = await register_runtime_observation_consumer(
+        db_session,
+        environment_id=environment_id,
+        owner_id=seed_user.id,
+        deployment_id=deployment_id,
+        consumer_id="hosted-controller",
+    )
+    await db_session.commit()
+
+    monkeypatch.setattr(settings, "db_pool_timeout", 0.25)
+    control = database._create_engine(pool_size=1, max_overflow=0)
+    pool = control.sync_engine.pool
+    assert isinstance(pool, QueuePool)
+    monkeypatch.setattr(
+        database,
+        "control_session_factory",
+        async_sessionmaker(
+            control,
+            class_=database.control_session_factory.class_,
+            expire_on_commit=False,
+        ),
+    )
+    monkeypatch.delitem(app.dependency_overrides, get_control_session)
+    opened = []
+
+    async def real_observation_session():
+        assert pool.checkedout() == 0, "workload auth retained the only control connection"
+        async for session in get_runtime_observation_session():
+            assert session is not db_session
+            opened.append(session)
+            yield session
+
+    monkeypatch.setitem(
+        app.dependency_overrides, get_runtime_observation_session, real_observation_session
+    )
+    try:
+        token = await _access_token(workload_harness, "platform:runtime-observations:consume")
+        requests = [
+            (
+                "/v2/runtime/environments/drift-summary:batchRead",
+                {
+                    "bindings": [
+                        {"environmentId": str(environment_id), "deploymentId": deployment_id}
+                    ],
+                },
+            ),
+            (
+                f"/v2/runtime/environments/{environment_id}/observations/read",
+                {
+                    "expectedApplyIdentity": {
+                        "generation": 1,
+                        "manifestETag": '"manifest-etag-0001"',
+                        "applyReceiptId": "apply-receipt-00000001",
+                        "bootNonce": "boot-nonce-0000000001",
+                    },
+                    "afterCursor": registered["cursor"],
+                },
+            ),
+        ]
+        async with asyncio.timeout(5):
+            for path, body in requests:
+                response = await workload_harness.client.post(
+                    path,
+                    json=body,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert response.status_code == 200, response.text
+                assert pool.checkedout() == 0
+        assert len(opened) == 2
+        assert opened[0] is not opened[1]
+    finally:
+        await control.dispose()
+
+
+@pytest.mark.asyncio
+async def test_admin_workload_scopes_revision_grant_and_immediate_revoke(
+    workload_harness,
+    db_session,
+    seed_user,
+):
+    credential = workload_harness.credential
+    credential_id = credential.id
+    credential.allowed_scopes = ["platform:runtime-state:write"]
+    await db_session.commit()
+    client = workload_harness.client
+    path = f"/v1/admin/platform/workload-clients/{credential.client_id}/scopes"
+    inspect_path = (
+        f"/v1/admin/platform/workload-clients/{credential.client_id}/provider-environment-verifier"
+    )
+    inspected = await client.get(inspect_path, headers={"X-Admin-Key": _ADMIN_KEY})
+    assert inspected.status_code == 200
+    revision = inspected.json()["revision"]
+    old_token = await _access_token(workload_harness, "platform:runtime-state:write")
+    scopes = ["platform:runtime-state:write", "platform:keys:mint"]
+    body = {"expected_revision": revision, "scopes": scopes, "reason": "Grant Hosted key mint"}
+    workload_only = await client.put(
+        path, json=body, headers={"Authorization": f"Bearer {old_token}"}
+    )
+    assert workload_only.status_code == 401
+    for invalid_scopes in [["unknown:scope"], [], ["platform:keys:mint"] * 2]:
+        invalid = await client.put(
+            path, json={**body, "scopes": invalid_scopes}, headers={"X-Admin-Key": _ADMIN_KEY}
+        )
+        assert invalid.status_code == 422
+    conflict = await client.put(
+        path, json={**body, "expected_revision": "0" * 64}, headers={"X-Admin-Key": _ADMIN_KEY}
+    )
+    assert conflict.status_code == 409
+    await db_session.refresh(credential)
+    await db_session.refresh(seed_user)
+    granted = await client.put(path, json=body, headers={"X-Admin-Key": _ADMIN_KEY})
+    assert granted.status_code == 200, granted.text
+    assert granted.json()["revision"] != revision
+    assert granted.json()["scopes"] == scopes
+    # Additive grants preserve unrelated, already issued tokens.
+    auth = await authenticate_platform_workload_access_token(
+        db_session,
+        workload_harness.resolver,
+        old_token,
+        required_scope="platform:runtime-state:write",
+    )
+    assert auth.client_id == credential.client_id
+    token = await _access_token(workload_harness, "platform:keys:mint")
+    # This token keeps carrying the soon-to-be-revoked mint scope even when used
+    # for another still-authorized action.
+    combined_token = await _access_token(
+        workload_harness, "platform:keys:mint platform:runtime-state:write"
+    )
+    from tests.conftest import create_env_with_project
+
+    environment = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-auth-{uuid.uuid4().hex}",
+        machine_name="runtime-auth-test",
+    )
+    runtime_body = {
+        "owner": _owner(seed_user),
+        "environmentId": str(environment.id),
+        "deploymentId": f"deployment-{environment.id}",
+        "label": "scopes-grant-test",
+    }
+    minted = await client.post(
+        "/v2/runtime/auth/keys",
+        json=runtime_body,
+        headers=_workload_headers(token, str(uuid.uuid4())),
+    )
+    assert minted.status_code == 200, minted.text
+    revoked = await client.put(
+        path,
+        json={
+            "expected_revision": granted.json()["revision"],
+            "scopes": ["platform:runtime-state:write"],
+            "reason": "Revoke key mint",
+        },
+        headers={"X-Admin-Key": _ADMIN_KEY},
+    )
+    assert revoked.status_code == 200
+    await db_session.refresh(credential)
+    denied = await client.post(
+        "/v2/runtime/auth/keys",
+        json=runtime_body,
+        headers=_workload_headers(token, str(uuid.uuid4())),
+    )
+    assert denied.status_code == 403
+    with pytest.raises(PlatformWorkloadAccessError) as exc_info:
+        await authenticate_platform_workload_access_token(
+            db_session,
+            workload_harness.resolver,
+            combined_token,
+            required_scope="platform:runtime-state:write",
+        )
+    assert exc_info.value.status_code == 403
+    stale = await client.put(
+        path,
+        json={**body, "expected_revision": granted.json()["revision"]},
+        headers={"X-Admin-Key": _ADMIN_KEY},
+    )
+    assert stale.status_code == 409
+    audits = list(
+        (
+            await db_session.scalars(
+                select(ControlPlaneAuditEvent).where(
+                    ControlPlaneAuditEvent.action == "platform.workload_client.scopes",
+                    ControlPlaneAuditEvent.resource_id == str(credential_id),
+                )
+            )
+        ).all()
+    )
+    assert len(audits) == 2
+    assert all(event.actor_type == "admin" for event in audits)
+    assert audits[0].details["before_revision"] == revision
+    assert audits[0].details["after_revision"] == granted.json()["revision"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("has_repair_scope", [False, True])
+async def test_generic_scope_changes_preserve_dedicated_repair_authority(
+    workload_harness,
+    db_session,
+    has_repair_scope,
+):
+    credential = workload_harness.credential
+    credential_id = credential.id
+    current = ["platform:runtime-state:write"]
+    repair_scope = "platform:provider-environment:repair"
+    if has_repair_scope:
+        current.append(repair_scope)
+    credential.allowed_scopes = current
+    await db_session.commit()
+    base = f"/v1/admin/platform/workload-clients/{credential.client_id}"
+    inspected = await workload_harness.client.get(
+        f"{base}/provider-environment-verifier",
+        headers={"X-Admin-Key": _ADMIN_KEY},
+    )
+    revision = inspected.json()["revision"]
+    requested = [scope for scope in current if scope != repair_scope]
+    if not has_repair_scope:
+        requested.append(repair_scope)
+    denied = await workload_harness.client.put(
+        f"{base}/scopes",
+        headers={"X-Admin-Key": _ADMIN_KEY},
+        json={
+            "expected_revision": revision,
+            "scopes": requested,
+            "reason": "Change repair grant",
+        },
+    )
+    assert denied.status_code == 409, denied.text
+    assert "provider-environment-verifier" in denied.json()["detail"]
+    await db_session.refresh(credential)
+    assert credential.allowed_scopes == current
+    audits = await db_session.scalar(
+        select(func.count())
+        .select_from(ControlPlaneAuditEvent)
+        .where(
+            ControlPlaneAuditEvent.action == "platform.workload_client.scopes",
+            ControlPlaneAuditEvent.resource_id == str(credential_id),
+        )
+    )
+    assert audits == 0
+    changed = await workload_harness.client.put(
+        f"{base}/scopes",
+        headers={"X-Admin-Key": _ADMIN_KEY},
+        json={
+            "expected_revision": revision,
+            "scopes": [*current, "platform:keys:mint"],
+            "reason": "Change unrelated grant",
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    assert (repair_scope in changed.json()["scopes"]) is has_repair_scope
+
+
+@pytest.mark.asyncio
+async def test_scopes_put_same_set_succeeds_with_stale_revision(workload_harness, db_session):
+    credential = workload_harness.credential
+    credential_id = credential.id
+    current = list(credential.allowed_scopes)
+    path = f"/v1/admin/platform/workload-clients/{credential.client_id}/scopes"
+    inspected = await workload_harness.client.get(
+        path.removesuffix("/scopes") + "/provider-environment-verifier",
+        headers={"X-Admin-Key": _ADMIN_KEY},
+    )
+    response = await workload_harness.client.put(
+        path,
+        headers={"X-Admin-Key": _ADMIN_KEY},
+        json={
+            "expected_revision": "0" * 64,
+            "scopes": list(reversed(current)),
+            "reason": "Retry scope grant",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["scopes"] == current
+    assert response.json()["revision"] == inspected.json()["revision"]
+    audits = await db_session.scalar(
+        select(func.count())
+        .select_from(ControlPlaneAuditEvent)
+        .where(
+            ControlPlaneAuditEvent.action == "platform.workload_client.scopes",
+            ControlPlaneAuditEvent.resource_id == str(credential_id),
+        )
+    )
+    assert audits == 0
+    changed = await workload_harness.client.put(
+        path,
+        headers={"X-Admin-Key": _ADMIN_KEY},
+        json={
+            "expected_revision": "0" * 64,
+            "scopes": [scope for scope in current if scope != "platform:keys:mint"],
+            "reason": "Change scope grant",
+        },
+    )
+    assert changed.status_code == 409, changed.text
+
+
+@pytest.mark.asyncio
+async def test_runtime_expiry_replay_usage_and_expired_ingestion(
+    workload_harness,
+    db_session,
+    seed_user,
+    monkeypatch,
+):
+    from app.routes import runtime_observation_v2 as v2_routes
+    from tests.conftest import create_env_with_project
+    from tests.test_runtime_observation_companion import _payload
+
+    monkeypatch.setattr(v2_routes, "RUNTIME_DEPLOYMENT_KEY_TTL", timedelta(days=30))
+    environment = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-auth-{uuid.uuid4().hex}",
+        machine_name="runtime-auth-test",
+    )
+    environment_id = environment.id
+    body = {
+        "owner": _owner(seed_user),
+        "environmentId": str(environment_id),
+        "deploymentId": f"deployment-{environment_id}",
+        "label": "expiring-runtime",
+    }
+    mint_token = await _access_token(workload_harness, "platform:keys:mint")
+    headers = _workload_headers(mint_token, str(uuid.uuid4()))
+    now = datetime.now(UTC)
+    client = workload_harness.client
+    minted = await client.post("/v2/runtime/auth/keys", json=body, headers=headers)
+    assert minted.status_code == 200, minted.text
+    expiry = datetime.fromisoformat(minted.json()["expires_at"])
+    assert now + timedelta(days=30) <= expiry <= datetime.now(UTC) + timedelta(days=30)
+    monkeypatch.setattr(v2_routes, "RUNTIME_DEPLOYMENT_KEY_TTL", None)
+    replay = await client.post("/v2/runtime/auth/keys", json=body, headers=headers)
+    assert replay.status_code == 200
+    assert replay.content == minted.content
+    replacement = await client.post(
+        "/v2/runtime/auth/keys", json=body, headers=_workload_headers(mint_token, str(uuid.uuid4()))
+    )
+    assert replacement.status_code == 200
+    assert replacement.json()["expires_at"] is None
+    assert replacement.json()["id"] != minted.json()["id"]
+
+    revoke_token = await _access_token(workload_harness, "platform:keys:revoke")
+    usage_path = f"/v1/platform/auth/keys/{minted.json()['id']}"
+    params = _owner(seed_user)
+    usage = await client.get(
+        usage_path, params=params, headers={"Authorization": f"Bearer {revoke_token}"}
+    )
+    assert usage.status_code == 200, usage.text
+    assert set(usage.json()) == {"id", "created_at", "last_used_at", "expires_at", "revoked_at"}
+    assert usage.json()["expires_at"] == minted.json()["expires_at"]
+    wrong_scope = await client.get(
+        usage_path, params=params, headers={"Authorization": f"Bearer {mint_token}"}
+    )
+    assert wrong_scope.status_code == 403
+    missing = await client.get(
+        f"/v1/platform/auth/keys/{uuid.uuid4()}",
+        params=params,
+        headers={"Authorization": f"Bearer {revoke_token}"},
+    )
+    assert missing.status_code == 404
+    foreign = User(clerk_id=f"foreign-usage-{uuid.uuid4().hex}", clerk_issuer=_CLERK_ISSUER)
+    db_session.add(foreign)
+    await db_session.commit()
+    mismatch = await client.get(
+        usage_path, params=_owner(foreign), headers={"Authorization": f"Bearer {revoke_token}"}
+    )
+    assert mismatch.status_code == 403, mismatch.text
+    unknown_owner = {"kind": "clerk", "ref": f"unknown-usage-{uuid.uuid4().hex}"}
+    unknown_mismatch = await client.get(
+        usage_path, params=unknown_owner, headers={"Authorization": f"Bearer {revoke_token}"}
+    )
+    assert unknown_mismatch.status_code == 403, unknown_mismatch.text
+    unknown_missing = await client.get(
+        f"/v1/platform/auth/keys/{uuid.uuid4()}",
+        params=unknown_owner,
+        headers={"Authorization": f"Bearer {revoke_token}"},
+    )
+    assert unknown_missing.status_code == 404, unknown_missing.text
+    usage_rejections = list(
+        (
+            await db_session.scalars(
+                select(ControlPlaneAuditEvent).where(
+                    ControlPlaneAuditEvent.action == "api_key.usage",
+                    ControlPlaneAuditEvent.resource_id == minted.json()["id"],
+                )
+            )
+        ).all()
+    )
+    assert len(usage_rejections) == 2
+    assert {event.details["owner"]["ref"] for event in usage_rejections} == {
+        foreign.clerk_id,
+        unknown_owner["ref"],
+    }
+    assert {event.target_user_id for event in usage_rejections} == {foreign.id, None}
+    assert all(event.details["result"] == "owner_mismatch" for event in usage_rejections)
+    assert all(
+        event.details["workload_sub"] == workload_harness.client_id for event in usage_rejections
+    )
+    assert all(event.details["request_id"] for event in usage_rejections)
+
+    ingestion_path = f"/v2/runtime/environments/{environment_id}/observations"
+    observation_body = _payload().model_dump(mode="json", by_alias=True)
+    for response in [minted, replacement]:
+        accepted = await client.post(
+            ingestion_path,
+            json=observation_body,
+            headers={"Authorization": f"Bearer {response.json()['raw_key']}"},
+        )
+        assert accepted.status_code == 200, accepted.text
+    key = await db_session.get(ApiKey, uuid.UUID(minted.json()["id"]))
+    assert key is not None
+    key.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    await db_session.commit()
+    expired = await client.post(
+        ingestion_path,
+        json=observation_body,
+        headers={"Authorization": f"Bearer {minted.json()['raw_key']}"},
+    )
+    assert expired.status_code == 401, expired.text
+    assert expired.json()["detail"] == "API key has expired"
 
 
 def _workload_headers(token: str, idempotency_key: str) -> dict[str, str]:
@@ -369,6 +834,15 @@ async def test_deployment_control_survives_slow_admin_and_gateway_pressure(
                             headers={"X-Admin-Key": _ADMIN_KEY},
                         )
                         assert result.status_code == 200, result.text
+                    source_token = await _access_token(
+                        workload_harness, "platform:runtime-state:write"
+                    )
+                    source = await client.get(
+                        f"/v1/platform/agents/{agent_id}/runtime-state",
+                        params=owner,
+                        headers={"Authorization": f"Bearer {source_token}"},
+                    )
+                    assert source.status_code == 200, source.text
                     recovered = await client.request(
                         "DELETE",
                         f"/v1/platform/agents/{agent_id}",
@@ -703,12 +1177,16 @@ async def test_oauth_storage_failures_are_503(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["provision", "retire", "register", "read", "ack", "reset"])
-async def test_companion_routes_require_and_accept_admin_key(
+@pytest.mark.parametrize(
+    "operation", ["provision", "retire", "drift", "register", "read", "ack", "reset"]
+)
+@pytest.mark.parametrize("credential_kind", ["admin", "workload"])
+async def test_companion_routes_accept_admin_and_scoped_workload(
     workload_harness,
     seed_user,
     db_session,
     operation,
+    credential_kind,
 ):
     from app.services.runtime_observation import provision_runtime_environment_fence
     from tests.conftest import create_env_with_project
@@ -740,6 +1218,11 @@ async def test_companion_routes_require_and_accept_admin_key(
         payload = {
             "expectedDeploymentBinding": deployment_id,
             "retirementId": f"retirement-admin-key-{environment.id}",
+        }
+    elif operation == "drift":
+        path = "/v2/runtime/environments/drift-summary:batchRead"
+        payload = {
+            "bindings": [{"environmentId": str(environment.id), "deploymentId": deployment_id}]
         }
     elif operation == "register":
         path = f"/v2/runtime/environments/{environment.id}/observation-consumers/register"
@@ -774,20 +1257,40 @@ async def test_companion_routes_require_and_accept_admin_key(
         headers={"X-Admin-Key": "invalid", "Idempotency-Key": idempotency_key},
         json=request_body,
     )
-    workload_token = await _access_token(workload_harness, "platform:keys:mint")
-    oauth_only = await workload_harness.client.post(
+    assert missing.status_code == invalid.status_code == 401
+    assert missing.json() == invalid.json() == {"detail": "invalid admin auth"}
+
+    scope = (
+        "platform:keys:mint"
+        if operation == "provision"
+        else "platform:runtime-environments:retire"
+        if operation == "retire"
+        else "platform:runtime-observations:consume"
+    )
+    wrong_token = await _access_token(workload_harness, "platform:agents:create")
+    wrong_scope = await workload_harness.client.post(
         path,
-        headers={
-            "Authorization": f"Bearer {workload_token}",
-            "Idempotency-Key": idempotency_key,
-        },
+        headers=_workload_headers(wrong_token, idempotency_key),
         json=request_body,
     )
-
-    assert missing.status_code == invalid.status_code == oauth_only.status_code == 401
-    assert missing.json() == invalid.json() == oauth_only.json() == {"detail": "invalid admin auth"}
+    assert wrong_scope.status_code == 403, wrong_scope.text
+    token = await _access_token(workload_harness, scope)
+    ambiguous = await workload_harness.client.post(
+        path,
+        headers={**_workload_headers(token, idempotency_key), "X-Admin-Key": _ADMIN_KEY},
+        json=request_body,
+    )
+    assert ambiguous.status_code == 400, ambiguous.text
 
     settings.platform_legacy_admin_auth_enabled = False
+    disabled = await workload_harness.client.post(
+        path,
+        headers={"X-Admin-Key": _ADMIN_KEY, "Idempotency-Key": idempotency_key},
+        json=request_body,
+    )
+    assert disabled.status_code == 401
+    assert disabled.json()["detail"] == "legacy platform admin auth is disabled"
+    settings.platform_legacy_admin_auth_enabled = True
     admin_headers = {
         "X-Admin-Key": _ADMIN_KEY,
         "Idempotency-Key": idempotency_key,
@@ -832,9 +1335,38 @@ async def test_companion_routes_require_and_accept_admin_key(
             path = f"/v2/runtime/environments/{environment.id}/observation-consumers/reset"
             payload = {}
         valid_body = payload
-    response = await workload_harness.client.post(path, headers=admin_headers, json=valid_body)
+    headers = (
+        admin_headers if credential_kind == "admin" else _workload_headers(token, idempotency_key)
+    )
+    if credential_kind == "workload":
+        settings.platform_legacy_admin_auth_enabled = False
+    response = await workload_harness.client.post(path, headers=headers, json=valid_body)
 
     assert response.status_code == 200, response.text
+
+    if operation in {"provision", "retire"}:
+        action = (
+            "runtime_environment.provision"
+            if operation == "provision"
+            else "runtime_environment.retire"
+        )
+        audit = await db_session.scalar(
+            select(ControlPlaneAuditEvent).where(
+                ControlPlaneAuditEvent.action == action,
+                ControlPlaneAuditEvent.resource_id == str(environment.id),
+            )
+        )
+        assert audit is not None
+        assert audit.actor_type == ("admin" if credential_kind == "admin" else "platform")
+        assert audit.details["auth_method"] == (
+            "x_admin_key" if credential_kind == "admin" else "workload"
+        )
+        if credential_kind == "workload":
+            assert audit.details["workload_sub"] == workload_harness.client_id
+            # The central audit scrubber redacts fields containing "token".
+            assert audit.details["token_jti"] == "[REDACTED]"
+        if operation == "provision":
+            assert response.json()["expires_at"] is None
 
 
 @pytest.mark.asyncio
@@ -944,6 +1476,9 @@ async def test_v2_provision_precedes_scoped_deploy_key_and_retirement_replays_ex
             raise RuntimeError("injected transition audit failure")
         return original_record_audit(db, **kwargs)
 
+    # Preserve the committed provisioning setup before testing the route's
+    # independent transaction rollback.
+    await db_session.commit()
     monkeypatch.setattr(v2_routes, "record_control_plane_audit", fail_transition_audit)
     with pytest.raises(RuntimeError, match="injected transition audit failure"):
         await workload_harness.client.post(path, headers=first_headers, json=body)
@@ -1213,6 +1748,7 @@ async def test_observation_consumer_identity_is_bound_to_admin_actor(
         {"environment_id": environment.id, "consumer_id": "hosted-controller"},
     )
     assert cursor is not None
+    await db_session.refresh(cursor)
     assert cursor.state == "active"
     assert cursor.acked_stream_position == 0
     assert cursor.reset_at is not None
@@ -1386,7 +1922,12 @@ async def test_retired_runtime_state_cleanup_works_for_archived_agent(
         "runtimeStateStatus": "absent",
         "cleanedAt": response.json()["cleanedAt"],
     }
-    assert await db_session.get(HostedRuntimeState, environment.id) is None
+    assert (
+        await db_session.scalar(
+            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment.id)
+        )
+        is None
+    )
     await db_session.refresh(payload)
     assert payload.consumer_environment_id is None
     assert payload.consumer_runtime is None

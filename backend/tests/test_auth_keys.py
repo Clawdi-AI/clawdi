@@ -21,6 +21,24 @@ from app.main import app
 from app.models.api_key import ApiKey
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_expiry", ["naive", "past"])
+async def test_mint_api_key_rejects_invalid_expiry(db_session, seed_user, invalid_expiry):
+    from datetime import UTC, datetime, timedelta
+
+    from app.services.api_key import mint_api_key
+
+    expires_at = (
+        datetime(2030, 1, 1)
+        if invalid_expiry == "naive"
+        else datetime.now(UTC) - timedelta(seconds=1)
+    )
+    with pytest.raises(ValueError, match="expires_at must be"):
+        await mint_api_key(
+            db_session, user_id=seed_user.id, label="invalid-expiry", expires_at=expires_at
+        )
+
+
 def test_scope_enforcement_preserves_legacy_access_and_fails_closed_for_strict_runtime(
     seed_user,
 ):

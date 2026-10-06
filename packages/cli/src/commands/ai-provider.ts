@@ -38,6 +38,8 @@ import {
 } from "../lib/ai-provider-test";
 import { ApiClient } from "../lib/api-client";
 import { PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
+import { confirmOrRequireYes } from "../lib/prompts";
+import { isInteractive } from "../lib/tty";
 import { collectAgentCredentialProfilePayload } from "./agent-credentials";
 
 interface AiProviderAddOptions {
@@ -74,6 +76,7 @@ interface AiProviderListOptions {
 interface AiProviderRemoveOptions {
 	force?: boolean;
 	json?: boolean;
+	yes?: boolean;
 }
 
 interface AiProviderValidateOptions {
@@ -224,6 +227,15 @@ export async function aiProviderRemoveCommand(
 ): Promise<void> {
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	const next = removeAiProvider(catalog, providerId, Boolean(opts.force));
+	if (
+		isInteractive() &&
+		!(await confirmOrRequireYes(`Remove AI provider ${providerId}?`, {
+			yes: opts.yes,
+			action: "remove this AI provider",
+		}))
+	) {
+		return;
+	}
 	writeAiProviderCatalog(next);
 	if (opts.json) {
 		console.log(JSON.stringify({ removed: providerId }, null, 2));
@@ -245,11 +257,11 @@ export async function aiProviderValidateCommand(
 		console.log(JSON.stringify(result, null, 2));
 	}
 	for (const warning of result.warnings) {
-		if (!opts.json) console.log(chalk.yellow(`warning: ${warning}`));
+		if (!opts.json) console.error(chalk.yellow(`warning: ${warning}`));
 	}
 	if (!result.valid) {
 		if (!opts.json) {
-			for (const error of result.errors) console.log(chalk.red(`error: ${error}`));
+			for (const error of result.errors) console.error(chalk.red(`error: ${error}`));
 		}
 		throw new Error("AI provider validation failed.");
 	}
@@ -455,7 +467,7 @@ export async function aiProviderConnectCommand(
 		} catch (error) {
 			callbackMode = "manual";
 			if (!opts.json) {
-				console.log(
+				console.error(
 					chalk.yellow(
 						`Could not start the local OAuth callback: ${(error as Error).message}. Falling back to manual completion.`,
 					),
@@ -524,7 +536,7 @@ export async function aiProviderConnectCommand(
 		console.log(chalk.green(`✓ Connected OAuth profile for ${updated.id}`));
 	} catch (error) {
 		if (loopback?.timedOut(error)) {
-			console.log(
+			console.error(
 				chalk.yellow(
 					"Timed out waiting for the browser callback. If the browser shows a localhost URL, paste it with:",
 				),

@@ -1,6 +1,8 @@
 import chalk from "chalk";
 import { authedJson, projectAlias, requireProjectAuth } from "../lib/project-command-utils";
 import { listProjects, type ProjectBrief, resolveProjectId } from "../lib/project-resolver";
+import { confirmOrRequireYes } from "../lib/prompts";
+import { isInteractive } from "../lib/tty";
 
 interface BindingRow {
 	id: string;
@@ -116,7 +118,7 @@ export async function agentProjectsAddContextCommand(
 
 export async function agentProjectsRemoveContextCommand(
 	agentId: string,
-	opts: { project: string },
+	opts: { project: string; yes?: boolean },
 ): Promise<void> {
 	const { apiUrl, apiKey } = await requireProjectAuth();
 	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
@@ -136,6 +138,15 @@ export async function agentProjectsRemoveContextCommand(
 	if (matches.length > 1) {
 		console.error(chalk.red("Multiple linked projects match. Unlink by relation ID."));
 		process.exitCode = 1;
+		return;
+	}
+	if (
+		isInteractive() &&
+		!(await confirmOrRequireYes(`Unlink project ${opts.project} from ${agentId}?`, {
+			yes: opts.yes,
+			action: "unlink this project",
+		}))
+	) {
 		return;
 	}
 	await authedJson<{ status: string }>(

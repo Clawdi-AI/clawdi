@@ -3,7 +3,7 @@ import { accessSync, constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import chalk from "chalk";
-import { reconcileLocalHermesMcp } from "../commands/hermes-mcp";
+import { reconcileAllLocalHermesMcp } from "../commands/hermes-mcp";
 import {
 	type CurrentCliInvocation,
 	resolveCurrentCliInvocation,
@@ -15,7 +15,7 @@ import { getCodexHome } from "./paths";
 import { readCommandVersion } from "./version";
 
 export interface McpLifecycle {
-	register(): Promise<void>;
+	register(): Promise<boolean>;
 	unregister(): Promise<void>;
 }
 
@@ -88,9 +88,9 @@ function commandLifecycle(input: {
 			const invocation = resolveCurrentCliInvocation(["mcp"]);
 			const manualRegister = input.manualRegister(invocation);
 			if (input.isSupported && !input.isSupported()) {
-				console.log(chalk.yellow(`⚠ Could not auto-register MCP server in ${input.label}.`));
-				console.log(chalk.gray(`  Run manually: ${manualRegister}`));
-				return;
+				console.error(chalk.yellow(`⚠ Could not auto-register MCP server in ${input.label}.`));
+				console.error(chalk.gray(`  Run manually: ${manualRegister}`));
+				return false;
 			}
 			if (input.listCommand && (input.registeredPattern || input.isRegistered)) {
 				try {
@@ -102,7 +102,7 @@ function commandLifecycle(input: {
 					});
 					if (input.isRegistered?.(listed) || input.registeredPattern?.test(listed)) {
 						console.log(chalk.gray(`✓ MCP server already registered in ${input.label}`));
-						return;
+						return true;
 					}
 				} catch {
 					// A failed probe is not evidence that registration cannot work.
@@ -112,17 +112,19 @@ function commandLifecycle(input: {
 				const [command, ...args] = input.registerCommand(invocation);
 				execFileSync(command, args, { stdio: "pipe", env: process.env });
 				console.log(chalk.green(input.registeredMessage));
+				return true;
 			} catch {
 				try {
 					if (input.fallbackRegister?.(invocation)) {
 						console.log(chalk.green(input.fallbackRegisteredMessage ?? input.registeredMessage));
-						return;
+						return true;
 					}
 				} catch {
 					// Fall through to the manual command when the fallback cannot write safely.
 				}
-				console.log(chalk.yellow(`⚠ Could not auto-register MCP server in ${input.label}.`));
-				console.log(chalk.gray(`  Run manually: ${manualRegister}`));
+				console.error(chalk.yellow(`⚠ Could not auto-register MCP server in ${input.label}.`));
+				console.error(chalk.gray(`  Run manually: ${manualRegister}`));
+				return false;
 			}
 		},
 		async unregister() {
@@ -261,31 +263,33 @@ export const openClawMcpLifecycle: McpLifecycle = commandLifecycle({
 
 export const hermesMcpLifecycle: McpLifecycle = {
 	async register() {
-		const invocation = resolveCurrentCliInvocation(["mcp"]);
 		try {
-			if (!reconcileLocalHermesMcp(true, invocation.command, invocation.args)) {
+			if (!(await reconcileAllLocalHermesMcp(true))) {
 				console.log(chalk.gray("✓ MCP server already registered in Hermes"));
-				return;
+				return true;
 			}
 			console.log(chalk.green("✓ MCP server registered in Hermes"));
+			return true;
 		} catch (error) {
-			console.log(chalk.yellow(`⚠ Could not register MCP server in Hermes: ${errMessage(error)}`));
-			console.log(chalk.gray("  Check with: hermes config get mcp_servers --json"));
+			console.error(
+				chalk.yellow(`⚠ Could not register MCP server in Hermes: ${errMessage(error)}`),
+			);
+			console.error(chalk.gray("  Check with: hermes config get mcp_servers --json"));
+			return false;
 		}
 	},
 	async unregister() {
-		const invocation = resolveCurrentCliInvocation(["mcp"]);
 		try {
-			if (reconcileLocalHermesMcp(false, invocation.command, invocation.args)) {
+			if (await reconcileAllLocalHermesMcp(false)) {
 				console.log(chalk.green("Hermes: removed MCP server registration"));
 			} else {
 				console.log(chalk.gray("Hermes: MCP server already absent"));
 			}
 		} catch (error) {
-			console.log(
+			console.error(
 				chalk.yellow(`Hermes: could not remove MCP server registration (${errMessage(error)})`),
 			);
-			console.log(chalk.gray("  Check with: hermes config get mcp_servers --json"));
+			console.error(chalk.gray("  Check with: hermes config get mcp_servers --json"));
 		}
 	},
 };

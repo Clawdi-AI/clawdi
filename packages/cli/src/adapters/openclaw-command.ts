@@ -6,7 +6,7 @@ let commandTail: Promise<void> = Promise.resolve();
 
 export function runOpenClawCommand(
 	args: string[],
-	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal">,
+	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal" | "env">,
 ): Promise<string> {
 	return runOpenClawSubprocess("openclaw", args, options);
 }
@@ -14,7 +14,7 @@ export function runOpenClawCommand(
 export function runOpenClawSdkCommand(
 	sdkPath: string,
 	params: { agentId: string; sessionId: string; sessionKey: string },
-	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal">,
+	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal" | "env">,
 ): Promise<string> {
 	const source = `
 		import { pathToFileURL } from 'node:url';
@@ -42,7 +42,7 @@ export function runOpenClawSdkCommand(
 function runOpenClawSubprocess(
 	executable: string,
 	args: string[],
-	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal">,
+	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal" | "env">,
 ): Promise<string> {
 	// Session reads and async Skill discovery share a subprocess slot, not the event loop.
 	const command = commandTail.then(async () => {
@@ -52,7 +52,7 @@ function runOpenClawSubprocess(
 			...limits,
 			killSignal: "SIGKILL",
 			encoding: "utf8",
-			env: process.env,
+			env: options.env ?? process.env,
 		});
 		const closed = new Promise<void>((resolve) => running.child.once("close", () => resolve()));
 		const abort = () => {

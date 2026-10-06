@@ -11,6 +11,7 @@ import { parseDotenv } from "../lib/dotenv";
 import { errMessage } from "../lib/errors";
 import { findProjectFolderLink } from "../lib/project-folders";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
+import { requireAuth } from "../lib/require-auth";
 import {
 	type ClawdiReference,
 	previewReferenceMap,
@@ -77,7 +78,7 @@ interface RuntimeChildWrapOptions {
 
 export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn = spawn) {
 	if (args.length === 0 && !opts.runtimeService) {
-		console.log(chalk.red("No command specified. Usage: clawdi run -- <command>"));
+		console.error(chalk.red("No command specified. Usage: clawdi run -- <command>"));
 		process.exit(1);
 	}
 
@@ -101,7 +102,7 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 		hostedServiceRun.status !== "ok" &&
 		!requiresCloudResolution(opts)
 	) {
-		console.log(chalk.red(hostedRuntimeRunError(hostedServiceRun)));
+		console.error(chalk.red(hostedRuntimeRunError(hostedServiceRun)));
 		process.exit(1);
 	}
 
@@ -120,21 +121,22 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 		hostedRuntimeRun.status !== "ok" &&
 		!requiresCloudResolution(opts)
 	) {
-		console.log(chalk.red(hostedRuntimeRunError(hostedRuntimeRun)));
+		console.error(chalk.red(hostedRuntimeRunError(hostedRuntimeRun)));
 		process.exit(1);
 	}
 	if (hostedGenericRun && !requiresCloudResolution(opts)) {
 		await spawnRuntimeInvocation(hostedGenericRun, spawnImpl);
 		return;
 	}
-	if (!isLoggedIn()) {
-		if (hostedRuntimeRun.status !== "not-runtime" && hostedRuntimeRun.status !== "ok") {
-			console.log(chalk.red(hostedRuntimeRunError(hostedRuntimeRun)));
-			process.exit(1);
-		}
-		console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
+	if (
+		!isLoggedIn() &&
+		hostedRuntimeRun.status !== "not-runtime" &&
+		hostedRuntimeRun.status !== "ok"
+	) {
+		console.error(chalk.red(hostedRuntimeRunError(hostedRuntimeRun)));
 		process.exit(1);
 	}
+	requireAuth();
 
 	const api = new ApiClient();
 	const selectedProject = await selectProject(api, opts);
@@ -166,16 +168,18 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 			vaultEnv = assertVaultResolved(resolved);
 		} catch (e) {
 			if (e instanceof ApiError && e.status === 403) {
-				console.log(chalk.red("vault/resolve requires CLI authentication (ApiKey)."));
+				console.error(chalk.red("vault/resolve requires CLI authentication (ApiKey)."));
 				process.exit(1);
 			}
 			if (e instanceof ApiError && e.status === 404 && isVaultProjectNotFoundBody(e.body)) {
-				console.log(chalk.yellow(`⚠ Could not fetch vault secrets: ${VAULT_PROJECT_ACCESS_ERROR}`));
-				console.log(chalk.gray(`  ${VAULT_PROJECT_ACCESS_HINT}`));
+				console.error(
+					chalk.yellow(`⚠ Could not fetch vault secrets: ${VAULT_PROJECT_ACCESS_ERROR}`),
+				);
+				console.error(chalk.gray(`  ${VAULT_PROJECT_ACCESS_HINT}`));
 			} else {
-				console.log(chalk.yellow(`⚠ Could not fetch vault secrets: ${errMessage(e)}`));
+				console.error(chalk.yellow(`⚠ Could not fetch vault secrets: ${errMessage(e)}`));
 			}
-			console.log(chalk.gray("  Running without vault injection."));
+			console.error(chalk.gray("  Running without vault injection."));
 		}
 
 		const injectedCount = Object.keys(vaultEnv).length;
@@ -196,12 +200,12 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 			allowConflicts: opts.allowConflicts,
 		});
 	} catch (e) {
-		console.log(chalk.red(`Could not resolve clawdi references: ${errMessage(e)}`));
+		console.error(chalk.red(`Could not resolve clawdi references: ${errMessage(e)}`));
 		process.exit(1);
 	}
 	const spawnEnv = { ...envWithReferences, ...vaultEnv, ...referenceEnv };
 	if (hostedRuntimeRun.status !== "not-runtime" && hostedRuntimeRun.status !== "ok") {
-		console.log(chalk.red(hostedRuntimeRunError(hostedRuntimeRun)));
+		console.error(chalk.red(hostedRuntimeRunError(hostedRuntimeRun)));
 		process.exit(1);
 	}
 
@@ -240,7 +244,7 @@ async function resolveManagedAiProviderEnv(
 	try {
 		catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	} catch (error) {
-		console.log(chalk.yellow(`⚠ Could not read AI provider catalog: ${errMessage(error)}`));
+		console.error(chalk.yellow(`⚠ Could not read AI provider catalog: ${errMessage(error)}`));
 		return {};
 	}
 
@@ -252,7 +256,7 @@ async function resolveManagedAiProviderEnv(
 		if (!envName || env[envName]) continue;
 		const auth = await inspectAiProviderAuth(provider);
 		if (auth.status !== "available" || !auth.value) {
-			console.log(
+			console.error(
 				chalk.yellow(
 					`⚠ Could not resolve AI provider key for ${provider.id}: ${auth.detail ?? auth.status}`,
 				),
@@ -341,7 +345,7 @@ async function spawnRuntimeInvocation(
 		childSpawn = buildRuntimeChildSpawn(invocation);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		console.log(chalk.red(`Failed to prepare ${invocation.runtime}: ${message}`));
+		console.error(chalk.red(`Failed to prepare ${invocation.runtime}: ${message}`));
 		process.exit(1);
 	}
 	const child = spawnImpl(childSpawn.command, childSpawn.args, {
@@ -428,7 +432,7 @@ function waitForChildExit(child: ReturnType<SpawnFn>, label: string): Promise<nu
 		};
 
 		child.once("error", (err) => {
-			console.log(chalk.red(`Failed to start ${label}: ${err.message}`));
+			console.error(chalk.red(`Failed to start ${label}: ${err.message}`));
 			settle(1);
 		});
 
@@ -464,7 +468,7 @@ async function previewRun(
 		console.log(chalk.gray("  Project context: default write project"));
 	}
 	if (opts.allVaultEnv) {
-		console.log(
+		console.error(
 			chalk.yellow("  Legacy all-vault-env requested; broad env values were not fetched."),
 		);
 	}

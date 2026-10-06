@@ -29,7 +29,7 @@ export async function agentReconnect(
 ): Promise<void> {
 	const auth = getAuth();
 	if (auth?.authType !== "clerk_oauth") {
-		console.log(chalk.red("Reconnect requires Clerk OAuth. Run `clawdi auth login` first."));
+		console.error(chalk.red("Reconnect requires Clerk OAuth. Run `clawdi auth login` first."));
 		process.exitCode = 1;
 		return;
 	}
@@ -46,7 +46,7 @@ export async function agentReconnect(
 			}),
 		);
 	} catch (error) {
-		console.log(chalk.red(`Could not list agents: ${errMessage(error)}`));
+		console.error(chalk.red(`Could not list agents: ${errMessage(error)}`));
 		process.exitCode = 1;
 		return;
 	}
@@ -82,14 +82,14 @@ export async function agentReconnect(
 	const agentType = parseAgentType(candidate.agent_type);
 	if (!agentType) return;
 	if (requestedType && requestedType !== agentType) {
-		console.log(chalk.red("The selected agent does not match --agent."));
+		console.error(chalk.red("The selected agent does not match --agent."));
 		process.exitCode = 1;
 		return;
 	}
 
 	const currentRegistration = getEnvIdByAgent(agentType);
 	if (currentRegistration && currentRegistration !== candidate.id) {
-		console.log(
+		console.error(
 			chalk.red(
 				`${adapterRegistry[agentType].displayName} is already connected locally. Run \`clawdi teardown --agent ${agentType}\` before reconnecting another identity.`,
 			),
@@ -103,14 +103,14 @@ export async function agentReconnect(
 		machineId = getOrCreateMachineId();
 		machineName = hostname();
 	} catch (error) {
-		console.log(chalk.red(`Could not prepare local agent identity: ${errMessage(error)}`));
+		console.error(chalk.red(`Could not prepare local agent identity: ${errMessage(error)}`));
 		process.exitCode = 1;
 		return;
 	}
 	const recentOtherMachine =
 		candidate.machine_id !== machineId && isRecentlySynced(candidate.last_sync_at);
 	if (recentOtherMachine && opts.yes && !opts.confirmTakeover) {
-		console.log(
+		console.error(
 			chalk.red(
 				"This agent recently synced from another machine. Repeat with --confirm-takeover to disconnect it explicitly.",
 			),
@@ -119,7 +119,9 @@ export async function agentReconnect(
 		return;
 	}
 	if (!opts.yes && !isInteractive()) {
-		console.log(chalk.red("Non-interactive reconnect requires explicit confirmation with --yes."));
+		console.error(
+			chalk.red("Non-interactive reconnect requires explicit confirmation with --yes."),
+		);
 		process.exitCode = 1;
 		return;
 	}
@@ -128,7 +130,7 @@ export async function agentReconnect(
 	let agentVersion: string | null;
 	try {
 		if (!(await adapter.detect())) {
-			console.log(
+			console.error(
 				chalk.red(`${adapterRegistry[agentType].displayName} is not available on this machine.`),
 			);
 			process.exitCode = 1;
@@ -136,7 +138,7 @@ export async function agentReconnect(
 		}
 		agentVersion = await adapter.getVersion();
 	} catch (error) {
-		console.log(
+		console.error(
 			chalk.red(
 				`Could not inspect ${adapterRegistry[agentType].displayName}: ${errMessage(error)}`,
 			),
@@ -147,13 +149,14 @@ export async function agentReconnect(
 
 	if (!opts.yes && isInteractive()) {
 		const confirmed = await p.confirm({
+			output: process.stderr,
 			message: recentOtherMachine
 				? `Take over “${candidate.name}” from “${candidate.machine_name}”? Its daemon on that machine stops syncing immediately.`
 				: `Reconnect ${adapterRegistry[agentType].displayName} to “${candidate.name}” and replace its previous installation binding?`,
 			initialValue: true,
 		});
 		if (p.isCancel(confirmed) || !confirmed) {
-			p.cancel("Cancelled.");
+			p.cancel("Cancelled.", { output: process.stderr });
 			return;
 		}
 	}
@@ -174,7 +177,7 @@ export async function agentReconnect(
 			}),
 		);
 	} catch (error) {
-		console.log(
+		console.error(
 			chalk.red(
 				`Could not reconnect ${adapterRegistry[agentType].displayName}: ${errMessage(error)}`,
 			),
@@ -192,12 +195,14 @@ export async function agentReconnect(
 			userId: auth.userId,
 		});
 	} catch (error) {
-		console.log(
+		console.error(
 			chalk.yellow(
 				`⚠ Agent was rebound in Clawdi, but local state could not be saved: ${errMessage(error)}`,
 			),
 		);
-		console.log(chalk.gray("  Fix local permissions, then run the same reconnect command again."));
+		console.error(
+			chalk.gray("  Fix local permissions, then run the same reconnect command again."),
+		);
 		process.exitCode = 1;
 		return;
 	}
@@ -206,7 +211,7 @@ export async function agentReconnect(
 	try {
 		await reconcileAgentIntegrations(adapter);
 	} catch (error) {
-		console.log(
+		console.error(
 			chalk.yellow(
 				`⚠ Agent identity recovered, but local integration setup failed: ${errMessage(error)}`,
 			),
@@ -216,7 +221,7 @@ export async function agentReconnect(
 	try {
 		await maybeInstallDaemons(opts, true);
 	} catch (error) {
-		console.log(
+		console.error(
 			chalk.yellow(`⚠ Agent identity recovered, but daemon setup failed: ${errMessage(error)}`),
 		);
 		process.exitCode = 1;
@@ -232,8 +237,8 @@ function isRecentlySynced(value: string | null | undefined): boolean {
 function parseAgentType(value: string | undefined): AgentType | null {
 	if (!value) return null;
 	if (AGENT_TYPES.includes(value as AgentType)) return value as AgentType;
-	console.log(chalk.red(`Unknown agent type: ${value}`));
-	console.log(chalk.gray(`Valid types: ${AGENT_TYPES.join(", ")}`));
+	console.error(chalk.red(`Unknown agent type: ${value}`));
+	console.error(chalk.gray(`Valid types: ${AGENT_TYPES.join(", ")}`));
 	process.exitCode = 1;
 	return null;
 }
@@ -246,23 +251,24 @@ async function selectCandidate(
 	if (agentId) {
 		const candidate = agents.find((agent) => agent.id === agentId);
 		if (candidate) return candidate;
-		console.log(chalk.red("The selected agent is unavailable or cannot be locally reconnected."));
+		console.error(chalk.red("The selected agent is unavailable or cannot be locally reconnected."));
 		process.exitCode = 1;
 		return null;
 	}
 	const reconnectable = agents.filter((agent) => !agentType || agent.agent_type === agentType);
 	if (reconnectable.length === 0) {
-		console.log(chalk.red("No reconnectable agents were found for this account."));
+		console.error(chalk.red("No reconnectable agents were found for this account."));
 		process.exitCode = 1;
 		return null;
 	}
 	if (reconnectable.length === 1) return reconnectable[0] ?? null;
 	if (!isInteractive()) {
-		console.log(chalk.red("Multiple agents match. Pass an agent ID to choose one."));
+		console.error(chalk.red("Multiple agents match. Pass an agent ID to choose one."));
 		process.exitCode = 1;
 		return null;
 	}
 	const selected = await p.select<string>({
+		output: process.stderr,
 		message: "Reconnect which agent?",
 		options: reconnectable.map((agent) => {
 			const type = AGENT_TYPES.includes(agent.agent_type as AgentType)
@@ -276,7 +282,7 @@ async function selectCandidate(
 		}),
 	});
 	if (p.isCancel(selected)) {
-		p.cancel("Cancelled.");
+		p.cancel("Cancelled.", { output: process.stderr });
 		return null;
 	}
 	return reconnectable.find((agent) => agent.id === selected) ?? null;

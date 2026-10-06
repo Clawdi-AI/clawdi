@@ -26,6 +26,8 @@ export type DashboardStats = Schemas["DashboardStatsResponse"];
 export type ContributionDay = Schemas["ContributionDayResponse"];
 
 // ── Sessions ─────────────────────────────────────────────────────────────
+export type AgentProfile = Schemas["AgentProfileResponse"];
+export type ProfileInventoryRequest = Schemas["ProfileInventoryRequest"];
 export type SessionListItem = Schemas["SessionListItemResponse"];
 export type SessionDetail = Schemas["SessionDetailResponse"];
 export type SessionMessage = Schemas["SessionMessageResponse"];

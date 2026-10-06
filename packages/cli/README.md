@@ -32,6 +32,19 @@ Updates follow the current owner: native installs use checksum-verified exact
 GitHub Release assets, while npm/Bun installs use exact npm versions. Hosted
 version transactions are separate and never invoke native self-update.
 
+To update from a non-interactive shell:
+
+```bash
+clawdi update --yes
+```
+
+Without `--yes`, non-interactive runs only check for updates and return JSON
+with `installed: false` plus an installation hint on stderr when an upgrade is
+available. `--check` always checks without installing, even with `--yes`.
+Use `--yes --json` for a JSON installation result. Registry or native manifest
+download failures exit 1; an unreachable registry returns a
+`registry_unreachable` error instead of reporting that the CLI is up to date.
+
 ## Development
 
 From the repository root:

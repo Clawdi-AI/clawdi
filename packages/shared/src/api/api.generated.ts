@@ -1665,6 +1665,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent_id}/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agent Profiles */
+        get: operations["list_agent_profiles_v1_agents__agent_id__profiles_get"];
+        /** Put Agent Profiles */
+        put: operations["put_agent_profiles_v1_agents__agent_id__profiles_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent_id}/profiles/{profile_key}/attribute-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Attribute Sessions */
+        post: operations["attribute_sessions_v1_agents__agent_id__profiles__profile_key__attribute_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent_id}/profiles/{profile_key}/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rename Profile */
+        post: operations["rename_profile_v1_agents__agent_id__profiles__profile_key__rename_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/public/sessions/{session_id}": {
         parameters: {
             query?: never;
@@ -2581,7 +2633,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Platform Get Api Key Usage */
+        get: operations["platform_get_api_key_usage_v1_platform_auth_keys__key_id__get"];
         put?: never;
         post?: never;
         /** Platform Revoke Api Key */
@@ -3985,6 +4038,43 @@ export interface components {
             /** Version */
             version?: string | null;
         };
+        /** AgentProfileResponse */
+        AgentProfileResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Profile Key */
+            profile_key: string;
+            /** Upstream Key */
+            upstream_key: string;
+            /** Is Default */
+            is_default: boolean;
+            /** Display Name */
+            display_name: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "active" | "removed";
+            /** Online */
+            online: boolean;
+            /**
+             * First Seen At
+             * Format: date-time
+             */
+            first_seen_at: string;
+            /**
+             * Last Seen At
+             * Format: date-time
+             */
+            last_seen_at: string;
+            /** Removed At */
+            removed_at: string | null;
+            /** Session Count */
+            session_count: number;
+        };
         /** AgentProjectBindingResponse */
         AgentProjectBindingResponse: {
             /** Id */
@@ -4959,6 +5049,30 @@ export interface components {
              */
             status: "revoked";
         };
+        /**
+         * ApiKeyUsageResponse
+         * @description Usage metadata for rotation decisions, without credential material.
+         */
+        ApiKeyUsageResponse: {
+            /** Id */
+            id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Expires At */
+            expires_at: string | null;
+            /** Revoked At */
+            revoked_at: string | null;
+        };
+        /** AttributeSessionsRequest */
+        AttributeSessionsRequest: {
+            /** Local Session Ids */
+            local_session_ids: string[];
+        };
         /** BindingCreate */
         BindingCreate: {
             /** Project Id */
@@ -5001,6 +5115,8 @@ export interface components {
              * Format: uuid
              */
             environment_id: string;
+            /** Profile Key */
+            profile_key?: string | null;
             /**
              * Append Id
              * Format: uuid
@@ -5049,6 +5165,8 @@ export interface components {
         Body_upload_session_content_v1_sessions__local_session_id__upload_post: {
             /** Environment Id */
             environment_id?: string | null;
+            /** Profile Key */
+            profile_key?: string | null;
             /** Expected Content Hash */
             expected_content_hash?: string | null;
             /** File */
@@ -6157,6 +6275,8 @@ export interface components {
         EnvironmentCreatedResponse: {
             /** Id */
             id: string;
+            /** Dashboard Url */
+            dashboard_url?: string | null;
         };
         /** EnvironmentReorderRequest */
         EnvironmentReorderRequest: {
@@ -7669,6 +7789,32 @@ export interface components {
             /** Plugins */
             plugins: components["schemas"]["PluginCatalogEntryResponse"][];
         };
+        /** ProfileInventoryItem */
+        ProfileInventoryItem: {
+            /** Upstream Key */
+            upstream_key: string;
+            /** Is Default */
+            is_default: boolean;
+        };
+        /** ProfileInventoryRequest */
+        ProfileInventoryRequest: {
+            /** Complete */
+            complete: boolean;
+            /** Profiles */
+            profiles: components["schemas"]["ProfileInventoryItem"][];
+        };
+        /** ProfileRenameRequest */
+        ProfileRenameRequest: {
+            /** New Upstream Key */
+            new_upstream_key: string;
+        };
+        /** ProfileSessionMoveResponse */
+        ProfileSessionMoveResponse: {
+            /** Sessions Moved */
+            sessions_moved: number;
+            /** Suppressions Moved */
+            suppressions_moved: number;
+        };
         /** ProjectAgentDeltaBody */
         ProjectAgentDeltaBody: {
             /** Add Agent Ids */
@@ -8951,6 +9097,8 @@ export interface components {
         };
         /** SessionBatchRequest */
         SessionBatchRequest: {
+            /** Profile Key */
+            profile_key?: string | null;
             /** Sessions */
             sessions: components["schemas"]["SessionCreate"][];
         };
@@ -8982,6 +9130,8 @@ export interface components {
              * Format: uuid
              */
             environment_id: string;
+            /** Profile Key */
+            profile_key?: string | null;
             /** Local Session Id */
             local_session_id: string;
             /** Project Path */
@@ -9041,6 +9191,13 @@ export interface components {
         };
         /** SessionDetailResponse */
         SessionDetailResponse: {
+            /**
+             * Profile Key
+             * @default
+             */
+            profile_key: string;
+            /** Profile Display Name */
+            profile_display_name?: string | null;
             /** Id */
             id: string;
             /** Local Session Id */
@@ -9151,6 +9308,8 @@ export interface components {
         };
         /** SessionEventCommitRequest */
         SessionEventCommitRequest: {
+            /** Profile Key */
+            profile_key?: string | null;
             /**
              * Append Id
              * Format: uuid
@@ -9180,6 +9339,8 @@ export interface components {
         };
         /** SessionEventGenerationCreate */
         SessionEventGenerationCreate: {
+            /** Profile Key */
+            profile_key?: string | null;
             /**
              * Environment Id
              * Format: uuid
@@ -9308,6 +9469,13 @@ export interface components {
         };
         /** SessionListItemResponse */
         SessionListItemResponse: {
+            /**
+             * Profile Key
+             * @default
+             */
+            profile_key: string;
+            /** Profile Display Name */
+            profile_display_name?: string | null;
             /** Id */
             id: string;
             /** Local Session Id */
@@ -12413,6 +12581,7 @@ export interface operations {
         parameters: {
             query: {
                 environment_id: string;
+                profile_key?: string | null;
             };
             header?: never;
             path: {
@@ -13692,6 +13861,7 @@ export interface operations {
                 agent?: string | null;
                 /** @description Filter by agent environment */
                 environment_id?: string | null;
+                profile_key?: string | null;
                 /** @description Filter by model (multi) */
                 model?: string[] | null;
                 /** @description Filter by tag (multi, AND semantics — every requested tag must be present) */
@@ -13912,7 +14082,10 @@ export interface operations {
     };
     extract_session_memories_v1_sessions__local_session_id__extract_post: {
         parameters: {
-            query?: never;
+            query?: {
+                environment_id?: string | null;
+                profile_key?: string | null;
+            };
             header?: {
                 "X-Clawdi-Machine-Id"?: string | null;
             };
@@ -14061,6 +14234,150 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_agent_profiles_v1_agents__agent_id__profiles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentProfileResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_agent_profiles_v1_agents__agent_id__profiles_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileInventoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentProfileResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    attribute_sessions_v1_agents__agent_id__profiles__profile_key__attribute_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
+            path: {
+                agent_id: string;
+                profile_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AttributeSessionsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileSessionMoveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_profile_v1_agents__agent_id__profiles__profile_key__rename_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Clawdi-Machine-Id"?: string | null;
+            };
+            path: {
+                agent_id: string;
+                profile_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileRenameRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileSessionMoveResponse"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -15836,6 +16153,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiKeyCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    platform_get_api_key_usage_v1_platform_auth_keys__key_id__get: {
+        parameters: {
+            query: {
+                kind: "clerk" | "partner_tenant";
+                ref: string;
+            };
+            header?: {
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyUsageResponse"];
                 };
             };
             /** @description Validation Error */
@@ -18155,6 +18509,7 @@ export interface operations {
             header: {
                 "Idempotency-Key": string;
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -18226,6 +18581,7 @@ export interface operations {
             header: {
                 "Idempotency-Key": string;
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path: {
                 environment_id: string;
@@ -18302,6 +18658,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -18337,6 +18694,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path: {
                 environment_id: string;
@@ -18374,6 +18732,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path: {
                 environment_id: string;
@@ -18411,6 +18770,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path: {
                 environment_id: string;
@@ -18448,6 +18808,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path: {
                 environment_id: string;

@@ -30,6 +30,9 @@ beforeEach(() => {
 	writeFileSync(
 		command,
 		`#!/bin/sh
+if [ "$*" = "sessions --json --agent main --limit all" ]; then
+  set -- sessions --json --all-agents --limit all
+fi
 if [ -f "$HOME/.openclaw/command-log" ]; then
   printf 'start:%s\n' "$1" >> "$HOME/.openclaw/command-log"
   trap 'printf "end:%s\n" "$1" >> "$HOME/.openclaw/command-log"' EXIT
@@ -663,7 +666,8 @@ describe("OpenClawAdapter.collectSessions", () => {
 		);
 		rmSync(join(stateRoot, "agents", "main", "sessions", "sessions.json"));
 
-		const sessions = (await new OpenClawAdapter().sessions.collect({ kind: "complete" })).sessions;
+		const sessions = (await new OpenClawAdapter("main").sessions.collect({ kind: "complete" }))
+			.sessions;
 
 		expect(sessions).toHaveLength(1);
 		expect(sessions[0]?.messages.map((message) => message.content)).toEqual([
@@ -1016,6 +1020,32 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 	});
 });
 
+describe("OpenClaw profile reader", () => {
+	it("reads an explicit named agent independently of the default selector", async () => {
+		addFinancialAgent(join(tmpHome, ".openclaw"));
+		process.env.OPENCLAW_AGENT_ID = "main";
+		const reader = new OpenClawAdapter("financial").sessions;
+		const result = await reader.collect({ kind: "complete" });
+		expect(result.sessions).toHaveLength(1);
+		expect(result.sessions[0]?.localSessionId).toBe("oc-financial-001");
+		expect(reader.watchPaths()).toEqual([
+			join(tmpHome, ".openclaw", "agents", "financial", "sessions"),
+		]);
+	});
+	it("keeps explicit home and activity isolated from the global state directory", async () => {
+		const stateRoot = join(tmpHome, "other-openclaw");
+		addFinancialAgent(stateRoot, "isolated-session");
+		process.env.OPENCLAW_STATE_DIR = join(tmpHome, ".openclaw");
+		const reader = new OpenClawAdapter("financial", stateRoot).sessions;
+		const scan = await scanSessionModule(reader, { kind: "complete" });
+		const sessions = [];
+		for await (const batch of scan.batches) sessions.push(...batch.sessions);
+		expect(sessions.map((session) => session.localSessionId)).toEqual(["isolated-session"]);
+		expect(scan.userActivity?.complete).toBeTrue();
+		expect(reader.watchPaths()).toEqual([join(stateRoot, "agents", "financial", "sessions")]);
+	});
+});
+
 describe("OpenClawAdapter.collectSkills", () => {
 	it("lists only the selected agent's Skills and rejects a missing agent", async () => {
 		addFinancialAgent(join(tmpHome, ".openclaw"));
@@ -1036,11 +1066,15 @@ describe("OpenClawAdapter.collectSkills", () => {
 		expect(skills.map((s) => s.skillKey)).toEqual(["demo"]);
 	});
 
-	it("unions skills across agents/<id>/skills/ dirs (issue #28)", async () => {
+	it("collects only the default agent skills, matching reconciliation", async () => {
 		addFinancialAgent(join(tmpHome, ".openclaw"));
 		const a = new OpenClawAdapter();
 		const keys = (await a.skills.collect()).map((s) => s.skillKey).sort();
-		expect(keys).toEqual(["demo", "fin-skill"]);
+		expect(keys).toEqual(["demo"]);
+		expect(await a.skills.listKeys()).toEqual(keys);
+		process.env.OPENCLAW_AGENT_ID = "financial";
+		expect((await a.skills.collect()).map((s) => s.skillKey)).toEqual(["fin-skill"]);
+		expect(await a.skills.listKeys()).toEqual(["fin-skill"]);
 	});
 });
 

@@ -155,21 +155,22 @@ function isNewer(latest: string, current: string): boolean {
  * Manual `clawdi update` — forces a registry fetch and, if a newer version
  * exists, installs it inline (foreground, blocking, with the installer's
  * own progress output). Pass `--check` to keep the old "diagnose only"
- * behavior. JSON / non-TTY runs always stay diagnose-only because piping
- * into a script and silently mutating the global install would surprise.
+ * behavior. JSON / non-TTY runs stay diagnose-only unless `--yes` explicitly
+ * authorizes installation.
  */
 export async function update(
-	opts: { json?: boolean; check?: boolean } = {},
+	opts: { json?: boolean; check?: boolean; yes?: boolean } = {},
 	runtime: ForegroundUpdateRuntime = {},
 ) {
 	const current = getCliVersion();
+	const json = opts.json || !process.stdout.isTTY;
 	const managedBy = (runtime.isDesktopManaged ?? isDesktopManagedCurrentCli)()
 		? "desktop"
 		: (runtime.isHomebrewManaged ?? isHomebrewManagedCurrentCli)()
 			? "homebrew"
 			: null;
 	if (managedBy) {
-		if (opts.json || !process.stdout.isTTY) {
+		if (json) {
 			console.log(
 				JSON.stringify({ current, latest: null, upgradeAvailable: false, managedBy }, null, 2),
 			);
@@ -188,33 +189,44 @@ export async function update(
 	const channel = updateChannelForVersion(current);
 	const latest = await fetchLatest(3000, channel);
 
-	if (latest) writeCache(latest, channel);
-
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(
-			JSON.stringify(
-				{
-					current,
-					latest,
-					upgradeAvailable: latest ? isNewer(latest, current) : false,
-				},
-				null,
-				2,
-			),
-		);
-		return;
-	}
-
 	if (!latest) {
-		console.log(chalk.yellow(`Could not reach npm registry at ${REGISTRY_URL}`));
+		const message = `Could not reach ${REGISTRY_URL}`;
+		if (json) {
+			console.log(
+				JSON.stringify(
+					{ current, latest: null, error: { code: "registry_unreachable", message } },
+					null,
+					2,
+				),
+			);
+		}
+		console.error(message);
+		process.exitCode = 1;
+		return;
+	}
+	writeCache(latest, channel);
+	const upgradeAvailable = isNewer(latest, current);
+	const report = (installed: boolean) => {
+		if (json) {
+			console.log(JSON.stringify({ current, latest, upgradeAvailable, installed }, null, 2));
+		}
+	};
+	const print = json ? console.error : console.log;
+
+	if (!json) {
+		print(chalk.gray(`current:  ${current}`));
+		print(chalk.gray(`latest:   ${latest}`));
+	}
+
+	if (!upgradeAvailable) {
+		report(false);
+		if (!json) print(chalk.green("\n✓ You're up to date."));
 		return;
 	}
 
-	console.log(chalk.gray(`current:  ${current}`));
-	console.log(chalk.gray(`latest:   ${latest}`));
-
-	if (!isNewer(latest, current)) {
-		console.log(chalk.green("\n✓ You're up to date."));
+	if (json && (!opts.yes || opts.check)) {
+		report(false);
+		console.error(`clawdi v${latest} is available. Re-run with --yes to install.`);
 		return;
 	}
 
@@ -241,19 +253,20 @@ export async function update(
 
 	const ownership = detectUpdateOwnership(runtime);
 	if (!ownership) {
-		console.log();
+		(json ? process.stderr : process.stdout).write("\n");
 		printUnsupportedInstall(latest);
+		report(false);
 		return;
 	}
 
 	const owner = ownership.kind === "native" ? "native distribution" : ownership.installer;
-	console.log();
-	console.log(chalk.cyan(`Installing v${latest} via ${owner}…`));
+	(json ? process.stderr : process.stdout).write("\n");
+	print(chalk.cyan(`Installing v${latest} via ${owner}…`));
 	const result = await runUpdateInstallWorker({
 		current,
 		latest,
 		ownership,
-		output: "inherit",
+		output: json ? "stderr" : "inherit",
 		platform: runtime.platform,
 		lockOptions: runtime.lockOptions,
 		installRunner: runtime.installRunner
@@ -265,20 +278,22 @@ export async function update(
 		nativeDownloadTimeoutMs: runtime.nativeDownloadTimeoutMs,
 	});
 	if (result.status === "locked") {
-		console.log();
-		console.log(chalk.yellow("Another clawdi update is already running."));
+		process.stderr.write("\n");
+		console.error(chalk.yellow("Another clawdi update is already running."));
+		report(false);
 		process.exitCode = 1;
 		return;
 	}
 	if (result.status === "disabled") {
-		console.log();
-		console.log(chalk.yellow("CLI updates are managed by this Cloud Agent's runtime."));
+		process.stderr.write("\n");
+		console.error(chalk.yellow("CLI updates are managed by this Cloud Agent's runtime."));
+		report(false);
 		process.exitCode = 1;
 		return;
 	}
 	if (result.status === "failed") {
-		console.log();
-		console.log(
+		process.stderr.write("\n");
+		console.error(
 			chalk.red(
 				`${
 					result.reason ??
@@ -294,15 +309,17 @@ export async function update(
 						: installCommand(ownership.installer, latest),
 				),
 		);
+		report(false);
 		process.exitCode = result.exitCode ?? 1;
 		return;
 	}
-	console.log();
-	console.log(chalk.green(`✓ clawdi v${latest} installed.`));
+	(json ? process.stderr : process.stdout).write("\n");
+	print(chalk.green(`✓ clawdi v${latest} installed.`));
+	report(true);
 }
 
 function printUnsupportedInstall(version: string): void {
-	console.log(
+	console.error(
 		chalk.yellow("Automatic update is unsupported for this invocation.") +
 			"\n" +
 			chalk.gray("Update the installation that launched clawdi, or install the exact release:") +
@@ -656,7 +673,7 @@ async function latestFromCacheOrRegistry(channel = "latest"): Promise<string | n
 	return cached?.latest ?? null;
 }
 
-type InstallerOutput = "inherit" | "log";
+type InstallerOutput = "inherit" | "stderr" | "log";
 
 type ProcessInstallRunner = (
 	command: string,
@@ -705,7 +722,14 @@ export async function runInstallerProcess(
 	try {
 		return await new Promise<number | null>((resolve) => {
 			const child = spawn(command, args, {
-				stdio: output === "inherit" ? "inherit" : logFd >= 0 ? ["ignore", logFd, logFd] : "ignore",
+				stdio:
+					output === "inherit"
+						? "inherit"
+						: output === "stderr"
+							? ["ignore", process.stderr, process.stderr]
+							: logFd >= 0
+								? ["ignore", logFd, logFd]
+								: "ignore",
 				env: process.env,
 				detached: process.platform !== "win32",
 				windowsHide: true,
@@ -892,6 +916,9 @@ function nativeStagingFailureReason(error: unknown): string {
 	if (error instanceof DOMException && error.name === "AbortError")
 		return "Native update was canceled.";
 	if (/abort|cancel/i.test(message)) return "Native update was canceled.";
+	if (message === "native manifest unreachable") {
+		return "Could not reach the native release manifest. Check your network and retry.";
+	}
 	const downloadFailure = /^native (manifest|artifact) download failed \(([0-9]{3})\)$/.exec(
 		message,
 	);

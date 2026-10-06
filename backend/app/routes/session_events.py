@@ -4,7 +4,18 @@ import uuid
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Path,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +28,7 @@ from app.models.session import (
     SessionEventChunk,
     SessionEventGeneration,
 )
+from app.schemas.agent_profile import ProfileKey
 from app.schemas.session_events import (
     SessionEvent,
     SessionEventAppendResponse,
@@ -41,6 +53,7 @@ from app.services.session_events import (
     SessionEventChunkInvalid,
     validate_event_chunk_async,
 )
+from app.services.session_profile import resolve_session_profile
 from app.services.session_search import (
     event_search_projection_complete,
     finalize_event_search_index,
@@ -77,6 +90,7 @@ async def _owned_session_by_local(
     fence_headers: ConnectedAgentFenceHeaders | None = None,
     *,
     for_update: bool = False,
+    profile_key: str | None = None,
 ) -> Session:
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         if auth.api_key.environment_id != environment_id:
@@ -89,10 +103,14 @@ async def _owned_session_by_local(
             headers=fence_headers,
             lock=True,
         )
+    key = await resolve_session_profile(
+        db, auth.user_id, environment_id, local_session_id, profile_key
+    )
     stmt = select(Session).where(
         Session.user_id == auth.user_id,
         Session.local_session_id == local_session_id,
         Session.origin_environment_id == environment_id,
+        Session.origin_profile_key == key,
     )
     if for_update:
         stmt = stmt.with_for_update()
@@ -201,10 +219,13 @@ async def session_upload_capabilities(
 async def get_session_event_head(
     local_session_id: str = Path(..., pattern=_LOCAL_ID_PATTERN),
     environment_id: UUID = Query(...),
+    profile_key: ProfileKey | None = Query(default=None),
     auth: AuthContext = Depends(require_scope("sessions:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SessionEventHeadResponse:
-    session = await _owned_session_by_local(db, auth, local_session_id, environment_id)
+    session = await _owned_session_by_local(
+        db, auth, local_session_id, environment_id, profile_key=profile_key
+    )
     return _head_response(session)
 
 
@@ -231,7 +252,13 @@ async def stage_session_event_generation(
     db: AsyncSession = Depends(get_session),
 ) -> SessionEventGenerationResponse:
     session = await _owned_session_by_local(
-        db, auth, local_session_id, body.environment_id, fence_headers, for_update=True
+        db,
+        auth,
+        local_session_id,
+        body.environment_id,
+        fence_headers,
+        for_update=True,
+        profile_key=body.profile_key,
     )
     existing = await db.get(SessionEventGeneration, body.generation)
     if existing is not None:
@@ -465,6 +492,12 @@ async def commit_session_event_generation(
             .with_for_update()
         )
     ).scalar_one_or_none()
+    if (
+        session is not None
+        and body.profile_key is not None
+        and session.origin_profile_key != body.profile_key
+    ):
+        raise HTTPException(404, "Session not found")
     if session is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
     if (
@@ -557,8 +590,10 @@ async def commit_session_event_generation(
 
 @router.post("/sessions/{local_session_id}/events/append")
 async def append_session_events(
+    request: Request,
     local_session_id: str = Path(..., pattern=_LOCAL_ID_PATTERN),
     environment_id: UUID = Form(...),
+    profile_key: ProfileKey | None = Form(default=None),
     append_id: UUID = Form(...),
     generation: UUID = Form(...),
     base_revision: int = Form(..., ge=0),
@@ -572,6 +607,9 @@ async def append_session_events(
     fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> SessionEventAppendResponse:
+    # Preserve explicit default identity: optional Form strings normalize "" to None.
+    if profile_key is None and (await request.form()).get("profile_key") == "":
+        profile_key = ""
     data = await _read_upload(file)
     try:
         validated = await validate_event_chunk_async(
@@ -586,7 +624,13 @@ async def append_session_events(
     ):
         raise HTTPException(status.HTTP_409_CONFLICT, "Event append final hash mismatch")
     session = await _owned_session_by_local(
-        db, auth, local_session_id, environment_id, fence_headers, for_update=True
+        db,
+        auth,
+        local_session_id,
+        environment_id,
+        fence_headers,
+        for_update=True,
+        profile_key=profile_key,
     )
     receipt = (
         await db.execute(
