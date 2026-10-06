@@ -518,8 +518,11 @@ async def second_channel_agent(db_session: AsyncSession, seed_user: User):
 
 
 @pytest.fixture
-def channel_runtime_head(db_session: AsyncSession):
-    """Seed permanent strict-v2 boot evidence in the disposable test database."""
+def channel_runtime_head(db_session: AsyncSession, request: pytest.FixtureRequest):
+    """Seed permanent strict-v2 boot evidence only inside the rollback lane."""
+    if request.node.get_closest_marker("committed_db"):
+        pytest.fail("runtime observation evidence is permanent; use the rollback lane")
+
     from app.models.runtime_observation import (
         V2RuntimeEnvironmentFence,
         V2RuntimeObservationHead,
