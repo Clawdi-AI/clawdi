@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from app.models.session import AgentProfile, Session, SessionSyncSuppression
 from tests.conftest import create_env_with_project
@@ -422,10 +422,82 @@ async def test_default_event_append_and_commit_remain_compatible(client, db_sess
 
 
 @pytest.mark.asyncio
-async def test_get_profiles_lazily_creates_default_during_deploy_window(
-    client, db_session, seed_user
+async def test_get_profiles_synthesizes_missing_default_without_writes(
+    client, db_session, seed_user, engine
 ):
-    from sqlalchemy import delete
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=uuid.uuid4().hex,
+        machine_name="test",
+        agent_type="hermes",
+    )
+    env.last_sync_at = datetime.now(UTC)
+    db_session.add_all(
+        [
+            AgentProfile(
+                environment_id=env.id, profile_key="work", upstream_key="work", is_default=False
+            ),
+            Session(
+                user_id=seed_user.id,
+                environment_id=env.id,
+                origin_environment_id=env.id,
+                local_session_id="legacy-default",
+                started_at=datetime.now(UTC),
+            ),
+        ]
+    )
+    await db_session.commit()
+    statements: list[str] = []
+    commits: list[bool] = []
+
+    def capture_statement(_conn, _cursor, statement, _params, _context, _many):
+        statements.append(statement)
+
+    def capture_commit(_session):
+        commits.append(True)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", capture_statement)
+    event.listen(db_session.sync_session, "after_commit", capture_commit)
+    try:
+        first = await client.get(f"/v1/agents/{env.id}/profiles")
+        second = await client.get(f"/v1/agents/{env.id}/profiles")
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture_statement)
+        event.remove(db_session.sync_session, "after_commit", capture_commit)
+
+    assert first.status_code == second.status_code == 200, first.text
+    assert first.json() == second.json()
+    profiles = first.json()
+    assert [(p["profile_key"], p["is_default"]) for p in profiles] == [("", True), ("work", False)]
+    default = profiles[0]
+    assert uuid.UUID(default["id"])
+    assert default["upstream_key"] == ""
+    assert default["state"] == "active" and default["online"] is True
+    assert default["display_name"] is None and default["removed_at"] is None
+    assert datetime.fromisoformat(default["first_seen_at"]) == env.created_at
+    assert datetime.fromisoformat(default["last_seen_at"]) == (env.last_seen_at or env.created_at)
+    assert default["session_count"] == 1 and profiles[1]["session_count"] == 0
+    assert statements and not commits
+    assert not any(
+        s.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for s in statements
+    )
+    assert (
+        await db_session.scalar(
+            select(AgentProfile.id).where(
+                AgentProfile.environment_id == env.id, AgentProfile.is_default
+            )
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("write_path", ["registration", "explicit_registration", "inventory"])
+async def test_profile_write_paths_persist_missing_default(
+    client, db_session, seed_user, write_path
+):
+    from app.services.agent_environments import register_agent_environment
 
     env = await create_env_with_project(
         db_session,
@@ -434,11 +506,44 @@ async def test_get_profiles_lazily_creates_default_during_deploy_window(
         machine_name="test",
         agent_type="hermes",
     )
-    await db_session.execute(delete(AgentProfile).where(AgentProfile.environment_id == env.id))
+    if write_path == "explicit_registration":
+        env.connected_agent_registered_at = datetime.now(UTC)
+        env.machine_fence_required = True
+        await db_session.commit()
+    ids = []
     for _ in range(2):
+        if write_path in ("registration", "explicit_registration"):
+            await register_agent_environment(
+                db_session,
+                user_id=seed_user.id,
+                machine_id=env.machine_id,
+                machine_name=env.machine_name,
+                agent_type=env.agent_type,
+                agent_version=None,
+                os_name=env.os,
+                sort_order=env.sort_order,
+                environment_id=env.id if write_path == "explicit_registration" else None,
+                registration_key=None
+                if write_path == "explicit_registration"
+                else env.registration_key,
+            )
+        else:
+            # Even an incomplete inventory without a default creates its row.
+            res = await inventory(client, env, ["work"], complete=False)
+            assert res.status_code == 200, res.text
+        default = (
+            await db_session.execute(
+                select(AgentProfile).where(
+                    AgentProfile.environment_id == env.id, AgentProfile.is_default
+                )
+            )
+        ).scalar_one()
+        assert default.profile_key == default.upstream_key == ""
+        ids.append(default.id)
         res = await client.get(f"/v1/agents/{env.id}/profiles")
         assert res.status_code == 200, res.text
-        assert [(p["profile_key"], p["is_default"]) for p in res.json()] == [("", True)]
+        assert res.json()[0]["id"] == str(default.id)
+    assert ids[0] == ids[1]
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,6 +56,15 @@ def clear_connected_agent_registration(agent: AgentEnvironment) -> None:
     agent.project_skill_reconcile_version = None
     agent.project_skill_reconcile_observed_at = None
     agent.adapter_modules = None
+
+
+async def ensure_default_agent_profile(db: AsyncSession, agent_id: UUID) -> None:
+    """Persist the default profile on registration and inventory write paths."""
+    await db.execute(
+        insert(AgentProfile)
+        .values(environment_id=agent_id, profile_key="", upstream_key="", is_default=True)
+        .on_conflict_do_nothing(constraint="uq_agent_profiles_environment_key")
+    )
 
 
 async def register_agent_environment(
@@ -187,9 +197,7 @@ async def register_agent_environment(
         )
         db.add(env)
         await db.flush()
-        db.add(
-            AgentProfile(environment_id=env.id, profile_key="", upstream_key="", is_default=True)
-        )
+        await ensure_default_agent_profile(db, env.id)
         project.origin_environment_id = env.id
         await ensure_agent_primary_binding(db, agent=env, created_by_user_id=user_id)
         await notify_sync_subscriptions_changed(db, [user_id])
@@ -318,6 +326,7 @@ async def _refresh_agent_environment(
         env.default_project_id = healing_project.id
         await ensure_agent_primary_binding(db, agent=env, created_by_user_id=user_id)
         await notify_sync_subscriptions_changed(db, [user_id])
+    await ensure_default_agent_profile(db, env.id)
 
 
 async def _next_explicit_default_name(db: AsyncSession, user_id: UUID, agent_type: str) -> str:

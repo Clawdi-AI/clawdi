@@ -1,9 +1,8 @@
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy import CursorResult, delete, func, select, update
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +16,7 @@ from app.schemas.agent_profile import (
     ProfileRenameRequest,
     ProfileSessionMoveResponse,
 )
+from app.services.agent_environments import ensure_default_agent_profile
 from app.services.connected_agent_fence import (
     ConnectedAgentFenceHeaders,
     connected_agent_fence_headers,
@@ -83,7 +83,7 @@ async def _responses(db: AsyncSession, agent: AgentEnvironment) -> list[AgentPro
     online = agent.last_sync_at is not None and agent.last_sync_at > datetime.now(UTC) - timedelta(
         seconds=90
     )
-    return [
+    responses = [
         AgentProfileResponse(
             id=p.id,
             profile_key=p.profile_key,
@@ -99,6 +99,35 @@ async def _responses(db: AsyncSession, agent: AgentEnvironment) -> list[AgentPro
         )
         for p, count in rows
     ]
+    if not any(p.is_default for p in responses):
+        # Deploy-window registrations may predate profile creation. Keep reads
+        # side-effect free until registration or inventory persists the row.
+        count = await db.scalar(
+            select(func.count())
+            .select_from(Session)
+            .where(
+                Session.user_id == agent.user_id,
+                Session.origin_environment_id == agent.id,
+                Session.origin_profile_key == "",
+            )
+        )
+        responses.insert(
+            0,
+            AgentProfileResponse(
+                id=uuid5(agent.id, "default-profile"),
+                profile_key="",
+                upstream_key="",
+                is_default=True,
+                display_name=None,
+                state="active",
+                online=online,
+                first_seen_at=agent.created_at,
+                last_seen_at=agent.last_seen_at or agent.created_at,
+                removed_at=None,
+                session_count=count or 0,
+            ),
+        )
+    return responses
 
 
 @router.get("/agents/{agent_id}/profiles")
@@ -110,12 +139,6 @@ async def list_agent_profiles(
     db: AsyncSession = Depends(get_session),
 ) -> list[AgentProfileResponse]:
     agent = await _agent(db, auth, agent_id)
-    await db.execute(
-        insert(AgentProfile)
-        .values(environment_id=agent_id, profile_key="", upstream_key="", is_default=True)
-        .on_conflict_do_nothing(constraint="uq_agent_profiles_environment_key")
-    )
-    await db.commit()
     return await _responses(db, agent)
 
 
@@ -128,6 +151,7 @@ async def put_agent_profiles(
     db: AsyncSession = Depends(get_session),
 ) -> list[AgentProfileResponse]:
     agent = await _write_agent(db, auth, agent_id, headers)
+    await ensure_default_agent_profile(db, agent_id)
     known = {
         p.profile_key: p
         for p in (
