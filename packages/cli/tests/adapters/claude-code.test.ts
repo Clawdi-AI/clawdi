@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ClaudeCodeAdapter } from "../../src/adapters/claude-code";
+import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
 import { tarSkillDir } from "../../src/lib/tar";
 import {
 	managedSkillReservationState,
@@ -74,6 +75,9 @@ describe("ClaudeCodeAdapter.detect", () => {
 });
 
 describe("ClaudeCodeAdapter.collectSessions", () => {
+	it("preserves origin/main session bytes and localHash", async () => {
+		await assertSessionGolden("claude-code", new ClaudeCodeAdapter().sessions);
+	});
 	it("parses the fixture session with correct tokens and model", async () => {
 		const a = new ClaudeCodeAdapter();
 		const { sessions, dedupedCount } = await a.sessions.collect({ kind: "complete" });

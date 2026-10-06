@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { scanSessionModule } from "../../src/adapters/base";
 import { HermesAdapter } from "../../src/adapters/hermes";
+import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
 import { computeLastActivityIso } from "../../src/lib/session-activity";
 import { prepareSessionUpload } from "../../src/lib/session-upload";
 import { tarSkillDir } from "../../src/lib/tar";
@@ -49,6 +50,9 @@ describe("HermesAdapter.detect", () => {
 });
 
 describe("HermesAdapter.collectSessions", () => {
+	it("preserves origin/main session bytes and localHash", async () => {
+		await assertSessionGolden("hermes", new HermesAdapter().sessions);
+	});
 	it.each(["user", "tool"])(
 		"re-maps persisted %s inline images without invalid attachment metadata",
 		async (role) => {

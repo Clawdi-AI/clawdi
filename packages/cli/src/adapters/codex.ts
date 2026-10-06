@@ -1,25 +1,17 @@
-import { type Dirent, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { type SessionEventDraft, sequenceSessionEvents } from "../lib/session-events";
-import { replaceSkillArchiveTarGz } from "../lib/tar";
-import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
-import {
-	migrateLegacyLocalSetupSkill,
-	mutateUserSkillTarget,
-	shouldIgnoreUserSkill,
-} from "../runtime/managed-skill-reservation";
 import type {
 	AgentAdapterCore,
 	RawSession,
-	RawSkill,
 	SessionScanRequest,
 	SessionScanResult,
 	SyncReadContext,
 } from "./base";
-import { getCodexHome, isPathWithinRoots, SKIP_DIRS, safeSkillDirectoryPath } from "./paths";
+import { getCodexHome, isPathWithinRoots } from "./paths";
 import {
 	canonicalStructuredString,
 	type JsonObject,
@@ -31,6 +23,7 @@ import {
 	visibleContentParts,
 } from "./rich-event-mapping";
 import { addSessionModel, describeSessionContent, JsonlSessionSource } from "./session-source";
+import { flatSkillModule } from "./skill-dir";
 import { readCommandVersion } from "./version";
 
 function codexDir() {
@@ -454,18 +447,7 @@ export class CodexAdapter implements AgentAdapterCore {
 			this.resolveSession(localSessionId, context),
 		watchPaths: () => this.getSessionsWatchPaths(),
 	};
-	readonly skills = {
-		collect: (context?: SyncReadContext) => this.collectSkills(context),
-		listKeys: (context?: SyncReadContext) => this.listSkillKeys(context),
-		path: (key: string) => this.getSkillPath(key),
-		rootDir: () => this.getSkillsRootDir(),
-		sharedPath: (skillKey: string, ownerHandle: string) =>
-			this.getSharedSkillPath(skillKey, ownerHandle),
-		writeArchive: (key: string, tarGzBytes: Buffer) => this.writeSkillArchive(key, tarGzBytes),
-		writeSharedArchive: (key: string, ownerHandle: string, tarGzBytes: Buffer) =>
-			this.writeSharedSkillArchive(key, ownerHandle, tarGzBytes),
-		remove: (key: string) => this.removeLocalSkill(key),
-	};
+	readonly skills = flatSkillModule({ root: skillsDir });
 
 	async detect(): Promise<boolean> {
 		// Bare `~/.codex/` could be a leftover. Require either the sessions
@@ -564,110 +546,8 @@ export class CodexAdapter implements AgentAdapterCore {
 		);
 	}
 
-	private async collectSkills(context?: SyncReadContext): Promise<RawSkill[]> {
-		context?.signal.throwIfAborted();
-		migrateLegacyLocalSetupSkill({
-			targetDir: join(skillsDir(), "clawdi"),
-			id: "clawdi",
-			version: 1,
-			digest: managedSkillDirectoryDigest,
-		});
-		if (!existsSync(skillsDir())) return [];
-
-		const skills: RawSkill[] = [];
-		for (const entry of readdirSync(skillsDir(), { withFileTypes: true })) {
-			// Skip dot-dirs (e.g. `.system/` holds Codex's built-in skills, not user-authored ones).
-			if (entry.name.startsWith(".")) continue;
-			if (SKIP_DIRS.has(entry.name)) continue;
-			const dirPath = safeSkillDirectoryPath(skillsDir(), entry);
-			if (!dirPath) continue;
-			try {
-				if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
-				const skillMd = join(dirPath, "SKILL.md");
-				if (!existsSync(skillMd)) continue;
-				const content = readFileSync(skillMd, "utf-8");
-				const fileCount = readdirSync(dirPath, { recursive: true }).length;
-				skills.push({
-					skillKey: entry.name,
-					name: entry.name,
-					content,
-					filePath: skillMd,
-					directoryPath: dirPath,
-					isDirectory: fileCount > 1,
-				});
-			} catch {}
-		}
-		return skills;
-	}
-
-	private getSkillPath(key: string): string {
-		return join(skillsDir(), key, "SKILL.md");
-	}
-
-	private async listSkillKeys(context?: SyncReadContext): Promise<string[]> {
-		context?.signal.throwIfAborted();
-		// Flat layout. Mirrors `collectSkills` filtering so the
-		// daemon's rescan and the bulk push see the same set.
-		migrateLegacyLocalSetupSkill({
-			targetDir: join(skillsDir(), "clawdi"),
-			id: "clawdi",
-			version: 1,
-			digest: managedSkillDirectoryDigest,
-		});
-		if (!existsSync(skillsDir())) return [];
-		const out: string[] = [];
-		for (const entry of readdirSync(skillsDir(), { withFileTypes: true })) {
-			if (entry.name.startsWith(".")) continue;
-			if (SKIP_DIRS.has(entry.name)) continue;
-			const dirPath = safeSkillDirectoryPath(skillsDir(), entry);
-			if (!dirPath) continue;
-			try {
-				if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
-				if (!existsSync(join(dirPath, "SKILL.md"))) continue;
-				out.push(entry.name);
-			} catch {}
-		}
-		return out;
-	}
-
-	private getSkillsRootDir(): string {
-		return skillsDir();
-	}
-
-	private getSharedSkillPath(skillKey: string, ownerHandle: string): string {
-		return join(skillsDir(), `${skillKey}__${ownerHandle}`);
-	}
-
 	private getSessionsWatchPaths(): string[] {
 		const existingRoots = sessionRoots().filter((root) => existsSync(root));
 		return existingRoots.length > 0 ? existingRoots : [sessionsDir()];
-	}
-
-	private async removeLocalSkill(key: string): Promise<void> {
-		const dir = join(skillsDir(), key);
-		mutateUserSkillTarget(dir, key, () => {
-			if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
-		});
-	}
-
-	private async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
-		const root = skillsDir();
-		const targetDir = join(root, key);
-		await replaceSkillArchiveTarGz(key, root, targetDir, tarGzBytes, undefined, (mutation) =>
-			mutateUserSkillTarget(targetDir, key, mutation),
-		);
-	}
-
-	private async writeSharedSkillArchive(
-		key: string,
-		ownerHandle: string,
-		tarGzBytes: Buffer,
-	): Promise<void> {
-		await replaceSkillArchiveTarGz(
-			key,
-			this.getSkillsRootDir(),
-			this.getSharedSkillPath(key, ownerHandle),
-			tarGzBytes,
-		);
 	}
 }

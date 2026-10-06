@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { PiAdapter } from "./pi";
+import { assertSessionGolden } from "./session-golden.test-support";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 const temporaryRoots: string[] = [];
@@ -39,6 +40,15 @@ function copyFixture(root: string, fixture: string, name: string): string {
 }
 
 describe("Pi session adapter", () => {
+	test.each(["v1", "v3", "v4"])(
+		"preserves origin/main %s session bytes and localHash",
+		async (version) => {
+			const { adapter, file, root } = fixtureSession();
+			rmSync(file);
+			copyFixture(root, `session-${version}.jsonl`, "golden.jsonl");
+			await assertSessionGolden(`pi-${version}`, adapter.sessions);
+		},
+	);
 	test("uploads private reasoning while projecting only the active visible tail", async () => {
 		const { adapter, file, root } = fixtureSession();
 		writeFileSync(file, readFileSync(file, "utf-8").replace(/\n$/, ""));
