@@ -382,7 +382,7 @@ export async function inboxAcceptCommand(
 		console.error(
 			chalk.red(
 				`Can't tell whether '${normalized.slice(0, 60)}…' is an invitation ID or a URL.\n` +
-					"  invitation ID shape:  1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d\n" +
+					"  Invitation ID shape:  1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d\n" +
 					"  Share URL shape:      https://.../share/<43-char-token>\n" +
 					"  Use --invite <id> or --url <link> to be explicit.",
 			),
@@ -762,7 +762,7 @@ function renderJoinedSuccess(
 		console.log(chalk.gray(`  Linked to ${bound.length} Agent${bound.length === 1 ? "" : "s"}.`));
 	} else {
 		console.log(
-			chalk.gray(`  Link to agent: clawdi agent projects link <agent-id> --project ${projectRef}`),
+			chalk.gray(`  Link to Agent: clawdi agent projects link <agent-id> --project ${projectRef}`),
 		);
 	}
 	console.log(chalk.gray(`  Next (optional): clawdi pull --project ${projectRef}`));

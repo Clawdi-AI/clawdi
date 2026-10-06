@@ -728,7 +728,7 @@ export async function runDeployFlow(
 	if (aiMode === "saved" && !selectedSavedProvider) {
 		throw new DeployInputError(
 			"provider_missing",
-			`Saved AI provider ${providerId ?? ""} was not found. Pass its exact provider ID from cloud AI providers.`,
+			`Saved AI provider ${providerId ?? ""} was not found. Pass its exact provider ID from the AI Providers page.`,
 		);
 	}
 	const selectedProviderIssue = selectedSavedProvider
@@ -929,7 +929,7 @@ export async function runDeployFlow(
 			const selected = await prompts.select(
 				"Payment",
 				[
-					{ value: "wallet", label: "Clawdi wallet", hint: "Exact quote and confirmation next" },
+					{ value: "wallet", label: "Clawdi Wallet", hint: "Exact quote and confirmation next" },
 					{
 						value: "card",
 						label: "Card",
@@ -1190,7 +1190,7 @@ export async function runDeployFlow(
 			if (!deploymentId) {
 				throw new PublicDeployFailure(
 					"invalid_deployment_result",
-					"Hosted accepted payment without returning the agent identifier. Do not start another payment; check agents in the dashboard.",
+					"Hosted accepted payment without returning the agent identifier. Do not start another payment; check the Agents page in the dashboard.",
 				);
 			}
 			onEvent({

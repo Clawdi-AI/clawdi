@@ -353,7 +353,7 @@ async function installBuiltinSkill(agentType: AgentType) {
 			reservationState !== "reserved" &&
 			managedSkillDirectoryDigest(targetDir) !== sourceDigest
 		) {
-			throw new Error(`refusing to replace unmanaged skill at ${targetDir}`);
+			throw new Error(`Refusing to replace unmanaged skill at ${targetDir}`);
 		}
 		installReservedManagedSkill(
 			{

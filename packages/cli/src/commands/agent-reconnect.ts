@@ -258,7 +258,7 @@ async function selectCandidate(
 	}
 	if (reconnectable.length === 1) return reconnectable[0] ?? null;
 	if (!isInteractive()) {
-		console.log(chalk.red("Multiple agents match. Pass an agent id to choose one."));
+		console.log(chalk.red("Multiple agents match. Pass an agent ID to choose one."));
 		process.exitCode = 1;
 		return null;
 	}

@@ -129,7 +129,7 @@ export async function agentSkillsInstall(agentId: string, opts: InstallOptions) 
 		if (opts.json || !process.stdout.isTTY) print({ status: "accepted", ...result });
 		else
 			console.log(
-				`library skill ${result.desired_state} request accepted. Run \`clawdi agent skills list ${agentId}\` to check application.`,
+				`Library skill ${result.desired_state} request accepted. Run \`clawdi agent skills list ${agentId}\` to check application.`,
 			);
 		return;
 	}
@@ -165,7 +165,7 @@ export async function agentSkillsRemove(
 		if (opts.json || !process.stdout.isTTY) print({ status: "accepted", ...result });
 		else
 			console.log(
-				`library skill ${result.desired_state} request accepted. Run \`clawdi agent skills list ${agentId}\` to check application.`,
+				`Library skill ${result.desired_state} request accepted. Run \`clawdi agent skills list ${agentId}\` to check application.`,
 			);
 		return;
 	}
@@ -241,7 +241,7 @@ async function mutateGithubSkill(
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Remote skill request failed.";
 		throw new Error(
-			`${message}\nrequest ID: ${requestId}\nresource version: ${resourceVersion}\nAn accepted request may not be applied yet. Check \`clawdi agent skills list ${agentId}\` before retrying, and reuse the same --request-id and --resource-version.`,
+			`${message}\nRequest ID: ${requestId}\nResource version: ${resourceVersion}\nAn accepted request may not be applied yet. Check \`clawdi agent skills list ${agentId}\` before retrying, and reuse the same --request-id and --resource-version.`,
 		);
 	}
 }
