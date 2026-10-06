@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { components } from "@clawdi/shared/api";
-import type { AgentTile } from "@/components/dashboard/agents-card";
+import type { AgentTile } from "@clawdi/shared/view";
 import {
 	claimedEnvIdsFromDeployments,
 	hostedDeploymentMembers,

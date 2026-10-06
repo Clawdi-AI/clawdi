@@ -1,5 +1,6 @@
 "use client";
 
+import { type AppearanceMode, isAppearanceMode } from "@clawdi/shared/consts";
 import {
 	createContext,
 	type ReactNode,
@@ -10,7 +11,7 @@ import {
 	useState,
 } from "react";
 
-type Theme = "light" | "dark" | "system";
+type Theme = AppearanceMode;
 
 type ThemeProviderProps = {
 	children: ReactNode;
@@ -50,7 +51,7 @@ export function ThemeProvider({
 	const [theme, setThemeState] = useState<Theme>(() => {
 		if (typeof window === "undefined") return defaultTheme;
 		const stored = window.localStorage.getItem(STORAGE_KEY);
-		return stored === "light" || stored === "dark" || stored === "system" ? stored : defaultTheme;
+		return isAppearanceMode(stored) ? stored : defaultTheme;
 	});
 	const [resolvedTheme, setResolvedTheme] = useState<"light" | "dark">(() =>
 		theme === "system" && enableSystem ? systemTheme() : theme === "dark" ? "dark" : "light",

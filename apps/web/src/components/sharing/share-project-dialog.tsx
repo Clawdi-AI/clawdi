@@ -1,11 +1,19 @@
 "use client";
 
 import { buildShareAgentHandoffPrompt } from "@clawdi/shared/sharing";
+import { shareProjectClasses } from "@clawdi/shared/ui";
+import {
+	canceledInvitationDescription,
+	formatMembershipToken,
+	projectSharingFormCopy as formCopy,
+	isCustomProject,
+	removedMemberDescription,
+	SHARING_COPY,
+} from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, CheckCircle2, Copy, Link2, Share2, Trash2, UserMinus } from "lucide-react";
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { isCustomProject } from "@/components/projects/project-metadata";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
 	AlertDialog,
@@ -79,22 +87,22 @@ export function ShareProjectDialog({
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			{trigger ? <DialogTrigger render={trigger} /> : null}
-			<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
+			<DialogContent className={shareProjectClasses.content}>
 				<DialogHeader>
-					<DialogTitle className="pr-8 leading-snug break-words">
+					<DialogTitle className={shareProjectClasses.title}>
 						{isShareableProject ? `Share ${projectName}` : "Only projects you create can be shared"}
 					</DialogTitle>
 					<DialogDescription>
 						{isShareableProject
-							? "People can view this project and let their agents use its keys. Only you can edit, and secret values stay hidden in the dashboard."
+							? SHARING_COPY.permissions
 							: "Sharing is available for projects you create. An agent's private workspace cannot be shared."}
 					</DialogDescription>
 				</DialogHeader>
 				{isShareableProject ? (
-					<div key={projectId} className="space-y-4">
+					<div key={projectId} className={shareProjectClasses.panels}>
 						<InvitationsPanel projectId={projectId} />
 						<MembersPanel projectId={projectId} />
-						<section className="space-y-3 border-t pt-4" aria-label="Invite links">
+						<section className={shareProjectClasses.linksSection} aria-label="Invite links">
 							<ShareLinksPanel projectId={projectId} open={open} />
 						</section>
 						<StopSharingPanel projectId={projectId} />
@@ -199,9 +207,9 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 	);
 
 	return (
-		<div className="space-y-3">
-			<div className="flex flex-wrap items-center justify-between gap-2">
-				<h3 className="text-sm font-semibold">Invite link</h3>
+		<div className={shareProjectClasses.section}>
+			<div className={shareProjectClasses.headingRow}>
+				<h3 className={shareProjectClasses.heading}>{SHARING_COPY.inviteLink}</h3>
 				<Button
 					variant="outline"
 					size="sm"
@@ -210,13 +218,11 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 						void create.execute().catch(() => undefined);
 					}}
 				>
-					<Link2 className="mr-1.5 size-4" />
-					{create.isPending ? "Creating…" : "Create invite link"}
+					<Link2 className={shareProjectClasses.createLinkIcon} />
+					{create.isPending ? "Creating…" : SHARING_COPY.createLink}
 				</Button>
 			</div>
-			<p className="text-sm text-muted-foreground">
-				Anyone with the link can preview and join this project.
-			</p>
+			<p className={shareProjectClasses.description}>{SHARING_COPY.linkDescription}</p>
 			{freshLink && !inactiveLinks.some((link) => link.id === freshLink.id) ? (
 				<FreshLinkBanner link={freshLink} onDismiss={() => setFreshLink(null)} />
 			) : null}
@@ -241,8 +247,8 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 				</ul>
 			) : null}
 			{inactiveLinks.length > 0 ? (
-				<details className="text-sm">
-					<summary className="cursor-pointer text-muted-foreground">
+				<details className={shareProjectClasses.manageRoot}>
+					<summary className={shareProjectClasses.manageTrigger}>
 						Inactive links ({inactiveLinks.length})
 					</summary>
 					<ul className="mt-2 space-y-1">
@@ -273,11 +279,8 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Turn off this invite link?</AlertDialogTitle>
-						<AlertDialogDescription>
-							People will no longer be able to join from this link. Existing members retain access
-							until removed from People.
-						</AlertDialogDescription>
+						<AlertDialogTitle>{formCopy.revokeTitle}</AlertDialogTitle>
+						<AlertDialogDescription>{formCopy.revokeDescription}</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
 						<AlertDialogCancel disabled={revoke.isPending}>Cancel</AlertDialogCancel>
@@ -288,9 +291,9 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 									revoke.mutate(renderedRevokeTarget.id);
 							}}
 							disabled={!renderedRevokeTarget || revoke.isPending}
-							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+							className={shareProjectClasses.destructiveAction}
 						>
-							{revoke.isPending ? "Turning off…" : "Turn off link"}
+							{revoke.isPending ? "Turning off…" : formCopy.revoke}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -319,7 +322,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 			<AlertTitle>Copy this link now</AlertTitle>
 			<AlertDescription>
 				<p>Save it before closing this dialog.</p>
-				<div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+				<div className={shareProjectClasses.freshLink}>
 					<Input
 						readOnly
 						value={link.url}
@@ -381,14 +384,16 @@ function LinkRow({
 			<div className="flex items-center justify-between gap-2">
 				<div className="min-w-0 flex-1">
 					<div className="flex items-center gap-2 text-sm">
-						<span className="truncate font-medium">{link.label ?? "Invite link"}</span>
+						<span className={shareProjectClasses.name}>
+							{link.label ?? SHARING_COPY.inviteLink}
+						</span>
 						{revoked || expired ? (
 							<Badge variant="secondary" className="text-xs">
 								{revoked ? "Off" : "Expired"}
 							</Badge>
 						) : null}
 					</div>
-					<div className="mt-1 flex flex-wrap items-center gap-x-3 text-xs text-muted-foreground">
+					<div className={shareProjectClasses.linkMeta}>
 						<span>
 							Created{" "}
 							{new Date(link.created_at).toLocaleDateString(undefined, {
@@ -411,7 +416,7 @@ function LinkRow({
 						aria-label={`Turn off invite link ${link.prefix}`}
 						onClick={onRevoke}
 					>
-						<Trash2 className="size-3.5 text-destructive" />
+						<Trash2 className={shareProjectClasses.destructiveIcon} />
 					</Button>
 				) : null}
 			</div>
@@ -489,19 +494,19 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 	const looksLikeEmail = /^\S+@\S+\.\S+$/.test(email.trim());
 
 	return (
-		<div className="space-y-3">
+		<div className={shareProjectClasses.section}>
 			<form
 				onSubmit={(e) => {
 					e.preventDefault();
 					if (!looksLikeEmail) return;
 					invite.mutate(email.trim());
 				}}
-				className="flex gap-2"
+				className={shareProjectClasses.form}
 			>
 				<Input
 					type="email"
 					name="project-invite-email"
-					placeholder="Enter email address"
+					placeholder={SHARING_COPY.email}
 					value={email}
 					onChange={(e) => setEmail(e.target.value)}
 					autoComplete="email"
@@ -514,7 +519,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 					disabled={!looksLikeEmail || invite.isPending}
 					aria-label="Invite email to project"
 				>
-					{invite.isPending ? "Sending…" : "Invite"}
+					{invite.isPending ? "Sending…" : SHARING_COPY.invite}
 				</Button>
 			</form>
 
@@ -530,11 +535,11 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 					}
 				/>
 			) : (invites.data ?? []).length === 0 ? null : (
-				<ul className="space-y-2">
+				<ul className={shareProjectClasses.list}>
 					{invites.data?.map((inv) => (
-						<li key={inv.id} className="flex items-center justify-between gap-2 py-1 text-sm">
-							<div className="min-w-0">
-								<div className="truncate font-medium" title={inv.invitee_email}>
+						<li key={inv.id} className={shareProjectClasses.row}>
+							<div className={shareProjectClasses.identity}>
+								<div className={shareProjectClasses.name} title={inv.invitee_email}>
 									{inv.invitee_email}
 								</div>
 								<div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
@@ -553,7 +558,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 									setCancelOpen(true);
 								}}
 							>
-								<Trash2 className="size-3.5 text-destructive" />
+								<Trash2 className={shareProjectClasses.destructiveIcon} />
 							</Button>
 						</li>
 					))}
@@ -580,14 +585,15 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Cancel this invitation?</AlertDialogTitle>
+						<AlertDialogTitle>{formCopy.cancelTitle}</AlertDialogTitle>
 						<AlertDialogDescription>
-							{renderedCancelTarget?.invitee_email ?? "This person"} will no longer see this
-							invitation in their dashboard.
+							{canceledInvitationDescription(renderedCancelTarget?.invitee_email ?? "This person")}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
-						<AlertDialogCancel disabled={cancel.isPending}>Keep invitation</AlertDialogCancel>
+						<AlertDialogCancel disabled={cancel.isPending}>
+							{formCopy.keepInvitation}
+						</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={(event) => {
 								event.preventDefault();
@@ -595,9 +601,9 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 									cancel.mutate(renderedCancelTarget.id);
 							}}
 							disabled={!renderedCancelTarget || cancel.isPending}
-							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+							className={shareProjectClasses.destructiveAction}
 						>
-							{cancel.isPending ? "Canceling…" : "Cancel invitation"}
+							{cancel.isPending ? "Canceling…" : formCopy.cancelInvitation}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -660,23 +666,23 @@ function MembersPanel({ projectId }: { projectId: string }) {
 	const rows = members.data ?? [];
 
 	return (
-		<div className="space-y-3">
-			<h3 className="text-sm font-semibold">People with access</h3>
+		<div className={shareProjectClasses.section}>
+			<h3 className={shareProjectClasses.heading}>{SHARING_COPY.people}</h3>
 			{members.isLoading ? (
 				<Skeleton className="h-16 w-full" />
 			) : shouldBlockQueryError(members.error, members.data) ? (
 				<EmptyHint variant="destructive" message={normalizeApiError(members.error)} />
 			) : rows.length === 0 ? (
-				<p className="text-sm text-muted-foreground">Only you have access</p>
+				<p className={shareProjectClasses.description}>{SHARING_COPY.onlyYou}</p>
 			) : (
-				<ul className="space-y-2">
+				<ul className={shareProjectClasses.list}>
 					{rows.map((member) => {
 						const label = member.user_email ?? member.user_display ?? member.user_id;
 						return (
-							<li key={member.id} className="flex items-center justify-between gap-2 py-1 text-sm">
-								<div className="min-w-0">
-									<div className="truncate font-medium">{label}</div>
-									<div className="text-xs text-muted-foreground">
+							<li key={member.id} className={shareProjectClasses.row}>
+								<div className={shareProjectClasses.identity}>
+									<div className={shareProjectClasses.name}>{label}</div>
+									<div className={shareProjectClasses.meta}>
 										{formatMembershipToken(member.role)}
 									</div>
 								</div>
@@ -692,7 +698,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 										setRemoveOpen(true);
 									}}
 								>
-									<UserMinus className="size-3.5 text-destructive" />
+									<UserMinus className={shareProjectClasses.destructiveIcon} />
 								</Button>
 							</li>
 						);
@@ -721,14 +727,15 @@ function MembersPanel({ projectId }: { projectId: string }) {
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Remove this member?</AlertDialogTitle>
+						<AlertDialogTitle>{formCopy.removeTitle}</AlertDialogTitle>
 						<AlertDialogDescription>
-							{renderedRemoveTarget
-								? (renderedRemoveTarget.user_email ??
-									renderedRemoveTarget.user_display ??
-									renderedRemoveTarget.user_id)
-								: "This member"}{" "}
-							will lose access to this project.
+							{removedMemberDescription(
+								renderedRemoveTarget
+									? (renderedRemoveTarget.user_email ??
+											renderedRemoveTarget.user_display ??
+											renderedRemoveTarget.user_id)
+									: "This member",
+							)}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -740,9 +747,9 @@ function MembersPanel({ projectId }: { projectId: string }) {
 									remove.mutate(renderedRemoveTarget.user_id);
 							}}
 							disabled={!renderedRemoveTarget || remove.isPending}
-							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+							className={shareProjectClasses.destructiveAction}
 						>
-							{remove.isPending ? "Removing…" : "Remove member"}
+							{remove.isPending ? "Removing…" : formCopy.removeMember}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -783,8 +790,8 @@ function StopSharingPanel({ projectId }: { projectId: string }) {
 	});
 
 	return (
-		<details className="text-sm">
-			<summary className="cursor-pointer text-muted-foreground">Manage sharing</summary>
+		<details className={shareProjectClasses.manageRoot}>
+			<summary className={shareProjectClasses.manageTrigger}>{SHARING_COPY.manage}</summary>
 			<AlertDialog
 				open={stopAllOpen}
 				onOpenChange={(nextOpen) => {
@@ -795,34 +802,33 @@ function StopSharingPanel({ projectId }: { projectId: string }) {
 					render={
 						<Button
 							variant="ghost"
-							className="text-destructive"
+							className={shareProjectClasses.manageAction}
 							size="sm"
 							disabled={unshare.isPending}
 							aria-label="Stop all sharing for this project"
 						/>
 					}
 				>
-					{unshare.isPending ? "Stopping…" : "Stop all sharing"}
+					{unshare.isPending ? "Stopping…" : SHARING_COPY.stop}
 				</AlertDialogTrigger>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Stop all sharing?</AlertDialogTitle>
-						<AlertDialogDescription>
-							All invite links and pending invitations will stop working. Members will lose access.
-							Your project content stays unchanged.
-						</AlertDialogDescription>
+						<AlertDialogTitle>{formCopy.stopTitle}</AlertDialogTitle>
+						<AlertDialogDescription>{formCopy.stopDescription}</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
-						<AlertDialogCancel disabled={unshare.isPending}>Keep sharing</AlertDialogCancel>
+						<AlertDialogCancel disabled={unshare.isPending}>
+							{formCopy.keepSharing}
+						</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={(event) => {
 								event.preventDefault();
 								if (!unshare.isPending) unshare.mutate();
 							}}
 							disabled={unshare.isPending}
-							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+							className={shareProjectClasses.destructiveAction}
 						>
-							Stop all sharing
+							{SHARING_COPY.stop}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -838,12 +844,4 @@ function EmptyHint({ message, variant }: { message: string; variant?: "default" 
 			<AlertDescription>{message}</AlertDescription>
 		</Alert>
 	);
-}
-
-function formatMembershipToken(value: string) {
-	return value
-		.split(/[_-]+/g)
-		.filter(Boolean)
-		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-		.join(" ");
 }

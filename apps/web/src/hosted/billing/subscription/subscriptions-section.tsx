@@ -1,9 +1,10 @@
 "use client";
 
+import type { AgentTile } from "@clawdi/shared/view";
+import { billingCopy, formatShortDate } from "@clawdi/shared/view";
 import { CreditCard, History } from "lucide-react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import type { AgentTile } from "@/components/dashboard/agents-card";
 import { EmptyState } from "@/components/empty-state";
 import { entityCardChassisClass } from "@/components/entity-card";
 import { SettingsSection } from "@/components/settings-section";
@@ -39,7 +40,6 @@ import {
 	resolvePerformancePlan,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { agentSectionHref } from "@/lib/agent-routes";
-import { formatShortDate } from "@/lib/format";
 import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
@@ -458,8 +458,8 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 			<SettingsSection
 				data-hosted="true"
 				headingLevel={3}
-				title="Your subscriptions"
-				description="Manage every compute subscription in one place."
+				title={billingCopy.subscriptions}
+				description={billingCopy.subscriptionsDescription}
 			>
 				{subscriptions.isLoading ? (
 					<SubscriptionListSkeleton />
@@ -559,8 +559,8 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 					<EmptyState
 						variant="inset"
 						icon={CreditCard}
-						title="No compute subscriptions"
-						description="Subscriptions will appear here when you start a Cloud Agent."
+						title={billingCopy.emptySubscriptions}
+						description={billingCopy.emptySubscriptionsDescription}
 						className="py-8 md:p-8"
 					/>
 				)}

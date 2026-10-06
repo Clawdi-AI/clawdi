@@ -4,6 +4,9 @@
 	"private": true,
 	"type": "module",
 	"exports": {
+		"./view": "./src/view/index.ts",
+		"./terminal": "./src/terminal-dom.ts",
+		"./markdown": "./src/markdown.ts",
 		".": "./src/index.ts",
 		"./client": "./src/client.ts",
 		"./desktop": "./src/desktop.ts",
@@ -11,7 +14,9 @@
 		"./sharing": "./src/sharing/agent-handoff.ts",
 		"./x402": "./src/x402/index.ts",
 		"./api": "./src/api/index.ts",
-		"./style/theme.css": "./src/style/theme.css"
+		"./qr": "./src/qr.ts",
+		"./style/theme.css": "./src/style/theme.css",
+		"./ui": "./src/ui/index.ts"
 	},
 	"scripts": {
 		"typecheck": "tsc --noEmit",
@@ -19,11 +24,21 @@
 		"test:internal": "bun test src"
 	},
 	"dependencies": {
+		"@xterm/xterm": "catalog:",
+		"@xterm/addon-fit": "catalog:",
+		"@xterm/addon-web-links": "catalog:",
+		"@types/mdast": "catalog:",
+		"remark-parse": "catalog:",
+		"remark-gfm": "catalog:",
+		"remark-breaks": "catalog:",
+		"unified": "catalog:",
 		"@x402/core": "catalog:",
 		"@x402/evm": "2.27.0",
 		"@x402/fetch": "2.27.0",
 		"openapi-fetch": "catalog:",
-		"viem": "catalog:"
+		"uqr": "catalog:",
+		"viem": "catalog:",
+		"class-variance-authority": "^0.7.1"
 	},
 	"devDependencies": {
 		"@types/bun": "catalog:",

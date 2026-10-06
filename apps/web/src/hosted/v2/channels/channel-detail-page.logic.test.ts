@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-	nativeTransportSummary,
-	pairCodeExpiryLabel,
-	telegramPairDeepLink,
-} from "./channel-detail-page.logic";
+import { pairCodeExpiryLabel, telegramPairDeepLink } from "./channel-detail-page.logic";
 
 describe("telegramPairDeepLink", () => {
 	test("accepts only the server-provided bot start link for this code", () => {
@@ -83,32 +79,5 @@ describe("pairCodeExpiryLabel", () => {
 		expect(pairCodeExpiryLabel("2026-07-30T12:01:05Z", now)).toBe("Expires in 1m 5s");
 		expect(pairCodeExpiryLabel("2026-07-30T12:00:00Z", now)).toBe("Expired — generate a new link");
 		expect(pairCodeExpiryLabel("invalid", now)).toBe("Expired — generate a new link");
-	});
-});
-
-describe("nativeTransportSummary", () => {
-	test("maps internal transport fields to user-facing labels", () => {
-		expect(
-			nativeTransportSummary({
-				available: false,
-				mode: "none",
-				reason: "shared-bot-transport-unavailable",
-				supportsOutboundMessages: false,
-			}),
-		).toEqual({
-			status: "Unavailable",
-			connection: "Not connected",
-			delivery: "Unavailable",
-		});
-	});
-
-	test("does not surface unknown internal values", () => {
-		expect(
-			nativeTransportSummary({ mode: "future_internal_mode", reason: "private-enum" }),
-		).toEqual({
-			status: "Unknown",
-			connection: "Details unavailable",
-			delivery: "Unknown",
-		});
 	});
 });

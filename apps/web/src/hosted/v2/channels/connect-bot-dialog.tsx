@@ -1,5 +1,8 @@
 "use client";
 
+import { connectBotDialogClasses as styles } from "@clawdi/shared/ui";
+import { connectBotDialogCopy as copy } from "@clawdi/shared/view";
+
 import { Link } from "@tanstack/react-router";
 import { ExternalLink, TriangleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -212,11 +215,8 @@ export function ConnectBotDialog({
 	}
 
 	const otherProviderHint = (
-		<p
-			data-other-provider-hint
-			className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]"
-		>
-			Need a provider that Clawdi Channels doesn&apos;t support?{" "}
+		<p data-other-provider-hint className={styles.unsupported}>
+			{copy.unsupported}
 			{agentId ? (
 				<>
 					Configure it in this agent&apos;s{" "}
@@ -230,19 +230,19 @@ export function ConnectBotDialog({
 					.
 				</>
 			) : (
-				"Open the relevant agent's OpenClaw Control UI or Hermes Dashboard to configure it."
+				copy.unsupportedInventory
 			)}
 		</p>
 	);
 	const providerChoices = (
-		<fieldset className="min-w-0 space-y-2 border-0 p-0" data-provider-chooser>
-			<legend className="mb-2 text-sm font-medium">Choose provider</legend>
-			<div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+		<fieldset className={styles.chooser} data-provider-chooser>
+			<legend className={styles.chooserTitle}>{copy.chooseProvider}</legend>
+			<div className={styles.choices}>
 				{CONNECTABLE_BOT_PROVIDERS.map((item) => (
 					<EntityChoiceCard
 						key={item}
 						variant="compact"
-						className="gap-2 p-2"
+						className={styles.choice}
 						icon={
 							<EntityIcon kind="channel" id={item} label={PROVIDER_META[item].label} size="sm" />
 						}
@@ -258,13 +258,13 @@ export function ConnectBotDialog({
 	);
 	const addCustomBotButton = (
 		<Button
-			className="min-w-0 whitespace-normal"
+			className={styles.action}
 			onClick={
 				providerLinkConflict ? undefined : () => void submit("auto-link").catch(() => undefined)
 			}
 			disabled={!canSubmit || isSubmitting}
 		>
-			{isSubmitting ? "Adding…" : "Add custom bot"}
+			{isSubmitting ? "Adding…" : copy.add}
 		</Button>
 	);
 
@@ -299,7 +299,7 @@ export function ConnectBotDialog({
 						<DialogFooter>
 							<Button
 								variant="outline"
-								className="min-w-0 whitespace-normal"
+								className={styles.action}
 								onClick={() => handleOpenChange(false)}
 							>
 								Done
@@ -307,7 +307,7 @@ export function ConnectBotDialog({
 							<Button
 								render={<Link to="/channels/$id" params={{ id: created.id }} />}
 								nativeButton={false}
-								className="min-w-0 whitespace-normal"
+								className={styles.action}
 							>
 								View custom bot
 							</Button>
@@ -316,25 +316,25 @@ export function ConnectBotDialog({
 				) : (
 					<>
 						<DialogHeader>
-							<DialogTitle>Add channel</DialogTitle>
+							<DialogTitle>{copy.title}</DialogTitle>
 							<DialogDescription>
 								{agentId
 									? "Add a custom bot you manage. When possible, it will be linked to this agent automatically."
-									: "Add a custom bot you manage to your inventory."}
+									: copy.description}
 							</DialogDescription>
 						</DialogHeader>
 
-						<div className="flex min-w-0 flex-col gap-4">
+						<div className={styles.body}>
 							{providerChoices}
 							<section
-								className="min-w-0 border-t pt-4"
+								className={styles.configuration}
 								aria-labelledby="provider-configuration-title"
 								data-provider-configuration
 							>
-								<h3 id="provider-configuration-title" className="mb-3 text-sm font-medium">
+								<h3 id="provider-configuration-title" className={styles.configurationTitle}>
 									Configure {meta.label}
 								</h3>
-								<div className="flex min-w-0 flex-col gap-3">
+								<div className={styles.form}>
 									{agentLinkWarning ? (
 										<Alert
 											data-agent-link-warning
@@ -360,34 +360,34 @@ export function ConnectBotDialog({
 										<WhatsAppDeviceOnboarding onDone={() => handleOpenChange(false)} />
 									) : (
 										<>
-											<p className="min-w-0 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
-												{provider === "telegram" ? "Need a bot token? " : "Need app credentials? "}
+											<p className={styles.hint}>
+												{provider === "telegram"
+													? copy.telegramSetupPrefix
+													: copy.discordSetupPrefix}
 												<a
 													href={meta.setupUrl}
 													target="_blank"
 													rel="noreferrer"
-													className="inline-flex min-w-0 flex-wrap items-center gap-1 font-medium text-foreground underline underline-offset-4"
+													className={styles.setupLink}
 												>
-													{provider === "telegram"
-														? "Create a bot with @BotFather"
-														: "Open Discord Developer Portal"}
-													<ExternalLink className="size-3" />
+													{provider === "telegram" ? copy.telegramSetup : copy.discordSetup}
+													<ExternalLink className={styles.setupIcon} />
 												</a>
 											</p>
 
-											<div className="flex flex-col gap-1.5">
-												<Label htmlFor="connect-name">Name</Label>
+											<div className={styles.field}>
+												<Label htmlFor="connect-name">{copy.name}</Label>
 												<Input
 													id="connect-name"
 													value={name}
 													onChange={(event) => setName(event.target.value)}
-													placeholder="Support Bot"
+													placeholder={copy.namePlaceholder}
 													autoComplete="off"
 												/>
 											</div>
 
-											<div className="flex flex-col gap-1.5">
-												<Label htmlFor="connect-token">Bot token</Label>
+											<div className={styles.field}>
+												<Label htmlFor="connect-token">{copy.token}</Label>
 												<Input
 													id="connect-token"
 													type="password"
@@ -412,13 +412,13 @@ export function ConnectBotDialog({
 
 											{discordSelected ? (
 												<>
-													<div className="flex flex-col gap-1.5">
-														<Label htmlFor="connect-app-id">Application ID</Label>
+													<div className={styles.field}>
+														<Label htmlFor="connect-app-id">{copy.applicationId}</Label>
 														<Input
 															id="connect-app-id"
 															value={applicationId}
 															onChange={(event) => setApplicationId(event.target.value)}
-															placeholder="Application ID"
+															placeholder={copy.applicationId}
 															autoComplete="off"
 															spellCheck={false}
 															required
@@ -436,13 +436,13 @@ export function ConnectBotDialog({
 															</p>
 														) : null}
 													</div>
-													<div className="flex flex-col gap-1.5">
-														<Label htmlFor="connect-public-key">Public key</Label>
+													<div className={styles.field}>
+														<Label htmlFor="connect-public-key">{copy.publicKey}</Label>
 														<Input
 															id="connect-public-key"
 															value={publicKey}
 															onChange={(event) => setPublicKey(event.target.value)}
-															placeholder="64-character hex public key"
+															placeholder={copy.publicKeyPlaceholder}
 															autoComplete="off"
 															spellCheck={false}
 															required
@@ -469,7 +469,7 @@ export function ConnectBotDialog({
 										<DialogFooter>
 											<Button
 												variant="outline"
-												className="min-w-0 whitespace-normal"
+												className={styles.action}
 												onClick={() => handleOpenChange(false)}
 											>
 												{isSubmitting ? "Close" : "Cancel"}

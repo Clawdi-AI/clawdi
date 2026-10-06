@@ -1,3 +1,15 @@
+import { hostedAgentOverviewClasses } from "@clawdi/shared/ui";
+import {
+	AGENT_NAVIGATION_GROUPS,
+	agentSectionCopy,
+	type ConsoleNavigationItemId,
+	getProjectResourceDefinition,
+	CONSOLE_NAVIGATION_ITEMS as SHARED_CONSOLE_NAVIGATION_ITEMS,
+	type ConsoleNavigationGroup as SharedConsoleNavigationGroup,
+	type ConsoleNavigationItemMetadata as SharedConsoleNavigationItemMetadata,
+	consoleCommandPaletteItems as sharedConsoleCommandPaletteItems,
+	consoleNavigationGroups as sharedConsoleNavigationGroups,
+} from "@clawdi/shared/view";
 import {
 	Blocks,
 	BrainCircuit,
@@ -11,11 +23,6 @@ import {
 	TerminalSquare,
 } from "lucide-react";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
-import {
-	getProjectResourceDefinition,
-	projectResourcePathLabel,
-	projectResourceScopeLabel,
-} from "@/lib/project-resource-model";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 
 export type AgentSectionId =
@@ -50,38 +57,6 @@ export type NavigationGroupMetadata<GroupId extends string, ItemId extends strin
 	id: GroupId;
 	label: string | null;
 	items: readonly NavigationItemMetadata<ItemId>[];
-};
-
-type ConsoleNavigationItemId =
-	| "overview"
-	| "agents"
-	| "projects"
-	| "skills"
-	| "vaults"
-	| "sessions"
-	| "memories"
-	| "connectors"
-	| "channels"
-	| "ai-providers";
-
-type ConsoleNavigationGroupId = "primary" | "library";
-
-type ConsoleCommandPaletteMetadata = {
-	subtitle: string;
-	searchText: string;
-};
-
-export type ConsoleNavigationItemMetadata = NavigationItemMetadata<ConsoleNavigationItemId> & {
-	availability: "all" | "cloud";
-	commandPalette?: ConsoleCommandPaletteMetadata;
-};
-
-export type ConsoleNavigationGroup = Omit<
-	NavigationGroupMetadata<ConsoleNavigationGroupId, ConsoleNavigationItemId>,
-	"items"
-> & {
-	items: readonly ConsoleNavigationItemMetadata[];
-	separated: boolean;
 };
 
 type CanonicalNavigationConceptId =
@@ -128,140 +103,42 @@ export const CANONICAL_NAVIGATION_IDENTITIES = {
 	settings: { label: "Settings", icon: Settings },
 } satisfies Record<CanonicalNavigationConceptId, { label: string; icon: LucideIcon }>;
 
-function projectResourceNavigationItem(
-	id: "projects" | "skills" | "vaults" | "sessions" | "memories" | "connectors",
-): ConsoleNavigationItemMetadata {
-	const definition = getProjectResourceDefinition(id);
-	const commandGroupLabel =
-		id === "projects"
-			? "Projects"
-			: id === "skills" || id === "vaults" || id === "connectors"
-				? "Library"
-				: "Account activity";
-	return {
+type ConsoleNavigationItemMetadata = SharedConsoleNavigationItemMetadata & { icon: LucideIcon };
+
+export type { ConsoleNavigationItemMetadata };
+export type ConsoleNavigationGroup = Omit<SharedConsoleNavigationGroup, "items"> & {
+	items: readonly ConsoleNavigationItemMetadata[];
+};
+const CONSOLE_ICONS = {
+	overview: LayoutDashboard,
+	agents: MonitorPlay,
+	projects: PROJECT_RESOURCE_ICONS.projects,
+	skills: PROJECT_RESOURCE_ICONS.skills,
+	vaults: PROJECT_RESOURCE_ICONS.vaults,
+	sessions: PROJECT_RESOURCE_ICONS.sessions,
+	memories: PROJECT_RESOURCE_ICONS.memories,
+	connectors: PROJECT_RESOURCE_ICONS.connectors,
+	channels: MessagesSquare,
+	"ai-providers": BrainCircuit,
+};
+export const CONSOLE_NAVIGATION_ITEMS = Object.fromEntries(
+	Object.entries(SHARED_CONSOLE_NAVIGATION_ITEMS).map(([id, item]) => [
 		id,
-		...CANONICAL_NAVIGATION_IDENTITIES[id],
-		href: definition.href,
-		tint: RESOURCE_TINT_CLASSES[id],
-		description: definition.managementDescription,
-		tooltip: `${definition.navLabel} — ${projectResourceScopeLabel(definition.projectScope)}`,
-		availability: "all",
-		commandPalette: {
-			subtitle: projectResourcePathLabel(definition),
-			searchText: `${definition.navLabel} ${definition.label} ${commandGroupLabel} ${projectResourceScopeLabel(definition.projectScope)} ${projectResourcePathLabel(definition)}`,
-		},
-	};
-}
-
-export const CONSOLE_NAVIGATION_ITEMS: Record<
-	ConsoleNavigationItemId,
-	ConsoleNavigationItemMetadata
-> = {
-	overview: {
-		id: "overview",
-		...CANONICAL_NAVIGATION_IDENTITIES.overview,
-		href: "/",
-		tint: RESOURCE_TINT_CLASSES.overview,
-		description: "Account inventory and recent activity.",
-		tooltip: "Console overview",
-		availability: "all",
-		commandPalette: {
-			subtitle: "Dashboard",
-			searchText: "overview dashboard",
-		},
-	},
-	agents: {
-		id: "agents",
-		label: "Agents",
-		href: "/agents",
-		icon: MonitorPlay,
-		tint: "bg-identity-6-bg text-identity-6-fg",
-		description: "Every agent in this account.",
-		tooltip: "All agents",
-		availability: "all",
-	},
-	projects: projectResourceNavigationItem("projects"),
-	skills: projectResourceNavigationItem("skills"),
-	vaults: projectResourceNavigationItem("vaults"),
-	sessions: projectResourceNavigationItem("sessions"),
-	memories: projectResourceNavigationItem("memories"),
-	connectors: projectResourceNavigationItem("connectors"),
-	channels: {
-		id: "channels",
-		...CANONICAL_NAVIGATION_IDENTITIES.channels,
-		href: "/channels",
-		tint: "bg-identity-5-bg text-identity-5-fg",
-		description: "Account channel inventory and connections.",
-		tooltip: "Channels — Account integrations",
-		availability: "cloud",
-		commandPalette: {
-			subtitle: "Library",
-			searchText: "channels telegram discord whatsapp bots messaging",
-		},
-	},
-	"ai-providers": {
-		id: "ai-providers",
-		...CANONICAL_NAVIGATION_IDENTITIES["ai-providers"],
-		href: "/ai-providers",
-		tint: "bg-identity-2-bg text-identity-2-fg",
-		description: "Account AI provider connections and credentials.",
-		tooltip: "AI Providers — Account integrations",
-		availability: "cloud",
-		commandPalette: {
-			subtitle: "Library",
-			searchText:
-				"model providers ai providers models openai anthropic openrouter gemini mistral byok api key",
-		},
-	},
-} satisfies Record<ConsoleNavigationItemId, ConsoleNavigationItemMetadata>;
-
-const CONSOLE_NAVIGATION_GROUPS = [
-	{
-		id: "primary",
-		label: null,
-		itemIds: ["overview", "agents", "sessions", "memories"],
-		separated: false,
-	},
-	{
-		id: "library",
-		label: "Library",
-		// Assets first (mirrors the dashboard Library card), integrations last;
-		// cloud-gated items drop out in OSS without disturbing the order.
-		itemIds: ["projects", "skills", "vaults", "connectors", "channels", "ai-providers"],
-		separated: false,
-	},
-] as const satisfies readonly {
-	id: ConsoleNavigationGroupId;
-	label: string | null;
-	itemIds: readonly ConsoleNavigationItemId[];
-	separated: boolean;
-}[];
-
+		{ ...item, icon: CONSOLE_ICONS[item.id] },
+	]),
+) as Record<ConsoleNavigationItemId, ConsoleNavigationItemMetadata>;
 export function consoleNavigationGroups(showCloudFeatures: boolean): ConsoleNavigationGroup[] {
-	return CONSOLE_NAVIGATION_GROUPS.map((group) => ({
-		id: group.id,
-		label: group.label,
-		separated: group.separated,
-		items: group.itemIds
-			.map((id) => CONSOLE_NAVIGATION_ITEMS[id])
-			.filter((item) => item.availability === "all" || showCloudFeatures),
+	return sharedConsoleNavigationGroups(showCloudFeatures).map((group) => ({
+		...group,
+		items: group.items.map((item) => CONSOLE_NAVIGATION_ITEMS[item.id]),
 	}));
 }
-
-export function consoleCommandPaletteItems(
-	showCloudFeatures: boolean,
-): Array<ConsoleNavigationItemMetadata & { commandPalette: ConsoleCommandPaletteMetadata }> {
-	return consoleNavigationGroups(showCloudFeatures)
-		.flatMap((group) => group.items)
-		.filter(
-			(
-				item,
-			): item is ConsoleNavigationItemMetadata & {
-				commandPalette: ConsoleCommandPaletteMetadata;
-			} => Boolean(item.commandPalette),
-		);
+export function consoleCommandPaletteItems(showCloudFeatures: boolean) {
+	return sharedConsoleCommandPaletteItems(showCloudFeatures).map((item) => ({
+		...item,
+		icon: CONSOLE_ICONS[item.id],
+	}));
 }
-
 type AgentNavigationGroupId = "primary" | "workspace" | "shared" | "operate" | "settings";
 
 export type AgentNavigationItemMetadata = Omit<NavigationItemMetadata<AgentSectionId>, "href"> & {
@@ -281,7 +158,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "overview",
 		...CANONICAL_NAVIGATION_IDENTITIES.overview,
 		tint: RESOURCE_TINT_CLASSES.overview,
-		description: "Status, resources, and recent activity for this agent.",
+		description: agentSectionCopy.overview.description,
 		tooltip: "Agent overview",
 		variants: ["connected", "hosted"],
 	},
@@ -289,7 +166,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "console",
 		label: "Dashboard",
 		icon: PanelsTopLeft,
-		tint: "bg-identity-6-bg text-identity-6-fg",
+		tint: hostedAgentOverviewClasses.browserTint,
 		description: "Open this agent's dashboard.",
 		tooltip: "Open dashboard",
 		variants: ["hosted"],
@@ -316,7 +193,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "sessions",
 		...CANONICAL_NAVIGATION_IDENTITIES.sessions,
 		tint: RESOURCE_TINT_CLASSES.sessions,
-		description: "Conversation history from this agent.",
+		description: agentSectionCopy.sessions.description,
 		tooltip: "Sessions from this agent",
 		variants: ["connected", "hosted"],
 	},
@@ -324,7 +201,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "memories",
 		...CANONICAL_NAVIGATION_IDENTITIES.memories,
 		tint: RESOURCE_TINT_CLASSES.memories,
-		description: "Memories are shared across all agents.",
+		description: agentSectionCopy.memories.description,
 		tooltip: "Shared across all agents",
 		variants: ["connected", "hosted"],
 	},
@@ -332,7 +209,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "skills",
 		...CANONICAL_NAVIGATION_IDENTITIES.skills,
 		tint: RESOURCE_TINT_CLASSES.skills,
-		description: "Skills installed in this agent's workspace.",
+		description: agentSectionCopy.skills.description,
 		tooltip: "Skills installed in this agent's workspace",
 		variants: ["connected", "hosted"],
 	},
@@ -340,7 +217,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "projects",
 		...CANONICAL_NAVIGATION_IDENTITIES.projects,
 		tint: RESOURCE_TINT_CLASSES.projects,
-		description: "Projects linked to this agent.",
+		description: agentSectionCopy.projects.description,
 		tooltip: "Projects linked to this agent",
 		variants: ["connected", "hosted"],
 	},
@@ -348,7 +225,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "vaults",
 		...CANONICAL_NAVIGATION_IDENTITIES.vaults,
 		tint: RESOURCE_TINT_CLASSES.vaults,
-		description: "Vaults attached to this agent's workspace.",
+		description: agentSectionCopy.vaults.description,
 		tooltip: "Vaults attached to this agent's workspace",
 		variants: ["connected", "hosted"],
 	},
@@ -356,7 +233,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "connectors",
 		...CANONICAL_NAVIGATION_IDENTITIES.connectors,
 		tint: RESOURCE_TINT_CLASSES.connectors,
-		description: "Connectors are shared across all agents.",
+		description: agentSectionCopy.connectors.description,
 		tooltip: "Shared across all agents",
 		variants: ["connected", "hosted"],
 	},
@@ -364,15 +241,15 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "ai",
 		...CANONICAL_NAVIGATION_IDENTITIES["ai-providers"],
 		tint: "bg-identity-2-bg text-identity-2-fg",
-		description: "AI provider and primary model used by this agent.",
+		description: agentSectionCopy.ai.description,
 		tooltip: "Choose this agent's AI provider and primary model",
 		variants: ["hosted"],
 	},
 	channels: {
 		id: "channels",
 		...CANONICAL_NAVIGATION_IDENTITIES.channels,
-		tint: "bg-identity-5-bg text-identity-5-fg",
-		description: "Channels linked to this agent.",
+		tint: hostedAgentOverviewClasses.channelsTint,
+		description: agentSectionCopy.channels.description,
 		tooltip: "Channels linked to this agent",
 		variants: ["hosted"],
 	},
@@ -380,8 +257,8 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "plugins",
 		label: "Plugins",
 		icon: Blocks,
-		tint: "bg-identity-7-bg text-identity-7-fg",
-		description: "Install skills and MCP servers for this agent.",
+		tint: hostedAgentOverviewClasses.pluginsTint,
+		description: agentSectionCopy.plugins.description,
 		tooltip: "Install plugins for this agent",
 		variants: ["hosted"],
 	},
@@ -389,7 +266,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		id: "settings",
 		...CANONICAL_NAVIGATION_IDENTITIES.settings,
 		tint: "bg-identity-4-bg text-identity-4-fg",
-		description: "Name, preferences, and agent controls.",
+		description: agentSectionCopy.settings.description,
 		tooltip: "Manage this agent",
 		variants: ["connected", "hosted"],
 	},
@@ -417,39 +294,6 @@ export const AGENT_OVERVIEW_WORKSPACE_SECTION_IDS = [
 	"skills",
 	"vaults",
 ] as const satisfies readonly AgentSectionId[];
-
-const AGENT_NAVIGATION_GROUPS = [
-	{
-		id: "primary",
-		label: null,
-		itemIds: ["overview", "console", "channels", "ai", "sessions"],
-		separated: false,
-	},
-	{
-		id: "workspace",
-		label: "Workspace",
-		itemIds: AGENT_WORKSPACE_SECTION_IDS,
-		separated: false,
-	},
-	{
-		id: "shared",
-		label: "Shared",
-		itemIds: AGENT_SHARED_SECTION_IDS,
-		separated: false,
-	},
-	{
-		id: "operate",
-		label: "Tools",
-		itemIds: ["files", "terminal"],
-		separated: false,
-	},
-	{ id: "settings", label: null, itemIds: ["settings"], separated: true },
-] as const satisfies readonly {
-	id: AgentNavigationGroupId;
-	label: string | null;
-	itemIds: readonly AgentSectionId[];
-	separated: boolean;
-}[];
 
 export function agentNavigationSectionIds(variant: AgentNavigationVariant): AgentSectionId[] {
 	return AGENT_NAVIGATION_GROUPS.flatMap((group) =>
@@ -485,11 +329,9 @@ export function agentNavigationGroups(
 	})).filter((group) => group.items.length > 0);
 }
 
-export function runtimeBrowserUiLabel(runtime?: string | null): string {
-	if (runtime === "openclaw") return "OpenClaw Control UI";
-	if (runtime === "hermes") return "Hermes Dashboard";
-	return "Dashboard";
-}
+export { runtimeBrowserUiLabel } from "@clawdi/shared/view";
+
+import { runtimeBrowserUiLabel } from "@clawdi/shared/view";
 
 export function agentSectionNavigationItem(
 	section: AgentSectionId,

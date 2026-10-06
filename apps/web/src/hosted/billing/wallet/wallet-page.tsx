@@ -1,5 +1,8 @@
 "use client";
 
+import { billingPageClass } from "@clawdi/shared/ui";
+
+import { billingCopy } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -37,8 +40,8 @@ import { X402Card } from "@/hosted/billing/wallet/x402-card";
 import { env } from "@/lib/env";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
-const DESCRIPTION = "Add funds and manage how your Clawdi usage is paid.";
-const WALLET_PAGE_CLASS = "flex flex-col gap-8 px-5 sm:px-6 lg:px-8";
+const DESCRIPTION = billingCopy.walletDescription;
+const WALLET_PAGE_CLASS = billingPageClass;
 
 function scrollToAutoReload() {
 	const section = document.getElementById("auto-reload");
@@ -295,7 +298,7 @@ export function WalletPage() {
 	if (wallet.isLoading) {
 		return (
 			<div data-hosted="true" className={WALLET_PAGE_CLASS}>
-				<SettingsPanelHeader title="Wallet" description={DESCRIPTION} />
+				<SettingsPanelHeader title={billingCopy.wallet} description={DESCRIPTION} />
 				<WalletSkeleton />
 			</div>
 		);
@@ -304,7 +307,7 @@ export function WalletPage() {
 	if (shouldBlockQueryError(wallet.error, wallet.data) || !wallet.data) {
 		return (
 			<div data-hosted="true" className={WALLET_PAGE_CLASS}>
-				<SettingsPanelHeader title="Wallet" description={DESCRIPTION} />
+				<SettingsPanelHeader title={billingCopy.wallet} description={DESCRIPTION} />
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
 					error={wallet.error}
@@ -323,7 +326,7 @@ export function WalletPage() {
 
 	return (
 		<div data-hosted="true" className={WALLET_PAGE_CLASS}>
-			<SettingsPanelHeader title="Wallet" description={DESCRIPTION} />
+			<SettingsPanelHeader title={billingCopy.wallet} description={DESCRIPTION} />
 
 			<TopUpDialog
 				open={topUpOpen}

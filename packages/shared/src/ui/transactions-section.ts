@@ -1,0 +1,20 @@
+/** Verbatim Web recipes; native adds only layout structure. */
+export const transactionsSectionClasses = {
+	muted: "text-muted-foreground",
+	inlineAction: "h-auto px-0",
+	descriptionBody: "min-w-0",
+	label: "font-medium",
+	reference: "truncate text-xs text-muted-foreground",
+	pagination: "flex justify-center",
+	section: "flex flex-col gap-4",
+	mobileRows: "divide-y overflow-hidden rounded-lg border md:hidden",
+	mobileRow: "flex items-start justify-between gap-3 p-3",
+	mobileCopy: "min-w-0 space-y-1.5",
+	mobileHeading: "flex flex-wrap items-center gap-2",
+	description: "text-xs text-muted-foreground",
+	desktopTable: "hidden overflow-x-auto rounded-lg border md:block",
+	amountColumn: "text-right",
+	referenceColumn: "max-w-[18rem]",
+	desktopAmount: "whitespace-nowrap text-right text-sm text-muted-foreground",
+	amount: "shrink-0 font-medium tabular-nums",
+} as const;

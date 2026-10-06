@@ -9,6 +9,9 @@
 @import "shadcn/tailwind.css";
 @import "@clawdi/shared/style/theme.css";
 
+@source "../../../../packages/shared/src/view";
+@source "../../../../packages/shared/src/ui";
+
 html[data-clawdi-desktop="true"] [data-clawdi-window-drag-region] {
 	-webkit-app-region: drag;
 }

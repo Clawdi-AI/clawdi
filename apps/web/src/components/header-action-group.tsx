@@ -1,3 +1,4 @@
+import { headerActionGroupClasses } from "@clawdi/shared/ui";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
@@ -9,14 +10,5 @@ export function HeaderActionGroup({
 	children: ReactNode;
 	className?: string;
 }) {
-	return (
-		<div
-			className={cn(
-				"flex w-full min-w-0 flex-wrap items-center gap-2 max-sm:[&_button]:min-h-11 max-sm:[&_[data-slot=button]]:min-h-11 sm:w-auto sm:shrink-0 sm:justify-end",
-				className,
-			)}
-		>
-			{children}
-		</div>
-	);
+	return <div className={cn(headerActionGroupClasses.root, className)}>{children}</div>;
 }

@@ -1,5 +1,9 @@
 "use client";
 
+import { contributionGraphClasses } from "@clawdi/shared/ui";
+
+import { buildWeeks, clampLevel, computeMonthLabels, DASHBOARD_COPY } from "@clawdi/shared/view";
+
 import { useEffect, useRef, useState } from "react";
 import type { ContributionDay } from "@/lib/api-schemas";
 import { cn } from "@/lib/utils";
@@ -8,11 +12,11 @@ import { cn } from "@/lib/utils";
 // so the heatmap reads the same way across light/dark modes regardless of
 // what role `--secondary` or `--muted` happen to play in any given palette.
 const LEVEL_COLORS = [
-	"bg-primary/10",
-	"bg-primary/30",
-	"bg-primary/50",
-	"bg-primary/75",
-	"bg-primary",
+	contributionGraphClasses.inactiveActivity,
+	contributionGraphClasses.lowActivity,
+	contributionGraphClasses.mediumActivity,
+	contributionGraphClasses.highActivity,
+	contributionGraphClasses.peakActivity,
 ];
 
 const CELL = 11; // px, matches GitHub's ~11px heatmap cell
@@ -20,63 +24,6 @@ const GAP = 3; // px gap between cells and columns
 const WEEK_STRIDE = CELL + GAP; // horizontal distance from one week's column to the next
 const DAY_LABEL_W = 18; // px reserved for single-letter weekday labels and their gap
 const MIN_WEEKS = 4; // never show fewer than a month of data, even on tiny viewports
-
-function clampLevel(level: number): number {
-	if (level < 0) return 0;
-	if (level > 4) return 4;
-	return Math.trunc(level);
-}
-
-/** Chunk chronological days into weeks (columns), padding the first week so
- * day[0] of the first column lines up with Sunday. */
-export function parseCalendarDate(value: string): Date | null {
-	const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-	if (!match) return null;
-	const year = Number(match[1]);
-	const monthIndex = Number(match[2]) - 1;
-	const day = Number(match[3]);
-	const date = new Date(year, monthIndex, day);
-	if (date.getFullYear() !== year || date.getMonth() !== monthIndex || date.getDate() !== day) {
-		return null;
-	}
-	return date;
-}
-
-export function buildWeeks(data: ContributionDay[]): ContributionDay[][] {
-	if (!data.length) return [];
-	const weeks: ContributionDay[][] = [];
-	let current: ContributionDay[] = [];
-	const startPad = parseCalendarDate(data[0].date)?.getDay() ?? 0;
-	for (let i = 0; i < startPad; i++) {
-		current.push({ date: "", count: 0, level: 0 });
-	}
-	for (const day of data) {
-		current.push(day);
-		if (current.length === 7) {
-			weeks.push(current);
-			current = [];
-		}
-	}
-	if (current.length > 0) weeks.push(current);
-	return weeks;
-}
-
-/** For each week column, return the month short-name if that week is the
- * first one to contain a day from a new month (so we draw one label per
- * month, like GitHub). Returns null for columns that shouldn't label. */
-export function computeMonthLabels(weeks: ContributionDay[][]): (string | null)[] {
-	let prevMonth = -1;
-	return weeks.map((week) => {
-		const firstReal = week.find((d) => d.date);
-		if (!firstReal) return null;
-		const date = parseCalendarDate(firstReal.date);
-		if (!date) return null;
-		const month = date.getMonth();
-		if (month === prevMonth) return null;
-		prevMonth = month;
-		return date.toLocaleString("en-US", { month: "short" });
-	});
-}
 
 export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -96,7 +43,7 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 	}, []);
 
 	if (!data.length) {
-		return <div className="text-sm text-muted-foreground">No activity data yet.</div>;
+		return <div className={contributionGraphClasses.empty}>{DASHBOARD_COPY.noActivity}</div>;
 	}
 
 	const allWeeks = buildWeeks(data);
@@ -104,11 +51,11 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 	const monthLabels = computeMonthLabels(weeks);
 
 	return (
-		<div ref={containerRef} className="w-full">
-			<div className="mx-auto flex w-fit gap-1.5">
+		<div ref={containerRef} className={contributionGraphClasses.root}>
+			<div className={contributionGraphClasses.graph}>
 				{/* Weekday labels align with the Sunday-first rows. */}
 				<div
-					className="flex shrink-0 flex-col gap-[3px] text-center text-3xs text-muted-foreground tabular-nums"
+					className={contributionGraphClasses.weekdays}
 					style={{ width: DAY_LABEL_W - 6 }}
 					aria-hidden
 				>
@@ -121,15 +68,17 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 
 				<div style={{ width: weeks.length * WEEK_STRIDE - GAP }}>
 					{/* Week columns grid. */}
-					<div className="flex gap-[3px]">
+					<div className={contributionGraphClasses.weeks}>
 						{weeks.map((week, wi) => (
-							<div key={wi} className="flex flex-col gap-[3px]">
+							<div key={wi} className={contributionGraphClasses.week}>
 								{week.map((day, di) => (
 									<div
 										key={di}
 										className={cn(
-											"rounded-[3px]",
-											day.date ? LEVEL_COLORS[clampLevel(day.level)] : "bg-transparent",
+											contributionGraphClasses.cell,
+											day.date
+												? LEVEL_COLORS[clampLevel(day.level)]
+												: contributionGraphClasses.placeholder,
 										)}
 										style={{ width: CELL, height: CELL }}
 										title={day.date ? `${day.count} sessions on ${day.date}` : undefined}
@@ -139,12 +88,12 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 						))}
 					</div>
 					{/* Keep the final month inside the row; omit a partial first month if its label would overlap the next. */}
-					<div className="relative mt-1 h-4 text-3xs leading-4 text-muted-foreground">
+					<div className={contributionGraphClasses.months}>
 						{monthLabels.map((m, i) =>
 							m && !monthLabels[i + 1] ? (
 								<span
 									key={i}
-									className="absolute whitespace-nowrap"
+									className={contributionGraphClasses.monthLabel}
 									style={{ left: `min(${i * WEEK_STRIDE}px, calc(100% - 3ch))` }}
 								>
 									{m}

@@ -9,6 +9,9 @@ unrelated clients.
 - Keep the Clawdi default catalog on the existing Web/Electron/CLI toolchain.
   Web and Electron remain on React `19.2.8`; Hosted remains a separate Bun
   `1.4.2` / TypeScript `5.x` repository.
+- Wave 1 mobile is Cloud-only. Hosted v1 is a legacy surface outside the
+  mobile app's config and acceptance scope; retaining Shared's Hosted client
+  export is a compatibility requirement for other workspaces only.
 - The Wave 1 verification target is Bun `1.4.2`. The fetched Clawdi
   `origin/main` is still pinned to Bun `1.4.0`; that is a baseline fact, not
   evidence that the candidate is ready for the latest-Bun gate. The candidate
@@ -83,6 +86,36 @@ manifest, and `bun.lock` byte-for-byte unchanged. The generated lock must be
 reviewed for its workspace specs, catalog metadata, exact resolutions, and
 peer contexts before any product branch consumes it.
 
+## Wave 3 Compatibility/CI Audit
+
+A read-only comparison of the latest agent-billing Wave 3 candidate
+(`9b5c07c36873ab6c98e1a1926c351a7fe172da75`) found two gates that must not be
+silently treated as passed:
+
+- `apps/mobile/compatibility/Dockerfile` still starts from the pinned Bun
+  `1.4.0` image, while the candidate root manifest requires Bun `1.4.2`.
+  Its generated probe lock and install evidence therefore do not prove the
+  latest-Bun contract. Replace it with a reviewed Bun `1.4.2` image digest,
+  regenerate the probe lock with that image, and require `bun --version` to
+  print `1.4.2`; do not use a mutable `latest` tag or copy a host lock.
+- `.github/workflows/client-ci.yml` runs mobile typecheck/build and iOS/Android
+  JS exports, but it does not invoke `apps/mobile/compatibility/run.sh`. Bundle
+  export alone does not enforce Expo's dependency check, peer closure,
+  polyfills, or the single-React identity audit. A bounded compatibility job
+  (or an equivalent step in the routed mobile job) must run the supported
+  diagnostic and fail on any status other than the explicitly approved
+  TypeScript `7.0.2` versus Expo 57 TypeScript `~6.0.3` warning.
+
+The checked-in Wave 3 evidence makes the gap concrete: the intentionally
+drifting `latest` profile resolves React `19.3.0`, React Native `0.87.1`, and
+related peers instead of the Expo57 tuple, while `supported-diagnostic` has
+frozen install and both Metro exports passing but still records the expected
+TypeScript-only Expo warning and a fixture `className` typecheck failure.
+Neither profile is product-approved
+until the probe image, lock, and CI gate are corrected and rerun. The
+`supported-diagnostic` profile is diagnostic evidence only; it must never
+rewrite the real mobile manifest or root lock.
+
 ## Expo 57 and `app.config.js`
 
 The candidate uses `apps/mobile/app.config.js`, not a static `app.json` or a
@@ -113,7 +146,7 @@ credentials) and record the JSON plus exit status. `expo install --check` and
 `expo-doctor` are read-only checks; do not run `--fix`, and do not accept a
 silent rewrite of a manifest or lock. Expo's SDK 57 recommendation
 may report the root catalog's TypeScript `7.0.2` against the SDK 57 template's
-TypeScript 5.x expectation. That is the only accepted Expo-check mismatch;
+TypeScript `~6.0.3` expectation. That is the only accepted Expo-check mismatch;
 React `19.2.3` and native-peer versions must satisfy the named catalog. A
 TypeScript warning is accepted only when its exact CLI output is recorded and
 the root TypeScript policy owner signs off; never run `--fix` to downgrade the

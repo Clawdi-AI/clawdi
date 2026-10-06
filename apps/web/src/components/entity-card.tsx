@@ -1,4 +1,33 @@
 "use client";
+import {
+	ENTITY_CARD_ACTIONS_ALWAYS_CLASS,
+	ENTITY_CARD_ACTIONS_CLASS,
+	ENTITY_CARD_BASE,
+	ENTITY_CARD_BUTTON_FOCUS_CLASS,
+	ENTITY_CARD_CHASSIS_CLASS,
+	ENTITY_CARD_STRETCHED_LINK_CLASS,
+	type EntityCardVariant,
+	HERO_STRETCHED_LINK_CLASS,
+} from "@clawdi/shared/ui";
+
+export {
+	ENTITY_CARD_ACTIONS_CLASS,
+	ENTITY_CARD_BASE,
+	ENTITY_CARD_BUTTON_FOCUS_CLASS,
+	ENTITY_CARD_CHASSIS_CLASS,
+	ENTITY_CARD_GRID_CLASS,
+	ENTITY_CARD_MASONRY_CLASS,
+	ENTITY_CARD_STRETCHED_LINK_CLASS,
+	ENTITY_CHOICE_GRID_CLASS,
+	ENTITY_GRID_CLASS,
+	ENTITY_STRETCHED_LINK_CLASS,
+	type EntityCardVariant,
+	HERO_CARD_BASE,
+	HERO_GRID_CLASS,
+	HERO_STRETCHED_LINK_CLASS,
+} from "@clawdi/shared/ui";
+
+import { entityCardClasses } from "@clawdi/shared/ui";
 
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { Check, ChevronRight, Plus } from "lucide-react";
@@ -24,62 +53,6 @@ import { cn } from "@/lib/utils";
  *     where they need a richer, bespoke body.
  */
 
-export type EntityCardVariant = "resource" | "compact";
-
-/** Stable chassis tokens. Resource cards preserve richer content; compact
- * cards favor dense catalogs without leaving the entity-card family. */
-export const ENTITY_CARD_CHASSIS_CLASS: Record<EntityCardVariant, string> = {
-	resource: "min-w-0 rounded-xl border bg-card p-5",
-	compact: "min-w-0 rounded-lg border bg-card p-4",
-};
-
-export const ENTITY_CARD_GRID_CLASS: Record<EntityCardVariant, string> = {
-	resource: "grid gap-4 sm:grid-cols-2 xl:grid-cols-3",
-	compact: "grid gap-2 sm:grid-cols-2 xl:grid-cols-3",
-};
-
-/** Variable-height resource notes keep the same responsive columns and gap
- * while avoiding the empty vertical space of equal-height grid rows. */
-export const ENTITY_CARD_MASONRY_CLASS =
-	"columns-1 gap-4 sm:columns-2 xl:columns-3 [&>*]:mb-4 [&>*]:break-inside-avoid";
-
-/** Compatibility names for established non-resource callers. New resource
- * components should use the semantic chassis/grid contract above. */
-export const ENTITY_CARD_BASE = ENTITY_CARD_CHASSIS_CLASS.compact;
-export const HERO_CARD_BASE = ENTITY_CARD_CHASSIS_CLASS.resource;
-export const HERO_GRID_CLASS = ENTITY_CARD_GRID_CLASS.resource;
-export const ENTITY_GRID_CLASS = ENTITY_CARD_GRID_CLASS.compact;
-
-/** Form-local choice cards follow their named main container instead of the viewport. */
-export const ENTITY_CHOICE_GRID_CLASS = "grid gap-2 @2xl/main:grid-cols-2";
-
-/** Stretched link that makes a whole card navigate while keeping inner
- * controls independently clickable — pairs with a `relative z-0` wrapper. */
-export const ENTITY_CARD_STRETCHED_LINK_CLASS: Record<EntityCardVariant, string> = {
-	compact:
-		"absolute inset-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-	resource:
-		"absolute inset-0 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-};
-
-export const ENTITY_STRETCHED_LINK_CLASS = ENTITY_CARD_STRETCHED_LINK_CLASS.compact;
-export const HERO_STRETCHED_LINK_CLASS = ENTITY_CARD_STRETCHED_LINK_CLASS.resource;
-
-/** Focus ring for whole-card buttons matching the stretched-link treatment. */
-export const ENTITY_CARD_BUTTON_FOCUS_CLASS =
-	"focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
-
-/**
- * Card actions stay visible and comfortably tappable on touch screens, then
- * recede until hover or keyboard focus on larger screens. Keep this in the
- * shared slot so Project, Skill, Vault, and note-style Memory cards do not
- * each invent a different action rhythm.
- */
-export const ENTITY_CARD_ACTIONS_CLASS =
-	"relative z-10 flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity duration-150 max-sm:[&_button]:min-h-11 max-sm:[&_button[aria-label]]:min-w-11 sm:opacity-0 sm:group-focus-within:opacity-100 sm:group-hover:opacity-100";
-const ENTITY_CARD_ACTIONS_ALWAYS_CLASS =
-	"relative z-10 flex shrink-0 items-center gap-2 max-sm:[&_button]:min-h-11 max-sm:[&_button[aria-label]]:min-w-11";
-
 export function entityCardChassisClass({
 	variant,
 	interactive = false,
@@ -91,11 +64,11 @@ export function entityCardChassisClass({
 }) {
 	return cn(
 		ENTITY_CARD_CHASSIS_CLASS[variant],
-		"group relative z-0 transition-all duration-150",
+		entityCardClasses.chassis,
 		interactive &&
 			(variant === "resource"
-				? "hover:-translate-y-px hover:border-foreground/20 focus-within:-translate-y-px focus-within:border-foreground/20"
-				: "hover:bg-muted/50 focus-within:bg-muted/50"),
+				? entityCardClasses.resourceInteractive
+				: entityCardClasses.compactInteractive),
 		className,
 	);
 }
@@ -138,7 +111,7 @@ export function EntityCardActions({
 		<div
 			className={cn(
 				visibility === "responsive" ? ENTITY_CARD_ACTIONS_CLASS : ENTITY_CARD_ACTIONS_ALWAYS_CLASS,
-				"pointer-events-auto",
+				entityCardClasses.actionsInteractive,
 				className,
 			)}
 		>
@@ -193,16 +166,17 @@ export function entityChoiceCardClass({
 	className?: string;
 }) {
 	return cn(
-		variant === "compact"
-			? "min-w-0 rounded-md border border-border bg-muted/30 p-2.5"
-			: ENTITY_CARD_BASE,
-		"flex w-full text-left transition-colors",
-		variant === "compact" ? "items-center gap-2.5" : "items-start gap-3",
+		variant === "compact" ? entityCardClasses.compactChoice : ENTITY_CARD_BASE,
+		entityCardClasses.choiceRoot,
+		variant === "compact" ? entityCardClasses.choiceCompactLayout : entityCardClasses.choiceLayout,
 		interactive && ENTITY_CARD_BUTTON_FOCUS_CLASS,
 		selected
-			? "border-primary bg-primary/5 ring-1 ring-primary/30"
-			: interactive && (variant === "compact" ? "hover:bg-muted/60" : "hover:bg-muted/50"),
-		disabled && "pointer-events-none opacity-60",
+			? entityCardClasses.choiceSelected
+			: interactive &&
+					(variant === "compact"
+						? entityCardClasses.compactChoiceInteractive
+						: entityCardClasses.choiceInteractive),
+		disabled && entityCardClasses.disabled,
 		className,
 	);
 }
@@ -235,30 +209,42 @@ export function EntityCardSkeleton({
 			aria-hidden="true"
 			data-slot="entity-card-skeleton"
 		>
-			<div className={cn("flex gap-3", align === "start" ? "items-start" : "items-center")}>
+			<div
+				className={cn(
+					entityCardClasses.skeletonLayout,
+					align === "start"
+						? entityCardClasses.skeletonAlignStart
+						: entityCardClasses.skeletonAlignCenter,
+				)}
+			>
 				<Skeleton
-					className={cn("shrink-0", iconSize === "sm" ? "size-8 rounded-md" : "size-10 rounded-lg")}
+					className={cn(
+						entityCardClasses.shrink,
+						iconSize === "sm"
+							? entityCardClasses.smallSkeletonIcon
+							: entityCardClasses.skeletonIcon,
+					)}
 				/>
-				<div className="min-w-0 flex-1">
-					<div className="flex min-w-0 items-center gap-1.5 text-sm">
-						{statusDot ? <Skeleton className="size-1.5 shrink-0 rounded-full" /> : null}
-						<Skeleton className="h-lh min-w-16 max-w-32 flex-1" />
-						{titleBadge ? <Skeleton className="h-5 w-16 shrink-0 rounded-full" /> : null}
+				<div className={entityCardClasses.body}>
+					<div className={entityCardClasses.skeletonTitleRow}>
+						{statusDot ? <Skeleton className={entityCardClasses.skeletonDot} /> : null}
+						<Skeleton className={entityCardClasses.skeletonTitle} />
+						{titleBadge ? <Skeleton className={entityCardClasses.skeletonBadge} /> : null}
 					</div>
 					{metaLines > 0 ? (
-						<div className="mt-0.5 space-y-1 text-sm">
-							<Skeleton className="h-lh w-40 max-w-[80%]" />
-							{metaLines > 1 ? <Skeleton className="h-lh w-full max-w-56" /> : null}
+						<div className={entityCardClasses.skeletonMetaLines}>
+							<Skeleton className={entityCardClasses.skeletonMeta} />
+							{metaLines > 1 ? <Skeleton className={entityCardClasses.skeletonSecondMeta} /> : null}
 						</div>
 					) : null}
 				</div>
-				{trailingBadge ? <Skeleton className="h-5 w-16 shrink-0 rounded-full" /> : null}
+				{trailingBadge ? <Skeleton className={entityCardClasses.skeletonBadge} /> : null}
 			</div>
 			{actions ? (
-				<div className="mt-3 flex items-center gap-2">
-					<Skeleton className="h-8 w-20 rounded-md" />
-					<Skeleton className="h-8 w-14 rounded-md" />
-					<Skeleton className="ml-auto size-8 rounded-md" />
+				<div className={entityCardClasses.skeletonActions}>
+					<Skeleton className={entityCardClasses.skeletonPrimaryAction} />
+					<Skeleton className={entityCardClasses.skeletonSecondaryAction} />
+					<Skeleton className={entityCardClasses.skeletonMoreAction} />
 				</div>
 			) : null}
 		</div>
@@ -282,24 +268,36 @@ export function HeroCardSkeleton({
 		<div
 			className={entityCardChassisClass({
 				variant: "resource",
-				className: cn("flex flex-col", compact ? "min-h-28 gap-2" : "min-h-36 gap-3", className),
+				className: cn(
+					entityCardClasses.heroSkeletonRoot,
+					compact ? entityCardClasses.compactHeroSkeleton : entityCardClasses.heroSkeleton,
+					className,
+				),
 			})}
 			aria-hidden="true"
 			data-slot="hero-card-skeleton"
 		>
-			<Skeleton className={iconSize === "sm" ? "size-8 rounded-lg" : "size-10 rounded-lg"} />
-			<div className="min-w-0">
-				<div className="text-sm">
-					<Skeleton className="h-lh w-40 max-w-full" />
+			<Skeleton
+				className={
+					iconSize === "sm"
+						? entityCardClasses.compactHeroSkeletonIcon
+						: entityCardClasses.skeletonIcon
+				}
+			/>
+			<div className={entityCardClasses.heroSkeletonBody}>
+				<div className={entityCardClasses.heroSkeletonTitleLine}>
+					<Skeleton className={entityCardClasses.heroSkeletonTitle} />
 				</div>
-				<div className="mt-1 text-xs leading-relaxed">
-					<Skeleton className="h-lh w-56 max-w-[85%]" />
+				<div className={entityCardClasses.heroSkeletonDescriptionLine}>
+					<Skeleton className={entityCardClasses.heroSkeletonDescription} />
 				</div>
 			</div>
 			{footerItems > 0 ? (
-				<div className="mt-auto flex items-center gap-3 text-xs">
-					<Skeleton className="h-lh w-16" />
-					{footerItems > 1 ? <Skeleton className="h-lh w-28 max-w-[45%]" /> : null}
+				<div className={entityCardClasses.heroSkeletonFooter}>
+					<Skeleton className={entityCardClasses.heroSkeletonFirstFact} />
+					{footerItems > 1 ? (
+						<Skeleton className={entityCardClasses.heroSkeletonSecondFact} />
+					) : null}
 				</div>
 			) : null}
 		</div>
@@ -329,21 +327,19 @@ export function EntityMeta({
 		<div
 			data-slot="entity-meta"
 			className={cn(
-				"mt-0.5 flex min-w-0 items-center text-sm text-muted-foreground",
-				wrap ? "flex-wrap gap-x-3 gap-y-1 overflow-visible" : "overflow-hidden",
+				entityCardClasses.meta,
+				wrap ? entityCardClasses.metaWrap : entityCardClasses.metaTruncate,
 				className,
 			)}
 		>
 			{arr.map((item, i) => (
 				<span
 					key={keyFor(item, i)}
-					className={cn("inline-flex min-w-0 items-center", wrap && "max-w-full shrink-0")}
+					className={cn(entityCardClasses.metaItem, wrap && entityCardClasses.metaItemWrap)}
 					title={typeof item === "string" || typeof item === "number" ? String(item) : undefined}
 				>
-					{i > 0 && !wrap ? (
-						<span className="mx-1.5 shrink-0 text-muted-foreground/40">·</span>
-					) : null}
-					<span className="min-w-0 truncate">{item}</span>
+					{i > 0 && !wrap ? <span className={entityCardClasses.metaSeparator}>·</span> : null}
+					<span className={entityCardClasses.metaText}>{item}</span>
 				</span>
 			))}
 		</div>
@@ -381,16 +377,16 @@ export function EntityHeader({
 	return (
 		<div
 			className={cn(
-				"flex min-w-0 gap-3",
-				align === "start" ? "items-start" : "items-center",
+				entityCardClasses.header,
+				align === "start" ? entityCardClasses.headerStart : entityCardClasses.headerCenter,
 				className,
 			)}
 		>
 			{icon}
-			<div className="min-w-0 flex-1">
-				<div className="flex min-w-0 items-center gap-2">
+			<div className={entityCardClasses.body}>
+				<div className={entityCardClasses.headerTitleRow}>
 					<span
-						className={cn("min-w-0 flex-1 truncate text-sm font-medium", titleClassName)}
+						className={cn(entityCardClasses.title, titleClassName)}
 						title={
 							titleAttribute ??
 							(typeof title === "string" || typeof title === "number" ? String(title) : undefined)
@@ -398,7 +394,9 @@ export function EntityHeader({
 					>
 						{title}
 					</span>
-					{titleAdornment ? <span className="shrink-0">{titleAdornment}</span> : null}
+					{titleAdornment ? (
+						<span className={entityCardClasses.shrink}>{titleAdornment}</span>
+					) : null}
 				</div>
 				{meta !== undefined ? <EntityMeta items={meta} wrap={metaWrap} /> : null}
 			</div>
@@ -456,20 +454,20 @@ export function HeroCard({
 		<EntityCardChassis
 			variant="resource"
 			interactive={Boolean(link || onClick)}
-			className={cn("flex min-h-36 flex-col gap-3", className)}
+			className={cn(entityCardClasses.hero, className)}
 		>
 			{icon || actions ? (
-				<div className="flex items-start justify-between gap-2">
-					{icon ? <div className="shrink-0">{icon}</div> : <span aria-hidden />}
+				<div className={entityCardClasses.heroTop}>
+					{icon ? <div className={entityCardClasses.shrink}>{icon}</div> : <span aria-hidden />}
 					{actions ? (
 						<EntityCardActions visibility={actionsVisibility}>{actions}</EntityCardActions>
 					) : null}
 				</div>
 			) : null}
-			<div className="min-w-0">
-				<div className="flex min-w-0 items-center gap-1.5">
+			<div className={entityCardClasses.heroBody}>
+				<div className={entityCardClasses.titleRow}>
 					<h3
-						className={cn("min-w-0 flex-1 truncate text-sm font-medium", titleClassName)}
+						className={cn(entityCardClasses.title, titleClassName)}
 						title={
 							titleAttribute ??
 							(typeof title === "string" || typeof title === "number" ? String(title) : undefined)
@@ -477,15 +475,10 @@ export function HeroCard({
 					>
 						{title}
 					</h3>
-					{badges ? <div className="flex shrink-0 items-center gap-1.5">{badges}</div> : null}
+					{badges ? <div className={entityCardClasses.heroBadges}>{badges}</div> : null}
 				</div>
 				{description ? (
-					<p
-						className={cn(
-							"mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground",
-							descriptionClassName,
-						)}
-					>
+					<p className={cn(entityCardClasses.heroDescription, descriptionClassName)}>
 						{description}
 					</p>
 				) : null}
@@ -494,7 +487,7 @@ export function HeroCard({
 			{footer !== undefined ? (
 				<EntityMeta
 					items={footer}
-					className={cn("mt-auto text-xs text-muted-foreground tabular-nums", footerClassName)}
+					className={cn(entityCardClasses.heroFooter, footerClassName)}
 					wrap={footerWrap}
 				/>
 			) : null}
@@ -569,10 +562,8 @@ export function EntityRow({
 				// The header fills the row; keep the title adornment beside the title.
 				titleClassName="flex-initial"
 			/>
-			{status ? <div className="shrink-0">{status}</div> : null}
-			{trailing ? (
-				<div className="pointer-events-auto relative z-10 shrink-0">{trailing}</div>
-			) : null}
+			{status ? <div className={entityCardClasses.shrink}>{status}</div> : null}
+			{trailing ? <div className={entityCardClasses.trailing}>{trailing}</div> : null}
 			{actions ? <EntityCardActions visibility="always">{actions}</EntityCardActions> : null}
 		</>
 	);
@@ -585,9 +576,9 @@ export function EntityRow({
 				disabled={disabled}
 				className={cn(
 					entityCardChassisClass({ variant: "compact", interactive: true }),
-					"flex w-full items-center gap-3 text-left",
+					entityCardClasses.rowButton,
 					ENTITY_CARD_BUTTON_FOCUS_CLASS,
-					disabled && "pointer-events-none opacity-60",
+					disabled && entityCardClasses.disabled,
 					className,
 				)}
 			>
@@ -598,17 +589,14 @@ export function EntityRow({
 
 	if (link) {
 		return (
-			<div className="group relative z-0 min-w-0">
+			<div className={entityCardClasses.rowLinkContainer}>
 				<EntityCardChassis
 					variant="compact"
-					className={cn(
-						"pointer-events-none z-10 flex items-center gap-3 group-hover:bg-muted/50 group-focus-within:bg-muted/50",
-						className,
-					)}
+					className={cn(entityCardClasses.rowLinkBody, className)}
 				>
 					{body}
 					{!actions && !trailing ? (
-						<ChevronRight className="size-4 shrink-0 text-muted-foreground/60" aria-hidden />
+						<ChevronRight className={entityCardClasses.chevron} aria-hidden />
 					) : null}
 				</EntityCardChassis>
 				<EntityCardLink variant="compact" {...link} ariaLabel={label} />
@@ -617,7 +605,7 @@ export function EntityRow({
 	}
 
 	return (
-		<EntityCardChassis variant="compact" className={cn("flex items-center gap-3", className)}>
+		<EntityCardChassis variant="compact" className={cn(entityCardClasses.row, className)}>
 			{body}
 		</EntityCardChassis>
 	);
@@ -661,35 +649,35 @@ export function EntityChoiceCard({
 }) {
 	const content = (
 		<>
-			<span aria-hidden="true" className="flex shrink-0">
+			<span aria-hidden="true" className={entityCardClasses.choiceIcon}>
 				{icon}
 			</span>
 			<div
 				className={cn(
-					"min-w-0 flex-1",
-					details && detailsPlacement === "trailing" && "flex items-start gap-3",
-					details &&
-						detailsPlacement === "responsive" &&
-						"flex flex-col gap-2 @md/choice:flex-row @md/choice:items-start @md/choice:gap-3",
+					entityCardClasses.body,
+					details && detailsPlacement === "trailing" && entityCardClasses.skeletonRow,
+					details && detailsPlacement === "responsive" && entityCardClasses.choiceResponsiveDetails,
 				)}
 			>
-				<div className="min-w-0 flex-1">
-					<div className="flex min-w-0 items-center gap-2">
+				<div className={entityCardClasses.body}>
+					<div className={entityCardClasses.headerTitleRow}>
 						<span
-							className="min-w-0 flex-1 truncate text-sm font-medium"
+							className={entityCardClasses.title}
 							title={
 								typeof title === "string" || typeof title === "number" ? String(title) : undefined
 							}
 						>
 							{title}
 						</span>
-						{badge ? <span className="shrink-0">{badge}</span> : null}
+						{badge ? <span className={entityCardClasses.shrink}>{badge}</span> : null}
 					</div>
 					{description ? (
 						<p
 							className={cn(
-								"mt-0.5 text-muted-foreground",
-								variant === "compact" ? "truncate text-xs leading-4" : "break-words text-sm",
+								entityCardClasses.choiceDescription,
+								variant === "compact"
+									? entityCardClasses.compactChoiceDescription
+									: entityCardClasses.fullChoiceDescription,
 							)}
 						>
 							{description}
@@ -699,12 +687,12 @@ export function EntityChoiceCard({
 				{details ? (
 					<div
 						className={cn(
-							"min-w-0",
+							entityCardClasses.heroBody,
 							detailsPlacement === "trailing"
-								? "max-w-[45%] shrink-0"
+								? entityCardClasses.choiceTrailingDetails
 								: detailsPlacement === "responsive"
-									? "w-full @md/choice:w-auto @md/choice:max-w-[52%] @md/choice:shrink-0"
-									: "mt-2",
+									? entityCardClasses.choiceResponsiveDetailsBody
+									: entityCardClasses.choiceStackedDetails,
 						)}
 					>
 						{details}
@@ -714,10 +702,10 @@ export function EntityChoiceCard({
 			{selected !== undefined ? (
 				<span
 					data-slot="entity-choice-indicator"
-					className="flex size-4 shrink-0 self-center items-center justify-center"
+					className={entityCardClasses.choiceIndicator}
 					aria-hidden
 				>
-					{selected ? <Check className="size-4 text-primary" /> : null}
+					{selected ? <Check className={entityCardClasses.choiceCheck} /> : null}
 				</span>
 			) : null}
 		</>
@@ -769,13 +757,13 @@ export function EntityAddCard({
 			onClick={onClick}
 			href={href}
 			icon={
-				<IconChip tint="bg-muted text-muted-foreground">
+				<IconChip tint={entityCardClasses.addTint}>
 					<Plus />
 				</IconChip>
 			}
 			title={title}
 			description={description}
-			className="h-full border-dashed bg-card"
+			className={entityCardClasses.add}
 		/>
 	);
 }

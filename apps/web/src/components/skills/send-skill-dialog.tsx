@@ -1,11 +1,17 @@
 "use client";
 
+import { sendSkillDialogClasses } from "@clawdi/shared/ui";
+import {
+	skillFormCopy as copy,
+	displayProjectName,
+	identityFor,
+	sendSkillTitle,
+} from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Copy } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { displayProjectName } from "@/components/projects/project-metadata";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -28,7 +34,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { ensureBlob, unwrap, useApi, useOpenApi, useSkillArchiveUploader } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
-import { identityFor } from "@/lib/identity";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { skillCapabilities } from "@/lib/skill-authority";
 
@@ -165,7 +170,7 @@ export function SendSkillDialog({
 
 	const trigger = children ?? (
 		<Button variant="ghost" size="icon-sm" aria-label={`Copy or move ${skill.name}`}>
-			<Copy className="size-3.5" />
+			<Copy className={sendSkillDialogClasses.icon} />
 		</Button>
 	);
 
@@ -180,21 +185,21 @@ export function SendSkillDialog({
 			}}
 		>
 			<DialogTrigger render={trigger} />
-			<DialogContent className="sm:max-w-md">
+			<DialogContent className={sendSkillDialogClasses.dialog}>
 				<DialogHeader>
-					<DialogTitle>Copy or move {skill.name}</DialogTitle>
+					<DialogTitle>{sendSkillTitle(skill.name)}</DialogTitle>
 					{/* Copy-vs-reference semantics must be explicit (Kingsley's
 					    review): skills duplicate per Project, so the destination's
 					    copy will NOT follow future changes to the source. */}
 					<DialogDescription>
-						The destination gets an independent copy — later changes to the source won&apos;t sync.
-						To give people the <em className="not-italic font-medium">same</em> skill, share the
-						project instead.
+						{copy.transferDescription} {copy.transferAlternativeBefore}
+						<em className={sendSkillDialogClasses.emphasis}>{copy.transferAlternativeEmphasis}</em>
+						{copy.transferAlternativeAfter}
 					</DialogDescription>
 				</DialogHeader>
-				<div className="space-y-4">
-					<div className="space-y-1.5">
-						<Label htmlFor="send-skill-target">Destination</Label>
+				<div className={sendSkillDialogClasses.body}>
+					<div className={sendSkillDialogClasses.field}>
+						<Label htmlFor="send-skill-target">{copy.destination}</Label>
 						<Select
 							items={targetItems}
 							value={target}
@@ -202,13 +207,13 @@ export function SendSkillDialog({
 								if (value !== null) setTarget(value);
 							}}
 						>
-							<SelectTrigger id="send-skill-target" className="w-full">
-								<SelectValue placeholder="Choose a project…" />
+							<SelectTrigger id="send-skill-target" className={sendSkillDialogClasses.trigger}>
+								<SelectValue placeholder={copy.chooseProject} />
 							</SelectTrigger>
-							<SelectContent className="max-h-80">
+							<SelectContent className={sendSkillDialogClasses.menu}>
 								{projectTargets.map((t) => (
 									<SelectItem key={`p-${t.value}`} value={t.value} label={t.label}>
-										<span aria-hidden className="select-none">
+										<span aria-hidden className={sendSkillDialogClasses.emoji}>
 											{t.emoji}
 										</span>
 										{t.label}
@@ -235,9 +240,9 @@ export function SendSkillDialog({
 							{send.isPending && send.variables === "copy" ? (
 								<Spinner />
 							) : (
-								<Copy className="size-3.5" />
+								<Copy className={sendSkillDialogClasses.icon} />
 							)}
-							Copy skill
+							{copy.copy}
 						</Button>
 						<Button
 							disabled={!target || send.isPending || !!destinationLoadError}
@@ -246,9 +251,9 @@ export function SendSkillDialog({
 							{send.isPending && send.variables === "move" ? (
 								<Spinner />
 							) : (
-								<ArrowRight className="size-3.5" />
+								<ArrowRight className={sendSkillDialogClasses.icon} />
 							)}
-							Move skill
+							{copy.move}
 						</Button>
 					</DialogFooter>
 				</div>

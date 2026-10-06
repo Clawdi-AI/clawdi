@@ -1,12 +1,19 @@
 "use client";
 
+import { dashboardPageClasses } from "@clawdi/shared/ui";
+import {
+	currentDaypart,
+	dashboardGreeting,
+	OVERVIEW_COPY,
+	selfManagedAgentTiles,
+} from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
 import { lazy, type ReactNode, Suspense, useEffect, useMemo, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
-import { AgentsCard, selfManagedAgentTiles } from "@/components/dashboard/agents-card";
+import { AgentsCard } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { ResourcesCard } from "@/components/dashboard/resources-card";
@@ -172,7 +179,7 @@ export default function DashboardPage() {
 						onRetry={() => {
 							void refetchStats();
 						}}
-						title="Couldn't load activity"
+						title={OVERVIEW_COPY.activityError}
 					/>
 				) : statsLoading ? (
 					<ActivityGraphSkeleton />
@@ -218,14 +225,14 @@ export default function DashboardPage() {
 						onRetry={() => {
 							void refetchSessions();
 						}}
-						title="Couldn't load recent sessions"
+						title={OVERVIEW_COPY.recentSessionsError}
 					/>
 				) : (
 					<SessionFeed
 						sessions={sessions ?? []}
 						isLoading={sessionsLoading}
 						grouped={false}
-						emptyMessage="No manual sessions yet. Once you start a conversation, it'll show up here."
+						emptyMessage={OVERVIEW_COPY.manualSessionsEmpty}
 						emptyVariant="inset"
 					/>
 				)
@@ -250,33 +257,33 @@ function OverviewLayout({
 	sessions: ReactNode;
 }) {
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, dashboardPageClasses.root)}>
 			{greeting}
 
-			<div className="grid gap-4 lg:grid-cols-3 lg:grid-rows-[auto_auto_1fr]">
-				<div className="min-w-0 lg:col-span-2 lg:row-start-1">{agents}</div>
+			<div className={dashboardPageClasses.grid}>
+				<div className={dashboardPageClasses.agents}>{agents}</div>
 
-				<section className="min-w-0 space-y-2 lg:col-span-2 lg:row-start-2">
-					<h2 className="text-base font-semibold">Activity</h2>
+				<section className={dashboardPageClasses.activity}>
+					<h2 className={dashboardPageClasses.sectionTitle}>{OVERVIEW_COPY.activity}</h2>
 					<Card>
 						<CardContent>{activity}</CardContent>
 					</Card>
 				</section>
 
 				{/* This source order is also the mobile reading and focus order. */}
-				<div className="min-w-0 space-y-4 lg:col-start-3 lg:row-span-3 lg:row-start-1">{aside}</div>
+				<div className={dashboardPageClasses.sidebar}>{aside}</div>
 
-				<section className="min-w-0 space-y-2 lg:col-span-2 lg:row-start-3">
-					<div className="flex items-center justify-between">
-						<h2 className="text-base font-semibold">Recent sessions</h2>
+				<section className={dashboardPageClasses.recentSessions}>
+					<div className={dashboardPageClasses.recentSessionsHeader}>
+						<h2 className={dashboardPageClasses.sectionTitle}>{OVERVIEW_COPY.recentSessions}</h2>
 						<Button
 							render={<Link to="/sessions" />}
 							nativeButton={false}
 							variant="ghost"
 							size="sm"
-							className="text-muted-foreground"
+							className={dashboardPageClasses.viewAll}
 						>
-							View all
+							{OVERVIEW_COPY.viewAll}
 							<ArrowRight />
 						</Button>
 					</div>
@@ -307,33 +314,34 @@ export function DashboardPageSkeleton() {
 
 function ActivityGraphSkeleton() {
 	return (
-		<div className="w-full">
+		<div className={dashboardPageClasses.graphSkeleton}>
 			{/* Centered like ContributionGraph so the grid doesn't shift on load. */}
-			<div className="mx-auto flex w-fit max-w-full gap-1.5">
-				<div className="flex w-3 shrink-0 flex-col items-center gap-[3px]">
+			<div className={dashboardPageClasses.graphSkeletonLayout}>
+				<div className={dashboardPageClasses.graphSkeletonWeekdays}>
 					{Array.from({ length: 7 }).map((_, index) => (
-						<Skeleton key={index} className="h-[11px] w-2 rounded-[3px]" />
+						<Skeleton key={index} className={dashboardPageClasses.graphSkeletonWeekday} />
 					))}
 				</div>
-				<div className="min-w-0 flex-1">
-					<div className="flex max-h-[95px] overflow-hidden gap-[3px]">
+				<div className={dashboardPageClasses.graphSkeletonBody}>
+					<div className={dashboardPageClasses.graphSkeletonWeeks}>
 						{Array.from({ length: 52 }).map((_, weekIndex) => (
-							<div key={weekIndex} className="flex flex-col gap-[3px]">
+							<div key={weekIndex} className={dashboardPageClasses.graphSkeletonWeek}>
 								{Array.from({ length: 7 }).map((_, dayIndex) => (
 									<Skeleton
 										key={dayIndex}
 										className={cn(
-											"size-[11px] rounded-[3px]",
-											(weekIndex + dayIndex) % 5 === 0 && "opacity-50",
+											dashboardPageClasses.graphSkeletonCell,
+											(weekIndex + dayIndex) % 5 === 0 &&
+												dashboardPageClasses.graphSkeletonMutedCell,
 										)}
 									/>
 								))}
 							</div>
 						))}
 					</div>
-					<div className="mt-1 flex h-4 items-center gap-10">
+					<div className={dashboardPageClasses.graphSkeletonMonths}>
 						{Array.from({ length: 6 }).map((_, index) => (
-							<Skeleton key={index} className="h-2.5 w-6" />
+							<Skeleton key={index} className={dashboardPageClasses.graphSkeletonMonth} />
 						))}
 					</div>
 				</div>
@@ -355,11 +363,11 @@ function ConnectAnotherCard() {
 		setOpen(true);
 	};
 	return (
-		<Card className="py-4">
-			<CardContent className="flex items-center justify-between gap-3 px-4">
-				<div className="min-w-0 text-sm font-medium">Connect another machine</div>
+		<Card className={dashboardPageClasses.connectCard}>
+			<CardContent className={dashboardPageClasses.connectCardContent}>
+				<div className={dashboardPageClasses.connectCardTitle}>{OVERVIEW_COPY.connectAnother}</div>
 				<Button size="sm" variant="outline" onClick={connectAgent}>
-					Add agent
+					{OVERVIEW_COPY.addAgent}
 				</Button>
 			</CardContent>
 			<AddAgentDialog open={open} onClose={() => setOpen(false)} />
@@ -368,10 +376,6 @@ function ConnectAnotherCard() {
 }
 
 /** Personal time-of-day greeting. */
-function currentDaypart(): "morning" | "afternoon" | "evening" {
-	const hour = new Date().getHours();
-	return hour < 5 ? "evening" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
-}
 
 function Greeting() {
 	const { user, isLoaded } = useCurrentUser();
@@ -382,11 +386,11 @@ function Greeting() {
 	const firstName = user?.fullName?.split(" ")[0];
 	return (
 		<div>
-			<h1 className="text-2xl font-semibold tracking-tight">
+			<h1 className={dashboardPageClasses.greeting}>
 				{daypart && isLoaded ? (
-					`Good ${daypart}${firstName ? `, ${firstName}` : ""}`
+					dashboardGreeting(daypart, firstName)
 				) : (
-					<Skeleton className="h-8 w-64 max-w-full" />
+					<Skeleton className={dashboardPageClasses.greetingSkeleton} />
 				)}
 			</h1>
 		</div>
@@ -396,8 +400,8 @@ function Greeting() {
 function GreetingSkeleton() {
 	return (
 		<div>
-			<h1 className="text-2xl font-semibold tracking-tight">
-				<Skeleton className="h-8 w-64 max-w-full" />
+			<h1 className={dashboardPageClasses.greeting}>
+				<Skeleton className={dashboardPageClasses.greetingSkeleton} />
 			</h1>
 		</div>
 	);

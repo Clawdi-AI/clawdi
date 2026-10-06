@@ -1,0 +1,17 @@
+export const splitVaultDialogClasses = {
+	icon: "size-3.5",
+	dialog: "max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg",
+	mono: "font-mono",
+	body: "space-y-4",
+	groups: "max-h-72 space-y-1 overflow-y-auto rounded-lg border p-2",
+	group: "flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/50",
+	emoji: "select-none text-sm leading-none",
+	prefix: "min-w-0 flex-1 truncate font-mono text-xs",
+	count: "shrink-0 text-xs text-muted-foreground tabular-nums",
+	checkRow: "flex items-center gap-2",
+	checkLabel: "text-sm font-normal",
+	warning: "text-xs font-medium text-warning-muted-foreground",
+	result: "space-y-2",
+	link: "underline",
+	submit: "w-full",
+} as const;

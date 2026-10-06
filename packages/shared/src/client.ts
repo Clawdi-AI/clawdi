@@ -47,7 +47,7 @@ export const PLATFORM_CAPABILITIES = {
 		cloudData: "direct",
 		localAgentSetup: "unsupported",
 		localAgentInventory: "unsupported",
-		connectedAgentDisconnect: "unsupported",
+		connectedAgentDisconnect: "direct",
 		backgroundLocalSync: "unsupported",
 		hostedAgentLifecycle: "direct",
 		hostedTerminal: "adapted",

@@ -1,4 +1,6 @@
 "use client";
+import { agentPluginsSurfaceClasses } from "@clawdi/shared/ui";
+import { agentSurfaceCopy } from "@clawdi/shared/view";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useRouter } from "@tanstack/react-router";
@@ -115,7 +117,7 @@ export function AgentPluginsSurface({
 			await refreshDesired();
 			toast.success(updating ? "Plugin updated" : "Plugin installed");
 		} catch (error) {
-			toast.error(updating ? "Couldn't update plugin" : "Couldn't install plugin", {
+			toast.error(updating ? agentSurfaceCopy.couldnTUpdatePlugin : "Couldn't install plugin", {
 				description: normalizeApiError(error),
 			});
 			throw error;
@@ -239,7 +241,7 @@ export function AgentPluginsSurface({
 	}, [desiredQuery.data, catalogQuery.data]);
 
 	return (
-		<div data-hosted="true" data-v2="true" className="space-y-6">
+		<div data-hosted="true" data-v2="true" className={agentPluginsSurfaceClasses.root}>
 			{selectedItem ? (
 				<AgentPluginDetail
 					item={selectedItem}
@@ -259,7 +261,7 @@ export function AgentPluginsSurface({
 			) : (
 				<>
 					<PageHeader
-						title="Plugins"
+						title={agentSurfaceCopy.plugins}
 						description="Add tools and knowledge to this agent."
 						icon={
 							<IconChip tint="bg-identity-7-bg text-identity-7-fg">
@@ -344,12 +346,12 @@ function AgentPluginCatalog({
 	const groups = [
 		{
 			id: "installed" as const,
-			label: "Installed",
+			label: agentSurfaceCopy.installed,
 			items: items.filter((item) => groupAssignments.get(item.name) === "installed"),
 		},
 		{
 			id: "available" as const,
-			label: "Available",
+			label: agentSurfaceCopy.available,
 			items: items.filter((item) => groupAssignments.get(item.name) === "available"),
 		},
 	];
@@ -374,13 +376,13 @@ function AgentPluginCatalog({
 	}
 
 	return (
-		<div className="space-y-6" data-testid="agent-plugins-surface">
+		<div className={agentPluginsSurfaceClasses.root} data-testid="agent-plugins-surface">
 			<ListToolbar
 				search={
 					<SearchInput
 						value={query}
 						onChange={onQueryChange}
-						placeholder="Search plugins…"
+						placeholder={agentSurfaceCopy.searchPlugins}
 						ariaLabel="Search plugins"
 					/>
 				}
@@ -388,7 +390,7 @@ function AgentPluginCatalog({
 					<>
 						<FilterChip active={category === "all"} onClick={() => onCategoryChange("all")}>
 							All
-							<span className="text-muted-foreground tabular-nums">{inventory.length}</span>
+							<span className={agentPluginsSurfaceClasses.filterCount}>{inventory.length}</span>
 						</FilterChip>
 						{categories.map((value) => (
 							<FilterChip
@@ -397,7 +399,7 @@ function AgentPluginCatalog({
 								onClick={() => onCategoryChange(value)}
 							>
 								{value}
-								<span className="text-muted-foreground tabular-nums">
+								<span className={agentPluginsSurfaceClasses.filterCount}>
 									{inventory.filter((item) => item.catalog?.category === value).length}
 								</span>
 							</FilterChip>
@@ -417,7 +419,7 @@ function AgentPluginCatalog({
 			) : null}
 			{groups.map((group) =>
 				group.items.length > 0 ? (
-					<section key={group.id} className="space-y-3">
+					<section key={group.id} className={agentPluginsSurfaceClasses.section}>
 						<SectionLabel count={group.items.length}>{group.label}</SectionLabel>
 						<div className={HERO_GRID_CLASS}>
 							{group.items.map((item) => (
@@ -440,8 +442,8 @@ function AgentPluginCatalog({
 			{noMatches ? (
 				<EmptyState
 					variant="inset"
-					title="No plugins found"
-					description="Try a different search or category."
+					title={agentSurfaceCopy.noPluginsFound}
+					description={agentSurfaceCopy.tryADifferentSearchOrCategory}
 				/>
 			) : null}
 		</div>
@@ -473,7 +475,7 @@ function DesiredStateErrorAlert({
 function AgentPluginGridSkeleton() {
 	return (
 		<div className={HERO_GRID_CLASS}>
-			<span className="sr-only">Loading plugins</span>
+			<span className={agentPluginsSurfaceClasses.screenReaderOnly}>Loading plugins</span>
 			{Array.from({ length: 4 }).map((_, index) => (
 				<HeroCardSkeleton key={`plugin-skeleton-${index}`} iconSize="sm" />
 			))}

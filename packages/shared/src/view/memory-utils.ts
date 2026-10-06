@@ -1,0 +1,38 @@
+/**
+ * Memory-specific presentation helpers.
+ * Centralized so the list, detail page, and any future memory surface
+ * (command palette preview, card view) stay colour-coordinated.
+ */
+
+// Category carries meaning, so each gets a distinct muted pastel from the
+// semantic token set (taste audit #6) — desaturated, never a raw palette hue.
+export const MEMORY_CATEGORY_COLORS: Record<string, string> = {
+	fact: "border-transparent bg-muted text-muted-foreground",
+	preference: "border-transparent bg-info-muted text-info-muted-foreground",
+	pattern: "border-transparent bg-success-muted text-success-muted-foreground",
+	decision: "border-transparent bg-warning-muted text-warning-muted-foreground",
+	context: "border-transparent bg-primary/10 text-primary",
+};
+
+/**
+ * Content is a Memory's user-facing identity. Keep the same concise label in
+ * cards, breadcrumbs, and assistive text instead of falling back to an
+ * internal database id.
+ */
+export function memoryDisplayName(content: string, maxLength = 80): string {
+	const trimmed = content.trim();
+	if (!trimmed) return "Memory";
+	const firstThought = trimmed.split(/[.!?\n]/, 1)[0]?.trim() || trimmed;
+	const compact = firstThought.replace(/\s+/g, " ");
+	if (compact.length <= maxLength) return compact;
+	return `${compact.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`;
+}
+
+export const MEMORY_CATEGORIES = [
+	{ value: "all", label: "All" },
+	{ value: "fact", label: "Fact" },
+	{ value: "preference", label: "Preference" },
+	{ value: "pattern", label: "Pattern" },
+	{ value: "decision", label: "Decision" },
+	{ value: "context", label: "Context" },
+] as const;

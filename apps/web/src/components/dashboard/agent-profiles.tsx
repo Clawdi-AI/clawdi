@@ -1,6 +1,7 @@
 "use client";
 
 import type { AgentProfile } from "@clawdi/shared/api";
+import { formatNumber, relativeTime } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, useEffect } from "react";
@@ -19,7 +20,6 @@ import {
 } from "@/lib/agent-profiles";
 import { agentSectionLink } from "@/lib/agent-routes";
 import { useOpenApi } from "@/lib/api";
-import { formatNumber, relativeTime } from "@/lib/utils";
 
 export function useAgentProfiles(agentId: string, { enabled }: { enabled: boolean }) {
 	const $api = useOpenApi();

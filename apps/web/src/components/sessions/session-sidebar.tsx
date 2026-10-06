@@ -1,3 +1,5 @@
+import { sessionSidebarClasses } from "@clawdi/shared/ui";
+import { sessionPullRequestUrl, sessionRepositoryUrl } from "@clawdi/shared/view";
 import { GitBranch, GitPullRequest, type LucideIcon, Package } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -38,7 +40,7 @@ export function SessionSidebar({
 	}
 
 	return (
-		<aside className={cn("flex flex-wrap items-center gap-1.5", className)}>
+		<aside className={cn(sessionSidebarClasses.root, className)}>
 			{prs.slice(0, 5).map((pr) => (
 				<PrChip key={`pr-${pr}`} pr={pr} />
 			))}
@@ -49,13 +51,7 @@ export function SessionSidebar({
 			) : null}
 
 			{repos.slice(0, 3).map((r) => (
-				<Chip
-					key={`r-${r}`}
-					icon={Package}
-					title="Repository"
-					href={`https://github.com/${r}`}
-					mono
-				>
+				<Chip key={`r-${r}`} icon={Package} title="Repository" href={sessionRepositoryUrl(r)} mono>
 					{r}
 				</Chip>
 			))}
@@ -88,13 +84,13 @@ function Chip({
 	children: React.ReactNode;
 }) {
 	const className = cn(
-		"inline-flex max-w-full items-center gap-1.5 truncate rounded-md border bg-card/30 px-2 py-1 text-xs",
-		mono && "font-mono",
-		href && "hover:bg-accent hover:text-accent-foreground transition-colors",
+		sessionSidebarClasses.chip,
+		mono && sessionSidebarClasses.mono,
+		href && sessionSidebarClasses.link,
 	);
 	const content = (
 		<>
-			<Icon className="size-3 shrink-0 text-muted-foreground" />
+			<Icon className={sessionSidebarClasses.icon} />
 			<span className="truncate">{children}</span>
 		</>
 	);
@@ -116,22 +112,16 @@ function Chip({
 // string under that name in React 19 makes the renderer treat the string as a
 // real ref object.
 function PrChip({ pr }: { pr: string }) {
-	const match = pr.match(/^([^/]+)\/([^#]+)#(\d+)$/);
-	if (!match) {
+	const href = sessionPullRequestUrl(pr);
+	if (!href) {
 		return (
 			<Chip icon={GitPullRequest} title="Pull request" mono>
 				{pr}
 			</Chip>
 		);
 	}
-	const [, owner, repo, num] = match;
 	return (
-		<Chip
-			icon={GitPullRequest}
-			title="Pull request"
-			href={`https://github.com/${owner}/${repo}/pull/${num}`}
-			mono
-		>
+		<Chip icon={GitPullRequest} title="Pull request" href={href} mono>
 			{pr}
 		</Chip>
 	);

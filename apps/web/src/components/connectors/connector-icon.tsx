@@ -1,13 +1,8 @@
 "use client";
+import { CONNECTOR_ICON_SIZES, connectorIconClasses } from "@clawdi/shared/ui";
 
 import { useCallback, useState } from "react";
 import { cn } from "@/lib/utils";
-
-const SIZES = {
-	sm: { box: "size-6", pad: "p-0.5", text: "text-xs", radius: "rounded-md" },
-	md: { box: "size-10", pad: "p-1.5", text: "text-base", radius: "rounded-lg" },
-	lg: { box: "size-14", pad: "p-2", text: "text-2xl", radius: "rounded-xl" },
-} as const;
 
 export function ConnectorIcon({
 	logo,
@@ -16,7 +11,7 @@ export function ConnectorIcon({
 }: {
 	logo?: string;
 	name: string;
-	size?: keyof typeof SIZES;
+	size?: keyof typeof CONNECTOR_ICON_SIZES;
 }) {
 	const [imageState, setImageState] = useState<{
 		src: string;
@@ -32,7 +27,7 @@ export function ConnectorIcon({
 		},
 		[logo],
 	);
-	const s = SIZES[size];
+	const s = CONNECTOR_ICON_SIZES[size];
 	const letter =
 		name
 			.replace(/^[_\-\s]+/, "")
@@ -42,13 +37,13 @@ export function ConnectorIcon({
 	return (
 		<div
 			className={cn(
-				"relative flex shrink-0 items-center justify-center overflow-hidden border",
-				loaded ? "bg-background" : "bg-muted",
+				connectorIconClasses.root,
+				loaded ? connectorIconClasses.loaded : connectorIconClasses.placeholder,
 				s.box,
 				s.radius,
 			)}
 		>
-			<span className={cn("font-semibold text-muted-foreground", s.text, loaded && "invisible")}>
+			<span className={cn(connectorIconClasses.letter, s.text, loaded && "invisible")}>
 				{letter}
 			</span>
 			{logo && !failed ? (
@@ -59,11 +54,7 @@ export function ConnectorIcon({
 					alt=""
 					loading="lazy"
 					decoding="async"
-					className={cn(
-						"absolute inset-0 h-full w-full object-contain transition-opacity",
-						s.pad,
-						loaded ? "opacity-100" : "opacity-0",
-					)}
+					className={cn(connectorIconClasses.image, s.pad, loaded ? "opacity-100" : "opacity-0")}
 					onLoad={() => setImageState({ src: logo, status: "loaded" })}
 					onError={() => setImageState({ src: logo, status: "error" })}
 				/>

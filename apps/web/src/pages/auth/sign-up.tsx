@@ -1,3 +1,4 @@
+import { authPageClasses } from "@clawdi/shared/ui";
 import { SignUp } from "@clerk/tanstack-react-start";
 import { Navigate } from "@tanstack/react-router";
 import { env } from "@/lib/env";
@@ -10,7 +11,7 @@ export default function SignUpPage() {
 	if (isDevAuthBypass) return <DevAuthBypassPage mode="sign-up" />;
 
 	return (
-		<main className="flex min-h-dvh items-center justify-center">
+		<main className={authPageClasses.main}>
 			<SignUp />
 		</main>
 	);

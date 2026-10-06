@@ -1,0 +1,15 @@
+export const dataTableFacetedFilterClasses = {
+	trigger: "h-8 border-dashed",
+	triggerIcon: "size-4",
+	separator: "mx-2 h-4",
+	selectedCount: "rounded-sm px-1 font-normal lg:hidden",
+	selectedLabels: "hidden gap-1 lg:flex",
+	selectedBadge: "rounded-sm px-1 font-normal",
+	content: "w-[200px] p-0",
+	checkbox: "mr-2 flex size-4 items-center justify-center rounded-sm border border-primary",
+	checked: "bg-primary text-primary-foreground",
+	unchecked: "opacity-50 [&_svg]:invisible",
+	checkIcon: "size-3",
+	optionIcon: "mr-2 size-4 text-muted-foreground",
+	clearAction: "justify-center text-center",
+} as const;

@@ -1,0 +1,74 @@
+import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import {
+	CONSOLE_NAVIGATION_ITEMS,
+	daemonStatusVisual,
+	identityFor,
+	MEMORY_CATEGORY_COLORS,
+	PROVIDER_META,
+	RESOURCE_TINT_CLASSES,
+} from "@clawdi/shared/view";
+import { possibleNativeClasses } from "@/lib/web-classes";
+import {
+	buildMobileTheme,
+	buildWebClassSafelist,
+	outputPath,
+	readSharedTheme,
+	readWebClassSources,
+	stringLiterals,
+	webClassesOutputPath,
+} from "../../scripts/theme";
+
+test("mobile theme is generated from the current shared Web tokens", () => {
+	expect(readFileSync(outputPath, "utf8")).toBe(buildMobileTheme(readSharedTheme()));
+});
+
+test("Web class safelist covers the current shared Web class strings", () => {
+	expect(readFileSync(webClassesOutputPath, "utf8")).toBe(
+		buildWebClassSafelist(readWebClassSources()),
+	);
+});
+
+test("Web class safelist covers class tables that live in shared view", () => {
+	const safelist = /@source inline\("([^"]*)"\)/.exec(readFileSync(webClassesOutputPath, "utf8"));
+	const safelisted = new Set(safelist?.[1]?.split(" "));
+	const now = new Date().toISOString();
+	const daemonEvidence = [
+		null,
+		{ sync_enabled: true, last_sync_at: now, last_sync_error: null },
+		{ sync_enabled: true, last_sync_at: now, last_sync_error: "failed" },
+		{ sync_enabled: true, last_sync_at: "2000-01-01T00:00:00Z", last_sync_error: null },
+	];
+	const viewClasses = [
+		...Object.values(MEMORY_CATEGORY_COLORS),
+		...Object.values(PROVIDER_META).map((meta) => meta.tint),
+		...Object.values(RESOURCE_TINT_CLASSES),
+		...Object.values(CONSOLE_NAVIGATION_ITEMS).map((item) => item.tint),
+		...Array.from({ length: 64 }, (_, seed) => identityFor(String(seed)).colorClasses),
+		...daemonEvidence.flatMap((env) => {
+			const visual = daemonStatusVisual(env);
+			return [visual.dotClass, visual.textClass];
+		}),
+	];
+	expect(
+		viewClasses.flatMap(possibleNativeClasses).filter((name) => !safelisted.has(name)),
+	).toEqual([]);
+});
+
+test("class scanning reads template chunks and nested strings but not comments", () => {
+	const literals = stringLiterals(
+		// biome-ignore lint/suspicious/noTemplateCurlyInString: TypeScript source fixture.
+		'const a = `rounded-md ${tone ? "text-xs" : `px-${size}`} bg-card`; // "bg-destructive"\n/* "border-ring" */',
+	);
+	expect(literals).toContain("rounded-md ");
+	expect(literals).toContain("text-xs");
+	expect(literals).toContain(" bg-card");
+	expect(literals.join(" ")).not.toContain("bg-destructive");
+	expect(literals.join(" ")).not.toContain("border-ring");
+	const quoted = buildWebClassSafelist([
+		// biome-ignore lint/suspicious/noTemplateCurlyInString: TypeScript source fixture.
+		'const a = `bg-success ${b} "quoted"`;',
+	]);
+	expect(quoted).toContain("bg-success");
+	expect(quoted).not.toContain('""');
+});

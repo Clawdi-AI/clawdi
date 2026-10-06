@@ -1,3 +1,4 @@
+import { pageHeaderClasses } from "@clawdi/shared/ui";
 import type { ReactNode } from "react";
 import { HeaderActionGroup } from "@/components/header-action-group";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -40,21 +41,19 @@ export function PageHeader({
 		<div
 			data-slot={slot}
 			aria-hidden={ariaHidden}
-			className={cn("flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", className)}
+			className={cn(pageHeaderClasses.root, className)}
 		>
-			<div className="flex min-w-0 items-center gap-3">
-				{icon ? <div className="shrink-0">{icon}</div> : null}
-				<div className="min-w-0 max-w-full">
-					<div className="flex min-w-0 flex-wrap items-center gap-2">
-						<h1 className="text-xl font-semibold tracking-tight text-pretty break-words">
-							{title}
-						</h1>
+			<div className={pageHeaderClasses.lockup}>
+				{icon ? <div className={pageHeaderClasses.icon}>{icon}</div> : null}
+				<div className={pageHeaderClasses.body}>
+					<div className={pageHeaderClasses.titleRow}>
+						<h1 className={pageHeaderClasses.title}>{title}</h1>
 						{titleAdornment}
 					</div>
 					{description ? (
-						<Description className="mt-1 text-sm text-muted-foreground">{description}</Description>
+						<Description className={pageHeaderClasses.description}>{description}</Description>
 					) : null}
-					{status ? <div className="mt-1">{status}</div> : null}
+					{status ? <div className={pageHeaderClasses.status}>{status}</div> : null}
 				</div>
 			</div>
 			{actions ? <HeaderActionGroup>{actions}</HeaderActionGroup> : null}
@@ -82,18 +81,20 @@ export function PageHeaderSkeleton({
 			data-slot="page-header-skeleton"
 			aria-hidden
 			className={className}
-			icon={icon ? <Skeleton className={cn("size-10 rounded-lg", iconClassName)} /> : null}
-			title={<Skeleton className="h-lh w-52 max-w-full" />}
+			icon={
+				icon ? <Skeleton className={cn(pageHeaderClasses.skeletonIcon, iconClassName)} /> : null
+			}
+			title={<Skeleton className={pageHeaderClasses.skeletonTitle} />}
 			description={
 				typeof description === "string" ? (
-					<Skeleton className="text-transparent" aria-hidden="true">
+					<Skeleton className={pageHeaderClasses.skeletonText} aria-hidden="true">
 						{description}
 					</Skeleton>
 				) : description ? (
-					<Skeleton className="h-lh w-80 max-w-full" />
+					<Skeleton className={pageHeaderClasses.skeletonDescription} />
 				) : null
 			}
-			actions={actions ? <Skeleton className="h-11 w-36 sm:h-8" /> : null}
+			actions={actions ? <Skeleton className={pageHeaderClasses.skeletonActions} /> : null}
 		/>
 	);
 }

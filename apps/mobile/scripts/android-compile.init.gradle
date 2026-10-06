@@ -1,0 +1,13 @@
+// Opt-in resource limits for isolated native compilation, not application behavior.
+// Gradle's worker limit alone does not constrain the Ninja processes launched by AGP.
+gradle.beforeProject { project ->
+    ["com.android.application", "com.android.library"].each { pluginId ->
+        project.pluginManager.withPlugin(pluginId) {
+            project.extensions.getByName("android").defaultConfig.externalNativeBuild.cmake.arguments.addAll([
+                "-DCMAKE_JOB_POOLS=clawdi_compile=2;clawdi_link=1",
+                "-DCMAKE_JOB_POOL_COMPILE=clawdi_compile",
+                "-DCMAKE_JOB_POOL_LINK=clawdi_link"
+            ])
+        }
+    }
+}

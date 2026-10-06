@@ -234,6 +234,18 @@ async def create_vault(
     return VaultCreatedResponse(id=str(vault.id), slug=vault.slug)
 
 
+@router.post("/{slug}/attachments/{project_id}")
+async def attach_vault(
+    slug: str,
+    project_id: UUID,
+    vault_id: UUID = Query(description="Required exact existing Vault identity; never creates."),
+    auth: AuthContext = Depends(require_user_auth),
+    db: AsyncSession = Depends(get_session),
+) -> VaultCreatedResponse:
+    vault = await vault_service.attach_account_vault(db, auth, slug, vault_id, project_id)
+    return VaultCreatedResponse(id=str(vault.id), slug=vault.slug)
+
+
 @router.get("/detail")
 async def get_vault_detail(
     vault_id: UUID | None = Query(default=None, description="Optional stable Vault identity."),

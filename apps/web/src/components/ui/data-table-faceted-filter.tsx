@@ -1,5 +1,7 @@
 "use client";
 
+import { dataTableFacetedFilterClasses } from "@clawdi/shared/ui";
+
 import { CheckIcon, PlusCircleIcon } from "lucide-react";
 import type * as React from "react";
 import { Badge } from "@/components/ui/badge";
@@ -55,18 +57,18 @@ export function DataTableFacetedFilter({
 
 	return (
 		<Popover>
-			<PopoverTrigger render={<Button variant="outline" size="sm" className="h-8 border-dashed" />}>
-				<PlusCircleIcon className="size-4" />
+			<PopoverTrigger render={<Button variant="outline" size="sm" className={dataTableFacetedFilterClasses.trigger} />}>
+				<PlusCircleIcon className={dataTableFacetedFilterClasses.triggerIcon} />
 				{title}
 				{selected.length > 0 && (
 					<>
-						<Separator orientation="vertical" className="mx-2 h-4" />
-						<Badge variant="secondary" className="rounded-sm px-1 font-normal lg:hidden">
+						<Separator orientation="vertical" className={dataTableFacetedFilterClasses.separator} />
+						<Badge variant="secondary" className={dataTableFacetedFilterClasses.selectedCount}>
 							{selected.length}
 						</Badge>
-						<div className="hidden gap-1 lg:flex">
+						<div className={dataTableFacetedFilterClasses.selectedLabels}>
 							{selected.length > 2 ? (
-								<Badge variant="secondary" className="rounded-sm px-1 font-normal">
+								<Badge variant="secondary" className={dataTableFacetedFilterClasses.selectedBadge}>
 									{selected.length} selected
 								</Badge>
 							) : (
@@ -76,7 +78,7 @@ export function DataTableFacetedFilter({
 										<Badge
 											key={option.value}
 											variant="secondary"
-											className="rounded-sm px-1 font-normal"
+											className={dataTableFacetedFilterClasses.selectedBadge}
 										>
 											{option.label}
 										</Badge>
@@ -86,7 +88,7 @@ export function DataTableFacetedFilter({
 					</>
 				)}
 			</PopoverTrigger>
-			<PopoverContent className="w-[200px] p-0" align="start">
+			<PopoverContent className={dataTableFacetedFilterClasses.content} align="start">
 				<Command label={`${title} filter options`}>
 					<CommandInput placeholder={title} />
 					<CommandList>
@@ -110,16 +112,16 @@ export function DataTableFacetedFilter({
 									>
 										<div
 											className={cn(
-												"mr-2 flex size-4 items-center justify-center rounded-sm border border-primary",
+												dataTableFacetedFilterClasses.checkbox,
 												isSelected
-													? "bg-primary text-primary-foreground"
-													: "opacity-50 [&_svg]:invisible",
+													? dataTableFacetedFilterClasses.checked
+													: dataTableFacetedFilterClasses.unchecked,
 											)}
 										>
-											<CheckIcon className="size-3" />
+											<CheckIcon className={dataTableFacetedFilterClasses.checkIcon} />
 										</div>
 										{option.icon ? (
-											<option.icon className="mr-2 size-4 text-muted-foreground" />
+											<option.icon className={dataTableFacetedFilterClasses.optionIcon} />
 										) : null}
 										<span>{option.label}</span>
 									</CommandItem>
@@ -130,7 +132,7 @@ export function DataTableFacetedFilter({
 							<>
 								<CommandSeparator />
 								<CommandGroup>
-									<CommandItem onSelect={() => onChange([])} className="justify-center text-center">
+									<CommandItem onSelect={() => onChange([])} className={dataTableFacetedFilterClasses.clearAction}>
 										Clear filter
 									</CommandItem>
 								</CommandGroup>

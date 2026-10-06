@@ -1,5 +1,6 @@
 "use client";
 
+import { formatShortDate } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Terminal, Trash2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
@@ -39,7 +40,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
 import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { ApiKey } from "@/lib/api-schemas";
-import { formatShortDate } from "@/lib/format";
 import { shouldBlockQueryError } from "@/lib/query-state";
 
 const REVOKE_API_KEY_MUTATION_KEY = ["revoke-api-key"] as const;

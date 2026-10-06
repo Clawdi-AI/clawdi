@@ -1,5 +1,6 @@
 "use client";
 
+import { projectDetailHref } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
@@ -36,7 +37,6 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
-import { projectDetailHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 import {

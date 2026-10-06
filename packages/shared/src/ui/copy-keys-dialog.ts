@@ -1,0 +1,16 @@
+export const copyKeysDialogClasses = {
+	dialog: "sm:max-w-md",
+	body: "space-y-4",
+	destinationRow: "grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end",
+	field: "space-y-1.5",
+	trigger: "w-full",
+	menu: "max-h-80",
+	emoji: "select-none",
+	icon: "size-3.5",
+	newField: "space-y-1",
+	newInput: "sm:w-44",
+	newError: "max-w-44 text-xs text-destructive",
+	warning: "text-xs font-medium text-warning-muted-foreground",
+	hint: "text-xs text-muted-foreground",
+	emphasis: "font-medium text-foreground",
+} as const;

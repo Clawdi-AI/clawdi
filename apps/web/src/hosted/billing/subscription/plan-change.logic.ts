@@ -2,7 +2,6 @@ import type {
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeQuoteResponse,
 	ComputePlanSlug,
-	HostedDeployment,
 } from "@/hosted/billing/contracts";
 import {
 	BillingApiError,
@@ -19,46 +18,7 @@ export type PlanChangeSelection = Omit<
 	funding_source: NonNullable<ComputePlanChangeQuoteRequest["funding_source"]>;
 };
 
-type HostedComputeUpgradeIneligibilityReason = NonNullable<
-	HostedDeployment["upgrade_eligibility"]["reason"]
->;
-
-const PERFORMANCE_UPGRADE_UNAVAILABLE_COPY = {
-	deployment_deleted: "This agent was deleted. Create a new agent to use Performance.",
-	compute_basic_required: "Only agents on the Basic plan can upgrade to Performance.",
-	compute_subscription_unavailable:
-		"Couldn't load this agent's subscription details. Check again in a moment.",
-	included_basic_required:
-		"This agent's subscription is managed separately. Change its plan from the subscription controls.",
-	compute_subscription_not_active:
-		"This agent's no-cost subscription isn't active yet, so it can't upgrade. You weren't charged and don't need to do anything. Check again later.",
-	compute_subscription_canceling:
-		"This agent's subscription is set to cancel. Resume it, then try again.",
-	deployment_state_unknown:
-		"Couldn't load this agent's current state. Check again before upgrading.",
-	deployment_must_be_running_or_stopped:
-		"Wait until this agent is running or stopped, then try again.",
-	upgrade_already_in_progress:
-		"An upgrade to Performance is already in progress. Wait for it to finish.",
-} satisfies Record<HostedComputeUpgradeIneligibilityReason, string>;
-
-const UNKNOWN_PERFORMANCE_UPGRADE_UNAVAILABLE_COPY =
-	"This agent can't be upgraded right now. Check again later, or contact support if this continues.";
-
-/** Recover an active plan change from the authoritative deployment projection. */
-export function activePlanChangeOperationName(
-	deployment: Pick<HostedDeployment, "accepted_operation" | "resource">,
-): string | null {
-	const operation = deployment.accepted_operation;
-	if (
-		operation?.done !== false ||
-		operation.metadata.verb !== "plan_change" ||
-		operation.metadata.deploymentId !== deployment.resource.id
-	) {
-		return null;
-	}
-	return operation.name.trim() || null;
-}
+export { activePlanChangeOperationName } from "@clawdi/shared/view";
 
 export function visiblePlanChangeOperationName(
 	projectedOperationName: string | null,
@@ -76,18 +36,6 @@ export function shouldResetUnacceptedPlanChangeQuote(error: unknown): boolean {
 		!(error instanceof PlanChangeTerminalError) &&
 		/quote.*expired|expired.*quote/i.test(error.detail)
 	);
-}
-
-function isHostedComputeUpgradeIneligibilityReason(
-	reason: string,
-): reason is HostedComputeUpgradeIneligibilityReason {
-	return Object.hasOwn(PERFORMANCE_UPGRADE_UNAVAILABLE_COPY, reason);
-}
-
-function performanceUpgradeEligibilityReasonCopy(reason: string | null): string {
-	return reason !== null && isHostedComputeUpgradeIneligibilityReason(reason)
-		? PERFORMANCE_UPGRADE_UNAVAILABLE_COPY[reason]
-		: UNKNOWN_PERFORMANCE_UPGRADE_UNAVAILABLE_COPY;
 }
 
 /** Subtract a decimal-string debit without rounding through a JavaScript number. */
@@ -296,65 +244,7 @@ export function isValidPaidPlanChangeQuote(
 	);
 }
 
-export function planChangeUnavailableReason({
-	canCreateCloudAgents,
-	cancelAtPeriodEnd,
-	status,
-	hasSubscriptionTarget,
-}: {
-	canCreateCloudAgents: boolean;
-	cancelAtPeriodEnd: boolean;
-	status: string;
-	hasSubscriptionTarget: boolean;
-}): string | null {
-	if (!canCreateCloudAgents) return "Subscription changes are temporarily unavailable.";
-	if (cancelAtPeriodEnd)
-		return "Resume this subscription before changing its plan, billing term, or payment source.";
-	if (!hasSubscriptionTarget)
-		return "Subscription changes will be available after details finish syncing.";
-	if (status !== "active" && status !== "past_due") {
-		return "Resolve the subscription status before changing its plan, billing term, or payment source.";
-	}
-	return null;
-}
-
-export function performanceUpgradeUnavailableReason({
-	plansLoading,
-	canCreateCloudAgents,
-	isIncludedBasic,
-	performancePlanAvailable,
-	pendingPlanSlug,
-	planChangeUnavailable,
-	deploymentStatusSupportsUpgrade,
-	upgradeAvailable,
-	upgradeEligibilityReason,
-}: {
-	plansLoading: boolean;
-	canCreateCloudAgents: boolean;
-	isIncludedBasic: boolean;
-	performancePlanAvailable: boolean;
-	pendingPlanSlug: ComputePlanSlug | null;
-	planChangeUnavailable: string | null;
-	deploymentStatusSupportsUpgrade: boolean;
-	upgradeAvailable: boolean;
-	upgradeEligibilityReason: string | null;
-}): string | null {
-	if (plansLoading) return "Checking Performance availability…";
-	if (!canCreateCloudAgents) return "Upgrades are temporarily unavailable.";
-	if (!performancePlanAvailable)
-		return "The Performance plan is unavailable right now. Try again later.";
-	if (!upgradeAvailable) {
-		return performanceUpgradeEligibilityReasonCopy(upgradeEligibilityReason);
-	}
-	if (!isIncludedBasic) {
-		return "Only Basic agents without a separate subscription can upgrade here. Use this agent's subscription controls instead.";
-	}
-	if (pendingPlanSlug === COMPUTE_PERFORMANCE_SLUG) {
-		return "An upgrade to Performance is already scheduled.";
-	}
-	if (planChangeUnavailable) return planChangeUnavailable;
-	if (!deploymentStatusSupportsUpgrade) {
-		return "Wait until this Basic agent is running or stopped before trying to upgrade again.";
-	}
-	return null;
-}
+export {
+	performanceUpgradeUnavailableReason,
+	planChangeUnavailableReason,
+} from "@clawdi/shared/view";

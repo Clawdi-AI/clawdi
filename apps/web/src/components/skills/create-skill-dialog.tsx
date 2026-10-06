@@ -1,10 +1,12 @@
 "use client";
 
+import { buildSkillCreateRequest } from "@clawdi/shared/api";
+import { createSkillDialogClasses } from "@clawdi/shared/ui";
+import { skillFormCopy as copy, createSkillDescription } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { type ReactElement, useRef, useState } from "react";
 import { toast } from "sonner";
-import { displayProjectName } from "@/components/projects/project-metadata";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -56,11 +58,7 @@ export function CreateSkillDialog({
 			unwrap(
 				await api.POST("/v1/projects/{project_id}/skills", {
 					params: { path: { project_id: project.id } },
-					body: {
-						name,
-						description,
-						instructions: instructions.trim(),
-					},
+					body: buildSkillCreateRequest({ name, description, instructions }),
 				}),
 			),
 		onSuccess: async () => {
@@ -95,16 +93,13 @@ export function CreateSkillDialog({
 			}}
 		>
 			{children ? <DialogTrigger render={children} /> : null}
-			<DialogContent className="sm:max-w-xl">
+			<DialogContent className={createSkillDialogClasses.dialog}>
 				<DialogHeader>
-					<DialogTitle>Add skill</DialogTitle>
-					<DialogDescription>
-						Add instructions to {displayProjectName(project)}. Linked agents receive the skill
-						automatically.
-					</DialogDescription>
+					<DialogTitle>{copy.title}</DialogTitle>
+					<DialogDescription>{createSkillDescription(project)}</DialogDescription>
 				</DialogHeader>
 				<form
-					className="space-y-4"
+					className={createSkillDialogClasses.form}
 					onSubmit={(event) => {
 						event.preventDefault();
 						if (!name || !description.trim() || !instructions.trim() || submitLockedRef.current)
@@ -113,8 +108,8 @@ export function CreateSkillDialog({
 						create.mutate();
 					}}
 				>
-					<div className="space-y-1.5">
-						<Label htmlFor="skill-name">Skill name</Label>
+					<div className={createSkillDialogClasses.field}>
+						<Label htmlFor="skill-name">{copy.name}</Label>
 						<Input
 							id="skill-name"
 							value={name}
@@ -124,32 +119,32 @@ export function CreateSkillDialog({
 							aria-describedby="skill-name-help"
 							autoFocus
 							onChange={(event) => setName(event.target.value)}
-							placeholder="review-pull-requests"
+							placeholder={copy.namePlaceholder}
 						/>
-						<p id="skill-name-help" className="text-xs text-muted-foreground">
-							Use lowercase letters, numbers, and single hyphens, such as review-pull-requests.
+						<p id="skill-name-help" className={createSkillDialogClasses.help}>
+							{copy.nameHelp}
 						</p>
 					</div>
-					<div className="space-y-1.5">
-						<Label htmlFor="skill-description">Description</Label>
+					<div className={createSkillDialogClasses.field}>
+						<Label htmlFor="skill-description">{copy.description}</Label>
 						<Input
 							id="skill-description"
 							value={description}
 							maxLength={1024}
 							required
 							onChange={(event) => setDescription(event.target.value)}
-							placeholder="When and why an agent should use this skill"
+							placeholder={copy.descriptionPlaceholder}
 						/>
 					</div>
-					<div className="space-y-1.5">
-						<Label htmlFor="skill-instructions">Instructions</Label>
+					<div className={createSkillDialogClasses.field}>
+						<Label htmlFor="skill-instructions">{copy.instructions}</Label>
 						<Textarea
 							id="skill-instructions"
 							value={instructions}
 							maxLength={200 * 1024}
 							onChange={(event) => setInstructions(event.target.value)}
-							placeholder="Explain what the agent should do, including constraints and examples."
-							className="min-h-48"
+							placeholder={copy.instructionsPlaceholder}
+							className={createSkillDialogClasses.textarea}
 						/>
 					</div>
 					<DialogFooter>
@@ -161,7 +156,7 @@ export function CreateSkillDialog({
 							disabled={!name || !description.trim() || !instructions.trim() || create.isPending}
 						>
 							{create.isPending ? <Spinner /> : <Plus />}
-							{create.isPending ? "Adding…" : "Add skill"}
+							{create.isPending ? copy.adding : copy.title}
 						</Button>
 					</DialogFooter>
 				</form>

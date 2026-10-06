@@ -1,5 +1,6 @@
 "use client";
 
+import { channelFormClasses as formStyles } from "@clawdi/shared/ui";
 import { Check, Copy } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import type { ComponentProps, ReactNode } from "react";
@@ -23,10 +24,7 @@ export function PairingDialogContent({
 			data-hosted="true"
 			data-v2="true"
 			data-pairing-dialog
-			className={cn(
-				"h-[min(40rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)] gap-4 overflow-hidden sm:h-auto sm:max-w-md",
-				className,
-			)}
+			className={cn(formStyles.pairingContent, className)}
 			{...props}
 		>
 			{children}
@@ -55,15 +53,7 @@ export function PairingDialogHeader({
 }
 
 export function PairingDialogBody({ className, ...props }: ComponentProps<"div">) {
-	return (
-		<div
-			className={cn(
-				"min-h-0 min-w-0 break-words overflow-y-auto overscroll-contain pr-1 [overflow-wrap:anywhere]",
-				className,
-			)}
-			{...props}
-		/>
-	);
+	return <div className={cn(formStyles.pairingBody, className)} {...props} />;
 }
 
 export function PairingDialogActions({ className, ...props }: ComponentProps<"div">) {

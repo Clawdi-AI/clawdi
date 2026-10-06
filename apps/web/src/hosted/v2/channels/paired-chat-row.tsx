@@ -1,5 +1,6 @@
 "use client";
 
+import { relativeTime } from "@clawdi/shared/view";
 import { Link2Off, MessageCircle, MessagesSquare } from "lucide-react";
 import { EntityHeader } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
@@ -14,7 +15,7 @@ import {
 } from "@/hosted/v2/channels/channel-ui";
 import { useDeleteChannelBinding } from "@/hosted/v2/channels/channels-hooks";
 import { pairedChatScopeLabel, pairedChatTitle } from "@/hosted/v2/channels/paired-chat-row.logic";
-import { cn, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 export const PAIRED_CHAT_ROW_CLASS =
 	"grid min-h-14 min-w-0 grid-cols-[minmax(0,1fr)_7rem] items-center gap-1.5 px-1 py-2.5";

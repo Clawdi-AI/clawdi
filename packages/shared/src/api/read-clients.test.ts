@@ -8,6 +8,7 @@ import {
 	type ApiClientOptions,
 	ApiClientResponseError,
 } from "./read-transport";
+import { normalizeSessionListQuery } from "./session-query";
 
 const options: ApiClientOptions = {
 	baseUrl: "https://cloud.example.test",
@@ -64,6 +65,15 @@ describe("Cloud read client over HTTP", () => {
 	test("preserves query encoding, owner auth, transcript revisions and paging without retries", async () => {
 		const requests: ObservedRequest[] = [];
 		let revision = "events:revision-a";
+		const memory: components["schemas"]["MemoryResponse"] = {
+			id: "memory/a?owner=other",
+			content: "Owner context",
+			category: "fact",
+			source: "manual",
+			source_session_id: "session-a",
+			source_machine_name: "Laptop",
+			access_count: 2,
+		};
 		const server = Bun.serve({
 			hostname: "127.0.0.1",
 			port: 0,
@@ -78,6 +88,7 @@ describe("Cloud read client over HTTP", () => {
 					return Response.json({ detail: "Not found" }, { status: 404 });
 				}
 				if (url.pathname === "/v1/agents") return Response.json([agent]);
+				if (url.pathname.startsWith("/v1/memories/")) return Response.json(memory);
 				if (url.pathname.startsWith("/v1/agents/")) return Response.json(agent);
 				if (url.pathname === "/v1/sessions") {
 					return Response.json({
@@ -119,14 +130,21 @@ describe("Cloud read client over HTTP", () => {
 			expect(await client.getAgent("agent/a?owner=other#secret")).toEqual(agent);
 			const query = '"hello" &owner=other +%_你好';
 			expect(
-				await client.listSessions({
-					q: query,
-					environment_id: "agent-a",
-					model: ["model+one", "model&two"],
-					tag: ["one/two", "tag%_"],
-					page: 3,
-					page_size: 10,
-				}),
+				await client.listSessions(
+					normalizeSessionListQuery({
+						q: query,
+						environment_id: "agent-a",
+						model: ["model+one", "model&two"],
+						tag: ["one/two", "tag%_"],
+						page: 3,
+						page_size: 10,
+						automated: false,
+						has_pr: true,
+						min_messages: 0,
+						sort: " relevance ",
+						order: "asc",
+					}),
+				),
 			).toEqual({ items: [], total: 0, page: 3, page_size: 10 });
 			expect(await client.getSession("session-a")).toEqual(session);
 			const transcriptQuery = {
@@ -167,14 +185,29 @@ describe("Cloud read client over HTTP", () => {
 			);
 			const listUrl = new URL(requests[2].url);
 			expect(listUrl.searchParams.get("q")).toBe(query);
+			expect(listUrl.searchParams.get("automated")).toBe("false");
+			expect(listUrl.searchParams.get("has_pr")).toBe("true");
+			expect(listUrl.searchParams.get("min_messages")).toBe("0");
+			expect(listUrl.searchParams.get("sort")).toBe("relevance");
+			expect(listUrl.searchParams.get("order")).toBe("asc");
 			expect(listUrl.searchParams.get("owner")).toBeNull();
-			expect(listUrl.searchParams.getAll("model")).toEqual(["model+one", "model&two"]);
+			expect(listUrl.searchParams.getAll("model")).toEqual(["model&two", "model+one"]);
 			expect(listUrl.searchParams.getAll("tag")).toEqual(["one/two", "tag%_"]);
 			const pageUrl = new URL(requests[4].url);
 			expect(pageUrl.searchParams.getAll("include")).toEqual(["user", "tools"]);
 			expect(pageUrl.searchParams.get("anchor_revision")).toBe("events:revision-a");
 			expect(pageUrl.searchParams.get("search_query")).toBe(query);
 			expect(requests[7].authorization).toBe("Bearer owner-b");
+			await expect(client.getMemory(memory.id)).rejects.toMatchObject({ status: 404 });
+			token = "owner-a";
+			expect(await client.getMemory(memory.id)).toEqual(memory);
+			const memoryRequest = requests.at(-1);
+			if (!memoryRequest) throw new Error("Missing memory request");
+			expect(new URL(memoryRequest.url).pathname).toBe("/v1/memories/memory%2Fa%3Fowner%3Dother");
+			expect(new URL(memoryRequest.url).search).toBe("");
+			await expect(client.getMemory("different-memory")).rejects.toBeInstanceOf(
+				ApiClientResponseError,
+			);
 		} finally {
 			await server.stop(true);
 		}
