@@ -1,6 +1,6 @@
 # Anonymous runtime preparation and warm adoption
 
-Implementation review draft. Hosted owns golden/pool lifecycle; the CLI owns
+Implementation review draft. Hosted owns pool lifecycle; the CLI owns
 installation, native configuration and readiness. Provisioning defaults off.
 OpenClaw hot apply requires `CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY=1`; ordinary
 provisioning and restart reconciliation remain the default.
@@ -11,14 +11,17 @@ clawdi runtime warm --runtime openclaw
 clawdi runtime warm --runtime hermes
 ```
 
+The prepare command runs inside the eventual pool instance. Its CLI arrives as
+an exact SHA-512-verified public package, without Cloud/tenant identity.
 These root-only commands require empty homes and a strict
 `clawdi.runtime-preinstallation.v1` spec binding CLI integrity, architecture,
 image, runtime version/commit and pinned official installers/artifacts.
 Tenant inputs, mutable versions and integrity mismatches are rejected.
 
-Preparation uses official installers and builds Hermes assets. Sealed OpenClaw
-is disabled and token-free. A root-owned 0400 receipt binds software, home digest
-and probes to launcher/package/source identity; mismatches retain ordinary probes.
+Preparation uses official installers and builds Hermes assets. OpenClaw
+is staged in the same pool instance before warm-up. A root-owned 0400 receipt
+binds software, home digest and probes to launcher/package/source identity;
+mismatches retain ordinary probes.
 
 ## First apply
 
@@ -74,9 +77,9 @@ New private receipts are additive and optional.
 | CLI, Files, egress and Skill helpers | Shared helpers accept anonymous inputs; ordinary integrity, permissions, installer options and reservation semantics remain. | Existing managed CLI/Files/egress/Skill suites plus preinstallation tests |
 | Profiling | Default off; `CLAWDI_RUNTIME_PROFILE=1` emits static labels, PID and duration without argv, secrets or payloads. | `profile.test.ts` |
 
-Hosted retains its ordinary readiness polling. Nodes without golden/pool config
-perform one history lookup instead of invoking every feature hook; persisted
-copies and claims keep their hooks after configuration removal for crash replay.
+Hosted retains its ordinary readiness polling. Nodes without pool configuration
+perform one claim-history lookup; persisted claims keep their hooks after
+configuration removal for crash replay. Empty pools use ordinary cold provisioning.
 No tenant or production enablement was performed.
 
 ## Verification and limits
@@ -84,18 +87,22 @@ No tenant or production enablement was performed.
 ```bash
 bash scripts/test.sh cli
 bash scripts/test.sh runtime-systemd
-bash scripts/test.sh cli-lint <changed-files>
+BIOME_THREADS=2 bash scripts/test.sh cli-lint <changed-files>
 bash scripts/test.sh hermes-upstream-contract
 ```
 
 Pack fixtures with `preinstallation-artifact` into an empty checkout-local
-directory. Paired Hosted qualification runs `backend-golden-native` under
+directory. Paired Hosted qualification runs `backend-pool-native` under
 `/tmp/clawdi-golden-native.lock`, three pool samples per runtime; results live in
 its design document. Production and real model/chat/channel traffic are unqualified.
 
-The final pool medians are 16.95 s OpenClaw and 14.23 s Hermes versus 18.87/13.18 s
-previously. All six samples and cleanup passed; Hermes Cloud `ok` increased 1.05 s
-despite faster init/HTTP readiness, so its non-regression remains unproved.
+Hosted qualification now fills blank volumes and installs software in place;
+TTL retirement/refill supplies freshness without cloned software volumes.
+Three samples per runtime gave claim-to-first-Cloud-`ok` medians of 13.76 s
+OpenClaw and 13.35 s Hermes, below the 16.95/14.23 s ceilings. Full fill medians
+were 202.40/279.67 s respectively. All six samples, one TTL retirement/refill
+cycle and cleanup passed. The paired Hosted pool design document retains the
+complete results and qualification limits.
 
 Done: Docker CLI typecheck/tests, real systemd and changed-file Biome pass;
 PostgreSQL regressions cover fallback/preservation. Paired native qualification
